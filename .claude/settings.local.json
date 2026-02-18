@@ -1,5 +1,8 @@
 {
   "permissions": {
-    "allow": []
+    "allow": [
+      "WebFetch(domain:www.linkedin.com)",
+      "WebFetch(domain:job-boards.greenhouse.io)"
+    ]
   }
 }
