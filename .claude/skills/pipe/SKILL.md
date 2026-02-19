@@ -1,5 +1,5 @@
 ---
-name: job-pipeline
+name: pipe
 description: Track job applications through stages with auto-generated action items per stage
 argument-hint: [add|update|remove <company> [role|stage] [url]]
 user-invocable: true
@@ -18,11 +18,11 @@ Track job applications through a stage-based pipeline with auto-generated action
   - `remove <company>` — remove/archive an application
 
 Examples:
-- `/job-pipeline` — show pipeline summary and what needs attention
-- `/job-pipeline add Stripe "Senior PM"` — add new application at Researching stage
-- `/job-pipeline add Notion "Product Manager" https://notion.so/careers/pm` — add with URL
-- `/job-pipeline update Stripe "Phone Screen"` — advance Stripe to Phone Screen
-- `/job-pipeline remove Stripe` — archive the Stripe application
+- `/pipe` — show pipeline summary and what needs attention
+- `/pipe add Stripe "Senior PM"` — add new application at Researching stage
+- `/pipe add Notion "Product Manager" https://notion.so/careers/pm` — add with URL
+- `/pipe update Stripe "Phone Screen"` — advance Stripe to Phone Screen
+- `/pipe remove Stripe` — archive the Stripe application
 
 ## Data File
 
@@ -36,7 +36,7 @@ All pipeline data lives in `data/job-pipeline.md`.
 2. If the file is empty or has no entries, display a welcome message:
    ```
    Pipeline is empty. Add your first application:
-     /job-pipeline add <company> <role> [url]
+     /pipe add <company> <role> [url]
 
    Stages: Researching → Applied → Phone Screen → Interview → Offer → Accepted/Rejected/Withdrawn
    ```

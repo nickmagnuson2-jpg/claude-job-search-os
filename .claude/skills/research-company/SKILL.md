@@ -1,6 +1,6 @@
 ---
 name: research-company
-description: Deep company research with parallel agents — overview, funding, people, news — with conversation starters
+description: Deep company research with parallel agents — overview, funding, people, news, competitive landscape — with conversation starters and similar companies to target
 argument-hint: <company-name> [url] [context]
 user-invocable: true
 allowed-tools: Read(*), Glob(data/*), Grep(data/*), Write(data/company-research/*), Edit(data/company-research/*), Edit(data/job-todos.md), Write(data/job-todos.md), Read(data/job-todos.md), Task, WebFetch, WebSearch
@@ -8,7 +8,7 @@ allowed-tools: Read(*), Glob(data/*), Grep(data/*), Write(data/company-research/
 
 # Research Company — Deep Dossier with Parallel Agents
 
-Research a company in depth by launching four parallel agents, each investigating a different dimension. Produces a comprehensive dossier with conversation starters tailored to the context (coffee chat, interview, networking).
+Research a company in depth by launching five parallel agents, each investigating a different dimension. Produces a comprehensive dossier with conversation starters tailored to the context (coffee chat, interview, networking), plus a curated list of similar companies worth targeting in your job search.
 
 Use this before meetings, coffee chats, interviews, or when evaluating opportunities at a specific company.
 
@@ -87,9 +87,9 @@ If `data/company-research/<slug>.md` already exists:
 - **>= 14 days old**: Inform the user the research is stale and auto-refresh: "Research from [date] is stale — refreshing now."
 - When refreshing, preserve any content under a `## Manual Notes` section if the user added one.
 
-### Step 3: Launch 4 Parallel Research Agents
+### Step 3: Launch 5 Parallel Research Agents
 
-Use the Task tool to launch **four parallel subagents** (`subagent_type: "general-purpose"`, `max_turns: 12`).
+Use the Task tool to launch **five parallel subagents** (`subagent_type: "general-purpose"`, `max_turns: 12`).
 
 **Each agent receives:**
 - The candidate context summary from Step 2
@@ -254,13 +254,69 @@ Key company milestones in chronological order. Founding, launches, pivots, fundi
 If news is sparse, note that the company has a low media profile and suggest asking what recent milestones they're proud of.
 ```
 
+---
+
+#### Agent 5: Competitive Landscape & Similar Companies to Target
+
+**Focus:** Map the competitive ecosystem to identify similar companies worth targeting in the candidate's job search. The goal is not just to understand competition — it's to build a shortlist of potential employers.
+
+**Research instructions:**
+```
+Research the competitive landscape around [Company Name] to find similar companies the candidate could also target in their job search. Search for:
+1. "[Company] competitors" OR "[Company] alternatives" — direct competitors
+2. "[Company] vs" — head-to-head comparisons that name specific rivals
+3. "[Industry/sector] startups" OR "[Industry/sector] companies" — broader ecosystem players
+4. "[Industry/sector] companies [location from candidate context]" — companies in the candidate's geography
+5. "companies like [Company]" OR "[Company] similar companies" — peer companies
+6. "[Industry/sector] market map" OR "[Industry/sector] landscape" — industry maps that list many players
+
+For each competitor or similar company found, research:
+- What they do and how they differ from [Company Name]
+- Approximate size and stage (startup vs. growth vs. enterprise)
+- HQ location and whether they have presence near the candidate
+- Whether they appear to be hiring (check for careers pages, recent job postings)
+- Why the candidate's background might be relevant to them
+
+Compile your findings into these sections (cite URLs for every claim):
+
+## Direct Competitors
+Companies solving the same problem or serving the same customers as [Company Name].
+For each: name, one-line description, how they differ from [Company], size/stage, HQ, careers page URL if found.
+
+## Adjacent Players
+Companies in the same industry or ecosystem but solving different problems or serving different segments. These are companies where similar skills and domain knowledge transfer.
+For each: name, one-line description, relevance to the candidate, size/stage, HQ.
+
+## Emerging Players
+Newer or smaller companies in this space that might be earlier-stage but growing. Good for candidates who want high impact or early-stage experience.
+For each: name, one-line description, why they're interesting, size/stage, HQ.
+
+## Companies to Target — Ranked Shortlist
+Rank the top 8-10 companies (from all categories above) that the candidate should consider targeting, based on:
+1. Relevance to the candidate's background and skills (from candidate context)
+2. Hiring signals (active job postings, growth indicators)
+3. Geographic fit (near candidate or remote-friendly)
+4. Stage/culture fit (based on candidate context)
+
+For each entry in the shortlist:
+- **Company name** + one-line description
+- **Why target**: How the candidate's background maps to this company
+- **Stage & size**: Funding stage, approximate headcount
+- **Location**: HQ + remote policy if known
+- **Hiring signal**: Active roles, growth indicators, or "unknown"
+- **Website / careers page**: URL
+
+If the industry is niche and competitors are hard to find, broaden the search to adjacent industries or note the gap.
+```
+
 ### Step 4: Synthesize Results
 
-After all four agents return, synthesize their findings:
+After all five agents return, synthesize their findings:
 
-1. **Deduplicate** — if multiple agents report the same fact, keep the most detailed version with the best source.
-2. **Resolve conflicts** — if agents report contradictory information (e.g., different founding years), note both with their sources and flag the discrepancy.
-3. **Cross-link** — connect findings across agents (e.g., a product mentioned by Agent 1 that's in the news from Agent 4, or a leader from Agent 3 who led a funding round from Agent 2).
+1. **Deduplicate** — if multiple agents report the same fact, keep the most detailed version with the best source. Agent 4 (News) and Agent 5 (Competitive Landscape) may both mention competitors — merge into a single view, keeping Agent 5's deeper analysis and Agent 4's news angle.
+2. **Resolve conflicts** — if agents report contradictory information (e.g., different founding years, conflicting competitor lists), note both with their sources and flag the discrepancy.
+3. **Cross-link** — connect findings across agents (e.g., a product mentioned by Agent 1 that's in the news from Agent 4, a leader from Agent 3 who led a funding round from Agent 2, or a competitor from Agent 5 that recently appeared in Agent 4's news).
+4. **Enrich the shortlist** — use findings from Agents 1-4 to enhance Agent 5's similar-companies shortlist. For example, if Agent 2 found a specific investor, note which shortlisted companies share that investor. If Agent 3 found alumni connections, flag shortlisted companies with similar alumni overlap potential.
 
 ### Step 5: Cross-Reference with Candidate Data
 
@@ -301,6 +357,8 @@ Read `data/job-todos.md` first. Then add relevant to-dos such as:
 - "Connect with [person] on LinkedIn" — if alumni or other connections were identified
 - "Prepare [topic] talking points for [Company] meeting" — if specific preparation areas emerged
 - "Follow up on [Company] research — check [news source] for updates" — if the research was thin in some areas
+- "Research [similar company] — flagged as strong fit from [Company] competitive landscape" — for the top 2-3 companies from Agent 5's shortlist that have strong hiring signals
+- "Check [similar company] careers page for [relevant role type]" — if Agent 5 found active hiring at a shortlisted company
 
 Use the same format as existing entries in `data/job-todos.md`:
 - **Priority**: `Med` (default) or `High` if time-sensitive
@@ -308,7 +366,7 @@ Use the same format as existing entries in `data/job-todos.md`:
 - **Status**: `Pending`
 - **Notes**: `From /research-company on [date]`
 
-If `data/job-todos.md` doesn't exist, create it with the standard header format (see `data/job-todos.md` structure from the `/job-todos` skill).
+If `data/job-todos.md` doesn't exist, create it with the standard header format (see `data/job-todos.md` structure from the `/todo` skill).
 
 ### Step 8: Write Output File
 
@@ -374,11 +432,42 @@ Create the output directory if needed, then write to `data/company-research/<slu
 
 ## Competitive Landscape
 
-[From Agent 4]
+[From Agent 4 news angle, supplemented by Agent 5's deeper competitive analysis]
 
 ## Industry Trends
 
 [From Agent 4]
+
+---
+
+## Similar Companies to Target
+
+[From Agent 5 — the core job-search output of this section]
+
+### Ranked Shortlist
+
+[Top 8-10 companies from Agent 5's ranked shortlist, enriched with cross-references from other agents. For each:]
+
+#### 1. [Company Name]
+> [One-line description]
+
+- **Why target:** [How candidate's background maps to this company]
+- **Stage & size:** [Funding stage, approximate headcount]
+- **Location:** [HQ + remote policy if known]
+- **Hiring signal:** [Active roles, growth indicators, or "unknown"]
+- **Website:** [URL]
+- **Careers:** [Careers page URL if found]
+
+#### 2. ...
+
+### Direct Competitors
+[From Agent 5 — companies solving the same problem]
+
+### Adjacent Players
+[From Agent 5 — same industry, different problem, transferable skills]
+
+### Emerging Players
+[From Agent 5 — earlier-stage companies worth watching]
 
 ---
 
@@ -421,6 +510,9 @@ Create the output directory if needed, then write to `data/company-research/<slu
 
 ### Agent 4: News & Industry Context
 [Full unedited output]
+
+### Agent 5: Competitive Landscape & Similar Companies
+[Full unedited output]
 ```
 
 **Important:** The Raw Agent Outputs appendix must contain the **complete, unedited output** from each agent. Do not summarize, truncate, or reformat.
@@ -446,6 +538,9 @@ After writing the file, display a concise summary to the user:
 2. [Second best]
 3. [Third]
 
+### Similar Companies to Target
+[Top 3-5 from the ranked shortlist, one line each: name — why it's a fit — hiring signal]
+
 ### To-Dos Created
 - [List of to-dos added to job-todos.md]
 
@@ -461,4 +556,5 @@ Full dossier: `data/company-research/<slug>.md`
 - **Contact name extracted but not in networking.md**: Note in the dossier that this contact isn't tracked yet. Suggest: "Consider running `/networking add \"[Name]\" [Company] [Role]`".
 - **No profile data**: Proceed with generic candidate context. Note in output: "Candidate context was limited — run `/import-cv` for better personalization."
 - **Agent returns thin results**: Proceed with remaining agents' data. Note which research dimension was thin in the output. Do NOT fail the entire operation because one agent struggled.
-- **Agent failure / timeout**: If an agent fails to return, proceed with the other three. Note the gap in the output and what section is affected.
+- **Agent failure / timeout**: If an agent fails to return, proceed with the remaining agents. Note the gap in the output and what section is affected.
+- **Niche industry with few competitors**: If Agent 5 finds very few direct competitors, it should broaden to adjacent industries and note the niche nature. The shortlist may be shorter than 8 — that's fine, quality over quantity.

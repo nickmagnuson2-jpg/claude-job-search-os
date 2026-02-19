@@ -8,7 +8,7 @@ allowed-tools: Read(*), Write(data/networking.md), Edit(data/networking.md), Wri
 
 # Networking Tracker
 
-Track networking contacts and interactions — coffee chats, recruiter calls, events, LinkedIn messages, and Claude conversations about job search strategy. Follow-up actions auto-generate as `/job-todos` entries.
+Track networking contacts and interactions — coffee chats, recruiter calls, events, LinkedIn messages, and Claude conversations about job search strategy. Follow-up actions auto-generate as `/todo` entries.
 
 **Full content capture**: Interactions store the actual message/email content (not just summaries) so Claude can analyze your tone, match your voice when drafting follow-ups, and track what you've already said to each contact.
 
