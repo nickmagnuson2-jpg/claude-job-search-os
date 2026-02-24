@@ -147,6 +147,29 @@ Include status: active, renewal pending, or expired. Include exam codes.
 
 Own business entities with founding dates, purposes, and outcomes. Only relevant for candidates with entrepreneurial or freelance backgrounds. These are not client projects — they provide context for ventures or business arrangements relevant to the candidate's career.
 
+## Research Dossier Standards
+
+Applies to `/research-company` and `/research-industry`. Both skills produce detailed dossiers with a **two-speed reading design:**
+
+1. **Executive Summary** (top of every dossier) — thesis/verdict, opportunity rating, top reasons to target, top risks, recommended next action. Fits one screen. Scan in 2 minutes.
+2. **Full dossier** — every major section opens with a bold **BLUF** (Bottom Line Up Front) sentence summarizing the takeaway. Scan all BLUFs in 60 seconds, or read any section in full for detail.
+
+### Evidence Quality Rules
+
+- **Source tiers:** Tier A (primary/official), Tier B (reputable secondary), Tier C (aggregator/crowd — flagged with caveat).
+- **Confidence tags:** High-impact claims (market size, funding, growth, headcount, risk events) include `[Confidence: High | Medium | Low, as of YYYY-MM]`.
+- **Contradictions:** When credible sources disagree, show both values with sources and mark `[Needs verification]`. Never silently pick one.
+- **Freshness:** Prioritize last-12-month sources for trend/news claims. Older sources noted with justification.
+
+### Refresh Behavior
+
+- If a dossier exists and is fresh, offer "view existing" or "refresh."
+- On refresh, include a `## What Changed Since Last Update` section listing material differences.
+
+### Handoff Chain
+
+The natural research flow is: `/research-industry` (map the landscape) → `/research-company` (deep-dive top picks) → `/cold-outreach` or `/follow-up` (act on findings). Each skill suggests the next step explicitly.
+
 ## Resume Generation
 
 See `framework/resume-workflow.md` — read this file before generating any resume. It contains the full workflow (11 steps), tailoring rules, CV quality standards, and the mandatory pre-output checklist.

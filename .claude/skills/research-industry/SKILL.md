@@ -86,6 +86,7 @@ If `data/industry-research/<slug>.md` already exists:
   - If "refresh", continue to Step 3.
 - **>= 30 days old**: Inform the user the research is stale and auto-refresh: "Research from [date] is stale — refreshing now."
 - When refreshing, preserve any content under a `## Manual Notes` section if the user added one.
+- **For any refresh:** Read and retain the existing file's **Executive Summary** and **At a Glance** sections before overwriting. These will be compared against new findings in Step 4 to generate a "What Changed" delta.
 
 ### Step 3: Launch 5 Parallel Research Agents
 
@@ -96,9 +97,25 @@ Use the Task tool to launch **five parallel subagents** (`subagent_type: "genera
 - The industry name
 - The anchor company (if extracted from context)
 - Their specific research focus and instructions (below)
-- Instruction to cite source URLs for every factual claim
+- The shared evidence quality standards (below)
 
 **Important:** Tell each agent to use WebSearch and WebFetch to gather information. Each agent should perform 3-5 targeted searches and follow the most promising results.
+
+**Shared evidence quality standards (include verbatim in every agent prompt):**
+
+> **Source quality — classify every source you cite:**
+> - **Tier A** (primary): government/regulator data, industry body reports, company filings, official press releases, peer-reviewed research
+> - **Tier B** (reputable secondary): major business publications (WSJ, Bloomberg, TechCrunch, Forbes), named analysts (Gartner, McKinsey, CB Insights), established trade press
+> - **Tier C** (aggregator/crowd): Glassdoor, Reddit, Quora, Owler, anonymous forums, generic listicles — always flag with `[Tier C — verify independently]`
+>
+> **Confidence tags — for high-impact claims** (market size, growth rates, funding amounts, headcount, compensation figures, regulatory changes), add: `[Confidence: High | Medium | Low, as of YYYY-MM]`
+> - High = primary source or 2+ corroborating Tier A/B sources
+> - Medium = single Tier B source, no contradiction found
+> - Low = Tier C only, inference, or data older than 18 months
+>
+> **Freshness:** Prioritize sources from the last 12 months for news, trend, and growth claims. If using older sources, note why they remain relevant (e.g., foundational industry structure data that hasn't changed).
+>
+> **Contradictions:** If two credible sources disagree on a fact, report both values with their sources and mark as `[Needs verification]`. Do not silently pick one or average them.
 
 ---
 
@@ -116,7 +133,7 @@ Research the [Industry Name] industry comprehensively. Search for:
 5. "[Industry] value chain" OR "[Industry] ecosystem" — how players interconnect
 6. "[Industry] cyclical" OR "[Industry] economic cycle" — sensitivity to economic conditions
 
-Compile your findings into these sections (cite URLs for every claim):
+Compile your findings into these sections. Cite URLs for every claim, classify sources by tier (A/B/C), and tag high-impact claims with [Confidence: H/M/L, as of YYYY-MM]:
 
 ## Market Size & Growth
 Total addressable market (TAM). Current size and projected growth rate (CAGR).
@@ -176,7 +193,7 @@ Research the key players in the [Industry Name] industry. Search for:
 5. "[Industry] market map" OR "[Industry] landscape map" — visual ecosystem maps
 6. "[Industry] investors" OR "[Industry] VCs" — who's funding the space
 
-Compile your findings into these sections (cite URLs for every claim):
+Compile your findings into these sections. Cite URLs for every claim, classify sources by tier (A/B/C), and tag high-impact claims with [Confidence: H/M/L, as of YYYY-MM]:
 
 ## Market Leaders
 The 5-8 dominant companies defining the industry. For each:
@@ -230,7 +247,7 @@ Research the talent landscape in the [Industry Name] industry. Search for:
 
 Given the candidate context below, focus particularly on roles where the candidate's background would be relevant.
 
-Compile your findings into these sections (cite URLs for every claim):
+Compile your findings into these sections. Cite URLs for every claim, classify sources by tier (A/B/C), and tag high-impact claims with [Confidence: H/M/L, as of YYYY-MM]:
 
 ## In-Demand Roles
 The most-hired roles in this industry right now. Group by function:
@@ -308,7 +325,7 @@ Based on the candidate's background, assess:
 
 **Research instructions:**
 ```
-Research trends and the regulatory environment in the [Industry Name] industry. Search for:
+Research trends and the regulatory environment in the [Industry Name] industry. Prioritize sources from the last 12 months — older sources only if still clearly relevant. Search for:
 1. "[Industry] trends 2026" OR "[Industry] outlook 2026" — current trends
 2. "[Industry] technology" OR "[Industry] innovation" — tech shifts
 3. "[Industry] regulation" OR "[Industry] policy" — regulatory landscape
@@ -317,7 +334,7 @@ Research trends and the regulatory environment in the [Industry Name] industry. 
 6. "[Industry] predictions" OR "future of [Industry]" — forward-looking analysis
 7. "[Industry] biggest problems" OR "[Industry] pain points" — what keeps leaders up at night
 
-Compile your findings into these sections (cite URLs for every claim):
+Compile your findings into these sections. Cite URLs for every claim, classify sources by tier (A/B/C), and tag high-impact claims with [Confidence: H/M/L, as of YYYY-MM]:
 
 ## Industry Pain Points — What Keeps Leaders Up at Night
 The 3-5 biggest problems this industry is currently grappling with. For each:
@@ -392,7 +409,7 @@ Using the candidate context provided, research how this specific candidate shoul
 5. "[Industry] newsletters" OR "[Industry] podcasts" OR "[Industry] thought leaders" — knowledge sources
 6. "[Industry] fellowships" OR "[Industry] programs" — structured entry programs
 
-Compile your findings into these sections (cite URLs for every claim):
+Compile your findings into these sections. Cite URLs for every claim, classify sources by tier (A/B/C), and tag high-impact claims with [Confidence: H/M/L, as of YYYY-MM]:
 
 ## Candidate → Industry Mapping
 A direct analysis of how the candidate's background maps to this industry:
@@ -444,9 +461,12 @@ Any relevant fellowships, rotational programs, bootcamps, or accelerators design
 After all five agents return, synthesize their findings:
 
 1. **Deduplicate** — if multiple agents mention the same companies or facts, merge into the most detailed version with the best source. Agent 2 (Key Players) and Agent 5 (Target Companies) will both name companies — use Agent 2 for the landscape map and Agent 5 for the candidate-specific ranking.
-2. **Resolve conflicts** — if agents report contradictory information (e.g., different market sizes, conflicting trend assessments), note both with their sources and flag the discrepancy.
+2. **Resolve contradictions** — if agents report contradictory information (e.g., different market sizes, conflicting trend assessments), **show both values with their sources and mark as `[Needs verification]`**. Do not silently pick one. Prefer higher-tier sources when choosing which to feature prominently, but always disclose the discrepancy.
 3. **Cross-link** — connect findings across agents (e.g., a trend from Agent 4 creating demand for a role from Agent 3, a company from Agent 2 that matches a hiring hotspot from Agent 3, an investment theme from Agent 4 validating a target company from Agent 5).
 4. **Enrich the target list** — use findings from Agents 1-4 to enhance Agent 5's target company list. Add context about each company's market position (Agent 2), relevant roles they'd hire for (Agent 3), and how industry trends favor them (Agent 4).
+5. **Write BLUFs** — For each major section of the dossier, draft a single bold opening sentence summarizing the key takeaway for the candidate. The BLUF answers: "If the reader only reads this one sentence, what must they know?" Keep BLUFs factual and specific — never generic filler like "This is a growing industry."
+6. **Draft Executive Summary** — Distill all findings into the Executive Summary format (see Step 8 template). This is the last synthesis step — do it after all deduplication, conflict resolution, and cross-linking is complete.
+7. **Generate refresh delta (refreshes only)** — If this is a refresh of an existing dossier, compare the new synthesis against the retained previous Executive Summary and At a Glance. Generate a `## What Changed Since Last Update` section listing: market size revisions, new major players, shifting trends, regulatory changes, revised attractiveness rating, material changes in target company rankings. Keep it to the 3-7 most significant changes. If nothing material changed, say so.
 
 ### Step 5: Cross-Reference with Candidate Data
 
@@ -528,27 +548,63 @@ Create the output directory if needed, then write to `data/industry-research/<sl
 | Regulatory Intensity | [low / moderate / high] |
 | Remote-Friendliness | [low / moderate / high] |
 
+## Executive Summary
+
+**Verdict:** [One sentence — is this industry worth pursuing and why]
+**Attractiveness:** High | Medium | Low — [one-sentence rationale]
+
+**Best segments right now:**
+1. [Segment] — [why, with evidence]
+2. [Segment] — [why]
+3. [Segment] — [why]
+
+**Biggest structural risk:** [One sentence, citing source]
+
+**Your fit:** [Strongest transferable skill/experience] / **Gap to close:** [Most critical gap]
+**Top 3 targets:** [Company A] · [Company B] · [Company C]
+**Recommended first move:** [One concrete action this week]
+
 ## Connection to You
 
 [Networking contacts in this industry, pipeline entries, companies already researched, experience overlap, skills overlap. If none, state "No existing connections to this industry — fresh territory."]
+
+[IF REFRESH]: ## What Changed Since Last Update
+> Comparing against previous research from [previous date].
+
+[3-7 bullet points listing material changes: market size revisions, new major players, shifting trends, regulatory changes, revised attractiveness rating, target company ranking shifts. If nothing material changed, state "No material changes detected."]
 
 ---
 
 ## Market Overview
 
 ### Market Size & Growth
+
+**[BLUF — one bold sentence: the headline number and whether it's growing, stalling, or declining]**
+
 [From Agent 1]
 
 ### Market Segmentation
+
+**[BLUF — which segments matter most for the candidate and why]**
+
 [From Agent 1]
 
 ### Value Chain & Profit Pools
+
+**[BLUF — where the money actually is, in one sentence]**
+
 [From Agent 1 — where value flows and where margin concentrates. High-margin segments = better comp and job quality.]
 
 ### Dominant Business Models
+
+**[BLUF — the winning model and its economics in one sentence]**
+
 [From Agent 1]
 
 ### Industry Maturity & Cycle Assessment
+
+**[BLUF — life cycle stage and whether timing is favorable for entry]**
+
 [From Agent 1 — life cycle stage, cyclical vs. secular assessment, market concentration]
 
 ---
@@ -556,12 +612,21 @@ Create the output directory if needed, then write to `data/industry-research/<sl
 ## Key Players
 
 ### Market Leaders
+
+**[BLUF — who dominates and what that means for job seekers]**
+
 [From Agent 2 — the 5-8 dominant companies]
 
 ### High-Growth / Breakout Companies
+
+**[BLUF — where the growth hiring is concentrated]**
+
 [From Agent 2 — companies on steep growth trajectories]
 
 ### Emerging / Early-Stage Players
+
+**[BLUF — the high-risk/high-upside options]**
+
 [From Agent 2 — newer companies worth watching]
 
 ### Key Investors & Backers
@@ -572,59 +637,103 @@ Create the output directory if needed, then write to `data/industry-research/<sl
 ## Talent & Career Landscape
 
 ### In-Demand Roles
+
+**[BLUF — the roles with the most demand and best candidate fit]**
+
 [From Agent 3]
 
 ### Skills in Demand
+
+**[BLUF — candidate's strongest match and biggest gap, in one sentence]**
+
 [From Agent 3 — with candidate fit flags]
 
 ### Key Metrics & KPIs Everyone Watches
+
+**[BLUF — the 2-3 metrics the candidate must learn to speak fluently]**
+
 [From Agent 3 — the 5-8 metrics that matter, benchmarks, and how the candidate's past metrics map to these]
 
 ### Compensation Landscape
+
+**[BLUF — typical comp range for the candidate's target level]**
+
 [From Agent 3]
 
 ### Career Paths & Entry Points
+
+**[BLUF — the most realistic entry path for this candidate]**
+
 [From Agent 3 — including bridge roles for career changers]
 
 ### Career Trajectory & Exit Options
+
+**[BLUF — launchpad or cul-de-sac? One sentence.]**
+
 [From Agent 3 — where do people go after this industry? Launchpad or cul-de-sac?]
 
 ### How This Industry Actually Hires
+
+**[BLUF — referral-driven or open-application friendly? The key insight.]**
+
 [From Agent 3 — referral vs. open application, key recruiters, conference hiring, seasonal patterns]
 
 ### Hiring Hotspots
 [From Agent 3]
 
 ### Your Fit Assessment
+
+**[BLUF — net assessment: strong fit, stretch, or long shot?]**
+
 [From Agent 3 — candidate-specific overlap, gaps, positioning, automation risk]
 
 ---
 
 ## Industry Pain Points — What Keeps Leaders Up at Night
 
+**[BLUF — the single biggest problem and why it creates opportunity]**
+
 [From Agent 4 — the 3-5 biggest problems. This is the #1 conversational differentiator.]
 
 ## Trends & Outlook
 
 ### Major Trends (Now)
+
+**[BLUF — the trend most likely to create jobs in the next 12 months]**
+
 [From Agent 4 — with secular vs. cyclical flags]
 
 ### Technology & Innovation
+
+**[BLUF — the technology shift with the most career impact]**
+
 [From Agent 4 — with Hype Cycle maturity assessment where relevant]
 
 ### Regulatory Landscape
+
+**[BLUF — net regulatory impact: tailwind or headwind for hiring?]**
+
 [From Agent 4 — including regulatory capture assessment]
 
 ### Investment Themes
+
+**[BLUF — where capital is flowing and what that signals for hiring]**
+
 [From Agent 4 — capital flows as leading indicator of hiring]
 
 ### Disruption Risk Assessment
+
+**[BLUF — overall disruption rating and what it means for career stability]**
+
 [From Agent 4 — vulnerability signals, overall rating, protected vs. exposed segments]
 
 ### Risks & Headwinds
 [From Agent 4]
 
 ### 3-Year Outlook
+
+**[BLUF — the one-sentence forward view: better, worse, or transforming?]**
+
 [From Agent 4]
 
 ---
@@ -632,6 +741,9 @@ Create the output directory if needed, then write to `data/industry-research/<sl
 ## Your Entry Strategy
 
 ### Candidate → Industry Mapping
+
+**[BLUF — the candidate's strongest positioning angle, in one sentence]**
+
 [From Agent 5 — transferable experience, unique angle, positioning narrative]
 
 ### Target Companies — Ranked Shortlist
@@ -700,9 +812,15 @@ Create the output directory if needed, then write to `data/industry-research/<sl
 
 ## Sources
 
-[All URLs cited by agents, organized by section]
+[All URLs cited by agents, organized by section. Include source tier for each: (A), (B), or (C).]
 
-## Raw Agent Outputs
+---
+---
+
+# Appendix: Raw Agent Outputs
+
+> Below this line is unedited agent output preserved for auditability.
+> The synthesized dossier above is the authoritative version.
 
 ### Agent 1: Market Overview & Structure
 [Full unedited output]
@@ -720,11 +838,11 @@ Create the output directory if needed, then write to `data/industry-research/<sl
 [Full unedited output]
 ```
 
-**Important:** The Raw Agent Outputs appendix must contain the **complete, unedited output** from each agent. Do not summarize, truncate, or reformat.
+**Important:** The Raw Agent Outputs appendix must contain the **complete, unedited output** from each agent. Do not summarize, truncate, or reformat. The double `---` line before the appendix visually separates the authoritative dossier from the audit trail.
 
 ### Step 9: Display Summary
 
-After writing the file, display a concise summary to the user:
+After writing the file, display a concise summary to the user. This is derived directly from the Executive Summary — do not duplicate effort:
 
 ```markdown
 ## Industry Research Complete — [Industry Name]
@@ -732,11 +850,12 @@ After writing the file, display a concise summary to the user:
 **Saved to:** `data/industry-research/<slug>.md`
 **Context:** [context type] [with anchor company if applicable]
 
-### Industry Snapshot
-- **Market size:** [TAM]
-- **Growth:** [rate/descriptor]
-- **Maturity:** [stage]
-- [2-3 most important/interesting findings about the industry]
+**Attractiveness:** [High | Medium | Low] — [rationale from Executive Summary]
+
+### Best Segments
+1. [Segment] — [why]
+2. [Segment] — [why]
+3. [Segment] — [why]
 
 ### Your Fit
 - **Strongest overlap:** [top transferable skill/experience area]
@@ -758,9 +877,25 @@ After writing the file, display a concise summary to the user:
 ### To-Dos Created
 - [List of to-dos added to job-todos.md]
 
+### What's Next?
+[2-3 relevant suggestions from Step 10]
+
 ---
 Full landscape analysis: `data/industry-research/<slug>.md`
 ```
+
+### Step 10: Suggest Next Steps (Handoff)
+
+Based on the research findings, suggest the most relevant next actions using other skills:
+
+- **For top-ranked targets:** "Deep-dive your top picks with `/research-company [company]`."
+- **If anchor company was identified:** "Get the full picture on [anchor] with `/research-company [anchor]`."
+- **If strong candidate fit found:** "Generate a tailored CV with `/generate-cv` when you find a specific role."
+- **If networking entry points identified:** "Draft outreach with `/cold-outreach [contact] [company]`."
+- **If career pivot context:** "Refine your positioning by running `/extract-identity` to surface transferable narrative patterns."
+- **If pipeline entries exist:** "Check pipeline status with `/pipe` and update stages."
+
+Display 2-3 of the most relevant suggestions based on context type and findings — not all of them.
 
 ## Edge Cases
 

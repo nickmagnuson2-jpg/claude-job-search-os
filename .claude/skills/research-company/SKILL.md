@@ -88,6 +88,7 @@ If `data/company-research/<slug>.md` already exists:
   - If "refresh", continue to Step 3.
 - **>= 14 days old**: Inform the user the research is stale and auto-refresh: "Research from [date] is stale — refreshing now."
 - When refreshing, preserve any content under a `## Manual Notes` section if the user added one.
+- **For any refresh:** Read and retain the existing file's **Executive Summary** and **At a Glance** sections before overwriting. These will be compared against new findings in Step 4 to generate a "What Changed" delta.
 
 ### Step 3: Launch 5 Parallel Research Agents
 
@@ -98,9 +99,25 @@ Use the Task tool to launch **five parallel subagents** (`subagent_type: "genera
 - The company name and URL (if provided)
 - The contact name (if extracted from context)
 - Their specific research focus and instructions (below)
-- Instruction to cite source URLs for every factual claim
+- The shared evidence quality standards (below)
 
 **Important:** Tell each agent to use WebSearch and WebFetch to gather information. Each agent should perform 3-5 targeted searches and follow the most promising results.
+
+**Shared evidence quality standards (include verbatim in every agent prompt):**
+
+> **Source quality — classify every source you cite:**
+> - **Tier A** (primary): company website, SEC/regulator filings, official press releases, earnings materials, first-party blog posts
+> - **Tier B** (reputable secondary): major business publications (WSJ, Bloomberg, TechCrunch, Forbes), named analysts, established trade press
+> - **Tier C** (aggregator/crowd): Glassdoor, Reddit, Quora, Owler, anonymous forums — always flag with `[Tier C — verify independently]`
+>
+> **Confidence tags — for high-impact claims** (funding amounts, headcount, revenue, growth rates, market size, major risk events), add: `[Confidence: High | Medium | Low, as of YYYY-MM]`
+> - High = primary source or 2+ corroborating Tier A/B sources
+> - Medium = single Tier B source, no contradiction found
+> - Low = Tier C only, inference, or data older than 18 months
+>
+> **Freshness:** Prioritize sources from the last 12 months for news, trend, and growth claims. If using older sources, note why they remain relevant (e.g., founding date is a historical fact).
+>
+> **Contradictions:** If two credible sources disagree on a fact, report both values with their sources and mark as `[Needs verification]`. Do not silently pick one or average them.
 
 ---
 
@@ -117,7 +134,7 @@ Research [Company Name] ([URL if provided]) comprehensively. Search for:
 4. "[Company] mission vision values"
 5. "[Company] vs" OR "[Company] competitors" — market positioning
 
-Compile your findings into these sections (cite URLs for every claim):
+Compile your findings into these sections. Cite URLs for every claim, classify sources by tier (A/B/C), and tag high-impact claims with [Confidence: H/M/L, as of YYYY-MM]:
 
 ## Mission & Purpose
 What the company exists to do. Their stated mission. The problem they solve.
@@ -155,7 +172,7 @@ Research the funding and financial trajectory of [Company Name]. Search for:
 4. "[Company] hiring" OR "[Company] jobs" — as a growth proxy
 5. "[Company] layoffs" OR "[Company] challenges" — risk signals
 
-Compile your findings into these sections (cite URLs for every claim):
+Compile your findings into these sections. Cite URLs for every claim, classify sources by tier (A/B/C), and tag high-impact claims with [Confidence: H/M/L, as of YYYY-MM]:
 
 ## Funding History
 All known funding rounds with dates, amounts, and lead investors. Total raised.
@@ -195,7 +212,7 @@ Research the people and culture at [Company Name]. Search for:
 [IF CONTACT NAME]: 5. "[Contact Name] LinkedIn" — their career path
 [IF SCHOOL FROM CANDIDATE CONTEXT]: 6. "[Company] [School Name]" — alumni connections
 
-Compile your findings into these sections (cite URLs for every claim):
+Compile your findings into these sections. Cite URLs for every claim, classify sources by tier (A/B/C), and tag high-impact claims with [Confidence: H/M/L, as of YYYY-MM]:
 
 ## Leadership Team
 Key executives and founders. Their backgrounds. Notable hires.
@@ -230,14 +247,14 @@ If Glassdoor or review data is unavailable, note it and suggest the candidate as
 
 **Research instructions:**
 ```
-Research recent news and strategic context for [Company Name]. Search for:
+Research recent news and strategic context for [Company Name]. Prioritize sources from the last 12 months — older sources only if still clearly relevant. Search for:
 1. "[Company] news 2025 2026" — recent developments
 2. "[Company] announcement" OR "[Company] launch" — milestones
 3. "[Company] competitors" OR "[Company] vs" — competitive positioning
 4. "[Company] partnership" OR "[Company] expansion" — strategic moves
 5. "[Company] strategy" OR "[Company] challenges" — strategic direction
 
-Compile your findings into these sections (cite URLs for every claim):
+Compile your findings into these sections. Cite URLs for every claim, classify sources by tier (A/B/C), and tag high-impact claims with [Confidence: H/M/L, as of YYYY-MM]:
 
 ## Recent News & Developments
 Last 6-12 months of news. Product launches, partnerships, milestones.
@@ -281,7 +298,7 @@ For each competitor or similar company found, research:
 - Whether they appear to be hiring (check for careers pages, recent job postings)
 - Why the candidate's background might be relevant to them
 
-Compile your findings into these sections (cite URLs for every claim):
+Compile your findings into these sections. Cite URLs for every claim, classify sources by tier (A/B/C), and tag high-impact claims with [Confidence: H/M/L, as of YYYY-MM]:
 
 ## Direct Competitors
 Companies solving the same problem or serving the same customers as [Company Name].
@@ -318,9 +335,12 @@ If the industry is niche and competitors are hard to find, broaden the search to
 After all five agents return, synthesize their findings:
 
 1. **Deduplicate** — if multiple agents report the same fact, keep the most detailed version with the best source. Agent 4 (News) and Agent 5 (Competitive Landscape) may both mention competitors — merge into a single view, keeping Agent 5's deeper analysis and Agent 4's news angle.
-2. **Resolve conflicts** — if agents report contradictory information (e.g., different founding years, conflicting competitor lists), note both with their sources and flag the discrepancy.
+2. **Resolve contradictions** — if agents report contradictory information (e.g., different founding years, different headcount numbers, conflicting competitor lists), **show both values with their sources and mark as `[Needs verification]`**. Do not silently pick one. Prefer higher-tier sources when choosing which to feature prominently, but always disclose the discrepancy.
 3. **Cross-link** — connect findings across agents (e.g., a product mentioned by Agent 1 that's in the news from Agent 4, a leader from Agent 3 who led a funding round from Agent 2, or a competitor from Agent 5 that recently appeared in Agent 4's news).
 4. **Enrich the shortlist** — use findings from Agents 1-4 to enhance Agent 5's similar-companies shortlist. For example, if Agent 2 found a specific investor, note which shortlisted companies share that investor. If Agent 3 found alumni connections, flag shortlisted companies with similar alumni overlap potential.
+5. **Write BLUFs** — For each major section of the dossier, draft a single bold opening sentence summarizing the key takeaway for the candidate. The BLUF answers: "If the reader only reads this one sentence, what must they know?" Keep BLUFs factual and specific — never generic filler like "The company has an interesting business model."
+6. **Draft Executive Summary** — Distill all findings into the Executive Summary format (see Step 8 template). This is the last synthesis step — do it after all deduplication, conflict resolution, and cross-linking is complete.
+7. **Generate refresh delta (refreshes only)** — If this is a refresh of an existing dossier, compare the new synthesis against the retained previous Executive Summary and At a Glance. Generate a `## What Changed Since Last Update` section listing: new funding rounds, leadership changes, significant news, revised risk assessment, any material change in opportunity rating. Keep it to the 3-7 most significant changes. If nothing material changed, say so.
 
 ### Step 5: Cross-Reference with Candidate Data
 
@@ -396,29 +416,63 @@ Create the output directory if needed, then write to `data/company-research/<slu
 | Total Funding | [amount] |
 | Last Round | [round, date, amount] |
 
+## Executive Summary
+
+**Thesis:** [One sentence — what this company does and why it matters to the candidate]
+**Opportunity Rating:** High | Medium | Low — [one-sentence rationale]
+
+**Target because:**
+1. [Strongest reason, citing specific evidence]
+2. [Second reason]
+3. [Third reason]
+
+**Watch out for:**
+1. [Top risk or red flag, citing source]
+2. [Second concern]
+3. [Third concern]
+
+**Your connection:** [Existing contacts + pipeline status, or "Cold approach — no existing ties"]
+**Best conversation opener:** [Single best starter from the full list, with the research fact behind it]
+**Recommended next action:** [One concrete thing to do this week]
+
 ## Connection to You
 
 [Networking contacts at this company, pipeline status, experience overlap, education connections. If none, state "No existing connections found — this is a cold approach."]
+
+[IF REFRESH]: ## What Changed Since Last Update
+> Comparing against previous research from [previous date].
+
+[3-7 bullet points listing material changes: new funding, leadership changes, news, revised risk assessment, opportunity rating shift. If nothing material changed, state "No material changes detected."]
 
 ---
 
 ## Mission & Purpose
 
+**[BLUF — one bold sentence: the single most important thing to know about this company's mission, specific to the candidate's context]**
+
 [From Agent 1]
 
 ## Products & Services
+
+**[BLUF — what they sell and why it matters for understanding the company]**
 
 [From Agent 1]
 
 ## Business Model
 
+**[BLUF — how they make money, in one sentence]**
+
 [From Agent 1, supplemented by Agent 2]
 
 ## Funding & Financial Trajectory
 
+**[BLUF — financial health and trajectory in one sentence, e.g., "Well-funded Series B with 18+ months runway and aggressive hiring"]**
+
 [From Agent 2]
 
 ## Leadership & Team
+
+**[BLUF — leadership quality/stability signal in one sentence]**
 
 [From Agent 3]
 
@@ -428,23 +482,33 @@ Create the output directory if needed, then write to `data/company-research/<slu
 
 ## Culture & Work Environment
 
+**[BLUF — the one-sentence culture read, e.g., "Mission-driven with high clinical rigor; hybrid model, SF-based"]**
+
 [From Agent 3]
 
 ## Recent News & Developments
+
+**[BLUF — the single most consequential recent development]**
 
 [From Agent 4]
 
 ## Competitive Positioning
 
+**[BLUF — where this company sits vs. competitors, in one sentence]**
+
 [From Agent 4 — how this company differs from key competitors. NOT a full industry map — for that, see `/research-industry`.]
 
 ## Industry Tailwinds & Headwinds Affecting This Company
+
+**[BLUF — net assessment: are macro forces helping or hurting this company?]**
 
 [From Agent 4 — only the 2-3 dynamics most relevant to this company's trajectory]
 
 ---
 
 ## Similar Companies to Target
+
+**[BLUF — how many viable alternatives exist and what the candidate's best options are]**
 
 [From Agent 5 — the core job-search output of this section]
 
@@ -499,9 +563,15 @@ Create the output directory if needed, then write to `data/company-research/<slu
 
 ## Sources
 
-[All URLs cited by agents, organized by section]
+[All URLs cited by agents, organized by section. Include source tier for each: (A), (B), or (C).]
 
-## Raw Agent Outputs
+---
+---
+
+# Appendix: Raw Agent Outputs
+
+> Below this line is unedited agent output preserved for auditability.
+> The synthesized dossier above is the authoritative version.
 
 ### Agent 1: Company Overview
 [Full unedited output]
@@ -519,11 +589,11 @@ Create the output directory if needed, then write to `data/company-research/<slu
 [Full unedited output]
 ```
 
-**Important:** The Raw Agent Outputs appendix must contain the **complete, unedited output** from each agent. Do not summarize, truncate, or reformat.
+**Important:** The Raw Agent Outputs appendix must contain the **complete, unedited output** from each agent. Do not summarize, truncate, or reformat. The double `---` line before the appendix visually separates the authoritative dossier from the audit trail.
 
 ### Step 9: Display Summary
 
-After writing the file, display a concise summary to the user:
+After writing the file, display a concise summary to the user. This is derived directly from the Executive Summary — do not duplicate effort:
 
 ```markdown
 ## Company Research Complete — [Company Name]
@@ -531,11 +601,16 @@ After writing the file, display a concise summary to the user:
 **Saved to:** `data/company-research/<slug>.md`
 **Context:** [context type] [with contact name if applicable]
 
-### Key Findings
-- [3-5 most important/interesting facts about the company]
+**Opportunity Rating:** [High | Medium | Low] — [rationale from Executive Summary]
 
-### Your Connections
-- [Networking contacts, pipeline status, or "No existing connections"]
+### Why Target
+1. [Reason 1 from Executive Summary]
+2. [Reason 2]
+3. [Reason 3]
+
+### Watch Out For
+1. [Risk 1 from Executive Summary]
+2. [Risk 2]
 
 ### Top 3 Conversation Starters
 1. [Best starter for this context]
@@ -548,9 +623,25 @@ After writing the file, display a concise summary to the user:
 ### To-Dos Created
 - [List of to-dos added to job-todos.md]
 
+### What's Next?
+[2-3 relevant suggestions from Step 10]
+
 ---
 Full dossier: `data/company-research/<slug>.md`
 ```
+
+### Step 10: Suggest Next Steps (Handoff)
+
+Based on the research findings, suggest the most relevant next actions using other skills:
+
+- **If high-opportunity company:** "Map the broader landscape with `/research-industry [sector]` to find more targets like this."
+- **If contact was researched:** "Draft outreach with `/cold-outreach [contact] [company]` or `/follow-up [contact]`."
+- **If pipeline entry exists:** "Update your pipeline with `/pipe update [company] [stage]`."
+- **If top similar companies identified:** "Deep-dive the top picks with `/research-company [similar-company]`."
+- **If interview context:** "Generate full interview prep with `/prep-interview [company] [role]`."
+- **If no pipeline entry:** "Add to your pipeline with `/pipe add [company] [role]`."
+
+Display 2-3 of the most relevant suggestions based on context type and findings — not all of them.
 
 ## Edge Cases
 
