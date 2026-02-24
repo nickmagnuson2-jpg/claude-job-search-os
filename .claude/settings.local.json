@@ -2,7 +2,28 @@
   "permissions": {
     "allow": [
       "WebFetch(domain:www.linkedin.com)",
-      "WebFetch(domain:job-boards.greenhouse.io)"
+      "WebFetch(domain:job-boards.greenhouse.io)",
+      "WebFetch(domain:www.tofuhq.com)",
+      "WebFetch(domain:blog.promptlayer.com)",
+      "WebFetch(domain:fortelabs.com)",
+      "WebFetch(domain:www.anthropic.com)",
+      "WebSearch",
+      "WebFetch(domain:growthlist.co)",
+      "WebFetch(domain:resumeworded.com)",
+      "WebFetch(domain:hls.harvard.edu)",
+      "WebFetch(domain:www.saleshandy.com)",
+      "WebFetch(domain:connectsafely.ai)",
+      "WebFetch(domain:www.commsor.com)",
+      "WebFetch(domain:scale.jobs)",
+      "WebFetch(domain:latitude-blog.ghost.io)",
+      "WebFetch(domain:www.themuse.com)",
+      "WebFetch(domain:latitude.so)",
+      "WebFetch(domain:hunter.io)",
+      "WebFetch(domain:www.decklinks.com)",
+      "WebFetch(domain:www.beehiiv.com)",
+      "WebFetch(domain:belkins.io)",
+      "WebFetch(domain:belfiorecheese.com)",
+      "Skill(research-company)"
     ]
   }
 }

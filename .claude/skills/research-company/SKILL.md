@@ -68,6 +68,8 @@ Read the following files in parallel (skip any that don't exist — proceed with
 
 Also check if `data/company-research/<slug>.md` already exists (for refresh logic).
 
+Also check `data/industry-research/` for any existing industry dossier that covers this company's sector. If found, note the file path — agents can reference it instead of reproducing industry-level analysis.
+
 **Build a candidate context summary** (2-3 paragraphs, shared with all agents) covering:
 - Candidate's name, current situation, and background (from profile)
 - Key skills and career direction (from professional-identity)
@@ -222,18 +224,18 @@ If Glassdoor or review data is unavailable, note it and suggest the candidate as
 
 ---
 
-#### Agent 4: News & Industry Context
+#### Agent 4: News & Strategic Context
 
-**Focus:** Recent developments, competitive landscape, industry trends, milestones.
+**Focus:** Recent developments, competitive positioning, company-specific industry tailwinds/headwinds, milestones.
 
 **Research instructions:**
 ```
-Research recent news and industry context for [Company Name]. Search for:
+Research recent news and strategic context for [Company Name]. Search for:
 1. "[Company] news 2025 2026" — recent developments
 2. "[Company] announcement" OR "[Company] launch" — milestones
-3. "[Company] competitors" OR "[Industry] market" — competitive landscape
-4. "[Industry] trends 2026" — broader context
-5. "[Company] partnership" OR "[Company] expansion" — strategic moves
+3. "[Company] competitors" OR "[Company] vs" — competitive positioning
+4. "[Company] partnership" OR "[Company] expansion" — strategic moves
+5. "[Company] strategy" OR "[Company] challenges" — strategic direction
 
 Compile your findings into these sections (cite URLs for every claim):
 
@@ -241,12 +243,14 @@ Compile your findings into these sections (cite URLs for every claim):
 Last 6-12 months of news. Product launches, partnerships, milestones.
 Ordered by recency (newest first).
 
-## Competitive Landscape
-Key competitors and how [Company] differs from each. Market dynamics.
+## Competitive Positioning
+Key competitors and how [Company] differs from each.
+Focus on THIS company's competitive advantages and vulnerabilities — not a comprehensive industry landscape.
+(For full industry mapping, the candidate should use `/research-industry`.)
 
-## Industry Trends
-Broader trends in [Company]'s industry that are relevant context.
-Regulatory changes, market shifts, technology trends.
+## Industry Tailwinds & Headwinds Affecting This Company
+NOT a standalone industry overview — focus only on the 2-3 industry dynamics that most directly affect THIS company's trajectory, hiring, and prospects.
+For each: what the trend is and how it specifically helps or hurts [Company].
 
 ## Milestones & Timeline
 Key company milestones in chronological order. Founding, launches, pivots, funding events.
@@ -256,9 +260,9 @@ If news is sparse, note that the company has a low media profile and suggest ask
 
 ---
 
-#### Agent 5: Competitive Landscape & Similar Companies to Target
+#### Agent 5: Similar Companies to Target (Anchored on Competitive Proximity)
 
-**Focus:** Map the competitive ecosystem to identify similar companies worth targeting in the candidate's job search. The goal is not just to understand competition — it's to build a shortlist of potential employers.
+**Focus:** Find companies similar to THIS company that the candidate could also target. The shortlist is anchored on competitive proximity — companies solving similar problems, serving similar customers, or operating in the same niche. For a broader industry-wide target list anchored on candidate fit across all segments, the candidate should use `/research-industry`.
 
 **Research instructions:**
 ```
@@ -430,13 +434,13 @@ Create the output directory if needed, then write to `data/company-research/<slu
 
 [From Agent 4]
 
-## Competitive Landscape
+## Competitive Positioning
 
-[From Agent 4 news angle, supplemented by Agent 5's deeper competitive analysis]
+[From Agent 4 — how this company differs from key competitors. NOT a full industry map — for that, see `/research-industry`.]
 
-## Industry Trends
+## Industry Tailwinds & Headwinds Affecting This Company
 
-[From Agent 4]
+[From Agent 4 — only the 2-3 dynamics most relevant to this company's trajectory]
 
 ---
 
@@ -508,7 +512,7 @@ Create the output directory if needed, then write to `data/company-research/<slu
 ### Agent 3: People & Culture
 [Full unedited output]
 
-### Agent 4: News & Industry Context
+### Agent 4: News & Strategic Context
 [Full unedited output]
 
 ### Agent 5: Competitive Landscape & Similar Companies
@@ -558,3 +562,4 @@ Full dossier: `data/company-research/<slug>.md`
 - **Agent returns thin results**: Proceed with remaining agents' data. Note which research dimension was thin in the output. Do NOT fail the entire operation because one agent struggled.
 - **Agent failure / timeout**: If an agent fails to return, proceed with the remaining agents. Note the gap in the output and what section is affected.
 - **Niche industry with few competitors**: If Agent 5 finds very few direct competitors, it should broaden to adjacent industries and note the niche nature. The shortlist may be shorter than 8 — that's fine, quality over quantity.
+- **Relationship to /research-industry**: This skill goes deep on ONE company; `/research-industry` maps the entire landscape. They are complementary: `/research-industry` first to identify targets and understand the terrain, then `/research-company` to deep-dive on specific picks. If `data/industry-research/` already has a dossier for this company's industry, reference it in the "Industry Tailwinds & Headwinds" section and link to it rather than reproducing the landscape analysis.
