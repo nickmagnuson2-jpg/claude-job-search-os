@@ -23,7 +23,10 @@
       "WebFetch(domain:www.beehiiv.com)",
       "WebFetch(domain:belkins.io)",
       "WebFetch(domain:belfiorecheese.com)",
-      "Skill(research-company)"
+      "Skill(research-company)",
+      "Skill(cold-outreach)",
+      "Bash(cd C:\\\\Users\\\\chris\\\\Documents\\\\Projects\\\\Nick-claude-resume-coach:*)",
+      "Bash(python:*)"
     ]
   }
 }

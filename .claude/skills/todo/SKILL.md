@@ -3,7 +3,7 @@ name: todo
 description: Lightweight to-do list for job search tasks not tied to specific applications
 argument-hint: [add|done|daily|clear <task> [priority] [due]]
 user-invocable: true
-allowed-tools: Read(*), Write(data/job-todos.md), Edit(data/job-todos.md), Read(data/job-pipeline.md), Read(data/networking.md), Write(data/job-todos-daily-log.md), Edit(data/job-todos-daily-log.md)
+allowed-tools: Read(*), Write(data/job-todos.md), Edit(data/job-todos.md), Read(data/job-pipeline.md), Read(data/networking.md), Write(data/job-todos-daily-log.md), Edit(data/job-todos-daily-log.md), Read(data/outreach-log.md), Glob(data/company-research/*), Glob(data/industry-research/*)
 ---
 
 # Job Search To-Do Manager
@@ -136,6 +136,10 @@ Generate a daily progress summary, archive it, and show trends.
    - `data/job-todos-daily-log.md` (create if doesn't exist)
    - `data/job-pipeline.md`
    - `data/networking.md`
+   - `data/outreach-log.md` (skip silently if doesn't exist)
+   - Glob `data/company-research/*.md` to get list of dossier files
+   - Glob `data/industry-research/*.md` to get list of research files
+   - For any company-research or industry-research files found, read each and check for `Last updated: [today's date]` in the file header to determine if it was generated/updated today
 
 2. **Build today's snapshot:**
    - Count items completed today (check Notes for today's date in Completed section)
@@ -144,6 +148,9 @@ Generate a daily progress summary, archive it, and show trends.
    - Identify items that moved to "In Progress" today
    - List pipeline entries with their current stages
    - List networking contacts with pending follow-up to-dos
+   - **Outreach sent today:** Filter `data/outreach-log.md` rows where Date = today. List recipient, company, channel, and subject/summary.
+   - **Company research completed today:** Any `data/company-research/*.md` file with `Last updated: [today]` in its header.
+   - **Industry research completed today:** Any `data/industry-research/*.md` file with `Last updated: [today]` in its header.
 
 3. **Check for existing entry:** If today's date already has an entry in the daily log, update it (replace) rather than creating a duplicate.
 
@@ -161,6 +168,15 @@ Generate a daily progress summary, archive it, and show trends.
    #### Still Active
    - [ ] Task description [Priority | Due: date]
    - [ ] Task description [Priority | Due: date]
+
+   #### Research Completed
+   - Company: Ripple Foods (data/company-research/ripple-foods.md)
+   - Industry: Behavioral Health Tech (data/industry-research/behavioral-health-tech.md)
+   (omit section entirely if no research completed today)
+
+   #### Outreach Sent
+   - Becky O'Grady @ Ripple Foods — email — "Ripple's next chapter"
+   (omit section entirely if no outreach sent today)
 
    #### Pipeline Snapshot
    | Company | Role | Stage |
@@ -190,6 +206,16 @@ Generate a daily progress summary, archive it, and show trends.
    - [x] Task 1
    - [x] Task 2
    (or "Nothing completed yet today." if zero)
+
+   #### Research Completed Today
+   - **Company:** Ripple Foods — dossier generated (`data/company-research/ripple-foods.md`)
+   - **Industry:** Behavioral Health Tech — landscape analysis generated (`data/industry-research/behavioral-health-tech.md`)
+   (omit section if none today)
+
+   #### Outreach Sent Today
+   - Becky O'Grady @ Ripple Foods — email — "Ripple's next chapter"
+   - Alex Mullin @ Amae Health — email — "Tuck alum, coffee chat request"
+   (omit section if none today)
 
    #### Top Priority Remaining
    - [ ] Highest priority / most urgent items (up to 5)
@@ -242,6 +268,12 @@ Generate a daily progress summary, archive it, and show trends.
 - [ ] Follow up: Alex Mullin @ Amae Health [Med | Due: 2026-02-25]
 - [ ] Read Alex Mullin's OUD white paper [Med | Due: 2026-02-25]
 - [ ] Review Amae Health open roles [Med | Due: 2026-02-25]
+
+#### Research Completed
+- Company: Ripple Foods (data/company-research/ripple-foods.md)
+
+#### Outreach Sent
+- Becky O'Grady @ Ripple Foods — email — "Ripple's next chapter"
 
 #### Pipeline Snapshot
 | Company | Role | Stage |
