@@ -1,12 +1,12 @@
 """
-open_draft.py — Open a pending email draft in your default mail client.
+open_draft.py — Open a pending email draft in Gmail compose.
 
 Usage:
     python tools/open_draft.py
 
 Reads tools/.pending-draft.txt (written automatically by /cold-outreach,
-/follow-up, and /draft-email) and opens a mailto: URI so your default mail
-client launches with the subject and body pre-filled.
+/follow-up, and /draft-email) and opens a Gmail compose window in your
+browser with the subject and body pre-filled.
 
 The To field is pre-filled only if the draft file contains a TO: line.
 Otherwise leave it blank and fill it in yourself.
@@ -58,23 +58,23 @@ def main():
 
     to, subject, body = parse_draft(DRAFT_FILE)
 
-    params = {}
+    params = {"view": "cm", "fs": "1"}
+    if to:
+        params["to"] = to
     if subject:
-        params["subject"] = subject
+        params["su"] = subject
     if body:
         params["body"] = body
 
     query = urllib.parse.urlencode(params, quote_via=urllib.parse.quote)
-    mailto = f"mailto:{to}?{query}" if query else f"mailto:{to}"
+    url = f"https://mail.google.com/mail/?{query}"
 
-    print(f"Opening draft in mail client...")
+    print("Opening draft in Gmail...")
     print(f"  To:      {to or '(fill in)'}")
     print(f"  Subject: {subject or '(none)'}")
     print(f"  Body:    {len(body)} characters")
-    print()
-    print("If your mail client doesn't open, check that a default email app is set.")
 
-    webbrowser.open(mailto)
+    webbrowser.open(url)
 
 
 if __name__ == "__main__":

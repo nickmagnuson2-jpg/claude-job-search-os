@@ -270,7 +270,7 @@ BODY:
 [full message text]
 ```
 
-Then show: `Draft saved → run \`python tools/open_draft.py\` to open in your mail client.`
+Then automatically run `python tools/open_draft.py` using the Bash tool to open the draft in Gmail. Show the output from the script to confirm it opened.
 
 ### Step 8: Auto-Logging (after user approves)
 
