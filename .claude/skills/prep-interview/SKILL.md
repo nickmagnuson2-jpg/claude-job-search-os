@@ -238,7 +238,7 @@ After all 3 agents return, compile their outputs into a single document. Do not 
 
 ### Step 6: Determine Output Filename and Save
 
-- Generate: `output/YYYYMMDD-[company-slug]-prep.md`
+- Generate: `output/MMDDYY-[company-slug]-prep.md`
 - If file exists, append `-v2`, `-v3` etc.
 - Write the compiled document to that path.
 
@@ -261,7 +261,7 @@ After all 3 agents return, compile their outputs into a single document. Do not 
 **Date:** [date if known, or "not specified"]
 **Stage:** [from pipeline]
 
-**Saved:** `output/YYYYMMDD-[company-slug]-prep.md`
+**Saved:** `output/MMDDYY-[company-slug]-prep.md`
 
 ### Coverage
 - Questions mapped: N (N with coached answers, N gaps)
@@ -277,7 +277,7 @@ After all 3 agents return, compile their outputs into a single document. Do not 
 ✅ "Debrief after [Company] interview" added to job-todos.md [due: date]
 
 ---
-Full prep doc: `output/YYYYMMDD-[company-slug]-prep.md`
+Full prep doc: `output/MMDDYY-[company-slug]-prep.md`
 After the interview: `/debrief` to log session and update coached answers
 ```
 

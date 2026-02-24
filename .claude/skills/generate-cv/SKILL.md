@@ -119,16 +119,16 @@ Alongside the CV, generate a pre-interview cheat sheet for this specific role:
 
 ### Step 8: Determine Output Filenames
 
-- Generate date prefix: `YYYYMMDD` (today's date)
-- CV filename: `output/YYYYMMDD-[role-slug].md` (e.g., `output/20260223-chief-of-staff.md`)
-- Cheat sheet filename: `output/YYYYMMDD-[role-slug]-cheatsheet.md`
+- Generate date prefix: `MMDDYY` (today's date)
+- CV filename: `output/MMDDYY-[role-slug].md` (e.g., `output/022426-chief-of-staff.md`)
+- Cheat sheet filename: `output/MMDDYY-[role-slug]-cheatsheet.md`
 - If a file at that path already exists, append `-v2`, `-v3` etc.
 
 ### Step 9: Save Output Files
 
 Write both files:
-1. **CV** → `output/YYYYMMDD-[role-slug].md`
-2. **Cheat sheet** → `output/YYYYMMDD-[role-slug]-cheatsheet.md`
+1. **CV** → `output/MMDDYY-[role-slug].md`
+2. **Cheat sheet** → `output/MMDDYY-[role-slug]-cheatsheet.md`
 
 ### Step 10: Update Pipeline
 
@@ -143,8 +143,8 @@ Write both files:
 ## CV Generated — [Role Title] at [Company]
 
 **Format:** [US/UK/DACH/international] | **Market:** [market]
-**CV saved:** `output/YYYYMMDD-[role-slug].md`
-**Cheat sheet:** `output/YYYYMMDD-[role-slug]-cheatsheet.md`
+**CV saved:** `output/MMDDYY-[role-slug].md`
+**Cheat sheet:** `output/MMDDYY-[role-slug]-cheatsheet.md`
 
 ### ATS Keyword Coverage
 | Keyword | Present? | Where |
@@ -163,7 +163,7 @@ Write both files:
 [✅ CV Used field updated in pipeline for [Company]] OR [⚠️ [Company] not in pipeline — add with: `/pipe add "[Company]" "[Role]"`]
 
 ### Suggested Next Step
-- Review output: `/review-cv output/YYYYMMDD-[role-slug].md`
+- Review output: `/review-cv output/MMDDYY-[role-slug].md`
 - When ready to apply: `/pipe update "[Company]" Applied`
 - Before interview: `/prep-interview "[Company]"`
 ```

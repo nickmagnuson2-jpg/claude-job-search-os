@@ -99,6 +99,22 @@ Owner details live in `data/profile.md` (gitignored — prevents personal data l
 └── output/                    # Generated output — CVs, interview cheat sheets, prep docs, summaries
 ```
 
+## Output Files — Conventions
+
+All files written to `output/` **must include the date as part of the filename**, formatted as `MMDDYY` prefix:
+
+```
+output/MMDDYY-[descriptor].md
+```
+
+Examples:
+- `output/022426-chief-of-staff-impossible-foods.md` — tailored CV
+- `output/022426-chief-of-staff-impossible-foods-cheatsheet.md` — interview cheat sheet
+- `output/022426-impossible-foods-prep.md` — interview prep doc
+- `output/022426-job-search-summary.md` — one-off summary
+
+This applies to **all** output files regardless of type — CVs, cheat sheets, prep docs, summaries, exports. No exceptions. Skills that write to `output/` must enforce this. If a skill generates a filename without a date prefix, it is non-compliant.
+
 ## Data Files — Conventions
 
 ### IMPORTANT: Content Exclusions for CVs/Resumes
