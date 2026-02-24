@@ -160,6 +160,7 @@ Applies to `/research-company` and `/research-industry`. Both skills produce det
 - **Confidence tags:** High-impact claims (market size, funding, growth, headcount, risk events) include `[Confidence: High | Medium | Low, as of YYYY-MM]`.
 - **Contradictions:** When credible sources disagree, show both values with sources and mark `[Needs verification]`. Never silently pick one.
 - **Freshness:** Prioritize last-12-month sources for trend/news claims. Older sources noted with justification.
+- **Self-verification:** Both research skills include an Evidence Summary Table and contradiction audit as mandatory output sections. See skill definitions for details.
 
 ### Refresh Behavior
 

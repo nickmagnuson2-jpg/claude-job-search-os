@@ -464,9 +464,11 @@ After all five agents return, synthesize their findings:
 2. **Resolve contradictions** — if agents report contradictory information (e.g., different market sizes, conflicting trend assessments), **show both values with their sources and mark as `[Needs verification]`**. Do not silently pick one. Prefer higher-tier sources when choosing which to feature prominently, but always disclose the discrepancy.
 3. **Cross-link** — connect findings across agents (e.g., a trend from Agent 4 creating demand for a role from Agent 3, a company from Agent 2 that matches a hiring hotspot from Agent 3, an investment theme from Agent 4 validating a target company from Agent 5).
 4. **Enrich the target list** — use findings from Agents 1-4 to enhance Agent 5's target company list. Add context about each company's market position (Agent 2), relevant roles they'd hire for (Agent 3), and how industry trends favor them (Agent 4).
-5. **Write BLUFs** — For each major section of the dossier, draft a single bold opening sentence summarizing the key takeaway for the candidate. The BLUF answers: "If the reader only reads this one sentence, what must they know?" Keep BLUFs factual and specific — never generic filler like "This is a growing industry."
-6. **Draft Executive Summary** — Distill all findings into the Executive Summary format (see Step 8 template). This is the last synthesis step — do it after all deduplication, conflict resolution, and cross-linking is complete.
-7. **Generate refresh delta (refreshes only)** — If this is a refresh of an existing dossier, compare the new synthesis against the retained previous Executive Summary and At a Glance. Generate a `## What Changed Since Last Update` section listing: market size revisions, new major players, shifting trends, regulatory changes, revised attractiveness rating, material changes in target company rankings. Keep it to the 3-7 most significant changes. If nothing material changed, say so.
+5. **Contradiction audit** — Before writing the final dossier, scan all agent outputs for numerical claims (market size, growth rates, funding amounts, headcount, compensation figures). If the same metric appears in multiple agent outputs with different values, treat this as a contradiction and apply the contradiction protocol — report both values with sources and mark `[Needs verification]` — even if individual agents didn't flag it.
+6. **Write BLUFs** — For each major section of the dossier, draft a single bold opening sentence summarizing the key takeaway for the candidate. The BLUF answers: "If the reader only reads this one sentence, what must they know?" Keep BLUFs factual and specific — never generic filler like "This is a growing industry."
+7. **Draft Executive Summary** — Distill all findings into the Executive Summary format (see Step 8 template). This is the last synthesis step — do it after all deduplication, conflict resolution, and cross-linking is complete.
+8. **Build Evidence Summary Table** — Compile all high-impact claims from the dossier into a summary table. For each claim, record: the claim, source, source tier, confidence level, and as-of date. Count contradictions found, sources older than 12 months, and Tier C sources used. This table goes at the bottom of the dossier, just before the raw agent appendix.
+9. **Generate refresh delta (refreshes only)** — If this is a refresh of an existing dossier, compare the new synthesis against the retained previous Executive Summary and At a Glance. Generate a `## What Changed Since Last Update` section listing: market size revisions, new major players, shifting trends, regulatory changes, revised attractiveness rating, material changes in target company rankings. Keep it to the 3-7 most significant changes. If nothing material changed, say so.
 
 ### Step 5: Cross-Reference with Candidate Data
 
@@ -809,6 +811,18 @@ Create the output directory if needed, then write to `data/industry-research/<sl
 | ... | ... | ... |
 
 ---
+
+## Evidence Summary
+
+| # | Claim | Source | Tier | Confidence | As-of |
+|---|-------|--------|------|------------|-------|
+| 1 | [High-impact claim, e.g., "Market size: $45B"] | [Source name + URL] | [A/B/C] | [High/Medium/Low] | [YYYY-MM] |
+| 2 | [Next claim] | [Source] | [Tier] | [Confidence] | [As-of] |
+| ... | | | | | |
+
+**Contradictions found:** N (brief description of each, with section reference)
+**Sources older than 12 months:** N of total (note if foundational data or stale)
+**Tier C sources used:** N of total (all flagged inline with caveats)
 
 ## Sources
 

@@ -230,8 +230,17 @@ Run a simplified quality check against `framework/outreach-guide.md`:
 
 - **Anti-patterns:** Scan the draft for banned phrases (filler openers, hedge words, multiple CTAs).
 - **Length:** Verify word count is within target range for the email type.
-- **CTA count:** Exactly 1.
+- **CTA count:** Exactly 1 (except thank-you emails, which may have zero).
 - **Tone:** Matches the sender's established voice (or defaults to professional peer-to-peer).
+
+**Quality gate (for Intro Request, Interest, and Informational types only — skip for Thank-you and Status Update):**
+
+Answer each question with a specific one-sentence response:
+1. **"Why you?"** — Why this specific recipient? (must reference something specific to the person, not just their title or company)
+2. **"Why now?"** — What makes this timely? (a trigger event, a connection, a recent development)
+3. **"Why me?"** — What establishes the sender's credibility for this ask? (a specific achievement or experience, not generic)
+
+If any answer is weak or generic, revise the draft before presenting. Show the answers in the output.
 
 If any check fails, revise before presenting.
 
@@ -255,6 +264,12 @@ If any check fails, revise before presenting.
 - Anti-patterns: [Clean / Found: list]
 - Word count: [N] (target: [range for this type])
 - CTA: [Single / Multiple — fix]
+
+[For Intro Request, Interest, and Informational types only:]
+**Quality Gate:**
+- **Why you?** [one-sentence specific answer]
+- **Why now?** [one-sentence specific answer]
+- **Why me?** [one-sentence specific answer]
 
 ---
 [If recipient is in networking.md]: Want me to log this interaction? (Y/N)

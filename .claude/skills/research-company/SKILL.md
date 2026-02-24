@@ -338,9 +338,11 @@ After all five agents return, synthesize their findings:
 2. **Resolve contradictions** — if agents report contradictory information (e.g., different founding years, different headcount numbers, conflicting competitor lists), **show both values with their sources and mark as `[Needs verification]`**. Do not silently pick one. Prefer higher-tier sources when choosing which to feature prominently, but always disclose the discrepancy.
 3. **Cross-link** — connect findings across agents (e.g., a product mentioned by Agent 1 that's in the news from Agent 4, a leader from Agent 3 who led a funding round from Agent 2, or a competitor from Agent 5 that recently appeared in Agent 4's news).
 4. **Enrich the shortlist** — use findings from Agents 1-4 to enhance Agent 5's similar-companies shortlist. For example, if Agent 2 found a specific investor, note which shortlisted companies share that investor. If Agent 3 found alumni connections, flag shortlisted companies with similar alumni overlap potential.
-5. **Write BLUFs** — For each major section of the dossier, draft a single bold opening sentence summarizing the key takeaway for the candidate. The BLUF answers: "If the reader only reads this one sentence, what must they know?" Keep BLUFs factual and specific — never generic filler like "The company has an interesting business model."
-6. **Draft Executive Summary** — Distill all findings into the Executive Summary format (see Step 8 template). This is the last synthesis step — do it after all deduplication, conflict resolution, and cross-linking is complete.
-7. **Generate refresh delta (refreshes only)** — If this is a refresh of an existing dossier, compare the new synthesis against the retained previous Executive Summary and At a Glance. Generate a `## What Changed Since Last Update` section listing: new funding rounds, leadership changes, significant news, revised risk assessment, any material change in opportunity rating. Keep it to the 3-7 most significant changes. If nothing material changed, say so.
+5. **Contradiction audit** — Before writing the final dossier, scan all agent outputs for numerical claims (funding amounts, headcount, revenue, market size, growth rates). If the same metric appears in multiple agent outputs with different values, treat this as a contradiction and apply the contradiction protocol — report both values with sources and mark `[Needs verification]` — even if individual agents didn't flag it.
+6. **Write BLUFs** — For each major section of the dossier, draft a single bold opening sentence summarizing the key takeaway for the candidate. The BLUF answers: "If the reader only reads this one sentence, what must they know?" Keep BLUFs factual and specific — never generic filler like "The company has an interesting business model."
+7. **Draft Executive Summary** — Distill all findings into the Executive Summary format (see Step 8 template). This is the last synthesis step — do it after all deduplication, conflict resolution, and cross-linking is complete.
+8. **Build Evidence Summary Table** — Compile all high-impact claims from the dossier into a summary table. For each claim, record: the claim, source, source tier, confidence level, and as-of date. Count contradictions found, sources older than 12 months, and Tier C sources used. This table goes at the bottom of the dossier, just before the raw agent appendix.
+9. **Generate refresh delta (refreshes only)** — If this is a refresh of an existing dossier, compare the new synthesis against the retained previous Executive Summary and At a Glance. Generate a `## What Changed Since Last Update` section listing: new funding rounds, leadership changes, significant news, revised risk assessment, any material change in opportunity rating. Keep it to the 3-7 most significant changes. If nothing material changed, say so.
 
 ### Step 5: Cross-Reference with Candidate Data
 
@@ -560,6 +562,18 @@ Create the output directory if needed, then write to `data/company-research/<slu
 [2-3 specific projects/roles from the candidate's background with brief explanation of relevance]
 
 ---
+
+## Evidence Summary
+
+| # | Claim | Source | Tier | Confidence | As-of |
+|---|-------|--------|------|------------|-------|
+| 1 | [High-impact claim, e.g., "Series B: $50M"] | [Source name + URL] | [A/B/C] | [High/Medium/Low] | [YYYY-MM] |
+| 2 | [Next claim] | [Source] | [Tier] | [Confidence] | [As-of] |
+| ... | | | | | |
+
+**Contradictions found:** N (brief description of each, with section reference)
+**Sources older than 12 months:** N of total (note if historical facts or stale)
+**Tier C sources used:** N of total (all flagged inline with caveats)
 
 ## Sources
 

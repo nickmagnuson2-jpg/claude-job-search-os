@@ -72,6 +72,29 @@ If `data/company-research/<slug>.md` does not exist:
 - Use the results to construct a minimal company context.
 - Note prominently in the output: "⚠️ No dossier found for [Company] — prep is based on quick web search. For deeper prep, run `/research-company "[Company]"` first."
 
+### Step 3b: Cross-Skill Consistency Check
+
+Before launching agents, verify consistency between the data sources loaded in Steps 2-3. Check for and flag any contradictions:
+
+1. **CV vs. research dossier:** If both a CV (from pipeline's "CV Used" field) and a company research dossier exist, verify:
+   - The company description/framing in the CV aligns with the dossier's findings (e.g., CV doesn't describe the company as "Series A" if the dossier shows Series C)
+   - The role framing in the CV matches what the dossier says the company is hiring for
+
+2. **CV vs. coached answers:** If both exist, verify:
+   - Experience claims are consistent (e.g., CV says "5 years React" but coached answer says "about 3 years with React")
+   - Project descriptions don't contradict each other across the two files
+   - The professional summary narrative aligns with coached pitch answers
+
+3. **Coached answers vs. professional-identity.md:** If both exist, verify:
+   - Strengths claimed in coached answers align with those in professional-identity.md
+   - Career direction framing is consistent
+
+If inconsistencies are found, include a **Consistency Warnings** section in the output file (after the At a Glance table) listing each discrepancy with:
+- What conflicts (file A says X, file B says Y)
+- Suggested resolution (which version to use in the interview, or flag for the user to decide)
+
+Pass any found inconsistencies to Agent 1 (Question Mapping) so it can account for them in answer frameworks.
+
 ### Step 4: Launch 3 Parallel Agents
 
 Use the Task tool to launch **3 parallel subagents** (`subagent_type: "general-purpose"`, `max_turns: 10`).
@@ -297,6 +320,15 @@ After the interview: `/debrief` to log session and update coached answers
 | Date | [date or "TBD"] |
 | Key contact | [if known from pipeline or research] |
 | CV used | [filename or "not specified"] |
+
+[IF INCONSISTENCIES FOUND IN STEP 3b]:
+## ⚠️ Consistency Warnings
+
+| # | Conflict | Source A | Source B | Suggested Resolution |
+|---|----------|----------|----------|---------------------|
+| 1 | [What conflicts] | [File A says X] | [File B says Y] | [Which to use / user to decide] |
+
+> Review these before the interview. Use the suggested resolution or update the source files.
 
 ## 15-Second Pitch (for this role)
 [Tailored from professional-identity.md + specific role requirements at this company]

@@ -133,15 +133,15 @@ Follow channel constraints from `framework/outreach-guide.md`:
 
 ### Step 7: Quality Gate
 
-Run the three-question test from `framework/outreach-guide.md`:
+Run the three-question test from `framework/outreach-guide.md`. For each question, write a **specific one-sentence answer** — not just a rating:
 
-1. **"Why you?"** — Is there a specific reason for reaching out to *this person*?
-2. **"Why now?"** — Is there a trigger event making this timely?
-3. **"Why me?"** — Does the sender establish credibility?
+1. **"Why you?"** — Why this specific person? (e.g., "She led the Series B ops buildout and would understand my scaling background" — NOT "She works at the company")
+2. **"Why now?"** — What timing trigger makes this relevant? (e.g., "They just announced a COO hire, signaling ops investment" — NOT "Job search")
+3. **"Why me?"** — What establishes the sender's credibility for this specific ask? (e.g., "Scaled a 3-person ops team to 25 across two geographies" — NOT "Relevant experience")
 
 Rate each: **Strong** / **Adequate** / **Weak**
 
-If any answer is **Weak**, revise the draft before presenting. If **Adequate**, note what would strengthen it.
+If any answer is **Weak** or generic (the kind of thing any applicant could say), revise the draft to strengthen that dimension before presenting. If **Adequate**, note what would strengthen it.
 
 ### Step 8: Present Draft
 
@@ -163,9 +163,9 @@ Show the draft with metadata:
 ---
 
 **Quality Gate:**
-- Why you: [Strong/Adequate/Weak] — [brief note]
-- Why now: [Strong/Adequate/Weak] — [brief note]
-- Why me: [Strong/Adequate/Weak] — [brief note]
+- **Why you?** [Strong/Adequate/Weak] — [one-sentence specific answer]
+- **Why now?** [Strong/Adequate/Weak] — [one-sentence specific answer]
+- **Why me?** [Strong/Adequate/Weak] — [one-sentence specific answer]
 
 **Metrics:**
 - Word count: [N] (target: 75–125)

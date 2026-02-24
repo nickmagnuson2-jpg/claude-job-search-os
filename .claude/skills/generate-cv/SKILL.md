@@ -97,6 +97,38 @@ Follow **all rules** in `framework/resume-workflow.md`. Key requirements:
 - **Achievements over responsibilities** — lead bullets with quantified outcomes where possible.
 - **No content from `data/project-background/`** — enforce absolutely.
 
+### Step 6b: Inline Quality Review (mandatory — do NOT skip)
+
+Before generating the cheat sheet, run the following checks against the CV you just produced. Fix any issues found **in place** — rewrite the CV, don't just flag problems.
+
+**1. Keyword coverage check:**
+- Take the 10 ATS keywords from Step 3.
+- For each keyword, verify it appears at least once in the CV text (case-insensitive, but exact product names must match — "React Native" ≠ "React").
+- If a keyword is missing, find a natural place to insert it (skills section, a bullet point, or the professional summary). If it genuinely can't be added (candidate doesn't have the skill), leave it as a gap.
+
+**2. Claim audit:**
+- Scan all quantified claims (years of experience, scale numbers, "across N projects").
+- Cross-reference experience years against project date ranges from the project files loaded in Step 5.
+- Cross-reference scale numbers (users, revenue, team size) against the source project files.
+- If a claim doesn't match source data, fix it to match. If source data is ambiguous, soften the claim ("~200" instead of "200").
+- Check any listed certifications against `data/certifications.md` — flag or remove expired ones listed without qualification.
+
+**3. Self-sabotage scan:**
+- Search the CV for hedging qualifiers that undermine expertise: "currently expanding", "basic knowledge", "evaluated but not used", "learning", "aspiring", "growing", "exposure to", "introductory", "some experience".
+- Remove or rewrite any found. Replace with confident, specific language.
+- Check for at least 2 collaboration signals (code reviews, team onboarding, cross-functional coordination, sprint participation). If missing, add one naturally to a bullet point.
+
+**4. Language/tense check:**
+- Verify spelling variant consistency (all British OR all American English, not mixed).
+- Verify tense: present tense for current roles, past tense for completed roles.
+- Fix any issues found.
+
+**After all fixes are applied**, record a QC summary to include in Step 11's output:
+- Keyword coverage: X/10 matched (list any unfixable gaps)
+- Claims verified: X checked, Y corrected
+- Self-sabotage scan: clean / N items fixed
+- Language consistency: clean / N items fixed
+
 ### Step 7: Generate Companion Cheat Sheet
 
 Alongside the CV, generate a pre-interview cheat sheet for this specific role:
@@ -146,12 +178,18 @@ Write both files:
 **CV saved:** `output/MMDDYY-[role-slug].md`
 **Cheat sheet:** `output/MMDDYY-[role-slug]-cheatsheet.md`
 
+### QC Summary (from Step 6b self-review)
+- **Keyword coverage:** N/10 matched [list any unfixable gaps]
+- **Claims verified:** N checked, N corrected
+- **Self-sabotage scan:** clean / N items fixed
+- **Language consistency:** clean / N items fixed
+
 ### ATS Keyword Coverage
 | Keyword | Present? | Where |
 |---------|----------|-------|
 | [keyword 1] | ✅ | Professional Summary |
 | [keyword 2] | ✅ | Project: [name] |
-| [keyword 3] | ⚠️ | Not found — consider adding |
+| [keyword 3] | ⚠️ | Gap — candidate lacks this skill |
 
 **Coverage: N/10 keywords**
 

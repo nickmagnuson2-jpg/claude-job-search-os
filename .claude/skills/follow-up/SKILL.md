@@ -147,13 +147,13 @@ Keep it shorter than the original message. Follow-ups should be 50–100 words (
 
 #### Step 7: Quality Gate
 
-Run the three-question test:
+Run the three-question test. For each question, write a **specific one-sentence answer** — not just a rating:
 
-1. **"Why you?"** — Does the follow-up reference something specific to this person?
-2. **"Why now?"** — Is there a timing trigger (days since last contact, recent news, their offer)?
-3. **"Why me?"** — Does it reinforce (not repeat) the sender's credibility?
+1. **"Why you?"** — Does the follow-up reference something specific to this person? (e.g., "Referenced her recent post about scaling clinical ops" — NOT "She's at the company")
+2. **"What's new?"** — What new value does this follow-up add? (e.g., "Sharing a relevant article about their competitor's Series C" — NOT "Just checking in")
+3. **"Why me?"** — Does it reinforce (not repeat) the sender's credibility? (e.g., "Adds context about a similar challenge I solved at [Project]" — NOT "Same as before")
 
-Rate each: **Strong** / **Adequate** / **Weak**. Revise if any is Weak.
+Rate each: **Strong** / **Adequate** / **Weak**. If any is **Weak** or generic, revise the draft to strengthen it before presenting.
 
 #### Step 8: Present Draft
 
@@ -174,9 +174,9 @@ Rate each: **Strong** / **Adequate** / **Weak**. Revise if any is Weak.
 ---
 
 **Quality Gate:**
-- Why you: [Strong/Adequate/Weak] — [brief note]
-- Why now: [Strong/Adequate/Weak] — [brief note]
-- Why me: [Strong/Adequate/Weak] — [brief note]
+- **Why you?** [Strong/Adequate/Weak] — [one-sentence specific answer]
+- **What's new?** [Strong/Adequate/Weak] — [one-sentence specific answer]
+- **Why me?** [Strong/Adequate/Weak] — [one-sentence specific answer]
 
 **Metrics:**
 - Word count: [N] (target: 50–100 for follow-ups)
