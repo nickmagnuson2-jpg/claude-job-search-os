@@ -3,7 +3,7 @@ name: act
 description: Autonomously execute actionable to-dos (careers checks, company research, article reads) — preview first, then run in parallel with right-sized models
 argument-hint: [none]
 user-invocable: true
-allowed-tools: Read(*), Edit(data/job-todos.md), Write(data/job-todos.md), Write(data/company-research/*), Edit(data/company-research/*), WebFetch(*), WebSearch, Task, Glob(data/company-research/*), Glob(inbox/*), Write(data/job-pipeline.md), Edit(data/job-pipeline.md), Write(data/networking.md), Edit(data/networking.md), Write(data/notes.md), Edit(data/notes.md), Bash(rm inbox/*)
+allowed-tools: Read(*), Edit(data/job-todos.md), Write(data/job-todos.md), Write(data/company-research/**), Edit(data/company-research/**), Write(data/industry-research/*), WebFetch(*), WebSearch, Task, Glob(data/company-research/**), Glob(inbox/*), Write(data/job-pipeline.md), Edit(data/job-pipeline.md), Write(data/networking.md), Edit(data/networking.md), Write(data/notes.md), Edit(data/notes.md), Bash(rm inbox/*)
 ---
 
 # Act — Execute Actionable To-Dos
@@ -19,38 +19,61 @@ Read the following in parallel:
 1. `data/job-todos.md` — the active to-do list
 2. `data/profile.md` — candidate background, target roles, and location (for role-matching in careers checks)
 3. `data/job-pipeline.md` — active pipeline (to note when a company is already being tracked)
-4. Glob `data/company-research/*.md` — to detect existing dossiers and their freshness
+4. Glob `data/company-research/**/*.md` — to detect existing dossiers and their freshness (catches both flat `data/company-research/slug.md` and subfolder `data/company-research/slug/slug.md` layouts)
 5. Glob `inbox/*` — list captured inbox items (filenames only; skip README.md)
 
 **Extract from profile.md:** the candidate's target role types (e.g., Chief of Staff, Strategy & Operations, Head of Operations, Director of Operations, Business Operations, Strategic Finance, Head of Strategy, VP Operations). These are the keywords used to match careers page results.
 
-**Build fresh dossier list:** For each file found in `data/company-research/`, read the `Last updated:` date from the file header. A dossier is "fresh" if Last updated is within the last 30 days. Build a map of: company slug → (exists, fresh, date).
+**Build fresh dossier list:** For each file found in `data/company-research/`, read the `Last updated:` date from the file header. A dossier is "fresh" if Last updated is within the last 30 days. Build a map of: company slug → (exists, fresh, date). For slug matching, a file at `data/company-research/amae-health/amae-health.md` or `data/company-research/amae-health.md` both count as the Amae Health dossier.
 
-**Build inbox list:** From the Glob results, collect all files in `inbox/` that are not `README.md`. Read each file to extract its content (company name, URL, or note). Classify each inbox item into a proposed routing destination:
-- Company name to research → suggest `/research-company` or add to Bucket A as company research
-- URL to read → suggest add to Bucket A as article read or resource browse
-- Contact to look up → suggest `/networking add`
-- Job ad link → suggest `/pipe add` + `/generate-cv`
-- Unclassifiable → route to `data/notes.md`
+**Flag blocked URLs:** While reading each Pending to-do, check if its Notes field contains the string `"access blocked"` (case-insensitive). Tag those rows as `blocked: true`. These will be pre-filtered in Step 2.
+
+**Flag careers check freshness:** While reading each Pending to-do that would be a careers check, scan the Notes field for the pattern `"Checked YYYY-MM-DD"`. Parse the most recent such date. If it is within 7 days of today, tag the row as `careers_fresh: true` with that date stored.
+
+**Build inbox list:** From the Glob results, collect all files in `inbox/` that are not `README.md`. Read each file to extract its content. Classify each inbox item using these rules **in priority order** (first match wins):
+
+| Priority | Type | Detection rules | Disposition |
+|----------|------|-----------------|-------------|
+| 1 | **Job ad** | Content contains a URL matching known ATS patterns: `greenhouse.io`, `lever.co`, `linkedin.com/jobs/`, `myworkdayjobs.com`, `jobs.ashbyhq.com`, `smartrecruiters.com` — OR any `/careers/` URL ending in a numeric or UUID job ID | Write to `data/job-pipeline.md` immediately when user confirms |
+| 2 | **Contact capture** | Content mentions a person's full name (two capitalized words) alongside context words: "met", "intro", "talk to", "reach out", "connect with", "introduced me to" | Write to `data/networking.md` immediately when user confirms |
+| 3 | **Article to read** | Content contains a URL where the domain is a media/editorial source (e.g., techcrunch, forbes, statnews, mobihealthnews, axios, substack), OR the URL path contains `/news/`, `/blog/`, `/article/`, `/post/`, `/insights/` | Add to Bucket A for this session — execute now |
+| 4 | **Company to research** | Content mentions a company name alongside: "check out", "research", "look into", "interesting", "target", OR just a company name + company homepage URL (no specific job path) | Add to Bucket A for this session — execute now |
+| 5 | **Unclassifiable** | Doesn't match any above pattern | Write to `data/notes.md` immediately when user confirms |
+
+**Company name extraction from job ad URLs:**
+- `job-boards.greenhouse.io/[slug]/` → use slug
+- `jobs.lever.co/[slug]/` → use slug
+- `jobs.ashbyhq.com/[slug]/` → use slug
+- Otherwise: use company name from surrounding text; if not findable, leave as "Unknown"
+
+De-slug the company name for display: convert hyphens to spaces, title case each word (e.g., `spring-health` → "Spring Health").
+
+Store the inbox classification results. Article read and company research inbox items will be added to Bucket A. Job ads, contacts, and unclassifiable items will be shown in an "Immediate Routes" table and written when the user confirms.
 
 ### Step 2: Scan & Categorize
 
 Filter the Active section of `data/job-todos.md` to rows where **Status = Pending only** (skip Done, Withdrawn, In Progress).
 
-Classify each Pending to-do into one of these buckets:
+**Pre-filter 1 — Blocked URLs:** Any Pending row tagged `blocked: true` → force to Bucket B (Manual) regardless of task text. Label it "(Previously blocked — check manually)" in the manual table. Do NOT attempt to re-fetch. Skip the remaining categorization rules for this row.
+
+**Pre-filter 2 — Careers check freshness:** Any Pending row tagged `careers_fresh: true` → move to Skipped section with label: `"Checked [date] — re-check after [date + 7 days]"`. Do NOT include in Bucket A or Bucket B. Skip the remaining categorization rules for this row.
+
+Then classify each remaining Pending to-do into one of these buckets:
 
 #### Bucket A — Executable by Claude
 
 | Category | Detection Pattern | Action |
 |----------|------------------|--------|
 | **Careers check** | Task text contains "Check [Company] careers" or "Check [Company] for [role types]" AND Notes contain a URL | Fetch careers page URL; scan for roles matching candidate's target role keywords |
-| **Company research** | Task text contains "Research [Company]", "Deep-dive research [Company]", or Notes explicitly say "Run `/research-company`" | Full research-company pipeline: 5 parallel agents, save dossier to `data/company-research/<slug>.md` |
-| **Article/content read** | Task text begins with "Read" or "Review [document/article]" AND Notes contain a specific article or document URL (not a general platform URL) | Fetch URL; return 4-5 key insights and why it matters |
-| **Resource browse** | Task text begins with "Browse [platform]" AND Notes contain a platform URL AND task specifies a filter criterion (e.g., "for active SF yoga studio listings") | Fetch URL; return top 3-5 results matching the filter criterion |
+| **Company research** | Task text contains "Research [Company]", "Deep-dive research [Company]", or Notes explicitly say "Run `/research-company`" | Full research-company pipeline: 5 parallel agents, save dossier to `data/company-research/[slug]/[slug].md` |
+| **Article/content read** | Task text begins with "Read" or "Review [document/article]" AND Notes contain a specific article or document URL (not a general platform URL) | Fetch URL; return 4-5 key insights and why it matters; save to `data/company-research/[slug]/[MMDDYY]-article-[article-slug].md` or `data/industry-research/[MMDDYY]-article-[article-slug].md` |
+| **Resource browse** | Task text begins with "Browse [platform]" AND Notes contain a platform URL AND task specifies a filter criterion | Fetch URL; return top 3-5 results matching the filter criterion |
 
 **Careers check URL extraction:** Pull the URL from the Notes field — it is always the URL in `[text](url)` markdown format or a bare URL in the notes.
 
 **Company research skip check:** Before adding a company research item to Bucket A, check the fresh dossier list from Step 1. If a fresh dossier exists (< 30 days old), move this item to the **Skipped** list instead. If a dossier exists but is stale (≥ 30 days old), include it in Bucket A with a note that it's a refresh.
+
+**Inbox items in Bucket A:** Append any inbox Article read and Company research items to the end of Bucket A (after the regular to-do items). Label them with `(inbox)` in the preview table.
 
 #### Bucket B — Manual Action Required (cannot execute)
 
@@ -62,16 +85,20 @@ Classify each Pending to-do into one of these buckets:
 | **Alumni network** | "Identify Tuck alumni", "Check Tuck [network]" — requires MyTuck access |
 | **Study / learn** | "Learn [topic]", "Study [topic]", "Listen to [podcast]" — no fetchable URL |
 | **Outreach** | "Follow up with", "Send email to", "Reach out to" |
+| **Previously blocked** | Tagged `blocked: true` from pre-filter 1 |
 
 For each Bucket B item, extract any direct link from the Notes field to display in the manual actions table.
 
+**Priority sort:** After categorizing, sort Bucket A items by Priority column: High → Med → Low → (no priority). Apply the same sort to Bucket B.
+
 #### Skip entirely (don't show)
 - Status = Done, Withdrawn, or In Progress
-- Items where the company already has a fresh dossier AND the to-do is a research task (show these in the Skipped section of the preview instead)
+- Items tagged `careers_fresh: true` (shown in the Skipped section instead)
+- Items where the company already has a fresh dossier AND the to-do is a research task (shown in Skipped section instead)
 
 ### Step 3: Preview Display
 
-Display the full categorized plan. **Do not execute anything yet.** Show all three sections:
+Display the full categorized plan. **Do not execute anything yet.** Show all sections:
 
 ```markdown
 ## /act — Preview
@@ -82,43 +109,52 @@ Display the full categorized plan. **Do not execute anything yet.** Show all thr
 | # | Type | Task | URL / Source |
 |---|------|------|-------------|
 | 1 | Careers check | Check Playlist-EGYM careers — S&O/Ops roles | playlist.com/careers |
-| 2 | Careers check | Check Wellhub careers — BD/strategy roles | wellhub.com/en-us/careers |
-| 3 | Company research | Deep-dive Talkiatry — #2 BH target | 5 agents + dossier (~5 min) |
-| 4 | Company research | Deep-dive Headway — #3 BH target | 5 agents + dossier (~5 min) |
-| 5 | Article read | Alex Mullin — OUD treatment white paper | mobihealthnews.com |
-| 6 | Resource browse | Browse BizBuySell — active SF yoga studio listings | bizbuysell.com |
+| 2 | Company research | Deep-dive Talkiatry — #2 BH target | 5 agents + dossier (~5 min) |
+| 3 | Company research | Deep-dive Headway — #3 BH target | 5 agents + dossier (~5 min) |
+| 4 | Company research | Deep-dive Spring Health — #4 BH target | 5 agents + dossier (~5 min) |
+| 5 | Company research | Deep-dive Brightside Health | 5 agents + dossier (~5 min) |
+| 6 | Article read | Alex Mullin — OUD treatment white paper | mobihealthnews.com |
+| 7 | Article read | (inbox) MobiHealthNews article on digital health | mobihealthnews.com |
+| 8 | Company research | (inbox) Ripple Foods | 5 agents + dossier |
 
 > Company research tasks run in parallel — all execute simultaneously, not sequentially.
 > Careers checks and article reads also run in parallel.
 
+[If more than 3 company research items in Bucket A, insert this warning block:]
+> ⚠️ **4 of 8 items are company research tasks** — each spawns 5 parallel agents.
+> Type `run fast` to skip research and run only careers checks + article reads.
+> Type `run research` to run ONLY the research tasks.
+
 ### Skipped — Fresh Dossier Exists (< 30 days)
-- **Amae Health** — dossier from 2026-02-18 (`data/company-research/amae-health.md`)
+- **Amae Health** — dossier from 2026-02-18 (`data/company-research/amae-health/amae-health.md`)
+
+### Skipped — Careers Page Checked Recently
+- **Wellhub** — Checked 2026-02-22 — re-check after 2026-03-01
 
 ### Requires Your Action
 
 | # | Task | Direct Link |
 |---|------|-------------|
-| 7 | Subscribe to BHT Newsletter, Out-Of-Pocket, BHB, Rock Health Weekly | [BHT signup] · [Out-of-Pocket] · [BHB] · [Rock Health] |
-| 8 | Follow Solome Tibebu, Nikhil Krishnan, April Koh, Robert Krayn on LinkedIn | LinkedIn search |
-| 9 | Join Mental Health Startup Community Slack | [slack link] |
-| 10 | Identify 3–5 Tuck alumni working in fitness/wellness | MyTuck network — manual |
+| 9 | Subscribe to BHT Newsletter, Out-Of-Pocket, BHB, Rock Health Weekly | [BHT signup] · [Out-of-Pocket] · [BHB] · [Rock Health] |
+| 10 | Follow Solome Tibebu, Nikhil Krishnan on LinkedIn | LinkedIn search |
+| 11 | Identify 3–5 Tuck alumni in fitness/wellness | MyTuck network — manual |
+| 12 | ~~Check Wellhub careers~~ (Previously blocked — check manually) | wellhub.com/en-us/careers |
 
-### Inbox — Items to Route
-[If inbox items exist:]
+### Inbox — Immediate Routes
+These will be written to data files when you confirm (no execution needed):
 
-| # | File | Content | Proposed destination |
-|---|------|---------|---------------------|
-| I1 | ripple-foods.md | "check out Ripple Foods" | Company research — add to Bucket A or run `/research-company` |
-| I2 | article-link.md | https://... | Article read — add to Bucket A |
+| # | File | Content | Action |
+|---|------|---------|--------|
+| I3 | greenhouse-job.md | "https://job-boards.greenhouse.io/openai/jobs/123" | → New pipeline entry: OpenAI \| Researching |
+| I4 | sarah-chen.md | "met Sarah Chen at SF health event, head of ops at Headway" | → New contact: Sarah Chen \| Headway \| Head of Ops |
 
-> Inbox items can be added to the execute list, or routed manually. Delete each item from `inbox/` after routing.
+> These write automatically when you type `run` or `run [numbers]`. No separate `inbox` command needed.
 
 [If inbox is empty:]
 > Inbox clear — nothing to route.
 
 ---
-**Type `run` to execute all automated items (1–6), `run 1 2 5` to run specific items, or `skip 3` to exclude specific items.**
-**To include inbox items in execution:** `run I1 I2` or `inbox` to route all inbox items.**
+**Type `run` to execute all · `run fast` (skip research) · `run research` (research only) · `run 1 2 5` (specific) · `skip 3` (exclude) · `cancel` to abort**
 ```
 
 Wait for the user's response before proceeding to Step 4.
@@ -127,14 +163,59 @@ Wait for the user's response before proceeding to Step 4.
 
 Parse the user's reply:
 
-- **`run`** or **`yes`** or **`go`** → execute all items in the "Will Execute Automatically" table
-- **`run [numbers]`** (e.g., `run 1 3 5`) → execute only those numbered items
-- **`skip [numbers]`** (e.g., `skip 3 4`) → execute all automated items *except* those numbered
-- **`inbox`** or **`run I1 I2`** → route inbox items (adds executable inbox items to execute list; routes non-executable items to appropriate data files and deletes the inbox files)
-- **`cancel`** or **`no`** → abort; display "Cancelled — no changes made."
-- **Anything else** → treat as `run` (assume confirmation)
+- **`run`** or **`yes`** or **`go`** → execute all items in the "Will Execute Automatically" table; also write all Immediate Route items (job ads → pipeline, contacts → networking, unclassifiable → notes)
+- **`run [numbers]`** (e.g., `run 1 3 5`) → execute only those numbered items; include all Immediate Route writes
+- **`skip [numbers]`** (e.g., `skip 3 4`) → execute all automated items *except* those numbered; include all Immediate Route writes
+- **`run fast`** → build execute list with only Careers Check and Article Read items (including inbox article reads). Company research items — both regular to-dos and inbox ones — stay Pending with no note update. Include all Immediate Route writes.
+- **`run research`** → build execute list with only Company Research items (including inbox company research). Careers checks and article reads are skipped. Include all Immediate Route writes.
+- **`cancel`** or **`no`** → abort; display "Cancelled — no changes made." Do not write anything, do not delete any inbox files.
+- **Unrecognized input** → respond: "I didn't understand that. Type `run` to execute all, `run [numbers]` for specific items, `skip [numbers]` to exclude, `run fast` to skip research, `run research` for research only, or `cancel` to abort." Wait for the user's next response. **Do NOT execute.**
 
 Build the final **execute list** from the parsed response.
+
+**Immediate Route writes (job ads, contacts, unclassifiable) — write in parallel with execution:**
+
+**Job ad → `data/job-pipeline.md`:** Append a new row to the Active Pipeline section:
+```
+| [Company name] | [Role if extractable from text, else "—"] | Researching | [YYYY-MM-DD] | Run /research-company, then /generate-cv | — | Added from inbox/[filename] | [full URL] |
+```
+
+**Contact capture → `data/networking.md`:** Two writes:
+1. Append a new row to the Contacts table:
+   ```
+   | [Name] | [Company if found] | [Role if found] | other | [YYYY-MM-DD] | — |
+   ```
+2. Append a new interaction log entry under `## Interaction Log`:
+   ```
+   ### [Name] — [Company or "Unknown"]
+
+   #### [YYYY-MM-DD] | other | Captured from inbox
+
+   > [Raw content of the inbox file]
+
+   **Follow-up:** Review and update relationship type, add outreach if appropriate.
+   ```
+
+**Unclassifiable → `data/notes.md`:** If `data/notes.md` doesn't exist, create it first:
+```markdown
+# Notes
+
+> General notes, decisions, and unroutable captures.
+> Managed by /remember and /act.
+
+## Decisions
+
+## Notes
+
+## From Inbox
+```
+Then append under `## From Inbox`:
+```markdown
+**[YYYY-MM-DD] — from inbox/[filename]:**
+[Raw content of inbox file]
+```
+
+**Inbox cleanup — delete source files:** After each inbox item is successfully processed (executed OR immediately written), delete the source file with `Bash(rm inbox/[filename])`. Do NOT delete if: the write or execution failed; the user skipped the item; or `cancel` was typed.
 
 ### Step 5: Execute (parallel)
 
@@ -192,9 +273,10 @@ Research process:
    - Conversation Starters (3 specific, researched talking points for the candidate to use)
    - Next Steps (suggested: add to pipeline, draft outreach, etc.)
 
-3. Save the completed dossier to: data/company-research/[slug].md
+3. Save the completed dossier to: data/company-research/[slug]/[slug].md
    File header must include: `Last updated: [today's date in YYYY-MM-DD format]`
    Slug format: lowercase company name with spaces replaced by hyphens (e.g., "Spring Health" → spring-health)
+   The directory will be created automatically by the Write tool.
 
 4. Return only the Executive Summary (3-5 sentences) — the full dossier is in the file.
 
@@ -207,18 +289,55 @@ Candidate context:
 One Task agent per article. Prompt:
 
 ```
-Fetch and summarize this article for a job seeker in [industry from task notes]:
+Fetch and summarize this article for a job seeker:
 
 URL: [URL from notes]
 Article context: [task text — e.g., "Alex Mullin's white paper on digital health and OUD treatment"]
 
-Return:
-- Title, author, publication, date (if findable)
-- 4-5 key insights (bullets — specific facts and arguments, not vague summaries)
-- Why it matters for this candidate's job search (1 sentence — be specific)
+Instructions:
 
-No preamble. Structured output only.
-If the URL is behind a paywall or returns an error, report: "Paywall / access blocked — [URL]"
+1. Fetch and read the article.
+
+2. Identify the PRIMARY company this article is about. Look for:
+   - A single company named as the subject (e.g., "Amae Health announces...", "Alex Mullin from Amae Health")
+   - If the article is primarily about one company, set primary_company = that company name
+   - If it covers multiple companies equally, or is a general industry piece, set primary_company = null
+
+3. Return in this format:
+   **Title:** [article title]
+   **Publication:** [pub] | **Author:** [author] | **Date:** [article date if found]
+   **Primary company:** [company name or "None — industry article"]
+
+   ## Key Insights
+   - [insight 1]
+   - [insight 2 — up to 5, specific facts not vague summaries]
+
+   ## Why It Matters
+   [1-sentence relevance for this job search]
+
+4. Save the full summary to a file:
+   - If primary_company is set: data/company-research/[slug]/[MMDDYY]-article-[article-slug].md
+     where [slug] = company name lowercased, hyphens for spaces (e.g., "amae-health")
+   - If primary_company is null: data/industry-research/[MMDDYY]-article-[article-slug].md
+   - [article-slug] = article title lowercased, spaces to hyphens, max 5 words (e.g., "oud-treatment-digital-health")
+   - [MMDDYY] = today's date formatted as MMDDYY (e.g., 022426 for Feb 24, 2026)
+
+   File format:
+   # Article Read: [Title]
+   > Source: [URL] | Summarized: [YYYY-MM-DD] | Task: [original task text]
+
+   **Publication:** [pub] | **Author:** [author] | **Date:** [article date if found]
+   **Associated company:** [company name or "—"]
+
+   ## Key Insights
+   - [insights]
+
+   ## Why It Matters
+   [relevance]
+
+5. Return the save path along with the summary.
+
+If URL is behind a paywall: report "Paywall / access blocked — [URL]", save nothing.
 ```
 
 #### Resource Browses — `model: "haiku"`, `max_turns: 4`
@@ -247,13 +366,13 @@ After all agents return, process results one by one:
 - Status → `Done`
 - Notes → append ` | Completed [today's date] — [1-sentence result summary]`
   - Careers check: "N relevant roles found" or "No relevant roles found"
-  - Company research: "Dossier saved to data/company-research/[slug].md"
-  - Article read: "[first key insight, truncated to ~80 chars]"
+  - Company research: "Dossier saved to data/company-research/[slug]/[slug].md"
+  - Article read: "[first key insight, ~80 chars] — Summary: [save path returned by agent]"
   - Resource browse: "N results found matching filter"
 
 **For each failed/blocked item (404, paywall, access denied):**
 - Status remains `Pending`
-- Notes → append ` | Checked [today's date] — [reason: 404 / paywall / access denied]`
+- Notes → append ` | Checked [today's date] — access blocked`
 
 Write the updated `data/job-todos.md`.
 
@@ -280,12 +399,12 @@ Write the updated `data/job-todos.md`.
 
 ### Company Research
 
-**Talkiatry** — dossier saved: `data/company-research/talkiatry.md`
+**Talkiatry** — dossier saved: `data/company-research/talkiatry/talkiatry.md`
 > $210M Series D (Feb 2026), 600+ psychiatrists on platform, telehealth-first SMI focus.
 > Strategy & Ops team actively hiring. Strong fit for S&O background.
 > Run `/research-company "Talkiatry"` for deeper refresh, or `/prep-interview "Talkiatry"` when applying.
 
-**Headway** — dossier saved: `data/company-research/headway.md`
+**Headway** — dossier saved: `data/company-research/headway/headway.md`
 > ...
 
 ---
@@ -297,6 +416,7 @@ Write the updated `data/job-todos.md`.
 - Insurance parity laws are expanding reimbursement for digital therapeutics
 - [3 more key insights]
 - Why it matters: Provides credibility talking points for the Amae Health coffee chat with Alex.
+> Summary saved: `data/company-research/amae-health/022426-article-oud-treatment-digital-health.md`
 
 ---
 
@@ -309,7 +429,19 @@ Write the updated `data/job-todos.md`.
 ---
 
 ### Failed / Blocked
-- Xponential Fitness careers page — returned 403 (blocked) — to-do remains Pending
+- Xponential Fitness careers page — returned 403 (blocked) — to-do remains Pending, labeled "access blocked" in notes
+
+---
+
+### Inbox Routed
+
+- **OpenAI job ad** → New entry added to `data/job-pipeline.md`
+- **Sarah Chen** → New contact added to `data/networking.md`
+- **MobiHealthNews article** → Executed as article read (see Articles Read above)
+- **Ripple Foods** → Executed as company research (see Company Research above)
+- Inbox files deleted: 4
+
+> Run `/todo` to see updated to-do list · Run `/pipe` to see pipeline · Run `/networking` to see contacts
 
 ---
 
@@ -324,6 +456,7 @@ These require your action — links provided for speed:
 | Follow Nikhil Krishnan on LinkedIn | [linkedin.com/in/...] |
 | Join Mental Health Startup Community Slack | [url] |
 | Identify Tuck alumni in fitness/wellness | [MyTuck network](https://my.tuck.dartmouth.edu) |
+| ~~Check Wellhub careers~~ (Previously blocked — check manually) | wellhub.com/en-us/careers |
 
 ---
 
@@ -343,6 +476,7 @@ These require your action — links provided for speed:
 - **Company research agent fails:** Note failure in results, leave Status as Pending with failure note in Notes field.
 - **User runs `/act` with nothing actionable and asks "why?":** Explain the classification rules briefly — which patterns trigger each category.
 - **Multiple to-dos for the same company research target:** Deduplicate — run research only once per company, mark all related research to-dos as Done from that one run.
+- **Article agent returns no save path (paywall/blocked):** Note "Paywall / access blocked" in the to-do Notes field. Status remains Pending. No file created.
 
 ## Model Selection Rationale
 
