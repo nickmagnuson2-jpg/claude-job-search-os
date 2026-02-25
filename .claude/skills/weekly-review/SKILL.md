@@ -25,7 +25,7 @@ Read the following files in parallel — skip any that don't exist, never fail:
 5. `data/outreach-log.md`
 
 Also Glob:
-- `data/company-research/*.md` — collect filenames and read each to check `Last updated:` date in their headers
+- `data/company-research/**/*.md` — collect filenames and read each to check `Last updated:` date in their headers (handles both flat and subdirectory dossier formats)
 - `data/industry-research/*.md` — same
 
 **Date window:** Today is `[today]`. The review covers `[today - 6 days]` through `[today]` (7 days inclusive). Calculate the Monday and Sunday bounding the week for the log header.

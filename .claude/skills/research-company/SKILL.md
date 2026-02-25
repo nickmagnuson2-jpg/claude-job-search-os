@@ -3,7 +3,7 @@ name: research-company
 description: Deep company research with parallel agents — overview, funding, people, news, competitive landscape — with conversation starters and similar companies to target
 argument-hint: <company-name> [url] [context]
 user-invocable: true
-allowed-tools: Read(*), Glob(data/*), Grep(data/*), Write(data/company-research/*), Edit(data/company-research/*), Edit(data/job-todos.md), Write(data/job-todos.md), Read(data/job-todos.md), Task, WebFetch, WebSearch
+allowed-tools: Read(*), Glob(data/*), Grep(data/*), Write(data/company-research/**), Edit(data/company-research/**), Write(data/job-todos.md), Read(data/job-todos.md), Task, WebFetch, WebSearch
 ---
 
 # Research Company — Deep Dossier with Parallel Agents
@@ -66,7 +66,7 @@ Read the following files in parallel (skip any that don't exist — proceed with
 5. `data/job-pipeline.md` — active pipeline entries at this company
 6. `data/project-index.md` — experience domains for overlap detection
 
-Also check if `data/company-research/<slug>.md` already exists (for refresh logic).
+Also check if `data/company-research/<slug>/<slug>.md` already exists (for refresh logic). If not, also check the legacy flat path `data/company-research/<slug>.md` — both formats may exist depending on when the dossier was created.
 
 Also check `data/industry-research/` for any existing industry dossier that covers this company's sector. If found, note the file path — agents can reference it instead of reproducing industry-level analysis.
 
@@ -81,7 +81,7 @@ Also check `data/industry-research/` for any existing industry dossier that cove
 
 ### Step 2b: Refresh Logic
 
-If `data/company-research/<slug>.md` already exists:
+If `data/company-research/<slug>/<slug>.md` already exists (or the legacy flat path `data/company-research/<slug>.md`):
 - Check the "Last updated" date in the file.
 - **< 14 days old**: Ask the user: "Existing research from [date] found. Refresh or view existing?"
   - If "view", display the existing file and stop.
@@ -237,6 +237,8 @@ Any connections between the candidate's school/network and the company.
 Notable alumni or shared-background team members.
 
 If Glassdoor or review data is unavailable, note it and suggest the candidate ask about culture directly.
+
+**Job posting verification rule:** If you find or cite any specific open role at this company, you MUST attempt to WebFetch the careers page URL to confirm the role is currently listed. If you successfully fetch the page and the role is present, mark it [VERIFIED, as of YYYY-MM-DD]. If you cannot fetch the page or the role is not found, mark it [UNVERIFIED — confirm manually at careers URL before acting]. Never present a job posting as "active" without attempting to fetch the URL. If you cannot verify, default to "Check careers page for [role type]" language rather than naming a specific role.
 ```
 
 ---
@@ -295,7 +297,7 @@ For each competitor or similar company found, research:
 - What they do and how they differ from [Company Name]
 - Approximate size and stage (startup vs. growth vs. enterprise)
 - HQ location and whether they have presence near the candidate
-- Whether they appear to be hiring (check for careers pages, recent job postings)
+- Whether they appear to be hiring — attempt to WebFetch the careers page URL and report what you actually find. If you cannot fetch it, note "careers page not verified — check manually." Never assert "actively hiring" based on a URL alone without fetching it.
 - Why the candidate's background might be relevant to them
 
 Compile your findings into these sections. Cite URLs for every claim, classify sources by tier (A/B/C), and tag high-impact claims with [Confidence: H/M/L, as of YYYY-MM]:
@@ -386,6 +388,8 @@ Read `data/job-todos.md` first. Then add relevant to-dos such as:
 - "Research [similar company] — flagged as strong fit from [Company] competitive landscape" — for the top 2-3 companies from Agent 5's shortlist that have strong hiring signals
 - "Check [similar company] careers page for [relevant role type]" — if Agent 5 found active hiring at a shortlisted company
 
+**Job posting todo rule — critical:** Never write an "Apply to [Role] at [Company]" todo based solely on a URL cited by a research agent. Agents frequently surface stale or cached job listings that no longer exist. The default for any job posting todo is: "Check [Company] careers page for [role type] — [URL]". Only upgrade to "Apply to..." language if Agent 3 explicitly marked the role as [VERIFIED] after fetching the URL. When in doubt, write "Check" not "Apply".
+
 Use the same format as existing entries in `data/job-todos.md`:
 - **Priority**: `Med` (default) or `High` if time-sensitive
 - **Due**: 7 days from today, or earlier if meeting date is known from context
@@ -396,7 +400,7 @@ If `data/job-todos.md` doesn't exist, create it with the standard header format 
 
 ### Step 8: Write Output File
 
-Create the output directory if needed, then write to `data/company-research/<slug>.md`:
+Create the output directory `data/company-research/<slug>/` if needed, then write to `data/company-research/<slug>/<slug>.md`:
 
 ```markdown
 # [Company Name] — Research Dossier
@@ -612,7 +616,7 @@ After writing the file, display a concise summary to the user. This is derived d
 ```markdown
 ## Company Research Complete — [Company Name]
 
-**Saved to:** `data/company-research/<slug>.md`
+**Saved to:** `data/company-research/<slug>/<slug>.md`
 **Context:** [context type] [with contact name if applicable]
 
 **Opportunity Rating:** [High | Medium | Low] — [rationale from Executive Summary]
@@ -641,7 +645,7 @@ After writing the file, display a concise summary to the user. This is derived d
 [2-3 relevant suggestions from Step 10]
 
 ---
-Full dossier: `data/company-research/<slug>.md`
+Full dossier: `data/company-research/<slug>/<slug>.md`
 ```
 
 ### Step 10: Suggest Next Steps (Handoff)

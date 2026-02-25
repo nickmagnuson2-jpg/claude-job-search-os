@@ -3,7 +3,7 @@ name: prep-interview
 description: One-command interview prep package — question mapping, company context digest, and tactics/logistics — saved as a single output document
 argument-hint: <company> [role] [context]
 user-invocable: true
-allowed-tools: Read(*), Glob(data/*), Glob(output/*), Write(output/*), Edit(data/job-todos.md), Task, WebSearch, WebFetch
+allowed-tools: Read(*), Glob(data/*), Glob(output/*), Write(output/*), Write(data/job-todos.md), Task, WebSearch, WebFetch
 ---
 
 # Prep Interview — One-Command Interview Prep Package
@@ -52,7 +52,7 @@ Examples:
 
 Read the following in parallel — skip any that don't exist:
 
-1. `data/company-research/<slug>.md` — company dossier (if exists)
+1. Company dossier — try `data/company-research/<slug>/<slug>.md` first (subfolder format), fall back to `data/company-research/<slug>.md` (legacy flat format)
 2. `data/profile.md`
 3. `data/professional-identity.md`
 4. `coaching/coached-answers.md`
@@ -65,7 +65,7 @@ Also Glob `data/projects/*.md` to have project files available for question mapp
 
 ### Step 3: Web Research if No Company Dossier
 
-If `data/company-research/<slug>.md` does not exist:
+If no company dossier was found (neither subfolder nor flat format):
 - Run 2 web searches in parallel:
   1. `"[Company] news 2026"` — recent developments
   2. `"[Company] [role] interview"` — interview-specific info

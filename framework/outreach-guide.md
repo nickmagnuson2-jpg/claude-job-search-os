@@ -111,6 +111,18 @@ Examples:
 - `Re: [specific topic]`
 - `[Mutual contact] suggested I reach out`
 
+### LinkedIn Connect — Real Example (Persona-Based, shared employer)
+
+> **Context:** Ella Brown, Chief of Staff at Odyssey PBC. Both Nick and Ella worked at Altman Solon at different times; no personal overlap. Sent 2026-02-25.
+
+```
+Hi Ella, I came across Odyssey while exploring the psychedelic therapy space
+and noticed we both did time at Altman Solon. Would love to connect and hear
+how you ended up there.
+```
+
+**Why it works:** Leads with the shared-employer hook without overstating familiarity ("did time at" rather than "we worked together"). Company-specific research signal ("psychedelic therapy space") shows genuine interest, not spray-and-pray. Single soft ask — hear *her* story, not a pitch about Nick. 172 chars.
+
 ---
 
 ## Optimal Metrics

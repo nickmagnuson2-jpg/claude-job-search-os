@@ -26,7 +26,11 @@
       "Skill(research-company)",
       "Skill(cold-outreach)",
       "Bash(cd C:\\\\Users\\\\chris\\\\Documents\\\\Projects\\\\Nick-claude-resume-coach:*)",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Skill(weekly-review)",
+      "Skill(generate-cv)",
+      "Skill(prep-interview)",
+      "Skill(follow-up)"
     ]
   }
 }

@@ -3,7 +3,7 @@ name: todo
 description: Lightweight to-do list for job search tasks not tied to specific applications
 argument-hint: [add|done|daily|clear <task> [priority] [due]]
 user-invocable: true
-allowed-tools: Read(*), Write(data/job-todos.md), Edit(data/job-todos.md), Read(data/job-pipeline.md), Read(data/networking.md), Write(data/job-todos-daily-log.md), Edit(data/job-todos-daily-log.md), Read(data/outreach-log.md), Glob(data/company-research/*), Glob(data/industry-research/*)
+allowed-tools: Read(*), Write(data/job-todos.md), Edit(data/job-todos.md), Read(data/job-pipeline.md), Read(data/networking.md), Write(data/job-todos-daily-log.md), Edit(data/job-todos-daily-log.md), Read(data/outreach-log.md), Glob(data/company-research/**), Glob(data/industry-research/*)
 ---
 
 # Job Search To-Do Manager
@@ -166,7 +166,7 @@ Generate a daily progress summary, archive it, and show trends.
    - `data/job-pipeline.md`
    - `data/networking.md`
    - `data/outreach-log.md` (skip silently if doesn't exist)
-   - Glob `data/company-research/*.md` to get list of dossier files
+   - Glob `data/company-research/**/*.md` to get list of dossier files (handles both flat and subdirectory formats)
    - Glob `data/industry-research/*.md` to get list of research files
    - For any company-research or industry-research files found, read each and check for `Last updated: [today's date]` in the file header to determine if it was generated/updated today
 

@@ -333,7 +333,7 @@ After all files are written, present a summary:
 ### Next Steps
 - Fill in TODO items (highest impact: compensation and key achievements)
 - Review your projects — if one stands out as your anchor (multi-year, high-impact, central to your identity), mark its type as `flagship`
-- Import another CV to enrich further: `/onboard path/to/another-cv.pdf`
+- Import another CV to enrich further: `/import-cv path/to/another-cv.pdf`
 - Discover your professional identity: `/extract-identity`
 - Generate your first CV: paste a job ad and ask for a targeted resume
 ```

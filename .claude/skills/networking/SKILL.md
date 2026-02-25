@@ -3,7 +3,7 @@ name: networking
 description: Track networking contacts and conversations — real-world and Claude chats — with auto-generated follow-up to-dos
 argument-hint: [add|log|remove <name> [company] [role] [summary]]
 user-invocable: true
-allowed-tools: Read(*), Write(data/networking.md), Edit(data/networking.md), Write(data/job-todos.md), Edit(data/job-todos.md), Read(data/job-pipeline.md), Glob(data/*)
+allowed-tools: Read(*), Write(data/networking.md), Edit(data/networking.md), Write(data/job-todos.md), Read(data/job-pipeline.md), Glob(data/*)
 ---
 
 # Networking Tracker
@@ -237,7 +237,7 @@ Sort by Last Interaction descending (most recent first). Contacts with no intera
 Each contact gets a section with entries in reverse chronological order (newest first):
 
 ```markdown
-### Alex — Amae Health
+### Alex Mullin — Amae Health
 
 #### 2026-02-18 | email | Cold outreach — Tuck alum, coffee chat
 

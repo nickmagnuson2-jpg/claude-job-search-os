@@ -3,7 +3,7 @@ name: research-industry
 description: Deep industry research with parallel agents — market overview, key players, talent demand, trends & regulation, entry strategy — with target companies and positioning advice
 argument-hint: <industry-name> [context]
 user-invocable: true
-allowed-tools: Read(*), Glob(data/*), Grep(data/*), Write(data/industry-research/*), Edit(data/industry-research/*), Edit(data/job-todos.md), Write(data/job-todos.md), Read(data/job-todos.md), Task, WebFetch, WebSearch
+allowed-tools: Read(*), Glob(data/*), Grep(data/*), Write(data/industry-research/*), Edit(data/industry-research/*), Write(data/job-todos.md), Read(data/job-todos.md), Task, WebFetch, WebSearch
 ---
 
 # Research Industry — Deep Landscape Analysis with Parallel Agents

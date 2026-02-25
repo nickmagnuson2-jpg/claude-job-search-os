@@ -3,7 +3,7 @@ name: draft-email
 description: Draft job-search emails — thank-you notes, status updates, intro requests, expressions of interest
 argument-hint: <recipient> <purpose> [context]
 user-invocable: true
-allowed-tools: Read(*), Glob(data/*), Grep(data/*), Edit(data/networking.md), Write(data/networking.md), Edit(data/job-todos.md), Write(data/job-todos.md), Write(tools/.pending-draft.txt), Edit(data/outreach-log.md), Write(data/outreach-log.md)
+allowed-tools: Read(*), Glob(data/*), Grep(data/*), Edit(data/networking.md), Write(data/networking.md), Write(data/job-todos.md), Write(tools/.pending-draft.txt), Edit(data/outreach-log.md), Write(data/outreach-log.md)
 ---
 
 # Draft Email — General-Purpose Job Search Emails
@@ -89,9 +89,9 @@ Read the following files in parallel (skip any that don't exist):
 **Type-specific context loading:**
 
 - **Status update:** Also read `data/job-pipeline.md`, `data/job-todos.md`, `data/job-todos-daily-log.md`
-- **Intro request:** Also read `data/company-research/<company-slug>.md` if the target company is identifiable
-- **Interest:** Also read `data/company-research/<company-slug>.md` and `data/job-pipeline.md`
-- **Informational:** Also read `data/company-research/<company-slug>.md`
+- **Intro request:** Also read company dossier if target company is identifiable — try `data/company-research/<slug>/<slug>.md` first, fall back to `data/company-research/<slug>.md`
+- **Interest:** Also read company dossier (same path logic) and `data/job-pipeline.md`
+- **Informational:** Also read company dossier (same path logic)
 
 ### Step 4: Tone Matching
 

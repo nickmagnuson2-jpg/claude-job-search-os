@@ -3,7 +3,7 @@ name: cold-outreach
 description: Draft personalized cold emails and LinkedIn messages to new contacts — research-informed, tone-matched, with auto-logging
 argument-hint: <name> <company> [role] [channel:email|linkedin] [context]
 user-invocable: true
-allowed-tools: Read(*), Glob(data/*), Grep(data/*), Edit(data/networking.md), Write(data/networking.md), Edit(data/job-todos.md), Write(data/job-todos.md), Write(tools/.pending-draft.txt), Edit(data/outreach-log.md), Write(data/outreach-log.md), WebSearch, WebFetch
+allowed-tools: Read(*), Glob(data/*), Grep(data/*), Edit(data/networking.md), Write(data/networking.md), Write(data/job-todos.md), Write(tools/.pending-draft.txt), Edit(data/outreach-log.md), Write(data/outreach-log.md), WebSearch, WebFetch
 ---
 
 # Cold Outreach — First-Contact Messages
@@ -70,7 +70,7 @@ Read the following files in parallel (skip any that don't exist):
 2. `data/professional-identity.md` — strengths, values, narrative patterns
 3. `data/education.md` — schools, degrees (for alumni matching)
 4. `data/networking.md` — for tone matching (read 2–3 prior sent messages as style reference)
-5. `data/company-research/<company-slug>.md` — existing company dossier (generate slug: lowercase, spaces→hyphens)
+5. Company dossier (generate slug: lowercase, spaces→hyphens) — try `data/company-research/<slug>/<slug>.md` first (subfolder format), fall back to `data/company-research/<slug>.md` (legacy flat format)
 6. `data/job-pipeline.md` — pipeline status for this company
 7. `framework/outreach-guide.md` — frameworks, constraints, anti-patterns, quality gate
 
