@@ -75,7 +75,7 @@ All examples from a tough-mode interview with the fictional example profile (Ale
 ### 1. Clone and try the demo
 
 ```bash
-git clone https://github.com/nickmagnuson2-jpg/claude-interview-coach.git
+git clone https://github.com/nickmagnuson2-jpg/claude-job-search-os.git
 cd claude-interview-coach
 ```
 
