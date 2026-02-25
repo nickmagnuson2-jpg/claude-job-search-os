@@ -67,9 +67,14 @@ Before displaying to-dos in **any command**, run a pipeline sync to auto-complet
 3. Scan `data/job-todos.md` Active section for any rows where:
    - Status is NOT `Done`, AND
    - The task text or notes contain a terminal company name as a full-name substring (case-insensitive, same matching rules as cross-referencing)
-4. For each matched row, auto-update:
-   - **Status** → `Withdrawn`
-   - **Notes** → append `Auto-withdrawn 2026-XX-XX — [Company] pipeline entry marked [Stage]` (use today's date)
+4. For each matched row, move it from Active to Completed:
+   - Remove the row from the Active table.
+   - Append a new row to the Completed table using this column mapping:
+     - **Task** → Task (unchanged)
+     - **Priority** → Priority (unchanged)
+     - **Completed** → `Withdrawn YYYY-MM-DD` (today's date)
+     - **Notes** → original Notes value + ` | Auto-withdrawn YYYY-MM-DD — [Company] pipeline entry marked [Stage]`
+   - Drop the `Due` and `Status` columns — they do not exist in the Completed table.
 5. Write the updated `data/job-todos.md` if any rows were changed.
 6. If any items were auto-withdrawn, display a notice **above** the to-do list:
    ```
@@ -140,12 +145,16 @@ Before displaying to-dos in **any command**, run a pipeline sync to auto-complet
 1. Read `data/job-todos.md`.
 2. Find the matching task (case-insensitive, fuzzy match — match on substring if unambiguous).
 3. If multiple matches, ask the user to clarify.
-4. Update the item:
-   - **Status**: `Done`
-   - Add completion date to Notes (format: `Completed 2026-02-18`)
-5. Move the row from Active to Completed section.
-6. Write updated file.
-7. Confirm completion and show remaining active count.
+4. Update the item and move it from Active to Completed:
+   - Remove the row from the Active table.
+   - Append a new row to the Completed table using this column mapping:
+     - **Task** → Task (unchanged)
+     - **Priority** → Priority (unchanged)
+     - **Completed** → today's date (YYYY-MM-DD)
+     - **Notes** → original Notes value, with `Completed YYYY-MM-DD` prepended if not already present
+   - Drop the `Due` and `Status` columns — they do not exist in the Completed table.
+5. Write updated file.
+6. Confirm completion and show remaining active count.
 
 ### Command: `daily`
 
@@ -260,10 +269,15 @@ Generate a daily progress summary, archive it, and show trends.
 ### Command: `clear`
 
 1. Read `data/job-todos.md`.
-2. Identify all items with Status = `Done` still in the Active section (if any).
-3. Move them to the Completed section.
+2. Identify all items with Status = `Done` **or `Withdrawn`** still in the Active section (if any).
+3. For each item, move it from Active to Completed using this column mapping:
+   - **Task** → Task (unchanged)
+   - **Priority** → Priority (unchanged)
+   - **Completed** → for `Done` items: today's date; for `Withdrawn` items: `Withdrawn YYYY-MM-DD`
+   - **Notes** → original Notes value (unchanged)
+   - Drop the `Due` and `Status` columns — they do not exist in the Completed table.
 4. Write updated file.
-5. Report how many items were archived.
+5. Report how many items were archived (Done count + Withdrawn count separately).
 
 ## Daily Log File Format
 
