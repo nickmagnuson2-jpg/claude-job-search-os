@@ -3,7 +3,7 @@
 When asked to create a targeted resume for a specific role:
 
 1. **Analyse the role** — extract key requirements, technologies, seniority level, industry, and market context (e.g. regional freelancer portals, international job boards, direct application)
-   - **Plugins:** Check `data/plugin-activation.md` for activation config (if the file is missing, all plugins are active). Scan `plugins/*/plugin.md` for enabled plugins whose scope includes `cv` and whose activation criteria match the target role/industry. If found, load their CV rules alongside core quality standards. Plugin CV rules are additive -- they cannot disable core quality checks. If `plugins/` is empty or missing, skip this step.
+  - **Plugins:** Check `data/plugin-activation.md` for activation config (if the file is missing, all plugins are active). Scan `plugins/*/plugin.md` for enabled plugins whose scope includes `cv` and whose activation criteria match the target role/industry. If found, load their CV rules alongside core quality standards. Plugin CV rules are additive -- they cannot disable core quality checks. If `plugins/` is empty or missing, skip this step.
 2. **Scan the project index** — read `data/project-index.md` to identify which projects are relevant based on technologies, tags, industry, and role type
 3. **Read relevant project details** — read the full project files only for the 3-6 most relevant matches. If any project is marked type: `flagship`, consider including it for depth and longevity — but only if it's relevant to the target role. Also read `data/skills.md` and `data/certifications.md`
 4. **Consult professional identity** — read `data/professional-identity.md` for narrative framing, reframes, and values. Use this to inform tone and angle — especially the narrative patterns table (how the candidate defaults vs. how they should frame things)
@@ -12,25 +12,25 @@ When asked to create a targeted resume for a specific role:
 7. **Adjust skill emphasis** — highlight skills that match the job description, de-emphasise irrelevant ones
 8. **Choose language** — match the language of the job posting (or the candidate's preferred language from `data/profile.md`)
 9. **Choose format** — select the appropriate market format (see `framework/style-guidelines.md`)
-10. **Output format** — produce clean markdown in an `output/` file named `YYYYMMDD-[target-role-slug].md`
-11. **Generate call cheat sheet** — produce a companion cheat sheet alongside the CV in `output/YYYYMMDD-[target-role-slug]-cheatsheet.md`. This is a quick-reference table the candidate keeps on screen during recruiter calls. Build it using these sources:
+10. **Output format** — produce clean markdown at `output/<company-slug>/MMDDYY-[role-slug].md` (e.g. `output/impossible-foods/022426-chief-of-staff.md`)
+11. **Generate call cheat sheet** — produce a companion cheat sheet alongside the CV at `output/<company-slug>/MMDDYY-[role-slug]-cheatsheet.md`. This is a quick-reference table the candidate keeps on screen during recruiter calls. Build it using these sources:
 
     **Content to include:**
-    - For each must-have requirement from the job posting, list 2-3 bullet points of *specific things the candidate did* (not generic skills — concrete actions from projects)
-    - Compensation to quote (rate or salary expectation), availability/notice period answer, start date answer
-    - 15-second recruiter pitch tailored to this role
-    - The cheat sheet should fit on one screen
+  - For each must-have requirement from the job posting, list 2-3 bullet points of *specific things the candidate did* (not generic skills — concrete actions from projects)
+  - Compensation to quote (rate or salary expectation), availability/notice period answer, start date answer
+  - 15-second recruiter pitch tailored to this role
+  - The cheat sheet should fit on one screen
 
     **Sources to cross-reference:**
-    - `coaching/coached-answers.md` — reuse existing coached answers for common topics (rate pushback, availability, key technology questions, etc.) instead of writing new ones from scratch. Adapt to the specific role.
-    - `coaching/pressure-points.md` + `framework/answering-strategies/anti-patterns.md` — scan for pressure points and anti-patterns relevant to this role and add **"Do NOT say"** warnings for the most likely traps (e.g., volunteering negatives on thin experience areas, over-explaining to recruiters, confirming concerns)
-    - `data/certifications.md` — verify cert status. If any cert listed in the CV is expired or renewal-pending, prepare the handling answer in the cheat sheet rather than ignoring it.
+  - `coaching/coached-answers.md` — reuse existing coached answers for common topics (rate pushback, availability, key technology questions, etc.) instead of writing new ones from scratch. Adapt to the specific role.
+  - `coaching/pressure-points.md` + `framework/answering-strategies/anti-patterns.md` — scan for pressure points and anti-patterns relevant to this role and add **"Do NOT say"** warnings for the most likely traps (e.g., volunteering negatives on thin experience areas, over-explaining to recruiters, confirming concerns)
+  - `data/certifications.md` — verify cert status. If any cert listed in the CV is expired or renewal-pending, prepare the handling answer in the cheat sheet rather than ignoring it.
 
     **Cheat sheet quality rules:**
-    - For collaboration/teamwork questions, always use the best **peer-work project** (team collaboration, subcontractors, code reviews) as the primary example — not projects where the candidate was sole decision-maker
-    - Include rate pushback defense if the rate is above market average for the role
-    - Include a short closing with interest statement + max 1-2 questions for the recruiter (save detailed/technical questions for the client interview)
-    - For each answer where a known anti-pattern could fire, add a bold **"Do NOT say:"** warning (in the CV's language) with the specific trap to avoid
+  - For collaboration/teamwork questions, always use the best **peer-work project** (team collaboration, subcontractors, code reviews) as the primary example — not projects where the candidate was sole decision-maker
+  - Include rate pushback defense if the rate is above market average for the role
+  - Include a short closing with interest statement + max 1-2 questions for the recruiter (save detailed/technical questions for the client interview)
+  - For each answer where a known anti-pattern could fire, add a bold **"Do NOT say:"** warning (in the CV's language) with the specific trap to avoid
 
 ## Tailoring Rules
 
@@ -63,7 +63,7 @@ These rules apply to every generated CV. They prevent recurring issues that redu
 
 ### Honest Scoping
 
-- **Only count projects where the candidate worked *inside* the technology**, not just alongside it. Consuming a product's API from the outside is integration experience, not experience with that product. Make this distinction explicit in the CV.
+- **Only count projects where the candidate worked *****inside***** the technology**, not just alongside it. Consuming a product's API from the outside is integration experience, not experience with that product. Make this distinction explicit in the CV.
 - **Role titles must reflect how the candidate was engaged.** If hired in one role and later absorbed broader duties, frame it as progression (e.g., "Developer, expanding to Architecture & Team Lead"), not as the starting role.
 - **Quantifiers must survive scrutiny.** "Across two projects" must mean two projects with genuine depth. "Three continents" must mean three production deployments, not one production + one pilot + one evaluation. When in doubt, use the more conservative framing.
 - **Certification status must be current.** Check `data/certifications.md` for renewal status. Never list a certification as active if it is expired or renewal-pending without noting the status.
@@ -73,7 +73,7 @@ These rules apply to every generated CV. They prevent recurring issues that redu
 - **Never include weakness admissions.** Phrases like "currently expanding my X experience", "basic knowledge of Y", or "evaluated but not used in production" tell the reader what the candidate *can't* do. If the skill isn't strong enough to state positively, omit it entirely.
 - **Explain concurrent engagements (if any overlap exists).** If any selected projects or roles overlap in time, the CV must acknowledge how concurrent work was managed. Without explanation, reviewers assume a timeline error or exaggeration. Add a brief explanation like "[Engagement A] maintained part-time alongside [Engagement B]" where applicable. Skip this check entirely if no timelines overlap.
 - **Include team-fit signals.** Always include at least 2-3 references to collaboration across the CV: code reviews, knowledge transfer, team onboarding, training, sprint participation, coordination with client departments. Candidates who appear to only work solo raise red flags for team-based roles.
-- **Consult `data/professional-identity.md` narrative patterns table** and actively apply any reframes found there. If the table shows weaker default framings alongside stronger coached versions, use the coached versions.
+- **Consult ****`data/professional-identity.md`**** narrative patterns table** and actively apply any reframes found there. If the table shows weaker default framings alongside stronger coached versions, use the coached versions.
 
 ### Structural Consistency
 

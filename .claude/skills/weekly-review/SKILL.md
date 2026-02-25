@@ -25,8 +25,7 @@ Read the following files in parallel — skip any that don't exist, never fail:
 5. `data/outreach-log.md`
 
 Also Glob:
-- `data/company-research/**/*.md` — collect filenames and read each to check `Last updated:` date in their headers (handles both flat and subdirectory dossier formats)
-- `data/industry-research/*.md` — same
+- `output/**/*.md` — collect filenames and read each to check `Last updated:` date in their headers. Company dossiers are at `output/<slug>/<slug>.md`; industry dossiers are at `output/<slug>/<slug>.md`.
 
 **Date window:** Today is `[today]`. The review covers `[today - 6 days]` through `[today]` (7 days inclusive). Calculate the Monday and Sunday bounding the week for the log header.
 
@@ -74,8 +73,8 @@ If the daily log has no entries (first run or log not maintained): note "Velocit
 
 From the file headers read in Step 1:
 
-1. List any `data/company-research/*.md` files with `Last updated:` date within the 7-day window
-2. List any `data/industry-research/*.md` files with `Last updated:` date within the 7-day window
+1. List any company dossier files (from `output/<slug>/<slug>.md`) with `Last updated:` date within the 7-day window
+2. List any industry dossier files (from `output/<slug>/<slug>.md`) with `Last updated:` date within the 7-day window
 3. Count total research files generated this week
 
 ### Step 6: Generate Top 5 Priorities for Coming Week
@@ -132,8 +131,8 @@ Examples:
 - Overdue: N | High-priority untouched: N
 
 #### Research Completed
-- Company: [Name] — `data/company-research/[slug].md`
-- Industry: [Name] — `data/industry-research/[slug].md`
+- Company: [Name] — `output/[slug]/[slug].md`
+- Industry: [Name] — `output/[slug].md`
 (omit section if none this week)
 
 #### Top 5 Priorities for Coming Week

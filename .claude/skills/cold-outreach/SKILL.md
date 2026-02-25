@@ -3,7 +3,7 @@ name: cold-outreach
 description: Draft personalized cold emails and LinkedIn messages to new contacts — research-informed, tone-matched, with auto-logging
 argument-hint: <name> <company> [role] [channel:email|linkedin] [context]
 user-invocable: true
-allowed-tools: Read(*), Glob(data/*), Grep(data/*), Edit(data/networking.md), Write(data/networking.md), Write(data/job-todos.md), Write(tools/.pending-draft.txt), Edit(data/outreach-log.md), Write(data/outreach-log.md), WebSearch, WebFetch
+allowed-tools: Read(*), Glob(data/*), Grep(data/*), Edit(data/networking.md), Write(data/networking.md), Write(data/job-todos.md), Write(tools/.pending-draft.txt), Edit(data/outreach-log.md), Write(data/outreach-log.md), Write(output/**), WebSearch, WebFetch
 ---
 
 # Cold Outreach — First-Contact Messages
@@ -70,13 +70,13 @@ Read the following files in parallel (skip any that don't exist):
 2. `data/professional-identity.md` — strengths, values, narrative patterns
 3. `data/education.md` — schools, degrees (for alumni matching)
 4. `data/networking.md` — for tone matching (read 2–3 prior sent messages as style reference)
-5. Company dossier (generate slug: lowercase, spaces→hyphens) — try `data/company-research/<slug>/<slug>.md` first (subfolder format), fall back to `data/company-research/<slug>.md` (legacy flat format)
+5. Company dossier — `output/<slug>/<slug>.md` (slug = company name, lowercase, spaces→hyphens)
 6. `data/job-pipeline.md` — pipeline status for this company
 7. `framework/outreach-guide.md` — frameworks, constraints, anti-patterns, quality gate
 
 ### Step 4: Lightweight Research
 
-If no company dossier exists in `data/company-research/`:
+If no company dossier exists in `output/<slug>/`:
 
 1. Run 2–3 targeted web searches:
    - `"[Name] [Company]"` — their role, LinkedIn, recent activity
@@ -186,6 +186,25 @@ BODY:
 ```
 
 Then automatically run `python tools/open_draft.py` using the Bash tool to open the draft in Gmail. Show the output from the script to confirm it opened.
+
+**After opening the draft**, also save an archive copy to `output/<company-slug>/MMDDYY-cold-outreach-<contact-slug>.md`:
+- Company slug = company name, lowercase, spaces→hyphens (e.g., "Amae Health" → `amae-health`)
+- Contact slug = contact's full name, lowercase, spaces→hyphens (e.g., "Alex Mullin" → `alex-mullin`)
+- Date prefix = `MMDDYY` (today's date)
+
+Archive file format:
+```markdown
+# Cold Outreach: [Contact Name] @ [Company] — [YYYY-MM-DD]
+
+**Channel:** [email / linkedin / inmail]
+**Contact:** [Name][, Role if known]
+**Company:** [Company Name]
+**Date:** [YYYY-MM-DD]
+
+---
+
+[Full draft text as presented — subject line on first line if email, then message body]
+```
 
 ### Step 9: Auto-Logging (after user approves)
 

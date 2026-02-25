@@ -26,7 +26,7 @@ This keeps reports actionable for quick decisions while preserving rigor.
 
 ## 3) Canonical dossier format (company research)
 
-Use this section order in `data/company-research/<slug>.md`:
+Use this section order in `output/<company-slug>/<company-slug>.md`:
 
 1. **Decision Snapshot**
    - One-line thesis
@@ -67,7 +67,7 @@ Use this section order in `data/company-research/<slug>.md`:
 
 ## 4) Canonical dossier format (industry research)
 
-Use this section order in `data/industry-research/<slug>.md`:
+Use this section order in `output/<industry-slug>/<industry-slug>.md`:
 
 1. **Industry Snapshot**
    - Attractiveness verdict

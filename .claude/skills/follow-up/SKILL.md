@@ -3,7 +3,7 @@ name: follow-up
 description: Draft follow-up messages to existing contacts — sequence-aware, tone-matched, with value-add logic
 argument-hint: [name] [channel:email|linkedin] [context]
 user-invocable: true
-allowed-tools: Read(*), Glob(data/*), Grep(data/*), Edit(data/networking.md), Write(data/networking.md), Write(data/job-todos.md), Write(tools/.pending-draft.txt), Edit(data/outreach-log.md), Write(data/outreach-log.md), WebSearch, WebFetch
+allowed-tools: Read(*), Glob(data/*), Grep(data/*), Edit(data/networking.md), Write(data/networking.md), Write(data/job-todos.md), Write(tools/.pending-draft.txt), Edit(data/outreach-log.md), Write(data/outreach-log.md), Write(output/**), WebSearch, WebFetch
 ---
 
 # Follow-Up — Sequence-Aware Follow-Up Messages
@@ -81,7 +81,7 @@ Read the following files in parallel (skip any that don't exist):
 
 1. `data/profile.md` — sender background
 2. `data/professional-identity.md` — strengths, values
-3. Company dossier (generate slug from contact's company: lowercase, spaces→hyphens) — try `data/company-research/<slug>/<slug>.md` first (subfolder format), fall back to `data/company-research/<slug>.md` (legacy flat format)
+3. Company dossier — `output/<slug>/<slug>.md` (slug = contact's company, lowercase, spaces→hyphens)
 4. `data/job-pipeline.md` — pipeline status for this company
 5. `data/job-todos.md` — any pending follow-up to-dos for this contact
 6. `framework/outreach-guide.md` — frameworks, constraints, anti-patterns
@@ -113,7 +113,7 @@ Count prior outbound messages to this contact to determine sequence position. Fo
 **Critical rule:** Each follow-up MUST add new value. Never send "just checking in" or "circling back."
 
 **Finding new value to add:**
-1. Check `data/company-research/<slug>.md` for recent findings
+1. Check `output/<slug>/<slug>.md` for recent findings
 2. Run 1–2 web searches for the contact's company — recent news, funding, launches, posts
 3. Reference something from sender's recent activity (new insight, article, event)
 4. If nothing fresh is available, ask a specific question that shows genuine curiosity
@@ -196,6 +196,26 @@ BODY:
 ```
 
 Then automatically run `python tools/open_draft.py` using the Bash tool to open the draft in Gmail. Show the output from the script to confirm it opened.
+
+**After opening the draft**, also save an archive copy to `output/<company-slug>/MMDDYY-follow-up-<contact-slug>.md`:
+- Company slug = contact's company name, lowercase, spaces→hyphens (e.g., "Amae Health" → `amae-health`)
+- Contact slug = contact's full name, lowercase, spaces→hyphens (e.g., "Alex Mullin" → `alex-mullin`)
+- Date prefix = `MMDDYY` (today's date)
+
+Archive file format:
+```markdown
+# Follow-Up: [Contact Name] @ [Company] — [YYYY-MM-DD]
+
+**Channel:** [email / linkedin]
+**Contact:** [Name][, Role if known]
+**Company:** [Company Name]
+**Date:** [YYYY-MM-DD]
+**Sequence position:** Follow-up #[N]
+
+---
+
+[Full draft text as presented — subject line on first line if email, then message body]
+```
 
 #### Step 9: Auto-Logging (after user approves)
 

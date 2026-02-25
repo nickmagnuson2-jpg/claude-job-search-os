@@ -3,7 +3,7 @@ name: todo
 description: Lightweight to-do list for job search tasks not tied to specific applications
 argument-hint: [add|done|daily|clear <task> [priority] [due]]
 user-invocable: true
-allowed-tools: Read(*), Write(data/job-todos.md), Edit(data/job-todos.md), Read(data/job-pipeline.md), Read(data/networking.md), Write(data/job-todos-daily-log.md), Edit(data/job-todos-daily-log.md), Read(data/outreach-log.md), Glob(data/company-research/**), Glob(data/industry-research/*)
+allowed-tools: Read(*), Write(data/job-todos.md), Edit(data/job-todos.md), Read(data/job-pipeline.md), Read(data/networking.md), Write(data/job-todos-daily-log.md), Edit(data/job-todos-daily-log.md), Read(data/outreach-log.md), Glob(output/**)
 ---
 
 # Job Search To-Do Manager
@@ -166,9 +166,8 @@ Generate a daily progress summary, archive it, and show trends.
    - `data/job-pipeline.md`
    - `data/networking.md`
    - `data/outreach-log.md` (skip silently if doesn't exist)
-   - Glob `data/company-research/**/*.md` to get list of dossier files (handles both flat and subdirectory formats)
-   - Glob `data/industry-research/*.md` to get list of research files
-   - For any company-research or industry-research files found, read each and check for `Last updated: [today's date]` in the file header to determine if it was generated/updated today
+   - Glob `output/**/*.md` to get list of research files (company dossiers at `output/<slug>/<slug>.md`; industry dossiers at `output/<slug>/<slug>.md`).
+   - For any research files found, read each and check for `Last updated: [today's date]` in the file header to determine if it was generated/updated today
 
 2. **Build today's snapshot:**
    - Count items completed today (check Notes for today's date in Completed section)
@@ -178,8 +177,8 @@ Generate a daily progress summary, archive it, and show trends.
    - List pipeline entries with their current stages
    - List networking contacts with pending follow-up to-dos
    - **Outreach sent today:** Filter `data/outreach-log.md` rows where Date = today. List recipient, company, channel, and subject/summary.
-   - **Company research completed today:** Any `data/company-research/*.md` file with `Last updated: [today]` in its header.
-   - **Industry research completed today:** Any `data/industry-research/*.md` file with `Last updated: [today]` in its header.
+   - **Company research completed today:** Any `output/<slug>/<slug>.md` file with `Last updated: [today]` in its header.
+   - **Industry research completed today:** Any `output/<slug>/<slug>.md` file with `Last updated: [today]` in its header.
 
 3. **Check for existing entry:** If today's date already has an entry in the daily log, update it (replace) rather than creating a duplicate.
 
@@ -199,8 +198,8 @@ Generate a daily progress summary, archive it, and show trends.
    - [ ] Task description [Priority | Due: date]
 
    #### Research Completed
-   - Company: Ripple Foods (data/company-research/ripple-foods.md)
-   - Industry: Behavioral Health Tech (data/industry-research/behavioral-health-tech.md)
+   - Company: Ripple Foods (output/ripple-foods/ripple-foods.md)
+   - Industry: Behavioral Health Tech (output/behavioral-health-tech.md)
    (omit section entirely if no research completed today)
 
    #### Outreach Sent
@@ -237,8 +236,8 @@ Generate a daily progress summary, archive it, and show trends.
    (or "Nothing completed yet today." if zero)
 
    #### Research Completed Today
-   - **Company:** Ripple Foods — dossier generated (`data/company-research/ripple-foods.md`)
-   - **Industry:** Behavioral Health Tech — landscape analysis generated (`data/industry-research/behavioral-health-tech.md`)
+   - **Company:** Ripple Foods — dossier generated (`output/ripple-foods/ripple-foods.md`)
+   - **Industry:** Behavioral Health Tech — landscape analysis generated (`output/behavioral-health-tech.md`)
    (omit section if none today)
 
    #### Outreach Sent Today
@@ -304,7 +303,7 @@ Generate a daily progress summary, archive it, and show trends.
 - [ ] Review Amae Health open roles [Med | Due: 2026-02-25]
 
 #### Research Completed
-- Company: Ripple Foods (data/company-research/ripple-foods.md)
+- Company: Ripple Foods (output/ripple-foods/ripple-foods.md)
 
 #### Outreach Sent
 - Becky O'Grady @ Ripple Foods — email — "Ripple's next chapter"

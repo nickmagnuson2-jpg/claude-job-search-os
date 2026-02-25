@@ -3,12 +3,12 @@ name: generate-cv
 description: Generate a tailored CV + interview cheat sheet for a specific role — follows the 11-step resume workflow, saves to output/, and updates the pipeline
 argument-hint: <job-url-or-jd> [context]
 user-invocable: true
-allowed-tools: Read(*), Glob(data/*), Glob(plugins/*), Glob(framework/*), Write(output/*), Edit(output/*), Edit(data/job-pipeline.md), WebFetch, WebSearch
+allowed-tools: Read(*), Glob(data/*), Glob(plugins/*), Glob(framework/*), Write(output/**), Edit(output/**), Edit(data/job-pipeline.md), WebFetch, WebSearch
 ---
 
 # Generate CV — Tailored Resume + Cheat Sheet
 
-Generate a fully tailored CV and companion interview cheat sheet for a specific job posting. Follows the 11-step process in `framework/resume-workflow.md`, produces ATS-optimised output in the right format for the market, and saves both files to `output/`.
+Generate a fully tailored CV and companion interview cheat sheet for a specific job posting. Produces ATS-optimised output in the right format for the market and saves both files to `output/`. Quality standards, tailoring rules, and the pre-output checklist are defined inline in this skill.
 
 ## Arguments
 
@@ -51,8 +51,7 @@ Read the following files in parallel — skip any that don't exist, never fail:
 5. `data/certifications.md`
 6. `data/project-index.md`
 7. `data/companies.md`
-8. `framework/resume-workflow.md`
-9. `framework/style-guidelines.md`
+8. `framework/style-guidelines.md`
 
 If `data/profile.md` is missing, warn: "Profile not found — run `/import-cv` first for best results. Proceeding with available data."
 
@@ -83,7 +82,7 @@ If `data/plugin-activation.md` exists, read it. Glob `plugins/*/plugin.md` and c
 
 ### Step 6: Generate the CV
 
-Follow **all rules** in `framework/resume-workflow.md`. Key requirements:
+Apply the **Tailoring Rules** and **CV Quality Standards** defined below. Key requirements:
 
 - **Professional summary** — 3–4 lines tailored to this specific role. Opens with a hook tied to the company's mission or the role's core challenge.
 - **Project ordering** — by relevance to this role, not chronologically. Most relevant project first.
@@ -101,33 +100,44 @@ Follow **all rules** in `framework/resume-workflow.md`. Key requirements:
 
 Before generating the cheat sheet, run the following checks against the CV you just produced. Fix any issues found **in place** — rewrite the CV, don't just flag problems.
 
-**1. Keyword coverage check:**
-- Take the 10 ATS keywords from Step 3.
-- For each keyword, verify it appears at least once in the CV text (case-insensitive, but exact product names must match — "React Native" ≠ "React").
-- If a keyword is missing, find a natural place to insert it (skills section, a bullet point, or the professional summary). If it genuinely can't be added (candidate doesn't have the skill), leave it as a gap.
+**1. Keyword coverage:**
+- Take the 10 ATS keywords from Step 3. For each, verify it appears at least once (case-insensitive, but exact product names must match — "React Native" ≠ "React").
+- If a keyword is missing, find a natural place to insert it. If genuinely not addable (candidate lacks the skill), note as a gap.
 
-**2. Claim audit:**
+**2. Product specificity:**
+- For every technology or platform named, verify the specific sub-product is labelled (not just the parent brand). E.g. "Salesforce" → which cloud? "AWS" → which services? Fix any that are too generic.
+
+**3. Claim integrity:**
 - Scan all quantified claims (years of experience, scale numbers, "across N projects").
-- Cross-reference experience years against project date ranges from the project files loaded in Step 5.
-- Cross-reference scale numbers (users, revenue, team size) against the source project files.
-- If a claim doesn't match source data, fix it to match. If source data is ambiguous, soften the claim ("~200" instead of "200").
-- Check any listed certifications against `data/certifications.md` — flag or remove expired ones listed without qualification.
+- Cross-reference against project date ranges and source files from Step 5. Fix or soften any that don't match source data.
+- Check certifications against `data/certifications.md` — fix or note status for any expired ones.
 
-**3. Self-sabotage scan:**
-- Search the CV for hedging qualifiers that undermine expertise: "currently expanding", "basic knowledge", "evaluated but not used", "learning", "aspiring", "growing", "exposure to", "introductory", "some experience".
-- Remove or rewrite any found. Replace with confident, specific language.
-- Check for at least 2 collaboration signals (code reviews, team onboarding, cross-functional coordination, sprint participation). If missing, add one naturally to a bullet point.
+**4. No weakness admissions:**
+- Search for hedging qualifiers: "currently expanding", "basic knowledge", "evaluated but not used", "learning", "aspiring", "exposure to", "introductory", "some experience". Remove or rewrite any found with confident, specific language.
 
-**4. Language/tense check:**
-- Verify spelling variant consistency (all British OR all American English, not mixed).
-- Verify tense: present tense for current roles, past tense for completed roles.
-- Fix any issues found.
+**5. Concurrent engagement explanation:**
+- If any selected projects overlap in time, confirm the CV explains how concurrent work was managed. Skip entirely if no timelines overlap.
+
+**6. Team-fit signals:**
+- Confirm at least 2–3 collaboration references exist (code reviews, onboarding, cross-functional coordination, sprint participation). Add naturally if missing.
+
+**7. Structural consistency:**
+- **Header pattern**: all project headers follow one format throughout (`Role — Description` or `Description — Role`). No "Flagship:" prefixes. Fix any that don't conform.
+- **Bullet format**: all bullets within each section follow the same format (all with bold labels or all without). Fix inconsistencies.
+- **Dates**: every project and engagement has a date range. Add approximate dates (e.g. "Q2 2023") if missing.
+- **Availability**: header includes availability/location/remote context if market convention expects it or if candidate is in a different region from the role.
+- **Sentence completeness**: every bullet point contains at least one verb. Fix fragments.
+
+**8. Language and tense:**
+- Spelling variant consistent throughout (all British OR all American English — match the job posting's variant).
+- Tense: present tense for current/ongoing roles, past tense for completed ones.
+- No native-language calques — check `data/profile.md` for candidate's native language, then scan for false friends or unusual phrasing.
 
 **After all fixes are applied**, record a QC summary to include in Step 11's output:
 - Keyword coverage: X/10 matched (list any unfixable gaps)
 - Claims verified: X checked, Y corrected
-- Self-sabotage scan: clean / N items fixed
-- Language consistency: clean / N items fixed
+- Issues fixed: list structural, language, or self-sabotage fixes made
+- Clean: confirm if no issues found
 
 ### Step 7: Generate Companion Cheat Sheet
 
@@ -149,18 +159,25 @@ Alongside the CV, generate a pre-interview cheat sheet for this specific role:
 
 6. **Keyword cheat** — list all 10 ATS keywords with a one-line reminder of which project to cite for each.
 
+**Cheat sheet quality rules:**
+- For collaboration/teamwork questions, use the best **peer-work project** as the primary example — not projects where the candidate was sole decision-maker.
+- Include rate pushback defense if the rate is above market average for the role.
+- Include a short closing with interest statement + max 1–2 questions for the recruiter (save detailed/technical questions for the client interview).
+- For each answer where a known anti-pattern could fire, add a bold **"Do NOT say:"** warning with the specific trap to avoid.
+
 ### Step 8: Determine Output Filenames
 
 - Generate date prefix: `MMDDYY` (today's date)
-- CV filename: `output/MMDDYY-[role-slug].md` (e.g., `output/022426-chief-of-staff.md`)
-- Cheat sheet filename: `output/MMDDYY-[role-slug]-cheatsheet.md`
+- Use the company slug from Step 3 as the subfolder: `output/<company-slug>/`
+- CV filename: `output/<company-slug>/MMDDYY-[role-slug].md` (e.g., `output/impossible-foods/022426-chief-of-staff.md`)
+- Cheat sheet filename: `output/<company-slug>/MMDDYY-[role-slug]-cheatsheet.md`
 - If a file at that path already exists, append `-v2`, `-v3` etc.
 
 ### Step 9: Save Output Files
 
 Write both files:
-1. **CV** → `output/MMDDYY-[role-slug].md`
-2. **Cheat sheet** → `output/MMDDYY-[role-slug]-cheatsheet.md`
+1. **CV** → `output/<company-slug>/MMDDYY-[role-slug].md`
+2. **Cheat sheet** → `output/<company-slug>/MMDDYY-[role-slug]-cheatsheet.md`
 
 ### Step 10: Update Pipeline
 
@@ -175,13 +192,13 @@ Write both files:
 ## CV Generated — [Role Title] at [Company]
 
 **Format:** [US/UK/DACH/international] | **Market:** [market]
-**CV saved:** `output/MMDDYY-[role-slug].md`
-**Cheat sheet:** `output/MMDDYY-[role-slug]-cheatsheet.md`
+**CV saved:** `output/<company-slug>/MMDDYY-[role-slug].md`
+**Cheat sheet:** `output/<company-slug>/MMDDYY-[role-slug]-cheatsheet.md`
 
 ### QC Summary (from Step 6b self-review)
 - **Keyword coverage:** N/10 matched [list any unfixable gaps]
 - **Claims verified:** N checked, N corrected
-- **Self-sabotage scan:** clean / N items fixed
+- **Issues fixed:** [list or "none"]
 - **Language consistency:** clean / N items fixed
 
 ### ATS Keyword Coverage
@@ -201,7 +218,7 @@ Write both files:
 [✅ CV Used field updated in pipeline for [Company]] OR [⚠️ [Company] not in pipeline — add with: `/pipe add "[Company]" "[Role]"`]
 
 ### Suggested Next Step
-- Review output: `/review-cv output/MMDDYY-[role-slug].md`
+- Review output: `/review-cv output/<company-slug>/MMDDYY-[role-slug].md`
 - When ready to apply: `/pipe update "[Company]" Applied`
 - Before interview: `/prep-interview "[Company]"`
 ```
@@ -210,7 +227,7 @@ Write both files:
 
 ```markdown
 # Interview Cheat Sheet — [Role] at [Company]
-> Generated [date] from CV: output/[cv-filename].md
+> Generated [date] from CV: output/<company-slug>/[cv-filename].md
 
 ## 15-Second Pitch
 [Tailored pitch for this role]
@@ -244,6 +261,66 @@ Write both files:
 |---------|------------------|
 | [keyword] | [Project name] |
 ```
+
+## Tailoring Rules
+
+- Never fabricate experience or inflate skill levels.
+- **Project selection:** Choose 3–6 projects by relevance to the target role. If one project is marked type: `flagship`, it may deserve inclusion for depth — but it competes on relevance like any other project. If no single standout exists, choose 2–3 of equal weight that best demonstrate depth.
+- **Project framing:** Adapt client descriptions to what's most impressive for the target role (e.g. parent company name for enterprise credibility, or technical characteristics for architecture roles). Full project context is in the project file.
+- **Role-type emphasis:** Match what you lead with to what the job posting values most. Scan `data/project-index.md` tags and `data/skills.md` categories to find the candidate's strongest overlap with the role's focus area — then lead with those projects and skills. Don't assume which technologies or domains the candidate is strongest in; derive it from the data.
+- For **entrepreneurial / startup roles:** include co-founded companies and side businesses from `data/companies.md`.
+- For **consulting / advisory roles:** include relevant early-career experience, professional qualifications, and degree focus areas.
+- Early-career experience (internships, student jobs, apprenticeships, bootcamps, first roles) is usually omitted unless specifically relevant to the target role.
+- Keep resumes to 2–4 pages depending on role seniority.
+- Daily rate and availability are only included if explicitly requested.
+
+### Keyword Pragmatism
+
+When the candidate's source data uses accurate but different terminology from a job posting's buzzwords, find honest bridge language rather than fabricating experience:
+- Use qualifying adjectives that signal intent/direction without claiming full adoption (e.g. "-oriented", "-driven", "-based")
+- Never invent patterns, tools, or practices the candidate hasn't actually used
+- If a keyword gap is too wide to bridge honestly, omit it — don't stretch
+
+## CV Quality Standards
+
+### Keyword Discipline
+
+- **Match the job posting's exact terminology.** If the posting says "CRM", the word "CRM" must appear in the CV. Don't rely on synonyms or related terms. ATS systems and speed-scanning recruiters won't make the connection.
+- **When a technology has sub-products, always specify which one.** E.g. "Salesforce" could mean Sales Cloud, Service Cloud, or Marketing Cloud; "AWS" could mean any of 200+ services. Always label the specific product.
+- **Extract the top 10 keywords from the job posting** before writing. After drafting, verify each appears at least once in the CV. Missing a primary keyword is a critical defect.
+
+### Honest Scoping
+
+- **Only count projects where the candidate worked *inside* the technology**, not just alongside it. Consuming a product's API from the outside is integration experience, not experience with that product. Make this distinction explicit in the CV.
+- **Role titles must reflect how the candidate was engaged.** If hired in one role and later absorbed broader duties, frame it as progression (e.g., "Developer, expanding to Architecture & Team Lead"), not as the starting role.
+- **Quantifiers must survive scrutiny.** "Across two projects" must mean two projects with genuine depth. "Three continents" must mean three production deployments, not one production + one pilot + one evaluation. When in doubt, use the more conservative framing.
+- **Certification status must be current.** Check `data/certifications.md` for renewal status. Never list a certification as active if it is expired or renewal-pending without noting the status.
+
+### Avoid Self-Sabotage
+
+- **Never include weakness admissions.** Phrases like "currently expanding my X experience", "basic knowledge of Y", or "evaluated but not used in production" tell the reader what the candidate *can't* do. If the skill isn't strong enough to state positively, omit it entirely.
+- **Explain concurrent engagements (if any overlap exists).** If any selected projects or roles overlap in time, the CV must acknowledge how concurrent work was managed. Without explanation, reviewers assume a timeline error or exaggeration. Add a brief explanation like "[Engagement A] maintained part-time alongside [Engagement B]" where applicable. Skip this check entirely if no timelines overlap.
+- **Include team-fit signals.** Always include at least 2–3 references to collaboration across the CV: code reviews, knowledge transfer, team onboarding, training, sprint participation, coordination with client departments. Candidates who appear to only work solo raise red flags for team-based roles.
+- **Apply `data/professional-identity.md` narrative reframes.** If the narrative patterns table shows weaker default framings alongside stronger coached versions, use the coached versions.
+
+### Structural Consistency
+
+- **Project headers must follow one pattern throughout.** Use either `Role — Description` or `Description — Role` for all project entries. Never mix. No prefixes like "Flagship:".
+- **All bullets within a section must follow the same format.** If most bullets have bold labels (e.g., `**Architecture:**`), every bullet in that section must. No exceptions.
+- **Every project and engagement must have dates.** No "second engagement" or "later period" without a time range. Even approximate dates (e.g., "Q2 2023") are better than nothing.
+- **Include availability and location context** in the header, when the target market convention expects it or if the candidate is based in a different region from the role. Add a line like "Available: [date] · Remote ([timezone]) · Travel to [region] on request".
+- **Sentence completeness:** Every bullet point must contain at least one verb. Sentence fragments without verbs are defects.
+
+### Language Precision
+
+- **No native-language calques.** Check `data/profile.md` for the candidate's native language, then watch for false friends and literal translations (e.g. German: "reconception" → redesign; French: "résumé" → summary; Spanish: "actually" → currently; Dutch: "eventually" → possibly).
+- **British/American English consistency** — match the target market convention or the job posting's language. Don't mix within a single CV.
+- **Tense must match engagement status.** Present tense for ongoing engagements, past tense for completed ones.
+- **Use standard modern compound forms** (e.g. "subcontractors" not "sub-contractors", "freelancer" not "free-lancer").
+
+## Future: Application Workflow Framework
+
+> **TODO (later):** `/generate-cv`, `/review-cv`, `/review-cv-deep`, and `/cover-letter` share overlapping concerns — quality standards, output paths, and candidate data loading. If rules here need to be duplicated across those skills, extract a shared `framework/application-workflow.md` that all four reference. The trigger: if the same rule needs to be updated in more than one skill at the same time.
 
 ## Edge Cases
 

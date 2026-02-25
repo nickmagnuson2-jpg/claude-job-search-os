@@ -42,7 +42,7 @@ This is the **single source of truth**. Every other feature reads from here. Whe
 
 ## Targeted Resume Generation
 
-An 11-step workflow ([resume-workflow.md](../framework/resume-workflow.md)) takes a job ad and produces a tailored CV:
+An 11-step workflow (defined inline in `.claude/skills/generate-cv/SKILL.md`) takes a job ad and produces a tailored CV:
 
 1. **Analyse the role** — extract requirements, technologies, seniority, market
 2. **Match from data** — scan the project index for relevant experience
@@ -210,7 +210,7 @@ This turns interview preparation from "I feel more confident" into measurable da
 ```
 CLAUDE.md                        ← Orchestration brain: points Claude to the right files
 framework/                       ← Methodology (reusable, no personal data)
-  ├── resume-workflow.md          ← 11-step CV generation workflow
+  ├── archive/resume-workflow.md  ← archived (consolidated into /generate-cv skill)
   ├── interview-workflow.md       ← Session routing and coaching rules
   ├── recruiter-screening.md      ← Recruiter coaching methodology
   ├── mock-interview.md           ← Hiring manager coaching methodology

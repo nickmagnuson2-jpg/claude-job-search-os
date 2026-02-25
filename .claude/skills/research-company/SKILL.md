@@ -3,7 +3,7 @@ name: research-company
 description: Deep company research with parallel agents — overview, funding, people, news, competitive landscape — with conversation starters and similar companies to target
 argument-hint: <company-name> [url] [context]
 user-invocable: true
-allowed-tools: Read(*), Glob(data/*), Grep(data/*), Write(data/company-research/**), Edit(data/company-research/**), Write(data/job-todos.md), Read(data/job-todos.md), Task, WebFetch, WebSearch
+allowed-tools: Read(*), Glob(data/*), Glob(output/**), Grep(data/*), Write(output/**), Edit(output/**), Write(data/job-todos.md), Read(data/job-todos.md), Task, WebFetch, WebSearch
 ---
 
 # Research Company — Deep Dossier with Parallel Agents
@@ -66,9 +66,9 @@ Read the following files in parallel (skip any that don't exist — proceed with
 5. `data/job-pipeline.md` — active pipeline entries at this company
 6. `data/project-index.md` — experience domains for overlap detection
 
-Also check if `data/company-research/<slug>/<slug>.md` already exists (for refresh logic). If not, also check the legacy flat path `data/company-research/<slug>.md` — both formats may exist depending on when the dossier was created.
+Also check if `output/<slug>/<slug>.md` already exists (for refresh logic).
 
-Also check `data/industry-research/` for any existing industry dossier that covers this company's sector. If found, note the file path — agents can reference it instead of reproducing industry-level analysis.
+Also check `output/` for any existing industry dossier (`output/<industry-slug>/<industry-slug>.md`) that covers this company's sector. If found, note the file path — agents can reference it instead of reproducing industry-level analysis.
 
 **Build a candidate context summary** (2-3 paragraphs, shared with all agents) covering:
 - Candidate's name, current situation, and background (from profile)
@@ -81,7 +81,7 @@ Also check `data/industry-research/` for any existing industry dossier that cove
 
 ### Step 2b: Refresh Logic
 
-If `data/company-research/<slug>/<slug>.md` already exists (or the legacy flat path `data/company-research/<slug>.md`):
+If `output/<slug>/<slug>.md` already exists:
 - Check the "Last updated" date in the file.
 - **< 14 days old**: Ask the user: "Existing research from [date] found. Refresh or view existing?"
   - If "view", display the existing file and stop.
@@ -400,7 +400,7 @@ If `data/job-todos.md` doesn't exist, create it with the standard header format 
 
 ### Step 8: Write Output File
 
-Create the output directory `data/company-research/<slug>/` if needed, then write to `data/company-research/<slug>/<slug>.md`:
+Create the output directory `output/<slug>/` if needed, then write to `output/<slug>/<slug>.md`:
 
 ```markdown
 # [Company Name] — Research Dossier
@@ -616,7 +616,7 @@ After writing the file, display a concise summary to the user. This is derived d
 ```markdown
 ## Company Research Complete — [Company Name]
 
-**Saved to:** `data/company-research/<slug>/<slug>.md`
+**Saved to:** `output/<slug>/<slug>.md`
 **Context:** [context type] [with contact name if applicable]
 
 **Opportunity Rating:** [High | Medium | Low] — [rationale from Executive Summary]
@@ -645,7 +645,7 @@ After writing the file, display a concise summary to the user. This is derived d
 [2-3 relevant suggestions from Step 10]
 
 ---
-Full dossier: `data/company-research/<slug>/<slug>.md`
+Full dossier: `output/<slug>/<slug>.md`
 ```
 
 ### Step 10: Suggest Next Steps (Handoff)
@@ -671,4 +671,4 @@ Display 2-3 of the most relevant suggestions based on context type and findings 
 - **Agent returns thin results**: Proceed with remaining agents' data. Note which research dimension was thin in the output. Do NOT fail the entire operation because one agent struggled.
 - **Agent failure / timeout**: If an agent fails to return, proceed with the remaining agents. Note the gap in the output and what section is affected.
 - **Niche industry with few competitors**: If Agent 5 finds very few direct competitors, it should broaden to adjacent industries and note the niche nature. The shortlist may be shorter than 8 — that's fine, quality over quantity.
-- **Relationship to /research-industry**: This skill goes deep on ONE company; `/research-industry` maps the entire landscape. They are complementary: `/research-industry` first to identify targets and understand the terrain, then `/research-company` to deep-dive on specific picks. If `data/industry-research/` already has a dossier for this company's industry, reference it in the "Industry Tailwinds & Headwinds" section and link to it rather than reproducing the landscape analysis.
+- **Relationship to /research-industry**: This skill goes deep on ONE company; `/research-industry` maps the entire landscape. They are complementary: `/research-industry` first to identify targets and understand the terrain, then `/research-company` to deep-dive on specific picks. If `output/<industry-slug>/<industry-slug>.md` exists for this company's sector, reference it in the "Industry Tailwinds & Headwinds" section and link to it rather than reproducing the landscape analysis.

@@ -3,7 +3,7 @@ name: remember
 description: Capture a note mid-session and route it to the right data file — contacts, pipeline, profile, or a general decision log
 argument-hint: "<note text>"
 user-invocable: true
-allowed-tools: Read(*), Edit(data/networking.md), Edit(data/job-pipeline.md), Edit(data/profile.md), Write(data/job-todos.md), Write(data/notes.md), Edit(data/notes.md), Write(inbox/*), Glob(inbox/*), Edit(data/company-research/**), Write(data/company-research/**)
+allowed-tools: Read(*), Edit(data/networking.md), Edit(data/job-pipeline.md), Edit(data/profile.md), Write(data/job-todos.md), Write(data/notes.md), Edit(data/notes.md), Write(inbox/*), Glob(inbox/*), Edit(output/**), Write(output/**)
 ---
 
 # Remember — Capture Notes Mid-Session
@@ -32,7 +32,7 @@ Classify the note into one of these destination types:
 | Type | Detection | Destination |
 |------|-----------|-------------|
 | **Contact note** | Mentions a person's name AND something they said, did, or that you learned about them | `data/networking.md` — append to that contact's entry |
-| **Company note** | Mentions a company name AND new intel (funding, people, strategy, news) | `data/company-research/<slug>/<slug>.md` or `data/company-research/<slug>.md` (whichever exists), otherwise `data/notes.md` |
+| **Company note** | Mentions a company name AND new intel (funding, people, strategy, news) | `output/<slug>/<slug>.md` if a dossier exists, otherwise `data/notes.md` |
 | **Pipeline note** | Mentions a company AND a decision, status change, or strategic note about the application | `data/job-pipeline.md` — append to that company's Notes cell |
 | **Profile update** | Mentions compensation, availability, start date, a preference, or a personal decision | `data/profile.md` — append to the relevant section |
 | **Decision** | A clear decision that affects job search direction (e.g., "decided not to pursue X", "decided to prioritize Y") | `data/notes.md` under a ## Decisions section |
@@ -43,7 +43,7 @@ Classify the note into one of these destination types:
 - Extract person names and company names from the note text
 - Check `data/networking.md` for matching contact entries (full-name match as substring, case-insensitive)
 - Check `data/job-pipeline.md` for matching company entries (full-name match as substring, case-insensitive)
-- Check `data/company-research/` for a matching dossier — try `data/company-research/<slug>/<slug>.md` (subfolder format) first, fall back to `data/company-research/<slug>.md` (legacy flat format)
+- Check `output/<slug>/<slug>.md` for a matching dossier (slug = company name, lowercase, spaces→hyphens)
 - A note can match multiple destinations — if so, write to all that apply (e.g., a note about a person at a pipeline company might update both networking.md and job-pipeline.md)
 
 **If classification is ambiguous**, default to `data/notes.md` and display a note asking if the routing was right.
@@ -77,7 +77,7 @@ Find the matching company's row. Append to the Notes cell:
 Find the most relevant section (Compensation, Availability, Preferences, etc.) and append the note with a date stamp. If the note updates an existing value (e.g., changes comp floor), update the existing value and add a note showing what changed and when.
 
 **For company dossier (company note):**
-Try `data/company-research/<slug>/<slug>.md` first (subfolder format); fall back to `data/company-research/<slug>.md` (legacy flat format). Append at the bottom under a `## Manual Notes` section (create it if it doesn't exist):
+Read `output/<slug>/<slug>.md`. Append at the bottom under a `## Manual Notes` section (create it if it doesn't exist):
 ```
 ### [YYYY-MM-DD]
 [Note text]

@@ -19,7 +19,9 @@ The user has:
 
 ## Arguments
 
-- `$ARGUMENTS` (required): Path to the CV file used for the simulation (e.g. `output/20260210-target-role-slug.md`)
+- `$ARGUMENTS` (required): Path to the CV file used for the simulation.
+  - New nested format: `output/<company-slug>/MMDDYY-[role-slug].md` (e.g. `output/amae-health/022526-chief-of-staff.md`)
+  - Old flat format: `output/MMDDYY-[role-slug].md` (e.g. `output/022526-chief-of-staff.md`) — still supported
 
 The transcript is expected to be in the conversation context — the user pastes it before or after invoking the skill.
 
@@ -27,9 +29,15 @@ The transcript is expected to be in the conversation context — the user pastes
 
 ### Step 1: Load Context
 
+**CV path parsing:** Extract the role slug from the CV path to find companion files:
+- New format `output/<company-slug>/MMDDYY-[role-slug].md`: the filename is `MMDDYY-[role-slug].md` — strip the date prefix to get `[role-slug]`
+- Old format `output/MMDDYY-[role-slug].md`: same logic — strip date prefix from the filename
+
+The cheat sheet is in the same directory as the CV: `<cv-directory>/MMDDYY-[role-slug]-cheatsheet.md`
+
 Load these files in parallel using the CV path to derive filenames:
 
-1. **Cheat sheet** — `*-cheatsheet.md` matching CV filename (full file — this IS the coaching side, coached answers are needed here)
+1. **Cheat sheet** — `*-cheatsheet.md` in the same directory as the CV (full file — this IS the coaching side, coached answers are needed here)
 2. **Coached answers** — `coaching/coached-answers.md` (general coached phrasings)
 3. **Deep review** — `*-DEEP-REVIEW.md` matching CV filename (to know what tough questions were expected)
 4. **Anti-pattern scorecard** — `coaching/progress-recruiter/_summary.md`

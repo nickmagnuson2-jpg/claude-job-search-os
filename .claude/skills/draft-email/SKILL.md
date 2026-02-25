@@ -3,7 +3,7 @@ name: draft-email
 description: Draft job-search emails — thank-you notes, status updates, intro requests, expressions of interest
 argument-hint: <recipient> <purpose> [context]
 user-invocable: true
-allowed-tools: Read(*), Glob(data/*), Grep(data/*), Edit(data/networking.md), Write(data/networking.md), Write(data/job-todos.md), Write(tools/.pending-draft.txt), Edit(data/outreach-log.md), Write(data/outreach-log.md)
+allowed-tools: Read(*), Glob(data/*), Grep(data/*), Edit(data/networking.md), Write(data/networking.md), Write(data/job-todos.md), Write(tools/.pending-draft.txt), Edit(data/outreach-log.md), Write(data/outreach-log.md), Write(output/**)
 ---
 
 # Draft Email — General-Purpose Job Search Emails
@@ -89,9 +89,9 @@ Read the following files in parallel (skip any that don't exist):
 **Type-specific context loading:**
 
 - **Status update:** Also read `data/job-pipeline.md`, `data/job-todos.md`, `data/job-todos-daily-log.md`
-- **Intro request:** Also read company dossier if target company is identifiable — try `data/company-research/<slug>/<slug>.md` first, fall back to `data/company-research/<slug>.md`
-- **Interest:** Also read company dossier (same path logic) and `data/job-pipeline.md`
-- **Informational:** Also read company dossier (same path logic)
+- **Intro request:** Also read company dossier if target company is identifiable — `output/<slug>/<slug>.md`
+- **Interest:** Also read company dossier (`output/<slug>/<slug>.md`) and `data/job-pipeline.md`
+- **Informational:** Also read company dossier (`output/<slug>/<slug>.md`)
 
 ### Step 4: Tone Matching
 
@@ -286,6 +286,27 @@ BODY:
 ```
 
 Then automatically run `python tools/open_draft.py` using the Bash tool to open the draft in Gmail. Show the output from the script to confirm it opened.
+
+**After opening the draft**, save an archive copy if a company is identifiable from context:
+- **If company is known**: save to `output/<company-slug>/MMDDYY-draft-email-<recipient-slug>.md`
+  - Company slug = company name, lowercase, spaces→hyphens
+  - Recipient slug = recipient's full name, lowercase, spaces→hyphens (e.g., "Alex Mullin" → `alex-mullin`)
+  - Date prefix = `MMDDYY` (today's date)
+- **If no company is identifiable** (e.g., general network update with no role/company context): save flat as `output/MMDDYY-draft-email-<recipient-slug>.md`
+
+Archive file format:
+```markdown
+# [Email Type]: [Recipient Name][@ Company if known] — [YYYY-MM-DD]
+
+**Type:** [Thank-you / Update / Intro Request / Interest / Informational / General]
+**Recipient:** [Name][, Role if known]
+**Company:** [Company Name or "—"]
+**Date:** [YYYY-MM-DD]
+
+---
+
+[Full draft text as presented]
+```
 
 ### Step 8: Auto-Logging (after user approves)
 

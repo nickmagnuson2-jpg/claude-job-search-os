@@ -3,7 +3,7 @@ name: research-industry
 description: Deep industry research with parallel agents — market overview, key players, talent demand, trends & regulation, entry strategy — with target companies and positioning advice
 argument-hint: <industry-name> [context]
 user-invocable: true
-allowed-tools: Read(*), Glob(data/*), Grep(data/*), Write(data/industry-research/*), Edit(data/industry-research/*), Write(data/job-todos.md), Read(data/job-todos.md), Task, WebFetch, WebSearch
+allowed-tools: Read(*), Glob(data/*), Glob(output/**), Grep(data/*), Write(output/**), Edit(output/**), Write(data/job-todos.md), Read(data/job-todos.md), Task, WebFetch, WebSearch
 ---
 
 # Research Industry — Deep Landscape Analysis with Parallel Agents
@@ -66,7 +66,10 @@ Read the following files in parallel (skip any that don't exist — proceed with
 6. `data/job-pipeline.md` — active pipeline entries in this industry
 7. `data/networking.md` — existing contacts in this industry
 
-Also check if `data/industry-research/<slug>.md` already exists (for refresh logic).
+Also check for an existing dossier (for refresh logic) in this order:
+1. `output/<slug>/<slug>.md` (new subfolder location)
+2. `output/<slug>.md` (old flat location)
+3. `data/industry-research/<slug>.md` (legacy)
 
 **Build a candidate context summary** (2-3 paragraphs, shared with all agents) covering:
 - Candidate's name, current situation, and background (from profile)
@@ -79,7 +82,7 @@ Also check if `data/industry-research/<slug>.md` already exists (for refresh log
 
 ### Step 2b: Refresh Logic
 
-If `data/industry-research/<slug>.md` already exists:
+If an existing dossier is found at `output/<slug>/<slug>.md`, `output/<slug>.md`, or `data/industry-research/<slug>.md`:
 - Check the "Last updated" date in the file.
 - **< 30 days old**: Ask the user: "Existing research from [date] found. Refresh or view existing?"
   - If "view", display the existing file and stop.
@@ -476,7 +479,7 @@ Using the data loaded in Step 2:
 
 1. **Networking contacts** — list any contacts working in this industry from `data/networking.md` with their company, role, and last interaction.
 2. **Pipeline status** — if any companies in this industry appear in `data/job-pipeline.md`, note the stage and applications.
-3. **Company research** — check `data/company-research/` for any companies in this industry that have already been researched. Note which ones and their research dates.
+3. **Company research** — check `output/` for any company subfolders (e.g., `output/<slug>/<slug>.md`) for companies in this industry that have already been researched. Note which ones and their research dates.
 4. **Experience overlap** — scan `data/project-index.md` for 3-5 projects with the strongest relevance to this industry's needs.
 5. **Skills overlap** — cross-reference `data/skills.md` with Agent 3's skills-in-demand list to identify matches and gaps.
 
@@ -526,7 +529,10 @@ If `data/job-todos.md` doesn't exist, create it with the standard header format.
 
 ### Step 8: Write Output File
 
-Create the output directory if needed, then write to `data/industry-research/<slug>.md`:
+Write to `output/<slug>/<slug>.md` (industry gets its own subfolder, same pattern as company research):
+- Subfolder: `output/<slug>/` (slug = lowercase industry name, spaces→hyphens)
+- Filename: `<slug>.md` (matches the folder name, no date prefix — this is the canonical dossier)
+- Example: "Behavioral Health Tech" → `output/behavioral-health-tech/behavioral-health-tech.md`
 
 ```markdown
 # [Industry Name] — Industry Landscape Analysis
@@ -861,7 +867,7 @@ After writing the file, display a concise summary to the user. This is derived d
 ```markdown
 ## Industry Research Complete — [Industry Name]
 
-**Saved to:** `data/industry-research/<slug>.md`
+**Saved to:** `output/<slug>/<slug>.md`
 **Context:** [context type] [with anchor company if applicable]
 
 **Attractiveness:** [High | Medium | Low] — [rationale from Executive Summary]
@@ -895,7 +901,7 @@ After writing the file, display a concise summary to the user. This is derived d
 [2-3 relevant suggestions from Step 10]
 
 ---
-Full landscape analysis: `data/industry-research/<slug>.md`
+Full landscape analysis: `output/<slug>/<slug>.md`
 ```
 
 ### Step 10: Suggest Next Steps (Handoff)
@@ -920,5 +926,5 @@ Display 2-3 of the most relevant suggestions based on context type and findings 
 - **No profile data**: Proceed with generic candidate context. Note in output: "Candidate context was limited — run `/import-cv` for better personalization."
 - **Agent returns thin results**: Proceed with remaining agents' data. Note which research dimension was thin in the output. Do NOT fail the entire operation because one agent struggled.
 - **Agent failure / timeout**: If an agent fails to return, proceed with the remaining agents. Note the gap in the output and what section is affected.
-- **Existing company research found**: If `data/company-research/` contains dossiers for companies in this industry, reference them in the "Connection to You" section and note them in the target list.
+- **Existing company research found**: If `output/` contains company subfolders with dossiers for companies in this industry, reference them in the "Connection to You" section and note them in the target list.
 - **Overlaps with /research-company**: This skill maps the landscape; `/research-company` goes deep on one company. The natural flow is: `/research-industry` first to identify targets, then `/research-company` on the top picks.

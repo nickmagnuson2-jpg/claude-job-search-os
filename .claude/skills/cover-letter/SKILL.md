@@ -3,7 +3,7 @@ name: cover-letter
 description: Generate a tailored 3-paragraph cover letter for a specific role — hook, value bridge, close with ask — saved to output/ with date prefix
 argument-hint: <job-url-or-jd> [context]
 user-invocable: true
-allowed-tools: Read(*), Glob(data/*), Glob(framework/*), Write(output/*), Edit(data/job-pipeline.md), WebFetch, WebSearch
+allowed-tools: Read(*), Glob(data/*), Glob(framework/*), Write(output/**), Edit(data/job-pipeline.md), WebFetch, WebSearch
 ---
 
 # Cover Letter — Tailored 3-Paragraph Generator
@@ -110,12 +110,14 @@ If `[context]` was provided, apply the instructions now:
 ### Step 7: Determine Output Filename
 
 - Date prefix: `MMDDYY` (today's date)
-- Filename: `output/MMDDYY-cover-letter-[company-slug].md`
+- Use the company slug from Step 3 as the subfolder: `output/<company-slug>/`
+- Filename: `output/<company-slug>/MMDDYY-cover-letter.md`
+  (company is already in the folder name, omit from filename)
 - If file exists: append `-v2`, `-v3`
 
 ### Step 8: Save Output
 
-Write the cover letter to `output/MMDDYY-cover-letter-[company-slug].md`.
+Write the cover letter to `output/<company-slug>/MMDDYY-cover-letter.md`.
 
 File structure:
 
@@ -158,7 +160,7 @@ If profile name/contact is unavailable, leave those fields as `[Your Name]` / `[
 ```
 ## Cover Letter Generated — [Role Title] at [Company]
 
-**Saved:** `output/MMDDYY-cover-letter-[company-slug].md`
+**Saved:** `output/<company-slug>/MMDDYY-cover-letter.md`
 **Word count:** [N] words
 **Tone:** [match / adjusted for JD energy]
 

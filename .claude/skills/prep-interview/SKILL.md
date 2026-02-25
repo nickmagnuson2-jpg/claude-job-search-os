@@ -3,7 +3,7 @@ name: prep-interview
 description: One-command interview prep package — question mapping, company context digest, and tactics/logistics — saved as a single output document
 argument-hint: <company> [role] [context]
 user-invocable: true
-allowed-tools: Read(*), Glob(data/*), Glob(output/*), Write(output/*), Write(data/job-todos.md), Task, WebSearch, WebFetch
+allowed-tools: Read(*), Glob(data/*), Glob(output/**), Write(output/**), Write(data/job-todos.md), Task, WebSearch, WebFetch
 ---
 
 # Prep Interview — One-Command Interview Prep Package
@@ -52,7 +52,7 @@ Examples:
 
 Read the following in parallel — skip any that don't exist:
 
-1. Company dossier — try `data/company-research/<slug>/<slug>.md` first (subfolder format), fall back to `data/company-research/<slug>.md` (legacy flat format)
+1. Company dossier — `output/<slug>/<slug>.md`
 2. `data/profile.md`
 3. `data/professional-identity.md`
 4. `coaching/coached-answers.md`
@@ -261,7 +261,9 @@ After all 3 agents return, compile their outputs into a single document. Do not 
 
 ### Step 6: Determine Output Filename and Save
 
-- Generate: `output/MMDDYY-[company-slug]-prep.md`
+- Use the company slug from Step 1 as the subfolder: `output/<company-slug>/`
+- Generate: `output/<company-slug>/MMDDYY-prep.md`
+  (company is already in the folder name, omit from filename)
 - If file exists, append `-v2`, `-v3` etc.
 - Write the compiled document to that path.
 
@@ -284,7 +286,7 @@ After all 3 agents return, compile their outputs into a single document. Do not 
 **Date:** [date if known, or "not specified"]
 **Stage:** [from pipeline]
 
-**Saved:** `output/MMDDYY-[company-slug]-prep.md`
+**Saved:** `output/<company-slug>/MMDDYY-prep.md`
 
 ### Coverage
 - Questions mapped: N (N with coached answers, N gaps)
@@ -300,7 +302,7 @@ After all 3 agents return, compile their outputs into a single document. Do not 
 ✅ "Debrief after [Company] interview" added to job-todos.md [due: date]
 
 ---
-Full prep doc: `output/MMDDYY-[company-slug]-prep.md`
+Full prep doc: `output/<company-slug>/MMDDYY-prep.md`
 After the interview: `/debrief` to log session and update coached answers
 ```
 

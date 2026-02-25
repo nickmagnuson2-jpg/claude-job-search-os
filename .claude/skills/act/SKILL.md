@@ -3,7 +3,7 @@ name: act
 description: Autonomously execute actionable to-dos (careers checks, company research, article reads) — preview first, then run in parallel with right-sized models
 argument-hint: [none]
 user-invocable: true
-allowed-tools: Read(*), Edit(data/job-todos.md), Write(data/job-todos.md), Write(data/company-research/**), Edit(data/company-research/**), Write(data/industry-research/*), WebFetch(*), WebSearch, Task, Glob(data/company-research/**), Glob(inbox/*), Write(data/job-pipeline.md), Edit(data/job-pipeline.md), Write(data/networking.md), Edit(data/networking.md), Write(data/notes.md), Edit(data/notes.md), Bash(rm inbox/*)
+allowed-tools: Read(*), Edit(data/job-todos.md), Write(data/job-todos.md), Write(output/**), Edit(output/**), WebFetch(*), WebSearch, Task, Glob(output/**), Glob(inbox/*), Write(data/job-pipeline.md), Edit(data/job-pipeline.md), Write(data/networking.md), Edit(data/networking.md), Write(data/notes.md), Edit(data/notes.md), Bash(rm inbox/*)
 ---
 
 # Act — Execute Actionable To-Dos
@@ -19,12 +19,12 @@ Read the following in parallel:
 1. `data/job-todos.md` — the active to-do list
 2. `data/profile.md` — candidate background, target roles, and location (for role-matching in careers checks)
 3. `data/job-pipeline.md` — active pipeline (to note when a company is already being tracked)
-4. Glob `data/company-research/**/*.md` — to detect existing dossiers and their freshness (catches both flat `data/company-research/slug.md` and subfolder `data/company-research/slug/slug.md` layouts)
+4. Glob `output/**/*.md` — to detect existing company dossiers and their freshness (catches `output/<slug>/<slug>.md` layout)
 5. Glob `inbox/*` — list captured inbox items (filenames only; skip README.md)
 
 **Extract from profile.md:** the candidate's target role types (e.g., Chief of Staff, Strategy & Operations, Head of Operations, Director of Operations, Business Operations, Strategic Finance, Head of Strategy, VP Operations). These are the keywords used to match careers page results.
 
-**Build fresh dossier list:** For each file found in `data/company-research/`, read the `Last updated:` date from the file header. A dossier is "fresh" if Last updated is within the last 30 days. Build a map of: company slug → (exists, fresh, date). For slug matching, a file at `data/company-research/amae-health/amae-health.md` or `data/company-research/amae-health.md` both count as the Amae Health dossier.
+**Build fresh dossier list:** For each file found under `output/`, read the `Last updated:` date from the file header. A dossier is "fresh" if Last updated is within the last 30 days. Build a map of: company slug → (exists, fresh, date). A file at `output/amae-health/amae-health.md` counts as the Amae Health dossier.
 
 **Flag blocked URLs:** While reading each Pending to-do, check if its Notes field contains the string `"access blocked"` (case-insensitive). Tag those rows as `blocked: true`. These will be pre-filtered in Step 2.
 
@@ -65,8 +65,8 @@ Then classify each remaining Pending to-do into one of these buckets:
 | Category | Detection Pattern | Action |
 |----------|------------------|--------|
 | **Careers check** | Task text contains "Check [Company] careers" or "Check [Company] for [role types]" AND Notes contain a URL | Fetch careers page URL; scan for roles matching candidate's target role keywords |
-| **Company research** | Task text contains "Research [Company]", "Deep-dive research [Company]", or Notes explicitly say "Run `/research-company`" | Full research-company pipeline: 5 parallel agents, save dossier to `data/company-research/[slug]/[slug].md` |
-| **Article/content read** | Task text begins with "Read" or "Review [document/article]" AND Notes contain a specific article or document URL (not a general platform URL) | Fetch URL; return 4-5 key insights and why it matters; save to `data/company-research/[slug]/[MMDDYY]-article-[article-slug].md` or `data/industry-research/[MMDDYY]-article-[article-slug].md` |
+| **Company research** | Task text contains "Research [Company]", "Deep-dive research [Company]", or Notes explicitly say "Run `/research-company`" | Full research-company pipeline: 5 parallel agents, save dossier to `output/[slug]/[slug].md` |
+| **Article/content read** | Task text begins with "Read" or "Review [document/article]" AND Notes contain a specific article or document URL (not a general platform URL) | Fetch URL; return 4-5 key insights and why it matters; save to `output/[slug]/[MMDDYY]-article-[article-slug].md` (if company-associated) or `output/[MMDDYY]-article-[article-slug].md` (if no company) |
 | **Resource browse** | Task text begins with "Browse [platform]" AND Notes contain a platform URL AND task specifies a filter criterion | Fetch URL; return top 3-5 results matching the filter criterion |
 
 **Careers check URL extraction:** Pull the URL from the Notes field — it is always the URL in `[text](url)` markdown format or a bare URL in the notes.
@@ -126,7 +126,7 @@ Display the full categorized plan. **Do not execute anything yet.** Show all sec
 > Type `run research` to run ONLY the research tasks.
 
 ### Skipped — Fresh Dossier Exists (< 30 days)
-- **Amae Health** — dossier from 2026-02-18 (`data/company-research/amae-health/amae-health.md`)
+- **Amae Health** — dossier from 2026-02-18 (`output/amae-health/amae-health.md`)
 
 ### Skipped — Careers Page Checked Recently
 - **Wellhub** — Checked 2026-02-22 — re-check after 2026-03-01
@@ -273,7 +273,7 @@ Research process:
    - Conversation Starters (3 specific, researched talking points for the candidate to use)
    - Next Steps (suggested: add to pipeline, draft outreach, etc.)
 
-3. Save the completed dossier to: data/company-research/[slug]/[slug].md
+3. Save the completed dossier to: output/[slug]/[slug].md
    File header must include: `Last updated: [today's date in YYYY-MM-DD format]`
    Slug format: lowercase company name with spaces replaced by hyphens (e.g., "Spring Health" → spring-health)
    The directory will be created automatically by the Write tool.
@@ -316,9 +316,9 @@ Instructions:
    [1-sentence relevance for this job search]
 
 4. Save the full summary to a file:
-   - If primary_company is set: data/company-research/[slug]/[MMDDYY]-article-[article-slug].md
+   - If primary_company is set: output/[slug]/[MMDDYY]-article-[article-slug].md
      where [slug] = company name lowercased, hyphens for spaces (e.g., "amae-health")
-   - If primary_company is null: data/industry-research/[MMDDYY]-article-[article-slug].md
+   - If primary_company is null: output/[MMDDYY]-article-[article-slug].md
    - [article-slug] = article title lowercased, spaces to hyphens, max 5 words (e.g., "oud-treatment-digital-health")
    - [MMDDYY] = today's date formatted as MMDDYY (e.g., 022426 for Feb 24, 2026)
 
@@ -366,7 +366,7 @@ After all agents return, process results one by one:
 - Status → `Done`
 - Notes → append ` | Completed [today's date] — [1-sentence result summary]`
   - Careers check: "N relevant roles found" or "No relevant roles found"
-  - Company research: "Dossier saved to data/company-research/[slug]/[slug].md"
+  - Company research: "Dossier saved to output/[slug]/[slug].md"
   - Article read: "[first key insight, ~80 chars] — Summary: [save path returned by agent]"
   - Resource browse: "N results found matching filter"
 
@@ -399,12 +399,12 @@ Write the updated `data/job-todos.md`.
 
 ### Company Research
 
-**Talkiatry** — dossier saved: `data/company-research/talkiatry/talkiatry.md`
+**Talkiatry** — dossier saved: `output/talkiatry/talkiatry.md`
 > $210M Series D (Feb 2026), 600+ psychiatrists on platform, telehealth-first SMI focus.
 > Strategy & Ops team actively hiring. Strong fit for S&O background.
 > Run `/research-company "Talkiatry"` for deeper refresh, or `/prep-interview "Talkiatry"` when applying.
 
-**Headway** — dossier saved: `data/company-research/headway/headway.md`
+**Headway** — dossier saved: `output/headway/headway.md`
 > ...
 
 ---
@@ -416,7 +416,7 @@ Write the updated `data/job-todos.md`.
 - Insurance parity laws are expanding reimbursement for digital therapeutics
 - [3 more key insights]
 - Why it matters: Provides credibility talking points for the Amae Health coffee chat with Alex.
-> Summary saved: `data/company-research/amae-health/022426-article-oud-treatment-digital-health.md`
+> Summary saved: `output/amae-health/022426-article-oud-treatment-digital-health.md`
 
 ---
 

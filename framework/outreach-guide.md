@@ -151,7 +151,7 @@ Research shows 3–5 follow-ups spaced 3–5 business days apart are optimal.
 | 4th | 20–28 days after initial | Last attempt — "I know you're busy, one last note" |
 | 5th+ | 35+ days | Break-up: "No pressure, just wanted to leave the door open" |
 
-**Critical rule:** Each follow-up MUST add new value — never just "checking in" or "circling back." Check `data/company-research/` and web for recent developments to reference.
+**Critical rule:** Each follow-up MUST add new value — never just "checking in" or "circling back." Check `output/<slug>/` and web for recent developments to reference.
 
 ---
 
