@@ -19,15 +19,18 @@ This repository is your **end-to-end job search operating system** — from iden
 
 Owner details live in `data/profile.md` (gitignored — prevents personal data leaking on public forks).
 
-**Always read `data/profile.md` at the start of any session that generates CVs, coaching, or personalised output.**
+Search goals and targeting criteria live in `data/goals.md` (also gitignored). See `framework/templates/goals.md` for the template.
+
+**Always read `data/profile.md` and `data/goals.md` at the start of any session that generates CVs, coaching, or personalised output.**
 
 ### Profile Guard — Hard Prerequisite
 
-**Before running ANY generative or research skill** (`/generate-cv`, `/research-company`, `/research-industry`, `/prep-interview`, `/cold-outreach`, `/follow-up`, `/draft-email`, `/voice-export`, `/extract-identity`, `/review-cv`, `/review-cv-deep`, `/weekly-review`, `/scan-jobs`), check that `data/profile.md` exists and contains real content (not just the template). If the file is missing or contains only TODO placeholders:
+**Before running ANY generative or research skill** (`/generate-cv`, `/research-company`, `/research-industry`, `/prep-interview`, `/cold-outreach`, `/follow-up`, `/draft-email`, `/voice-export`, `/extract-identity`, `/review-cv`, `/review-cv-deep`, `/weekly-review`, `/scan-jobs`, `/standup`), check that **both** `data/profile.md` and `data/goals.md` exist and contain real content (not just TODO placeholders). If either file is missing or contains only TODO placeholders:
 
 1. **STOP** — do not proceed with the skill.
-2. Inform the user: "⚠️ `data/profile.md` is missing or incomplete. This file is required before running any skills. Run `/import-cv` first to populate your profile, or manually create `data/profile.md` with your name, background, and career context."
-3. Do not fall back to generic candidate context — the whole system depends on personalized data.
+2. If `data/profile.md` is missing or empty: "⚠️ `data/profile.md` is missing or incomplete. Run `/import-cv` first to populate your profile, or manually create `data/profile.md` with your name, background, and career context."
+3. If `data/goals.md` is missing or all TODOs: "⚠️ `data/goals.md` is missing or incomplete. Copy `framework/templates/goals.md` to `data/goals.md` and fill in your search thesis and target criteria before running skills."
+4. Do not fall back to generic candidate context — the whole system depends on personalized data.
 
 ## Repository Structure
 

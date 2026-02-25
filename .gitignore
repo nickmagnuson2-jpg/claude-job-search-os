@@ -2,6 +2,7 @@
 # If you use a private repo and want to version your data, remove these lines.
 /data/
 /coaching/
+/inbox/
 
 # Generated output (regenerable from data)
 /output/
