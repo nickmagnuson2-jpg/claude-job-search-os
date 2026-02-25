@@ -92,7 +92,7 @@ If `data/company-research/<slug>.md` already exists:
 
 ### Step 3: Launch 5 Parallel Research Agents
 
-Use the Task tool to launch **five parallel subagents** (`subagent_type: "general-purpose"`, `max_turns: 12`).
+Use the Task tool to launch **five parallel subagents** (`subagent_type: "general-purpose"`, `model: "haiku"`, `max_turns: 12`).
 
 **Each agent receives:**
 - The candidate context summary from Step 2

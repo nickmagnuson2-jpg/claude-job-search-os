@@ -97,7 +97,7 @@ Pass any found inconsistencies to Agent 1 (Question Mapping) so it can account f
 
 ### Step 4: Launch 3 Parallel Agents
 
-Use the Task tool to launch **3 parallel subagents** (`subagent_type: "general-purpose"`, `max_turns: 10`).
+Use the Task tool to launch **3 parallel subagents** (`subagent_type: "general-purpose"`, `model: "sonnet"`, `max_turns: 10`).
 
 Pass to each agent:
 - The company name, role, interview type, and interview date (if known)

@@ -58,9 +58,29 @@ Every time to-dos are displayed (by any command), cross-reference the task text 
 
 If a to-do has no links, display it normally without annotation lines.
 
+### Pipeline Sync (auto-run before any display)
+
+Before displaying to-dos in **any command**, run a pipeline sync to auto-complete to-dos for withdrawn/rejected/accepted companies:
+
+1. Read `data/job-pipeline.md` (already loaded for cross-referencing).
+2. Extract company names from the **Archived** section where Stage is `Withdrawn`, `Rejected`, or `Accepted`. Call this the **terminal companies** list.
+3. Scan `data/job-todos.md` Active section for any rows where:
+   - Status is NOT `Done`, AND
+   - The task text or notes contain a terminal company name as a full-name substring (case-insensitive, same matching rules as cross-referencing)
+4. For each matched row, auto-update:
+   - **Status** → `Withdrawn`
+   - **Notes** → append `Auto-withdrawn 2026-XX-XX — [Company] pipeline entry marked [Stage]` (use today's date)
+5. Write the updated `data/job-todos.md` if any rows were changed.
+6. If any items were auto-withdrawn, display a notice **above** the to-do list:
+   ```
+   ⚡ Pipeline sync: N to-do(s) auto-withdrawn — [Company] marked [Stage]
+   ```
+7. If no terminal companies exist in the pipeline, skip silently.
+
 ### Command: Show To-Dos (no arguments)
 
-1. Read these files in parallel:
+1. Run **Pipeline Sync** (above) first.
+2. Read these files in parallel:
    - `data/job-todos.md`
    - `data/job-pipeline.md`
    - `data/networking.md`
@@ -298,6 +318,15 @@ Generate a daily progress summary, archive it, and show trends.
 - **High** — blocking progress or time-sensitive (e.g., follow up before deadline, fix broken profile)
 - **Med** — important but not urgent (e.g., update LinkedIn, research companies)
 - **Low** — nice-to-have, do when there's time (e.g., optimize portfolio, read industry articles)
+
+## Status Values
+
+- **Pending** — not yet started
+- **In Progress** — actively being worked on
+- **Done** — genuinely completed — the task was accomplished (counts toward velocity and completion stats)
+- **Withdrawn** — deprioritized, cancelled, or made irrelevant (e.g., company pipeline entry withdrawn, role no longer exists, plan changed) — does NOT count as a completion; excluded from velocity and streak calculations
+
+Use `Withdrawn` instead of `Done` for anything that did not result in real work or output. This keeps completion stats honest — `Done` represents actual accomplishment, `Withdrawn` represents things that fell away.
 
 ## Display Format
 

@@ -55,7 +55,7 @@ From the job posting, extract:
 
 ### Step 3: Launch Six Parallel Reviews
 
-Use the Task tool to launch **six parallel subagents** (subagent_type: `general-purpose`), each adopting a different perspective.
+Use the Task tool to launch **six parallel subagents** (subagent_type: `general-purpose`, model: `sonnet`), each adopting a different perspective.
 
 **Context strategy — differentiated by perspective:**
 
