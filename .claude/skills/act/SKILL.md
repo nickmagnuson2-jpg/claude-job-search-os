@@ -38,7 +38,7 @@ Read the following in parallel:
 | 2 | **Contact capture** | Content mentions a person's full name (two capitalized words) alongside context words: "met", "intro", "talk to", "reach out", "connect with", "introduced me to" | Write to `data/networking.md` immediately when user confirms |
 | 3 | **Article to read** | Content contains a URL where the domain is a media/editorial source (e.g., techcrunch, forbes, statnews, mobihealthnews, axios, substack), OR the URL path contains `/news/`, `/blog/`, `/article/`, `/post/`, `/insights/` | Add to Bucket A for this session — execute now |
 | 4 | **Company to research** | Content mentions a company name alongside: "check out", "research", "look into", "interesting", "target", OR just a company name + company homepage URL (no specific job path) | Add to Bucket A for this session — execute now |
-| 5 | **Unclassifiable** | Doesn't match any above pattern | Write to `data/notes.md` immediately when user confirms |
+| 5 | **Unclassifiable** | Doesn't match any above pattern | If a company name is identifiable in the content, write to `output/<slug>/notes.md` (create if needed). Otherwise write to `data/notes.md`. Both confirmed by user before writing. |
 
 **Company name extraction from job ad URLs:**
 - `job-boards.greenhouse.io/[slug]/` → use slug
@@ -196,7 +196,25 @@ Build the final **execute list** from the parsed response.
    **Follow-up:** Review and update relationship type, add outreach if appropriate.
    ```
 
-**Unclassifiable → `data/notes.md`:** If `data/notes.md` doesn't exist, create it first:
+**Unclassifiable → company `notes.md` or `data/notes.md`:**
+
+First, check if a company name is identifiable in the inbox item content. If yes:
+- Write to `output/<slug>/notes.md`. If it doesn't exist, create it:
+  ```markdown
+  # [Company Name] — Notes
+
+  > Running log of raw notes, call prep, and observations.
+  > Newest entries at the top. One section per date + context.
+
+  ---
+  ```
+  Then prepend a new entry at the top of the log:
+  ```markdown
+  ## [YYYY-MM-DD] | From inbox
+  [Raw content of inbox file]
+  ```
+
+If no company is identifiable, fall back to `data/notes.md`. If `data/notes.md` doesn't exist, create it first:
 ```markdown
 # Notes
 

@@ -131,6 +131,7 @@ Search goals and targeting criteria live in `data/goals.md` (also gitignored). S
     │   ├── MMDDYY-[role-slug]-cheatsheet.md  #   Interview cheat sheet
     │   ├── MMDDYY-cover-letter.md  #   Cover letter
     │   ├── MMDDYY-prep.md         #     Interview prep package
+    │   ├── notes.md               #     Raw notes log — recruiter calls, video/article notes, call prep, observations (no date prefix; append newest at top)
     │   ├── MMDDYY-cold-outreach-[contact-slug].md  #  Outreach archive
     │   ├── MMDDYY-follow-up-[contact-slug].md      #  Follow-up archive
     │   └── MMDDYY-draft-email-[recipient-slug].md  #  Draft email archive
@@ -159,7 +160,9 @@ Examples:
 - `output/behavioral-health-tech/behavioral-health-tech.md` — industry dossier (no date, matches folder)
 - `output/MMDDYY-draft-email-[recipient-slug].md` — flat fallback when no company is identifiable
 
-**Date prefix rule:** Applies to all dated artifact files within folders. The research dossier `<slug>.md` is the one exception — it has no date prefix because it is the canonical, in-place-versioned file for that entity. Skills that write to `output/` must use the subfolder pattern. Flat `output/MMDDYY-*.md` is only for one-off outputs with no associated entity.
+**Date prefix rule:** Applies to all dated artifact files within folders. Two exceptions have no date prefix because they are canonical, in-place-versioned files: the research dossier (`<slug>.md`) and the notes log (`notes.md`). Skills that write to `output/` must use the subfolder pattern. Flat `output/MMDDYY-*.md` is only for one-off outputs with no associated entity.
+
+**`notes.md` convention:** A free-form running log for each company — recruiter call notes, video/article observations, pre-call prep, general thoughts. Create it manually when needed; append new entries at the top with a `## YYYY-MM-DD | [context]` header. No skill required. The dossier (`<slug>.md`) holds structured research; `notes.md` holds everything raw and informal.
 
 ## Data Files — Conventions
 
