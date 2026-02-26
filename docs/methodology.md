@@ -821,3 +821,7 @@ The foundation gave me: a way to store professional experience as structured mar
 **Why:** Important context was being captured as raw chat text and then lost between sessions. Notes about contacts, companies, and decisions were disappearing into conversation history.
 
 **Learned:** Routing classification needs to be explicit. Without it, everything ends up in a general notes dump that quickly becomes unsearchable. The five-category routing (contact / company / pipeline / profile / general) covers the vast majority of what gets captured mid-session.
+
+---
+
+*For bug fixes, skill patches, and system maintenance changes, see [CHANGELOG.md](./CHANGELOG.md).*

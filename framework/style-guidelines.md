@@ -17,7 +17,11 @@ Then apply these universal principles:
 
 ## Nick's Voice — Outreach & Email
 
-Derived from actual sent messages. Apply when drafting any outreach, follow-up, or email on Nick's behalf.
+**This is the canonical source for Nick's personal voice in all outreach.** Patterns are extracted from actual sent messages and promoted here from `memory/lessons.md` when a correction pattern reaches 2+ occurrences.
+
+**Precedence:** These patterns override generic guidance in `framework/outreach-guide.md` when they conflict. Nick's Voice is specific and observed; outreach-guide is universal and strategic — they are complementary, not duplicative.
+
+**When adding new rules** (via the self-improvement loop): add to the most specific subsection below. If no subsection fits, create one.
 
 ### Greetings & Closings
 - Open with **"Hi [Name],"** for warm contacts — not just the name alone, not "Hello"

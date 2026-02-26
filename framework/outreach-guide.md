@@ -192,6 +192,8 @@ Research shows 3–5 follow-ups spaced 3–5 business days apart are optimal.
 
 ## Tone Matching Protocol
 
+> **Scope:** This protocol covers HOW to calibrate tone from prior messages. For WHAT Nick's voice sounds like — specific phrases, greetings, closings, and learned patterns — see `framework/style-guidelines.md` → Nick's Voice section. Those patterns take precedence over the generic calibration guidance below.
+
 1. Read 2–3 of the sender's actual sent messages from `data/networking.md`
 2. Analyze: sentence length, formality level, use of contractions, opening/closing patterns, characteristic phrases, emoji usage
 3. Draft in that style — few-shot examples beat style descriptions

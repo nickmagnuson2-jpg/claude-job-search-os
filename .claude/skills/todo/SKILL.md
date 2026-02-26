@@ -3,7 +3,7 @@ name: todo
 description: Lightweight to-do list for job search tasks not tied to specific applications
 argument-hint: [add|done|daily|clear <task> [priority] [due]]
 user-invocable: true
-allowed-tools: Read(*), Write(data/job-todos.md), Edit(data/job-todos.md), Read(data/job-pipeline.md), Read(data/networking.md), Write(data/job-todos-daily-log.md), Edit(data/job-todos-daily-log.md), Read(data/outreach-log.md), Glob(output/**)
+allowed-tools: Read(*), Write(data/job-todos.md), Edit(data/job-todos.md), Read(data/job-pipeline.md), Read(data/networking.md), Write(data/job-todos-daily-log.md), Edit(data/job-todos-daily-log.md), Read(data/outreach-log.md), Read(docs/CHANGELOG.md), Glob(output/**)
 ---
 
 # Job Search To-Do Manager
@@ -166,6 +166,7 @@ Generate a daily progress summary, archive it, and show trends.
    - `data/job-pipeline.md`
    - `data/networking.md`
    - `data/outreach-log.md` (skip silently if doesn't exist)
+   - `docs/CHANGELOG.md` (skip silently if doesn't exist)
    - Glob `output/**/*.md` to get list of research files (company dossiers at `output/<slug>/<slug>.md`; industry dossiers at `output/<slug>/<slug>.md`).
    - For any research files found, read each and check for `Last updated: [today's date]` in the file header to determine if it was generated/updated today
 
@@ -179,6 +180,7 @@ Generate a daily progress summary, archive it, and show trends.
    - **Outreach sent today:** Filter `data/outreach-log.md` rows where Date = today. List recipient, company, channel, and subject/summary.
    - **Company research completed today:** Any `output/<slug>/<slug>.md` file with `Last updated: [today]` in its header.
    - **Industry research completed today:** Any `output/<slug>/<slug>.md` file with `Last updated: [today]` in its header.
+   - **Changelog entries today:** Scan `docs/CHANGELOG.md` for sections starting with `## [today's date]`. For each match, extract the entry title (the text after `## YYYY-MM-DD — `) and a one-line summary of what changed (e.g. "3 bugs fixed" or "new skill added"). Omit if no entries match today.
 
 3. **Check for existing entry:** If today's date already has an entry in the daily log, update it (replace) rather than creating a duplicate.
 
@@ -205,6 +207,10 @@ Generate a daily progress summary, archive it, and show trends.
    #### Outreach Sent
    - Becky O'Grady @ Ripple Foods — email — "Ripple's next chapter"
    (omit section entirely if no outreach sent today)
+
+   #### System Changes
+   - Self-improvement loop repairs + email tone clarity — 3 bugs fixed, `memory/lessons.md` created
+   (omit section entirely if no changelog entries match today)
 
    #### Pipeline Snapshot
    | Company | Role | Stage |
@@ -244,6 +250,10 @@ Generate a daily progress summary, archive it, and show trends.
    - Becky O'Grady @ Ripple Foods — email — "Ripple's next chapter"
    - Alex Mullin @ Amae Health — email — "Tuck alum, coffee chat request"
    (omit section if none today)
+
+   #### System Changes Today
+   - **Self-improvement loop repairs + email tone clarity** — 3 bugs fixed, `memory/lessons.md` created, `/draft-email` patched, tone source disambiguation added
+   (omit section if no changelog entries match today)
 
    #### Top Priority Remaining
    - [ ] Highest priority / most urgent items (up to 5)
@@ -307,6 +317,9 @@ Generate a daily progress summary, archive it, and show trends.
 
 #### Outreach Sent
 - Becky O'Grady @ Ripple Foods — email — "Ripple's next chapter"
+
+#### System Changes
+- Self-improvement loop repairs + email tone clarity — 3 bugs fixed, `memory/lessons.md` created
 
 #### Pipeline Snapshot
 | Company | Role | Stage |

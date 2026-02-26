@@ -84,7 +84,8 @@ Read the following files in parallel (skip any that don't exist):
 1. `data/profile.md` — sender background
 2. `data/professional-identity.md` — strengths, values
 3. `data/networking.md` — existing contact info and prior interactions with the recipient
-4. `framework/outreach-guide.md` — anti-patterns, tone matching, metrics
+4. `framework/outreach-guide.md` — frameworks, anti-patterns, metrics, quality gate
+5. `framework/style-guidelines.md` — Nick's Voice patterns for tone matching (see "Nick's Voice — Outreach & Email" section)
 
 **Type-specific context loading:**
 
