@@ -32,7 +32,7 @@ Classify the note into one of these destination types:
 | Type | Detection | Destination |
 |------|-----------|-------------|
 | **Contact note** | Mentions a person's name AND something they said, did, or that you learned about them | `data/networking.md` — append to that contact's entry |
-| **Company note** | Mentions a company name AND any observation, intel, call note, or raw thought about that company | `output/<slug>/notes.md` — create if it doesn't exist |
+| **Company note** | Mentions a company name AND any observation, intel, call note, or raw thought about that company | `data/company-notes/<slug>.md` — create if it doesn't exist |
 | **Pipeline note** | Mentions a company AND a decision, status change, or strategic note about the application | `data/job-pipeline.md` — append to that company's Notes cell |
 | **Profile update** | Mentions compensation, availability, start date, a preference, or a personal decision | `data/profile.md` — append to the relevant section |
 | **Decision** | A clear decision that affects job search direction (e.g., "decided not to pursue X", "decided to prioritize Y") | `data/notes.md` under a ## Decisions section |
@@ -76,8 +76,8 @@ Find the matching company's row. Append to the Notes cell:
 **For `data/profile.md` (profile update):**
 Find the most relevant section (Compensation, Availability, Preferences, etc.) and append the note with a date stamp. If the note updates an existing value (e.g., changes comp floor), update the existing value and add a note showing what changed and when.
 
-**For company notes.md (company note):**
-Write to `output/<slug>/notes.md`. If the file doesn't exist, create it:
+**For company notes (company note):**
+Write to `data/company-notes/<slug>.md`. If the file doesn't exist, create it:
 ```markdown
 # [Company Name] — Notes
 

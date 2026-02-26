@@ -104,6 +104,8 @@ Search goals and targeting criteria live in `data/goals.md` (also gitignored). S
 │   ├── company-research/    # LEGACY — older company dossiers before output/ migration; kept for read fallback
 │   ├── industry-research/   # LEGACY — older industry analyses before output/ migration; kept for read fallback
 │   ├── notes.md             # General notes and unroutable inbox captures (created by /act; also managed by /remember)
+│   ├── company-notes/       # Personal notes per company — recruiter calls, video notes, call prep, observations
+│   │   └── <slug>.md        #   One file per company (e.g., dusty-robotics.md) — read by generative skills
 │   ├── project-background/    # Sensitive project background (NEVER use in CVs/resumes)
 │   └── projects/
 │       └── *.md                 # One file per project/engagement
@@ -131,7 +133,6 @@ Search goals and targeting criteria live in `data/goals.md` (also gitignored). S
     │   ├── MMDDYY-[role-slug]-cheatsheet.md  #   Interview cheat sheet
     │   ├── MMDDYY-cover-letter.md  #   Cover letter
     │   ├── MMDDYY-prep.md         #     Interview prep package
-    │   ├── notes.md               #     Raw notes log — recruiter calls, video/article notes, call prep, observations (no date prefix; append newest at top)
     │   ├── MMDDYY-cold-outreach-[contact-slug].md  #  Outreach archive
     │   ├── MMDDYY-follow-up-[contact-slug].md      #  Follow-up archive
     │   └── MMDDYY-draft-email-[recipient-slug].md  #  Draft email archive
@@ -162,7 +163,7 @@ Examples:
 
 **Date prefix rule:** Applies to all dated artifact files within folders. Two exceptions have no date prefix because they are canonical, in-place-versioned files: the research dossier (`<slug>.md`) and the notes log (`notes.md`). Skills that write to `output/` must use the subfolder pattern. Flat `output/MMDDYY-*.md` is only for one-off outputs with no associated entity.
 
-**`notes.md` convention:** A free-form running log for each company — recruiter call notes, video/article observations, pre-call prep, general thoughts. Create it manually when needed; append new entries at the top with a `## YYYY-MM-DD | [context]` header. No skill required. The dossier (`<slug>.md`) holds structured research; `notes.md` holds everything raw and informal.
+**`data/company-notes/<slug>.md` convention:** A free-form running log of personal context for each company — recruiter call notes, video/article observations, pre-call prep, general thoughts. Lives in `data/` (not `output/`) so it is automatically read by generative skills (`/generate-cv`, `/cover-letter`, `/prep-interview`, `/cold-outreach`). Create via `/remember "..."` or manually; append new entries at the top with a `## YYYY-MM-DD | [context]` header. The dossier (`output/<slug>/<slug>.md`) holds structured research Claude produced; `data/company-notes/<slug>.md` holds everything personal and informal.
 
 ## Data Files — Conventions
 

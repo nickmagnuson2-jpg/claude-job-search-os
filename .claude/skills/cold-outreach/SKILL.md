@@ -71,8 +71,9 @@ Read the following files in parallel (skip any that don't exist):
 3. `data/education.md` — schools, degrees (for alumni matching)
 4. `data/networking.md` — for tone matching (read 2–3 prior sent messages as style reference)
 5. Company dossier — `output/<slug>/<slug>.md` (slug = company name, lowercase, spaces→hyphens)
-6. `data/job-pipeline.md` — pipeline status for this company
-7. `framework/outreach-guide.md` — frameworks, constraints, anti-patterns, quality gate
+6. Company notes — `data/company-notes/<slug>.md` — personal context, recruiter call notes, observations
+7. `data/job-pipeline.md` — pipeline status for this company
+8. `framework/outreach-guide.md` — frameworks, constraints, anti-patterns, quality gate
 
 ### Step 4: Lightweight Research
 

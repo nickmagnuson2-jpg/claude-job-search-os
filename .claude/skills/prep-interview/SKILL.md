@@ -53,13 +53,14 @@ Examples:
 Read the following in parallel — skip any that don't exist:
 
 1. Company dossier — `output/<slug>/<slug>.md`
-2. `data/profile.md`
-3. `data/professional-identity.md`
-4. `coaching/coached-answers.md`
-5. `coaching/anti-pattern-tracker.md`
-6. `coaching/pressure-points.md`
-7. `framework/answering-strategies/anti-patterns.md`
-8. If CV Used field is populated in pipeline: read `output/<cv-filename>` to get the exact projects and language used
+2. Company notes — `data/company-notes/<slug>.md` — personal notes, call context, recruiter observations
+3. `data/profile.md`
+4. `data/professional-identity.md`
+5. `coaching/coached-answers.md`
+6. `coaching/anti-pattern-tracker.md`
+7. `coaching/pressure-points.md`
+8. `framework/answering-strategies/anti-patterns.md`
+9. If CV Used field is populated in pipeline: read `output/<cv-filename>` to get the exact projects and language used
 
 Also Glob `data/projects/*.md` to have project files available for question mapping.
 

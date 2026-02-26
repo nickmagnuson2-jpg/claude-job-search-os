@@ -48,6 +48,7 @@ Read the following in parallel — skip any that don't exist, never fail:
 4. `data/project-index.md` — lightweight project index for fast relevance scanning
 5. `framework/style-guidelines.md` — tone conventions
 6. `data/networking.md` — check if any contact at this company exists (informs hook personalisation)
+7. `data/company-notes/<company-slug>.md` — personal notes, call context, and observations about this company (derive slug from Step 1; skip if slug not yet known and read after Step 3)
 
 If `data/profile.md` is missing, warn and proceed with available data.
 

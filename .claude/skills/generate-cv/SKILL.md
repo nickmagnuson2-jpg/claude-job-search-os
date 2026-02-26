@@ -52,6 +52,7 @@ Read the following files in parallel — skip any that don't exist, never fail:
 6. `data/project-index.md`
 7. `data/companies.md`
 8. `framework/style-guidelines.md`
+9. `data/company-notes/<company-slug>.md` — personal notes, call context, and observations about this company (derive slug from the JD in Step 1 if already parsed, otherwise read after Step 3)
 
 If `data/profile.md` is missing, warn: "Profile not found — run `/import-cv` first for best results. Proceeding with available data."
 
