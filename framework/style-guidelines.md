@@ -15,6 +15,30 @@ Then apply these universal principles:
 - **Language variant:** Infer from `data/profile.md` location or match the job posting's language. Maintain consistency within a single CV. Match the formality level expected in the target market's language conventions (e.g. German resumes use formal professional German)
 - **Never impose a work-style assumption** (e.g. "hands-on", "building and operating", "consulting on") — let the projects and identity data speak for themselves
 
+## Nick's Voice — Outreach & Email
+
+Derived from actual sent messages. Apply when drafting any outreach, follow-up, or email on Nick's behalf.
+
+### Greetings & Closings
+- Open with **"Hi [Name],"** for warm contacts — not just the name alone, not "Hello"
+- Close with **"Thanks!"** — warm, casual, peer-level. Not "Best," not "Sincerely," not just the name
+
+### Phrasing Patterns
+- **"Wanted to follow up here"** — not "Wanted to bump this up" (natural, not pushy)
+- **"Exploring my next move"** — not "job search" or "pointing my job search" (soft framing)
+- **Specific ask, not generic:** "Would Wrecking Ball work?" not just "grab coffee" — concrete venue or format
+- Drop filler adverbs: no "genuinely," "truly," "really" — cleaner without them
+
+### Sentence-Level Rules
+- Short sentences. No filler. No hedge language.
+- No "I believe I could," "I think I might," "hoping to" — if it weakens the line, cut it
+- No essay structure — answer first, context second, stop
+
+### When to Apply
+Use these patterns in: `/cold-outreach`, `/follow-up`, `/draft-email`, and any outreach drafted inline during sessions. Read 2–3 entries from `data/networking.md` Interaction Log for additional tone-matching context if available.
+
+---
+
 ## CV Formats
 
 > The format to use is determined by the target market from the job posting or `data/profile.md`. Regional formats below cover market-specific conventions. When in doubt, use the International format.

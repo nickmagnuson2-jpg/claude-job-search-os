@@ -85,6 +85,7 @@ Read the following files in parallel (skip any that don't exist):
 4. `data/job-pipeline.md` — pipeline status for this company
 5. `data/job-todos.md` — any pending follow-up to-dos for this contact
 6. `framework/outreach-guide.md` — frameworks, constraints, anti-patterns
+7. `framework/style-guidelines.md` — Nick's voice patterns for tone matching (see "Nick's Voice" section)
 
 #### Step 3: Determine Follow-Up Type
 

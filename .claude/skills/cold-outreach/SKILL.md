@@ -74,6 +74,7 @@ Read the following files in parallel (skip any that don't exist):
 6. Company notes — `data/company-notes/<slug>.md` — personal context, recruiter call notes, observations
 7. `data/job-pipeline.md` — pipeline status for this company
 8. `framework/outreach-guide.md` — frameworks, constraints, anti-patterns, quality gate
+9. `framework/style-guidelines.md` — Nick's voice patterns for tone matching (see "Nick's Voice" section)
 
 ### Step 4: Lightweight Research
 
