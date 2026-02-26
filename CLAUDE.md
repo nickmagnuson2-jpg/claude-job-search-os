@@ -15,6 +15,22 @@ This repository is your **end-to-end job search operating system** — from iden
 5. **Professional self-awareness** — identity, values, strengths, and narrative patterns that underpin everything
 6. **Structured record-keeping** — all experience data lives here in markdown, versioned with git
 
+## Self-Improvement Loop
+
+After ANY correction from the user:
+1. Open `memory/lessons.md` and add a new row to the Active Rules table with:
+   - The pattern (what went wrong — factual, specific)
+   - The rule (what to do instead — actionable, preventive)
+   - Today's date
+2. If a correction refines an existing rule, update that row instead of adding a duplicate.
+3. Review `memory/lessons.md` at the start of any session involving skill edits, data file operations, or CV generation — scan takes under 60 seconds.
+
+**Email/outreach correction tracking:**
+- When Nick edits, rewrites, or rejects an email/LinkedIn draft: capture the delta as a row in Section 2 of `memory/lessons.md`
+- New pattern: add row with Occurrences = 1, Promoted = No
+- Recurring pattern: find existing row and increment Occurrences
+- If Occurrences >= 2 AND Promoted = No: update `framework/style-guidelines.md` under a "Nick's Voice" section, then set Promoted = Yes in the lessons.md row
+
 ## Owner Profile
 
 Owner details live in `data/profile.md` (gitignored — prevents personal data leaking on public forks).
