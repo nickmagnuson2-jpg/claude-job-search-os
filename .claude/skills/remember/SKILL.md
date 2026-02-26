@@ -3,7 +3,7 @@ name: remember
 description: Capture a note mid-session and route it to the right data file — contacts, pipeline, profile, or a general decision log
 argument-hint: "<note text>"
 user-invocable: true
-allowed-tools: Read(*), Edit(data/networking.md), Edit(data/job-pipeline.md), Edit(data/profile.md), Write(data/job-todos.md), Write(data/notes.md), Edit(data/notes.md), Write(inbox/*), Glob(inbox/*), Edit(output/**), Write(output/**)
+allowed-tools: Read(*), Edit(data/networking.md), Edit(data/job-pipeline.md), Edit(data/profile.md), Write(data/job-todos.md), Write(data/notes.md), Edit(data/notes.md), Write(inbox/*), Glob(inbox/*), Edit(output/**), Write(output/**), Edit(data/outreach-log.md)
 ---
 
 # Remember — Capture Notes Mid-Session
@@ -16,6 +16,8 @@ Quickly saves something you want to retain across sessions, routed to the right 
 
 Examples:
 - `/remember "Alex mentioned Amae is building a new clinic in Sacramento"` → appended to Alex Mullin's contact entry in networking.md
+- `/remember "Alex Mullin replied to my email"` → updates outreach-log.md Status to Replied for most recent Alex Mullin row
+- `/remember "heard back from Sarah Chen, she's happy to connect"` → updates outreach-log.md Status to Replied + logs contact note
 - `/remember "comp floor is $130K in practice, not $140K"` → appended to profile.md compensation section
 - `/remember "decided not to pursue Two Chairs — too similar to what I want to leave"` → appended to pipeline notes or decision log
 - `/remember "Amae Series B was pre-empted by Altos, not a standard raise"` → appended to company research dossier or pipeline notes
@@ -31,6 +33,7 @@ Classify the note into one of these destination types:
 
 | Type | Detection | Destination |
 |------|-----------|-------------|
+| **Outreach reply** | Mentions a person's name AND indicates they replied (e.g., "replied", "got back to me", "responded", "heard back from", "wrote back") | `data/outreach-log.md` — update Status to `Replied` for the most recent matching row |
 | **Contact note** | Mentions a person's name AND something they said, did, or that you learned about them | `data/networking.md` — append to that contact's entry |
 | **Company note** | Mentions a company name AND any observation, intel, call note, or raw thought about that company | `data/company-notes/<slug>.md` — create if it doesn't exist |
 | **Pipeline note** | Mentions a company AND a decision, status change, or strategic note about the application | `data/job-pipeline.md` — append to that company's Notes cell |
@@ -55,6 +58,12 @@ Read the target file(s) identified in Step 1. Always read before writing.
 If `data/notes.md` doesn't exist, it will be created in Step 3.
 
 ### Step 3: Write the Note
+
+**For `data/outreach-log.md` (outreach reply):**
+Read `data/outreach-log.md`. Scan all rows for the contact name (case-insensitive full-name substring match on the Recipient column). Find the most recent row where Status is `Drafted` or `Sent`.
+- If found: update that row's Status cell to `Replied`.
+- If no matching `Drafted`/`Sent` row found: write to `data/networking.md` instead (treat as a contact note) and note: "No outreach-log entry found for [Name] — logged to networking.md."
+- An outreach reply note often also contains content that qualifies as a **Contact note** — if so, write to both files. Apply full-name matching rules.
 
 **For `data/networking.md` (contact note):**
 Find the matching contact's row or section. Append to their interaction log or notes field:

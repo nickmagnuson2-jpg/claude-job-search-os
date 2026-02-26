@@ -3,7 +3,7 @@ name: follow-up
 description: Draft follow-up messages to existing contacts — sequence-aware, tone-matched, with value-add logic
 argument-hint: [name] [channel:email|linkedin] [context]
 user-invocable: true
-allowed-tools: Read(*), Glob(data/*), Grep(data/*), Edit(data/networking.md), Write(data/networking.md), Write(data/job-todos.md), Write(tools/.pending-draft.txt), Edit(data/outreach-log.md), Write(data/outreach-log.md), Write(output/**), WebSearch, WebFetch
+allowed-tools: Read(*), Glob(data/*), Grep(data/*), Edit(data/networking.md), Write(data/networking.md), Write(data/job-todos.md), Write(tools/.pending-draft.txt), Edit(data/outreach-log.md), Write(data/outreach-log.md), Write(output/**), Edit(framework/style-guidelines.md), Write(memory/lessons.md), WebSearch, WebFetch
 ---
 
 # Follow-Up — Sequence-Aware Follow-Up Messages
@@ -63,6 +63,26 @@ When invoked with no arguments:
 
 ### Named Contact Mode
 
+#### Step 0: Lessons Promotion Check
+
+Before drafting, surface any accumulated voice patterns ready to be canonized:
+
+1. Read `memory/lessons.md`.
+2. Scan Section 2 for rows where **Occurrences ≥ 2** AND **Promoted = No**.
+3. If none found, skip silently and proceed to Step 1.
+4. If any found, surface them before proceeding:
+   ```
+   [N] outreach rule(s) ready to add to your Nick's Voice guidelines:
+
+   1. Pattern: [pattern text]
+      Rule: [rule text]
+      Occurrences: [N]
+
+   Promote to style-guidelines.md now? (Y / N)
+   ```
+5. **If approved (Y):** For each rule, append it to the most specific matching subsection in `framework/style-guidelines.md` → Nick's Voice (Greetings & Closings / Phrasing Patterns / Sentence-Level Rules). If no subsection fits, create one. Then update the lessons.md row: set Promoted = Yes.
+6. **If declined (N):** skip and proceed. Rules remain in lessons.md for next time.
+
 #### Step 1: Load Contact History
 
 1. Read `data/networking.md` — find the contact (case-insensitive, fuzzy match on full name).
@@ -74,6 +94,27 @@ When invoked with no arguments:
    - Use `/cold-outreach "[name]" [company]` for a first-contact message
    ```
 4. Read all interactions for this contact. Count prior touchpoints to determine sequence position.
+
+#### Step 1b: Reply Status Check
+
+Before determining follow-up type, check whether the contact has replied to prior outreach:
+
+1. Read `data/outreach-log.md` — scan for rows where:
+   - Recipient column matches this contact's name (case-insensitive full-name substring match)
+   - Status is `Drafted` or `Sent`
+2. If no matching rows found, skip silently — contact not in outreach-log, or status already updated.
+3. If matching rows exist, ask before proceeding:
+   ```
+   Did [Name] reply to your [most recent matching date] message?
+     Y — Yes, they replied
+     N — No response yet
+     S — Skip / don't update status now
+   ```
+4. **If Yes (replied):** Update the most recent matching row's Status to `Replied` in `data/outreach-log.md`. Store `reply_status = "replied"` — this informs Step 3.
+   Optionally ask: "Briefly, what did they say? (helps tailor the follow-up — press Enter to skip)"
+   If context is provided, carry it into Steps 3 and 6.
+5. **If No (no response):** Update the most recent matching row's Status to `No reply` in `data/outreach-log.md`. Store `reply_status = "no_reply"`.
+6. **If Skip:** Proceed without updating outreach-log. Store `reply_status = "unknown"`.
 
 #### Step 2: Load Context
 
@@ -98,6 +139,11 @@ Analyze the interaction history to determine the follow-up type:
 | Ongoing back-and-forth | **Continue thread** | Continue naturally, advance the conversation |
 | Last contact 30+ days ago | **Re-establish** | Re-establish context, reference original connection |
 | They offered something (intro, info) | **Collect** | Politely follow up on their offer |
+
+**Use `reply_status` from Step 1b to confirm the situation:**
+- `replied` → route to **Post-meeting** or **Continue thread** (not Nudge), even if interaction log says "cold outreach"
+- `no_reply` → route to **Nudge** regardless of how the interaction log describes the last message
+- `unknown` → infer from interaction history as usual
 
 #### Step 4: Sequence-Aware Drafting
 

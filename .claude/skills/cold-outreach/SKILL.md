@@ -3,7 +3,7 @@ name: cold-outreach
 description: Draft personalized cold emails and LinkedIn messages to new contacts — research-informed, tone-matched, with auto-logging
 argument-hint: <name> <company> [role] [channel:email|linkedin] [context]
 user-invocable: true
-allowed-tools: Read(*), Glob(data/*), Grep(data/*), Edit(data/networking.md), Write(data/networking.md), Write(data/job-todos.md), Write(tools/.pending-draft.txt), Edit(data/outreach-log.md), Write(data/outreach-log.md), Write(output/**), WebSearch, WebFetch
+allowed-tools: Read(*), Glob(data/*), Grep(data/*), Edit(data/networking.md), Write(data/networking.md), Write(data/job-todos.md), Write(tools/.pending-draft.txt), Edit(data/outreach-log.md), Write(data/outreach-log.md), Write(output/**), Edit(framework/style-guidelines.md), Write(memory/lessons.md), WebSearch, WebFetch
 ---
 
 # Cold Outreach — First-Contact Messages
@@ -36,6 +36,28 @@ Examples:
 ```
 
 ## Instructions
+
+### Step 0: Lessons Promotion Check
+
+Before drafting, surface any accumulated voice patterns ready to be canonized:
+
+1. Read `memory/lessons.md`.
+2. Scan Section 2 for rows where **Occurrences ≥ 2** AND **Promoted = No**.
+3. If none found, skip silently and proceed to Step 1.
+4. If any found, surface them before proceeding:
+   ```
+   [N] outreach rule(s) ready to add to your Nick's Voice guidelines:
+
+   1. Pattern: [pattern text]
+      Rule: [rule text]
+      Occurrences: [N]
+
+   Promote to style-guidelines.md now? (Y / N)
+   ```
+5. **If approved (Y):** For each rule, append it to the most specific matching subsection in `framework/style-guidelines.md` → Nick's Voice (Greetings & Closings / Phrasing Patterns / Sentence-Level Rules). If no subsection fits, create one. Then update the lessons.md row: set Promoted = Yes.
+6. **If declined (N):** skip and proceed. Rules remain in lessons.md for next time.
+
+---
 
 ### Step 1: Parse Arguments
 

@@ -3,7 +3,7 @@ name: draft-email
 description: Draft job-search emails — thank-you notes, status updates, intro requests, expressions of interest
 argument-hint: <recipient> <purpose> [context]
 user-invocable: true
-allowed-tools: Read(*), Glob(data/*), Grep(data/*), Edit(data/networking.md), Write(data/networking.md), Write(data/job-todos.md), Write(tools/.pending-draft.txt), Edit(data/outreach-log.md), Write(data/outreach-log.md), Write(output/**)
+allowed-tools: Read(*), Glob(data/*), Grep(data/*), Edit(data/networking.md), Write(data/networking.md), Write(data/job-todos.md), Write(tools/.pending-draft.txt), Edit(data/outreach-log.md), Write(data/outreach-log.md), Write(output/**), Edit(framework/style-guidelines.md), Write(memory/lessons.md)
 ---
 
 # Draft Email — General-Purpose Job Search Emails
@@ -44,6 +44,28 @@ Examples:
 ```
 
 ## Instructions
+
+### Step 0: Lessons Promotion Check
+
+Before drafting, surface any accumulated voice patterns ready to be canonized:
+
+1. Read `memory/lessons.md`.
+2. Scan Section 2 for rows where **Occurrences ≥ 2** AND **Promoted = No**.
+3. If none found, skip silently and proceed to Step 1.
+4. If any found, surface them before proceeding:
+   ```
+   [N] outreach rule(s) ready to add to your Nick's Voice guidelines:
+
+   1. Pattern: [pattern text]
+      Rule: [rule text]
+      Occurrences: [N]
+
+   Promote to style-guidelines.md now? (Y / N)
+   ```
+5. **If approved (Y):** For each rule, append it to the most specific matching subsection in `framework/style-guidelines.md` → Nick's Voice (Greetings & Closings / Phrasing Patterns / Sentence-Level Rules). If no subsection fits, create one. Then update the lessons.md row: set Promoted = Yes.
+6. **If declined (N):** skip and proceed. Rules remain in lessons.md for next time.
+
+---
 
 ### Step 1: Parse Arguments
 

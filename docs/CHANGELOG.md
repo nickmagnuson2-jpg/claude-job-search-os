@@ -5,6 +5,21 @@ Format: newest entries at the top.
 
 ---
 
+## 2026-02-25 — Response tracking + lessons loop auto-promotion
+
+### Added
+- **Response tracking in `/follow-up`** — Step 1b inserted between Step 1 and Step 2 in Named Contact Mode. Before drafting, `/follow-up` now scans `data/outreach-log.md` for Drafted/Sent rows for this contact, asks "Did they reply?", and updates the Status column to `Replied` or `No reply`. The reply status flows into Step 3 to ensure the correct follow-up type is selected (e.g., a Nudge can't be chosen if they already replied).
+- **Lessons loop auto-promotion in all outreach skills** — Step 0 added to `/cold-outreach`, `/follow-up`, and `/draft-email`. Before drafting, each skill scans `memory/lessons.md` Section 2 for patterns with Occurrences ≥ 2 AND Promoted = No, then prompts the user to promote them to `framework/style-guidelines.md`. Prevents Nick's Voice rules from stagnating in lessons.md indefinitely.
+- **Outreach reply routing in `/remember`** — New classification type: "Outreach reply" detected when a note mentions a person's name alongside reply-indicating words ("replied", "got back to me", "heard back from", etc.). Routes to `data/outreach-log.md` — updates the most recent Drafted/Sent row to `Replied`. Falls back to networking.md if no matching row found. Reply notes that also contain contact info write to both files.
+
+### Files changed
+- `.claude/skills/follow-up/SKILL.md` — added Step 1b (reply status check) + Step 3 reply_status routing note
+- `.claude/skills/cold-outreach/SKILL.md` — added Step 0 (lessons promotion check)
+- `.claude/skills/draft-email/SKILL.md` — added Step 0 (lessons promotion check)
+- `.claude/skills/remember/SKILL.md` — added Outreach reply classification + Step 3 handler + two new examples
+
+---
+
 ## 2026-02-25 — Self-improvement loop repairs + email tone clarity
 
 ### Bugs fixed
