@@ -5,6 +5,40 @@ Format: newest entries at the top.
 
 ---
 
+## 2026-02-26 — /checkout + /apply skills, preprocessing scripts, token optimization
+
+### Added
+- **`/checkout` skill** — end-of-day close-out, bookend to `/standup`. Absorbs `/todo daily` entirely. Runs `todo_daily_metrics.py` to build today's snapshot, writes daily log entry, calculates streak/velocity, surfaces tomorrow's top 3 cross-referenced against the weekly review's Top 5 priorities.
+- **`/apply` skill** — one-command apply bundle: fetches JD, runs CV generation logic, runs cover letter logic, and adds/updates the pipeline entry. Eliminates the 3-command apply flow.
+- **5 preprocessing scripts** in `tools/` — each accepts `--target-date` and `--repo-root`, outputs JSON to stdout:
+  - `todo_daily_metrics.py` — todos, daily log, pipeline snapshot, outreach, research, changelog (~2,300 tokens saved per `/checkout` run)
+  - `pipeline_staleness.py` — per-stage staleness thresholds (Researching=7d, Applied=5d, Screening=5d, Interview=7d, Offer=3d)
+  - `dossier_freshness.py` — detects dossiers by filename==parent pattern, classifies by freshness
+  - `outreach_pending.py` — awaiting/overdue outreach, response rate calculation
+  - `networking_followup.py` — infers follow-up due dates from free-text (next week, 3–5 biz days, explicit dates, default 14d)
+- **28 pytest tests** in `tests/scripts/` — full coverage of all 5 scripts; `conftest.py` sets `PYTHONIOENCODING=utf-8` for Windows compatibility
+
+### Changed
+- **`/standup`** — Step 1 now runs `pipeline_staleness.py`, `outreach_pending.py`, `networking_followup.py` instead of reading 6 files and parsing manually; `allowed-tools` simplified to `Read(*)`
+- **`/weekly-review`** — Steps 2/3/5 now use script JSON instead of manual file parsing; Step 1 calls 3 scripts + reads only 2 files; velocity (Step 4) reads from daily log (not raw todos); edge case note updated from `/todo daily` to `/checkout`
+- **`/scan-jobs`** — Step 7b added: after scoring, surfaces shortlisted roles (≥80%) not already in pipeline and prompts to add them
+- **`/todo`** — `daily` command removed; replaced with one-line redirect to `/checkout`
+- **`prep-interview`, `generate-cv`, `cold-outreach`, `follow-up`** — inline stale dossier warning (>30 days old) with refresh suggestion; never blocks execution
+
+### Files changed
+- `.claude/skills/checkout/SKILL.md` — new
+- `.claude/skills/apply/SKILL.md` — new
+- `tools/todo_daily_metrics.py`, `pipeline_staleness.py`, `dossier_freshness.py`, `outreach_pending.py`, `networking_followup.py` — new
+- `tests/scripts/conftest.py` + 5 test files — new
+- `tests/skills/TESTING_CHECKLIST.md` — new
+- `.claude/skills/standup/SKILL.md` — Step 1 rewritten, Step 2 analysis sections replaced with JSON refs
+- `.claude/skills/weekly-review/SKILL.md` — Steps 1/2/3/5 rewritten; allowed-tools updated
+- `.claude/skills/scan-jobs/SKILL.md` — Step 7b added
+- `.claude/skills/todo/SKILL.md` — daily command removed
+- `.claude/skills/prep-interview/SKILL.md`, `generate-cv/SKILL.md`, `cold-outreach/SKILL.md`, `follow-up/SKILL.md` — stale dossier warning added
+
+---
+
 ## 2026-02-25 — Response tracking + lessons loop auto-promotion
 
 ### Added
