@@ -5,6 +5,36 @@ Format: newest entries at the top.
 
 ---
 
+## 2026-02-26 — Edit tool safety: Write-only enforcement + PostToolUse hook
+
+### Root cause
+The Edit tool silently fails (returns success, no change) when `old_string` spans lines >~500 characters in markdown table files. No external linter is involved — this is intrinsic Edit tool behavior. Affected files: `data/job-todos.md` (543 chars max), `data/job-pipeline.md` (524 chars max), all `output/**/*.md` dossiers (up to 1,677 chars).
+
+### Changed
+- **7 skill `allowed-tools` fixes** — removed `Edit()` on risky files, keeping only `Write()`:
+  - `todo/SKILL.md` — removed `Edit(data/job-todos.md)`
+  - `pipe/SKILL.md` — removed `Edit(data/job-pipeline.md)`
+  - `apply/SKILL.md` — removed `Edit(data/job-pipeline.md)`
+  - `cover-letter/SKILL.md` — removed `Edit(data/job-pipeline.md)`
+  - `generate-cv/SKILL.md` — removed `Edit(data/job-pipeline.md)`, `Edit(output/**)`
+  - `remember/SKILL.md` — removed `Edit(data/job-pipeline.md)`, `Edit(output/**)`
+  - `act/SKILL.md` — removed `Edit(data/job-todos.md)`, `Edit(data/job-pipeline.md)`, `Edit(output/**)`
+
+### Added
+- **`tools/check_edit_safety.py`** — PostToolUse hook script; warns when Edit is used on markdown files with rows >500 chars; hard-stops on known write-only files (`job-todos.md`, `job-pipeline.md`)
+- **`.claude/settings.json`** — PostToolUse hook registration; triggers `check_edit_safety.py` after every Edit call on `.md` files
+
+### Documented
+- **`CLAUDE.md` Write-Only Files section** — lists the two affected data files and all output dossiers; explains the root cause; points to the hook
+
+### Files changed
+- `.claude/skills/todo/SKILL.md`, `pipe/SKILL.md`, `apply/SKILL.md`, `cover-letter/SKILL.md`, `generate-cv/SKILL.md`, `remember/SKILL.md`, `act/SKILL.md` — allowed-tools updated
+- `tools/check_edit_safety.py` — new
+- `.claude/settings.json` — new
+- `CLAUDE.md` — Write-Only Files section added
+
+---
+
 ## 2026-02-26 — /checkout + /apply skills, preprocessing scripts, token optimization
 
 ### Added

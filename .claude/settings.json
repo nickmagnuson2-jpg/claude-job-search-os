@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python tools/check_edit_safety.py"
+          }
+        ]
+      }
+    ]
+  }
+}

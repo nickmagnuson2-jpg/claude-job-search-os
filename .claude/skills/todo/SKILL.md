@@ -3,7 +3,7 @@ name: todo
 description: Lightweight to-do list for job search tasks not tied to specific applications
 argument-hint: [add|done|daily|clear <task> [priority] [due]]
 user-invocable: true
-allowed-tools: Read(*), Write(data/job-todos.md), Edit(data/job-todos.md), Read(data/job-pipeline.md), Read(data/networking.md), Read(data/job-todos-daily-log.md), Read(data/outreach-log.md), Glob(output/**)
+allowed-tools: Read(*), Write(data/job-todos.md), Read(data/job-pipeline.md), Read(data/networking.md), Read(data/job-todos-daily-log.md), Read(data/outreach-log.md), Glob(output/**)
 ---
 
 # Job Search To-Do Manager

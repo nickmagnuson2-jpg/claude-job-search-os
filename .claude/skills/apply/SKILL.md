@@ -3,7 +3,7 @@ name: apply
 description: Generate tailored CV + cover letter and add to pipeline in one command — the complete apply bundle
 argument-hint: "<job-url-or-jd> [context]"
 user-invocable: true
-allowed-tools: Read(*), Glob(data/*), Glob(framework/*), Glob(plugins/*), Write(output/**), Edit(data/job-pipeline.md), Write(data/job-pipeline.md), WebFetch, WebSearch
+allowed-tools: Read(*), Glob(data/*), Glob(framework/*), Glob(plugins/*), Write(output/**), Write(data/job-pipeline.md), WebFetch, WebSearch
 ---
 
 # Apply — One-Command Application Bundle

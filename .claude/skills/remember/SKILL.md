@@ -3,7 +3,7 @@ name: remember
 description: Capture a note mid-session and route it to the right data file — contacts, pipeline, profile, or a general decision log
 argument-hint: "<note text>"
 user-invocable: true
-allowed-tools: Read(*), Edit(data/networking.md), Edit(data/job-pipeline.md), Edit(data/profile.md), Write(data/job-todos.md), Write(data/notes.md), Edit(data/notes.md), Write(inbox/*), Glob(inbox/*), Edit(output/**), Write(output/**), Edit(data/outreach-log.md)
+allowed-tools: Read(*), Edit(data/networking.md), Write(data/job-pipeline.md), Edit(data/profile.md), Write(data/job-todos.md), Write(data/notes.md), Edit(data/notes.md), Write(inbox/*), Glob(inbox/*), Write(output/**), Edit(data/outreach-log.md)
 ---
 
 # Remember — Capture Notes Mid-Session

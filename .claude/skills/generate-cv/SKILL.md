@@ -3,7 +3,7 @@ name: generate-cv
 description: Generate a tailored CV + interview cheat sheet for a specific role — follows the 11-step resume workflow, saves to output/, and updates the pipeline
 argument-hint: <job-url-or-jd> [context]
 user-invocable: true
-allowed-tools: Read(*), Glob(data/*), Glob(plugins/*), Glob(framework/*), Write(output/**), Edit(output/**), Edit(data/job-pipeline.md), WebFetch, WebSearch
+allowed-tools: Read(*), Glob(data/*), Glob(plugins/*), Glob(framework/*), Write(output/**), Write(data/job-pipeline.md), WebFetch, WebSearch
 ---
 
 # Generate CV — Tailored Resume + Cheat Sheet

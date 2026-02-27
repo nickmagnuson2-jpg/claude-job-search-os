@@ -106,6 +106,8 @@ Search goals and targeting criteria live in `data/goals.md` (also gitignored). S
 │   ├── notes.md             # General notes and unroutable inbox captures (created by /act; also managed by /remember)
 │   ├── company-notes/       # Personal notes per company — recruiter calls, video notes, call prep, observations
 │   │   └── <slug>.md        #   One file per company (e.g., dusty-robotics.md) — read by generative skills
+│   ├── industry-notes/      # Personal notes per industry — observations, contacts, trends, gut reactions
+│   │   └── <slug>.md        #   One file per industry (e.g., construction-tech.md) — read by generative skills
 │   ├── project-background/    # Sensitive project background (NEVER use in CVs/resumes)
 │   └── projects/
 │       └── *.md                 # One file per project/engagement
@@ -116,6 +118,9 @@ Search goals and targeting criteria live in `data/goals.md` (also gitignored). S
 │   └── plugins/                 #   Example plugin (copy to plugins/ to activate)
 ├── .claude/
 │   └── skills/                  # 20 skill definitions powering slash commands — see Working With This Repo
+├── memory/
+│   ├── MEMORY.md                # Auto-loaded session context (managed by auto-memory system)
+│   └── lessons.md               # Active correction rules — canonical self-improvement log (NOT auto-memory)
 ├── docs/
 │   ├── methodology.md           # Full explanation of how each component works
 │   ├── customization.md         # Guide to customizing skills, plugins, and data files
@@ -165,7 +170,20 @@ Examples:
 
 **`data/company-notes/<slug>.md` convention:** A free-form running log of personal context for each company — recruiter call notes, video/article observations, pre-call prep, general thoughts. Lives in `data/` (not `output/`) so it is automatically read by generative skills (`/generate-cv`, `/cover-letter`, `/prep-interview`, `/cold-outreach`). Create via `/remember "..."` or manually; append new entries at the top with a `## YYYY-MM-DD | [context]` header. The dossier (`output/<slug>/<slug>.md`) holds structured research Claude produced; `data/company-notes/<slug>.md` holds everything personal and informal.
 
+**`data/industry-notes/<slug>.md` convention:** A free-form running log of personal context for each industry — gut reactions, contacts met, trends observed, reasons to pursue or avoid. Mirrors the company-notes pattern. Lives in `data/` so it is automatically read by generative skills (`/research-industry`, `/generate-cv`, `/cold-outreach`). Create via `/remember "..."` or manually; append new entries at the top with a `## YYYY-MM-DD | [context]` header. The dossier (`output/<slug>/<slug>.md`) holds structured research Claude produced; `data/industry-notes/<slug>.md` holds everything personal and informal.
+
 ## Data Files — Conventions
+
+### Write-Only Files (never use Edit)
+
+The Edit tool silently fails on markdown files with table rows >500 characters — it returns success but makes no change. Two data files in this repo exceed that threshold and **must always use Write (read-then-write full file)**:
+
+- `data/job-todos.md` — task rows with long Notes cells (up to 543 chars)
+- `data/job-pipeline.md` — pipeline rows with long Notes cells (up to 524 chars)
+
+All output dossiers (`output/**/*.md`) also exceed this threshold (up to 1,677 chars) — use Write for any in-place dossier updates.
+
+A `PostToolUse` hook in `.claude/settings.json` warns when Edit is used on an affected file. If you see the warning, re-read the file and Write the full updated content.
 
 ### IMPORTANT: Content Exclusions for CVs/Resumes
 
@@ -315,6 +333,12 @@ python tools/convert_pdfs.py
 
 **Outreach drafting** (`tools/open_draft.py` — auto-run by `/cold-outreach`, `/follow-up`, `/draft-email`):
 Opens a pre-filled Gmail compose window in the browser. Requires no manual setup — runs automatically when an outreach draft is approved.
+
+**Preprocessing scripts — Windows encoding:** Run all `tools/*.py` scripts with the `PYTHONIOENCODING=utf-8` env prefix on Windows, or they crash on Unicode chars (arrows, em-dashes) in data files. Prefix: `PYTHONIOENCODING=utf-8 python tools/<script>.py [args]`. Tests handle this automatically via `conftest.py`; skills must add the prefix to any `Bash()` calls.
+
+**Preprocessing scripts — separator row noise:** Script output for `active_remaining[]` and `pipeline_snapshot[]` includes a `{"task": "---", ...}` / `{"company": "---", ...}` entry from markdown table separator rows. Filter these out: `[e for e in entries if e.get("task") != "---"]`.
+
+**Edit tool safety hook:** `.claude/settings.json` runs `tools/check_edit_safety.py` (PostToolUse) after every Edit on `.md` files. If you see a `⚠️` warning after an Edit, re-read the file and verify the change was applied — if not, use Write instead.
 
 ## Style Guidelines
 

@@ -3,7 +3,7 @@ name: cover-letter
 description: Generate a tailored 3-paragraph cover letter for a specific role — hook, value bridge, close with ask — saved to output/ with date prefix
 argument-hint: <job-url-or-jd> [context]
 user-invocable: true
-allowed-tools: Read(*), Glob(data/*), Glob(framework/*), Write(output/**), Edit(data/job-pipeline.md), WebFetch, WebSearch
+allowed-tools: Read(*), Glob(data/*), Glob(framework/*), Write(output/**), Write(data/job-pipeline.md), WebFetch, WebSearch
 ---
 
 # Cover Letter — Tailored 3-Paragraph Generator

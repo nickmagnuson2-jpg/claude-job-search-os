@@ -13,9 +13,21 @@
 
 ## Section 1 — General Corrections
 
-| Pattern | Rule | Date |
-|---------|------|------|
-| *(no entries yet)* | | |
+| # | Pattern (what went wrong) | Rule (what to do instead) | Date |
+|---|--------------------------|---------------------------|------|
+| 1 | Cross-reference matching used first name only | Always match full name string as substring — "Alex" ≠ "Alex Mullin", "Amae" ≠ "Amae Health" | 2026-02-24 |
+| 2 | Display examples in skills written without checking actual data | Trace matching logic against actual data files before finalizing any example in a skill | 2026-02-24 |
+| 3 | Skills failed hard when a cross-referenced file was missing | Skills that read cross-referenced files must skip silently if the file doesn't exist — never throw an error | 2026-02-24 |
+| 4 | `allowed-tools` listed both `Read(*)` and specific read paths | `Read(*)` already covers all read paths — listing specific paths too is redundant (harmless but noisy) | 2026-02-24 |
+| 5 | Used Edit tool on data/job-todos.md | Always Write data/job-todos.md atomically — a linter actively reverts Edit changes on long cells | 2026-02-25 |
+| 6 | Subagent WebFetch used on corporate careers pages | Most corporate careers pages are access-blocked in subagents; only ATS pages (Greenhouse, Lever) tend to work — mark blocked pages as "access blocked; check manually" and keep Pending | 2026-02-25 |
+| 7 | Profile guard only checked profile.md | Profile guard must check BOTH profile.md AND goals.md — both must exist and contain non-TODO content before any generative skill runs | 2026-02-25 |
+| 8 | "Odyssey" used without disambiguation | "Odyssey" is ambiguous — Odyssey PBC (psilocybin, Bend OR) vs. Odyssey ML (AI lab, Santa Clara) — always confirm which one before researching or writing | 2026-02-25 |
+| 9 | `allowed-tools` glob used single `*` for output subdirectories | Must use `**` depth for subdirectory writes — `Write(output/**)` not `Write(output/*)` | 2026-02-25 |
+| 10 | `Glob` call used `output/*` to discover dossiers | Must use `Glob(output/**)` to find files in nested subfolders — `output/*` only matches top-level entries | 2026-02-25 |
+| 11 | Shared employer framed as personal working relationship | Shared employer ≠ personal connection — don't overstate familiarity. "We both did time at Altman Solon" not "we worked together" | 2026-02-25 |
+| 12 | Stated "she's the second person to mention HR" without verifying — no prior mention existed in any data file | Never assert a pattern (recurring suggestion, repeated theme, second occurrence) without first searching the data files to confirm it. If no corroborating evidence is found, don't state it. | 2026-02-26 |
+| 13 | Added "possible operations/community role" to Lisa referral — Nick only said client connection, nothing professional | Never infer the nature or purpose of a connection beyond what was explicitly stated. Record only what was said; do not extrapolate intent or capacity. | 2026-02-26 |
 
 ---
 
