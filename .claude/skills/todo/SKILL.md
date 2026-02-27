@@ -3,7 +3,7 @@ name: todo
 description: Lightweight to-do list for job search tasks not tied to specific applications
 argument-hint: [add|done|daily|clear <task> [priority] [due]]
 user-invocable: true
-allowed-tools: Read(*), Write(data/job-todos.md), Edit(data/job-todos.md), Read(data/job-pipeline.md), Read(data/networking.md), Write(data/job-todos-daily-log.md), Edit(data/job-todos-daily-log.md), Read(data/outreach-log.md), Read(docs/CHANGELOG.md), Glob(output/**)
+allowed-tools: Read(*), Write(data/job-todos.md), Edit(data/job-todos.md), Read(data/job-pipeline.md), Read(data/networking.md), Read(data/job-todos-daily-log.md), Read(data/outreach-log.md), Glob(output/**)
 ---
 
 # Job Search To-Do Manager
@@ -15,7 +15,7 @@ Lightweight to-do list for job search tasks — networking follow-ups, company r
 - `$ARGUMENTS`: Optional. If empty, show active to-dos.
   - `add <task> [priority] [due]` — add a new to-do
   - `done <task>` — mark a to-do as complete and archive it
-  - `daily` — generate today's summary, archive it, and show progress trends
+  - `daily` — **Replaced by `/checkout`** — use `/checkout` for end-of-day logging and daily summary
   - `clear` — move all completed items to archive
 
 Examples:
@@ -158,122 +158,12 @@ Before displaying to-dos in **any command**, run a pipeline sync to auto-complet
 
 ### Command: `daily`
 
-Generate a daily progress summary, archive it, and show trends.
-
-1. Read these files in parallel:
-   - `data/job-todos.md`
-   - `data/job-todos-daily-log.md` (create if doesn't exist)
-   - `data/job-pipeline.md`
-   - `data/networking.md`
-   - `data/outreach-log.md` (skip silently if doesn't exist)
-   - `docs/CHANGELOG.md` (skip silently if doesn't exist)
-   - Glob `output/**/*.md` to get list of research files (company dossiers at `output/<slug>/<slug>.md`; industry dossiers at `output/<slug>/<slug>.md`).
-   - For any research files found, read each and check for `Last updated: [today's date]` in the file header to determine if it was generated/updated today
-
-2. **Build today's snapshot:**
-   - Count items completed today (check Notes for today's date in Completed section)
-   - Count items still active, grouped by priority
-   - Count overdue items
-   - Identify items that moved to "In Progress" today
-   - List pipeline entries with their current stages
-   - List networking contacts with pending follow-up to-dos
-   - **Outreach sent today:** Filter `data/outreach-log.md` rows where Date = today. List recipient, company, channel, and subject/summary.
-   - **Company research completed today:** Any `output/<slug>/<slug>.md` file with `Last updated: [today]` in its header.
-   - **Industry research completed today:** Any `output/<slug>/<slug>.md` file with `Last updated: [today]` in its header.
-   - **Changelog entries today:** Scan `docs/CHANGELOG.md` for sections starting with `## [today's date]`. For each match, extract the entry title (the text after `## YYYY-MM-DD — `) and a one-line summary of what changed (e.g. "3 bugs fixed" or "new skill added"). Omit if no entries match today.
-
-3. **Check for existing entry:** If today's date already has an entry in the daily log, update it (replace) rather than creating a duplicate.
-
-4. **Write daily log entry** — append (or replace) today's entry in `data/job-todos-daily-log.md`:
-
-   ```markdown
-   ### 2026-02-18 (Tuesday)
-
-   **Completed today: N** | Active remaining: N | Overdue: N
-
-   #### Done
-   - [x] Task description (Priority)
-   - [x] Task description (Priority)
-
-   #### Still Active
-   - [ ] Task description [Priority | Due: date]
-   - [ ] Task description [Priority | Due: date]
-
-   #### Research Completed
-   - Company: Ripple Foods (output/ripple-foods/ripple-foods.md)
-   - Industry: Behavioral Health Tech (output/behavioral-health-tech.md)
-   (omit section entirely if no research completed today)
-
-   #### Outreach Sent
-   - Becky O'Grady @ Ripple Foods — email — "Ripple's next chapter"
-   (omit section entirely if no outreach sent today)
-
-   #### System Changes
-   - Self-improvement loop repairs + email tone clarity — 3 bugs fixed, `memory/lessons.md` created
-   (omit section entirely if no changelog entries match today)
-
-   #### Pipeline Snapshot
-   | Company | Role | Stage |
-   |---------|------|-------|
-   | Amae Health | Strategy & Operations | Researching |
-
-   #### Networking Activity
-   - Alex Mullin (Amae Health) — last: 2026-02-18, pending follow-up to-dos: 2
-   ```
-
-5. **Calculate trends** from the daily log history:
-   - **Completion rate:** items completed per day over the last 7 and 30 days
-   - **Streak:** consecutive days with at least 1 item completed
-   - **Total completed:** all-time count from the log
-   - **Velocity:** average completions per active day (days with at least 1 completion)
-   - **Overdue trend:** is the overdue count growing, shrinking, or stable?
-
-6. **Display the daily summary:**
-
-   ```markdown
-   ## Daily Summary — [date]
-
-   ### Today
-   Completed: N | Still active: N | Overdue: N
-
-   #### Done Today
-   - [x] Task 1
-   - [x] Task 2
-   (or "Nothing completed yet today." if zero)
-
-   #### Research Completed Today
-   - **Company:** Ripple Foods — dossier generated (`output/ripple-foods/ripple-foods.md`)
-   - **Industry:** Behavioral Health Tech — landscape analysis generated (`output/behavioral-health-tech.md`)
-   (omit section if none today)
-
-   #### Outreach Sent Today
-   - Becky O'Grady @ Ripple Foods — email — "Ripple's next chapter"
-   - Alex Mullin @ Amae Health — email — "Tuck alum, coffee chat request"
-   (omit section if none today)
-
-   #### System Changes Today
-   - **Self-improvement loop repairs + email tone clarity** — 3 bugs fixed, `memory/lessons.md` created, `/draft-email` patched, tone source disambiguation added
-   (omit section if no changelog entries match today)
-
-   #### Top Priority Remaining
-   - [ ] Highest priority / most urgent items (up to 5)
-
-   ### Progress
-   | Metric | Value |
-   |--------|-------|
-   | Streak | N days |
-   | This week | N completed |
-   | Last 7 days | N completed |
-   | Last 30 days | N completed |
-   | All-time | N completed |
-   | Avg per active day | N.N |
-   | Overdue trend | ↑ growing / → stable / ↓ shrinking |
-
-   ### Pipeline Activity
-   | Company | Role | Stage | Related To-Dos |
-   |---------|------|-------|----------------|
-   | Amae Health | Strategy & Operations | Researching | 4 active |
-   ```
+> **Replaced by `/checkout`** — use `/checkout` for end-of-day logging and daily progress summary. The `daily` command is no longer supported here.
+>
+> If the user runs `/todo daily`, display this message and stop:
+> ```
+> The `daily` command has moved. Run `/checkout` for end-of-day logging, progress trends, and tomorrow's top 3 priorities.
+> ```
 
 ### Command: `clear`
 
@@ -295,7 +185,7 @@ Generate a daily progress summary, archive it, and show trends.
 ```markdown
 # Job Search — Daily Progress Log
 
-> Auto-generated by `/todo daily`. One entry per day.
+> Auto-generated by `/checkout`. One entry per day.
 > Newest entries first. Do not delete entries — they power progress tracking.
 
 ### 2026-02-18 (Tuesday)

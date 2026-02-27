@@ -45,6 +45,9 @@ Parse `$ARGUMENTS`:
 Read the following files in parallel — skip any that don't exist, never fail:
 
 1. `data/profile.md`
+
+   Also read the company dossier `output/<company-slug>/<company-slug>.md` (derive slug after Step 3 if not yet known — re-read at that point). After reading, grep for `Last updated:` in the first 10 lines. If the dossier is more than 30 days old (or no `Last updated:` line exists), display this inline warning — then continue, never block:
+   > ⚠️ Company dossier is [N] days old (last updated YYYY-MM-DD). Consider refreshing: `/research-company "[Company]"`
 2. `data/professional-identity.md`
 3. `data/education.md`
 4. `data/skills.md`

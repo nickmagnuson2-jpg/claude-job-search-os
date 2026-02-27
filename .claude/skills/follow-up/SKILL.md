@@ -123,6 +123,9 @@ Read the following files in parallel (skip any that don't exist):
 1. `data/profile.md` — sender background
 2. `data/professional-identity.md` — strengths, values
 3. Company dossier — `output/<slug>/<slug>.md` (slug = contact's company, lowercase, spaces→hyphens)
+
+   **Staleness check:** After reading, grep for `Last updated:` in the first 10 lines. If the dossier is more than 30 days old (or no `Last updated:` line is found), display this inline warning — then continue, never block:
+   > ⚠️ Company dossier is [N] days old (last updated YYYY-MM-DD). Consider refreshing: `/research-company "[Company]"`
 4. `data/job-pipeline.md` — pipeline status for this company
 5. `data/job-todos.md` — any pending follow-up to-dos for this contact
 6. `framework/outreach-guide.md` — frameworks, constraints, anti-patterns

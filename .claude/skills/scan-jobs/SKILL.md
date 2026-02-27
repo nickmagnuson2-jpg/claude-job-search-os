@@ -3,7 +3,7 @@ name: scan-jobs
 description: Scan a job portal for matching projects/roles, assess fit against profile, track evaluated ads
 argument-hint: <portal-url-or-name> [search query]
 user-invocable: true
-allowed-tools: WebFetch(*), Read(*), Edit(.claude/skills/scan-jobs/cache.md), Write(.claude/skills/scan-jobs/cache.md)
+allowed-tools: WebFetch(*), Read(*), Edit(.claude/skills/scan-jobs/cache.md), Write(.claude/skills/scan-jobs/cache.md), Read(data/job-pipeline.md), Write(data/job-pipeline.md)
 ---
 
 # Scan Job Portal
@@ -169,6 +169,38 @@ Append all newly evaluated ads to the cache file. Use the Edit tool to add rows 
 - Use the **ad's posting date** (from the listing) for the "Ad Date" column, not the scan date
 - Store the **detail page URL** in the "URL" column as a markdown link. Use `—` if no URL was extracted.
 - If an existing cached ad needs a status change (e.g., user says "I applied to this one"), update that row
+
+### Step 7b: Pipeline Auto-Propose
+
+After updating the cache, collect all **newly-evaluated** roles (scored in this run) with fit ≥80%.
+
+1. Read `data/job-pipeline.md` (skip silently if it doesn't exist).
+2. Filter shortlisted roles to those NOT already in the pipeline:
+   - Match by company name substring (case-insensitive) — if the role's company appears anywhere in the pipeline's Company column, it's already tracked.
+3. If no untracked shortlisted roles remain, skip silently.
+4. If any untracked shortlisted roles remain, display a prompt **before** the Summary section:
+
+   ```
+   📋 [N] shortlisted role(s) not yet in pipeline:
+   1. [Company] — [Role] (fit: N%) — Add to pipeline? (Y/N)
+   2. [Company] — [Role] (fit: N%) — Add to pipeline? (Y/N)
+   ```
+
+5. For each role where user answers Y:
+   - Append a new row to the Active section of `data/job-pipeline.md`:
+     - **Company**: company name from the listing
+     - **Role**: role title from the listing
+     - **Stage**: `Researching`
+     - **Date Added**: today (YYYY-MM-DD)
+     - **Date Updated**: today
+     - **CV Used**: `—`
+     - **URL**: listing URL if available
+     - **Notes**: `Added by /scan-jobs on [today's date]`
+   - Write the updated `data/job-pipeline.md`.
+   - Confirm: "✅ [Company] — [Role] added to pipeline [Researching]."
+
+6. For roles where user answers N: skip, no changes.
+7. If `data/job-pipeline.md` doesn't exist and user answers Y: create it with the standard header before adding the first entry.
 
 ### Step 8: Summary
 

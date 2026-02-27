@@ -3,7 +3,7 @@ name: standup
 description: Morning briefing — pipeline health, today's top 3 actions, pending outreach, and a momentum read of the search state
 argument-hint: [none]
 user-invocable: true
-allowed-tools: Read(data/goals.md), Read(data/job-pipeline.md), Read(data/job-todos.md), Read(data/outreach-log.md), Read(data/networking.md), Read(inbox/README.md), Glob(inbox/*)
+allowed-tools: Read(*), Glob(inbox/*), Bash(python tools/pipeline_staleness.py:*), Bash(python tools/outreach_pending.py:*), Bash(python tools/networking_followup.py:*)
 ---
 
 # Standup — Morning Briefing
@@ -12,19 +12,31 @@ Reads five data files and generates a focused daily brief. Output is in-chat onl
 
 ## Instructions
 
-### Step 1: Load Data (parallel)
+### Step 1: Load Data
 
-Read the following files simultaneously:
+**Run preprocessing scripts (parallel):**
+```bash
+python tools/pipeline_staleness.py --target-date $(date +%Y-%m-%d)
+python tools/outreach_pending.py --target-date $(date +%Y-%m-%d)
+python tools/networking_followup.py --target-date $(date +%Y-%m-%d)
+```
+Parse JSON output from each script. If a script returns empty results (missing data file), continue — never fail.
 
+**Also read in parallel:**
 1. `data/goals.md` — current phase, this week's focus, search thesis
-2. `data/job-pipeline.md` — all applications and their stages/dates
-3. `data/job-todos.md` — active to-do list with priorities and due dates
-4. `data/outreach-log.md` — outreach sent (last 30 days) with response status
-5. `data/networking.md` — contacts with follow-up dates
-
-If any file doesn't exist, skip it silently and note it as unavailable in the output.
+2. `data/job-todos.md` — active to-do list with priorities and due dates
+3. `data/job-todos-daily-log.md` — daily progress log (for checkout nudge check)
 
 Also check `inbox/` for any captured items: `Glob(inbox/*)` — list filenames only.
+
+**Checkout nudge check (run after loading daily log):**
+Check if an entry exists for **yesterday's date** (look for `### YYYY-MM-DD` header matching yesterday). If no entry for yesterday is found, prepend this one-line nudge at the very top of the brief output (before the date header):
+
+```
+💡 Yesterday's checkout wasn't logged — run `/checkout` when wrapping up today.
+```
+
+If yesterday's entry exists, skip silently.
 
 ### Step 2: Analyze Each Data Source
 
@@ -34,30 +46,26 @@ Also check `inbox/` for any captured items: `Glob(inbox/*)` — list filenames o
 - Extract: search thesis (one-sentence version)
 - If goals.md is all TODOs or missing: flag "⚠️ goals.md not populated — run `/standup` after filling in `data/goals.md`" and skip goals-dependent sections
 
-**From job-pipeline.md:**
-- Identify items **stuck** in a stage for longer than the following thresholds:
-  - Researching: 7+ days → suggest: research or move on
-  - Applied: 5+ days → suggest: follow up or check status
-  - Screening: 5+ days → suggest: send thank-you / follow up
-  - Interviewing: 7+ days → suggest: follow up on timeline
-  - Offer: 3+ days → suggest: respond or negotiate
-- Count items per stage for a pipeline snapshot
-- Flag any company where Notes field contains "reach out" or "follow up" with a recent date
+**From pipeline_staleness.py JSON:**
+- `stalled_entries[]` — each entry has: `name`, `role`, `stage`, `days_since_update`. Use for the "Attention Needed" list.
+- Suggested action per stage: Researching → "run `/research-company` or move on"; Applied → "follow up or check status"; Screening → "send thank-you / follow up"; Interview → "follow up on timeline"; Offer → "respond or negotiate"
+- `stage_distribution{}` — use for the pipeline snapshot count (N per stage)
+- `metrics.total_active` — total active entries
 
 **From job-todos.md:**
 - Extract all Pending to-dos, sorted by: (1) overdue — due date has passed, (2) high priority, (3) due today or this week
 - Take the top 3 for "Today's Top 3"
 - Note total pending count
 
-**From outreach-log.md:**
-- Find outreach messages sent in the last 30 days where no response is recorded
-- Compute days-since-sent
-- Flag messages ≥ 5 days old with no response as "awaiting response"
-- Sort by oldest first
+**From outreach_pending.py JSON:**
+- `awaiting_response_overdue[]` + `awaiting_response[]` — sorted by `days_since_sent` descending (oldest first)
+- Each entry has: `name`, `company`, `channel`, `days_since_sent`
+- Show overdue entries first, then non-overdue awaiting entries
 
-**From networking.md:**
-- Find contacts where follow-up date is today or in the past
-- List name, company, and the follow-up action needed
+**From networking_followup.py JSON:**
+- `followup_overdue[]` — contacts with overdue follow-ups (show first)
+- `followup_due[]` — contacts with follow-ups due within 7 days (show after overdue)
+- Each entry has: `name`, `company`, `follow_up_action`
 
 **From inbox/:**
 - Count items in `inbox/` (files that aren't README.md)

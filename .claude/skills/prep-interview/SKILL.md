@@ -53,6 +53,9 @@ Examples:
 Read the following in parallel — skip any that don't exist:
 
 1. Company dossier — `output/<slug>/<slug>.md`
+
+   **Staleness check:** After reading, grep for `Last updated:` in the first 10 lines of the dossier. Parse the date. If the dossier is more than 30 days old (or if no `Last updated:` line is found), display this inline warning — then continue, never block:
+   > ⚠️ Company dossier is [N] days old (last updated YYYY-MM-DD). Consider refreshing: `/research-company "[Company]"`
 2. Company notes — `data/company-notes/<slug>.md` — personal notes, call context, recruiter observations
 3. `data/profile.md`
 4. `data/professional-identity.md`
