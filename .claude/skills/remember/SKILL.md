@@ -3,7 +3,7 @@ name: remember
 description: Capture a note mid-session and route it to the right data file — contacts, pipeline, profile, or a general decision log
 argument-hint: "<note text>"
 user-invocable: true
-allowed-tools: Read(*), Write(data/networking.md), Write(data/job-pipeline.md), Edit(data/profile.md), Write(data/job-todos.md), Write(data/notes.md), Edit(data/notes.md), Write(inbox/*), Glob(inbox/*), Write(output/**), Edit(data/outreach-log.md), Bash(PYTHONIOENCODING=utf-8 python tools/remember_classify.py:*)
+allowed-tools: Read(*), Write(data/job-todos.md), Glob(inbox/*), Write(output/**), Bash(PYTHONIOENCODING=utf-8 python tools/remember_classify.py:*), Bash(PYTHONIOENCODING=utf-8 python tools/remember_apply.py:*)
 ---
 
 # Remember — Capture Notes Mid-Session
@@ -47,77 +47,25 @@ If `data/notes.md` doesn't exist, it will be created in Step 3.
 
 ### Step 3: Write the Note
 
-**For `data/outreach-log.md` (outreach reply):**
-Read `data/outreach-log.md`. Scan all rows for the contact name (case-insensitive full-name substring match on the Recipient column). Find the most recent row where Status is `Drafted` or `Sent`.
-- If found: update that row's Status cell to `Replied`.
-- If no matching `Drafted`/`Sent` row found: write to `data/networking.md` instead (treat as a contact note) and note: "No outreach-log entry found for [Name] — logged to networking.md."
-- An outreach reply note often also contains content that qualifies as a **Contact note** — if so, write to both files. Apply full-name matching rules.
+Write the destinations JSON to a temp file, then call `remember_apply.py`:
 
-**For `data/networking.md` (contact note):**
-Find the matching contact's row or section. Append to their interaction log or notes field:
-```
-[YYYY-MM-DD] [Note text]
-```
-If the contact doesn't exist yet, add a minimal entry:
-```
-| [Name] | [Company if mentioned] | [Role if mentioned] | — | — | — | [Date] | Note from /remember: [note text] |
-```
-and suggest: "Contact added. Run `/networking add` to fill in full details."
-
-**For `data/job-pipeline.md` (pipeline note):**
-Find the matching company's row. Append to the Notes cell:
-```
-[Date]: [note text]
+```bash
+PYTHONIOENCODING=utf-8 python tools/remember_apply.py \
+  --note "[escaped $ARGUMENTS]" \
+  --destinations '[<destinations JSON from Step 1>]' \
+  --repo-root .
 ```
 
-**For `data/profile.md` (profile update):**
-Find the most relevant section (Compensation, Availability, Preferences, etc.) and append the note with a date stamp. If the note updates an existing value (e.g., changes comp floor), update the existing value and add a note showing what changed and when.
+Or use `--destinations-file` on Windows to avoid shell-escaping issues:
+1. Write destinations JSON to a temp file (e.g., `/tmp/dests.json`)
+2. Call: `remember_apply.py --note "..." --destinations-file /tmp/dests.json --repo-root .`
 
-**For company notes (company note):**
-Write to `data/company-notes/<slug>.md`. If the file doesn't exist, create it:
-```markdown
-# [Company Name] — Notes
+Parse the response:
+- Single destination: `{"status":"ok","action":"<type>","file":"..."}` — use `file` in confirmation
+- Multi destination: `{"status":"ok","action":"multi_write","results":[...]}` — surface any `warning` fields
+- Error: `{"status":"error","message":"..."}` — surface to user with fallback suggestion
 
-> Running log of raw notes, call prep, and observations.
-> Newest entries at the top. One section per date + context.
-
----
-```
-Then prepend a new entry at the top of the log (after the header block):
-```
-## [YYYY-MM-DD] | [context — infer from note text, e.g., "Recruiter call", "Video note", "General"]
-[Note text]
-```
-
-**For `inbox/` (raw capture):**
-Create a new file: `inbox/YYYYMMDD-HHMMSS-[slug].md` where slug is 2–4 words from the note (lowercase, hyphenated). Content:
-```markdown
-# [Note text, first line]
-
-Captured: [YYYY-MM-DD HH:MM]
-
-[Full note text]
-
----
-*Route with `/act` when ready.*
-```
-
-**For `data/notes.md` (general note or decision):**
-If the file doesn't exist, create it:
-```markdown
-# Job Search Notes
-
-> Captured by `/remember`. Raw notes and decisions from sessions.
-
-## Decisions
-
-## Notes
-```
-
-Append under the appropriate section header with a date stamp:
-```
-**[YYYY-MM-DD]:** [Note text]
-```
+If the script fails or classify returned empty destinations: fall back to writing `data/notes.md` as general_note.
 
 ### Step 4: Confirm
 

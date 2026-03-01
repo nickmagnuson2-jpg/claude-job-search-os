@@ -3,6 +3,7 @@ import json
 import os
 import subprocess
 import sys
+import textwrap
 from pathlib import Path
 
 import pytest
@@ -40,6 +41,17 @@ def run_script(script_name: str, *args, input_dir=None) -> dict:
         check=True,
     )
     return json.loads(result.stdout)
+
+
+def write_fixture(tmp_path: Path, rel_path: str, content: str) -> Path:
+    """Write dedented content to tmp_path/rel_path, creating parents as needed.
+
+    Returns the path written. Shared by all write-script test files.
+    """
+    path = tmp_path / rel_path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(textwrap.dedent(content), encoding="utf-8")
+    return path
 
 
 @pytest.fixture

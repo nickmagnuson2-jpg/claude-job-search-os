@@ -3,7 +3,7 @@ name: networking
 description: Track networking contacts and conversations — real-world and Claude chats — with auto-generated follow-up to-dos
 argument-hint: [add|log|remove <name> [company] [role] [summary]]
 user-invocable: true
-allowed-tools: Read(*), Write(data/networking.md), Write(data/job-todos.md), Read(data/job-pipeline.md), Glob(data/*), Bash(PYTHONIOENCODING=utf-8 python tools/networking_read.py:*)
+allowed-tools: Read(*), Write(data/job-todos.md), Read(data/job-pipeline.md), Glob(data/*), Bash(PYTHONIOENCODING=utf-8 python tools/networking_read.py:*), Bash(PYTHONIOENCODING=utf-8 python tools/networking_write.py:*), Bash(PYTHONIOENCODING=utf-8 python tools/todo_write.py:*)
 ---
 
 # Networking Tracker
@@ -59,28 +59,18 @@ Examples:
 
 ### Command: `add <name> [company] [role]`
 
-1. Read `data/networking.md`.
-2. Parse arguments:
-   - **Name**: required — contact's name (quoted string or unquoted)
-   - **Company**: optional — their company. Default: `—`
-   - **Role**: optional — their role/title (quoted if multi-word). Default: `—`
-3. Check for duplicates (case-insensitive match on name). Warn if similar name exists.
-4. Ask the user for **Relationship** type if not obvious from context:
+1. Parse arguments and infer **Relationship** type:
    - `recruiter`, `hiring-manager`, `peer`, `mentor`, `referral`, `other`
-   - If the role contains "recruiter" (case-insensitive), default to `recruiter`
-   - If the role contains "manager" (case-insensitive), default to `hiring-manager`
+   - If the role contains "recruiter", default to `recruiter`
+   - If the role contains "manager", default to `hiring-manager`
    - Otherwise default to `peer`
-5. Add a new row to the Contacts table:
-   - **Name**: from argument
-   - **Company**: from argument or `—`
-   - **Role**: from argument or `—`
-   - **Relationship**: determined above
-   - **Added**: today's date (YYYY-MM-DD)
-   - **Last Interaction**: `—`
-6. Create the contact's Interaction Log section heading: `### [Name] — [Company]` (with no entries yet).
-7. Write updated file.
-8. Display the added contact and total contact count.
-9. **Pipeline cross-reference**: Check `data/job-pipeline.md` — if any active entry matches this company, mention it.
+2. Call `networking_write.py add`:
+   ```bash
+   PYTHONIOENCODING=utf-8 python tools/networking_write.py add "<name>" [--company CO] [--role ROLE] [--relationship TYPE] --repo-root .
+   ```
+3. If result `action == "duplicate_warning"`: warn user, show existing company.
+4. On success: display the added contact and total contact count.
+5. **Pipeline cross-reference**: Check `data/job-pipeline.md` — if any active entry matches this company, mention it.
 
 ### Command: `log <name> [summary]`
 
@@ -106,44 +96,20 @@ Examples:
    - Look for phrases like "follow up", "intro", "send", "share", "connect", "schedule", "reach out", "let me know", "next steps"
    - If found, extract the follow-up action text
    - If none detected, ask: "Any follow-up actions from this interaction?"
-8. **Write the interaction entry** to the contact's Interaction Log section using this format:
-
-   ```markdown
-   #### YYYY-MM-DD | type | Summary line
-
-   > Full message/email content here.
-   > Preserving the original text, line by line,
-   > in a blockquote.
-
-   **Follow-up:** Action item text (or "—" if none)
+8. Call `networking_write.py log`:
+   ```bash
+   PYTHONIOENCODING=utf-8 python tools/networking_write.py log "<name>" \
+     --date YYYY-MM-DD --type TYPE --summary "Summary line" \
+     [--followup "Action text"] [--content "Full message text"] \
+     --repo-root .
    ```
-
-   - If no full content was provided (summary-only mode), omit the blockquote:
-
-   ```markdown
-   #### YYYY-MM-DD | type | Summary line
-
-   **Follow-up:** Action item text (or "—" if none)
-   ```
-
-9. Update the contact's **Last Interaction** date in the Contacts table.
-10. Write updated `data/networking.md`.
-11. **Auto-generate follow-up to-dos** — if follow-up actions were identified:
-    - Read `data/job-todos.md`
-    - Add a new row to the Active section:
-      - **Task**: `Follow up: <name> @ <company> — <action>`
-      - **Priority**: `Med`
-      - **Due**: 7 days from today (YYYY-MM-DD)
-      - **Status**: `Pending`
-      - **Notes**: `From networking interaction on <date>`
-    - Write updated `data/job-todos.md`
-    - Confirm the to-do was created:
-      ```
-      Follow-up to-do created:
-        Task: Follow up: Sarah Chen @ Stripe — Get intro to hiring manager
-        Due: 2026-02-25 | Priority: Med
-      ```
-12. Display the logged interaction and any cross-references.
+   The script writes the interaction entry (newest-first), updates Last Interaction in Contacts table, and shells out to `todo_write.py` for follow-up todos automatically.
+9. If `code == "not_found"`: ask if user wants to add the contact first.
+10. **Auto-generate follow-up to-dos** — if follow-up actions were identified AND the script didn't already create them (it does this when `--followup` is passed), create manually via:
+    ```bash
+    PYTHONIOENCODING=utf-8 python tools/todo_write.py add "Follow up: <name> @ <company> — <action>" Med <due-date> "From networking interaction on <date>"
+    ```
+11. Display the logged interaction and any cross-references.
 
 ### Tone & Voice Analysis
 
@@ -158,13 +124,12 @@ When the user asks to draft a message to a contact, read their full interaction 
 
 ### Command: `remove <name>`
 
-1. Read `data/networking.md`.
-2. Find the matching contact (case-insensitive, fuzzy).
-3. If multiple matches, ask which one.
-4. Move the contact's row from the Contacts table to a comment or remove it.
-5. Add `[ARCHIVED]` prefix to their Interaction Log section heading.
-6. Write updated file.
-7. Confirm removal with interaction count preserved.
+1. Call `networking_write.py remove`:
+   ```bash
+   PYTHONIOENCODING=utf-8 python tools/networking_write.py remove "<name>" --repo-root .
+   ```
+2. If `code == "not_found"`: tell user the contact wasn't found.
+3. On success: confirm removal (row deleted, interaction log heading prefixed `[ARCHIVED]`).
 
 ## Relationship Types
 

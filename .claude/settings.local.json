@@ -1,44 +1,7 @@
 {
   "permissions": {
     "allow": [
-      "WebFetch(domain:www.linkedin.com)",
-      "WebFetch(domain:job-boards.greenhouse.io)",
-      "WebFetch(domain:www.tofuhq.com)",
-      "WebFetch(domain:blog.promptlayer.com)",
-      "WebFetch(domain:fortelabs.com)",
-      "WebFetch(domain:www.anthropic.com)",
-      "WebSearch",
-      "WebFetch(domain:growthlist.co)",
-      "WebFetch(domain:resumeworded.com)",
-      "WebFetch(domain:hls.harvard.edu)",
-      "WebFetch(domain:www.saleshandy.com)",
-      "WebFetch(domain:connectsafely.ai)",
-      "WebFetch(domain:www.commsor.com)",
-      "WebFetch(domain:scale.jobs)",
-      "WebFetch(domain:latitude-blog.ghost.io)",
-      "WebFetch(domain:www.themuse.com)",
-      "WebFetch(domain:latitude.so)",
-      "WebFetch(domain:hunter.io)",
-      "WebFetch(domain:www.decklinks.com)",
-      "WebFetch(domain:www.beehiiv.com)",
-      "WebFetch(domain:belkins.io)",
-      "WebFetch(domain:belfiorecheese.com)",
-      "Skill(research-company)",
-      "Skill(cold-outreach)",
-      "Bash(cd C:\\\\Users\\\\chris\\\\Documents\\\\Projects\\\\Nick-claude-resume-coach:*)",
-      "Bash(python:*)",
-      "Skill(weekly-review)",
-      "Skill(generate-cv)",
-      "Skill(prep-interview)",
-      "Skill(follow-up)",
-      "WebFetch(domain:luma.com)",
-      "WebFetch(domain:www.oceantechhackathon.org)",
-      "WebFetch(domain:docs.sofarocean.com)",
-      "WebFetch(domain:www.sofarocean.com)",
-      "WebFetch(domain:propellervc.com)",
-      "WebFetch(domain:www.aquatic-labs.com)",
-      "Bash(git add:*)",
-      "Bash(PYTHONIOENCODING=utf-8 python:*)"
+      "*"
     ]
   }
 }

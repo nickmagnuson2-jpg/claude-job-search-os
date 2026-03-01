@@ -3,7 +3,7 @@ name: pipe
 description: Track job applications through stages with auto-generated action items per stage
 argument-hint: [add|update|remove <company> [role|stage] [url]]
 user-invocable: true
-allowed-tools: Read(*), Write(data/job-pipeline.md), Glob(data/*), Grep(data/*), Bash(PYTHONIOENCODING=utf-8 python tools/pipe_read.py:*)
+allowed-tools: Read(*), Glob(data/*), Grep(data/*), Bash(PYTHONIOENCODING=utf-8 python tools/pipe_read.py:*), Bash(PYTHONIOENCODING=utf-8 python tools/pipe_write.py:*)
 ---
 
 # Job Application Pipeline
@@ -53,40 +53,32 @@ All pipeline data lives in `data/job-pipeline.md`.
 
 ### Command: `add <company> <role> [url]`
 
-1. Read `data/job-pipeline.md`.
-2. Check for duplicates — if the company already exists in the active pipeline, warn the user and ask if they want to add a second role or update the existing one.
-3. Add a new row to the pipeline table:
-   - **Company**: from argument
-   - **Role**: from argument
-   - **Stage**: `Researching`
-   - **Date Updated**: today's date (YYYY-MM-DD)
-   - **Next Action**: auto-generated (see Stage Actions below)
-   - **CV Used**: `—`
-   - **Notes**: `—`
-   - **URL**: from argument, or `—` if not provided
-4. Write updated file.
-5. Display the new entry and its auto-generated action items.
-6. **Cross-reference**: Check if this company/role appears in `.claude/skills/scan-jobs/cache.md` — if found, mention the fit score from the scan.
+1. Call `pipe_write.py add`:
+   ```bash
+   PYTHONIOENCODING=utf-8 python tools/pipe_write.py add "<company>" "<role>" [--url URL] --repo-root .
+   ```
+2. If result `action == "duplicate_warning"`: warn user and show `existing_roles[]`. Ask if they want to add a second role anyway (if yes, re-run with `--stage` override) or update the existing entry.
+3. On success: display the new entry and its auto-generated action items (see Stage Actions below).
+4. **Cross-reference**: Check if this company/role appears in `.claude/skills/scan-jobs/cache.md` — if found, mention the fit score from the scan.
 
 ### Command: `update <company> <new-stage>`
 
-1. Read `data/job-pipeline.md`.
-2. Find the matching company (case-insensitive, fuzzy). If multiple roles exist for the same company, ask which one.
-3. Validate the stage transition is reasonable (warn but allow non-linear moves).
-4. Update the row:
-   - **Stage**: new stage
-   - **Date Updated**: today's date
-   - **Next Action**: auto-generated for the new stage (see Stage Actions below)
-5. Write updated file.
-6. Display the updated entry with stage-appropriate action items and any relevant coaching links.
+1. Call `pipe_write.py update`:
+   ```bash
+   PYTHONIOENCODING=utf-8 python tools/pipe_write.py update "<company>" "<new-stage>" [--role ROLE] [--next-action TEXT] --repo-root .
+   ```
+2. If result `code == "ambiguous_match"`: show the `matches[]` list and ask user to specify `--role`.
+3. If result `code == "not_found"`: tell user no active entry was found.
+4. On success: display the updated entry with stage-appropriate action items and any relevant coaching links.
 
 ### Command: `remove <company>`
 
-1. Read `data/job-pipeline.md`.
-2. Find the matching company. If multiple roles, ask which one.
-3. Move the entry to the Archived section (set stage to `Withdrawn` if not already terminal).
-4. Write updated file.
-5. Confirm removal.
+1. Call `pipe_write.py remove`:
+   ```bash
+   PYTHONIOENCODING=utf-8 python tools/pipe_write.py remove "<company>" [--role ROLE] --repo-root .
+   ```
+2. If `code == "ambiguous_match"`: show `matches[]` and ask user which role to remove.
+3. On success: confirm removal (soft-deleted to ## Archived with Withdrawn stage).
 
 ## Pipeline Stages
 

@@ -1,16 +1,9 @@
 """Tests for tools/networking_read.py"""
-import textwrap
 from pathlib import Path
 
 import pytest
 
-from conftest import run_script
-
-
-def write_fixture(tmp_path: Path, filename: str, content: str) -> None:
-    dest = tmp_path / filename
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_text(textwrap.dedent(content), encoding="utf-8")
+from conftest import run_script, write_fixture
 
 
 def test_missing_file_no_crash(tmp_path):
