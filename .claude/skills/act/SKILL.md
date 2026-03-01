@@ -3,7 +3,7 @@ name: act
 description: Autonomously execute actionable to-dos (careers checks, company research, article reads) — preview first, then run in parallel with right-sized models
 argument-hint: [none]
 user-invocable: true
-allowed-tools: Read(*), Write(data/job-todos.md), Write(output/**), WebFetch(*), WebSearch, Task, Glob(output/**), Glob(inbox/*), Write(data/job-pipeline.md), Write(data/networking.md), Edit(data/networking.md), Write(data/notes.md), Edit(data/notes.md), Bash(rm inbox/*)
+allowed-tools: Read(*), Write(data/job-todos.md), Write(output/**), WebFetch(*), WebSearch, Task, Glob(output/**), Glob(inbox/*), Write(data/job-pipeline.md), Write(data/networking.md), Edit(data/networking.md), Write(data/notes.md), Edit(data/notes.md), Bash(PYTHONIOENCODING=utf-8 python tools/act_classify.py:*), Bash(rm inbox/*)
 ---
 
 # Act — Execute Actionable To-Dos

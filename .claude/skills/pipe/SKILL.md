@@ -3,7 +3,7 @@ name: pipe
 description: Track job applications through stages with auto-generated action items per stage
 argument-hint: [add|update|remove <company> [role|stage] [url]]
 user-invocable: true
-allowed-tools: Read(*), Write(data/job-pipeline.md), Glob(data/*), Grep(data/*)
+allowed-tools: Read(*), Write(data/job-pipeline.md), Glob(data/*), Grep(data/*), Bash(PYTHONIOENCODING=utf-8 python tools/pipe_read.py:*)
 ---
 
 # Job Application Pipeline
