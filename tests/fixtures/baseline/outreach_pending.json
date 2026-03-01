@@ -1,0 +1,21 @@
+{
+  "awaiting_response": [],
+  "awaiting_response_overdue": [
+    {
+      "date": "2026-02-18",
+      "name": "Alex Mullin",
+      "company": "Amae Health",
+      "channel": "email",
+      "subject": "Tuck alum, coffee chat request",
+      "days_since_sent": 10,
+      "status": "Sent"
+    }
+  ],
+  "recent_outreach": {
+    "sent": 4,
+    "replied": 0,
+    "no_reply": 0,
+    "response_rate_percent": 0
+  },
+  "target_date": "2026-02-28"
+}

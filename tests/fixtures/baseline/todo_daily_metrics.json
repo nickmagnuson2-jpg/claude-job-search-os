@@ -1,0 +1,607 @@
+{
+  "target_date": "2026-02-28",
+  "completed_today": [],
+  "active_remaining": [
+    {
+      "task": "---",
+      "priority": "---",
+      "due": "---",
+      "status": "---",
+      "notes": "---"
+    },
+    {
+      "task": "Check Arch careers for Chief of Staff role — open NOW, SF-based, McKinsey co-founder culture",
+      "priority": "High",
+      "due": "2026-03-01",
+      "status": "Pending",
+      "notes": "From /research-company pHathom on 2026-02-27 — Active posting on ClimateTechList + Welcome to the Jungle. arch.com or search ClimateTechList for \"Arch Chief of Staff\". Direct role match + SF."
+    },
+    {
+      "task": "Check Ebb Carbon careers — SF Bay Area (San Carlos), OAE leader, Series A+ ($50M+), actively hiring ops/strategy",
+      "priority": "High",
+      "due": "2026-03-03",
+      "status": "Pending",
+      "notes": "From /research-company pHathom on 2026-02-27 — Microsoft $350K-ton deal + Google offtake. Careers portal: ebb-carbon.breezy.hr. Highest-priority climate tech employer from pHathom competitive landscape."
+    },
+    {
+      "task": "Engage pHathom team at hackathon tomorrow (Feb 28) — ask about remote culture + Series A ops hiring timeline",
+      "priority": "High",
+      "due": "2026-02-28",
+      "status": "Pending",
+      "notes": "From /research-company pHathom on 2026-02-27 — pHathom sponsors Track 2; Nick competing on Track 2. Use conversation starters from dossier (output/phathom/phathom.md). Key questions: (1) remote policy for ops roles? (2) what ops/biz hires planned post-Series A?"
+    },
+    {
+      "task": "Deep-dive research Ebb Carbon — highest-priority climate tech target from pHathom landscape; run /research-company",
+      "priority": "High",
+      "due": "2026-03-06",
+      "status": "Pending",
+      "notes": "From /research-company pHathom on 2026-02-27 — San Carlos CA (SF Bay Area), Series A+ ($50M+), electrochemical OAE, Microsoft + Google offtake. ebbcarbon.com. Run /research-company before applying."
+    },
+    {
+      "task": "Check Equatic careers — equatic.tech — Santa Monica CA, Series A ($11.6M Aug 2025), UCLA spinout, DOE recognized",
+      "priority": "Med",
+      "due": "2026-03-06",
+      "status": "Pending",
+      "notes": "From /research-company pHathom on 2026-02-27 — Recent Series A = active hiring cycle; dual product (H₂ + CO₂ removal). Not SF but remote-friendly likely."
+    },
+    {
+      "task": "Check Planetary Technologies careers — planetarytech.com — accepts unsolicited resumes at careers@planetarytech.com",
+      "priority": "Med",
+      "due": "2026-03-10",
+      "status": "Pending",
+      "notes": "From /research-company pHathom on 2026-02-27 — Series A ($11.3M Oct 2024), world's first OAE credits, $31.3M Frontier offtake. Dartmouth NS — remote likely."
+    },
+    {
+      "task": "Follow up on Notion application if no response",
+      "priority": "High",
+      "due": "2026-03-06",
+      "status": "Pending",
+      "notes": "Applied 2026-02-27 — Partner Strategy & Operations Manager; follow up if no screen scheduled by 2026-03-06"
+    },
+    {
+      "task": "Search LinkedIn for Tuck/Duke/McKinsey alumni at Notion — warm intro is highest-probability path before application advances",
+      "priority": "High",
+      "due": "2026-03-03",
+      "status": "Pending",
+      "notes": "From /research-company on 2026-02-27 — filter Notion employees by Tuck MBA, Duke BA, or McKinsey background; also check McKinsey Alumni Network portal"
+    },
+    {
+      "task": "Read Akshay Kothari (Notion COO) interview — Compound Manual — prep for interview",
+      "priority": "High",
+      "due": "2026-03-03",
+      "status": "Pending",
+      "notes": "From /research-company on 2026-02-27 — https://manual.compoundplanning.com/chapters/interview-with-akshay-kothari-chief-operating-officer-at-notion — Akshay oversees partner/sales/ops; likely in interview loop"
+    },
+    {
+      "task": "Explore Notion's partner ecosystem — visit notion.com/partners, identify current partner tiers and categories",
+      "priority": "High",
+      "due": "2026-03-03",
+      "status": "Pending",
+      "notes": "From /research-company on 2026-02-27 — understanding the current partner landscape is table-stakes before any interview"
+    },
+    {
+      "task": "Check Linear careers for Revenue Operations role — verified active as of Feb 2026",
+      "priority": "High",
+      "due": "2026-03-06",
+      "status": "Pending",
+      "notes": "From /research-company on 2026-02-27 — https://linear.app/careers — Revenue Operations, AI & Automation role [VERIFIED Feb 2026]; SF-based, $100M ARR, Series C unicorn ($1.25B)"
+    },
+    {
+      "task": "Check Glean careers for ops/strategy roles — 49 open SF roles verified active",
+      "priority": "Med",
+      "due": "2026-03-06",
+      "status": "Pending",
+      "notes": "From /research-company on 2026-02-27 — https://www.glean.com/careers — Series F, $7.2B valuation, $100M+ ARR; 49 open SF roles; filter for ops/strategy/partnerships"
+    },
+    {
+      "task": "Read Erica Anderson (Notion CRO) background on GitHub Copilot GTM — she built the partner-led AI go-to-market at GitHub before Notion",
+      "priority": "Med",
+      "due": "2026-03-05",
+      "status": "Pending",
+      "notes": "From /research-company on 2026-02-27 — LinkedIn: https://www.linkedin.com/in/erica-anderson-54b5878/ — understanding her playbook is prep leverage"
+    },
+    {
+      "task": "Prepare \"why Notion\" answer with three specific layers: (1) Erica building partner motion at $600M ARR inflection, (2) operating values match, (3) pre-IPO 2026-27 window",
+      "priority": "High",
+      "due": "2026-03-03",
+      "status": "Pending",
+      "notes": "From /research-company on 2026-02-27 — see cheat sheet for full framing"
+    },
+    {
+      "task": "Add Zuora Key Achievements to data/projects/zuora.md — 1-2 impact metrics from the CoS role (decisions made, processes built, outcomes delivered)",
+      "priority": "High",
+      "due": "2026-03-03",
+      "status": "Pending",
+      "notes": "Required before Notion CV is final — currently all TODO; add to data/projects/zuora.md Key Achievements section, then update CV bullet to surface the outcome"
+    },
+    {
+      "task": "[SYSTEM] /scan-contacts setup — add LINKEDIN_EMAIL, LINKEDIN_PASSWORD, ANTHROPIC_API_KEY to repo root .env",
+      "priority": "High",
+      "due": "2026-03-01",
+      "status": "Pending",
+      "notes": "Prerequisites before /scan-contacts runs; create .env if it doesn't exist yet"
+    },
+    {
+      "task": "[SYSTEM] /scan-contacts setup — install Python deps: `cd tools/linkedin-scanner && pip install -r requirements.txt`",
+      "priority": "High",
+      "due": "2026-03-01",
+      "status": "Pending",
+      "notes": "Installs: anthropic, beautifulsoup4, selenium, webdriver-manager, pandas, tqdm, termcolor"
+    },
+    {
+      "task": "[SYSTEM] /scan-contacts first-run verification — run `/scan-contacts \"Amae Health\" 5` — confirm Chrome opens, LinkedIn auth succeeds, JSON output contains ranked profiles",
+      "priority": "High",
+      "due": "2026-03-05",
+      "status": "Pending",
+      "notes": "First run may trigger LinkedIn email/SMS verification; after login, cookie saved at tools/linkedin-scanner/src/cache/scraper_cookie.pkl — subsequent runs skip login"
+    },
+    {
+      "task": "[TEST] /scan-contacts ranking sanity check — run on a company with known leadership (e.g., Spring Health), verify: founders/CEOs score role_proximity 9–10, VPs 6–8, ICs 1–4",
+      "priority": "Med",
+      "due": "2026-03-10",
+      "status": "Pending",
+      "notes": "Scoring: role_proximity + education + connectedness + industry_fit, max 40; overall_rating is Claude's holistic 1–10"
+    },
+    {
+      "task": "[TEST] /scan-contacts cache validation — run same company twice; second run should print \"Loading cached\" and complete faster; confirm cache at tools/linkedin-scanner/src/cache/",
+      "priority": "Med",
+      "due": "2026-03-10",
+      "status": "Pending",
+      "notes": "Delete cache/ folder to force full re-scrape; confirms 3-layer cache (HTML → parsed → ranked) works"
+    },
+    {
+      "task": "[TEST] /scan-contacts → networking.md write — select a contact from scan results, confirm row added to data/networking.md with correct columns: Name, Company, Role, Relationship=target, Source=linkedin-scan, Notes with LinkedIn URL + score",
+      "priority": "Med",
+      "due": "2026-03-10",
+      "status": "Pending",
+      "notes": "Check format matches existing networking.md rows"
+    },
+    {
+      "task": "[TEST] /scan-contacts → /cold-outreach end-to-end — scan a target company, add top contact to networking.md, run /cold-outreach; verify outreach skill reads new contact and uses headline/context from scan",
+      "priority": "Med",
+      "due": "2026-03-10",
+      "status": "Pending",
+      "notes": "Primary value chain: discover → add → outreach; this is the integration test"
+    },
+    {
+      "task": "[TEST] /scan-contacts error handling — test with: (a) company name with no results, (b) private profile URL; confirm graceful JSON error records (not crashes), error profiles shown at bottom of results",
+      "priority": "Low",
+      "due": "2026-03-10",
+      "status": "Pending",
+      "notes": "Error records use error field instead of rank; skill filters and displays separately"
+    },
+    {
+      "task": "[SYSTEM] Upgrade remaining skills to use preprocessing scripts — /cold-outreach and /follow-up can use outreach_pending.py; /generate-cv and /review-cv-deep can use a future cv_qc.py; /research-company and /research-industry can use a prompt/source cache",
+      "priority": "Low",
+      "due": "—",
+      "status": "Pending",
+      "notes": "Phase 2 follow-up: standup/weekly-review/checkout already upgraded; ~500 tokens saved per outreach skill run; cv_qc.py and research cache are higher-effort"
+    },
+    {
+      "task": "LinkedIn profile optimization — high-leverage for passive inbound on CoS roles, no current tool",
+      "priority": "Low",
+      "due": "—",
+      "status": "Pending",
+      "notes": "Nice-to-have from planning session 2026-02-23"
+    },
+    {
+      "task": "Build `/network-tuck` skill — cross-reference target companies against Tuck alumni list",
+      "priority": "Low",
+      "due": "—",
+      "status": "Pending",
+      "notes": "Nice-to-have from planning session 2026-02-23 — alumni intro is highest-probability path across all three pipeline companies"
+    },
+    {
+      "task": "Listen to 3 episodes of The Business of Yoga Podcast — focus on studio economics and operations",
+      "priority": "Med",
+      "due": "2026-03-03",
+      "status": "Pending",
+      "notes": "From /research-industry on 2026-02-24 — [thebizofyoga.com](https://www.thebizofyoga.com)"
+    },
+    {
+      "task": "Visit 2–3 SF yoga studios as a customer — observe operations, note management quality",
+      "priority": "Med",
+      "due": "2026-03-03",
+      "status": "Pending",
+      "notes": "From /research-industry on 2026-02-24 — Folk Yoga, Yoga Flow SF, Ritual Hot Yoga are good targets — Arise tonight 2026-02-25 (1 of 2–3)"
+    },
+    {
+      "task": "Check Wellhub (formerly Gympass) careers for BD/strategy roles — B2B corporate wellness, $2.4B platform",
+      "priority": "High",
+      "due": "2026-03-10",
+      "status": "Pending",
+      "notes": "From /research-industry on 2026-02-24 — New CEO (Jan 2025) = strategic reset. Burlingame CA. [Careers](https://wellhub.com/en-us/careers) — Checked 2026-02-24 — access blocked; check manually"
+    },
+    {
+      "task": "Check Vuori careers for operations/strategy roles — $5.5B valuation, $1B+ revenue, profitable, IPO prep signals (Global President + CLO hires Jul 2025)",
+      "priority": "High",
+      "due": "2026-03-10",
+      "status": "Pending",
+      "notes": "From /research-industry refresh on 2026-02-24 — [vuori.com/pages/careers](https://www.vuori.com/pages/careers) — Checked 2026-02-24 — access blocked; check manually"
+    },
+    {
+      "task": "Check Xponential Fitness / YogaSix HQ careers for Director of Operations or Franchise Development roles",
+      "priority": "Med",
+      "due": "2026-03-10",
+      "status": "Pending",
+      "notes": "From /research-industry on 2026-02-24 — [xponential.com/careers](https://www.xponential.com/careers) — Checked 2026-02-24 — access blocked; check manually"
+    },
+    {
+      "task": "Review YogaSix FDD (Franchise Disclosure Document) — best single doc for yoga studio unit economics",
+      "priority": "Med",
+      "due": "2026-03-10",
+      "status": "Pending",
+      "notes": "From /research-industry on 2026-02-24 — Available via FranchiseChatter; details membership revenue, margins, ops model"
+    },
+    {
+      "task": "Browse BizBuySell for active SF yoga studio listings — understand acquisition market pricing",
+      "priority": "Med",
+      "due": "2026-03-10",
+      "status": "Pending",
+      "notes": "From /research-industry on 2026-02-24 — [bizbuysell.com/california/dance-pilates-and-yoga-studios-for-sale](https://www.bizbuysell.com/california/dance-pilates-and-yoga-studios-for-sale/) — Checked 2026-02-24 — access blocked; check manually"
+    },
+    {
+      "task": "Identify 3–5 Tuck alumni working in fitness/wellness/yoga — alumni intro is highest-probability path",
+      "priority": "Med",
+      "due": "2026-03-10",
+      "status": "Pending",
+      "notes": "From /research-industry on 2026-02-24 — Check MyTuck network"
+    },
+    {
+      "task": "Connect with FitLab on LinkedIn — PE-backed boutique yoga roll-up, acquired Y7 Studio Feb 2025, likely needs CoS-level ops support",
+      "priority": "Med",
+      "due": "2026-03-17",
+      "status": "Pending",
+      "notes": "From /research-industry on 2026-02-24 — Early-stage roll-up; [fitlab.com](https://www.fitlab.com)"
+    },
+    {
+      "task": "Read Alex Mullin's white paper on digital health and OUD treatment",
+      "priority": "Med",
+      "due": "2026-03-04",
+      "status": "Pending",
+      "notes": "From /research-company on 2026-02-18 — [MobiHealthNews article](https://www.mobihealthnews.com/news/contributed-digital-health-and-opioid-use-disorder) — Checked 2026-02-24 — access blocked; consider emailing Alex to share. Postponed from 2026-02-25."
+    },
+    {
+      "task": "Prepare your \"why mental health\" narrative for Alex coffee chat",
+      "priority": "High",
+      "due": "2026-02-25",
+      "status": "Pending",
+      "notes": "From /research-company on 2026-02-18 — Both founders have deeply personal motivations; authenticity matters"
+    },
+    {
+      "task": "Subscribe to BHT Newsletter, Out-Of-Pocket, BHB, Rock Health Weekly",
+      "priority": "High",
+      "due": "2026-02-28",
+      "status": "Pending",
+      "notes": "From /research-industry on 2026-02-23 — Foundation step for BH tech knowledge ramp-up"
+    },
+    {
+      "task": "Learn PHQ-9 and GAD-7 scoring — high-ROI credibility signal for interviews",
+      "priority": "High",
+      "due": "2026-03-02",
+      "status": "Pending",
+      "notes": "From /research-industry on 2026-02-23 — Weekend study, outsized impression in conversations"
+    },
+    {
+      "task": "Join Mental Health Startup Community Slack (free, 3,000+ members)",
+      "priority": "Med",
+      "due": "2026-03-02",
+      "status": "Pending",
+      "notes": "From /research-industry on 2026-02-23"
+    },
+    {
+      "task": "Join HealthTech Hang SF email list for local meetups",
+      "priority": "Med",
+      "due": "2026-03-02",
+      "status": "Pending",
+      "notes": "From /research-industry on 2026-02-23 — [Sign up](https://bit.ly/SFHTHPublicContactListSignUp)"
+    },
+    {
+      "task": "Follow Solome Tibebu, Nikhil Krishnan, April Koh, Robert Krayn on LinkedIn",
+      "priority": "Med",
+      "due": "2026-03-02",
+      "status": "Pending",
+      "notes": "From /research-industry on 2026-02-23 — BH tech thought leaders"
+    },
+    {
+      "task": "Read BHT Career Launchpad (10-part series)",
+      "priority": "Med",
+      "due": "2026-03-09",
+      "status": "Pending",
+      "notes": "From /research-industry on 2026-02-23 — [Start here](https://www.behavioralhealthtech.com/insights/introducing-the-behavioral-health-career-launchpad) — Checked 2026-02-24 — access blocked; read manually"
+    },
+    {
+      "task": "Study payer/provider economics — understand FFS, VBC, PMPM, carve-out vs. carve-in",
+      "priority": "Med",
+      "due": "2026-03-09",
+      "status": "Pending",
+      "notes": "From /research-industry on 2026-02-23 — Priority knowledge gap"
+    },
+    {
+      "task": "Register for BHT2026 conference (Sept 22-24, Nashville) — THE industry event",
+      "priority": "Med",
+      "due": "2026-03-16",
+      "status": "Pending",
+      "notes": "From /research-industry on 2026-02-23 — [Register](https://www.behavioralhealthtech.com/)"
+    },
+    {
+      "task": "Identify 3-5 Tuck alumni working in behavioral health / digital health",
+      "priority": "Med",
+      "due": "2026-03-09",
+      "status": "Pending",
+      "notes": "From /research-industry on 2026-02-23 — Industry hires 50-60% through referrals"
+    },
+    {
+      "task": "Reach out to Farr Hariri (Owner, Belfiore Cheese) — Berkeley artisan food, aligns with Vermont farm aspiration",
+      "priority": "Med",
+      "due": "2026-03-02",
+      "status": "Pending",
+      "notes": "From /research-company on 2026-02-23 — LinkedIn: https://www.linkedin.com/in/farr-hariri-29b4a96/"
+    },
+    {
+      "task": "Check Good Eggs careers for any open roles — now GrubMarket subsidiary, ~2 open positions, mostly absorbed",
+      "priority": "Low",
+      "due": "2026-03-02",
+      "status": "Pending",
+      "notes": "From /research-company on 2026-02-23 — [goodeggs.com/careers](https://www.goodeggs.com/careers) — Checked 2026-02-24 — access blocked; check manually"
+    },
+    {
+      "task": "Miyoko's Creamery is off the target list — acquired via ABC insolvency Nov 2025 by Prosperity Organic Foods; no operating team",
+      "priority": "Low",
+      "due": "2026-03-02",
+      "status": "Pending",
+      "notes": "From /research-company on 2026-02-23 — See dossier for plant-based food alternatives (Kite Hill, Califia, Perfect Day)"
+    },
+    {
+      "task": "Check Kite Hill careers — Hayward CA, PE-backed artisan plant-based dairy, Miyoko's closest peer, likely ops/strategy roles",
+      "priority": "Med",
+      "due": "2026-03-02",
+      "status": "Pending",
+      "notes": "From /research-company on 2026-02-23 — [kite-hill.com/pages/careers](https://www.kite-hill.com/pages/careers) — Checked 2026-02-24 — access blocked; check manually"
+    },
+    {
+      "task": "Check Califia Farms careers — SF-based plant-based beverage brand, $300M+ raised, big enough for CoS/Strategy ops role",
+      "priority": "Med",
+      "due": "2026-03-02",
+      "status": "Pending",
+      "notes": "From /research-company on 2026-02-23 — [califiafarms.com/pages/careers](https://www.califiafarms.com/pages/careers) — Checked 2026-02-24 — access blocked; check manually"
+    },
+    {
+      "task": "Find warm intro to Becky O'Grady (Ripple CEO) — Harvard MBA, General Mills vet, 5 yrs on Ripple board",
+      "priority": "High",
+      "due": "2026-03-02",
+      "status": "Pending",
+      "notes": "From /research-company on 2026-02-23 — No CoS role posted; must pitch proactively. Check Tuck T'22 classmates who passed through General Mills, S2G Ventures contacts, Seth Goldman (board) via impact investing circles"
+    },
+    {
+      "task": "Check Tuck LinkedIn network for General Mills alumni who know Becky O'Grady (Ripple CEO)",
+      "priority": "Med",
+      "due": "2026-03-02",
+      "status": "Pending",
+      "notes": "From /research-company on 2026-02-23 — O'Grady spent 20+ years at General Mills; Tuck classmates likely passed through there"
+    },
+    {
+      "task": "Draft proactive CoS pitch to Stephen Williamson (Forager Project CEO) — anchor on Cashew Project + Greek yogurt expansion; frame as \"operational infrastructure gap at 10K-store scale\"",
+      "priority": "Med",
+      "due": "2026-03-03",
+      "status": "Pending",
+      "notes": "From /research-company on 2026-02-24 — Use conversation starter #6 from dossier. LinkedIn: https://www.linkedin.com/in/stephen-williamson-86b94910/"
+    },
+    {
+      "task": "Search Tuck MyTuck alumni network for anyone connected to Forager Project, Danone Manifesto Ventures, or Bay Area organic CPG ecosystem",
+      "priority": "Med",
+      "due": "2026-03-03",
+      "status": "Pending",
+      "notes": "From /research-company on 2026-02-24 — Warm intro is highest-probability path; cold pitch to Williamson is backup"
+    },
+    {
+      "task": "Listen to Taste Radio Ep. 766 — \"Mission, Never Accomplished: The Relentless Evolution of Forager Project\" (Oct 2025, 34 min)",
+      "priority": "Med",
+      "due": "2026-03-03",
+      "status": "Pending",
+      "notes": "From /research-company on 2026-02-24 — Stephen Williamson + JC Hanley discuss tariff challenges, mission evolution, and growth strategy. Prep material before any outreach. [tasteradio.com](https://www.tasteradio.com/episodes/mission-never-accomplished-the-relentless-evolution-of-forager-project)"
+    },
+    {
+      "task": "Listen to Kara Goldin Show Ep. 727 — Stephen Williamson on 10,000 stores, own creamery bet, Odwalla lessons (Aug 2025)",
+      "priority": "Low",
+      "due": "2026-03-10",
+      "status": "Pending",
+      "notes": "From /research-company on 2026-02-24 — Good background for proactive pitch context. [karagoldin.com](https://karagoldin.com/podcasts/stephen-williamson/)"
+    },
+    {
+      "task": "Check Lyra Health careers for \"Manager, Growth Strategy, Provider Ops\" role — Bay Area, active posting, tailor-made for analytics + ops background",
+      "priority": "High",
+      "due": "2026-03-02",
+      "status": "Pending",
+      "notes": "From /research-industry refresh on 2026-02-24 — New CEO (Jan 2025) = strategic reset. Burlingame CA. [Careers](https://www.lyrahealth.com/careers/) — Checked 2026-02-24 — access blocked; check manually"
+    },
+    {
+      "task": "Check Brightside Health careers — SF HQ, $100M raised, expanding into teens and Medicare/Medicaid",
+      "priority": "Med",
+      "due": "2026-03-09",
+      "status": "Pending",
+      "notes": "From /research-industry refresh on 2026-02-24 — Smaller scale = outsized impact. [brightside.com](https://www.brightside.com/) — Checked 2026-02-24 — access blocked; check manually"
+    },
+    {
+      "task": "Register with Storm3 recruiter — specialized BH tech recruiter, handles 30-40% of non-clinical BH tech placements",
+      "priority": "Med",
+      "due": "2026-03-02",
+      "status": "Pending",
+      "notes": "From /research-industry refresh on 2026-02-24 — [storm3.com](https://www.storm3.com/)"
+    },
+    {
+      "task": "Follow Jen Meyer (SonderMind President, ex-McKinsey) on LinkedIn — closest career path analog",
+      "priority": "Med",
+      "due": "2026-03-02",
+      "status": "Pending",
+      "notes": "From /research-industry refresh on 2026-02-24 — McKinsey → DispatchHealth → DaVita → SonderMind"
+    },
+    {
+      "task": "Check DroneDeploy careers for Manager of Business Operations or BD roles — SF Series E ($178M+), active hiring",
+      "priority": "Med",
+      "due": "2026-03-10",
+      "status": "Pending",
+      "notes": "From /research-company on 2026-02-25 — [jobs.lever.co/dronedeploy](https://jobs.lever.co/dronedeploy)"
+    },
+    {
+      "task": "Deep-dive research Taranis — Sunnyvale CA, Series D ($99.5M raised, $40M in 2024), AI crop monitoring",
+      "priority": "Med",
+      "due": "2026-03-10",
+      "status": "Pending",
+      "notes": "From /research-company on 2026-02-25 — run `/research-company`. [taranis.com](https://www.taranis.com)"
+    },
+    {
+      "task": "Deep-dive research Jupiter Intelligence — San Jose CA, Series C ($100M+), enterprise climate risk analytics",
+      "priority": "Med",
+      "due": "2026-03-10",
+      "status": "Pending",
+      "notes": "From /research-company on 2026-02-25 — run `/research-company`. [jupiterintel.com](https://www.jupiterintel.com)"
+    },
+    {
+      "task": "Listen to Gabe Charalambides podcast: \"From Rocket Scientist to Magic Mushroom Retreat Founder\" — prep before any Odyssey PBC conversation",
+      "priority": "Med",
+      "due": "2026-03-04",
+      "status": "Pending",
+      "notes": "From /research-company on 2026-02-25 — [Apple Podcasts](https://podcasts.apple.com/us/podcast/45-from-rocket-scientist-to-magic-mushroom-retreat/id1622304400?i=1000655626170)"
+    },
+    {
+      "task": "Check Mindbloom careers for operations/strategy roles — ketamine telehealth, 120% YoY growth, most direct Odyssey PBC analog with VC backing",
+      "priority": "Med",
+      "due": "2026-03-10",
+      "status": "Pending",
+      "notes": "From /research-company on 2026-02-25 — [mindbloom.com/careers](https://www.mindbloom.com/careers)"
+    },
+    {
+      "task": "Check Ember Health careers page — boutique ketamine clinic, actively hiring leadership ops roles",
+      "priority": "Med",
+      "due": "2026-03-10",
+      "status": "Pending",
+      "notes": "From /research-company on 2026-02-25 — [emberhealth.co/hiring](https://emberhealth.co/hiring/) — Agent confirmed active hiring"
+    },
+    {
+      "task": "Check Odyssey PBC careers page in ~60 days — no open roles as of 2026-02-25; CoS filled by Ella Brown; Colorado expansion may create new ops capacity need by mid-2026",
+      "priority": "Low",
+      "due": "2026-04-25",
+      "status": "Pending",
+      "notes": "From /research-company on 2026-02-25 — [odysseypbc.com/careers](https://www.odysseypbc.com/careers)"
+    },
+    {
+      "task": "Create framework/application-workflow.md — shared application workflow for /apply, /generate-cv, /cover-letter (CV quality rules, step sequence, cover letter structure)",
+      "priority": "Med",
+      "due": "—",
+      "status": "Pending",
+      "notes": "Skills can't call other skills — /apply duplicates logic from /generate-cv and /cover-letter; extract to shared framework to prevent drift"
+    },
+    {
+      "task": "Build `/today` command — morning orientation pulling recent reflections, goals, and todos into a prioritized daily plan",
+      "priority": "Low",
+      "due": "2026-03-28",
+      "status": "Pending",
+      "notes": "From Vin Obsidian Workflows lesson 2026-02-28 — builds on /my-world; most useful once nick/reflections/ has 4+ weeks of entries. Command file: ~/.claude/commands/my-world.md is the model."
+    },
+    {
+      "task": "Build `/close` command — evening bookend that extracts the day's action items and surfaces connections from recent reflections",
+      "priority": "Low",
+      "due": "2026-03-28",
+      "status": "Pending",
+      "notes": "From Vin Obsidian Workflows lesson 2026-02-28 — pairs with /today; compounds with regular writing practice."
+    },
+    {
+      "task": "Build `/ideas` command — scans 30 days of reflections for patterns, surfaces things to build or pursue",
+      "priority": "Low",
+      "due": "2026-03-28",
+      "status": "Pending",
+      "notes": "From Vin Obsidian Workflows lesson 2026-02-28 — most powerful command once vault has depth; Vin's original demo command. Run /reflect regularly between now and then to feed it."
+    }
+  ],
+  "overdue": [
+    {
+      "task": "Prepare your \"why mental health\" narrative for Alex coffee chat",
+      "priority": "High",
+      "due": "2026-02-25",
+      "status": "Pending",
+      "notes": "From /research-company on 2026-02-18 — Both founders have deeply personal motivations; authenticity matters"
+    }
+  ],
+  "outreach_sent_today": [],
+  "research_completed_today": [],
+  "changelog_today": [
+    {
+      "title": "/critique-plan skill, /scan-contacts skill, todo_write.py, PDF + style fixes",
+      "date": "2026-02-28"
+    }
+  ],
+  "metrics": {
+    "streak": 0,
+    "this_week": 24,
+    "last_7": 24,
+    "last_30": 24,
+    "all_time": 24,
+    "avg_per_day": 6.0,
+    "overdue_trend": "→",
+    "entry_count": 5
+  },
+  "pipeline_snapshot": [
+    {
+      "company": "---",
+      "role": "---",
+      "stage": "---"
+    },
+    {
+      "company": "Headway",
+      "role": "Manager, Business Operations",
+      "stage": "Applied"
+    },
+    {
+      "company": "Notion",
+      "role": "Partner Strategy & Operations Manager",
+      "stage": "Applied"
+    },
+    {
+      "company": "Dusty Robotics",
+      "role": "Director of Business Operations",
+      "stage": "Researching"
+    },
+    {
+      "company": "Amae Health",
+      "role": "Strategy & Operations",
+      "stage": "Researching"
+    },
+    {
+      "company": "Climate.ai",
+      "role": "Chief of Staff to CEO",
+      "stage": "Researching"
+    },
+    {
+      "company": "Ripple Foods",
+      "role": "Chief of Staff (no open role — proactive pitch)",
+      "stage": "Researching"
+    }
+  ],
+  "networking_activity": [
+    {
+      "name": "---",
+      "company": "---",
+      "last_interaction": "---",
+      "pending_todos": 9
+    },
+    {
+      "name": "Alex Mullin",
+      "company": "Amae Health",
+      "last_interaction": "2026-02-18",
+      "pending_todos": 3
+    },
+    {
+      "name": "Ella Brown",
+      "company": "Odyssey PBC",
+      "last_interaction": "2026-02-25",
+      "pending_todos": 3
+    },
+    {
+      "name": "Becky O'Grady",
+      "company": "Ripple Foods",
+      "last_interaction": "2026-02-23",
+      "pending_todos": 3
+    }
+  ]
+}

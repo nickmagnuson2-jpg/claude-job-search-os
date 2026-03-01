@@ -1,0 +1,101 @@
+{
+  "followup_due": [],
+  "followup_overdue": [
+    {
+      "name": "Jack Wiefels",
+      "company": "—",
+      "role": "—",
+      "relationship": "referral",
+      "last_interaction": "2024-10-04",
+      "follow_up_action": "2024-10-04",
+      "followup_date": "2024-10-04",
+      "days_until": -512
+    },
+    {
+      "name": "David Benudis",
+      "company": "ex-Sofar Ocean",
+      "role": "GTM & Post-Sales Lead, Wayfinder (left Oct 2024)",
+      "relationship": "referral",
+      "last_interaction": "2024-10-07",
+      "follow_up_action": "2024-10-07",
+      "followup_date": "2024-10-07",
+      "days_until": -509
+    },
+    {
+      "name": "Alex Mullin",
+      "company": "Amae Health",
+      "role": "Product Lead (fmr Strategy & Ops Lead)",
+      "relationship": "peer",
+      "last_interaction": "2026-02-18",
+      "follow_up_action": "2026-02-25",
+      "followup_date": "2026-02-25",
+      "days_until": -3
+    },
+    {
+      "name": "Meghan Munzel",
+      "company": "Concero (placing at Dusty Robotics)",
+      "role": "Lead Talent Acquisition Partner",
+      "relationship": "recruiter",
+      "last_interaction": "2026-02-25",
+      "follow_up_action": "2026-02-25",
+      "followup_date": "2026-02-25",
+      "days_until": -3
+    },
+    {
+      "name": "Ella Brown",
+      "company": "Odyssey PBC",
+      "role": "Chief of Staff",
+      "relationship": "other",
+      "last_interaction": "2026-02-25",
+      "follow_up_action": "2026-02-25",
+      "followup_date": "2026-02-25",
+      "days_until": -3
+    },
+    {
+      "name": "Becky O'Grady",
+      "company": "Ripple Foods",
+      "role": "CEO",
+      "relationship": "hiring-manager",
+      "last_interaction": "2026-02-23",
+      "follow_up_action": "2026-02-25",
+      "followup_date": "2026-02-25",
+      "days_until": -3
+    },
+    {
+      "name": "Sophie Davis",
+      "company": "Arise",
+      "role": "Studio Manager",
+      "relationship": "other",
+      "last_interaction": "2026-02-26",
+      "follow_up_action": "2026-02-26",
+      "followup_date": "2026-02-26",
+      "days_until": -2
+    },
+    {
+      "name": "Ami Zou",
+      "company": "Climate Tech Club",
+      "role": "Founder / Hackathon Organizer",
+      "relationship": "other",
+      "last_interaction": "2026-02-26",
+      "follow_up_action": "2026-02-26",
+      "followup_date": "2026-02-26",
+      "days_until": -2
+    },
+    {
+      "name": "Andy Ramirez",
+      "company": "Eames Construction",
+      "role": "President (fmr SVP Berkeley Partners)",
+      "relationship": "other",
+      "last_interaction": "2026-02-26",
+      "follow_up_action": "2026-02-26",
+      "followup_date": "2026-02-26",
+      "days_until": -2
+    }
+  ],
+  "summary": {
+    "total_contacts": 11,
+    "due_today": 0,
+    "overdue": 9
+  },
+  "target_date": "2026-02-28"
+}

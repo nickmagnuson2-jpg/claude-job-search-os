@@ -1,0 +1,201 @@
+{
+  "recent_dossiers": {
+    "this_week": [
+      {
+        "slug": "amae-health",
+        "path": "output\\amae-health\\amae-health.md",
+        "last_updated": "2026-02-24",
+        "days_old": 4
+      },
+      {
+        "slug": "behavioral-health-tech",
+        "path": "output\\behavioral-health-tech\\behavioral-health-tech.md",
+        "last_updated": "2026-02-24",
+        "days_old": 4
+      },
+      {
+        "slug": "belfiore-cheese",
+        "path": "output\\belfiore-cheese\\belfiore-cheese.md",
+        "last_updated": "2026-02-23",
+        "days_old": 5
+      },
+      {
+        "slug": "big-health",
+        "path": "output\\big-health\\big-health.md",
+        "last_updated": "2026-02-24",
+        "days_old": 4
+      },
+      {
+        "slug": "climate-ai",
+        "path": "output\\climate-ai\\climate-ai.md",
+        "last_updated": "2026-02-25",
+        "days_old": 3
+      },
+      {
+        "slug": "eclipse-foods",
+        "path": "output\\eclipse-foods\\eclipse-foods.md",
+        "last_updated": "2026-02-24",
+        "days_old": 4
+      },
+      {
+        "slug": "folk-yoga-sf",
+        "path": "output\\folk-yoga-sf\\folk-yoga-sf.md",
+        "last_updated": "2026-02-24",
+        "days_old": 4
+      },
+      {
+        "slug": "forager-project",
+        "path": "output\\forager-project\\forager-project.md",
+        "last_updated": "2026-02-24",
+        "days_old": 4
+      },
+      {
+        "slug": "good-eggs",
+        "path": "output\\good-eggs\\good-eggs.md",
+        "last_updated": "2026-02-23",
+        "days_old": 5
+      },
+      {
+        "slug": "grow-therapy",
+        "path": "output\\grow-therapy\\grow-therapy.md",
+        "last_updated": "2026-02-24",
+        "days_old": 4
+      },
+      {
+        "slug": "headway",
+        "path": "output\\headway\\headway.md",
+        "last_updated": "2026-02-24",
+        "days_old": 4
+      },
+      {
+        "slug": "impossible-foods",
+        "path": "output\\impossible-foods\\impossible-foods.md",
+        "last_updated": "2026-02-23",
+        "days_old": 5
+      },
+      {
+        "slug": "miyokos-creamery",
+        "path": "output\\miyokos-creamery\\miyokos-creamery.md",
+        "last_updated": "2026-02-23",
+        "days_old": 5
+      },
+      {
+        "slug": "nobell-foods",
+        "path": "output\\nobell-foods\\nobell-foods.md",
+        "last_updated": "2026-02-24",
+        "days_old": 4
+      },
+      {
+        "slug": "notion",
+        "path": "output\\notion\\notion.md",
+        "last_updated": "2026-02-27",
+        "days_old": 1
+      },
+      {
+        "slug": "ocean-based-carbon-removal",
+        "path": "output\\ocean-based-carbon-removal\\ocean-based-carbon-removal.md",
+        "last_updated": "2026-02-27",
+        "days_old": 1
+      },
+      {
+        "slug": "odysseypbc",
+        "path": "output\\odysseypbc\\odysseypbc.md",
+        "last_updated": "2026-02-25",
+        "days_old": 3
+      },
+      {
+        "slug": "olipop",
+        "path": "output\\olipop\\olipop.md",
+        "last_updated": "2026-02-24",
+        "days_old": 4
+      },
+      {
+        "slug": "perfect-day",
+        "path": "output\\perfect-day\\perfect-day.md",
+        "last_updated": "2026-02-24",
+        "days_old": 4
+      },
+      {
+        "slug": "phathom",
+        "path": "output\\phathom\\phathom.md",
+        "last_updated": "2026-02-27",
+        "days_old": 1
+      },
+      {
+        "slug": "phathom-technologies",
+        "path": "output\\phathom-technologies\\phathom-technologies.md",
+        "last_updated": "2026-02-27",
+        "days_old": 1
+      },
+      {
+        "slug": "pivot-bio",
+        "path": "output\\pivot-bio\\pivot-bio.md",
+        "last_updated": "2026-02-24",
+        "days_old": 4
+      },
+      {
+        "slug": "ripple-foods",
+        "path": "output\\ripple-foods\\ripple-foods.md",
+        "last_updated": "2026-02-23",
+        "days_old": 5
+      },
+      {
+        "slug": "sofar-ocean",
+        "path": "output\\sofar-ocean\\sofar-ocean.md",
+        "last_updated": "2026-02-26",
+        "days_old": 2
+      },
+      {
+        "slug": "sondermind",
+        "path": "output\\sondermind\\sondermind.md",
+        "last_updated": "2026-02-24",
+        "days_old": 4
+      },
+      {
+        "slug": "spring-health",
+        "path": "output\\spring-health\\spring-health.md",
+        "last_updated": "2026-02-24",
+        "days_old": 4
+      },
+      {
+        "slug": "talkiatry",
+        "path": "output\\talkiatry\\talkiatry.md",
+        "last_updated": "2026-02-24",
+        "days_old": 4
+      },
+      {
+        "slug": "two-chairs",
+        "path": "output\\two-chairs\\two-chairs.md",
+        "last_updated": "2026-02-24",
+        "days_old": 4
+      },
+      {
+        "slug": "yoga-industry",
+        "path": "output\\yoga-industry\\yoga-industry.md",
+        "last_updated": "2026-02-24",
+        "days_old": 4
+      }
+    ],
+    "older_than_30_days": [
+      {
+        "slug": "construction-tech",
+        "path": "output\\construction-tech\\construction-tech.md",
+        "last_updated": null,
+        "days_old": null
+      },
+      {
+        "slug": "dusty-robotics",
+        "path": "output\\dusty-robotics\\dusty-robotics.md",
+        "last_updated": null,
+        "days_old": null
+      }
+    ]
+  },
+  "summary": {
+    "total_dossiers": 31,
+    "updated_this_week": 29,
+    "stale_count": 2
+  },
+  "staleness_alerts": [],
+  "target_date": "2026-02-28"
+}

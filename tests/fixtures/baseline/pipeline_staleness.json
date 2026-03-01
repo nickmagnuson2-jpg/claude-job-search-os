@@ -1,0 +1,99 @@
+{
+  "active_entries": [
+    {
+      "company": "---",
+      "role": "---",
+      "stage": "---",
+      "date_added": "---",
+      "date_updated": "---",
+      "days_since_update": null,
+      "threshold": 7,
+      "stalled": false,
+      "url": "---",
+      "notes": "---"
+    },
+    {
+      "company": "Headway",
+      "role": "Manager, Business Operations",
+      "stage": "Applied",
+      "date_added": "2026-02-27",
+      "date_updated": "Follow up if no response by 2026-03-06; run `/prep-interview` when interview scheduled",
+      "days_since_update": null,
+      "threshold": 5,
+      "stalled": false,
+      "url": "Remote role. Applied via McKinsey alumni portal. Cover note addressed to Marissa. $121.6K–$190K range. Added by /apply on 2026-02-27.",
+      "notes": "[Greenhouse](https://job-boards.greenhouse.io/headway/jobs/5740168004)"
+    },
+    {
+      "company": "Notion",
+      "role": "Partner Strategy & Operations Manager",
+      "stage": "Applied",
+      "date_added": "2026-02-27",
+      "date_updated": "Follow up if no response by 2026-03-06; find Tuck/Duke/McKinsey alumni warm intro",
+      "days_since_update": null,
+      "threshold": 5,
+      "stalled": false,
+      "url": "SF or NYC, on-site 3 anchor days (Mon/Tue/Thu). $185K–$220K base. Applied 2026-02-27.",
+      "notes": "[Ashby](https://jobs.ashbyhq.com/notion/5dc7695e-139e-4679-a213-a733ee1d62d5)"
+    },
+    {
+      "company": "Dusty Robotics",
+      "role": "Director of Business Operations",
+      "stage": "Researching",
+      "date_added": "2026-02-25",
+      "date_updated": "Do research → generate CV → respond to Meghan Munzel",
+      "days_since_update": null,
+      "threshold": 7,
+      "stalled": false,
+      "url": "Mountain View CA. First BizOps hire; partners with CEO/CFO. MBA + MBB required. Construction robotics. Inbound from Meghan Munzel (Concero recruiter).",
+      "notes": "[Greenhouse](https://job-boards.greenhouse.io/dustyrobotics/jobs/7631500003?gh_jid=7631500003)"
+    },
+    {
+      "company": "Amae Health",
+      "role": "Strategy & Operations",
+      "stage": "Researching",
+      "date_added": "2026-02-24",
+      "date_updated": "Prep coffee chat with Alex Mullin; run `/prep-interview`",
+      "days_since_update": null,
+      "threshold": 7,
+      "stalled": false,
+      "url": "Contact: Alex Mullin (networking.md). In-office SF (Cow Hollow), 5 days/week. $119K–$161K + equity. Series B PBC.",
+      "notes": "[Greenhouse](https://job-boards.greenhouse.io/amaehealth/jobs/4077449009)"
+    },
+    {
+      "company": "Climate.ai",
+      "role": "Chief of Staff to CEO",
+      "stage": "Researching",
+      "date_added": "2026-02-25",
+      "date_updated": "Apply to posted role; run `/generate-cv`",
+      "days_since_update": null,
+      "threshold": 7,
+      "stalled": false,
+      "url": "SF-based, Series B ($38M raised), 51 employees. No Series C in 34 months — probe. Remote-first with optional SF office — clarify. 4.7/5 Glassdoor. CEO Himanshu Gupta (WEF YGL 2025, advised Al Gore). See dossier: output/climate-ai/climate-ai.md",
+      "notes": "[Careers](https://climate.ai/work/chief-of-staff-to-the-ceo/)"
+    },
+    {
+      "company": "Ripple Foods",
+      "role": "Chief of Staff (no open role — proactive pitch)",
+      "stage": "Researching",
+      "date_added": "2026-02-23",
+      "date_updated": "Find warm intro path to Becky O'Grady (CEO, Harvard MBA, General Mills); check Tuck classmates who passed through General Mills",
+      "days_since_update": null,
+      "threshold": 7,
+      "stalled": false,
+      "url": "Emeryville CA (~15-20min from SF). 79 employees. New CEO Dec 2025 (O'Grady). $17M strategic financing. Organic line launching NOW. No CoS role exists — must create it. Rich Products Ventures = possible M&A pathway. Glassdoor 4.4/5 WLB. See dossier.",
+      "notes": "[ripplefoods.com](https://ripplefoods.com)"
+    }
+  ],
+  "stalled_entries": [],
+  "stage_distribution": {
+    "---": 1,
+    "Applied": 2,
+    "Researching": 4
+  },
+  "metrics": {
+    "total_active": 7,
+    "total_stalled": 0
+  },
+  "target_date": "2026-02-28"
+}
