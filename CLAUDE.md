@@ -129,7 +129,9 @@ Search goals and targeting criteria live in `data/goals.md` (also gitignored). S
 ├── tools/
 │   ├── convert_pdfs.py        # PDF-to-text extractor (for input files in files/)
 │   ├── md_to_pdf.py           # Markdown CV → styled PDF converter
-│   └── open_draft.py          # Opens Gmail compose URL with pre-filled draft (auto-run by outreach skills)
+│   ├── open_draft.py          # Opens Gmail compose URL with pre-filled draft (auto-run by outreach skills)
+│   ├── todo_daily_metrics.py  # Pre-processes daily metrics for /checkout and /weekly-review → JSON
+│   └── todo_write.py          # Atomic mutations for data/job-todos.md (add/done/clear/sync) → JSON
 └── output/                    # All generated output — company-first hierarchy
     ├── [company-slug]/            #   One subfolder per named entity (company or industry)
     │   ├── [slug].md              #     Research dossier (no date prefix — canonical, versioned in place)
@@ -178,7 +180,7 @@ Examples:
 
 The Edit tool silently fails on markdown files with table rows >500 characters — it returns success but makes no change. Two data files in this repo exceed that threshold and **must always use Write (read-then-write full file)**:
 
-- `data/job-todos.md` — task rows with long Notes cells (up to 543 chars)
+- `data/job-todos.md` — **mutations must use `tools/todo_write.py`** (add/done/clear/sync); if direct write is unavoidable, use Write not Edit (rows up to 543 chars)
 - `data/job-pipeline.md` — pipeline rows with long Notes cells (up to 524 chars)
 
 All output dossiers (`output/**/*.md`) also exceed this threshold (up to 1,677 chars) — use Write for any in-place dossier updates.
@@ -333,6 +335,15 @@ python tools/convert_pdfs.py
 
 **Outreach drafting** (`tools/open_draft.py` — auto-run by `/cold-outreach`, `/follow-up`, `/draft-email`):
 Opens a pre-filled Gmail compose window in the browser. Requires no manual setup — runs automatically when an outreach draft is approved.
+
+**Todo mutations (`tools/todo_write.py`):** Preferred path for all `data/job-todos.md` writes — atomic, zero token cost:
+```bash
+PYTHONIOENCODING=utf-8 python tools/todo_write.py add "Task name" Med 2026-03-01 "--"
+PYTHONIOENCODING=utf-8 python tools/todo_write.py done "fragment"
+PYTHONIOENCODING=utf-8 python tools/todo_write.py clear
+PYTHONIOENCODING=utf-8 python tools/todo_write.py sync
+```
+Use `--` for omitted `due`/`notes` args. Returns JSON: `{"status": "ok", "action": "...", "summary": "..."}` or `{"status": "error", "message": "..."}`. The `sync` command fast-paths out immediately if the pipeline Archived section is empty.
 
 **Preprocessing scripts — Windows encoding:** Run all `tools/*.py` scripts with the `PYTHONIOENCODING=utf-8` env prefix on Windows, or they crash on Unicode chars (arrows, em-dashes) in data files. Prefix: `PYTHONIOENCODING=utf-8 python tools/<script>.py [args]`. Tests handle this automatically via `conftest.py`; skills must add the prefix to any `Bash()` calls.
 

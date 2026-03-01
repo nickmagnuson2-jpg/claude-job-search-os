@@ -3,7 +3,7 @@ name: todo
 description: Lightweight to-do list for job search tasks not tied to specific applications
 argument-hint: [add|done|daily|clear <task> [priority] [due]]
 user-invocable: true
-allowed-tools: Read(*), Write(data/job-todos.md), Read(data/job-pipeline.md), Read(data/networking.md), Read(data/job-todos-daily-log.md), Read(data/outreach-log.md), Glob(output/**)
+allowed-tools: Read(*), Read(data/job-pipeline.md), Read(data/networking.md), Read(data/job-todos-daily-log.md), Read(data/outreach-log.md), Glob(output/**), Bash(python tools/todo_write.py:*)
 ---
 
 # Job Search To-Do Manager
@@ -60,27 +60,21 @@ If a to-do has no links, display it normally without annotation lines.
 
 ### Pipeline Sync (auto-run before any display)
 
-Before displaying to-dos in **any command**, run a pipeline sync to auto-complete to-dos for withdrawn/rejected/accepted companies:
+Before displaying to-dos in **any command**, run the sync script:
 
-1. Read `data/job-pipeline.md` (already loaded for cross-referencing).
-2. Extract company names from the **Archived** section where Stage is `Withdrawn`, `Rejected`, or `Accepted`. Call this the **terminal companies** list.
-3. Scan `data/job-todos.md` Active section for any rows where:
-   - Status is NOT `Done`, AND
-   - The task text or notes contain a terminal company name as a full-name substring (case-insensitive, same matching rules as cross-referencing)
-4. For each matched row, move it from Active to Completed:
-   - Remove the row from the Active table.
-   - Append a new row to the Completed table using this column mapping:
-     - **Task** → Task (unchanged)
-     - **Priority** → Priority (unchanged)
-     - **Completed** → `Withdrawn YYYY-MM-DD` (today's date)
-     - **Notes** → original Notes value + ` | Auto-withdrawn YYYY-MM-DD — [Company] pipeline entry marked [Stage]`
-   - Drop the `Due` and `Status` columns — they do not exist in the Completed table.
-5. Write the updated `data/job-todos.md` if any rows were changed.
-6. If any items were auto-withdrawn, display a notice **above** the to-do list:
-   ```
-   ⚡ Pipeline sync: N to-do(s) auto-withdrawn — [Company] marked [Stage]
-   ```
-7. If no terminal companies exist in the pipeline, skip silently.
+```bash
+PYTHONIOENCODING=utf-8 python tools/todo_write.py sync
+```
+
+Parse the JSON result:
+- If `withdrawn > 0`, display a notice **above** the to-do list:
+  ```
+  ⚡ Pipeline sync: N to-do(s) auto-withdrawn — [Company] marked [Stage]
+  ```
+  (Use `summary` from the JSON for the notice text.)
+- If `withdrawn == 0` (or `action` is `sync` with no withdrawals), skip silently.
+
+Then read `data/job-todos.md` (it may have been updated by the sync) along with `data/job-pipeline.md` and `data/networking.md` for display.
 
 ### Command: Show To-Dos (no arguments)
 
@@ -125,36 +119,40 @@ Before displaying to-dos in **any command**, run a pipeline sync to auto-complet
 
 ### Command: `add <task> [priority] [due]`
 
-1. Read `data/job-todos.md`.
-2. Parse arguments:
-   - **Task**: required — the to-do description (quoted string or unquoted text before priority/date)
-   - **Priority**: optional — `High`, `Med`, or `Low`. Default: `Med`
-   - **Due**: optional — date in YYYY-MM-DD format. Default: `—`
-3. Check for duplicates (fuzzy match on task text). Warn if similar item exists.
-4. Add a new row to the Active section:
-   - **Task**: from argument
-   - **Priority**: from argument or `Med`
-   - **Due**: from argument or `—`
-   - **Status**: `Pending`
-   - **Notes**: `—`
-5. Write updated file.
-6. Read pipeline and networking files, then display the added item with any cross-reference links detected.
+1. Parse `$ARGUMENTS` to extract:
+   - **Task** (required) — the to-do description
+   - **Priority** (optional, default: `Med`) — `High`, `Med`, or `Low`
+   - **Due** (optional, default: `--`) — date in YYYY-MM-DD format
+2. Run the write script (substitute extracted values; use `--` for missing priority/due):
+   ```bash
+   PYTHONIOENCODING=utf-8 python tools/todo_write.py add "TASK" "PRIORITY" "DUE" "--"
+   ```
+   Use `--` as a placeholder for any omitted argument.
+3. Parse JSON result:
+   - If `status: error`, show the message and stop.
+   - If `warning` key is present, display: `⚠ Note: {warning}`
+4. Read `data/job-pipeline.md` and `data/networking.md`, build cross-reference links for the added task, then confirm:
+   ```
+   ✓ Added: TASK [PRIORITY | Due: DUE]
+   > Pipeline: ... (if matched)
+   > Contact: ... (if matched)
+   ```
 
 ### Command: `done <task>`
 
-1. Read `data/job-todos.md`.
-2. Find the matching task (case-insensitive, fuzzy match — match on substring if unambiguous).
-3. If multiple matches, ask the user to clarify.
-4. Update the item and move it from Active to Completed:
-   - Remove the row from the Active table.
-   - Append a new row to the Completed table using this column mapping:
-     - **Task** → Task (unchanged)
-     - **Priority** → Priority (unchanged)
-     - **Completed** → today's date (YYYY-MM-DD)
-     - **Notes** → original Notes value, with `Completed YYYY-MM-DD` prepended if not already present
-   - Drop the `Due` and `Status` columns — they do not exist in the Completed table.
-5. Write updated file.
-6. Confirm completion and show remaining active count.
+1. Extract the task fragment from `$ARGUMENTS`.
+2. Run the write script:
+   ```bash
+   PYTHONIOENCODING=utf-8 python tools/todo_write.py done "FRAGMENT"
+   ```
+3. Parse JSON result:
+   - If `status: error` and message mentions "Multiple matches", show the listed options and ask the user to be more specific. Stop.
+   - If `status: error` and message mentions "No task found", show the error and stop.
+   - If `status: ok`, confirm using values from the JSON:
+     ```
+     ✓ Completed: TASK
+     N tasks remaining active.
+     ```
 
 ### Command: `daily`
 
@@ -167,16 +165,16 @@ Before displaying to-dos in **any command**, run a pipeline sync to auto-complet
 
 ### Command: `clear`
 
-1. Read `data/job-todos.md`.
-2. Identify all items with Status = `Done` **or `Withdrawn`** still in the Active section (if any).
-3. For each item, move it from Active to Completed using this column mapping:
-   - **Task** → Task (unchanged)
-   - **Priority** → Priority (unchanged)
-   - **Completed** → for `Done` items: today's date; for `Withdrawn` items: `Withdrawn YYYY-MM-DD`
-   - **Notes** → original Notes value (unchanged)
-   - Drop the `Due` and `Status` columns — they do not exist in the Completed table.
-4. Write updated file.
-5. Report how many items were archived (Done count + Withdrawn count separately).
+1. Run the write script:
+   ```bash
+   PYTHONIOENCODING=utf-8 python tools/todo_write.py clear
+   ```
+2. Parse JSON result:
+   - If `archived: 0`, display: `Nothing to archive — no Done or Withdrawn items in Active section.`
+   - Otherwise, report using `done` and `withdrawn` counts from the JSON:
+     ```
+     Archived N items: X Done, Y Withdrawn.
+     ```
 
 ## Daily Log File Format
 

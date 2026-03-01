@@ -64,7 +64,11 @@ For US-based roles and US job boards:
 - Experience section with accomplishment-driven bullets (lead with impact metrics)
 - Education at the bottom (unless recent graduate)
 - Typically 1-2 pages (senior roles may extend to 3)
-- No availability or rate in the document — discuss in conversation
+- No availability or rate in the document - discuss in conversation
+
+#### Nick's CV Formatting Preferences
+- **No em dashes or en dashes** - use hyphens (`-`) everywhere. In bullet text: ` - ` (with spaces). In date ranges: `2022-2024` (no spaces).
+- **Skills separators:** use commas, not dots/bullets. Example: `SQL, Tableau, Looker, R, Excel` not `SQL · Tableau · Looker`
 
 ### UK CV Format
 

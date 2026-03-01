@@ -5,6 +5,40 @@ Format: newest entries at the top.
 
 ---
 
+## 2026-02-28 — /critique-plan skill, /scan-contacts skill, todo_write.py, PDF + style fixes
+
+### Added
+- **`/critique-plan` skill** — six-agent plan critique + hybrid plan synthesis. Inserts a structured review step between Codex plan generation and Claude execution. Five analytical agents (completeness, risk/safety, codebase alignment, simplicity/scope, sequencing) run in parallel against the Codex plan; a sixth independent Claude planner receives only the stated goal (no Codex steps — no anchoring) to generate a clean-room plan. Synthesizes a diff table (Codex vs Claude) and an enhanced hybrid plan with all blockers resolved, gaps filled, and order corrected. Inline output only — no file written. Agents 1/2/3/6 use sonnet; agents 4/5 use haiku.
+- **`/scan-contacts` skill** — LinkedIn contact scanner for a target company. Runs `tools/linkedin-scanner/scan.py` to fetch profiles, then ranks each contact on four dimensions: role proximity (hiring decision authority), education overlap, network connectedness, and industry fit. Outputs a ranked table and adds top contacts to `data/networking.md`.
+- **`tools/todo_write.py`** — atomic mutation tool for `data/job-todos.md`. Handles `add`, `done`, `clear`, and `sync` without loading the full file into Claude's context. Outputs JSON. The `sync` command fast-paths out immediately if the pipeline Archived section is empty.
+
+### Changed
+- **`/todo` skill** — all mutation commands (add, done, clear, sync) now delegate to `tools/todo_write.py` via Bash. Direct file manipulation removed. Pipeline sync step rewritten to call `todo_write.py sync` instead of reading and rewriting the file manually.
+- **`tools/md_to_pdf.py`** — major rewrite for 1-page CV output: switched from Helvetica to Calibri (registered via ReportLab TTFont from `C:/Windows/Fonts/`), tightened page margins (8mm/13mm), reduced line-height to 1.1, reduced body font-size to 8.5pt, tightened section spacing throughout.
+- **`framework/style-guidelines.md`** — added Nick's CV formatting preferences: no em dashes or en dashes (use hyphens everywhere), comma separators for skills lists (not dots or bullets).
+- **`CLAUDE.md`** — added `todo_write.py` to repo structure listing; updated Write-Only Files section to specify that mutations must use `todo_write.py`; added `todo_write.py` usage examples to Tools & Environment section.
+- **`.claude/settings.local.json`** — added pre-approved WebFetch domains (luma.com, oceantechhackathon.org, sofarocean.com, propellervc.com, aquatic-labs.com) and pre-approved Bash patterns (`git add:*`, `PYTHONIOENCODING=utf-8 python:*`).
+
+### Tests added
+- `tests/scripts/test_linkedin_scanner_parser.py` — unit tests for LinkedIn profile parser
+- `tests/scripts/test_linkedin_scanner_scan.py` — integration tests for scan workflow
+- `tests/scripts/test_linkedin_scanner_unit.py` — unit tests for scanner core
+- `tests/skills/SCAN_CONTACTS_TESTING.md` — manual testing guide for `/scan-contacts`
+
+### Files changed
+- `.claude/skills/critique-plan/SKILL.md` — new
+- `.claude/skills/scan-contacts/SKILL.md` — new
+- `tools/todo_write.py` — new
+- `tests/scripts/test_linkedin_scanner_parser.py`, `test_linkedin_scanner_scan.py`, `test_linkedin_scanner_unit.py` — new
+- `tests/skills/SCAN_CONTACTS_TESTING.md` — new
+- `.claude/skills/todo/SKILL.md` — mutation commands rewired to todo_write.py
+- `tools/md_to_pdf.py` — major rewrite (Calibri, tight spacing)
+- `framework/style-guidelines.md` — Nick's CV formatting preferences added
+- `CLAUDE.md` — todo_write.py docs added; Write-Only Files section updated
+- `.claude/settings.local.json` — domain + bash permissions added
+
+---
+
 ## 2026-02-26 — Edit tool safety: Write-only enforcement + PostToolUse hook
 
 ### Root cause

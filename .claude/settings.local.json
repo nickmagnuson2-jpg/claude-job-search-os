@@ -30,7 +30,15 @@
       "Skill(weekly-review)",
       "Skill(generate-cv)",
       "Skill(prep-interview)",
-      "Skill(follow-up)"
+      "Skill(follow-up)",
+      "WebFetch(domain:luma.com)",
+      "WebFetch(domain:www.oceantechhackathon.org)",
+      "WebFetch(domain:docs.sofarocean.com)",
+      "WebFetch(domain:www.sofarocean.com)",
+      "WebFetch(domain:propellervc.com)",
+      "WebFetch(domain:www.aquatic-labs.com)",
+      "Bash(git add:*)",
+      "Bash(PYTHONIOENCODING=utf-8 python:*)"
     ]
   }
 }

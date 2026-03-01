@@ -28,6 +28,8 @@
 | 11 | Shared employer framed as personal working relationship | Shared employer ≠ personal connection — don't overstate familiarity. "We both did time at Altman Solon" not "we worked together" | 2026-02-25 |
 | 12 | Stated "she's the second person to mention HR" without verifying — no prior mention existed in any data file | Never assert a pattern (recurring suggestion, repeated theme, second occurrence) without first searching the data files to confirm it. If no corroborating evidence is found, don't state it. | 2026-02-26 |
 | 13 | Added "possible operations/community role" to Lisa referral — Nick only said client connection, nothing professional | Never infer the nature or purpose of a connection beyond what was explicitly stated. Record only what was said; do not extrapolate intent or capacity. | 2026-02-26 |
+| 14 | CHANGELOG not updated after a session that created `/scan-contacts`, `todo_write.py`, and several file changes — Nick had to ask explicitly | Always update `docs/CHANGELOG.md` as the final step of any session that creates or modifies skills, tools, or framework files. Don't wait to be asked. | 2026-02-28 |
+| 15 | Multi-agent comparison plans risk anchoring when the independent agent sees the original plan | When building a clean-room comparison agent (e.g., Agent 6 in `/critique-plan`), pass ONLY the stated goal — never the existing plan steps. Anchoring defeats the purpose of the independent view. | 2026-02-28 |
 
 ---
 

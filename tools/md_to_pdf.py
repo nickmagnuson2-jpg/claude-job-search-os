@@ -1,105 +1,211 @@
 """Convert a markdown resume to a styled PDF using markdown + xhtml2pdf."""
 
 import sys
+import re
 import markdown
 from xhtml2pdf import pisa
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
+from reportlab.pdfbase.pdfmetrics import registerFontFamily
+
+_FONT_DIR = "C:/Windows/Fonts"
+pdfmetrics.registerFont(TTFont("Calibri",           f"{_FONT_DIR}/calibri.ttf"))
+pdfmetrics.registerFont(TTFont("Calibri-Bold",      f"{_FONT_DIR}/calibrib.ttf"))
+pdfmetrics.registerFont(TTFont("Calibri-Italic",    f"{_FONT_DIR}/calibrii.ttf"))
+pdfmetrics.registerFont(TTFont("Calibri-BoldItalic",f"{_FONT_DIR}/calibriz.ttf"))
+registerFontFamily(
+    "Calibri",
+    normal="Calibri",
+    bold="Calibri-Bold",
+    italic="Calibri-Italic",
+    boldItalic="Calibri-BoldItalic",
+)
 
 CSS = """
 @page {
     size: A4;
-    margin: 18mm 20mm 18mm 20mm;
+    margin: 8mm 13mm 8mm 13mm;
 }
 
 body {
-    font-family: Helvetica, Arial, sans-serif;
-    font-size: 9.5pt;
-    line-height: 1.4;
-    color: #1a1a1a;
+    font-family: Calibri, Helvetica, sans-serif;
+    font-size: 8.5pt;
+    line-height: 1.1;
+    color: #000000;
 }
 
 h1 {
-    font-size: 17pt;
-    margin-bottom: 0;
+    font-size: 14pt;
+    font-weight: bold;
+    color: #000000;
+    text-align: center;
+    margin-bottom: 1pt;
     padding-bottom: 0;
-    color: #0d2137;
+}
+
+.contact-line {
+    text-align: center;
+    font-size: 8pt;
+    color: #000000;
+    margin-top: 0;
+    margin-bottom: 1pt;
 }
 
 h2 {
-    font-size: 11.5pt;
-    color: #0d2137;
-    border-bottom: 1.5px solid #0d2137;
-    padding-bottom: 2pt;
-    margin-top: 14pt;
-    margin-bottom: 6pt;
+    font-size: 9.5pt;
+    font-weight: bold;
+    color: #000000;
+    border-bottom: 1pt solid #000000;
+    padding-bottom: 1pt;
+    margin-top: 5pt;
+    margin-bottom: 2pt;
     text-transform: uppercase;
     letter-spacing: 0.5pt;
 }
 
-h3 {
-    font-size: 10.5pt;
-    color: #1a3a5c;
-    margin-top: 10pt;
-    margin-bottom: 3pt;
-}
-
-h4 {
-    font-size: 10pt;
-    color: #1a3a5c;
-    margin-top: 8pt;
-    margin-bottom: 2pt;
-}
-
 p {
-    margin-top: 2pt;
-    margin-bottom: 5pt;
+    margin-top: 0;
+    margin-bottom: 1pt;
+    color: #000000;
 }
 
 ul {
-    margin-top: 1pt;
-    margin-bottom: 5pt;
-    padding-left: 16pt;
+    margin-top: 0;
+    margin-bottom: 1pt;
+    padding-left: 12pt;
 }
 
 li {
-    margin-bottom: 1.5pt;
-}
-
-table {
-    width: 100%;
-    border-collapse: collapse;
-    margin-top: 4pt;
-    margin-bottom: 8pt;
-    font-size: 9pt;
-}
-
-th {
-    background-color: #0d2137;
-    color: white;
-    padding: 4pt 6pt;
-    text-align: left;
-    font-weight: bold;
-}
-
-td {
-    padding: 3pt 6pt;
-    border-bottom: 0.5pt solid #ddd;
+    margin-bottom: 0;
+    color: #000000;
 }
 
 hr {
-    border: none;
-    border-top: 0.75pt solid #bbb;
-    margin: 10pt 0;
+    display: none;
 }
 
 strong {
-    color: #0d2137;
+    color: #000000;
 }
 
 em {
+    font-size: 8pt;
+    color: #000000;
+}
+
+.job-header {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 4pt;
+    margin-bottom: 0;
+}
+
+.job-title {
+    font-size: 8.8pt;
+    font-weight: bold;
+    color: #000000;
+    text-align: left;
+    padding: 0;
+}
+
+.job-date {
     font-size: 8.5pt;
-    color: #555;
+    color: #000000;
+    text-align: right;
+    padding: 0;
+    white-space: nowrap;
+}
+
+.job-company {
+    font-size: 8.5pt;
+    color: #000000;
+    font-style: italic;
+    padding: 0;
+    padding-bottom: 1pt;
+}
+
+.job-location {
+    font-size: 8.5pt;
+    color: #000000;
+    font-style: italic;
+    text-align: right;
+    padding: 0;
+    padding-bottom: 1pt;
+    white-space: nowrap;
 }
 """
+
+
+def transform_job_headers(html: str) -> str:
+    """Convert <h3>Title | Company | Date</h3> into a two-row table layout."""
+    def replace_h3(m):
+        content = m.group(1)
+        parts = [p.strip() for p in content.split(' | ')]
+        if len(parts) == 4:
+            title, company, location, date = parts
+            return (
+                f'<table class="job-header"><tr>'
+                f'<td class="job-title">{title}</td>'
+                f'<td class="job-date">{date}</td>'
+                f'</tr><tr>'
+                f'<td class="job-company">{company}</td>'
+                f'<td class="job-location">{location}</td>'
+                f'</tr></table>'
+            )
+        elif len(parts) == 3:
+            title, company, date = parts
+            return (
+                f'<table class="job-header"><tr>'
+                f'<td class="job-title">{title}</td>'
+                f'<td class="job-date">{date}</td>'
+                f'</tr><tr>'
+                f'<td class="job-company" colspan="2">{company}</td>'
+                f'</tr></table>'
+            )
+        elif len(parts) == 2:
+            title, date = parts
+            return (
+                f'<table class="job-header"><tr>'
+                f'<td class="job-title">{title}</td>'
+                f'<td class="job-date">{date}</td>'
+                f'</tr></table>'
+            )
+        # Single part — just render as bold paragraph
+        return f'<p><strong>{content}</strong></p>'
+
+    return re.sub(r'<h3>(.*?)</h3>', replace_h3, html)
+
+
+def transform_edu_entries(html: str) -> str:
+    """Convert <p><strong>Degree</strong> | School | Date</p> into table layout."""
+    def replace_edu(m):
+        degree = m.group(1).strip()
+        rest = m.group(2).strip()
+        parts = [p.strip() for p in rest.split(' | ', 1)]
+        if len(parts) == 2:
+            school, date = parts
+            return (
+                f'<table class="job-header"><tr>'
+                f'<td class="job-title">{degree}</td>'
+                f'<td class="job-date">{date}</td>'
+                f'</tr><tr>'
+                f'<td class="job-company" colspan="2">{school}</td>'
+                f'</tr></table>'
+            )
+        return m.group(0)
+
+    return re.sub(r'<p><strong>(.*?)</strong>\s*\|(.*?)</p>', replace_edu, html)
+
+
+def tag_contact_line(html: str) -> str:
+    """Apply .contact-line class to the first <p> immediately after <h1>."""
+    return re.sub(
+        r'(<h1>.*?</h1>\s*)(<p>)',
+        r'\1<p class="contact-line">',
+        html,
+        count=1,
+        flags=re.DOTALL,
+    )
 
 
 def convert(md_path: str, pdf_path: str) -> None:
@@ -110,6 +216,10 @@ def convert(md_path: str, pdf_path: str) -> None:
         md_text,
         extensions=["tables", "sane_lists"],
     )
+
+    html_body = transform_job_headers(html_body)
+    html_body = transform_edu_entries(html_body)
+    html_body = tag_contact_line(html_body)
 
     full_html = f"""<!DOCTYPE html>
 <html><head>
