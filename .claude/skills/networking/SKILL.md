@@ -3,7 +3,7 @@ name: networking
 description: Track networking contacts and conversations — real-world and Claude chats — with auto-generated follow-up to-dos
 argument-hint: [add|log|remove <name> [company] [role] [summary]]
 user-invocable: true
-allowed-tools: Read(*), Write(data/networking.md), Edit(data/networking.md), Write(data/job-todos.md), Read(data/job-pipeline.md), Glob(data/*)
+allowed-tools: Read(*), Write(data/networking.md), Write(data/job-todos.md), Read(data/job-pipeline.md), Glob(data/*), Bash(PYTHONIOENCODING=utf-8 python tools/networking_read.py:*)
 ---
 
 # Networking Tracker
@@ -47,28 +47,15 @@ Examples:
    - /networking add "James Liu" — "Recruiter"
    - /networking add "Alex Park" Google
    ```
-3. If contacts exist, display all contacts sorted by Last Interaction date (most recent first):
-   ```markdown
-   ## Networking — [date]
-
-   **Contacts: N** | Active: X | Stale (14+ days): X
-
-   | Name | Company | Role | Relationship | Last Interaction | # Interactions |
-   |------|---------|------|-------------|------------------|----------------|
-   | ... | ... | ... | ... | 2026-02-15 | 3 |
+3. Run `networking_read.py` to get structured contact data:
+   ```bash
+   PYTHONIOENCODING=utf-8 python tools/networking_read.py
    ```
-4. **Flag stale contacts** — any contact with no interaction in 14+ days gets flagged:
-   ```
-   ⚠ Stale contacts (no interaction in 14+ days):
-   - Sarah Chen (Stripe) — last: 2026-02-01
-   - James Liu — last: 2026-01-28
-   Tip: /networking log <name> <summary> to log a recent interaction
-   ```
-5. **Pipeline cross-reference** — for each contact, check `data/job-pipeline.md` for any active pipeline entries at the same company. If found, note it:
-   ```
-   Pipeline connections:
-   - Sarah Chen → Stripe (Stage: Applied)
-   ```
+   Use the JSON output to build the display:
+   - `contacts[]` (sorted by last_interaction descending) → "All Contacts" table; include `interaction_count` and `days_since_last_interaction`
+   - `stale_contacts[]` → "Stale Contacts (14+ days)" section (contacts with `stale: true`)
+   - `pipeline_connections[]` → "Pipeline Connections" section (contacts whose company matches an active pipeline entry)
+   - `metrics` → summary header (total_contacts, active_count, stale_count)
 
 ### Command: `add <name> [company] [role]`
 

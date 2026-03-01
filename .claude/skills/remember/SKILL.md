@@ -3,7 +3,7 @@ name: remember
 description: Capture a note mid-session and route it to the right data file — contacts, pipeline, profile, or a general decision log
 argument-hint: "<note text>"
 user-invocable: true
-allowed-tools: Read(*), Edit(data/networking.md), Write(data/job-pipeline.md), Edit(data/profile.md), Write(data/job-todos.md), Write(data/notes.md), Edit(data/notes.md), Write(inbox/*), Glob(inbox/*), Write(output/**), Edit(data/outreach-log.md)
+allowed-tools: Read(*), Write(data/networking.md), Write(data/job-pipeline.md), Edit(data/profile.md), Write(data/job-todos.md), Write(data/notes.md), Edit(data/notes.md), Write(inbox/*), Glob(inbox/*), Write(output/**), Edit(data/outreach-log.md), Bash(PYTHONIOENCODING=utf-8 python tools/remember_classify.py:*)
 ---
 
 # Remember — Capture Notes Mid-Session
@@ -25,31 +25,19 @@ Examples:
 
 ## Instructions
 
-### Step 1: Parse and Classify the Note
+### Step 1: Classify the Note
 
-Read the note from `$ARGUMENTS`.
+Run `remember_classify.py` with the note text from `$ARGUMENTS`:
 
-Classify the note into one of these destination types:
+```bash
+PYTHONIOENCODING=utf-8 python tools/remember_classify.py --note "[escaped $ARGUMENTS]"
+```
 
-| Type | Detection | Destination |
-|------|-----------|-------------|
-| **Outreach reply** | Mentions a person's name AND indicates they replied (e.g., "replied", "got back to me", "responded", "heard back from", "wrote back") | `data/outreach-log.md` — update Status to `Replied` for the most recent matching row |
-| **Contact note** | Mentions a person's name AND something they said, did, or that you learned about them | `data/networking.md` — append to that contact's entry |
-| **Company note** | Mentions a company name AND any observation, intel, call note, or raw thought about that company | `data/company-notes/<slug>.md` — create if it doesn't exist |
-| **Pipeline note** | Mentions a company AND a decision, status change, or strategic note about the application | `data/job-pipeline.md` — append to that company's Notes cell |
-| **Profile update** | Mentions compensation, availability, start date, a preference, or a personal decision | `data/profile.md` — append to the relevant section |
-| **Decision** | A clear decision that affects job search direction (e.g., "decided not to pursue X", "decided to prioritize Y") | `data/notes.md` under a ## Decisions section |
-| **Raw capture** | Ambiguous item — a company name to look into, a link to read later, a half-formed thought, or the user explicitly says "just note this" / "save to inbox" | `inbox/` — create a timestamped file |
-| **General note** | Anything else — insight, observation, follow-up thought | `data/notes.md` under a ## Notes section |
+Parse the JSON output:
+- `destinations[]` — list of routing destinations, each with `type`, `file`, `entity` (matched contact or company name), and `slug` (for company-notes paths)
+- `ambiguous` — if `true`, default to `data/notes.md` and flag the routing as uncertain in the Step 4 confirmation
 
-**Matching rules:**
-- Extract person names and company names from the note text
-- Check `data/networking.md` for matching contact entries (full-name match as substring, case-insensitive)
-- Check `data/job-pipeline.md` for matching company entries (full-name match as substring, case-insensitive)
-- Check `output/<slug>/<slug>.md` for a matching dossier (slug = company name, lowercase, spaces→hyphens)
-- A note can match multiple destinations — if so, write to all that apply (e.g., a note about a person at a pipeline company might update both networking.md and job-pipeline.md)
-
-**If classification is ambiguous**, default to `data/notes.md` and display a note asking if the routing was right.
+Proceed to Step 2 with the resolved `destinations[]`. If the script fails or returns an empty destinations list, fall back to `data/notes.md` as general_note.
 
 ### Step 2: Read Target File(s)
 

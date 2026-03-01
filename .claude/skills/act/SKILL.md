@@ -12,84 +12,38 @@ Scans `data/job-todos.md` for to-dos Claude can autonomously execute (careers pa
 
 ## Instructions
 
-### Step 1: Load Data (parallel)
+### Step 1: Classify Todos + Inbox
 
-Read the following in parallel:
+Run `act_classify.py` to get a structured JSON classification of all Pending to-dos and inbox files:
 
-1. `data/job-todos.md` — the active to-do list
-2. `data/profile.md` — candidate background, target roles, and location (for role-matching in careers checks)
-3. `data/job-pipeline.md` — active pipeline (to note when a company is already being tracked)
-4. Glob `output/**/*.md` — to detect existing company dossiers and their freshness (catches `output/<slug>/<slug>.md` layout)
-5. Glob `inbox/*` — list captured inbox items (filenames only; skip README.md)
+```bash
+PYTHONIOENCODING=utf-8 python tools/act_classify.py
+```
 
-**Extract from profile.md:** the candidate's target role types (e.g., Chief of Staff, Strategy & Operations, Head of Operations, Director of Operations, Business Operations, Strategic Finance, Head of Strategy, VP Operations). These are the keywords used to match careers page results.
+Parse the JSON output. Key fields:
+- `bucket_a[]` — to-dos Claude can execute (type, task, priority, url, notes)
+- `bucket_b[]` — to-dos requiring manual action (type, task, priority, notes)
+- `skipped_fresh_careers[]` — careers checks done within 7 days (task, checked_date, recheck_after)
+- `skipped_fresh_dossier[]` — companies with fresh dossiers < 30 days old (task, company, dossier_date)
+- `inbox_items[]` — classified inbox files (filename, content, type, company_slug, company_display, url)
+- `dossier_map` — existing dossier slugs with freshness info
 
-**Build fresh dossier list:** For each file found under `output/`, read the `Last updated:` date from the file header. A dossier is "fresh" if Last updated is within the last 30 days. Build a map of: company slug → (exists, fresh, date). A file at `output/amae-health/amae-health.md` counts as the Amae Health dossier.
+Also read `data/profile.md` — needed to extract candidate's target role keywords for careers check agent prompts in Step 5.
 
-**Flag blocked URLs:** While reading each Pending to-do, check if its Notes field contains the string `"access blocked"` (case-insensitive). Tag those rows as `blocked: true`. These will be pre-filtered in Step 2.
+**Inbox item routing from `inbox_items[]`:**
+- type `article` or `company_research` → append to `bucket_a[]` with `(inbox)` label
+- type `job_ad`, `contact_capture`, or `unclassifiable` → show in "Inbox — Immediate Routes" table (written when user confirms)
 
-**Flag careers check freshness:** While reading each Pending to-do that would be a careers check, scan the Notes field for the pattern `"Checked YYYY-MM-DD"`. Parse the most recent such date. If it is within 7 days of today, tag the row as `careers_fresh: true` with that date stored.
+### Step 2: Build Preview from JSON
 
-**Build inbox list:** From the Glob results, collect all files in `inbox/` that are not `README.md`. Read each file to extract its content. Classify each inbox item using these rules **in priority order** (first match wins):
+Using the classified JSON from Step 1, compose the preview tables:
+- `bucket_a[]` → "Will Execute Automatically" table (# | Type | Task | URL / Source)
+- `bucket_b[]` → "Requires Your Action" table (# | Task | Direct Link)
+- `skipped_fresh_careers[]` → "Skipped — Careers Page Checked Recently" list
+- `skipped_fresh_dossier[]` → "Skipped — Fresh Dossier Exists" list
+- `inbox_items` where type in {job_ad, contact_capture, unclassifiable} → "Inbox — Immediate Routes" table
 
-| Priority | Type | Detection rules | Disposition |
-|----------|------|-----------------|-------------|
-| 1 | **Job ad** | Content contains a URL matching known ATS patterns: `greenhouse.io`, `lever.co`, `linkedin.com/jobs/`, `myworkdayjobs.com`, `jobs.ashbyhq.com`, `smartrecruiters.com` — OR any `/careers/` URL ending in a numeric or UUID job ID | Write to `data/job-pipeline.md` immediately when user confirms |
-| 2 | **Contact capture** | Content mentions a person's full name (two capitalized words) alongside context words: "met", "intro", "talk to", "reach out", "connect with", "introduced me to" | Write to `data/networking.md` immediately when user confirms |
-| 3 | **Article to read** | Content contains a URL where the domain is a media/editorial source (e.g., techcrunch, forbes, statnews, mobihealthnews, axios, substack), OR the URL path contains `/news/`, `/blog/`, `/article/`, `/post/`, `/insights/` | Add to Bucket A for this session — execute now |
-| 4 | **Company to research** | Content mentions a company name alongside: "check out", "research", "look into", "interesting", "target", OR just a company name + company homepage URL (no specific job path) | Add to Bucket A for this session — execute now |
-| 5 | **Unclassifiable** | Doesn't match any above pattern | If a company name is identifiable in the content, write to `data/company-notes/<slug>.md` (create if needed). Otherwise write to `data/notes.md`. Both confirmed by user before writing. |
-
-**Company name extraction from job ad URLs:**
-- `job-boards.greenhouse.io/[slug]/` → use slug
-- `jobs.lever.co/[slug]/` → use slug
-- `jobs.ashbyhq.com/[slug]/` → use slug
-- Otherwise: use company name from surrounding text; if not findable, leave as "Unknown"
-
-De-slug the company name for display: convert hyphens to spaces, title case each word (e.g., `spring-health` → "Spring Health").
-
-Store the inbox classification results. Article read and company research inbox items will be added to Bucket A. Job ads, contacts, and unclassifiable items will be shown in an "Immediate Routes" table and written when the user confirms.
-
-### Step 2: Scan & Categorize
-
-Filter the Active section of `data/job-todos.md` to rows where **Status = Pending only** (skip Done, Withdrawn, In Progress).
-
-**Pre-filter 1 — Blocked URLs:** Any Pending row tagged `blocked: true` → force to Bucket B (Manual) regardless of task text. Label it "(Previously blocked — check manually)" in the manual table. Do NOT attempt to re-fetch. Skip the remaining categorization rules for this row.
-
-**Pre-filter 2 — Careers check freshness:** Any Pending row tagged `careers_fresh: true` → move to Skipped section with label: `"Checked [date] — re-check after [date + 7 days]"`. Do NOT include in Bucket A or Bucket B. Skip the remaining categorization rules for this row.
-
-Then classify each remaining Pending to-do into one of these buckets:
-
-#### Bucket A — Executable by Claude
-
-| Category | Detection Pattern | Action |
-|----------|------------------|--------|
-| **Careers check** | Task text contains "Check [Company] careers" or "Check [Company] for [role types]" AND Notes contain a URL | Fetch careers page URL; scan for roles matching candidate's target role keywords |
-| **Company research** | Task text contains "Research [Company]", "Deep-dive research [Company]", or Notes explicitly say "Run `/research-company`" | Full research-company pipeline: 5 parallel agents, save dossier to `output/[slug]/[slug].md` |
-| **Article/content read** | Task text begins with "Read" or "Review [document/article]" AND Notes contain a specific article or document URL (not a general platform URL) | Fetch URL; return 4-5 key insights and why it matters; save to `output/[slug]/[MMDDYY]-article-[article-slug].md` (if company-associated) or `output/[MMDDYY]-article-[article-slug].md` (if no company) |
-| **Resource browse** | Task text begins with "Browse [platform]" AND Notes contain a platform URL AND task specifies a filter criterion | Fetch URL; return top 3-5 results matching the filter criterion |
-
-**Careers check URL extraction:** Pull the URL from the Notes field — it is always the URL in `[text](url)` markdown format or a bare URL in the notes.
-
-**Company research skip check:** Before adding a company research item to Bucket A, check the fresh dossier list from Step 1. If a fresh dossier exists (< 30 days old), move this item to the **Skipped** list instead. If a dossier exists but is stale (≥ 30 days old), include it in Bucket A with a note that it's a refresh.
-
-**Inbox items in Bucket A:** Append any inbox Article read and Company research items to the end of Bucket A (after the regular to-do items). Label them with `(inbox)` in the preview table.
-
-#### Bucket B — Manual Action Required (cannot execute)
-
-| Category | Detection Pattern |
-|----------|------------------|
-| **Subscriptions** | "Subscribe to", "Join [Slack / community / email list]" |
-| **Social actions** | "Follow [person] on LinkedIn", "Connect with [person/company]" |
-| **Physical / in-person** | "Visit", "Attend", "Text", "Call" |
-| **Alumni network** | "Identify Tuck alumni", "Check Tuck [network]" — requires MyTuck access |
-| **Study / learn** | "Learn [topic]", "Study [topic]", "Listen to [podcast]" — no fetchable URL |
-| **Outreach** | "Follow up with", "Send email to", "Reach out to" |
-| **Previously blocked** | Tagged `blocked: true` from pre-filter 1 |
-
-For each Bucket B item, extract any direct link from the Notes field to display in the manual actions table.
-
-**Priority sort:** After categorizing, sort Bucket A items by Priority column: High → Med → Low → (no priority). Apply the same sort to Bucket B.
+Priority sort: within each bucket, High → Med → Low → (none). Inline `(inbox)` items appear after regular to-dos.
 
 #### Skip entirely (don't show)
 - Status = Done, Withdrawn, or In Progress

@@ -40,12 +40,16 @@ All pipeline data lives in `data/job-pipeline.md`.
 
    Stages: Researching → Applied → Phone Screen → Interview → Offer → Accepted/Rejected/Withdrawn
    ```
-3. If entries exist, build the display:
-   - **Staleness calculation** — for every non-terminal entry, calculate `days_stale = today − Date Updated`. Flag entries where `days_stale > 7` with a `[⚠️ N days stale]` annotation appended inline to the Stage cell.
-   - **Needs Attention** (show **above** the Full Pipeline table) — entries where `days_stale > 7` OR Next Action is blank/`—`. Use the same format as Full Pipeline but include a "Days Since Update" column.
-   - **Active pipeline** — all non-terminal entries, most recently updated first, with stale annotations inline.
-   - **Summary stats** — count per stage, total active, count of stalled entries.
-   - **Archived** — count of terminal entries (Accepted/Rejected/Withdrawn), collapsed.
+3. Run `pipe_read.py` to get structured pipeline data:
+   ```bash
+   PYTHONIOENCODING=utf-8 python tools/pipe_read.py
+   ```
+   Use the JSON output to build the display:
+   - `needs_attention[]` → "Needs Attention" table (above Full Pipeline); use `stale_label` for the Days Since Update column and note `missing_action` entries
+   - `active_entries[]` → "Full Pipeline" table, most recently updated first; use each entry's `stale_label` for inline Stage annotations
+   - `metrics` → summary stats header (total_active, total_stalled, stage_distribution counts)
+   - `metrics.archived_count` → Archived section count (collapsed)
+   - `company_index` → use in `add` command to check for duplicates before writing
 
 ### Command: `add <company> <role> [url]`
 
@@ -165,10 +169,4 @@ When showing the pipeline, use this format:
 
 Sort by Date Updated descending (most recent first).
 
-**Staleness rules:**
-- `days_stale = today − Date Updated` (calendar days, not business days)
-- `days_stale > 7` → stale: append `⚠️ [N days stale]` to Stage cell in Full Pipeline; show in Needs Attention
-- `days_stale ≤ 7` → no annotation
-- Blank or `—` Next Action → always include in Needs Attention (regardless of staleness)
-- An entry can appear in Needs Attention for both reasons simultaneously — show one row, note both issues
-- Terminal stages (Accepted/Rejected/Withdrawn) are excluded from staleness checks
+**Staleness and attention logic is computed by `pipe_read.py`** — use `stale_label` and `missing_action` fields from the JSON output. Do not re-compute dates inline.

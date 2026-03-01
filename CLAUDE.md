@@ -131,6 +131,14 @@ Search goals and targeting criteria live in `data/goals.md` (also gitignored). S
 │   ├── md_to_pdf.py           # Markdown CV → styled PDF converter
 │   ├── open_draft.py          # Opens Gmail compose URL with pre-filled draft (auto-run by outreach skills)
 │   ├── todo_daily_metrics.py  # Pre-processes daily metrics for /checkout and /weekly-review → JSON
+│   ├── pipeline_staleness.py  # Pipeline staleness per-stage thresholds → JSON (used by /standup, /weekly-review)
+│   ├── dossier_freshness.py   # Dossier freshness detection → JSON (used by /weekly-review)
+│   ├── outreach_pending.py    # Awaiting/overdue outreach + response rate → JSON (used by /standup, /weekly-review)
+│   ├── networking_followup.py # Follow-up due-date inference from free-text → JSON (used by /standup)
+│   ├── act_classify.py        # Classify Pending todos + inbox items into buckets → JSON (used by /act)
+│   ├── pipe_read.py           # Pipeline read + staleness annotations → JSON (used by /pipe)
+│   ├── networking_read.py     # Contacts read + stale detection + pipeline cross-reference → JSON (used by /networking)
+│   ├── remember_classify.py   # Classify a note into routing destinations → JSON (used by /remember)
 │   └── todo_write.py          # Atomic mutations for data/job-todos.md (add/done/clear/sync) → JSON
 └── output/                    # All generated output — company-first hierarchy
     ├── [company-slug]/            #   One subfolder per named entity (company or industry)
