@@ -36,8 +36,8 @@ How the 8 behavioral patterns in the global CLAUDE.md snippet map to this projec
 **Global rule:** Append-only logs, newest-first, trend computation.
 
 **Project implementation:**
-- `.claude/skills/weekly-review/SKILL.md` (lines 100-108) — append-only with "Do not delete entries"
-- `.claude/skills/todo/SKILL.md` — daily log snapshots to `data/job-todos-daily-log.md`
+- `.claude/skills/weekly-review/SKILL.md` — append-only with "Do not delete entries"
+- `.claude/skills/checkout/SKILL.md` — daily log snapshots to `data/job-todos-daily-log.md` (absorbed from `/todo daily` 2026-02-26)
 - `coaching/progress-recruiter/_summary.md` and `coaching/progress-interview/_summary.md` — session scorecards
 - `coaching/anti-pattern-tracker.md` — Update Log section
 
@@ -46,8 +46,9 @@ How the 8 behavioral patterns in the global CLAUDE.md snippet map to this projec
 **Global rule:** Classify notes by type, route to correct file, multi-destination.
 
 **Project implementation:**
-- `.claude/skills/remember/SKILL.md` — 145-line skill: classify (contact, company, pipeline, profile, decision, raw, general), route, multi-destination write
-- `.claude/skills/act/SKILL.md` (lines 33-51) — inbox classification: job ads → pipeline, contacts → networking, articles → execution, other → notes
+- `tools/remember_classify.py` — deterministic classifier: 8-priority rule engine matching contact names, company names, dossier slugs, and keyword patterns; outputs `destinations[]` with file + entity + type
+- `.claude/skills/remember/SKILL.md` — calls `remember_classify.py`, routes to networking/pipeline/profile/company-notes/inbox/notes; supports multi-destination writes
+- `tools/act_classify.py` — inbox classification: job ads → pipeline, contacts → networking, articles/research → bucket_a, unclassifiable → notes
 
 ### 6. Task Management
 
@@ -74,7 +75,7 @@ How the 8 behavioral patterns in the global CLAUDE.md snippet map to this projec
 **Global rule:** Handle missing data, first-run scenarios.
 
 **Project implementation:**
-- `CLAUDE.md` Profile Guard (lines 26-33) — stops generative skills if profile/goals are missing, with specific remediation instructions
+- `CLAUDE.md` Profile Guard (lines 42-49) — stops generative skills if profile/goals are missing, with specific remediation instructions
 - `.claude/skills/standup/SKILL.md` — works with whatever data exists, notes gaps
 - `.claude/skills/weekly-review/SKILL.md` — generates baseline metrics on first run
 

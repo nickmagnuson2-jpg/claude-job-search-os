@@ -29,7 +29,7 @@ CSS = """
 
 body {
     font-family: Calibri, Helvetica, sans-serif;
-    font-size: 8.5pt;
+    font-size: 10pt;
     line-height: 1.1;
     color: #000000;
 }
@@ -52,13 +52,13 @@ h1 {
 }
 
 h2 {
-    font-size: 9.5pt;
+    font-size: 11pt;
     font-weight: bold;
     color: #000000;
     border-bottom: 1pt solid #000000;
     padding-bottom: 1pt;
     margin-top: 5pt;
-    margin-bottom: 2pt;
+    margin-bottom: 5pt;
     text-transform: uppercase;
     letter-spacing: 0.5pt;
 }
@@ -101,7 +101,7 @@ em {
 }
 
 .job-title {
-    font-size: 8.8pt;
+    font-size: 10pt;
     font-weight: bold;
     color: #000000;
     text-align: left;
@@ -109,7 +109,7 @@ em {
 }
 
 .job-date {
-    font-size: 8.5pt;
+    font-size: 10pt;
     color: #000000;
     text-align: right;
     padding: 0;
@@ -117,7 +117,7 @@ em {
 }
 
 .job-company {
-    font-size: 8.5pt;
+    font-size: 10pt;
     color: #000000;
     font-style: italic;
     padding: 0;
@@ -125,7 +125,7 @@ em {
 }
 
 .job-location {
-    font-size: 8.5pt;
+    font-size: 10pt;
     color: #000000;
     font-style: italic;
     text-align: right;

@@ -3,11 +3,13 @@
 act_apply.py — Atomic writes for /act Immediate Route buckets.
 
 Subcommands:
-  pipeline-add <company> [--role ROLE] [--url URL] [--notes NOTES]
-                         [--source-file FILENAME]
-  contact-add <name>     [--company CO] [--role ROLE] [--content TEXT]
-                         [--source-file FILENAME]
-  notes-add --content TEXT [--company-slug SLUG] [--source-file FILENAME]
+  pipeline-add <company>    [--role ROLE] [--url URL] [--notes NOTES]
+                            [--source-file FILENAME]
+  contact-add <name>        [--company CO] [--role ROLE] [--content TEXT]
+                            [--source-file FILENAME]
+  notes-add --content TEXT  [--company-slug SLUG] [--source-file FILENAME]
+  company-note-add <slug> --content TEXT [--context LABEL]
+                            [--source-file FILENAME]
 
 Options (all subcommands):
   --repo-root PATH   Repository root. Defaults to cwd.
@@ -25,6 +27,7 @@ Usage:
   PYTHONIOENCODING=utf-8 python tools/act_apply.py pipeline-add "OpenAI" --url https://... --repo-root .
   PYTHONIOENCODING=utf-8 python tools/act_apply.py contact-add "Sarah Chen" --company Headway --repo-root .
   PYTHONIOENCODING=utf-8 python tools/act_apply.py notes-add --content "Random note" --repo-root .
+  PYTHONIOENCODING=utf-8 python tools/act_apply.py company-note-add "amae-health" --content "..." --context "inbound email" --repo-root .
 """
 import argparse
 import json
@@ -34,9 +37,10 @@ import sys
 from datetime import date
 from pathlib import Path
 
-PIPELINE_FILE   = "data/job-pipeline.md"
-NETWORKING_FILE = "data/networking.md"
-NOTES_FILE      = "data/notes.md"
+PIPELINE_FILE      = "data/job-pipeline.md"
+NETWORKING_FILE    = "data/networking.md"
+NOTES_FILE         = "data/notes.md"
+COMPANY_NOTES_DIR  = "data/company-notes"
 
 PIPELINE_HEADER = "| Company | Role | Stage | Date Updated | Next Action | CV Used | Notes | URL |"
 PIPELINE_SEP    = "| --- | --- | --- | --- | --- | --- | --- | --- |"
@@ -318,6 +322,57 @@ def cmd_notes_add(args, repo_root: Path, dry_run: bool) -> None:
                file=str(path))
 
 
+def cmd_company_note_add(args, repo_root: Path, dry_run: bool) -> None:
+    """Prepend a dated entry to data/company-notes/<slug>.md.
+
+    Used by /act Gmail triage to route inbound emails into company context so
+    /follow-up and /draft-email can read them automatically.
+
+    Header format: ## YYYY-MM-DD | <context>
+    Entries are prepended (newest first) per the company-notes convention.
+    """
+    today   = date.today().strftime("%Y-%m-%d")
+    slug    = args.slug
+    context = args.context if args.context else "inbound email"
+    source  = args.source_file if args.source_file else ""
+
+    header_label = f"{context} — {source}" if source else context
+    entry = f"## {today} | {header_label}\n\n{args.content}\n"
+
+    path = repo_root / COMPANY_NOTES_DIR / f"{slug}.md"
+
+    if dry_run:
+        out_ok("company_note_add", f"Would prepend note to company-notes/{slug}.md",
+               dry_run=True, would_mutate=[{"file": str(path)}])
+        return
+
+    content = read_file(path)
+    if not content:
+        new_content = (
+            f"# {slug} — Notes\n\n"
+            "> Running log of raw notes, call prep, and observations.\n"
+            "> Newest entries at the top.\n\n"
+            "---\n\n"
+            + entry
+        )
+    else:
+        lines = content.splitlines()
+        # Find the first ## YYYY-* heading to prepend before it (newest first)
+        insert_at = len(lines)
+        for i, line in enumerate(lines):
+            if re.match(r"^##\s+\d{4}", line):
+                insert_at = i
+                break
+        lines.insert(insert_at, "")
+        for j, el in enumerate(entry.rstrip("\n").splitlines()):
+            lines.insert(insert_at + 1 + j, el)
+        new_content = "\n".join(lines) + "\n"
+
+    write_atomic(path, new_content)
+    out_ok("company_note_add", f"Prepended note to company-notes/{slug}.md",
+           slug=slug, file=str(path))
+
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
@@ -348,13 +403,19 @@ def parse_args():
     na.add_argument("--company-slug", dest="company_slug", default=None)
     na.add_argument("--source-file",  dest="source_file",  default=None)
 
+    cna = sub.add_parser("company-note-add")
+    cna.add_argument("slug")
+    cna.add_argument("--content",     required=True)
+    cna.add_argument("--context",     default=None)
+    cna.add_argument("--source-file", dest="source_file", default=None)
+
     return p.parse_args()
 
 
 def main() -> None:
     args = parse_args()
     if not args.command:
-        out_error("Usage: act_apply.py <pipeline-add|contact-add|notes-add> [args...]")
+        out_error("Usage: act_apply.py <pipeline-add|contact-add|notes-add|company-note-add> [args...]")
 
     repo_root       = Path(args.repo_root) if args.repo_root else Path.cwd()
     pipeline_path   = repo_root / PIPELINE_FILE
@@ -366,6 +427,8 @@ def main() -> None:
         cmd_contact_add(args, networking_path, args.dry_run)
     elif args.command == "notes-add":
         cmd_notes_add(args, repo_root, args.dry_run)
+    elif args.command == "company-note-add":
+        cmd_company_note_add(args, repo_root, args.dry_run)
     else:
         out_error(f"Unknown command: {args.command}")
 

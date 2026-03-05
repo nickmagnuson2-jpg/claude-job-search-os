@@ -83,6 +83,8 @@ Always use the highest-priority signal available. If signal #1 exists, lead with
 | LinkedIn InMail | 1,900 chars body | 200 chars | Limited | Reaching unconnected people with specific ask |
 | LinkedIn DM | 3,000 chars | N/A | Limited | Follow-up after connecting |
 
+> **⚠️ LinkedIn connect pending (unaccepted):** A regular DM is not possible until they accept. Use InMail to reach them immediately, or hold the draft and send it as the opening DM the moment they accept (often higher response rate since they just engaged).
+
 ---
 
 ## The Three-Question Quality Gate

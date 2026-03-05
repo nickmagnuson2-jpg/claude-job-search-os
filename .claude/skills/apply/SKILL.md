@@ -48,22 +48,9 @@ Check that both `data/profile.md` and `data/goals.md` exist and contain real con
 
 ### Step 3: Load Candidate Context (parallel)
 
-Read the following in parallel — skip any that don't exist, never fail:
+Read all files listed in `framework/application-workflow.md` § Candidate Context Loading (both "CV" and "Cover Letter" columns — `/apply` needs the superset). Skip any that don't exist, never fail.
 
-1. `data/profile.md`
-2. `data/professional-identity.md`
-3. `data/goals.md`
-4. `data/education.md`
-5. `data/skills.md`
-6. `data/certifications.md`
-7. `data/project-index.md`
-8. `data/companies.md`
-9. `framework/style-guidelines.md`
-10. `coaching/coached-answers.md`
-11. `coaching/anti-pattern-tracker.md`
-12. `framework/answering-strategies/anti-patterns.md`
-
-Check for plugins: if `data/plugin-activation.md` exists, read it. Glob `plugins/*/plugin.md` for any with `scope: cv` or `scope: all`.
+Check for plugins per the § Candidate Context Loading plugin instructions.
 
 ### Step 4: Analyse the Role
 
@@ -84,10 +71,7 @@ From the job posting text, extract:
 Now read:
 - `data/company-notes/<company-slug>.md` — personal notes (skip if doesn't exist)
 - `data/networking.md` — check for any contact at this company (informs cover letter hook)
-- Company dossier at `output/<company-slug>/<company-slug>.md` — if found, check `Last updated:` date:
-  - If >30 days old: display inline warning:
-    ⚠️ Company dossier is [N] days old (last updated YYYY-MM-DD). Consider refreshing: `/research-company "[Company]"`
-  - Then continue — never block
+- Company dossier at `output/<company-slug>/<company-slug>.md` — run the **Company Dossier Staleness Check** from `framework/application-workflow.md` § Company Dossier Staleness Check
 
 ### Step 5: Select Projects
 
@@ -99,10 +83,10 @@ Now read:
 
 ### Step 6: Generate the CV
 
-Apply all Tailoring Rules and CV Quality Standards from `framework/style-guidelines.md`:
+Apply all **Tailoring Rules** and **CV Quality Standards** from `framework/application-workflow.md`:
 
 - **Professional summary** — 3–4 lines tailored to this specific role. Opens with a hook tied to the company's mission or the role's core challenge.
-- **Project ordering** — by relevance to this role, not chronologically. Most relevant project first.
+- **Experience ordering** — strict reverse-chronological (most recent first). Do NOT reorder by relevance — non-chronological CVs are flagged by ATS systems and confuse recruiters. Tailor through bullet selection and emphasis, not ordering.
 - **Skills section** — emphasise skills that appear in the JD. Lead with required skills the candidate has.
 - **ATS keyword coverage** — verify all 10 extracted keywords appear at least once in the CV text.
 - **Format** — based on market:
@@ -113,60 +97,50 @@ Apply all Tailoring Rules and CV Quality Standards from `framework/style-guideli
 
 ### Step 6b: Inline CV Quality Review (mandatory — do NOT skip)
 
-Run these checks and fix issues in place — never just flag:
+Run all 16 checks from `framework/application-workflow.md` § CV Quality Checks. Fix issues in place — never just flag.
 
-1. **Keyword coverage** — verify each of the 10 ATS keywords appears at least once.
-2. **Product specificity** — check "Salesforce" → which cloud? "AWS" → which services?
-3. **Claim integrity** — cross-reference quantified claims against project date ranges. Fix anything that doesn't match.
-4. **No weakness admissions** — remove "currently expanding", "basic knowledge of", "exposure to", "learning", etc.
-5. **Concurrent engagement explanation** — if any projects overlap in time, confirm the CV explains how.
-6. **Team-fit signals** — confirm at least 2–3 collaboration references exist.
-7. **Structural consistency** — all project headers follow one format, all bullets within a section follow the same format, every project has dates.
-8. **Language and tense** — British/American English consistency matching the JD; present tense for current roles, past for completed.
+After all fixes, record a QC summary using the template in `framework/application-workflow.md` § QC Summary Template.
 
-Record a QC summary for the final output.
+### Step 7: Generate the Cover Letter (Problem-Solution Format)
 
-### Step 7: Generate the Cover Letter
+Use the **Problem-Solution** structure — leads with their challenge, proves you've solved it, bridges to what you'd do for them. Total target: **250-350 words**. The resume covers the past; the cover letter addresses the future. Never summarize the CV.
 
-Write three paragraphs following this structure:
+**Section 1 — The Hook (2-3 sentences)**
+- Open with something specific to this company: a challenge they face (from JD language, dossier, or news), a recent event, or a personal connection from `data/networking.md`.
+- Name the company in the first sentence. Always.
+- The uniqueness test: could another applicant send this same opener to a different company? If yes, rewrite.
+- Never open with: "I'm writing to apply for...", "I've always been passionate about...", "I'm a [trait] professional with X years..."
 
-**Paragraph 1 — Hook (3–5 sentences)**
-- Open with the company's mission or the role's core challenge — NOT "I am writing to apply for…"
-- Name the company in the first sentence.
-- If there's a personal connection in `data/networking.md`, reference it briefly in sentence 2.
-- Close with a direct claim that pulls the reader forward.
-- Tone: match the JD's energy.
+**Section 2 — The Proof (3-5 sentences)**
+- Present 1-2 specific examples of how you've solved a problem similar to the company's challenge.
+- Lead with the problem you faced, then action, then quantified result.
+- Frame as analogy: "When [Company/Project] faced [similar problem], I [action] which resulted in [outcome]."
+- Do NOT reproduce CV bullet points verbatim — synthesize into narrative.
+- Choose proof points that complement (not duplicate) the CV's top bullets.
 
-**Paragraph 2 — Value Bridge (4–6 sentences)**
-- Translate 2–3 experiences into proof of fit for the role's top required qualities.
-- Lead each evidence point with what was done and the result — not a job description.
-- Use concrete numbers from project files where they exist.
-- Tie each proof point back to the specific challenge this role faces.
-- Do NOT reproduce CV bullet points verbatim.
+**Section 3 — The Bridge (2-3 sentences)**
+- Connect your capability to their specific needs: "At [Company], I'd apply this approach to [their specific challenge]."
+- Reference 1-2 concrete priorities from the JD or research.
+- Position as thought partner, not task executor (especially for senior roles).
 
-**Paragraph 3 — Close with Ask (2–3 sentences)**
-- Express specific enthusiasm for this company (not generic "I'm excited about the opportunity").
-- Make a direct ask: one sentence, specific.
+**Section 4 — The Close (1-2 sentences)**
+- Express genuine enthusiasm tied to something specific about this company.
+- Direct ask that advances the conversation: "I'd welcome the chance to discuss how [specific approach] maps to [Company]'s [specific challenge]."
 
 **Cover letter quality gates:**
-- Total length: 200–300 words preferred. Flag if over 350.
-- No hedging language: "I believe I could", "I think I might", "hoping to" — remove all.
-- No filler openers: "I am writing to apply for", "Please find attached" — rewrite if found.
-- Company name appears at least twice and is spelled correctly.
-- Spell-check variant consistency (match the JD's language).
+- **Uniqueness test:** each section must be specific enough that it can't be sent to another company unchanged.
+- **Resume separation:** the letter must add what the CV can't (the "why", connective tissue, future vision).
+- **Length:** 250-350 words. Hard ceiling 400. If over 350, trim section 2 to one proof point.
+- **Anti-patterns:** no hedging ("I believe I could", "hoping to"), no filler openers, no em dashes, no trait claims without evidence, no generic enthusiasm.
+- **ATS:** 3-5 key JD terms woven naturally into the letter body.
+- **Company name** appears at least twice and is spelled correctly.
+- **Language variant** consistent (US/UK — match the JD).
 
 Apply any `[context]` overrides: `"emphasize [project]"`, `"more informal tone"`, `"keep to 200 words"`, `"mention coffee chat with [name]"`, etc.
 
 ### Step 8: Generate Companion Cheat Sheet
 
-Generate a pre-interview cheat sheet for this specific role:
-
-1. **15-second recruiter pitch** — "[Identity hook] with [key credential]. Most relevant: [2 projects]. Looking for [role type] at [company type]. Interested in [Company] because [specific researched reason]."
-2. **Must-have requirements coverage** — for each required skill from the JD: 2–3 specific bullets from selected projects.
-3. **Compensation, availability, start date** — from `data/profile.md`.
-4. **Coached answers to cross-reference** — from `coaching/coached-answers.md` if exists. Flag directly applicable answers.
-5. **Do NOT say warnings** — top 5–7 relevant anti-patterns from `coaching/anti-pattern-tracker.md` and `framework/answering-strategies/anti-patterns.md`.
-6. **Keyword cheat** — all 10 ATS keywords with one-line reminder of which project to cite.
+Generate a pre-interview cheat sheet following the structure, quality rules, and markdown template in `framework/application-workflow.md` § Cheat Sheet Structure.
 
 ### Step 9: Determine Output Filenames
 
@@ -231,6 +205,8 @@ Write all three files:
 ### Suggested Next Step
 - Review the CV: `/review-cv output/<company-slug>/MMDDYY-[role-slug].md`
 - When ready to interview: `/prep-interview "[Company]"`
+- To export as PDF: close any open PDF with the same name first, then run:
+  `python tools/md_to_pdf.py output/<company-slug>/MMDDYY-[role-slug].md`
 ```
 
 ## Edge Cases

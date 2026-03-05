@@ -230,6 +230,96 @@ def test_notes_add_creates_notes_md_if_missing(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# Tests: company-note-add
+# ---------------------------------------------------------------------------
+
+COMPANY_NOTES_EXISTING = """\
+# amae-health — Notes
+
+> Running log of raw notes, call prep, and observations.
+> Newest entries at the top.
+
+---
+
+## 2026-02-20 | recruiter call
+
+Notes from earlier call.
+"""
+
+
+def test_company_note_add_creates_new_file(tmp_path):
+    """Creates data/company-notes/<slug>.md with header and entry when file is absent."""
+    result, code = run_act_apply(
+        "--repo-root", str(tmp_path),
+        "company-note-add", "amae-health",
+        "--content", "Alex replied with a calendar invite",
+        "--context", "inbound email",
+    )
+    assert code == 0
+    assert result["status"] == "ok"
+    assert result["action"] == "company_note_add"
+    assert result["slug"] == "amae-health"
+
+    note_path = tmp_path / "data/company-notes/amae-health.md"
+    assert note_path.exists()
+    content = note_path.read_text(encoding="utf-8")
+    assert "Alex replied with a calendar invite" in content
+    assert "inbound email" in content
+
+
+def test_company_note_add_prepends_to_existing(tmp_path):
+    """New entry is prepended before the first ## YYYY-* heading (newest first)."""
+    write_fixture(tmp_path, "data/company-notes/amae-health.md", COMPANY_NOTES_EXISTING)
+    run_act_apply(
+        "--repo-root", str(tmp_path),
+        "company-note-add", "amae-health",
+        "--content", "Follow-up email received",
+        "--context", "inbound email",
+    )
+    content = (tmp_path / "data/company-notes/amae-health.md").read_text(encoding="utf-8")
+    new_pos  = content.index("Follow-up email received")
+    old_pos  = content.index("Notes from earlier call.")
+    assert new_pos < old_pos, "New entry should appear before existing entries"
+
+
+def test_company_note_add_context_in_header(tmp_path):
+    """--context value appears in the ## YYYY-MM-DD | <context> header."""
+    run_act_apply(
+        "--repo-root", str(tmp_path),
+        "company-note-add", "sofar-ocean",
+        "--content", "Sarah confirmed interest in CoS role",
+        "--context", "inbound email",
+    )
+    content = (tmp_path / "data/company-notes/sofar-ocean.md").read_text(encoding="utf-8")
+    assert "| inbound email" in content
+
+
+def test_company_note_add_source_file_in_header(tmp_path):
+    """--source-file value appears in the header label."""
+    run_act_apply(
+        "--repo-root", str(tmp_path),
+        "company-note-add", "openai",
+        "--content", "Recruiter outreach for eng role",
+        "--source-file", "openai-recruiter.md",
+    )
+    content = (tmp_path / "data/company-notes/openai.md").read_text(encoding="utf-8")
+    assert "openai-recruiter.md" in content
+
+
+def test_company_note_add_dry_run(tmp_path):
+    """--dry-run returns dry_run:true and does not create the file."""
+    result, code = run_act_apply(
+        "--repo-root", str(tmp_path),
+        "--dry-run",
+        "company-note-add", "ghost-company",
+        "--content", "Should not be written",
+    )
+    assert code == 0
+    assert result["dry_run"] is True
+    assert not (tmp_path / "data/company-notes/ghost-company.md").exists()
+
+
+# ---------------------------------------------------------------------------
 # Tests: dry-run
 # ---------------------------------------------------------------------------
 

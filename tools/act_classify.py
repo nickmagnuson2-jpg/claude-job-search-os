@@ -329,11 +329,19 @@ def classify_inbox_file(filename: str, content: str) -> dict:
     """
     Classify a single inbox file. Returns a dict with type and metadata.
     Priority order: job_ad > contact_capture > article > company_research > unclassifiable
+
+    Gmail-sourced files (containing source="gmail" in XML delimiter) are tagged
+    with source_type="gmail". Type classification still runs for display purposes,
+    but /act treats these as requiring explicit confirmation before any write.
     """
+    is_gmail = 'source="gmail"' in content
+
     base = {
         "filename": filename,
         "content": content[:500],  # truncate for output
     }
+    if is_gmail:
+        base["source_type"] = "gmail"
 
     # ── 1. Job ad: ATS URL match ──────────────────────────────────────────
     for pat in ATS_PATTERNS:

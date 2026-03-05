@@ -4,3 +4,9 @@ xhtml2pdf>=0.2.13
 
 # Optional — for PDF text extraction (tools/convert_pdfs.py)
 pypdf>=4.0
+
+# Optional — for Gmail integration (tools/gmail_fetch.py)
+google-api-python-client>=2.0.0
+google-auth-httplib2>=0.1.0
+google-auth-oauthlib>=0.5.0
+beautifulsoup4>=4.12.0

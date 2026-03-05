@@ -37,6 +37,7 @@ Then apply these universal principles:
 - Short sentences. No filler. No hedge language.
 - No "I believe I could," "I think I might," "hoping to" — if it weakens the line, cut it
 - No essay structure — answer first, context second, stop
+- No em dashes in outreach — replace with a comma (e.g., "last week, wanted to follow up" not "last week — wanted to follow up"). Scan the full draft before presenting, not just the first occurrence.
 
 ### When to Apply
 Use these patterns in: `/cold-outreach`, `/follow-up`, `/draft-email`, and any outreach drafted inline during sessions. Read 2–3 entries from `data/networking.md` Interaction Log for additional tone-matching context if available.
@@ -47,7 +48,17 @@ Use these patterns in: `/cold-outreach`, `/follow-up`, `/draft-email`, and any o
 
 > The format to use is determined by the target market from the job posting or `data/profile.md`. Regional formats below cover market-specific conventions. When in doubt, use the International format.
 
-### International CV Format (default)
+### US Resume Format (default)
+
+For US-based roles and US job boards:
+- Professional summary at the top (tailored, concise)
+- No photo, no date of birth, no personal details beyond name/contact/LinkedIn
+- Experience section with accomplishment-driven bullets (lead with impact metrics)
+- Education at the bottom (unless recent graduate)
+- Typically 1 page (senior roles may extend to 2)
+- No availability or rate in the document - discuss in conversation
+
+### International CV Format 
 
 For international roles, direct applications, or when no regional format matches:
 - Professional summary at the top (tailored)
@@ -56,19 +67,12 @@ For international roles, direct applications, or when no regional format matches
 - Projects can be reordered by relevance rather than strictly chronological
 - Education and certifications can be positioned for maximum impact
 
-### US Resume Format
-
-For US-based roles and US job boards:
-- Professional summary at the top (tailored, concise)
-- No photo, no date of birth, no personal details beyond name/contact/LinkedIn
-- Experience section with accomplishment-driven bullets (lead with impact metrics)
-- Education at the bottom (unless recent graduate)
-- Typically 1-2 pages (senior roles may extend to 3)
-- No availability or rate in the document - discuss in conversation
-
 #### Nick's CV Formatting Preferences
 - **No em dashes or en dashes** - use hyphens (`-`) everywhere. In bullet text: ` - ` (with spaces). In date ranges: `2022-2024` (no spaces).
 - **Skills separators:** use commas, not dots/bullets. Example: `SQL, Tableau, Looker, R, Excel` not `SQL · Tableau · Looker`
+- **Job header format:** Use H3 with pipe-separated parts — `### Company | Title | Location | Date`. The PDF generator renders this as: **Company bold** + date right-aligned (row 1), *title italic* + location italic right (row 2). 3-part format `### Company | Title | Date` omits the location row.
+- **Education header format:** Same H3 pipe format — `### School | Degree | Date`. Renders as: **School bold** + date right (row 1), *degree italic* below (row 2).
+- **Do not use the old `### Title — Company` H3 format** — it bypasses the transform and renders as a plain bold line with no right-aligned date.
 
 ### UK CV Format
 

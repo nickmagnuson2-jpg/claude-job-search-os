@@ -83,10 +83,17 @@ Run this first thing each day instead of manually checking multiple files.
 /todo                  # View active list with priority and due-date flags
 /todo add <task>       # Add a new item
 /todo done <item>      # Mark complete
-/todo daily            # Generate today's progress snapshot
 ```
 
-Tasks cross-reference pipeline entries and contacts — you can see that several open items are all related to the same company. `/todo daily` appends to `data/job-todos-daily-log.md` with completion rate, streak, and velocity trend.
+Tasks cross-reference pipeline entries and contacts — you can see that several open items are all related to the same company.
+
+### End-of-day close-out
+
+```
+/checkout
+```
+
+Bookend to `/standup`. Runs `todo_daily_metrics.py` to build today's progress snapshot (completion rate, streak, velocity trend), appends to `data/job-todos-daily-log.md`, and surfaces tomorrow's top 3 priorities cross-referenced against the weekly review's Top 5.
 
 ### Weekly retrospective
 
@@ -166,6 +173,15 @@ Runs an 11-step workflow: matches your experience to the role, selects the most 
 
 The cheat sheet maps coached answers to each must-have requirement — keep it open during recruiter calls.
 
+### One-command apply bundle
+
+```
+/apply https://jobs.lever.co/company/role-id
+/apply https://jobs.lever.co/company/role-id "context notes"
+```
+
+Generates a tailored CV + Problem-Solution cover letter and adds the entry to the pipeline — all in one command. Use this when you're ready to apply. Use `/generate-cv` alone when you want just the CV without a cover letter.
+
 ### Generate a cover letter
 
 ```
@@ -173,7 +189,7 @@ The cheat sheet maps coached answers to each must-have requirement — keep it o
 /cover-letter "Meridian Health" "Chief of Staff"
 ```
 
-3-paragraph structure: hook anchored to the company's mission → value bridge with proof points → close with ask. Saves to `output/<company-slug>/MMDDYY-cover-letter.md`.
+**Problem-Solution format** — leads with the company's challenge, not your background: Hook (their problem) → Proof (you've solved it) → Bridge (how it maps to what they need now) → Close (specific ask). 250–350 words. Saves to `output/<company-slug>/MMDDYY-cover-letter.md`.
 
 ### Review a CV
 
@@ -340,7 +356,7 @@ Saved to `output/<company-slug>/MMDDYY-prep.md`. A debrief to-do is created auto
 
 ## Skills Reference
 
-Full list of all 23 skills:
+Full list of all 27 skills:
 
 | Skill | Arguments | What it does |
 |---|---|---|
@@ -348,15 +364,19 @@ Full list of all 23 skills:
 | `/extract-identity` | *(none — interactive)* | Guided conversation → `data/professional-identity.md` |
 | `/setup-goals` | *(none — interactive)* | Identity-aware goals setup → `data/goals.md` |
 | `/generate-cv` | `<job-url-or-jd> [context]` | 11-step tailored CV + cheat sheet, saved to `output/<slug>/` |
-| `/cover-letter` | `<job-url-or-role> [context]` | 3-paragraph cover letter saved to `output/<slug>/` |
+| `/apply` | `<job-url-or-jd> [context]` | One-command apply bundle: CV + cover letter + pipeline add |
+| `/cover-letter` | `<job-url-or-role> [context]` | Problem-Solution cover letter saved to `output/<slug>/` |
 | `/review-cv` | `<cv-path> [job-ad-url]` | Fast quality gate: keywords, claims, format |
 | `/review-cv-deep` | `<cv-path> <job-ad-url>` | 6-perspective deep review + Top 10 probing questions |
 | `/scan-jobs` | `<portal> [search terms]` | Scan a job portal, score fit, deduplicate |
+| `/scan-contacts` | `"Company Name"` | LinkedIn contact scanner — ranks contacts by role proximity, education, network, fit |
 | `/pipe` | `[add/update + args]` | Application pipeline with staleness alerts |
-| `/todo` | `[add/done/daily + args]` | Task manager with pipeline/contact cross-references |
-| `/standup` | *(none)* | Morning briefing reading 5 data files in parallel |
+| `/todo` | `[add/done + args]` | Task manager with pipeline/contact cross-references |
+| `/standup` | *(none)* | Morning briefing — pipeline, todos, outreach, suggested priority |
+| `/checkout` | *(none)* | End-of-day close-out — daily log, tomorrow's top 3, velocity snapshot |
 | `/weekly-review` | *(none)* | Weekly retrospective → `data/weekly-review-log.md` |
 | `/act` | *(none)* | Autonomous execution of Bucket A to-dos, processes inbox/ |
+| `/critique-plan` | *(none — paste plan inline)* | Six-agent plan critique + independent Claude plan + hybrid synthesis |
 | `/research-industry` | `"industry name" [context]` | Parallel-agent industry dossier → `output/<slug>/<slug>.md` |
 | `/research-company` | `"Company Name" [url] [context]` | Parallel-agent company dossier → `output/<slug>/<slug>.md` |
 | `/cold-outreach` | `"Name" "Company" [context]` | First-contact draft, framework-selected, quality-gated, auto-logged |

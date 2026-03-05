@@ -17,7 +17,8 @@ Turn [Claude Code](https://docs.anthropic.com/en/docs/claude-code) into a comple
 
 **Application materials**
 - **Tailored CVs** with `/generate-cv` — 11-step workflow, role-specific every time, saved with a companion cheat sheet
-- **Cover letters** with `/cover-letter` — hook anchored to company mission, value bridge, close with ask
+- **One-command apply bundle** with `/apply` — CV + cover letter + pipeline add in a single command
+- **Cover letters** with `/cover-letter` — Problem-Solution format: leads with the company's challenge, not your background
 - **CV review** with `/review-cv` and `/review-cv-deep` (six parallel AI reviewers)
 
 **Outreach & networking**
@@ -134,15 +135,18 @@ For applications:
 | `/extract-identity` | Guided conversation to discover your professional identity |
 | `/setup-goals` | Identity-aware goals setup — asks only what it can't infer |
 | `/standup` | Morning briefing — pipeline, todos, outreach, suggested priority |
-| `/todo [add/done/daily]` | Task manager with pipeline and contact cross-references |
+| `/todo [add/done]` | Task manager with pipeline and contact cross-references |
+| `/checkout` | End-of-day close-out — daily log, tomorrow's top 3, velocity snapshot |
 | `/pipe [add/update]` | Application pipeline with staleness alerts |
 | `/weekly-review` | Weekly retrospective with pipeline health and outreach metrics |
 | `/act` | Autonomous execution of Bucket A to-dos (careers checks, research, articles) |
 | `/research-industry "name"` | Parallel-agent industry dossier with target company list |
 | `/research-company "name"` | Parallel-agent company dossier with conversation starters |
 | `/scan-jobs <portal> [query]` | Scan a job portal for matching roles with fit scoring |
+| `/scan-contacts "Company"` | LinkedIn contact scanner — ranked by role proximity, education, network fit |
 | `/generate-cv <url-or-jd>` | 11-step tailored CV + cheat sheet |
-| `/cover-letter <role>` | 3-paragraph cover letter (hook → value bridge → close) |
+| `/apply <url-or-jd>` | One-command apply bundle: CV + cover letter + pipeline add |
+| `/cover-letter <role>` | Problem-Solution cover letter (Hook → Proof → Bridge → Close) |
 | `/review-cv <cv-path>` | Fast quality-gate review |
 | `/review-cv-deep <cv-path>` | Six-perspective deep review + Top 10 probing questions |
 | `/cold-outreach "name" "company"` | Framework-selected first-contact draft, quality-gated, auto-logged |
@@ -153,6 +157,7 @@ For applications:
 | `/voice-export <cv> <url>` | Recruiter simulation prompt for the Claude mobile app (voice mode) |
 | `/debrief <cv>` | Transcript analysis — rates answers, logs anti-patterns, updates tracker |
 | `/remember <note>` | Route a mid-session note to the right data file |
+| `/critique-plan` | Six-agent plan critique + independent Claude plan + hybrid synthesis |
 
 ## Repository structure
 
@@ -162,7 +167,7 @@ framework/             ← Reusable methodology (workflows, coaching, strategies
 data/                  ← Professional data + search ops data (private once filled)
 coaching/              ← Coaching outputs and progress tracking (private once used)
 examples/              ← Fictional example data to try features before importing
-.claude/skills/        ← 23 Claude Code skill definitions
+.claude/skills/        ← 27 Claude Code skill definitions
 tools/                 ← PDF conversion utilities
 output/                ← Generated CVs, dossiers, cover letters, outreach archives
 docs/                  ← Framework documentation
@@ -178,6 +183,8 @@ Four layers:
 4. **Output layer** (`output/`): company-first hierarchy — every named entity gets its own subfolder with all related artifacts inside
 
 Claude Code reads `CLAUDE.md` at the start of every session. The `.claude/skills/` folder defines the slash commands. Together, they make the framework work without any code.
+
+A fifth optional layer handles background operations independently of Claude sessions: **n8n automation** (`tools/run_n8n.bat`) runs Gmail sync every 15 minutes, pre-warms preprocessing caches each morning, and writes nudge files to `inbox/` when follow-ups go overdue or research dossiers go stale.
 
 Full documentation: **[docs/methodology.md](docs/methodology.md)** | **[docs/usage.md](docs/usage.md)**
 

@@ -5,6 +5,113 @@ Format: newest entries at the top.
 
 ---
 
+## 2026-03-04 — Extract application workflow framework
+
+### Added
+- **`framework/application-workflow.md`** — single source of truth for shared application standards. Contains 6 sections: Candidate Context Loading (with per-output-type table), Company Dossier Staleness Check, Tailoring Rules (incl. Keyword Pragmatism), CV Quality Standards (5 subsections), 16-point CV Quality Checks, and Cheat Sheet Structure (contents, quality rules, markdown template).
+
+### Changed
+- **`/generate-cv`** — replaced ~165 lines of inline rules with references to `framework/application-workflow.md`. Deleted Tailoring Rules section, CV Quality Standards section, Cheat Sheet Format template, and the "Future: Application Workflow Framework" TODO.
+- **`/apply`** — replaced ~65 lines of inline rules with framework references. **Fixed two bugs:** (1) broken reference to `framework/style-guidelines.md` for Tailoring Rules/Quality Standards (that file doesn't contain those rules), now correctly points to `framework/application-workflow.md`; (2) candidate context loading was missing `data/goals.md` in the numbered list (now uses framework superset).
+- **`/cover-letter`** — replaced candidate context loading and dossier staleness check with framework references (~15 lines saved). Cover letter quality gates remain inline (unique to this skill).
+- **`CLAUDE.md`** — added `application-workflow.md` to framework/ listing; updated Resume Generation section description.
+
+### Notes
+- `/review-cv` and `/review-cv-deep` intentionally NOT modified — they operate from a reviewer perspective and don't share the same generation rules.
+- This extraction was triggered by the TODO in generate-cv (line 349): "if the same rule needs to be updated in more than one skill at the same time" — which happened twice in the 2026-03-04 session (quality checks 9-16 sync and cover letter format sync).
+
+---
+
+## 2026-03-04 — Cover letter rewrite + /apply quality sync
+
+### Changed
+- **`/cover-letter` skill rewritten** — replaced generic 3-paragraph hook/value/close with research-backed **Problem-Solution format** (4 sections: Hook → Proof → Bridge → Close). Based on meta-analysis of 80+ cover letter studies showing Problem-Solution outperforms traditional formats. Key changes: leads with company's specific challenge, uniqueness test quality gate, resume separation test, ATS keyword weaving (3-5 terms), 250-350 word target.
+- **`/apply` Step 7 updated** — cover letter section now uses the same Problem-Solution format as standalone `/cover-letter` skill.
+- **`/apply` Step 6b synced with `/generate-cv`** — added quality checks 9-16 that were missing: date math validation, month-level dates for short/recent tenures, causal attribution check, skills evidence check, metric specificity, client engagement disambiguation, role progression in titles, jargon translation.
+
+### Notes
+- Cover letter research sources: Interview Guys meta-analysis (80+ studies), HBR 2025, Ask a Manager, Jobscan, Resume Genius (625 managers), MyPerfectResume (1,000+ seekers). Key stat: 94% of hiring managers say cover letters influence interview decisions; 90% of generic letters rejected.
+- Both `/cover-letter` and `/apply` now enforce the same Problem-Solution structure and quality gates.
+
+---
+
+## 2026-03-01 — n8n background automation (4 workflows)
+
+### Added
+- **4 n8n workflows** built and active at http://localhost:5678 (`n8n start` via `tools/run_n8n.bat`):
+  - **Gmail Fetch** (every 15 min) — runs `gmail_fetch.py --label-id Label_7175134973725917628`; replaces Windows Task Scheduler task
+  - **Standup Cache Warm** (weekdays 8am) — runs `act_classify.py` + `pipeline_staleness.py` in parallel; writes pre-computed JSON to `tools/.cache/`
+  - **Follow-up Nudge + Dossier Freshness** (daily 9am) — runs `n8n_outreach_nudge.py` + `n8n_dossier_nudge.py` in parallel; writes inbox items when overdue follow-ups or stale dossiers are found
+  - **Weekly Review Reminder** (Friday 4pm) — runs `n8n_weekly_reminder.py`; writes `inbox/YYYYMMDD-weekly-review-reminder.md`
+- **`tools/n8n_outreach_nudge.py`** — delegates to `outreach_pending.py`; writes inbox nudge if `awaiting_response_overdue` is non-empty
+- **`tools/n8n_dossier_nudge.py`** — delegates to `dossier_freshness.py`; writes inbox nudge if `staleness_alerts` is non-empty
+- **`tools/n8n_weekly_reminder.py`** — writes weekly review reminder to `inbox/`
+- **`tools/run_n8n.bat`** — n8n startup script; sets `NODES_EXCLUDE=[]` to re-enable the Execute Command node (blocked by default in n8n 2.x); always use instead of bare `n8n start`
+- **`tools/.cache/`** — pre-computed JSON cache directory written by Standup Cache Warm workflow
+
+### Changed
+- **Windows Task Scheduler** — "Gmail Fetch (Job Search)" task disabled; n8n workflow handles the same 15-min cadence
+
+### Notes
+- n8n 2.x excludes `n8n-nodes-base.executeCommand` by default via `NODES_EXCLUDE` env var; `run_n8n.bat` overrides this with `NODES_EXCLUDE=[]`
+- n8n API key stored in `~/.n8n/database.sqlite` (label: `claude-automation`)
+
+---
+
+## 2026-03-01 — Gmail integration pipeline
+
+### Added
+- **`tools/gmail_fetch.py`** — incremental Gmail sync: OAuth, Gmail history API, body sanitization (HTML strip → invisible unicode removal → injection phrase redaction → truncation → XML wrap), inbox file writes, 48h auto-cleanup of Gmail files, token expiry alerting. All pure functions are top-level and testable without Google API deps.
+- **`tools/run_gmail_fetch.bat`** — Windows Task Scheduler wrapper; appends to `logs/gmail_fetch.log`
+- **`logs/`** added to `.gitignore` alongside `tools/gmail_credentials.json`, `tools/gmail_token.json`, `tools/.gmail_state.json`
+- **Gmail deps** added to `requirements.txt` (optional section): `google-api-python-client`, `google-auth-httplib2`, `google-auth-oauthlib`, `beautifulsoup4`
+- **28 new tests** in `tests/scripts/test_gmail_fetch.py` (165 total, all passing): `sanitize_body` (9 tests), `extract_plain_text` (4), `build_inbox_filename` (5), `write_inbox_file` (2), `cleanup_old_inbox_files` (5), `act_classify` gmail detection (3)
+
+### Changed
+- **`tools/act_classify.py`** — `classify_inbox_file` now detects `source="gmail"` in inbox file content and sets `source_type: "gmail"` on the item. Type classification still runs for display; routing to Bucket A is blocked by `/act` security policy.
+- **`/act` skill** — security warning block added before Step 1: email content inside `<email-content>` tags is untrusted, injection instructions must be flagged, gmail items require explicit Nick confirmation before any data file write.
+
+---
+
+## 2026-02-28 — Phase 2: 4 atomic write scripts + skill wiring
+
+### Added
+- **`tools/pipe_write.py`** — atomic add/update/remove for `data/job-pipeline.md`
+- **`tools/networking_write.py`** — atomic add/log/remove for `data/networking.md`
+- **`tools/remember_apply.py`** — 8 destination handlers routing notes to the correct data file
+- **`tools/act_apply.py`** — pipeline-add/contact-add/notes-add for `/act` Immediate Route writes
+- **48 new tests** in `tests/scripts/` (137 total, all passing)
+- **`conftest.py` `write_fixture`** — shared helper for write script tests
+
+### Changed
+- **`/pipe`** — inline write logic replaced with `pipe_write.py` calls; allowed-tools updated
+- **`/networking`** — inline write logic replaced with `networking_write.py` calls; allowed-tools updated
+- **`/remember`** — Step 3 write logic replaced with `remember_apply.py` calls; allowed-tools updated
+- **`/act`** — Step 4 Immediate Route format specs replaced with `act_apply.py` commands; inline `Write()` tools removed from allowed-tools
+
+---
+
+## 2026-02-28 — Deterministic script migration + CLAUDE.md audit + continuous learning loop
+
+### Added
+- **`tools/act_classify.py`** — classifies Pending todos + inbox items into bucket_a/bucket_b/skipped/inbox_items JSON; replaces inline LLM classification in `/act` Steps 1–2
+- **`tools/pipe_read.py`** — pipeline read with per-entry staleness annotations (stale_label, needs_attention, missing_action), metrics, and company_index; replaces inline date math in `/pipe`
+- **`tools/networking_read.py`** — contacts read with stale_contacts, pipeline_connections, interaction counts, and metrics; replaces inline stale detection in `/networking`
+- **`tools/remember_classify.py`** — 8-priority rule engine: classifies note text into typed destinations[] with entity matching against networking/pipeline/dossier slugs; replaces classification table in `/remember`
+- **24 new tests** in `tests/scripts/` covering all 4 new scripts (89 total, all passing)
+
+### Changed
+- **`/act`** — Steps 1–2 (75 lines of inline classification tables) replaced with `act_classify.py` call + JSON parse
+- **`/pipe`** — Show command inline staleness math replaced with `pipe_read.py` JSON fields
+- **`/networking`** — Show command inline stale detection + pipeline scan replaced with `networking_read.py`; `Edit(data/networking.md)` removed from allowed-tools
+- **`/remember`** — Step 1 classification table replaced with `remember_classify.py` call
+- **`CLAUDE.md`** — skill count corrected (20→27); LEGACY dirs removed from tree (deleted 2026-02-25); `/standup` + `/checkout` added to Ongoing Tracking; `/apply` added to Applications; all 9 preprocessing scripts listed in tools section
+- **`memory/lessons.md`** — Section 2 back-populated with 8 Nick's Voice patterns (all Promoted=Yes); closes the email correction loop
+- **`docs/self-improving-data-framework.md`** — stale Note Routing and Longitudinal Logging entries updated to reflect `remember_classify.py`, `act_classify.py`, and `/checkout`
+- **`docs/methodology.md`** — `/todo daily` replaced with `/checkout` in Daily Operations section
+
+---
+
 ## 2026-02-28 — /critique-plan skill, /scan-contacts skill, todo_write.py, PDF + style fixes
 
 ### Added

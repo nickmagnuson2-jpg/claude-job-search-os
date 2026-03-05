@@ -69,7 +69,18 @@ class Scraper:
                     self.logged_in = True
                     return
             except Exception as e:
-                print(colored(f"Failed login attempt due to: {e}", "yellow"))
+                # Save screenshot for debugging
+                screenshot_path = os.path.join(os.path.dirname(__file__), "cache", "login_failure.png")
+                try:
+                    os.makedirs(os.path.dirname(screenshot_path), exist_ok=True)
+                    self.browser.save_screenshot(screenshot_path)
+                    current_url = self.browser.current_url
+                    page_title = self.browser.title
+                    print(colored(f"Failed login attempt — URL: {current_url}", "yellow"))
+                    print(colored(f"  Page title: {page_title}", "yellow"))
+                    print(colored(f"  Screenshot saved: {screenshot_path}", "yellow"))
+                except:
+                    print(colored(f"Failed login attempt due to: {e}", "yellow"))
                 time.sleep(delay)
 
 
@@ -160,19 +171,20 @@ class Scraper:
         names = []
         prof_links = []
 
-        #search for company and see all resuts
-        search_bar = self.browser.find_element(By.CLASS_NAME, "search-global-typeahead__input")
-        search_bar.send_keys(company)
-        search_bar.send_keys(Keys.RETURN)
-        try:
-    # Wait for the 'See all people results' link to be clickable
-            people_results = WebDriverWait(self.browser, 10).until(
-                EC.element_to_be_clickable((By.XPATH, '//a[text()="See all people results"]'))
-            )
-            people_results.click()
-        except Exception as e:
-            print("Error: ", str(e))
+        # Navigate directly to people search URL (bypasses fragile search bar selectors)
+        import urllib.parse
+        encoded_company = urllib.parse.quote(company)
+        search_url = f"https://www.linkedin.com/search/results/people/?keywords={encoded_company}&origin=GLOBAL_SEARCH_HEADER"
+        self.browser.get(search_url)
+        time.sleep(3)
 
+        # Verify we landed on search results
+        try:
+            WebDriverWait(self.browser, 15).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, "div.search-results-container, ul.reusable-search__entity-result-list"))
+            )
+        except Exception as e:
+            print(f"Warning: search results page may not have loaded fully: {e}")
 
         names, prof_links = self.paginate_store(num_profiles, True)
         prof_links = [self.sanitize_url(link) for link in prof_links]
