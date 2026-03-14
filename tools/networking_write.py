@@ -27,11 +27,19 @@ import os
 import re
 import subprocess
 import sys
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
-NETWORKING_FILE = "data/networking.md"
-TODOS_FILE      = "data/job-todos.md"
+NETWORKING_FILE  = "data/networking.md"
+TODOS_FILE       = "data/job-todos.md"
+OUTREACH_FILE    = "data/outreach-log.md"
+
+# Keywords in interaction summary that signal a reply was received
+REPLY_SIGNALS = (
+    "replied", "responded", "heard back", "call scheduled", "meeting set",
+    "coffee scheduled", "phone screen", "interview scheduled", "got back",
+    "reply", "called back", "texted back",
+)
 
 CONTACTS_HEADER = "| Name | Company | Role | Relationship | Added | Last Interaction | Email |"
 CONTACTS_SEP    = "| --- | --- | --- | --- | --- | --- | --- |"
@@ -173,6 +181,61 @@ def save_lines(path: Path, lines: list, original_content: str) -> None:
     if original_content.endswith("\n"):
         content += "\n"
     write_atomic(path, content)
+
+
+# ---------------------------------------------------------------------------
+# Outreach-log cross-update
+# ---------------------------------------------------------------------------
+
+def update_outreach_status(repo_root: Path, contact_name: str, log_date: str) -> bool:
+    """Update the most recent 'Sent' entry in outreach-log.md for contact_name to 'Replied'.
+
+    Returns True if an entry was updated.
+    """
+    outreach_path = repo_root / OUTREACH_FILE
+    content = read_file(outreach_path)
+    if not content:
+        return False
+
+    name_lower = contact_name.lower().strip()
+    lines = content.splitlines()
+    best_idx = -1
+    best_date = None
+
+    for i, line in enumerate(lines):
+        if not line.startswith("|") or line.startswith("| Date") or line.startswith("|---"):
+            continue
+        cols = [c.strip() for c in line.strip("|").split("|")]
+        if len(cols) < 7:
+            continue
+        row_name = cols[3].lower().strip()
+        row_status = cols[6].strip().lower()
+        if row_name != name_lower:
+            continue
+        if row_status not in ("sent", "drafted", "pending"):
+            continue
+        # Track the most recent matching row
+        try:
+            row_date = datetime.strptime(cols[0].strip(), "%Y-%m-%d").date()
+        except ValueError:
+            continue
+        if best_date is None or row_date > best_date:
+            best_date = row_date
+            best_idx = i
+
+    if best_idx == -1:
+        return False
+
+    # Replace status in the matched row
+    cols = [c.strip() for c in lines[best_idx].strip("|").split("|")]
+    cols[6] = "Replied"
+    lines[best_idx] = "| " + " | ".join(cols) + " |"
+
+    new_content = "\n".join(lines)
+    if content.endswith("\n"):
+        new_content += "\n"
+    write_atomic(outreach_path, new_content)
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -345,8 +408,15 @@ def cmd_log(args, networking_path: Path, repo_root: Path, dry_run: bool) -> None
             except Exception:
                 pass  # todo creation is best-effort
 
+    # Auto-update outreach-log.md if the interaction looks like a reply
+    outreach_updated = False
+    summary_lower = args.summary.lower()
+    if any(signal in summary_lower for signal in REPLY_SIGNALS):
+        outreach_updated = update_outreach_status(repo_root, args.name, log_date)
+
     out_ok("log", f"Logged interaction for {args.name}: {args.summary}",
-           name=args.name, date=log_date)
+           name=args.name, date=log_date,
+           outreach_log_updated=outreach_updated)
 
 
 def cmd_remove(args, networking_path: Path, dry_run: bool) -> None:

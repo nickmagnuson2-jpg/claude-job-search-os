@@ -1,4 +1,8 @@
+Last updated: 2026-03-04
+
 # Outreach Guide
+
+> **Precedence:** Nick-specific voice patterns in `framework/style-guidelines.md` → Nick's Voice section override the generic guidance in this file. When in doubt, match Nick's actual voice first, then fall back to these frameworks.
 
 Durable reference for all outreach skills (`/cold-outreach`, `/follow-up`, `/draft-email`). Read this before drafting any message.
 

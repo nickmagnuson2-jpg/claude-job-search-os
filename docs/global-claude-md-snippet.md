@@ -1,6 +1,8 @@
 <!-- Copy this entire block into your global ~/.claude/CLAUDE.md.
      These are project-agnostic behavioral patterns that apply across all projects.
-     Project-level skills add detailed file paths and procedures on top. -->
+     Project-specific overrides live in framework/style-guidelines.md and CLAUDE.md. -->
+
+Last updated: 2026-02-27
 
 # Continuous Improvement Defaults
 

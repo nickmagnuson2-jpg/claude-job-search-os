@@ -1,3 +1,5 @@
+Last updated: 2026-03-04
+
 # AI Job Search System — Methodology
 
 An open-source framework that turns Claude Code into an **end-to-end job search operating system**: from identifying target companies to accepting an offer. The system covers six capability areas:
@@ -582,6 +584,10 @@ coaching/                        ← Coaching outputs and progress (private)
   ├── progress-recruiter/         ← Session logs + scorecard
   └── progress-interview/         ← Session logs + scorecard
 inbox/                           ← Raw capture zone (gitignored, processed by /act)
+memory/                          ← Persistent session context (auto-memory system)
+  ├── MEMORY.md                  ← Auto-loaded every session — active context only (<100 lines)
+  ├── lessons.md                 ← Self-improvement rules (updated after corrections)
+  └── archive-YYYY-MM.md        ← Archived resolved sections from MEMORY.md
 .claude/skills/                  ← Skill definitions powering slash commands
   ├── import-cv/                  ← /import-cv — CV data extraction + merge
   ├── extract-identity/           ← /extract-identity — professional self-discovery
@@ -614,7 +620,12 @@ tools/                           ← Python utilities
   ├── convert_pdfs.py             ← PDF-to-text extractor (input: files/)
   ├── md_to_pdf.py                ← Markdown CV → styled PDF
   ├── open_draft.py               ← Gmail compose opener (auto-run by outreach skills)
-  ├── todo_write.py               ← Atomic mutations for job-todos.md (read layer)
+  ├── todo_write.py               ← Atomic mutations for job-todos.md
+  ├── todo_daily_metrics.py       ← Daily metrics for /checkout and /weekly-review → JSON
+  ├── pipeline_staleness.py       ← Pipeline staleness per-stage thresholds → JSON
+  ├── outreach_pending.py         ← Awaiting/overdue outreach + response rate → JSON (cross-refs networking.md for replies)
+  ├── networking_followup.py      ← Follow-up due-date inference from Interaction Log → JSON
+  ├── dossier_freshness.py        ← Dossier freshness detection → JSON
   ├── pipe_read.py                ← Pipeline read + staleness annotations → JSON
   ├── networking_read.py          ← Contacts read + stale detection → JSON
   ├── act_classify.py             ← Classifies todos + inbox items into buckets → JSON
@@ -643,11 +654,11 @@ Every data file mutation (pipeline, networking, notes, todos) goes through a ded
 |--------|-------------|------------|
 | `todo_write.py` | `data/job-todos.md` | add, done, clear, sync |
 | `pipe_write.py` | `data/job-pipeline.md` | add, update, remove |
-| `networking_write.py` | `data/networking.md` | add, log, remove |
+| `networking_write.py` | `data/networking.md` + `data/outreach-log.md` | add, log (auto-updates outreach status on reply), remove |
 | `remember_apply.py` | 8 destinations (pipeline, networking, notes, profile, etc.) | route-and-write |
 | `act_apply.py` | pipeline, networking, notes (via inbox routing) | pipeline-add, contact-add, notes-add |
 
-**Why scripts instead of inline LLM writes?** Three reasons: (1) markdown table format is brittle — slight variations break parsing in subsequent skill reads; (2) write logic appears in 5+ skills — a format change would require updating every skill; (3) scripts are testable in isolation — 137 unit tests cover all mutation paths, which LLM-inline writes cannot have. The LLM focuses on judgment (what to write); the script handles mechanics (how to write it correctly every time).
+**Why scripts instead of inline LLM writes?** Three reasons: (1) markdown table format is brittle — slight variations break parsing in subsequent skill reads; (2) write logic appears in 5+ skills — a format change would require updating every skill; (3) scripts are testable in isolation — 176 unit tests cover all mutation paths, which LLM-inline writes cannot have. The LLM focuses on judgment (what to write); the script handles mechanics (how to write it correctly every time).
 
 ### Background Automation (n8n)
 

@@ -1,3 +1,5 @@
+Last updated: 2026-02-12
+
 # Customization
 
 How to extend the framework beyond its defaults: plugins, CV format rules, and coaching behaviour.

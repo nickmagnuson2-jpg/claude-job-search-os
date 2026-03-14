@@ -9,6 +9,10 @@ Outputs JSON to stdout with keys:
   followup_overdue[]  — contacts where follow-up is overdue
   summary{}           — total_contacts, due_today, overdue
 
+Follow-up source: The Interaction Log section of networking.md, NOT the Contacts table.
+Each contact's subsection (### Name — Company) contains entries with **Follow-up:** lines.
+The most recent non-dash follow-up line is used for date inference.
+
 Due-date inference rules (applied to follow-up notes):
   - "next week" → last_date + 7d
   - "3–5 business days" / "3-5 business days" → last_date + 5d
@@ -89,31 +93,24 @@ def infer_followup_date(last_date: date, notes: str) -> date | None:
     return last_date + timedelta(days=14)
 
 
-def parse_networking(content: str, today: date, days_overdue_threshold: int) -> dict:
-    """Parse networking.md contacts table and interaction notes."""
-    followup_due = []
-    followup_overdue = []
+def parse_contacts_table(content: str) -> list[dict]:
+    """Parse the Contacts table. Returns list of {name, company, role, relationship, last_interaction}.
 
-    # Find the main contacts table
+    Real table format (7 cols):
+      | Name | Company | Role | Relationship | Added | Last Interaction | Email |
+    """
+    contacts = []
     contacts_match = re.search(
         r"\|\s*Name\s*\|.*?\n\|[-\s|]+\n(.*?)(?=\n## |\Z)",
         content,
-        re.DOTALL
+        re.DOTALL,
     )
     if not contacts_match:
-        return {
-            "followup_due": [],
-            "followup_overdue": [],
-            "summary": {"total_contacts": 0, "due_today": 0, "overdue": 0},
-        }
+        return contacts
 
-    table_text = contacts_match.group(1)
-    total_contacts = 0
-
-    for line in table_text.splitlines():
+    for line in contacts_match.group(1).splitlines():
         if not line.startswith("|") or line.startswith("|---"):
             continue
-
         cols = [c.strip() for c in line.strip("|").split("|")]
         if len(cols) < 4 or not cols[0]:
             continue
@@ -122,10 +119,98 @@ def parse_networking(content: str, today: date, days_overdue_threshold: int) -> 
         company = cols[1] if len(cols) > 1 else ""
         role = cols[2] if len(cols) > 2 else ""
         relationship = cols[3] if len(cols) > 3 else ""
-        last_interaction_str = cols[4] if len(cols) > 4 else ""
-        follow_up_action = cols[5] if len(cols) > 5 else ""
+        # cols[4] = Added (date added to table)
+        # cols[5] = Last Interaction (date of most recent interaction)
+        last_interaction_str = cols[5] if len(cols) > 5 else ""
 
-        total_contacts += 1
+        contacts.append({
+            "name": name,
+            "company": company,
+            "role": role,
+            "relationship": relationship,
+            "last_interaction": last_interaction_str,
+        })
+    return contacts
+
+
+def extract_followup_from_interaction_log(content: str, name: str) -> tuple[str, date | None]:
+    """Find the most recent **Follow-up:** line in a contact's Interaction Log subsection.
+
+    Returns (followup_text, interaction_date) where interaction_date comes from the
+    #### YYYY-MM-DD header above the follow-up line. Returns ("", None) if not found.
+    """
+    name_lower = name.lower().strip()
+    lines = content.splitlines()
+
+    # Find the ### section for this contact
+    section_start = -1
+    for i, line in enumerate(lines):
+        if not line.startswith("### "):
+            continue
+        m = re.match(r"^###\s+(.+?)(?:\s+[—–]|$)", line)
+        if m and m.group(1).strip().lower() == name_lower:
+            section_start = i
+            break
+
+    if section_start == -1:
+        return ("", None)
+
+    # Find section end
+    section_end = len(lines)
+    for i in range(section_start + 1, len(lines)):
+        if lines[i].startswith("## ") or lines[i].startswith("### "):
+            section_end = i
+            break
+
+    # Scan entries in section (newest first — entries are prepended).
+    # Each entry starts with #### YYYY-MM-DD | type | summary
+    # and has a **Follow-up:** line below it.
+    # We want the MOST RECENT non-dash follow-up.
+    current_entry_date = None
+    for i in range(section_start + 1, section_end):
+        line = lines[i]
+
+        # Track which entry we're in
+        entry_match = re.match(r"^####\s+(\d{4}-\d{2}-\d{2})\s*\|", line)
+        if entry_match:
+            try:
+                current_entry_date = datetime.strptime(entry_match.group(1), "%Y-%m-%d").date()
+            except ValueError:
+                current_entry_date = None
+
+        # Look for **Follow-up:** lines
+        fu_match = re.match(r"^\*\*Follow-up:\*\*\s*(.*)", line)
+        if fu_match:
+            fu_text = fu_match.group(1).strip()
+            # Skip dashes (no follow-up needed)
+            if fu_text in ("—", "-", ""):
+                continue
+            # Skip "None required" type entries
+            if fu_text.lower().startswith("none"):
+                continue
+            return (fu_text, current_entry_date)
+
+    return ("", None)
+
+
+def parse_networking(content: str, today: date, days_overdue_threshold: int) -> dict:
+    """Parse networking.md contacts table and interaction log follow-ups."""
+    followup_due = []
+    followup_overdue = []
+
+    contacts = parse_contacts_table(content)
+    if not contacts:
+        return {
+            "followup_due": [],
+            "followup_overdue": [],
+            "summary": {"total_contacts": 0, "due_today": 0, "overdue": 0},
+        }
+
+    total_contacts = len(contacts)
+
+    for contact in contacts:
+        name = contact["name"]
+        last_interaction_str = contact["last_interaction"]
 
         if not last_interaction_str or last_interaction_str == "—":
             continue
@@ -135,11 +220,15 @@ def parse_networking(content: str, today: date, days_overdue_threshold: int) -> 
         except ValueError:
             continue
 
-        # Skip contacts with "—" follow-up
-        if follow_up_action == "—" or not follow_up_action:
+        # Get follow-up from Interaction Log section (not table column)
+        followup_text, entry_date = extract_followup_from_interaction_log(content, name)
+        if not followup_text:
+            # No actionable follow-up in interaction log — skip this contact
             continue
 
-        followup_date = infer_followup_date(last_date, follow_up_action)
+        # Use the entry date for relative inference (e.g., "next week" = entry_date + 7d)
+        reference_date = entry_date if entry_date else last_date
+        followup_date = infer_followup_date(reference_date, followup_text)
         if not followup_date:
             continue
 
@@ -148,11 +237,11 @@ def parse_networking(content: str, today: date, days_overdue_threshold: int) -> 
 
         entry = {
             "name": name,
-            "company": company,
-            "role": role,
-            "relationship": relationship,
+            "company": contact["company"],
+            "role": contact["role"],
+            "relationship": contact["relationship"],
             "last_interaction": last_interaction_str,
-            "follow_up_action": follow_up_action,
+            "follow_up_action": followup_text,
             "followup_date": followup_date.strftime("%Y-%m-%d"),
             "days_until": days_until,
         }
@@ -163,10 +252,8 @@ def parse_networking(content: str, today: date, days_overdue_threshold: int) -> 
             else:
                 followup_due.append(entry)
         elif days_until <= 7:
-            # Due within 7 days — surface as upcoming
             followup_due.append(entry)
 
-    # Sort overdue by most overdue first
     followup_overdue.sort(key=lambda e: e["days_until"])
     followup_due.sort(key=lambda e: e["days_until"])
 

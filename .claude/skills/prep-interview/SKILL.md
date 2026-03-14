@@ -142,6 +142,8 @@ Step 2: For each question, check coached-answers.md and project experience for a
 - If a partial match exists (related but not exact): note what to adapt.
 - If no coached answer exists: flag as GAP.
 
+Step 2b: For questions that draw on the candidate's personal experience or industry knowledge, ensure answer frameworks include HYPOTHESES about the company's challenges, not just observations of the problem space. "Observer thinking" (describing what you saw) is weaker than "operator thinking" (positing what the operational challenge actually is and what you'd investigate). This is especially important for S&O, operations, and strategy roles.
+
 Step 3: List the top 5 GAPS — questions where no good coached answer exists. These need new prep.
 
 Output format:
@@ -263,6 +265,15 @@ After all 3 agents return, compile their outputs into a single document. Do not 
 - Merge any overlapping anti-pattern warnings between Agent 1 and Agent 3 into one unified list
 - Cross-link where relevant (e.g., if Agent 2 identified a key business challenge, and Agent 1 has a question about it, note the link)
 
+**Staging gates:** If the interview type is `recruiter`, add explicit staging labels throughout:
+- Mark any content that references personal experience, deeper disclosure, or operational insights with `[HM-STAGE ONLY]` or move to a separate "If You Advance" section at the bottom.
+- Recruiter-stage answer frameworks should use the most guarded framing of personal motivation (e.g., "X is personal to me" not "going through X myself").
+- For healthcare/behavioral health companies specifically: recruiters in the clinical space can infer program types from specific language. Heighten disclosure awareness in anti-patterns.
+
+**Self-reported metrics:** When citing company-reported outcomes (readmission rates, NPS, adherence, cost savings) in answer frameworks or company context, qualify with "they report" or "self-reported." Presenting unverified metrics as fact undermines credibility with knowledgeable interviewers.
+
+**Cross-reference reduction:** If existing research briefs (SMI brief, industry dossier, comparison briefs) cover a topic in depth, cross-reference them in the prep doc rather than reproducing the content. The prep doc should be a quick-scan interview tool, not a second copy of the research.
+
 ### Step 6: Determine Output Filename and Save
 
 - Use the company slug from Step 1 as the subfolder: `output/<company-slug>/`
@@ -360,6 +371,11 @@ Format: "[Who you are] with [key credential/experience]. Most relevant: [2 proje
 
 ## Logistics
 [From Agent 3 — format, platform, duration, who you're talking to, dress, pre-call reminders]
+
+[IF INTERVIEW TYPE IS RECRUITER]:
+## If You Advance — Hiring Manager Prep References
+
+[Table linking existing research briefs and dossiers relevant to this company/role. Each row: document path, what it covers, when to use it. Include a staging rule summary: what shows up at recruiter stage (confidence only) vs. HM stage (deeper framing, operational insights).]
 ```
 
 ## Edge Cases

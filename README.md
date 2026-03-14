@@ -168,7 +168,7 @@ data/                  ← Professional data + search ops data (private once fil
 coaching/              ← Coaching outputs and progress tracking (private once used)
 examples/              ← Fictional example data to try features before importing
 .claude/skills/        ← 27 Claude Code skill definitions
-tools/                 ← PDF conversion utilities
+tools/                 ← Python scripts: PDF, preprocessing, atomic writes, n8n automation
 output/                ← Generated CVs, dossiers, cover letters, outreach archives
 docs/                  ← Framework documentation
 ```
@@ -179,7 +179,7 @@ Four layers:
 
 1. **Data layer** (`data/`): your professional experience and search ops data in structured markdown — projects, skills, goals, pipeline, contacts, todos, outreach log
 2. **Methodology layer** (`framework/`): workflows, coaching methodologies, answering strategies, outreach frameworks, research standards
-3. **Automation layer** (`CLAUDE.md` + `.claude/skills/`): 23 skills that read and write the data layer following the methodology layer
+3. **Automation layer** (`CLAUDE.md` + `.claude/skills/`): 27 skills that read and write the data layer following the methodology layer
 4. **Output layer** (`output/`): company-first hierarchy — every named entity gets its own subfolder with all related artifacts inside
 
 Claude Code reads `CLAUDE.md` at the start of every session. The `.claude/skills/` folder defines the slash commands. Together, they make the framework work without any code.

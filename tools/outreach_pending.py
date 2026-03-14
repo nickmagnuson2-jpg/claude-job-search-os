@@ -4,6 +4,9 @@ outreach_pending.py — Pre-process outreach follow-up status for /standup and /
 
 Reads: data/outreach-log.md, data/networking.md
 
+Cross-references networking.md Interaction Log to detect replies that were logged
+via networking_write.py but not reflected in outreach-log.md status.
+
 Outputs JSON to stdout with keys:
   awaiting_response[]           — outreach with no reply, not yet overdue
   awaiting_response_overdue[]   — outreach with no reply, overdue (>=threshold days)
@@ -40,9 +43,46 @@ def read_file(path: Path) -> str:
         return ""
 
 
-def parse_outreach_log(content: str, today: date, lookback_days: int, overdue_threshold: int) -> dict:
-    """Parse outreach-log.md table rows."""
+def parse_networking_interactions(networking_content: str) -> dict[str, date | None]:
+    """Parse networking.md Interaction Log to find most recent interaction date per contact.
+
+    Returns {lowercase_name: latest_interaction_date}.
+    """
+    interactions: dict[str, date | None] = {}
+    lines = networking_content.splitlines()
+    current_name = None
+
+    for line in lines:
+        # Match ### Name or ### Name — Company
+        m = re.match(r"^###\s+(.+?)(?:\s+[—–]\s+.+)?$", line)
+        if m:
+            current_name = m.group(1).strip().lower()
+            continue
+
+        if current_name is None:
+            continue
+
+        # Match #### YYYY-MM-DD | type | summary
+        entry_match = re.match(r"^####\s+(\d{4}-\d{2}-\d{2})\s*\|", line)
+        if entry_match:
+            try:
+                entry_date = datetime.strptime(entry_match.group(1), "%Y-%m-%d").date()
+            except ValueError:
+                continue
+            existing = interactions.get(current_name)
+            if existing is None or entry_date > existing:
+                interactions[current_name] = entry_date
+
+    return interactions
+
+
+def parse_outreach_log(content: str, today: date, lookback_days: int,
+                       overdue_threshold: int,
+                       networking_interactions: dict[str, date | None] | None = None) -> dict:
+    """Parse outreach-log.md table rows, cross-referencing networking.md for replies."""
     cutoff = today - timedelta(days=lookback_days)
+    if networking_interactions is None:
+        networking_interactions = {}
 
     sent_count = 0
     replied_count = 0
@@ -76,9 +116,19 @@ def parse_outreach_log(content: str, today: date, lookback_days: int, overdue_th
 
         sent_count += 1
 
-        if status.lower() in ("replied", "reply"):
+        # Cross-reference: if networking.md has an interaction AFTER the outreach date,
+        # treat this as replied regardless of outreach-log status
+        effective_status = status
+        name_lower = name.lower().strip()
+        latest_interaction = networking_interactions.get(name_lower)
+        if (latest_interaction is not None
+                and latest_interaction > sent_date
+                and effective_status.lower() in ("sent", "drafted", "pending")):
+            effective_status = "Replied"
+
+        if effective_status.lower() in ("replied", "reply"):
             replied_count += 1
-        elif status.lower() in ("no reply", "no_reply", "noreply"):
+        elif effective_status.lower() in ("no reply", "no_reply", "noreply"):
             no_reply_count += 1
             days_since = (today - sent_date).days
             entry = {
@@ -93,7 +143,7 @@ def parse_outreach_log(content: str, today: date, lookback_days: int, overdue_th
                 awaiting_overdue.append(entry)
             else:
                 awaiting.append(entry)
-        elif status.lower() in ("drafted", "sent", "pending"):
+        elif effective_status.lower() in ("drafted", "sent", "pending"):
             days_since = (today - sent_date).days
             if days_since >= overdue_threshold:
                 entry = {
@@ -134,12 +184,17 @@ def main():
 
     repo_root = Path(args.repo_root) if args.repo_root else Path.cwd()
     outreach_content = read_file(repo_root / "data" / "outreach-log.md")
+    networking_content = read_file(repo_root / "data" / "networking.md")
+
+    # Build interaction map from networking.md
+    networking_interactions = parse_networking_interactions(networking_content)
 
     result = parse_outreach_log(
         outreach_content,
         today,
         lookback_days=args.lookback_days,
         overdue_threshold=args.days_threshold_overdue,
+        networking_interactions=networking_interactions,
     )
     result["target_date"] = today.strftime("%Y-%m-%d")
 

@@ -118,6 +118,8 @@ Use the Task tool to launch **five parallel subagents** (`subagent_type: "genera
 >
 > **Freshness:** Prioritize sources from the last 12 months for news, trend, and growth claims. If using older sources, note why they remain relevant (e.g., foundational industry structure data that hasn't changed).
 >
+> **Self-reported metrics:** When citing outcome data from a company's own materials (readmission rates, NPS, retention, cost savings, growth rates), always tag as `[Self-reported]`. Do not present company-sourced outcome claims as independently verified unless corroborated by an external source (peer-reviewed study, government audit, independent analysis).
+>
 > **Contradictions:** If two credible sources disagree on a fact, report both values with their sources and mark as `[Needs verification]`. Do not silently pick one or average them.
 
 ---

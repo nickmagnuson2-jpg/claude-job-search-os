@@ -5,6 +5,86 @@ Format: newest entries at the top.
 
 ---
 
+## 2026-03-12 — Documentation cleanup and navigation index
+
+### Added
+- **`docs/README.md`** — navigation index mapping all documentation by audience (Claude, new users, design) and framework files by domain (application, interview, outreach, coaching, templates). The missing "which file do I read for X?" entry point.
+- **`Last updated` headers** on 11 docs/framework files — enables the staleness-check logic in the global CLAUDE.md snippet (14-day threshold).
+
+### Changed
+- **`CLAUDE.md`** — trimmed Purpose section from 10-line lifecycle list to one-line pointer to README.md (saves ~200 tokens/session of duplicated content). Updated structure tree: added `coaching/` subdirectories (coached-answers, pressure-points, anti-pattern-tracker, progress-recruiter), changed `docs/` comment to point to new index.
+- **`docs/privacy.md`** — added cross-reference to CLAUDE.md Profile Guard section under "What stays local."
+- **`framework/outreach-guide.md`** — added precedence note: Nick-specific voice in `style-guidelines.md` overrides generic guidance here.
+- **`docs/global-claude-md-snippet.md`** — added scope note: these are project-agnostic patterns; project-specific overrides live in `style-guidelines.md` and `CLAUDE.md`.
+
+### Archived
+- **`docs/phase2-handoff.md`** → `docs/archive/` — Phase 2 complete (commit `9791808`). No skills reference it.
+- **`docs/research-skills-upgrade-summary.md`** → `docs/archive/` — Proposal doc; adopted parts already in CLAUDE.md research standards. Unadopted parts would contradict current standards.
+
+---
+
+## 2026-03-04 — Opportunity evaluation generators
+
+### Added
+- **`tools/generate_belfiore_model.py`** — financial model generator for Belfiore Cheese acquisition thesis with computed economics (not hardcoded); COGS reconciled to 10–18% EBITDA industry benchmarks.
+- **`tools/generate_belfiore_pitch.py`** — investor pitch deck generator for Belfiore Cheese.
+- **`tools/generate_model.py`** — financial model generator for SF Portable Sanitation thesis (original pattern).
+- **`tools/generate_pitch.py`** — investor pitch deck generator for SF Portable Sanitation.
+- **`framework/opportunity-evaluation-playbook.md`** — end-to-end process for evaluating acquisition/investment/business opportunities, from initial research through financial model and pitch deck. Gitignored (private financial analysis).
+
+---
+
+## 2026-03-10 — Fix date logic bugs in standup preprocessing scripts
+
+### Fixed
+- **`networking_followup.py` — column mismatch bug:** Script read `cols[5]` as "Follow-Up Action" but the real Contacts table has 7 columns (`Name | Company | Role | Relationship | Added | Last Interaction | Email`) where `cols[5]` is Last Interaction (a date). This caused every contact's last interaction date to be parsed as a follow-up note — `infer_followup_date()` found a YYYY-MM-DD pattern and treated it as the due date, making contacts appear "overdue" the day after any interaction. **Symptom:** Marisa Patel-O'Connor showed "1 day overdue" on 2026-03-10 despite being emailed 2026-03-09 with a follow-up target of ~2026-03-16.
+- **`networking_followup.py` — wrong data source:** Follow-up information lives in the Interaction Log section (`**Follow-up:**` lines under `### Name — Company`), not in the Contacts table. The script now reads follow-ups from the Interaction Log and uses the entry's `#### YYYY-MM-DD` date for relative inference (e.g., "next week" = entry_date + 7d). Contacts with no interaction log, `—` follow-ups, or "None required" follow-ups are skipped.
+- **`outreach_pending.py` — no cross-reference for replies:** Script only read `outreach-log.md`. When a reply was logged via `networking_write.py log`, the outreach entry still showed "Sent" because the two data files were independent. Now cross-references `networking.md` Interaction Log: if a contact has an interaction dated *after* their outreach, the outreach is treated as "Replied". **Symptom:** Farr Hariri still showed "awaiting response" after his reply was logged.
+
+### Added
+- **`networking_write.py` — auto-update outreach-log.md on reply detection:** When `log` is called and the summary contains reply-signal keywords (replied, responded, call scheduled, meeting set, etc.), the most recent "Sent" entry for that contact in `outreach-log.md` is updated to "Replied". This is write-path reconciliation complementing the read-path cross-reference in `outreach_pending.py`.
+- **4 new tests in `test_networking_followup.py`:** `test_most_recent_followup_used`, `test_none_required_followup_skipped`, `test_marisa_bug_regression`, `test_dash_followup_skipped`
+- **3 new tests in `test_outreach_pending.py`:** `test_cross_reference_networking_reply`, `test_cross_reference_no_later_interaction`, `test_cross_reference_no_networking_file`
+
+### Changed
+- **`test_networking_followup.py` rewritten:** All fixtures updated from the incorrect 6-column format (`Name | Company | Role | Relationship | Last Interaction | Follow-Up Action`) to the real 7-column format + Interaction Log sections. 6 tests → 9 tests.
+- **Test count:** 165 → 176 (11 net new tests)
+
+### Root Cause
+Two scripts (`networking_followup.py` and `outreach_pending.py`) and the data model (`networking.md` Contacts table vs Interaction Log) drifted out of sync. The Contacts table schema changed when `networking_write.py` was built (Added + Email columns replaced Follow-Up Action), but the read scripts were never updated. The outreach-log.md ↔ networking.md data silo existed from inception — both were designed as independent stores with no cross-referencing.
+
+---
+
+## 2026-03-09 — Context trimming + memory hygiene
+
+### Changed
+- **`CLAUDE.md`** — trimmed from 396 → 196 lines (51% reduction, ~5,350 tokens saved per conversation):
+  - Repository structure tree collapsed from 112 lines to 15 (top-level with brief descriptions)
+  - "Working With This Repo" section (50 lines of user-facing docs) removed — `docs/usage.md` covers this
+  - Answering Strategies expanded list collapsed to one sentence
+  - Output file examples reduced from 7 to 3
+  - Tools section condensed — kept gotchas and atomic write scripts, dropped per-script descriptions
+- **`memory/MEMORY.md`** — trimmed from 157 → 66 lines (57% reduction, ~1,375 tokens saved per conversation). Archived resolved sections to `memory/archive-2026-03.md`.
+- **`README.md`** — fixed "23 skills" → "27 skills" in architecture description; updated `tools/` description from "PDF conversion utilities" to "Python scripts: PDF, preprocessing, atomic writes, n8n automation"
+- **`docs/methodology.md`** — added 5 missing preprocessing scripts to tools tree (`todo_daily_metrics.py`, `pipeline_staleness.py`, `outreach_pending.py`, `networking_followup.py`, `dossier_freshness.py`); added `memory/` directory to architecture tree; updated test count 137 → 165
+
+### Added
+- **`CLAUDE.md` "Memory Hygiene" section** — rules for when to archive vs keep entries in MEMORY.md (archive when: codebase is source of truth, leads resolved, features stable >2 weeks, reminders past date)
+- **`memory/archive-2026-03.md`** — archived resolved sections: completed skill additions, output hierarchy migration, skills audit fixes, CV quality check sync, skill updates, Amae Health research briefs, stale outreach notes, resolved search leads (Notion rejected, Odyssey dead)
+
+### Removed (from MEMORY.md)
+- n8n API key (security concern — should not be stored in auto-loaded memory)
+- Stale "NEW" labels on established skills
+- Completed migration notes (output hierarchy, skills audit fixes)
+- Resolved lead context (Notion, Odyssey PBC)
+
+### Notes
+- Combined token savings: ~6,725 tokens per conversation (~$0.10-0.20 saved per session at Opus rates)
+- All information removed from CLAUDE.md either exists in `docs/usage.md` (user guide), is discoverable via Glob (file structure), or was redundant with section content that follows the tree
+- Methodology test count updated from 137 (Phase 2 baseline) to 165 (current)
+
+---
+
 ## 2026-03-04 — Extract application workflow framework
 
 ### Added

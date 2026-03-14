@@ -1,3 +1,5 @@
+Last updated: 2026-02-25
+
 # Interview Training Workflow
 
 When asked to practice for an interview or prepare for a role:

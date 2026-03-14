@@ -1,3 +1,5 @@
+Last updated: 2026-03-04
+
 # Usage Guide
 
 Practical how-to for using the system. For how the system works internally, see [methodology.md](methodology.md). For extending it with plugins and custom formats, see [customization.md](customization.md).
@@ -72,7 +74,8 @@ cp -r examples/output/* output/
 Reads your goals, pipeline, todos, outreach log, and networking contacts in parallel, then outputs:
 - Pipeline health snapshot (stages, staleness alerts)
 - Today's top 3 actions with cross-references to relevant contacts and companies
-- Pending outreach with follow-up sequence positions
+- Pending outreach with follow-up sequence positions (cross-references networking.md to detect replies not yet reflected in outreach-log.md)
+- Networking follow-ups due or overdue (inferred from Interaction Log `**Follow-up:**` lines, not the Contacts table)
 - One suggested priority action
 
 Run this first thing each day instead of manually checking multiple files.
@@ -243,7 +246,7 @@ Auto-detects message type and matches tone to prior messages with the same recip
 /networking view "Jamie Torres"
 ```
 
-Logs interactions (calls, emails, coffee, events, LinkedIn), flags contacts with no activity in 14+ days, and auto-generates follow-up to-dos.
+Logs interactions (calls, emails, coffee, events, LinkedIn), flags contacts with no activity in 14+ days, and auto-generates follow-up to-dos. When logging an interaction with reply-signal keywords (replied, call scheduled, etc.), automatically updates `data/outreach-log.md` status from "Sent" to "Replied".
 
 ---
 

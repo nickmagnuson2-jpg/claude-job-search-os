@@ -1,3 +1,5 @@
+Last updated: 2026-03-04
+
 # Self-Improving Data Framework
 
 How the 8 behavioral patterns in the global CLAUDE.md snippet map to this project's specific implementations. This is a reference for understanding the architecture — not instructions for Claude.

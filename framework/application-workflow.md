@@ -1,3 +1,5 @@
+Last updated: 2026-03-04
+
 # Application Workflow Framework
 
 > Single source of truth for `/generate-cv`, `/apply`, and `/cover-letter`. Each skill references sections here instead of duplicating rules. Skill-specific workflow steps, argument parsing, output logic, and edge cases stay inline in the skill files.

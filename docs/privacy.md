@@ -1,3 +1,5 @@
+Last updated: 2026-02-12
+
 # Privacy & Data Handling
 
 This framework stores sensitive career data locally. This document explains what goes where, what's protected by default, and what to watch out for.
@@ -17,6 +19,8 @@ The `.gitignore` excludes all personal data directories by default:
 Everything in `framework/`, `plugins/`, `docs/`, `tools/`, `.claude/skills/`, `examples/`, and `CLAUDE.md` is safe to commit. These contain methodology and automation only, no personal data.
 
 ## What stays local vs. what's shared
+
+> **See also:** CLAUDE.md → Profile Guard section — enforces that `data/profile.md` and `data/goals.md` must exist before any generative skill runs. This prevents accidental generation with missing personal data.
 
 ```
 Safe to push (methodology)          Private (your data)

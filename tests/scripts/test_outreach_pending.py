@@ -44,8 +44,6 @@ def test_no_reply_overdue_detected(tmp_path):
     assert "Sarah Chen" in overdue_names
 
     # Alex: 1 day, Drafted → below threshold, not overdue
-    overdue_names_all = overdue_names + [e["name"] for e in result["awaiting_response"]]
-    # Alex is within threshold so may not appear at all, or appears in awaiting
     assert "Sarah Chen" not in [e["name"] for e in result["awaiting_response"]]
 
 
@@ -108,3 +106,104 @@ def test_outside_lookback_excluded(tmp_path):
                         "--repo-root", str(tmp_path))
 
     assert result["recent_outreach"]["sent"] == 1  # Only new contact within 30 days
+
+
+def test_cross_reference_networking_reply(tmp_path):
+    """Outreach-log 'Sent' entry is treated as replied when networking.md has a later interaction."""
+    write_fixture(tmp_path, "data/outreach-log.md", """\
+        # Outreach Log
+
+        | Date | Type | Channel | Name | Company | Subject | Status |
+        |------|------|---------|------|---------|---------|--------|
+        | 2026-03-03 | cold-outreach | text | Farr Hariri | Belfiore Cheese | Coffee ask | Sent |
+    """)
+
+    write_fixture(tmp_path, "data/networking.md", """\
+        ## Contacts
+
+        | Name | Company | Role | Relationship | Added | Last Interaction | Email |
+        | --- | --- | --- | --- | --- | --- | --- |
+        | Farr Hariri | Belfiore Cheese | Owner | personal | 2026-03-03 | 2026-03-10 | — |
+
+        ## Interaction Log
+
+        ### Farr Hariri — Belfiore Cheese
+
+        #### 2026-03-10 | text | Farr replied. Call scheduled Friday 2026-03-13 at 11am.
+
+        **Follow-up:** 2026-03-13
+
+        #### 2026-03-03 | text | Sent cold text via Everett's intro
+
+        **Follow-up:** —
+    """)
+
+    result = run_script("outreach_pending.py",
+                        "--target-date", "2026-03-10",
+                        "--days-threshold-overdue", "5",
+                        "--repo-root", str(tmp_path))
+
+    # Farr should NOT appear in awaiting lists — networking.md shows he replied on 2026-03-10
+    all_awaiting = (
+        [e["name"] for e in result["awaiting_response"]] +
+        [e["name"] for e in result["awaiting_response_overdue"]]
+    )
+    assert "Farr Hariri" not in all_awaiting
+    # Should be counted as replied
+    assert result["recent_outreach"]["replied"] == 1
+
+
+def test_cross_reference_no_later_interaction(tmp_path):
+    """Outreach-log 'Sent' is NOT treated as replied when networking.md interaction is same day or earlier."""
+    write_fixture(tmp_path, "data/outreach-log.md", """\
+        # Outreach Log
+
+        | Date | Type | Channel | Name | Company | Subject | Status |
+        |------|------|---------|------|---------|---------|--------|
+        | 2026-03-03 | cold-outreach | text | Farr Hariri | Belfiore Cheese | Coffee ask | Sent |
+    """)
+
+    write_fixture(tmp_path, "data/networking.md", """\
+        ## Contacts
+
+        | Name | Company | Role | Relationship | Added | Last Interaction | Email |
+        | --- | --- | --- | --- | --- | --- | --- |
+        | Farr Hariri | Belfiore Cheese | Owner | personal | 2026-03-03 | 2026-03-03 | — |
+
+        ## Interaction Log
+
+        ### Farr Hariri — Belfiore Cheese
+
+        #### 2026-03-03 | text | Sent cold text via Everett's intro
+
+        **Follow-up:** —
+    """)
+
+    result = run_script("outreach_pending.py",
+                        "--target-date", "2026-03-10",
+                        "--days-threshold-overdue", "5",
+                        "--repo-root", str(tmp_path))
+
+    # Farr SHOULD still appear as overdue — no interaction after the outreach date
+    overdue_names = [e["name"] for e in result["awaiting_response_overdue"]]
+    assert "Farr Hariri" in overdue_names
+
+
+def test_cross_reference_no_networking_file(tmp_path):
+    """Script works normally when networking.md is missing (no cross-reference)."""
+    write_fixture(tmp_path, "data/outreach-log.md", """\
+        # Outreach Log
+
+        | Date | Type | Channel | Name | Company | Subject | Status |
+        |------|------|---------|------|---------|---------|--------|
+        | 2026-03-03 | cold-outreach | text | Farr Hariri | Belfiore Cheese | Coffee ask | Sent |
+    """)
+
+    result = run_script("outreach_pending.py",
+                        "--target-date", "2026-03-10",
+                        "--days-threshold-overdue", "5",
+                        "--repo-root", str(tmp_path))
+
+    # Without networking.md, Farr stays as Sent → overdue (7 days > 5 threshold)
+    overdue_names = [e["name"] for e in result["awaiting_response_overdue"]]
+    assert "Farr Hariri" in overdue_names

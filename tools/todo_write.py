@@ -425,13 +425,25 @@ def cmd_sync(todos_path: Path, pipeline_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 def main() -> None:
-    if len(sys.argv) < 2:
+    # Extract --repo-root from anywhere in argv so it works before or after the command
+    argv = sys.argv[1:]
+    repo_root = Path.cwd()
+    filtered = []
+    i = 0
+    while i < len(argv):
+        if argv[i] == "--repo-root" and i + 1 < len(argv):
+            repo_root = Path(argv[i + 1])
+            i += 2
+        else:
+            filtered.append(argv[i])
+            i += 1
+
+    if not filtered:
         out_error("Usage: todo_write.py <add|done|clear|sync> [args...]")
 
-    cmd = sys.argv[1].lower()
-    extra_args = sys.argv[2:]
+    cmd = filtered[0].lower()
+    extra_args = filtered[1:]
 
-    repo_root = Path.cwd()
     todos_path = repo_root / TODOS_FILE
     pipeline_path = repo_root / PIPELINE_FILE
 

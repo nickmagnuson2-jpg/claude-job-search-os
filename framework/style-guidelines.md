@@ -1,3 +1,5 @@
+Last updated: 2026-03-04
+
 # Style Guidelines
 
 ## Tone & Voice
@@ -38,6 +40,25 @@ Then apply these universal principles:
 - No "I believe I could," "I think I might," "hoping to" — if it weakens the line, cut it
 - No essay structure — answer first, context second, stop
 - No em dashes in outreach — replace with a comma (e.g., "last week, wanted to follow up" not "last week — wanted to follow up"). Scan the full draft before presenting, not just the first occurrence.
+
+### Thank-You / Post-Screen Emails
+- One specific callback to something the interviewer said — not a generic "great conversation"
+- Callback should reference their words, not your pitch (e.g., "when you described X" not "I mentioned X")
+- Avoid AI-sounding phrases: no "exactly the kind of work I want to be doing," no "deeply aligned with my values"
+- "That really resonated" is natural — use it over "that was exciting" or "that stood out"
+- Keep under 75 words. Three sentences max: thanks, callback, forward-looking close.
+- Subject line: short, human. "Thanks for today" over "Thank you for the conversation regarding..."
+
+**Reference example (Dusty Robotics, Tessa Lau CEO first round, 2026-03-13):**
+
+> Hi Tessa,
+>
+> Appreciate you taking the time today. I enjoyed our conversation. When you described the role as "chief of staff mini COO with training wheels," that really resonated - it's exactly the kind of build I want to be doing. Looking forward to connecting with Phil and digging into the data side.
+>
+> Thanks!
+> Nick
+
+Structure: appreciation (no "really") + enjoyment + callback using her exact words + "really resonated" (one per email max) + forward-looking next step + warm close.
 
 ### When to Apply
 Use these patterns in: `/cold-outreach`, `/follow-up`, `/draft-email`, and any outreach drafted inline during sessions. Read 2–3 entries from `data/networking.md` Interaction Log for additional tone-matching context if available.
