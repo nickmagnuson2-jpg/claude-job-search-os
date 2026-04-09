@@ -63,9 +63,9 @@ Plans:
 **Plans:** 4 plans
 
 Plans:
-- [ ] 02-01-PLAN.md — ATS API parsers (Greenhouse, Lever, Ashby) + Playwright generic fallback
-- [ ] 02-02-PLAN.md — Scoring engine (4 weighted dimensions) + pipeline deduplication module
-- [ ] 02-03-PLAN.md — Scanner orchestrator, CLI, scan-targets.yaml config, /scan-companies skill
+- [x] 02-01-PLAN.md — ATS API parsers (Greenhouse, Lever, Ashby) + Playwright generic fallback
+- [x] 02-02-PLAN.md — Scoring engine (4 weighted dimensions) + pipeline deduplication module
+- [x] 02-03-PLAN.md — Scanner orchestrator, CLI, scan-targets.yaml config, /scan-companies skill
 - [ ] 02-04-PLAN.md — n8n automation wrapper + end-to-end verification checkpoint
 
 ### Requirements
