@@ -117,6 +117,12 @@ Plans:
 
 **Why third:** Improves daily UX but doesn't change outcomes directly. Builds on Phase 2 (scanner results feed the dashboard).
 
+**Plans:** 2 plans
+
+Plans:
+- [ ] 03-01-PLAN.md — Data loading layer (pipeline parser + todo cross-reference) + Textual app shell with stage-grouped tables and staleness coloring
+- [ ] 03-02-PLAN.md — Conversion funnel, search/filter, keyboard navigation, /dashboard skill + visual verification
+
 ### Requirements
 - [ ] R3.1: Terminal dashboard using Python Textual or Rich library
 - [ ] R3.2: Pipeline view: applications grouped by stage (Applied, Interview, Offer, Closed) with counts
