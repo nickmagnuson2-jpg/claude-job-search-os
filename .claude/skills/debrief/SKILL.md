@@ -46,13 +46,13 @@ Check if a transcript has been pasted into the conversation context.
 
 3. Ask: "Which call would you like to debrief? (Enter number)"
 4. After user selects, call `get_meeting_transcript` with the selected meeting's ID
-5. Parse the transcript segments into Q&A pairs:
-   - **Merge consecutive segments** from the same speaker source (Granola splits on pauses, not speaker turns)
-   - `source: "speaker"` = interviewer/recruiter (the other person)
-   - `source: "microphone"` = Nick (the candidate)
-   - Pair each merged "speaker" block with the following merged "microphone" block to form one Q&A pair
-   - If the candidate speaks without a preceding question (e.g., opening intro), mark the question as "(unprompted / opening)"
-   - For panel interviews (multiple remote speakers), note that all remote participants appear as "speaker" - flag this in the debrief output
+5. Parse the transcript into Q&A pairs. Granola returns a single string with `Me:` and `Them:` labels:
+   - `Me:` = Nick (the candidate)
+   - `Them:` = interviewer/recruiter (the other person)
+   - Split on `Me:` / `Them:` labels to get individual speaker turns
+   - Pair each "Them:" block with the following "Me:" block to form one Q&A pair
+   - If Nick speaks without a preceding question (e.g., opening intro), mark the question as "(unprompted / opening)"
+   - For panel interviews (multiple remote speakers), note that all remote participants appear as "Them:" - flag this in the debrief output
 6. Extract the company name from the meeting title for use in Step 1 (loading the correct cheat sheet and company notes)
 
 If `list_meetings` returns no results or `get_meeting_transcript` fails, tell the user: "Could not fetch transcript from Granola. Please paste the transcript directly, or verify your Granola plan supports transcript access."

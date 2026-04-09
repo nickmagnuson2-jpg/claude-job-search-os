@@ -37,7 +37,7 @@ DEFAULT_REPO_ROOT = SCRIPT_DIR.parent
 # Import sibling modules
 sys.path.insert(0, str(DEFAULT_REPO_ROOT))
 from tools.granola_fetch import fetch_new_since_last_run
-from tools.call_analyzer import analyze_transcript
+from tools.call_analyzer import analyze_transcript, parse_granola_text
 
 
 def format_inbox_entry(meeting: dict, analysis: dict) -> str:
@@ -176,6 +176,10 @@ def auto_debrief_new_calls(dry_run: bool = False, hours: int = None,
         if not transcript:
             print(f"Skipping '{meeting.get('title', '?')}' - no transcript", file=sys.stderr)
             continue
+
+        # Handle both string format ("Me: ... Them: ...") and segment list format
+        if isinstance(transcript, str):
+            transcript = parse_granola_text(transcript)
 
         analysis = analyze_transcript(transcript)
         entry = format_inbox_entry(meeting, analysis)

@@ -35,6 +35,50 @@ FILLER_PATTERNS = {
 }
 
 
+def parse_granola_text(transcript_text: str) -> list:
+    """Convert Granola's 'Me: ... Them: ...' string format into segment dicts.
+
+    Granola's get_meeting_transcript returns a single string with 'Me:' and
+    'Them:' labels. This converts it into the structured segment list that
+    parse_qa_pairs and analyze_transcript expect.
+
+    Args:
+        transcript_text: Raw string like "Me: hello Them: hi Me: ..."
+
+    Returns:
+        List of {"speaker": {"source": "microphone"|"speaker"}, "text": "..."}
+    """
+    if not transcript_text or not transcript_text.strip():
+        return []
+
+    # Split on Me: or Them: labels, keeping the label
+    parts = re.split(r'\b(Me:|Them:)\s*', transcript_text.strip())
+    segments = []
+    i = 0
+    while i < len(parts):
+        part = parts[i].strip()
+        if part == "Me:":
+            if i + 1 < len(parts):
+                text = parts[i + 1].strip()
+                if text:
+                    segments.append({"speaker": {"source": "microphone"}, "text": text})
+                i += 2
+            else:
+                i += 1
+        elif part == "Them:":
+            if i + 1 < len(parts):
+                text = parts[i + 1].strip()
+                if text:
+                    segments.append({"speaker": {"source": "speaker"}, "text": text})
+                i += 2
+            else:
+                i += 1
+        else:
+            i += 1
+
+    return segments
+
+
 def count_fillers(text: str) -> dict:
     """Count filler words in text using regex patterns.
 
@@ -186,9 +230,22 @@ def main():
             with open(args.file, "r", encoding="utf-8") as f:
                 raw = f.read()
 
-        segments = json.loads(raw)
-        if not isinstance(segments, list):
-            print("Error: input must be a JSON array of transcript segments", file=sys.stderr)
+        data = json.loads(raw)
+        if isinstance(data, list):
+            segments = data
+        elif isinstance(data, dict) and "transcript" in data:
+            transcript = data["transcript"]
+            if isinstance(transcript, str):
+                segments = parse_granola_text(transcript)
+            elif isinstance(transcript, list):
+                segments = transcript
+            else:
+                print("Error: unexpected transcript format", file=sys.stderr)
+                sys.exit(1)
+        elif isinstance(data, str):
+            segments = parse_granola_text(data)
+        else:
+            print("Error: input must be a JSON array, object with 'transcript', or string", file=sys.stderr)
             sys.exit(1)
 
         result = analyze_transcript(segments)

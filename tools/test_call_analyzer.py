@@ -6,7 +6,7 @@ import subprocess
 import sys
 import unittest
 
-from tools.call_analyzer import count_fillers, parse_qa_pairs, analyze_transcript
+from tools.call_analyzer import count_fillers, parse_qa_pairs, analyze_transcript, parse_granola_text
 
 
 class TestCountFillers(unittest.TestCase):
@@ -143,6 +143,40 @@ class TestAnalyzeTranscript(unittest.TestCase):
         self.assertEqual(result["candidate_word_count"], 0)
         self.assertEqual(result["interviewer_word_count"], 0)
         self.assertEqual(result["talk_ratio"], 0.0)
+
+
+class TestParseGranolaText(unittest.TestCase):
+    """Tests for parse_granola_text - converts Me:/Them: string to segments."""
+
+    def test_simple_exchange(self):
+        text = "Me: Hello there Them: Hi how are you Me: I'm good"
+        segs = parse_granola_text(text)
+        self.assertEqual(len(segs), 3)
+        self.assertEqual(segs[0]["speaker"]["source"], "microphone")
+        self.assertEqual(segs[0]["text"], "Hello there")
+        self.assertEqual(segs[1]["speaker"]["source"], "speaker")
+        self.assertEqual(segs[1]["text"], "Hi how are you")
+        self.assertEqual(segs[2]["speaker"]["source"], "microphone")
+        self.assertEqual(segs[2]["text"], "I'm good")
+
+    def test_empty_string(self):
+        self.assertEqual(parse_granola_text(""), [])
+        self.assertEqual(parse_granola_text("   "), [])
+
+    def test_them_first(self):
+        text = "Them: Welcome Me: Thanks"
+        segs = parse_granola_text(text)
+        self.assertEqual(len(segs), 2)
+        self.assertEqual(segs[0]["speaker"]["source"], "speaker")
+        self.assertEqual(segs[1]["speaker"]["source"], "microphone")
+
+    def test_works_with_analyze_transcript(self):
+        text = "Them: Tell me about yourself Me: I really like building things"
+        segs = parse_granola_text(text)
+        result = analyze_transcript(segs)
+        self.assertEqual(result["total_questions"], 1)
+        self.assertEqual(result["filler_counts"], {"really": 1})
+        self.assertGreater(result["talk_ratio"], 0)
 
 
 if __name__ == "__main__":
