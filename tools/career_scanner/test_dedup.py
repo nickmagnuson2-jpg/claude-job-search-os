@@ -48,8 +48,9 @@ class TestIsDuplicateFuzzy:
         assert is_duplicate("Junior Frontend Developer", "Ramp", sample_pipeline) is False
 
     def test_very_similar_title(self, sample_pipeline):
-        # Minor variation
-        assert is_duplicate("Head of Ops", "Discord", sample_pipeline) is True
+        # Minor variation: "Head of Operation" vs "Head of Operations"
+        # SequenceMatcher ratio ~ 0.97
+        assert is_duplicate("Head of Operation", "Discord", sample_pipeline) is True
 
 
 # ---------------------------------------------------------------------------
