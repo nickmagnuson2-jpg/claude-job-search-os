@@ -189,7 +189,7 @@ class PipelineDashboard(App):
 
         return company, role, date_updated, days_text, next_action
 
-    def action_toggle_search(self) -> None:
+    async def action_toggle_search(self) -> None:
         """Toggle search input visibility."""
         search = self.query_one("#search-input", Input)
         search.toggle_class("visible")
@@ -197,7 +197,7 @@ class PipelineDashboard(App):
             search.focus()
         else:
             search.value = ""
-            self._rebuild_tables()
+            await self._rebuild_tables()
 
     async def on_input_changed(self, event: Input.Changed) -> None:
         """Filter tables by company name as user types."""
@@ -215,10 +215,10 @@ class PipelineDashboard(App):
 
         await self._rebuild_tables(filtered)
 
-    def action_sort_staleness(self) -> None:
+    async def action_sort_staleness(self) -> None:
         """Toggle sort between stale-first and date-first."""
         self._sort_by_staleness = not self._sort_by_staleness
-        self._rebuild_tables()
+        await self._rebuild_tables()
 
 
 if __name__ == "__main__":
