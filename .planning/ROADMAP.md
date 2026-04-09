@@ -56,9 +56,17 @@ Plans:
 
 ## Phase 2: Browser Automation for Job Discovery
 
-**Goal:** Playwright-based scanning of target company career pages that auto-scores roles against profile and surfaces matches in /standup.
+**Goal:** API-first scanning of target company career pages (Greenhouse, Lever, Ashby APIs + Playwright fallback) that auto-scores roles against profile and surfaces matches in /standup.
 
 **Why second:** Closes the biggest gap vs. Career-Ops. Currently job discovery is manual; this makes it passive.
+
+**Plans:** 4 plans
+
+Plans:
+- [ ] 02-01-PLAN.md — ATS API parsers (Greenhouse, Lever, Ashby) + Playwright generic fallback
+- [ ] 02-02-PLAN.md — Scoring engine (4 weighted dimensions) + pipeline deduplication module
+- [ ] 02-03-PLAN.md — Scanner orchestrator, CLI, scan-targets.yaml config, /scan-companies skill
+- [ ] 02-04-PLAN.md — n8n automation wrapper + end-to-end verification checkpoint
 
 ### Requirements
 - [ ] R2.1: Playwright scanner that navigates to a company's careers page and extracts open roles
@@ -218,4 +226,4 @@ Plans:
 **Recommended execution order:** 1 → 2 → 3 → 4 (Phase 1 is independent and highest immediate value; Phase 4 depends on Phase 2's Playwright setup)
 
 ---
-*Last updated: 2026-04-08*
+*Last updated: 2026-04-09*
