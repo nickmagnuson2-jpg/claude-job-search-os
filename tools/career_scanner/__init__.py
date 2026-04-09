@@ -47,3 +47,9 @@ try:
     PARSERS["ashby"] = fetch_ashby
 except ImportError:
     pass
+
+try:
+    from tools.career_scanner.generic import fetch_generic
+    PARSERS["generic"] = fetch_generic
+except ImportError:
+    pass
