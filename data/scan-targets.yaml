@@ -1,0 +1,88 @@
+# Career page scan targets
+# ATS options: greenhouse, lever, ashby, generic
+# Set active: false to temporarily disable a company
+#
+# Finding slugs:
+#   Greenhouse: boards.greenhouse.io/SLUG
+#   Lever: jobs.lever.co/SLUG
+#   Ashby: jobs.ashbyhq.com/SLUG
+#   Generic: provide full careers_url
+
+companies:
+  # -- From pipeline (verified ATS from application URLs) --
+
+  - name: Headway
+    ats: greenhouse
+    slug: headway
+    active: true
+    role_filters:
+      - "operations"
+      - "strategy"
+
+  - name: Outset
+    ats: ashby
+    slug: outset
+    active: true
+    role_filters:
+      - "operations"
+      - "strategy"
+      - "account"
+      - "director"
+
+  # -- Target companies by industry/goals alignment --
+
+  - name: Ramp
+    ats: ashby
+    slug: ramp
+    active: true
+    role_filters:
+      - "operations"
+      - "strategy"
+      - "chief of staff"
+      - "program"
+
+  - name: Notion
+    ats: ashby
+    slug: notion
+    active: true
+    role_filters:
+      - "operations"
+      - "strategy"
+      - "program"
+
+  - name: Discord
+    ats: greenhouse
+    slug: discord
+    active: true
+    role_filters:
+      - "operations"
+      - "strategy"
+      - "program"
+
+  - name: Lyra Health
+    ats: generic
+    # Verify slug/ATS - Lyra uses a custom careers site
+    careers_url: "https://careers.lyrahealth.com/jobs"
+    active: false  # Set to true after verifying careers URL works
+    role_filters:
+      - "operations"
+      - "strategy"
+      - "growth"
+
+  - name: Spring Health
+    ats: greenhouse
+    slug: springhealth
+    active: true
+    role_filters:
+      - "operations"
+      - "strategy"
+      - "program"
+      - "chief of staff"
+
+  - name: Cerebral
+    ats: greenhouse
+    slug: cerebral
+    active: true
+    role_filters:
+      - "operations"
+      - "strategy"
