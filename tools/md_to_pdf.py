@@ -8,11 +8,19 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfbase.pdfmetrics import registerFontFamily
 
-_FONT_DIR = "C:/Windows/Fonts"
-pdfmetrics.registerFont(TTFont("Calibri",           f"{_FONT_DIR}/calibri.ttf"))
-pdfmetrics.registerFont(TTFont("Calibri-Bold",      f"{_FONT_DIR}/calibrib.ttf"))
-pdfmetrics.registerFont(TTFont("Calibri-Italic",    f"{_FONT_DIR}/calibrii.ttf"))
-pdfmetrics.registerFont(TTFont("Calibri-BoldItalic",f"{_FONT_DIR}/calibriz.ttf"))
+import platform as _platform
+if _platform.system() == "Darwin":
+    _FONT_DIR = "/System/Library/Fonts/Supplemental"
+    pdfmetrics.registerFont(TTFont("Calibri",           f"{_FONT_DIR}/Arial.ttf"))
+    pdfmetrics.registerFont(TTFont("Calibri-Bold",      f"{_FONT_DIR}/Arial Bold.ttf"))
+    pdfmetrics.registerFont(TTFont("Calibri-Italic",    f"{_FONT_DIR}/Arial Italic.ttf"))
+    pdfmetrics.registerFont(TTFont("Calibri-BoldItalic",f"{_FONT_DIR}/Arial Bold Italic.ttf"))
+else:
+    _FONT_DIR = "C:/Windows/Fonts"
+    pdfmetrics.registerFont(TTFont("Calibri",           f"{_FONT_DIR}/calibri.ttf"))
+    pdfmetrics.registerFont(TTFont("Calibri-Bold",      f"{_FONT_DIR}/calibrib.ttf"))
+    pdfmetrics.registerFont(TTFont("Calibri-Italic",    f"{_FONT_DIR}/calibrii.ttf"))
+    pdfmetrics.registerFont(TTFont("Calibri-BoldItalic",f"{_FONT_DIR}/calibriz.ttf"))
 registerFontFamily(
     "Calibri",
     normal="Calibri",

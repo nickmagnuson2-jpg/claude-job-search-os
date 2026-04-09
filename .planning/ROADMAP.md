@@ -14,9 +14,9 @@
 **Plans:** 3 plans
 
 Plans:
-- [ ] 01-01-PLAN.md — MCP setup + extend /debrief skill with Granola fetch, company-notes append, filler tracking
-- [ ] 01-02-PLAN.md — Python scripts: call_analyzer.py (transcript analysis) + granola_fetch.py (REST API client)
-- [ ] 01-03-PLAN.md — n8n automation: auto-debrief orchestrator + scheduled workflow
+- [x] 01-01-PLAN.md — MCP setup + extend /debrief skill with Granola fetch, company-notes append, filler tracking
+- [x] 01-02-PLAN.md — Python scripts: call_analyzer.py (transcript analysis) + granola_fetch.py (REST API client)
+- [x] 01-03-PLAN.md — n8n automation: auto-debrief orchestrator + scheduled workflow
 
 ### Requirements
 - [ ] R1.1: Discover Granola MCP API surface (list tools, understand data model)

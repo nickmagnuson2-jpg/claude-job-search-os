@@ -215,3 +215,5 @@ MEMORY.md is loaded into every conversation. Keep it under 100 lines of active c
 ## Style Guidelines
 
 See `framework/style-guidelines.md` — covers tone, language conventions, and CV format options.
+
+**Hard rule: NO em dashes (—) in any output.** Not in emails, outreach, CVs, cover letters, or any text Nick will send. Use commas, periods, or hyphens instead. This applies to ALL generated content without exception.
