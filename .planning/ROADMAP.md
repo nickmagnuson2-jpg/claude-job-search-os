@@ -226,4 +226,18 @@ Plans:
 **Recommended execution order:** 1 → 2 → 3 → 4 (Phase 1 is independent and highest immediate value; Phase 4 depends on Phase 2's Playwright setup)
 
 ---
+
+## Backlog
+
+### Phase 999.1: Job Process Orchestrator Meta-Skill (BACKLOG)
+
+**Goal:** Create a `/process` or `/pipeline-next` skill that reads pipeline state and dispatches to the right sub-skill based on application stage (Discovery -> /research-company, Applied -> /prep-interview, Interview -> /voice-export + /debrief, etc.). Turns the implicit workflow sequence into explicit code. No new framework needed, just a dispatcher skill that chains existing skills based on stage.
+
+**Requirements:** TBD
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (promote with /gsd-review-backlog when ready)
+
+---
 *Last updated: 2026-04-09*
