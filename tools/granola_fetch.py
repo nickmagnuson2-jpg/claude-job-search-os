@@ -36,8 +36,24 @@ DEFAULT_STATE_FILE = "tools/.cache/granola_last_fetch.json"
 RETRY_WAIT_SECONDS = 5
 
 
+def _load_dotenv() -> None:
+    """Load .env file from project root if it exists."""
+    env_path = Path(__file__).resolve().parent.parent / ".env"
+    if env_path.is_file():
+        with open(env_path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if "=" in line:
+                    k, v = line.split("=", 1)
+                    k = k.replace("export ", "").strip()
+                    os.environ.setdefault(k, v.strip())
+
+
 def _get_api_key() -> str:
-    """Read GRANOLA_API_KEY from environment. Exit with error if missing."""
+    """Read GRANOLA_API_KEY from environment or .env file. Exit with error if missing."""
+    _load_dotenv()
     key = os.environ.get("GRANOLA_API_KEY", "").strip()
     if not key:
         print(
