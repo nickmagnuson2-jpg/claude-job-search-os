@@ -554,22 +554,19 @@ def format_scan_result(roles: list[dict]) -> str:
 | A3 | 0.5-1s delay between API calls is sufficient to avoid rate limiting | Pitfalls | Medium - if scanning 30+ companies, may need longer delays or batch scheduling |
 | A4 | Seniority keyword mapping covers most job title patterns | Scoring Engine Design | Low - can expand the mapping as edge cases emerge |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **Generic parser scope for initial release**
+1. **Generic parser scope for initial release** - RESOLVED: Build as best-effort, focus testing on three ATS parsers. Generic parser built in Plan 01 Task 2.
    - What we know: D-02 specifies Playwright + heuristics for custom career pages
-   - What's unclear: How many target companies will need the generic parser vs. known ATS?
-   - Recommendation: Build the generic parser but mark it as best-effort. Focus testing on the three ATS parsers first. If most targets use Greenhouse/Lever/Ashby, the generic parser may rarely be invoked.
+   - Resolution: Build the generic parser but mark it as best-effort. Focus testing on the three ATS parsers first. If most targets use Greenhouse/Lever/Ashby, the generic parser may rarely be invoked.
 
-2. **Scoring calibration**
+2. **Scoring calibration** - RESOLVED: Include --dry-run mode for calibration after first real scan. Implemented in Plan 03 CLI.
    - What we know: Four dimensions, 1-10 scale, weighted average
-   - What's unclear: Without running against real targets, we don't know if scores will differentiate well
-   - Recommendation: Include a `--dry-run` mode that shows scores without writing to inbox. Let user calibrate weights after first real scan.
+   - Resolution: Include a `--dry-run` mode that shows scores without writing to inbox. Let user calibrate weights after first real scan.
 
-3. **ATS platform detection**
+3. **ATS platform detection** - RESOLVED: Manual config in scan-targets.yaml for now. Auto-detection deferred.
    - What we know: User specifies ATS in config file
-   - What's unclear: Could we auto-detect ATS from a careers URL?
-   - Recommendation: Manual config for now. Auto-detection is a nice-to-have for later. Most companies are identifiable by their careers URL pattern.
+   - Resolution: Manual config for now. Auto-detection is a nice-to-have for later. Most companies are identifiable by their careers URL pattern.
 
 ## Environment Availability
 
