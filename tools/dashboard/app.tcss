@@ -1,6 +1,6 @@
 #funnel-bar {
     dock: top;
-    height: 1;
+    height: 2;
     text-style: bold;
     background: $primary-background;
     padding: 0 2;
@@ -13,6 +13,12 @@
 
 #search-input.visible {
     display: block;
+    height: 3;
+    margin: 0 1;
+}
+
+VerticalScroll {
+    height: 1fr;
 }
 
 Collapsible {
