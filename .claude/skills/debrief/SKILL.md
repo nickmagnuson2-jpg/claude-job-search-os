@@ -3,7 +3,7 @@ name: debrief
 description: Debrief a voice simulation — analyze transcript against coached answers, track anti-patterns, log session
 argument-hint: <path-to-cv>
 user-invocable: true
-allowed-tools: Read(*), Glob(*), Grep(*), Write(coaching/**), Edit(coaching/**)
+allowed-tools: Read(*), Glob(*), Grep(*), Write(coaching/**), Edit(coaching/**), Write(data/company-notes/**)
 ---
 
 # Debrief — Voice Simulation Post-Session Analysis
@@ -26,6 +26,38 @@ The user has:
 The transcript is expected to be in the conversation context — the user pastes it before or after invoking the skill.
 
 ## Instructions
+
+### Step 0: Acquire Transcript
+
+Check if a transcript has been pasted into the conversation context.
+
+**If transcript is present:** Skip to Step 1 (existing flow, unchanged).
+
+**If no transcript is present:** Fetch from Granola MCP.
+
+1. Call `list_meetings` to retrieve recent meetings (last 14 days)
+2. Present a numbered picker table to the user:
+
+   | # | Title | Date | Duration |
+   |---|-------|------|----------|
+   | 1 | [meeting title] | [date] | [duration] |
+   | 2 | [meeting title] | [date] | [duration] |
+   | ... | | | |
+
+3. Ask: "Which call would you like to debrief? (Enter number)"
+4. After user selects, call `get_meeting_transcript` with the selected meeting's ID
+5. Parse the transcript segments into Q&A pairs:
+   - **Merge consecutive segments** from the same speaker source (Granola splits on pauses, not speaker turns)
+   - `source: "speaker"` = interviewer/recruiter (the other person)
+   - `source: "microphone"` = Nick (the candidate)
+   - Pair each merged "speaker" block with the following merged "microphone" block to form one Q&A pair
+   - If the candidate speaks without a preceding question (e.g., opening intro), mark the question as "(unprompted / opening)"
+   - For panel interviews (multiple remote speakers), note that all remote participants appear as "speaker" - flag this in the debrief output
+6. Extract the company name from the meeting title for use in Step 1 (loading the correct cheat sheet and company notes)
+
+If `list_meetings` returns no results or `get_meeting_transcript` fails, tell the user: "Could not fetch transcript from Granola. Please paste the transcript directly, or verify your Granola plan supports transcript access."
+
+**Deriving CV path from Granola meeting:** When using Granola (no CV path argument), attempt to match the meeting title to an existing company slug in `output/`. If a match is found, use the most recent CV file in that directory. If no match, ask the user for the CV path or proceed without a cheat sheet (see "No cheat sheet fallback" below).
 
 ### Step 1: Load Context
 
@@ -85,6 +117,8 @@ For each answer, assess trust impact:
   - How close did the candidate get?
   - What was different — better or worse?
 
+**No cheat sheet fallback:** If no cheat sheet or coached answers exist for this company (common for first-time calls or companies without prep), skip Step 3C (coached-answer comparison) but run all other analysis: filler counts, anti-pattern detection, Q&A grading, trust impact assessment. Include in the report: "No cheat sheet found for [company]. Coached-answer comparison skipped. Consider running /prep-interview [company] to generate one before the next call."
+
 #### D. Anti-Pattern Check
 Scan each answer for known anti-patterns. Load the full pattern list from `coaching/anti-pattern-tracker.md` § "Known Anti-Patterns Reference" — that file is the single source of truth for which patterns exist and their numbering. If the tracker has no patterns yet (new user), use these universal seed patterns:
 - Volunteered a negative unprompted
@@ -94,6 +128,17 @@ Scan each answer for known anti-patterns. Load the full pattern list from `coach
 - Essay structure (verdict last)
 
 Also watch for any NEW anti-patterns not yet tracked — add them to the tracker after the debrief.
+
+**Filler word tracking (per D-06):** For the "Filler hedging words" anti-pattern, count specific occurrences of each tracked filler in the candidate's speech:
+- "really" (word boundary match)
+- "kind of" / "kinda"
+- "definitely"
+- "to be honest with you"
+- "absolutely"
+- "pretty" (when used as hedge before adjective: "pretty good", "pretty much", etc.)
+
+Report individual counts in the debrief and include them when updating the anti-pattern tracker Update Log. Example format for the Update Log entry:
+`| 2026-04-08 | Company - Role (Granola/voice sim) | Filler: really x3, kind of x1; [other patterns] | [notes] |`
 
 ### Step 4: Generate Debrief Report
 
@@ -191,6 +236,38 @@ After the user confirms the assessment:
    - Add a line to the Update Log
 
 5. **Data enrichment** — check if the simulation surfaced new information (project details, achievements, technologies, skills) that should be captured in the data files. Follow the procedure in `framework/data-enrichment.md`.
+
+### Step 6.5: Update Company Notes
+
+After logging the session, append structured call intel to the company notes file.
+
+1. Determine the company slug from the CV path or Granola meeting title
+2. Read `data/company-notes/<slug>.md` (create if it doesn't exist, with header `# <Company Name> - Notes`)
+3. **Use Write (read-then-write), never Edit** - this file may have long rows
+4. Prepend a new section at the top (below the header), formatted as:
+
+```
+## YYYY-MM-DD | [Meeting type] with [interviewer name if known]
+
+**Source:** Granola transcript / Voice simulation / Pasted transcript
+**Duration:** [if known]
+**Overall rating:** [confidence rating]/5
+
+### Key Intel
+- [Bullet points of factual information learned: team size, tech stack, timeline, budget, pain points, org structure]
+
+### Questions They Asked
+- [List of interviewer questions - useful for future prep]
+
+### Signals
+- [Positive signals: enthusiasm, "we need someone like you", timeline urgency]
+- [Negative signals: hesitation, "we have other candidates", scope concerns]
+
+### Follow-up Items
+- [Action items: send materials, schedule next round, research topic mentioned]
+```
+
+5. If no company slug can be determined, skip this step and note: "Could not determine company - skipping company notes update. Run manually if needed."
 
 ### Session File Naming
 
