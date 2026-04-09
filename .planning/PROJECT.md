@@ -23,7 +23,7 @@ Close the automation and UX gaps without sacrificing the system's depth advantag
 ### Active
 
 - [ ] Browser automation for job discovery (Playwright scanning target company career pages)
-- [ ] Visual pipeline dashboard (terminal TUI for pipeline status, staleness, next actions)
+- [x] Visual pipeline dashboard (terminal TUI for pipeline status, staleness, next actions) — Validated in Phase 3
 - [ ] ATS form auto-fill (Greenhouse/Lever/Workday submission from profile data)
 - [ ] Granola MCP integration for call analysis and coaching improvement
 
@@ -60,4 +60,4 @@ Close the automation and UX gaps without sacrificing the system's depth advantag
 | Playwright for browser automation | Same tool Career-Ops uses, proven at scale | — Pending |
 
 ---
-*Last updated: 2026-04-08 after competitive analysis*
+*Last updated: 2026-04-09 after Phase 3 completion*
