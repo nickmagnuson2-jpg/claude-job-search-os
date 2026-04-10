@@ -59,11 +59,11 @@ class PipelineDashboard(App):
         yield VerticalScroll()
         yield Footer()
 
-    def on_mount(self) -> None:
+    async def on_mount(self) -> None:
         repo_root = Path(__file__).resolve().parent.parent.parent
         self.data = load_dashboard_data(repo_root)
         self._build_funnel_bar()
-        self._rebuild_tables()
+        await self._rebuild_tables()
 
     def _build_funnel_bar(self) -> None:
         """Build conversion funnel and summary stats for the header bar."""
@@ -84,7 +84,7 @@ class PipelineDashboard(App):
             if count == 0 and not funnel_parts:
                 # Skip leading zeros
                 continue
-            if prev_count is not None and prev_count > 0:
+            if prev_count is not None and prev_count > 0 and count <= prev_count:
                 pct = round(count / prev_count * 100)
                 funnel_parts.append(f"{count} {stage} ({pct}%)")
             else:
