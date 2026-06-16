@@ -1,0 +1,100 @@
+# Tuck/MBB CV Design Theme
+#
+# Single source of design truth for the CV style. Composed into every
+# generated CV YAML by tools/cv_merge_theme.py (called from /generate-cv,
+# /apply, and tools/projects_to_yaml.py).
+#
+# Generated CV YAMLs in output/<slug>/ contain the FULL design block (this
+# file's contents merged in). That keeps them reproducible standalone — any
+# old CV YAML can be re-rendered without this theme file present.
+#
+# Reference visual: output/example-ventures/042826-cos-example.pdf
+# (validated Tuck/MBB aesthetic — Times New Roman, ALL CAPS
+# small-caps section titles, COMPANY-over-italic-POSITION experience entries.)
+#
+# Architecture decision 2026-05-12: chose YAML compose over Typst fork.
+# See data/job-todos.md row "CV-INFRA 4/6" for full rationale.
+
+design:
+  theme: classic
+  typography:
+    font_family:
+      body: Times New Roman
+      name: Times New Roman
+      headline: Times New Roman
+      connections: Times New Roman
+      section_titles: Times New Roman
+    font_size:
+      body: 10.5pt
+      name: 18pt
+      section_titles: 1.1em
+    small_caps:
+      name: false
+      section_titles: true
+    line_spacing: 0.45em
+    bold:
+      section_titles: true
+  colors:
+    name: rgb(0, 0, 0)
+    section_titles: rgb(0, 0, 0)
+    headline: rgb(0, 0, 0)
+    connections: rgb(0, 0, 0)
+    links: rgb(0, 0, 0)
+  page:
+    size: us-letter
+    top_margin: 0.5in
+    bottom_margin: 0.5in
+    left_margin: 0.6in
+    right_margin: 0.6in
+    show_footer: false
+    show_top_note: false
+  header:
+    alignment: center
+    space_below_name: 0.15cm
+    space_below_connections: 0.3cm
+    connections:
+      show_icons: false
+      separator: '|'
+      space_between_connections: 0.25cm
+      display_urls_instead_of_usernames: true
+  section_titles:
+    type: with_full_line
+    line_thickness: 0.5pt
+    space_above: 0.25cm
+    space_below: 0.15cm
+  sections:
+    space_between_regular_entries: 0.3em
+    space_between_text_based_entries: 0.1em
+    show_time_spans_in: []
+  entries:
+    date_and_location_width: 3.6cm
+    short_second_row: false
+    highlights:
+      space_between_items: 0cm
+      bullet: •
+  templates:
+    experience_entry:
+      main_column: |-
+        **COMPANY**
+
+        *POSITION*
+
+        HIGHLIGHTS
+      date_and_location_column: |-
+        DATE
+
+        LOCATION
+    education_entry:
+      main_column: |-
+        **INSTITUTION**
+
+        *DEGREE in AREA*
+
+        HIGHLIGHTS
+      degree_column: ''
+      date_and_location_column: |-
+        DATE
+
+        LOCATION
+    one_line_entry:
+      main_column: '**LABEL:** DETAILS'

@@ -1,0 +1,36 @@
+#funnel-bar {
+    dock: top;
+    height: 2;
+    text-style: bold;
+    background: $primary-background;
+    padding: 0 2;
+}
+
+#search-input {
+    dock: top;
+    display: none;
+}
+
+#search-input.visible {
+    display: block;
+    height: 3;
+    margin: 0 1;
+}
+
+VerticalScroll {
+    height: 1fr;
+}
+
+Collapsible {
+    margin: 0;
+    padding: 0;
+}
+
+DataTable {
+    height: auto;
+    max-height: 25;
+}
+
+DataTable > .datatable--cursor {
+    background: $accent;
+}

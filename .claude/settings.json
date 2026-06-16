@@ -1,0 +1,147 @@
+{
+  "enabledPlugins": {
+    "vercel-plugin@vercel-vercel-plugin": false
+  },
+  "permissions": {
+    "allow": [
+      "mcp__exa__web_search_exa",
+      "mcp__exa__web_fetch_exa"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /Users/mag/Documents/Obsidian/30-projects/job-search/tools/check_voice_pure.py"
+          },
+          {
+            "type": "command",
+            "command": "python3 /Users/mag/Documents/Obsidian/30-projects/job-search/tools/check_email_via_skill.py"
+          },
+          {
+            "type": "command",
+            "command": "python3 /Users/mag/Documents/Obsidian/30-projects/job-search/tools/check_no_confabulation.py"
+          },
+          {
+            "type": "command",
+            "command": "python3 /Users/mag/Documents/Obsidian/30-projects/job-search/tools/check_data_projects.py"
+          },
+          {
+            "type": "command",
+            "command": "python3 /Users/mag/Documents/Obsidian/30-projects/job-search/tools/check_public_pii.py"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /Users/mag/Documents/Obsidian/30-projects/job-search/tools/check_draft_voice.py"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /Users/mag/Documents/Obsidian/30-projects/job-search/tools/check_todo_write_kwargs.py"
+          },
+          {
+            "type": "command",
+            "command": "python3 /Users/mag/Documents/Obsidian/30-projects/job-search/tools/check_bare_python.py"
+          }
+        ]
+      },
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /Users/mag/Documents/Obsidian/30-projects/job-search/tools/check_living_log_purity.py"
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /Users/mag/Documents/Obsidian/30-projects/job-search/tools/check_edit_after_mutation.py --mode check"
+          },
+          {
+            "type": "command",
+            "command": "python3 /Users/mag/Documents/Obsidian/30-projects/job-search/tools/check_replace_all_safety.py"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /Users/mag/Documents/Obsidian/30-projects/job-search/tools/check_edit_safety.py"
+          }
+        ]
+      },
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /Users/mag/Documents/Obsidian/30-projects/job-search/tools/check_plan_partner_critique.py"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /Users/mag/Documents/Obsidian/30-projects/job-search/tools/check_script_error_logged.py"
+          }
+        ]
+      },
+      {
+        "matcher": "Read|Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /Users/mag/Documents/Obsidian/30-projects/job-search/tools/check_edit_after_mutation.py --mode record"
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "Bash|Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /Users/mag/Documents/Obsidian/30-projects/job-search/tools/log_tool_failure.py"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /Users/mag/Documents/Obsidian/30-projects/job-search/tools/scan_transcript_failures.py"
+          },
+          {
+            "type": "command",
+            "command": "python3 /Users/mag/Documents/Obsidian/30-projects/job-search/tools/check_changelog_currency.py"
+          }
+        ]
+      }
+    ]
+  }
+}

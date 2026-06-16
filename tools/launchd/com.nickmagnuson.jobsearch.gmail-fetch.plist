@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.nickmagnuson.jobsearch.gmail-fetch</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/opt/homebrew/bin/python3</string>
+        <string>/Users/mag/Documents/Obsidian/30-projects/job-search/tools/gmail_fetch.py</string>
+        <string>--label-id</string>
+        <string>Label_7175134973725917628</string>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PYTHONIOENCODING</key>
+        <string>utf-8</string>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/bin:/bin</string>
+    </dict>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/mag/Documents/Obsidian/30-projects/job-search</string>
+
+    <key>StartInterval</key>
+    <integer>900</integer>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/mag/Documents/Obsidian/30-projects/job-search/tools/launchd/logs/gmail-fetch.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/mag/Documents/Obsidian/30-projects/job-search/tools/launchd/logs/gmail-fetch.err</string>
+</dict>
+</plist>

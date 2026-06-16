@@ -1,0 +1,149 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/rendercv/rendercv/refs/tags/v2.8/schema.json
+# Example CV for the fictional demo persona "Priya Anand" (see examples/README.md).
+# Generated with the current CV pipeline: `rendercv render examples/output/sample-cv-priya-anand.yaml`
+cv:
+  name: PRIYA ANAND
+  location: San Francisco, CA
+  email: priya.anand@example.com
+  phone: tel:+1-415-555-0148
+  social_networks:
+    - network: LinkedIn
+      username: priya-anand-example
+  sections:
+    SUMMARY:
+      - Product leader with an engineering and consulting foundation, moving into enterprise sales. Built production software, advised B2B software clients at BCG, and owned an $8M product line as a PM, consistently the technical closer in the room on competitive enterprise deals. Looking for a quota-carrying AE or Sales Engineering seat at a technical B2B SaaS company where deep product credibility wins deals. San Francisco, in-person or hybrid.
+    EXPERIENCE:
+      - company: NORTHWIND
+        position: Senior Product Manager
+        date: 2023 – Present
+        location: San Francisco, CA
+        highlights:
+          - Owned the enterprise-tier roadmap for a B2B workflow-automation platform; grew the product line from $3M to $8M ARR over two years
+          - Served as technical closer on 30+ enterprise deals, running product evaluations, security reviews, and executive demos for the two largest logos signed in 2025
+          - Built the win/loss program that lifted competitive win rate from 38% to 52% and reoriented the roadmap around what actually closed
+          - Shipped a self-serve integration framework that cut enterprise onboarding time by 40%
+      - company: BOSTON CONSULTING GROUP
+        position: Consultant
+        date: 2019 – 2021
+        location: San Francisco, CA
+        highlights:
+          - Advised B2B software clients on go-to-market, pricing, and sales-force effectiveness; staffed primarily on SaaS cases
+          - Designed a sales-territory and quota redesign for a $200M SaaS client, projected to lift sales productivity 15%
+          - Led win/loss and customer-reference work on a technology PE diligence that closed a $400M acquisition
+          - Promoted to Consultant a cycle early on the strength of client-facing work
+      - company: LUMEN ANALYTICS
+        position: Software Engineer
+        date: 2016 – 2019
+        location: San Francisco, CA
+        highlights:
+          - Full-stack engineer at an early-stage B2B data-infrastructure startup (Python, React); scaled with the platform from 20 to 150 customers
+          - Built the public REST API that became the most-cited reason enterprise customers chose the platform
+          - Cut new-customer integration time from three weeks to four days
+          - Routinely pulled into pre-sales calls to handle prospects' technical questions
+    EDUCATION:
+      - institution: HARVARD BUSINESS SCHOOL
+        area: Business Administration
+        degree: MBA
+        date: 2021 – 2023
+        location: Boston, MA
+      - institution: STANFORD UNIVERSITY
+        area: Computer Science
+        degree: BS
+        date: 2012 – 2016
+        location: Stanford, CA
+    ADDITIONAL INFORMATION:
+      - label: Skills
+        details: Enterprise Sales (MEDDPICC), Technical / Solution Selling, Discovery & Qualification, Executive Communication, Product Strategy, Go-to-Market, ROI Modeling, SQL, Python, Looker, Salesforce
+      - label: Certifications
+        details: MEDDPICC Enterprise Selling & Command of the Message (Force Management, 2026); Pragmatic Institute PMC-III (2024)
+      - label: Interests
+        details: Trail running, mentoring first-gen students in tech, ceramics
+design:
+  theme: classic
+  typography:
+    font_family:
+      body: Times New Roman
+      name: Times New Roman
+      headline: Times New Roman
+      connections: Times New Roman
+      section_titles: Times New Roman
+    font_size:
+      body: 10.5pt
+      name: 18pt
+      section_titles: 1.1em
+    small_caps:
+      name: false
+      section_titles: true
+    line_spacing: 0.45em
+    bold:
+      section_titles: true
+  colors:
+    name: rgb(0, 0, 0)
+    section_titles: rgb(0, 0, 0)
+    headline: rgb(0, 0, 0)
+    connections: rgb(0, 0, 0)
+    links: rgb(0, 0, 0)
+  page:
+    size: us-letter
+    top_margin: 0.5in
+    bottom_margin: 0.5in
+    left_margin: 0.6in
+    right_margin: 0.6in
+    show_footer: false
+    show_top_note: false
+  header:
+    alignment: center
+    space_below_name: 0.15cm
+    space_below_connections: 0.3cm
+    connections:
+      show_icons: false
+      separator: '|'
+      space_between_connections: 0.25cm
+      display_urls_instead_of_usernames: true
+  section_titles:
+    type: with_full_line
+    line_thickness: 0.5pt
+    space_above: 0.25cm
+    space_below: 0.15cm
+  sections:
+    space_between_regular_entries: 0.3em
+    space_between_text_based_entries: 0.1em
+    show_time_spans_in: []
+  entries:
+    date_and_location_width: 3.6cm
+    short_second_row: false
+    highlights:
+      space_between_items: 0cm
+      bullet: •
+  templates:
+    experience_entry:
+      main_column: |-
+        **COMPANY**
+
+        *POSITION*
+
+        HIGHLIGHTS
+      date_and_location_column: |-
+        DATE
+
+        LOCATION
+    education_entry:
+      main_column: |-
+        **INSTITUTION**
+
+        *DEGREE in AREA*
+
+        HIGHLIGHTS
+      degree_column: ''
+      date_and_location_column: |-
+        DATE
+
+        LOCATION
+    one_line_entry:
+      main_column: '**LABEL:** DETAILS'
+locale:
+  language: english
+settings:
+  current_date: today
+  bold_keywords: []
+  pdf_title: Priya Anand - CV

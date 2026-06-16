@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.nickmagnuson.jobsearch.alirohde-triage</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>-c</string>
+        <string>/opt/homebrew/bin/python3 /Users/mag/Documents/Obsidian/30-projects/job-search/tools/alirohde_nudge.py --repo-root /Users/mag/Documents/Obsidian/30-projects/job-search</string>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PYTHONIOENCODING</key>
+        <string>utf-8</string>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/bin:/bin</string>
+    </dict>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/mag/Documents/Obsidian/30-projects/job-search</string>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>9</integer>
+        <key>Minute</key>
+        <integer>15</integer>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/mag/Documents/Obsidian/30-projects/job-search/tools/launchd/logs/alirohde-triage.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/mag/Documents/Obsidian/30-projects/job-search/tools/launchd/logs/alirohde-triage.err</string>
+</dict>
+</plist>

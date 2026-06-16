@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.nickmagnuson.jobsearch.gmail-fetch-personal</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/opt/homebrew/bin/python3</string>
+        <string>/Users/mag/Documents/Obsidian/30-projects/job-search/tools/gmail_fetch.py</string>
+        <string>--label-id</string>
+        <string>Label_4</string>
+        <string>--inbox-dir</string>
+        <string>/Users/mag/Documents/Obsidian/30-projects/personal/inbox</string>
+        <string>--state-file</string>
+        <string>/Users/mag/Documents/Obsidian/30-projects/job-search/tools/.gmail_state_personal.json</string>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PYTHONIOENCODING</key>
+        <string>utf-8</string>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/bin:/bin</string>
+    </dict>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/mag/Documents/Obsidian/30-projects/job-search</string>
+
+    <key>StartInterval</key>
+    <integer>900</integer>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/mag/Documents/Obsidian/30-projects/job-search/tools/launchd/logs/gmail-fetch-personal.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/mag/Documents/Obsidian/30-projects/job-search/tools/launchd/logs/gmail-fetch-personal.err</string>
+</dict>
+</plist>

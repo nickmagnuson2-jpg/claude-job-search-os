@@ -1,0 +1,25 @@
+# Optional — for prep-doc PDF generation (tools/md_to_pdf_doc.py, weasyprint backend)
+markdown>=3.5
+weasyprint>=60.0
+
+# CV PDFs use RenderCV (pipx-installed binary at ~/.local/bin/rendercv) — no Python deps required here.
+
+# Optional — for PDF text extraction (tools/convert_pdfs.py)
+pypdf>=4.0
+
+# Optional — for Gmail integration (tools/gmail_fetch.py)
+google-api-python-client>=2.0.0
+google-auth-httplib2>=0.1.0
+google-auth-oauthlib>=0.5.0
+beautifulsoup4>=4.12.0
+
+# Optional - for pipeline dashboard TUI (tools/dashboard/app.py)
+textual>=8.0.0
+
+# Optional - for company discovery via Exa Websets (tools/webset_discover.py)
+exa-py>=2.13.0
+
+# Optional - for YouTube transcript ingestion (tools/fetch_transcript.py, used by /analyze video branch)
+# Install on macOS/Homebrew python under PEP 668 with:
+#   python3 -m pip install --user --break-system-packages youtube-transcript-api
+youtube-transcript-api>=1.2.0
