@@ -89,3 +89,52 @@ def test_withdrawn_row_not_counted_by_metrics(tmp_path):
     metrics = run_script("todo_daily_metrics.py", "--target-date", today,
                          "--repo-root", str(tmp_path))
     assert "Old umbrella task" not in [c["task"] for c in metrics["completed_today"]]
+
+
+# ---------------------------------------------------------------------------
+# Tests: supersede subcommand (dedupe a contact's prior auto follow-up)
+# ---------------------------------------------------------------------------
+
+SUPERSEDE_FIXTURE = """\
+# Job Search To-Dos
+
+## Active
+
+| Task | Priority | Due | Status | Notes |
+| --- | --- | --- | --- | --- |
+| Follow up: Jane Doe — await reply | Med | 2026-06-25 | Pending | old |
+| Follow up: Jane Doe — newer await | Med | 2026-06-26 | Pending | old2 |
+| Follow up: Jane Doe (Acme) — manual curated | Med | 2026-06-27 | Pending | keep |
+| Unrelated task | Low | — | Pending | keep |
+
+## Completed
+
+| Task | Priority | Completed | Notes |
+| --- | --- | --- | --- |
+"""
+
+
+def test_supersede_withdraws_all_prefix_matches(tmp_path):
+    p = _write(tmp_path, SUPERSEDE_FIXTURE)
+    code, res = _run_raw(tmp_path, "supersede", "Follow up: Jane Doe —")
+    assert code == 0
+    assert res["action"] == "supersede"
+    assert res["superseded"] == 2
+
+    active, completed = p.read_text(encoding="utf-8").split("## Completed")
+    # Both auto rows left Active and are now Withdrawn
+    assert "await reply" not in active
+    assert "newer await" not in active
+    assert completed.count("Withdrawn") == 2
+    # The manually-curated "(Acme)" variant and the unrelated task are untouched
+    assert "Jane Doe (Acme) — manual curated" in active
+    assert "Unrelated task" in active
+
+
+def test_supersede_no_match_is_noop(tmp_path):
+    p = _write(tmp_path, SUPERSEDE_FIXTURE)
+    before = p.read_text(encoding="utf-8")
+    code, res = _run_raw(tmp_path, "supersede", "Follow up: Nobody —")
+    assert code == 0
+    assert res["superseded"] == 0
+    assert p.read_text(encoding="utf-8") == before  # file untouched

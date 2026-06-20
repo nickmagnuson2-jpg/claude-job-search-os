@@ -52,6 +52,38 @@ REPLY_SIGNALS = (
     "reply", "called back", "texted back",
 )
 
+# Phrases where NICK is the one replying/sending (outbound). These must NOT flip
+# the outreach-log to "Replied" — that status means the RECIPIENT replied, not
+# that Nick replied to them. Bug origin 2026-06-18: logging "Replied to her
+# intro" (Nick's own send) falsely flipped a Sent row to Replied.
+OUTBOUND_REPLY_MARKERS = (
+    "replied to", "reply to", "replying to", "responded to", "responding to",
+    "my reply", "sent a reply", "sent my reply", "i replied", "nick replied",
+)
+
+# Explicit inbound-subject phrases — the RECIPIENT acted. These win over an
+# outbound marker so "She replied to my email" still counts as a received reply.
+INBOUND_SUBJECT_MARKERS = (
+    "they replied", "she replied", "he replied", "they responded",
+    "she responded", "he responded", "heard back", "got back", "wrote back",
+    "called back", "texted back", "reply from", "response from",
+    "got a reply", "got a response",
+)
+
+
+def reply_received(summary: str) -> bool:
+    """Heuristic: did the RECIPIENT reply (→ flip outreach-log to Replied)?
+
+    Order matters: an explicit inbound subject ("she replied") wins; an outbound
+    marker ("replied to her") suppresses; otherwise fall back to the bare signals.
+    """
+    s = summary.lower()
+    if any(m in s for m in INBOUND_SUBJECT_MARKERS):
+        return True
+    if any(m in s for m in OUTBOUND_REPLY_MARKERS):
+        return False
+    return any(sig in s for sig in REPLY_SIGNALS)
+
 CONTACTS_HEADER = "| Name | Company | Role | Relationship | Added | Last Interaction | Email |"
 CONTACTS_SEP    = "| --- | --- | --- | --- | --- | --- | --- |"
 
@@ -427,28 +459,47 @@ def cmd_log(args, networking_path: Path, repo_root: Path, dry_run: bool) -> None
 
     save_lines(networking_path, lines, content)
 
-    # Follow-up todo via subprocess (non-fatal if todos file missing)
+    # Follow-up todo via subprocess (non-fatal if todos file missing).
+    # Supersede this contact's prior AUTO-generated follow-up first so repeated
+    # logging keeps a single live "Follow up: <name> — ..." row instead of stacking
+    # duplicates (bug origin 2026-06-18). The "— " prefix matches only the auto
+    # format, so a manually-curated variant (e.g. "Follow up: <name> (Acme) — ...")
+    # is left untouched.
     if args.followup:
         todos_path = repo_root / TODOS_FILE
         if todos_path.exists():
+            todo_write = str(Path(__file__).parent / "todo_write.py")
+            todo_env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
             try:
+                subprocess.run(
+                    [sys.executable, todo_write, "--repo-root", str(repo_root),
+                     "supersede", f"Follow up: {args.name} —"],
+                    capture_output=True, text=True, encoding="utf-8", env=todo_env,
+                    cwd=str(repo_root),
+                )
                 todo_task = f"Follow up: {args.name} — {args.followup}"
                 from datetime import timedelta
                 due = (date.today() + timedelta(days=7)).strftime("%Y-%m-%d")
                 subprocess.run(
-                    [sys.executable, str(Path(__file__).parent / "todo_write.py"),
+                    [sys.executable, todo_write,
                      "add", todo_task, "Med", due, f"From networking log on {log_date}"],
-                    capture_output=True, text=True, encoding="utf-8",
-                    env={**os.environ, "PYTHONIOENCODING": "utf-8"},
+                    capture_output=True, text=True, encoding="utf-8", env=todo_env,
                     cwd=str(repo_root),
                 )
             except Exception:
                 pass  # todo creation is best-effort
 
-    # Auto-update outreach-log.md if the interaction looks like a reply
+    # Auto-update outreach-log.md only if the RECIPIENT replied.
+    # Explicit flags override the heuristic; otherwise reply_received() guards
+    # against flipping on Nick's own outbound replies ("Replied to her intro").
     outreach_updated = False
-    summary_lower = args.summary.lower()
-    if any(signal in summary_lower for signal in REPLY_SIGNALS):
+    if getattr(args, "reply_received", False):
+        should_flip = True
+    elif getattr(args, "no_reply_flip", False):
+        should_flip = False
+    else:
+        should_flip = reply_received(args.summary)
+    if should_flip:
         outreach_updated = update_outreach_status(repo_root, args.name, log_date)
 
     out_ok("log", f"Logged interaction for {args.name}: {args.summary}",
@@ -516,6 +567,12 @@ def parse_args():
     log_p.add_argument("--summary",  required=True)
     log_p.add_argument("--followup", default=None)
     log_p.add_argument("--content",  default=None)
+    log_p.add_argument("--reply-received", action="store_true",
+                       help="Force-flip the matching outreach-log row to 'Replied' "
+                            "(the RECIPIENT replied). Overrides the summary heuristic.")
+    log_p.add_argument("--no-reply-flip", action="store_true",
+                       help="Never flip the outreach-log, even if the summary looks "
+                            "like a reply. Use when logging Nick's own outbound reply.")
 
     rem_p = sub.add_parser("remove")
     rem_p.add_argument("name")

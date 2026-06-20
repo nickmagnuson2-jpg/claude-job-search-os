@@ -587,7 +587,7 @@ A set of PreToolUse and PostToolUse hooks in `.claude/settings.json` that enforc
 | `check_todo_write_kwargs.py` | PreToolUse on Bash | Blocks kwarg-style invocation of the atomic to-do writer |
 | `check_edit_after_mutation.py` | PreToolUse on Edit/MultiEdit | Read-state guard, warns when a file changed on disk since last read this session, or was never read |
 | `check_replace_all_safety.py` | PreToolUse on Edit/MultiEdit | Blocks a `replace_all: true` when `old_string` is a short token embedded inside a longer word in the target file (the substring-corruption class); `REPLACE_ALL_OVERRIDE=1` bypasses |
-| `check_script_error_logged.py` | PostToolUse on Bash | Auto-appends to the friction log when a `tools/*.py` script returns a JSON error |
+| `check_script_error_logged.py` | PostToolUse on Bash | Auto-appends to the friction log when a `tools/*.py` script returns a JSON error, or when any `python3` invocation (including inline heredocs and skill helpers) crashes with a traceback |
 | `check_plan_partner_critique.py` | PostToolUse on Write/Edit | Reminds to run a McKinsey-critical-advisor critique when a plan doc's estimated effort exceeds 10 hours |
 | `check_bare_python.py` | PreToolUse on Bash | Blocks a bare `python` in command position (requires `python3`); anchors to command position so it never trips on the token inside strings or filenames |
 | `check_changelog_currency.py` | Stop hook | Warns (once per HEAD) when commits since the last `docs/CHANGELOG.md` edit touched `tools/`, `.claude/skills/`, `framework/`, settings, or `requirements.txt` without a changelog update |
@@ -606,7 +606,7 @@ This repo is public, so real contacts and pipeline-target companies must never r
 The friction log is an append-only ledger of small recurring errors that burn turns (wrong flags, mismatched file paths, template snags). Auto-captured mechanically — no manual logging required.
 
 **How it works (three-hook chain):**
-- `check_script_error_logged.py` (PostToolUse on Bash) fires after every `tools/*.py` call that returns a JSON error and auto-appends to `memory/friction-log.md`.
+- `check_script_error_logged.py` (PostToolUse on Bash) fires after a `tools/*.py` call that returns a JSON error (Branch A) or any `python3` invocation that crashes with a traceback — inline heredocs and skill helpers outside `tools/` included (Branch B) — and auto-appends to `memory/friction-log.md`.
 - `log_tool_failure.py` (PostToolUseFailure on Bash/Edit/Write/MultiEdit) is the primary capture for outright tool-call failures, which standard PostToolUse hooks never see.
 - `scan_transcript_failures.py` (Stop hook) scans the session transcript at turn-end for harness pre-check errors (e.g., "file not read" Edit rejections) that the other two hooks cannot see.
 - `/weekly-review` Step 5b audits unpromoted entries during the weekly retro.

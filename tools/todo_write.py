@@ -349,6 +349,51 @@ def cmd_withdraw(args: list[str], todos_path: Path) -> None:
     out_error(f"No task found matching: {args[0]}")
 
 
+def cmd_supersede(args: list[str], todos_path: Path) -> None:
+    """Withdraw EVERY Active row whose task starts with the given prefix.
+
+    Keeps a single live item per logical group. Callers (e.g. networking_write.py)
+    supersede a contact's prior auto-generated follow-up before adding a fresh one,
+    so repeated logging doesn't stack duplicate "Follow up: <name> — ..." rows.
+    Superseded rows move to Completed marked "Withdrawn <today>" (not a completion).
+    """
+    if not args:
+        out_error("Usage: supersede <task-prefix>")
+
+    prefix = args[0].lower()
+    content, lines = load_todos(todos_path)
+    act_start, act_end = find_section(lines, "## Active")
+    if act_start == -1:
+        out_error("Could not find ## Active section in job-todos.md")
+
+    today_str = date.today().strftime("%Y-%m-%d")
+    matches = []
+    for i in range(act_start, act_end):
+        if is_data_row(lines[i]):
+            cols = parse_cols(lines[i])
+            status = cols[3] if len(cols) > 3 else ""
+            if (cols and cols[0] and cols[0].lower().startswith(prefix)
+                    and status not in TERMINAL_STAGES and status != "Done"):
+                matches.append((i, cols))
+
+    if not matches:
+        out_ok("supersede", f"No active todos matching prefix: {args[0]}", superseded=0)
+        return
+
+    # Delete from Active (reverse order to keep indices valid), then archive as Withdrawn.
+    for i, _ in reversed(matches):
+        del lines[i]
+    for _, cols in matches:
+        task = cols[0]
+        priority = cols[1] if len(cols) > 1 and cols[1] else "Med"
+        notes = cols[4] if len(cols) > 4 else "—"
+        insert_into_completed(lines, fmt_completed(task, priority, f"Withdrawn {today_str}", notes))
+
+    save_lines(todos_path, lines, content)
+    out_ok("supersede", f"Superseded {len(matches)} todo(s) matching: {args[0]}",
+           superseded=len(matches), tasks=[c[0] for _, c in matches])
+
+
 def cmd_clear(todos_path: Path) -> None:
     """Move all Done/Withdrawn rows from Active to Completed."""
     today_str = date.today().strftime("%Y-%m-%d")
@@ -515,7 +560,7 @@ def main() -> None:
             i += 1
 
     if not filtered:
-        out_error("Usage: todo_write.py <add|done|withdraw|clear|sync> [args...]")
+        out_error("Usage: todo_write.py <add|done|withdraw|supersede|clear|sync> [args...]")
 
     # Reject unknown --flags before they silently slot into wrong columns.
     # todo_write.py is positional-only; the only flag is --repo-root (handled above).
@@ -531,7 +576,7 @@ def main() -> None:
             f"Unknown flag(s): {', '.join(unknown_flags)}. "
             "todo_write.py is positional-only — pass bare values, not --flag names. "
             "Usage: add <task> [priority] [due] [notes]  |  "
-            "done <fragment>  |  withdraw <fragment>  |  clear  |  sync  |  --repo-root <path> (anywhere)"
+            "done <fragment>  |  withdraw <fragment>  |  supersede <prefix>  |  clear  |  sync  |  --repo-root <path> (anywhere)"
         )
 
     cmd = filtered[0].lower()
@@ -546,12 +591,14 @@ def main() -> None:
         cmd_done(extra_args, todos_path)
     elif cmd == "withdraw":
         cmd_withdraw(extra_args, todos_path)
+    elif cmd == "supersede":
+        cmd_supersede(extra_args, todos_path)
     elif cmd == "clear":
         cmd_clear(todos_path)
     elif cmd == "sync":
         cmd_sync(todos_path, pipeline_path)
     else:
-        out_error(f"Unknown command: {cmd}. Use: add, done, withdraw, clear, sync")
+        out_error(f"Unknown command: {cmd}. Use: add, done, withdraw, supersede, clear, sync")
 
 
 if __name__ == "__main__":

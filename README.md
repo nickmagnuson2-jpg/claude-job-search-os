@@ -88,11 +88,11 @@ PreToolUse and PostToolUse hooks wired into `.claude/settings.json`. They enforc
 | `check_edit_after_mutation.py` | PreToolUse on Edit/MultiEdit | Read-state guard: warns when a file changed on disk since last read, or was never read this session |
 | `check_edit_safety.py` | PostToolUse on Edit | Warns on long-row markdown tables; hard-stops on write-only files |
 | `check_plan_partner_critique.py` | PostToolUse on Write/Edit | Reminds to run a McKinsey-critical-advisor critique on large plan docs |
-| `check_script_error_logged.py` | PostToolUse on Bash | Auto-appends to friction log when a script returns a JSON error |
+| `check_script_error_logged.py` | PostToolUse on Bash | Auto-appends to friction log when a script returns a JSON error, or when any `python3` invocation crashes with a traceback |
 | `check_bare_python.py` | PreToolUse on Bash | Blocks a bare `python` in command position, requiring `python3` (anchored to command position so it never trips on the token inside strings or filenames) |
 | `check_changelog_currency.py` | Stop | Warns once per HEAD when commits since the last `docs/CHANGELOG.md` edit touched `tools/`, `.claude/skills/`, `framework/`, settings, or `requirements.txt` without a changelog update |
 
-Friction capture runs on a dedicated three-hook chain rather than a single hook (PostToolUse hooks never fire on tool errors, a documented Claude Code limitation). `check_script_error_logged.py` (PostToolUse on Bash) catches `tools/*.py` scripts that return a JSON error. `log_tool_failure.py` (PostToolUseFailure on Bash/Edit/Write/MultiEdit) is the primary capture for outright tool-call failures. `scan_transcript_failures.py` (Stop hook) scans the session transcript at turn-end for harness-level errors the other two cannot see, for example "file not read" Edit rejections. All three append to `memory/friction-log.md`; entries that fire 3+ times trigger a structural patch.
+Friction capture runs on a dedicated three-hook chain rather than a single hook (PostToolUse hooks never fire on tool errors, a documented Claude Code limitation). `check_script_error_logged.py` (PostToolUse on Bash) catches `tools/*.py` scripts that return a JSON error, plus any `python3` invocation (inline heredocs and skill helpers included) that crashes with a traceback. `log_tool_failure.py` (PostToolUseFailure on Bash/Edit/Write/MultiEdit) is the primary capture for outright tool-call failures. `scan_transcript_failures.py` (Stop hook) scans the session transcript at turn-end for harness-level errors the other two cannot see, for example "file not read" Edit rejections. All three append to `memory/friction-log.md`; entries that fire 3+ times trigger a structural patch.
 
 ### 4. Framework layer (`framework/`)
 

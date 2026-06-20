@@ -5,6 +5,22 @@ Format: newest entries at the top.
 
 ---
 
+## 2026-06-18: Atomic-write hardenings — todo supersede, reply-direction fix, draft CC, traceback friction-log
+
+### Added
+- **`todo_write.py supersede <prefix>`**: withdraws every open Active row whose task starts with the given prefix, keeping a single live item per logical group. Superseded rows archive to Completed marked `Withdrawn <today>` (a cancellation, not a completion). Built so `networking_write.py log --followup` can supersede a contact's prior auto-generated follow-up before adding a fresh one, instead of stacking duplicate `Follow up: <name> — ...` rows on repeated logging. The `— ` prefix match targets only the auto format, leaving a manually-curated variant untouched. New tests in `tests/scripts/test_todo_write_withdraw.py`.
+- **`open_draft.py` `CC:` field**: `tools/.pending-draft.txt` now accepts an optional `CC:` line (placed between `TO:` and `SUBJECT:`); the address is threaded into the Gmail compose URL. Omit the line entirely when unused.
+- **`check_script_error_logged.py` Branch B (traceback capture)**: the friction-log hook now also catches Python crashes that do **not** follow the `tools/*.py` `{"status":"error"}` JSON contract — inline `python3 - <<heredoc` scripts and skill helpers outside `tools/` that raise a traceback. A traceback is an unambiguous crash signal (no graceful-empty carve-out); surface name is derived from the command's tools script, then skill name, then deepest real `.py` frame. The two self-referential scripts (`friction_log.py`, `check_script_error_logged.py`) are excluded to avoid logging loops. Origin: the `/ss` U+202F hand-typed-path `FileNotFoundError` (2nd fire 2026-06-18) was invisible to the old JSON-contract-only path.
+
+### Fixed
+- **`networking_write.py log` reply-direction false-flip**: logging Nick's *own* outbound reply ("Replied to her intro") previously flipped the matching `outreach-log.md` row to `Replied`, which means the *recipient* replied. The new `reply_received()` heuristic only flips on an inbound subject ("she replied", "heard back", "reply from"); an outbound marker ("replied to", "my reply", "I replied") suppresses the flip. Explicit `--reply-received` / `--no-reply-flip` flags override the heuristic. New tests in `tests/scripts/test_networking_write.py`.
+- **`/learn` `args`-binding guard**: some runtimes deliver the workflow `args` parameter as a JSON-encoded *string* rather than an object, so `cfg.topic` read undefined and the run silently fell back to the `'UNSPECIFIED TOPIC'` placeholder (observed 2026-06-15, ~700k tokens wasted on agents that correctly refused to fabricate). `learn-workflow.js` now self-parses the string case (`string → JSON.parse → config`); SKILL.md documents the failure signature.
+
+### Origin
+- 2026-06-18 networking/todo session: blind follow-up logging stacked duplicate `Follow up:` todos (264/265 dup), and an outbound "Replied to her intro" log false-flipped a Sent row to Replied. Both traced to the atomic-write layer and fixed at the script tier with regression tests.
+
+---
+
 ## 2026-06-14: /checkout proposes milestone accomplishment candidates (propose-only, anti-inflation)
 
 ### Added

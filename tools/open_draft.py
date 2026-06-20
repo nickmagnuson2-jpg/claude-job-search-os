@@ -35,6 +35,7 @@ def parse_draft(path):
         content = f.read()
 
     to = ""
+    cc = ""
     subject = ""
     attachments = []
     body_lines = []
@@ -44,6 +45,8 @@ def parse_draft(path):
         if not in_body:
             if line.startswith("TO:"):
                 to = line[3:].strip()
+            elif line.startswith("CC:"):
+                cc = line[3:].strip()
             elif line.startswith("SUBJECT:"):
                 subject = line[8:].strip()
             elif line.startswith("ATTACH:"):
@@ -61,7 +64,7 @@ def parse_draft(path):
     while body_lines and not body_lines[-1].strip():
         body_lines.pop()
 
-    return to, subject, attachments, "\n".join(body_lines)
+    return to, cc, subject, attachments, "\n".join(body_lines)
 
 
 def copy_file_to_clipboard(file_path):
@@ -141,7 +144,7 @@ def main():
         print("opening the wrong draft. Re-write tools/.pending-draft.txt, then re-run.")
         sys.exit(2)
 
-    to, subject, attachments, body = parse_draft(DRAFT_FILE)
+    to, cc, subject, attachments, body = parse_draft(DRAFT_FILE)
 
     if is_reply(subject):
         handle_reply(to, subject, body, attachments)
@@ -157,6 +160,8 @@ def main():
     params = {"view": "cm", "fs": "1"}
     if to:
         params["to"] = to
+    if cc:
+        params["cc"] = cc
     if subject:
         params["su"] = subject
     if body:
@@ -167,6 +172,8 @@ def main():
 
     print("Opening draft in Gmail...")
     print(f"  To:      {to or '(fill in)'}")
+    if cc:
+        print(f"  Cc:      {cc}")
     print(f"  Subject: {subject or '(none)'}")
     print(f"  Body:    {len(body)} characters")
 

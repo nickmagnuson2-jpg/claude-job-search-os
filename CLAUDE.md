@@ -225,9 +225,9 @@ Python 3.8+. `pip install -r requirements.txt` for PDF features. **All `tools/*.
 
 | Script | Purpose |
 |---|---|
-| `todo_write.py` | add/done/clear/sync `data/job-todos.md` |
+| `todo_write.py` | add/done/withdraw/supersede/clear/sync `data/job-todos.md` (`supersede <prefix>` withdraws all open rows matching a prefix — keeps one live follow-up per contact) |
 | `pipe_write.py` | add/update/remove `data/job-pipeline.md` (`--repo-root .` before subcommand) |
-| `networking_write.py` | add/log/remove `data/networking.md`; `log` auto-detects replies and updates `data/outreach-log.md` |
+| `networking_write.py` | add/log/remove `data/networking.md`; `log` auto-detects a **received** reply (recipient → Nick) and flips the matching `data/outreach-log.md` row to `Replied`. Outbound phrasing ("Replied to her intro") no longer false-flips; override with `--reply-received` / `--no-reply-flip` |
 | `remember_apply.py` | route notes to 8 destinations |
 | `daily_stoic.py` | `--sync`/`--backfill` archive Daily Stoic meditations to `data/source-emails/daily-stoic/` (promo/digest filtered, 28 kept / 15 dropped on the seed corpus); `--mark-prompted <id>` records standup prompts. State: `tools/.daily_stoic_state.json`. Read-only Gmail; reuses gmail_fetch auth + sanitizer. |
 | `act_apply.py` | pipeline-add / contact-add / notes-add for inbox routing |
@@ -246,12 +246,13 @@ Python 3.8+. `pip install -r requirements.txt` for PDF features. **All `tools/*.
 
 ```
 TO: recipient@example.com
+CC: optional@example.com
 SUBJECT: Subject line
 BODY:
 Email body here
 ```
 
-Then `PYTHONIOENCODING=utf-8 python3 tools/open_draft.py` opens Gmail compose pre-filled.
+`CC:` is optional (omit the line entirely if unused). Then `PYTHONIOENCODING=utf-8 python3 tools/open_draft.py` opens Gmail compose pre-filled.
 
 **Post-interview workflow:**
 1. `data/company-notes/<slug>.md` — call intel, newest at top

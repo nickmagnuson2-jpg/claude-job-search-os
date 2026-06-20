@@ -54,6 +54,8 @@ Workflow({
 })
 ```
 
+**`args` binding:** some runtimes deliver the `args` parameter to the workflow as a JSON-encoded *string* rather than an object. `learn-workflow.js` self-parses this case (string → `JSON.parse` → config), so pass `args` as the structured object above either way and it will bind. The historical failure mode (observed 2026-06-15) was `args` arriving as a string, `cfg.topic` reading undefined, and the run silently falling back to the `'UNSPECIFIED TOPIC'` placeholder, burning ~700k tokens on agents that correctly refused to fabricate. If a run ever reports "UNSPECIFIED TOPIC," the topic did not bind, confirm the parse-guard at the top of learn-workflow.js is intact.
+
 The workflow runs six phases: **Scope** (anti-anchored agent builds the coverage checklist + atomic research slices), **Research** (one agent per slice on live web via Exa, plus an optional repo-miner), **Assemble** (fresh-context writer, URLs required), **Quiz** (optional), **Verify** (extract 25-35 load-bearing claims, adversarial agents try to refute each against live sources), **Finalize** (auto-correct flagged claims, attach real URLs, write a validation report).
 
 It returns `{ briefing, quiz, validationReport, tally, totalClaims }`.

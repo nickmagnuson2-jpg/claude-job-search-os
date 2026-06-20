@@ -12,7 +12,13 @@ export const meta = {
 }
 
 // ---------- config from args (the skill fills these in) ----------
-const cfg = args || {}
+// Some runtimes deliver `args` as a JSON-encoded string rather than an object;
+// parse defensively so `cfg.topic` binds in both cases (else it silently
+// falls through to 'UNSPECIFIED TOPIC' and the whole run researches nothing).
+let cfg = args || {}
+if (typeof cfg === 'string') {
+  try { cfg = JSON.parse(cfg) } catch { cfg = {} }
+}
 const TOPIC = cfg.topic || 'UNSPECIFIED TOPIC'
 const DEPTH = cfg.depth || 'deep' // 'focused' | 'deep' | 'comprehensive'
 const REPOS = Array.isArray(cfg.repos) ? cfg.repos : [] // optional paths/context to mine

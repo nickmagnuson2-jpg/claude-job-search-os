@@ -663,13 +663,13 @@ Every data file mutation (pipeline, networking, notes, todos) goes through a ded
 
 | Script | Target file | Operations |
 |--------|-------------|------------|
-| `todo_write.py` | `data/job-todos.md` | add, done, clear, sync |
+| `todo_write.py` | `data/job-todos.md` | add, done, withdraw, supersede, clear, sync |
 | `pipe_write.py` | `data/job-pipeline.md` | add, update, remove |
-| `networking_write.py` | `data/networking.md` + `data/outreach-log.md` | add, log (auto-updates outreach status on reply), remove |
+| `networking_write.py` | `data/networking.md` + `data/outreach-log.md` | add, log (flips outreach status to Replied only when the *recipient* replied), remove |
 | `remember_apply.py` | 8 destinations (pipeline, networking, notes, profile, etc.) | route-and-write |
 | `act_apply.py` | pipeline, networking, notes (via inbox routing) | pipeline-add, contact-add, notes-add |
 
-**Why scripts instead of inline LLM writes?** Three reasons: (1) markdown table format is brittle — slight variations break parsing in subsequent skill reads; (2) write logic appears in 5+ skills — a format change would require updating every skill; (3) scripts are testable in isolation — 424 unit tests cover all mutation paths, which LLM-inline writes cannot have. The LLM focuses on judgment (what to write); the script handles mechanics (how to write it correctly every time).
+**Why scripts instead of inline LLM writes?** Three reasons: (1) markdown table format is brittle — slight variations break parsing in subsequent skill reads; (2) write logic appears in 5+ skills — a format change would require updating every skill; (3) scripts are testable in isolation — 520 unit tests cover all mutation paths, which LLM-inline writes cannot have. The LLM focuses on judgment (what to write); the script handles mechanics (how to write it correctly every time).
 
 ### Background Automation (launchd)
 

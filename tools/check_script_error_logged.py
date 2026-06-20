@@ -47,6 +47,23 @@ ERROR_MARKER_RE = re.compile(r'"status"\s*:\s*"error"')
 # JSON message field (best-effort extraction; non-greedy)
 JSON_MESSAGE_RE = re.compile(r'"message"\s*:\s*"([^"]{1,300})"')
 
+# Traceback branch (added 2026-06-18): catches Python crashes that do NOT follow
+# the tools/*.py JSON-error contract — inline `python3 - <<heredoc` scripts and
+# skill helpers outside tools/ that raise a traceback instead of printing
+# {"status":"error"}. Origin: the ss-skill U+202F hand-typed-path FileNotFoundError
+# (2nd fire 2026-06-18) was invisible to this hook because it was an inline heredoc
+# importing ss_log_append, not a tools/*.py JSON-contract call.
+PY_INVOKE_RE = re.compile(r'(?:^|[|;&`(\n]|\benv\s)\s*(?:[A-Za-z_]\w*=\S+\s+)*python3?\b')
+TRACEBACK_RE = re.compile(r'Traceback \(most recent call last\):')
+# Final exception line of a traceback, e.g. "FileNotFoundError: [Errno 2] ..."
+TRACEBACK_EXC_RE = re.compile(
+    r'^([A-Za-z_][\w.]*(?:Error|Exception|Exit|Interrupt|Warning|Failure|Timeout)):?.*$',
+    re.M,
+)
+# Real .py frames in a traceback (skip <stdin>, <frozen ...>, <string>)
+TRACEBACK_FILE_RE = re.compile(r'File "([^"<][^"]*\.py)"')
+SKILL_PATH_RE = re.compile(r'/skills/([a-z0-9_-]+)/', re.IGNORECASE)
+
 # Graceful-empty patterns — scripts that use {"status": "error"} as a "nothing
 # to do" signal rather than a real defect (sweep operations, idempotent done,
 # query-no-match). Skip auto-logging these — they're expected returns, not
@@ -84,6 +101,44 @@ def extract_nature(combined: str, surface: str) -> str:
     # Sanitize for table cell: no pipes, no newlines
     nature = nature.replace("|", "/").replace("\n", " ").replace("\r", " ")
     # Add auto-tag so we know this came from the hook (vs Claude calling explicitly)
+    return f"[auto] {nature}"
+
+
+def derive_traceback_surface(command: str, combined: str) -> str:
+    """Best-effort surface name for a Python traceback that isn't a tools/*.py
+    JSON-contract call. Priority: tools script in command > skill name in command
+    > deepest real .py frame in the traceback > generic inline label."""
+    m = SCRIPT_RE.search(command)
+    if m:
+        name = m.group(1).lower() + ".py"
+        if name not in EXCLUDE_SCRIPTS:
+            return name
+    sm = SKILL_PATH_RE.search(command)
+    if sm:
+        return f"{sm.group(1).lower()} skill (inline)"
+    files = TRACEBACK_FILE_RE.findall(combined)
+    # deepest user frame = last File "..." that isn't a stdlib/frozen path
+    for f in reversed(files):
+        base = os.path.basename(f)
+        if "site-packages" not in f and not f.startswith("<"):
+            return f"{base} (inline)"
+    return "inline python3 (heredoc)"
+
+
+def extract_traceback_nature(combined: str) -> str:
+    """Concise nature from a traceback: the final exception line."""
+    excs = TRACEBACK_EXC_RE.findall(combined)
+    if excs:
+        # findall returns the captured class; re-find the full line for the message
+        for line in reversed(combined.splitlines()):
+            if TRACEBACK_EXC_RE.match(line.strip()):
+                nature = line.strip()[:160]
+                break
+        else:
+            nature = excs[-1][:160]
+    else:
+        nature = "python traceback (no parseable exception line)"
+    nature = nature.replace("|", "/").replace("\n", " ").replace("\r", " ")
     return f"[auto] {nature}"
 
 
@@ -137,15 +192,6 @@ def main() -> int:
     if not command:
         return 0
 
-    matches = SCRIPT_RE.findall(command)
-    if not matches:
-        return 0
-
-    scripts = [(m + ".py").lower() for m in matches]
-    scripts = [s for s in scripts if s not in EXCLUDE_SCRIPTS]
-    if not scripts:
-        return 0
-
     if re.search(r"\s--help\b|\s-h\b", command):
         return 0
 
@@ -154,22 +200,36 @@ def main() -> int:
     stderr = tool_response.get("stderr") or ""
     combined = stdout + "\n" + stderr
 
-    if not ERROR_MARKER_RE.search(combined):
-        # Strict signal only: the atomic-script contract is {"status": "error"}.
-        # Earlier fallback ("error" lowercase anywhere) matched too broadly —
-        # caught the word inside successful output (e.g., todo descriptions
-        # mentioning "error handling") and produced false-positive auto-logs
-        # (caught 2026-05-21 on todo_daily_metrics.py success path).
-        return 0
+    script_matches = SCRIPT_RE.findall(command)
+    scripts = [(m + ".py").lower() for m in script_matches]
+    scripts = [s for s in scripts if s not in EXCLUDE_SCRIPTS]
 
-    # Skip graceful-empty patterns (sweeps, idempotent done, query-no-match).
-    # These use status:error as a "nothing to do" signal — not real friction.
-    for pat in GRACEFUL_EMPTY_PATTERNS:
-        if pat.search(combined):
+    surface = None
+    nature = None
+
+    if scripts and ERROR_MARKER_RE.search(combined):
+        # Branch A — tools/*.py following the {"status":"error"} JSON contract.
+        # Strict signal only: earlier "error" substring matching caught the word
+        # inside successful output (caught 2026-05-21, todo_daily_metrics.py).
+        # Skip graceful-empty patterns (sweeps, idempotent done, query-no-match)
+        # — these use status:error as a "nothing to do" signal, not real friction.
+        if any(pat.search(combined) for pat in GRACEFUL_EMPTY_PATTERNS):
             return 0
+        surface = scripts[0]
+        nature = extract_nature(combined, surface)
+    elif PY_INVOKE_RE.search(command) and TRACEBACK_RE.search(combined):
+        # Branch B (2026-06-18) — any python invocation that crashed with a
+        # traceback: inline heredocs, skill helpers outside tools/, or a tools
+        # script that crashed instead of emitting JSON. A traceback is an
+        # unambiguous crash signal, so no graceful-empty carve-out applies.
+        # Exclude the two self-referential scripts to avoid logging loops.
+        if re.search(r"tools/(friction_log|check_script_error_logged)\.py", command):
+            return 0
+        surface = derive_traceback_surface(command, combined)
+        nature = extract_traceback_nature(combined)
 
-    surface = scripts[0]
-    nature = extract_nature(combined, surface)
+    if not surface or not nature:
+        return 0
 
     if is_recent_duplicate(surface, nature):
         sys.stderr.write(

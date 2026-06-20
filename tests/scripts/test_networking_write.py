@@ -286,3 +286,85 @@ def test_dry_run_returns_no_file_change(tmp_path):
     assert result["dry_run"] is True
     after = (tmp_path / "data/networking.md").read_text(encoding="utf-8")
     assert after == original
+
+
+# ---------------------------------------------------------------------------
+# Tests: outreach-log reply-flip (bug fix 2026-06-18 — who replied?)
+# ---------------------------------------------------------------------------
+
+OUTREACH_LOG_SENT = """\
+# Outreach Log
+
+| Date | Skill | Channel | Recipient | Company | Subject / Summary | Status |
+| --- | --- | --- | --- | --- | --- | --- |
+| 2026-06-18 | follow-up | email | Jane Doe | Acme Corp | Re: intro | Sent |
+"""
+
+
+def _setup_outreach(tmp_path):
+    write_fixture(tmp_path, "data/networking.md", NETWORKING_WITH_CONTACT)
+    write_fixture(tmp_path, "data/outreach-log.md", OUTREACH_LOG_SENT)
+
+
+def test_outbound_reply_does_not_flip_outreach_log(tmp_path):
+    """Logging Nick's OWN reply ('Replied to ...') must NOT flip the row to Replied."""
+    _setup_outreach(tmp_path)
+    result, code = run_nw_write(
+        "--repo-root", str(tmp_path), "log", "Jane Doe",
+        "--date", "2026-06-18", "--type", "email reply",
+        "--summary", "Replied to her intro - yes to a chat",
+    )
+    assert code == 0
+    assert result["outreach_log_updated"] is False
+    log = (tmp_path / "data/outreach-log.md").read_text(encoding="utf-8")
+    assert "| Sent |" in log
+    assert "| Replied |" not in log
+
+
+def test_inbound_reply_flips_outreach_log(tmp_path):
+    """A genuine received reply ('Heard back ...') flips the row to Replied."""
+    _setup_outreach(tmp_path)
+    result, code = run_nw_write(
+        "--repo-root", str(tmp_path), "log", "Jane Doe",
+        "--date", "2026-06-19", "--type", "email",
+        "--summary", "Heard back from Jane - wants to schedule",
+    )
+    assert code == 0
+    assert result["outreach_log_updated"] is True
+    log = (tmp_path / "data/outreach-log.md").read_text(encoding="utf-8")
+    assert "| Replied |" in log
+
+
+def test_inbound_subject_wins_over_outbound_marker(tmp_path):
+    """'She replied to my email' is inbound even though it contains 'replied to'."""
+    _setup_outreach(tmp_path)
+    result, _ = run_nw_write(
+        "--repo-root", str(tmp_path), "log", "Jane Doe",
+        "--date", "2026-06-19", "--type", "email",
+        "--summary", "She replied to my email with availability",
+    )
+    assert result["outreach_log_updated"] is True
+
+
+def test_reply_received_flag_forces_flip(tmp_path):
+    """--reply-received forces the flip even with outbound-looking phrasing."""
+    _setup_outreach(tmp_path)
+    result, _ = run_nw_write(
+        "--repo-root", str(tmp_path), "log", "Jane Doe",
+        "--date", "2026-06-19", "--type", "email",
+        "--summary", "Replied to her note", "--reply-received",
+    )
+    assert result["outreach_log_updated"] is True
+
+
+def test_no_reply_flip_flag_suppresses(tmp_path):
+    """--no-reply-flip suppresses the flip even with inbound-looking phrasing."""
+    _setup_outreach(tmp_path)
+    result, _ = run_nw_write(
+        "--repo-root", str(tmp_path), "log", "Jane Doe",
+        "--date", "2026-06-19", "--type", "email",
+        "--summary", "Heard back from Jane", "--no-reply-flip",
+    )
+    assert result["outreach_log_updated"] is False
+    log = (tmp_path / "data/outreach-log.md").read_text(encoding="utf-8")
+    assert "| Sent |" in log
