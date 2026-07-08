@@ -1,13 +1,25 @@
 #!/bin/bash
 # Backup private job search data to GitHub
-# Tracks: data/, output/, coaching/, memory/, inbox/, _archive/, private framework/*.md docs, .claude/skills/scan-jobs/cache.md
+# Tracks: data/, output/, coaching/, memory/ (repo-local + canonical sidecar mirror),
+#         inbox/, _archive/, private framework/*.md docs, .claude/skills/scan-jobs/cache.md
 # Repo: https://github.com/nickmagnuson2-jpg/nick-job-search-data
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORK_TREE="$(dirname "$SCRIPT_DIR")"
 GIT_DIR="$HOME/.nick-private-git"
+CANONICAL_MEMORY="$HOME/.claude/projects/-Users-mag-Documents-Obsidian-30-projects-job-search/memory"
 
 GIT="git --git-dir=$GIT_DIR --work-tree=$WORK_TREE"
+
+# The canonical auto-memory sidecar lives outside the repo entirely (Claude Code's
+# actual session-loaded memory dir), so it's invisible to the git add below unless
+# mirrored in first. rsync into a repo-local subfolder (gitignored from the PUBLIC
+# repo like the rest of memory/) so the existing add/commit/push picks it up as-is.
+if [ -d "$CANONICAL_MEMORY" ]; then
+  echo "Mirroring canonical memory sidecar..."
+  mkdir -p "$WORK_TREE/memory/canonical-sidecar"
+  rsync -a --delete "$CANONICAL_MEMORY/" "$WORK_TREE/memory/canonical-sidecar/"
+fi
 
 echo "Staging changes..."
 $GIT add --force \
