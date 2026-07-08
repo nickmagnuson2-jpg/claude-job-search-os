@@ -13,7 +13,8 @@
       "WebFetch(domain:www.clay.com)",
       "Skill(act)",
       "mcp__granola__get_meeting_transcript",
-      "Edit(/Users/mag/.claude/projects/-Users-mag-Documents-Obsidian-30-projects-job-search/memory/*.md)"
+      "Edit(/Users/mag/.claude/projects/-Users-mag-Documents-Obsidian-30-projects-job-search/memory/*.md)",
+      "Skill(follow-up)"
     ]
   },
   "spinnerTipsEnabled": true

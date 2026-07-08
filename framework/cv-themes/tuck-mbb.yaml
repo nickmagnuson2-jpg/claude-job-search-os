@@ -31,7 +31,7 @@ design:
     small_caps:
       name: false
       section_titles: true
-    line_spacing: 0.45em
+    line_spacing: 0.6em
     bold:
       section_titles: true
   colors:
@@ -42,10 +42,10 @@ design:
     links: rgb(0, 0, 0)
   page:
     size: us-letter
-    top_margin: 0.5in
-    bottom_margin: 0.5in
-    left_margin: 0.6in
-    right_margin: 0.6in
+    top_margin: 0.4in
+    bottom_margin: 0.4in
+    left_margin: 0.5in
+    right_margin: 0.5in
     show_footer: false
     show_top_note: false
   header:

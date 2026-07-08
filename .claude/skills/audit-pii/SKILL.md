@@ -39,6 +39,23 @@ Per `memory/feedback_nick_pii_redaction_boundary`:
 
 ## Steps
 
+### Step 0 — Check for non-main ref exposure on the public remote
+
+```bash
+git ls-remote origin
+```
+
+Only `HEAD` and `refs/heads/main` should be present. Any other ref — most
+commonly `refs/pull/N/head` from a merged/closed PR — can serve gitignored or
+sealed file content from that PR's tree/history even when `main` is clean,
+because deleting a branch or force-pushing `main` does **not** remove pull
+refs. If any non-`main` ref appears, flag it as a **blocking** finding: the
+only reliable fix is to delete and recreate the repo from the current clean
+`main` (pull refs do not survive repo recreation). A GitHub Support
+sensitive-data-removal request is the fallback if recreation isn't viable.
+Origin: 2026-07-07 fable-audit finding, confirmed live and remediated
+2026-07-08 via delete-and-recreate (`memory/audit-2026-07-07.md`).
+
 ### Step 1 — Refresh the denylist and run the deterministic scan
 
 ```bash

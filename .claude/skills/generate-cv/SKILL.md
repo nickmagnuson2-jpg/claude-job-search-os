@@ -110,9 +110,9 @@ cv:
         location: Durham, NC
     ADDITIONAL INFORMATION:
       - label: Skills
-        details: <tailored skills line>
-      - label: Side project          # optional, only if relevant
-        details: <one-line side project description>
+        details: <tailored skills line — concrete tools + craft only; see Skills rule below>
+      - label: Building              # use "Building" NOT "Side project" (Nick: "side project is not what I am")
+        details: <the AI products Nick has built — named, by what they ARE + capability, NOT internal plumbing>
       - label: Hobbies
         details: <hobbies line from profile.md>
 locale:
@@ -125,10 +125,10 @@ settings:
 
 Apply all **Tailoring Rules** and **CV Quality Standards** from `framework/application-workflow.md`. Key requirements:
 
-- **Professional summary** — 3–4 lines tailored to this specific role. Opens with a hook tied to the company's mission or the role's core challenge.
+- **Professional summary** — 3–4 lines tailored to this specific role. Opens with a hook tied to the company's mission or the role's core challenge. **Voice (Nick, 2026-06-22):** lead with the BUILDER/OPERATOR identity and results ("I get things done, use data, and build the thing that fixes it"), NOT a credential-first opener. Do NOT lead with "McKinsey-trained" or frame Nick as someone who "lands complex change in large organizations" — for early-stage/founder audiences that reads as pedigree-play (and founders hire for agency over credentials). McKinsey + Zuora are SUPPORTING credibility, named mid-summary, not the lead. First-person ("I ...") is acceptable and in voice for the summary.
 - **Experience entries** — start from the Step 5 stubs verbatim. Tailor bullet PHRASING for JD relevance (emphasize keywords, lead with most-relevant impact). Do NOT invent quantified claims not present in the stubs or in `data/projects/<slug>.md`. Lesson #54: prior-CV numbers are hypotheses, source files are tests.
 - **Experience ordering** — strict reverse-chronological (most recent first). Do NOT reorder by relevance — non-chronological CVs are flagged by ATS systems and confuse recruiters. Tailor through bullet selection and emphasis, not ordering.
-- **Skills section** — emphasise skills that appear in the JD. Lead with required skills the candidate has. Per lesson #31/#53: every Skills line item must be substantively evidenced by an experience bullet; hedge words (`-adjacent`, `partnership` without a verb, `exposure`, `familiarity`) are forbidden.
+- **Skills section** — **concrete tools + craft ONLY.** Per lesson #31/#53 + `feedback_cv_one_page_default_no_skills_fluff` + Nick 2026-06-22: every item must be substantively evidenced by a bullet; hedge words (`-adjacent`, `partnership` without a verb, `exposure`, `familiarity`) forbidden. **DO NOT emit Title-Case competency buzzwords or JD-mirroring compound phrases** ("Implementation & Deployment", "Customer Onboarding", "Change Management", "Cross-Functional Program Management", "Stakeholder Management", "Operating Cadence & Playbook Design", "Executive Communication") — those are already shown in the bullets and read as keyword bait. Nick's preferred framing (2026-06-22): group as the real things he does — **building with AI** (Claude Code, Claude/OpenAI APIs, Next.js, Postgres, AI agent workflows), **data analysis and financial modeling** (SQL, R, Tableau, Looker, Excel), **executive decks** (PowerPoint). Build the line from `data/skills.md` + evidenced experience, sentence case, strongest/most-differentiated first. **Building entry:** label it `Building` (NOT "Side project") and name Nick's AI products (Portrait Crossword at portraitcrossword.com; the job-search OS) by what they ARE + capability, never by listing internal primitives (hooks, scripts) — see `feedback_dev_jargon_to_ceo_context`.
 - **ATS keyword coverage** — verify all 10 extracted keywords appear at least once in the CV text. If a keyword is missing, find a natural place to include it.
 - **Achievements over responsibilities** — lead bullets with quantified outcomes where possible (sourced from stubs, not invented).
 - **No content from `data/project-background/`** — enforce absolutely.
@@ -192,9 +192,10 @@ The PDF is the artifact you send. The markdown is the rendercv-emitted version u
 
 Per `framework/application-workflow.md` § Render & verify. Do NOT skip — this is where the layout/length defects that otherwise force user iteration get caught.
 
-1. **`Read` the PNG** (`output/<company-slug>/rendercv_output/*_1.png`). Visually confirm: exactly one page for Nick; italics, line breaks, and spacing render cleanly (no stray asterisks, no broken emphasis, no awkward title wraps); page well-filled, not overflowing. Reasoning from the markdown alone misses these — the rendercv gotchas (bare-year → "Jan YYYY"; `\n` breaking position italics) are only visible in the render.
+1. **`Read` the PNG** (`output/<company-slug>/rendercv_output/*_1.png`). Visually confirm: exactly one page for Nick; italics, line breaks, and spacing render cleanly (no stray asterisks, no broken emphasis, no awkward title wraps); page well-filled, not overflowing. Reasoning from the markdown alone misses these — the rendercv gotchas (bare-year → "Jan YYYY"; `\n` breaking position italics) are only visible in the render. **Bare-year fix (Nick, 2026-06-22):** for a single-year role, write the date as an UNQUOTED integer (`date: 2024`) — that renders as "2024". A quoted `date: '2024'` renders as "Jan 2024" (wrong, and it spotlights short stints / the silent gap). Multi-year ranges (`date: 2022 – 2024`) already render verbatim.
 2. **Count pages:** `PYTHONIOENCODING=utf-8 python3 -c "from pypdf import PdfReader; print(len(PdfReader('output/<company-slug>/MMDDYY-magnuson.pdf').pages))"`. For Nick this must be 1.
-3. **If over one page or layout is off, fix it now and re-render** — trim per § Length & One-Page Verification (tighten summary → merge/cut weakest-oldest bullets → shorten side project → drop filler, before touching design). Never hand over a 2-page CV or one with mechanical layout defects for the user to "edit down."
+3. **If over one page or layout is off, fix it now and re-render** — trim per § Length & One-Page Verification (tighten summary → merge/cut weakest-oldest bullets → shorten the Building entry → drop filler, before touching design). Never hand over a 2-page CV or one with mechanical layout defects for the user to "edit down."
+3b. **Fill the page — don't leave a half-empty CV (Nick, 2026-06-22).** If there is meaningful blank space at the bottom, the CV is under-filled — bump sizing in the FINAL `MMDDYY-magnuson.yaml` design block (NOT the shared theme, so other CVs are unaffected) and re-render: body `11pt` / name `20pt`, `line_spacing: 0.6em`, `sections.space_between_regular_entries: 0.5em`, and `section_titles.space_above: 0.45cm` for clear breaks between SUMMARY / EXPERIENCE / EDUCATION / ADDITIONAL INFORMATION. Re-check it still holds at one page (Step 2). The target is a full, balanced single page, not a top-heavy one.
 4. Once verified, `rm -rf output/<company-slug>/rendercv_output/`.
 
 ### Step 9c: Save Cheat Sheet
