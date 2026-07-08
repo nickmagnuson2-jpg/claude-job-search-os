@@ -56,6 +56,18 @@ sensitive-data-removal request is the fallback if recreation isn't viable.
 Origin: 2026-07-07 fable-audit finding, confirmed live and remediated
 2026-07-08 via delete-and-recreate (`memory/audit-2026-07-07.md`).
 
+### Step 0b — Full-tree + history + remote-ref sweep (mandatory before any squash, filter-repo, or force-push)
+
+The routine Step 1 scope (changed/staged files in the working tree) is correct for a normal commit, but is **insufficient** before any history-rewriting or snapshot-publishing operation — a squashed-snapshot force-push, `git filter-repo`, or branch recreation publishes or exposes *every* file and *all* history, not just what you touched this session. A changed-file-only scan gives a false all-clear in that scenario. See `memory/feedback_pii_sweep_must_cover_siblings_and_history.md`.
+
+Before any such operation, sweep three axes (not just the file you edited):
+
+1. **All tracked files, not just changed ones:** `git grep -in <name>` across the whole working tree for each denylist token and any newly-known real entity.
+2. **Git history, not just the working tree:** `git grep -in <name> $(git rev-list --all)` (inline `$(...)`, not a pre-expanded shell variable — that has silently returned empty before) and `git grep <name> origin/<branch>` per remote branch.
+3. **Contextual variants, not just exact tokens:** quoted strings, path-embedded fragments (e.g. `therapy-<name>-transcript.md`), case variants. For short single-word company/person tokens that could also appear as a substring of an unrelated common word, use word-boundary matching (`grep -wE "\b<token>\b"`) rather than plain substring — plain substring produces false positives that both cause false alarms and can corrupt unrelated content if fed into a `--replace-text` scrub.
+
+Surface every hit and triage by hand for a small set. Do not report "clean" from a changed-files-only scan when the operation touches the full history/tree.
+
 ### Step 1 — Refresh the denylist and run the deterministic scan
 
 ```bash
@@ -99,9 +111,14 @@ Subagent instructions:
 > public repo: real person names, pipeline/target company names, email addresses, phone
 > numbers, physical addresses, side-venture names. Apply this boundary: KEEP real
 > employers/schools/public-author names/generic products [list]; SCRUB everything else.
+> **A real name/company used as an EXAMPLE, test fixture, code comment, or "Origin:"
+> provenance note is STILL a leak — "it's just an example" is NOT a reason to mark it
+> clean.** Flag it exactly as you would a live reference.
 > For each finding return: file, line, exact text, type, KEEP/SCRUB/AMBIGUOUS, and a
 > suggested generic placeholder that preserves the example's intent. Return structured
 > findings only. If a file is clean, say so. Do not edit anything.
+
+**Why the anti-rationalization line is mandatory:** subagents systematically rationalize a real name in an example/test/Origin-note as "benign illustrative data" and report false-clean — fired 3x in one session (2026-06-15) before this line existed. See `memory/feedback_pii_subagents_rationalize_examples.md`.
 
 ### Step 3 — Merge, present, and gate
 
@@ -121,6 +138,13 @@ De-duplicate by (file, text). Present grouped by file:
 - **Any SCRUB finding = do not commit yet.** Offer to apply the generic-placeholder
   fixes (re-read + Write/Edit each file), then re-run the audit to confirm green.
 - **AMBIGUOUS findings** are surfaced for Nick's decision, never auto-edited.
+- **Treat a subagent "clean" verdict as a hypothesis, not a conclusion.** Cross-check
+  its clean calls against the deterministic denylist scan (Step 1) and a direct grep
+  for known real entities (recent `data/networking.md` / `data/job-pipeline.md` names,
+  Origin-note dates that name a real person/company). Do not accept "clean" purely on
+  the subagent's say-so — the failure mode this guards against is a confidently-wrong
+  all-clear, which is worse than no check at all. See
+  `memory/feedback_pii_subagents_rationalize_examples.md`.
 - **All clean** → report `✅ PII audit clean — safe to commit.` and stop.
 
 ### Step 4 — On fix-and-recommit
