@@ -54,6 +54,10 @@
           {
             "type": "command",
             "command": "python3 /Users/mag/Documents/Obsidian/30-projects/job-search/tools/check_bare_python.py"
+          },
+          {
+            "type": "command",
+            "command": "python3 /Users/mag/Documents/Obsidian/30-projects/job-search/tools/check_screenshot_path.py"
           }
         ]
       },
