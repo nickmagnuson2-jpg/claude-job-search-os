@@ -7,7 +7,8 @@ Navigation for all project documentation. The reader-facing docs are organized b
 | File | Purpose |
 |------|---------|
 | [CLAUDE.md](../CLAUDE.md) | Project instructions, loaded every session |
-| [memory/MEMORY.md](../memory/MEMORY.md) | Persistent context, loaded every session |
+| [memory/MEMORY.md](../memory/MEMORY.md) | Loaded every session — critical context + a router to the topic shards below |
+| memory/index-\<topic\>.md | Full memory index, split into topic shards (outreach, coaching, research, tools, system, personal, projects); loaded on demand per the router |
 | [memory/lessons.md](../memory/lessons.md) | Correction tracking, reviewed before skill edits, data ops, CV generation |
 
 ---

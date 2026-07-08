@@ -31,7 +31,7 @@ cd claude-job-search-os
 pip install -r requirements.txt   # optional, only needed for PDF generation
 ```
 
-Open the repo in Claude Code. The session loads `CLAUDE.md` (the project's operating rules) and `memory/MEMORY.md` automatically.
+Open the repo in Claude Code. The session loads `CLAUDE.md` (the project's operating rules) and `memory/MEMORY.md` automatically. As your memory corpus grows, `MEMORY.md` can become a small router pointing to topic-shard files (`memory/index-<topic>.md`) instead of holding every entry directly — see `docs/methodology.md` for the pattern.
 
 > **You should see:** Claude Code start a session in the repo with no errors. If you skipped `pip install`, everything still works except PDF rendering.
 

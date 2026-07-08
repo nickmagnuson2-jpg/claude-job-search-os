@@ -16,7 +16,7 @@ The `.gitignore` excludes all personal data directories by default:
 | `output/` | Generated CVs, cheat sheets, review reports | Yes |
 | `files/` | PDF input files (CVs you import) | Yes |
 | `inbox/` | Raw capture zone (emails, nudges, voice notes awaiting routing) | Yes |
-| `memory/` | Claude's persistent session memory (auto-memory files, `MEMORY.md`) | Yes |
+| `memory/` | Claude's persistent session memory (auto-memory files, `MEMORY.md` router + any `index-<topic>.md` shards) | Yes |
 
 Everything in `framework/`, `plugins/`, `docs/`, `tools/`, `.claude/skills/`, `examples/`, and `CLAUDE.md` is safe to commit. These contain methodology and automation only, no personal data. (A few `framework/*.md` methodology docs are author-private and gitignored in the source repo; they ship as copy-into-place starters under `examples/framework/`. Your own filled-in versions stay gitignored the same way.)
 

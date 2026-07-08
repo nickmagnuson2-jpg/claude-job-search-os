@@ -105,7 +105,7 @@ How the 11 behavioral patterns in the global CLAUDE.md snippet map to this proje
 
 **Project implementation:**
 - The `memory/feedback_*.md` auto-memory layer captures these as enforced rules (resist-social-pressure, premortem-on-own-proposals, confidence-tagging) reviewed before plan/spec work
-- Surfaced via `MEMORY.md` (auto-loaded each session) so the discipline persists across conversations
+- Surfaced via `MEMORY.md` (auto-loaded each session — directly, or via its topic-shard router once the corpus is large enough to need one) so the discipline persists across conversations
 
 ## Design Principle
 
