@@ -191,6 +191,18 @@ Analyze the interaction history to determine the follow-up type:
 
 **Voice-dictated proper nouns:** any company/person name that entered via Nick's dictation (Wispr) is unverified — flag for confirm before it goes in an outbound email (e.g. "Acme Labs" → was actually "Acme AI").
 
+#### Step 3d: Voice-Pure Dictation Mode (when Nick provides a guide)
+
+**Trigger:** Nick passes a voice-pure dictation guide via argument or earlier in the conversation ("use this as the spine: '...'"), OR signals he'll author the substance himself ("give me the spine," "I want to put it in my words," "I'll write it myself").
+
+**Rule:** The polished output's diff from the guide must be **mechanical only** — grammar, punctuation, Wispr-homophone silent-correct, sentence-boundary cleanup. Do NOT add new sentences, qualitative adjectives ("solid concept," "really cool"), feature-list descriptors when products are named, volume/scale estimates Nick didn't include, a second ask, or URLs to a company's own docs when the recipient works there. Do NOT reorganize structure beyond the dictation. If something seems missing, pause and ask Nick before adding.
+
+**When Nick signals he'll write it himself** ("give me the spine"), give him structure + key points + raw hook material — NOT a finished, polished message — and do NOT run the fully-drafted Step 4-8 flow. Escalate to a full draft only if he explicitly asks for one ("put a draft together").
+
+**Pre-present check:** diff the polished draft against the guide. If the diff includes new content beyond mechanical fixes, revise to cut.
+
+See `memory/feedback_voice_pure_diff_minimal.md`, `memory/feedback_minimize_polish_on_voice_pure_dictation.md`, `memory/feedback_no_product_docs_to_employees.md`, `memory/feedback_give_nick_beats_not_a_polished_script.md`.
+
 #### Step 4: Sequence-Aware Drafting
 
 Count prior outbound messages to this contact to determine sequence position. Follow the cadence from `framework/outreach-guide.md`:

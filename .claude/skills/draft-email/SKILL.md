@@ -146,7 +146,7 @@ Mid-session, Nick's profile and identity context is usually already in the conve
 
 ### Step 4b: Voice-Pure Dictation Mode (when Nick provides a guide)
 
-**Trigger:** Nick passes a voice-pure dictation guide via argument or earlier in the conversation (e.g., "use this as the spine: 'I watched the Loom. Will absolutely provide my resume...'").
+**Trigger:** Nick passes a voice-pure dictation guide via argument or earlier in the conversation (e.g., "use this as the spine: 'I watched the Loom. Will absolutely provide my resume...'"), OR he signals he'll author the substance himself ("give me the spine," "I want to put it in my words," "I'll write it myself"). In the latter case, give him structure + key points + raw hook material — NOT a finished, polished message — and do NOT run the full Step 5-8 draft flow. Escalate to a full draft only if he explicitly asks for one ("put a draft together"). See `memory/feedback_give_nick_beats_not_a_polished_script.md`.
 
 **Rule:** The polished output's diff from the guide must be **mechanical only**:
 - Grammar errors → fix
@@ -168,6 +168,17 @@ Mid-session, Nick's profile and identity context is usually already in the conve
 If something seems missing (a URL, a number, a transition), **pause and ask Nick** before adding. Do not infer.
 
 See `memory/feedback_voice_pure_diff_minimal.md` and `memory/feedback_minimize_polish_on_voice_pure_dictation.md`.
+
+### Step 4c: Reply-Mode Source Grounding (mandatory when replying to a specific received message)
+
+**Fires when:** the email is a *reply* to a specific message the recipient sent (subject starts "Re:", or the trigger was "reply to their email" / "reply to this thread"). Skip for new (non-reply) emails.
+
+**This step exists because:** the highest-frequency cause of multi-spin reply churn is drafting from a *self-summary* of the inbound instead of the verbatim source — which silently carries mis-assigned attributes (which thing they said about which entity) and invented positioning claims. "Quick / ASAP" makes this MORE important, not skippable. Origin: 2026-06-15 recruiter-reply incident, 7 versions. See `memory/feedback_ground_email_draft_in_verbatim_source_not_paraphrase.md`.
+
+1. **Pull the verbatim inbound.** If not already in context, fetch it: `tools/gmail_fetch.py --all-mail --search "<query>" --body`. Read it line by line — do NOT work from a summary.
+2. **Build a claim→source map (working notes, not the email).** For every substantive sentence the draft will make about the sender's message — per entity/role — quote the verbatim line it grounds in. Any claim with no source line is invented: cut it, recast it, or ask Nick.
+3. **Cross-assignment check:** verify each attribute is attached to the entity the sender attached it to.
+4. **Mirror their framing where agreeing:** echo the sender's own structure/words where Nick is agreeing with their read.
 
 ### Step 5: Draft by Email Type
 
