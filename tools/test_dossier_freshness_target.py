@@ -47,7 +47,7 @@ def check(name, cond):
 
 root = Path(tempfile.mkdtemp())
 (root / "data").mkdir()
-# Northwind = active pipeline target; good-eggs / climate-ai = abandoned lanes.
+# Northwind = active pipeline target; good-eggs / zzz-fixture-only-co = abandoned lanes.
 (root / "data" / "job-pipeline.md").write_text(
     "| Company | Role | Stage |\n|---|---|---|\n"
     "| Northwind | FDAS | Phone Screen |\n"
@@ -56,7 +56,7 @@ root = Path(tempfile.mkdtemp())
 _dossier(root, "northwind", "2026-02-24")   # stale + active pipeline target
 _dossier(root, "tessera", "2026-02-24")      # stale + pipeline BUT terminal stage
 _dossier(root, "good-eggs", "2026-02-23")        # stale + not in pipeline at all
-_dossier(root, "climate-ai", "2026-02-25")       # stale + not in pipeline
+_dossier(root, "zzz-fixture-only-co", "2026-02-25")       # stale + not in pipeline
 _dossier(root, "fresh-co", "2026-06-01")         # fresh (not stale)
 
 data = _run(root)
@@ -67,20 +67,20 @@ check("terminal-stage pipeline co suppressed (tessera withdrawn)",
       "tessera" not in alert_slugs)
 check("non-pipeline stale dossier suppressed (good-eggs)",
       "good-eggs" not in alert_slugs)
-check("non-pipeline stale dossier suppressed (climate-ai)",
-      "climate-ai" not in alert_slugs)
+check("non-pipeline stale dossier suppressed (zzz-fixture-only-co)",
+      "zzz-fixture-only-co" not in alert_slugs)
 check("suppressed_non_target == 3", data["summary"]["suppressed_non_target"] == 3)
 check("stale_target_count == 1", data["summary"]["stale_target_count"] == 1)
 check("older_than_30_days still lists all 4 stale (no data loss)",
       len({e["slug"] for e in data["recent_dossiers"]["older_than_30_days"]}
-          & {"northwind", "tessera", "good-eggs", "climate-ai"}) == 4)
+          & {"northwind", "tessera", "good-eggs", "zzz-fixture-only-co"}) == 4)
 check("fresh dossier not in alerts", "fresh-co" not in alert_slugs)
 
 # --all-stale restores legacy behavior
 data_all = _run(root, all_stale=True)
 all_slugs = {a["slug"] for a in data_all["staleness_alerts"]}
 check("--all-stale includes non-target + terminal",
-      {"northwind", "tessera", "good-eggs", "climate-ai"} <= all_slugs)
+      {"northwind", "tessera", "good-eggs", "zzz-fixture-only-co"} <= all_slugs)
 
 print(f"\ndossier_freshness target tests: {PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

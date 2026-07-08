@@ -20,6 +20,17 @@ import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from schema_guard import assert_schema, find_header_line, SchemaDriftError  # noqa: E402
+
+# Canonical schema (tools/pipe_write.py PIPELINE_HEADER) — the parser's cols[N]
+# indices below assume this exact column order. See schema_guard.py docstring for
+# the 2026-06-08 incident this guards against.
+PIPELINE_EXPECTED_COLUMNS = [
+    "Company", "Role", "Stage", "Date Updated",
+    "Next Action", "CV Used", "Notes", "URL",
+]
+
 # Staleness thresholds by stage (days)
 STAGE_THRESHOLDS = {
     "Researching": 7,
@@ -70,6 +81,10 @@ def read_file(path: Path) -> str:
 
 
 def parse_pipeline(content: str, today: date, global_threshold: int | None) -> dict:
+    # Fail loudly (not silently) if the live file's header has drifted from what
+    # the cols[N] indices below assume — see schema_guard.py.
+    assert_schema(find_header_line(content, "| Company |"), PIPELINE_EXPECTED_COLUMNS)
+
     active_entries = []
     stalled_entries = []
     stage_distribution = {}
@@ -162,7 +177,13 @@ def main():
     repo_root = Path(args.repo_root) if args.repo_root else Path.cwd()
     content = read_file(repo_root / "data" / "job-pipeline.md")
 
-    result = parse_pipeline(content, today, args.days_threshold)
+    try:
+        result = parse_pipeline(content, today, args.days_threshold)
+    except SchemaDriftError as e:
+        print(json.dumps({"status": "error", "code": "schema_drift", "message": str(e)},
+                          indent=2, ensure_ascii=False))
+        sys.exit(1)
+
     result["target_date"] = today.strftime("%Y-%m-%d")
 
     print(json.dumps(result, indent=2, ensure_ascii=False))

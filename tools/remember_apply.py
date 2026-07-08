@@ -19,6 +19,8 @@ Destination types handled:
   decision        → data/decisions.md — prepend dated entry (newest-first log)
   general_note    → data/notes.md — append under ## Notes
   raw_capture     → inbox/ — create new file
+  source_article  → data/source-articles/YYYYMMDD-<slug>.md — voice-pure commonplace-book entry
+  deferred_idea   → data/inbox.md — prepend dated ## YYYY-MM-DD | <title> block
 
 Output: JSON to stdout
   Single:  {"status": "ok", "action": "<type>", "summary": "..."}
@@ -456,6 +458,117 @@ def apply_raw_capture(note: str, dest: dict, repo_root: Path) -> dict:
     return {"status": "ok", "type": "raw_capture", "file": str(path)}
 
 
+def _title_from_note(note: str, max_words: int = 8, max_chars: int = 70) -> str:
+    """First N words of the note, cleaned up, for use as a heading/title."""
+    stripped = note.strip()
+    # Drop a leading "interesting:" / "later:" style label if present.
+    stripped = re.sub(
+        r"^\s*(save( this)?\s+as\s+interesting|interesting|later|park this)\s*[:\-]\s*",
+        "", stripped, flags=re.I,
+    )
+    words = stripped.split()
+    title = " ".join(words[:max_words])
+    if len(words) > max_words or len(title) > max_chars:
+        title = title[:max_chars].rstrip()
+        title += "..."
+    return title or "Untitled"
+
+
+def _slug_from_note(note: str, max_words: int = 6) -> str:
+    """Lowercase-hyphenated slug from the first few words of the note."""
+    stripped = re.sub(
+        r"^\s*(save( this)?\s+as\s+interesting|interesting|later|park this)\s*[:\-]\s*",
+        "", note.strip(), flags=re.I,
+    )
+    stripped = re.sub(r"https?://\S+", "", stripped)  # drop URLs from the slug
+    words = re.sub(r"[^\w\s]", "", stripped.lower()).split()[:max_words]
+    return "-".join(words) if words else "note"
+
+
+def apply_source_article(note: str, dest: dict, repo_root: Path) -> dict:
+    """Create a voice-pure commonplace-book entry in data/source-articles/.
+
+    Matches the entry structure in data/commonplace-book.md: BLUF, an empty
+    'My take (voice-pure)' section (never authored by Claude), a separate
+    'Claude's read' section, and a Connections stub.
+    """
+    today = datetime.now()
+    date_str = today.strftime("%Y%m%d")
+    slug = _slug_from_note(note)
+    title = _title_from_note(note)
+
+    dest_dir = repo_root / "data" / "source-articles"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    filename = f"{date_str}-{slug}.md"
+    path = dest_dir / filename
+    # Avoid clobbering same-day duplicate slugs.
+    n = 2
+    while path.exists():
+        path = dest_dir / f"{date_str}-{slug}-{n}.md"
+        n += 1
+
+    url_match = re.search(r"https?://\S+", note)
+    url = url_match.group(0) if url_match else "TODO"
+
+    file_content = (
+        f"# {title}\n\n"
+        f"> **Source:** TODO\n"
+        f"> **Author:** TODO\n"
+        f"> **Published:** TODO\n"
+        f"> **URL:** {url}\n"
+        f"> **Fetched:** {today.strftime('%Y-%m-%d')} (via `/remember`)\n"
+        f"> **Evidence tier:** TODO\n\n"
+        f"## BLUF\n\n"
+        f"{note}\n\n"
+        f"## My take (voice-pure)\n\n"
+        f"<!-- voice: pure-voice, my words only, not Claude's -->\n\n"
+        f"_(unfilled, backlog signal)_\n\n"
+        f"## Claude's read\n\n"
+        f"_(pending)_\n\n"
+        f"## Connections\n\n"
+    )
+    write_atomic(path, file_content)
+    return {"status": "ok", "type": "source_article", "file": str(path)}
+
+
+def apply_deferred_idea(note: str, dest: dict, repo_root: Path) -> dict:
+    """Prepend a dated ## YYYY-MM-DD | <title> block to data/inbox.md.
+
+    Deferred ideas ("come back to this later") route to the inbox rather
+    than the general_note fallback to data/notes.md — see global CLAUDE.md
+    "The /remember Skill" and feedback_remember_deferred_goes_to_inbox.md.
+    """
+    today = datetime.now().strftime("%Y-%m-%d")
+    path = repo_root / "data" / "inbox.md"
+
+    content = read_file(path)
+    if not content:
+        content = (
+            "# Inbox\n\n"
+            "<!-- Items captured via /remember. Review and route to appropriate files periodically. -->\n"
+        )
+
+    title = _title_from_note(note)
+    lines = content.splitlines()
+    entry = ["", f"## {today} | {title}", "", note, ""]
+
+    insert_at = None
+    for i, ln in enumerate(lines):
+        if ln.strip().startswith("<!-- Items captured"):
+            insert_at = i + 1
+            break
+
+    if insert_at is None:
+        lines.extend(entry)
+    else:
+        lines[insert_at:insert_at] = entry
+
+    new_content = "\n".join(lines).rstrip("\n") + "\n"
+    write_atomic(path, new_content)
+    return {"status": "ok", "type": "deferred_idea", "file": str(path)}
+
+
 # ---------------------------------------------------------------------------
 # Dispatch
 # ---------------------------------------------------------------------------
@@ -470,6 +583,8 @@ HANDLERS = {
     "accomplishment": lambda n, d, r: apply_dated_log(n, "accomplishment", r),
     "general_note":   lambda n, d, r: apply_notes_md(n, "general_note", r),
     "raw_capture":    apply_raw_capture,
+    "source_article": apply_source_article,
+    "deferred_idea":  apply_deferred_idea,
 }
 
 

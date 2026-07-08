@@ -240,6 +240,18 @@ def cmd_update(args, pipeline_path: Path, dry_run: bool) -> None:
 
     row_idx, cols = matches[0]
 
+    if len(cols) != 8:
+        out_error(
+            f"Row for {args.company} has {len(cols)} columns, expected 8 — "
+            f"a Notes or Next Action cell likely contains an unescaped '|'. "
+            f"Fix the row by hand in {PIPELINE_FILE} (replace the stray '|' "
+            f"with ' - ' or similar) before retrying, or the rewrite will "
+            f"silently truncate Notes and/or destroy the URL.",
+            "malformed_row",
+            row=row_idx + 1,
+            column_count=len(cols),
+        )
+
     new_next_action = args.next_action if args.next_action else (cols[4] if len(cols) > 4 else "—")
     new_cv_used     = args.cv_used     if args.cv_used     else (cols[5] if len(cols) > 5 else "—")
     new_notes       = args.notes       if args.notes       else (cols[6] if len(cols) > 6 else "—")
@@ -305,9 +317,21 @@ def cmd_remove(args, pipeline_path: Path, dry_run: bool) -> None:
 
     row_idx, cols = matches[0]
 
+    if len(cols) != 8:
+        out_error(
+            f"Row for {args.company} has {len(cols)} columns, expected 8 — "
+            f"a Notes or Next Action cell likely contains an unescaped '|'. "
+            f"Fix the row by hand in {PIPELINE_FILE} (replace the stray '|' "
+            f"with ' - ' or similar) before retrying, or the rewrite will "
+            f"silently truncate Notes and/or destroy the URL.",
+            "malformed_row",
+            row=row_idx + 1,
+            column_count=len(cols),
+        )
+
     existing_notes = cols[6] if len(cols) > 6 else "—"
     new_notes = (
-        f"{existing_notes} | Withdrawn {today}"
+        f"{existing_notes} - Withdrawn {today}"
         if existing_notes not in ("—", "", "–")
         else f"Withdrawn {today}"
     )

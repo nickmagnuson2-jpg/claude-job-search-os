@@ -12,6 +12,12 @@ Commands:
                                          also corrects a row already mis-marked Completed)
   clear                                — move Done/Withdrawn rows to Completed
   sync                                 — auto-withdraw based on pipeline Archived section
+  list [--status <Status>] [--grep <substring>]
+                                        — print todos (Active + Completed) as structured JSON;
+                                         verify a mutation landed without grepping the raw file.
+                                         --status filters on exact status (Pending/In Progress/
+                                         Done/Withdrawn); --grep filters task+notes substring
+                                         (case-insensitive). Filters compose (AND).
 
 Output: JSON to stdout
   Success: {"status": "ok", "action": "...", "summary": "...", ...extra}
@@ -22,6 +28,8 @@ Usage:
   PYTHONIOENCODING=utf-8 python3 tools/todo_write.py done "task fragment"
   PYTHONIOENCODING=utf-8 python3 tools/todo_write.py clear
   PYTHONIOENCODING=utf-8 python3 tools/todo_write.py sync
+  PYTHONIOENCODING=utf-8 python3 tools/todo_write.py list --status Pending
+  PYTHONIOENCODING=utf-8 python3 tools/todo_write.py list --grep "acme corp"
 """
 import json
 import os
@@ -89,11 +97,21 @@ def parse_cols(line: str) -> list[str]:
     return [c.strip() for c in line.strip().strip("|").split("|")]
 
 
+def _safe_cell(s: str) -> str:
+    """Neutralize literal pipe chars so a field value can't split a table row into
+    extra columns on write (root cause of the 2026-07 job-todos.md column drift)."""
+    return s.replace("|", "/") if s else s
+
+
 def fmt_active(task: str, priority: str, due: str, status: str, notes: str) -> str:
+    task, priority, due, status, notes = (
+        _safe_cell(task), _safe_cell(priority), _safe_cell(due), _safe_cell(status), _safe_cell(notes))
     return f"| {task} | {priority} | {due} | {status} | {notes} |"
 
 
 def fmt_completed(task: str, priority: str, completed: str, notes: str) -> str:
+    task, priority, completed, notes = (
+        _safe_cell(task), _safe_cell(priority), _safe_cell(completed), _safe_cell(notes))
     return f"| {task} | {priority} | {completed} | {notes} |"
 
 
@@ -541,6 +559,81 @@ def cmd_sync(todos_path: Path, pipeline_path: Path) -> None:
            withdrawn=n, companies=companies)
 
 
+def cmd_list(args: list[str], todos_path: Path) -> None:
+    """Print Active + Completed todos as structured JSON, with optional filters.
+
+    Exists to verify a mutation landed without grepping the raw markdown file
+    (an errored/mistyped subcommand's empty grep output is UNKNOWN, not ABSENT —
+    see memory/feedback_verify_mutation_via_raw_file_not_tool_subcommand.md).
+    """
+    status_filter = None
+    grep_filter = None
+    i = 0
+    while i < len(args):
+        if args[i] == "--status" and i + 1 < len(args):
+            status_filter = args[i + 1]
+            i += 2
+        elif args[i] == "--grep" and i + 1 < len(args):
+            grep_filter = args[i + 1].lower()
+            i += 2
+        else:
+            i += 1
+
+    content, lines = load_todos(todos_path)
+    entries: list[dict] = []
+
+    act_start, act_end = find_section(lines, "## Active")
+    if act_start != -1:
+        for i in range(act_start, act_end):
+            if not is_data_row(lines[i]):
+                continue
+            cols = parse_cols(lines[i])
+            # Filter separator-row noise (project convention: e.get("task") != "---").
+            if not cols or not cols[0] or cols[0] == "---":
+                continue
+            entries.append({
+                "section": "Active",
+                "task": cols[0],
+                "priority": cols[1] if len(cols) > 1 else "",
+                "due": cols[2] if len(cols) > 2 else "",
+                "status": cols[3] if len(cols) > 3 else "",
+                "notes": " | ".join(cols[4:]) if len(cols) > 4 else "—",
+            })
+
+    comp_start, comp_end = find_section(lines, "## Completed")
+    if comp_start != -1:
+        for i in range(comp_start, comp_end):
+            if not is_data_row(lines[i]):
+                continue
+            cols = parse_cols(lines[i])
+            if not cols or not cols[0] or cols[0] == "---":
+                continue
+            completed = cols[2] if len(cols) > 2 else ""
+            status = "Withdrawn" if completed.lower().startswith("withdrawn") else "Done"
+            # Some Completed rows have drifted to 5 columns (a stray Active-shaped row
+            # migrated without reflow) — join everything past col 3 so trailing notes
+            # text a --grep filter relies on isn't silently dropped.
+            notes = " | ".join(cols[3:]) if len(cols) > 3 else "—"
+            entries.append({
+                "section": "Completed",
+                "task": cols[0],
+                "priority": cols[1] if len(cols) > 1 else "",
+                "due": completed,
+                "status": status,
+                "notes": notes,
+            })
+
+    if status_filter:
+        entries = [e for e in entries if e["status"].lower() == status_filter.lower()]
+    if grep_filter:
+        entries = [
+            e for e in entries
+            if grep_filter in e["task"].lower() or grep_filter in e["notes"].lower()
+        ]
+
+    out_ok("list", f"{len(entries)} todo(s)", count=len(entries), entries=entries)
+
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
@@ -560,7 +653,10 @@ def main() -> None:
             i += 1
 
     if not filtered:
-        out_error("Usage: todo_write.py <add|done|withdraw|supersede|clear|sync> [args...]")
+        out_error("Usage: todo_write.py <add|done|withdraw|supersede|clear|sync|list> [args...]")
+
+    cmd = filtered[0].lower()
+    extra_args = filtered[1:]
 
     # Reject unknown --flags before they silently slot into wrong columns.
     # todo_write.py is positional-only; the only flag is --repo-root (handled above).
@@ -570,17 +666,20 @@ def main() -> None:
     # sentinel is unreachable (the contradiction that made /todo's "--" instruction
     # fail, 2026-06-06).
     # Per memory/feedback_atomic_script_positional_args.md (script-tier promotion 2026-05-21).
-    unknown_flags = [a for a in filtered if a.startswith("--") and len(a) > 2]
+    # `list` is the one query subcommand and takes real --flags (--status, --grep).
+    allowed_flags = {"--status", "--grep"} if cmd == "list" else set()
+    unknown_flags = [
+        a for a in filtered if a.startswith("--") and len(a) > 2 and a not in allowed_flags
+    ]
     if unknown_flags:
         out_error(
             f"Unknown flag(s): {', '.join(unknown_flags)}. "
-            "todo_write.py is positional-only — pass bare values, not --flag names. "
+            "todo_write.py is positional-only — pass bare values, not --flag names "
+            "(except `list`, which takes --status/--grep). "
             "Usage: add <task> [priority] [due] [notes]  |  "
-            "done <fragment>  |  withdraw <fragment>  |  supersede <prefix>  |  clear  |  sync  |  --repo-root <path> (anywhere)"
+            "done <fragment>  |  withdraw <fragment>  |  supersede <prefix>  |  clear  |  sync  |  "
+            "list [--status <Status>] [--grep <substring>]  |  --repo-root <path> (anywhere)"
         )
-
-    cmd = filtered[0].lower()
-    extra_args = filtered[1:]
 
     todos_path = repo_root / TODOS_FILE
     pipeline_path = repo_root / PIPELINE_FILE
@@ -597,8 +696,10 @@ def main() -> None:
         cmd_clear(todos_path)
     elif cmd == "sync":
         cmd_sync(todos_path, pipeline_path)
+    elif cmd == "list":
+        cmd_list(extra_args, todos_path)
     else:
-        out_error(f"Unknown command: {cmd}. Use: add, done, withdraw, supersede, clear, sync")
+        out_error(f"Unknown command: {cmd}. Use: add, done, withdraw, supersede, clear, sync, list")
 
 
 if __name__ == "__main__":

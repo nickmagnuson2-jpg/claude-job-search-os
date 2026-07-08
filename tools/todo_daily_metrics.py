@@ -40,6 +40,18 @@ import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from schema_guard import assert_schema, find_header_line, SchemaDriftError  # noqa: E402
+
+# Canonical schemas (see the writers: tools/todo_write.py, tools/pipe_write.py). The
+# cols[N] indices throughout this file's parsers assume these exact column orders.
+# See schema_guard.py docstring for the 2026-06-08 incident this guards against.
+TODOS_ACTIVE_EXPECTED_COLUMNS = ["Task", "Priority", "Due", "Status", "Notes"]
+PIPELINE_EXPECTED_COLUMNS = [
+    "Company", "Role", "Stage", "Date Updated",
+    "Next Action", "CV Used", "Notes", "URL",
+]
+
 
 def parse_args():
     p = argparse.ArgumentParser()
@@ -65,6 +77,10 @@ def _is_separator_row(*values: str) -> bool:
 
 def parse_todos(content: str, today: date) -> tuple[list, list, list]:
     """Parse job-todos.md into completed_today, active, overdue lists. Strips '---' separator rows."""
+    # Fail loudly (not silently) if the live file's Active-section header has
+    # drifted from what the cols[N] indices below assume — see schema_guard.py.
+    assert_schema(find_header_line(content, "| Task |"), TODOS_ACTIVE_EXPECTED_COLUMNS)
+
     completed_today = []
     active = []
     overdue = []
@@ -105,6 +121,8 @@ def parse_todos(content: str, today: date) -> tuple[list, list, list]:
     completed_match = re.search(r"## Completed.*?\n(.*?)(?=\n## |\Z)", content, re.DOTALL)
     if completed_match:
         completed_text = completed_match.group(1)
+        assert_schema(find_header_line(completed_text, "| Task |"),
+                      ["Task", "Priority", "Completed", "Notes"])
         for line in completed_text.splitlines():
             if not line.startswith("|") or line.startswith("| Task") or line.startswith("|---"):
                 continue
@@ -314,6 +332,11 @@ def parse_pipeline(content: str) -> dict:
     Returns:
       { "active_process": [...], "evaluation_backlog": [...], "terminal": [...] }
     """
+    # Fail loudly (not silently) if the live file's header has drifted from what
+    # the cols[N] indices below (and in parse_upcoming_scheduled, which shares this
+    # content) assume — see schema_guard.py.
+    assert_schema(find_header_line(content, "| Company |"), PIPELINE_EXPECTED_COLUMNS)
+
     buckets = {"active_process": [], "evaluation_backlog": [], "terminal": []}
 
     # Find the Active section (or fall back to whole file)
@@ -596,6 +619,17 @@ def main():
 
     output_dir = repo_root / "output"
 
+    try:
+        _run(todos_content, daily_log_content, pipeline_content, networking_content,
+             outreach_content, changelog_content, output_dir, repo_root, today)
+    except SchemaDriftError as e:
+        print(json.dumps({"status": "error", "code": "schema_drift", "message": str(e)},
+                          indent=2, ensure_ascii=False))
+        sys.exit(1)
+
+
+def _run(todos_content, daily_log_content, pipeline_content, networking_content,
+         outreach_content, changelog_content, output_dir, repo_root, today):
     # Process each source
     completed_today, active, overdue = parse_todos(todos_content, today)
     metrics = parse_daily_log(daily_log_content, today, today_completions_from_todos=len(completed_today))

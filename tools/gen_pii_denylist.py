@@ -27,6 +27,7 @@ to hook tier (Nick requested the hook + subagent audit).
 import argparse
 import json
 import re
+import unicodedata
 from pathlib import Path
 
 OUTPUT_REL = "tools/.pii-denylist.txt"
@@ -52,6 +53,19 @@ STOPWORDS = {
 
 
 SYSTEM_DICT = Path("/usr/share/dict/words")
+
+
+def slugify(name: str) -> str:
+    """Lowercase, accent-fold, hyphenate — matches the output/<slug> convention used
+    throughout this repo (tools/person_write.py:slugify). E.g. 'Casey Doe' ->
+    'casey-doe', 'Acme Ventures' -> 'acme-ventures'. Path-embedded slug forms
+    (folder names, filenames) are a distinct denylist-evasion surface from the
+    space-separated name-forms above them, per feedback_denylist_needs_slug_forms_not_just_names."""
+    nfkd = unicodedata.normalize("NFKD", name)
+    ascii_str = "".join(c for c in nfkd if not unicodedata.combining(c))
+    ascii_str = ascii_str.lower()
+    ascii_str = re.sub(r"[^a-z0-9]+", "-", ascii_str)
+    return ascii_str.strip("-")
 
 
 def read_file(path: Path) -> str:
@@ -125,6 +139,10 @@ def build_denylist(names: set[str], companies: set[str], dictionary: set[str]) -
         # Only keep multi-token full names — distinctive, low false-positive risk.
         if len(tokens) >= 2 and all(re.match(r"^[A-Za-zÀ-ÿ.'\-]+$", t) for t in tokens):
             out.add(clean)
+            # Slug-form variant (path-embedded, e.g. output/<slug>/, data/people/<slug>.md).
+            slug = slugify(clean)
+            if slug and slug not in KEEP:
+                out.add(slug)
 
     for company in companies:
         clean = company.strip().strip("*").strip()
@@ -136,8 +154,14 @@ def build_denylist(names: set[str], companies: set[str], dictionary: set[str]) -
             # Multi-word company — keep whole phrase (still skip if every word is a stopword)
             if not all(t.lower() in STOPWORDS for t in tokens):
                 out.add(clean)
+                slug = slugify(clean)
+                if slug and slug not in KEEP:
+                    out.add(slug)
         elif is_distinctive_single(clean, dictionary):
             out.add(clean)
+            slug = slugify(clean)
+            if slug and slug not in KEEP:
+                out.add(slug)
 
     return sorted(out, key=lambda s: (s.lower(), s))
 

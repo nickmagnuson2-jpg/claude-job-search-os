@@ -17,6 +17,7 @@ PLISTS=(
     "com.nickmagnuson.jobsearch.career-scan"
     "com.nickmagnuson.jobsearch.granola-auto-debrief"
     "com.nickmagnuson.jobsearch.alirohde-triage"
+    "com.nickmagnuson.jobsearch.memory-promotion-scan"
 )
 
 case "${1:-install}" in

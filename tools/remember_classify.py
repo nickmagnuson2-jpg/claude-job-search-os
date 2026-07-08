@@ -15,6 +15,8 @@ Classification priority order (first-match for primary; all matches returned):
   5. profile_update   — comp/salary/availability keywords
   6. decision         — decided/won't/prioritizing keywords (→ data/decisions.md)
   6b. accomplishment  — shipped/landed/completed/milestone keywords (→ data/accomplishments.md)
+  6c. source_article  — "save as interesting" / commonplace-book language (→ data/source-articles/)
+  6d. deferred_idea   — "later"/"park this"/"come back to" language (→ data/inbox.md)
   7. raw_capture      — URL-only, or explicit "save"/"inbox" language
   8. general_note     — fallback
 
@@ -74,6 +76,23 @@ ACCOMPLISHMENT_KEYWORDS = [
 RAW_CAPTURE_KEYWORDS = [
     "save for later", "just note this", "save this", "add to inbox",
     "inbox", "check this out", "look into this later",
+]
+
+# Commonplace-book capture — "save as interesting" / "interesting:" is a
+# dedicated door into data/source-articles/ (see data/commonplace-book.md),
+# not a generic note. Checked BEFORE raw_capture (below) so it doesn't lose
+# to the more generic "save this" phrasing.
+SOURCE_ARTICLE_KEYWORDS = [
+    "save as interesting", "save this as interesting", "interesting:",
+    "commonplace book", "save to commonplace", "add to commonplace",
+]
+
+# Deferred idea / "come back to this later" — routes to data/inbox.md as a
+# dated block rather than the generic data/notes.md fallback (global CLAUDE.md
+# inbox-first rule). Distinct from RAW_CAPTURE_KEYWORDS above ("save this",
+# "add to inbox") which are explicit inbox asks; these are softer deferrals.
+DEFERRED_IDEA_KEYWORDS = [
+    "later", "park this", "come back to", "revisit", "someday", "hold off",
 ]
 
 
@@ -336,6 +355,32 @@ def classify_note(
             "destinations": [{
                 "type": "accomplishment",
                 "file": "data/accomplishments.md",
+                "entity": None,
+            }],
+            "ambiguous": False,
+            "warnings":  warnings,
+        }
+
+    # ── 6c. Source article (commonplace-book capture) ──────────────────────
+    if _contains_any(note, SOURCE_ARTICLE_KEYWORDS):
+        return {
+            "note": note,
+            "destinations": [{
+                "type": "source_article",
+                "file": "data/source-articles/",
+                "entity": None,
+            }],
+            "ambiguous": False,
+            "warnings":  warnings,
+        }
+
+    # ── 6d. Deferred idea ("come back to this later") ──────────────────────
+    if _contains_any(note, DEFERRED_IDEA_KEYWORDS):
+        return {
+            "note": note,
+            "destinations": [{
+                "type": "deferred_idea",
+                "file": "data/inbox.md",
                 "entity": None,
             }],
             "ambiguous": False,
