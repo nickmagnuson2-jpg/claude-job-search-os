@@ -406,7 +406,17 @@ def cmd_list(args: argparse.Namespace) -> None:
     if args.surface:
         out = [r for r in out if normalize_surface(r["surface"]) == normalize_surface(args.surface)]
     if args.unpromoted:
-        out = [r for r in out if r["promotion"].strip() in ("—", "-", "")]
+        # A row is "unpromoted" when it HAS a promotion action due (memory or
+        # script-patch — i.e. the promotion field is set, meaning it crossed
+        # the 2nd/3rd-fire threshold) AND that action hasn't been executed yet
+        # (no RESOLVED marker in the Fix cell). The inverse of this — filtering
+        # to rows where promotion is EMPTY — silently hid every row with a real
+        # promotion due, breaking the promotion loop end to end. Origin: 2026-07-08.
+        out = [
+            r for r in out
+            if r["promotion"].strip() not in ("—", "-", "")
+            and not is_resolved(r["fix"])
+        ]
     if getattr(args, "unresolved", False):
         out = [r for r in out if not is_resolved(r["fix"])]
     ok({"count": len(out), "rows": out})

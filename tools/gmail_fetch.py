@@ -658,10 +658,19 @@ def fetch_new_messages(service, state: dict, label_id: str | None = None) -> lis
         return []
 
     try:
+        # When scoped to a label, also request labelAdded: emails the user
+        # manually tags after arrival are recorded by Gmail as labelAdded
+        # events, NOT messageAdded, so a messageAdded-only sync silently skips
+        # them and advances historyId past them permanently. Only request it
+        # when label_id is set (unscoped labelAdded would pull every label
+        # change in the mailbox).
+        history_types = ["messageAdded"]
+        if label_id:
+            history_types.append("labelAdded")
         kwargs = {
             "userId": "me",
             "startHistoryId": history_id,
-            "historyTypes": ["messageAdded"],
+            "historyTypes": history_types,
         }
         if label_id:
             kwargs["labelId"] = label_id
@@ -683,6 +692,18 @@ def fetch_new_messages(service, state: dict, label_id: str | None = None) -> lis
             if msg_id not in seen:
                 seen.add(msg_id)
                 message_ids.append(msg_id)
+        # Emails the user manually tagged with the target label after arrival.
+        # Only when label-scoped, and only if the target label is among the
+        # labels added in this event. The format=full label re-check below
+        # (label_id not in msg.labelIds) is the final correctness gate.
+        if label_id:
+            for labeled in hist.get("labelsAdded", []):
+                if label_id not in labeled.get("labelIds", []):
+                    continue
+                msg_id = labeled["message"]["id"]
+                if msg_id not in seen:
+                    seen.add(msg_id)
+                    message_ids.append(msg_id)
 
     if "historyId" in response:
         state["historyId"] = response["historyId"]

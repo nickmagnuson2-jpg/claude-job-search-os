@@ -8,7 +8,8 @@
     <key>ProgramArguments</key>
     <array>
         <string>/opt/homebrew/bin/python3</string>
-        <string>/Users/mag/Documents/Obsidian/30-projects/job-search/tools/n8n_career_scan.py</string>
+        <string>-m</string>
+        <string>tools.career_scanner.cli</string>
         <string>--repo-root</string>
         <string>/Users/mag/Documents/Obsidian/30-projects/job-search</string>
     </array>

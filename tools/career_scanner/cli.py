@@ -15,6 +15,12 @@ import json
 import sys
 from pathlib import Path
 
+# Repo root on sys.path so `tools.career_scanner.*` imports resolve when this
+# script is invoked directly (python3 tools/career_scanner/cli.py).
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
 
 def main():
     p = argparse.ArgumentParser(

@@ -24,8 +24,19 @@ Workarounds baked in (from official-doc GitHub issues):
 
 State file: tools/.transcript-scan-cursor.json
   {
-    "<session_id>": {"last_line": int, "last_seen_ts": str}
+    "<session_id>": {"last_line": int, "last_seen_ts": str, "logged_ids": [str, ...]}
   }
+
+Flush-race hardening (diagnosed 2026-06-10, see memory/friction-log.md "Pending
+Infra Fix"): the Stop hook can advance `last_line` past a tool_result line that
+hasn't been durably flushed to disk yet, permanently skipping that error. Fix:
+  - Overlap re-scan: each scan starts from max(0, last_line - OVERLAP_LINES)
+    instead of exactly last_line, so a flush-missed line gets re-examined.
+  - Dedup by tool_use_id: `logged_ids` in the per-session cursor state tracks
+    which tool_result ids have already been logged, so the overlap re-scan
+    doesn't double-log (and inflate friction_log.py's occurrence count) an
+    error that was already caught on a prior pass. Missing/old-schema state
+    (no `logged_ids` key) is treated as an empty list.
 
 Exit codes: always 0 (WARN-tier, never blocks the stop).
 """
@@ -45,6 +56,18 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 FRICTION_LOG_PY = REPO_ROOT / "tools" / "friction_log.py"
 TRACE_LOG = REPO_ROOT / "tools" / ".hook-trace.log"
 CURSOR_FILE = REPO_ROOT / "tools" / ".transcript-scan-cursor.json"
+
+# How many lines before the previous cursor position to re-scan on each pass,
+# to recover a line that lost the transcript-flush race last time (the write
+# landed on disk only after the scanner had already advanced past its
+# position). Transcripts are JSONL (one object/line); 40 lines comfortably
+# covers several tool_use/tool_result pairs. See module docstring.
+OVERLAP_LINES = 40
+
+# Cap on how many logged tool_use_ids we retain per session. Only the overlap
+# window (OVERLAP_LINES back from the cursor) is ever re-checked, so this is a
+# memory/file-size guard, not a correctness requirement — generously sized.
+MAX_LOGGED_IDS = 500
 
 EXCLUDE_SCRIPTS = fs.EXCLUDE_SCRIPTS
 
@@ -293,12 +316,20 @@ def append_friction(surface: str, nature: str, exit_hint: str = "") -> None:
         trace(f"append_friction SUBPROCESS_FAIL: {e!r}")
 
 
-def scan(transcript_path: Path, start_line: int) -> tuple[int, int]:
+def scan(transcript_path: Path, start_line: int, logged_ids: "set[str]" = None) -> tuple[int, int, "set[str]"]:
     """
     Walk JSONL starting from start_line. Find tool_result entries with
     is_error: true, pair with prior tool_use to extract command/tool name,
-    append friction rows. Returns (new_line_position, errors_logged_count).
+    append friction rows. `logged_ids` is the set of tool_use_ids already
+    logged for this session (from prior scans); entries whose id is already
+    present are skipped, which is what makes the overlap re-scan (start_line
+    intentionally rewound a bit by the caller) safe from double-logging.
+    Returns (new_line_position, errors_logged_count, updated_logged_ids).
     """
+    if logged_ids is None:
+        logged_ids = set()
+    new_logged_ids = set(logged_ids)
+
     # Build tool_use_id → tool_use_dict map by walking the file once
     tool_uses: dict[str, dict] = {}
     errors_found: list[tuple[str, dict, str]] = []  # (tool_use_id, tool_use, error_text)
@@ -345,10 +376,15 @@ def scan(transcript_path: Path, start_line: int) -> tuple[int, int]:
                                 errors_found.append((tu_id, tu, err_text))
     except Exception as e:
         trace(f"scan READ_FAIL: {e!r}")
-        return start_line, 0
+        return start_line, 0, new_logged_ids
 
     logged = 0
     for tu_id, tu, err_text in errors_found:
+        # Dedup: an overlap re-scan can re-see an error already logged on a
+        # prior pass (that's the point — it also recovers a flush-race miss).
+        # Skip anything we've already logged for this session.
+        if tu_id and tu_id in new_logged_ids:
+            continue
         tool_name = (tu or {}).get("name") or "Unknown"
         # Skip excluded bash invocations
         if tool_name == "Bash" and is_excluded_bash(tu):
@@ -368,8 +404,10 @@ def scan(transcript_path: Path, start_line: int) -> tuple[int, int]:
             continue
         append_friction(surface, nature)
         logged += 1
+        if tu_id:
+            new_logged_ids.add(tu_id)
 
-    return line_no, logged
+    return line_no, logged, new_logged_ids
 
 
 def main() -> int:
@@ -399,21 +437,39 @@ def main() -> int:
     session_id = data.get("session_id") or transcript_path.stem
     state = load_cursor()
     prev = state.get(session_id, {})
-    start_line = int(prev.get("last_line", 0))
+    last_line = int(prev.get("last_line", 0))
+    # Backward-compatible: older cursor state files won't have logged_ids.
+    prev_logged_ids = set(prev.get("logged_ids") or [])
 
-    new_line, logged = scan(transcript_path, start_line)
+    # Overlap re-scan: rewind the start position so a line that lost the
+    # transcript-flush race last time (written to disk only after we'd
+    # already advanced past it) gets a second chance to be picked up.
+    scan_start = max(0, last_line - OVERLAP_LINES)
+
+    new_line, logged, new_logged_ids = scan(transcript_path, scan_start, prev_logged_ids)
+    # last_line only moves forward — the overlap start is just a re-read
+    # window, never a regression of the persisted cursor.
+    new_line = max(new_line, last_line)
+
+    # Bound logged_ids: keep the most recently added ids only. Sets aren't
+    # ordered, but this is a soft memory guard, not a correctness mechanism
+    # (see OVERLAP_LINES comment) — trimming arbitrarily is fine.
+    logged_ids_list = list(new_logged_ids)
+    if len(logged_ids_list) > MAX_LOGGED_IDS:
+        logged_ids_list = logged_ids_list[-MAX_LOGGED_IDS:]
 
     state[session_id] = {
         "last_line": new_line,
         "last_seen_ts": datetime.datetime.now().isoformat(),
+        "logged_ids": logged_ids_list,
     }
     save_cursor(state)
 
     if logged > 0:
         sys.stderr.write(
-            f"✓ transcript-scan: {logged} new error(s) logged (session {session_id[:8]}, lines {start_line}→{new_line}).\n"
+            f"✓ transcript-scan: {logged} new error(s) logged (session {session_id[:8]}, lines {scan_start}→{new_line}, cursor was {last_line}).\n"
         )
-    trace(f"STOP_HOOK DONE logged={logged} cursor={start_line}→{new_line}")
+    trace(f"STOP_HOOK DONE logged={logged} cursor={last_line}→{new_line} scan_start={scan_start}")
     return 0
 
 
