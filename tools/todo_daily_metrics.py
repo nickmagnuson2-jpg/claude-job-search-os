@@ -573,8 +573,12 @@ def scan_substantive_work(repo_root: Path, today: date) -> dict:
     memories_n, memories_paths = (0, [])
     if memory_dir.exists():
         memories_n, memories_paths = count_modified_after(str(memory_dir / "*.md"))
-        # Exclude MEMORY.md (index) from count
-        memories_paths = [p for p in memories_paths if not p.endswith("MEMORY.md")]
+        # Exclude MEMORY.md and the index-<topic>.md shards (2026-07-08 7-shard
+        # restructure) — these are router/index containers, not memory entries.
+        memories_paths = [
+            p for p in memories_paths
+            if not p.endswith("MEMORY.md") and "/index-" not in p
+        ]
         memories_n = len(memories_paths)
 
     # Inbox entries today (count of '## YYYY-MM-DD' headers matching today)

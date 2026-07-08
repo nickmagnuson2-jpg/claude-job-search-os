@@ -77,7 +77,8 @@ def load_memory_files(memory_dir: Path):
     for p in sorted(memory_dir.glob("*.md")):
         if p.name in ("MEMORY.md",) or p.name.startswith("MEMORY.backup") \
                 or p.name.startswith("archive-") or p.name.startswith("archived-") \
-                or p.name.startswith("audit-") or p.name.startswith("promotion-backlog"):
+                or p.name.startswith("audit-") or p.name.startswith("promotion-backlog") \
+                or p.name.startswith("index-"):
             continue
         try:
             text = p.read_text(encoding="utf-8")

@@ -200,7 +200,7 @@ coaching/              Coaching session outputs and progress tracking
 tools/                 Python scripts: atomic writes, PDF generation, background automation
 output/                Generated CVs, dossiers, cover letters, outreach archives
   └─ <company-slug>/   One folder per named entity; all related artifacts inside
-memory/                MEMORY.md (auto-loaded each session), friction-log.md, lessons.md
+memory/                MEMORY.md (auto-loaded router + critical context), index-<topic>.md shards, friction-log.md, lessons.md
 docs/                  Usage guide, changelog, navigation index
 examples/              Fictional demo profile for trying features before importing your own
 ```

@@ -585,9 +585,10 @@ coaching/                        ← Coaching outputs and progress (private)
   └── progress-interview/         ← Session logs + scorecard
 inbox/                           ← Raw capture zone (gitignored, processed by /act)
 memory/                          ← Persistent session context (auto-memory system)
-  ├── MEMORY.md                  ← Auto-loaded every session — active context only (<100 lines)
+  ├── MEMORY.md                  ← Auto-loaded every session — router + critical context only (<100 lines)
+  ├── index-<topic>.md            ← Topic shards the router points to (outreach, coaching, research, tools, system, personal, projects — split by whatever taxonomy fits your project); the actual index entries live here, not in MEMORY.md, so each shard stays small on its own
   ├── lessons.md                 ← Self-improvement rules (updated after corrections)
-  └── archive-YYYY-MM.md        ← Archived resolved sections from MEMORY.md
+  └── archive-YYYY-MM.md        ← Archived resolved sections from any shard
 .claude/skills/                  ← Skill definitions (illustrative — run `ls .claude/skills/` for the current set; the catalog grows over time)
   ├── import-cv/                  ← /import-cv — CV data extraction + merge
   ├── extract-identity/           ← /extract-identity — professional self-discovery

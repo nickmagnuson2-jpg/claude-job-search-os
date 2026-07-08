@@ -5,6 +5,32 @@ Format: newest entries at the top.
 
 ---
 
+## 2026-07-08: MEMORY.md restructured into a 7-shard router + memory-overhaul promotion backlog closed out
+
+### Changed
+- **`memory/MEMORY.md` is now a router, not the index.** It holds only a small always-visible Critical Context block (facts that must never depend on recall — employment status, family contacts, active hard-rule-DUE items) plus a Topic Shards table pointing to 7 `memory/index-<topic>.md` files (outreach, coaching, research, tools, system, personal, projects). All ~267 prior index entries were classified by topic and migrated verbatim, with one-line cross-link pointers for entries spanning two shards. MEMORY.md itself dropped from 279 lines / 66KB to 27 lines / 4KB, well under the 24.4KB auto-load cap that had been silently truncating it. This supersedes the earlier 2026-06-04 restructure prep (family-consolidation approach, never built) with a simpler topic-shard split.
+- **`.claude/skills/{weekly-review,wispr,memory-refresh,analyze}/SKILL.md`** and **`CLAUDE.md`** updated to route index writes/reads to the correct shard instead of assuming a flat `MEMORY.md`.
+- **`~/.claude/skills/lessons-learned/SKILL.md`** (global, cross-project) now detects the router pattern and routes new lesson captures to the right shard when present, falling back to flat-file behavior for projects that don't use it.
+- **`tools/todo_daily_metrics.py`** and **`tools/scan_promotion_candidates.py`**: exclude `index-*.md` shard files from memory-file counts/scans so they aren't miscounted as individual memory entries.
+
+### Fixed (bug fixes shipped same day, unrelated to the restructure but part of the same session)
+- `todo_write.py`: new `list` subcommand + a `_safe_cell()` guard that neutralizes literal `|` characters before they're written into a table row (root cause of a job-todos.md column-drift bug); 366 drifted rows migrated back to canonical 4 columns.
+- `pipe_write.py`: reject `update`/`remove` on a pipeline row with the wrong column count instead of silently truncating Notes/URL.
+- `remember_classify.py` / `remember_apply.py`: new `source_article` and `deferred_idea` routing branches.
+- `gen_pii_denylist.py`: emit slug-forms alongside name-forms so path-embedded PII doesn't slip the denylist.
+- `friction_log.py`: fixed an inverted `--unpromoted` filter.
+- `career_scanner/cli.py`, `gmail_fetch.py`, `scan_transcript_failures.py`: import-path fix, label-scoped history-sync gap, transcript flush-race hardening respectively.
+
+### Promoted (memory-overhaul promotion backlog worked to completion)
+- 8 memory rules promoted into skill/hook/hard-rule tier: `follow-up`/`cold-outreach`/`draft-email` SKILL.md (voice-pure dictation mode, reply-mode source grounding, spine-first trigger), `audit-pii` SKILL.md (anti-rationalization subagent instruction, cross-check requirement, full-tree+history+remote-ref sweep step), and a new CLAUDE.md Hard Rule banning role-title inference (fired 3x).
+- 2 more confirmed already-landed on inspection (`/wispr` topic-match gate, `/ss` source-read pass).
+- ~34 correctly re-verified against their own stated promotion gates and left parked with dated notes in `memory/promotion-backlog-2026-07.md`.
+
+### Origin
+- Multi-session memory-overhaul project (handoff: `output/analysis/070826-memory-overhaul-handoff.md`). This entry closes it out.
+
+---
+
 ## 2026-06-18: Atomic-write hardenings — todo supersede, reply-direction fix, draft CC, traceback friction-log
 
 ### Added

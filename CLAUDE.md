@@ -39,7 +39,7 @@ After any user correction, run the **full tiered protocol** — not just a lesso
    - **Connections:** `[[wikilinks]]` to related memory rules — link liberally even if the target doesn't exist yet
    - **Tier ladder:** name the next promotion target (skill / hook / framework) and the trigger condition
 2. **If the correction refines an existing rule**, update that file instead of creating a duplicate. Add a dated supplement section.
-3. **Update `~/.claude/projects/.../memory/MEMORY.md`** with a one-line index pointer (`- [Title](feedback_*.md) — terse hook`). Keep MEMORY.md under ~24KB; archive on overflow per [[project_memory_directory_structure]].
+3. **Add a one-line index pointer** (`- [Title](feedback_*.md) — terse hook`). Since the 2026-07-08 7-shard restructure, `~/.claude/projects/.../memory/MEMORY.md` itself holds ONLY Critical Context (facts that must never depend on recall — employment status, family contacts, active hard-rule-DUE items) plus the Topic Shards router; it is NOT the index anymore. Check MEMORY.md's Topic Shards router table and add the pointer to the matching `memory/index-<topic>.md` shard (outreach / coaching / research / tools / system / personal / projects). Only add directly to MEMORY.md's Critical Context block if the fact itself belongs there. Keep each shard under ~24KB; archive on overflow per [[project_memory_directory_structure]].
 4. **For email/outreach corrections specifically:** also add a row to `memory/lessons.md` Section 2 (Occurrences=1, Promoted=No). Recurring → increment Occurrences. If Occurrences ≥ 2 and Promoted=No → update `framework/style-guidelines.md` "Nick's Voice" section, set Promoted=Yes. This is the email-specific promotion path; doesn't replace the auto-memory file.
 
 ### Step 2 — Plan promotion via REOPEN gate (when build cost > 5 min)
@@ -63,7 +63,7 @@ When the REOPEN gate condition is met (2nd occurrence, threshold crossed, etc.):
 
 ### Step 4 — Scan on relevant sessions
 
-Scan `memory/MEMORY.md` (auto-loaded every session) and `memory/lessons.md` (skill-edit / data-ops / CV-gen sessions) at the start of relevant work. The MEMORY.md index is the primary loaded surface; full memory files load on demand via recall.
+Scan `memory/MEMORY.md` (auto-loaded every session — Critical Context + the Topic Shards router) and `memory/lessons.md` (skill-edit / data-ops / CV-gen sessions) at the start of relevant work. For anything beyond Critical Context, load the relevant `memory/index-<topic>.md` shard(s) named in the router table — that's where the actual index entries live now, not in MEMORY.md itself. Full memory files load on demand via recall.
 
 ### Anti-patterns this loop is designed against
 
@@ -86,7 +86,7 @@ data/              Owner data (profile.md, goals.md, professional-identity.md gi
   ├─ reflections/          Snapshots of Nick's processing (date-prefixed)
   └─ workbooks/            Reusable frameworks (no date prefix)
 .claude/skills/    35 slash-command skill definitions
-memory/            MEMORY.md (auto-loaded, <100 lines), lessons.md, archives
+memory/            MEMORY.md (auto-loaded router + Critical Context), index-<topic>.md shards (7), lessons.md, archives
 tools/             Python scripts (PDF, preprocessing, atomic writes, launchd schedules)
 output/            Generated outputs — company-first hierarchy
 ```
@@ -281,15 +281,17 @@ The (now-historical) n8n setup (`tools/run_n8n.bat`, dashboard at localhost:5678
 
 ## Memory Hygiene
 
-MEMORY.md is loaded every conversation — keep under 100 lines.
+**MEMORY.md is loaded every conversation — keep it to Critical Context + the Topic Shards router only** (2026-07-08 7-shard restructure; currently ~27 lines / 4KB). It is a router, not the index — do not append general index entries directly to it.
 
-**Archive to `memory/archive-YYYY-MM.md`** when:
+**Keep in MEMORY.md's Critical Context block (small, always-visible, never depend on recall):** employment status, family contacts, active hard-rule-DUE items. Nothing else belongs here — active search context, architectural patterns, unfixed bugs, and user preferences all route to the matching `memory/index-<topic>.md` shard (outreach / coaching / research / tools / system / personal / projects) instead.
+
+**Archive to `memory/archive-YYYY-MM.md`** (from whichever shard the entry lives in) when:
 - Skill change / bug fix / migration is completed and merged (codebase is source of truth)
 - Search lead resolved (move with outcome)
 - "New feature" note has been stable >2 weeks
 - Session-specific reminders past their date
 
-**Keep in MEMORY.md:** active search context, stable architectural patterns, known unfixed bugs, user preferences, critical personal context (employment status, framing rules).
+Keep each shard under ~24KB; if one overflows, split it further rather than letting it grow past the read budget again.
 
 ## Style
 

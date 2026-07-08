@@ -112,7 +112,7 @@ PYTHONIOENCODING=utf-8 python3 tools/friction_log.py list --unpromoted
 
 For each row returned:
 
-1. **Occurrence ≥ 2 with `Promotion: memory (do now)`** — auto-memory file should already exist from when it was logged. If it doesn't (Claude skipped the promotion step), create it now: `memory/feedback_<slug>.md` per the [[friction-log-before-fix]] schema + add a MEMORY.md index pointer.
+1. **Occurrence ≥ 2 with `Promotion: memory (do now)`** — auto-memory file should already exist from when it was logged. If it doesn't (Claude skipped the promotion step), create it now: `memory/feedback_<slug>.md` per the [[friction-log-before-fix]] schema + add an index pointer to the matching `memory/index-<topic>.md` shard (check MEMORY.md's Topic Shards router table to pick the shard; MEMORY.md itself only holds Critical Context now, not the full index).
 2. **Occurrence ≥ 3 with `Promotion: script-patch (mandatory)`** — patch the script/hook/template now, in this session. Don't defer.
 3. **Occurrence = 1, stale (>14 days old) with no recurrence** — leave it. Single-fire frictions that didn't recur are background noise; the ledger captures the fact that it happened.
 

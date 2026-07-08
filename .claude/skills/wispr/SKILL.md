@@ -102,11 +102,11 @@ Before writing ANY file whose name encodes a date (`YYYY-MM-DD-*.md` in `data/re
    - Relative anchor ("yesterday", "this morning") → resolve against the Wispr capture date, BUT recognize the capture itself may lag the event by hours-to-days. If the relative anchor is ambiguous, ask.
    - No anchor at all → filename date = Wispr capture date, AND state that explicitly so Nick can correct.
 
-3. **Scan MEMORY.md for any scheduled event the rumble references.** If the rumble mentions an interview, call, deadline, or any other event that appears in MEMORY.md (e.g., an interviewer dossier memory has "Runs Mon 5/25 case"), the pre/post/upcoming framing in the filename MUST be consistent with that calendar. Concretely: if MEMORY.md says event X is on date D, and the rumble is dated >D, the framing is "post-X", not "pre-X". If you cannot find the event in MEMORY.md but the rumble suggests one is scheduled, ask Nick to confirm the date.
+3. **Scan for any scheduled event the rumble references.** Check `data/job-pipeline.md` first (authoritative for interview/round dates), then the memory corpus: MEMORY.md's Critical Context block covers only always-visible facts now — full event-level detail (e.g., an interviewer dossier memory with "Runs Mon 5/25 case") lives in `memory/index-coaching.md` or `memory/index-projects.md` (check MEMORY.md's Topic Shards router table if unsure which). If the rumble mentions an interview, call, deadline, or other event found in any of these, the pre/post/upcoming framing in the filename MUST be consistent with that calendar. Concretely: if the source says event X is on date D, and the rumble is dated >D, the framing is "post-X", not "pre-X". If you cannot find the event anywhere but the rumble suggests one is scheduled, ask Nick to confirm the date.
 
 4. **Surface the proposal to Nick in one line BEFORE writing.** Format:
 
-   > Proposing: `<filename>` — date from <"rumble first line" | "Wispr capture (no anchor in text)" | "relative anchor resolved against capture">; framing <pre/post/none> based on <MEMORY.md event reference | no scheduled event referenced>. Confirm?
+   > Proposing: `<filename>` — date from <"rumble first line" | "Wispr capture (no anchor in text)" | "relative anchor resolved against capture">; framing <pre/post/none> based on <pipeline/memory event reference | no scheduled event referenced>. Confirm?
 
    Do NOT write the file until Nick confirms. A rename after-the-fact requires updating wiki-links from anywhere it was referenced (the [[wispr-YYYY-MM-DD-HHMMSS-*]] back-pointer from any synthesis destination, plus the source archive in `~/Documents/Obsidian/00-voice-corpus-archive/`).
 
