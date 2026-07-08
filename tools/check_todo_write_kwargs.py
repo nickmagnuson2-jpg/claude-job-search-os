@@ -49,7 +49,7 @@ Origin: Phase E NEW-D2 (2026-05-28 lessons audit).
 Friction-log: 10+ fires of "Unknown flag(s): --task, --priority, --due"
 across 5/27-5/28 after the in-script argparse patch failed to stop
 pre-invocation pattern recognition. See:
-  - memory/feedback_atomic_script_positional_args.md
+  - memory/archive-2026-04-orphans.md (superseded, rule still enforced by this hook)
   - friction-log row 40, 44, 50-52
 """
 import json
@@ -115,7 +115,7 @@ def main() -> None:
         "\n"
         + USAGE_REMINDER
         + "\n"
-        "Reference: memory/feedback_atomic_script_positional_args.md\n"
+        "Reference: memory/archive-2026-04-orphans.md (superseded, rule still enforced by this hook)\n"
         "Friction-log: 10+ fires of this exact pattern across 5/27-5/28.\n",
         file=sys.stderr,
     )
