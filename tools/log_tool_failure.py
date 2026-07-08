@@ -147,6 +147,14 @@ def main() -> int:
             trace(f"log_tool_failure SKIP graceful-empty match")
             return 0
 
+    # Skip unresolved-exit failures whose only extractable text has no error
+    # signal — almost always a chained/piped command whose real (benign)
+    # failure point left no text, and what we captured is an earlier stage's
+    # successful stdout. See friction_surface.looks_like_real_error docstring.
+    if exit_code == "?" and not fs.looks_like_real_error(error_text):
+        trace("log_tool_failure SKIP unresolved-exit + no error signal (likely masked benign nonzero)")
+        return 0
+
     surface = derive_surface(tool_name, tool_input, error_text)
     nature = derive_nature(error_text)
 

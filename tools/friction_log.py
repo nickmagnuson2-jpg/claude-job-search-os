@@ -42,6 +42,9 @@ from collections import Counter
 from datetime import date
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import friction_surface as fs  # shared surface/nature derivation (single source of truth)
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LEDGER = Path(os.environ.get(
     "FRICTION_LEDGER", str(REPO_ROOT / "memory" / "friction-log.md")))
@@ -232,9 +235,20 @@ def strip_auto_tag(nature: str) -> str:
     return AUTO_TAG_RE.sub("", nature).strip()
 
 
-def is_false_positive(nature: str) -> bool:
+def is_false_positive(nature: str, fix: str = "") -> bool:
     body = strip_auto_tag(nature)
-    return any(re.search(p, body) for p in FP_PATTERNS)
+    if any(re.search(p, body) for p in FP_PATTERNS):
+        return True
+    # Masked-benign PostToolUseFailure: exit code unresolved ("exit=?" in the
+    # auto-logged fix text) AND the captured nature has no error signal —
+    # almost always an earlier stage's successful stdout in a chained/piped
+    # bash command. See friction_surface.looks_like_real_error and the
+    # 2026-07-08 friction-log audit (On branch main / shebang-line / markdown
+    # header rows all matched this shape). log_tool_failure.py now guards this
+    # at capture time too; this is the retroactive-cleanup half via dedup.
+    if "exit=?" in (fix or "") and not fs.looks_like_real_error(body):
+        return True
+    return False
 
 
 def _dates_in(cell: str) -> list[str]:
@@ -279,7 +293,7 @@ def cmd_append(args: argparse.Namespace) -> None:
     # failing test is dev signal, not a tool friction. Reject at this single
     # chokepoint — every logger (auto + manual + backfill) funnels through here —
     # reusing the same is_false_positive() the dedup pass uses.
-    if is_false_positive(nature):
+    if is_false_positive(nature, fix):
         ok({"action": "skipped",
             "reason": "non-friction (test-runner or stdout output)",
             "surface": surface, "nature": nature[:120]})
@@ -454,7 +468,7 @@ def cmd_dedup(args: argparse.Namespace) -> None:
 
     dropped, kept = [], []
     for p in parsed:
-        (dropped if is_false_positive(p["nature"]) else kept).append(p)
+        (dropped if is_false_positive(p["nature"], p.get("fix", "")) else kept).append(p)
 
     # Cluster on nature similarity ALONE — surface is contextual metadata, not the
     # friction's identity. The bare-`python` interpreter error recurs across many

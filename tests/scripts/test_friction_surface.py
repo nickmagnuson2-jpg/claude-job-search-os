@@ -207,3 +207,65 @@ def test_nature_traceback_uses_exception_line_not_header():
     out = fs.derive_nature(err, "auto")
     assert out.startswith("[auto] TypeError: append_entry()")
     assert "Traceback (most recent" not in out
+
+
+# --- looks_like_real_error (2026-07-08 masked-benign PostToolUseFailure guard) ---
+# Gates the exit=? fallback: a chained/piped bash command can report a real
+# nonzero exit driven by a benign downstream stage, while the only text we can
+# extract is an EARLIER stage's successful stdout (no error signal in it).
+
+def test_masked_benign_git_status_stdout():
+    assert fs.looks_like_real_error("On branch main") is False
+
+
+def test_masked_benign_shebang_line():
+    assert fs.looks_like_real_error("#!/usr/bin/env python3") is False
+
+
+def test_masked_benign_markdown_header():
+    assert fs.looks_like_real_error("# Job Search To-Dos") is False
+
+
+def test_real_error_traceback():
+    assert fs.looks_like_real_error("Traceback (most recent call last):") is True
+
+
+def test_real_error_pascalcase_exception():
+    assert fs.looks_like_real_error(
+        "FileNotFoundError: [Errno 2] No such file or directory"
+    ) is True
+
+
+def test_real_error_command_not_found():
+    assert fs.looks_like_real_error("bash: python: command not found") is True
+
+
+def test_real_error_permission_denied():
+    assert fs.looks_like_real_error("Permission denied") is True
+
+
+def test_real_error_gitignore_message():
+    assert fs.looks_like_real_error(
+        "ignored by one of your .gitignore files"
+    ) is True
+
+
+def test_empty_and_none_text_not_real_error():
+    assert fs.looks_like_real_error("") is False
+    assert fs.looks_like_real_error(None) is False
+
+
+def test_substring_terror_does_not_false_match():
+    # Lowercase "error" as a substring of an unrelated word must not match —
+    # only PascalCase Python exception names or the bare word "error".
+    assert fs.looks_like_real_error("Terror management theory") is False
+
+
+def test_usage_line_is_a_real_error():
+    # Regression: "usage:" always ends in a non-word char (the colon), so a
+    # trailing \b right after it can never be satisfied (colon-to-space and
+    # colon-to-end-of-string are not word-boundary transitions). This must be
+    # its own alternative with only a leading \b, not folded into the
+    # shared-trailing-\b group.
+    assert fs.looks_like_real_error("usage: todo_write.py [-h]") is True
+    assert fs.looks_like_real_error("usage:") is True

@@ -64,6 +64,43 @@ _STDLIB_NOISE = {
     "argparse", "typing", "io", "csv", "random", "string", "hashlib",
 }
 
+# Recognizable error signal in free text. Used to gate the PostToolUseFailure
+# exit-code-unknown fallback (see looks_like_real_error): a chained/piped bash
+# command (`cmd1 | cmd2`) can report a real nonzero exit driven entirely by a
+# benign downstream stage (`grep -c` finding 0 matches, `grep -q` no match),
+# while the only text we can extract is an EARLIER stage's successful stdout
+# (e.g. `git status && grep ...` -> "On branch main", `head file.py | grep ...`
+# -> the file's own shebang line). That stdout has no error signal in it.
+# Origin: 2026-07-08 friction-log audit — 10+ rows logged nature="On branch
+# main" / "#!/usr/bin/env python3" / "# Job Search To-Dos", all exit=? auto
+# rows, none of them an actual failure of the named command.
+_ERROR_SIGNAL_RE = re.compile(
+    r"(?-i:\b[A-Z]\w*(?:Error|Exception)\b)"  # PascalCase Python exception
+    # names (TypeError, FileNotFoundError, MyCustomException, ...) — case-
+    # sensitive on purpose so lowercase words merely containing "error" as a
+    # substring (e.g. "Terror") don't false-match; Python exception classes
+    # are always capitalized.
+    r"|\busage\s*:"  # argparse-style usage line. Own alternative with only a
+    # LEADING \b: "usage:" always ends in a non-word char (the colon), and a
+    # trailing \b right after a colon is never satisfied (colon-to-space or
+    # colon-to-end-of-string is not a word-boundary transition), so folding
+    # this into the shared-trailing-\b group below would make it unmatchable.
+    r"|\b(error|fatal|traceback|not found|no such file|"
+    r"permission denied|cannot|invalid|failed|denied|refused|"
+    r"unrecognized|illegal option|command not found|no matches found|"
+    r"ignored by one of your \.gitignore files)\b",
+    re.IGNORECASE,
+)
+
+
+def looks_like_real_error(text: str) -> bool:
+    """True if text contains a recognizable error signal (see _ERROR_SIGNAL_RE
+    docstring for why this matters). Pure text heuristic, WARN-tier — false
+    negatives just mean a real-but-oddly-worded failure goes unlogged, which
+    is an acceptable trade against the alternative (drowning genuine friction
+    rows in benign-stdout noise)."""
+    return bool(text) and bool(_ERROR_SIGNAL_RE.search(text))
+
 
 def python_invoked(command: str) -> bool:
     """True iff python/python3 runs in COMMAND POSITION in some segment of the
