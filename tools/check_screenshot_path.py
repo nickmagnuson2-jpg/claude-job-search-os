@@ -50,12 +50,28 @@ BAD_SCREENSHOT_PATH = re.compile(
 
 # Documentation/logging context, not a real file operation: citing the exact
 # bad filename as an example (e.g. `friction_log.py append/resolve ... "...bad
-# filename..."`) is not the bug this hook exists to catch — it's exercising
-# the FRICTION LOG's own record of the bug. Without this exclusion the hook
-# blocks itself forever, since the ledger permanently stores this row's nature
-# text verbatim. Found live 2026-07-08: blocked its own `friction_log.py
-# resolve` call quoting this exact row.
+# filename..."`, or a `git commit` message documenting this exact bug) is not
+# the bug this hook exists to catch. Without this exclusion the hook blocks
+# itself forever, since the ledger permanently stores this row's nature text
+# verbatim. Found live 2026-07-08: blocked its own `friction_log.py resolve`
+# call quoting this exact row. Broadened same-session (code review) after a
+# second concrete repro: a `git commit -m "..."` message documenting the bug
+# was still blocked — `git` never takes this filename as a real file operand
+# (commit messages, log messages, branch ops), so it's safe to exempt
+# wholesale rather than growing a per-caller allowlist one script at a time.
+#
+# Checked per SEGMENT, not over the whole command: `cp "bad path" dest &&
+# python3 tools/friction_log.py append ...` must still block the cp even
+# though the command AS A WHOLE also mentions friction_log.py — exempting the
+# whole string would let a real file operation hide behind an unrelated
+# doc-context call later in the same compound command.
 DOC_CONTEXT_RE = re.compile(r"\bfriction_log\.py\b")
+GIT_COMMAND_RE = re.compile(r"^\s*(?:\w+=\S+\s+)*git\b")
+_SHELL_SPLIT_RE = re.compile(r"&&|\|\||[|;&]")
+
+
+def is_doc_context(segment: str) -> bool:
+    return bool(DOC_CONTEXT_RE.search(segment) or GIT_COMMAND_RE.search(segment.strip()))
 
 
 def main() -> None:
@@ -69,10 +85,13 @@ def main() -> None:
     if not command:
         sys.exit(0)
 
-    if DOC_CONTEXT_RE.search(command):
-        sys.exit(0)
-
-    m = BAD_SCREENSHOT_PATH.search(command)
+    m = None
+    for segment in _SHELL_SPLIT_RE.split(command):
+        if is_doc_context(segment):
+            continue
+        m = BAD_SCREENSHOT_PATH.search(segment)
+        if m:
+            break
     if not m:
         sys.exit(0)
 
