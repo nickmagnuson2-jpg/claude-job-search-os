@@ -43,9 +43,19 @@ def find_violations(content: str, check_frontmatter: bool) -> list[str]:
         if len(parts) >= 3:
             body = parts[2]
 
+    prev_was_blockquote = False
     for para in body.split("\n\n"):
         para = para.strip()
-        if not para or len(para) <= LONG_PARA_THRESHOLD:
+        if not para:
+            continue
+        if len(para) <= LONG_PARA_THRESHOLD:
+            # Still track blockquote-continuation state through short paragraphs
+            # (e.g. a short quoted aside between two long quoted paragraphs)
+            # so a later long paragraph doesn't lose its "lazy continuation"
+            # context just because a short one sat between them.
+            lines = [ln for ln in para.splitlines() if ln.strip()]
+            if lines:
+                prev_was_blockquote = lines[0].lstrip().startswith(">")
             continue
 
         lines = [ln for ln in para.splitlines() if ln.strip()]
@@ -54,18 +64,46 @@ def find_violations(content: str, check_frontmatter: bool) -> list[str]:
 
         first = lines[0].lstrip()
         if first.startswith(">"):
+            prev_was_blockquote = True
             continue
         if first.startswith("#"):
+            prev_was_blockquote = False
             continue
         if all(ln.lstrip().startswith(("- ", "* ", "1.", "2.", "3.")) for ln in lines):
+            prev_was_blockquote = False
             continue
         if first.startswith("```") or first.startswith("|"):
+            prev_was_blockquote = False
+            continue
+        if prev_was_blockquote:
+            # Lazy continuation: a paragraph immediately following a
+            # blockquote paragraph, with no "> " of its own, is treated as
+            # part of the same quote rather than new unquoted prose. Real
+            # Markdown blockquotes require "> " on every line to render
+            # correctly, but dictated/appended verbatim text commonly drops
+            # it on the ONE paragraph directly after the anchor — the exact
+            # shape of the reported bug (memory/friction-log.md 2026-06-04):
+            # an Edit append anchored on the tail of a prior "> " line, where
+            # new_string's own next paragraph loses that leading marker.
+            #
+            # Bounded to exactly this one paragraph: prev_was_blockquote is
+            # reset to False here, NOT left True. An earlier version left it
+            # True indefinitely, which let a single short "> ok" line unlock
+            # an UNBOUNDED run of unquoted paragraphs after it — confirmed via
+            # direct execution to let arbitrary-length Claude-authored prose
+            # through a gate whose entire purpose is blocking exactly that.
+            # A genuine multi-paragraph verbatim quote is expected to carry
+            # "> " on each of its own paragraphs (or the short-paragraph
+            # branch above re-arms this for one more) rather than lean on
+            # indefinite lazy continuation.
+            prev_was_blockquote = False
             continue
 
         errors.append(
             f"Prose paragraph >{LONG_PARA_THRESHOLD} chars outside blockquote: "
             f"{para[:80].replace(chr(10), ' ')}..."
         )
+        prev_was_blockquote = False
 
     return errors
 
