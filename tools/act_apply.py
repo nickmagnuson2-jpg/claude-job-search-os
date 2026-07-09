@@ -378,6 +378,22 @@ def cmd_company_note_add(args, repo_root: Path, dry_run: bool) -> None:
 # ---------------------------------------------------------------------------
 
 def parse_args():
+    # --repo-root/--dry-run MUST be given BEFORE the subcommand (this is a
+    # top-level-only optional; argparse does not recognize it after a
+    # subparser token). See SKILL.md's invocation examples, corrected
+    # 2026-07-08 to match this — they previously showed --repo-root AFTER the
+    # subcommand args, which argparse rejects with "unrecognized arguments"
+    # (10 friction-log occurrences of exactly that usage error).
+    #
+    # A `parents=[common]` shared-parser approach (registering the same flags
+    # on every subparser so both orderings work) was tried and REVERTED: when
+    # a subparser also defines a flag already set by the top-level parser, the
+    # subparser's own default SILENTLY OVERWRITES the value already in the
+    # namespace — `--dry-run` given before the subcommand gets silently
+    # dropped back to False. That is a correctness bug worse than the original
+    # loud usage error (a dropped --dry-run could cause an unintended real
+    # write). Confirmed live: `python3 repro.py --dry-run foo bar` ->
+    # `dry_run=False` with that pattern. Do not reintroduce it.
     p = argparse.ArgumentParser(description="Atomic writes for /act Immediate Route buckets.")
     p.add_argument("--repo-root", default=None)
     p.add_argument("--dry-run", action="store_true")

@@ -212,21 +212,23 @@ Build the final **execute list** from the parsed response.
 
 Use `act_apply.py` for all three write types. All commands use `--repo-root .`.
 
+**`--repo-root`/`--dry-run` MUST come BEFORE the subcommand** (`act_apply.py --repo-root . pipeline-add ...`, not `act_apply.py pipeline-add ... --repo-root .`) — they're top-level-only argparse flags; putting them after the subcommand raises "unrecognized arguments" (this was the #1 friction-log occurrence for this script, 10 fires, fixed 2026-07-08).
+
 **Job ad → pipeline:**
 ```bash
-PYTHONIOENCODING=utf-8 python3 tools/act_apply.py pipeline-add "<company>" --role "ROLE" --url "URL" --source-file "FILENAME" --repo-root .
+PYTHONIOENCODING=utf-8 python3 tools/act_apply.py --repo-root . pipeline-add "<company>" --role "ROLE" --url "URL" --source-file "FILENAME"
 ```
 Extract company name, role, and URL from the inbox item content. Pass `--` for any field not found.
 
 **Contact capture → networking:**
 ```bash
-PYTHONIOENCODING=utf-8 python3 tools/act_apply.py contact-add "<name>" --company "CO" --role "ROLE" --content "RAW_CONTENT" --source-file "FILENAME" --repo-root .
+PYTHONIOENCODING=utf-8 python3 tools/act_apply.py --repo-root . contact-add "<name>" --company "CO" --role "ROLE" --content "RAW_CONTENT" --source-file "FILENAME"
 ```
 Pass the raw inbox content as `--content`. The script writes both the contacts table row and the interaction log entry.
 
 **Unclassifiable → notes:**
 ```bash
-PYTHONIOENCODING=utf-8 python3 tools/act_apply.py notes-add --content "RAW_CONTENT" [--company-slug "SLUG"] --source-file "FILENAME" --repo-root .
+PYTHONIOENCODING=utf-8 python3 tools/act_apply.py --repo-root . notes-add --content "RAW_CONTENT" [--company-slug "SLUG"] --source-file "FILENAME"
 ```
 Include `--company-slug` if a company name is identifiable (converts to lowercase-hyphen slug). Without it, routes to `data/notes.md` under `## From Inbox`.
 
@@ -267,11 +269,10 @@ Parse the reply:
 
 `company-note-add` format:
 ```bash
-PYTHONIOENCODING=utf-8 python3 tools/act_apply.py company-note-add "<slug>" \
+PYTHONIOENCODING=utf-8 python3 tools/act_apply.py --repo-root . company-note-add "<slug>" \
   --content "From: <sender>\nSubject: <subject>\n\n<key content from email>" \
   --context "inbound email" \
-  --source-file "<inbox filename>" \
-  --repo-root .
+  --source-file "<inbox filename>"
 ```
 Pass the email's From, Subject, and a 2-3 sentence content summary as `--content`. Do NOT dump the full raw email body — summarize to preserve readability in company-notes.
 
