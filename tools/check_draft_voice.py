@@ -64,27 +64,63 @@ from hook_command_lint import strip_literals  # noqa: E402
 OPEN_DRAFT_INVOKE = re.compile(r"\bpython[0-9.]*\b[^|;&\n]*\bopen_draft\.py\b")
 
 
-def is_open_draft_invocation() -> bool:
-    """
-    Read hook stdin (Claude Code PreToolUse JSON) and check whether this Bash
-    call is invoking open_draft.py. The Bash matcher in settings.json fires for
-    every Bash tool use; we only care about open_draft.py calls.
-
-    Returns True if the command actually invokes open_draft.py (python interpreter
-    + the script, after stripping quoted/heredoc literals), or if stdin is
-    unreadable (fail-safe: when we can't tell, run the check to be conservative).
-    A bare mention of the token (grep pattern, commit message, JSON payload) is NOT
-    an invocation and must not trigger the gate.
-    """
+def read_hook_command() -> "str | None":
+    """Read hook stdin (Claude Code PreToolUse JSON) once and return the Bash
+    command, or None if stdin is unreadable (caller should fail conservative)."""
     try:
         data = json.load(sys.stdin)
     except (json.JSONDecodeError, ValueError):
-        # No stdin or bad JSON — could be a manual/direct invocation; run check
-        return True
-
+        return None
     tool_input = data.get("tool_input", {}) or {}
-    command = tool_input.get("command", "") or ""
+    return tool_input.get("command", "") or ""
+
+
+def is_open_draft_invocation(command: "str | None") -> bool:
+    """
+    Check whether this Bash call is invoking open_draft.py. The Bash matcher in
+    settings.json fires for every Bash tool use; we only care about
+    open_draft.py calls.
+
+    Returns True if the command actually invokes open_draft.py (python interpreter
+    + the script, after stripping quoted/heredoc literals), or if command is None
+    (fail-safe: when we can't tell, run the check to be conservative). A bare
+    mention of the token (grep pattern, commit message, JSON payload) is NOT an
+    invocation and must not trigger the gate.
+    """
+    if command is None:
+        return True
     return bool(OPEN_DRAFT_INVOKE.search(strip_literals(command)))
+
+
+# A command writing the marker file (heredoc/printf/echo redirect) in the SAME
+# Bash call that invokes open_draft.py. PreToolUse fires BEFORE the command
+# executes, so this write is invisible to check_provenance() — the hook can
+# only ever see the marker's state from a PRIOR, already-completed tool call.
+# SKILL.md already prescribes writing .pending-draft.source via the Write tool
+# (a separate, already-executed tool call) before the Bash call that runs
+# open_draft.py, which sidesteps this entirely. This pattern exists only to
+# give a diagnostic, actionable message when that instruction wasn't followed
+# and a Bash printf/heredoc was used instead — it does NOT grant provenance;
+# the file-based check below is unchanged and still authoritative.
+# Origin: 2026-07-08 friction-log audit, 13 occurrences of this exact race
+# (see memory/reference_pending_draft_marker_before_open_draft.md).
+#
+# Requires an actual write indicator (>, >>, tee) targeting the marker path,
+# not just the bare substring — a plain mention (e.g. `cat
+# tools/.pending-draft.source && python3 tools/open_draft.py`, debugging why
+# the marker is missing) is a READ, and showing the "this command appears to
+# write it" hint there would misdirect the fix (splitting into two calls does
+# nothing when there's no write to move). This only affects the diagnostic
+# TEXT — check_provenance()'s actual gate is unchanged and file-based either
+# way. Tightened same-session (code review) after this exact false-positive
+# was confirmed on a read-only command.
+_INLINE_MARKER_WRITE_RE = re.compile(
+    r"(?:>>?\s*\S*|\btee\s+(?:-a\s+)?\S*)\.pending-draft\.source\b"
+)
+
+
+def command_attempts_inline_marker_write(command: "str | None") -> bool:
+    return bool(command) and bool(_INLINE_MARKER_WRITE_RE.search(command))
 
 DRAFT_FILE = Path(__file__).parent / ".pending-draft.txt"
 SOURCE_FILE = Path(__file__).parent / ".pending-draft.source"
@@ -241,7 +277,7 @@ def recipients_all_personal(to_field: str, allowlist: set) -> bool:
     return bool(addrs) and all(a in allowlist for a in addrs)
 
 
-def check_provenance() -> list[str]:
+def check_provenance(command: "str | None" = None) -> list[str]:
     """
     Verify .pending-draft.source marker exists, is fresh, and names an allowed skill.
 
@@ -249,11 +285,25 @@ def check_provenance() -> list[str]:
     Its presence proves an email-drafting skill ran (rather than inline drafting that
     bypasses tone-matching, voice-reference loading, and quality structure).
 
+    `command` is used ONLY to diagnose one specific failure mode (see
+    command_attempts_inline_marker_write docstring) and never grants provenance
+    by itself — the file-based check below is unchanged.
+
     Returns a list of violations (empty list = clean).
     """
     if not SOURCE_FILE.exists():
+        inline_hint = ""
+        if command_attempts_inline_marker_write(command):
+            inline_hint = (
+                "\n  This command appears to write .pending-draft.source itself — but "
+                "PreToolUse fires BEFORE the command runs, so that write is invisible "
+                "here. Use the Write tool for tools/.pending-draft.source (a separate, "
+                "already-executed tool call), THEN invoke open_draft.py in a SEPARATE "
+                "Bash call. See [[reference_pending_draft_marker_before_open_draft]]."
+            )
         return [
-            "No skill provenance marker (tools/.pending-draft.source).\n"
+            "No skill provenance marker (tools/.pending-draft.source)."
+            + inline_hint + "\n"
             "  Job-search emails must be drafted via /draft-email, /cold-outreach, or /follow-up.\n"
             "  These skills load voice-reference.md, prior tone with this contact, and the right structure.\n"
             "  Inline drafts bypass that.\n"
@@ -298,7 +348,8 @@ def main():
     # PreToolUse(Bash) fires for every Bash tool use; without this gate the
     # provenance check blocks unrelated commands as long as .pending-draft.txt
     # exists.
-    if not is_open_draft_invocation():
+    command = read_hook_command()
+    if not is_open_draft_invocation(command):
         sys.exit(0)
 
     if not DRAFT_FILE.exists():
@@ -317,7 +368,7 @@ def main():
 
     # Provenance check first — wrong path is louder than wrong content.
     if not is_personal:
-        provenance_violations = check_provenance()
+        provenance_violations = check_provenance(command)
         if provenance_violations:
             msg = (
                 "BLOCKED: tools/.pending-draft.txt was created outside an approved drafting skill.\n\n"
