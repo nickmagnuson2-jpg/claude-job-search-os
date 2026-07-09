@@ -79,8 +79,48 @@ def ok(payload: dict) -> "None":
     sys.exit(0)
 
 
+# Path segments common to nearly every absolute path this ledger will ever see
+# (repo root + macOS home-dir scaffolding). Left untouched, these tokenize as
+# ordinary "significant" keywords and dominate the Jaccard similarity between
+# two UNRELATED "file not found" errors that merely happen to live under the
+# same repo — e.g. two different missing scripts under tools/ can hit Jaccard
+# 0.75, well past DEDUP_THRESHOLD (0.6), silently merging distinct frictions
+# into one inflated row. Stripped before tokenizing so only the distinguishing
+# tail (the actual filename/subpath) drives matching. Origin: 2026-07-08
+# friction-log audit — the bash:ls "career_scanner test path missing" row (17
+# occurrences) traced back to exactly this over-clustering.
+# Derived from REPO_ROOT (not hand-typed) so a relocated checkout can't
+# silently desync the regex from the actual path — a hardcoded literal here
+# would stop matching if the repo ever moved, quietly reintroducing the very
+# over-clustering bug this fix exists to prevent, with no test catching it.
+_PATH_NOISE_RE = re.compile(re.escape(str(REPO_ROOT)) + "/", re.IGNORECASE)
+
+# The auto-capture wrapper text every PreToolUse-hook-block row shares
+# verbatim, regardless of which specific thing was blocked: the "[auto]"/
+# "[auto-stop]" provenance tag and the "PreToolUse:<Tool> hook error:
+# [python3 .../check_X.py]:" invocation preamble. Left untouched, this
+# boilerplate tokenizes into a dozen "significant" keywords (pretooluse, hook,
+# error, python3, write, blocked, ...) shared by EVERY hook-block row, which
+# is enough on its own to push two block events for DIFFERENT targets (e.g.
+# check_voice_pure.py blocking two unrelated reflection files) to Jaccard 0.75
+# — past DEDUP_THRESHOLD — over-merging distinct frictions into one inflated
+# row. Same failure class as _PATH_NOISE_RE, different noise source. Origin:
+# 2026-07-08 friction-log audit — the check_voice_pure.py row (25 occurrences)
+# traced back to this.
+_BOILERPLATE_NOISE_RE = re.compile(
+    r"^\[auto[^\]]*\]\s*"
+    r"|PreToolUse:\w+ hook error:\s*"
+    r"|\[python3?\b[^\]]*\]:?",
+    re.IGNORECASE,
+)
+
+
 def keywords(text: str) -> set[str]:
-    """Lowercased significant words (len>=4, not in stopwords)."""
+    """Lowercased significant words (len>=4, not in stopwords). Repo-root path
+    scaffolding and hook-wrapper boilerplate are stripped first — see
+    _PATH_NOISE_RE / _BOILERPLATE_NOISE_RE docstrings."""
+    text = _PATH_NOISE_RE.sub(" ", text)
+    text = _BOILERPLATE_NOISE_RE.sub(" ", text)
     tokens = re.findall(r"[a-z0-9_]+", text.lower())
     return {t for t in tokens if len(t) >= 4 and t not in STOPWORDS}
 

@@ -128,6 +128,104 @@ def test_inline_c_all_stdlib_comma_import_still_inline():
     assert fs.derive_surface("Bash", cmd, err) == "inline:os"
 
 
+# --- NEW: python heredoc attribution (2026-07-08 friction-log audit) -------
+# `python3 <<EOF ... EOF` was falling through every check to the generic
+# bash:<first-token> fallback (e.g. "bash:cd"), and the short/truncated
+# traceback text these tend to produce ("File \"<string>\", line 4" with no
+# exception line) is generic enough that unrelated heredoc scripts collide at
+# Jaccard 1.0 in dedup — silently merging distinct one-off failures into one
+# wrongly-promoted row.
+
+def test_heredoc_attributes_to_imported_module():
+    cmd = "cd /repo && python3 <<'EOF'\nimport ss_log_append\nss_log_append.mark_seen('x')\nEOF"
+    err = 'File "<string>", line 2\nAttributeError: nope'
+    assert fs.derive_surface("Bash", cmd, err) == "ss_log_append.py"
+
+
+def test_heredoc_unquoted_delimiter():
+    cmd = "cd /repo && python3 <<EOF\nimport pipeline_staleness\nEOF"
+    err = "File \"<string>\", line 1\nImportError: bad"
+    assert fs.derive_surface("Bash", cmd, err) == "pipeline_staleness.py"
+
+
+def test_heredoc_prefers_real_pyfile_in_traceback():
+    cmd = "python3 <<'EOF'\nimport ss_log_append\nss_log_append.mark_seen('x')\nEOF"
+    err = (
+        'File "<string>", line 2, in <module>\n'
+        '  File "/Users/x/tools/ss_log_append.py", line 40, in mark_seen\n'
+        "FileNotFoundError: [Errno 2] No such file"
+    )
+    assert fs.derive_surface("Bash", cmd, err) == "ss_log_append.py"
+
+
+def test_heredoc_no_import_falls_back_to_heredoc_label():
+    # Truncated/generic traceback with no importable module and no real .py
+    # frame — must NOT collide with the -c fallback label (distinguishable
+    # so a -c failure and a heredoc failure don't merge into one row either).
+    cmd = "cd /repo && python3 <<'EOF'\nx = 1/0\nEOF"
+    err = 'File "<string>", line 1'
+    assert fs.derive_surface("Bash", cmd, err) == "inline-python-heredoc"
+
+
+def test_heredoc_stdlib_only_import_is_not_a_fake_surface():
+    cmd = "python3 <<'EOF'\nimport os\nprint(1/0)\nEOF"
+    err = "ZeroDivisionError: division by zero"
+    assert fs.derive_surface("Bash", cmd, err) == "inline:os"
+
+
+# --- NEW: heredoc unbounded-fallback hardening (code review, 2026-07-08) ---
+# _heredoc_body() no longer sweeps the unbounded command remainder into "the
+# body" when no closing delimiter is found — it returns "" (safe generic
+# fallback) instead of scanning unrelated later text for imports.
+
+def test_heredoc_unterminated_falls_back_to_generic_label_not_unrelated_import():
+    # No closing "EOF" line anywhere in the captured text; a later unrelated
+    # "import numpy" must NOT get picked up as the surface.
+    cmd = (
+        "python3 <<EOF\n"
+        "import json\n"
+        'data = json.loads(open("foo.json").read())\n'
+        "print(data)\n"
+        "\n"
+        "import numpy\n"
+        "print(numpy.__version__)"
+    )
+    err = 'FileNotFoundError: foo.json'
+    assert fs.derive_surface("Bash", cmd, err) == "inline-python-heredoc"
+
+
+def test_heredoc_body_isolated_stops_at_unterminated_point():
+    cmd = (
+        "python3 <<EOF\n"
+        "import json\n"
+        "\n"
+        "import numpy\n"
+    )
+    assert fs._heredoc_body(cmd) == ""
+
+
+def test_heredoc_closing_delimiter_with_trailing_command_substitution_syntax():
+    # "EOF)" closes a heredoc feeding a $(...) command substitution — a
+    # common idiom (x=$(python3 <<EOF ... EOF)). The closing-line regex must
+    # recognize this, not just a bare "EOF" alone on its line.
+    cmd = (
+        'x=$(python3 <<EOF\n'
+        "import json\n"
+        'data = json.loads(open("foo.json").read())\n'
+        "EOF)"
+    )
+    body = fs._heredoc_body(cmd)
+    assert "json" in body
+    assert "EOF" not in body
+
+
+def test_plain_cd_without_python_still_falls_back_to_bash_cd():
+    # Sanity: the heredoc path must not fire on unrelated cd commands.
+    cmd = "cd /repo && ls"
+    err = "ls: cannot access 'x': No such file or directory"
+    assert fs.derive_surface("Bash", cmd, err) == "bash:cd"
+
+
 # --- NEW: python_invoked command-position detection (masked-failure support, 2026-06-05) ---
 
 def test_python_invoked_at_start():

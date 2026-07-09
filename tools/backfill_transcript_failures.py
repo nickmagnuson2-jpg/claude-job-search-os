@@ -26,19 +26,23 @@ import subprocess
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import friction_surface as fs  # shared surface/nature derivation (single source of truth)
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 FRICTION_LOG_PY = REPO_ROOT / "tools" / "friction_log.py"
 
 PROJECT_DIR_HASH = "-Users-mag-Documents-Obsidian-30-projects-job-search"
 SESSIONS_DIR = Path.home() / ".claude" / "projects" / PROJECT_DIR_HASH
 
-EXCLUDE_SCRIPTS = {
-    "friction_log.py",
-    "log_tool_failure.py",
-    "scan_transcript_failures.py",
-    "backfill_transcript_failures.py",
-    "check_script_error_logged.py",
-}
+# Was a locally-duplicated copy of tools/friction_surface.py's own
+# EXCLUDE_SCRIPTS/SCRIPT_RE/derive_surface/derive_nature — meant this script
+# never benefited from friction_surface.py's own fixes (heredoc attribution,
+# PascalCase exception detection, PreToolUse-block attribution) despite that
+# module's docstring claiming to be the "single source of truth." Wired to
+# delegate 2026-07-08 code review. EXCLUDE_SCRIPTS kept as an alias (used by
+# is_excluded_bash below) rather than touching every call site.
+EXCLUDE_SCRIPTS = fs.EXCLUDE_SCRIPTS
 
 GRACEFUL_EMPTY_PATTERNS = [
     re.compile(p, re.IGNORECASE) for p in [
@@ -50,9 +54,7 @@ GRACEFUL_EMPTY_PATTERNS = [
     ]
 ]
 
-SCRIPT_RE = re.compile(
-    r"\bpython3?\b[^\n]*?\btools/([a-z0-9_]+)\.py\b", re.IGNORECASE
-)
+SCRIPT_RE = fs.SCRIPT_RE
 
 
 def extract_text(content) -> str:
@@ -63,45 +65,6 @@ def extract_text(content) -> str:
             (x.get("text", "") if isinstance(x, dict) else str(x)) for x in content
         )
     return str(content)
-
-
-def derive_surface(tool_name: str, tool_use: dict) -> str:
-    if tool_name == "Bash":
-        command = ((tool_use or {}).get("input") or {}).get("command", "") or ""
-        matches = SCRIPT_RE.findall(command)
-        scripts = [
-            (m + ".py").lower()
-            for m in matches
-            if (m + ".py").lower() not in EXCLUDE_SCRIPTS
-        ]
-        if scripts:
-            return scripts[0]
-        first = command.strip().split()[0] if command.strip() else "bash"
-        if "=" in first:
-            for t in command.strip().split():
-                if "=" not in t:
-                    first = t
-                    break
-        return f"bash:{first}"
-    return f"tool:{tool_name}"
-
-
-def derive_nature(error_text: str) -> str:
-    m = re.search(r'"message"\s*:\s*"([^"]{1,300})"', error_text)
-    if m:
-        nature = m.group(1)
-    else:
-        nature = ""
-        for line in error_text.splitlines():
-            line = line.strip()
-            if not line or line.startswith("Exit code "):
-                continue
-            nature = line
-            break
-        if not nature:
-            nature = error_text[:200]
-    nature = nature[:200].replace("|", "/").replace("\n", " ").replace("\r", " ")
-    return f"[auto-backfill] {nature}"
 
 
 def is_excluded_bash(tool_use: dict) -> bool:
@@ -178,10 +141,11 @@ def scan_session(path: Path, since: datetime.date | None) -> list[tuple[str, str
                         err_text = extract_text(c.get("content", ""))
                         if any(p.search(err_text) for p in GRACEFUL_EMPTY_PATTERNS):
                             continue
-                        surface = derive_surface(tool_name, tu)
+                        command = ((tu or {}).get("input") or {}).get("command", "") or ""
+                        surface = fs.derive_surface(tool_name, command, err_text)
                         if not surface or surface == "bash:":
                             continue
-                        nature = derive_nature(err_text)
+                        nature = fs.derive_nature(err_text, "auto-backfill")
                         found.append((surface, nature, event_date))
     except Exception as e:
         print(f"  scan_session FAIL on {path.name}: {e}", file=sys.stderr)

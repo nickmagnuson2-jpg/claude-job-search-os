@@ -196,26 +196,85 @@ def _inline_c_body(command: str) -> str:
     return rest
 
 
-def _surface_from_inline(command: str, error_text: str) -> str:
-    """Attribute an inline `python3 -c` failure to the real module, not bash:cd."""
-    if not _INLINE_C_RE.search(command):
-        return ""
-    # 1. A real .py in the traceback is the most reliable signal.
+def _attribute_from_body(error_text: str, body: str, fallback: str) -> str:
+    """Shared attribution logic for any inline-python invocation shape once its
+    script BODY has been extracted (whether from `-c '...'` or a heredoc):
+    1. A real .py in the traceback is the most reliable signal.
+    2. Else the first NON-stdlib imported module in the body.
+    3. Else `fallback` (a shape-specific label, so a -c failure and a heredoc
+       failure with no imports don't collide into one indistinguishable row)."""
     files = _TRACEBACK_PYFILE_RE.findall(error_text or "")
     if files:
         return files[-1].rsplit("/", 1)[-1].lower()
-    # 2. Imported modules in the -c body: prefer the first NON-stdlib module
-    #    (handles `import os, glob, ss_log_append as s` -> ss_log_append.py,
-    #    not the junk `inline:os`). Fall back to inline:<stdlib> when every
-    #    import is stdlib noise, then inline-python when there's no import.
-    body = _inline_c_body(command)
     mods = _imported_modules(body)
     non_std = [m for m in mods if m.lower() not in _STDLIB_NOISE]
     if non_std:
         return f"{non_std[0]}.py"
     if mods:
         return f"inline:{mods[0]}"
-    return "inline-python"
+    return fallback
+
+
+def _surface_from_inline(command: str, error_text: str) -> str:
+    """Attribute an inline `python3 -c` failure to the real module, not bash:cd."""
+    if not _INLINE_C_RE.search(command):
+        return ""
+    body = _inline_c_body(command)
+    return _attribute_from_body(error_text, body, "inline-python")
+
+
+# `python3 <<'EOF' ... EOF` / `python3 - <<EOF ... EOF` heredoc invocation.
+# Captures the delimiter (optionally quoted) so the body can be sliced out to
+# its matching closing line. Distinct from _INLINE_C_RE (`-c`) — this shape
+# was falling through ALL surface-attribution checks straight to the generic
+# `bash:<first-token>` fallback (e.g. `cd dir && python3 <<EOF ...` -> just
+# "bash:cd"), and worse, whatever traceback text WAS captured for these tended
+# to be short/truncated ("File \"<string>\", line 4" with no exception line),
+# which is generic enough that any two unrelated heredoc scripts hit Jaccard
+# 1.0 in dedup — silently merging distinct one-off script failures into a
+# single inflated, wrongly-promoted-to-mandatory row. Origin: 2026-07-08
+# friction-log audit, the bash:cd "File \"<string>\", line 4" row (10 occ).
+_HEREDOC_PY_RE = re.compile(r"\bpython3?\b[^\n]*<<-?\s*(['\"]?)(\w+)\1")
+
+
+def _heredoc_body(command: str) -> str:
+    """Best-effort extraction of a python heredoc's body text.
+
+    Two hardening fixes (2026-07-08 code review) against misattribution:
+    1. The closing-delimiter match uses a word boundary, not end-of-line, so
+       an idiomatic same-line close like `EOF)` (a heredoc feeding a `$(...)`
+       command substitution — e.g. `x=$(python3 <<EOF ... EOF)`) is still
+       recognized as the close. The stricter `\\s*$` version missed this and
+       fell through to the no-match branch below.
+    2. If no closing delimiter is found at all (truly unterminated in the
+       captured text), return "" rather than the unbounded remainder of the
+       command. Confirmed live: without this, an unrelated LATER command in
+       the same compound string (e.g. a trailing `python3 -c "import numpy"`)
+       gets swept into "the heredoc body" and its import wrongly becomes the
+       attributed surface, masking the real failure.
+    """
+    m = _HEREDOC_PY_RE.search(command)
+    if not m:
+        return ""
+    delim = m.group(2)
+    rest = command[m.end():]
+    nl = rest.find("\n")
+    if nl == -1:
+        return ""
+    after_open = rest[nl + 1:]
+    end_re = re.compile(rf"^\s*{re.escape(delim)}\b", re.MULTILINE)
+    m2 = end_re.search(after_open)
+    return after_open[:m2.start()] if m2 else ""
+
+
+def _surface_from_heredoc(command: str, error_text: str) -> str:
+    """Attribute an inline `python3 <<EOF ... EOF` heredoc failure — see
+    _HEREDOC_PY_RE docstring for why this exists as a separate path from
+    `-c`."""
+    if not _HEREDOC_PY_RE.search(command):
+        return ""
+    body = _heredoc_body(command)
+    return _attribute_from_body(error_text, body, "inline-python-heredoc")
 
 
 def derive_surface(tool_name: str, command: str, error_text: str = "") -> str:
@@ -241,6 +300,10 @@ def derive_surface(tool_name: str, command: str, error_text: str = "") -> str:
         return s
 
     s = _surface_from_inline(command, error_text)
+    if s:
+        return s
+
+    s = _surface_from_heredoc(command, error_text)
     if s:
         return s
 
