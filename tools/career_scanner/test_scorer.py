@@ -262,7 +262,14 @@ class TestExtractSeniority:
         assert extract_seniority("Director of Operations") == 8
 
     def test_no_seniority_defaults_to_mid(self):
-        assert extract_seniority("Product Manager") == 4
+        # A title with no seniority keyword defaults to mid (4). ("Product
+        # Manager" is no longer keyword-free — 'manager' now maps to 5.)
+        assert extract_seniority("Software Engineer") == 4
+
+    def test_manager_keyword(self):
+        # fable-audit Theme 3: 'manager' was missing from the level map, so the
+        # user's Operations/Program Manager targets silently defaulted to mid.
+        assert extract_seniority("Product Manager") == 5
 
     def test_vp_keyword(self):
         assert extract_seniority("VP of Engineering") == 9
@@ -360,3 +367,76 @@ class TestLoadScoringContext:
         context = load_scoring_context(tmp_path)
         assert context["target_titles"] == []
         assert context["skills"] == []
+
+
+# ---------------------------------------------------------------------------
+# Revealed-fit overlay (fit-spec.yaml -> title-shape screen + not-fit taxonomy)
+# ---------------------------------------------------------------------------
+
+from tools.career_scanner.scorer import _fit_overlay_adjustment, load_fit_spec
+
+_FIT_SPEC = {
+    "positive_title_patterns": ["deployment strateg", "forward deployed"],
+    "scope_disqualifiers": ["quota", "land and expand", "customer success"],
+    "not_fit_title_patterns": ["chief of staff", "business operations"],
+    "not_fit_domain_patterns": ["cpq", "deal desk"],
+    "weights": {
+        "not_fit_title": -4.0, "not_fit_domain": -3.0,
+        "title_shape_screen": -3.0, "in_lane_title": 2.0,
+        "min_adjustment": -5.0, "max_adjustment": 3.0,
+    },
+}
+
+
+def test_overlay_noop_without_fit_spec():
+    """No fit_spec -> overlay is exactly 0 (scorer unchanged)."""
+    role = {"title": "Deployment Strategist", "description_plain": "carry a quota"}
+    assert _fit_overlay_adjustment(role, {}) == 0.0
+    assert _fit_overlay_adjustment(role, None or {}) == 0.0
+
+
+def test_overlay_in_lane_title_boost():
+    role = {"title": "Founding Deployment Strategist",
+            "description_plain": "own end-to-end enterprise deployments, build the playbook"}
+    assert _fit_overlay_adjustment(role, _FIT_SPEC) == 2.0
+
+
+def test_overlay_title_shape_screen_catches_gtm_in_disguise():
+    """Same in-lane title, GTM scope -> screened DOWN below the clean version.
+
+    This is the Context case: a 'Deployment Strategist' that is really a GTM seat.
+    """
+    clean = {"title": "Deployment Strategist",
+             "description_plain": "scope pilots to production, forward-deployed"}
+    gtm = {"title": "Deployment Strategist",
+           "description_plain": "land and expand accounts, carry a quota, customer success"}
+    assert _fit_overlay_adjustment(clean, _FIT_SPEC) == 2.0
+    assert _fit_overlay_adjustment(gtm, _FIT_SPEC) == -3.0
+    assert _fit_overlay_adjustment(gtm, _FIT_SPEC) < _fit_overlay_adjustment(clean, _FIT_SPEC)
+
+
+def test_overlay_not_fit_title_downranks():
+    role = {"title": "Chief of Staff to the CEO", "description_plain": "board prep, cadences"}
+    assert _fit_overlay_adjustment(role, _FIT_SPEC) == -4.0
+
+
+def test_overlay_clamped_to_bounds():
+    """A role tripping multiple penalties is clamped, not unbounded."""
+    role = {"title": "Chief of Staff, Business Operations",
+            "description_plain": "own our cpq and deal desk platform"}
+    adj = _fit_overlay_adjustment(role, _FIT_SPEC)
+    assert adj == -5.0  # -4 (title) + -3 (domain) = -7, clamped to min -5.0
+
+
+def test_real_fit_spec_loads_and_screens():
+    """Integration: the real data/calibration/fit-spec.yaml loads and the
+    title-shape screen fires on a GTM-in-disguise deployment role."""
+    repo_root = Path(__file__).resolve().parents[2]
+    ctx = load_scoring_context(repo_root)
+    spec = ctx.get("fit_spec")
+    assert spec and spec.get("positive_title_patterns")
+    gtm = {"title": "Deployment Strategist",
+           "description_plain": "land and expand, carry a quota, drive renewals"}
+    real = {"title": "Deployment Strategist",
+            "description_plain": "own enterprise deployments, build the playbook, forward-deployed"}
+    assert score_role(gtm, ctx) < score_role(real, ctx)

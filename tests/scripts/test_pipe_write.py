@@ -303,3 +303,67 @@ def test_repo_root_after_subcommand_rejected():
     assert code == 2
     assert "unrecognized arguments" in stderr
     assert stdout.strip() == ""
+
+
+# ---------------------------------------------------------------------------
+# fit-reason capture (source-coverage fix per 071526-machine-vs-human-agreement)
+# ---------------------------------------------------------------------------
+
+def _cols(row_line):
+    return [c.strip() for c in row_line.strip().strip("|").split("|")]
+
+
+def test_add_with_fit_reason_and_verdict(tmp_path):
+    """add --fit-reason --fit-verdict writes a [fit-reason ...] tag into Notes, 8 cols."""
+    write_fixture(tmp_path, "data/job-pipeline.md", PIPELINE_MD)
+    result, code = run_pipe_write(
+        "--repo-root", str(tmp_path), "add", "Beta", "Deployment Strategist",
+        "--fit-verdict", "fit", "--fit-reason", "in-lane FDE at AI-native co",
+    )
+    assert result["status"] == "ok"
+    assert result["fit_reason_logged"] is True
+    content = (tmp_path / "data/job-pipeline.md").read_text(encoding="utf-8")
+    row = [ln for ln in content.splitlines() if ln.startswith("| Beta ")][0]
+    assert "[fit-reason" in row and " fit: in-lane FDE at AI-native co]" in row
+    assert len(_cols(row)) == 8
+
+
+def test_update_fit_reason_sanitizes_pipe_and_appends(tmp_path):
+    """A '|' in the reason is sanitized (would break the row) and the tag appends
+    to existing Notes rather than clobbering them; row stays 8 columns."""
+    write_fixture(tmp_path, "data/job-pipeline.md", PIPELINE_WITH_ROW)
+    # seed an existing note first
+    run_pipe_write("--repo-root", str(tmp_path), "update", "Acme Corp", "Screen",
+                   "--notes", "Recruiter screen booked")
+    result, code = run_pipe_write(
+        "--repo-root", str(tmp_path), "update", "Acme Corp", "Closed - passed (self)",
+        "--fit-verdict", "not-fit", "--fit-reason", "CoS re-tread | comp below floor",
+    )
+    assert result["status"] == "ok" and result["fit_reason_logged"] is True
+    content = (tmp_path / "data/job-pipeline.md").read_text(encoding="utf-8")
+    row = [ln for ln in content.splitlines() if ln.startswith("| Acme Corp ")][0]
+    assert "|" not in _cols(row)[6]  # notes cell has no stray pipe
+    assert "CoS re-tread / comp below floor" in row  # sanitized
+    assert "Recruiter screen booked" in row  # existing note preserved
+    assert len(_cols(row)) == 8
+
+
+def test_fit_reason_without_verdict_omits_verdict_word(tmp_path):
+    write_fixture(tmp_path, "data/job-pipeline.md", PIPELINE_MD)
+    run_pipe_write("--repo-root", str(tmp_path), "add", "Gamma", "PM",
+                   "--fit-reason", "researching, no verdict yet")
+    content = (tmp_path / "data/job-pipeline.md").read_text(encoding="utf-8")
+    row = [ln for ln in content.splitlines() if ln.startswith("| Gamma ")][0]
+    # tag present but no fit/not-fit/neutral/unknown token before the colon
+    import re
+    assert re.search(r"\[fit-reason \d{4}-\d{2}-\d{2}: researching", row)
+
+
+def test_invalid_fit_verdict_rejected(tmp_path):
+    write_fixture(tmp_path, "data/job-pipeline.md", PIPELINE_MD)
+    code, stdout, stderr = _run_pipe_write_raw(
+        "--repo-root", str(tmp_path), "add", "Delta", "PM",
+        "--fit-verdict", "great-fit", "--fit-reason", "x",
+    )
+    assert code == 2
+    assert "invalid choice" in stderr

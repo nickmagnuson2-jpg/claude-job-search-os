@@ -12,6 +12,7 @@ Dimensions (weighted):
 Per D-05: All roles get scores, no filtering threshold.
 """
 import re
+import statistics
 from difflib import SequenceMatcher
 from pathlib import Path
 
@@ -25,6 +26,7 @@ SENIORITY_LEVELS: dict[str, int] = {
     "junior": 2,
     "associate": 3,
     "mid": 4,
+    "manager": 5,
     "senior": 5,
     "staff": 6,
     "principal": 7,
@@ -58,6 +60,7 @@ def load_scoring_context(repo_root: Path) -> dict:
     result = {
         "target_titles": [],
         "target_seniority": "",
+        "target_seniority_level": None,
         "target_industries": [],
         "skills": [],
     }
@@ -69,6 +72,14 @@ def load_scoring_context(repo_root: Path) -> dict:
         result["target_titles"] = _extract_target_titles(goals_text)
         result["target_seniority"] = _extract_target_seniority(goals_text)
         result["target_industries"] = _extract_target_industries(goals_text)
+        # Resolve a numeric target level. Prefer an explicit 'Target seniority:'
+        # keyword; otherwise infer from the target titles themselves (goals.md
+        # states target *titles* like 'Engagement Lead' / 'Program Manager', not
+        # levels). Without this the seniority dimension (25%) was permanently
+        # neutral in real scans. Origin: fable-audit Theme 3.
+        result["target_seniority_level"] = _resolve_target_level(
+            result["target_seniority"], result["target_titles"]
+        )
 
     # Parse profile.md
     profile_path = data_dir / "profile.md"
@@ -76,7 +87,29 @@ def load_scoring_context(repo_root: Path) -> dict:
         profile_text = profile_path.read_text(encoding="utf-8")
         result["skills"] = _extract_skills(profile_text)
 
+    # Revealed-fit overlay (deterministic; distilled from Nick's 52 hand-labels).
+    result["fit_spec"] = load_fit_spec(repo_root)
+
     return result
+
+
+def load_fit_spec(repo_root: Path) -> dict:
+    """Load the revealed-fit overlay (data/calibration/fit-spec.yaml), or {}.
+
+    The overlay encodes the title-shape screen + reasoned not-fit taxonomy from
+    Nick's 52 hand-labels (output/analysis/071526-fit-function.md), letting the
+    scorer rank against his REVEALED fit function, not just the STATED thesis in
+    goals.md. Graceful by design: a missing file, missing PyYAML, or a parse error
+    all return {} so score_role behaves exactly as before (overlay = 0).
+    """
+    path = repo_root / "data" / "calibration" / "fit-spec.yaml"
+    if not path.exists():
+        return {}
+    try:
+        import yaml  # PyYAML — already a repo dep (cv themes, discover presets)
+        return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return {}
 
 
 def _extract_target_titles(text: str) -> list[str]:
@@ -226,7 +259,50 @@ def score_role(role: dict, context: dict) -> int:
     d4 = _score_keyword_overlap(role, context)
 
     raw = _W_TITLE * d1 + _W_SENIORITY * d2 + _W_INDUSTRY * d3 + _W_KEYWORD * d4
+    raw += _fit_overlay_adjustment(role, context.get("fit_spec") or {})
     return max(1, min(10, round(raw)))
+
+
+def _fit_overlay_adjustment(role: dict, fit_spec: dict) -> float:
+    """Revealed-fit deterministic overlay: points added to the raw 4-dim score.
+
+    Encodes the title-shape screen and the reasoned not-fit taxonomy from Nick's
+    52 hand-labels (output/analysis/071526-fit-function.md):
+      - an in-lane title (Deployment Strategist / Forward Deployed) is necessary
+        but NOT sufficient — if the scope reads GTM/quota/CS it is screened out
+        (the Context case);
+      - CoS/BizOps/CS/Growth titles and off-lane domains (CPQ/deal-pricing) are
+        reasoned down-ranks (Nick's own declines — the highest-signal negatives).
+    Returns 0.0 when no fit_spec is loaded, so the scorer is unchanged without it.
+    """
+    if not fit_spec:
+        return 0.0
+    title = (role.get("title") or "").lower()
+    desc = (role.get("description_plain") or "").lower()
+    title_and_desc = f"{title} {desc}"
+
+    def any_in(patterns, hay):
+        return any(str(p).lower() in hay for p in (patterns or []))
+
+    w = fit_spec.get("weights") or {}
+    pos_title = any_in(fit_spec.get("positive_title_patterns"), title)
+    scope_dq = any_in(fit_spec.get("scope_disqualifiers"), title_and_desc)
+    notfit_title = any_in(fit_spec.get("not_fit_title_patterns"), title)
+    notfit_domain = any_in(fit_spec.get("not_fit_domain_patterns"), title_and_desc)
+
+    adj = 0.0
+    if notfit_title:
+        adj += w.get("not_fit_title", -4.0)
+    if notfit_domain:
+        adj += w.get("not_fit_domain", -3.0)
+    if pos_title and scope_dq:
+        adj += w.get("title_shape_screen", -3.0)   # in-lane title, out-of-lane scope
+    elif pos_title:
+        adj += w.get("in_lane_title", 2.0)
+
+    lo = w.get("min_adjustment", -5.0)
+    hi = w.get("max_adjustment", 3.0)
+    return max(lo, min(hi, adj))
 
 
 def _score_title_match(role: dict, context: dict) -> float:
@@ -246,19 +322,38 @@ def _score_title_match(role: dict, context: dict) -> float:
     return best_ratio * 10.0
 
 
+def _resolve_target_level(target_seniority: str, target_titles: list) -> int | None:
+    """Resolve a numeric target seniority level (1-10) or None if indeterminate.
+
+    Priority: an explicit 'Target seniority:' keyword (mapped via
+    SENIORITY_LEVELS), else infer from the target titles by taking the median of
+    each title's extracted level. Returns None only when there is neither an
+    explicit keyword nor any target titles, in which case the seniority
+    dimension stays neutral (the pre-fix behavior).
+    """
+    if target_seniority and target_seniority.lower() in SENIORITY_LEVELS:
+        return SENIORITY_LEVELS[target_seniority.lower()]
+    levels = [extract_seniority(t) for t in (target_titles or [])]
+    if not levels:
+        return None
+    return round(statistics.median(levels))
+
+
 def _score_seniority_match(role: dict, context: dict) -> float:
     """Dimension 2: Seniority match (weight 0.25).
 
     Score = 10 - abs(role_level - target_level) * 2, clamped 1-10.
     """
-    target_seniority = context.get("target_seniority", "")
-    if not target_seniority:
-        return 5.0
+    target_level = context.get("target_seniority_level")
+    if target_level is None:
+        # Back-compat: contexts built before the numeric resolver, or goals with
+        # no titles and no explicit level — fall back to the keyword, else neutral.
+        target_seniority = context.get("target_seniority", "")
+        if not target_seniority:
+            return 5.0
+        target_level = SENIORITY_LEVELS.get(target_seniority.lower(), 4)
 
     role_level = extract_seniority(role.get("title", ""))
-    # Get target level from seniority map
-    target_level = SENIORITY_LEVELS.get(target_seniority.lower(), 4)
-
     raw = 10 - abs(role_level - target_level) * 2
     return max(1.0, min(10.0, float(raw)))
 

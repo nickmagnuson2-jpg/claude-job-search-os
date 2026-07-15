@@ -162,3 +162,31 @@ def test_score_keyword_no_substring_false_positive():
     # "ai" must not match inside "maintenance".
     assert _score_keyword("maintenance contracts only", ["ai"]) == 0.0
     assert _score_keyword("an ai platform", ["ai"]) == 2.0
+
+
+# ---------------------------------------------------------------------------
+# Revealed-fit overlay (company-level: off-lane domain down-rank)
+# ---------------------------------------------------------------------------
+
+from tools.career_scanner.company_scorer import _company_fit_overlay
+
+_FIT_SPEC = {
+    "not_fit_domain_patterns": ["cpq", "deal desk"],
+    "weights": {"not_fit_domain": -3.0},
+}
+
+
+def test_company_overlay_noop_without_fit_spec():
+    assert _company_fit_overlay("a cpq pricing company", {}) == 0.0
+
+
+def test_company_overlay_downranks_offlane_domain():
+    assert _company_fit_overlay("we build a cpq and deal desk platform", _FIT_SPEC) == -3.0
+    assert _company_fit_overlay("an AI-native deployment company", _FIT_SPEC) == 0.0
+
+
+def test_score_company_offlane_domain_scores_below_clean():
+    ctx = {"target_industries": ["AI"], "fit_spec": _FIT_SPEC}
+    offlane = {"location": "San Francisco, CA", "description": "AI-powered cpq deal desk pricing", "stage_text": "Series B"}
+    clean = {"location": "San Francisco, CA", "description": "AI-native enterprise deployment platform", "stage_text": "Series B"}
+    assert score_company(offlane, ctx)["score"] < score_company(clean, ctx)["score"]

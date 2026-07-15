@@ -54,9 +54,10 @@ All pipeline data lives in `data/job-pipeline.md`.
 
 ### Command: `add <company> <role> [url]`
 
+0. **Fit-reason capture (do this first).** Ask Nick a one-line fit read: *"Quick fit read — why is (or isn't) this in your lane?"* If he gives one, pass it through in step 1 as `--fit-reason "<his words>"`, plus `--fit-verdict {fit|not-fit|neutral|unknown}` if he names a verdict. Keep it optional and light (one prompt, accept a skip) — do NOT block the add on it. Rationale: this one line is the source-coverage input the calibration loop was starving for — the blind machine re-run abstained on 9 of 52 of Nick's fit calls purely because his reasoning lived only in his head (`output/analysis/071526-machine-vs-human-agreement.md`).
 1. Call `pipe_write.py add`:
    ```bash
-   PYTHONIOENCODING=utf-8 python3 tools/pipe_write.py --repo-root . add "<company>" "<role>" [--url URL]
+   PYTHONIOENCODING=utf-8 python3 tools/pipe_write.py --repo-root . add "<company>" "<role>" [--url URL] [--fit-reason "..."] [--fit-verdict fit|not-fit|neutral|unknown]
    ```
 2. If result `action == "duplicate_warning"`: warn user and show `existing_roles[]`. Ask if they want to add a second role anyway (if yes, re-run with `--stage` override) or update the existing entry.
 3. On success: display the new entry and its auto-generated action items (see Stage Actions below).
@@ -64,9 +65,10 @@ All pipeline data lives in `data/job-pipeline.md`.
 
 ### Command: `update <company> <new-stage>`
 
+0. **Fit-reason capture on fit-forming stage changes.** When the new stage is a decline / self-pass / close (`Closed`, `Considered - passed`, `Withdrawn`, `Rejected`) — these are Nick's **highest-signal fit-negatives** — OR Nick volunteers a fit read, ask one line: *"One-line fit read for the ledger — why did this fit or not?"* and pass it in step 1 as `--fit-reason "<his words>"` (+ `--fit-verdict` if named). Light and optional (accept a skip); do not block the update. Skip the prompt for routine mechanical advances (e.g. Researching → Applied) unless Nick offers a read.
 1. Call `pipe_write.py update`:
    ```bash
-   PYTHONIOENCODING=utf-8 python3 tools/pipe_write.py --repo-root . update "<company>" "<new-stage>" [--role ROLE] [--next-action TEXT]
+   PYTHONIOENCODING=utf-8 python3 tools/pipe_write.py --repo-root . update "<company>" "<new-stage>" [--role ROLE] [--next-action TEXT] [--fit-reason "..."] [--fit-verdict fit|not-fit|neutral|unknown]
    ```
 2. If result `code == "ambiguous_match"`: show the `matches[]` list and ask user to specify `--role`.
 3. If result `code == "not_found"`: tell user no active entry was found.

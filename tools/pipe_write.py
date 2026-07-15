@@ -92,6 +92,33 @@ def fmt_row(company, role, stage, date_updated, next_action, cv_used, notes, url
     return f"| {company} | {role} | {stage} | {date_updated} | {next_action} | {cv_used} | {notes} | {url} |"
 
 
+FIT_VERDICTS = ("fit", "not-fit", "neutral", "unknown")
+
+
+def sanitize_cell(text: str) -> str:
+    """Collapse whitespace and strip any '|' that would break the 8-column row."""
+    return re.sub(r"\s+", " ", str(text).replace("|", "/")).strip()
+
+
+def compose_fit_note(existing_notes: str, fit_reason: str, fit_verdict, today: str) -> str:
+    """Append a structured, greppable [fit-reason ...] tag to the Notes cell.
+
+    Captures Nick's one-line fit rationale at a stage change — the input the
+    calibration scorer was starving for. The blind machine re-run abstained on 9
+    of 52 of Nick's fit calls purely because his reasoning lived in his head, not
+    in a quotable source (output/analysis/071526-machine-vs-human-agreement.md).
+    Storing it in Notes needs no schema change: the extract-verify manifest and
+    scorer_eval already read the Notes cell, so a future run can quote it. Format:
+    `[fit-reason YYYY-MM-DD <verdict>: <reason>]` (verdict omitted if not given).
+    """
+    verdict = f" {fit_verdict}" if fit_verdict in FIT_VERDICTS else ""
+    tag = f"[fit-reason {today}{verdict}: {sanitize_cell(fit_reason)}]"
+    base = (existing_notes or "").strip()
+    if base in ("", "—", "–"):
+        return tag
+    return f"{base} {tag}"
+
+
 # ---------------------------------------------------------------------------
 # Section navigation
 # ---------------------------------------------------------------------------
@@ -156,9 +183,12 @@ def cmd_add(args, pipeline_path: Path, dry_run: bool) -> None:
     today = date.today().strftime("%Y-%m-%d")
     stage = args.stage if args.stage else "Researching"
     url   = args.url   if args.url   else "—"
+    notes = "—"
+    if getattr(args, "fit_reason", None):
+        notes = compose_fit_note("—", args.fit_reason, getattr(args, "fit_verdict", None), today)
 
     if dry_run:
-        row = fmt_row(args.company, args.role, stage, today, "—", "—", "—", url)
+        row = fmt_row(args.company, args.role, stage, today, "—", "—", notes, url)
         out_ok("add", f"Would add: {args.company} | {args.role}",
                dry_run=True, would_mutate=[{"file": str(pipeline_path), "row": row}])
         return
@@ -183,13 +213,14 @@ def cmd_add(args, pipeline_path: Path, dry_run: bool) -> None:
                existing_roles=existing_roles)
         return
 
-    row = fmt_row(args.company, args.role, stage, today, "—", "—", "—", url)
+    row = fmt_row(args.company, args.role, stage, today, "—", "—", notes, url)
     pos = table_insert_pos(lines, act_start, act_end)
     lines.insert(pos, row)
     save_lines(pipeline_path, lines, content)
 
     out_ok("add", f"Added: {args.company} | {args.role} | {stage}",
-           company=args.company, role=args.role, stage=stage)
+           company=args.company, role=args.role, stage=stage,
+           fit_reason_logged=bool(getattr(args, "fit_reason", None)))
 
 
 def cmd_update(args, pipeline_path: Path, dry_run: bool) -> None:
@@ -256,6 +287,8 @@ def cmd_update(args, pipeline_path: Path, dry_run: bool) -> None:
     new_next_action = args.next_action if args.next_action else (cols[4] if len(cols) > 4 else "—")
     new_cv_used     = args.cv_used     if args.cv_used     else (cols[5] if len(cols) > 5 else "—")
     new_notes       = args.notes       if args.notes       else (cols[6] if len(cols) > 6 else "—")
+    if getattr(args, "fit_reason", None):
+        new_notes = compose_fit_note(new_notes, args.fit_reason, getattr(args, "fit_verdict", None), today)
     url             = cols[7] if len(cols) > 7 else "—"
 
     updated_row = fmt_row(
@@ -272,7 +305,8 @@ def cmd_update(args, pipeline_path: Path, dry_run: bool) -> None:
     save_lines(pipeline_path, lines, content)
 
     out_ok("update", f"Updated: {args.company} → {args.new_stage}",
-           company=args.company, stage=args.new_stage)
+           company=args.company, stage=args.new_stage,
+           fit_reason_logged=bool(getattr(args, "fit_reason", None)))
 
 
 def cmd_remove(args, pipeline_path: Path, dry_run: bool) -> None:
@@ -385,6 +419,10 @@ def parse_args():
     add_p.add_argument("role")
     add_p.add_argument("--url", default=None)
     add_p.add_argument("--stage", default=None)
+    add_p.add_argument("--fit-reason", dest="fit_reason", default=None,
+                       help="One-line fit rationale; appended to Notes as a [fit-reason ...] tag.")
+    add_p.add_argument("--fit-verdict", dest="fit_verdict", default=None, choices=list(FIT_VERDICTS),
+                       help="Optional fit_verdict class for the fit-reason tag (feeds the scorer target).")
 
     upd_p = sub.add_parser("update")
     upd_p.add_argument("company")
@@ -393,6 +431,10 @@ def parse_args():
     upd_p.add_argument("--next-action", dest="next_action", default=None)
     upd_p.add_argument("--cv-used",     dest="cv_used",     default=None)
     upd_p.add_argument("--notes",                           default=None)
+    upd_p.add_argument("--fit-reason", dest="fit_reason", default=None,
+                       help="One-line fit rationale for this stage change; appended to Notes as a [fit-reason ...] tag.")
+    upd_p.add_argument("--fit-verdict", dest="fit_verdict", default=None, choices=list(FIT_VERDICTS),
+                       help="Optional fit_verdict class for the fit-reason tag (feeds the scorer target).")
 
     rem_p = sub.add_parser("remove")
     rem_p.add_argument("company")

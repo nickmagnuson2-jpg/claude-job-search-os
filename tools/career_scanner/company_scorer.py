@@ -122,6 +122,23 @@ def _score_keyword(text: str, keywords: list) -> float:
     return min(10.0, float(matched * 2))
 
 
+def _company_fit_overlay(text: str, fit_spec: dict) -> float:
+    """Company-level slice of the revealed-fit overlay: down-rank off-lane DOMAINS.
+
+    Only the DOMAIN not-fits apply at the company level (e.g. a CPQ / deal-pricing
+    company). The title-shape screen and role-shape not-fits are role-level and live
+    in scorer.py. Patterns come from the owner's hand-labeled fit-spec.yaml. Returns
+    0.0 with no fit_spec, so scoring is unchanged without it.
+    """
+    if not fit_spec:
+        return 0.0
+    t = (text or "").lower()
+    patterns = fit_spec.get("not_fit_domain_patterns") or []
+    if any(str(p).lower() in t for p in patterns):
+        return (fit_spec.get("weights") or {}).get("not_fit_domain", -3.0)
+    return 0.0
+
+
 def score_company(candidate: dict, context: dict,
                   weights: dict = None, keywords: list = None) -> dict:
     """Score a discovered company 1-10.
@@ -153,6 +170,8 @@ def score_company(candidate: dict, context: dict,
            + weights["sector"] * d_sector
            + weights["keyword"] * d_keyword)
     raw *= (1.0 - gate["penalty"])
+    fit_overlay = _company_fit_overlay(desc, context.get("fit_spec") or {})
+    raw += fit_overlay
     score = max(1, min(10, round(raw)))
 
     return {
@@ -162,6 +181,7 @@ def score_company(candidate: dict, context: dict,
             "sector": round(d_sector, 1),
             "keyword": round(d_keyword, 1),
             "geo_penalty": gate["penalty"],
+            "fit_overlay": fit_overlay,
         },
         "geo_flag": gate["flag"],
         "excluded": False,
