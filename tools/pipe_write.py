@@ -16,10 +16,11 @@ Output: JSON to stdout
   Success: {"status": "ok", "action": "...", "summary": "..."}
   Failure: {"status": "error", "message": "...", "code": "..."}
 
-Usage:
-  PYTHONIOENCODING=utf-8 python3 tools/pipe_write.py add "Acme" "PM" --repo-root .
-  PYTHONIOENCODING=utf-8 python3 tools/pipe_write.py update "Acme" "Applied" --repo-root .
-  PYTHONIOENCODING=utf-8 python3 tools/pipe_write.py remove "Acme" --repo-root .
+Usage (--repo-root/--dry-run are top-level flags — they MUST come BEFORE the
+subcommand; argparse rejects them after it with "unrecognized arguments"):
+  PYTHONIOENCODING=utf-8 python3 tools/pipe_write.py --repo-root . add "Acme" "PM"
+  PYTHONIOENCODING=utf-8 python3 tools/pipe_write.py --repo-root . update "Acme" "Applied"
+  PYTHONIOENCODING=utf-8 python3 tools/pipe_write.py --repo-root . remove "Acme"
 """
 import argparse
 import json

@@ -2,10 +2,12 @@
 """
 outreach_pending.py — Pre-process outreach follow-up status for /standup and /weekly-review.
 
-Reads: data/outreach-log.md, data/networking.md
+Reads: data/outreach-log.md, data/networking.md, data/job-pipeline.md
 
 Cross-references networking.md Interaction Log to detect replies that were logged
-via networking_write.py but not reflected in outreach-log.md status.
+via networking_write.py but not reflected in outreach-log.md status, and reads the
+pipeline's company→stage map so outreach tied to a closed opportunity is suppressed
+from the awaiting-response lists (still counted in stats).
 
 Outputs JSON to stdout with keys:
   awaiting_response[]           — outreach with no reply, not yet overdue
@@ -19,8 +21,13 @@ Usage:
 import argparse
 import json
 import re
+import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
+
+# Shared freeform-stage classifier (single source of truth). See stage_vocab.py.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from stage_vocab import is_terminal_stage  # noqa: E402
 
 
 def parse_args():
@@ -97,16 +104,6 @@ def parse_networking_interactions(networking_content: str) -> dict[str, date | N
     return interactions
 
 
-# Pipeline stages that mean the opportunity is over — outreach tied to these
-# companies should not surface as "awaiting a reply" (origin: 2026-06-11 standup,
-# closed/passed-opportunity threads kept showing as overdue follow-ups). Matched as a
-# whole-word prefix on the lowercased stage so "Closed - they passed (door open)"
-# and "Rejected" both count, while "Closing round scheduled" would not.
-_CLOSED_STAGE_PREFIXES = (
-    "closed", "rejected", "withdrawn", "declined", "passed",
-    "skipped", "deprioritized", "not pursuing", "dead",
-)
-
 # Subject markers for messages that do not expect a reply — thank-you notes and
 # graceful closes. These are real outreach (counted in stats) but are not open
 # loops, so they must not appear in the "awaiting response" list.
@@ -138,9 +135,29 @@ def parse_pipeline_stages(content: str) -> dict[str, str]:
 
 
 def is_closed_stage(stage: str) -> bool:
-    """True if a pipeline stage means the opportunity is over."""
-    s = stage.strip().lower()
-    return any(re.match(rf"^{re.escape(p)}\b", s) for p in _CLOSED_STAGE_PREFIXES)
+    """True if a pipeline stage means the opportunity is over.
+
+    Delegates to the shared classifier so outreach tied to a closed company (incl.
+    freeform mid-string closes like "Founder intro complete (...) - declined") is
+    suppressed from the awaiting-response lists, consistently with pipe_read /
+    pipeline_staleness / networking_read."""
+    return is_terminal_stage(stage)
+
+
+# "Deprioritized"/paused is NOT terminal for the pipeline (it stays counted as active
+# backlog — it can be revived), but for OUTREACH nagging a set-aside company is not an
+# open loop, so its threads are suppressed from the awaiting lists here. This is an
+# outreach-only concern, deliberately kept out of the shared is_terminal_stage — the
+# old _CLOSED_STAGE_PREFIXES included "deprioritized"; this preserves that behavior.
+_OUTREACH_SUPPRESS_KEYWORDS = ("deprioritized", "on hold", "paused")
+
+
+def is_outreach_dormant_stage(stage: str) -> bool:
+    """True if outreach to this company is not an open loop (closed OR set-aside)."""
+    if is_terminal_stage(stage):
+        return True
+    s = (stage or "").lower()
+    return any(k in s for k in _OUTREACH_SUPPRESS_KEYWORDS)
 
 
 def is_no_reply_expected(subject: str) -> bool:
@@ -209,7 +226,7 @@ def parse_outreach_log(content: str, today: date, lookback_days: int,
         # Suppress from the awaiting lists (but NOT from the stats) when the
         # opportunity is closed or the message expects no reply.
         suppress_awaiting = (
-            is_closed_stage(pipeline_stages.get(company.lower().strip(), ""))
+            is_outreach_dormant_stage(pipeline_stages.get(company.lower().strip(), ""))
             or is_no_reply_expected(subject)
         )
 

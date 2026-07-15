@@ -27,11 +27,16 @@ Usage:
 import argparse
 import json
 import re
+import sys
 from datetime import date, datetime
 from pathlib import Path
 
+# Shared freeform-stage classifier (single source of truth across pipe_read,
+# pipeline_staleness, networking_read, outreach_pending). See stage_vocab.py.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from stage_vocab import is_terminal_stage  # noqa: E402
+
 STALE_THRESHOLD_DAYS = 14
-TERMINAL_STAGES = {"Withdrawn", "Rejected", "Accepted", "Archived"}
 
 
 def parse_args():
@@ -153,7 +158,7 @@ def build_pipeline_index(pipeline_content: str) -> dict[str, dict]:
         company = cols[0]
         stage   = cols[2] if len(cols) > 2 else ""
 
-        if stage in TERMINAL_STAGES or in_archived:
+        if is_terminal_stage(stage) or in_archived:
             continue
 
         index[company.lower()] = {"company": company, "stage": stage}

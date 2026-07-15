@@ -11,12 +11,14 @@ Accepts:
   --dry-run                Return JSON contract without writing.
 
 Destination types handled:
+Destination types handled (11):
   contact_note    → data/networking.md — append to contact's section
   outreach_reply  → data/outreach-log.md — update Status to Replied
   pipeline_note   → data/job-pipeline.md — append to Notes cell
   company_note    → data/company-notes/<slug>.md — prepend entry
   profile_update  → data/profile.md — append under ## Session Notes
   decision        → data/decisions.md — prepend dated entry (newest-first log)
+  accomplishment  → data/accomplishments.md — prepend dated entry (newest-first log)
   general_note    → data/notes.md — append under ## Notes
   raw_capture     → inbox/ — create new file
   source_article  → data/source-articles/YYYYMMDD-<slug>.md — voice-pure commonplace-book entry
@@ -147,7 +149,9 @@ def section_end(lines: list, start: int) -> int:
 # ---------------------------------------------------------------------------
 
 def apply_contact_note(note: str, dest: dict, repo_root: Path) -> dict:
-    """Append [date] note to matching contact's section in networking.md."""
+    """Append a `#### YYYY-MM-DD | remember | <note>` interaction entry to the
+    matching contact's section in networking.md (parseable by the Interaction-Log
+    reconcilers, unlike the old bare `[date] note` line)."""
     today = datetime.now().strftime("%Y-%m-%d")
     entity = dest.get("entity", "")
     path = repo_root / NETWORKING_FILE
@@ -170,7 +174,14 @@ def apply_contact_note(note: str, dest: dict, repo_root: Path) -> dict:
             sec_start = i
             break
 
-    entry = f"[{today}] {note}"
+    # Write a canonical interaction-log entry (`#### YYYY-MM-DD | remember | ...`)
+    # rather than a bare `[date] note` line, so the reconcilers that scan the
+    # Interaction Log can see it: outreach_pending.parse_networking_interactions
+    # and networking_read.build_interaction_counts both key off `#### ` date
+    # headers. A bare `[date]` line was invisible to them, so a /remember-captured
+    # reply stayed "awaiting response" in standup (fable-audit Theme 2, 2026-07-14).
+    summary = " ".join(note.split())  # collapse newlines/whitespace for the header
+    entry = f"#### {today} | remember | {summary}"
 
     if sec_start == -1:
         # Contact section not found — append note to general section or create
@@ -208,18 +219,24 @@ def apply_outreach_reply(note: str, dest: dict, repo_root: Path) -> dict:
     lines = [ln.rstrip("\n").rstrip("\r") for ln in content.splitlines(keepends=True)]
     name_lower = entity.lower().strip()
 
-    # Find most recent Sent/Drafted row matching entity
-    # Outreach log columns: Date | Recipient | Company | Type | Subject | Status | Notes
+    # Find most recent Sent/Drafted row matching entity.
+    # Real outreach-log.md schema (data/outreach-log.md header):
+    #   Date | Skill | Channel | Recipient | Company | Subject / Summary | Status
+    #   idx    0       1         2           3          4        5            6
+    # Recipient is cols[3], Status is cols[6]. (Pre-2026-07-14 this used cols[1]/
+    # cols[5] against an imaginary schema, so the flip never matched a real name and
+    # a match would have overwritten the Subject cell. See networking_write.py
+    # update_outreach_status, which already uses the correct indices.)
     last_match = -1
     for i, line in enumerate(lines):
         if not is_data_row_generic(line):
             continue
         cols = parse_cols(line)
-        if len(cols) < 6:
+        if len(cols) < 7:
             continue
-        recipient = cols[1].lower()
-        status = cols[5]
-        if name_lower in recipient and status in ("Sent", "Drafted", "Sent ", "Drafted "):
+        recipient = cols[3].lower()
+        status = cols[6].strip()
+        if name_lower in recipient and status in ("Sent", "Drafted"):
             last_match = i
 
     if last_match == -1:
@@ -231,7 +248,7 @@ def apply_outreach_reply(note: str, dest: dict, repo_root: Path) -> dict:
     cols = parse_cols(lines[last_match])
     while len(cols) < 7:
         cols.append("—")
-    cols[5] = "Replied"
+    cols[6] = "Replied"
     lines[last_match] = "| " + " | ".join(cols) + " |"
 
     new_content = "\n".join(lines)

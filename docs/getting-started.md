@@ -9,7 +9,7 @@ The whole path below takes about thirty to sixty minutes (the identity step is a
 ## Prerequisites
 
 - **[Claude Code](https://docs.anthropic.com/en/docs/claude-code)** installed. A Max subscription is recommended; the parallel-agent research and deep CV reviews are token-intensive.
-- **Python 3.8+** for the PDF pipeline and atomic write scripts. (All scripts run with `python3`, not `python`.)
+- **Python 3.10+** for the PDF pipeline and atomic write scripts. (All scripts run with `python3`, not `python`.)
 - **RenderCV** (optional, only for CV PDFs) — the CV skills render formatted PDFs via [RenderCV](https://github.com/rendercv/rendercv). Without it, CVs still generate as markdown and YAML; you just won't get the rendered PDF.
 - That is all you need for the core. There is nothing to compile. The skills are markdown files Claude Code reads and executes.
 

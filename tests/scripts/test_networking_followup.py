@@ -53,6 +53,28 @@ def test_overdue_contact_from_interaction_log(tmp_path):
     assert "Jordan Lee" in overdue_names
 
 
+def test_followup_due_exactly_today_counts_as_due(tmp_path):
+    """A follow-up whose inferred date is exactly today lands in followup_due and is
+    counted in summary.due_today — not dumped into overdue. Regression for fable-audit
+    Theme 2: under the default threshold, a `<=` boundary sent due-today to overdue,
+    so summary.due_today was structurally always 0."""
+    # Entry 2026-02-19 + "next week" (7d) → due 2026-02-26 == target date.
+    write_fixture(tmp_path, "data/networking.md", make_fixture(
+        "| Jordan Lee | Acme AI | PM | peer | 2026-02-10 | 2026-02-19 | jordan@acme-ai.com |\n",
+        "### Jordan Lee — Acme AI\n\n"
+        "#### 2026-02-19 | email | Coffee chat follow-up\n\n"
+        "**Follow-up:** Follow up next week\n\n",
+    ))
+    result = run_script("networking_followup.py",
+                        "--target-date", "2026-02-26",
+                        "--repo-root", str(tmp_path))
+    due_names = [e["name"] for e in result["followup_due"]]
+    overdue_names = [e["name"] for e in result["followup_overdue"]]
+    assert "Jordan Lee" in due_names
+    assert "Jordan Lee" not in overdue_names
+    assert result["summary"]["due_today"] == 1
+
+
 def test_explicit_date_in_interaction_log(tmp_path):
     """Explicit date in follow-up line is parsed correctly."""
     write_fixture(tmp_path, "data/networking.md", make_fixture(

@@ -95,7 +95,7 @@ Create a per-person relationship dossier for an active relationship. The roster 
        --section <commitments|owed|touchpoints> --text "..." [--date YYYY-MM-DD]
      ```
    - Only capture what the sources actually support. Leave a section's scaffold in place if there's nothing real to add yet.
-4. Confirm: dossier path + what was populated. Example built this way: `data/people/jane-doe.md`.
+4. Confirm: dossier path + what was populated (e.g. `data/people/<slug>.md`, slug = name lowercased, accents folded, spaces→hyphens).
 
 ### Command: `log <name> [summary]`
 

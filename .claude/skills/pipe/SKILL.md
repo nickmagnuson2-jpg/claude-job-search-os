@@ -47,7 +47,8 @@ All pipeline data lives in `data/job-pipeline.md`.
    Use the JSON output to build the display:
    - `needs_attention[]` → "Needs Attention" table (above Full Pipeline); use `stale_label` for the Days Since Update column and note `missing_action` entries
    - `active_entries[]` → "Full Pipeline" table, most recently updated first; use each entry's `stale_label` for inline Stage annotations
-   - `metrics` → summary stats header (total_active, total_stalled, stage_distribution counts)
+   - `metrics` → summary stats header (total_active, total_stalled)
+   - `stage_distribution` (top-level key, NOT under `metrics`) → per-stage counts
    - `metrics.archived_count` → Archived section count (collapsed)
    - `company_index` → use in `add` command to check for duplicates before writing
 
@@ -55,7 +56,7 @@ All pipeline data lives in `data/job-pipeline.md`.
 
 1. Call `pipe_write.py add`:
    ```bash
-   PYTHONIOENCODING=utf-8 python3 tools/pipe_write.py add "<company>" "<role>" [--url URL] --repo-root .
+   PYTHONIOENCODING=utf-8 python3 tools/pipe_write.py --repo-root . add "<company>" "<role>" [--url URL]
    ```
 2. If result `action == "duplicate_warning"`: warn user and show `existing_roles[]`. Ask if they want to add a second role anyway (if yes, re-run with `--stage` override) or update the existing entry.
 3. On success: display the new entry and its auto-generated action items (see Stage Actions below).
@@ -65,7 +66,7 @@ All pipeline data lives in `data/job-pipeline.md`.
 
 1. Call `pipe_write.py update`:
    ```bash
-   PYTHONIOENCODING=utf-8 python3 tools/pipe_write.py update "<company>" "<new-stage>" [--role ROLE] [--next-action TEXT] --repo-root .
+   PYTHONIOENCODING=utf-8 python3 tools/pipe_write.py --repo-root . update "<company>" "<new-stage>" [--role ROLE] [--next-action TEXT]
    ```
 2. If result `code == "ambiguous_match"`: show the `matches[]` list and ask user to specify `--role`.
 3. If result `code == "not_found"`: tell user no active entry was found.
@@ -75,7 +76,7 @@ All pipeline data lives in `data/job-pipeline.md`.
 
 1. Call `pipe_write.py remove`:
    ```bash
-   PYTHONIOENCODING=utf-8 python3 tools/pipe_write.py remove "<company>" [--role ROLE] --repo-root .
+   PYTHONIOENCODING=utf-8 python3 tools/pipe_write.py --repo-root . remove "<company>" [--role ROLE]
    ```
 2. If `code == "ambiguous_match"`: show `matches[]` and ask user which role to remove.
 3. On success: confirm removal (soft-deleted to ## Archived with Withdrawn stage).
@@ -129,9 +130,11 @@ Auto-generated action items when entering each stage:
 ### → Rejected
 - Note rejection reason if known (for pattern tracking)
 - Review what could be improved for similar roles
+- **Close linked networking threads (mandatory):** grep `data/networking.md` for contacts whose Company column matches this entry (or a recruiter/agency tied to it, e.g. a marketplace recruiter for a recruiter-sourced role). For each contact with an open follow-up on this thread, append a dated Interaction Log entry ending `**Follow-up:** — (closed)`. Without this, `networking_followup.py` keeps resurfacing a dead thread in every future `/standup` (origin: 2026-07-09 — a pipeline entry closed but a contact's networking follow-up kept surfacing as due for 2+ days after).
 
 ### → Withdrawn
 - Note reason for withdrawing
+- **Close linked networking threads** — same sweep as Rejected above.
 
 ## Display Format
 

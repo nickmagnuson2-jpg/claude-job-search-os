@@ -23,11 +23,12 @@ Output: JSON to stdout
   Success: {"status": "ok", "action": "...", "summary": "..."}
   Failure: {"status": "error", "message": "...", "code": "..."}
 
-Usage:
-  PYTHONIOENCODING=utf-8 python3 tools/act_apply.py pipeline-add "OpenAI" --url https://... --repo-root .
-  PYTHONIOENCODING=utf-8 python3 tools/act_apply.py contact-add "Sarah Chen" --company Northwind --repo-root .
-  PYTHONIOENCODING=utf-8 python3 tools/act_apply.py notes-add --content "Random note" --repo-root .
-  PYTHONIOENCODING=utf-8 python3 tools/act_apply.py company-note-add "acme-ai" --content "..." --context "inbound email" --repo-root .
+Usage (--repo-root/--dry-run are top-level flags — they MUST come BEFORE the
+subcommand; argparse rejects them after it with "unrecognized arguments"):
+  PYTHONIOENCODING=utf-8 python3 tools/act_apply.py --repo-root . pipeline-add "OpenAI" --url https://...
+  PYTHONIOENCODING=utf-8 python3 tools/act_apply.py --repo-root . contact-add "Sarah Chen" --company Northwind
+  PYTHONIOENCODING=utf-8 python3 tools/act_apply.py --repo-root . notes-add --content "Random note"
+  PYTHONIOENCODING=utf-8 python3 tools/act_apply.py --repo-root . company-note-add "acme-ai" --content "..." --context "inbound email"
 """
 import argparse
 import json
@@ -36,6 +37,10 @@ import re
 import sys
 from datetime import date
 from pathlib import Path
+
+# Sibling import: fuzzy name-duplicate guard (stdlib-only module in tools/).
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from name_dedup import find_near_duplicates  # noqa: E402
 
 PIPELINE_FILE      = "data/job-pipeline.md"
 NETWORKING_FILE    = "data/networking.md"
@@ -193,19 +198,58 @@ def cmd_contact_add(args, networking_path: Path, dry_run: bool) -> None:
     log_source = f"inbox/{source}" if source else "inbox"
     interaction_summary = f"Captured from {log_source}"
 
+    # Load the file up front so the duplicate guard runs in BOTH dry-run and real
+    # mode — a --dry-run must report the SAME duplicate the real run would block on,
+    # not a blind "Would add" (parity with networking_write.cmd_add; fable-audit
+    # Theme 2 reviewer finding). On a missing/empty file there are no existing
+    # contacts, so dry-run still previews an add; only the real write requires the file.
+    content = read_file(networking_path)
+    lines = [ln.rstrip("\n").rstrip("\r") for ln in content.splitlines(keepends=True)] if content else []
+
+    contacts_start, contacts_end = find_section(lines, r"^##\s+Contacts")
+
+    # Duplicate guard — the sibling write path (networking_write.py add) blocks on
+    # exact and fuzzy name matches; this path previously had NO check, so /act
+    # inbox-routing could silently create a duplicate contact row. Same contract here.
+    existing_names = []
+    if contacts_start != -1:
+        for i in range(contacts_start, contacts_end):
+            if is_data_row(lines[i]):
+                cols = parse_cols(lines[i])
+                if cols and cols[0]:
+                    existing_names.append((cols[0], cols[1] if len(cols) > 1 else ""))
+
+    for nm, co in existing_names:
+        if nm.lower() == args.name.lower():
+            out_ok("duplicate_warning",
+                   f"{args.name} already exists in contacts",
+                   existing_company=co)
+            return
+
+    if not getattr(args, "force", False):
+        near = find_near_duplicates(args.name, [nm for nm, _ in existing_names])
+        if near:
+            co_by_name = {nm: co for nm, co in existing_names}
+            candidates = [
+                {"name": nm, "company": co_by_name.get(nm, ""), "similarity": ratio}
+                for nm, ratio in near
+            ]
+            out_error(
+                "Possible duplicate of existing contact(s): "
+                + ", ".join(f"{c['name']} ({c['similarity']})" for c in candidates)
+                + f". If {args.name} is genuinely a different person, re-run with --force. "
+                  f"Otherwise log to the existing contact instead of adding a new one.",
+                code="possible_duplicate",
+                candidates=candidates,
+            )
+
     if dry_run:
         out_ok("contact_add", f"Would add contact: {args.name}",
                dry_run=True, would_mutate=[{"file": str(networking_path)}])
         return
 
-    content = read_file(networking_path)
     if not content:
         out_error(f"File not found or empty: {networking_path}", "file_not_found")
-
-    lines = [ln.rstrip("\n").rstrip("\r") for ln in content.splitlines(keepends=True)]
-
-    # Add row to Contacts table
-    contacts_start, contacts_end = find_section(lines, r"^##\s+Contacts")
     if contacts_start == -1:
         out_error("Could not find ## Contacts section in networking.md", "missing_section")
 
@@ -413,6 +457,8 @@ def parse_args():
     ca.add_argument("--role",        default=None)
     ca.add_argument("--content",     default=None)
     ca.add_argument("--source-file", dest="source_file", default=None)
+    ca.add_argument("--force", action="store_true",
+                    help="Add even if a fuzzy name match to an existing contact is found.")
 
     na = sub.add_parser("notes-add")
     na.add_argument("--content",      required=True)

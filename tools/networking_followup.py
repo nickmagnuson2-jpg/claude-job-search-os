@@ -275,7 +275,12 @@ def parse_networking(content: str, today: date, days_overdue_threshold: int) -> 
         }
 
         if followup_date <= today:
-            if followup_date <= overdue_cutoff:
+            # Strictly-before the cutoff is overdue; a follow-up due exactly today
+            # (or within the grace window) is "due", not "overdue". With the default
+            # threshold (days_overdue=0 → cutoff==today), a `<=` here sent every
+            # due-today item to `overdue`, so summary.due_today was structurally
+            # always 0 (fable-audit Theme 2).
+            if followup_date < overdue_cutoff:
                 followup_overdue.append(entry)
             else:
                 followup_due.append(entry)

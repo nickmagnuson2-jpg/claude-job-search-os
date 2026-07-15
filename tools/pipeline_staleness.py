@@ -22,6 +22,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from schema_guard import assert_schema, find_header_line, SchemaDriftError  # noqa: E402
+# Shared freeform-stage classifier (single source of truth). See stage_vocab.py.
+from stage_vocab import is_terminal_stage, is_active_pursuit  # noqa: E402
 
 # Canonical schema (tools/pipe_write.py PIPELINE_HEADER) — the parser's cols[N]
 # indices below assume this exact column order. See schema_guard.py docstring for
@@ -42,24 +44,6 @@ STAGE_THRESHOLDS = {
     "Offer": 3,
 }
 DEFAULT_THRESHOLD = 7
-
-TERMINAL_STAGES = {"Withdrawn", "Rejected", "Accepted", "Archived"}
-
-# Stages are freeform in this pipeline ("Strategic Thinking round complete (6/8)",
-# "To Apply (warm-intro path)", etc.), so staleness is gated by keyword: only rows
-# whose stage names an active *pursuit* are eligible to be flagged stalled. Backlog
-# stages (To Evaluate, To Apply, Deprioritized, Watch) and closed variants match none
-# of these and are therefore never nagged, though they still count in the distribution.
-ACTIVE_PURSUIT_KEYWORDS = (
-    "applied", "screen", "interview", "onsite", "offer",
-    "researching", "recruiter", "phone", "round", "case", "loop", "final",
-)
-
-
-def _is_active_pursuit(stage: str) -> bool:
-    """True if the (freeform) stage names a live pursuit eligible for staleness flagging."""
-    s = stage.lower()
-    return any(k in s for k in ACTIVE_PURSUIT_KEYWORDS)
 
 
 def parse_args():
@@ -106,6 +90,12 @@ def parse_pipeline(content: str, today: date, global_threshold: int | None) -> d
         cols = [c.strip() for c in line.strip("|").split("|")]
         if len(cols) < 3 or not cols[0]:
             continue
+        # Skip separator rows written as "| --- | --- | ... |" (space after the pipe,
+        # so the "|---" prefix check above misses them). Without this they were parsed
+        # as a company="---" entry and inflated total_active — the 1-row divergence
+        # from pipe_read (which already has this guard). fable-audit Theme 2.
+        if cols[0] == "---":
+            continue
 
         company = cols[0]
         role = cols[1] if len(cols) > 1 else ""
@@ -118,8 +108,11 @@ def parse_pipeline(content: str, today: date, global_threshold: int | None) -> d
         url = cols[7] if len(cols) > 7 else ""
         date_added = date_updated  # no separate Date Added column; mirror for back-compat
 
-        # Skip terminal entries
-        if stage in TERMINAL_STAGES or in_terminal_section:
+        # Skip terminal entries. Uses the shared freeform-stage classifier, not a
+        # 4-value exact set — descriptive closed stages ("Closed - they passed",
+        # "Declined", "Considered - passed") must not count as active (fable-audit
+        # Theme 2). Keeps /standup's active count consistent with /pipe (pipe_read).
+        if is_terminal_stage(stage) or in_terminal_section:
             continue
 
         # Calculate days since update
@@ -145,7 +138,7 @@ def parse_pipeline(content: str, today: date, global_threshold: int | None) -> d
             "date_updated": date_updated or date_added,
             "days_since_update": days_since_update,
             "threshold": threshold,
-            "stalled": _is_active_pursuit(stage) and days_since_update is not None and days_since_update >= threshold,
+            "stalled": is_active_pursuit(stage) and days_since_update is not None and days_since_update >= threshold,
             "url": url,
             "notes": notes,
         }

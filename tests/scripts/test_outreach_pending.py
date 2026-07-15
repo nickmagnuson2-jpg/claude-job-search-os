@@ -228,6 +228,66 @@ def test_closed_pipeline_company_suppressed(tmp_path):
     assert result["recent_outreach"]["sent"] == 2
 
 
+def test_midstring_declined_company_suppressed(tmp_path):
+    """A company closed via a mid-string signal ('Founder intro complete (...) -
+    declined') must also be suppressed from awaiting — the shared classifier catches
+    it where the old prefix-only is_closed_stage would not. fable-audit Theme 2."""
+    write_fixture(tmp_path, "data/outreach-log.md", """\
+        # Outreach Log
+
+        | Date | Type | Channel | Name | Company | Subject | Status |
+        |------|------|---------|------|---------|---------|--------|
+        | 2026-02-10 | follow-up | email | Casey Doe | ClosedCo | Nudge | No reply |
+    """)
+    write_fixture(tmp_path, "data/job-pipeline.md", """\
+        # Job Application Pipeline
+
+        | Company | Role | Stage | Date Updated | Next Action | CV Used | Notes | URL |
+        | --- | --- | --- | --- | --- | --- | --- | --- |
+        | ClosedCo | CoS | Founder intro complete (a CEO) - declined, no current fit | 2026-02-05 | none | - | - | - |
+    """)
+    result = run_script("outreach_pending.py",
+                        "--target-date", "2026-02-26",
+                        "--days-threshold-overdue", "5",
+                        "--repo-root", str(tmp_path))
+    all_awaiting = (
+        [e["name"] for e in result["awaiting_response"]] +
+        [e["name"] for e in result["awaiting_response_overdue"]]
+    )
+    assert "Casey Doe" not in all_awaiting
+    assert result["recent_outreach"]["sent"] == 1  # still counted
+
+
+def test_deprioritized_company_outreach_suppressed(tmp_path):
+    """Deprioritized is backlog-active for the pipeline count, but for OUTREACH nagging
+    a set-aside company is not an open loop — its threads are suppressed from awaiting
+    (preserves the pre-refactor behavior of the old _CLOSED_STAGE_PREFIXES). Theme 2."""
+    write_fixture(tmp_path, "data/outreach-log.md", """\
+        # Outreach Log
+
+        | Date | Type | Channel | Name | Company | Subject | Status |
+        |------|------|---------|------|---------|---------|--------|
+        | 2026-02-10 | follow-up | email | Casey Doe | PausedCo | Nudge | No reply |
+    """)
+    write_fixture(tmp_path, "data/job-pipeline.md", """\
+        # Job Application Pipeline
+
+        | Company | Role | Stage | Date Updated | Next Action | CV Used | Notes | URL |
+        | --- | --- | --- | --- | --- | --- | --- | --- |
+        | PausedCo | Lead | Deprioritized | 2026-02-05 | none | - | - | - |
+    """)
+    result = run_script("outreach_pending.py",
+                        "--target-date", "2026-02-26",
+                        "--days-threshold-overdue", "5",
+                        "--repo-root", str(tmp_path))
+    all_awaiting = (
+        [e["name"] for e in result["awaiting_response"]] +
+        [e["name"] for e in result["awaiting_response_overdue"]]
+    )
+    assert "Casey Doe" not in all_awaiting
+    assert result["recent_outreach"]["sent"] == 1  # still counted in stats
+
+
 def test_thank_you_not_awaiting(tmp_path):
     """A thank-you note (no reply expected) is not flagged as awaiting, even for an active company."""
     write_fixture(tmp_path, "data/outreach-log.md", """\

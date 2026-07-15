@@ -31,6 +31,10 @@ import sys
 from datetime import date, datetime
 from pathlib import Path
 
+# Shared freeform-stage classifier (single source of truth). See stage_vocab.py.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from stage_vocab import is_terminal_stage, is_active_pursuit  # noqa: E402
+
 # Per-stage staleness thresholds (calendar days)
 STAGE_THRESHOLDS = {
     "Researching": 7,
@@ -42,8 +46,6 @@ STAGE_THRESHOLDS = {
     "Offer": 3,
 }
 DEFAULT_THRESHOLD = 7
-
-TERMINAL_STAGES = {"Withdrawn", "Rejected", "Accepted", "Archived"}
 
 
 def parse_args():
@@ -108,8 +110,12 @@ def parse_pipeline(content: str, today: date) -> dict:
         if company == "---":
             continue
 
-        # Count archived entries separately
-        if stage in TERMINAL_STAGES or in_archived:
+        # Count archived/closed entries separately. Uses the shared freeform-stage
+        # classifier, not a 4-value exact set — otherwise descriptive closed stages
+        # ("Closed - they passed", "Declined", "Considered - passed") fall through
+        # into active_entries and inflate total_active (fable-audit Theme 2: 29 such
+        # rows were mis-counted as active on the live pipeline).
+        if is_terminal_stage(stage) or in_archived:
             archived_count += 1
             continue
 
@@ -123,7 +129,9 @@ def parse_pipeline(content: str, today: date) -> dict:
                 pass
 
         threshold = STAGE_THRESHOLDS.get(stage, DEFAULT_THRESHOLD)
-        stale = days_since_update is not None and days_since_update >= threshold
+        stale = (is_active_pursuit(stage)
+                 and days_since_update is not None
+                 and days_since_update >= threshold)
         missing_action = _is_missing_action(next_action)
         needs_attention = stale or missing_action
 

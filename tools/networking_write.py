@@ -297,14 +297,13 @@ def cmd_add(args, networking_path: Path, dry_run: bool) -> None:
         else f"### {args.name}"
     )
 
-    if dry_run:
-        row = fmt_contact_row(args.name, company, role, rel, today, "—")
-        out_ok("add", f"Would add contact: {args.name}",
-               dry_run=True,
-               would_mutate=[{"file": str(networking_path), "row": row}])
-        return
-
-    content, lines = load_networking(networking_path)
+    # Load the file up front so the duplicate checks run in BOTH real and dry-run
+    # mode — a --dry-run must report the SAME possible_duplicate / duplicate_warning
+    # the real run would, not a blind "Would add" (fable-audit Theme 2). On a
+    # missing/empty file there are no existing contacts, so dry-run still previews an
+    # add; only the real write requires the file to exist.
+    content = read_file(networking_path)
+    lines = [ln.rstrip("\n").rstrip("\r") for ln in content.splitlines(keepends=True)] if content else []
 
     # Collect existing contact names once (for exact + fuzzy dup checks).
     contacts_start, contacts_end = find_section(lines, r"^##\s+Contacts")
@@ -343,6 +342,16 @@ def cmd_add(args, networking_path: Path, dry_run: bool) -> None:
                 code="possible_duplicate",
                 candidates=candidates,
             )
+
+    if dry_run:
+        row = fmt_contact_row(args.name, company, role, rel, today, "—")
+        out_ok("add", f"Would add contact: {args.name}",
+               dry_run=True,
+               would_mutate=[{"file": str(networking_path), "row": row}])
+        return
+
+    if not content:
+        out_error(f"File not found or empty: {networking_path}", "file_not_found")
 
     # Append to Contacts table
     if contacts_start == -1:

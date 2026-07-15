@@ -195,3 +195,42 @@ def test_custom_threshold_override(tmp_path):
                         "--repo-root", str(tmp_path))
 
     assert len(result["stalled_entries"]) == 1
+
+
+def test_descriptive_closed_stage_not_active(tmp_path):
+    """A freeform closed stage must be excluded from active_entries (parity with
+    pipe_read), even when it contains active-pursuit keywords. fable-audit Theme 2."""
+    write_fixture(tmp_path, "data/job-pipeline.md", """\
+        # Job Pipeline
+
+        ## Active
+        | Company | Role | Stage | Date Updated | Next Action | CV Used | Notes | URL |
+        |---------|------|-------|--------------|-------------|---------|-------|-----|
+        | LiveCo | PM | Applied | 2026-01-01 | Follow up | — | — | — |
+        | ClosedCo | PM | Closed - rejected after final round | 2026-01-01 | — | — | — | — |
+    """)
+    result = run_script("pipeline_staleness.py",
+                        "--target-date", "2026-02-26",
+                        "--repo-root", str(tmp_path))
+    active = {e["company"] for e in result["active_entries"]}
+    assert active == {"LiveCo"}, active
+    assert result["metrics"]["total_active"] == 1
+
+
+def test_separator_row_not_counted_active(tmp_path):
+    """A '| --- | --- | ... |' separator row must not be parsed as a company='---'
+    active entry (it inflated total_active by 1 vs pipe_read). fable-audit Theme 2."""
+    write_fixture(tmp_path, "data/job-pipeline.md", """\
+        # Job Pipeline
+
+        ## Active
+        | Company | Role | Stage | Date Updated | Next Action | CV Used | Notes | URL |
+        | --- | --- | --- | --- | --- | --- | --- | --- |
+        | LiveCo | PM | Applied | 2026-01-01 | Follow up | — | — | — |
+    """)
+    result = run_script("pipeline_staleness.py",
+                        "--target-date", "2026-02-26",
+                        "--repo-root", str(tmp_path))
+    companies = {e["company"] for e in result["active_entries"]}
+    assert "---" not in companies
+    assert result["metrics"]["total_active"] == 1

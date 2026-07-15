@@ -30,11 +30,12 @@ Output: JSON to stdout
   Success: {"status": "ok", "action": "...", "summary": "..."}
   Failure: {"status": "error", "message": "...", "code": "..."}
 
-Usage:
-  PYTHONIOENCODING=utf-8 python3 tools/person_write.py create "Priya Anand" \
-      --company "Acme AI" --role "Interviewer / Principal" --relationship interviewer --repo-root .
-  PYTHONIOENCODING=utf-8 python3 tools/person_write.py add-entry priya-anand \
-      --section commitments --text "Will relay feedback via Jordan's process" --repo-root .
+Usage (--repo-root/--dry-run are top-level flags — they MUST come BEFORE the
+subcommand; argparse rejects them after it with "unrecognized arguments"):
+  PYTHONIOENCODING=utf-8 python3 tools/person_write.py --repo-root . create "Priya Anand" \
+      --company "Acme AI" --role "Interviewer / Principal" --relationship interviewer
+  PYTHONIOENCODING=utf-8 python3 tools/person_write.py --repo-root . add-entry priya-anand \
+      --section commitments --text "Will relay feedback via Jordan's process"
 """
 import argparse
 import json

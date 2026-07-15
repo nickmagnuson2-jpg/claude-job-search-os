@@ -264,3 +264,42 @@ def test_remove_creates_archived_section_if_missing(tmp_path):
         if l.startswith("| Acme Corp |")
     ]
     assert len(active_rows) == 0
+
+
+# ---------------------------------------------------------------------------
+# Tests: --repo-root ordering contract (fable-audit Theme 2 doc-drift)
+# --repo-root/--dry-run are top-level flags; argparse rejects them AFTER the
+# subcommand. Locks the behavior the corrected docstrings/SKILL now describe,
+# so the "before the subcommand" convention can't silently re-drift.
+# ---------------------------------------------------------------------------
+
+def _run_pipe_write_raw(*args):
+    """Run pipe_write.py returning (returncode, stdout, stderr) without parsing."""
+    script_path = TOOLS_DIR / "pipe_write.py"
+    cmd = [sys.executable, str(script_path), *[str(a) for a in args]]
+    result = subprocess.run(
+        cmd, capture_output=True, text=True, encoding="utf-8",
+        env={**os.environ, "PYTHONIOENCODING": "utf-8"}, cwd=str(REPO_ROOT),
+    )
+    return result.returncode, result.stdout, result.stderr
+
+
+def test_repo_root_before_subcommand_succeeds(tmp_path):
+    """--repo-root BEFORE the subcommand (documented ordering) parses and adds."""
+    write_fixture(tmp_path, "data/job-pipeline.md", PIPELINE_MD)
+    result, code = run_pipe_write(
+        "--repo-root", str(tmp_path), "add", "Acme", "PM",
+    )
+    assert code == 0
+    assert result["status"] == "ok"
+
+
+def test_repo_root_after_subcommand_rejected():
+    """--repo-root AFTER the subcommand is rejected by argparse (exit 2) — the
+    old docstring form. No JSON is emitted; the error goes to stderr."""
+    code, stdout, stderr = _run_pipe_write_raw(
+        "add", "Acme", "PM", "--repo-root", ".",
+    )
+    assert code == 2
+    assert "unrecognized arguments" in stderr
+    assert stdout.strip() == ""

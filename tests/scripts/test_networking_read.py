@@ -83,6 +83,62 @@ def test_pipeline_link_detected(tmp_path):
     assert len(result["pipeline_connections"]) == 1
 
 
+def test_closed_stage_not_a_pipeline_connection(tmp_path):
+    """A contact whose company is at a freeform terminal stage ('Closed - they
+    passed', 'Declined', ...) must NOT surface as a live pipeline_connection.
+    Regression for fable-audit Theme 2: the 4-value TERMINAL_STAGES set missed the
+    real closed vocabulary, so dead-company contacts showed as active connections."""
+    write_fixture(tmp_path, "data/networking.md", """\
+        # Networking
+
+        ## Contacts
+        | Name | Company | Role | Relationship | Added | Last Interaction | Email |
+        |------|---------|------|-------------|-------|-----------------|-------|
+        | Sarah Chen | Stripe | EM | hiring-manager | 2026-02-01 | 2026-02-25 | — |
+        | Dana Lee | Globex | PM | peer | 2026-02-01 | 2026-02-25 | — |
+    """)
+    write_fixture(tmp_path, "data/job-pipeline.md", """\
+        # Pipeline
+
+        ## Active
+        | Company | Role | Stage | Date Updated | Next Action | CV Used | Notes | URL |
+        |---------|------|-------|-------------|-------------|---------|-------|-----|
+        | Stripe | PM | Applied | 2026-02-25 | Follow up | — | — | — |
+        | Globex | PM | Closed - they passed | 2026-02-20 | — | — | — | — |
+    """)
+    result = run_script("networking_read.py",
+                        "--target-date", "2026-02-28",
+                        "--repo-root", str(tmp_path))
+    conn_companies = {c["company"] for c in result["pipeline_connections"]}
+    assert conn_companies == {"Stripe"}, conn_companies
+
+
+def test_midstring_declined_stage_not_a_connection(tmp_path):
+    """A closed signal buried mid-string ('Founder intro complete (...) - declined,
+    no current fit') must exclude the company from pipeline_connections. This is the
+    real-data leak a prefix-only terminal check missed. fable-audit Theme 2."""
+    write_fixture(tmp_path, "data/networking.md", """\
+        # Networking
+
+        ## Contacts
+        | Name | Company | Role | Relationship | Added | Last Interaction | Email |
+        |------|---------|------|-------------|-------|-----------------|-------|
+        | Dana Lee | Globex | Founder | peer | 2026-02-01 | 2026-02-25 | — |
+    """)
+    write_fixture(tmp_path, "data/job-pipeline.md", """\
+        # Pipeline
+
+        ## Active
+        | Company | Role | Stage | Date Updated | Next Action | CV Used | Notes | URL |
+        |---------|------|-------|-------------|-------------|---------|-------|-----|
+        | Globex | CoS | Founder intro complete (a CEO, 6/29) - declined, no current fit | 2026-02-20 | — | — | — | — |
+    """)
+    result = run_script("networking_read.py",
+                        "--target-date", "2026-02-28",
+                        "--repo-root", str(tmp_path))
+    assert result["pipeline_connections"] == []
+
+
 def test_interaction_count_matches_log_headers(tmp_path):
     """Interaction count reflects the number of '#### ' date headers in that contact's log section."""
     write_fixture(tmp_path, "data/networking.md", """\

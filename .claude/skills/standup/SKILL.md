@@ -3,7 +3,7 @@ name: standup
 description: Morning briefing — pipeline health, today's top 3 actions, pending outreach, corpus state, and a momentum read of the search state
 argument-hint: [none]
 user-invocable: true
-allowed-tools: Read(*), Glob(inbox/*), Glob(data/reflections/*), Glob(data/workbooks/*), Bash(python3 tools/pipeline_staleness.py:*), Bash(python3 tools/outreach_pending.py:*), Bash(python3 tools/networking_followup.py:*), Bash(python3 tools/todos_summary.py:*), Bash(ls:*), Bash(stat:*)
+allowed-tools: Read(*), Glob(inbox/*), Glob(data/reflections/*), Glob(data/workbooks/*), Bash(PYTHONIOENCODING=utf-8 python3 tools/pipeline_staleness.py:*), Bash(PYTHONIOENCODING=utf-8 python3 tools/outreach_pending.py:*), Bash(PYTHONIOENCODING=utf-8 python3 tools/networking_followup.py:*), Bash(PYTHONIOENCODING=utf-8 python3 tools/todos_summary.py:*), Bash(PYTHONIOENCODING=utf-8 python3 tools/check_automation_health.py:*), Bash(ls:*), Bash(stat:*)
 ---
 
 # Standup — Morning Briefing
@@ -16,11 +16,11 @@ Reads five data files and generates a focused daily brief. Output is in-chat onl
 
 **Run preprocessing scripts (parallel):**
 ```bash
-python3 tools/pipeline_staleness.py --target-date $(date +%Y-%m-%d)
-python3 tools/outreach_pending.py --target-date $(date +%Y-%m-%d)
-python3 tools/networking_followup.py --target-date $(date +%Y-%m-%d)
-python3 tools/todos_summary.py --target-date $(date +%Y-%m-%d) --top-n 6
-python3 tools/check_automation_health.py --repo-root .
+PYTHONIOENCODING=utf-8 python3 tools/pipeline_staleness.py --target-date $(date +%Y-%m-%d)
+PYTHONIOENCODING=utf-8 python3 tools/outreach_pending.py --target-date $(date +%Y-%m-%d)
+PYTHONIOENCODING=utf-8 python3 tools/networking_followup.py --target-date $(date +%Y-%m-%d)
+PYTHONIOENCODING=utf-8 python3 tools/todos_summary.py --target-date $(date +%Y-%m-%d) --top-n 6
+PYTHONIOENCODING=utf-8 python3 tools/check_automation_health.py --repo-root .
 ```
 Parse JSON output from each script. If a script returns empty results (missing data file), continue — never fail.
 
@@ -113,6 +113,8 @@ Origin: [[feedback_no_confabulation_in_corpus_synthesis]] (Conviction Workbook P
 - If `morning_starter.exists` → Read the file in full and use its Sequence section as Today's Top 3 (the chain is the source of truth). The `top_n` items are supporting context shown below the chain. (An `is_event: true` item dated today still pins above the chain — a real interview beats the planned chain.)
 - Else → take the first 3 entries of `top_n` for "Today's Top 3"
 - `total_pending`, `overdue_count`, `high_priority_count` go in the footer line.
+
+**Staleness sanity check on Today's Top 3 (mandatory, cheap):** before presenting, fuzzy-match each of the (up to) 3 chosen task strings against the entries already loaded for the Momentum Read — the 2-3 most recent `data/decisions.md` entries and the most recent `data/accomplishments.md` entry (Step 1, item 3) — plus any filenames seen in the corpus-state `ls` output (Step 1 corpus-state check). A likely match is a shared distinctive noun/entity/deliverable name, not topic-level resemblance (e.g. a todo saying "ship N projects" against an accomplishments entry naming that same project as shipped). If a candidate looks done, do not present it as fact in Today's Top 3 — either drop it in favor of the next-ranked `top_n` item, or present it flagged: `⚠️ [task] — this may already be done (per [source]); confirm before treating as open`. This is a read-only flag; `/standup` never writes closures itself (`/checkout`'s Step 4c#5 owns the actual close). Origin: 2026-07-09 — two already-completed High-priority todos (one done weeks earlier, one the day before) were presented as live Top 3 items and Nick had to correct them live.
 
 **From outreach_pending.py JSON:**
 - `awaiting_response_overdue[]` + `awaiting_response[]` — sorted by `days_since_sent` descending (oldest first)

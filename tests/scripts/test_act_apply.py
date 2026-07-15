@@ -180,6 +180,89 @@ def test_contact_add_missing_file_returns_error(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# Tests: contact-add duplicate guard (fable-audit Theme 2 — name_dedup bypass)
+# ---------------------------------------------------------------------------
+
+CONTACTS_WITH_JORDAN = """\
+# Networking
+
+## Contacts
+
+| Name | Company | Role | Relationship | Added | Last Interaction | Email |
+| --- | --- | --- | --- | --- | --- | --- |
+| Jordan Sample | Acme | PM | peer | 2026-01-01 | — | — |
+
+## Interaction Log
+
+### Jordan Sample — Acme
+"""
+
+
+def test_contact_add_blocks_exact_duplicate(tmp_path):
+    """An exact-name re-add returns duplicate_warning and does not add a 2nd row."""
+    write_fixture(tmp_path, "data/networking.md", CONTACTS_WITH_JORDAN)
+    result, code = run_act_apply(
+        "--repo-root", str(tmp_path),
+        "contact-add", "Jordan Sample", "--company", "Acme",
+    )
+    assert code == 0
+    assert result["action"] == "duplicate_warning"
+    content = (tmp_path / "data/networking.md").read_text(encoding="utf-8")
+    assert content.count("| Jordan Sample |") == 1
+
+
+def test_contact_add_blocks_fuzzy_duplicate(tmp_path):
+    """A spelling-variant of an existing contact is blocked with possible_duplicate
+    (parity with networking_write.py add). Regression: act_apply had NO dup check."""
+    write_fixture(tmp_path, "data/networking.md", CONTACTS_WITH_JORDAN)
+    result, code = run_act_apply(
+        "--repo-root", str(tmp_path),
+        "contact-add", "Jordan Samples", "--company", "Acme",
+    )
+    assert code != 0
+    assert result["status"] == "error"
+    assert result["code"] == "possible_duplicate"
+    content = (tmp_path / "data/networking.md").read_text(encoding="utf-8")
+    assert "| Jordan Samples |" not in content
+
+
+def test_contact_add_force_overrides_fuzzy_duplicate(tmp_path):
+    """--force adds the near-duplicate anyway (genuinely different person)."""
+    write_fixture(tmp_path, "data/networking.md", CONTACTS_WITH_JORDAN)
+    result, code = run_act_apply(
+        "--repo-root", str(tmp_path),
+        "contact-add", "Jordan Samples", "--company", "Acme", "--force",
+    )
+    assert code == 0
+    assert result["action"] == "contact_add"
+    content = (tmp_path / "data/networking.md").read_text(encoding="utf-8")
+    assert "| Jordan Samples |" in content
+
+
+def test_contact_add_dry_run_reports_duplicate(tmp_path):
+    """--dry-run must surface the SAME duplicate the real run would block on, not a
+    blind 'Would add' (parity with networking_write; fable-audit Theme 2 reviewer
+    finding — the dedup guard was dead on the dry-run path)."""
+    write_fixture(tmp_path, "data/networking.md", CONTACTS_WITH_JORDAN)
+    # exact dup under dry-run
+    result, code = run_act_apply(
+        "--repo-root", str(tmp_path), "--dry-run",
+        "contact-add", "Jordan Sample", "--company", "Acme",
+    )
+    assert result["action"] == "duplicate_warning"
+    # fuzzy dup under dry-run
+    result, code = run_act_apply(
+        "--repo-root", str(tmp_path), "--dry-run",
+        "contact-add", "Jordan Samples", "--company", "Acme",
+    )
+    assert code != 0
+    assert result["code"] == "possible_duplicate"
+    # file untouched by the dry run
+    content = (tmp_path / "data/networking.md").read_text(encoding="utf-8")
+    assert content.count("| Jordan Sample") == 1
+
+
+# ---------------------------------------------------------------------------
 # Tests: notes-add
 # ---------------------------------------------------------------------------
 

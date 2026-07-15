@@ -288,6 +288,34 @@ def test_dry_run_returns_no_file_change(tmp_path):
     assert after == original
 
 
+def test_dry_run_reports_fuzzy_duplicate(tmp_path):
+    """--dry-run must surface the SAME possible_duplicate the real run would block on,
+    not a blind 'Would add'. Regression for fable-audit Theme 2: the dry-run branch
+    returned before the exact/fuzzy dedup checks ran."""
+    write_fixture(tmp_path, "data/networking.md", NETWORKING_WITH_CONTACT)
+    # "Jane Doe" already exists; "Jane Doh" is a fuzzy variant.
+    result, code = run_nw_write(
+        "--repo-root", str(tmp_path),
+        "--dry-run",
+        "add", "Jane Doh", "--company", "Acme Corp",
+    )
+    assert code != 0
+    assert result["status"] == "error"
+    assert result["code"] == "possible_duplicate"
+
+
+def test_dry_run_reports_exact_duplicate(tmp_path):
+    """--dry-run on an exact-name match reports duplicate_warning, not 'Would add'."""
+    write_fixture(tmp_path, "data/networking.md", NETWORKING_WITH_CONTACT)
+    result, code = run_nw_write(
+        "--repo-root", str(tmp_path),
+        "--dry-run",
+        "add", "Jane Doe", "--company", "Acme Corp",
+    )
+    assert code == 0
+    assert result["action"] == "duplicate_warning"
+
+
 # ---------------------------------------------------------------------------
 # Tests: outreach-log reply-flip (bug fix 2026-06-18 — who replied?)
 # ---------------------------------------------------------------------------

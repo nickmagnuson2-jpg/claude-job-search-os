@@ -139,7 +139,7 @@ If you are building a personal-OS on top of Claude Code (not job-search-specific
 
 > For a guided walkthrough with a demo profile and a first worked example, see [docs/getting-started.md](docs/getting-started.md). The quick version:
 
-**Prerequisites:** [Claude Code](https://docs.anthropic.com/en/docs/claude-code) installed (Max subscription recommended, parallel-agent research and deep CV reviews are token-intensive). Python 3.8+ for PDF features and atomic write scripts.
+**Prerequisites:** [Claude Code](https://docs.anthropic.com/en/docs/claude-code) installed (Max subscription recommended, parallel-agent research and deep CV reviews are token-intensive). Python 3.10+ for PDF features and atomic write scripts.
 
 ### Step 1, Clone and install
 
