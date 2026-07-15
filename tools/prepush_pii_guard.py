@@ -3,9 +3,12 @@
 prepush_pii_guard.py — public-repo pre-push PII gate.
 
 The job-search OS repo is PUBLIC. This is the last automated line before code
-leaves the machine: it runs the deterministic denylist scan over every tracked
-public file and BLOCKS the push if any known real contact / target company /
-email token is present. It exists because the public repo silently diverged and
+leaves the machine: it runs the deterministic denylist scan over the committed
+blobs at the pushed sha(s) (read from the pre-push hook's stdin) and BLOCKS the
+push if any known real contact / target company / email token is present. It
+scans what is actually being pushed — not the on-disk working tree — so a commit
+that carries PII in history is caught even when the working tree has been cleaned.
+When invoked manually (no pre-push stdin) it falls back to a working-tree scan. It exists because the public repo silently diverged and
 shipped real names for weeks (see memory project_phase6_history_clean_done /
 the 2026-06-15 reconcile); a tip-clean working tree is not enough — every push
 must be gated.
@@ -37,13 +40,56 @@ def tracked_public_files(root: Path) -> list[str]:
     files = []
     for rel in out:
         rel = rel.strip()
-        if not rel or not cp.is_public_path(rel):
+        if not rel or not cp.is_public_path(rel) or cp.is_binary(rel):
             continue
         if cp.is_gitignored(root, rel):
             continue
         if (root / rel).is_file():
             files.append(rel)
     return files
+
+
+def read_prepush_stdin():
+    """Parse the pre-push hook's stdin. Each line is:
+        <local ref> <local sha> <remote ref> <remote sha>
+    Returns (stdin_present, shas):
+      - stdin_present is False for a manual run (tty or empty pipe) — the caller
+        then falls back to a working-tree scan.
+      - stdin_present is True when the hook piped ref lines; shas holds the
+        non-zero local shas being pushed. A deletion-only push yields True + [],
+        which means "nothing to scan, allow" (NOT a working-tree fallback)."""
+    if sys.stdin is None or sys.stdin.isatty():
+        return False, []
+    lines = sys.stdin.read().splitlines()
+    if not lines:
+        return False, []
+    shas = []
+    for line in lines:
+        parts = line.split()
+        if len(parts) >= 2 and parts[1] and set(parts[1]) != {"0"}:
+            shas.append(parts[1])
+    return True, shas
+
+
+def public_blobs_at(root: Path, sha: str):
+    """Yield (rel, content) for every public, non-gitignored file in the tree at
+    `sha`. Content is decoded utf-8 with replacement so a binary blob never crashes
+    the scan."""
+    names = subprocess.run(
+        ["git", "-C", str(root), "ls-tree", "-r", "--name-only", "-z", sha],
+        capture_output=True,
+    ).stdout.split(b"\0")
+    for raw in names:
+        rel = raw.decode("utf-8", "replace").strip()
+        if not rel or not cp.is_public_path(rel) or cp.is_binary(rel):
+            continue
+        if cp.is_gitignored(root, rel):
+            continue
+        blob = subprocess.run(
+            ["git", "-C", str(root), "show", f"{sha}:{rel}"],
+            capture_output=True,
+        ).stdout
+        yield rel, blob.decode("utf-8", "replace")
 
 
 def main() -> int:
@@ -61,14 +107,27 @@ def main() -> int:
         return 0
 
     hits = {}
-    for rel in tracked_public_files(root):
-        try:
-            content = (root / rel).read_text(encoding="utf-8", errors="replace")
-        except Exception:
-            continue
-        found = cp.find_pii(content, tokens)
-        if found:
-            hits[rel] = sorted(set(found))
+    stdin_present, shas = read_prepush_stdin()
+    if shas:
+        # Scan what is actually being pushed: the committed blobs at each sha.
+        for sha in shas:
+            for rel, content in public_blobs_at(root, sha):
+                found = cp.find_pii(content, tokens)
+                if found:
+                    hits[rel] = sorted(set(hits.get(rel, []) + found))
+    elif stdin_present:
+        # Deletion-only push (all-zero shas): nothing being added, allow.
+        pass
+    else:
+        # Manual invocation (no pre-push stdin): fall back to the working-tree scan.
+        for rel in tracked_public_files(root):
+            try:
+                content = (root / rel).read_text(encoding="utf-8", errors="replace")
+            except Exception:
+                continue
+            found = cp.find_pii(content, tokens)
+            if found:
+                hits[rel] = sorted(set(found))
 
     if not hits:
         print("prepush_pii_guard: deterministic PII scan clean "

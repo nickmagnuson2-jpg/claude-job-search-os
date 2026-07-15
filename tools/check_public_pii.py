@@ -32,8 +32,24 @@ from pathlib import Path
 DENYLIST_REL = "tools/.pii-denylist.txt"
 
 # Public-repo path prefixes/globs. A file outside these is not a public artifact.
-PUBLIC_PREFIXES = ("tests/", ".claude/skills/", "framework/", "docs/")
+# examples/ + plugins/ are tracked public surface too (fable-audit 2026-07-07 #10/#17).
+PUBLIC_PREFIXES = ("tests/", ".claude/skills/", "framework/", "docs/", "examples/", "plugins/")
 # Plus: tools/*.{py,md,sh} and top-level *.md (README.md, CLAUDE.md, ...).
+
+# Binary / non-text extensions: never text-scanned for denylist tokens. A PDF's byte
+# stream can contain a short denylist brand-token as a substring and false-positive,
+# which would block every push once examples/ (which ships a sample-CV PDF) is in
+# scope (fable-audit 2026-07-07 #18).
+BINARY_EXTS = frozenset({
+    "pdf", "png", "jpg", "jpeg", "gif", "ico", "bmp", "webp",
+    "zip", "gz", "tar", "woff", "woff2", "ttf", "otf", "eot",
+    "pyc", "pkl", "db", "sqlite", "xlsx", "docx", "pptx",
+})
+
+
+def is_binary(rel: str) -> bool:
+    ext = rel.rsplit(".", 1)[-1].lower() if "." in rel else ""
+    return ext in BINARY_EXTS
 
 
 def is_public_path(rel: str) -> bool:
@@ -93,7 +109,12 @@ def main():
     if not file_path:
         return
 
-    root = Path.cwd()
+    # Derive repo root from this file's location (tools/), not cwd() — the hook
+    # runs with an absolute script path, so __file__ is reliable even when the
+    # session is launched from outside the repo root. (fable-audit 2026-07-07 #3)
+    # PII_REPO_ROOT overrides for tests, which inject a fixture repo + denylist.
+    root_env = os.environ.get("PII_REPO_ROOT")
+    root = Path(root_env).resolve() if root_env else Path(__file__).resolve().parent.parent
     try:
         rel = os.path.relpath(os.path.abspath(file_path), root)
     except Exception:
@@ -104,6 +125,8 @@ def main():
     rel = rel.replace(os.sep, "/")
     if not is_public_path(rel) or is_gitignored(root, rel):
         return
+    if is_binary(rel):
+        return  # never text-scan binary blobs (a PDF byte stream false-positives, #18)
 
     if tool_name == "Write":
         content = tool_input.get("content", "")

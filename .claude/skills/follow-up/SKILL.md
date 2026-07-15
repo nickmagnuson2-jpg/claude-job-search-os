@@ -320,6 +320,13 @@ Rate each: **Strong** / **Adequate** / **Weak**. If any is **Weak** or generic, 
 
 If any answer is bad, regenerate from the tone source — do not patch sentence-by-sentence. Present only once all three pass.
 
+**Mechanical pre-send checklist (do this explicitly, don't rely on having "read" the rule earlier — two documented-but-missed recurrences each, see `memory/lessons.md` Section 2, 2026-06-08/2026-06-30/2026-07-09):**
+
+1. **Bare "next steps" scan.** Grep the draft for the literal phrase "next steps." If found without a softener immediately before or after it ("potential," "hopefully," "whenever you have a read," "any read yet on potential..."), add one. Bare "next steps" reads as presumptuous; this has been missed twice despite being canonical (`voice-reference.md` Exemplar 5 rule 4).
+2. **Personalized-pleasantry check.** Is there a known specific about the recipient's timing this week (a holiday, a just-passed long weekend, a stated vacation, a known event)? If yes and the draft has no pleasantry referencing it (opener OR close — either position is valid), add one (`voice-reference.md` line 40). This has been missed three times.
+
+Both checks are mechanical (pattern-match the draft text), not judgment calls — run them every time before Step 8, not just when they happen to come to mind.
+
 #### Step 8: Present Draft
 
 ```markdown

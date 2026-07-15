@@ -1,7 +1,7 @@
 # /scan-contacts — Manual Integration Testing Checklist
 
 > For automated unit and parser tests, run:
-> `PYTHONIOENCODING=utf-8 python -m pytest tests/scripts/ -v`
+> `PYTHONIOENCODING=utf-8 python3 -m pytest tests/scripts/ -v`
 >
 > This checklist covers what automated tests cannot reach:
 > live LinkedIn auth, browser scraping, LLM ranking, and the
@@ -26,13 +26,13 @@
   - `LINKEDIN_PASSWORD=yourpassword`
   - `ANTHROPIC_API_KEY=sk-ant-...`
 - [ ] Dependencies installed: `pip install -r tools/linkedin-scanner/requirements.txt`
-- [ ] No import errors: `python tools/linkedin-scanner/scan.py --help` exits 0 and prints usage
+- [ ] No import errors: `PYTHONIOENCODING=utf-8 python3 tools/linkedin-scanner/scan.py --help` exits 0 and prints usage
 
 ---
 
 ## 2. First-Run LinkedIn Auth
 
-- [ ] Run `/scan-contacts "Acme AI" 3` (or `python scan.py --company "Acme AI" --num 3`)
+- [ ] Run `/scan-contacts "Acme AI" 3` (or `PYTHONIOENCODING=utf-8 python3 scan.py --company "Acme AI" --num 3`)
 - [ ] Chrome window opens and navigates to LinkedIn login
 - [ ] Login completes successfully (manual login or credentials auto-filled)
   - If LinkedIn prompts for a verification code: enter it, then let the scan continue
@@ -53,7 +53,7 @@
 ## 4. Basic Scan Smoke Test
 
 - [ ] `/scan-contacts "Acme AI" 5` completes without crashing
-- [ ] Output JSON is valid (copy into `python -c "import json,sys; json.load(sys.stdin)"`)
+- [ ] Output JSON is valid (copy into `PYTHONIOENCODING=utf-8 python3 -c "import json,sys; json.load(sys.stdin)"`)
 - [ ] Output contains at least 1 ranked profile object with:
   - `name`, `url`, `headline`, `rank.aggregate_rating` fields present
 - [ ] Results are sorted by `aggregate_rating` descending (highest score first)
@@ -111,7 +111,7 @@
 - Selenium version must match installed Chrome — if Chrome auto-updated, run:
   `pip install --upgrade webdriver-manager` and re-test auth flow
 - LinkedIn may trigger CAPTCHA on first login from a new IP — manual completion required
-- If `ranked_profiles.json` grows stale (prompt changed), run with `--no-cache` flag once
+- If `ranked_profiles.json` grows stale (prompt changed), delete `tools/linkedin-scanner/src/cache/ranked_profiles.json` (and `rank_prompts.json`) to force a fresh re-rank
 
 ---
 

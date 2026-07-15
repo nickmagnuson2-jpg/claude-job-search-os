@@ -72,6 +72,61 @@ Compound formats: `unstructured-chat | structured-behavioral | founder-vibe-chec
 Stages: `networking | recruiter-screen | hiring-manager | founder-meet | peer-meet | onsite-loop | drill`.
 Drill format leaves orthogonal axes blank.
 
+### Step 1b: Mode check (MANDATORY branch point)
+
+**If `stage: networking`** — this is a peer/mentor/warm-contact call where nobody is evaluating Nick and no role is being screened (no interviewer, no rubric target, usually no pipeline row). Skip Steps 2–9b entirely (the 5-dimension rubric, Tier-1 NN screen, and hypothesis test log all presume an evaluator grading Nick's interview performance — none applies to a mutual conversation). Go directly to **Networking Call Mode** below, then rejoin at Step 10.
+
+**Otherwise** (`recruiter-screen | hiring-manager | founder-meet | peer-meet-as-evaluator | onsite-loop | drill`) — proceed to Step 2 as normal; this is real interview-evaluation content.
+
+Origin: 2026-07-09 — a networking catch-up (peer, no hiring signal) was run through the interview rubric and Nick had to stop mid-scoring: "I don't think this is the right format for networking calls."
+
+---
+
+## Networking Call Mode (stage: networking only)
+
+Four short takeaways instead of a 5-dimension rubric. No interviewer signal, no NN screen, no hypothesis log — there's no evaluator and no role to test fit against.
+
+### NW-1: Nick's cold read (still nick-first — no polish-anchoring even here)
+
+Ask, before any Claude analysis:
+
+> 1. **Story Delivery** (1–5, half-points OK): How did you present where you're at right now — the transition, what you're looking for? One-line evidence in your own words.
+> 2. What was most valuable about this call for you — information, connection, or a lead?
+> 3. What did you learn that changes something (market read, role-shape signal, a fact worth keeping)?
+> 4. Anything you'd do differently next time (tone, ask, sequencing)?
+
+Save under `## Nick's Cold Read`.
+
+### NW-2: Claude annotates Story Delivery + extracts takeaways
+
+**Story Delivery annotation (mirrors rubric Steps 3–4 in miniature, scoped to this one dimension):** read the transcript's self-narrative passage (the "where I'm at" / background walkthrough) and independently score 1–5 against the same anchors Dimension 2 (Delivery Crispness) and Dimension 5 (Authenticity) use in `coaching/debrief-rubric.md` — filler density, hedging, whether the story landed with texture or read as rehearsed. If Claude's score differs from Nick's by ≥1 point, run the same reconciliation as Step 4 (show both, ask Nick to adjudicate) before recording a final score. This is the only scored dimension in Networking Call Mode — everything else below is takeaways, not scoring.
+
+**Structured takeaways** — read the transcript and pull out, quoting or citing the transcript line where useful:
+
+- **New information worth keeping** — market intel, company facts, industry signal. Candidate content for `data/company-notes/<slug>.md` or `data/industry-notes/<slug>.md`.
+- **Commitments** — what THEY offered (intro, info, a connection) and what NICK owes them (a promised follow-up, an intro, information).
+- **Explicit next step**, if any was named.
+- **Relationship-strength read**: cold / warm / hot, one line of evidence (e.g., "offered to network Nick into her own contacts unprompted — warm").
+
+Save both under `## Claude's Takeaways` (Story Delivery final score at the top, takeaways below).
+
+### NW-3: Capture the to-do and the info — mandatory, not just proposed
+
+Two concrete outputs every networking-call debrief must produce (don't just describe them — do them, after Nick confirms wording):
+
+1. **A to-do**, if NW-2 surfaced anything Nick owes the contact or a next move on the relationship (a nudge date, a promised send, "follow up if X"). Run `tools/todo_write.py add "<task>" "<priority>" "<due>" "<notes>"`. If nothing is owed and no next move exists yet, say so explicitly rather than inventing a generic "stay in touch" todo.
+2. **Additional info worth remembering** — any new fact from NW-2 that isn't already captured elsewhere (market intel, a company data point, something about the contact). Confirm the exact destination and wording with Nick, then write it: append to `data/company-notes/<slug>.md` / `data/industry-notes/<slug>.md` for market intel, or note it in the `data/networking.md` interaction log entry (Step 9 still runs — this skill doesn't skip logging the interaction) if it's contact-specific color with no other natural home.
+
+If the relationship reads warm/hot and looks like it's becoming an ongoing active tie (per `data/people/` promotion criteria in project CLAUDE.md), suggest `/networking promote` — do not auto-create a person dossier.
+
+### NW-4: No pipeline step
+
+Skip Step 9b entirely — there is no interview event advancing a pipeline stage. (Exception: if the contact is explicitly tied to a company already in `data/job-pipeline.md`, e.g. a warm-intro source for a live process, note that pipeline row's next-action instead of creating a new one — don't invent a stage change for a call that wasn't its own pipeline event.)
+
+Then continue to **Step 10** (Predictions for next session — reframe as "what's the next move with this contact") and **Step 11** (close trigger todos) as normal. **Step 12** (`/follow-up` hand-off) still applies and is usually the natural next action for a networking call.
+
+---
+
 ### Step 2: NICK-FIRST SCORING (mandatory gate)
 
 Before producing ANY analysis output, ask Nick to score the call cold:

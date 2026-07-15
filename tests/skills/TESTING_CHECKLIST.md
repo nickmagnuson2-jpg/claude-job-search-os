@@ -13,6 +13,8 @@
 
 ### Pre-Integration Baseline
 
+> `tests/baselines/` is created on demand — `mkdir -p tests/baselines` before the first save.
+
 - [ ] Run skill before optimization and save output to `tests/baselines/[skill]-before.md`
 - [ ] Note approximate number of file reads in the skill (baseline)
 
@@ -25,7 +27,7 @@
 
 ### Skill-Level Changes
 
-- [ ] `Bash(python tools/[script].py:*)` added to `allowed-tools` frontmatter
+- [ ] `Bash(python3 tools/[script].py:*)` added to `allowed-tools` frontmatter
 - [ ] In-context computation steps replaced with script call + JSON parse
 - [ ] Source file reads that are now covered by the script removed from instructions
 

@@ -93,3 +93,9 @@ tools/.pii-denylist.txt
 
 # Therapist allowlist for granola classification (real names/emails; never commit)
 tools/.therapy-classifier.txt
+
+# LinkedIn-scanner cache (scraped profiles, parsed JSON, pickled session cookie, login screenshots — never commit)
+tools/linkedin-scanner/src/cache/
+
+# Local-only Claude settings (permissions/env; not for the public repo)
+.claude/settings.local.json

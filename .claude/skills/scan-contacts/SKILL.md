@@ -8,7 +8,7 @@ allowed-tools: Read(*), Glob(data/*), Write(data/networking.md), Bash(python3 to
 
 # Scan Contacts — LinkedIn Outreach Target Finder
 
-Searches LinkedIn for employees at a target company, scrapes their profiles, and ranks them using Claude to identify the best people to reach out to for a CoS/Strategy Ops job search. Ranks on four dimensions: role proximity (hiring decision authority), education, network connectedness, and industry fit.
+Searches LinkedIn for employees at a target company, scrapes their profiles, and ranks them using Claude to identify the best people to reach out to. Ranking targets the candidate's current role from `data/goals.md` (the top-ranked role type), not a fixed lane. Ranks on four dimensions: role proximity (hiring decision authority), education, network connectedness, and industry fit.
 
 Use this after researching a company with `/research-company` to find who to cold-message.
 
@@ -86,7 +86,7 @@ Rank | Name | Role | Deg | Mut | ProxScore | EduScore | NetScore | FitScore | **
 ```
 
 Column key:
-- **ProxScore** = role_proximity (decision authority for CoS hire)
+- **ProxScore** = role_proximity (decision authority for the target-role hire)
 - **EduScore** = education (school prestige)
 - **NetScore** = connectedness (1st/2nd/3rd + mutuals)
 - **FitScore** = industry_fit (sector alignment)

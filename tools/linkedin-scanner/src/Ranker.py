@@ -31,6 +31,14 @@ class Ranker:
                 self.discard_profile(url)
             return None
         rank = llm.rank_for_profile(profile, key)
+        if rank is None:
+            # Transient LLM ranking failure (rank_for_profiles returns None on any
+            # exception). Do NOT attach or cache a None rank, or it poisons the
+            # ranked-profile cache permanently. Treat it as a failure and move on.
+            # (fable-audit 2026-07-07 #15)
+            if discard_failed:
+                self.discard_profile(url)
+            return None
         llm.rank_profile(profile, url, rank)
 
         if use_cache:
@@ -45,6 +53,13 @@ class Ranker:
             return None
         print(f"Loading cached ranked profile with key {key}")
         profile = self.cached_profiles[key]
+        if profile.get("rank") is None:
+            # Evict a previously-poisoned entry (rank=None from a past transient
+            # failure) so it re-ranks instead of returning a null rank forever.
+            # (fable-audit 2026-07-07 #15)
+            print(f"Discarding cached profile with null rank, key {key}")
+            del self.cached_profiles[key]
+            return None
         if (
             discard_outdated
             and profile["metadata"]["rank_prompt_id"] != llm.RANK_PROMPT_ID

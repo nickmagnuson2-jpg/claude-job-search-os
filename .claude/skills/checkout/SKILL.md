@@ -166,6 +166,8 @@ Origin: 2026-05-27 task #4 reflexive close — see `memory/feedback_diagnose_une
 
 4. **Networking contacts with pending follow-ups overdue.** From `networking_activity`, identify contacts with pending to-dos past their due date. Surface for follow-up decision.
 
+5. **Overdue todos that read as already-done.** For each `Pending` todo in `active_remaining` overdue by 7+ days (same set as audit #2), fuzzy-match its text against the top 5 entries of `data/accomplishments.md` and `data/decisions.md`, plus today's `substantive_work` output paths — not just today's Done list, since this catches work completed on an earlier day whose todo was never closed (e.g. a "ship N projects" todo left open for weeks after the last of N shipped). A match is a strong keyword/entity overlap (same project name, same deliverable noun), not a topic-level resemblance. Surface each candidate match for Nick's confirm; on "yes, close it," run `todo_write.py done`. Never auto-close — this is a fuzzy match, more error-prone than the exact-slug patterns in Step 4b. Origin: 2026-07-09 — two High-priority todos (a shipped-project todo and a completed voice-pass todo) sat open for weeks/a day respectively and surfaced as false "Today's Top 3" items in `/standup` before Nick caught it.
+
 **Display under a new section `#### State Audit (diagnose, don't close)`** in the checkout summary. Format:
 
 ```

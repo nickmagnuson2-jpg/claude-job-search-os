@@ -1,3 +1,7 @@
+# Required — YAML parsing for the CV pipeline (cv_merge_theme.py, projects_to_yaml.py),
+# /discover-companies, and career-scan. Hard-imported; not optional.
+pyyaml>=6.0
+
 # Optional — for prep-doc PDF generation (tools/md_to_pdf_doc.py, weasyprint backend)
 markdown>=3.5
 weasyprint>=60.0

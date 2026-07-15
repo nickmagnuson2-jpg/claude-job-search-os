@@ -1,4 +1,5 @@
 import json
+import re
 import anthropic
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from termcolor import colored
@@ -17,8 +18,10 @@ client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 dir_path = os.path.dirname(os.path.realpath(__file__))
 RANK_PROFILE_PROMPT_FILE = dir_path + "/prompts/rank_profile_template.txt"
 
-# Compute repo root: src/ -> linkedin-scanner/ -> tools/ -> repo root
-REPO_ROOT = os.path.join(dir_path, "..", "..", "..", "..")
+# Compute repo root: src/ -> linkedin-scanner/ -> tools/ -> repo root (3 hops).
+# Was 4 hops (one above repo root) — profile.md never loaded, ranking silently
+# used the generic CoS fallback. (fable-audit 2026-07-07 #14)
+REPO_ROOT = os.path.join(dir_path, "..", "..", "..")
 REPO_ROOT = os.path.realpath(REPO_ROOT)
 
 # Build profile summary from data/profile.md if available
@@ -34,10 +37,39 @@ else:
         "targeting CoS and Strategy/Operations roles across high-growth tech sectors"
     )
 
+def _load_target_role(path=None):
+    """Derive the target-role descriptor from data/goals.md (the top-ranked role
+    type) so ranking optimizes for the current thesis instead of a hardcoded lane.
+    Falls back to a neutral phrase when goals.md is absent or unparseable.
+    (fable-audit 2026-07-07 #16)"""
+    fallback = "the candidate's target role (see background above)"
+    if path is None:
+        path = os.path.join(REPO_ROOT, "data", "goals.md")
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            lines = f.read().splitlines()
+    except OSError:
+        return fallback
+    in_roles = False
+    for ln in lines:
+        if ln.strip().startswith("**Role types**"):
+            in_roles = True
+            continue
+        if in_roles and re.match(r"^\s*1\.\s+", ln):
+            role = re.sub(r"^\s*1\.\s+", "", ln).strip()
+            role = role.split(" (")[0].strip()  # drop any trailing parenthetical
+            return role or fallback
+    return fallback
+
+
+TARGET_ROLE = _load_target_role()
+
 with open(RANK_PROFILE_PROMPT_FILE, "r", encoding="utf-8") as f:
     rank_profile_prompt_template = f.read()
 
-rank_profile_prompt = rank_profile_prompt_template.format(profile_summary=profile_summary)
+rank_profile_prompt = rank_profile_prompt_template.format(
+    profile_summary=profile_summary, target_role=TARGET_ROLE
+)
 
 
 def rank_for_profile(profile, key=0):

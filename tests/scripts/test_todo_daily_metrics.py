@@ -168,10 +168,10 @@ def test_pipeline_snapshot(tmp_path):
         # Job Pipeline
 
         ## Active
-        | Company | Role | Stage | Date Added | Date Updated | CV Used | URL | Notes |
-        |---------|------|-------|-----------|--------------|---------|-----|-------|
-        | Acme AI | Strategy & Ops | Researching | 2026-02-20 | 2026-02-20 | — | — | — |
-        | ClosedCo | CoS | Applied | 2026-02-15 | 2026-02-22 | closedco-cos.md | — | — |
+        | Company | Role | Stage | Date Updated | Next Action | CV Used | Notes | URL |
+        |---------|------|-------|--------------|-------------|---------|-------|-----|
+        | Acme AI | Strategy & Ops | Researching | 2026-02-20 | — | — | — | — |
+        | ClosedCo | CoS | Applied | 2026-02-22 | — | closedco-cos.md | — | — |
     """)
 
     result = run_script("todo_daily_metrics.py",

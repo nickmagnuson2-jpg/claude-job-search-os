@@ -25,11 +25,17 @@ Usage:
 """
 import argparse
 import json
+import os
 import re
 import statistics
 import sys
 from collections import Counter
 from pathlib import Path
+
+# Personal Calendly handle used as a signature-detection token. Kept out of this
+# public file — set VOICE_CALENDLY_HANDLE in the env to your real handle; the
+# placeholder default is a no-op detector. (fable-audit 2026-07-07 #6)
+CALENDLY_TOKEN = os.getenv("VOICE_CALENDLY_HANDLE", "calendly.com/your-handle")
 
 
 SIGNATURE_PHRASES = [
@@ -173,7 +179,7 @@ def compute_features(body: str) -> dict:
         "exclamation": body.count("!"),
         "question": body.count("?"),
         "asterisk_emphasis": len(re.findall(r"\*[^*]+\*", body)),
-        "calendly_link": int("calendly.com/nickmagnuson" in body_lower),
+        "calendly_link": int(CALENDLY_TOKEN in body_lower),
     }
 
     # Function word frequencies
@@ -329,7 +335,7 @@ def render_report(features_list: list[dict], aggregate: dict) -> str:
     lines.append("")
 
     lines.append("## Calendly link\n")
-    lines.append(f"- `calendly.com/nickmagnuson` appears in {aggregate['calendly_link_count']} of {aggregate['email_count']} emails\n")
+    lines.append(f"- `{CALENDLY_TOKEN}` appears in {aggregate['calendly_link_count']} of {aggregate['email_count']} emails\n")
 
     lines.append("## Openers (first 8 words after greeting, sample)\n")
     for op in aggregate["openers_sample"]:
