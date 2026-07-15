@@ -1,146 +1,171 @@
 ---
 name: scan-contacts
-description: Scan LinkedIn for contacts at a target company and rank them for outreach — uses LinkedIn scraper + Claude to score by role proximity, education, network connectedness, and industry fit
+description: Find contacts at a target company and rank them for outreach — uses Exa search (no LinkedIn login) + a session-side evidence gate and ranking by role proximity, warm-tie, reachability, and personalization surface
 argument-hint: "<company-name> [count]"
 user-invocable: true
-allowed-tools: Read(*), Glob(data/*), Write(data/networking.md), Bash(python3 tools/linkedin-scanner/scan.py*)
+allowed-tools: Read(*), Glob(data/*), Write(data/networking.md), Bash(*)
 ---
 
-# Scan Contacts — LinkedIn Outreach Target Finder
+# Scan Contacts — Exa-based Outreach Target Finder
 
-Searches LinkedIn for employees at a target company, scrapes their profiles, and ranks them using Claude to identify the best people to reach out to. Ranking targets the candidate's current role from `data/goals.md` (the top-ranked role type), not a fixed lane. Ranks on four dimensions: role proximity (hiring decision authority), education, network connectedness, and industry fit.
+Finds real people at a target company via **Exa web search** (retired the
+Selenium LinkedIn scraper — no password, no ban risk, 2026-07-15), then verifies
+and ranks them **in-session** for cold outreach. Ranking targets the top role
+in `data/goals.md`, not a fixed lane.
 
-Use this after researching a company with `/research-company` to find who to cold-message.
+Architecture: the tool (`tools/contact_finder.py`) does **deterministic
+acquisition only** — Exa fetch, `/in/` filtering, name-from-title extraction,
+URL dedup, and a coarse company-mention bucket. It emits **UNRANKED** JSON. This
+skill does the judgment layer: an **evidence-span current-employment gate**
+(quote-or-drop) and the ranking. There is no in-tool LLM and no
+`ANTHROPIC_API_KEY` dependency.
+
+Use after `/research-company` — outreach lands better with a dossier loaded.
 
 ## Arguments
 
-- `$ARGUMENTS` (required): At minimum a company name.
-  - **Company name** (required): The company to scan (quoted if multi-word)
-  - **Count** (optional): Number of profiles to scan. Default: 20.
+- `$ARGUMENTS` (required): company name (quoted if multi-word); optional integer count (default 20).
+  - `/scan-contacts "Acme AI"` — ~20 profiles
+  - `/scan-contacts "Acme AI" 30`
 
-Examples:
-- `/scan-contacts "Acme AI"` — scan 20 profiles at Acme AI
-- `/scan-contacts "Tessera" 30` — scan 30 profiles
-- `/scan-contacts Stripe 15`
+If no arguments, show the usage block above and stop.
 
 ## Prerequisites
 
-This skill runs a Python tool via Bash. Before running, the following must be set in `.env` at the repo root:
-- `LINKEDIN_EMAIL` — your LinkedIn login email
-- `LINKEDIN_PASSWORD` — your LinkedIn password
-- `ANTHROPIC_API_KEY` — your Anthropic API key
+Only one secret is needed, in `.env` at the repo root:
+- `EXA_API_KEY` — for Exa search (already present for `/research-company`).
 
-Chrome must be installed. First run may require email/SMS verification on LinkedIn.
+No LinkedIn credentials, no Chrome, no chromedriver. (Exa Websets Pro is NOT
+required — this uses plain Exa `/search`.)
 
 ## Instructions
 
-### Step 1: Parse Arguments
+### Step 1: Profile guard
 
-Parse `$ARGUMENTS`:
-- **Company name**: first quoted string or unquoted text before a number
-- **Count**: optional integer, default 20
+The tool enforces this itself, but confirm `data/profile.md` and `data/goals.md`
+exist with real content. If the tool returns `"error"` mentioning a missing/
+placeholder file, relay it and stop (tell the user to run `/import-cv` or fill
+`data/goals.md`).
 
-If no arguments, display usage:
-```
-Usage: /scan-contacts <company-name> [count]
-
-Examples:
-  /scan-contacts "Acme AI"
-  /scan-contacts "Tessera" 30
-  /scan-contacts Stripe 15
-```
-
-### Step 2: Profile Guard
-
-Check that `data/profile.md` and `data/goals.md` exist and are not empty/placeholder-only. If either is missing or empty, stop and display:
-
-```
-⚠️ data/profile.md or data/goals.md is missing. Run /import-cv first or fill in your profile before scanning contacts.
-```
-
-### Step 3: Run the Scanner
-
-Run the scanner tool via Bash:
+### Step 2: Run the finder
 
 ```bash
-PYTHONIOENCODING=utf-8 python3 tools/linkedin-scanner/scan.py --company "<company_name>" --num <count> --output-format json
+PYTHONIOENCODING=utf-8 python3 tools/contact_finder.py --company "<company>" --num <count>
 ```
 
-- If the command fails with a missing env var message, display the error and stop with instructions to populate `.env`.
-- If Selenium can't find Chrome, display: "Chrome not found. Install Chrome and chromedriver, or run `pip install webdriver-manager` in `tools/linkedin-scanner/`."
-- If the command succeeds, parse the JSON output.
+Parse the JSON. Key fields:
+- `exit_reason`: `ok` | `no_results` | `all_filtered` | `exa_error`
+- `counts`: `raw_results`, `profile_results`, `candidates_kept`,
+  `needs_manual_check`, `dropped_no_name`
+- `candidates[]`: people whose bio mentions the company in a work context.
+- `needs_check[]`: real `/in/` profiles with a parseable name but no clear
+  work-context company mention (ambiguous-name collisions, thin snippets, or
+  people the deterministic filter could not confirm).
 
-### Step 4: Display Ranked Results
+**Honest-signal handling — do NOT report "no contacts" on a tooling miss:**
+- `exit_reason: exa_error` → relay `exa_errors`; it's an API problem, not an
+  empty company. Offer to re-run.
+- `no_results` / `all_filtered` → say Exa's index returned nothing usable for
+  this company (try a more specific or alternate company name), NOT "nobody
+  works here."
+- If `candidates_kept` is low but `needs_manual_check` is high, the company name
+  is probably ambiguous (a common first name, or a same-prefix different
+  company). Mine `needs_check` in Step 3.
 
-Display a ranked table. Filter out records with an `error` field (display those separately at the end with a count). For successful records:
+### Step 3: Evidence-span employment gate (MANDATORY — the fabrication guard)
+
+The tool hands you strangers you cannot sanity-check from memory. Before ranking,
+gate every person on **provable CURRENT employment at THIS company**:
+
+1. For each `candidate` AND each `needs_check` record, read `bio_text`.
+2. **Quote-or-drop:** keep the person ONLY if you can quote a specific bio
+   sentence showing they work at the target company **now** — e.g.
+   `"Agent Deployment Strategist - Acme (Current)"` or `"Head of Ops at Acme"`.
+   Record that quote as their `evidence`.
+3. **Current vs. past:** LinkedIn Experience lists prior employers. A sentence
+   showing they *used to* be at the company (a dated past role, "formerly",
+   ending date) does NOT pass. Drop it.
+4. **Right company:** reject same-prefix different companies (e.g. target "Acme"
+   ≠ "Acme Sciences") and people merely *named* like the company.
+5. If you cannot produce a current-employment quote, DROP the person — never
+   guess, never surface them. This is the never-fabricate rule pointed at people
+   the user can't cross-check. (Origin: the role-inference failure family,
+   CLAUDE.md Hard Rules.)
+
+Report how many you dropped at this gate and why (one line).
+
+### Step 4: Rank the survivors (session judgment)
+
+Score each gated person 1-10 on four dimensions, reading `data/profile.md` for
+the user's background and `data/goals.md` for the target role:
+
+- **role_proximity** — decision authority for the target-role hire (Founder/CEO 10,
+  C-suite 8, Head-of-function 6, Director 5, Manager 4, IC 3).
+- **warm_tie** — shared institution with the user: cross-reference the schools
+  and past employers listed in `data/profile.md` against the person's bio. Folds
+  in education prestige. A genuine shared alma mater or employer is the single
+  strongest cold-outreach signal. (Do not hardcode the user's institutions here —
+  read them from `profile.md` each run.)
+- **reachability** — how approachable/open: public reach (`reach` field —
+  followers/connections), recent public activity, seniority-approachability.
+- **personalization_surface** — how much concrete, specific material the bio
+  gives you to write an authentic "why you / why now" (named projects, posts,
+  a distinctive path). Low surface = a generic email; high surface = a sharp one.
+
+`aggregate` = sum (max 40). Also give `overall` (1-10) holistic — penalize thin
+profiles. Do NOT compute a network-degree or mutuals score; that data is
+login-gated and unavailable (it lived in the old Selenium tool).
+
+### Step 5: Display ranked results
 
 ```
-## LinkedIn Contacts — [Company Name]
-Scanned: N profiles | Ranked: M | Errors: E
+## Contacts — [Company]
+Exa: N raw / M profiles | gated-in: G | dropped at evidence gate: D
 
-Rank | Name | Role | Deg | Mut | ProxScore | EduScore | NetScore | FitScore | **Total** | LinkedIn
------|------|------|-----|-----|-----------|----------|----------|----------|-----------|--------
-  1  | Jane Smith | VP of Operations | 1st | 12 | 8 | 7 | 8 | 8 | **31** | linkedin.com/in/janesmith
-  2  | Tom Lee | COO | 2nd | 3 | 9 | 8 | 3 | 8 | **28** | ...
-  ...
+Rank | Name | Role | Prox | Warm | Reach | Pers | **Total** | LinkedIn
+-----|------|------|------|------|-------|------|-----------|--------
+  1  | Jane Smith | Head of Deployment | 6 | 9 | 7 | 8 | **30** | linkedin.com/in/janesmith
 ```
 
-Column key:
-- **ProxScore** = role_proximity (decision authority for the target-role hire)
-- **EduScore** = education (school prestige)
-- **NetScore** = connectedness (1st/2nd/3rd + mutuals)
-- **FitScore** = industry_fit (sector alignment)
-- **Total** = aggregate_rating (max 40)
+Then the **Top 3**, each with one line on *why* they rank high AND their
+`evidence` quote (proof of current employment). Note the top `overall`.
 
-Also display the top contact's `overall_rating` score and a note: "overall_rating is Claude's holistic recommendation (1–10)."
+### Step 6: Offer to add contacts to networking
 
-Below the table, show the **Top 3 recommended contacts** with one sentence each on why they ranked high (synthesized from their scores and headline).
+Ask: `Add any of these to data/networking.md? (names/numbers, or Enter to skip)`
 
-### Step 5: Offer to Add Contacts to Networking
+On selection, read `data/networking.md` and add a row per contact:
+- **Name**, **Company** (the scanned company), **Role/Title** (from headline)
+- **Relationship**: `target` · **Source**: `exa-scan`
+- **Last Interaction**: `—`
+- **Notes**: `[LinkedIn](url) | Warm: X | Reach: Y/10 | Total: Z/40 | evidence: "<quote>"`
 
-Ask:
+Write the file and confirm: "Added N contact(s) to data/networking.md."
+
+Do NOT write `Deg:`/`Mut:` fields — that login-gated network data no longer
+exists.
+
+### Step 7: Suggest next action
+
 ```
-Add any of these contacts to data/networking.md?
-Enter names or numbers (comma-separated), or press Enter to skip:
-```
-
-Wait for user input. If the user selects contacts:
-
-1. Read `data/networking.md`
-2. For each selected contact, add a row to the Contacts table using this format:
-   - **Name**: from scan results
-   - **Company**: the scanned company
-   - **Role/Title**: from headline (or "—" if blank)
-   - **Relationship**: `target` (this is a new cold contact)
-   - **Source**: `linkedin-scan`
-   - **Last Interaction**: `—`
-   - **Notes**: Include LinkedIn URL + degree/mutuals + top scores. Format: `[LinkedIn](url) | Deg: X | Mut: Y | Score: Z/40`
-3. Write the updated `data/networking.md`
-4. Confirm: "Added N contact(s) to data/networking.md."
-
-### Step 6: Suggest Next Action
-
-Display:
-```
-## Next Steps
-
 Top contacts to reach out to:
-1. [Name] — [Role] ([score]/40) → /cold-outreach "[Name]" "[Company]"
-2. [Name] — [Role] ([score]/40) → /cold-outreach "[Name]" "[Company]"
-3. [Name] — [Role] ([score]/40) → /cold-outreach "[Name]" "[Company]"
-
-Run /research-company "[Company]" first if you haven't already — outreach lands better with a dossier loaded.
+1. [Name] — [Role] ([Total]/40) → /cold-outreach "[Name]" "[Company]"
+...
+Run /research-company "[Company]" first if you haven't — outreach lands better with a dossier.
 ```
 
-## Score Interpretation Guide
+## Score interpretation
 
-| Total (out of 40) | Recommendation |
+| Total /40 | Recommendation |
 |---|---|
-| 32–40 | Priority — reach out immediately |
-| 24–31 | Strong — good outreach target |
-| 16–23 | Moderate — consider if others are exhausted |
-| < 16 | Low — skip unless you have a specific reason |
+| 32–40 | Priority — reach out now |
+| 24–31 | Strong target |
+| 16–23 | Moderate — if others are exhausted |
+| < 16 | Skip unless a specific reason |
 
-## Caching
+## Notes
 
-The scanner caches profiles in `tools/linkedin-scanner/src/cache/` — subsequent runs on the same company re-use parsed and ranked profiles unless the cache is cleared. This makes re-runs fast.
+- The Selenium scanner (`tools/linkedin-scanner/`) is retired/dormant; see its
+  `DEPRECATED.md`. Do not use it.
+- Public-repo PII gate: examples here are placeholders; real names appear only at
+  runtime. Run `/audit-pii` before committing any change to this skill or tool.
