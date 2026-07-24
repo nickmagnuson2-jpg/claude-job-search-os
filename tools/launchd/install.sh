@@ -2,8 +2,8 @@
 # Install/uninstall the job-search launchd schedules.
 #
 # Usage:
-#   bash tools/launchd/install.sh          # install all 4 jobs
-#   bash tools/launchd/install.sh uninstall # remove all 4 jobs
+#   bash tools/launchd/install.sh          # install all jobs (see JOBS below)
+#   bash tools/launchd/install.sh uninstall # remove all jobs
 #   bash tools/launchd/install.sh status    # show running schedules
 
 set -e
@@ -18,6 +18,8 @@ PLISTS=(
     "com.nickmagnuson.jobsearch.granola-auto-debrief"
     "com.nickmagnuson.jobsearch.alirohde-triage"
     "com.nickmagnuson.jobsearch.memory-promotion-scan"
+    "com.nickmagnuson.jobsearch.automation-health"
+    "com.nickmagnuson.jobsearch.agent-discover-collect"
 )
 
 case "${1:-install}" in
