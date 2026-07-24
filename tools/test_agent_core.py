@@ -9,7 +9,7 @@ def test_run_agent_returns_structured(monkeypatch):
         {"id": "agent_run_x", "status": "completed",
          "output": {"text": "t", "structured": {"companies": [{"name": "Acme"}]},
                     "grounding": []},
-         "usage": {"agentComputeUnits": 0.1}, "cost": {"total": 0.02}},
+         "usage": {"agentComputeUnits": 0.1}, "costDollars": {"total": 0.02}},
     ]
     out = run_agent(client, "q", output_schema={"type": "object"}, poll_interval_s=0)
     assert out["status"] == "completed"

@@ -47,7 +47,8 @@ def _shape(cur):
     out = cur.get("output") or {}
     return {"status": cur.get("status"), "text": out.get("text"),
             "structured": out.get("structured"), "grounding": out.get("grounding"),
-            "usage": cur.get("usage"), "cost": cur.get("cost"),
+            "usage": cur.get("usage"),
+            "cost": cur.get("costDollars") or cur.get("cost"),
             "run_id": cur.get("id")}
 
 
