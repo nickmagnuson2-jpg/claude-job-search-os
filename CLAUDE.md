@@ -239,6 +239,8 @@ Python 3.10+ (several `tools/*.py` use PEP 604 `X | None` annotations evaluated 
 | `md_to_pdf_doc.py` | prep-doc PDFs (cheat sheets, dossiers, prep packages) via weasyprint — Georgia, multi-page |
 | `convert_pdfs.py` | extract text from PDFs in `files/` |
 | `fetch_transcript.py` | YouTube transcript + oEmbed metadata → ExtractionBlock JSON; caches markdown to `data/source-transcripts/<id>.md`. Used by `/analyze` video branch. Dep: `youtube-transcript-api`. |
+| `agent_discover.py` | on-demand company/people discovery via the **Exa Agent API** (structured `output_schema` + citations). `--preset`/`--query`, `--entity company\|person`, `--effort`, `--async`/`--collect`. Reads `data/discover-presets.yaml`; company results scored by `company_scorer`. Engine: `agent_core.py`. (Replaces the retired Websets path `webset_discover.py` — Websets 401s for this account + is deprecating.) |
+| `agent_collect.py` | launchd collector: re-runs each `monitor:`-flagged preset's Agent query, dedups vs known targets + a per-preset seen-set (`tools/.agent_seen.json`), writes new review-gated proposals to `data/inbox.md`. Takes `--today YYYY-MM-DD`. |
 
 **CV PDFs use RenderCV** (`~/.local/bin/rendercv render <yaml>`) — see `/generate-cv` and `/apply` SKILL.md for the full pipeline. Reference YAML: `output/example-ventures/042826-cos-example.yaml`. Theme: `framework/cv-themes/tuck-mbb.yaml`.
 
@@ -277,6 +279,8 @@ Email body here
 | `career-scan` | Daily | scans target company career pages for new matches |
 | `alirohde-triage` | Daily 9:15 | `alirohde_nudge.py` cheap-check: no-op unless a new "Ali Rohde Jobs" Substack edition landed in `inbox/`; then writes `inbox/YYYYMMDD-alirohde-edition-NNN-triage.md` (review-gated → run `/scan-jobs <url>`). State: `tools/.alirohde_state.json`. |
 | `granola-auto-debrief` | Every 3 hrs | `granola_auto_debrief.py` → persists transcript+summary pair via `granola_save.py` (sealed-aware), AND posts a `<!-- voice: cloud-generated -->` debrief snippet to `data/inbox.md` (skipped for therapy-classified calls) |
+| `memory-promotion-scan` | Weekly (Mon 07:00) | `scan_promotion_candidates.py` → surfaces memory rules due for promotion/demotion (feeds `/memory-refresh`) |
+| `agent-discover-collect` | Weekly (Mon 08:45) | `agent_collect.py` → runs each monitored Exa Agent preset, drips new companies/people to `data/inbox.md` (review-gated). NOT installed by default (starts weekly Agent billing) — install via `tools/launchd/install.sh`. |
 
 The (now-historical) n8n setup (`tools/run_n8n.bat`, dashboard at localhost:5678) was replaced by launchd ~2026-04-28; n8n binaries may still exist but no jobs run there.
 
