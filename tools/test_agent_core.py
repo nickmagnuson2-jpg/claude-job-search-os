@@ -25,3 +25,13 @@ def test_company_struct_to_candidate_maps_keys():
     assert cands[0]["name"] == "Acme"
     assert cands[0]["location"] == "San Francisco"   # hq -> location for scorer
     assert cands[0]["stage_text"] == "Series A"      # funding_stage -> stage_text
+
+
+def test_resolve_schema_falls_back_to_default():
+    from tools.agent_discover import resolve_schema, DEFAULT_SCHEMAS
+    # preset with no schema -> entity default
+    assert resolve_schema({}, "company") == DEFAULT_SCHEMAS["company"]
+    assert resolve_schema({}, "person") == DEFAULT_SCHEMAS["person"]
+    # preset schema wins when present
+    custom = {"type": "object", "properties": {}}
+    assert resolve_schema({"output_schema": custom}, "company") == custom

@@ -6,6 +6,27 @@ if str(_REPO_ROOT) not in sys.path:
 from tools.agent_core import (load_dotenv, make_client, run_agent, create_run_async,
                               get_run, _shape, filter_known, load_known_names, guess_slug)
 
+# Default output schemas so an ad-hoc --query (no preset) still yields structured
+# output. A preset's own output_schema takes precedence when present.
+DEFAULT_SCHEMAS = {
+    "company": {"type": "object", "properties": {"companies": {"type": "array", "items": {
+        "type": "object", "properties": {
+            "name": {"type": "string"}, "funding_stage": {"type": "string"},
+            "hq": {"type": "string"}, "description": {"type": "string"}},
+        "required": ["name"]}}}},
+    "person": {"type": "object", "properties": {"people": {"type": "array", "items": {
+        "type": "object", "properties": {
+            "name": {"type": "string"}, "title": {"type": "string"},
+            "company": {"type": "string"}, "funding_stage": {"type": "string"},
+            "location": {"type": "string"}},
+        "required": ["name"]}}}},
+}
+
+
+def resolve_schema(preset, entity):
+    """Preset's output_schema if set, else the entity default (so --query works)."""
+    return preset.get("output_schema") or DEFAULT_SCHEMAS.get(entity)
+
 
 def struct_to_candidates(structured, entity):
     """Map Agent structured output to candidate dicts.
@@ -67,7 +88,7 @@ def main():
     entity = args.entity or preset.get("entity_type", "company")
     query = args.query or preset.get("query")
     effort = args.effort or preset.get("effort", "low")
-    schema = preset.get("output_schema")
+    schema = resolve_schema(preset, entity)
     if not query:
         _fail("no query: pass --preset or --query")
 
