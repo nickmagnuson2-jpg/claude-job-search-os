@@ -35,3 +35,21 @@ def test_resolve_schema_falls_back_to_default():
     # preset schema wins when present
     custom = {"type": "object", "properties": {}}
     assert resolve_schema({"output_schema": custom}, "company") == custom
+
+
+def test_score_company_candidates_sorts_and_excludes(monkeypatch):
+    """score_company_candidates: stamps score, drops geo-excluded, sorts desc."""
+    import tools.agent_discover as ad
+    monkeypatch.setattr(ad, "load_scoring_context", lambda root: {}, raising=False)
+
+    def fake_score(c, ctx, weights=None, keywords=None):
+        table = {"Acme": (8, False), "FarCo": (2, True), "MidCo": (5, False)}
+        score, excluded = table[c["name"]]
+        return {"score": score, "excluded": excluded, "geo_flag": excluded}
+    import tools.career_scanner.company_scorer as cs
+    monkeypatch.setattr(cs, "score_company", fake_score)
+
+    cands = [{"name": "Acme"}, {"name": "FarCo"}, {"name": "MidCo"}]
+    out = ad.score_company_candidates(cands, weights=None, keywords=[])
+    assert [c["name"] for c in out] == ["Acme", "MidCo"]   # FarCo excluded, sorted desc
+    assert out[0]["score"] == 8
