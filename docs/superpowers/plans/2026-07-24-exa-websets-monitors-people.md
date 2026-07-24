@@ -1,5 +1,7 @@
 # Exa Websets — Monitors, Enrichments, Async, People Discovery — Implementation Plan
 
+> **SUPERSEDED 2026-07-24** by `2026-07-24-exa-agent-discovery.md`. Websets 401'd for Nick's team and is deprecating; the build pivoted to the Exa Agent API. Kept for the decision trail — do not execute this plan.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Verify live Exa Websets access, then extend the discovery stack with configurable enrichments, async create/collect, server-side Monitors that drip new results into `data/inbox.md`, and a person entity for cross-company people discovery.

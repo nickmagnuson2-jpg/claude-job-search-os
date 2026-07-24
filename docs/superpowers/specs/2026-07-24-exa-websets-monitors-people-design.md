@@ -1,7 +1,9 @@
 # Exa Websets — Monitors, Enrichments, Async, and People Discovery
 
+> **SUPERSEDED 2026-07-24** by `2026-07-24-exa-agent-discovery-design.md`. Live verification found the Websets API returns 401 for Nick's team (no entitlement) and is deprecating in favor of the Exa **Agent** API, which works on his key. The design pivoted to Agent (same scoring/dedup/inbox/launchd plumbing). Kept for the decision trail.
+
 **Date:** 2026-07-24
-**Status:** Design approved, pending spec review
+**Status:** Superseded (Websets unreachable — pivoted to Agent)
 **Author:** Nick Magnuson (with Claude)
 
 ## Problem
