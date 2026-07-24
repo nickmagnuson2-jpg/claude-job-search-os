@@ -57,6 +57,21 @@ def load_preset(presets_path, name):
     return presets[name], weights
 
 
+def score_company_candidates(candidates, weights=None, keywords=None):
+    """Score + geo-exclude + sort company candidates via the shared company_scorer.
+    Used by both the on-demand CLI and the collector so scoring is identical."""
+    from tools.career_scanner.scorer import load_scoring_context
+    from tools.career_scanner.company_scorer import score_company
+    ctx = load_scoring_context(_REPO_ROOT)
+    for c in candidates:
+        sc = score_company(c, ctx, weights=weights, keywords=keywords or [])
+        c.update({"score": sc["score"], "excluded": sc["excluded"],
+                  "geo_flag": sc["geo_flag"]})
+    kept = [c for c in candidates if not c["excluded"]]
+    kept.sort(key=lambda c: c["score"], reverse=True)
+    return kept
+
+
 def _fail(msg):
     print(json.dumps({"candidates": [], "error": msg})); sys.exit(1)
 
@@ -107,16 +122,7 @@ def main():
     candidates = filter_known(struct_to_candidates(result["structured"], entity),
                               load_known_names(args.exclude_names_from))
     if entity == "company":
-        from tools.career_scanner.scorer import load_scoring_context
-        from tools.career_scanner.company_scorer import score_company
-        ctx = load_scoring_context(_REPO_ROOT)
-        kw = preset.get("keywords") or []
-        for c in candidates:
-            sc = score_company(c, ctx, weights=weights, keywords=kw)
-            c.update({"score": sc["score"], "excluded": sc["excluded"],
-                      "geo_flag": sc["geo_flag"]})
-        candidates = [c for c in candidates if not c["excluded"]]
-        candidates.sort(key=lambda c: c["score"], reverse=True)
+        candidates = score_company_candidates(candidates, weights, preset.get("keywords"))
 
     print(json.dumps({"entity": entity, "query": query, "effort": effort,
                       "candidate_count": len(candidates), "cost": result.get("cost"),

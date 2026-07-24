@@ -5,7 +5,7 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 from tools.agent_core import (load_dotenv, make_client, run_agent, _norm_name,
                               filter_known, load_known_names)
-from tools.agent_discover import struct_to_candidates, load_preset
+from tools.agent_discover import struct_to_candidates, load_preset, score_company_candidates
 
 SEEN_PATH = _REPO_ROOT / "tools" / ".agent_seen.json"
 INBOX = _REPO_ROOT / "data" / "inbox.md"
@@ -62,6 +62,7 @@ def main():
     import yaml
     data = yaml.safe_load(Path(args.presets_file).read_text(encoding="utf-8")) or {}
     seen = read_seen(); summary = {}
+    weights = data.get("scoring_weights")
     known = load_known_names([str(_REPO_ROOT / "data" / "scan-targets.yaml"),
                               str(_REPO_ROOT / "data" / "job-pipeline.md")])
     for name, preset in (data.get("presets") or {}).items():
@@ -73,6 +74,8 @@ def main():
         if res["status"] != "completed":
             summary[name] = {"status": res["status"]}; continue
         cands = filter_known(struct_to_candidates(res["structured"], entity), known)
+        if entity == "company":
+            cands = score_company_candidates(cands, weights, preset.get("keywords"))
         fresh, updated = diff_unseen(cands, set(seen.get(name, [])))
         if fresh:
             append_inbox(render_inbox_block({"preset": name, "entity": entity},
