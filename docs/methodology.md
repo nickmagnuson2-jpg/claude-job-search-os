@@ -646,7 +646,8 @@ tools/                           ← Python utilities
   ├── daily_stoic.py              ← Archive Daily Stoic meditations → data/source-emails/ (used by /standup)
   ├── fetch_transcript.py         ← YouTube transcript + metadata → ExtractionBlock JSON (used by /analyze)
   ├── person_write.py             ← Atomic create/add-entry for data/people/<slug>.md dossiers
-  ├── webset_discover.py          ← Exa Websets company discovery (used by /discover-companies)
+  ├── agent_discover.py           ← Exa Agent company/people discovery (used by /discover-companies; engine agent_core.py)
+  ├── agent_collect.py            ← Weekly launchd collector: Agent discovery → data/inbox.md
   ├── my_world_synthesis.py       ← Longitudinal reflection synthesis (used by /my-world)
   ├── granola_auto_debrief.py     ← Granola transcript auto-debrief (launchd, sealed-aware)
   ├── md_to_pdf_doc.py            ← Prep-doc PDFs via weasyprint (cheat sheets, dossiers)
@@ -680,14 +681,12 @@ Scheduled jobs run independently of Claude sessions via macOS-native `launchd` (
 |-----|----------|--------|
 | `gmail-fetch` | Every 15 min | `inbox/` markdown files from the job-search Gmail label |
 | `gmail-fetch-personal` | Every 15 min | personal Gmail label → the personal vault's `inbox/` |
-| `daily-nudge` | Daily | follow-up + dossier-freshness nudges to `inbox/` |
-| `weekly-reminder` | Weekly | `inbox/` weekly-review reminder |
 | `career-scan` | Daily | scans target-company career pages for new matches |
 | `alirohde-triage` | Daily 9:15 | triage file when a new "Ali Rohde Jobs" edition lands |
 | `granola-auto-debrief` | Every 3 hrs | persists Granola transcripts + posts a debrief snippet to `data/inbox.md` (sealed-aware) |
-| `checkout-nudge` | Daily 20:00 | nudges `/checkout` if the day's log entry is missing |
+| `memory-promotion-scan` | Weekly (Mon 07:00) | `scan_promotion_candidates.py` — surfaces memory rules due for promotion |
 
-The nudge jobs write to `inbox/` so `/act` (or `/standup`) surfaces them in the next session.
+The feed jobs write to `inbox/` (or `data/inbox.md`) so `/act` (or `/standup`) surfaces them in the next session. `install.sh status` shows load state and each job's last exit code; the independent watchdog is `tools/check_automation_health.py` (surfaced by `/standup`).
 
 ### Separation of Concerns
 

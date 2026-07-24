@@ -1,6 +1,6 @@
 ---
 name: discover-companies
-description: Discover new target companies via Exa Websets, score them against your thesis, and propose them to your inbox for review
+description: Discover new target companies (or people) via the Exa Agent API, score them against your thesis, and propose them to your inbox for review
 argument-hint: "[preset-name | --query \"...\"]"
 user-invocable: true
 allowed-tools: Bash(*), Read(*), Write(data/inbox.md), Write(data/discover-presets.yaml)
@@ -37,22 +37,27 @@ passed `--query`.
 ### Step 2: Run the discovery tool
 
 ```bash
-PYTHONIOENCODING=utf-8 python3 tools/webset_discover.py --preset lane-a \
+PYTHONIOENCODING=utf-8 python3 tools/agent_discover.py --preset lane-a \
   --exclude-names-from data/scan-targets.yaml data/job-pipeline.md
 ```
 
-For a freeform run:
+For a freeform run (fold geo/stage constraints into the query itself):
 
 ```bash
-PYTHONIOENCODING=utf-8 python3 tools/webset_discover.py \
-  --query "AI for restaurants" --criteria "Bay Area HQ" --criteria "Series A-C" \
+PYTHONIOENCODING=utf-8 python3 tools/agent_discover.py \
+  --query "AI for restaurants, Bay Area HQ, Series A-C" --entity company \
   --exclude-names-from data/scan-targets.yaml data/job-pipeline.md
 ```
 
-The tool prints JSON: `candidate_count`, `excluded_count`, `weights`, and a
-score-sorted `candidates` list. Websets is async; the call can take 1-5 minutes.
-If the tool returns a JSON `error` (e.g. EXA_API_KEY unset, timeout), relay it
-and stop.
+Discovery runs on the **Exa Agent API** (`tools/agent_discover.py`, engine
+`agent_core.py`). It prints JSON: `candidate_count`, `cost`, per-field
+`grounding` citations, and a score-sorted `candidates` list. Add `--entity person`
+for cross-company people discovery (e.g. `--preset deployment-leads`); people are
+surfaced with role/company/location, not scored. Agent runs take ~1-10 minutes;
+use `--async` to get a `run_id` back immediately and `--collect <run_id>` later.
+If the tool returns a JSON `error` (e.g. EXA_API_KEY unset, run failed), relay it
+and stop. (The old Websets path `webset_discover.py` is retired — Websets 401s for
+this account and is deprecating in favor of Agent.)
 
 ### Step 3: Annotate (judgment layer)
 
