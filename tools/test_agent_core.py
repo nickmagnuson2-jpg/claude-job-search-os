@@ -15,3 +15,13 @@ def test_run_agent_returns_structured(monkeypatch):
     assert out["status"] == "completed"
     assert out["structured"]["companies"][0]["name"] == "Acme"
     assert out["cost"]["total"] == 0.02
+
+
+def test_company_struct_to_candidate_maps_keys():
+    from tools.agent_discover import struct_to_candidates
+    structured = {"companies": [{"name": "Acme", "funding_stage": "Series A",
+                                 "hq": "San Francisco", "description": "AI infra"}]}
+    cands = struct_to_candidates(structured, "company")
+    assert cands[0]["name"] == "Acme"
+    assert cands[0]["location"] == "San Francisco"   # hq -> location for scorer
+    assert cands[0]["stage_text"] == "Series A"      # funding_stage -> stage_text
