@@ -28,10 +28,13 @@ tools/.gmail_state.json
 tools/.gmail_state_personal.json
 tools/.wispr-state.json
 tools/.alirohde_state.json
+tools/.agent_seen.json
 tools/.session-mutations.json
 tools/.transcript-scan-cursor.json
+tools/.transcript-scan-cursor.json.tmp
 tools/.changelog-currency-cursor.json
 tools/.hook-trace.log
+tools/.hook-trace.log.1
 tools/launchd/logs/
 logs/
 
@@ -99,3 +102,6 @@ tools/linkedin-scanner/src/cache/
 
 # Local-only Claude settings (permissions/env; not for the public repo)
 .claude/settings.local.json
+
+# Calibration ledger (personal outcome data)
+data/calibration/
