@@ -5,6 +5,29 @@ Format: newest entries at the top.
 
 ---
 
+## 2026-08-10: Public-repo privacy hardening, portable hook paths, and a silent-failure test suite
+
+**Privacy.** A full `/audit-pii` pass (deterministic denylist scan + four independent semantic reviewers over 63 changed public files) surfaced leaks the denylist structurally could not catch.
+
+**Root cause, corrected.** An earlier draft of this entry said `gen_pii_denylist.py` "emits person names only." That is false — verified: it parses 105 companies and 70 reach the denylist. The real mechanism is narrower and was a *deliberate* design choice: `is_distinctive_single()` drops single-token company names that are ordinary English words, because matching them would false-positive against prose. 35 companies are dropped this way. A live pipeline company whose name is an everyday noun was therefore absent from the denylist while all three of its interviewers were present — and its name reached six public files. **Fix: a second WARN-only tier** (`tools/.pii-denylist-ambiguous.txt`, gitignored, 29 tokens) that surfaces these without blocking, per `feedback_warn_vs_block_hook_design`. Verified: ambiguous token → WARN at exit 0; hard denylist token → BLOCK at exit 2; clean content → silent.
+
+Also fixed in this pass:
+
+- Real contact/company names scrubbed from two hook scripts, five test files, and one skill doc (45 replacements).
+- A new leak class documented: test fixtures whose *names* were placeholder-ized while **verbatim sealed-transcript content** was copied across unchanged. A name denylist can never catch this. Fixtures derived from real transcripts must be paraphrased, not just renamed.
+- Consulting-case material moved out of the repo into the gitignored archive.
+- `framework/content-rules.{md,yaml}` made private (gitignored) — the exemplar corpus held a real compensation figure and a valuation/headcount/stage triple identifying one company. Paths unchanged, so all five referencing skills keep working and degrade gracefully.
+- Private backup remote, GitHub account, and overlay git-dir removed from `CLAUDE.md`, `/checkout`, `docs/usage.md`, and `backup-data.sh`; they now load from the gitignored `tools/.private-backup.conf`. Missing config is a **hard failure**, never a silent skip.
+- Owner email removed from `granola_auto_debrief.py`, now loaded from gitignored `tools/.owner-identity.txt`, falling back to the public name so forks work unchanged.
+
+**Portability.** All 25 hook commands in `.claude/settings.json` migrated from hardcoded absolute paths to `$CLAUDE_PROJECT_DIR`. The repo is now forkable without editing settings.
+
+**Silent-failure test suite** (`tests/scripts/test_no_silent_failures.py`, 9 tests). Guards the failure class this repo actually suffers from — things that quietly stop running. Asserts: settings.json parses; every hook command resolves to an existing, compiling script; no command hardcodes a home path; `$CLAUDE_PROJECT_DIR` resolves; one representative hook executes end-to-end; every `check_*.py` is registered or explicitly exempt; every launchd plist points at a real script and has a schedule. **Each assertion was mutation-tested** — verified to fail when the invariant is broken — rather than trusted because it passed on first write.
+
+Also: `backup-data.sh` now backs up the newly-private config files, and derives the Claude project-memory path instead of hardcoding it. Full suite green at 1024 tests.
+
+---
+
 ## 2026-07-08: MEMORY.md restructured into a 7-shard router + memory-overhaul promotion backlog closed out
 
 ### Changed
