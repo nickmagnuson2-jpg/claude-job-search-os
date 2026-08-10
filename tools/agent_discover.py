@@ -53,7 +53,13 @@ def load_preset(presets_path, name):
     presets = data.get("presets", {})
     if name not in presets:
         raise KeyError(f"preset '{name}' not in {presets_path}")
-    weights = data.get("scoring_weights", {"stage": 0.50, "sector": 0.30, "keyword": 0.20})
+    # Global weights, overridable per preset. Lane B needs this: the 2026-08-06
+    # decision retired stage as a Lane B criterion ("stage is no longer a criterion;
+    # customer shape is"), but the global block weights stage at 0.50 — so Lane B
+    # candidates were being marked down on the exact axis that decision removed.
+    weights = dict(data.get("scoring_weights",
+                            {"stage": 0.50, "sector": 0.30, "keyword": 0.20}))
+    weights.update(presets[name].get("scoring_weights") or {})
     return presets[name], weights
 
 
