@@ -61,7 +61,7 @@ data/voice-corpus/
 # Daily Stoic pipeline state (generated)
 tools/.daily_stoic_state.json
 
-# Private archive (personal scratch moved out of the public tree; backed up to nick-job-search-data via tools/backup-data.sh)
+# Private archive (personal scratch moved out of the public tree; backed up to the private remote via tools/backup-data.sh)
 /_archive/
 
 # GSD planning workspace (local scratch)
@@ -84,6 +84,12 @@ tools/.daily_stoic_state.json
 /framework/overnight-queue-design.md
 /framework/outreach-guide.md
 
+# Content-rules corpus (exemplars drawn from real sent messages: comp figures,
+# verbatim private-call quotes, company fingerprints — never public).
+# Skills reference these paths directly and degrade gracefully when absent.
+/framework/content-rules.md
+/framework/content-rules.yaml
+
 # Local-only backups of pre-redaction files (never commit)
 .privacy-backup/
 
@@ -93,9 +99,19 @@ tools/.daily_stoic_state.json
 
 # PII denylist (generated from private data; never commit)
 tools/.pii-denylist.txt
+# Ambiguous tier: single-word company names that are also ordinary words (WARN-only)
+tools/.pii-denylist-ambiguous.txt
+
+# Owner identity (live email address; the public name is compiled in as the default)
+tools/.owner-identity.txt
+
+# Private backup target (names the private remote + overlay git-dir; never public)
+tools/.private-backup.conf
 
 # Therapist allowlist for granola classification (real names/emails; never commit)
 tools/.therapy-classifier.txt
+tools/.personal-projects.txt
+tools/.granola-pending-classification.json
 
 # LinkedIn-scanner cache (scraped profiles, parsed JSON, pickled session cookie, login screenshots — never commit)
 tools/linkedin-scanner/src/cache/

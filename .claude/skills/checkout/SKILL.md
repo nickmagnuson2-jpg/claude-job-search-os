@@ -331,14 +331,14 @@ Run this once all writes are done (after the daily log in Step 3 and the auto-cl
 bash tools/backup-data.sh
 ```
 
-What it does: force-adds the private path-set (`data/ output/ coaching/ memory/ inbox/ _archive/` + the tracked private `framework/*.md` docs + the 2 sidebiz tools), commits (`--allow-empty`), and pushes a fast-forward to the private `nick-job-search-data` repo via the overlay git-dir (`~/.nick-private-git`). **It does NOT touch the public repo.** Safe to run multiple times a day — each push is an idempotent fast-forward.
+What it does: force-adds the private path-set (`data/ output/ coaching/ memory/ inbox/ _archive/` + the tracked private `framework/*.md` docs + the 2 sidebiz tools), commits (`--allow-empty`), and pushes a fast-forward to the **private backup repo via an overlay git-dir outside the working tree**. **It does NOT touch the public repo.** Safe to run multiple times a day — each push is an idempotent fast-forward. (Concrete repo name, account, and overlay path live in the gitignored `memory/reference_private_data_backup_mechanism.md`; `backup-data.sh` reads them itself, so nothing here needs them inline.)
 
 **Non-blocking / graceful (mandatory):** a backup failure must never abort checkout. Read the tail of the output and set the `Private backup:` line in the Step 6 summary accordingly. Note git's push format is `<old>..<new>  master -> master` (the SHAs come *before* `master`, e.g. `   42ca07c..202cb8b  master -> master`):
 - A range `<old>..<new>` is present → `pushed (`<new short SHA>`)`. The new SHA is the part after `..` (since `backup-data.sh` commits with `--allow-empty`, this is the normal/expected case on every run).
 - `Everything up-to-date` (no range) → `up to date`.
 - `! [rejected]`, `fatal:`, network/auth error, or non-zero exit → `skipped (<one-line reason>)`, and add: run `bash tools/backup-data.sh` later. Do NOT retry, do NOT block, do NOT touch the public repo to "fix" it.
 
-Origin: wired into `/checkout` 2026-06-11, replacing the manual-only backup. The overlay `~/.nick-private-git` is the canonical private backup (per the 2026-06-11 reconcile); `backup-data.sh` is its driver. This makes the end-of-day private snapshot automatic.
+Origin: wired into `/checkout` 2026-06-11, replacing the manual-only backup. The overlay git-dir is the canonical private backup (per the 2026-06-11 reconcile); `backup-data.sh` is its driver. This makes the end-of-day private snapshot automatic.
 
 ## Edge Cases
 

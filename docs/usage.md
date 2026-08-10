@@ -112,7 +112,7 @@ Sibling to `/todo` — same schema, different scope. Writes to a separate person
 
 Bookend to `/standup`. Runs `todo_daily_metrics.py` to build today's progress snapshot (completion rate, streak, velocity trend), appends to `data/job-todos-daily-log.md`, and surfaces tomorrow's top 3 priorities — pinning any interview/screen scheduled within 3 days (from the pipeline Next-Action column) ahead of regular to-dos, then cross-referenced against the weekly review's Top 5.
 
-It also runs a Granola debrief cascade (Step 4d): surfaces calls from the day that haven't been debriefed yet and proposes them, propose-only, it never auto-debriefs. It proposes any milestone-level accomplishment candidates from the day's real artifacts for you to confirm into `data/accomplishments.md` (a strict bar — most days produce none, and nothing is ever auto-logged), and runs a silent-failure probe to catch tracked items left in an unexpected state. As its closing action it pushes an automatic private-data backup to the `nick-job-search-data` repo (non-blocking — a backup failure never aborts checkout, and the public repo is never touched).
+It also runs a Granola debrief cascade (Step 4d): surfaces calls from the day that haven't been debriefed yet and proposes them, propose-only, it never auto-debriefs. It proposes any milestone-level accomplishment candidates from the day's real artifacts for you to confirm into `data/accomplishments.md` (a strict bar — most days produce none, and nothing is ever auto-logged), and runs a silent-failure probe to catch tracked items left in an unexpected state. As its closing action it pushes an automatic private-data backup to a private remote (non-blocking — a backup failure never aborts checkout, and the public repo is never touched).
 
 ### Weekly retrospective
 
@@ -497,11 +497,13 @@ Full list of all 35 skills:
 | `/standup` | *(none)* | Morning briefing — pipeline, todos, outreach, scheduled-interview pins, suggested priority |
 | `/checkout` | *(none)* | End-of-day close-out — daily log, scheduled-event pins, accomplishments capture, tomorrow's top 3, velocity snapshot, auto private-backup |
 | `/weekly-review` | *(none)* | Weekly retrospective → `data/weekly-review-log.md` |
+| `/memory-refresh` | *(none)* | Shows memory rules due for promotion (recurring but not yet skill/hook-wired) or demotion (unread 60+ days), and offers to act |
 | `/act` | *(none)* | Autonomous execution of Bucket A to-dos, processes inbox/ |
 | `/critique-plan` | *(none — paste plan inline)* | Six-agent plan critique + independent Claude plan + hybrid synthesis |
 | `/research-industry` | `"industry name" [context]` | Parallel-agent industry dossier → `output/<slug>/<slug>.md` |
 | `/research-company` | `"Company Name" [url] [context]` | Parallel-agent company dossier → `output/<slug>/<slug>.md` |
 | `/cold-outreach` | `"Name" "Company" [context]` | First-contact draft, framework-selected, quality-gated, auto-logged |
+| `/outreach-batch` | `"Company" [count] [draft:N]` | Batch cold outreach for one company: finds + ranks contacts, drafts the top N in Nick's voice, writes them all to one review queue in `output/outreach-queue/`. Never auto-sends. |
 | `/follow-up` | `"Name"` or *(none)* | Sequence-aware follow-up, tone-matched; no arg = stale contact dashboard |
 | `/draft-email` | `[context]` | General email drafting — thank-you, status update, intro request, etc. |
 | `/networking` | `add/log/view + args` | Contact tracker with interaction logs and stale-contact alerts |

@@ -30,6 +30,7 @@ import sys
 from pathlib import Path
 
 DENYLIST_REL = "tools/.pii-denylist.txt"
+AMBIGUOUS_REL = "tools/.pii-denylist-ambiguous.txt"
 
 # Public-repo path prefixes/globs. A file outside these is not a public artifact.
 # examples/ + plugins/ are tracked public surface too (fable-audit 2026-07-07 #10/#17).
@@ -80,6 +81,15 @@ def is_gitignored(root: Path, rel: str) -> bool:
 def load_denylist(root: Path) -> list[str]:
     try:
         lines = (root / DENYLIST_REL).read_text(encoding="utf-8").splitlines()
+    except (FileNotFoundError, PermissionError):
+        return []
+    return [ln.strip() for ln in lines if ln.strip() and not ln.startswith("#")]
+
+
+def load_ambiguous(root: Path) -> list[str]:
+    """WARN-tier tokens. Missing file = empty list (fail open, same as the block tier)."""
+    try:
+        lines = (root / AMBIGUOUS_REL).read_text(encoding="utf-8").splitlines()
     except (FileNotFoundError, PermissionError):
         return []
     return [ln.strip() for ln in lines if ln.strip() and not ln.startswith("#")]
@@ -140,6 +150,24 @@ def main():
         return  # fail open — no denylist, nothing to enforce
 
     hits = find_pii(content, tokens)
+
+    # WARN tier (added 2026-08-10). Single-token company names that are also ordinary
+    # English words are excluded from the BLOCK list above, because matching them would
+    # false-positive on prose. Excluding them entirely is what let a live pipeline
+    # company reach six public files on 2026-08-10 while all three of its interviewers
+    # were correctly blocked. So: surface, never block. Per feedback_warn_vs_block_hook_design.
+    amb_hits = find_pii(content, load_ambiguous(root))
+    if amb_hits and not hits:
+        uniq_amb = sorted(set(amb_hits))
+        print(
+            f"WARN: {Path(file_path).name} contains token(s) that match a pipeline company "
+            f"name which is also an ordinary word: {', '.join(uniq_amb)}.\n"
+            "Not blocking — this is very often a false positive. But if any of these refers "
+            "to the real company, replace it with a placeholder (ActiveCo / ClosedCo / Acme) "
+            "before committing. Ambiguous tier: tools/.pii-denylist-ambiguous.txt",
+            file=sys.stderr,
+        )
+
     if not hits:
         return
 

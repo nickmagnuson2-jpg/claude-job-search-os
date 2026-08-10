@@ -250,7 +250,12 @@ Anti-pattern tracker: [anti-pattern-tracker.md content — personal persistent p
 Company stage and interview type: [Company], [interview type], [stage from pipeline]
 
 ## Pre-Call Checklist (60-second scan before the call)
-[Top 7-10 checklist items — pulled from anti-patterns.md + personal anti-pattern tracker, tailored to this specific interview type and company]
+
+**Item 1 is fixed and MANDATORY — emit it verbatim as the first line of every generated checklist, above any tailored items:**
+
+- [ ] **T-MINUS-2 SCAN, then the reset, then dial. Nothing substantive in between.** Re-read exactly three things in this doc: **THE ONE THING**, the **predicted live-need sentence**, and the **questions list**. Then run the filler reset aloud. Then dial. (~2 min total.)
+
+[Then top 6-9 tailored checklist items — pulled from anti-patterns.md + personal anti-pattern tracker, specific to this interview type and company]
 - [ ] [Item]
 - [ ] [Item]
 
@@ -269,6 +274,59 @@ The bridge and any story draft use ONLY details Nick explicitly provided: his ve
 
 ## Polished-Arc Guard (B3)
 Add this pre-call checklist item: "Count my clarifying questions before my first action verb; zero means the polished-arc reversion fired." The tell is a smooth problem-to-goal-to-action answer in under two minutes with no clarifying questions (it looks collaborative, so the "did a framework fire" check misses it). In case/behavioral drills, require 3+ self-generated clarifying questions before proposing any action.
+
+## Bare Definitions Rehearsal (B4 — MANDATORY whenever Nick brings his own framework)
+
+**Fires when** the round involves Nick presenting or defending a frame he authored: a take-home deck, a presentation defense, a case where he proposes criteria, a scorecard, a recommendation ranked along named dimensions. Skip only for pure behavioral rounds where Nick names no framework of his own.
+
+**Produce a two-column table in the prep doc — every named term in Nick's frame, and its operational definition in UNDER EIGHT WORDS:**
+
+| Term in my frame | What it IS, in <8 words |
+|---|---|
+| [criterion / metric / rung / threshold] | [the noun, not the reasoning] |
+
+**Rules:**
+- **If a term needs more than eight words, it is not a criterion yet.** It is a mood, and the interviewer will spend the block discovering that.
+- Each definition must name **what is measured**, not why it matters. "Contained conversations plus CSAT" is a definition. "The outcome of those actions" is a rationale wearing a definition's clothes.
+- Rehearse them **aloud, as bare definitions** — not as arguments. The live failure is answering *why* when asked *what*.
+- Add the in-call governor to the checklist: *"Asked what something means → lead with the noun in under eight words, then stop. Rationale is the second sentence, only if they ask."*
+
+**Orthogonality line (one sentence, also required):** name the pair of criteria most likely to be accused of overlap, and the one-sentence distinction. If an input appears under two criteria, that is a MECE defect and it must be resolved before the round, not defended in it. Full gate: `framework/adversarial-analysis-pipeline.md` §7.4.
+
+**Origin:** an onsite at a target company. Eight turns to establish what "expected impact" meant, and the interviewer found a real MECE violation (CSAT load-bearing in criteria 1 and 3) that six days of review had never checked. Same defect fired in the other block on an integration primitive. See [[feedback_audit_frame_structure_not_only_claim_truth]] and the tracker's "Supplies a rationale when asked for a definition".
+
+## Custody Rehearsal (B5 — presentation-defense rounds only)
+
+**One rep, five minutes, before any round where Nick presents slides.** The counterpart halts him on the frame page and refuses to let him advance; he delivers the rest of the argument with no visual aid.
+
+Every delivery rehearsal assumes the deck advances. **The likeliest real failure is being stopped on the page that carries the frame and never regaining the narrative** — in that room, slides 6 through 13 were never delivered as designed. Add to the checklist: *"If they take the floor at the frame page, I still owe them the argument. Know which three sentences carry it without the slides."*
+
+## Reset-Carrier Rule (B6 — MANDATORY on every prep doc, no exceptions)
+
+**The problem this solves:** a prep doc that is correct and never read is worth zero. On 2026-08-06 (founder screen, SMB-motion AI company) the doc was generated that morning, carried a same-day dossier refresh, and Nick did not open it. Consequence: **zero of six prepared questions asked**, the strongest unfakeable proof unused, the company's own role framing unused — and he led with five enterprise-scale signals at a small-business-motion company, which was the founder's stated reason for passing. The role mismatch was real; the doc had already corrected the frame that made it look bigger.
+
+This is a **different and upstream** defect from the known read-but-not-retrieved failure (2026-07-22: the governor line was read back aloud and still did not fire live). Here the artifact never entered the loop, so every prep-doc-resident behavior-change clause — H4's live-need bridge and governor, B3's clarifying-question count, B4's bare definitions, the NN probe questions — silently did not run. **Any debrief of such a call will misattribute the resulting misses to skill rather than to non-consumption.**
+
+**The rule: bind the doc to the reset, because the reset is the only pre-call ritual with a proven execution record.**
+
+The filler reset runs reliably as the literal last action before dialing (confirmed 2026-08-06: full protocol compliance produced the corpus's best real-call filler density, 2.8%). The prep doc has no such carrier. So attach it to the one that works rather than hoping it gets read on its own:
+
+**T-minus-2 → scan · T-minus-1 → reset · dial.** Nothing substantive in between.
+
+The scan is exactly three things, and the prep doc must be structured so all three are findable in under two minutes:
+1. **THE ONE THING** — the single framing sentence for this call.
+2. **The predicted live-need sentence** + the one bridge proof (H4).
+3. **The questions list.**
+
+**Generation-side requirements (enforce when writing any prep doc):**
+- The mandatory checklist item 1 above is emitted verbatim, before any tailored items.
+- **THE ONE THING**, the Live-Need Bridge block, and the questions list must each be reachable without scrolling past a wall of context — put them in the first third of the doc, or repeat them in a scan block at the top.
+- **Whose-customers line (REQUIRED, one sentence, inside THE ONE THING):** *"Their customers are ___, so the proof of mine shaped like their customer is ___."* Enterprise-scale proofs at a small-business-motion company read as mismatch even when the underlying skill transfers — and vice versa. This line is what was missing on 8/06.
+- If a late addition or dossier refresh lands after the doc is written, **fold its consequences into THE ONE THING**, do not only append a section at the bottom. On 8/06 the 09:45 refresh was appended below a 215-line doc and was never reached.
+
+**Debrief-side requirement:** `/debrief` must ask whether the prep doc was read before scoring any bridge or question-quality miss. A miss under non-consumption is logged against **prep artifact not consumed**, not against the skill it appears to be.
+
+**Origin:** 2026-08-06 founder screen. See `coaching/anti-pattern-tracker.md` § "Prep artifact not consumed" and that date's file in `coaching/progress/`.
 
 ## Opening Strategy (first 60 seconds)
 [How to open the call — tone, the one thing to establish immediately, what NOT to do in opening]

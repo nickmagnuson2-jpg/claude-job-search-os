@@ -31,6 +31,7 @@ import unicodedata
 from pathlib import Path
 
 OUTPUT_REL = "tools/.pii-denylist.txt"
+AMBIGUOUS_REL = "tools/.pii-denylist-ambiguous.txt"
 
 # Public-safe entities — real employers, schools, public-figure authors, generic
 # products. These appear legitimately in public skill/framework docs. Lowercased.
@@ -166,6 +167,32 @@ def build_denylist(names: set[str], companies: set[str], dictionary: set[str]) -
     return sorted(out, key=lambda s: (s.lower(), s))
 
 
+def build_ambiguous_list(companies: set[str], dictionary: set[str]) -> list[str]:
+    """Single-token company names that ARE ordinary English words.
+
+    These are deliberately excluded from the BLOCK denylist: matching them would
+    false-positive on ordinary prose (a "sierra" in a sentence, a "patch" in a code
+    comment). But excluding them entirely is what let a live pipeline company reach
+    six public files on 2026-08-10 while all three of its interviewers were correctly
+    denylisted.
+
+    So they get a second tier: WARN, not BLOCK. Per feedback_warn_vs_block_hook_design
+    -- reserve BLOCK for unambiguous violations, WARN for judgment calls. The human
+    decides; the hook only refuses to stay silent.
+    """
+    out = set()
+    for company in companies:
+        clean = company.strip().strip("*").strip()
+        if not clean or " " in clean:
+            continue  # multi-word names are distinctive enough for the BLOCK tier
+        if is_distinctive_single(clean, dictionary):
+            continue  # already in the BLOCK tier
+        if clean.lower() in STOPWORDS or clean.lower() in KEEP:
+            continue
+        out.add(clean)
+    return sorted(out)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--repo-root", default=None)
@@ -181,9 +208,12 @@ def main():
     companies = parse_pipeline_companies(pipeline)
     dictionary = load_dictionary()
     tokens = build_denylist(names, companies, dictionary)
+    ambiguous = build_ambiguous_list(companies, dictionary)
 
     if args.dry_run:
-        print(json.dumps({"count": len(tokens), "tokens": tokens}, indent=2, ensure_ascii=False))
+        print(json.dumps({"count": len(tokens), "tokens": tokens,
+                          "ambiguous_count": len(ambiguous), "ambiguous": ambiguous},
+                         indent=2, ensure_ascii=False))
         return
 
     out_path = root / OUTPUT_REL
@@ -194,7 +224,21 @@ def main():
         "# Regenerate after adding contacts/pipeline rows. Hand-edits are overwritten on regen.\n"
     )
     out_path.write_text(header + "\n".join(tokens) + "\n", encoding="utf-8")
-    print(json.dumps({"status": "ok", "written": str(out_path), "count": len(tokens)},
+
+    # Second tier: single-word company names that are ordinary English words.
+    # WARN-only. Excluding them entirely is what let a live pipeline company reach six
+    # public files on 2026-08-10 while all three of its interviewers were denylisted.
+    amb_path = root / AMBIGUOUS_REL
+    amb_header = (
+        "# AMBIGUOUS PII tier — GITIGNORED, do not commit.\n"
+        "# Single-token company names that are also ordinary English words, so matching\n"
+        "# them would false-positive on prose. check_public_pii.py WARNs on these (exit 0),\n"
+        "# it never BLOCKs. Per feedback_warn_vs_block_hook_design. Human decides.\n"
+    )
+    amb_path.write_text(amb_header + "\n".join(ambiguous) + "\n", encoding="utf-8")
+
+    print(json.dumps({"status": "ok", "written": str(out_path), "count": len(tokens),
+                      "ambiguous_written": str(amb_path), "ambiguous_count": len(ambiguous)},
                      ensure_ascii=False))
 
 

@@ -39,7 +39,7 @@ After `/import-cv` and `/setup-goals` (about ten minutes), the generative core w
 The skills themselves are covered by your Claude subscription. Optional third-party services are separately priced: Exa (deep research) and a LinkedIn scraper (contact scan). Skip them and the core search loop still runs.
 
 **Does it run on Linux or Windows?**
-The skills, scripts, and hooks are cross-platform (Python + markdown). The *background automation* (gmail-fetch, daily nudges, auto-debrief) uses macOS `launchd`; on Linux or Windows the interactive skills all work, but you would reimplement scheduling with cron or Task Scheduler.
+The skills, scripts, and hooks are cross-platform (Python + markdown). The *background automation* (gmail-fetch, career-scan, granola auto-debrief) uses macOS `launchd`; on Linux or Windows the interactive skills all work, but you would reimplement scheduling with cron or Task Scheduler.
 
 ---
 

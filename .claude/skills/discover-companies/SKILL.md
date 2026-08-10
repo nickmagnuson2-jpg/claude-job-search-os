@@ -72,7 +72,21 @@ Do NOT re-score; the number is deterministic. You are adding judgment on top.
 
 ### Step 4: Write the proposal (atomic, review-gated)
 
-Prepend a block to `data/inbox.md` (re-read then Write, per the atomic-write rule):
+Prepend a block to `data/inbox.md` **via the locked writer, never a raw Write**:
+
+```bash
+PYTHONIOENCODING=utf-8 python3 tools/inbox_lock.py prepend \
+  --inbox data/inbox.md --stdin <<'BLOCK'
+<the block below>
+BLOCK
+```
+
+A re-read-then-Write cannot hold the file lock across its read-think-write cycle, so
+it can silently revert a concurrent write from the launchd collectors (which fire
+every 3 hours and each morning). Hand the CLI just the new block; it does the
+read-splice-write inside the lock.
+
+The block to pass:
 
 ```markdown
 ## Discovered Companies - YYYY-MM-DD (preset: lane-a)

@@ -62,7 +62,7 @@ Before drafting, surface any accumulated voice patterns ready to be canonized:
 
    Promote to style-guidelines.md now? (Y / N)
    ```
-5. **If approved (Y):** For each rule, append it to the most specific matching subsection in `framework/style-guidelines.md` → Nick's Voice (Greetings & Closings / Phrasing Patterns / Sentence-Level Rules). If no subsection fits, create one. Then update the lessons.md row: set Promoted = Yes.
+5. **If approved (Y):** For each rule, promote by LAYER per the `memory/lessons.md` Section 2 loop (indexed in `framework/style-guidelines.md`): **voice mechanics** → `framework/voice-reference.md` §3; **drafting judgment** (what to say/cut/position per audience) → `framework/content-rules.yaml` + its `content-rules.md` index, applying the C1 generalizability gate; **CV/format** → `framework/style-guidelines.md`. Then update the lessons.md row: set Promoted = Yes.
 6. **If declined (N):** skip and proceed. Rules remain in lessons.md for next time.
 
 ---
@@ -118,6 +118,7 @@ Mid-session, Nick's profile and identity context is usually already in the conve
 **Reference reads:**
 
 6. `framework/voice-reference.md` — **EMPIRICAL voice reference extracted from labeled corpus.** Contains validated rules + verbatim exemplars. **MUST read both the rules AND the exemplars sections — research finding: rules alone underperform; rules + 2-3 exemplars beats both.** Match the relevant exemplar to email type (cold outreach, post-call thank-you, follow-up nudge, application follow-up, logistics/rescheduling). **The matched exemplar is the generative spine for Step 5: you draft by adapting it to this recipient, NOT by filling the per-type structure with fresh prose. The Step 5 structure is a constraint check on the adapted exemplar, never the starting point. If the exemplar isn't doing the work, the draft will read generic.**
+7. `framework/content-rules.md` — **DRAFTING-JUDGMENT index** (what to say / cut / position per audience — distinct from voice mechanics). Not conditionally skippable (unlike items 4-5): it is voice-critical, not positioning-detail. The **active** rules are the pre-send checklist run in the Step 6 Content-Rules Pass; reference-only rules (in `content-rules.yaml`) inform what to include and cut. Rule-gate to what applies to THIS type/recipient (a thank-you selects `B1`/`B3`/`H1`/`H3`; a status/channel update selects `D2`/`E1`; a decline selects `H8`; etc.) — don't apply all rules blindly.
 
 > **Experiment in progress (2026-05-13):** items 4-5 are conditionally skipped per the "context-hot" rule above. Rollback criterion: if a draft is missing positioning/fit details that should have come from profile.md or professional-identity.md, revert this section to unconditional loading. Logged in `memory/lessons.md` row 62.
 
@@ -360,6 +361,8 @@ If any answer is bad, the exemplar didn't drive the draft. **Regenerate from the
 
 Anti-pattern scanning is **not** done in-skill anymore — the `check_draft_voice.py` PreToolUse hook gates the draft against the full mechanical anti-pattern set (filler adverbs, em dashes, semicolons, "just wanted to," "circling back," "just checking in," stacked "really") before `open_draft.py` runs. Trust the hook for mechanical issues; trust the tonal self-check above for voice fidelity.
 
+**Content-Rules Pass (mandatory — voice hook is mechanical; this is the judgment layer).** Load `framework/content-rules.md`. **Rule-gate:** select only the active rules whose trigger applies to THIS email type/recipient — don't walk all rules. Check the draft against each selected rule and record a one-line verdict in the Content-rules row of the Step 7 block. Advisory: you surface hits, Nick decides; nothing blocks. Run it every time — a silent skip is the `[[feedback_llm_self_policing_fails]]` failure this pass exists to prevent. (Rule `G1` "shape of role" is also hook-enforced.)
+
 **Quality gate (for Intro Request, Interest, and Informational types only — skip for Thank-you and Status Update):**
 
 Answer each question with a specific one-sentence response:
@@ -391,6 +394,7 @@ If any check fails, revise before presenting.
 - Word count: [N] (target: [range for this type])
 - CTA: [Single / Multiple — fix]
 - Tone calibration: [networking.md blockquote / archive: `output/<slug>/<file>.md` / voice-reference exemplar (no prior body found)]
+- Content-rules pass: [rules checked: B1, H3... → `ok`, or rule-id + what fired]
 - Anti-patterns: gated by `check_draft_voice.py` hook (not scanned in-skill)
 
 [For Intro Request, Interest, and Informational types only:]

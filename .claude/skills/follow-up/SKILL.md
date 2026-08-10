@@ -80,7 +80,7 @@ Before drafting, surface any accumulated voice patterns ready to be canonized:
 
    Promote to style-guidelines.md now? (Y / N)
    ```
-5. **If approved (Y):** For each rule, append it to the most specific matching subsection in `framework/style-guidelines.md` → Nick's Voice (Greetings & Closings / Phrasing Patterns / Sentence-Level Rules). If no subsection fits, create one. Then update the lessons.md row: set Promoted = Yes.
+5. **If approved (Y):** For each rule, promote by LAYER per the `memory/lessons.md` Section 2 loop (indexed in `framework/style-guidelines.md`): **voice mechanics** → `framework/voice-reference.md` §3; **drafting judgment** (what to say/cut/position per audience) → `framework/content-rules.yaml` + its `content-rules.md` index, applying the C1 generalizability gate; **CV/format** → `framework/style-guidelines.md`. Then update the lessons.md row: set Promoted = Yes.
 6. **If declined (N):** skip and proceed. Rules remain in lessons.md for next time.
 
 #### Step 1: Load Contact History
@@ -132,6 +132,7 @@ Read the following files in parallel (skip any that don't exist):
 6. `framework/outreach-guide.md` — frameworks, constraints, anti-patterns
 7. `framework/style-guidelines.md` — Nick's voice patterns for tone matching (see "Nick's Voice" section)
 8. `framework/voice-reference.md` — **EMPIRICAL voice reference extracted from labeled corpus.** Contains validated rules + verbatim exemplars. **MUST read both the rules AND the exemplars sections — research finding: rules alone underperform; rules + 2-3 exemplars beats both.** Pay particular attention to follow-up patterns (`Following up on my previous email...`, `Bumping this back to the top of your inbox`, post-call thank-you with specific reference) — these are the modes most relevant to this skill. **When Step 5 falls through to the voice-reference exemplar (no prior body), that exemplar is the generative spine — adapt it, don't fill the Step 6 structure with fresh prose.**
+9. `framework/content-rules.md` — **DRAFTING-JUDGMENT index** (what to say / cut / position per audience — distinct from voice mechanics). The **active** rules are the pre-send checklist run in Step 7's Content-Rules Pass; reference-only rules (in `content-rules.yaml`) inform what to include and cut as you draft. Rule-gate to what applies to THIS recipient/type — don't apply all rules blindly.
 
 #### Step 3: Determine Follow-Up Type
 
@@ -327,6 +328,8 @@ If any answer is bad, regenerate from the tone source — do not patch sentence-
 
 Both checks are mechanical (pattern-match the draft text), not judgment calls — run them every time before Step 8, not just when they happen to come to mind.
 
+**Content-Rules Pass (mandatory — mirror of the provenance audit's visible-output discipline).** Load `framework/content-rules.md`. **Rule-gate:** select only the active rules whose trigger applies to THIS draft (recipient_role, email_type, whether a value-offer/BCC-move/parallel-channel/logistical-concern is in play) — do NOT walk all rules. For each selected rule, check the draft and record a one-line verdict in the Content-rules row of the Step 8 block below (`ok` or the rule id + what fired). This is advisory: you surface hits, Nick decides — nothing here blocks. Run it every time; a silent skip is the exact failure `[[feedback_llm_self_policing_fails]]` documents. (`content-rules.md` rule G1 "shape of role" is also enforced by the `check_draft_voice.py` hook — it fires regardless.)
+
 #### Step 8: Present Draft
 
 ```markdown
@@ -354,6 +357,7 @@ Both checks are mechanical (pattern-match the draft text), not judgment calls �
 - Word count: [N] (target: 50–100 for follow-ups)
 - Sequence position: [N] of recommended 3–5 max
 - Tone calibration: [networking.md blockquote / archive: `output/<slug>/<file>.md` / voice-reference exemplar (no prior body found)]
+- Content-rules pass: [rules checked: A2, B1, H3... → `ok`, or rule-id + what fired]
 
 ---
 Want me to log this and update your follow-up to-do? (Y/N)

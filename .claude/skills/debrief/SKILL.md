@@ -145,6 +145,16 @@ Before producing ANY analysis output, ask Nick to score the call cold:
 **Do not produce dimension scoring or evidence aggregation before Nick
 submits.** This is the polish-anchoring defense (per `feedback_llm_verification_system` memory).
 
+**Also ask, in the same message (one line, required for real calls):**
+
+> "Did you read the prep doc before the call? (read / skimmed / didn't open it)"
+
+This gates attribution, not scoring. If the doc was **not read**, every prep-doc-resident behavior-change clause did not run — H4's live-need bridge and in-call governor, B3's clarifying-question count, B4's bare definitions, B6's whose-customers line, the NN probe questions. Any resulting miss must be logged against the **prep artifact not consumed** anti-pattern, NOT against the skill it superficially resembles. Scoring a bridge-miss as an H4 failure when the governor was never read misattributes a distribution problem to a retrieval problem, and the tracker then chases the wrong fix.
+
+Record the answer in the per-call file's metadata block as `prep-doc: read | skimmed | unread`.
+
+Origin: 2026-08-06 founder screen — a correct, same-day prep doc went unopened; zero of six prepared questions were asked and the positioning frame the doc had already corrected is what drew the pass. Distinct from the 2026-07-22 read-but-not-retrieved failure. See `/prep-interview` § B6 Reset-Carrier Rule.
+
 Save Nick's scores to the per-call file under `## Nick's Cold Score`.
 
 ### Step 3: Claude annotates

@@ -15,23 +15,23 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 /Users/mag/Documents/Obsidian/30-projects/job-search/tools/check_voice_pure.py"
+            "command": "PYTHONIOENCODING=utf-8 python3 $CLAUDE_PROJECT_DIR/tools/check_voice_pure.py"
           },
           {
             "type": "command",
-            "command": "python3 /Users/mag/Documents/Obsidian/30-projects/job-search/tools/check_email_via_skill.py"
+            "command": "PYTHONIOENCODING=utf-8 python3 $CLAUDE_PROJECT_DIR/tools/check_email_via_skill.py"
           },
           {
             "type": "command",
-            "command": "python3 /Users/mag/Documents/Obsidian/30-projects/job-search/tools/check_no_confabulation.py"
+            "command": "PYTHONIOENCODING=utf-8 python3 $CLAUDE_PROJECT_DIR/tools/check_no_confabulation.py"
           },
           {
             "type": "command",
-            "command": "python3 /Users/mag/Documents/Obsidian/30-projects/job-search/tools/check_data_projects.py"
+            "command": "PYTHONIOENCODING=utf-8 python3 $CLAUDE_PROJECT_DIR/tools/check_data_projects.py"
           },
           {
             "type": "command",
-            "command": "python3 /Users/mag/Documents/Obsidian/30-projects/job-search/tools/check_public_pii.py"
+            "command": "PYTHONIOENCODING=utf-8 python3 $CLAUDE_PROJECT_DIR/tools/check_public_pii.py"
           }
         ]
       },
@@ -40,7 +40,20 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 /Users/mag/Documents/Obsidian/30-projects/job-search/tools/check_draft_voice.py"
+            "command": "PYTHONIOENCODING=utf-8 python3 $CLAUDE_PROJECT_DIR/tools/check_draft_voice.py"
+          },
+          {
+            "type": "command",
+            "command": "PYTHONIOENCODING=utf-8 python3 $CLAUDE_PROJECT_DIR/tools/check_draft_pleasantry.py"
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__claude_ai_Gmail__(search_threads|get_message|get_thread)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "PYTHONIOENCODING=utf-8 python3 $CLAUDE_PROJECT_DIR/tools/check_gmail_read_mcp.py"
           }
         ]
       },
@@ -49,19 +62,19 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 /Users/mag/Documents/Obsidian/30-projects/job-search/tools/check_todo_write_kwargs.py"
+            "command": "PYTHONIOENCODING=utf-8 python3 $CLAUDE_PROJECT_DIR/tools/check_todo_write_kwargs.py"
           },
           {
             "type": "command",
-            "command": "python3 /Users/mag/Documents/Obsidian/30-projects/job-search/tools/check_bare_python.py"
+            "command": "PYTHONIOENCODING=utf-8 python3 $CLAUDE_PROJECT_DIR/tools/check_bare_python.py"
           },
           {
             "type": "command",
-            "command": "python3 /Users/mag/Documents/Obsidian/30-projects/job-search/tools/check_screenshot_path.py"
+            "command": "PYTHONIOENCODING=utf-8 python3 $CLAUDE_PROJECT_DIR/tools/check_screenshot_path.py"
           },
           {
             "type": "command",
-            "command": "python3 /Users/mag/Documents/Obsidian/30-projects/job-search/tools/check_unquoted_glob.py"
+            "command": "PYTHONIOENCODING=utf-8 python3 $CLAUDE_PROJECT_DIR/tools/check_unquoted_glob.py"
           }
         ]
       },
@@ -70,7 +83,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 /Users/mag/Documents/Obsidian/30-projects/job-search/tools/check_living_log_purity.py"
+            "command": "PYTHONIOENCODING=utf-8 python3 $CLAUDE_PROJECT_DIR/tools/check_living_log_purity.py"
           }
         ]
       },
@@ -79,11 +92,11 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 /Users/mag/Documents/Obsidian/30-projects/job-search/tools/check_edit_after_mutation.py --mode check"
+            "command": "PYTHONIOENCODING=utf-8 python3 $CLAUDE_PROJECT_DIR/tools/check_edit_after_mutation.py --mode check"
           },
           {
             "type": "command",
-            "command": "python3 /Users/mag/Documents/Obsidian/30-projects/job-search/tools/check_replace_all_safety.py"
+            "command": "PYTHONIOENCODING=utf-8 python3 $CLAUDE_PROJECT_DIR/tools/check_replace_all_safety.py"
           }
         ]
       },
@@ -92,18 +105,29 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 /Users/mag/Documents/Obsidian/30-projects/job-search/tools/check_sealed_read.py"
+            "command": "PYTHONIOENCODING=utf-8 python3 $CLAUDE_PROJECT_DIR/tools/check_sealed_read.py"
           }
         ]
       }
     ],
     "PostToolUse": [
       {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "PYTHONIOENCODING=utf-8 python3 $CLAUDE_PROJECT_DIR/tools/check_module_imports.py",
+            "timeout": 20,
+            "statusMessage": "Import-checking edited module"
+          }
+        ]
+      },
+      {
         "matcher": "Edit",
         "hooks": [
           {
             "type": "command",
-            "command": "python3 /Users/mag/Documents/Obsidian/30-projects/job-search/tools/check_edit_safety.py"
+            "command": "PYTHONIOENCODING=utf-8 python3 $CLAUDE_PROJECT_DIR/tools/check_edit_safety.py"
           }
         ]
       },
@@ -112,7 +136,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 /Users/mag/Documents/Obsidian/30-projects/job-search/tools/check_plan_partner_critique.py"
+            "command": "PYTHONIOENCODING=utf-8 python3 $CLAUDE_PROJECT_DIR/tools/check_plan_partner_critique.py"
           }
         ]
       },
@@ -121,7 +145,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 /Users/mag/Documents/Obsidian/30-projects/job-search/tools/check_script_error_logged.py"
+            "command": "PYTHONIOENCODING=utf-8 python3 $CLAUDE_PROJECT_DIR/tools/check_script_error_logged.py"
           }
         ]
       },
@@ -130,7 +154,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 /Users/mag/Documents/Obsidian/30-projects/job-search/tools/check_edit_after_mutation.py --mode record"
+            "command": "PYTHONIOENCODING=utf-8 python3 $CLAUDE_PROJECT_DIR/tools/check_edit_after_mutation.py --mode record"
           }
         ]
       }
@@ -141,7 +165,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 /Users/mag/Documents/Obsidian/30-projects/job-search/tools/log_tool_failure.py"
+            "command": "PYTHONIOENCODING=utf-8 python3 $CLAUDE_PROJECT_DIR/tools/log_tool_failure.py"
           }
         ]
       }
@@ -151,11 +175,15 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 /Users/mag/Documents/Obsidian/30-projects/job-search/tools/scan_transcript_failures.py"
+            "command": "PYTHONIOENCODING=utf-8 python3 $CLAUDE_PROJECT_DIR/tools/scan_transcript_failures.py"
           },
           {
             "type": "command",
-            "command": "python3 /Users/mag/Documents/Obsidian/30-projects/job-search/tools/check_changelog_currency.py"
+            "command": "PYTHONIOENCODING=utf-8 python3 $CLAUDE_PROJECT_DIR/tools/check_changelog_currency.py"
+          },
+          {
+            "type": "command",
+            "command": "PYTHONIOENCODING=utf-8 python3 $CLAUDE_PROJECT_DIR/tools/check_save_claims.py"
           }
         ]
       }

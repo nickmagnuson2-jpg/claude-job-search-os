@@ -54,7 +54,7 @@ Before drafting, surface any accumulated voice patterns ready to be canonized:
 
    Promote to style-guidelines.md now? (Y / N)
    ```
-5. **If approved (Y):** For each rule, append it to the most specific matching subsection in `framework/style-guidelines.md` → Nick's Voice (Greetings & Closings / Phrasing Patterns / Sentence-Level Rules). If no subsection fits, create one. Then update the lessons.md row: set Promoted = Yes.
+5. **If approved (Y):** For each rule, promote by LAYER per the `memory/lessons.md` Section 2 loop (indexed in `framework/style-guidelines.md`): **voice mechanics** → `framework/voice-reference.md` §3; **drafting judgment** (what to say/cut/position per audience) → `framework/content-rules.yaml` + its `content-rules.md` index, applying the C1 generalizability gate; **CV/format** → `framework/style-guidelines.md`. Then update the lessons.md row: set Promoted = Yes.
 6. **If declined (N):** skip and proceed. Rules remain in lessons.md for next time.
 
 ---
@@ -102,8 +102,13 @@ Read the following files in parallel (skip any that don't exist):
 8. `framework/outreach-guide.md` — frameworks, constraints, anti-patterns, quality gate
 9. `framework/style-guidelines.md` — Nick's voice patterns for tone matching (see "Nick's Voice" section)
 10. `framework/voice-reference.md` — **EMPIRICAL voice reference extracted from labeled corpus.** Contains validated rules + verbatim exemplars. **MUST read both the rules AND the exemplars sections — research finding: rules alone underperform; rules + 2-3 exemplars beats both.** **The matched exemplar is the generative spine for Step 6: draft by adapting it to this recipient, NOT by filling the Step 6 structure with fresh prose. The persuasion framework (Step 5) and the structure (Step 6) shape argument ORDER, not voice — the exemplar shapes voice. If the exemplar isn't doing the work, the draft will read generic.**
+11. `framework/content-rules.md` — **DRAFTING-JUDGMENT index** (what to say / cut / position — distinct from voice mechanics). Cold outreach leans on the `L2`/`L3` (subject + no alum-handshake), `I1` (name the company in sentence one), `A3` (no invented research-signal on replies), `C1`/`C3` (one ask, no logistics) rules. The **active** rules are the pre-send checklist run in Step 7's Content-Rules Pass; reference-only rules (in `content-rules.yaml`) inform what to include and cut. Rule-gate to what applies here.
 
-### Step 4: Lightweight Research
+### Step 4: Research & Personalization Gate (mandatory)
+
+**A cold email does not proceed past this step without a cited, recipient- or company-specific hook.** Per [[feedback_cold_outreach_flow_gaps]] (2026-07-15 Loop-2 voice test): flat personalization is the #1 reason a draft "doesn't sound like Nick" and gets no reply. The hook must be a *specific, quotable* thing (the company's own words about its mission/problem, a named project, a post, a distinctive path) tied to something real about Nick, NOT a headline paraphrase. It is `I`-provenance (cited to a source), never `G`.
+
+Run a **real** research pass (not a skim): use Exa (`mcp__exa__web_search_exa` / `web_fetch_exa`) on BOTH the company and the person, and fetch at least one primary source (the company's own site/about page, the recipient's public bio/post). Record the hook + its source URL for the Step 6b provenance audit. If no citable hook surfaces after a genuine pass, STOP and tell Nick the personalization gap rather than drafting on the headline alone.
 
 If no company dossier exists in `output/<slug>/`:
 
@@ -174,6 +179,14 @@ Follow channel constraints from `framework/outreach-guide.md`:
 
 **Tone matching:** Follow the tone matching protocol from `framework/outreach-guide.md`. Read 2–3 prior sent messages from `data/networking.md` and match the sender's natural voice. If no prior messages exist, default to professional, concise, peer-to-peer.
 
+**Flow-gap guardrails (mandatory — per [[feedback_cold_outreach_flow_gaps]]).** Before presenting, verify each; the drafting flow — not the voice corpus — is what fails, and it fails the same four ways:
+
+1. **Warm opener present.** Nick's real cold emails open with a SHORT warmth beat (`Hope your week's going well -`, `small world!`), then get to it. Not a straight-into-the-pitch cold open, and not a flabby full pleasantry — warm but brief. A missing warm opener is the most common miss.
+2. **No thesis-jargon recital.** Grep the draft for Nick's own job-search taxonomy ("deployment-strategist seat," "forward-deployed side," "the lane," "bringing AI into legacy enterprises") and de-recite it into plain speech. Reading his positioning doc aloud at the recipient reads as inauthentic. (Exception: keep a real target term like "forward-deployed roles" when the recipient literally works at a forward-deployed company — then it reads as fluency, not jargon. Judge per recipient.)
+3. **One resonance beat, then the ask.** Two consecutive "why this resonates" paragraphs kill the ask for a 5-second scanner. Keep exactly ONE resonance beat, then the ask.
+4. **Tight + scannable (~5 seconds).** Cut surface repetition and any corpus-validated phrase that reads as filler *in this context* (corpus-validated ≠ always-keep). Cold email should be scannable fast.
+5. **Time-blocks vs. Calendly is per-send, not fixed.** Offer concrete time blocks OR a Calendly link; if unsure which fits this recipient, ask Nick. Do not hardcode either.
+
 ### Step 6b: Substance-Provenance Audit (mandatory)
 
 Before the quality gate, label the provenance of every substantive sentence in the draft. This is the gate that catches Claude-generated self-positioning content before it reaches Nick's voice as a fait accompli — most acute in cold outreach because the recipient has no prior context to fact-check Claude's framing.
@@ -236,6 +249,8 @@ If any answer is **Weak** or generic (the kind of thing any applicant could say)
 
 If any answer is bad, the exemplar didn't drive the draft. **Regenerate from the exemplar — do not patch sentence-by-sentence.** Present only once all three pass.
 
+**Content-Rules Pass (mandatory — visible-output discipline, like the Step 6b provenance audit).** Load `framework/content-rules.md`. **Rule-gate:** select only the active rules whose trigger applies to a cold draft to THIS recipient (channel=cold always selects `L2`/`L3`/`I1`/`A3`/`C1`/`C3`; add `G2` if the recipient is non-technical, `G3` if they work at the company being discussed, `H6` for the availability close). Check the draft against each selected rule and record a one-line verdict in the Content-rules row of the Step 8 block. Advisory — you surface hits, Nick decides; nothing blocks. Run it every time; a silent skip is the `[[feedback_llm_self_policing_fails]]` failure. (Rule `G1` is also hook-enforced by `check_draft_voice.py`.)
+
 ### Step 8: Present Draft
 
 Show the draft with metadata:
@@ -265,6 +280,7 @@ Show the draft with metadata:
 - Character count: [N] (LinkedIn only — target: <300 for connect)
 - Suggested send time: [day/time in recipient timezone if known]
 - Tone calibration: voice-reference exemplar — [cold outreach / Tuck alum / mission-aware / 3-bullet pitch] (cold = first contact, no prior body for this recipient)
+- Content-rules pass: [rules checked: L2, L3, I1, C1... → `ok`, or rule-id + what fired]
 
 ---
 Want me to log this contact and create a follow-up to-do? (Y/N)
@@ -290,6 +306,8 @@ cold-outreach
 ```
 
 This marker is read by the `check_draft_voice.py` PreToolUse hook to verify the draft was produced by a skill (not inline). Without it, the hook blocks `open_draft.py`.
+
+**Write the marker in a SEPARATE Bash call that completes BEFORE the `open_draft.py` call — never chain them with `&&`.** The PreToolUse hook evaluates the whole command string before any of it runs, so `printf … > .pending-draft.source && python3 tools/open_draft.py` reads the OLD marker and BLOCKs as "stale marker." Two calls: (1) refresh the marker, (2) run `open_draft.py`. Same applies to every draft re-open when iterating. Per [[reference_pending_draft_marker_before_open_draft]] (fired 2026-06-22 + 2026-07-16).
 
 Then automatically run `python3 tools/open_draft.py` using the Bash tool to open the draft in Gmail. Show the output from the script to confirm it opened.
 

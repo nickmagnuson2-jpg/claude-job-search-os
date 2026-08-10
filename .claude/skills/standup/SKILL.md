@@ -129,7 +129,7 @@ Origin: [[feedback_no_confabulation_in_corpus_synthesis]] (Conviction Workbook P
 
 **From inbox/:**
 
-The `inbox/` folder is fed by launchd automation (gmail-fetch, daily-nudge, weekly-reminder, career-scan) PLUS ad-hoc captures. Surface them by category so daily nudges actually nudge — don't just count.
+The `inbox/` folder is fed by launchd automation (gmail-fetch, gmail-fetch-personal, career-scan, alirohde-triage, granola-auto-debrief) PLUS ad-hoc captures. Surface them by category so the feeds actually surface — don't just count. (The dossier-freshness and follow-up/weekly-review nudge jobs were retired; those category patterns below now only match hand-dropped files, so they may stay empty.)
 
 Run:
 ```bash

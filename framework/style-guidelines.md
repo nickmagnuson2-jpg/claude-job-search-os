@@ -1,6 +1,21 @@
-Last updated: 2026-03-04
+Last updated: 2026-07-28
 
 # Style Guidelines
+
+> **This file is the canonical INDEX of Nick's writing system.** Three layers, three homes — this doc is
+> the map (and the CV/format home). The two rule stores are pointed to, not duplicated here.
+>
+> | Layer | Governs | Canonical home |
+> |---|---|---|
+> | **Voice mechanics** | punctuation, filler, phrasings, rhythm, openers/closers | [`voice-reference.md`](voice-reference.md) — empirical rules + verbatim exemplars |
+> | **Drafting judgment** | what to SAY / CUT / POSITION per audience (hold-the-proof, one-ask, register, attribution, verification) | [`content-rules.md`](content-rules.md) — human index · `content-rules.yaml` — machine-readable, backs the skills' pre-send **Content-Rules Pass** |
+> | **CV / cover-letter** | tone derivation, regional formats, `voice:` provenance tiers | this file (sections below) |
+>
+> Drafting skills (`/cold-outreach`, `/follow-up`, `/draft-email`, `/cover-letter`, `/outreach-batch`) LOAD
+> the two rule stores directly; this index says which layer owns what. New corrections route by layer —
+> see the promotion loop in `memory/lessons.md` Section 2. The `voice:` provenance vocabulary
+> (`self`/`mixed`/`co-authored`) is defined at the bottom of this file and is shared by the voice corpus
+> and all vault files.
 
 ## Tone & Voice
 
@@ -19,7 +34,9 @@ Then apply these universal principles:
 
 ## Nick's Voice — Outreach & Email
 
-**Canonical source: [`framework/voice-reference.md`](voice-reference.md).** Corpus-validated rules + verbatim exemplars from 37 labeled emails. Drafting skills (`/cold-outreach`, `/follow-up`, `/draft-email`, `/cover-letter`) read voice-reference.md directly — they MUST load both rules and exemplars.
+**Canonical source for VOICE: [`framework/voice-reference.md`](voice-reference.md).** Corpus-validated rules + verbatim exemplars from 37 labeled emails. Drafting skills (`/cold-outreach`, `/follow-up`, `/draft-email`, `/cover-letter`) read voice-reference.md directly — they MUST load both rules and exemplars.
+
+**Canonical source for DRAFTING JUDGMENT: [`framework/content-rules.md`](content-rules.md)** (+ machine-readable `content-rules.yaml`). Voice = *how* Nick writes; content-rules = *what* to say, cut, and position per audience (hold-the-proof, one-ask, register calibration, attribution integrity, fact-verification). The drafting skills load it in their Load-Context step and run a rule-gated **Content-Rules Pass** in their Quality Gate. Do NOT duplicate those judgment rules here — they live in content-rules; this section stays voice-only.
 
 The legacy aspirational rules that previously lived here were reconciled into voice-reference.md Section 3 on 2026-05-07. KEEP rules are now canonical; DROP rules (e.g. close with `Thanks!` not `Best,`; ban ` - ` spaced-hyphen in outreach) were factually contradicted by the corpus and removed. See voice-reference.md "Reconciliation from legacy style-guidelines.md" for the full table.
 

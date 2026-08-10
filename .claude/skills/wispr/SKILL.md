@@ -171,7 +171,19 @@ Default to option 3 when in doubt — never silently proceed to Step 5 with a mi
 
 **Apply (Case A or "use now"):** Use the transcript as input to the active workflow. Quote the relevant phrases when scaffolding so Nick can verify Claude understood his voice.
 
-**Route (Case B or "route to inbox"):** Append to `data/inbox.md` per `/remember` conventions, one entry per dictation chunk:
+**Route (Case B or "route to inbox"):** Write to `data/inbox.md` **through the locked
+writer, never a raw Write/Edit** — one call per dictation chunk:
+
+```bash
+PYTHONIOENCODING=utf-8 python3 \
+  ~/Documents/Obsidian/30-projects/job-search/tools/inbox_lock.py prepend \
+  --inbox data/inbox.md --stdin <<'BLOCK'
+<the entry below>
+BLOCK
+```
+
+A raw Write cannot hold the lock across its read-think-write cycle and can silently
+revert a concurrent write from the launchd collectors. Entry shape:
 
 ```
 ## YYYY-MM-DD | [derived label from content]
@@ -230,7 +242,7 @@ The script is the ONLY sanctioned writer (deterministic, verbatim — it never p
 
 - **DB not found:** Tell user the path checked (`~/Library/Application Support/Wispr Flow/flow.sqlite`) and ask if Wispr Flow is installed/running.
 - **All chunks low-signal** (test/empty/file-uri): script auto-skips those. Tell user "Pulled N chunks, all filtered as low-signal (test/empty/etc.). Try `/wispr all` if you think real content was missed."
-- **Mixed relevance:** if some chunks clearly belong in the active workflow and others are unrelated captures, propose a split: "Chunks 1 and 3 are about Sam — feeding into the thank-you. Chunk 2 looks like a separate capture — route to inbox?"
+- **Mixed relevance:** if some chunks clearly belong in the active workflow and others are unrelated captures, propose a split: "Chunks 1 and 3 are about Casey — feeding into the thank-you. Chunk 2 looks like a separate capture — route to inbox?"
 - **Nick said he'd dictate but pull returns nothing:** check if Wispr Flow is open and synced. The DB only updates when Wispr's local app sees the dictation. Suggest manually checking the Wispr app, or widening the window.
 - **Cross-device dictation:** Wispr syncs phone + desktop. Phone notes typically arrive within seconds via cloud. If Nick dictated on phone and the pull is empty, sync may be lagging — wait 10–20 seconds, retry.
 - **Edited Wispr notes don't re-import:** if Nick edits a previously-pulled Note in Wispr Flow, the edit isn't picked up by default (state's `imported_ids` blocks it). To re-pull an edited note: delete the file in `~/Documents/Obsidian/00-voice-corpus-archive/` and run `/wispr all`. Rare in practice — Wispr notes are typically write-once.
@@ -270,19 +282,19 @@ Nick: I'm back / I'm done
 Claude: [invokes /wispr, runs pull --print]
 Wispr — 4 dictations since 09:43:
 
-— 09:55 | About Dana
+— 09:55 | About Casey
 [verbatim transcript]
 
-— 09:58 | About Sam
+— 09:58 | About Jordan
 [verbatim transcript]
 
-— 10:01 | About Alex
+— 10:01 | About Riley
 [verbatim transcript]
 
-— 10:04 | About Robin
+— 10:04 | About Morgan
 [verbatim transcript]
 
-I have context for Dana, Sam, Alex, and Robin. Starting with Dana's thank-you draft now (lowest friction). Sam's heartfelt note will be last given the weight you flagged.
+I have context for Casey, Jordan, Riley, and Morgan. Starting with Casey's thank-you draft now (lowest friction). Jordan's note will be last given the weight you flagged.
 
 [scaffolds Dana draft]
 ```
@@ -336,13 +348,13 @@ Nick: I'm done dictating
 Claude: [pull --print, gets 3 chunks]
 Wispr — 3 dictations:
 
-— 14:10 | Sam thank-you context
+— 14:10 | Jordan thank-you context
 [transcript about Sam]
 
 — 14:14 | Pipeline thoughts
 [transcript about how stage line might shift]
 
-— 14:18 | Watershed reactivation
+— 14:18 | ActiveCo reactivation
 [transcript with prior-conversation details]
 
 Proposed split:

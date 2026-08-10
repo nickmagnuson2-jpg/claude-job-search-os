@@ -46,6 +46,8 @@ Read all cover-letter-relevant files listed in `framework/application-workflow.m
 
 **Voice-critical:** the table includes `framework/voice-reference.md` (corpus-validated rules + verbatim exemplars). For cover letters specifically, hold the relevant exemplars in context while drafting. Research finding: **rules alone underperform; rules + 2-3 exemplars beats both.** A cover letter is longer-form than email, but the sentence-level voice patterns (no em-dashes, ` - ` inline hyphen, `particularly` as emphasis, mission language, bare-Nick close) still apply.
 
+**Also load `framework/content-rules.md`** — the drafting-judgment index (distinct from voice mechanics). For a cover letter the load-bearing active rules are `B1` (hold the heavy scale proof-drop; keep the lens), `B2` (bring Nick's own proof, don't echo the company's framing back), and `F1`/`F2` (no meta-frames or consulting-speak labels). These are positioning rules, not voice rules — check the drafted letter against them at the Step-4 quality read.
+
 Derive the company slug from Step 1 if already parsed; otherwise read `data/company-notes/<company-slug>.md` after Step 3.
 
 ### Step 3: Analyze the Role & Research the Company
