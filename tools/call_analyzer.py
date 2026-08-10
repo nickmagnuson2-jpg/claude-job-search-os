@@ -4,7 +4,7 @@
 call_analyzer.py - Transcript analysis engine for interview call debriefs.
 
 Analyzes Granola transcript segments for filler words, Q&A pair structure,
-talk ratio, and word counts. Designed for headless n8n automation and
+talk ratio, and word counts. Consumed by granola_auto_debrief.py (launchd) and
 standalone CLI use.
 
 Functions:

@@ -36,6 +36,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import friction_surface as fs  # shared surface/nature derivation (single source of truth)
+import hook_trace  # shared rotating trace-log writer (size-capped, single source of truth)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 FRICTION_LOG_PY = REPO_ROOT / "tools" / "friction_log.py"
@@ -64,13 +65,8 @@ SCRIPT_RE = fs.SCRIPT_RE
 
 
 def trace(msg: str) -> None:
-    """Best-effort diagnostic trace. Never throws."""
-    try:
-        TRACE_LOG.parent.mkdir(parents=True, exist_ok=True)
-        with open(TRACE_LOG, "a", encoding="utf-8") as f:
-            f.write(f"[{datetime.datetime.now().isoformat()}] {msg}\n")
-    except Exception:
-        pass
+    """Best-effort diagnostic trace. Never throws. Size-capped via hook_trace."""
+    hook_trace.append(TRACE_LOG, f"[{datetime.datetime.now().isoformat()}] {msg}")
 
 
 def extract_failure_text(data: dict) -> str:

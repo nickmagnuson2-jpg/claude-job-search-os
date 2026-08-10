@@ -5,7 +5,7 @@ edition has landed (deterministic detect + extract; no scoring).
 
 "Ali Rohde Jobs" is a weekly Substack jobs newsletter (alirohdejobs@substack.com)
 heavy on Chief of Staff / Strategic Operations roles — Nick's target shape.
-gmail-fetch.py already drops each edition into inbox/. This script runs daily
+gmail_fetch.py already drops each edition into inbox/. This script runs daily
 (cheap-check): it no-ops unless a NEW edition number is present, then writes a
 review-gated nudge pointing at /scan-jobs (which does profile-fit scoring and
 keeps its own Y/N pipeline gate). Scoring is deliberately NOT done here —

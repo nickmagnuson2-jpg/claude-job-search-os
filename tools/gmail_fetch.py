@@ -13,7 +13,7 @@ Setup (first run):
   4. Optional: create a "Job Search" label in Gmail, add a Gmail filter rule
      to auto-label job-related emails, then pass --label-id <ID>.
      Find label IDs by running:
-       python -c "
+       PYTHONIOENCODING=utf-8 python3 -c "
        import json; from pathlib import Path; import sys
        sys.path.insert(0, 'tools')
        from gmail_fetch import get_or_refresh_creds
@@ -23,7 +23,8 @@ Setup (first run):
        labels = svc.users().labels().list(userId='me').execute()
        for l in labels['labels']: print(l['id'], l['name'])
        "
-  5. Schedule via Task Scheduler: run tools/run_gmail_fetch.bat every 15–30 minutes.
+  5. Schedule via launchd: bash tools/launchd/install.sh install
+     (the gmail-fetch job runs every 15 min). Logs at tools/launchd/logs/.
 
 Subsequent runs (automated):
   PYTHONIOENCODING=utf-8 python3 tools/gmail_fetch.py --repo-root .
@@ -981,7 +982,7 @@ def main():
         state = {"historyId": history_id, "last_refresh": datetime.now().isoformat()}
         _save_state(state_path, state)
         print(f"State saved: {state_path} (historyId={history_id})")
-        print("Setup complete. Schedule tools/run_gmail_fetch.bat to run every 15–30 minutes.")
+        print("Setup complete. Schedule via launchd: bash tools/launchd/install.sh install")
         return
 
     # ── Search mode: free-text read-only Gmail search ─────────────────────

@@ -168,11 +168,46 @@ def summary_body(data: dict, transcript_basename: str) -> str:
     return "\n".join(parts) + "\n"
 
 
+def find_existing_by_meeting_id(directory: Path, meeting_id: str):
+    """Return an existing transcript in `directory` for this Granola meeting, or None.
+
+    Filename-keyed idempotence is not enough: the launchd collector slugs the
+    Granola title while a hand-pull may choose a longer descriptive slug, so the
+    same meeting saved both ways produces two files and `--no-overwrite` catches
+    neither. The meeting id is the only stable key, and it is already written into
+    every transcript body as "**Granola meeting ID:** `<id>`".
+    """
+    if not meeting_id or not directory.is_dir():
+        return None
+    needle = f"**Granola meeting ID:** `{meeting_id}`"
+    for path in sorted(directory.glob("*.md")):
+        if path.name.endswith("-summary.md"):
+            continue
+        try:
+            if needle in path.read_text(encoding="utf-8"):
+                return path
+        except (OSError, UnicodeDecodeError):
+            continue
+    return None
+
+
 def cmd_write(data: dict, output: Path, no_overwrite: bool = False) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     transcript_basename = output.stem
     summary_path = output.with_name(transcript_basename + "-summary.md")
     summary_basename = summary_path.stem
+
+    if no_overwrite:
+        dup = find_existing_by_meeting_id(output.parent, data.get("meeting_id", ""))
+        if dup is not None and dup.resolve() != output.resolve():
+            print(json.dumps({
+                "status": "skip",
+                "reason": "meeting already persisted under a different filename",
+                "meeting_id": data.get("meeting_id", ""),
+                "existing_path": str(dup),
+                "requested_path": str(output),
+            }))
+            return
 
     if no_overwrite and (output.exists() or summary_path.exists()):
         print(json.dumps({

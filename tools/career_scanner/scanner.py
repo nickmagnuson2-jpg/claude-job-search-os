@@ -18,6 +18,12 @@ import yaml
 from datetime import datetime, timezone
 from pathlib import Path
 
+# Reach the sibling tools/ package for the shared inbox writer. Must come after
+# `from pathlib import Path` — this line referenced Path before it was imported
+# and made the module unimportable, which the fixture suite did not catch.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # tools/
+import inbox_lock
+
 
 def load_targets(repo_root: Path) -> list[dict]:
     """Load active targets from scan-targets.yaml.
@@ -189,46 +195,20 @@ def format_inbox_entry(roles: list[dict]) -> str:
 
 
 def write_inbox(repo_root: Path, roles: list[dict]):
-    """Prepend scan results to data/inbox.md following granola_auto_debrief.py pattern.
+    """Prepend scan results to data/inbox.md, locked and atomically.
 
-    Reads existing content, finds insertion point after header + comments,
-    prepends new entries, writes full file (per CLAUDE.md conventions).
-
-    Args:
-        repo_root: Path to repository root.
-        roles: List of scored role dicts.
+    Delegates to tools/inbox_lock.prepend_entries. This previously reimplemented
+    the header scan and finished with a plain write_text() while its docstring
+    claimed it followed the atomic convention — a crash mid-write truncated the
+    user's inbox outright, and it ran daily on a schedule that clusters with two
+    other inbox writers.
     """
     inbox_path = repo_root / "data" / "inbox.md"
     entry = format_inbox_entry(roles)
-
-    if inbox_path.exists():
-        content = inbox_path.read_text(encoding="utf-8")
-    else:
-        content = "# Inbox\n\n<!-- Items captured via /remember. Review and route to appropriate files periodically. -->\n"
-
-    # Find insertion point: after the header line and any comment block
-    # Follows granola_auto_debrief.py pattern (lines 203-215)
-    lines = content.split("\n")
-    insert_after = 0
-    for i, line in enumerate(lines):
-        if line.startswith("# Inbox"):
-            insert_after = i + 1
-            # Skip blank lines and HTML comments after header
-            while insert_after < len(lines):
-                next_line = lines[insert_after].strip()
-                if next_line == "" or next_line.startswith("<!--") or next_line.endswith("-->"):
-                    insert_after += 1
-                else:
-                    break
-            break
-
-    # Build new content: header + new entries + existing entries
-    header_lines = lines[:insert_after]
-    existing_lines = lines[insert_after:]
-
-    new_content = "\n".join(header_lines) + "\n" + entry + "\n".join(existing_lines)
-
-    # Full-file write (per CLAUDE.md conventions for data files)
-    inbox_path.write_text(new_content, encoding="utf-8")
-
+    try:
+        inbox_lock.prepend_entries(inbox_path, entry)
+    except (inbox_lock.LockTimeout, inbox_lock.ConcurrentModification) as exc:
+        print(f"ERROR: inbox not updated ({exc}) — {len(roles)} roles NOT written",
+              file=sys.stderr)
+        return
     print(f"Wrote {len(roles)} roles to {inbox_path}", file=sys.stderr)

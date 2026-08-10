@@ -33,7 +33,7 @@ CLI:
   python3 tools/granola_cli.py info <id>
 
 Exit codes:
-  0 ok, 1 error, 2 user cancelled
+  0 ok, 1 error, 2 unclassifiable meeting (re-run with --type therapy|networking)
 
 State:
   tools/.cache/granola_last_list.json — caches last list output so position-based

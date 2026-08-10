@@ -52,6 +52,11 @@ ALLOWLIST_PATTERNS = [
     re.compile(r"/data/networking\.md$"),
     re.compile(r"/data/outreach-log\.md$"),
     re.compile(r"/inbox/"),
+    # Voice-corpus exemplar homes: these legitimately CONTAIN verbatim email bodies as
+    # reference material (not send paths). The skill itself reads voice-reference.md as its
+    # 37-email corpus; curating it must not be blocked. (Added 2026-07-28, exemplar re-anchoring.)
+    re.compile(r"/framework/voice-reference\.md$"),
+    re.compile(r"/data/voice-corpus/"),
 ]
 
 EMAIL_SHAPE_PATTERNS = [

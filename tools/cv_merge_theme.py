@@ -39,12 +39,39 @@ def load_yaml(path: Path) -> dict:
         return yaml.safe_load(f)
 
 
+def _check_scalar_sections(content: dict) -> None:
+    """Catch the unquoted-colon mangle before it reaches rendercv.
+
+    A summary/details string written with a bare ': ' (e.g. `- ... fluency: I
+    build ...`) is parsed by YAML as a single-key MAPPING, not a string. rendercv
+    then fails with an opaque "couldn't match this section with any entry types".
+    Flag it here with an actionable message: quote the offending string.
+    """
+    sections = (content.get("cv") or {}).get("sections") or {}
+    for name, entries in sections.items():
+        if not isinstance(entries, list):
+            continue
+        for i, entry in enumerate(entries):
+            # A text-block entry that parsed as a one-key dict whose key is a
+            # sentence (has spaces) is the colon-mangle signature.
+            if isinstance(entry, dict) and len(entry) == 1:
+                (key,) = entry.keys()
+                if isinstance(key, str) and " " in key.strip():
+                    raise SystemExit(
+                        f"Section '{name}' entry #{i + 1} parsed as a mapping, not "
+                        f"text — almost certainly an unquoted ': ' in the content "
+                        f"YAML (YAML reads 'foo: bar' as a key/value). Wrap that "
+                        f'string in double quotes. Offending key: "{key[:60]}...".'
+                    )
+
+
 def merge(content: dict, theme: dict, *, strict: bool = True) -> dict:
     if "design" in content and strict:
         raise SystemExit(
             "Content YAML already contains a `design:` block. Remove it — the "
             "theme owns design. If this is intentional, re-run with --override."
         )
+    _check_scalar_sections(content)
     merged = dict(content)
     merged["design"] = theme["design"]
     # Preserve canonical top-level key order: cv, design, locale, settings.

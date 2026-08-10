@@ -2,43 +2,37 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>Label</key>
-    <string>com.nickmagnuson.jobsearch.agent-discover-collect</string>
-
-    <key>ProgramArguments</key>
-    <array>
-        <string>/bin/sh</string>
-        <string>-c</string>
-        <string>/opt/homebrew/bin/python3 /Users/mag/Documents/Obsidian/30-projects/job-search/tools/agent_collect.py --today "$(date +%Y-%m-%d)"</string>
-    </array>
-
-    <key>EnvironmentVariables</key>
-    <dict>
-        <key>PYTHONIOENCODING</key>
-        <string>utf-8</string>
-        <key>PATH</key>
-        <string>/opt/homebrew/bin:/usr/bin:/bin</string>
-    </dict>
-
-    <key>WorkingDirectory</key>
-    <string>/Users/mag/Documents/Obsidian/30-projects/job-search</string>
-
-    <key>StartCalendarInterval</key>
-    <dict>
-        <key>Weekday</key>
-        <integer>1</integer>
-        <key>Hour</key>
-        <integer>8</integer>
-        <key>Minute</key>
-        <integer>45</integer>
-    </dict>
-
-    <key>RunAtLoad</key>
-    <false/>
-
-    <key>StandardOutPath</key>
-    <string>/Users/mag/Documents/Obsidian/30-projects/job-search/tools/launchd/logs/agent-discover-collect.log</string>
-    <key>StandardErrorPath</key>
-    <string>/Users/mag/Documents/Obsidian/30-projects/job-search/tools/launchd/logs/agent-discover-collect.err</string>
+	<key>Label</key>
+	<string>com.nickmagnuson.jobsearch.agent-discover-collect</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/bin/sh</string>
+		<string>-c</string>
+		<string>/opt/homebrew/bin/python3 /Users/mag/Documents/Obsidian/30-projects/job-search/tools/agent_collect.py --today "$(date +%Y-%m-%d)"</string>
+	</array>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PYTHONIOENCODING</key>
+		<string>utf-8</string>
+		<key>PATH</key>
+		<string>/opt/homebrew/bin:/usr/bin:/bin</string>
+	</dict>
+	<key>WorkingDirectory</key>
+	<string>/Users/mag/Documents/Obsidian/30-projects/job-search</string>
+	<key>StartCalendarInterval</key>
+	<dict>
+		<key>Weekday</key>
+		<integer>1</integer>
+		<key>Hour</key>
+		<integer>9</integer>
+		<key>Minute</key>
+		<integer>45</integer>
+	</dict>
+	<key>RunAtLoad</key>
+	<false/>
+	<key>StandardOutPath</key>
+	<string>/Users/mag/Documents/Obsidian/30-projects/job-search/tools/launchd/logs/agent-discover-collect.log</string>
+	<key>StandardErrorPath</key>
+	<string>/Users/mag/Documents/Obsidian/30-projects/job-search/tools/launchd/logs/agent-discover-collect.err</string>
 </dict>
 </plist>

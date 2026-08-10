@@ -1,5 +1,9 @@
 import json, sys
 from pathlib import Path
+import sys as _sys
+_sys.path.insert(0, str(Path(__file__).resolve().parent))
+import inbox_lock
+import sys
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
@@ -47,8 +51,17 @@ def render_inbox_block(record, candidates, today):
 
 
 def append_inbox(block):
-    prior = INBOX.read_text(encoding="utf-8") if INBOX.is_file() else "# Inbox\n"
-    INBOX.write_text(prior + block, encoding="utf-8")
+    """Add a proposal block to the inbox, locked and atomically.
+
+    Was a read-concat-write_text that appended at EOF: non-atomic (a crash
+    truncated the inbox) and it buried new proposals at the bottom while every
+    other writer prepends, quietly breaking the newest-first convention. Now
+    prepends through the shared writer like everything else.
+    """
+    try:
+        inbox_lock.prepend_entries(INBOX, block)
+    except (inbox_lock.LockTimeout, inbox_lock.ConcurrentModification) as exc:
+        print(f"ERROR: inbox not updated ({exc}) — proposals NOT written", file=sys.stderr)
 
 
 def main():

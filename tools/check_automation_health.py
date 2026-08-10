@@ -23,6 +23,7 @@ Usage: PYTHONIOENCODING=utf-8 python3 tools/check_automation_health.py [--repo-r
 """
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -72,8 +73,28 @@ def check_gmail(repo_root: Path, stale_hours: float) -> tuple[list, list]:
     return entries, warnings
 
 
-def check_jobs() -> tuple[list, list]:
-    """Return (job_status_entries, warnings) from `launchctl list`."""
+def expected_jobs(repo_root: Path) -> set:
+    """Job short-names we expect loaded, derived from the installed plists.
+
+    The plists in tools/launchd/ are the source of truth for what SHOULD run;
+    deriving from them keeps this watchdog in sync as jobs are added/removed.
+    """
+    plist_dir = repo_root / "tools" / "launchd"
+    jobs = set()
+    if plist_dir.is_dir():
+        for p in plist_dir.glob(f"{JOB_PREFIX}*.plist"):
+            jobs.add(p.name[len(JOB_PREFIX):-len(".plist")])
+    return jobs
+
+
+def check_jobs(repo_root: Path) -> tuple[list, list]:
+    """Return (job_status_entries, warnings) from `launchctl list`.
+
+    Two failure modes are caught: (1) a loaded job whose last exit was non-zero,
+    and (2) a job that has a plist but is NOT loaded at all — the exact shape of
+    the 2026-06 die-off, where jobs vanished from `launchctl list` and the old
+    check (which only warned on ZERO loaded jobs) reported healthy for 3 weeks.
+    """
     entries, warnings = [], []
     try:
         out = subprocess.run(["launchctl", "list"], capture_output=True, text=True, timeout=15)
@@ -94,19 +115,62 @@ def check_jobs() -> tuple[list, list]:
             warnings.append(f"launchd job '{short}' last exited {exit_code} (non-zero = broken).")
     if not entries:
         warnings.append("No com.nickmagnuson.jobsearch.* launchd jobs are loaded — automation is off.")
+        return entries, warnings
+    loaded = {e["job"] for e in entries}
+    for missing in sorted(expected_jobs(repo_root) - loaded):
+        warnings.append(
+            f"launchd job '{missing}' has a plist but is not loaded — automation is off "
+            f"for it. Run: bash tools/launchd/install.sh install"
+        )
     return entries, warnings
+
+
+def write_inbox_alert(repo_root: Path, warnings: list) -> Path | None:
+    """When run headless (launchd), surface warnings by writing a dated alert to
+    inbox/ so /standup or /act catches an outage even if the watchdog is never
+    invoked interactively. Overwrites the same-day file (idempotent per day);
+    removes a stale same-day alert once things are healthy again. Atomic write.
+    """
+    inbox = repo_root / "inbox"
+    # Date derived locally; this is a CLI tool, not a resumable workflow.
+    stamp = datetime.now().strftime("%Y%m%d")
+    alert = inbox / f"{stamp}-automation-health-alert.md"
+    if not warnings:
+        if alert.exists():
+            try:
+                alert.unlink()
+            except OSError:
+                pass
+        return None
+    inbox.mkdir(parents=True, exist_ok=True)
+    body = (
+        f"# Automation health alert ({stamp})\n\n"
+        "The launchd automation watchdog (`check_automation_health.py`) found problems:\n\n"
+        + "".join(f"- {w}\n" for w in warnings)
+        + "\nRun `bash tools/launchd/install.sh status` to inspect, "
+        "then `bash tools/launchd/install.sh install` to (re)load jobs.\n"
+    )
+    tmp = alert.with_suffix(alert.suffix + ".tmp")
+    tmp.write_text(body, encoding="utf-8")
+    os.replace(tmp, alert)
+    return alert
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--repo-root", default=".")
     ap.add_argument("--gmail-stale-hours", type=float, default=24.0)
+    ap.add_argument("--inbox-on-warn", action="store_true",
+                    help="Write a dated alert to inbox/ when warnings exist (for headless/launchd runs).")
     args = ap.parse_args()
     repo_root = Path(args.repo_root).resolve()
 
     gmail, gw = check_gmail(repo_root, args.gmail_stale_hours)
-    jobs, jw = check_jobs()
-    print(json.dumps({"warnings": gw + jw, "gmail": gmail, "jobs": jobs}, indent=2))
+    jobs, jw = check_jobs(repo_root)
+    warnings = gw + jw
+    if args.inbox_on_warn:
+        write_inbox_alert(repo_root, warnings)
+    print(json.dumps({"warnings": warnings, "gmail": gmail, "jobs": jobs}, indent=2))
     return 0
 
 

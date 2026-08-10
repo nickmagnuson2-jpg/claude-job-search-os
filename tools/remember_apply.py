@@ -42,6 +42,9 @@ import re
 import sys
 from datetime import datetime
 from pathlib import Path
+import sys as _sys
+_sys.path.insert(0, str(Path(__file__).resolve().parent))
+import inbox_lock
 
 NOTES_FILE      = "data/notes.md"
 DECISIONS_FILE  = "data/decisions.md"
@@ -559,30 +562,18 @@ def apply_deferred_idea(note: str, dest: dict, repo_root: Path) -> dict:
     today = datetime.now().strftime("%Y-%m-%d")
     path = repo_root / "data" / "inbox.md"
 
-    content = read_file(path)
-    if not content:
-        content = (
-            "# Inbox\n\n"
-            "<!-- Items captured via /remember. Review and route to appropriate files periodically. -->\n"
-        )
-
     title = _title_from_note(note)
-    lines = content.splitlines()
-    entry = ["", f"## {today} | {title}", "", note, ""]
+    block = f"## {today} | {title}\n\n{note}"
 
-    insert_at = None
-    for i, ln in enumerate(lines):
-        if ln.strip().startswith("<!-- Items captured"):
-            insert_at = i + 1
-            break
-
-    if insert_at is None:
-        lines.extend(entry)
-    else:
-        lines[insert_at:insert_at] = entry
-
-    new_content = "\n".join(lines).rstrip("\n") + "\n"
-    write_atomic(path, new_content)
+    # Locked + atomic via the shared inbox writer. This used to hand-roll the
+    # header scan and finish with a fixed-temp-name write_atomic: atomic against a
+    # crash, but two skills already pointed at this function as THE "lock-safe"
+    # inbox path when no lock existed anywhere in the repo. Now that claim is true.
+    try:
+        inbox_lock.prepend_entries(path, block)
+    except (inbox_lock.LockTimeout, inbox_lock.ConcurrentModification) as exc:
+        return {"status": "error", "type": "deferred_idea", "file": str(path),
+                "message": f"inbox busy, nothing written ({exc}) — retry"}
     return {"status": "ok", "type": "deferred_idea", "file": str(path)}
 
 

@@ -3,7 +3,8 @@
 """
 granola_fetch.py - REST API client for fetching Granola meetings and transcripts.
 
-Headless client for n8n automation. Uses the Granola public REST API with a
+Headless client for launchd automation (granola-auto-debrief, every 3 hrs; the
+earlier n8n setup was retired ~2026-04-28). Uses the Granola public REST API with a
 Personal API Key (not the MCP server, which requires interactive OAuth).
 
 Environment:

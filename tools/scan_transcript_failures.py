@@ -51,6 +51,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import friction_surface as fs  # shared surface/nature derivation (single source of truth)
+import hook_trace  # shared rotating trace-log writer (size-capped, single source of truth)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 FRICTION_LOG_PY = REPO_ROOT / "tools" / "friction_log.py"
@@ -68,6 +69,12 @@ OVERLAP_LINES = 40
 # window (OVERLAP_LINES back from the cursor) is ever re-checked, so this is a
 # memory/file-size guard, not a correctness requirement — generously sized.
 MAX_LOGGED_IDS = 500
+
+# Cap on how many per-session cursor records we retain. Each Stop scan only ever
+# touches its own session_id, so older sessions' cursors are dead weight; without
+# a cap the file grew to 133 sessions (the fable-audit finding). Keep the most
+# recent by last_seen_ts.
+MAX_CURSOR_SESSIONS = 50
 
 EXCLUDE_SCRIPTS = fs.EXCLUDE_SCRIPTS
 
@@ -185,12 +192,7 @@ def is_masked_shell_failure(tool_name: str, command: str, text: str, is_error) -
 
 
 def trace(msg: str) -> None:
-    try:
-        TRACE_LOG.parent.mkdir(parents=True, exist_ok=True)
-        with open(TRACE_LOG, "a", encoding="utf-8") as f:
-            f.write(f"[{datetime.datetime.now().isoformat()}] scan_transcript {msg}\n")
-    except Exception:
-        pass
+    hook_trace.append(TRACE_LOG, f"[{datetime.datetime.now().isoformat()}] scan_transcript {msg}")
 
 
 def resolve_transcript_path(data: dict) -> Path | None:
@@ -260,9 +262,29 @@ def load_cursor() -> dict:
         return {}
 
 
+def prune_cursor(state: dict) -> dict:
+    """Keep only the MAX_CURSOR_SESSIONS most-recent sessions by last_seen_ts.
+
+    Sessions with no last_seen_ts (legacy rows) sort oldest and are dropped first.
+    """
+    if len(state) <= MAX_CURSOR_SESSIONS:
+        return state
+    ordered = sorted(
+        state.items(),
+        key=lambda kv: kv[1].get("last_seen_ts", "") if isinstance(kv[1], dict) else "",
+        reverse=True,
+    )
+    return dict(ordered[:MAX_CURSOR_SESSIONS])
+
+
 def save_cursor(state: dict) -> None:
     try:
-        CURSOR_FILE.write_text(json.dumps(state, indent=2), encoding="utf-8")
+        state = prune_cursor(state)
+        # Atomic: temp write + rename so a crash can't leave a half-written cursor
+        # (which load_cursor would silently reset, losing every session's position).
+        tmp = CURSOR_FILE.with_suffix(CURSOR_FILE.suffix + ".tmp")
+        tmp.write_text(json.dumps(state, indent=2), encoding="utf-8")
+        os.replace(tmp, CURSOR_FILE)
     except Exception:
         pass
 
