@@ -30,6 +30,11 @@ import sys
 from datetime import date
 from pathlib import Path
 
+# Stages a row may be archived under. Must stay in sync with
+# todo_write.py TERMINAL_STAGES, which exact-matches these in ## Archived —
+# a row archived under anything else is invisible to every terminal consumer.
+ARCHIVABLE_STAGES = {"Withdrawn", "Rejected", "Accepted"}
+
 PIPELINE_FILE   = "data/job-pipeline.md"
 PIPELINE_HEADER = "| Company | Role | Stage | Date Updated | Next Action | CV Used | Notes | URL |"
 PIPELINE_SEP    = "| --- | --- | --- | --- | --- | --- | --- | --- |"
@@ -364,17 +369,27 @@ def cmd_remove(args, pipeline_path: Path, dry_run: bool) -> None:
             column_count=len(cols),
         )
 
+    stage = getattr(args, "stage", "Withdrawn") or "Withdrawn"
+    if stage not in ARCHIVABLE_STAGES:
+        out_error(
+            f"--stage must be one of {sorted(ARCHIVABLE_STAGES)}, got {stage!r}. "
+            f"todo_write.py sync exact-matches these in ## Archived; a row "
+            f"archived under any other stage is invisible to it.",
+            "invalid_stage",
+            stage=stage,
+        )
+
     existing_notes = cols[6] if len(cols) > 6 else "—"
     new_notes = (
-        f"{existing_notes} - Withdrawn {today}"
+        f"{existing_notes} - {stage} {today}"
         if existing_notes not in ("—", "", "–")
-        else f"Withdrawn {today}"
+        else f"{stage} {today}"
     )
 
     archived_row = fmt_row(
         cols[0],
         cols[1] if len(cols) > 1 else "—",
-        "Withdrawn",
+        stage,
         cols[3] if len(cols) > 3 else today,
         cols[4] if len(cols) > 4 else "—",
         cols[5] if len(cols) > 5 else "—",
@@ -399,8 +414,8 @@ def cmd_remove(args, pipeline_path: Path, dry_run: bool) -> None:
 
     save_lines(pipeline_path, lines, content)
 
-    out_ok("soft_delete", f"Archived: {args.company}",
-           company=args.company)
+    out_ok("soft_delete", f"Archived: {args.company} → {stage}",
+           company=args.company, stage=stage)
 
 
 # ---------------------------------------------------------------------------
@@ -439,6 +454,15 @@ def parse_args():
     rem_p = sub.add_parser("remove")
     rem_p.add_argument("company")
     rem_p.add_argument("--role", default=None)
+    rem_p.add_argument(
+        # Validated in cmd_remove, not by argparse `choices`, so an invalid
+        # stage returns the tool's JSON error contract instead of argparse's
+        # exit-2 plain text.
+        "--stage", default="Withdrawn",
+        help="Terminal stage to archive under. Default Withdrawn. Use Rejected "
+             "when the company passed, Accepted when an offer was taken — "
+             "archiving a rejection as a withdrawal inverts the fact.",
+    )
 
     return p.parse_args()
 

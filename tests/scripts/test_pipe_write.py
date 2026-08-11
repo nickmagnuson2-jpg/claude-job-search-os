@@ -245,6 +245,59 @@ def test_remove_moves_to_archived(tmp_path):
     assert "Withdrawn" in archived_cols[6]  # date appended to notes
 
 
+def test_remove_stage_records_the_real_terminal_outcome(tmp_path):
+    """--stage lets the archived row say what actually happened.
+
+    Default is Withdrawn, but a loop that ended because the company passed is a
+    Rejected, not a Withdrawn. Recording it as Withdrawn inverts the fact and
+    corrupts any conversion math computed off this file.
+    """
+    write_fixture(tmp_path, "data/job-pipeline.md", PIPELINE_WITH_ROW)
+    result, code = run_pipe_write(
+        "--repo-root", str(tmp_path), "remove", "Acme Corp", "--stage", "Rejected"
+    )
+    assert code == 0
+    assert result["status"] == "ok"
+
+    content = (tmp_path / "data/job-pipeline.md").read_text(encoding="utf-8")
+    lines = content.splitlines()
+    archived_start = next(i for i, l in enumerate(lines) if l.strip() == "## Archived")
+    row = next(l for l in lines[archived_start:] if l.startswith("| Acme Corp |"))
+    cols = [c.strip() for c in row.strip("|").split("|")]
+
+    assert cols[2] == "Rejected"
+    assert "Rejected" in cols[6]        # notes stamp matches the stage
+    assert "Withdrawn" not in cols[6]   # and does not contradict it
+
+
+def test_remove_stage_defaults_to_withdrawn(tmp_path):
+    """Existing callers that pass no --stage must behave exactly as before."""
+    write_fixture(tmp_path, "data/job-pipeline.md", PIPELINE_WITH_ROW)
+    result, code = run_pipe_write("--repo-root", str(tmp_path), "remove", "Acme Corp")
+    assert code == 0
+
+    content = (tmp_path / "data/job-pipeline.md").read_text(encoding="utf-8")
+    lines = content.splitlines()
+    archived_start = next(i for i, l in enumerate(lines) if l.strip() == "## Archived")
+    row = next(l for l in lines[archived_start:] if l.startswith("| Acme Corp |"))
+    cols = [c.strip() for c in row.strip("|").split("|")]
+    assert cols[2] == "Withdrawn"
+
+
+def test_remove_rejects_a_non_terminal_stage(tmp_path):
+    """--stage must not be able to archive a row under a live-sounding stage.
+
+    todo_write.py sync only recognises Withdrawn/Rejected/Accepted in Archived;
+    anything else would sit there invisible to every terminal-stage consumer.
+    """
+    write_fixture(tmp_path, "data/job-pipeline.md", PIPELINE_WITH_ROW)
+    result, code = run_pipe_write(
+        "--repo-root", str(tmp_path), "remove", "Acme Corp", "--stage", "Onsite"
+    )
+    assert code != 0
+    assert result["status"] == "error"
+
+
 def test_remove_creates_archived_section_if_missing(tmp_path):
     """If ## Archived section is absent, remove creates it and places row there."""
     write_fixture(tmp_path, "data/job-pipeline.md", PIPELINE_NO_ARCHIVED)
