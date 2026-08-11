@@ -483,6 +483,75 @@ def _append_entry(path: Path, key: str, row: dict) -> None:
     write_atomic(path, "\n".join(lines) + "\n")
 
 
+def _target_names(doc: dict) -> set:
+    out = set()
+    for key in ("companies", "rejected"):
+        for c in (doc.get(key) or []):
+            if isinstance(c, dict) and c.get("name"):
+                out.add(str(c["name"]).strip().lower())
+    return out
+
+
+def _comment_count(text: str) -> int:
+    return sum(1 for line in text.splitlines() if "#" in line)
+
+
+def _write_validated(path: Path, key: str, row: dict, label: str) -> None:
+    """Append an entry, then VERIFY the result and roll back if it is wrong.
+
+    The writer appends raw text rather than re-serialising, which is what keeps
+    hand-written comments alive. Nothing checked the file afterwards, so a
+    malformed append would have landed silently on a file this tool had just
+    written 44 entries into.
+
+    Three post-conditions, each tied to a real failure already seen here:
+      1. The document still parses            (a bad render corrupts the file)
+      2. Comment count did not drop           (the yaml.safe_dump bug, 14 lost)
+      3. Every pre-existing name is still present, plus the new one
+         (a clobbering writer instead of an appending one)
+
+    On any failure the pre-write bytes are restored and the command aborts.
+    """
+    import yaml
+
+    before_text = read_file(path) if path.exists() else ""
+    before_doc = _load_targets_doc(path)
+    before_names = _target_names(before_doc)
+    before_comments = _comment_count(before_text)
+
+    _append_entry(path, key, row)
+
+    after_text = read_file(path)
+    failure = None
+    try:
+        after_doc = yaml.safe_load(after_text) or {}
+    except yaml.YAMLError as e:
+        after_doc, failure = None, f"result is not valid YAML: {e}"
+
+    if failure is None:
+        if _comment_count(after_text) < before_comments:
+            failure = (f"comment lines dropped from {before_comments} to "
+                       f"{_comment_count(after_text)}")
+        else:
+            after_names = _target_names(after_doc)
+            lost = before_names - after_names
+            if lost:
+                failure = f"pre-existing entries disappeared: {sorted(lost)}"
+            elif str(row.get("name", "")).strip().lower() not in after_names:
+                failure = f"the appended entry {row.get('name')!r} is not readable back"
+
+    if failure:
+        if before_text:
+            write_atomic(path, before_text)
+        else:
+            path.unlink(missing_ok=True)
+        out_error(
+            f"{label} aborted and rolled back: {failure}. Offending entry: "
+            f"{json.dumps(row, ensure_ascii=False)}",
+            "write_validation_failed", entry=row, reason=failure,
+        )
+
+
 def _target_exists(doc: dict, name: str) -> bool:
     """True if `name` already appears under companies: or rejected:.
 
@@ -530,7 +599,7 @@ def cmd_target_add(args, targets_path: Path, dry_run: bool) -> None:
     if args.notes:
         row["notes"] = args.notes
 
-    _append_entry(targets_path, "companies", row)
+    _write_validated(targets_path, "companies", row, "target-add")
     out_ok("target-add", f"Added target: {args.company}",
            company=args.company, added=True, outreach=row["outreach"],
            lane=row.get("lane"))
@@ -560,7 +629,7 @@ def cmd_target_reject(args, targets_path: Path, dry_run: bool) -> None:
     if args.lane:
         row["lane"] = args.lane
 
-    _append_entry(targets_path, "rejected", row)
+    _write_validated(targets_path, "rejected", row, "target-reject")
     out_ok("target-reject", f"Recorded rejection: {args.company}",
            company=args.company, added=True, reason=args.reason)
 

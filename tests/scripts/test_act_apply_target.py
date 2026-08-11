@@ -55,6 +55,27 @@ def _load(p):
     return yaml.safe_load(p.read_text(encoding="utf-8")) or {}
 
 
+def _run_inproc(mod, tmp_path, *args):
+    """Run act_apply.main() in-process so internals can be monkeypatched.
+
+    Returns the exit code. A subprocess cannot be patched, and these tests need
+    to simulate a writer that corrupts the file.
+    """
+    import contextlib
+    import io
+    argv = ["act_apply.py", "--repo-root", str(tmp_path), *[str(a) for a in args]]
+    old_argv = sys.argv
+    sys.argv = argv
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            mod.main()
+        return 0
+    except SystemExit as e:
+        return e.code or 0
+    finally:
+        sys.argv = old_argv
+
+
 def test_target_add_writes_an_outreach_only_row(tmp_path):
     p = _write(tmp_path)
     res, code = _run(tmp_path, "target-add", "Solea AI",
@@ -199,6 +220,76 @@ def test_add_then_reject_then_add_keeps_file_valid(tmp_path):
     names = [c["name"] for c in doc["companies"]]
     assert names == ["Existing Co", "A Co", "C Co"]
     assert [c["name"] for c in doc["rejected"]] == ["B Co"]
+    assert "# Career page scan targets" in p.read_text(encoding="utf-8")
+
+
+def test_write_is_validated_and_rolled_back_on_corruption(tmp_path, monkeypatch):
+    """A text-level append must verify its own result, not assume it.
+
+    The writer appends raw lines rather than re-serialising, which is what
+    preserves comments. Nothing verified the file afterwards, so a malformed
+    append would land silently. Simulated here by forcing the rendered entry to
+    be invalid YAML.
+    """
+    p = _write(tmp_path, COMMENTED_CONFIG)
+    before = p.read_text(encoding="utf-8")
+
+    sys.path.insert(0, str(TOOLS))
+    import act_apply
+
+    monkeypatch.setattr(act_apply, "_render_entry",
+                        lambda row, indent="  ": "  - name: [unclosed")
+    rc = _run_inproc(act_apply, tmp_path, "target-add", "Bad Co",
+                     "--lane", "b", "--outreach")
+    assert rc != 0
+    assert p.read_text(encoding="utf-8") == before, "file was not rolled back"
+
+
+def test_validation_catches_a_dropped_preexisting_entry(tmp_path, monkeypatch):
+    """The check that matters most: an append that loses existing content."""
+    p = _write(tmp_path, COMMENTED_CONFIG)
+    before = p.read_text(encoding="utf-8")
+
+    sys.path.insert(0, str(TOOLS))
+    import act_apply
+
+    # Simulate a writer that clobbers the file instead of appending.
+    def clobber(path, key, row):
+        path.write_text("companies:\n  - name: Only Me\n", encoding="utf-8")
+
+    monkeypatch.setattr(act_apply, "_append_entry", clobber)
+    rc = _run_inproc(act_apply, tmp_path, "target-add", "New Co",
+                     "--lane", "b", "--outreach")
+    assert rc != 0
+    assert p.read_text(encoding="utf-8") == before
+
+
+def test_validation_catches_comment_loss(tmp_path, monkeypatch):
+    """Regression guard for the exact bug that wiped 14 comments."""
+    p = _write(tmp_path, COMMENTED_CONFIG)
+    before = p.read_text(encoding="utf-8")
+
+    sys.path.insert(0, str(TOOLS))
+    import act_apply, yaml as _y
+
+    def reserialise(path, key, row):
+        doc = _y.safe_load(path.read_text(encoding="utf-8")) or {}
+        doc.setdefault(key, []).append(row)
+        path.write_text(_y.safe_dump(doc, sort_keys=False), encoding="utf-8")
+
+    monkeypatch.setattr(act_apply, "_append_entry", reserialise)
+    rc = _run_inproc(act_apply, tmp_path, "target-add", "New Co",
+                     "--lane", "b", "--outreach")
+    assert rc != 0, "re-serialisation dropped comments and was not caught"
+    assert p.read_text(encoding="utf-8") == before
+
+
+def test_valid_write_still_succeeds(tmp_path):
+    """Control: validation must not reject correct writes."""
+    p = _write(tmp_path, COMMENTED_CONFIG)
+    res, code = _run(tmp_path, "target-add", "Good Co", "--lane", "b", "--outreach")
+    assert code == 0 and res["status"] == "ok"
+    assert "Good Co" in [c["name"] for c in _load(p)["companies"]]
     assert "# Career page scan targets" in p.read_text(encoding="utf-8")
 
 
