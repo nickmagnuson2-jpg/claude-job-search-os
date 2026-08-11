@@ -290,6 +290,16 @@ def cmd_add(args, networking_path: Path, dry_run: bool) -> None:
     company   = args.company      if args.company      else "—"
     role      = args.role         if args.role         else "—"
     rel       = args.relationship if args.relationship else "peer"
+    email     = (args.email or "").strip()
+    if email:
+        # A pipe would split the markdown row and silently shift every later
+        # column; a missing @ is almost always a typo worth failing loudly on.
+        if "|" in email or "@" not in email:
+            out_error(f"invalid email {email!r}: must contain '@' and must not "
+                      f"contain '|' (a pipe breaks the table row)",
+                      "invalid_email")
+    else:
+        email = "—"
 
     stub_heading = (
         f"### {args.name} — {company}"
@@ -344,7 +354,7 @@ def cmd_add(args, networking_path: Path, dry_run: bool) -> None:
             )
 
     if dry_run:
-        row = fmt_contact_row(args.name, company, role, rel, today, "—")
+        row = fmt_contact_row(args.name, company, role, rel, today, "—", email)
         out_ok("add", f"Would add contact: {args.name}",
                dry_run=True,
                would_mutate=[{"file": str(networking_path), "row": row}])
@@ -364,7 +374,7 @@ def cmd_add(args, networking_path: Path, dry_run: bool) -> None:
         contacts_start = len(lines) - 3
         contacts_end   = len(lines)
 
-    row = fmt_contact_row(args.name, company, role, rel, today, "—")
+    row = fmt_contact_row(args.name, company, role, rel, today, "—", email)
     pos = table_insert_pos(lines, contacts_start, contacts_end)
     lines.insert(pos, row)
 
@@ -566,6 +576,10 @@ def parse_args():
     add_p.add_argument("--company",      default=None)
     add_p.add_argument("--role",         default=None)
     add_p.add_argument("--relationship", default=None)
+    add_p.add_argument("--email",        default=None,
+                       help="Contact email. The Email column already exists in the "
+                            "schema; without this flag it could only ever be filled "
+                            "by hand.")
     add_p.add_argument("--force", action="store_true",
                        help="Add even if a fuzzy name match to an existing contact is found.")
 

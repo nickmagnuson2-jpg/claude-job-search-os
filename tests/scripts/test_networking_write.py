@@ -396,3 +396,58 @@ def test_no_reply_flip_flag_suppresses(tmp_path):
     assert result["outreach_log_updated"] is False
     log = (tmp_path / "data/outreach-log.md").read_text(encoding="utf-8")
     assert "| Sent |" in log
+
+
+# ---------------------------------------------------------------------------
+# --email on `add`
+# ---------------------------------------------------------------------------
+
+def test_add_records_email_when_given(tmp_path):
+    """The Email column already exists in the schema and fmt_contact_row already
+    accepts it; before this flag there was no way to populate it from the CLI, so
+    every contact added programmatically had a permanently empty Email cell."""
+    write_fixture(tmp_path, "data/networking.md", NETWORKING_EMPTY)
+    result, code = run_nw_write(
+        "--repo-root", str(tmp_path),
+        "add", "Alice Smith",
+        "--company", "Beta Inc",
+        "--email", "alice@example.com",
+    )
+    assert code == 0 and result["status"] == "ok"
+
+    content = (tmp_path / "data/networking.md").read_text(encoding="utf-8")
+    row = next(l for l in content.splitlines() if l.startswith("| Alice Smith |"))
+    cols = [c.strip() for c in row.strip("|").split("|")]
+    assert cols[6] == "alice@example.com"
+
+
+def test_add_without_email_keeps_placeholder(tmp_path):
+    """Existing callers must be unaffected."""
+    write_fixture(tmp_path, "data/networking.md", NETWORKING_EMPTY)
+    run_nw_write("--repo-root", str(tmp_path), "add", "Bob Jones", "--company", "Gamma")
+    content = (tmp_path / "data/networking.md").read_text(encoding="utf-8")
+    row = next(l for l in content.splitlines() if l.startswith("| Bob Jones |"))
+    cols = [c.strip() for c in row.strip("|").split("|")]
+    assert cols[6] == "—"
+
+
+def test_add_email_survives_a_dry_run_without_writing(tmp_path):
+    write_fixture(tmp_path, "data/networking.md", NETWORKING_EMPTY)
+    before = (tmp_path / "data/networking.md").read_text(encoding="utf-8")
+    result, code = run_nw_write(
+        "--repo-root", str(tmp_path), "--dry-run",
+        "add", "Carol Lee", "--email", "carol@example.com",
+    )
+    assert code == 0
+    assert (tmp_path / "data/networking.md").read_text(encoding="utf-8") == before
+    assert "carol@example.com" in json.dumps(result)
+
+
+def test_add_rejects_a_malformed_email(tmp_path):
+    """A pipe would break the table row; a missing @ is almost always a typo."""
+    write_fixture(tmp_path, "data/networking.md", NETWORKING_EMPTY)
+    result, code = run_nw_write(
+        "--repo-root", str(tmp_path), "add", "Dave Kim", "--email", "not-an-email",
+    )
+    assert code != 0
+    assert result["status"] == "error"
