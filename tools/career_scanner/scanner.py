@@ -26,9 +26,18 @@ import inbox_lock
 
 
 def load_targets(repo_root: Path) -> list[dict]:
-    """Load active targets from scan-targets.yaml.
+    """Load active, scannable targets from scan-targets.yaml.
 
-    Returns list of company config dicts with active=True (or active not set).
+    Returns company config dicts that are both active=True (or active not set)
+    AND scannable — meaning they declare an `ats`. Entries without one are
+    outreach-only targets (seed-stage companies with no job board); they live in
+    the same file so the discovery collector dedups against them, but there is
+    nothing for the nightly career scan to fetch.
+
+    The `ats` check is load-bearing, not cosmetic: fetch_company_roles defaults a
+    missing `ats` to "generic", finds no careers_url, and warns on stderr. Left
+    unfiltered that fires once per outreach target on every nightly run.
+
     Returns empty list if config file is missing.
     """
     config_path = repo_root / "data" / "scan-targets.yaml"
@@ -39,7 +48,10 @@ def load_targets(repo_root: Path) -> list[dict]:
         data = yaml.safe_load(f)
     if not data or not isinstance(data.get("companies"), list):
         return []
-    return [c for c in data["companies"] if c.get("active", True)]
+    return [
+        c for c in data["companies"]
+        if c.get("active", True) and c.get("ats")
+    ]
 
 
 def fetch_company_roles(target: dict) -> list[dict]:

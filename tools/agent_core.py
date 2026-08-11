@@ -96,9 +96,14 @@ def load_known_names(paths):
                 data = yaml.safe_load(text) or {}
             except yaml.YAMLError:
                 continue
-            for c in (data.get("companies") or []):
-                if isinstance(c, dict) and c.get("name"):
-                    known.add(_norm_name(c["name"]))
+            # `rejected:` counts as known on purpose. A company Nick looked at
+            # and turned down is in neither `companies:` nor the per-preset
+            # seen-set, so without this the collector re-proposes it to the
+            # inbox every week, forever.
+            for key in ("companies", "rejected"):
+                for c in (data.get(key) or []):
+                    if isinstance(c, dict) and c.get("name"):
+                        known.add(_norm_name(c["name"]))
         else:
             for line in text.splitlines():
                 if line.strip().startswith("|"):

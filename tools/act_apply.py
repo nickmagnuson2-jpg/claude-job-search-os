@@ -421,6 +421,150 @@ def cmd_company_note_add(args, repo_root: Path, dry_run: bool) -> None:
 # Entry point
 # ---------------------------------------------------------------------------
 
+def _load_targets_doc(path: Path) -> dict:
+    """Read scan-targets.yaml as a dict, tolerating a missing/empty file."""
+    import yaml
+    if not path.exists():
+        return {}
+    try:
+        return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except yaml.YAMLError as e:
+        out_error(f"scan-targets.yaml is not valid YAML: {e}", "invalid_yaml")
+
+
+def _render_entry(row: dict, indent: str = "  ") -> str:
+    """Serialise one list entry as YAML text, indented for nesting under a key.
+
+    Dumped as a one-item list so PyYAML handles quoting/escaping, then re-indented.
+    """
+    import yaml
+    body = yaml.safe_dump([row], sort_keys=False, allow_unicode=True,
+                          default_flow_style=False).rstrip("\n")
+    return "\n".join(indent + line for line in body.splitlines())
+
+
+def _append_entry(path: Path, key: str, row: dict) -> None:
+    """Append an entry under a top-level list key, editing the file as TEXT.
+
+    Never re-serialises the whole document. scan-targets.yaml is hand-maintained
+    and carries comments that document how to find ATS slugs and why individual
+    targets are disabled; yaml.safe_dump silently strips every one of them.
+    Round-tripping via ruamel would also work but is not a dependency here.
+
+    Layout invariant: `companies:` comes first, `rejected:` (if present) last, so
+    a companies entry is inserted just before `rejected:` and a rejected entry is
+    appended at EOF.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    text = read_file(path) if path.exists() else ""
+    lines = text.splitlines()
+    block = _render_entry(row).splitlines()
+
+    key_idx = next((i for i, l in enumerate(lines)
+                    if re.match(rf"^{re.escape(key)}\s*:", l)), -1)
+    if key_idx == -1:
+        # Key absent — create it at EOF.
+        if lines and lines[-1].strip():
+            lines.append("")
+        lines.append(f"{key}:")
+        lines.extend(block)
+    else:
+        # End of this key's block = next top-level key, or EOF.
+        end = len(lines)
+        for i in range(key_idx + 1, len(lines)):
+            if lines[i] and not lines[i][0].isspace() and not lines[i].startswith("#"):
+                end = i
+                break
+        # Back off trailing blank lines so the entry lands inside the block.
+        while end > key_idx + 1 and not lines[end - 1].strip():
+            end -= 1
+        lines[end:end] = block
+
+    write_atomic(path, "\n".join(lines) + "\n")
+
+
+def _target_exists(doc: dict, name: str) -> bool:
+    """True if `name` already appears under companies: or rejected:.
+
+    Checked across BOTH keys so a triage pass cannot add a company to the target
+    list that was previously rejected, or re-reject one already targeted.
+    """
+    want = name.strip().lower()
+    for key in ("companies", "rejected"):
+        for c in (doc.get(key) or []):
+            if isinstance(c, dict) and str(c.get("name", "")).strip().lower() == want:
+                return True
+    return False
+
+
+def cmd_target_add(args, targets_path: Path, dry_run: bool) -> None:
+    """Add a company to data/scan-targets.yaml.
+
+    `ats` is optional. Omitting it makes an outreach-only target: the nightly
+    career scan skips it (nothing to fetch) but the discovery collector still
+    dedups against it. See tools/career_scanner/scanner.py load_targets.
+    """
+    if dry_run:
+        out_ok("target-add", f"Would add target: {args.company}",
+               dry_run=True, would_mutate=[{"file": str(targets_path)}])
+        return
+
+    doc = _load_targets_doc(targets_path)
+    if _target_exists(doc, args.company):
+        out_ok("target-add", f"Already known, no change: {args.company}",
+               company=args.company, added=False)
+        return
+
+    row: dict = {"name": args.company, "active": True}
+    if args.ats:
+        row["ats"] = args.ats
+        if args.slug:
+            row["slug"] = args.slug
+    if args.careers_url:
+        row["careers_url"] = args.careers_url
+    if args.lane:
+        row["lane"] = args.lane
+    row["outreach"] = bool(args.outreach)
+    if args.role_filters:
+        row["role_filters"] = [f.strip() for f in args.role_filters.split(",") if f.strip()]
+    if args.notes:
+        row["notes"] = args.notes
+
+    _append_entry(targets_path, "companies", row)
+    out_ok("target-add", f"Added target: {args.company}",
+           company=args.company, added=True, outreach=row["outreach"],
+           lane=row.get("lane"))
+
+
+def cmd_target_reject(args, targets_path: Path, dry_run: bool) -> None:
+    """Record a company as reviewed-and-declined.
+
+    Recorded rather than discarded on purpose: agent_core.load_known_names reads
+    `rejected:` as known, so the weekly collector stops re-proposing it. A
+    discarded rejection returns to the inbox every week forever.
+    """
+    if dry_run:
+        out_ok("target-reject", f"Would reject: {args.company}",
+               dry_run=True, would_mutate=[{"file": str(targets_path)}])
+        return
+
+    doc = _load_targets_doc(targets_path)
+    if _target_exists(doc, args.company):
+        out_ok("target-reject", f"Already known, no change: {args.company}",
+               company=args.company, added=False)
+        return
+
+    row = {"name": args.company, "date": date.today().strftime("%Y-%m-%d")}
+    if args.reason:
+        row["reason"] = args.reason
+    if args.lane:
+        row["lane"] = args.lane
+
+    _append_entry(targets_path, "rejected", row)
+    out_ok("target-reject", f"Recorded rejection: {args.company}",
+           company=args.company, added=True, reason=args.reason)
+
+
 def parse_args():
     # --repo-root/--dry-run MUST be given BEFORE the subcommand (this is a
     # top-level-only optional; argparse does not recognize it after a
@@ -465,6 +609,26 @@ def parse_args():
     na.add_argument("--company-slug", dest="company_slug", default=None)
     na.add_argument("--source-file",  dest="source_file",  default=None)
 
+    ta = sub.add_parser("target-add")
+    ta.add_argument("company")
+    ta.add_argument("--lane",         default=None,
+                    help="Free-form lane label, e.g. 'lane-b v5'.")
+    ta.add_argument("--outreach",     action="store_true",
+                    help="Mark as an outreach target.")
+    ta.add_argument("--ats",          default=None,
+                    help="greenhouse|lever|ashby|generic. Omit for outreach-only "
+                         "targets with no job board — the nightly scan skips them.")
+    ta.add_argument("--slug",         default=None)
+    ta.add_argument("--careers-url",  dest="careers_url", default=None)
+    ta.add_argument("--role-filters", dest="role_filters", default=None,
+                    help="Comma-separated role filters.")
+    ta.add_argument("--notes",        default=None)
+
+    tr = sub.add_parser("target-reject")
+    tr.add_argument("company")
+    tr.add_argument("--reason", default=None)
+    tr.add_argument("--lane",   default=None)
+
     cna = sub.add_parser("company-note-add")
     cna.add_argument("slug")
     cna.add_argument("--content",     required=True)
@@ -477,11 +641,13 @@ def parse_args():
 def main() -> None:
     args = parse_args()
     if not args.command:
-        out_error("Usage: act_apply.py <pipeline-add|contact-add|notes-add|company-note-add> [args...]")
+        out_error("Usage: act_apply.py <pipeline-add|contact-add|notes-add|"
+                  "company-note-add|target-add|target-reject> [args...]")
 
     repo_root       = Path(args.repo_root) if args.repo_root else Path.cwd()
     pipeline_path   = repo_root / PIPELINE_FILE
     networking_path = repo_root / NETWORKING_FILE
+    targets_path    = repo_root / "data" / "scan-targets.yaml"
 
     if args.command == "pipeline-add":
         cmd_pipeline_add(args, pipeline_path, args.dry_run)
@@ -491,6 +657,10 @@ def main() -> None:
         cmd_notes_add(args, repo_root, args.dry_run)
     elif args.command == "company-note-add":
         cmd_company_note_add(args, repo_root, args.dry_run)
+    elif args.command == "target-add":
+        cmd_target_add(args, targets_path, args.dry_run)
+    elif args.command == "target-reject":
+        cmd_target_reject(args, targets_path, args.dry_run)
     else:
         out_error(f"Unknown command: {args.command}")
 
