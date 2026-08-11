@@ -491,6 +491,23 @@ def cmd_sync(todos_path: Path, pipeline_path: Path) -> None:
         out_ok("sync", "Archived pipeline is empty — nothing to sync", withdrawn=0)
         return
 
+    # Companies with a LIVE (non-terminal) row in Active Pipeline are never terminal,
+    # even if a stale Archived row says otherwise. A company can legitimately appear
+    # in both sections (an old withdrawn application plus a current live loop); the
+    # live row wins. Origin: 2026-08-08, a stale duplicate row mass-withdrew 18 todos.
+    live: set[str] = set()
+    active_match = re.search(r"## Active Pipeline.*?\n(.*?)(?=\n## |\Z)",
+                             pipeline_content, re.DOTALL)
+    if active_match:
+        for line in active_match.group(1).splitlines():
+            if (not line.startswith("|")
+                    or line.startswith("| Company")
+                    or re.match(r"^\|\s*:?-+", line)):
+                continue
+            cols = parse_cols(line)
+            if len(cols) >= 3 and cols[0] and cols[2] not in TERMINAL_STAGES:
+                live.add(cols[0].lower())
+
     # Extract terminal companies from Archived section
     terminal: list[tuple[str, str]] = []
     for line in archived_match.group(1).splitlines():
@@ -500,6 +517,8 @@ def cmd_sync(todos_path: Path, pipeline_path: Path) -> None:
             continue
         cols = parse_cols(line)
         if len(cols) >= 3 and cols[0] and cols[2] in TERMINAL_STAGES:
+            if cols[0].lower() in live:
+                continue
             terminal.append((cols[0], cols[2]))
 
     if not terminal:
@@ -522,9 +541,12 @@ def cmd_sync(todos_path: Path, pipeline_path: Path) -> None:
         # Skip rows already marked terminal
         if len(cols) >= 4 and cols[3] in ("Done", "Withdrawn"):
             continue
-        full_text = " ".join(cols).lower()
+        # Match the TASK column only, on a word boundary. Matching the joined row
+        # meant a todo that merely name-dropped the company in its Notes ("reuse
+        # the Acme case format") was withdrawn along with it.
+        task_text = cols[0]
         for company, stage in terminal:
-            if company.lower() in full_text:
+            if re.search(rf"\b{re.escape(company)}\b", task_text, re.IGNORECASE):
                 to_withdraw.append((i, cols, company, stage))
                 break
 
