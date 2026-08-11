@@ -451,3 +451,108 @@ def test_add_rejects_a_malformed_email(tmp_path):
     )
     assert code != 0
     assert result["status"] == "error"
+
+
+# ---------------------------------------------------------------------------
+# `update` subcommand
+# ---------------------------------------------------------------------------
+
+NETWORKING_FOR_UPDATE = """\
+# Networking
+
+## Contacts
+
+| Name | Company | Role | Relationship | Added | Last Interaction | Email |
+| --- | --- | --- | --- | --- | --- | --- |
+| Alice Smith | Beta Inc | Director | peer | 2026-01-05 | 2026-02-01 | a@beta.com |
+| Bob Jones | Gamma LLC | VP | recruiter | 2026-01-06 | — | — |
+
+## Interaction Log
+
+### Alice Smith — Beta Inc
+
+- 2026-02-01 | email | said hello
+
+### Bob Jones — Gamma LLC
+"""
+
+
+def _row(tmp_path, name):
+    content = (tmp_path / "data/networking.md").read_text(encoding="utf-8")
+    line = next(l for l in content.splitlines() if l.startswith(f"| {name} |"))
+    return [c.strip() for c in line.strip("|").split("|")]
+
+
+def test_update_changes_only_the_named_fields(tmp_path):
+    """Before this existed, backfilling one field meant remove + re-add, which
+    left an [ARCHIVED] stub in the Interaction Log to clean up by hand."""
+    write_fixture(tmp_path, "data/networking.md", NETWORKING_FOR_UPDATE)
+    result, code = run_nw_write("--repo-root", str(tmp_path),
+                                "update", "Bob Jones", "--email", "bob@gamma.com")
+    assert code == 0 and result["status"] == "ok"
+    cols = _row(tmp_path, "Bob Jones")
+    assert cols[6] == "bob@gamma.com"
+    assert cols[1] == "Gamma LLC"      # untouched
+    assert cols[2] == "VP"             # untouched
+    assert cols[3] == "recruiter"      # untouched
+    assert cols[4] == "2026-01-06"     # Added never changes
+
+
+def test_update_leaves_other_contacts_alone(tmp_path):
+    write_fixture(tmp_path, "data/networking.md", NETWORKING_FOR_UPDATE)
+    run_nw_write("--repo-root", str(tmp_path), "update", "Bob Jones", "--role", "SVP")
+    assert _row(tmp_path, "Alice Smith") == [
+        "Alice Smith", "Beta Inc", "Director", "peer",
+        "2026-01-05", "2026-02-01", "a@beta.com"]
+
+
+def test_update_company_also_fixes_the_interaction_log_header(tmp_path):
+    """The log header embeds the company; leaving it stale silently desyncs the
+    two halves of the file."""
+    write_fixture(tmp_path, "data/networking.md", NETWORKING_FOR_UPDATE)
+    run_nw_write("--repo-root", str(tmp_path),
+                 "update", "Alice Smith", "--company", "Delta Co")
+    content = (tmp_path / "data/networking.md").read_text(encoding="utf-8")
+    assert "### Alice Smith — Delta Co" in content
+    assert "### Alice Smith — Beta Inc" not in content
+    assert "- 2026-02-01 | email | said hello" in content   # history preserved
+
+
+def test_update_unknown_contact_errors(tmp_path):
+    write_fixture(tmp_path, "data/networking.md", NETWORKING_FOR_UPDATE)
+    result, code = run_nw_write("--repo-root", str(tmp_path),
+                                "update", "Nobody Here", "--role", "X")
+    assert code != 0
+    assert result["status"] == "error"
+
+
+def test_update_with_no_fields_errors(tmp_path):
+    """A no-op update that reports ok is a silent-success bug."""
+    write_fixture(tmp_path, "data/networking.md", NETWORKING_FOR_UPDATE)
+    result, code = run_nw_write("--repo-root", str(tmp_path), "update", "Bob Jones")
+    assert code != 0
+    assert result["status"] == "error"
+
+
+def test_update_validates_email(tmp_path):
+    write_fixture(tmp_path, "data/networking.md", NETWORKING_FOR_UPDATE)
+    result, code = run_nw_write("--repo-root", str(tmp_path),
+                                "update", "Bob Jones", "--email", "nope")
+    assert code != 0 and result["status"] == "error"
+
+
+def test_update_rejects_a_pipe_in_any_field(tmp_path):
+    """A pipe splits the row and shifts every later column."""
+    write_fixture(tmp_path, "data/networking.md", NETWORKING_FOR_UPDATE)
+    result, code = run_nw_write("--repo-root", str(tmp_path),
+                                "update", "Bob Jones", "--role", "VP | Ops")
+    assert code != 0 and result["status"] == "error"
+
+
+def test_update_dry_run_writes_nothing(tmp_path):
+    write_fixture(tmp_path, "data/networking.md", NETWORKING_FOR_UPDATE)
+    before = (tmp_path / "data/networking.md").read_text(encoding="utf-8")
+    result, code = run_nw_write("--repo-root", str(tmp_path), "--dry-run",
+                                "update", "Bob Jones", "--email", "bob@gamma.com")
+    assert code == 0 and result.get("dry_run") is True
+    assert (tmp_path / "data/networking.md").read_text(encoding="utf-8") == before

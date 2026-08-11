@@ -526,6 +526,88 @@ def cmd_log(args, networking_path: Path, repo_root: Path, dry_run: bool) -> None
            outreach_log_updated=outreach_updated)
 
 
+def cmd_update(args, networking_path: Path, dry_run: bool) -> None:
+    """Update fields on an existing contact row, leaving the rest untouched.
+
+    Exists because backfilling a single field previously meant remove + re-add,
+    which archived the contact's Interaction Log section behind an "[ARCHIVED]"
+    header and created a second one, leaving residue to clean up by hand.
+
+    `Added` is never updated: it records when the contact entered the roster.
+    """
+    fields = {
+        1: ("company", args.company),
+        2: ("role", args.role),
+        3: ("relationship", args.relationship),
+        5: ("last_interaction", args.last_interaction),
+        6: ("email", args.email),
+    }
+    given = {idx: (name, val) for idx, (name, val) in fields.items() if val is not None}
+    if not given:
+        out_error(
+            "no fields given: pass at least one of --company / --role / "
+            "--relationship / --last-interaction / --email. An update that "
+            "changes nothing but reports ok is a silent no-op.",
+            "no_fields",
+        )
+
+    for idx, (fname, val) in given.items():
+        # A pipe splits the markdown row and silently shifts every later column.
+        if "|" in val:
+            out_error(f"--{fname.replace('_','-')} may not contain '|' "
+                      f"(it would break the table row): {val!r}", "invalid_field")
+    if args.email is not None and args.email.strip() and "@" not in args.email:
+        out_error(f"invalid email {args.email!r}: must contain '@'", "invalid_email")
+
+    if dry_run:
+        out_ok("update", f"Would update contact: {args.name}",
+               dry_run=True, name=args.name,
+               fields={n: v for _, (n, v) in given.items()},
+               would_mutate=[{"file": str(networking_path)}])
+        return
+
+    content, lines = load_networking(networking_path)
+
+    contacts_start, contacts_end = find_section(lines, r"^##\s+Contacts")
+    if contacts_start == -1:
+        out_error("Could not find ## Contacts section", "missing_section")
+
+    row_idx, cols = -1, None
+    for i in range(contacts_start, contacts_end):
+        if is_data_row(lines[i]):
+            c = parse_cols(lines[i])
+            if c and c[0].lower() == args.name.lower():
+                row_idx, cols = i, c
+                break
+    if row_idx == -1:
+        out_error(f"No contact found for: {args.name}", "not_found")
+
+    if len(cols) != 7:
+        out_error(f"Row for {args.name} has {len(cols)} columns, expected 7 - "
+                  f"fix the stray '|' by hand before retrying", "malformed_row",
+                  row=row_idx + 1, column_count=len(cols))
+
+    old_company = cols[1]
+    for idx, (_, val) in given.items():
+        cols[idx] = val.strip() if val.strip() else "\u2014"
+
+    lines[row_idx] = fmt_contact_row(*cols[:7])
+
+    # The Interaction Log header embeds the company. Leaving it stale silently
+    # desyncs the roster from the log.
+    if args.company is not None and args.company.strip() != old_company:
+        log_start, _ = find_contact_log_section(lines, args.name)
+        if log_start != -1:
+            new_company = args.company.strip()
+            lines[log_start] = (f"### {args.name} \u2014 {new_company}"
+                                if new_company and new_company != "\u2014"
+                                else f"### {args.name}")
+
+    save_lines(networking_path, lines, content)
+    out_ok("update", f"Updated contact: {args.name}", name=args.name,
+           fields={n: v for _, (n, v) in given.items()})
+
+
 def cmd_remove(args, networking_path: Path, dry_run: bool) -> None:
     if dry_run:
         out_ok("remove", f"Would archive contact: {args.name}",
@@ -583,6 +665,14 @@ def parse_args():
     add_p.add_argument("--force", action="store_true",
                        help="Add even if a fuzzy name match to an existing contact is found.")
 
+    upd_p = sub.add_parser("update")
+    upd_p.add_argument("name")
+    upd_p.add_argument("--company",          default=None)
+    upd_p.add_argument("--role",             default=None)
+    upd_p.add_argument("--relationship",     default=None)
+    upd_p.add_argument("--email",            default=None)
+    upd_p.add_argument("--last-interaction", dest="last_interaction", default=None)
+
     log_p = sub.add_parser("log")
     log_p.add_argument("name")
     log_p.add_argument("--date",     default=None)
@@ -613,6 +703,8 @@ def main() -> None:
 
     if args.command == "add":
         cmd_add(args, networking_path, args.dry_run)
+    elif args.command == "update":
+        cmd_update(args, networking_path, args.dry_run)
     elif args.command == "log":
         cmd_log(args, networking_path, repo_root, args.dry_run)
     elif args.command == "remove":
