@@ -5,6 +5,71 @@ Format: newest entries at the top.
 
 ---
 
+## 2026-08-12: Sleep-killed API connections, eight silently-dead launchd jobs, and a rebuilt trim guard
+
+**API errors: macOS idle-sleep, not the API.** Recurring `ECONNRESET` / "connection closed
+mid-response" traced to the machine sleeping every 60 seconds on battery *and* on AC
+(`pmset sleep 1` on both), tearing down pooled TCP connections between requests. 2,044
+sleep/wake events in one day. Raised to 15 min (battery) / 30 min (AC). Proxy, DNS, MTU,
+IPv6 and API reachability were each ruled out with evidence first.
+
+**All 8 launchd jobs were dead for ~18 hours, silently.** `EX_CONFIG` (78) is a *job setup*
+failure: launchd opens `StandardOutPath` itself, and the log files carried a
+`com.apple.provenance` xattr that denied it. The script never ran, so nothing was logged to
+explain why. Isolated by cloning the plist and changing one variable at a time — identical
+job, only the log-file identity differed. **Files created from a Claude Code Bash call
+inherit the tag**, so recreating a log reproduces the bug and `xattr -d` reports success
+without removing it. Fix: delete the log, let launchd recreate it. Logs archived, all 8
+verified exit 0 and firing on schedule.
+
+**Gmail token corruption.** `token_path.write_text()` truncates in place; a death mid-write
+(ample opportunity, given the sleeping) left an empty token and a `JSONDecodeError` on every
+later run. Now atomic via temp + `os.replace`, with a corrupt token reporting how to re-auth
+instead of a traceback.
+
+**career-scan was silently scanning nothing** for two companies: both had migrated Greenhouse
+→ Ashby and the config was never updated (one is a pipeline company with 73 open roles). A
+third target has no reachable ATS at all and was deactivated. Nothing is cached — targets are
+read fresh from `scan-targets.yaml` each run; the config had simply aged out.
+
+**`/trim-context-file` re-enabled behind a real gate.** The skill relocates sections out of
+`CLAUDE.md`, which holds every hard rule, and had been disabled since 2026-08-10 because its
+verification invoked flags that did not exist — producing an empty before-set that made the
+"any normative line missing is a hard abort" check pass vacuously. `context_file_audit.py`
+gained `--capabilities`/`--require`, `--rules`, `--emit-blocks`, `--expect-blocks`, and
+fence-aware splitting (the old splitter produced phantom sections in 32 of 113 tracked
+markdown files), each with a loud failing mode. New `tools/trim_context_gate.sh` is a
+mandatory Step 0.
+
+Built builder → tester → auditor, and **each round found a defect the previous one
+introduced**: the guard against stale blocks became a file-deleter that destroyed a folder of
+numbered user notes at exit 0 (fixed by requiring `manifest.json` as provenance — filename
+shape is a *guess* about provenance, not evidence); the guard against empty baselines left a
+*thin* baseline that missed the em-dash hard rule entirely (fixed with a structural
+bolded-bullet rule, coverage 16% → 29%). The auditor wrote its spec before reading the code,
+then mutation-tested: 15 of 18 mutants caught, and the two survivors were rule-detector
+coverage — no test asserted a *known* rule was captured, so the detector could silently
+narrow while the suite stayed green. Closed with fixtures where each keyword is the sole
+marker on its line. 184 tests.
+
+Two corrections that generalize: **byte conservation is the load-bearing guarantee, the rules
+diff is corroborating** (both sides share a detector, so a systematic omission cancels out);
+and a gate must check **exit status**, never file existence or size, because `cmd > f`
+truncates `f` before `cmd` runs.
+
+**Personal-vault path swept.** The vault root was hardcoded in 17 places across 7 public
+files, so scrubbing any one was cosmetic. Now resolved solely via `tools/vault_paths.py`
+(env var or gitignored `tools/.personal-vault.conf`). No fallback by design — the vault holds
+sealed therapy routing, so a guessed destination is worse than stopping. Accessors are
+functions, not constants, so an unconfigured vault fails at *use* rather than making the
+module unimportable. Regression test greps tracked public files and fails if the root returns.
+
+**Doc drift corrected:** `agent-discover-collect` was documented at $0.05/run from a two-preset
+measurement; a third preset was added and lane-b costs 4x the others, so it is $0.15 (~$7.80/yr).
+Skill count 35 → 38. An external system's codename removed from two `Origin:` notes.
+
+---
+
 ## 2026-08-10: Public-repo privacy hardening, portable hook paths, and a silent-failure test suite
 
 **Privacy.** A full `/audit-pii` pass (deterministic denylist scan + four independent semantic reviewers over 63 changed public files) surfaced leaks the denylist structurally could not catch.

@@ -87,7 +87,7 @@ data/              Owner data (profile.md, goals.md, professional-identity.md gi
   ├─ project-background/   Sensitive — never in output
   ├─ reflections/          Snapshots of Nick's processing (date-prefixed)
   └─ workbooks/            Reusable frameworks (no date prefix)
-.claude/skills/    35 slash-command skill definitions
+.claude/skills/    38 slash-command skill definitions
 memory/            MEMORY.md (auto-loaded router + Critical Context), index-<topic>.md shards (7), lessons.md, archives
 tools/             Python scripts (PDF, preprocessing, atomic writes, launchd schedules)
 output/            Generated outputs — company-first hierarchy
@@ -246,6 +246,9 @@ Python 3.10+ (several `tools/*.py` use PEP 604 `X | None` annotations evaluated 
 | `inbox_lock.py` | Advisory lock around `data/inbox.md` so concurrent writers (launchd collectors + interactive skills) cannot interleave a partial block. |
 | `ledger_diff.py` | Diffs a meeting's commitment ledger against the prior call: what was kept, dropped, or newly promised. Consumed by `/meeting`. |
 | `hook_trace.py` | Shared rotating trace-log writer for the auto-capture hooks (`log_tool_failure.py`, `scan_transcript_failures.py`). Caps `tools/.hook-trace.log` at 256KB + one rotated generation. Library, not an entry point. |
+| `vault_paths.py` | The ONLY place the personal-vault root resolves (env `PERSONAL_VAULT_ROOT` or gitignored `tools/.personal-vault.conf`) + named accessors (therapy dir, personal inbox, voice corpus, todos, living logs). Never hardcode the root; a regression test fails the build if it reappears in a tracked public file. Unconfigured raises `VaultRootMissing` — no fallback, since the vault holds sealed material. Library, not an entry point. |
+| `context_file_audit.py` | Measures an always-loaded context file section by section (bytes, rule/lookup density, advisory KEEP/MOVE) and backs `/trim-context-file`. Exit codes are the contract: 4 = zero rules (refuses an empty baseline), 5 = zero blocks, 6 = unsafe output dir, 7 = block count != `--expect-blocks`. Fence-aware splitting; `--emit-blocks` writes verbatim per-section blocks + a sha256 manifest. |
+| `trim_context_gate.sh` | Step 0 gate for `/trim-context-file`. Exercises `--rules`/`--emit-blocks` on the real target and independently re-derives byte conservation from the source. Gates on exit status and parsed content, never on file existence or size (`cmd > f` truncates before `cmd` runs). |
 | `calibration_review.py` | Reviews logged prediction-vs-outcome pairs from `data/calibration/` (gitignored). |
 | `backup-data.sh` | Nightly private-data backup driver, run by `/checkout`. **Reads the private remote + overlay git-dir from the gitignored `tools/.private-backup.conf`** — the public repo never names them. Missing config is a hard failure, never a silent skip. |
 
