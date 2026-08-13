@@ -2,37 +2,61 @@
 name: trim-context-file
 description: Shrink an always-loaded context file (CLAUDE.md, MEMORY.md, a large SKILL.md) by moving reference-shaped sections out to on-demand docs and leaving a router pointer behind. Measures first, proposes KEEP/MOVE per section, never deletes, never acts without approval.
 argument-hint: <path> (defaults to CLAUDE.md)
-user-invocable: false  # DISABLED 2026-08-10 — see Safety gate below. Do not flip to true until the capability probe passes.
-allowed-tools: Bash(PYTHONIOENCODING=utf-8 python3 tools/context_file_audit.py:*), Bash(grep:*), Bash(wc:*), Bash(ls:*), Read(*), Write(*), Edit(*)
+user-invocable: true  # RE-ENABLED 2026-08-11 after the capabilities landed and were mutation-verified. See Step 0.
+allowed-tools: Bash(bash tools/trim_context_gate.sh:*), Bash(PYTHONIOENCODING=utf-8 python3 tools/context_file_audit.py:*), Bash(grep:*), Bash(wc:*), Bash(ls:*), Read(*), Write(*), Edit(*)
 ---
 
 # Trim Context File
 
-## ⛔ SAFETY GATE — this skill is DISABLED
+## Step 0 — CAPABILITY + BASELINE GATE (mandatory, never skipped)
 
-**Do not run this skill until `tools/context_file_audit.py` advertises `--rules`,
-`--emit-blocks`, and fence-aware section splitting, verified by exit code from a
-`--capabilities` probe — not by reading help text.**
+**Run this before touching the target file. If it aborts, stop — do not edit anything.**
 
-Why, found by adversarial review 2026-08-10 before first use: the verification steps
-below invoke script flags **that do not exist yet**. `--rules --json > rules_before.json`
-writes a **zero-byte file**; the Step 5 check "any normative line present before and
-absent after is a hard abort" then iterates an empty before-set, finds zero missing
-lines, and reports **PASS**. Identically, `--emit-blocks` errors out leaving no blocks,
-so the per-block `diff` loop iterates zero blocks and also reports PASS.
+```bash
+bash tools/trim_context_gate.sh <target> [approved_block_count]
+```
 
-Both guards **fail open, silently**, while destinations exist, pointers resolve, and
-line accounting balances — so the run looks clean. This is exactly the failure class
-this repo has documented twice (a check that passes because its input mirrors the
-defect), applied to the file that holds every hard rule.
+It exits 0 only when all of the following hold, each exercised against the real target:
+`--rules` returns a non-empty baseline (`rule_count > 0`), `--emit-blocks` emits blocks
+whose concatenation reproduces the source **byte for byte**, every manifest sha256
+re-derives against the *source* bytes, byte accounting balances, and — when you pass an
+approved count — the emitted block count matches it exactly. It prints the baseline and
+block paths to hand to Step 5.
 
-**A guard with no failing mode is the same bug wearing a safety vest.** Empty artifacts
-must be a hard abort, never a pass: `rules_before.json` must be non-empty with a rule
-count > 0, and the emitted block count must equal the approved block count exactly,
-both checked *before* any edit.
+**Byte conservation is the load-bearing guarantee. The rules diff is corroborating
+only — never invert that.** `--rules` is a keyword+structural *sample*, not a cover
+(71 of 240 non-blank lines on CLAUDE.md), and before/after are parsed by the **same**
+detector, so a systematic omission cancels on both sides and the diff comes back empty.
+A green rules diff is not proof; matching bytes are.
 
-Re-enable by: landing the script capabilities, adding the Step 0 capability gate, then
-flipping `user-invocable` back to `true` in the frontmatter.
+### Why this gate exists, and the two traps in it
+
+Adversarial review on 2026-08-10, before first use, found the verification steps below
+invoked script flags **that did not exist**. `--rules --json > rules_before.json` wrote a
+**zero-byte file**; the Step 5 check then iterated an empty before-set, found zero missing
+lines, and reported **PASS**. Identically, `--emit-blocks` errored out leaving no blocks,
+so the per-block `diff` loop iterated zero blocks and also passed. Both failed open,
+silently, while destinations existed and pointers resolved — so the run looked clean.
+
+**A guard with no failing mode is the same bug wearing a safety vest.**
+
+Two traps survive that fix, and the gate script is written around both:
+
+1. **Never check that a redirect target exists or is non-empty.** `cmd > f` truncates `f`
+   *before* `cmd` runs, so `[ -f f ]` passes on a failed run and `[ -s f ]` passes on any
+   partial write. That is the original bug in a new costume. Gate on the **process exit
+   status** and on **parsed content**; capture stdout into a variable (`$(...)` propagates
+   the child's status) and write the baseline file only once it is known good.
+2. **`--require` verifies a declaration, not behavior.** Delete the `--rules`
+   implementation and leave its name in the capability list, and `--require` still exits 0.
+   The gate therefore *exercises* `--rules` and `--emit-blocks` on the real target rather
+   than trusting the advertised list.
+
+Re-enabled 2026-08-11 after the capabilities landed and were **mutation-verified**: the
+supporting suite (184 tests) was checked by deliberately breaking the script one fault at
+a time and confirming the suite fails — including narrowing the rule detector, dropping
+fence tracking, and keying directory cleanup on filename shape instead of manifest
+provenance. A suite that only passes is not evidence.
 
 Some files are loaded into **every session**: `CLAUDE.md`, `memory/MEMORY.md`, and any
 SKILL.md the model reads on each invocation. Their size is a per-session tax paid
@@ -126,10 +150,31 @@ dead-end, the same failure the memory-archive rule guards against.
 
 1. Re-run Step 1 and report before/after: total bytes, and the reduction.
 2. Confirm every new pointer's destination file exists and is non-empty.
-3. Confirm no moved content was lost: the sum of moved bytes should roughly match the
-   source's reduction (allow for the pointer lines added back).
-4. If the file is `CLAUDE.md` or a SKILL.md, run the repo's test suite — hooks and tests
+3. **Rule conservation — compare against the UNION, not the source.** Re-run `--rules`
+   over the trimmed source **and every destination file**, and check the Step 0 baseline
+   against that combined set. Any normative line present before and absent from the union
+   is a **hard abort**: it means a rule was dropped rather than relocated.
+
+   **This must be the union, and getting it wrong is the likeliest route back to
+   fail-open.** Checked against the trimmed source alone, the abort fires on every
+   *successful* move — the top MOVE candidates by byte share all contain normative lines,
+   so relocating them is exactly the intended outcome. An operator who hits a spurious
+   abort will loosen the check until it passes, hand-restoring the bug this gate exists
+   to prevent. A rule leaving the source is expected; a rule leaving the *union* is data
+   loss.
+
+   Before trusting a green result, confirm the baseline was non-empty (Step 0 guarantees
+   `rule_count > 0` — do not re-derive it here with the same parser and call that
+   independent confirmation).
+4. **Byte conservation — the load-bearing check.** The trimmed source plus every
+   destination file must account for all original bytes, allowing only for the pointer
+   lines you added. Diff each moved section against its Step 0 block: content must be
+   **byte-identical**. This, not the rules diff, is what proves nothing was silently
+   reworded during the move.
+5. If the file is `CLAUDE.md` or a SKILL.md, run the repo's test suite — hooks and tests
    assert against some of these conventions.
+6. Because `CLAUDE.md`, `framework/`, `docs/`, and `.claude/skills/` are public artifacts,
+   run `/audit-pii` before committing whatever this produces.
 
 ### Step 6 — Record
 
