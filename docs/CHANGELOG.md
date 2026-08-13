@@ -5,6 +5,65 @@ Format: newest entries at the top.
 
 ---
 
+## 2026-08-12: Drafting-integrity hardening — send-state, reserve proofs, exclusion scans
+
+Four workstreams closing defects from the 8/10-8/11 sessions. Each is independently
+landable; build order W1 → W4 → W3 → W2.
+
+**A prep doc can no longer tell you to withhold something that never arrived.** The old
+chain was "a draft file exists under `output/`" → *"CV already sent 8/4, do not re-offer
+it."* The CV had bounced. `outreach_status.py` derives send-state from
+`data/outreach-log.md` and splits *transmission* from *receipt*: only `delivered=true`,
+for the named artifact, unlocks suppressive phrasing. A recipient-level query can never
+report `delivered:true`, because the recipient may have replied on an unrelated thread.
+`--set-status` makes a bounce recordable; the log's status vocabulary gains `Bounced` /
+`Delivered` / `Delivery unknown` (header only, nothing backfilled).
+
+**Mentioning an artifact is not sending it.** Found by running the mandated real-data
+validator, not by the fixture suite: 8 of 16 artifact-bearing log rows name a CV without
+sending one ("offered resume", "CV promised for 8/07", "CV not attached"), and several
+carry `Replied`. Scoping receipt on mentions returned `delivered:true` for a CV that was
+never sent — the original defect, reproduced by its own fix.
+`artifact_vocab.find_transmitted_in_text()` gates it, nearest-marker-wins, deliberately
+asymmetric: a missed send is harmless, a false send unlocks suppression.
+
+**Prep docs bind a primary AND a reserve proof, in canonically different domains.**
+Binding one proof is a single point of failure — an interviewer excluded that domain
+20 minutes into a call and there was no fallback. `proof_domains.py` is a closed enum, so
+`customer-experience` and `customer-ops` cannot pose as a fallback for each other.
+`check_prep_doc.py` runs six checks and now gates `/prep-interview` Step 6a, **before**
+the PDF render: the PDF is what gets read on paper, so a defect that reaches it has
+already done its work.
+
+**The transcript gets scanned for domain exclusions before a bound proof is deployed.**
+`transcript_exclusions.py`, scoped to the counterpart by default (Nick uses "never"
+constructions himself; surfacing his own line would block a valid proof). `hit_count: 0`
+is explicitly not a clearance — every output carries a `coverage` string saying
+paraphrases are not detected. `/follow-up` Step 3e runs on every follow-up type and emits
+`[exclusion scan: NOT RUN — no transcript]` rather than passing silently. `/debrief`
+Step 1c scores an undeployed proof as "interviewer excluded the domain", not as a miss.
+
+**`content-rules` beats `voice-reference` on conflict, and a checker proves it.**
+`X rather than Y` sat in voice-reference's "Patterns to ADD" as validated (n=1) while
+content-rules B7 banned it by name; a drafting pass took the one labelled validated.
+Precedence is now declared in all three files, all 69 rules carry a phrase registry
+mirrored into the human index the skills actually load, and `check_doc_precedence.py`
+compares them by bidirectional template subsumption. `rather than` is registered *only*
+as a construction — as a bare literal it fires on ~10 benign prose uses, and a checker
+that cries wolf gets ignored.
+
+**One new hook, deliberately narrow.** `check_prep_doc_format.py` (PreToolUse,
+`Write|Edit`) blocks only the two prep-doc defects decidable from the text alone: a
+malformed or non-v2 `outreach_status` stamp, and proof domains that are invalid or
+collapse to the same tag. Missing reserves, suppressive phrasing and stale stamps stay at
+skill tier — they need context, and a PreToolUse "warn" is invisible in Claude Code, so
+every hook is block-or-nothing.
+
+103 new tests (1428 total). Spec, build log and reconciliation audit under
+`output/analysis/` (gitignored).
+
+---
+
 ## 2026-08-12: Data-integrity fixes, a discovery feedback loop, and four closed traps
 
 **`todo_write.py sync` was destroying to-dos.** Two independent defects: the company name

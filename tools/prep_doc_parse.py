@@ -61,13 +61,21 @@ def find_prep_doc(company_slug: str, repo_root: Path | str = ".") -> str | None:
 
 
 def parse_proofs(path: Path | str) -> dict:
-    """Extract the Primary/Reserve proof lines from a prep doc.
+    """Extract the Primary/Reserve proof lines from a prep doc on disk."""
+    return parse_proofs_text(Path(path).read_text(encoding="utf-8"))
+
+
+def parse_proofs_text(text: str) -> dict:
+    """Extract the Primary/Reserve proof lines from prep-doc TEXT.
+
+    Split out from parse_proofs so a PreToolUse hook can check content that has not been
+    written to disk yet (a Write payload, or an Edit's new_string) without a second copy
+    of the frozen regex.
 
     Returns {"primary": {...}|None, "reserve": {...}|None}, each entry carrying the raw
     tag (NOT canonicalized — that is check_prep_doc's job, so the checker can report the
     tag the author actually wrote), the proof text, and the 1-indexed line number.
     """
-    text = Path(path).read_text(encoding="utf-8")
     found: dict = {"primary": None, "reserve": None}
     for lineno, line in enumerate(text.splitlines(), start=1):
         m = PROOF_LINE_RE.match(line.strip())

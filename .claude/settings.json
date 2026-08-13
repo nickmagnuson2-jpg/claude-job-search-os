@@ -32,6 +32,10 @@
           {
             "type": "command",
             "command": "PYTHONIOENCODING=utf-8 python3 $CLAUDE_PROJECT_DIR/tools/check_public_pii.py"
+          },
+          {
+            "type": "command",
+            "command": "PYTHONIOENCODING=utf-8 python3 $CLAUDE_PROJECT_DIR/tools/check_prep_doc_format.py"
           }
         ]
       },
