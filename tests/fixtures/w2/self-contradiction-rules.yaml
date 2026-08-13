@@ -1,0 +1,8 @@
+meta:
+  version: test
+rules:
+  - id: C1
+    category: ask-discipline
+    rule_statement: Placeholder.
+    banned_phrases: [{phrase: "no pressure at all", scope: literal}]
+    preferred_phrases: [{phrase: "no pressure at all", scope: literal}]

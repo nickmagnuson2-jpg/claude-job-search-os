@@ -1,0 +1,8 @@
+meta:
+  version: test
+rules:
+  - id: A1
+    category: attribution-integrity
+    rule_statement: Placeholder.
+    banned_phrases: [{phrase: "caught my eye", scope: literal}]
+    preferred_phrases: []

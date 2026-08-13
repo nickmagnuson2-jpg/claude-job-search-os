@@ -1,0 +1,8 @@
+meta:
+  version: test
+rules:
+  - id: B7
+    category: proof-and-positioning
+    rule_statement: Show the built artifact, never a told claim.
+    banned_phrases: [{phrase: "X rather than Y", scope: construction}, {phrase: "building not reading", scope: literal}]
+    preferred_phrases: []
