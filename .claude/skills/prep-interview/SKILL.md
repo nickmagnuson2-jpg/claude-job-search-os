@@ -323,6 +323,18 @@ The scan is exactly three things, and the prep doc must be structured so all thr
 - **THE ONE THING**, the Live-Need Bridge block, and the questions list must each be reachable without scrolling past a wall of context — put them in the first third of the doc, or repeat them in a scan block at the top.
 - **Whose-customers line (REQUIRED, one sentence, inside THE ONE THING):** *"Their customers are ___, so the proof of mine shaped like their customer is ___."* Enterprise-scale proofs at a small-business-motion company read as mismatch even when the underlying skill transfers — and vice versa. This line is what was missing on 8/06.
 - If a late addition or dossier refresh lands after the doc is written, **fold its consequences into THE ONE THING**, do not only append a section at the bottom. On 8/06 the 09:45 refresh was appended below a 215-line doc and was never reached.
+- **Primary AND reserve proof (REQUIRED, two lines, inside THE ONE THING — no new section, no new heading).** Emit exactly this shape:
+
+  ```
+  **Primary proof** (domain: <canonical-tag>): <proof>
+  **Reserve proof** (domain: <canonical-tag>): <proof>
+  ```
+
+  - Both tags come from `proof_domains.valid_tags()` — run `PYTHONIOENCODING=utf-8 python3 tools/proof_domains.py --list` to see them, or `--canonicalize <tag>` if the natural label is not in the enum. **Do not invent a tag**; pick the nearest canonical one.
+  - **The two domains MUST differ after canonicalization.** `customer-experience` and `customer-ops` are the same domain wearing two labels — one exclusion sentence takes out both, which is exactly the failure this line exists to prevent. `tools/check_prep_doc.py` check 3 enforces this.
+  - The reserve is not a second-favorite proof. It is the one to reach for when the interviewer rules the primary's whole domain out of scope mid-call.
+
+  **Origin:** on 2026-08-11 a prep doc bound one proof as *"the ONE bound proof (do not substitute)."* Roughly 20 minutes in, the interviewer excluded that entire domain and named the proof's central deliverable as the commoditizable part. There was no fallback, and the follow-up led with the dead proof anyway. `/follow-up` Step 3e now reads this reserve line when a transcript shows the primary was excluded.
 
 **Debrief-side requirement:** `/debrief` must ask whether the prep doc was read before scoring any bridge or question-quality miss. A miss under non-consumption is logged against **prep artifact not consumed**, not against the skill it appears to be.
 
