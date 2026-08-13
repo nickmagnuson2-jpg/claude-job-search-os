@@ -48,6 +48,32 @@ The em-dash and spaced-hyphen rule applies to **CVs and cover letters** (formal 
 - **In CVs and cover letters,** also avoid the spaced hyphen ` - ` functioning as an em dash. Use comma, semicolon, period, or colon based on clause relationship.
 - **In outreach emails,** ` - ` (space-hyphen-space) IS Nick's voice signature (0.86 occurrences per 100 words in corpus). Do NOT replace it. See voice-reference.md Section 1 punctuation profile.
 
+### Sensitive names — internal-only
+
+Some real people appear throughout the private corpus (reflections, therapy notes,
+company notes, interaction logs). They are **internal-only**: they may appear in
+gitignored files (`data/`, `output/`, `memory/`, `coaching/`) and must **never** appear
+in a public artifact or in anything sent outside.
+
+- **Public artifacts** (`tests/`, `.claude/skills/`, `framework/`, `docs/`, `tools/*.py`,
+  top-level `*.md`) use generic placeholders: Acme, Globex, Northwind, Contoso, Jane Doe.
+- **External-facing artifacts** (CVs, cover letters, outreach) refer to people by role,
+  not name, unless the person is a public figure or the recipient already knows them.
+- Former colleagues, managers, recruiters, and contacts are all in scope. Past employers
+  and schools are **not** (Zuora, McKinsey, Tuck, Duke, Yahoo, ESPN, IBM are public).
+
+**Enforcement is two-layer and neither layer is sufficient alone:**
+`tools/check_public_pii.py` blocks known tokens from the generated denylist, and
+`/audit-pii` runs a semantic subagent that catches names the denylist has never seen.
+The denylist is generated from `data/networking.md`, `data/job-pipeline.md` and
+`data/scan-targets.yaml` by `tools/gen_pii_denylist.py`; **a real entity living in any
+other file is invisible to the deterministic layer.** That is not hypothetical: on
+2026-08-12 a real target company reached a public test file as a fixture name and only
+the semantic pass caught it, because `scan-targets.yaml` was not yet a denylist source.
+
+Origin: this rule was referenced by reflections for months (`sensitive names: ...
+internal-only`) but was never actually written down here. Codified 2026-08-12.
+
 ### Capitalization rule — universal
 
 **Use proper capitalization in every draft, regardless of channel or register.** Sentences start with capitals; proper nouns capitalized; "I" capitalized. This applies to LinkedIn DMs, Slack notes, text messages, voice transcriptions surfaced as drafts — all of it.

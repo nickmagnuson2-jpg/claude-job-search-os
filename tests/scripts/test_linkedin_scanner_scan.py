@@ -116,9 +116,44 @@ def test_prompt_template_exists_and_has_placeholder():
     assert "{profile_summary}" in content
 
 
-def test_prompt_template_formats_without_error():
-    """Formatting the template with a dummy profile_summary must not raise KeyError."""
+# The keys src/llm.py actually passes to .format() (see the rank_profile_prompt
+# assignment there). Kept as an explicit constant so the drift test below can
+# compare it against the template.
+PRODUCTION_FORMAT_KEYS = {"profile_summary", "target_role"}
+
+
+def test_prompt_template_formats_with_the_keys_production_passes():
+    """Formatting must not raise KeyError using exactly what llm.py supplies.
+
+    This previously passed only `profile_summary`. `target_role` was later added
+    to the template and to llm.py but not here, so the test raised KeyError. It
+    went unnoticed because the whole module failed to COLLECT (module-level
+    `tqdm.pandas()` required pandas), so the suite was run with --ignore on it.
+    """
     template_path = SCANNER_DIR / "src" / "prompts" / "rank_profile_template.txt"
     content = template_path.read_text(encoding="utf-8")
-    formatted = content.format(profile_summary="test candidate summary")
+    formatted = content.format(profile_summary="test candidate summary",
+                               target_role="Test Role")
     assert "test candidate summary" in formatted
+    assert "Test Role" in formatted
+
+
+def test_template_placeholders_match_what_production_supplies():
+    """Guard against drift in either direction.
+
+    A placeholder added to the template but not passed by llm.py raises KeyError
+    at import time in production. A key passed but no longer in the template is
+    dead config. Both are caught here rather than at runtime.
+    """
+    import re
+    template_path = SCANNER_DIR / "src" / "prompts" / "rank_profile_template.txt"
+    content = template_path.read_text(encoding="utf-8")
+    in_template = set(re.findall(r"\{([a-z_]+)\}", content))
+
+    missing = in_template - PRODUCTION_FORMAT_KEYS
+    extra = PRODUCTION_FORMAT_KEYS - in_template
+    assert not missing, (
+        f"template uses {sorted(missing)} but src/llm.py does not pass them; "
+        f"this raises KeyError at import time")
+    assert not extra, (
+        f"src/llm.py passes {sorted(extra)} but the template no longer uses them")

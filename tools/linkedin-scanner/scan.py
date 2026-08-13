@@ -22,7 +22,18 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
 from dotenv import load_dotenv
 from termcolor import colored
 from tqdm import tqdm
-tqdm.pandas()
+
+# `tqdm.pandas()` was called here at import time. It hard-requires pandas, which is
+# only needed lazily inside build_dataframe(), so importing this module without
+# pandas installed raised ModuleNotFoundError and made the whole test suite fail to
+# COLLECT, forcing every run to pass --ignore on two files. It enabled
+# .progress_apply / .progress_map, neither of which this package uses anywhere.
+# Kept as an optional no-op rather than deleted, so the progress-bar integration is
+# still available if pandas is present and someone later wants it.
+try:  # pragma: no cover - depends on optional dependency
+    tqdm.pandas()
+except (ImportError, AttributeError):
+    pass
 
 # Load .env from repo root (scan.py is at tools/linkedin-scanner/, so go up two levels)
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent

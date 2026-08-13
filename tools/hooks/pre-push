@@ -1,0 +1,15 @@
+#!/bin/bash
+# pre-push PII gate for the PUBLIC repo (claude-job-search-os).
+# Fires ONLY when pushing to the public remote; private (nick-job-search-data)
+# and upstream pushes are unaffected. Reusable logic lives in
+# tools/prepush_pii_guard.py (tracked). Override a false positive with
+# PUSH_PII_OVERRIDE=1. Install on other machines: copy this file to
+# .git/hooks/pre-push and chmod +x.
+remote_url="$2"
+case "$remote_url" in
+  *claude-job-search-os*)
+    root="$(git rev-parse --show-toplevel)"
+    PYTHONIOENCODING=utf-8 python3 "$root/tools/prepush_pii_guard.py" || exit 1
+    ;;
+esac
+exit 0
