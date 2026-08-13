@@ -128,3 +128,8 @@ data/calibration/
 # Untracked AND un-ignored meant a 48KB spec was one `git add -A` from the public
 # repo, against its own header. 2026-08-12.
 scratchpad/
+
+# Local-only expectations for --validate-local (Tier 2) on outreach_status /
+# transcript_exclusions / check_prep_doc / check_doc_precedence. Holds real names,
+# real output paths and verbatim quotes; the committed tests use placeholders only.
+tools/.local-validators.json

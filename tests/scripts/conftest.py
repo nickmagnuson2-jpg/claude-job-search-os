@@ -43,6 +43,26 @@ def run_script(script_name: str, *args, input_dir=None) -> dict:
     return json.loads(result.stdout)
 
 
+def run_script_raw(script_name: str, *args, input_dir=None):
+    """Run a tools/ script WITHOUT check=True and return the CompletedProcess.
+
+    Companion to run_script() for the many tools whose contract is an exit CODE plus
+    JSON on stdout (ambiguous recipient -> 2, unrecognized status -> 3, ...). Those
+    cases still print parseable JSON, so asserting on them requires a runner that does
+    not raise. Callers do `json.loads(proc.stdout)` themselves.
+    """
+    script_path = TOOLS_DIR / script_name
+    cmd = [sys.executable, str(script_path), *[str(a) for a in args]]
+    return subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        encoding='utf-8',
+        env={**os.environ, 'PYTHONIOENCODING': 'utf-8'},
+        cwd=str(input_dir or REPO_ROOT),
+    )
+
+
 def write_fixture(tmp_path: Path, rel_path: str, content: str) -> Path:
     """Write dedented content to tmp_path/rel_path, creating parents as needed.
 

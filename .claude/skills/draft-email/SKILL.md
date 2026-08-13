@@ -180,6 +180,12 @@ See `memory/feedback_voice_pure_diff_minimal.md` and `memory/feedback_minimize_p
 2. **Build a claim→source map (working notes, not the email).** For every substantive sentence the draft will make about the sender's message — per entity/role — quote the verbatim line it grounds in. Any claim with no source line is invented: cut it, recast it, or ask Nick.
 3. **Cross-assignment check:** verify each attribute is attached to the entity the sender attached it to.
 4. **Mirror their framing where agreeing:** echo the sender's own structure/words where Nick is agreeing with their read.
+5. **Record any delivery signal in the thread, immediately.** If the inbound shows a bounce, a delivery receipt, or an explicit "I never got it" / "can you resend", write it to the outreach log before drafting:
+   ```
+   PYTHONIOENCODING=utf-8 python3 tools/outreach_status.py --set-status \
+     --recipient "<name>" --date YYYY-MM-DD --artifact <token> --status <Bounced|Delivered>
+   ```
+   The `--date` is the date of the row being corrected, not today. An **unrecorded bounce is what produced the 2026-08-10 suppressive-claim defect**: the log still read `Sent`, so a later prep doc concluded the CV had arrived and told Nick not to re-offer it.
 
 ### Step 5: Draft by Email Type
 

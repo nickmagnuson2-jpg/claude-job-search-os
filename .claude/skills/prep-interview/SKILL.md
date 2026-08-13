@@ -354,7 +354,32 @@ For panel: mix — some technical/functional, some culture, some about the panel
 - Who you're talking to: [from pipeline notes or company research, if known]
 - Dress: [appropriate level — video call defaults to business casual unless context suggests otherwise]
 - Pre-call: [specific prep actions — review notes, test tech, etc.]
+- Send-state of any artifact (CV, cover letter, deck): [ONLY from an `outreach_status.py --stamp` call made this run — see the mandatory gate below]
 ```
+
+**Send-state claims in Logistics are gated (MANDATORY — do not paraphrase this away).**
+
+Every claim about whether Nick already sent someone something comes from a stamp generated **this run**, with `--artifact` set to the artifact the claim is about:
+
+```
+PYTHONIOENCODING=utf-8 python3 tools/outreach_status.py \
+  --recipient "<name>" --company "<company>" --artifact <cv|cover-letter|deck|portfolio|writeup|link> \
+  --as-of <doc date YYYY-MM-DD> --stamp
+```
+
+Paste the returned `<!-- outreach_status: … -->` comment into the Logistics block. Then:
+
+- **Never infer a send from the existence of a file under `output/`.** `output/` is a *draft archive*: a file there proves a draft was generated, not that it was attached, not that it was sent, and not that it arrived. This inference is the entire mechanism of the 2026-08-10 defect.
+- `resolution: not_found` → render `[unverified: no outreach-log row for <name> as of <date>]`. Do not fill the gap from memory.
+- `resolution: ambiguous` → render `[unverified: ambiguous recipient — candidates: …]`. The tool exits 2 and never guesses; neither do you.
+- **Suppressive phrasing** ("do not re-offer it", "already sent", "no need to send") must **(a) name the artifact it suppresses** and **(b)** be backed by a stamp for *that same artifact* reading `delivered=true`.
+  - `delivered=unknown` is **not** a license. The correct phrasing is *"sent <date>, no delivery confirmation — offer it again if asked."*
+  - A recipient-level stamp (`artifact=none`) **never** licenses an artifact-level suppression. The recipient may have replied on an unrelated thread.
+  - `delivered=false` means it bounced. Say so, and say to re-send.
+
+`tools/check_prep_doc.py` enforces (a) and (b) mechanically (checks 4-6); this instruction is what makes the doc pass.
+
+**Origin:** on 2026-08-10 a Logistics block asserted *"CV already sent 8/4, do not re-offer it."* No such row existed in the outreach log; the address had bounced on 8/4 (a fact recorded two lines above in the same block); the recipient asked for the CV again on 8/11. The suppressive half is the damaging half — it instructed Nick not to take the corrective action.
 
 ---
 

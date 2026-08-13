@@ -277,6 +277,7 @@ Args are passed as a **JSON object**, not a bare string — `{"planPath": "...",
 | `tools/.personal-projects.txt` | Personal-OS project routing allowlist | Two-way split instead of four-way |
 | `tools/.pii-denylist.txt` | Generated PII tokens, harvested from `networking.md` + `job-pipeline.md` + `scan-targets.yaml` | Regenerate with `gen_pii_denylist.py`. **A real entity living in any other file is invisible to the deterministic hook**, so run `/audit-pii` (semantic pass) before any push |
 | `framework/content-rules.{md,yaml}` | Voice/content rule corpus + exemplars | Skills skip the Content-Rules Pass |
+| `tools/.local-validators.json` | Real-name / real-path / verbatim-quote expectations for the Tier 2 `--validate-local` runs of `outreach_status.py`, `transcript_exclusions.py`, `check_prep_doc.py`, `check_doc_precedence.py`. Four keys (`w1`-`w4`). The committed tests use placeholders only, so this file is where the real historical regressions actually get proven | Each validator prints `{"status":"SKIPPED","reason":"tools/.local-validators.json absent"}` and exits 0 — **loudly SKIPPED, never a silent pass** |
 
 **CV PDFs use RenderCV** (`~/.local/bin/rendercv render <yaml>`) — see `/generate-cv` and `/apply` SKILL.md for the full pipeline. Reference YAML: `output/example-ventures/042826-cos-example.yaml`. Theme: `framework/cv-themes/tuck-mbb.yaml`.
 

@@ -187,6 +187,12 @@ Analyze the interaction history to determine the follow-up type:
 3. **Any claim with no source line is invented** — cut it, recast it to something grounded, or ask Nick. This is stricter than Step 6b's after-the-fact provenance labeling: re-read their actual words; do not label an un-checked claim as "grounded."
 4. **Cross-assignment check:** explicitly verify each attribute is attached to the entity the contact attached it to (the Beacon-vs-Northwind swap is the canonical miss).
 5. **Mirror their framing where agreeing:** if Nick is agreeing with the contact's read, echo the contact's own structure/words (role-by-role) rather than a generic blob.
+6. **Record any delivery signal in the thread, immediately.** If the inbound shows a bounce, a delivery receipt, or an explicit "I never got it" / "can you resend", write it to the outreach log before drafting:
+   ```
+   PYTHONIOENCODING=utf-8 python3 tools/outreach_status.py --set-status \
+     --recipient "<name>" --date YYYY-MM-DD --artifact <token> --status <Bounced|Delivered>
+   ```
+   The `--date` is the date of the row being corrected, not today. An **unrecorded bounce is what produced the 2026-08-10 suppressive-claim defect**: the log still read `Sent`, so a later prep doc concluded the CV had arrived and told Nick not to re-offer it.
 
 **Pre-stage voice scan (do before open_draft, every draft):** scan for banned tokens yourself — "genuinely"/"truly", semicolons, em-dashes, "exactly the kind of" — rather than relying on the `check_draft_voice.py` hook to catch them. Each hook trip is a wasted spin.
 
