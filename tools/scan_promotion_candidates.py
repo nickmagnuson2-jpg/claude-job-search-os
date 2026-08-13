@@ -73,26 +73,119 @@ def parse_frontmatter(text: str) -> dict:
     return result
 
 
-def load_memory_files(memory_dir: Path):
+def _is_scannable(name: str) -> bool:
+    """Is this a memory RULE file (vs an index, archive, audit, or the router)?"""
+    if name in ("MEMORY.md",):
+        return False
+    return not any(name.startswith(pfx) for pfx in (
+        "MEMORY.backup", "archive-", "archived-", "audit-",
+        "promotion-backlog", "index-",
+    ))
+
+
+def iter_candidate_files(memory_dir: Path):
+    """Every memory rule file, WITHOUT the schema filter.
+
+    This is the honest denominator. `load_memory_files` below drops files lacking
+    `occurrences:`, so any ratio computed inside its loop is 100% by construction --
+    the filter pre-selects its own numerator. Coverage must be measured here.
+    """
     for p in sorted(memory_dir.glob("*.md")):
-        if p.name in ("MEMORY.md",) or p.name.startswith("MEMORY.backup") \
-                or p.name.startswith("archive-") or p.name.startswith("archived-") \
-                or p.name.startswith("audit-") or p.name.startswith("promotion-backlog") \
-                or p.name.startswith("index-"):
+        if not _is_scannable(p.name):
             continue
         try:
             text = p.read_text(encoding="utf-8")
         except (UnicodeDecodeError, OSError):
             continue
-        fm = parse_frontmatter(text)
+        yield p, parse_frontmatter(text)
+
+
+def schema_coverage(memory_dir: Path) -> dict:
+    """How much of the corpus the two signals can actually see.
+
+    An empty candidate list is only interpretable next to this number. On 2026-08-13 the
+    scanner returned 1 candidate against 3.5% coverage, which read as an all-clear and was
+    really an empty scan.
+
+    Broken out by rule type, because the two signals have different scopes and a blended
+    percentage hides that: `occurrences`/`promoted`/`reopen_gate` are only meaningful for
+    FEEDBACK rules (a project/reference/user memory is a fact, not a rule that can recur),
+    while `last_cited` staleness applies to every type. Backfill scope follows this split.
+    """
+    total = visible = 0
+    fb_total = fb_visible = 0
+    cited_total = 0
+    for path, fm in iter_candidate_files(memory_dir):
+        total += 1
+        is_feedback = path.name.startswith("feedback_") or fm.get("type") == "feedback"
+        if "occurrences" in fm:
+            visible += 1
+        if "last_cited" in fm:
+            cited_total += 1
+        if is_feedback:
+            fb_total += 1
+            if "occurrences" in fm:
+                fb_visible += 1
+    return {
+        "files": total,
+        "visible": visible,
+        "invisible": total - visible,
+        "pct": round(100 * visible / total, 1) if total else 0.0,
+        "feedback_rules": fb_total,
+        "feedback_visible": fb_visible,
+        "feedback_invisible": fb_total - fb_visible,
+        "feedback_pct": round(100 * fb_visible / fb_total, 1) if fb_total else 0.0,
+        "with_last_cited": cited_total,
+        "note": ("promotion signal covers ONLY feedback rules carrying occurrences:; "
+                 "low coverage means an empty candidate list is an empty scan, not an "
+                 "all-clear. Backfill scope = feedback_invisible."),
+    }
+
+
+def load_memory_files(memory_dir: Path):
+    for p, fm in iter_candidate_files(memory_dir):
         if "occurrences" not in fm:
-            continue  # opted-out / pre-existing corpus, not tracked (no backfill)
+            continue  # invisible to the signals; counted by schema_coverage(), not here
         yield p, fm
 
 
 def is_promoted(fm: dict) -> bool:
     v = str(fm.get("promoted", "no")).strip().lower()
     return v not in ("no", "false", "", "0")
+
+
+# Always-loaded files pay their size as a per-session tax forever. Thresholds are the ones
+# already stated in CLAUDE.md's Memory Hygiene section (~24KB/shard) and the observed
+# CLAUDE.md working size; both are advisory, surfaced for judgment, never auto-acted.
+SHARD_LIMIT_BYTES = 24 * 1024
+CLAUDE_MD_LIMIT_BYTES = 40 * 1024
+
+
+def oversized_context_files(memory_dir: Path, repo_root: Path) -> list[dict]:
+    """Always-loaded files past their size budget. Reporting only -- never mutates."""
+    targets = [(p, SHARD_LIMIT_BYTES) for p in sorted(memory_dir.glob("index-*.md"))]
+    mem = memory_dir / "MEMORY.md"
+    if mem.is_file():
+        targets.append((mem, SHARD_LIMIT_BYTES))
+    claude_md = repo_root / "CLAUDE.md"
+    if claude_md.is_file():
+        targets.append((claude_md, CLAUDE_MD_LIMIT_BYTES))
+
+    out = []
+    for path, limit in targets:
+        try:
+            size = path.stat().st_size
+        except OSError:
+            continue
+        if size > limit:
+            out.append({
+                "file": path.name,
+                "bytes": size,
+                "limit": limit,
+                "over_by": size - limit,
+                "ratio": round(size / limit, 2),
+            })
+    return sorted(out, key=lambda d: -d["over_by"])
 
 
 def main(argv: list[str]) -> None:
@@ -139,6 +232,9 @@ def main(argv: list[str]) -> None:
             except ValueError:
                 pass  # malformed date, skip rather than guess
 
+    coverage = schema_coverage(memory_dir)
+    oversized = oversized_context_files(memory_dir, repo_root)
+
     report = {
         "status": "ok",
         "scanned_dir": str(memory_dir),
@@ -147,6 +243,13 @@ def main(argv: list[str]) -> None:
         "demotion_candidates": demotion_candidates,
         "promotion_count": len(promotion_candidates),
         "demotion_count": len(demotion_candidates),
+        # An empty candidate list is only meaningful alongside coverage. Read them together.
+        "schema_coverage": coverage,
+        # The trigger /trim-context-file never had: it was mutation-verified and then never
+        # invoked once, because nothing ever pinged that a file had grown. Reporting is not
+        # acting -- this surfaces, the merged hygiene skill decides.
+        "oversized_context_files": oversized,
+        "oversized_count": len(oversized),
     }
 
     if args.mode == "interactive":

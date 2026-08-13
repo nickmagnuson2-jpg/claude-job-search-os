@@ -34,7 +34,23 @@ After any user correction, run the **full tiered protocol** — not just a lesso
 
 ### Step 1 — Capture at memory tier (always)
 
-1. **Create a dedicated auto-memory file** at `~/.claude/projects/-Users-mag-Documents-Obsidian-30-projects-job-search/memory/feedback_<kebab-case-slug>.md` with frontmatter (`name`, `description`, `metadata.type: feedback`) and a body containing:
+1. **Create a dedicated auto-memory file** at `~/.claude/projects/-Users-mag-Documents-Obsidian-30-projects-job-search/memory/feedback_<kebab-case-slug>.md` with the frontmatter below — **all six `metadata` keys are mandatory for `type: feedback`** — and a body containing:
+
+   ```yaml
+   ---
+   name: feedback_<kebab-case-slug>
+   description: <one line, used for recall relevance>
+   metadata:
+     node_type: memory
+     type: feedback
+     occurrences: 1        # bump on EVERY repeat fire, or the rule can never trip its own gate
+     promoted: no          # or "yes — <tier>, <date>" once wired into a skill/hook/principle
+     reopen_gate: "<trigger + the concrete structural target it promotes to>"
+     last_cited: YYYY-MM-DD
+   ---
+   ```
+
+   **`occurrences` / `promoted` / `reopen_gate` / `last_cited` are the ONLY keys `tools/scan_promotion_candidates.py` reads** — the detector behind both `/memory-refresh` and the weekly `memory-promotion-scan` job. A memory file without them is **invisible** to it: the rule accumulates fires while reporting as a first-timer, and no promotion ever surfaces. Prose alone does not register. Origin: this instruction previously specified only `name`/`description`/`metadata.type`, disagreeing with the `lessons-learned` skill, so **384 of 403 `feedback_*.md` files (95%) are invisible to the scanner** — 69 of them written in the month *after* the gap was first discovered. Fixed 2026-08-13; see `output/analysis/081326-memory-hygiene-project.md`.
    - **Rule:** the new rule, plainly stated
    - **Why:** the underlying principle
    - **If the rule is about absence-assertion, verification-before-claim, or hook/skill effectiveness**, default to skill or hook tier (not memory tier), and check the family-N count across [[verification-umbrella]] — these failures compose silently and memory-tier capture alone has a documented track record of not preventing recurrence.
