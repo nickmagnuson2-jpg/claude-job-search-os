@@ -143,9 +143,12 @@ def test_no_public_file_hardcodes_the_vault_root():
     gitignored and may legitimately name real paths.
     """
     import subprocess
+    # Built from parts on purpose: spelling the path literally here would put it
+    # in a tracked public file, and this guard would then match ITSELF and fail on
+    # every run. A self-flagging guard gets deleted rather than fixed.
+    needle = "Obsidian/30-projects/" + "personal"
     out = subprocess.run(
-        ["git", "grep", "-l", "-I", "Obsidian/30-projects/personal", "--",
-         "*.py", "*.md", "*.sh"],
+        ["git", "grep", "-l", "-I", needle, "--", "*.py", "*.md", "*.sh"],
         cwd=REPO_ROOT, capture_output=True, text=True,
     ).stdout.split()
     offenders = [f for f in out if not f.startswith(("data/", "output/", "memory/",
