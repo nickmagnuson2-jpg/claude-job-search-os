@@ -14,7 +14,7 @@ Failure modes caught (drawn from memory/lessons.md Section 2 + framework/voice-r
   - "load-bearing" (banned LLM-tell metaphor)
   - "if you have a sec/minute" performative-casual scaffold
   - Meta-narration labels ("Quick reframe", "To summarize", "Here's where I'm headed")
-  - "not as X, but as Y" rhetorical contrast (use "X rather than Y")
+  - "not as X, but as Y" rhetorical contrast (drop the contrast; name the artifact)
 
 Cleanly-detectable voice anti-patterns only. Semantic ones (coined hyphenated
 compounds, speculative framing of the recipient's work, temporal jump-cuts,
@@ -204,7 +204,7 @@ PATTERNS = [
     (
         re.compile(r"\bnot\s+as\b[^.?!\n]{1,50}?\bbut\s+as\b", re.IGNORECASE),
         '"not as X, but as Y" — performs the contrast instead of stating substance (voice-reference.md, 5/21)',
-        'use "X rather than Y" (corpus-validated)',
+        "drop the contrast and name the built artifact (content-rules B7)",
     ),
 ]
 

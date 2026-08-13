@@ -35,6 +35,7 @@ from pathlib import Path
 DEFAULT_YAML = "framework/content-rules.yaml"
 DEFAULT_MD = "framework/content-rules.md"
 DEFAULT_VOICE = "framework/voice-reference.md"
+DEFAULT_HOOK = "tools/check_draft_voice.py"
 LOCAL_VALIDATORS = "tools/.local-validators.json"
 
 # `X`/`Y` are the only placeholder tokens, and only as standalone capitals. Rendering
@@ -143,6 +144,50 @@ def load_yaml_registry(path: Path) -> tuple[list[dict], list[dict]]:
     return banned, preferred
 
 
+def load_hook_remedies(path: Path) -> list[dict]:
+    """The REMEDY strings a voice hook tells the drafter to use instead.
+
+    WHY THIS EXISTS. The 8/11 ban on `X rather than Y` swept voice-reference.md and
+    content-rules, but not `check_draft_voice.py`, whose PATTERNS list still carried
+    'use "X rather than Y" (corpus-validated)' as its remedy for "not as X, but as Y".
+    The hook is the highest-authority tier -- it fires on every draft -- so a stale
+    remedy there re-prescribes a banned phrase on every run, and doc-vs-doc checking
+    cannot see it. Found 2026-08-13, two days after the ban.
+
+    Only element [2] of each PATTERNS tuple (the remedy) is read. Element [1] is the
+    diagnostic message, which QUOTES the banned phrase by design -- scanning it would
+    false-positive on every correctly-authored rule.
+
+    Parsed with `ast` (never imported) so a hook module is not executed to lint it.
+    """
+    import ast
+
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except SyntaxError as exc:
+        raise MarkerError(f"{path} is not parseable Python: {exc}") from exc
+
+    remedies = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        if not any(getattr(t, "id", None) == "PATTERNS" for t in node.targets):
+            continue
+        if not isinstance(node.value, (ast.List, ast.Tuple)):
+            continue
+        for entry in node.value.elts:
+            if not isinstance(entry, ast.Tuple) or len(entry.elts) < 3:
+                continue
+            remedy = entry.elts[2]
+            if isinstance(remedy, ast.Constant) and isinstance(remedy.value, str):
+                remedies.append({
+                    "phrase": remedy.value,
+                    "scope": "literal",
+                    "line": remedy.lineno,
+                })
+    return remedies
+
+
 def load_voice_markers(path: Path) -> list[dict]:
     """ADD markers from voice-reference.md. RETIRED markers are ignored by design."""
     text = path.read_text(encoding="utf-8")
@@ -169,7 +214,8 @@ def load_voice_markers(path: Path) -> list[dict]:
 # ---------------------------------------------------------------- check
 
 
-def run(yaml_path: Path, md_path: Path, voice_path: Path) -> tuple[int, dict]:
+def run(yaml_path: Path, md_path: Path, voice_path: Path,
+        hook_path: Path | None = None) -> tuple[int, dict]:
     missing = [str(p) for p in (yaml_path, md_path, voice_path) if not p.is_file()]
     if missing:
         return 0, {"status": "SKIPPED",
@@ -178,6 +224,8 @@ def run(yaml_path: Path, md_path: Path, voice_path: Path) -> tuple[int, dict]:
     try:
         banned, preferred = load_yaml_registry(yaml_path)
         markers = load_voice_markers(voice_path)
+        # The hook is TRACKED (not gitignored), so absence is a real problem, not a skip.
+        remedies = load_hook_remedies(hook_path) if hook_path and hook_path.is_file() else []
     except MarkerError as exc:
         return 1, {"status": "PARSE_ERROR", "error": str(exc), "conflicts": []}
 
@@ -207,12 +255,28 @@ def run(yaml_path: Path, md_path: Path, voice_path: Path) -> tuple[int, dict]:
                     "kind": "content_rules_self_contradiction",
                 })
 
+    # A voice hook's REMEDY string that contains a banned phrase re-prescribes it on
+    # every draft. Containment (search), not subsumption -- the remedy is a sentence
+    # wrapping the phrase, e.g. 'use "X rather than Y" (corpus-validated)'.
+    for ban in banned:
+        pattern = compile_phrase(ban["phrase"], ban["scope"])
+        for remedy in remedies:
+            if pattern.search(remedy["phrase"]):
+                found.append({
+                    "phrase": ban["phrase"], "scope": ban["scope"],
+                    "content_rule_id": ban["rule_id"], "voice_ref_line": 0,
+                    "hook_line": remedy["line"], "hook_remedy": remedy["phrase"],
+                    "direction": "hook_remedy_contains_banned_phrase",
+                    "kind": "voice_hook_prescribes_a_banned_phrase",
+                })
+
     return (1 if found else 0), {
         "status": "FAIL" if found else "PASS",
         "conflicts": found,
         "banned_count": len(banned),
         "validated_count": len(markers),
         "preferred_count": len(preferred),
+        "hook_remedy_count": len(remedies),
     }
 
 
@@ -245,6 +309,8 @@ def main() -> int:
     parser.add_argument("--content-rules-yaml", default=DEFAULT_YAML)
     parser.add_argument("--content-rules-md", default=DEFAULT_MD)
     parser.add_argument("--voice-reference", default=DEFAULT_VOICE)
+    parser.add_argument("--voice-hook", default=DEFAULT_HOOK,
+                        help="voice hook whose PATTERNS remedies are scanned for banned phrases")
     parser.add_argument("--validate-local", action="store_true", dest="validate_local")
     args = parser.parse_args()
 
@@ -253,7 +319,8 @@ def main() -> int:
     else:
         code, payload = run(Path(args.content_rules_yaml),
                             Path(args.content_rules_md),
-                            Path(args.voice_reference))
+                            Path(args.voice_reference),
+                            Path(args.voice_hook))
     print(json.dumps(payload, ensure_ascii=False))
     return code
 
