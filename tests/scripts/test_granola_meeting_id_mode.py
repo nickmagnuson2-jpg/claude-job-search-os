@@ -151,7 +151,9 @@ def test_force_type_overrides_classification(monkeypatch, tmp_path):
     """A call the classifier would call 'networking' can be forced personal."""
     _stub_fetch(monkeypatch)
     _stub_configs(monkeypatch)
-    monkeypatch.setattr(gad, "PERSONAL_VAULT", tmp_path / "personal")
+    # The vault root is now resolved by an accessor, not a module constant, so an
+    # unconfigured vault fails where a path is used rather than at import.
+    monkeypatch.setattr(gad, "personal_vault", lambda: tmp_path / "personal")
     monkeypatch.setattr(gad, "classify_meeting",
                         lambda *a, **k: pytest.fail("force-type must skip classification"))
 

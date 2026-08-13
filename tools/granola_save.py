@@ -32,7 +32,7 @@ JSON shape (passed via --input file or stdin):
 
 Example:
   echo '{...}' | PYTHONIOENCODING=utf-8 python3 tools/granola_save.py write \\
-    --output ~/Documents/Obsidian/30-projects/personal/data/therapy/2026-05-04-therapy-provider-transcript.md
+    --output <personal-vault>/data/therapy/2026-05-04-therapy-provider-transcript.md
   # Writes both -transcript.md AND -transcript-summary.md, with wiki-links between them.
 """
 import argparse
@@ -42,7 +42,7 @@ import sys
 from pathlib import Path
 
 
-SEALED_HEADER_THERAPY = """> **SEALED.** This is sensitive personal therapy material. Per `~/Documents/Obsidian/30-projects/personal/CLAUDE.md`, contents of `personal/data/therapy/` never appear in CVs, cover letters, recruiter prep, voice exports, networking notes, or any external-facing artifact. The verbatim transcript is preserved here as source-of-truth; do not paraphrase or excerpt outside this folder."""
+SEALED_HEADER_THERAPY = """> **SEALED.** This is sensitive personal therapy material. Per `<personal-vault>/CLAUDE.md`, contents of `personal/data/therapy/` never appear in CVs, cover letters, recruiter prep, voice exports, networking notes, or any external-facing artifact. The verbatim transcript is preserved here as source-of-truth; do not paraphrase or excerpt outside this folder."""
 
 RECRUITER_HEADER = """> **Voice classification:** mixed-voice (Nick + counterpart, verbatim Granola transcript). Per `framework/two-tier-capture.md`. Synthesized debriefs live in `coaching/progress-recruiter/`; this file is the raw tier."""
 
@@ -142,7 +142,7 @@ def summary_body(data: dict, transcript_basename: str) -> str:
     if type_ == "therapy":
         boundary = (
             "> **SEALED.** This is sensitive personal therapy material. Per "
-            "`~/Documents/Obsidian/30-projects/personal/CLAUDE.md`, contents of "
+            "`<personal-vault>/CLAUDE.md`, contents of "
             "`personal/data/therapy/` never appear in CVs, cover letters, recruiter prep, "
             "voice exports, networking notes, or any external-facing artifact."
         )

@@ -6,7 +6,7 @@ Slim sibling of tools/todo_write.py — no pipeline sync, no daily log, no
 cross-references. Personal todos live in the Obsidian vault, not the
 job-search project.
 
-Default file: ~/Documents/Obsidian/30-projects/personal/data/personal-todos.md
+Default file: <personal-vault>/data/personal-todos.md
 Override with --file <path>.
 
 Commands:
@@ -30,7 +30,9 @@ import sys
 from datetime import date
 from pathlib import Path
 
-DEFAULT_TODOS_FILE = Path.home() / "Documents/Obsidian/30-projects/personal/data/personal-todos.md"
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from tools import vault_paths
+
 DONE_HEADER = "| Task | Completed | Notes |"
 DONE_SEP = "| --- | --- | --- |"
 
@@ -38,6 +40,11 @@ DONE_SEP = "| --- | --- | --- |"
 # ---------------------------------------------------------------------------
 # I/O helpers
 # ---------------------------------------------------------------------------
+
+def default_todos_file() -> Path:
+    """Resolved at call time: the vault root is private and this repo is public."""
+    return vault_paths.personal_todos()
+
 
 def read_file(path: Path) -> str:
     try:
@@ -303,7 +310,7 @@ def cmd_clear(todos_path: Path) -> None:
 
 def main() -> None:
     argv = sys.argv[1:]
-    todos_path = DEFAULT_TODOS_FILE
+    todos_path = None   # resolved after --file parsing, so an override needs no vault
     filtered = []
     i = 0
     while i < len(argv):
@@ -316,6 +323,15 @@ def main() -> None:
 
     if not filtered:
         out_error("Usage: personal_todo_write.py <add|done|clear> [args...]")
+
+    # Resolve the default only when --file did not supply one, so an explicit
+    # path works on a machine with no vault configured. Missing config is a
+    # loud, actionable error rather than a guessed destination.
+    if todos_path is None:
+        try:
+            todos_path = default_todos_file()
+        except vault_paths.VaultRootMissing as exc:
+            out_error(str(exc))
 
     cmd = filtered[0].lower()
     extra_args = filtered[1:]

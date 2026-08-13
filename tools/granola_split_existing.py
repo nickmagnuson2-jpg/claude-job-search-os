@@ -85,7 +85,7 @@ def split_one(path: Path) -> None:
     if is_therapy:
         sealed_header = (
             "> **SEALED.** This is sensitive personal therapy material. Per "
-            "`~/Documents/Obsidian/30-projects/personal/CLAUDE.md`, contents of "
+            "`<personal-vault>/CLAUDE.md`, contents of "
             "`personal/data/therapy/` never appear in CVs, cover letters, recruiter prep, "
             "voice exports, networking notes, or any external-facing artifact.\n\n"
         )

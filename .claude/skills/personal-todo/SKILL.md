@@ -10,7 +10,7 @@ allowed-tools: Read(*), Bash(python3 tools/personal_todo_write.py:*), Bash(PYTHO
 
 Lightweight to-do list for personal life — admin, household, family, finances, errands. Mirrors the schema of `/todo` (job-todos) but writes to the vault file, not the project.
 
-**Data file:** `~/Documents/Obsidian/30-projects/personal/data/personal-todos.md`
+**Data file:** `<personal-vault>/data/personal-todos.md`
 
 ## Arguments
 
@@ -30,7 +30,7 @@ Examples:
 
 ### Command: Show To-Dos (no arguments)
 
-1. Read `~/Documents/Obsidian/30-projects/personal/data/personal-todos.md`.
+1. Read `<personal-vault>/data/personal-todos.md`.
 2. If file is empty or has no entries in the Active section, display:
    ```
    No personal to-dos yet. Add your first one:

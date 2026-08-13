@@ -23,12 +23,21 @@ import re
 import sys
 from pathlib import Path
 
-LOGS = {
-    "garden": Path.home() / "Documents/Obsidian/30-projects/personal/data/garden-log.md",
-    "practice": Path.home() / "Documents/Obsidian/30-projects/personal/data/practice-log.md",
-    "coffee": Path.home() / "Documents/Obsidian/30-projects/personal/data/coffee-log.md",
-    "farmers-market": Path.home() / "Documents/Obsidian/30-projects/personal/data/farmers-market-log.md",
-}
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from tools import vault_paths
+
+# Log names only. The vault root that hosts them is private (this repo is
+# public), so paths resolve at call time via tools/vault_paths.py rather than
+# being hardcoded here. A dict of resolved paths would need the vault at import
+# time and make the module unimportable when it is unconfigured.
+LOG_NAMES = ("garden", "practice", "coffee", "farmers-market")
+
+
+def log_path(name: str) -> Path:
+    """Resolve a living log's path, raising VaultRootMissing if unconfigured."""
+    if name not in LOG_NAMES:
+        raise KeyError(name)
+    return vault_paths.living_log(name)
 DATE_H2 = re.compile(r"^## \d{4}-\d{2}-\d{2}\s*$", re.M)
 
 
@@ -62,9 +71,14 @@ def main(argv):
         fail("label/text must be single-line (got embedded newline)")
     if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date):
         fail(f"bad date (want YYYY-MM-DD): {date}")
-    path = Path(file_override) if file_override else LOGS.get(log)
+    if file_override:
+        path = Path(file_override)
+    elif log in LOG_NAMES:
+        path = log_path(log)          # resolves the private vault root, may raise
+    else:
+        path = None
     if path is None:
-        fail(f"unknown log '{log}'; valid: {', '.join(LOGS)}")
+        fail(f"unknown log '{log}'; valid: {', '.join(LOG_NAMES)}")
     if not path.exists():
         fail(f"log file not found: {path}")
 

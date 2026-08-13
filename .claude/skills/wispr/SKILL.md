@@ -89,7 +89,7 @@ For long transcripts (>500 chars per chunk), still show the full text — voice 
 
 ### Step 4.5: Date + framing anchor check (MANDATORY before any dated reflection file)
 
-Before writing ANY file whose name encodes a date (`YYYY-MM-DD-*.md` in `data/reflections/` or `~/Documents/Obsidian/30-projects/personal/data/reflections/`), perform this check and surface the result to Nick. Do NOT write the file until Nick has confirmed the date and framing.
+Before writing ANY file whose name encodes a date (`YYYY-MM-DD-*.md` in `data/reflections/` or `<personal-vault>/data/reflections/`), perform this check and surface the result to Nick. Do NOT write the file until Nick has confirmed the date and framing.
 
 **Origin:** 2026-05-27. A 5/26 post-onsite target-company anxiety rumble (captured by Wispr at 5/27 13:48) was routed as `2026-05-27-targetco-anxiety-pre-onsite.md` — wrong on both axes. Filename date used the Wispr capture timestamp instead of the event date Nick stated in the rumble ("Reflections, May 26, 10:50"). Pre/post framing contradicted MEMORY.md, which already had the target-company onsite on Mon 5/25 — so by Tuesday 5/26 the rumble was post-onsite, not pre. See [[feedback_reflection_event_date_not_capture_date]]. This is the same gap-filling failure mode as [[feedback_silent_gap_filling_on_screenshot_parsing]] and [[feedback_cross_context_name_conflation]] — third documented occurrence, hence structural enforcement here.
 
@@ -198,7 +198,7 @@ Confirm one line: "Saved N dictation(s) to data/inbox.md."
 **Synthesis-destination test — pick which `reflections/` folder.** Per `framework/personal-vs-job-os-architecture.md` (architecture decision 2026-05-04), there are two reflection homes:
 
 - `data/reflections/` (job-search project) — when the rumble's *synthesis destination* is job-search work: conviction-workbook, professional-identity, projects/zuora, goals, company-notes, networking, interview prep, AI-fluency narrative, recruiter conversations.
-- `~/Documents/Obsidian/30-projects/personal/data/reflections/` — when the synthesis destination is personal-OS: practice-log, garden-log, gratitude practice, fatherhood prep, relationship, household, finances, identity work that is purely personal (not feeding professional-identity).
+- `<personal-vault>/data/reflections/` — when the synthesis destination is personal-OS: practice-log, garden-log, gratitude practice, fatherhood prep, relationship, household, finances, identity work that is purely personal (not feeding professional-identity).
 
 The test is *destination, not topic*. A rumble that processes job-search ideas through a personal frame (e.g., "habits / asking for help → I can do outreach") is job-search because the routing destination is job-search action. A rumble about gratitude / fatherhood with no professional throughline is personal.
 

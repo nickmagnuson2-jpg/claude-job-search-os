@@ -303,7 +303,7 @@ def test_solo_attendee_no_signal_still_unknown():
 # --- vault seam + durability (review items) --------------------------------
 
 def test_vault_directive_parsed_and_resolved(tmp_path):
-    from tools.granola_auto_debrief import vault_for_project, PERSONAL_VAULT
+    from tools.granola_auto_debrief import vault_for_project, personal_vault
     cfg = tmp_path / "p.txt"
     cfg.write_text("project: work-acme\nvault: ~/Documents/Obsidian/30-projects/work\n"
                    "title: standup\n\nproject: side-project\ntitle: side project\n", encoding="utf-8")
@@ -312,8 +312,8 @@ def test_vault_directive_parsed_and_resolved(tmp_path):
     assert "~" not in out["rules"][0]["vault"]          # expanded
     assert out["rules"][0]["titles"] == ["standup"]     # vault line not swallowed as a title
     assert vault_for_project("work-acme", out).name == "work"
-    assert vault_for_project("side-project", out) == PERSONAL_VAULT   # default
-    assert vault_for_project("nonexistent", out) == PERSONAL_VAULT
+    assert vault_for_project("side-project", out) == personal_vault()   # default
+    assert vault_for_project("nonexistent", out) == personal_vault()
 
 
 def test_session_with_no_longer_seals_business_calls():

@@ -53,6 +53,7 @@ from tools.granola_fetch import (
 )
 from tools.call_analyzer import analyze_transcript, parse_granola_text
 from tools import inbox_lock
+from tools import vault_paths
 
 
 import re
@@ -97,16 +98,37 @@ NICK_IDENTIFIERS = _load_owner_identifiers()
 # Gitignored allowlist of real therapist identities.
 DEFAULT_THERAPY_CONFIG = DEFAULT_REPO_ROOT / "tools" / ".therapy-classifier.txt"
 
-VAULT_THERAPY_DIR = Path.home() / "Documents/Obsidian/30-projects/personal/data/therapy"
 VOICE_CORPUS_DIR = DEFAULT_REPO_ROOT / "data/voice-corpus/granola"
 
 # Personal-OS (non-job-search) routing. Side-business partner calls, contractor
 # meetings, family logistics: these belong in the personal vault, not the
 # job-search repo. The allowlist that maps people to projects is gitignored
 # because it holds real names; this repo is public.
-PERSONAL_VAULT = Path.home() / "Documents/Obsidian/30-projects/personal"
-PERSONAL_VOICE_CORPUS_DIR = PERSONAL_VAULT / "data/voice-corpus/granola"
-PERSONAL_INBOX = PERSONAL_VAULT / "data/inbox.md"
+#
+# The vault's LOCATION is likewise private, so it is resolved at call time from
+# tools/vault_paths.py (env var or gitignored config) rather than hardcoded
+# here. These are functions, not module constants, deliberately: an unconfigured
+# vault must fail where a path is USED, not at import, or the module becomes
+# unimportable and the test suite dies with it. There is no fallback path --
+# guessing a destination for sealed therapy content is worse than stopping.
+
+
+def vault_therapy_dir() -> Path:
+    return vault_paths.therapy_dir()
+
+
+def personal_vault() -> Path:
+    return vault_paths.require_vault_root()
+
+
+def personal_voice_corpus_dir() -> Path:
+    return vault_paths.personal_voice_corpus_dir()
+
+
+def personal_inbox() -> Path:
+    return vault_paths.personal_inbox()
+
+
 DEFAULT_PERSONAL_PROJECTS_CONFIG = DEFAULT_REPO_ROOT / "tools" / ".personal-projects.txt"
 
 # Durable review surface for meetings the collector refused to route. Previously
@@ -212,7 +234,7 @@ def vault_for_project(project: str, pconfig: dict = None) -> Path:
     for rule in (pconfig or {}).get("rules", []):
         if rule.get("project") == project and rule.get("vault"):
             return Path(rule["vault"])
-    return PERSONAL_VAULT
+    return personal_vault()
 
 
 def match_personal_project(meeting: dict, pconfig: dict = None):
@@ -432,7 +454,7 @@ def resolve_destination(meeting: dict, meeting_type: str, project: str = None,
     title = meeting.get("title", "Untitled")
     type_ = meeting_type
     created_at = meeting.get("created_at", "")
-    vault_root = Path(vault_root) if vault_root else PERSONAL_VAULT
+    vault_root = Path(vault_root) if vault_root else personal_vault()
 
     # Convert UTC timestamp to local time for date extraction.
     # Granola REST returns ISO-8601 UTC (e.g. "2026-05-05T00:04:58.303Z").
@@ -465,7 +487,7 @@ def resolve_destination(meeting: dict, meeting_type: str, project: str = None,
         if not therapist_slug or therapist_slug == "untitled":
             therapist_slug = slugify(title)
         filename = f"{date_part}-therapy-{therapist_slug}-transcript.md"
-        output_path = VAULT_THERAPY_DIR / filename
+        output_path = vault_therapy_dir() / filename
         session_desc = f"{title} (auto-classified as therapy by title; verify therapist name)"
     elif type_ == "personal":
         # Personal-OS (or any non-job-search vault): same two-tier filename
@@ -547,7 +569,7 @@ def persist_via_granola_save(meeting: dict, summary: str, private_notes: str,
         # right for one and wrong for the other. It previously pointed at
         # <vault>/data for personal calls, which still failed closed by luck but
         # named the wrong path in the error.
-        vault_marker = VAULT_THERAPY_DIR.parent.parent if type_ == "therapy" else vault_root
+        vault_marker = vault_therapy_dir().parent.parent if type_ == "therapy" else vault_root
         if not vault_marker.is_dir():
             print(f"  [error] vault not found at {vault_marker} — refusing to create it. "
                   f"'{title}' NOT persisted.", file=sys.stderr)
@@ -1051,7 +1073,7 @@ def auto_debrief_new_calls(dry_run: bool = False, hours: int = None,
         "personal_vaults": sorted(personal_entries),
         "meetings": [m.get("title", "") for m in meetings if m.get("transcript")],
         "inbox_path": str(inbox_path),
-        "personal_inbox_path": str(PERSONAL_INBOX),
+        "personal_inbox_path": str(personal_inbox()),
         "persisted": persist_results,
         "flagged": flagged,
     }

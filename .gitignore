@@ -111,6 +111,7 @@ tools/.private-backup.conf
 # Therapist allowlist for granola classification (real names/emails; never commit)
 tools/.therapy-classifier.txt
 tools/.personal-projects.txt
+tools/.personal-vault.conf
 tools/.granola-pending-classification.json
 
 # LinkedIn-scanner cache (scraped profiles, parsed JSON, pickled session cookie, login screenshots — never commit)
