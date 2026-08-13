@@ -123,3 +123,22 @@ def test_empty_scope_is_an_error(tmp_path):
     )
     assert proc.returncode == 2
     assert "ZERO files" in json.loads(proc.stdout)["reason"]
+
+
+def test_global_skill_paths_resolve_outside_the_repo(tmp_path):
+    """A skill can live in ~/.claude/skills/, not just the repo.
+
+    Checking only the repo reported 3 live global skills as absent; an agent reading
+    that fact would call the rule's target unbuilt. That false-absence is the error
+    class this whole pipeline exists to remove, so it is pinned here.
+    """
+    home_skill = Path.home() / ".claude" / "skills" / "lessons-learned" / "SKILL.md"
+    if not home_skill.is_file():
+        pytest.skip("global lessons-learned skill absent on this machine — Tier 2 only")
+    assert mp.artifact_exists(".claude/skills/lessons-learned/SKILL.md", REPO_ROOT) is True
+    assert mp.artifact_exists(".claude/skills/zzz-does-not-exist/SKILL.md", REPO_ROOT) is False
+
+
+def test_repo_paths_still_resolve(tmp_path):
+    assert mp.artifact_exists("tools/sweep.py", REPO_ROOT) is True
+    assert mp.artifact_exists("tools/zzz_no_such_tool.py", REPO_ROOT) is False

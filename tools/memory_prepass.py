@@ -63,6 +63,21 @@ WIKILINK_RE = re.compile(r"\[\[([^\]|]+)")
 SUPPLEMENT_RE = re.compile(r"(?m)^#{2,4}\s+.*?(20\d{2}-\d{2}-\d{2})")
 
 
+def artifact_exists(rel: str, repo_root: Path) -> bool:
+    """Resolve an artifact path against BOTH the repo and the global ~/.claude tree.
+
+    Skills resolve from two roots: `.claude/skills/<name>/SKILL.md` may be project-local
+    OR a global skill under `~/.claude/skills/`. Checking only the repo reported three
+    live global skills as absent, and an agent reading that fact would conclude the rule's
+    target does not exist -- a false "genuinely open" verdict, which is the exact error
+    class this pipeline exists to eliminate. Found 2026-08-13 by an agent cross-checking
+    a pre-pass fact against the filesystem, which is the intended behavior.
+    """
+    if (repo_root / rel).exists():
+        return True
+    return (Path.home() / rel).exists()
+
+
 def body_of(text: str) -> str:
     m = FRONTMATTER_RE.match(text)
     return text[m.end():] if m else text
@@ -77,7 +92,7 @@ def analyse(path: Path, repo_root: Path) -> dict:
     recurrence = sorted({m.group(0) for m in RECURRENCE_RE.finditer(body)})
     tier = TIER_CLAIM_RE.search(body)
     artifacts = sorted(set(ARTIFACT_RE.findall(body)))
-    exists = {a: (repo_root / a).exists() for a in artifacts}
+    exists = {a: artifact_exists(a, repo_root) for a in artifacts}
 
     return {
         "file": path.name,

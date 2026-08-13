@@ -115,3 +115,58 @@ def test_conservation_rejects_a_line_count_change():
     assert amv.conservation_ok(original, original.replace("1", "3"))
     assert not amv.conservation_ok(original, original + "extra\n")
     assert not amv.conservation_ok(original, original.replace("body", "tampered"))
+
+
+# --- merge_mining_verdicts.py: the generator that feeds this applier -------------------
+
+import merge_mining_verdicts as mmv  # noqa: E402
+
+
+def _records(tmp_path, *lines):
+    d = tmp_path / "recs"
+    d.mkdir(exist_ok=True)
+    (d / "work01.tsv").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return d
+
+
+def test_merge_refuses_an_empty_records_dir(tmp_path):
+    (tmp_path / "empty").mkdir()
+    with pytest.raises(SystemExit):
+        mmv.read_records(tmp_path / "empty")
+
+
+def test_merge_rejects_an_unknown_disposition(tmp_path):
+    d = _records(tmp_path, "feedback_x.md\t1\tinvented-disposition\t-")
+    with pytest.raises(SystemExit):
+        mmv.read_records(d)
+
+
+def test_half_landed_becomes_partial_not_yes(tmp_path):
+    """Marking a half-enforced rule `yes` would hide a real gap — the ghost in reverse."""
+    recs = mmv.read_records(_records(
+        tmp_path, "feedback_x.md\t2\talready-landed;genuinely-open\ttools/foo.py"))
+    lines, _ = mmv.build_verdicts(recs, None)
+    assert any('promoted="partial -- tools/foo.py"' in l for l in lines)
+    assert not any('promoted="yes' in l for l in lines)
+
+
+def test_fully_landed_becomes_yes(tmp_path):
+    recs = mmv.read_records(_records(tmp_path, "feedback_x.md\t2\talready-landed\ttools/foo.py"))
+    lines, _ = mmv.build_verdicts(recs, None)
+    assert any('promoted="yes -- tools/foo.py"' in l for l in lines)
+
+
+def test_zero_fire_records_keep_needs_review_flagged(tmp_path):
+    """occurrences 0 means the origin was a success — the fix is a retype, not a count edit."""
+    recs = mmv.read_records(_records(tmp_path, "feedback_x.md\t0\tcount-correction\t-"))
+    lines, stats = mmv.build_verdicts(recs, None)
+    assert stats["zero_fire_flagged"] == 1
+    assert not any("needs_review" in l for l in lines)
+    assert any("occurrences=1" in l for l in lines), "0 is written as the schema floor of 1"
+
+
+def test_reopen_gate_is_never_generated(tmp_path):
+    recs = mmv.read_records(_records(
+        tmp_path, "feedback_x.md\t3\talready-landed;count-correction\ttools/foo.py"))
+    lines, _ = mmv.build_verdicts(recs, None)
+    assert not any("reopen_gate" in l for l in lines), "a script cannot compose a promotion gate"
