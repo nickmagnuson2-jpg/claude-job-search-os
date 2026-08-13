@@ -122,3 +122,9 @@ tools/linkedin-scanner/src/cache/
 
 # Calibration ledger (personal outcome data)
 data/calibration/
+
+# Session scratch space. Working copies only; anything durable belongs in
+# output/ (gitignored + covered by tools/backup-data.sh) or in the repo proper.
+# Untracked AND un-ignored meant a 48KB spec was one `git add -A` from the public
+# repo, against its own header. 2026-08-12.
+scratchpad/
