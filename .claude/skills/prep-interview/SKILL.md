@@ -331,7 +331,7 @@ The scan is exactly three things, and the prep doc must be structured so all thr
   ```
 
   - Both tags come from `proof_domains.valid_tags()` — run `PYTHONIOENCODING=utf-8 python3 tools/proof_domains.py --list` to see them, or `--canonicalize <tag>` if the natural label is not in the enum. **Do not invent a tag**; pick the nearest canonical one.
-  - **The two domains MUST differ after canonicalization.** `customer-experience` and `customer-ops` are the same domain wearing two labels — one exclusion sentence takes out both, which is exactly the failure this line exists to prevent. `tools/check_prep_doc.py` check 3 enforces this.
+  - **The two domains MUST differ after canonicalization.** `customer-experience` and `customer-ops` are the same domain wearing two labels — one exclusion sentence takes out both, which is exactly the failure this line exists to prevent. Step 6a's checker (check 3) blocks the PDF render if they collapse.
   - The reserve is not a second-favorite proof. It is the one to reach for when the interviewer rules the primary's whole domain out of scope mid-call.
 
   **Origin:** on 2026-08-11 a prep doc bound one proof as *"the ONE bound proof (do not substitute)."* Roughly 20 minutes in, the interviewer excluded that entire domain and named the proof's central deliverable as the commoditizable part. There was no fallback, and the follow-up led with the dead proof anyway. `/follow-up` Step 3e now reads this reserve line when a transcript shows the primary was excluded.
@@ -389,7 +389,7 @@ Paste the returned `<!-- outreach_status: … -->` comment into the Logistics bl
   - A recipient-level stamp (`artifact=none`) **never** licenses an artifact-level suppression. The recipient may have replied on an unrelated thread.
   - `delivered=false` means it bounced. Say so, and say to re-send.
 
-`tools/check_prep_doc.py` enforces (a) and (b) mechanically (checks 4-6); this instruction is what makes the doc pass.
+**Step 6a runs `tools/check_prep_doc.py` against the saved doc and blocks the PDF render on failure** — checks 4-6 enforce (a) and (b) mechanically. This instruction is what makes the doc pass on the first try.
 
 **Origin:** on 2026-08-10 a Logistics block asserted *"CV already sent 8/4, do not re-offer it."* No such row existed in the outreach log; the address had bounced on 8/4 (a fact recorded two lines above in the same block); the recipient asked for the CV again on 8/11. The suppressive half is the damaging half — it instructed Nick not to take the corrective action.
 
@@ -458,9 +458,35 @@ After all 3 agents return, compile their outputs into a single document. Do not 
 - If file exists, append `-v2`, `-v3` etc.
 - Write the compiled document to that path.
 
+### Step 6a: Compliance Gate (MANDATORY — runs before the PDF, never after)
+
+Run the checker on the file just saved:
+
+```bash
+PYTHONIOENCODING=utf-8 python3 tools/check_prep_doc.py output/<company-slug>/MMDDYY-prep.md
+```
+
+**This runs before Step 6b by design.** The PDF is the artifact Nick reads on paper, morning-of. A false send-state claim or a missing reserve proof that reaches the printed page is exactly the failure mode this gate exists to stop — catching it after the render means catching it after he has already read it.
+
+- **Exit 0 (`compliant: true`)** → proceed to Step 6b.
+- **Exit 2** → the path is wrong. Fix the path and re-run; do not skip.
+- **Exit 1** → **do NOT render the PDF.** Fix the doc, re-save, re-run this step until it exits 0. Each failure names its check:
+
+| Check | Fix |
+|---|---|
+| 1 / 2 | Add the missing `**Primary proof**` / `**Reserve proof**` line inside THE ONE THING, in the frozen format with a `(domain: <tag>)` tag. |
+| 3 | The two domains collapse to one, or a tag is not in the enum. Run `PYTHONIOENCODING=utf-8 python3 tools/proof_domains.py --list` and pick a genuinely different domain — **do not** just relabel the same proof. A reserve in the primary's domain dies to the same exclusion sentence. |
+| 4 | A suppressive sentence in Logistics either names no artifact or has no `delivered=true` stamp for the artifact it names. Either generate the stamp (see the Logistics gate above) or **rewrite the sentence** — *"sent \<date\>, no delivery confirmation — offer it again if asked."* Rewriting is usually the correct fix; the stamp is only correct when the artifact genuinely arrived. |
+| 5 | A stamp predates the doc. Re-run `outreach_status.py --stamp` with `--as-of` set to the doc's own date and replace it. |
+| 6 | A stamp is malformed or v1 (no `artifact=`). Regenerate it; never hand-edit a stamp. |
+
+**Do not fix a failure by deleting the offending line and moving on** when the underlying claim is what matters — a suppressive sentence removed without checking the send-state leaves Nick with no guidance where he previously had wrong guidance. Resolve the fact, then write the line.
+
+If Nick explicitly overrides a failure, note the check number and his reason inline in the doc. An unexplained override is indistinguishable from a skipped gate.
+
 ### Step 6b: Render PDF (mandatory terminal artifact)
 
-After saving the markdown in Step 6, render a printable PDF as the closing action. Per `memory/feedback_print_prep_pdfs`, Nick reads high-stakes prep on paper.
+After the Step 6a gate passes, render a printable PDF as the closing action. Per `memory/feedback_print_prep_pdfs`, Nick reads high-stakes prep on paper.
 
 ```bash
 PYTHONIOENCODING=utf-8 python3 tools/md_to_pdf_doc.py output/<company-slug>/MMDDYY-prep.md
