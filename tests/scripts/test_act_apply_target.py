@@ -78,11 +78,11 @@ def _run_inproc(mod, tmp_path, *args):
 
 def test_target_add_writes_an_outreach_only_row(tmp_path):
     p = _write(tmp_path)
-    res, code = _run(tmp_path, "target-add", "Solea AI",
+    res, code = _run(tmp_path, "target-add", "Northwind AI",
                      "--lane", "lane-b v5", "--outreach")
     assert code == 0 and res["status"] == "ok"
 
-    row = next(c for c in _load(p)["companies"] if c["name"] == "Solea AI")
+    row = next(c for c in _load(p)["companies"] if c["name"] == "Northwind AI")
     assert row["lane"] == "lane-b v5"
     assert row["outreach"] is True
     assert "ats" not in row          # outreach-only: nothing to scan
@@ -91,26 +91,26 @@ def test_target_add_writes_an_outreach_only_row(tmp_path):
 
 def test_target_add_accepts_an_optional_ats(tmp_path):
     p = _write(tmp_path)
-    _run(tmp_path, "target-add", "Boulevard", "--lane", "lane-b v5",
-         "--outreach", "--ats", "greenhouse", "--slug", "boulevard")
-    row = next(c for c in _load(p)["companies"] if c["name"] == "Boulevard")
+    _run(tmp_path, "target-add", "Globex Systems", "--lane", "lane-b v5",
+         "--outreach", "--ats", "greenhouse", "--slug", "globex-systems")
+    row = next(c for c in _load(p)["companies"] if c["name"] == "Globex Systems")
     assert row["ats"] == "greenhouse"
-    assert row["slug"] == "boulevard"
+    assert row["slug"] == "globex-systems"
 
 
 def test_target_add_is_idempotent(tmp_path):
     """Re-running a triage must not duplicate rows."""
     p = _write(tmp_path)
-    _run(tmp_path, "target-add", "Solea AI", "--lane", "b", "--outreach")
-    res, code = _run(tmp_path, "target-add", "Solea AI", "--lane", "b", "--outreach")
+    _run(tmp_path, "target-add", "Northwind AI", "--lane", "b", "--outreach")
+    res, code = _run(tmp_path, "target-add", "Northwind AI", "--lane", "b", "--outreach")
     assert code == 0
     names = [c["name"] for c in _load(p)["companies"]]
-    assert names.count("Solea AI") == 1
+    assert names.count("Northwind AI") == 1
 
 
 def test_target_add_preserves_existing_rows(tmp_path):
     p = _write(tmp_path)
-    _run(tmp_path, "target-add", "Solea AI", "--lane", "b", "--outreach")
+    _run(tmp_path, "target-add", "Northwind AI", "--lane", "b", "--outreach")
     row = next(c for c in _load(p)["companies"] if c["name"] == "Existing Co")
     assert row["ats"] == "greenhouse"
     assert row["slug"] == "existing"
@@ -179,7 +179,7 @@ def test_target_add_preserves_comments(tmp_path):
     and why individual targets are disabled — re-serializing it destroys that."""
     p = _write(tmp_path, COMMENTED_CONFIG)
     before = p.read_text(encoding="utf-8")
-    _run(tmp_path, "target-add", "Solea AI", "--lane", "b", "--outreach")
+    _run(tmp_path, "target-add", "Northwind AI", "--lane", "b", "--outreach")
     after = p.read_text(encoding="utf-8")
 
     for comment in ("# Career page scan targets",
@@ -204,7 +204,7 @@ def test_target_reject_preserves_comments(tmp_path):
 def test_existing_target_values_survive_an_add(tmp_path):
     """The inactive flag and careers_url must not be rewritten or dropped."""
     p = _write(tmp_path, COMMENTED_CONFIG)
-    _run(tmp_path, "target-add", "Solea AI", "--lane", "b", "--outreach")
+    _run(tmp_path, "target-add", "Northwind AI", "--lane", "b", "--outreach")
     row = next(c for c in _load(p)["companies"] if c["name"] == "Existing Co")
     assert row["active"] is False
     assert row["careers_url"] == "https://careers.example.com/jobs"
@@ -296,7 +296,7 @@ def test_valid_write_still_succeeds(tmp_path):
 def test_dry_run_writes_nothing(tmp_path):
     p = _write(tmp_path)
     before = p.read_text(encoding="utf-8")
-    res, code = _run(tmp_path, "--dry-run", "target-add", "Solea AI",
+    res, code = _run(tmp_path, "--dry-run", "target-add", "Northwind AI",
                      "--lane", "b", "--outreach")
     assert code == 0
     assert res.get("dry_run") is True
