@@ -169,7 +169,7 @@ Analyze the interaction history to determine the follow-up type:
    - Any commitment / next step they named (informs the close).
    - A specific topic worth referencing as the value-add.
    - Anything they flagged as feedback or a question Nick can now answer — **a follow-up that answers their stated concern is the strongest kind** (e.g., a founder who coaches "push back on the AI more" → the follow-up acknowledges that directly and offers a relevant agentic side-project as living proof).
-4. **Graceful degradation:** if no transcript is found (and none passed), skip this branch silently and proceed with the existing Step 2 context (networking blockquote + dossier). No warning, no block.
+4. **Graceful degradation:** if no transcript is found (and none passed), skip this branch silently and proceed with the existing Step 2 context (networking blockquote + dossier). No warning, no block. **Silent skip applies to content hooks only — the pre-bound-proof safety gate is Step 3e and runs regardless.**
 
 #### Step 3c: Reply-Mode Source Grounding (mandatory when replying to a specific received message)
 
@@ -209,6 +209,24 @@ Analyze the interaction history to determine the follow-up type:
 **Pre-present check:** diff the polished draft against the guide. If the diff includes new content beyond mechanical fixes, revise to cut.
 
 See `memory/feedback_voice_pure_diff_minimal.md`, `memory/feedback_minimize_polish_on_voice_pure_dictation.md`, `memory/feedback_no_product_docs_to_employees.md`, `memory/feedback_give_nick_beats_not_a_polished_script.md`.
+
+#### Step 3e: Pre-Bound Proof Safety Gate
+
+**Runs for EVERY follow-up type — Post-meeting, Continue thread, Nudge, Re-establish, Collect.** Unlike Step 3b, this is not a content branch and does not depend on a transcript existing.
+
+1. **Locate the prep doc:** `PYTHONIOENCODING=utf-8 python3 tools/prep_doc_parse.py --company-slug <slug>`. If it returns `{"doc": null}`, this step is a no-op — say so in one line and continue.
+2. **If a prep doc exists, locate a transcript** for this contact using the Step 3b glob rule (`data/voice-corpus/granola/*.md`, name contains a contact name token, dated within ~7 days, most recent match).
+3. **Transcript found:** run
+
+   ```
+   PYTHONIOENCODING=utf-8 python3 tools/transcript_exclusions.py --transcript <path> --wide
+   ```
+
+   Surface every `hits` sentence verbatim to the drafting pass, and read `candidates` yourself. **If any hit or candidate's domain overlaps the proof the prep doc pre-bound, that proof is blocked.** If the prep doc carries a `**Reserve proof**` line, use it. If it does not, surface the block to Nick and ask — do not improvise a substitute. *The overlap judgment is yours; running the detection is not optional.*
+4. **`hit_count: 0` does NOT clear the proof.** The tool's own `coverage` string says paraphrased exclusions are not detected. Read the counterpart's turns for domain exclusions expressed in other words before deploying a pre-bound proof.
+5. **No transcript found:** emit the literal line `[exclusion scan: NOT RUN — no transcript]` in the draft-review output. **A safety check that did not run is never reported as a check that passed.**
+
+**Origin:** a prep doc bound one proof as *"the ONE bound proof (do not substitute)."* About 20 minutes into the call the interviewer excluded that entire domain and named the proof's central deliverable as the commoditizable part. The follow-up, drafted from the full transcript, led with it anyway — because nothing asked anyone to re-read the counterpart's turns for exclusions.
 
 #### Step 4: Sequence-Aware Drafting
 

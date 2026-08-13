@@ -80,6 +80,22 @@ Drill format leaves orthogonal axes blank.
 
 Origin: 2026-07-09 — a networking catch-up (peer, no hiring signal) was run through the interview rubric and Nick had to stop mid-scoring: "I don't think this is the right format for networking calls."
 
+### Step 1c: Proof-availability exclusion scan (real interviews only — run BEFORE scoring)
+
+Run the deterministic scan on the staged transcript before Step 2 scoring begins:
+
+```
+PYTHONIOENCODING=utf-8 python3 tools/transcript_exclusions.py --transcript <path> --wide
+```
+
+Read `hits` and `candidates`. If the interviewer **excluded the domain of the proof Nick had intended to deploy** — said they would never do that piece, that it is commoditized, that it is table stakes, that it is not what they do — then a "proof not deployed" observation in Step 5 is **not** a detection failure by Nick.
+
+Score that miss as **"proof unavailable — interviewer excluded the domain"** and say so explicitly in the Live-Need Bridge binary at Step 5. Do not log it against H4 or the anti-pattern tracker.
+
+`hit_count: 0` does not mean no exclusion happened — the tool's `coverage` string says paraphrases are not detected. Read the counterpart's turns.
+
+**Why this step exists:** the rubric otherwise penalizes Nick for not deploying a proof the interviewer had already ruled out of scope, which is the correct in-room decision. Scoring it as a miss chases the wrong fix. Pairs with `/follow-up` Step 3e, which blocks the same proof from being deployed in the written follow-up.
+
 ---
 
 ## Networking Call Mode (stage: networking only)
