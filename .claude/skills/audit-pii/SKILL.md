@@ -88,15 +88,27 @@ For each changed/untracked path, keep it only if BOTH:
 Skip everything else (private `data/**`, gitignored caches, `output/**`, the denylist).
 If the public-file set is empty, report "No public files changed — nothing to audit" and stop.
 
-Run the deterministic hook against each candidate file's current content (pipe a
-synthetic `Write` payload) to surface any known-token hits up front:
+Sweep them in ONE command with `--scan`, which runs the hook's own word-boundary
+matcher over a path list and applies the same public/gitignored/binary filters:
 
 ```bash
-echo '{"tool_name":"Write","tool_input":{"file_path":"<path>","content":<file-json>}}' \
-  | PYTHONIOENCODING=utf-8 python3 tools/check_public_pii.py; echo "exit=$?"
+git status --porcelain | awk '{print $2}' \
+  | PYTHONIOENCODING=utf-8 python3 tools/check_public_pii.py --scan --stdin-paths
 ```
 
-Collect the exact-match hits (exit 2) into the findings list.
+Or pass paths directly: `... check_public_pii.py --scan path/a.md path/b.py`.
+Exit 2 = denylist hits (in `hits[]`); exit 1 = it scanned **zero** files, which is a
+failure, not a pass; exit 0 = clean. Ambiguous-tier matches come back separately in
+`ambiguous_hits[]` and are for judgment, not auto-edits.
+
+**Never hand-roll this sweep with `grep`.** Hand-rolled greps default to substring
+matching, and a short brand token then fires inside unrelated common words — a 2026-08-12
+pre-push sweep produced ~190 such false hits before being redone. Worse, a substring
+sweep feeding a `git filter-repo --replace-text` scrub corrupts unrelated content. If you
+genuinely must grep, use word boundaries: `grep -E '\b(tok1|tok2)\b'`. See
+[[feedback_replace_all_substring_check]].
+
+Collect the `hits[]` entries into the findings list.
 
 ### Step 2 — Dispatch a FRESH subagent for the semantic pass
 

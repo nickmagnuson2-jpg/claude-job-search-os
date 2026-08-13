@@ -107,7 +107,86 @@ def find_pii(content: str, tokens: list[str]) -> list[str]:
     return hits
 
 
+def scan_paths(paths: list[str]) -> int:
+    """`--scan` sweep mode: run the SAME word-boundary matcher over a list of files.
+
+    WHY THIS EXISTS (promoted from [[feedback_replace_all_substring_check]], 3 fires).
+    The hook body is only reachable by piping a synthetic Write payload per file, so
+    anyone auditing a whole tree hand-rolls a `grep` instead — and hand-rolled greps use
+    substring matching. On 2026-08-12 a pre-push sweep used `grep -qiF` and produced
+    ~190 false hits, essentially all of them a short brand token matching INSIDE an
+    unrelated common word (the shape of `Ace` firing on `placed`). `/audit-pii` Step 0b
+    already said to use word boundaries; prose alone did not hold. This makes the
+    correct sweep the EASY one, which is the only reliable fix.
+
+    The false-positive cost is not just noise: a substring sweep feeding a
+    `git filter-repo --replace-text` scrub corrupts unrelated content.
+
+    Exit 2 if any denylist token is found (same contract as the hook), else 0.
+    """
+    root_env = os.environ.get("PII_REPO_ROOT")
+    root = Path(root_env).resolve() if root_env else Path(__file__).resolve().parent.parent
+    tokens = load_denylist(root)
+    ambiguous = load_ambiguous(root)
+
+    result = {"scanned": 0, "skipped": [], "hits": [], "ambiguous_hits": [],
+              "denylist_tokens": len(tokens)}
+    if not tokens:
+        result["error"] = "denylist empty — run gen_pii_denylist.py first; a sweep with no tokens is not a pass"
+        print(json.dumps(result, indent=2))
+        return 2
+
+    for raw in paths:
+        try:
+            rel = os.path.relpath(os.path.abspath(raw), root).replace(os.sep, "/")
+        except Exception:
+            result["skipped"].append({"path": raw, "why": "unresolvable"})
+            continue
+        if rel.startswith(".."):
+            result["skipped"].append({"path": rel, "why": "outside repo"})
+            continue
+        if not is_public_path(rel):
+            result["skipped"].append({"path": rel, "why": "not a public artifact"})
+            continue
+        if is_gitignored(root, rel):
+            result["skipped"].append({"path": rel, "why": "gitignored"})
+            continue
+        if is_binary(rel):
+            result["skipped"].append({"path": rel, "why": "binary"})
+            continue
+        try:
+            content = (root / rel).read_text(encoding="utf-8")
+        except OSError as exc:
+            result["skipped"].append({"path": rel, "why": f"unreadable: {exc}"})
+            continue
+
+        result["scanned"] += 1
+        hits = find_pii(content, tokens)
+        if hits:
+            result["hits"].append({"file": rel, "tokens": hits})
+        amb = find_pii(content, ambiguous)
+        if amb:
+            result["ambiguous_hits"].append({"file": rel, "tokens": amb})
+
+    result["clean"] = not result["hits"]
+    # A sweep that examined nothing is never a pass — that shape has produced a
+    # false all-clear before (an empty list plus a loop that silently ran zero times).
+    if result["scanned"] == 0:
+        result["clean"] = False
+        result["error"] = "scanned 0 files — an empty sweep is not a pass"
+
+    print(json.dumps(result, indent=2))
+    return 2 if result["hits"] else (1 if result["scanned"] == 0 else 0)
+
+
 def main():
+    # --scan <paths...> | --scan --stdin-paths : sweep mode (NOT the hook path).
+    argv = sys.argv[1:]
+    if argv and argv[0] == "--scan":
+        rest = [a for a in argv[1:] if a != "--stdin-paths"]
+        paths = rest or [ln.strip() for ln in sys.stdin.read().splitlines() if ln.strip()]
+        sys.exit(scan_paths(paths))
+
     try:
         data = json.load(sys.stdin)
     except Exception:
