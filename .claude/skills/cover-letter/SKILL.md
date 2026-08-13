@@ -44,7 +44,13 @@ Parse `$ARGUMENTS`:
 
 Read all cover-letter-relevant files listed in `framework/application-workflow.md` § Candidate Context Loading (the "Cover Letter" column). Skip any that don't exist, never fail.
 
-**Voice-critical:** the table includes `framework/voice-reference.md` (corpus-validated rules + verbatim exemplars). For cover letters specifically, hold the relevant exemplars in context while drafting. Research finding: **rules alone underperform; rules + 2-3 exemplars beats both.** A cover letter is longer-form than email, but the sentence-level voice patterns (no em-dashes, ` - ` inline hyphen, `particularly` as emphasis, mission language, bare-Nick close) still apply.
+**Voice-critical:** the table includes `framework/voice-reference.md` (corpus-validated rules + verbatim exemplars). **MUST read both the rules AND the exemplars sections — research finding: rules alone underperform; rules + 2-3 exemplars beats both.**
+
+**The matched exemplar is the generative spine for Step 5: draft by adapting it to this company and role, NOT by filling the Step 5 structure with fresh prose. The Problem-Solution arc (Step 5) shapes argument ORDER, not voice — the exemplar shapes voice. The structure is a constraint check on the adapted exemplar, never the starting point. If the exemplar isn't doing the work, the letter will read generic.**
+
+*Long-form caveat.* A cover letter is several times the length of any email exemplar, so the spine cannot be adapted one-to-one. Adapt it at the **paragraph** level: take the exemplar's sentence rhythm, register, and transition habits as the pattern each paragraph is written against, rather than stretching one email's shape across the whole letter. The sentence-level patterns (no em-dashes, ` - ` inline hyphen, `particularly` as emphasis, mission language, bare-Nick close) still apply throughout.
+
+> Origin 2026-08-13: the other three drafting skills (`/draft-email`, `/cold-outreach`, `/follow-up`) all carried this spine architecture; `/cover-letter` alone still said "hold the relevant exemplars in context while drafting" — the ambient-reference pattern that [[feedback_voice_asset_must_be_generative_spine]] names as the exact defect it exists to prevent. Found by the Phase 2 memory audit (`output/analysis/081326-memory-hygiene-project.md`), which verified the rule's claim of "4 skills fixed in code" and found only 3.
 
 **Also load `framework/content-rules.md`** — the drafting-judgment index (distinct from voice mechanics). For a cover letter the load-bearing active rules are `B1` (hold the heavy scale proof-drop; keep the lens), `B2` (bring Nick's own proof, don't echo the company's framing back), and `F1`/`F2` (no meta-frames or consulting-speak labels). These are positioning rules, not voice rules — check the drafted letter against them at the Step-4 quality read.
 
