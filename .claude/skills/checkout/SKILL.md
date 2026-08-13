@@ -184,7 +184,7 @@ Origin: 2026-05-27 task #4 reflexive close — see `memory/feedback_diagnose_une
 
 Scan today's Granola meetings for calls that were never debriefed, and surface them so the day's residue is visible before checkout closes. **Propose only. Never auto-run `/debrief`** — `/debrief` is Nick-first cold-scoring, and auto-running it inside `/checkout` would corrupt that methodology.
 
-Origin: KAOS `/eod` cascade (E3, build queue 2026-05-28). Composes with the T7 raw-Granola precondition gate in `/debrief`.
+Origin: an external personal-OS system's `/eod` cascade (E3, build queue 2026-05-28). Composes with the T7 raw-Granola precondition gate in `/debrief`.
 
 **Steps:**
 
