@@ -193,14 +193,16 @@ def test_no_artifact_can_never_report_delivered(tmp_path):
 
 
 def test_named_but_not_sent_is_not_receipt_evidence(tmp_path):
-    """Live-data regression: "offered resume" on a Replied row is not a delivered CV.
+    """Live-data regression: an OFFERED CV on a Replied row is not a delivered CV.
 
     Found on 2026-08-12 by running --validate-local against the real log, where this
-    exact shape returned delivered:true and re-authorized the historical claim.
+    shape returned delivered:true and re-authorized the historical claim. The rows below
+    are invented to reproduce the shape — the real cells are private — but they keep the
+    two negative markers ("offered", "promised") that do the actual work.
     """
     log = make_log(tmp_path, [
-        "| 2026-07-28 | cold-outreach | email | Jane Doe | Acme Corp | Pitched the fit, asked what days work + offered resume | Replied |",
-        "| 2026-08-06 | follow-up | email | John Smith | Acme Corp | Answers + tailored CV promised for 8/07 | Replied |",
+        "| 2026-07-28 | cold-outreach | email | Jane Doe | Acme Corp | Intro call scheduling; offered to send a CV if useful | Replied |",
+        "| 2026-08-06 | follow-up | email | John Smith | Acme Corp | Answers to her questions; CV promised for next week | Replied |",
     ])
     for name in ("Jane Doe", "John Smith"):
         code, out = query("--recipient", name, "--artifact", "cv", "--log", log)

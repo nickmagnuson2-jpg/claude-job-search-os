@@ -108,15 +108,16 @@ def find_in_text(text: str) -> list[str]:
 # an artifact in plenty of non-transmission senses. Verified against the live log on
 # 2026-08-12, naming-but-not-sending accounts for 8 of 16 artifact-bearing rows:
 #
-# (shapes below are paraphrased -- the live cells are private):
+# The four shapes, INVENTED here to stand in for the private cells rather than quoted
+# (the live log is gitignored and its rows name real people and companies):
 #
-#   "asked what days work + offered resume"      -> offered, never sent
-#   "answers + tailored CV promised for <date>"  -> promised, not yet sent
-#   "CV not attached, offered to send if useful" -> explicitly not attached
-#   "Re: send-resume thread - bumping back up"   -> a thread NAME
+#   "... proposed times, said a CV could follow"  -> offered, never sent
+#   "... deck to follow next week"                -> promised, not yet sent
+#   "... no CV this time, happy to send one"      -> explicitly withheld
+#   "Re: the resume thread"                       -> a thread NAME, not a send
 #
 # Treating those as receipt evidence reproduces the exact 2026-08-10 defect from the
-# other direction: the offered-resume row is `Replied`, so a naive artifact scope
+# other direction: the merely-offered row carries `Replied`, so a naive artifact scope
 # returns delivered:true for a CV that was never sent, and the suppressive sentence is
 # re-authorized. This function is the gate.
 #
@@ -124,7 +125,7 @@ def find_in_text(text: str) -> list[str]:
 # transmission marker and the closest non-transmission marker; the artifact counts as
 # transmitted only if a positive marker exists and is strictly closer than any negative.
 # Proximity (not mere presence) is what separates "request for a current resume,
-# attached 071526-placeholder.pdf" (sent) from "offered resume" (not sent).
+# attached 071526-placeholder.pdf" (sent) from "a CV could follow" (not sent).
 #
 # The failure mode is deliberately asymmetric: a missed send yields `delivered: unknown`,
 # which renders as "offer it again if asked" -- harmless. A false send yields

@@ -21,8 +21,9 @@ report `delivered:true`, because the recipient may have replied on an unrelated 
 
 **Mentioning an artifact is not sending it.** Found by running the mandated real-data
 validator, not by the fixture suite: 8 of 16 artifact-bearing log rows name a CV without
-sending one ("offered resume", "CV promised for 8/07", "CV not attached"), and several
-carry `Replied`. Scoping receipt on mentions returned `delivered:true` for a CV that was
+sending one — resume merely offered, CV promised but not yet sent, an explicit "not
+attached", a thread whose subject contains the word — and several carry `Replied`.
+Scoping receipt on mentions returned `delivered:true` for a CV that was
 never sent — the original defect, reproduced by its own fix.
 `artifact_vocab.find_transmitted_in_text()` gates it, nearest-marker-wins, deliberately
 asymmetric: a missed send is harmless, a false send unlocks suppression.

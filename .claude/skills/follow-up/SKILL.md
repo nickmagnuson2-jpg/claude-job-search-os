@@ -226,7 +226,7 @@ See `memory/feedback_voice_pure_diff_minimal.md`, `memory/feedback_minimize_poli
 4. **`hit_count: 0` does NOT clear the proof.** The tool's own `coverage` string says paraphrased exclusions are not detected. Read the counterpart's turns for domain exclusions expressed in other words before deploying a pre-bound proof.
 5. **No transcript found:** emit the literal line `[exclusion scan: NOT RUN — no transcript]` in the draft-review output. **A safety check that did not run is never reported as a check that passed.**
 
-**Origin:** a prep doc bound one proof as *"the ONE bound proof (do not substitute)."* About 20 minutes into the call the interviewer excluded that entire domain and named the proof's central deliverable as the commoditizable part. The follow-up, drafted from the full transcript, led with it anyway — because nothing asked anyone to re-read the counterpart's turns for exclusions.
+**Origin:** a prep doc pre-bound a single proof and said not to substitute it. Partway into the call the counterpart ruled that entire domain out of scope and called the proof's central deliverable commoditizable. The follow-up, drafted from the full transcript, led with it anyway — because nothing asked anyone to re-read the counterpart's turns for exclusions.
 
 #### Step 4: Sequence-Aware Drafting
 

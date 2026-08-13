@@ -2,12 +2,11 @@
 """
 transcript_exclusions.py — Find sentences where the counterpart ruled a domain OUT.
 
-WHY. A prep doc bound one proof as "the ONE bound proof (do not substitute)." About
-twenty minutes into the call the interviewer said she would never do that piece of the
-market, and that it gets commoditized as the model layer improves — naming the proof's
-central deliverable. The follow-up, drafted from the full transcript, led with it
-anyway. Nobody re-read the counterpart's turns looking for exclusions, because nothing
-asked them to.
+WHY. A prep doc pre-bound a single proof and told the reader not to substitute it.
+Partway into the call the counterpart ruled that entire domain out of scope and called
+the proof's central deliverable commoditizable. The follow-up, drafted from the full
+transcript, led with it anyway. Nobody re-read the counterpart's turns looking for
+exclusions, because nothing asked them to.
 
 SPLIT OF LABOR. Detecting *literal* exclusion phrasings is deterministic and belongs
 here. Judging whether a detected exclusion overlaps the bound proof's domain is
@@ -42,10 +41,10 @@ PHRASES = [
     r"we are not doing",
     r"not what we do",
     # The commoditization family is matched on the word itself, not on an enumerated
-    # set of auxiliaries. The spec's v1 list had `gets/is/would get commoditized` and
-    # the real 2026-08-11 sentence was "it WILL GET commoditized pretty easily" — it
-    # matched none of them. Enumerating auxiliaries is a losing game; a counterpart
-    # calling any part of the work commoditized is always worth surfacing.
+    # set of auxiliaries. The spec's v1 list had `gets/is/would get commoditized`, and
+    # the sentence that motivated this tool used "will get" — matching none of them.
+    # Enumerating auxiliaries is a losing game; a counterpart calling any part of the
+    # work commoditized is always worth surfacing.
     r"commoditi[sz]ed",
 ]
 # Near-misses that must NOT fire. "never mind" / "I've never seen" are conversational,

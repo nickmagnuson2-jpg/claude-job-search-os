@@ -194,8 +194,9 @@ def derive_state(matched: list[dict], artifact: str | None) -> dict:
     known = [r for r in matched if r["status"] in KNOWN_STATUSES]
 
     # TRANSMISSION sense, not mention sense. A Summary cell that merely NAMES the
-    # artifact ("offered resume", "CV promised for <date>", "Re: send-resume thread") is
-    # not receipt evidence -- and on the live log those rows carry `Replied`, so scoping
+    # artifact (a CV merely offered, a deck promised for later, a thread whose SUBJECT is
+    # about a resume) is not receipt evidence -- and on the live log such rows carry
+    # `Replied`, so scoping
     # on mentions returns delivered:true for a CV that was never sent. That is the
     # 2026-08-10 defect wearing a different hat. See artifact_vocab.find_transmitted_in_text.
     artifact_rows = []

@@ -334,7 +334,7 @@ The scan is exactly three things, and the prep doc must be structured so all thr
   - **The two domains MUST differ after canonicalization.** `customer-experience` and `customer-ops` are the same domain wearing two labels — one exclusion sentence takes out both, which is exactly the failure this line exists to prevent. Step 6a's checker (check 3) blocks the PDF render if they collapse.
   - The reserve is not a second-favorite proof. It is the one to reach for when the interviewer rules the primary's whole domain out of scope mid-call.
 
-  **Origin:** on 2026-08-11 a prep doc bound one proof as *"the ONE bound proof (do not substitute)."* Roughly 20 minutes in, the interviewer excluded that entire domain and named the proof's central deliverable as the commoditizable part. There was no fallback, and the follow-up led with the dead proof anyway. `/follow-up` Step 3e now reads this reserve line when a transcript shows the primary was excluded.
+  **Origin:** a prep doc pre-bound a single proof and said not to substitute it. Partway into the call the counterpart ruled that entire domain out of scope and called the proof's central deliverable commoditizable. There was no fallback, and the follow-up led with the dead proof anyway. `/follow-up` Step 3e now reads this reserve line when a transcript shows the primary was excluded.
 
 **Debrief-side requirement:** `/debrief` must ask whether the prep doc was read before scoring any bridge or question-quality miss. A miss under non-consumption is logged against **prep artifact not consumed**, not against the skill it appears to be.
 
