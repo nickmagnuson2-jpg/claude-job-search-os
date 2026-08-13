@@ -51,6 +51,7 @@ any data file.
 import argparse
 import base64
 import json
+import os
 import re
 import sys
 from datetime import datetime, timedelta
@@ -410,6 +411,42 @@ def check_token_expiry(token_path: Path, inbox_dir: Path) -> bool:
 
 # ── Gmail API functions (require google-api-python-client) ────────────────────
 
+def _write_token_atomic(token_path: Path, content: str) -> None:
+    """
+    Write the OAuth token via temp-file + os.replace so a mid-write death
+    (machine sleep, SIGKILL) can never leave a truncated token behind.
+
+    A plain write_text() truncates the target before writing; if the process
+    dies in that window the token becomes empty and every later run fails with
+    JSONDecodeError at from_authorized_user_file. os.replace is atomic on the
+    same filesystem, so readers see either the old token or the new one.
+    Matches the write_atomic convention in act_apply.py.
+    """
+    tmp = token_path.with_suffix(token_path.suffix + ".tmp")
+    tmp.write_text(content, encoding="utf-8")
+    os.replace(tmp, token_path)
+
+
+def _load_token_or_exit(Credentials, token_path: Path, tools_dir: Path):
+    """
+    Load the token file, converting a corrupt/truncated token into an
+    actionable re-auth message instead of a raw JSONDecodeError traceback.
+    """
+    try:
+        return Credentials.from_authorized_user_file(str(token_path), SCOPES)
+    except (json.JSONDecodeError, ValueError, KeyError) as e:
+        detail = f"token file at {token_path} is corrupt or truncated ({e})"
+        _emit_auth_failure_alert(tools_dir, detail)
+        print(
+            f"ERROR: {detail}\n"
+            "This usually means a previous run was killed mid-write.\n"
+            "Re-run auth to regenerate it:\n"
+            "  PYTHONIOENCODING=utf-8 python3 tools/gmail_fetch.py --auth --repo-root .",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+
 def get_or_refresh_creds(tools_dir: Path, auth_mode: bool = False):
     """
     Load or create Gmail OAuth credentials.
@@ -449,7 +486,7 @@ def get_or_refresh_creds(tools_dir: Path, auth_mode: bool = False):
             sys.exit(1)
         flow = InstalledAppFlow.from_client_secrets_file(str(creds_path), SCOPES)
         creds = flow.run_local_server(port=0)
-        token_path.write_text(creds.to_json(), encoding="utf-8")
+        _write_token_atomic(token_path, creds.to_json())
         print(f"Token saved to {token_path}")
         return creds
 
@@ -461,14 +498,14 @@ def get_or_refresh_creds(tools_dir: Path, auth_mode: bool = False):
         )
         sys.exit(1)
 
-    creds = Credentials.from_authorized_user_file(str(token_path), SCOPES)
+    creds = _load_token_or_exit(Credentials, token_path, tools_dir)
     if not creds.valid:
         if creds.expired and creds.refresh_token:
             try:
                 creds.refresh(Request())
                 token_data = json.loads(creds.to_json())
                 token_data["token_last_refresh"] = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
-                token_path.write_text(json.dumps(token_data), encoding="utf-8")
+                _write_token_atomic(token_path, json.dumps(token_data))
             except Exception as e:
                 _emit_auth_failure_alert(tools_dir, str(e))
                 raise
