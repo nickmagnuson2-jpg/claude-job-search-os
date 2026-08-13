@@ -25,9 +25,17 @@ block paths to hand to Step 5.
 
 **Byte conservation is the load-bearing guarantee. The rules diff is corroborating
 only — never invert that.** `--rules` is a keyword+structural *sample*, not a cover
-(71 of 240 non-blank lines on CLAUDE.md), and before/after are parsed by the **same**
-detector, so a systematic omission cancels on both sides and the diff comes back empty.
-A green rules diff is not proof; matching bytes are.
+(roughly a third of `CLAUDE.md` — 82 of 249 non-blank lines on 2026-08-12; re-measure
+rather than trusting that number, it drifts as the file changes), and before/after are
+parsed by the **same** detector, so a systematic omission cancels on both sides and the
+diff comes back empty. A green rules diff is not proof; matching bytes are.
+
+**If the gate aborts, the exit code says where.** `context_file_audit.py` uses:
+`1` not a file · `2` usage error · `3` a required capability is unadvertised ·
+`4` zero normative lines (refuses an empty baseline) · `5` zero blocks ·
+`6` the `--emit-blocks` directory is unsafe to write (unprovable, holds undeclared
+entries, or is unwritable) · `7` emitted block count ≠ `--expect-blocks`.
+Codes 4-7 mean the guard did its job — fix the input, never loosen the check.
 
 ### Why this gate exists, and the two traps in it
 
@@ -103,6 +111,12 @@ a 91-line table. Never propose trims from line counts alone.
 The script's suggestion is **advisory input, not a verdict.** Read the actual section
 before agreeing with it. A high `lookup_density` section can still be load-bearing if
 its table encodes a rule (e.g. a "these files are write-only, use these scripts" table).
+
+**If it warns about an unclosed code fence, stop and fix the file first.** Per CommonMark
+an unclosed ``` runs to EOF, so every `## ` heading after it is treated as code and
+vanishes from the audit. Byte accounting still balances — nothing is lost — but you will
+see one giant section and a file with no structure, and any trim proposed from that view
+is meaningless. Close the fence, then re-run Step 0 and Step 1.
 
 ### Step 2 — Propose per-section, with the destination named
 
@@ -196,5 +210,14 @@ rule needs to be able to trace it.
 ## Notes
 
 - Read-and-propose by default. It never edits without per-group approval.
-- Works on any markdown file with `## ` sections; it is not CLAUDE.md-specific.
-- Companion script: `tools/context_file_audit.py` (measure/classify only, never edits).
+- Works on any markdown file with `## ` sections; it is not CLAUDE.md-specific. Section
+  splitting is fence-aware, so a `## ` line inside a code fence is content, not a heading.
+- Companion script: `tools/context_file_audit.py`. **It never touches the target file** —
+  but it is no longer read-only overall: `--emit-blocks <DIR>` writes block files and a
+  manifest into DIR, and on a re-run deletes the block files that DIR's existing
+  `manifest.json` declares. It refuses (exit 6) rather than touching a directory it cannot
+  prove it wrote, so point `--emit-blocks` at a fresh or dedicated directory, never at a
+  folder holding anything you care about. An earlier revision keyed that cleanup on
+  filename shape and destroyed a folder of numbered user notes; see
+  `memory/feedback_shape_is_not_provenance_for_destructive_ops.md`.
+- Companion gate: `tools/trim_context_gate.sh` (Step 0).
