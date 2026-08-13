@@ -12,11 +12,15 @@ Step 1 prescribed `name`/`description`/`metadata.type` only, while the `lessons-
 required the full schema. The more commonly-followed authority emitted the invisible variant.
 Both were fixed 2026-08-13.
 
-DATE GATE. 384 legacy files predate the fix and are backfilled in Phase 1 of
-`output/analysis/081326-memory-hygiene-project.md`. Enforcing on them today would ship a red
-suite, which gets muted rather than fixed. So this asserts on files whose frontmatter is
-*newer than the cutoff* — new captures cannot regress — and the cutoff drops to None once
-backfill lands, at which point the whole corpus is enforced.
+DATE GATE — LIFTED 2026-08-13. The 383 legacy files were backfilled by
+`tools/backfill_memory_schema.py` (Phase 1), so `ENFORCE_FROM` is now None and the whole
+corpus is enforced. Coverage at the lift: 403/403 feedback rules carry the three keys.
+
+WHY `last_cited` IS NOT REQUIRED. It is stamped by the `memory-last-cited-stamp` PostToolUse
+hook on a genuine Read — never authored, never backfilled. Seeding it would have faked either
+freshness (today) or staleness (mtime); the backfill omitted it on purpose, so requiring it
+here would demand a fabricated value. When present it must still be a valid ISO date, since a
+malformed one is silently skipped by the demotion signal.
 
 The memory dir is OUTSIDE the repo and is gitignored, so on a clean clone this SKIPS loudly
 rather than passing vacuously.
@@ -34,11 +38,12 @@ MEMORY_DIR = Path(
     )
 )
 
-# Files whose `last_cited` is on/after this date must carry the full schema.
-# Phase 1 backfill -> set to None to enforce corpus-wide.
-ENFORCE_FROM = date(2026, 8, 13)
+# None = enforce corpus-wide. Was date(2026, 8, 13) until the Phase 1 backfill landed.
+ENFORCE_FROM = None
 
-REQUIRED_KEYS = ("occurrences", "promoted", "reopen_gate", "last_cited")
+# The keys an AUTHOR (or the backfill) writes. `last_cited` is hook-stamped and is
+# deliberately absent from most of the corpus — see the module docstring.
+REQUIRED_KEYS = ("occurrences", "promoted", "reopen_gate")
 
 _FRONTMATTER_RE = re.compile(r"\A---\n(.*?)\n---", re.S)
 _LAST_CITED_RE = re.compile(r"^\s*last_cited:\s*['\"]?(\d{4}-\d{2}-\d{2})", re.M)
@@ -117,6 +122,28 @@ def test_occurrences_is_an_integer_when_present():
         if m and not re.fullmatch(r"\d+", m.group(1).strip()):
             bad.append(f"{path.name}: occurrences={m.group(1).strip()!r}")
     assert not bad, "occurrences must be a bare integer:\n  " + "\n  ".join(bad)
+
+
+def test_last_cited_when_present_is_a_valid_iso_date():
+    """A malformed date is swallowed by the demotion signal's except-and-skip."""
+    files = _feedback_files()
+    if not files:
+        pytest.skip("memory dir absent — Tier 2 only")
+
+    bad = []
+    for path in files:
+        fm = _frontmatter(path)
+        if fm is None:
+            continue
+        m = re.search(r"^\s*last_cited:\s*(.+)$", fm, re.M)
+        if not m:
+            continue  # hook has not stamped it yet — expected for most of the corpus
+        raw = m.group(1).strip().strip("'\"")
+        try:
+            date.fromisoformat(raw)
+        except ValueError:
+            bad.append(f"{path.name}: last_cited={raw!r}")
+    assert not bad, "last_cited must be YYYY-MM-DD:\n  " + "\n  ".join(bad)
 
 
 def test_coverage_is_reported_even_when_green():

@@ -129,6 +129,61 @@ def test_empty_corpus_does_not_divide_by_zero(tmp_path):
     assert cov["files"] == 0 and cov["pct"] == 0.0
 
 
+BACKFILLED = """---
+name: feedback_backfilled_{n}
+description: a rule made visible by the Phase 1 backfill, with no last_cited
+metadata:
+  node_type: memory
+  type: feedback
+  occurrences: 1
+  promoted: no
+  reopen_gate: "UNREVIEWED -- schema backfill 2026-08-13"
+  needs_review: true
+---
+body
+"""
+
+
+def test_never_cited_files_get_their_own_bucket(tmp_path):
+    """The Phase 1 seed policy omits last_cited on purpose, which creates a third state.
+
+    Visible to promotion, invisible to demotion. Silently skipping those files would hide
+    the strongest demotion evidence in the corpus: never cited since it was written.
+    """
+    d = tmp_path / "memory"
+    d.mkdir()
+    (d / "feedback_visible_0.md").write_text(VISIBLE.format(n=0, occ=1))  # has last_cited
+    for i in range(3):
+        (d / f"feedback_backfilled_{i}.md").write_text(BACKFILLED.format(n=i))
+    report = run(d, tmp_path)
+    assert report["never_cited_count"] == 3
+    assert {c["file"] for c in report["never_cited_sample"]} == {
+        f"feedback_backfilled_{i}.md" for i in range(3)
+    }
+    assert report["needs_review_count"] == 3
+    assert report["demotion_count"] == 0, "a never-cited file is not a dated staleness hit"
+
+
+def test_never_cited_sample_is_bounded(tmp_path):
+    """~383 files land in this bucket the day the backfill runs; the count is the signal."""
+    d = tmp_path / "memory"
+    d.mkdir()
+    for i in range(25):
+        (d / f"feedback_backfilled_{i}.md").write_text(BACKFILLED.format(n=i))
+    report = run(d, tmp_path)
+    assert report["never_cited_count"] == 25
+    assert len(report["never_cited_sample"]) == 10
+
+
+def test_backfilled_occurrences_do_not_surface_as_promotion_candidates(tmp_path):
+    """`occurrences: 1` is a floor, not a count -- it must not fake a promotion gate."""
+    d = tmp_path / "memory"
+    d.mkdir()
+    for i in range(5):
+        (d / f"feedback_backfilled_{i}.md").write_text(BACKFILLED.format(n=i))
+    assert run(d, tmp_path)["promotion_count"] == 0
+
+
 def test_oversized_reporting_is_advisory_and_never_mutates(tmp_path):
     d = build_corpus(tmp_path, visible=1, invisible=0, projects=0)
     big = d / "index-big.md"

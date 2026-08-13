@@ -203,6 +203,14 @@ def main(argv: list[str]) -> None:
 
     promotion_candidates = []
     demotion_candidates = []
+    # Post-backfill (2026-08-13) the corpus deliberately carries NO seeded `last_cited`:
+    # seeding today would fake freshness, seeding mtime would fake staleness. The
+    # last_cited hook stamps it on the first genuine Read. That leaves a third state --
+    # visible to the promotion signal, invisible to the demotion signal, forever --
+    # and "never cited since backfill" is arguably the strongest demotion evidence there
+    # is. It is reported as its own bucket rather than silently skipped.
+    never_cited = []
+    needs_review = 0
 
     for path, fm in load_memory_files(memory_dir):
         try:
@@ -218,7 +226,16 @@ def main(argv: list[str]) -> None:
                 "description": fm.get("description", ""),
             })
 
+        if str(fm.get("needs_review", "")).strip().lower() in ("true", "yes", "1"):
+            needs_review += 1
+
         last_cited = fm.get("last_cited", "")
+        if not last_cited:
+            never_cited.append({
+                "file": path.name,
+                "occurrences": occurrences,
+                "needs_review": str(fm.get("needs_review", "")).strip().lower() in ("true", "yes", "1"),
+            })
         if last_cited:
             try:
                 lc_date = datetime.strptime(last_cited, "%Y-%m-%d").date()
@@ -243,6 +260,14 @@ def main(argv: list[str]) -> None:
         "demotion_candidates": demotion_candidates,
         "promotion_count": len(promotion_candidates),
         "demotion_count": len(demotion_candidates),
+        # Visible to promotion, invisible to demotion: no last_cited has ever been stamped.
+        # A count plus a bounded sample -- right after the Phase 1 backfill this is ~383
+        # files, and dumping all of them would bury the two live signals above.
+        "never_cited_count": len(never_cited),
+        "never_cited_sample": never_cited[:10],
+        # Files whose occurrences/promoted were backfilled, not counted. A `1` here means
+        # "unknown", not "fired once" -- Phase 2 mining is what resolves them.
+        "needs_review_count": needs_review,
         # An empty candidate list is only meaningful alongside coverage. Read them together.
         "schema_coverage": coverage,
         # The trigger /trim-context-file never had: it was mutation-verified and then never
@@ -280,7 +305,18 @@ def main(argv: list[str]) -> None:
             lines.append(f"- `{c['file']}` (last cited {c['last_cited']}, {c['age_days']}d ago)")
     else:
         lines.append("_none_")
-    lines.append("")
+    lines += [
+        "",
+        "## Signal health",
+        "",
+        f"- Schema coverage: {coverage['feedback_visible']}/{coverage['feedback_rules']} "
+        f"feedback rules visible to the promotion signal ({coverage['feedback_pct']}%).",
+        f"- Never cited: {len(never_cited)} visible files have no `last_cited` yet "
+        "(the hook stamps it on first genuine Read; until then they cannot go stale).",
+        f"- Needs review: {needs_review} files carry backfilled counts -- `occurrences: 1` "
+        "there means UNKNOWN, not once.",
+        "",
+    ]
 
     if not args.dry_run:
         backlog_path.write_text("\n".join(lines), encoding="utf-8")
