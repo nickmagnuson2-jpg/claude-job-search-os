@@ -5,6 +5,52 @@ Format: newest entries at the top.
 
 ---
 
+## 2026-08-12: Data-integrity fixes, a discovery feedback loop, and four closed traps
+
+**`todo_write.py sync` was destroying to-dos.** Two independent defects: the company name
+was substring-matched against all columns joined, so a to-do that merely mentioned a
+company in its Notes was withdrawn; and nothing checked whether that company also held a
+live row in Active Pipeline. A single stale Archived row had mass-withdrawn 18 to-dos, 3
+unrelated. Now matches the task column only, on a word boundary, and skips any company
+with a non-terminal row. Verified against a copy of the live files: pre-fix withdrew 2
+that day, post-fix withdrew 0.
+
+**`pipe_write.py remove` gains `--stage`.** It hardcoded `Withdrawn`, so a loop that ended
+because the company passed was recorded as a withdrawal. Opposite facts, and every
+conversion metric computed off the file inherited the error.
+
+**Discovery output now routes, and rejections compound.** `act_apply.py` gains
+`target-add` / `target-reject`; `scan-targets.yaml` gains outreach-only rows (no `ats`,
+skipped by the nightly scan); and `agent_core.load_known_names` reads `rejected:` as well
+as `companies:`, so a declined company stops returning to the inbox every week. 44 scored
+candidates triaged: 24 kept, 20 rejected. Collector dedup set 11 to 55.
+
+**Inbox tooling.** `inbox_census.py` (comment-span-aware oracle; a 372-line HTML comment
+was hiding headers, so the real count was 147/31 not 150/34) and `inbox_triage.py`
+(read-only extraction of 108 non-machine blocks, grouped by destination).
+
+**PII: the denylist had a blind spot over the entire target pool.** `gen_pii_denylist.py`
+read only `networking.md` and `job-pipeline.md`, never `scan-targets.yaml`. A real target
+company reached a public test file as a fixture name and was **not** blocked; the semantic
+subagent pass caught it, the deterministic hook did not. Fixed at source; 332 to 414
+tokens.
+
+**Four standing traps closed.** The suite runs clean with **no `--ignore` flags** (1325
+passing): `scan.py` called `tqdm.pandas()` at import time, hard-requiring a scanner-only
+dependency and breaking collection for the whole suite, while enabling a feature the
+package never uses. That had been hiding a genuinely failing test (`KeyError:
+'target_role'` from a stale template test; production was correct). The pre-push PII gate
+is now tracked in `tools/hooks/` with an installer, closing a gap where a fresh clone had
+**no push-time gate at all**. And the internal-only naming rule, cited by reflections for
+months, is finally written into `framework/style-guidelines.md`.
+
+**Known and deliberate:** `output/deployment-strategist/071626-magnuson.*` carries a
+GenAI-workshop overclaim corrected on 2026-07-08. Decision 2026-08-12: **leave as is**, it
+is the record of what was sent. The canonical reference CV was fixed so it stops
+propagating.
+
+---
+
 ## 2026-08-12: Sleep-killed API connections, eight silently-dead launchd jobs, and a rebuilt trim guard
 
 **API errors: macOS idle-sleep, not the API.** Recurring `ECONNRESET` / "connection closed
