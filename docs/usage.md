@@ -660,4 +660,4 @@ Routes to the right file automatically (contact note → networking.md, company 
 /my-world deep
 ```
 
-`/my-world` is a global command (lives in `~/.claude/commands/`, not among the 35 project skills). It loads daily orientation, then runs a gated longitudinal three-axis synthesis over your reflections, written to `data/reflections/_longitudinal.md`. The synthesis pass is gated by default; `/my-world deep` forces it. It is driven by `tools/my_world_synthesis.py`.
+`/my-world` is a global command (lives in `~/.claude/commands/`, not among the 38 project skills). It loads daily orientation, then runs a gated longitudinal three-axis synthesis over your reflections, written to `data/reflections/_longitudinal.md`. The synthesis pass is gated by default; `/my-world deep` forces it. It is driven by `tools/my_world_synthesis.py`.

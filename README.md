@@ -1,10 +1,10 @@
-Last updated: 2026-06-15
+Last updated: 2026-08-13
 
 # Claude Code Job-Search OS
 
 An end-to-end job search operating system built on [Claude Code](https://docs.anthropic.com/en/docs/claude-code). Built by Nick Magnuson during a 2026 job search.
 
-35 slash-command skills, a structured data layer, a verification hook stack, and a library of methodology documents. Runs against an Obsidian markdown vault. No code required to use, skills are defined in markdown and executed by Claude.
+38 slash-command skills, a structured data layer, a verification hook stack, and a library of methodology documents. Runs against an Obsidian markdown vault. No code required to use, skills are defined in markdown and executed by Claude.
 
 **New here?** Start with [why this exists](docs/why.md) for the value and design, [getting started](docs/getting-started.md) to run it from zero, or [workflows](docs/workflows.md) to see the end-to-end flows.
 
@@ -26,7 +26,7 @@ Five skills account for 75% of invocations (Apr-May 2026 usage audit):
 
 ## Full Skill Catalog
 
-35 skills total. See [docs/usage.md](docs/usage.md) for full argument syntax and worked examples.
+38 skills total. See [docs/usage.md](docs/usage.md) for full argument syntax and worked examples.
 
 ### Daily Operations
 `/standup` `/checkout` `/todo` `/personal-todo` `/weekly-review` `/act` `/pipe` `/dashboard`
@@ -54,7 +54,7 @@ Five skills account for 75% of invocations (Apr-May 2026 usage audit):
 
 ### Personal Commands (global)
 
-Two personal orientation/processing commands live in `~/.claude/commands/` (global, not part of the 35 project skills): `/reflect` (in-the-moment processing: six questions to a dated reflection) and `/my-world` (daily orientation plus a gated longitudinal three-axis synthesis over your reflections, written to `data/reflections/_longitudinal.md`).
+Two personal orientation/processing commands live in `~/.claude/commands/` (global, not part of the 38 project skills): `/reflect` (in-the-moment processing: six questions to a dated reflection) and `/my-world` (daily orientation plus a gated longitudinal three-axis synthesis over your reflections, written to `data/reflections/_longitudinal.md`).
 
 ---
 
@@ -70,7 +70,7 @@ Data files accumulate over time. A file like `data/role-shape-engagement-lead.md
 
 ### 2. Skill layer (`.claude/skills/`)
 
-35 slash commands defined as markdown files Claude Code reads and executes. Each skill specifies: steps, context-loading (which data files to read), allowed-tools (what write operations are permitted), and failure conditions. Skills are the orchestration surface, they read data, call tools, and write outputs following the methodology docs.
+38 slash commands defined as markdown files Claude Code reads and executes. Each skill specifies: steps, context-loading (which data files to read), allowed-tools (what write operations are permitted), and failure conditions. Skills are the orchestration surface, they read data, call tools, and write outputs following the methodology docs.
 
 ### 3. Hook layer (`tools/check_*.py`)
 
@@ -90,6 +90,7 @@ PreToolUse and PostToolUse hooks wired into `.claude/settings.json`. They enforc
 | `check_plan_partner_critique.py` | PostToolUse on Write/Edit | Reminds to run a McKinsey-critical-advisor critique on large plan docs |
 | `check_script_error_logged.py` | PostToolUse on Bash | Auto-appends to friction log when a script returns a JSON error, or when any `python3` invocation crashes with a traceback |
 | `check_bare_python.py` | PreToolUse on Bash | Blocks a bare `python` in command position, requiring `python3` (anchored to command position so it never trips on the token inside strings or filenames) |
+| `check_prep_doc_format.py` | PreToolUse on Write/Edit to `output/<slug>/*prep*.md` | Blocks a malformed or non-v2 `outreach_status` stamp, and proof domains that are invalid or collapse to one after canonicalization. Deliberately only the context-free checks — a missing reserve proof and unbacked suppressive phrasing need context and stay at skill tier, where `/prep-interview` Step 6a gates them |
 | `check_changelog_currency.py` | Stop | Warns once per HEAD when commits since the last `docs/CHANGELOG.md` edit touched `tools/`, `.claude/skills/`, `framework/`, settings, or `requirements.txt` without a changelog update |
 
 Friction capture runs on a dedicated three-hook chain rather than a single hook (PostToolUse hooks never fire on tool errors, a documented Claude Code limitation). `check_script_error_logged.py` (PostToolUse on Bash) catches `tools/*.py` scripts that return a JSON error, plus any `python3` invocation (inline heredocs and skill helpers included) that crashes with a traceback. `log_tool_failure.py` (PostToolUseFailure on Bash/Edit/Write/MultiEdit) is the primary capture for outright tool-call failures. `scan_transcript_failures.py` (Stop hook) scans the session transcript at turn-end for harness-level errors the other two cannot see, for example "file not read" Edit rejections. All three append to `memory/friction-log.md`; entries that fire 3+ times trigger a structural patch.
@@ -196,7 +197,7 @@ data/                  Your professional data and search ops data (private once 
   ├─ decisions.md      Append-only log of strategic search decisions, newest first
   └─ accomplishments.md  Append-only log of job-search process wins, newest first
 coaching/              Coaching session outputs and progress tracking
-.claude/skills/        35 slash-command skill definitions
+.claude/skills/        38 slash-command skill definitions
 tools/                 Python scripts: atomic writes, PDF generation, background automation
 output/                Generated CVs, dossiers, cover letters, outreach archives
   └─ <company-slug>/   One folder per named entity; all related artifacts inside
@@ -240,7 +241,7 @@ The public repo also guards itself against leaks. A PreToolUse hook (`tools/chec
 | [docs/getting-started.md](docs/getting-started.md) | Zero-to-first-output walkthrough, with a demo profile to try first |
 | [docs/why.md](docs/why.md) | The value and the design bet: what it does for you, who it is for, what it is not |
 | [docs/workflows.md](docs/workflows.md) | End-to-end flows: the daily loop, applying, interviewing, outreach |
-| [docs/usage.md](docs/usage.md) | Full how-to: all 35 skills with argument syntax, worked examples, PDF pipeline, hook override flags |
+| [docs/usage.md](docs/usage.md) | Full how-to: all 38 skills with argument syntax, worked examples, PDF pipeline, hook override flags |
 | [docs/faq.md](docs/faq.md) | Quick answers: setup, privacy, day-to-day, voice, forking, troubleshooting |
 | [docs/CHANGELOG.md](docs/CHANGELOG.md) | Dated history: what was built, what was fixed, what was learned |
 | [docs/README.md](docs/README.md) | Navigation index: all docs organized by audience (Claude, new users, design) |

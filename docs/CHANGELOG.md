@@ -5,6 +5,43 @@ Format: newest entries at the top.
 
 ---
 
+## 2026-08-13: Two repeat-fire rules promoted out of memory tier
+
+Both surfaced by `/memory-refresh` — but only after fixing the reason it could not see
+them. **The promotion detector reads an `occurrences:` frontmatter key; `/lessons-learned`
+writes a `## Promotion criterion` prose section. 288 memory files had the prose, 4 had the
+key**, so a scan returning "0 promotion candidates" was an empty scan reading as an
+all-clear. Two rules at 2 and 3 fires — one with its structural fix already designed and
+unbuilt — had never surfaced. The global `/lessons-learned` skill now emits both forms and
+increments `occurrences:` on update.
+
+**`plan-hardening` no longer returns a pass/fail certificate.** `airtight: true` is a
+claim the panel makes about itself, and it was wrong twice — most recently certifying a
+470-line spec that produced 7 real defects on execution, two of which the panel had
+flagged as blocking in round 1 and silently dropped in round 2. The judge now returns
+`residual_risks[]` (status mitigated/accepted/open, each with a `where_to_verify`) plus
+`unverified_claims[]` — repo-state assertions the plan makes that were never checked,
+which the executing agent must treat as work. The loop stops on a **delta rule** (no NEW
+blocking hole for K rounds) rather than waiting for a verdict that is anti-convergent by
+construction, and the reviser gets a hard length budget so rounds replace rather than
+accrete.
+
+**`check_public_pii.py --scan`, and `/audit-pii` uses it.** This rule was *already* at
+skill tier and still failed: Step 0b has always said to use word boundaries, and a
+pre-push sweep hand-rolled `grep -qiF` anyway, producing ~190 false hits from short tokens
+matching inside unrelated words. The root cause was ergonomic — the correct matcher was
+reachable only through a per-file synthetic stdin payload, so auditing a tree meant
+reaching for grep. `--scan` makes the correct sweep one command over a path list, with the
+same public/gitignored/binary filters. Exit 1 when it scans zero files, because an empty
+sweep is not a pass. Step 1 now forbids hand-rolled greps and names the `--replace-text`
+corruption risk.
+
+Docs brought current in the same pass: the 8 tools from the 8/12 build were missing from
+the CLAUDE.md tools table entirely, and both `/plan-hardening` descriptions (CLAUDE.md +
+`framework/multi-agent-workflows.md` §3) still described the removed certificate.
+
+---
+
 ## 2026-08-12: Drafting-integrity hardening — send-state, reserve proofs, exclusion scans
 
 Four workstreams closing defects from the 8/10-8/11 sessions. Each is independently

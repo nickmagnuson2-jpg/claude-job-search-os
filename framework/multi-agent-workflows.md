@@ -46,9 +46,18 @@ that no amount of better prompting on the generator will.
   claim can fail multiple ways.
 
 ### 3. Iterative refinement with a convergence gate (quality through rounds)
-Generate → critique → revise → **judge** → loop, until a fresh judge says "good
-enough" (or a round cap). The explicit stopping rule is what separates this from
-endless tinkering. Used here to harden a *plan* before executing it, but the shape
+Generate → critique → revise → **judge** → loop, stopping when a round surfaces no
+**new** blocking hole (or a round cap). The explicit stopping rule is what separates
+this from endless tinkering — but it must be a *delta* rule, not "until the judge is
+satisfied." Looping until a judge declares the artifact sound is anti-convergent by
+construction: every fix adds prose, new prose is new attack surface, and N fresh critics
+primed to attack will essentially always find something. Equally, **do not return a
+pass/fail certificate.** A self-reported "airtight" is a claim the panel makes about
+itself, and it has twice been wrong here — most recently certifying a spec that produced
+7 real defects on execution, two of which the panel had flagged as blocking in an earlier
+round and silently dropped. Return a *residual risk register* (each risk named, with a
+status and where to verify it) plus the repo-state claims nobody checked. That is always
+achievable and tells the executing agent where to look. Used here to harden a *plan* before executing it, but the shape
 generalizes to any artifact (a design, a doc, a piece of code).
 
 - **Use when:** an artifact is expensive to get wrong downstream (a plan that will
@@ -127,7 +136,7 @@ run time, never hardcoded (this repo is public). Invoke by name, or via `scriptP
 
 | Template | Pattern(s) | Give it (`args`) | Produces |
 |---|---|---|---|
-| `plan-hardening.js` | #3 convergence | a plan (path/text) + domain context + round cap | a hardened plan + round-by-round changelog |
+| `plan-hardening.js` | #3 convergence | a plan (path/text) + domain context + round cap (+ optional `quietRoundsToStop`, `maxGrowthPerRound`) | a hardened plan + a residual risk register + unverified repo-state claims + round-by-round changelog |
 | `research-audit.js` | #1 fan-out + #2 verify | a subject + systems, each with current-state + research angles | cited, adversarially-validated recommendations |
 | `extract-verify.js` | #4 extract→verify | a manifest of entities + their source files + a label taxonomy | a verified per-entity ledger with provenance |
 
