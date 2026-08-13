@@ -40,6 +40,16 @@ SETTINGS = REPO / ".claude" / "settings.json"
 NON_HOOK_CHECKERS = {
     # Invoked by /standup and by the automation-health launchd job, not as a hook.
     "check_automation_health.py",
+    # Run on demand against a specific prep doc. Deliberately NOT a hook: the
+    # suppressive-phrasing boundary (check 4) is contextual -- "already sent" is only a
+    # defect when it is unbacked by a delivery stamp -- so a regex hook over it would
+    # over-fire on every legitimate use, per the warn-vs-block design rule.
+    "check_prep_doc.py",
+    # Run on demand (and by /audit-pii-style pre-commit flows) over the three
+    # framework/ rule docs, all of which are gitignored. A hook cannot fire usefully on
+    # files that do not exist in a clean clone, and the check is whole-corpus rather
+    # than per-edit.
+    "check_doc_precedence.py",
 }
 
 
