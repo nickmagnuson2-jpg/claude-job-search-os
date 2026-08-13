@@ -110,6 +110,13 @@ sealed therapy routing, so a guessed destination is worse than stopping. Accesso
 functions, not constants, so an unconfigured vault fails at *use* rather than making the
 module unimportable. Regression test greps tracked public files and fails if the root returns.
 
+**A guard that passed on staging state.** The regression test added to lock the vault sweep
+spelled the root literally as its `git grep` needle, putting the string in a tracked public
+file so the guard matched its own source. It went green only because `git grep` searches
+*tracked* files and the test was still untracked when written — a pass that depended entirely
+on staging state. Once committed it failed. Needle now built from parts; a guard that flags
+itself gets deleted rather than fixed.
+
 **Doc drift corrected:** `agent-discover-collect` was documented at $0.05/run from a two-preset
 measurement; a third preset was added and lane-b costs 4x the others, so it is $0.15 (~$7.80/yr).
 Skill count 35 → 38. An external system's codename removed from two `Origin:` notes.

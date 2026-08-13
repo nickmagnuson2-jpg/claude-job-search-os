@@ -214,7 +214,7 @@ Five parallel agents cover overview, funding, people/culture, news/strategy, and
 /discover-companies "vertical SaaS for the trades"
 ```
 
-Uses Exa Websets to find companies you are not yet tracking, scores each against your thesis (geography as a hard gate, then configurable stage / sector / keyword weights with lane keywords from your goals), deduplicates against the pipeline and existing targets, and proposes the survivors to `data/inbox.md` for review. Feeds `/scan-companies`: discovery finds the company, the career-page scan finds the role. Requires an Exa Pro plan for the Websets endpoint. Config in `data/discover-presets.yaml`.
+Uses the Exa Agent API to find companies you are not yet tracking, scores each against your thesis (geography as a hard gate, then configurable stage / sector / keyword weights with lane keywords from your goals), deduplicates against the pipeline and existing targets, and proposes the survivors to `data/inbox.md` for review. Feeds `/scan-companies`: discovery finds the company, the career-page scan finds the role. Engine: `tools/agent_discover.py` (the earlier Websets path was retired — it 401s for this account and is deprecating). Config in `data/discover-presets.yaml`.
 
 ### Analyze an external artifact
 
@@ -472,7 +472,7 @@ Saved to `output/<company-slug>/MMDDYY-prep.md`. A debrief to-do is created auto
 
 ## Skills Reference
 
-Full list of all 35 skills:
+Full list of all 38 skills:
 
 | Skill | Arguments | What it does |
 |---|---|---|
@@ -491,13 +491,14 @@ Full list of all 35 skills:
 | `/todo` | `[add/done/withdraw + args]` | Task manager with pipeline/contact cross-references |
 | `/personal-todo` | `[add/done/clear + args]` | Personal life to-do list (household, admin, errands) — sibling of `/todo`, vault-scoped |
 | `/scan-companies` | `[--dry-run]` | Scan configured career pages, score vs. profile, write new matches to `inbox/` |
-| `/discover-companies` | `[thesis or query]` | Exa Websets discovery of new target companies, scored vs. thesis, proposed to `inbox/` (Exa Pro) |
+| `/discover-companies` | `[thesis or query]` | Exa Agent API discovery of new target companies, scored vs. thesis, proposed to `inbox/` |
 | `/analyze` | `<url> [focus]` | Teardown of a paper/repo/article/video vs. your systems and wisdom -> `output/analysis/MMDDYY-<slug>.md` |
 | `/learn` | `<topic>` | Validated deep briefing — parallel research, BLUF synthesis, comprehension/interview quiz, adversarial claim-check that auto-fixes + cites |
 | `/standup` | *(none)* | Morning briefing — pipeline, todos, outreach, scheduled-interview pins, suggested priority |
 | `/checkout` | *(none)* | End-of-day close-out — daily log, scheduled-event pins, accomplishments capture, tomorrow's top 3, velocity snapshot, auto private-backup |
 | `/weekly-review` | *(none)* | Weekly retrospective → `data/weekly-review-log.md` |
 | `/memory-refresh` | *(none)* | Shows memory rules due for promotion (recurring but not yet skill/hook-wired) or demotion (unread 60+ days), and offers to act |
+| `/trim-context-file` | `<path>` (default `CLAUDE.md`) | Shrink an always-loaded context file by relocating reference-shaped sections to on-demand docs, leaving a router pointer. Measures first, proposes KEEP/MOVE per section, never deletes, never acts without approval. Runs `tools/trim_context_gate.sh` as a mandatory Step 0. |
 | `/act` | *(none)* | Autonomous execution of Bucket A to-dos, processes inbox/ |
 | `/critique-plan` | *(none — paste plan inline)* | Six-agent plan critique + independent Claude plan + hybrid synthesis |
 | `/research-industry` | `"industry name" [context]` | Parallel-agent industry dossier → `output/<slug>/<slug>.md` |

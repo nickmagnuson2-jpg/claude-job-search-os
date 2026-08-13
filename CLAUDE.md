@@ -304,6 +304,7 @@ Email body here
 **Gotchas:**
 - Filter separator-row noise from script output: `[e for e in entries if e.get("task") != "---"]`.
 - Edit-safety hook (`.claude/settings.json`) runs `tools/check_edit_safety.py` on every `.md` Edit.
+- **Never create, truncate, or `touch` a file in `tools/launchd/logs/` from a Claude Code Bash call.** Files created that way inherit a `com.apple.provenance` xattr that launchd cannot open, so the job dies at setup with `EX_CONFIG` (78) **before the script runs** — nothing is logged to explain it. All 8 jobs sat dead for ~18 hours this way on 2026-08-11. Fix: `rm` the log and let launchd recreate it; `xattr -d` reports success without removing the tag, and `ls -l@` is the only reliable check. Log rotation must delete, never truncate. Diagnose with `launchctl print gui/$(id -u)/<label> | grep -i "last exit code"` — a `runs` count far below what `StartInterval` implies is the tell. Full trace: `memory/reference_launchd_ex_config_provenance_xattr.md`.
 
 **Background automation (launchd, macOS-native).** Schedules live as plists in `tools/launchd/`. Install/manage with `bash tools/launchd/install.sh {install|uninstall|status}`. Logs at `tools/launchd/logs/`.
 
