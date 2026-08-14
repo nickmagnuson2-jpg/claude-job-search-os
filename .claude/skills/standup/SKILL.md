@@ -3,7 +3,7 @@ name: standup
 description: Morning briefing — pipeline health, today's top 3 actions, pending outreach, corpus state, and a momentum read of the search state
 argument-hint: [none]
 user-invocable: true
-allowed-tools: Read(*), Glob(inbox/*), Glob(data/reflections/*), Glob(data/workbooks/*), Bash(PYTHONIOENCODING=utf-8 python3 tools/pipeline_staleness.py:*), Bash(PYTHONIOENCODING=utf-8 python3 tools/outreach_pending.py:*), Bash(PYTHONIOENCODING=utf-8 python3 tools/networking_followup.py:*), Bash(PYTHONIOENCODING=utf-8 python3 tools/todos_summary.py:*), Bash(PYTHONIOENCODING=utf-8 python3 tools/check_automation_health.py:*), Bash(ls:*), Bash(stat:*)
+allowed-tools: Read(*), Glob(inbox/*), Glob(data/reflections/*), Glob(data/workbooks/*), Bash(PYTHONIOENCODING=utf-8 python3 tools/pipeline_staleness.py:*), Bash(PYTHONIOENCODING=utf-8 python3 tools/outreach_pending.py:*), Bash(PYTHONIOENCODING=utf-8 python3 tools/networking_followup.py:*), Bash(PYTHONIOENCODING=utf-8 python3 tools/todos_summary.py:*), Bash(PYTHONIOENCODING=utf-8 python3 tools/check_automation_health.py:*), Bash(PYTHONIOENCODING=utf-8 python3 tools/attention.py:*), Bash(ls:*), Bash(stat:*)
 ---
 
 # Standup — Morning Briefing
@@ -21,8 +21,22 @@ PYTHONIOENCODING=utf-8 python3 tools/outreach_pending.py --target-date $(date +%
 PYTHONIOENCODING=utf-8 python3 tools/networking_followup.py --target-date $(date +%Y-%m-%d)
 PYTHONIOENCODING=utf-8 python3 tools/todos_summary.py --target-date $(date +%Y-%m-%d) --top-n 6
 PYTHONIOENCODING=utf-8 python3 tools/check_automation_health.py --repo-root .
+PYTHONIOENCODING=utf-8 python3 tools/attention.py --repo-root . --json
 ```
 Parse JSON output from each script. If a script returns empty results (missing data file), continue — never fail.
+
+**Queue depth (from `attention.py`) — surface SECOND, right below automation health.** This is the only place the promotion backlog is ever seen: the weekly scan writes it to `memory/promotion-backlog.md` and a Low-priority todo, and neither is read. Render a single compact block, never a duplicate of the Pipeline/Inbox sections below:
+
+```
+📥 **Queues:** inbox N · todos N overdue (oldest Nd) · promotion N (N partial) · pipeline N stale — **total N**
+```
+
+Three rules for this block:
+- **`complete: false` is surfaced, always.** Append `⚠️ N of 4 queues unreadable: <names>`. A queue that silently drops out turns "nothing needs attention" into a lie — a skipped queue reports `count: null`, never `0`, and you must not render a null as a zero.
+- **Every count keeps its denominator** where the JSON provides one (`157 / 160`). A bare count is not a finding.
+- **`partial` is called out separately** from the promotion total. A half-landed rule needs its enforcement finished; an untouched one needs a tier chosen. Different work, so don't merge the numbers.
+
+If `total_open` is `null`, say `Queues: UNREADABLE` rather than omitting the line — the absence is the signal.
 
 **Automation health (from `check_automation_health.py`) — surface FIRST if anything is wrong.** This is the independent watchdog: it lives outside the launchd jobs so a scheduler failure is caught even when the jobs (and their own in-process alerts) are dead. If `warnings[]` is non-empty, prepend a block at the very top of the brief, above the date header:
 ```
@@ -222,6 +236,10 @@ Output the brief in this exact format:
 
 **Search thesis:** [one sentence from goals.md, or "— not set" if missing]
 **Current phase:** [phase from goals.md, or "— not set"]
+
+📥 **Queues:** inbox [N / N] · todos [N] overdue (oldest [N]d) · promotion [N] ([N] partial) · pipeline [N] stale — **total [N]**
+[If complete=false: ⚠️ [N] of 4 queues unreadable: [names]]
+[If total_open=null: **Queues: UNREADABLE** — say this, never omit the line]
 
 ---
 
