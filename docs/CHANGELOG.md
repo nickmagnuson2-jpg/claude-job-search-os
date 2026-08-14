@@ -3,6 +3,40 @@
 All notable changes to this job search system are recorded here.
 Format: newest entries at the top.
 
+## 2026-08-14: CLAUDE.md 41.1KB -> 37.2KB, data-file conventions moved to docs/data-file-conventions.md
+
+CLAUDE.md went 142 bytes over its 40KB always-loaded budget when a Hard-Rules bullet was
+corrected (the hook-tier bullet had been prescribing the superseded "default to WARN exit 0",
+which is how a WARN tier shipped that warns into a void). The file had **24 bytes of headroom**
+before that edit, so any correction longer than the wrong line it replaced would trip the
+budget. Scraping 142 bytes would have tripped again on the next fix.
+
+Moved verbatim to `docs/data-file-conventions.md` (3,710 bytes, two contiguous subsections):
+**Decisions & Accomplishments Logs** and **Personal Exploration — Four Kinds**. A pointer block
+stays behind carrying explicit triggers ("read before writing to data/decisions.md or
+data/accomplishments.md, routing a /remember capture between them, or creating a reflection,
+workbook, therapy doc, or identity file") rather than a bare see-also.
+
+**What deliberately did NOT move**, confirming the 2026-08-13 entry's warning about this exact
+section: `### Write-Only Files` stayed resident. The audit script scores it reference-shaped,
+but its table encodes a rule — `Edit` silently fails on rows >500 chars, so a session that never
+read it would corrupt `data/job-todos.md` without an error. Also held back for a later pass:
+Three Identity Docs (boundary rules whose violation is silent), Resume Bullets vs Spoken STAR
+(contains a real prohibition), and Tools & Environment (one undifferentiated block mixing two
+load-bearing rules with pure reference — needs splitting, not relocating).
+
+The sealed-folder prohibition stays in Hard Rules; only its elaboration moved, verified against
+line 14 before the move.
+
+Verification: Step 0 gate passed (72-rule baseline, 13 blocks reconstructing all 41,102 bytes);
+byte accounting balances exactly (41,102 = 38,099 trimmed + 3,710 moved - 707 pointer); rule
+conservation checked against the UNION of source and destination with 0 missing; suite 1650
+passed; `oversized_context_files` back to 0.
+
+Also this session: `feedback_warn_vs_block_hook_design.md` restored to the memory corpus after
+being archived in June while 13 tools/*.py, CLAUDE.md, HOOK_AUTHORING.md and this changelog
+still cited it by name — a recall dead-end that let a build implement the rule's superseded form.
+
 ## 2026-08-13: CLAUDE.md trimmed 56.5KB -> 37.5KB, tool tables moved to docs/tools-reference.md
 
 CLAUDE.md was 1.38x over its 40KB always-loaded budget — a size paid as a tax on every
