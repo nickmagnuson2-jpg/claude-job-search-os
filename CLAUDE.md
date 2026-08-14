@@ -59,7 +59,7 @@ After any user correction, run the **full tiered protocol** — not just a lesso
    - **Connections:** `[[wikilinks]]` to related memory rules — link liberally even if the target doesn't exist yet
    - **Tier ladder:** name the next promotion target (skill / hook / framework) and the trigger condition
 2. **If the correction refines an existing rule**, update that file instead of creating a duplicate. Add a dated supplement section.
-3. **Add a one-line index pointer** (`- [Title](feedback_*.md) — terse hook`). Since the 2026-07-08 7-shard restructure, `~/.claude/projects/.../memory/MEMORY.md` itself holds ONLY Critical Context (facts that must never depend on recall — employment status, family contacts, active hard-rule-DUE items) plus the Topic Shards router; it is NOT the index anymore. Check MEMORY.md's Topic Shards router table and add the pointer to the matching `memory/index-<topic>.md` shard (outreach / coaching / research / tools / system / personal / projects). Only add directly to MEMORY.md's Critical Context block if the fact itself belongs there. Keep each shard under ~24KB; archive on overflow per [[project_memory_directory_structure]].
+3. **Add a one-line index pointer** (`- [Title](feedback_*.md) — terse hook`). Since the 2026-07-08 restructure (re-split to 11 shards 2026-08-13), `~/.claude/projects/.../memory/MEMORY.md` itself holds ONLY Critical Context (facts that must never depend on recall — employment status, family contacts, active hard-rule-DUE items) plus the Topic Shards router; it is NOT the index anymore. Check MEMORY.md's Topic Shards router table and add the pointer to the matching `memory/index-<topic>.md` shard (outreach / coaching / research / tools / hooks / repo-ops / agents / verification / system / personal / projects — 11 shards since the 2026-08-13 split). Only add directly to MEMORY.md's Critical Context block if the fact itself belongs there. Keep each shard under ~24KB; archive on overflow per [[project_memory_directory_structure]].
 4. **For email/outreach corrections specifically:** also add a row to `memory/lessons.md` Section 2 (Occurrences=1, Promoted=No). Recurring → increment Occurrences. If Occurrences ≥ 2 and Promoted=No → update `framework/style-guidelines.md` "Nick's Voice" section, set Promoted=Yes. This is the email-specific promotion path; doesn't replace the auto-memory file.
 
 ### Step 2 — Plan promotion via REOPEN gate (when build cost > 5 min)
@@ -351,7 +351,7 @@ The (now-historical) n8n setup (`tools/run_n8n.bat`, dashboard at localhost:5678
 
 ## Memory Hygiene
 
-**MEMORY.md is loaded every conversation — keep it to Critical Context + the Topic Shards router only** (2026-07-08 7-shard restructure; currently ~27 lines / 4KB). It is a router, not the index — do not append general index entries directly to it.
+**MEMORY.md is loaded every conversation — keep it to Critical Context + the Topic Shards router only** (2026-07-08 restructure, re-split to 11 shards 2026-08-13; currently ~8.5KB). It is a router, not the index — do not append general index entries directly to it.
 
 **Keep in MEMORY.md's Critical Context block (small, always-visible, never depend on recall):** employment status, family contacts, active hard-rule-DUE items. Nothing else belongs here — active search context, architectural patterns, unfixed bugs, and user preferences all route to the matching `memory/index-<topic>.md` shard (outreach / coaching / research / tools / system / personal / projects) instead.
 

@@ -72,9 +72,14 @@ forever. This skill reduces that tax **without losing the content** by moving
 reference-shaped material to on-demand files and leaving an explicit pointer behind.
 
 **The precedent this generalizes:** the 2026-07-08 MEMORY.md restructure, which turned
-a bloated always-loaded index into a Critical Context block plus a 7-shard router. That
-worked because the router table is explicit about what lives where. This skill applies
-the same pattern to any context file.
+a bloated always-loaded index into a Critical Context block plus a topic-shard router
+(7 shards then, 11 after the 2026-08-13 split). That worked because the router table is
+explicit about what lives where. This skill applies the same pattern to any context file.
+
+**And the follow-on lesson, from the 2026-08-13 split:** sharding buys headroom, it does not
+stop growth. Two of those seven shards were 1.5-1.7x over budget within five weeks. Re-split
+on the same axis the content actually clusters on; do not let a shard creep past the read
+budget a second time on the theory that it was recently reorganized.
 
 ## The governing distinction
 

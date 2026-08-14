@@ -3,6 +3,30 @@
 All notable changes to this job search system are recorded here.
 Format: newest entries at the top.
 
+## 2026-08-13: memory shards re-split 7 -> 11, and the promotion backlog worked down
+
+**Shards.** `index-tools` (42KB, 1.72x) and `index-system` (38KB, 1.53x) were over the ~24KB
+read budget five weeks after the 7-shard restructure. Split by artifact type into four new
+shards -- `index-hooks`, `index-repo-ops`, `index-agents`, `index-verification` -- per the
+CLAUDE.md rule to split rather than let a shard grow past budget again. Every shard is now
+under; the largest is `index-outreach` at 24.3KB.
+
+Destinations are topical, not parent-derived: a verification rule filed under tools moved to
+`index-verification` regardless of origin. 80 of 248 entries (32%) were ambiguous to the keyword
+classifier and were resolved by reading each file's own `description` frontmatter instead of
+guessing. One duplicate index entry (`blind_sighted_pair_for_self_audit`, listed in two shards)
+was collapsed. Conservation asserted on line count and line multiset before writing.
+
+**Archival was measured and rejected as the lever:** under the memory-refresh CLASS guard only
+7 of 318 entries were archivable (646 bytes), because 242 are unpromoted live rules. Splitting
+was the only thing that could work.
+
+**Promotion backlog 22 -> 12.** New `terminal:` frontmatter key retires rules no artifact can
+enforce (12 marked, each with a stated reason, fails open). Five rules promoted to skill or
+hard-rule tier; `tools/source_corrections.py` added; five broken or missing reopen gates
+repaired. Four audit verdicts from the 2026-08-13 corpus mining were overturned on inspection.
+
+
 ---
 
 ## 2026-08-13: Two repeat-fire rules promoted out of memory tier
