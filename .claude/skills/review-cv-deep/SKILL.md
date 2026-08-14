@@ -152,7 +152,9 @@ Output your findings as a structured list of factual issues and missed opportuni
 
 ### Step 4: Compile Consolidated Report
 
-After all six agents return, synthesise their findings into a single report with this structure:
+**Run Step 5 first.** It is numbered after this one because the report template below is easier to read as a whole, but verification and re-rating happen *before* anything is written into it — a finding enters this template only once it has a verdict and your own severity. Compiling first and verifying afterwards means the report exists in its relayed form and the verification pass becomes a review of your own draft.
+
+After all six agents return and Step 5 has dispositioned every finding, synthesise into a single report with this structure:
 
 ```markdown
 # CV Deep Review — [CV filename]
@@ -174,9 +176,11 @@ After all six agents return, synthesise their findings into a single report with
 
 ## Severity-Rated Issue List
 
+Verified findings only, filed under **your** severity (Step 5b), never the agents'.
+
 ### CRITICAL
-| # | Issue | Perspectives | Lines | Detail |
-|---|---|---|---|---|
+| # | Issue | Perspectives | Their severity | Lines | Detail |
+|---|---|---|---|---|---|
 
 ### IMPORTANT
 [same format]
@@ -186,6 +190,18 @@ After all six agents return, synthesise their findings into a single report with
 
 ### NITPICK
 [same format]
+
+## Findings Ledger
+
+Mandatory. Every agent finding and what happened to it, including the ones that did not survive. Per `framework/review-findings-protocol.md`.
+
+| # | Perspective | Finding | Their severity | My severity | Verdict | Disposition | Why |
+|---|---|---|---|---|---|---|---|
+| 1 | Skeptic | [one line] | CRITICAL | — | REFUTED | **rejected — refuted by source data** | Auditor confirmed the figure at `data/projects/<name>.md` |
+| 2 | Copy Editor | [one line] | NITPICK | IMPORTANT | CONFIRMED | in issue list | Not a wording nit — the claim itself is wrong at line N |
+| 3 | Recruiter | [one line] | IMPORTANT | — | COULD NOT VERIFY | **rejected — could not verify** | Cited a section the CV does not contain |
+
+**Three tells, read them before trusting this report.** Both severity columns matching on every row means no independent judgment happened. Zero rejections across six agents on one CV means the same. And if the ledger has fewer rows than the appendix has findings, something was dropped silently — count them.
 
 ## Key Suggested Rewrites
 [Specific line references with before/after text for the most impactful changes]
@@ -223,14 +239,32 @@ After all six agents return, synthesise their findings into a single report with
 
 **Important:** The appendix must contain the **complete, unedited output** from each agent — do not summarize, truncate, or reformat. This preserves the full reasoning and detail for later reference, even when findings have been merged or de-duplicated in the consolidated sections above.
 
-### Step 5: Deduplication and Severity Alignment
+### Step 5: Verify, Re-Rate, Deduplicate
 
-When multiple perspectives flag the same underlying issue:
-- **Merge into a single entry** with all flagging perspectives listed.
-- **Use the highest severity** assigned by any perspective.
-- **Combine the detail** from all perspectives for a richer description.
+**Bound by `framework/review-findings-protocol.md`.** Six agents reading one CV produce findings that are real, findings that are half-real, and findings that are simply wrong. Relaying them is not reviewing them.
 
-**Skeptic + Auditor overlap:** When the Skeptic flags something as suspicious from the CV surface and the Source Data Auditor confirms or refutes it against source data, merge into one entry with both perspectives listed. The Auditor's factual detail enriches the Skeptic's suspicion-based finding.
+**5a — Verify every finding against the CV before it enters the report.** You read the CV in Step 1; open it again and quote the actual line. An agent's paraphrase of a bullet is not the bullet. Three verdicts:
+
+- **CONFIRMED** — you found the line and it says what the agent said it says.
+- **REFUTED** — you found the line and the agent was wrong about it.
+- **COULD NOT VERIFY** — the agent cited a line, section, or claim you cannot locate.
+
+**COULD NOT VERIFY is never CONFIRMED.** A finding you cannot ground goes into the ledger as `rejected — could not verify`, never silently dropped and never quietly promoted into the issue list.
+
+Watch specifically for **right finding, wrong specifics**: an agent correct that a defect exists and wrong about where it is or how bad it is. Location and severity each need their own derivation.
+
+**5b — Assign your own severity, per the definitions below, from the CV text.** The perspectives' ratings are inputs you are re-deciding.
+
+- **Never use max-of-perspectives.** A max rule cannot go *down*, so a single over-anxious agent silently sets the ceiling for the whole report — and the Skeptic's job description is to be over-anxious.
+- Severity moves both directions on re-derivation. The Skeptic overstates by design; the Copy Editor understates a factual error as a wording nit.
+- Record both ratings in the ledger. **If your severity matches the agents' on every row, you relayed rather than reviewed.**
+
+**5c — Deduplicate.** When multiple perspectives flag the same underlying issue, merge into a single entry listing all flagging perspectives and combine their detail. Merge *after* verification, never before — merging first launders an unverified finding into a confirmed one by attaching it to a real neighbour.
+
+**Skeptic + Auditor overlap, and the refutation case.** The Skeptic flags what looks suspicious from the CV surface; the Source Data Auditor checks it against the source files and **confirms or refutes** it.
+
+- **Auditor confirms** → merge into one entry, both perspectives listed. The Auditor's factual detail enriches the Skeptic's surface suspicion.
+- **Auditor refutes** → **do NOT merge. The finding is rejected**, and it goes in the ledger as `rejected — refuted by source data`. Merging a refuted suspicion keeps it alive in the report with the Auditor's name attached, which reads as corroboration of the exact thing the Auditor disproved. This is the highest-value check in the step: the Auditor is the only agent with access to the source files, so its refutation outranks every surface reading.
 
 ### Severity Definitions
 

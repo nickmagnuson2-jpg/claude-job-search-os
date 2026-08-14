@@ -113,20 +113,33 @@ how an under-rated finding becomes invisible without anyone deciding to ignore i
 |---|---|---|---|---|---|
 | `.claude/workflows/plan-hardening.js` | ✅ Validate phase, independent model | ✅ `critic_severity` + `severity_disagreement` | ✅ register, edits nothing | ✅ | **Done** 2026-08-13 |
 | `.claude/skills/critique-plan/SKILL.md` | ✅ verification bar | ✅ ledger + Step 4a derives `My severity`; agent rating recorded as an input | ✅ inline, approval before execute | ✅ | **Done** 2026-08-14 |
-| `.claude/skills/review-cv-deep/SKILL.md` | ❌ no re-derivation against the CV | ❌ `:230` "use the highest severity assigned by any perspective" | ✅ writes a report | ❌ | **Open** |
-| `.claude/skills/audit-pii/SKILL.md` | ⚠️ cross-checks **clean** verdicts only (`:153`); positives unverified | ❌ | ✅ approval-gated (`:150`) | ❌ | **Open** |
-| `.claude/workflows/research-audit.js` | ✅ claim-level CONFIRMED/REFUTED/UNVERIFIABLE | ❌ | ✅ writes a doc | ❌ **`:107` "refuted claims dropped"** | **Open** |
+| `.claude/skills/review-cv-deep/SKILL.md` | ✅ Step 5a, three verdicts against the CV | ✅ Step 5b; max-of-perspectives banned | ✅ writes a report | ✅ | **Done** 2026-08-14 |
+| `.claude/skills/audit-pii/SKILL.md` | ✅ Step 3a, both directions (clean AND positive) | ✅ own SCRUB/AMBIGUOUS/CLEAR verdict | ✅ approval-gated | ✅ | **Done** 2026-08-14 |
+| `.claude/workflows/research-audit.js` | ✅ claim-level confirmed/refuted/uncertain | ✅ `researcher_confidence` + `confidence_disagreement` | ✅ writes a doc | ✅ | **Done** 2026-08-14 |
 
-Three observations the table earns:
+**All five adopted.** Each fix found defects beyond the one named in its row, and none were where
+the ledger goes:
 
-- **Nobody had all four.** Each surface guarded a different subset, which is why no single one read as
-  broken and the rule never promoted.
-- **`audit-pii` guards the opposite direction from everyone else.** It distrusts a subagent's *clean*
-  verdict, because PII subagents rationalize real names as benign examples. That is a real and
-  separate defect class, and it belongs here too: **a clean verdict is a hypothesis, not a
-  conclusion** — cross-check it against a deterministic scan.
-- **`research-audit.js` validates rigorously and then drops what it refuted.** Correct verdicts,
-  wrong disposition. The cheapest fix on the list.
+- **`review-cv-deep`** told the Source Data Auditor to "confirm or refute" a Skeptic finding and then
+  **merge either way** — so a refuted suspicion survived into the report *with the Auditor's name
+  attached*, reading as corroboration of the thing the Auditor had disproved. Its verification step
+  was also numbered after the compile step it was supposed to gate.
+- **`audit-pii`** distrusted *clean* verdicts and took *positive* ones on faith. It also gated commits
+  on already-public strings, which is the overstated-severity failure and trains the gate to be
+  ignored.
+- **`research-audit.js`** had three silent drops, not one: a dead research angle, a system starved of
+  all research but synthesized anyway from an empty payload, and a system whose synthesizer died so
+  the doc never mentioned it. The last is the worst — the research succeeded and the reader never
+  learns it exists.
+
+**What the pre-adoption state explains:** nobody had all four properties, and each surface guarded a
+different subset. That is why no single one read as broken on its own and the rule fired twice
+without ever promoting.
+
+**One property came from `audit-pii` and now belongs to everyone: a clean verdict is a hypothesis.**
+It distrusted subagent *clean* calls because PII subagents rationalize real names in examples as
+benign — a false-clean is worse than no check at all, since it manufactures confidence. Every surface
+here inherits that, in both directions: **verify the findings AND verify the absence of findings.**
 
 ---
 
@@ -179,10 +192,22 @@ verdict NOT_ENFORCED — nothing anywhere enforced it).
   from Agent 4 applied inline"). Guarding a poisoned source leaves the recurrence intact, so the
   source was fixed first and this protocol written second.
 
-**Tier:** framework. **Next promotion:** a `check_review_ledger.py` hook is premature — the three
-tells are countable but the ledger has no fixed on-disk location yet. **Gate: build the hook when a
-ledger-bearing surface ships a review with a missing or all-agree ledger, or when the fourth surface
-adopts.** Until then the ledger is enforced by the skills that cite this file.
+**Tier:** framework, with all five surfaces adopted 2026-08-14.
+
+**Next promotion: `tools/check_review_ledger.py`.** The original gate was "when the fourth surface
+adopts" — five adopted the same night, so the gate is **met**, and the build is deferred on cost
+rather than on evidence. Deferred deliberately, recorded honestly: **do not read this as parked.**
+
+What it would check is already countable without judgment: a ledger's row count against the findings
+it claims to cover, whether both severity columns are identical on every row, and whether the
+rejection count is zero. All three are the tells above, and all three are arithmetic.
+
+What blocks it is that the ledger has **no fixed on-disk location**. `review-cv-deep` writes to
+`output/**-DEEP-REVIEW.md`, `research-audit.js` to `output/analysis/`, and `critique-plan` and
+`plan-hardening` emit inline and persist nothing. A hook cannot check a file that was never written.
+**So the real next step is smaller than the hook: give the two inline surfaces a persisted ledger
+path.** Until then this protocol is enforced by the five skills that cite it, which is skill tier,
+which is the tier with a documented history of not holding.
 
 ## Pointers
 

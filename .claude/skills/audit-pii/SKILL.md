@@ -132,10 +132,35 @@ Subagent instructions:
 
 **Why the anti-rationalization line is mandatory:** subagents systematically rationalize a real name in an example/test/Origin-note as "benign illustrative data" and report false-clean — fired 3x in one session (2026-06-15) before this line existed. See `memory/feedback_pii_subagents_rationalize_examples.md`.
 
-### Step 3 — Merge, present, and gate
+### Step 3 — Verify, merge, present, and gate
 
-Merge deterministic hits (Step 1) with the subagent's SCRUB + AMBIGUOUS findings.
-De-duplicate by (file, text). Present grouped by file:
+**Bound by `framework/review-findings-protocol.md`.** This skill already distrusts the subagent's
+*clean* verdicts (see the cross-check below). The same distrust applies to its *positive* findings,
+and that half was missing until 2026-08-14.
+
+**3a — Verify each SCRUB/AMBIGUOUS finding before it gates anything.** For each one:
+
+1. **Open the file at the cited line and quote it.** The subagent's paraphrase is not the line.
+2. **Establish the token is a real entity, not a house placeholder.** This repo uses a fictional
+   cast (`Jordan Lee <jordan@example.com>`, Acme AI, Northwind, `company.com`) across many public
+   skill files. Grep the token repo-wide before believing it: a name appearing in nine skills beside
+   `example.com` addresses is the placeholder persona, not a leak. **Cross-check first names against
+   the FULL denylist entry** — a first-name collision with a real contact is not a leak.
+3. **Establish exposure state, because it sets the remediation, not just the urgency.** Run
+   `git grep -n "<token>" origin/main` and `git log -S "<token>"`. *Already on the public remote* and
+   *staged for the next commit* are different problems: the first is a history question, the second a
+   working-tree scrub. Do not report the second as the first, or the reverse.
+4. **Check whether the finding's evidence is itself public.** A date or oblique reference that
+   resolves to a company only via a gitignored tree (`coaching/`, `data/`, `output/`) is not
+   walkable by a public reader. Verify with `git check-ignore -v <path>` and
+   `git ls-tree -r origin/main --name-only`.
+
+**Assign your own SCRUB/AMBIGUOUS/CLEAR verdict.** The subagent's is an input. It has been wrong in
+both directions: false-clean on real names in examples (2026-06-15, 3x) and false-positive on a
+placeholder that collided with a real first name (2026-08-14).
+
+**3b — Merge and present.** Merge deterministic hits (Step 1) with your *verified* SCRUB + AMBIGUOUS
+findings. De-duplicate by (file, text). Present grouped by file:
 
 ```
 ## PII Audit — N file(s) scanned
@@ -147,9 +172,39 @@ De-duplicate by (file, text). Present grouped by file:
 [If clean:] ✅ <path> — clean
 ```
 
-- **Any SCRUB finding = do not commit yet.** Offer to apply the generic-placeholder
-  fixes (re-read + Write/Edit each file), then re-run the audit to confirm green.
+Then the ledger, which is mandatory — the audit is not done without it:
+
+```
+## Findings Ledger
+| # | File | Finding | Their verdict | My verdict | Evidence | Exposure | Disposition |
+|---|---|---|---|---|---|---|---|
+| 1 | apply/SKILL.md | "Jordan" | SCRUB | not PII | house placeholder in 9 public skills w/ example.com | n/a | rejected — refuted |
+| 2 | x/SKILL.md | jobs.<co>.com | SCRUB | ambiguous | dossier at output/archive/<co>/ | **public since <sha>** | presented, open |
+```
+
+Every finding gets a row including the refuted ones. A ledger where both verdict columns
+match on every row is a relay; zero rejections across a full semantic pass is the same.
+
+- **Any *verified* SCRUB finding in a file this commit touches = do not commit yet.** Offer to
+  apply the generic-placeholder fixes (re-read + Write/Edit each file), then re-run to confirm green.
+- **A SCRUB finding already on the public remote is NOT a commit gate** when the pending commit
+  does not touch those lines — pushing adds no new exposure. Report it as a separate standing item
+  with its remediation options (scrub-forward, which leaves history; or scrub plus history rewrite,
+  which is what the July delete-and-recreate cost). Blocking a clean commit on a two-month-old
+  public string is the overstated-severity failure, and it trains the gate to be ignored.
 - **AMBIGUOUS findings** are surfaced for Nick's decision, never auto-edited.
+- **Known and accepted.** A small set of example-URL hostnames in `apply/SKILL.md` and
+  `generate-cv/SKILL.md` were reviewed on 2026-08-14 and accepted by Nick as-is. Do not re-gate a
+  commit on them; surface a one-line note instead. **The list itself lives in the gitignored
+  `memory/reference_accepted_public_pii_exceptions.md`** — enumerating them here, in a public file,
+  with the reasoning for why each was a real entity, would disclose more than the strings already do.
+  A bare hostname in an examples block reads as a placeholder; a note confirming it was a genuine
+  target does not.
+- **The structural gap behind that entry is worth knowing.** `gen_pii_denylist.py` builds only from
+  `networking.md` and `job-pipeline.md`, so an entity that was researched and archived without ever
+  entering the pipeline is invisible to the deterministic layer **by construction** — `output/archive/`
+  holds several. The semantic pass is load-bearing there, not a backstop, and a green Step 1 alone
+  does not cover it.
 - **Treat a subagent "clean" verdict as a hypothesis, not a conclusion.** Cross-check
   its clean calls against the deterministic denylist scan (Step 1) and a direct grep
   for known real entities (recent `data/networking.md` / `data/job-pipeline.md` names,

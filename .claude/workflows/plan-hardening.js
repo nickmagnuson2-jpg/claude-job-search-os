@@ -83,6 +83,11 @@ const REVISION_SCHEMA = {
   required: ['revised_plan', 'changelog'],
 }
 
+// Bound by framework/review-findings-protocol.md — the canonical rules for verifying, re-rating,
+// and dispositioning review findings. This file was fixed 2026-08-13, a day before the protocol
+// was written, so it is the one surface whose compliance predates the doc; if the two ever
+// disagree, the protocol wins.
+//
 // The judge returns a RESIDUAL RISK REGISTER, not a pass/fail certificate.
 //
 // WHY (promoted from [[feedback_adversarial_panel_needs_delta_stopping_rule]], 2 fires):
