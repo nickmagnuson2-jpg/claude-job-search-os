@@ -534,11 +534,23 @@ def main(argv=None):
                           "detail": "frame is not a mapping"}, indent=2))
         return 4
 
+    # The schema declares which frame versions it still understands. Reading that
+    # list rather than comparing equality means a version bump does not orphan every
+    # frame written before it -- including the retrospective reconstructions that
+    # acceptance regressions are pinned to. Adding a version is a schema edit, never
+    # a code edit.
+    supported = schema.get("supports_frames_at")
+    if not isinstance(supported, list) or not supported:
+        supported = [known]
+
     got = frame.get("schema_version")
-    if got != known:
+    if got not in supported:
         print(json.dumps({"status": "refused", "stage": "schema",
-                          "detail": f"frame schema_version {got!r} is not the schema's "
-                                    f"{known!r}; refusing rather than guessing"}, indent=2))
+                          "detail": f"frame schema_version {got!r} is not among the "
+                                    f"versions this schema supports ({supported}); "
+                                    "refusing rather than guessing",
+                          "schema_version": known,
+                          "supports_frames_at": supported}, indent=2))
         return 3
 
     prior = None

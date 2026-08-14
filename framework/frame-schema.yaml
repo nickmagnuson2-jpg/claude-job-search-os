@@ -10,7 +10,19 @@
 # tools/check_frame_integrity.py reads this file. A frame.yaml whose schema_version
 # is unknown to the checker is REFUSED, never silently accepted.
 
-schema_version: 1
+schema_version: 2
+
+# Frame versions this schema still understands. The checker reads THIS list rather
+# than comparing equality, so a frame written at an older version keeps validating
+# and old acceptance regressions survive a bump. Adding a version is a schema edit,
+# never a code edit.
+#
+# v1 -> v2 (2026-08-13): added segment_completed, status, status_reason, declines.
+# Recorded as LEARNING WHILE BUILDING, not as a rule amendment. The standing-tier
+# promotion gate exists to stop per-engagement JUDGMENTS being promoted to standing
+# by convenience. These are structural fields the run protocol cannot function
+# without, discovered by designing the protocol. No rule changed.
+supports_frames_at: [1, 2]
 
 # ---------------------------------------------------------------------------
 # The three judgment classes. Design objective: maximize `derived`, migrate
@@ -64,6 +76,48 @@ fields:
       backup commits on a fixed interval and carries no semantics.
   locked_at: {type: timestamp, required: false, class: derived}
   engagement: {type: string, required: true, class: derived}
+
+  # ---- RUN STATE (added v2). Derived, never authored by the operator. ----
+  segment_completed:
+    type: enum
+    required: false
+    class: derived
+    values: [A, B, C, D, LOCK, E]
+    note: >
+      The resume point. Each segment's first agent asserts this equals its
+      predecessor and refuses otherwise, writing nothing and returning the
+      mismatch. Absent means no segment has completed yet.
+      Deriving the resume point from field-presence alone was the alternative and
+      it cannot distinguish "not authored yet" from "authored then abandoned",
+      which is exactly the case that loses multi-day state.
+  status:
+    type: enum
+    required: false
+    class: per_engagement
+    values: [in_progress, awaiting_outcome, complete, abandoned]
+    note: >
+      `abandoned` is reachable only through the mutation path, requires a
+      status_reason, and COUNTS AS A COMPLETED SEGMENT E for acceptance. An
+      engagement that dies without a recorded reason teaches the loop nothing,
+      which is the failure the acceptance criterion is aimed at.
+  status_reason:
+    type: string
+    required: false
+    class: per_engagement
+    note: mandatory whenever status is `abandoned`; one line, plus any rule candidate it implies
+  declines:
+    type: list[{segment, rejected_candidate, reason, at_version}]
+    required: false
+    class: derived
+    note: >
+      Segment E declining to change the method. Recorded because a decline that
+      costs nothing is how a compounding loop quietly stops compounding: every
+      run declines, the changelog fills with "no change", and it reads as
+      stability rather than as stall. After two CONSECUTIVE declines the next
+      run may not decline; it must apply a change or state the method is at a
+      local optimum together with the concrete observation that would reopen it.
+      Cross-run, so it must live in the frame -- the checker sees one file plus
+      an optional prior and cannot hold this in memory.
 
   # ---- D1: SPECIFICATION DISCOVERY. Must complete before D2 opens. ----
   d1.problem_statement:

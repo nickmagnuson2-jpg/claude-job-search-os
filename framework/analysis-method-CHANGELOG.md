@@ -21,6 +21,42 @@ Format:
 
 ---
 
+## 2026-08-13 | Frame schema 1 -> 2: run-state fields | method v1.2 -> v1.3
+
+**Source:** in-flight, during design of the run protocol. Not a feedback event.
+
+**This is LEARNING WHILE BUILDING, and it is deliberately not filed as a rule amendment.**
+The operator's framing, and it is the right one: *"this is an example of me learning as we go. It
+shouldn't be viewed as me changing it."*
+
+The standing-tier promotion gate exists to stop **per-engagement judgments** being promoted to
+standing by convenience — the documented root failure, where a call that was the most
+problem-dependent in the case got treated as settled. **No judgment and no rule changed here.** Four
+structural fields were added because designing the six-segment run protocol revealed the state it
+needs to carry. Discovering that a protocol needs a field is not the failure mode the gate guards.
+
+**Added:** `segment_completed`, `status`, `status_reason`, `declines`.
+
+- **`segment_completed`** is the resume point. The alternative — deriving position from which fields
+  are populated — was the original design and cannot distinguish *not authored yet* from *authored
+  then abandoned*, which is precisely the case that loses multi-day state.
+- **`status: abandoned`** requires a reason and counts as a completed segment E. An engagement that
+  dies silently teaches the loop nothing, which is the failure the acceptance criterion targets.
+- **`declines`** exists because **a decline that costs nothing is how a compounding loop quietly stops
+  compounding.** Every run declines, the changelog fills with "no change", and it reads as stability
+  rather than as stall. Two consecutive declines force the next run to apply a change or state a local
+  optimum with the observation that would reopen it. It is cross-run state, so it must live in the
+  frame — the checker sees one file plus an optional prior and cannot hold it in memory.
+
+**The version bump was the risk, and it is handled.** An adversarial panel flagged that bumping to 2
+would make the checker refuse every v1 frame, **including the reconstruction the acceptance regression
+is pinned to** — silently deleting the only evidence the gate works. The checker now reads
+`supports_frames_at: [1, 2]` from the schema instead of comparing equality, so adding a version is a
+schema edit rather than a code edit, and a test asserts no hardcoded version list exists in the module.
+Verified: the v1 reconstruction still returns 6 fail / 4 cannot-run / 1 pass, unchanged.
+
+---
+
 ## 2026-08-13 | Checker built and run; acceptance test MEASURED | v1.1 -> v1.2
 
 **Source:** in-flight. First execution of `tools/check_frame_integrity.py` against the blind

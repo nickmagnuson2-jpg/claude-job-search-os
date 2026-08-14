@@ -284,6 +284,52 @@ def test_unknown_schema_version_is_refused_not_guessed(tmp_path):
     assert json.loads(r.stdout)["status"] == "refused"
 
 
+# ---------------------------------------------------------------- version support
+#
+# The schema bumped 1 -> 2 on 2026-08-13 to add run-state fields. Equality-checking
+# schema_version would have orphaned every frame written at v1, INCLUDING the
+# retrospective reconstruction the acceptance regression is pinned to -- so a bump
+# would have silently deleted the only evidence the gate works.
+
+def test_schema_declares_which_frame_versions_it_supports():
+    schema = yaml.safe_load(SCHEMA.read_text(encoding="utf-8"))
+    supported = schema.get("supports_frames_at")
+    assert isinstance(supported, list) and supported, "schema must declare supported versions"
+    assert schema["schema_version"] in supported, "current version must support itself"
+
+
+@pytest.mark.parametrize("ver", [1, 2])
+def test_every_supported_version_is_accepted(tmp_path, ver):
+    schema = yaml.safe_load(SCHEMA.read_text(encoding="utf-8"))
+    if ver not in schema.get("supports_frames_at", []):
+        pytest.skip(f"v{ver} not currently supported")
+    f = clean_frame()
+    f["schema_version"] = ver
+    r = run(write(tmp_path, f))
+    assert r.returncode == 0, r.stdout
+    assert json.loads(r.stdout)["schema_version"] == ver
+
+
+def test_supported_versions_come_from_the_schema_not_from_code():
+    """Adding a version must be a schema edit, never a code edit."""
+    src = (REPO / "tools" / "check_frame_integrity.py").read_text(encoding="utf-8")
+    assert "supports_frames_at" in src
+    # no hardcoded version allowlist in the module
+    assert "[1, 2]" not in src and "(1, 2)" not in src
+
+
+def test_v2_run_state_fields_are_type_checked(tmp_path):
+    """The new fields must be real schema entries, not free-form."""
+    schema = yaml.safe_load(SCHEMA.read_text(encoding="utf-8"))
+    for field in ("segment_completed", "status", "status_reason", "declines"):
+        assert field in schema["fields"], field
+    f = clean_frame()
+    f["schema_version"] = 2
+    f["declines"] = "should be a list"
+    errs = cfi.validate_structure(f, schema)
+    assert any("declines" in e for e in errs), errs
+
+
 def test_missing_schema_version_is_refused(tmp_path):
     f = clean_frame()
     del f["schema_version"]
