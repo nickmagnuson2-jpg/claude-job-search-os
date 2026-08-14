@@ -284,6 +284,63 @@ def test_unknown_schema_version_is_refused_not_guessed(tmp_path):
     assert json.loads(r.stdout)["status"] == "refused"
 
 
+# ---------------------------------------------------------------- flat dotted keys
+#
+# Origin 2026-08-13, SECOND corpus run. The schema declares its own field names in
+# dotted notation (`d1.problem_statement:`), so a transcribing agent copied them
+# literally as FLAT top-level keys instead of nesting under `d1:`. Ten fields landed
+# that way.
+#
+# validate_structure's dotted-path walk could not see it: with no `d1` parent every
+# nested field read as "not authored yet". The frame passed structural validation and
+# returned CANNOT_RUN on every check reading d1 or recommendation -- a well-formed
+# file, a confident verdict, and nothing actually tested.
+#
+# The root cause is the schema's own notation, so this will recur with any new
+# transcriber. It has to be caught mechanically.
+
+def test_flat_dotted_keys_are_detected():
+    schema = yaml.safe_load(SCHEMA.read_text(encoding="utf-8"))
+    frame = {
+        "schema_version": 2,
+        "d1.problem_statement": "written flat instead of nested",
+        "d1.problem_type": "prioritization",
+        "recommendation.text": "also flat",
+    }
+    errs = cfi.detect_flat_dotted_keys(frame, schema)
+    assert errs, "mis-nesting must be caught"
+    joined = " ".join(errs)
+    assert "d1" in joined and "recommendation" in joined
+    assert "CANNOT_RUN" in joined, "the error must explain the consequence"
+
+
+def test_flat_dotted_keys_surface_through_validate_structure(tmp_path):
+    """It must reach the CLI, not just the helper."""
+    frame = {"schema_version": 2, "d1.problem_statement": "x", "recommendation.text": "y"}
+    r = run(write(tmp_path, frame))
+    payload = json.loads(r.stdout)
+    assert payload["structural_errors"], payload
+    assert payload["clean"] is False
+    assert r.returncode == 2
+
+
+def test_correctly_nested_frame_triggers_no_flat_key_error():
+    schema = yaml.safe_load(SCHEMA.read_text(encoding="utf-8"))
+    assert cfi.detect_flat_dotted_keys(clean_frame(), schema) == []
+
+
+def test_yaml_parsed_date_is_accepted_for_timestamp_fields():
+    """YAML turns an unquoted 2026-07-21 into a date, not a str.
+
+    Rejecting it was a false positive on a correctly-authored frame.
+    """
+    import datetime
+    schema = yaml.safe_load(SCHEMA.read_text(encoding="utf-8"))
+    f = clean_frame()
+    f["locked_at"] = datetime.date(2026, 7, 21)
+    assert not [e for e in cfi.validate_structure(f, schema) if "locked_at" in e]
+
+
 # ---------------------------------------------------------------- version support
 #
 # The schema bumped 1 -> 2 on 2026-08-13 to add run-state fields. Equality-checking

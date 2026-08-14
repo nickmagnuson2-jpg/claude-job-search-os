@@ -32,6 +32,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import datetime as _dt
 import json
 import sys
 from pathlib import Path
@@ -123,9 +124,43 @@ def _shape_of(decl_type: str):
         return bool
     if t == "int":
         return int
-    if t in ("string", "timestamp", "enum"):
+    if t == "timestamp":
+        # YAML parses an unquoted 2026-07-21 into a date object, not a string.
+        # Rejecting that was a false positive on a correctly-authored frame.
+        return (str, _dt.date, _dt.datetime)
+    if t in ("string", "enum"):
         return str
     return None  # unknown/unconstrained
+
+
+def detect_flat_dotted_keys(frame, schema):
+    """Catch a frame that wrote `d1.problem_statement:` as a FLAT top-level key.
+
+    The schema declares its own field names in dotted notation, so an agent
+    transcribing into it copies `d1.problem_statement:` literally as a key rather
+    than nesting under `d1:`. That is a predictable error caused by the schema's
+    notation, not a random one.
+
+    It was invisible to the dotted-path walk in validate_structure(): with no `d1`
+    parent, every nested field looked merely "not authored yet". The frame then
+    passed structural validation and returned CANNOT_RUN on every check that reads
+    those fields -- a well-formed file, a confident result, and nothing tested.
+
+    Origin: 2026-08-13, second corpus run. The first corpus never hit it.
+    """
+    if not isinstance(frame, dict):
+        return []
+    dotted = {k for k in (schema or {}).get("fields", {}) if "." in k}
+    hits = sorted(k for k in frame if k in dotted)
+    if not hits:
+        return []
+    parents = sorted({k.split(".")[0] for k in hits})
+    return [
+        f"{len(hits)} field(s) written as FLAT dotted keys instead of nested under "
+        f"{parents}: {', '.join(hits[:6])}"
+        + (f" (+{len(hits) - 6} more)" if len(hits) > 6 else "")
+        + f" -- every check reading {parents} silently returned CANNOT_RUN"
+    ]
 
 
 def validate_structure(frame, schema):
@@ -136,10 +171,10 @@ def validate_structure(frame, schema):
     that what IS there has the right shape. A wrong shape is a hard error, never a
     silent CANNOT_RUN.
     """
-    errors = []
+    errors = list(detect_flat_dotted_keys(frame, schema))
     fields = (schema or {}).get("fields")
     if not isinstance(fields, dict):
-        return ["schema has no `fields:` block to validate against"]
+        return errors + ["schema has no `fields:` block to validate against"]
 
     for dotted, spec in fields.items():
         if not isinstance(spec, dict):
