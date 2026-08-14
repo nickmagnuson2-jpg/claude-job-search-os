@@ -176,9 +176,27 @@ def build_ambiguous_list(companies: set[str], dictionary: set[str]) -> list[str]
     six public files on 2026-08-10 while all three of its interviewers were correctly
     denylisted.
 
-    So they get a second tier: WARN, not BLOCK. Per feedback_warn_vs_block_hook_design
-    -- reserve BLOCK for unambiguous violations, WARN for judgment calls. The human
-    decides; the hook only refuses to stay silent.
+    So they get a second tier: WARN, not BLOCK.
+
+    CITATION CORRECTED 2026-08-14 -- this docstring previously read "Per
+    feedback_warn_vs_block_hook_design -- reserve BLOCK for unambiguous violations,
+    WARN for judgment calls. The human decides; the hook only refuses to stay silent."
+    That is the rule's SUPERSEDED form, and the last clause is false. The rule's
+    2026-05-28 correction states that a PreToolUse WARN (exit 0 + stderr) is NOT
+    surfaced by Claude Code at all -- see tools/HOOK_AUTHORING.md L77. So on the
+    PreToolUse write path this tier detects and informs nobody: a real pipeline
+    company reached two public files on 2026-08-14 with the hook warning correctly
+    into a void, caught by hand at staging rather than by the guard.
+
+    Why the paraphrase was wrong: the memory file had been archived and deleted while
+    13 tools/*.py still cited it, so the correction was unreachable at build time.
+    Restored 2026-08-14 as memory/feedback_warn_vs_block_hook_design.md.
+
+    WHERE THIS TIER IS ACTUALLY READ: /audit-pii Step 1, which surfaces
+    ambiguous_hits[] to a human. That is the tier's only functioning consumer.
+    Whether it should ALSO block on the public-artifact write path is an open
+    decision (see feedback_warn_tier_is_invisible_so_it_is_not_a_tier); behavior is
+    deliberately unchanged here.
     """
     out = set()
     for company in companies:
@@ -264,7 +282,12 @@ def main():
         "# AMBIGUOUS PII tier — GITIGNORED, do not commit.\n"
         "# Single-token company names that are also ordinary English words, so matching\n"
         "# them would false-positive on prose. check_public_pii.py WARNs on these (exit 0),\n"
-        "# it never BLOCKs. Per feedback_warn_vs_block_hook_design. Human decides.\n"
+        "# it never BLOCKs.\n"
+        "# NOTE: a PreToolUse exit-0 WARN is NOT surfaced by Claude Code (HOOK_AUTHORING.md\n"
+        "# L77), so on the write path this tier reaches nobody. Its only functioning reader\n"
+        "# is /audit-pii Step 1, which reports ambiguous_hits[] to a human. Treat a non-empty\n"
+        "# ambiguous_hits[] there as requiring an explicit verdict, not as advisory noise.\n"
+        "# See memory/feedback_warn_vs_block_hook_design.md (corrected 2026-05-28).\n"
     )
     amb_path.write_text(amb_header + "\n".join(ambiguous) + "\n", encoding="utf-8")
 
