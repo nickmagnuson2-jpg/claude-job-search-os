@@ -149,8 +149,27 @@ def load_memory_files(memory_dir: Path):
         yield p, fm
 
 
+def is_partially_promoted(fm: dict) -> bool:
+    """`promoted: partial -- <what's missing>` means enforcement is HALF landed."""
+    return str(fm.get("promoted", "")).strip().lower().startswith("partial")
+
+
 def is_promoted(fm: dict) -> bool:
+    """True only when enforcement is COMPLETE.
+
+    `partial` is deliberately NOT promoted. The 2026-08-13 verdict run set 41 files to
+    `partial -- <what's missing>` precisely so a half-landed rule would not read as done --
+    and this function then counted every one of them as promoted and dropped them from the
+    candidate list, hiding exactly the gap the value was invented to expose.
+
+    Measured impact when fixed: 12 candidates -> 35. The 23 recovered included
+    feedback_llm_self_policing_fails and feedback_llm_verification_system, both at 5 fires.
+
+    A rule is only out of the backlog when nothing is missing.
+    """
     v = str(fm.get("promoted", "no")).strip().lower()
+    if v.startswith("partial"):
+        return False
     return v not in ("no", "false", "", "0")
 
 
@@ -251,6 +270,11 @@ def main(argv: list[str]) -> None:
             promotion_candidates.append({
                 "file": path.name,
                 "occurrences": occurrences,
+                # `partial` rules are half-landed, not unstarted. Surfaced in the same
+                # list because the remaining gap is real work, but flagged so the
+                # backlog can be triaged (finish the half-built one vs start a new one).
+                "partial": is_partially_promoted(fm),
+                "promoted_value": str(fm.get("promoted", "no")),
                 "reopen_gate": fm.get("reopen_gate", ""),
                 "description": fm.get("description", ""),
             })
