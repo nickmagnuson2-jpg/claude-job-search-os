@@ -3,6 +3,37 @@
 All notable changes to this job search system are recorded here.
 Format: newest entries at the top.
 
+## 2026-08-13: CLAUDE.md trimmed 56.5KB -> 37.5KB, tool tables moved to docs/tools-reference.md
+
+CLAUDE.md was 1.38x over its 40KB always-loaded budget — a size paid as a tax on every
+session, forever. Four pure-lookup tables moved out verbatim to `docs/tools-reference.md`:
+atomic write scripts (37 rows), launchd background jobs (9), private local config (10),
+multi-agent workflow templates (5). A router pointer with a trigger condition stays behind
+("read before invoking any tools/*.py script"), because a pointer with no trigger is a
+pointer nobody follows.
+
+**What deliberately did NOT move**, against the audit script's own advice: the script scored
+Tools & Environment as MOVE wholesale and Data Files as MOVE. Both are wrong in part, because
+rule-shaped lines sit inside reference-shaped sections. The `PYTHONIOENCODING=utf-8`
+requirement and the prohibition on creating/truncating files in `tools/launchd/logs/` (which
+killed 8 launchd jobs for ~18 hours) stay resident — they are prohibitions with destructive
+failure modes, not lookups, even though they sit beside the tables that left. Data Files stays
+whole: its "write-only files, use these scripts not Edit" table encodes a rule (Edit silently
+fails on rows >500 chars). Hard Rules and the Self-Improvement Loop stay regardless of byte
+share.
+
+Verified per the trim-context-file protocol: Step 0 gate (90-rule baseline, 13 blocks
+reconstructing 56,487 bytes exactly); rule conservation against the UNION of trimmed source
+and destination, 0 of 90 missing; byte conservation with all 61 moved table rows
+byte-identical to their Step 0 block; 1590 tests green; 0 hits against 414 PII denylist
+tokens.
+
+Back-propagated: `feedback_ship_isnt_done_until_doc_surfaces_swept` named "the CLAUDE.md tools
+table" as its future hook's enforcement target in four places. Repointed. Unswept, that hook
+would have been built to check a table no longer there — and would have passed every commit
+silently, which is worse than no hook, because it reports green.
+
+
 ## 2026-08-13: memory shards re-split 7 -> 11, and the promotion backlog worked down
 
 **Shards.** `index-tools` (42KB, 1.72x) and `index-system` (38KB, 1.53x) were over the ~24KB
