@@ -184,6 +184,84 @@ def test_backfilled_occurrences_do_not_surface_as_promotion_candidates(tmp_path)
     assert run(d, tmp_path)["promotion_count"] == 0
 
 
+TERMINAL = """---
+name: feedback_terminal_{n}
+description: a rule no artifact can enforce
+metadata:
+  node_type: memory
+  type: feedback
+  occurrences: {occ}
+  promoted: no
+  terminal: true
+  terminal_reason: "judgment call about calibration; no artifact property to check"
+  reopen_gate: "n/a -- terminal-behavioral"
+  last_cited: 2026-08-13
+---
+body
+"""
+
+
+def test_terminal_rules_do_not_surface_as_promotion_candidates(tmp_path):
+    """A rule no artifact can enforce inflates the candidate list forever.
+
+    The 2026-08-13 corpus audit classified 25 of 230 rules terminal-behavioral: correct as
+    written, promoted nowhere, and un-promotable in principle. Left unmarked they re-surface
+    at every scan, and a candidate list padded with un-actionable rows trains the reader to
+    skim the actionable ones.
+    """
+    d = tmp_path / "memory"
+    d.mkdir()
+    (d / "feedback_terminal_0.md").write_text(TERMINAL.format(n=0, occ=3))
+    (d / "feedback_visible_0.md").write_text(VISIBLE.format(n=0, occ=2))
+    report = run(d, tmp_path)
+    assert report["promotion_count"] == 1, "the terminal rule must not be a candidate"
+    assert report["promotion_candidates"][0]["file"] == "feedback_visible_0.md"
+
+
+def test_terminal_rules_are_reported_not_silently_dropped(tmp_path):
+    """Suppression without a count is indistinguishable from a scanner that lost the file.
+
+    This is the same failure the coverage metric exists to prevent, one level down: a
+    filtered-out rule has to remain visible AS filtered, with the reason it was filtered.
+    """
+    d = tmp_path / "memory"
+    d.mkdir()
+    for i in range(3):
+        (d / f"feedback_terminal_{i}.md").write_text(TERMINAL.format(n=i, occ=4))
+    report = run(d, tmp_path)
+    assert report["terminal_count"] == 3
+    assert {c["file"] for c in report["terminal_rules"]} == {
+        f"feedback_terminal_{i}.md" for i in range(3)
+    }
+    assert all(c["terminal_reason"] for c in report["terminal_rules"]), (
+        "a terminal mark with no stated reason is an unauditable silencer"
+    )
+
+
+def test_terminal_only_suppresses_promotion_not_the_denominators(tmp_path):
+    """Marking a rule terminal must not shrink coverage -- it is still a schema-visible rule."""
+    d = tmp_path / "memory"
+    d.mkdir()
+    (d / "feedback_terminal_0.md").write_text(TERMINAL.format(n=0, occ=3))
+    (d / "feedback_invisible_0.md").write_text(INVISIBLE.format(n=0))
+    cov = run(d, tmp_path)["schema_coverage"]
+    assert cov["files"] == 2
+    assert cov["visible"] == 1, "a terminal rule still carries the schema"
+
+
+@pytest.mark.parametrize("value", ["false", "no", ""])
+def test_falsy_terminal_values_leave_the_rule_a_candidate(tmp_path, value):
+    """Fail open: only an explicit truthy mark suppresses. A typo must not silence a rule."""
+    d = tmp_path / "memory"
+    d.mkdir()
+    (d / "feedback_terminal_0.md").write_text(
+        TERMINAL.format(n=0, occ=3).replace("terminal: true", f"terminal: {value}")
+    )
+    report = run(d, tmp_path)
+    assert report["promotion_count"] == 1, f"terminal: {value!r} must not suppress"
+    assert report["terminal_count"] == 0
+
+
 def test_oversized_reporting_is_advisory_and_never_mutates(tmp_path):
     d = build_corpus(tmp_path, visible=1, invisible=0, projects=0)
     big = d / "index-big.md"

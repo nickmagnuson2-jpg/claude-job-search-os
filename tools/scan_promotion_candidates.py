@@ -154,6 +154,25 @@ def is_promoted(fm: dict) -> bool:
     return v not in ("no", "false", "", "0")
 
 
+def is_terminal(fm: dict) -> bool:
+    """True for a rule that no artifact can enforce, so promotion is not the right end state.
+
+    The 2026-08-13 corpus audit classified 25 of 230 rules terminal-behavioral: correct as
+    written, landed nowhere, and un-promotable in principle (calibration judgments, "match
+    Nick's read", "don't offer deferral on a pain he just named"). They are not failures of
+    the promotion ladder; they are rules whose only possible tier is behavioral.
+
+    Left unmarked they re-surface at every scan forever, and a candidate list padded with
+    un-actionable rows trains the reader to skim the actionable ones.
+
+    FAILS OPEN, deliberately: only an explicit truthy mark suppresses, so a typo
+    (`terminal: ture`) leaves the rule a candidate rather than silencing it. Suppression is
+    never silent -- terminal rules are reported in their own bucket with the stated reason,
+    because a filtered row that vanishes is indistinguishable from one the scanner lost.
+    """
+    return str(fm.get("terminal", "")).strip().lower() in ("true", "yes", "1")
+
+
 # Always-loaded files pay their size as a per-session tax forever. Thresholds are the ones
 # already stated in CLAUDE.md's Memory Hygiene section (~24KB/shard) and the observed
 # CLAUDE.md working size; both are advisory, surfaced for judgment, never auto-acted.
@@ -210,6 +229,7 @@ def main(argv: list[str]) -> None:
     # and "never cited since backfill" is arguably the strongest demotion evidence there
     # is. It is reported as its own bucket rather than silently skipped.
     never_cited = []
+    terminal_rules = []
     needs_review = 0
 
     for path, fm in load_memory_files(memory_dir):
@@ -218,7 +238,16 @@ def main(argv: list[str]) -> None:
         except ValueError:
             occurrences = 0
 
-        if occurrences >= 2 and not is_promoted(fm):
+        terminal = is_terminal(fm)
+        if terminal:
+            terminal_rules.append({
+                "file": path.name,
+                "occurrences": occurrences,
+                "terminal_reason": fm.get("terminal_reason", ""),
+                "description": fm.get("description", ""),
+            })
+
+        if occurrences >= 2 and not is_promoted(fm) and not terminal:
             promotion_candidates.append({
                 "file": path.name,
                 "occurrences": occurrences,
@@ -268,6 +297,11 @@ def main(argv: list[str]) -> None:
         # Files whose occurrences/promoted were backfilled, not counted. A `1` here means
         # "unknown", not "fired once" -- Phase 2 mining is what resolves them.
         "needs_review_count": needs_review,
+        # Rules excluded from the promotion signal because no artifact can enforce them.
+        # Listed in full, not sampled: this bucket must stay auditable, since every row is a
+        # rule someone decided will never be built. It should grow slowly and be re-read.
+        "terminal_rules": terminal_rules,
+        "terminal_count": len(terminal_rules),
         # An empty candidate list is only meaningful alongside coverage. Read them together.
         "schema_coverage": coverage,
         # The trigger /trim-context-file never had: it was mutation-verified and then never
