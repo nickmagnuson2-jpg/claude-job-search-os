@@ -3,6 +3,44 @@
 All notable changes to this job search system are recorded here.
 Format: newest entries at the top.
 
+## 2026-08-14: check_stale_file_claim.py Stop hook, and the WARN-tier correction chain
+
+Backfilled — these six commits shipped before this entry existed. See the note at the end.
+
+**`tools/check_stale_file_claim.py` (new, Stop hook, exit 2)** — catches telling the user a named
+file "hasn't had a pass this session" when mtime says otherwise. Built first as a process guard
+("did an `ls` run on this path?"), which passed 35 unit tests and then scored ~zero true positives
+against 4,085 real assistant messages: the dominant false positive was the legitimate self-report
+("`data/goals.md` untouched", meaning *I chose not to edit it*), which carries the same evidence
+signature as the defect. Redesigned to check mtime instead — 6 hits (0.15%), two of them the
+original 2026-07-31 incident recovered verbatim, 0 spurious blocks across 60 real transcripts.
+37 tests. Commit `8e80024`.
+
+**The WARN-tier chain (`9e71d52`, `dde8231`, `506a19a`, `ad96350`).** Writing that hook put a real
+pipeline-company name into two public files. It was caught by hand at staging, not by the always-on
+PII hook — which had detected it correctly and emitted an exit-0 stderr WARN that Claude Code does
+not surface. Tracing that to source found a recall dead-end:
+`memory/feedback_warn_vs_block_hook_design.md` had been archived and deleted in the 2026-06-13 pass
+while 13 `tools/*.py`, `CLAUDE.md`, `HOOK_AUTHORING.md` and this changelog still cited it by name.
+Its 2026-05-28 correction — *a PreToolUse exit-0 WARN is non-functional; default to BLOCK, or don't
+build the hook* — was therefore unreachable, and `gen_pii_denylist.py` had implemented the rule's
+superseded "default to WARN" form. Worse, `CLAUDE.md`'s own hook-tier bullet prescribed that
+superseded form to every session.
+
+Fixed at the source, not just the symptom: memory file restored (3 fires); `CLAUDE.md` hook-tier
+bullet corrected to "PreToolUse: BLOCK (exit 2) or don't build it"; `gen_pii_denylist.py` docstring
+and generated header corrected; `.claude/skills/audit-pii/SKILL.md` gained the second deterministic
+blind spot (pipeline membership does not imply BLOCK-tier coverage, because dictionary-word company
+names are routed to the invisible WARN tier); `HOOK_SPEC_status_query_verification.md` clarified
+that its always-exit-0 design is correct for `UserPromptSubmit`, where stdout injection *is*
+delivery, and must not be generalized to PreToolUse. No hook behavior changed.
+
+**Why this entry is a backfill.** Six pushes went out before any changelog entry was written.
+`tools/check_changelog_currency.py` exists to prevent exactly that and did not fire: run directly,
+it exits 0 with no stdout and no stderr, and every return path in it is `return 0`. It is a third
+instance of the defect above — a guard that cannot reach the agent it is guarding. Nick supplied
+the correction the hook could not.
+
 ## 2026-08-14: CLAUDE.md 41.1KB -> 37.2KB, data-file conventions moved to docs/data-file-conventions.md
 
 CLAUDE.md went 142 bytes over its 40KB always-loaded budget when a Hard-Rules bullet was
