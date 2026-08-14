@@ -308,9 +308,22 @@ Compare Codex's steps (from Step 1) against Agent 6's independent plan step-by-s
 - [claude-only] steps inserted at the correct sequence position
 - [diverge] steps resolved to the recommended approach with a note
 - Safety checkpoints from Agent 2 inserted before any high-risk operations
-- Reordering applied per Agent 5 findings
-- Simplifications from Agent 4 applied inline
+- Reordering from Agent 5 and simplifications from Agent 4 folded in **only after passing the
+  verification bar below** — never relayed on the agent's say-so
 - Each step: action + files touched + how to verify success]
+
+**Verification bar — every finding, before it enters the plan.** Synthesis is this skill's job, so
+"apply nothing" would gut it. What is banned is applying a finding *silently, unverified, in the
+agent's own framing*.
+
+1. **Check it against the artifact yourself.** Open the file, quote the actual line. An agent's
+   description of a plan step is not the step. A finding you cannot confirm does not get folded in —
+   it moves to Rejected with "could not verify."
+2. **State your own severity.** The agent's rating is an input you are re-deciding. Where you
+   disagree, say so and use yours.
+3. **A simplification that deletes a safety step is a downgrade, not a simplification.** Agent 4
+   optimizes for less code and does not see what Agent 2 added. When they conflict, safety wins and
+   the conflict is recorded.
 
 1. **[Step title]**
    - Action: [what to do]
@@ -321,6 +334,29 @@ Compare Codex's steps (from Step 1) against Agent 6's independent plan step-by-s
 
 ### Verification
 [Overall: how to confirm the full plan succeeded — specific commands or observable outcomes]
+
+### Findings Ledger (mandatory — the plan is not done without it)
+
+Every agent finding, and what happened to it. **A synthesis with no rejections is a synthesis that
+did not judge** — six agents on one plan do not all produce keepers.
+
+| # | Agent | Finding | Agent severity | My severity | Disposition | Why |
+|---|---|---|---|---|---|---|
+| 1 | 4 (simplicity) | [one line] | major | minor | **rejected** | Verified at `path:line` — it deletes the retry guard Agent 2 added |
+| 2 | 5 (sequencing) | [one line] | major | major | applied, step 3→6 | Verified: step 3 reads a file step 6 creates |
+| 3 | 2 (risk) | [one line] | blocking | blocking | applied as checkpoint | agrees |
+
+**Read the `My severity` column before trusting the plan.** If it matches `Agent severity` on every
+row, no independent judgment happened and the synthesis is a relay.
+
+**Anything you could not verify goes in as `rejected — could not verify`, never silently dropped.**
+A finding that vanishes between critique and plan is indistinguishable from one that was considered
+and refused, and only one of those is a decision.
+
+Origin: `feedback_verify_and_present_review_findings` (2026-08-13 audit). This skill previously
+instructed "Simplifications from Agent 4 applied inline" and "Reordering applied per Agent 5
+findings" with no verification, no independent severity, and no record of what was refused — which
+made it the source that rule kept firing against.
 
 ### Rollback
 [Only include this section if the plan contains destructive operations. Describe how to undo each destructive step.]
