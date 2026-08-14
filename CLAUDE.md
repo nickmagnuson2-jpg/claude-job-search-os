@@ -108,7 +108,7 @@ data/              Owner data (profile.md, goals.md, professional-identity.md gi
   ├─ reflections/          Snapshots of Nick's processing (date-prefixed)
   └─ workbooks/            Reusable frameworks (no date prefix)
 .claude/skills/    38 slash-command skill definitions
-memory/            MEMORY.md (auto-loaded router + Critical Context), index-<topic>.md shards (7), lessons.md, archives
+memory/            MEMORY.md (auto-loaded router + Critical Context), index-<topic>.md shards (11), lessons.md, archives
 tools/             Python scripts (PDF, preprocessing, atomic writes, launchd schedules)
 output/            Generated outputs — company-first hierarchy
 ```

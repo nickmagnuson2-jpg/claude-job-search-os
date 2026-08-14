@@ -8,7 +8,7 @@ Navigation for all project documentation. The reader-facing docs are organized b
 |------|---------|
 | [CLAUDE.md](../CLAUDE.md) | Project instructions, loaded every session |
 | [memory/MEMORY.md](../memory/MEMORY.md) | Loaded every session — critical context + a router to the topic shards below |
-| memory/index-\<topic\>.md | Full memory index, split into topic shards (outreach, coaching, research, tools, system, personal, projects); loaded on demand per the router |
+| memory/index-\<topic\>.md | Full memory index, split into 11 topic shards (outreach, coaching, research, tools, hooks, repo-ops, agents, verification, system, personal, projects); loaded on demand per the router. Was 7 until the 2026-08-13 split, when `tools` and `system` went 1.7x and 1.5x over the ~24KB read budget. |
 | [memory/lessons.md](../memory/lessons.md) | Correction tracking, reviewed before skill edits, data ops, CV generation |
 
 ---
@@ -38,6 +38,8 @@ Look-it-up material. Precise, scannable, not meant to be read front to back.
 | File | Purpose |
 |------|---------|
 | [usage.md](usage.md) | Every skill with argument syntax, worked examples, the PDF pipeline, hook override flags |
+| [tools-reference.md](tools-reference.md) | Tool tables: atomic write scripts, launchd background jobs, private local config, multi-agent workflow templates. Read before invoking any `tools/*.py` script (argument order, flag placement, `--repo-root` position). Moved out of CLAUDE.md 2026-08-13. |
+| [data-file-conventions.md](data-file-conventions.md) | The decisions/accomplishments append-only logs and their boundaries; the four kinds of personal exploration and which take a `YYYY-MM-DD-` prefix; the therapy two-tier and reflections two-voice patterns. Moved out of CLAUDE.md 2026-08-14. |
 | [faq.md](faq.md) | Quick answers: setup, privacy, day-to-day, voice, forking, troubleshooting |
 
 ## Explanation (understanding)

@@ -118,7 +118,7 @@ Every outgoing email draft (`/draft-email`, `/follow-up`, `/cold-outreach`) labe
 
 ## What Got Pruned
 
-Of the 31 skills in the catalog at the time of the Apr-May 2026 usage audit, 20 saw regular use. 11 were low-invocation. (The catalog has since grown to 35.) That's not a failure of design, the system was built broadly and the daily-driver skills emerged from actual use, not from planning.
+Of the 31 skills in the catalog at the time of the Apr-May 2026 usage audit, 20 saw regular use. 11 were low-invocation. (The catalog has since grown to 38.) That's not a failure of design, the system was built broadly and the daily-driver skills emerged from actual use, not from planning.
 
 Three low-invocation skills are legitimate one-shot tools: `/import-cv`, `/setup-goals`, and `/extract-identity` run once at setup and rarely again. The rest are skills that made sense in theory and didn't get pulled in practice: `/scan-contacts` (LinkedIn scanner, useful but rarely needed at the daily cadence), `/critique-plan` (six-agent plan critique, valuable when needed, infrequently needed), `/dashboard` (Textual terminal UI for the pipeline, replaced by `/pipe` for quick checks), `/act` (autonomous task execution, useful in theory, in practice the manual cadence worked better), `/review-cv-deep` (six-reviewer parallel CV analysis, pulled when actively applying, not in between).
 
