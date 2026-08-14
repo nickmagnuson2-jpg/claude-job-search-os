@@ -63,8 +63,34 @@ from hook_command_lint import strip_literals  # noqa: E402
 # Require an actual `python … todo_write.py … --flag` invocation (not a bare
 # substring). `python` anchor + kwarg allowlist; applied AFTER literal-stripping.
 KWARGS_PATTERN = re.compile(
-    r"python3?\b[^\n]*?\btodo_write\.py\b[^\n]*?--(task|priority|due|notes)\b"
+    r"python3?\b[^\n]*?\btodo_write\.py\b(?P<tail>[^\n]*?)--(task|priority|due|notes)\b"
 )
+
+# `update` (added 2026-08-14) is the one MUTATING subcommand that legitimately takes
+# these flags: it edits a single field in place, so naming the field IS the interface.
+# The alternative was positional sentinels for every column you are NOT changing, which
+# reintroduces the retyping the verb exists to delete.
+#
+# This exemption is SUBCOMMAND-POSITION, never substring: the token is read from the
+# argument slot after todo_write.py (skipping `--repo-root <path>` pairs), so a stray
+# the word "update" elsewhere in the command line cannot unlock the guard.
+# [[feedback_command_hook_match_position_not_substring]] — the blind spot this whole
+# hook family keeps re-learning.
+FLAG_TAKING_SUBCOMMANDS = {"update", "list", "sync"}
+
+
+def subcommand_of(tail: str) -> str:
+    """The subcommand token in `todo_write.py [--repo-root P] <cmd> ...`, or ''."""
+    toks = tail.split()
+    i = 0
+    while i < len(toks):
+        if toks[i] == "--repo-root":
+            i += 2
+            continue
+        if toks[i].startswith("-"):
+            return ""          # a flag before any subcommand: not an exempt form
+        return toks[i]
+    return ""
 
 # Literal spans (quoted strings + heredoc bodies) are stripped before matching via the
 # shared tools/hook_command_lint.py so the pattern inside a string argument
@@ -88,8 +114,12 @@ USAGE_REMINDER = (
     "  python3 tools/todo_write.py clear                # archive completed\n"
     "  python3 tools/todo_write.py sync                 # rebuild from data files\n"
     "\n"
-    "The --repo-root flag IS accepted (positional anywhere) — only\n"
-    "--task / --priority / --due / --notes trigger this warning.\n"
+    "  python3 tools/todo_write.py update <fragment> --notes-append \"text\"\n"
+    "                                                   # edit ONE field in place;\n"
+    "                                                   # `update` DOES take these flags\n"
+    "\n"
+    "The --repo-root flag IS accepted (positional anywhere), and `update`/`list`/`sync`\n"
+    "take real flags. Only --task / --priority / --due / --notes on `add` trigger this.\n"
 )
 
 
@@ -109,7 +139,12 @@ def main() -> None:
     if not match:
         sys.exit(0)
 
-    flag = match.group(1)
+    # Subcommands that legitimately take these flags are not the failure this hook
+    # guards. Checked by argument position, not by substring presence.
+    if subcommand_of(match.group("tail")) in FLAG_TAKING_SUBCOMMANDS:
+        sys.exit(0)
+
+    flag = match.group(2)
     print(
         f"BLOCKED: todo_write.py invoked with --{flag} (kwarg). Argparse will reject this.\n"
         "\n"

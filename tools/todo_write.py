@@ -7,6 +7,16 @@ Each command reads the file, performs a targeted line-level mutation, and writes
 
 Commands:
   add <task> <priority> <due> <notes>  — append row to Active section
+  update <task_fragment> --field val   — edit an ACTIVE row's fields in place without
+                                         retyping the rest. Fields: --task, --priority,
+                                         --due, --notes (replaces), --notes-append,
+                                         --notes-prepend. STATUS IS NOT UPDATABLE —
+                                         done/withdraw/supersede own that transition.
+                                         --task/--due/--notes stamp a `[rev <date>: ...]`
+                                         marker into notes, since they overwrite; the
+                                         append/prepend forms lose nothing and do not.
+                                         No marker when the edit only INSERTED text
+                                         (subsequence test), since nothing was lost.
   done <task_fragment>                 — move matching row to Completed (a completion)
   withdraw <task_fragment>             — mark matching row Withdrawn, not Done (NOT a completion;
                                          also corrects a row already mis-marked Completed)
@@ -381,6 +391,169 @@ def cmd_withdraw(args: list[str], todos_path: Path) -> None:
     out_error(f"No task found matching: {args[0]}")
 
 
+UPDATE_FIELD_FLAGS = {"--task", "--priority", "--due",
+                      "--notes", "--notes-append", "--notes-prepend"}
+
+# Changing one of these DESTROYS the prior value, so it earns a revision marker.
+# --notes-append/--notes-prepend destroy nothing by construction, and priority is
+# trivially recoverable, so neither is stamped. Record what a change LOSES, not
+# every change -- otherwise rows already carrying 1-2k of notes grow without bound.
+UPDATE_DESTRUCTIVE = {"--task", "--due", "--notes"}
+REV_VALUE_CAP = 120
+
+
+def is_insertion_only(old: str, new: str) -> bool:
+    """True when `new` is `old` with text inserted and nothing removed.
+
+    The test is SUBSEQUENCE containment, not substring. Substring only recognises a
+    pure prefix or suffix edit; it misses an insertion into the MIDDLE, which is the
+    common shape -- and was the exact shape of this verb's first live use, where a
+    tracker went in after the date and before the colon. Every character of `old`
+    still present, in order, is precisely the statement "nothing was deleted".
+
+    Deletions, truncations and replacements all break the ordering and correctly
+    still record. "Ship the widget" -> "Ship the thing" is NOT insertion-only: after
+    "Ship the " there is no `w` left to match.
+    """
+    if not old:
+        return True
+    it = iter(new)
+    return all(ch in it for ch in old)
+
+
+def _parse_update_flags(args: list[str]) -> tuple[str, dict[str, str]]:
+    """`update <fragment> --flag value ...` in any order. Returns (fragment, fields)."""
+    usage = ("Usage: update <task_fragment> [--task X] [--priority X] [--due X] "
+             "[--notes X] [--notes-append X] [--notes-prepend X]  (one or more)")
+    if not args:
+        out_error(usage)
+    fragment = args[0]
+    if fragment.startswith("--"):
+        out_error(f"update needs a task fragment FIRST, before any flag. {usage}")
+
+    fields: dict[str, str] = {}
+    i = 1
+    while i < len(args):
+        flag = args[i]
+        if flag not in UPDATE_FIELD_FLAGS:
+            out_error(f"update: unknown field flag {flag}. "
+                      f"Allowed: {', '.join(sorted(UPDATE_FIELD_FLAGS))}")
+        if i + 1 >= len(args):
+            out_error(f"update: {flag} needs a value")
+        if flag in fields:
+            out_error(f"update: {flag} given twice")
+        fields[flag] = args[i + 1]
+        i += 2
+
+    if not fields:
+        out_error(f"update: nothing to change — pass at least one field flag. {usage}")
+    if "--notes" in fields and ({"--notes-append", "--notes-prepend"} & set(fields)):
+        out_error("update: --notes REPLACES the whole cell, so combining it with "
+                  "--notes-append/--notes-prepend is ambiguous. Pick one.")
+    return fragment, fields
+
+
+def cmd_update(args: list[str], todos_path: Path) -> None:
+    """Edit an ACTIVE row's fields in place, without retyping the ones you are not changing.
+
+    Built 2026-08-14 after the missing verb cost real work twice in one day: every
+    edit meant `supersede` plus a re-`add` with the full task AND notes retyped, on
+    rows carrying 1-2k characters of notes. That is a transcription-error generator.
+
+    STATUS IS NOT UPDATABLE, deliberately. done/withdraw/supersede own the status
+    transitions and carry side effects (section move, date stamp, and the
+    Withdrawn-vs-Completed distinction tools/todo_daily_metrics.py counts on). A
+    second path to the same state change is how two code paths start disagreeing.
+
+    ACTIVE ROWS ONLY. Editing an archived row is rarer and riskier, and `withdraw`
+    already handles the one archived-row correction that actually comes up.
+
+    DESTRUCTIVE CHANGES LEAVE A TRAIL. --task/--due/--notes overwrite a value that is
+    then gone, so each stamps `[rev <date>: <field> was "<old>"]` into notes -- unless
+    the edit only INSERTED text, which loses nothing. See is_insertion_only.
+    """
+    fragment_raw, fields = _parse_update_flags(args)
+    fragment = fragment_raw.lower()
+    content, lines = load_todos(todos_path)
+
+    act_start, act_end = find_section(lines, "## Active")
+    if act_start == -1:
+        out_error("No ## Active section found")
+
+    matches = _find_in_section(lines, act_start, act_end, fragment)
+    if not matches:
+        out_error(f"No ACTIVE task found matching: {fragment_raw}")
+    if len(matches) > 1:
+        opts = "\n".join(f"  - {c[0]}" for _, c in matches)
+        out_error(f"Multiple matches — be more specific:\n{opts}")
+
+    row_idx, cols = matches[0]
+    task = cols[0]
+    priority = cols[1] if len(cols) > 1 else "Med"
+    due = cols[2] if len(cols) > 2 else "—"
+    status = cols[3] if len(cols) > 3 else "Pending"
+    # Legacy rows may carry literal pipes in notes; rejoin exactly as cmd_withdraw does.
+    notes = " | ".join(cols[4:]) if len(cols) > 4 else "—"
+
+    today_str = date.today().strftime("%Y-%m-%d")
+    revs: list[str] = []
+
+    def _stamp(field_name: str, old: str, new: str) -> None:
+        """Record the prior value ONLY when the change actually destroys it.
+
+        Three ways nothing is lost, and none earns a marker:
+          - there was no prior value
+          - the cell held the "—" placeholder, which means "empty"
+          - the edit was INSERTION-ONLY (see is_insertion_only)
+
+        Not hypothetical. The first live use of this verb inserted a tracker into five
+        task strings and stamped five markers quoting text still fully present in the
+        new value. A trail that records non-losses is noise, and noise in an audit
+        trail is worse than none: it trains you to skim past the real entries.
+        """
+        old = (old or "").strip()
+        new = (new or "").strip()
+        if not old or old == "—" or is_insertion_only(old, new):
+            return
+        shown = old if len(old) <= REV_VALUE_CAP else old[:REV_VALUE_CAP].rstrip() + "..."
+        revs.append(f'[rev {today_str}: {field_name} was "{shown}"]')
+
+    changed: list[str] = []
+
+    if "--task" in fields:
+        _stamp("task", task, fields["--task"])
+        task = fields["--task"]
+        changed.append("task")
+    if "--priority" in fields:
+        priority = fields["--priority"]
+        changed.append("priority")
+    if "--due" in fields:
+        _stamp("due", due, fields["--due"])
+        due = fields["--due"]
+        changed.append("due")
+
+    if "--notes" in fields:
+        _stamp("notes", notes, fields["--notes"])
+        notes = fields["--notes"]
+        changed.append("notes")
+    else:
+        base = "" if notes.strip() in ("", "—") else notes
+        if "--notes-prepend" in fields:
+            notes = f"{fields['--notes-prepend']} {base}".strip()
+            changed.append("notes-prepend")
+        if "--notes-append" in fields:
+            notes = f"{base} {fields['--notes-append']}".strip()
+            changed.append("notes-append")
+
+    if revs:
+        notes = f"{notes} {' '.join(revs)}".strip()
+
+    lines[row_idx] = fmt_active(task, priority, due, status, notes)
+    save_lines(todos_path, lines, content)
+    out_ok("updated", f"Updated ({', '.join(changed)}): {task[:70]}",
+           task=task, changed=changed, revisions_recorded=len(revs))
+
+
 def cmd_supersede(args: list[str], todos_path: Path) -> None:
     """Withdraw EVERY Active row whose task starts with the given prefix.
 
@@ -718,7 +891,7 @@ def main() -> None:
             i += 1
 
     if not filtered:
-        out_error("Usage: todo_write.py <add|done|withdraw|supersede|clear|sync|list> [args...]")
+        out_error("Usage: todo_write.py <add|update|done|withdraw|supersede|clear|sync|list> [args...]")
 
     cmd = filtered[0].lower()
     extra_args = filtered[1:]
@@ -733,10 +906,15 @@ def main() -> None:
     # Per memory/feedback_atomic_script_positional_args.md (script-tier promotion 2026-05-21).
     # `list` is the one query subcommand and takes real --flags (--status, --grep).
     # `sync` takes --apply: it previews by default and only writes when asked.
+    # `update` is partial-field by design: naming the field is the whole point, and a
+    # positional form would need sentinel placeholders for every column you are NOT
+    # changing, which reintroduces exactly the retyping this verb exists to delete.
     if cmd == "list":
         allowed_flags = {"--status", "--grep"}
     elif cmd == "sync":
         allowed_flags = {"--apply"}
+    elif cmd == "update":
+        allowed_flags = set(UPDATE_FIELD_FLAGS)
     else:
         allowed_flags = set()
     unknown_flags = [
@@ -748,6 +926,7 @@ def main() -> None:
             "todo_write.py is positional-only — pass bare values, not --flag names "
             "(except `list`, which takes --status/--grep). "
             "Usage: add <task> [priority] [due] [notes]  |  "
+            "update <fragment> [--task|--priority|--due|--notes|--notes-append|--notes-prepend] X  |  "
             "done <fragment>  |  withdraw <fragment>  |  supersede <prefix>  |  clear  |  sync  |  "
             "list [--status <Status>] [--grep <substring>]  |  --repo-root <path> (anywhere)"
         )
@@ -761,6 +940,8 @@ def main() -> None:
         cmd_done(extra_args, todos_path)
     elif cmd == "withdraw":
         cmd_withdraw(extra_args, todos_path)
+    elif cmd == "update":
+        cmd_update(extra_args, todos_path)
     elif cmd == "supersede":
         cmd_supersede(extra_args, todos_path)
     elif cmd == "clear":
@@ -770,7 +951,7 @@ def main() -> None:
     elif cmd == "list":
         cmd_list(extra_args, todos_path)
     else:
-        out_error(f"Unknown command: {cmd}. Use: add, done, withdraw, supersede, clear, sync, list")
+        out_error(f"Unknown command: {cmd}. Use: add, update, done, withdraw, supersede, clear, sync, list")
 
 
 if __name__ == "__main__":
