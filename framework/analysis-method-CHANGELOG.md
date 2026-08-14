@@ -21,6 +21,35 @@ Format:
 
 ---
 
+## 2026-08-13 | Checker built and run; acceptance test MEASURED | v1.1 -> v1.2
+
+**Source:** in-flight. First execution of `tools/check_frame_integrity.py` against the blind
+reconstruction of the 2026-08-05 frame.
+
+**Result: 6 FAIL, 4 CANNOT_RUN, 1 PASS.** The gate independently reproduced the known failure with
+no contamination in the chain: a blind agent transcribed the artifact without access to Section F,
+and the checks were written from the schema rather than from the artifact.
+
+**The headline is F3.** `i_csat` is load-bearing in two elements. That is verbatim the question that
+broke the room, recovered by set intersection. **The instrument works.**
+
+**F10struct was not on the original nine-rule assessment and found two real defects** that a year of
+review had not: one assumption with no basis, another with neither basis nor sensitivity. A rule
+nobody thought to apply to that work.
+
+**Prediction accuracy: 0 for 3.** The acceptance test was stated three times before it was run and was
+wrong every time — six rules, then seven, then a different seven. The measured result is now recorded
+in `frame-schema.yaml` under `limits.acceptance_test` and the predictions are deliberately not kept.
+**The lesson generalizes past this instrument: predicted coverage is not coverage.**
+
+**Design decision that earned itself immediately:** every check reports PASS, FAIL or **CANNOT_RUN**,
+and a CANNOT_RUN is never counted as a pass. Four rules could not execute here. Had they collapsed
+into PASS the frame would have reported 5 pass / 6 fail and four untested rules would have read as
+coverage — which is "artifacts of rigor without the rigor" rebuilt inside the tool meant to prevent it.
+`clean` means no failures; `fully_covered` additionally means nothing went untested. Read both.
+
+---
+
 ## 2026-08-13 | Acceptance test falsified the spec, pre-release | v1 -> v1.1
 
 **Source:** in-flight. A blind agent reconstructed a real 2026-08-05 frame into the schema, having

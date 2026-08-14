@@ -294,10 +294,19 @@ limits:
   F9_needs_two: >
     F9 requires a prior `locked: true` version. It cannot run on a single-version frame.
   acceptance_test: >
-    Against the 2026-08-05 reconstruction the runnable failures are F1a, F1b, F2a, F3, F5,
-    F8b and F12. F8a passes, F2b and F9 cannot run. The earlier claim of "six of the nine"
-    was wrong in both directions: F12 fails and was never on the nine-rule list, while F9
-    was on it and cannot execute.
+    MEASURED 2026-08-13 by running tools/check_frame_integrity.py against the blind
+    reconstruction of the 2026-08-05 frame. Not predicted - the prediction was wrong
+    three times and is not recorded here.
+    FAIL (6): F1a, F2a, F3, F5, F10struct, F12.
+    CANNOT_RUN (4): F1b and F8b because the reconstruction predates the surface and
+    metric_roles fields; F2b because a finished artifact carries no version history;
+    F9 because compression needs two locked versions.
+    PASS (1): F8a.
+    The headline is F3: i_csat is load-bearing in two elements, which is the exact
+    double-count the room interrogated, recovered by set intersection from a frame
+    transcribed by an agent that had never read Section F.
+    F10struct was NOT on the original nine-rule assessment and found two real defects
+    (two assumptions missing basis and sensitivity). A rule nobody thought to apply.
 
 # Not deterministic, delegated. Recorded here so the split has one source of truth.
 delegated:

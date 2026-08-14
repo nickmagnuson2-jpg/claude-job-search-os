@@ -1,0 +1,351 @@
+"""Tests for tools/check_frame_integrity.py.
+
+The load-bearing contract under test is the THREE-STATE design: PASS / FAIL /
+CANNOT_RUN, where a CANNOT_RUN is never counted as a pass. Several tests here exist
+specifically to fail if someone "simplifies" that back to a boolean, because that
+collapse rebuilds the exact failure the gate was built to prevent.
+
+Fixtures are synthetic and generic by design (public repo).
+"""
+
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+import yaml
+
+REPO = Path(__file__).resolve().parents[2]
+SCRIPT = REPO / "tools" / "check_frame_integrity.py"
+SCHEMA = REPO / "framework" / "frame-schema.yaml"
+
+sys.path.insert(0, str(REPO / "tools"))
+import check_frame_integrity as cfi  # noqa: E402
+
+
+# ---------------------------------------------------------------- fixtures
+
+def clean_frame():
+    """A frame that should pass every runnable check."""
+    return {
+        "schema_version": 1,
+        "version": 2,
+        "locked": True,
+        "engagement": "acme",
+        "d1": {
+            "problem_statement": "Where should Acme place its next investment?",
+            "problem_type": "prioritization",
+            "metric_roles": {"quality_score": "guardrail", "throughput": "target"},
+        },
+        "facts": {
+            "f1": {"text": "throughput is 100/day", "tier": "A", "first_seen": 1},
+            "f2": {"text": "budget is fixed", "tier": "A", "first_seen": 1},
+        },
+        "inputs": {
+            "i_vol": {"name": "throughput", "aka": ["volume"]},
+            "i_cost": {"name": "build cost", "aka": []},
+        },
+        "elements": [
+            {"id": "e1", "name": "expected impact", "name_surface": "p5",
+             "measure": "convertible volume", "measure_surface": "p5",
+             "because": ["f1"], "inputs": ["i_vol"], "protected": True, "first_seen": 1},
+            {"id": "e2", "name": "cost to build", "name_surface": "p5",
+             "measure": "engineering weeks", "measure_surface": "p5",
+             "because": ["f2"], "inputs": ["i_cost"], "protected": True, "first_seen": 1},
+        ],
+        "closure": "These two and no more because the constraint is one investment.",
+        "exclusions": [{"element": "strategic signal", "reason": "a preference, not a property"}],
+        "unknowns": {
+            "u1": {"text": "split unknown", "disposition": "assumption",
+                   "basis": "low/high case", "sensitivity": "flips at the high end"},
+        },
+        "recommendation": {
+            "text": "Commit the next investment to the first option.",
+            "confidence": "medium",
+            "next_action": {"who": "the sponsor", "what": "approve two weeks of measurement"},
+        },
+    }
+
+
+def write(tmp_path, data, name="frame.yaml"):
+    p = tmp_path / name
+    p.write_text(yaml.safe_dump(data), encoding="utf-8")
+    return p
+
+
+def run(frame_path, *extra):
+    return subprocess.run(
+        [sys.executable, str(SCRIPT), str(frame_path), "--schema", str(SCHEMA), "--json", *extra],
+        capture_output=True, text=True,
+    )
+
+
+def states(frame, prior=None):
+    return {r.rule: r.state for r in cfi.run_checks(frame, prior)}
+
+
+# ---------------------------------------------------------------- happy path
+
+def test_clean_frame_passes_every_runnable_check():
+    st = states(clean_frame())
+    assert cfi.FAIL not in st.values(), st
+    # F2b and F9 legitimately cannot run on a single uniform-version frame
+    assert st["F2b"] == cfi.CANNOT_RUN
+    assert st["F9"] == cfi.CANNOT_RUN
+    for rule in ("F1a", "F1b", "F2a", "F3", "F5", "F8a", "F8b", "F10struct", "F12"):
+        assert st[rule] == cfi.PASS, (rule, st[rule])
+
+
+def test_clean_frame_exits_zero(tmp_path):
+    r = run(write(tmp_path, clean_frame()))
+    assert r.returncode == 0, r.stdout
+    payload = json.loads(r.stdout)
+    assert payload["clean"] is True
+    # not fully covered: F2b/F9 cannot run
+    assert payload["fully_covered"] is False
+
+
+# ---------------------------------------------------------------- the three-state contract
+
+def test_cannot_run_is_not_counted_as_pass():
+    """The central contract. If this fails, the gate is lying about coverage."""
+    f = clean_frame()
+    del f["d1"]["metric_roles"]          # F8b can no longer run
+    for e in f["elements"]:
+        e.pop("name_surface"); e.pop("measure_surface")   # F1b can no longer run
+    results = cfi.run_checks(f)
+    by = {r.rule: r for r in results}
+    assert by["F8b"].state == cfi.CANNOT_RUN
+    assert by["F1b"].state == cfi.CANNOT_RUN
+    passes = [r.rule for r in results if r.state == cfi.PASS]
+    assert "F8b" not in passes and "F1b" not in passes
+
+
+def test_cannot_run_always_explains_why():
+    """A bare CANNOT_RUN with no reason is unactionable."""
+    f = clean_frame()
+    del f["d1"]["metric_roles"]
+    for r in cfi.run_checks(f):
+        if r.state == cfi.CANNOT_RUN:
+            assert r.detail.strip(), r.rule
+            assert len(r.detail) > 20, (r.rule, r.detail)
+
+
+def test_fully_covered_false_whenever_anything_cannot_run(tmp_path):
+    r = run(write(tmp_path, clean_frame()))
+    p = json.loads(r.stdout)
+    assert p["counts"]["cannot_run"] > 0
+    assert p["fully_covered"] is False
+
+
+# ---------------------------------------------------------------- per-rule failures
+
+def test_F1a_fails_on_missing_measure():
+    f = clean_frame()
+    f["elements"][1]["measure"] = ""
+    assert states(f)["F1a"] == cfi.FAIL
+
+
+def test_F1b_fails_when_measure_sits_off_the_naming_surface():
+    f = clean_frame()
+    f["elements"][0]["measure_surface"] = "p12"
+    assert states(f)["F1b"] == cfi.FAIL
+
+
+def test_F2a_fails_on_empty_because_not_just_unresolved():
+    """Zero ids resolve vacuously. The non-empty half is the whole point."""
+    f = clean_frame()
+    f["elements"][0]["because"] = []
+    r = [x for x in cfi.run_checks(f) if x.rule == "F2a"][0]
+    assert r.state == cfi.FAIL
+    assert "cites nothing" in " ".join(r.offenders)
+
+
+def test_F2a_fails_on_unresolved_id():
+    f = clean_frame()
+    f["elements"][0]["because"] = ["f_does_not_exist"]
+    assert states(f)["F2a"] == cfi.FAIL
+
+
+def test_F2b_detects_retrofitted_citation():
+    f = clean_frame()
+    f["elements"][0]["first_seen"] = 2
+    f["facts"]["f1"]["first_seen"] = 5     # fact newer than the element citing it
+    assert states(f)["F2b"] == cfi.FAIL
+
+
+def test_F2b_cannot_run_when_all_versions_identical():
+    """A retrospective reconstruction stamps everything 1. That is not a pass."""
+    assert states(clean_frame())["F2b"] == cfi.CANNOT_RUN
+
+
+def test_F3_detects_shared_input():
+    f = clean_frame()
+    f["elements"][1]["inputs"] = ["i_vol"]   # now load-bearing in both
+    r = [x for x in cfi.run_checks(f) if x.rule == "F3"][0]
+    assert r.state == cfi.FAIL
+    assert "i_vol" in " ".join(r.offenders)
+
+
+def test_F3_matches_on_id_so_synonyms_cannot_dodge_it():
+    """The registry exists so two wordings of one quantity collide by construction."""
+    f = clean_frame()
+    f["inputs"]["i_vol"]["aka"] = ["volume", "unit count"]
+    f["elements"][1]["inputs"] = ["i_vol"]
+    assert states(f)["F3"] == cfi.FAIL
+
+
+@pytest.mark.parametrize("mutate", [
+    lambda f: f.__setitem__("closure", ""),
+    lambda f: f.__setitem__("exclusions", []),
+    lambda f: f.__setitem__("exclusions", [{"element": "x", "reason": ""}]),
+])
+def test_F5_fails_without_closure_or_reasoned_exclusion(mutate):
+    f = clean_frame()
+    mutate(f)
+    assert states(f)["F5"] == cfi.FAIL
+
+
+def test_F8b_detects_guardrail_used_as_ranking_input():
+    """The documented role-reassignment drift."""
+    f = clean_frame()
+    f["inputs"]["i_q"] = {"name": "quality_score", "aka": []}
+    f["elements"][0]["inputs"] = ["i_vol", "i_q"]
+    r = [x for x in cfi.run_checks(f) if x.rule == "F8b"][0]
+    assert r.state == cfi.FAIL
+    assert "guardrail" in " ".join(r.offenders)
+
+
+def test_F8b_matches_guardrail_through_an_alias():
+    f = clean_frame()
+    f["inputs"]["i_q"] = {"name": "csat", "aka": ["quality_score"]}
+    f["elements"][0]["inputs"] = ["i_vol", "i_q"]
+    assert states(f)["F8b"] == cfi.FAIL
+
+
+def test_F8b_cannot_run_without_metric_roles():
+    f = clean_frame()
+    del f["d1"]["metric_roles"]
+    assert states(f)["F8b"] == cfi.CANNOT_RUN
+
+
+def test_F9_detects_dropped_measure_against_prior():
+    prior = clean_frame()
+    now = clean_frame()
+    now["elements"][0]["measure"] = ""
+    r = [x for x in cfi.run_checks(now, prior) if x.rule == "F9"][0]
+    assert r.state == cfi.FAIL
+    assert "lost its measure" in " ".join(r.offenders)
+
+
+def test_F9_cannot_run_without_a_prior():
+    assert states(clean_frame())["F9"] == cfi.CANNOT_RUN
+
+
+@pytest.mark.parametrize("disp,missing", [
+    ("assumption", {"basis": "", "sensitivity": "x"}),
+    ("assumption", {"basis": "x", "sensitivity": ""}),
+    ("data_request", {"owner": "", "due": "week 1"}),
+    ("question", {"owner": ""}),
+])
+def test_F10struct_fails_on_missing_disposition_fields(disp, missing):
+    f = clean_frame()
+    u = {"text": "t", "disposition": disp}
+    u.update(missing)
+    f["unknowns"] = {"u1": u}
+    assert states(f)["F10struct"] == cfi.FAIL
+
+
+def test_F10struct_fails_on_unknown_disposition_value():
+    f = clean_frame()
+    f["unknowns"] = {"u1": {"text": "t", "disposition": "maybe"}}
+    assert states(f)["F10struct"] == cfi.FAIL
+
+
+@pytest.mark.parametrize("mutate", [
+    lambda r: r.__setitem__("confidence", ""),
+    lambda r: r.__setitem__("next_action", None),
+    lambda r: r.__setitem__("next_action", {"who": "", "what": "x"}),
+])
+def test_F12_fails_on_underspecified_recommendation(mutate):
+    f = clean_frame()
+    mutate(f["recommendation"])
+    assert states(f)["F12"] == cfi.FAIL
+
+
+# ---------------------------------------------------------------- schema gate + exit codes
+
+def test_unknown_schema_version_is_refused_not_guessed(tmp_path):
+    f = clean_frame()
+    f["schema_version"] = 99
+    r = run(write(tmp_path, f))
+    assert r.returncode == 3
+    assert json.loads(r.stdout)["status"] == "refused"
+
+
+def test_missing_schema_version_is_refused(tmp_path):
+    f = clean_frame()
+    del f["schema_version"]
+    assert run(write(tmp_path, f)).returncode == 3
+
+
+def test_unreadable_frame_exits_4(tmp_path):
+    p = tmp_path / "broken.yaml"
+    p.write_text("key: [unclosed\n", encoding="utf-8")
+    assert run(p).returncode == 4
+
+
+def test_non_mapping_frame_exits_4(tmp_path):
+    p = tmp_path / "list.yaml"
+    p.write_text("- a\n- b\n", encoding="utf-8")
+    assert run(p).returncode == 4
+
+
+def test_any_failure_exits_2(tmp_path):
+    f = clean_frame()
+    f["closure"] = ""
+    assert run(write(tmp_path, f)).returncode == 2
+
+
+# ---------------------------------------------------------------- acceptance regression
+
+def _find_reconstruction():
+    """Locate the retrospective reconstruction without naming the engagement.
+
+    It lives under gitignored output/, so this file (which is PUBLIC) must not
+    hardcode its path: the directory name is a real company. Glob on the
+    engagement-agnostic filename instead.
+    """
+    hits = sorted((REPO / "output").glob("*/casework/frame-*-reconstructed.yaml"))
+    return hits[0] if hits else None
+
+
+RECONSTRUCTION = _find_reconstruction()
+
+
+@pytest.mark.skipif(RECONSTRUCTION is None,
+                    reason="reconstruction lives in gitignored output/; local-only check")
+def test_acceptance_measured_result_is_pinned():
+    """Regression on the MEASURED 2026-08-13 result.
+
+    The checker must independently fail the real reconstructed frame. If a future
+    edit makes this frame pass, the checker has been broken, not the frame fixed.
+    """
+    frame = yaml.safe_load(RECONSTRUCTION.read_text(encoding="utf-8"))
+    st = states(frame)
+
+    # The headline: the double-counted input the room actually interrogated.
+    assert st["F3"] == cfi.FAIL
+
+    expected_fail = {"F1a", "F2a", "F3", "F5", "F10struct", "F12"}
+    expected_cannot = {"F1b", "F2b", "F8b", "F9"}
+    expected_pass = {"F8a"}
+
+    got_fail = {k for k, v in st.items() if v == cfi.FAIL}
+    got_cannot = {k for k, v in st.items() if v == cfi.CANNOT_RUN}
+    got_pass = {k for k, v in st.items() if v == cfi.PASS}
+
+    assert got_fail == expected_fail, f"FAIL drift: {got_fail ^ expected_fail}"
+    assert got_cannot == expected_cannot, f"CANNOT_RUN drift: {got_cannot ^ expected_cannot}"
+    assert got_pass == expected_pass, f"PASS drift: {got_pass ^ expected_pass}"
