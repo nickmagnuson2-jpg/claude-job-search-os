@@ -18,16 +18,24 @@ VERDICT FILE FORMAT — one record per line, tab- or multi-space separated:
     feedback_example.md    occurrences=3   promoted="yes -- hook, 2026-05-14"
     feedback_other.md      needs_review=false
 
-Only these keys may be set: occurrences, promoted, needs_review, reopen_gate.
-Anything else is rejected -- this script edits the schema block, never prose.
+Only these keys may be set: occurrences, promoted, needs_review, reopen_gate,
+terminal, terminal_reason. Anything else is rejected -- this script edits the schema
+block, never prose.
+
+Of those, only `terminal` and `terminal_reason` may be CREATED when absent (see
+INSERTABLE_KEYS). Every other key must already exist; a missing one is reported as
+`key-absent` rather than filled in, because a file lacking `occurrences` is a schema
+defect to surface, not a hole to quietly patch.
 
 SAFETY (same contract as the backfill):
   * Dry run by default; `--apply` required to write.
   * Refuses an empty verdict file (exit 2). An empty change-set is an error, not a no-op.
   * Refuses a filename that does not exist, or a key already holding the target value
     (reported as `unchanged`, never silently counted as applied).
-  * Conservation: the ONLY permitted diff is the value of an existing key on its own
-    line. Line count must not change. Verified per file before the write.
+  * Conservation: the ONLY permitted diff is a changed value on an existing schema key
+    line, or a newly inserted insertable-key line. Nothing is ever deleted and no prose
+    line may change -- checked structurally with a line diff, not a line count, so an
+    insertion cannot mask a deletion elsewhere. Verified per file before the write.
   * Atomic per-file write (tmp + os.replace).
 
 Usage:
@@ -42,9 +50,27 @@ import os
 import re
 import sys
 import tempfile
+from collections import Counter
+from difflib import SequenceMatcher
 from pathlib import Path
 
-ALLOWED_KEYS = {"occurrences", "promoted", "needs_review", "reopen_gate"}
+ALLOWED_KEYS = {"occurrences", "promoted", "needs_review", "reopen_gate",
+                "terminal", "terminal_reason"}
+
+# Keys that may be CREATED when absent, rather than only overwritten. Deliberately
+# narrow: `occurrences` missing from a file is a schema defect worth surfacing as
+# `key-absent`, but the 41 self-declared terminal-behavioral files legitimately have
+# no `terminal:` line yet -- the key was introduced after they were written. Anything
+# not listed here still fails loudly, so a typo'd key name can never append a new line.
+INSERTABLE_KEYS = {"terminal", "terminal_reason"}
+
+# Where a newly created key is placed, in preference order per key. This yields
+# promoted -> terminal -> terminal_reason, matching the 17 files that already carry
+# the convention. terminal_reason must prefer `terminal` or the two land inverted.
+INSERT_AFTER = {
+    "terminal": ("promoted", "occurrences", "type"),
+    "terminal_reason": ("terminal", "promoted", "occurrences", "type"),
+}
 FRONTMATTER_RE = re.compile(r"\A---\n(.*?\n)---\n", re.DOTALL)
 KV_LINE = "  {key}: {value}\n"
 
@@ -86,23 +112,60 @@ def set_key(text: str, key: str, value: str) -> tuple[str, str]:
     pat = re.compile(rf"^(\s*){re.escape(key)}:[ \t]*(.*)$", re.M)
     found = pat.search(fm)
     if not found:
-        return text, "key-absent"
+        if key not in INSERTABLE_KEYS:
+            return text, "key-absent"
+        anchor = None
+        for anchor_key in INSERT_AFTER[key]:
+            a = re.compile(rf"^(\s*){re.escape(anchor_key)}:[ \t]*.*$", re.M).search(fm)
+            if a:
+                anchor = a
+                break
+        if anchor is None:
+            return text, "no-anchor"
+        indent = anchor.group(1)
+        new_fm = fm[:anchor.end()] + f"\n{indent}{key}: {value}" + fm[anchor.end():]
+        return text[:4] + new_fm + text[4 + len(fm):], "set"
     if found.group(2).strip() == value:
         return text, "unchanged"
     new_fm = fm[:found.start()] + f"{found.group(1)}{key}: {value}" + fm[found.end():]
     return text[:4] + new_fm + text[4 + len(fm):], "set"
 
 
+def _schema_key(line: str) -> str | None:
+    m = re.match(r"^\s*([A-Za-z_][A-Za-z0-9_]*):", line)
+    return m.group(1) if m else None
+
+
 def conservation_ok(original: str, new: str) -> bool:
-    """Only values changed: same line count, and every differing line is a schema key."""
+    """The only permitted diff is a changed schema VALUE or an inserted insertable key.
+
+    Nothing may ever be deleted, and no prose line may change. Line count may grow
+    only by the inserted keys -- checked structurally via a diff rather than by a
+    count, so an insertion cannot mask a simultaneous prose deletion elsewhere.
+    """
     o, n = original.splitlines(), new.splitlines()
-    if len(o) != len(n):
-        return False
-    for a, b in zip(o, n):
-        if a == b:
+    for tag, i1, i2, j1, j2 in SequenceMatcher(None, o, n, autojunk=False).get_opcodes():
+        if tag == "equal":
             continue
-        key = re.match(r"^\s*([A-Za-z_][A-Za-z0-9_]*):", b)
-        if not key or key.group(1) not in ALLOWED_KEYS:
+        if tag == "delete":
+            return False
+        if tag == "insert":
+            if not all(_schema_key(b) in INSERTABLE_KEYS for b in n[j1:j2]):
+                return False
+            continue
+        # `replace`: a value edit in place, possibly with an insertion merged in by
+        # SequenceMatcher when the new line abuts a changed one. Spans may therefore
+        # differ. Verify by KEY rather than by count: every line on both sides must be
+        # an allowed schema key, nothing may disappear, and any surplus must be
+        # insertable. This is what stops a prose line being consumed by the span.
+        old_keys = [_schema_key(a) for a in o[i1:i2]]
+        new_keys = [_schema_key(b) for b in n[j1:j2]]
+        if not all(k in ALLOWED_KEYS for k in old_keys + new_keys):
+            return False
+        if Counter(old_keys) - Counter(new_keys):
+            return False  # a schema line vanished
+        if any(k not in INSERTABLE_KEYS
+               for k in (Counter(new_keys) - Counter(old_keys)).elements()):
             return False
     return True
 

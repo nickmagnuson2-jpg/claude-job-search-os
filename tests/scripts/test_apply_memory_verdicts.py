@@ -170,3 +170,98 @@ def test_reopen_gate_is_never_generated(tmp_path):
         tmp_path, "feedback_x.md\t3\talready-landed;count-correction\ttools/foo.py"))
     lines, _ = mmv.build_verdicts(recs, None)
     assert not any("reopen_gate" in l for l in lines), "a script cannot compose a promotion gate"
+
+
+# --- terminal-key insertion (added 2026-08-13, Task 9 corpus resolution) ---------
+# The 41 self-declared terminal-behavioral files carry no `terminal:` line at all,
+# and set_key can only overwrite an EXISTING key. Insertion is opt-in per key so a
+# typo'd key name still fails loudly instead of silently appending a new line.
+
+def test_terminal_is_inserted_after_promoted_when_absent(corpus, tmp_path):
+    v = tmp_path / "v.txt"
+    v.write_text('feedback_example.md\tterminal=true\n', encoding="utf-8")
+    rc, rep = run(corpus, v, "--apply")
+    assert rc == 0 and rep["changed"] == 1
+    lines = (corpus / "feedback_example.md").read_text(encoding="utf-8").splitlines()
+    assert "  terminal: true" in lines
+    assert lines.index("  terminal: true") == lines.index("  promoted: no") + 1
+
+
+def test_terminal_reason_is_insertable_and_quoted_value_survives(corpus, tmp_path):
+    v = tmp_path / "v.txt"
+    v.write_text('feedback_example.md\tterminal=true\tterminal_reason="judgment call"\n',
+                 encoding="utf-8")
+    rc, rep = run(corpus, v, "--apply")
+    assert rc == 0
+    text = (corpus / "feedback_example.md").read_text(encoding="utf-8")
+    assert '  terminal_reason: "judgment call"' in text
+
+
+def test_insertion_leaves_body_and_other_keys_byte_identical(corpus, tmp_path):
+    before = (corpus / "feedback_example.md").read_text(encoding="utf-8")
+    v = tmp_path / "v.txt"
+    v.write_text('feedback_example.md\tterminal=true\n', encoding="utf-8")
+    run(corpus, v, "--apply")
+    after = (corpus / "feedback_example.md").read_text(encoding="utf-8")
+    assert after.replace("  terminal: true\n", "", 1) == before
+
+
+def test_non_insertable_absent_key_still_reports_key_absent(tmp_path):
+    """occurrences is settable but NOT insertable: a file missing it is a schema
+    defect to surface, not a hole to quietly fill."""
+    d = tmp_path / "m"
+    d.mkdir()
+    (d / "feedback_x.md").write_text(
+        "---\nname: x\nmetadata:\n  promoted: no\n---\n\nbody\n", encoding="utf-8")
+    v = tmp_path / "v.txt"
+    v.write_text("feedback_x.md\toccurrences=2\n", encoding="utf-8")
+    rc, rep = run(d, v)
+    assert rc == 1 and any("key-absent" in f for f in rep["failed"])
+
+
+def test_terminal_already_present_is_overwritten_not_duplicated(tmp_path):
+    d = tmp_path / "m"
+    d.mkdir()
+    (d / "feedback_y.md").write_text(
+        "---\nname: y\nmetadata:\n  promoted: no\n  terminal: false\n---\n\nbody\n",
+        encoding="utf-8")
+    v = tmp_path / "v.txt"
+    v.write_text("feedback_y.md\tterminal=true\n", encoding="utf-8")
+    rc, rep = run(d, v, "--apply")
+    text = (d / "feedback_y.md").read_text(encoding="utf-8")
+    assert rc == 0 and text.count("terminal:") == 1 and "  terminal: true" in text
+
+
+def test_conservation_allows_only_inserted_allowed_keys():
+    original = "---\nmetadata:\n  promoted: no\n---\nbody\n"
+    good = "---\nmetadata:\n  promoted: no\n  terminal: true\n---\nbody\n"
+    bad_prose = "---\nmetadata:\n  promoted: no\n---\nbody\nsneaky\n"
+    bad_key = "---\nmetadata:\n  promoted: no\n  sneaky: true\n---\nbody\n"
+    assert amv.conservation_ok(original, good)
+    assert not amv.conservation_ok(original, bad_prose)
+    assert not amv.conservation_ok(original, bad_key)
+
+
+def test_conservation_allows_insert_merged_into_an_adjacent_replace():
+    """SequenceMatcher merges an insertion that abuts a changed line into ONE
+    `replace` opcode with unequal spans. Treating unequal spans as failure rejected
+    all 40 real terminal-mark files, which is how this was found."""
+    original = "---\nmetadata:\n  promoted: no\n  needs_review: true\n---\nbody\n"
+    good = ("---\nmetadata:\n  promoted: no\n  terminal: true\n"
+            "  needs_review: false\n---\nbody\n")
+    dropped = "---\nmetadata:\n  terminal: true\n  needs_review: false\n---\nbody\n"
+    ate_prose = ("---\nmetadata:\n  promoted: no\n  terminal: true\n"
+                 "  needs_review: false\n---\n")
+    assert amv.conservation_ok(original, good)
+    assert not amv.conservation_ok(original, dropped)    # promoted line lost
+    assert not amv.conservation_ok(original, ate_prose)  # body lost
+
+
+def test_terminal_reason_lands_after_terminal_not_after_promoted(corpus, tmp_path):
+    v = tmp_path / "v.txt"
+    v.write_text('feedback_example.md\tterminal=true\tterminal_reason="because"\n',
+                 encoding="utf-8")
+    rc, rep = run(corpus, v, "--apply")
+    assert rc == 0
+    lines = (corpus / "feedback_example.md").read_text(encoding="utf-8").splitlines()
+    assert lines.index('  terminal_reason: "because"') == lines.index("  terminal: true") + 1
