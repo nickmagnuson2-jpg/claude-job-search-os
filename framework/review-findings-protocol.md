@@ -92,6 +92,28 @@ absence checked **and the scope of that check**), `disposition`, `why`.
 indistinguishable from one that was considered and refused, and only one of those is a decision.
 Unverifiable findings go in as `rejected — could not verify`, never silently filtered.
 
+### The ledger scales with the surface, the obligation does not
+
+**A full table is right for a surface that runs occasionally and produces an artifact someone
+reads later.** It is wrong for a gate that fires before every commit: ceremony on a high-frequency
+path gets skipped, and a requirement people route around is worse than a lighter one they keep.
+
+So the ledger has two forms, and the *obligation* is identical in both:
+
+| Form | Where | Shape |
+|---|---|---|
+| **Full table** | Occasional, artifact-producing (`review-cv-deep`, `research-audit.js`, `critique-plan`, `plan-hardening`) | Every finding, every column |
+| **Inline disagreements** | High-frequency gates (`audit-pii`) | One line per refusal or severity disagreement; nothing for the rows that agree |
+
+**What can never be traded away is the refusal record.** The full table also proves you *considered*
+the findings that agreed; the inline form assumes that and only surfaces where you diverged. Both
+make the same thing visible: that somebody judged. Dropping to the inline form to avoid recording an
+inconvenient refusal is the failure this whole file exists to prevent.
+
+**Corollary: a run with zero disagreements is a claim, not a default.** Under the inline form it
+looks identical to a run nobody checked, so it has to be stated explicitly rather than shown by an
+empty section.
+
 ### The three tells
 
 Read these before trusting any review output:
@@ -114,7 +136,7 @@ how an under-rated finding becomes invisible without anyone deciding to ignore i
 | `.claude/workflows/plan-hardening.js` | ✅ Validate phase, independent model | ✅ `critic_severity` + `severity_disagreement` | ✅ register, edits nothing | ✅ | **Done** 2026-08-13 |
 | `.claude/skills/critique-plan/SKILL.md` | ✅ verification bar | ✅ ledger + Step 4a derives `My severity`; agent rating recorded as an input | ✅ inline, approval before execute | ✅ | **Done** 2026-08-14 |
 | `.claude/skills/review-cv-deep/SKILL.md` | ✅ Step 5a, three verdicts against the CV | ✅ Step 5b; max-of-perspectives banned | ✅ writes a report | ✅ | **Done** 2026-08-14 |
-| `.claude/skills/audit-pii/SKILL.md` | ✅ Step 3a, both directions (clean AND positive) | ✅ own SCRUB/AMBIGUOUS/CLEAR verdict | ✅ approval-gated | ✅ | **Done** 2026-08-14 |
+| `.claude/skills/audit-pii/SKILL.md` | ✅ Step 3a, both directions (clean AND positive) | ✅ own SCRUB/AMBIGUOUS/CLEAR verdict | ✅ approval-gated | ⚖️ inline disagreements only, by design | **Done** 2026-08-14 |
 | `.claude/workflows/research-audit.js` | ✅ claim-level confirmed/refuted/uncertain | ✅ `researcher_confidence` + `confidence_disagreement` | ✅ writes a doc | ✅ | **Done** 2026-08-14 |
 
 **All five adopted.** Each fix found defects beyond the one named in its row, and none were where

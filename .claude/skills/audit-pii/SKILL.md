@@ -172,18 +172,22 @@ findings. De-duplicate by (file, text). Present grouped by file:
 [If clean:] ✅ <path> — clean
 ```
 
-Then the ledger, which is mandatory — the audit is not done without it:
+**No ledger table here, deliberately** — this gate runs before every public commit, and a
+mandatory table on a high-frequency path is the kind of ceremony that gets skipped, which
+costs more than it buys. `framework/review-findings-protocol.md` requires a ledger of
+ledger-*bearing* surfaces; this one carries the obligation in the cheaper form below.
+
+**What is still mandatory: show the disagreements and the refusals inline.** For any finding
+where your verdict differs from the subagent's, add one line under that file:
 
 ```
-## Findings Ledger
-| # | File | Finding | Their verdict | My verdict | Evidence | Exposure | Disposition |
-|---|---|---|---|---|---|---|---|
-| 1 | apply/SKILL.md | "Jordan" | SCRUB | not PII | house placeholder in 9 public skills w/ example.com | n/a | rejected — refuted |
-| 2 | x/SKILL.md | jobs.<co>.com | SCRUB | ambiguous | dossier at output/archive/<co>/ | **public since <sha>** | presented, open |
+- ↩︎ REFUTED  "<text>"  — subagent said SCRUB; <the evidence that refuted it>
 ```
 
-Every finding gets a row including the refuted ones. A ledger where both verdict columns
-match on every row is a relay; zero rejections across a full semantic pass is the same.
+That single line preserves the only thing the table existed to expose. **A run where you
+refuted nothing and every verdict matched the subagent's is a relay, not a review** — say so
+plainly in that case rather than reporting a clean pass, because a semantic agent that is
+right six times out of six has not been observed yet (2026-08-14: two of six were wrong).
 
 - **Any *verified* SCRUB finding in a file this commit touches = do not commit yet.** Offer to
   apply the generic-placeholder fixes (re-read + Write/Edit each file), then re-run to confirm green.
