@@ -34,16 +34,51 @@ instantiation:
       was missing from the first version of this table. Standing move: rebuild and
       diff, never review in place. The diff is the deliverable.
 
-  # TODO 2026-08-13: the remaining rows exist in prose in the build log (Phase 2c)
-  # and have NOT been transcribed here, deliberately, rather than reconstructed from
-  # memory. Transcribe them verbatim before the first run that needs them.
-  prioritization: {named_element: null, level_below: null, stopping_question: null}
-  system_design: {named_element: null, level_below: null, stopping_question: null}
-  diagnostic: {named_element: null, level_below: null, stopping_question: null}
-  sizing: {named_element: null, level_below: null, stopping_question: null}
-  product_sense: {named_element: null, level_below: null, stopping_question: null}
-  pen_and_paper: {named_element: null, level_below: null, stopping_question: null}
-  engagement: {named_element: null, level_below: null, stopping_question: null}
+  # Transcribed verbatim 2026-08-13 from the build-log extraction. The invariant is
+  # standing; only the level below changes by work type.
+  # OPERATING TEST: for every noun on the surface, can you state the level below it
+  # in one sentence?
+
+  prioritization:
+    named_element: a criterion
+    level_below: its measure
+    stopping_question: "what are you measuring?"
+
+  system_design:
+    named_element: a capability
+    level_below: its surface + owner
+    stopping_question: "how would that team give you that?"
+
+  diagnostic:
+    named_element: a driver / hypothesis
+    level_below: the test that would kill it
+    stopping_question: "how would you know you're wrong?"
+
+  sizing:
+    named_element: a number
+    level_below: its decomposition + dominant input
+    stopping_question: "where does that come from?"
+
+  product_sense:
+    named_element: a user or job
+    level_below: the decision they make, and what reveals it
+    stopping_question: "what would you actually look at?"
+
+  pen_and_paper:
+    named_element: anything written
+    level_below: same rule, live, no edit pass
+    stopping_question: the next question
+
+  engagement:
+    named_element: a workstream
+    level_below: owner, first action, data request
+    stopping_question: null
+    note: >
+      NOTHING STOPS YOU. This row fails SILENTLY, and it is the only one that does.
+      A case exposes a missing level in ninety seconds; an engagement exposes it in
+      month three. The interrogation is a gift a case gives you and an engagement
+      does not, so in engagement mode the audit has to be self-imposed - there is no
+      room to catch it for you.
 
 # ---------------------------------------------------------------------------
 # 2. THE MOVE CATALOGUE
