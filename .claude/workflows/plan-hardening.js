@@ -254,7 +254,7 @@ Return:
 
 An empty residual_risks is a strong claim — return it only if you genuinely cannot name a way this plan fails.
 
-ALSO CHECK WHAT THE PANEL BUILT. This loop revises the plan between rounds, so some risks may attack machinery the panel itself introduced rather than anything the author proposed. Where you can tell, say so in the risk's `why` — "this attacks an addition from round N, not the original plan" — because the cheapest fix for those is often to drop the addition.
+ALSO CHECK WHAT THE PANEL BUILT. This loop revises the plan between rounds, so some risks may attack machinery the panel itself introduced rather than anything the author proposed. Where you can tell, say so in the risk's \`why\` — "this attacks an addition from round N, not the original plan" — because the cheapest fix for those is often to drop the addition.
 
 ALL OF THIS ROUND'S HOLES (every severity, JSON — you are re-rating them, so you get the full set, not a pre-filtered one):
 ${JSON.stringify(holes).slice(0, 12000)}

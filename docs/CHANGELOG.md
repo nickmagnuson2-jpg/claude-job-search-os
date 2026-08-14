@@ -3,6 +3,25 @@
 All notable changes to this job search system are recorded here.
 Format: newest entries at the top.
 
+## 2026-08-14: plan-hardening workflow was unrunnable — unescaped backticks in a prompt
+
+`.claude/workflows/plan-hardening.js` failed to parse when invoked, aborting before any agent
+ran. Line 257 sits inside a template literal and contained an unescaped backtick pair around the
+word `why`, which breaks out of the string mid-prompt.
+
+**It passed `node --check`.** The two backticks cancel each other, so overall parity stays balanced
+and a syntax check reports clean — but the Workflow runtime's parser rejected it, and more
+importantly the prompt text was wrong regardless: inside a template literal, a backtick must be
+escaped to be literal text. A file can be parseable and still say the wrong thing.
+
+Introduced by `516098a` ("the judge derives severity instead of inheriting it"), which added the
+"ALSO CHECK WHAT THE PANEL BUILT" paragraph. Shipped and pushed; the workflow had been unrunnable
+since. Fixed by escaping both backticks. A parity scan over the whole file confirms this was the
+only occurrence.
+
+Found because the workflow was invoked for real. A prompt-only change inside a template literal is
+invisible to the test suite and to `node --check`, so nothing but an actual run would have caught it.
+
 ## 2026-08-14: check_stale_file_claim.py Stop hook, and the WARN-tier correction chain
 
 Backfilled — these six commits shipped before this entry existed. See the note at the end.
