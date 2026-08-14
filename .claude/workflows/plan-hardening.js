@@ -372,9 +372,38 @@ if (cfg.skipValidation) {
   }
 }
 
+// The register is persisted WITH the plan, not only returned. Before 2026-08-14 this wrote the
+// hardened plan alone, so the artifact surviving on disk was a clean-looking final plan with the
+// register naming where it still fails stripped off — and a reader opening it a week later has no
+// way to tell it was ever stress-tested. Returning the register to a caller that may discard it is
+// not persistence. Per framework/review-findings-protocol.md: findings outlive the session that
+// produced them, or they are not findings.
 const outPath = cfg.outPath || `scratchpad/plan-hardened.md`
+const registerMd = [
+  `## Residual Risk Register`,
+  ``,
+  `Rounds: ${round}. Stopped because: ${stoppedBecause}.`,
+  `**There is deliberately no \`airtight\` verdict. Read the register and decide.**`,
+  ``,
+  `| Risk | My severity | Critic severity | Disagreement | Status | Why | Where to verify |`,
+  `|---|---|---|---|---|---|---|`,
+  ...(lastVerdict?.residual_risks || []).map(
+    (r) => `| ${r.risk} | ${r.severity} | ${r.critic_severity} | ${r.severity_disagreement} | ${r.status} | ${r.why} | ${r.where_to_verify} |`,
+  ),
+  ``,
+  `**A register where every Disagreement reads "agrees" is a judge that did not judge.**`,
+  ``,
+  `### Unverified repo-state claims`,
+  ``,
+  ...((lastVerdict?.unverified_claims || []).length
+    ? (lastVerdict.unverified_claims || []).map((c) => `- ${c}`)
+    : ['- none recorded']),
+  ``,
+  `The executing agent must treat each as work, not as background.`,
+].join('\n')
+
 await agent(
-  `Write the following hardened plan to ${outPath} exactly as given (it is final). Then return a 3-sentence summary of its final shape.\n\nPLAN:\n${planText.slice(0, 60000)}`,
+  `Write the following to ${outPath} exactly as given (it is final), the plan first and the register immediately after it under a horizontal rule. Then return a 3-sentence summary of its final shape.\n\nPLAN:\n${planText.slice(0, 60000)}\n\n---\n\n${registerMd}`,
   { label: 'persist:final-plan', phase: 'Judge' },
 )
 
