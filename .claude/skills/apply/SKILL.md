@@ -81,6 +81,11 @@ Now read:
 2. Select **3–6 most relevant projects**. Criteria: skill overlap with required skills > industry/domain match > seniority match > recency.
 3. **Side-project trigger:** if the JD mentions technical background, engineering, CS/EE/ML, applied AI, or "builds products," scan side-projects (type: `side-project`) in the project-index regardless of seniority and include the strongest one in a compact Selected Projects section on the CV.
 4. Read the full project files for each selected project from `data/projects/`.
+4b. **Reconcile against source corrections (mandatory, before drafting any prose):**
+   ```bash
+   PYTHONIOENCODING=utf-8 python3 tools/source_corrections.py data/projects/<slug>.md [more...]
+   ```
+   Corrections live in HTML comments pinned to the bullet they correct, which makes them invisible exactly when you paraphrase that bullet. Draft from the **corrected** wording, and note that one live correction says "keep this wording, but the underlying fact is X" — that one means the bullet stands and the cheat sheet carries the real fact. Fired twice (2026-07-08 CVs, 2026-08-07 application answer), both caught only by after-the-fact review agents. See `memory/feedback_cv_em_dash_and_source_verb_regression.md`.
 5. **NEVER read or use files from `data/project-background/`.**
 6. Note the rationale for each selected project (used in the cheat sheet).
 7. **Generate factual EXPERIENCE stubs.** Run:

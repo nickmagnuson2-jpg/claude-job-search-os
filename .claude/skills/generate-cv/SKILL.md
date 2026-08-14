@@ -134,6 +134,25 @@ Apply all **Tailoring Rules** and **CV Quality Standards** from `framework/appli
 - **No content from `data/project-background/`** — enforce absolutely.
 - **No em dashes** (per CLAUDE.md hard rule) — but the EN DASH (`–`) is used in date ranges per the reference YAML.
 
+### Step 6a-corrections: Reconcile against source corrections (mandatory, BEFORE first render)
+
+Run this against every source project file you drew bullets from in Step 5/6:
+
+```bash
+PYTHONIOENCODING=utf-8 python3 tools/source_corrections.py data/projects/<file>.md [more...]
+```
+
+Source files carry their honesty history in HTML comments pinned to the bullet they correct. Those comments are invisible while you are reading the claim text you're paraphrasing — which is exactly how this has failed **twice**, both times with the file already read in full in the same session:
+
+- **2026-07-08:** "Ran the operating cadence" / "stood up from scratch" reintroduced the `"facilitated" not "stood up"` overclaim that `zuora.md` had carried a dated correction for since 2026-05-12.
+- **2026-08-07:** "built the POC portfolio with our head of engineering" reintroduced an overstatement the same file corrects to "partnered with."
+
+For each correction returned, check the drafted line against the **corrected** wording, not the original claim. A correction that says "keep this wording, but the underlying fact is X" (there is one live example) means the CV line stands and the *cheat sheet* must carry the real fact — do not silently rewrite the bullet.
+
+Also grep the drafted content YAML for `—` before first render. No em dashes, ever (hard project rule). Both fires shipped 3-4 of them in the Summary section.
+
+**Why here and not Step 10b:** both failures were caught only by the 6-agent deep review, after the render. This check costs one command and runs before the expensive pass. Origin: `memory/feedback_cv_em_dash_and_source_verb_regression.md`.
+
 ### Step 6b: Inline Quality Review (mandatory — do NOT skip)
 
 Before generating the cheat sheet, run all 18 checks from `framework/application-workflow.md` § CV Quality Checks against the CV you just produced. Fix any issues found **in place** — rewrite the CV, don't just flag problems.

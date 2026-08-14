@@ -78,6 +78,11 @@ This is the most important step. You need proof points that **mirror the company
 
 1. Read `data/project-index.md` — identify 1-2 projects where you solved a problem *similar* to the company's core challenge from Step 3.
 2. Read those project files from `data/projects/`.
+2b. **Reconcile against source corrections (mandatory, before drafting any prose):**
+   ```bash
+   PYTHONIOENCODING=utf-8 python3 tools/source_corrections.py data/projects/<file>.md [more...]
+   ```
+   Those files carry their honesty history in HTML comments pinned to the bullet they correct, and the comment is invisible while you read the claim you're about to paraphrase. Draft from the **corrected** wording. This has fired twice on external-facing prose (a CV and an application answer), both times with the file already read in full in the same session. See `memory/feedback_cv_em_dash_and_source_verb_regression.md`.
 3. For each, extract:
    - The **problem** you faced (analogous to theirs)
    - The **specific action** you took

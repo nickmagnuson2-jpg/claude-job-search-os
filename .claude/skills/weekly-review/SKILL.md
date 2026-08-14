@@ -120,9 +120,31 @@ Also ask Nick directly: "Does the ledger feel complete vs. what you remember hit
 
 This step exists because the friction-log only works if it's actively maintained. Per [[index-decay-needs-maintenance-trigger]] — living-with-trigger doc, the trigger is this weekly step.
 
+### Step 5c: Engine vs Output (mandatory, and it feeds Step 6)
+
+Step 5b just audited the engine. This step asks whether the engine got driven.
+
+Split this week's completed work into two columns and show both:
+
+| Output — moved toward a job | Engine — improved the system |
+|---|---|
+| applications sent, calls taken, prep done, outreach sent, an artifact Nick can *speak from* | skills, hooks, tools, docs refactors, memory hygiene, dashboards |
+
+Then ask plainly: **"What shipped toward a job this week?"**
+
+Three calls this step has to get right:
+
+- **Package-to-speak is OUTPUT, refactor-to-organize is ENGINE, and they feel identical from the inside.** Articulating principles so Nick can use them in an interview is output. Cleaning up the OS docs that hold those principles is engine. The tell is the phrase *"codify / organize / refactor my OS."*
+- **Clear-mind activity counts as output.** Walking Phil, yoga, Peloton — when they bring his best self, they are not the absence of work. Do not score them as slack.
+- **Engine weeks are not automatically bad.** `goals.md` Search Principle 4 is the arbiter, in its stated order: (1) did it displace the morning foundational window? (2) was a judgment or ship rep available and avoided? (3) otherwise it compounds legitimately, and the energy is a signal, not a guilt trigger. The crowding-out test wins ties.
+
+**If the output column is thin two weeks running**, say so directly and make the top Step 6 priority an output-shaped one. Don't soften it — Nick asked to be held to this.
+
+Origin: `memory/feedback_output_over_engine_test.md` (3 occurrences). His words: *"At some point you can't stop. You have to focus on the output."* Related: `memory/feedback_infrastructure_during_search.md`.
+
 ### Step 6: Generate Top 5 Priorities for Coming Week
 
-Rank 5 specific, actionable priorities for the next 7 days. Use this scoring to rank:
+Rank 5 specific, actionable priorities for the next 7 days. **If Step 5c flagged a thin output column two weeks running, priority #1 must be output-shaped.** Use this scoring to rank:
 
 1. **Blocking status** — is this preventing stage advancement? (highest weight)
 2. **Time sensitivity** — overdue item or hard deadline approaching?
