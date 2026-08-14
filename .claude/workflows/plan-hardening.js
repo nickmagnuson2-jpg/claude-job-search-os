@@ -102,12 +102,25 @@ const JUDGE_SCHEMA = {
         type: 'object',
         properties: {
           risk: { type: 'string' },
-          severity: { type: 'string', enum: ['blocking', 'major'] },
+          severity: {
+            type: 'string',
+            enum: ['blocking', 'major'],
+            description: "THE JUDGE'S OWN rating, derived from the plan text — not the critic's rating relayed.",
+          },
+          critic_severity: {
+            type: 'string',
+            enum: ['blocking', 'major', 'minor', 'none'],
+            description: "What the critic who raised it called it. 'none' if the judge raised it independently.",
+          },
+          severity_disagreement: {
+            type: 'string',
+            description: "One line on why the judge's rating differs from the critic's, or 'agrees'. Makes inheritance visible: a register where every row reads 'agrees' is a judge that did not judge.",
+          },
           status: { type: 'string', enum: ['mitigated', 'accepted', 'open'] },
-          why: { type: 'string', description: 'Why it is mitigated/acceptable, or why it is still open' },
+          why: { type: 'string', description: 'Why it is mitigated/acceptable, or why it is still open. Note here if the risk attacks machinery the panel itself added rather than the original plan.' },
           where_to_verify: { type: 'string', description: 'What the executing agent should check to confirm this in the real repo' },
         },
-        required: ['risk', 'severity', 'status', 'why', 'where_to_verify'],
+        required: ['risk', 'severity', 'critic_severity', 'severity_disagreement', 'status', 'why', 'where_to_verify'],
       },
     },
     unverified_claims: {
@@ -220,15 +233,26 @@ Your job is NOT to certify the plan. It is to produce a RESIDUAL RISK REGISTER: 
 
 Independently re-examine the plan text — do NOT trust that the listed holes were actually fixed. A hole marked "fixed" in the changelog but absent from the plan text is an OPEN risk, and this is the single most common failure of this loop: a blocking hole gets flagged in one round and silently dropped in the next.
 
+DERIVE SEVERITY YOURSELF. DO NOT INHERIT IT.
+
+The holes below carry a severity assigned by the critic who raised it. That rating is an INPUT you are re-deciding, never a verdict you are relaying. For every risk you keep, judge its severity from the plan text and the domain context on your own, then record:
+- severity: YOUR rating.
+- critic_severity: what the critic called it (or "none" if you raised it yourself).
+- severity_disagreement: if yours differs, one line on why. If they match, "agrees".
+
+Escalating a critic's "major" to blocking, and demoting a critic's "blocking" to major, are both expected outcomes and neither needs justifying beyond that line. A judge that returns the critics' ratings unchanged across every risk has not judged.
+
 Return:
-- residual_risks: every blocking/major risk that remains, each with a status (mitigated = the plan genuinely handles it; accepted = it remains but is a reasonable trade-off; open = unhandled) and where_to_verify — the concrete thing the executing agent should check in the real repo to confirm it.
+- residual_risks: every risk that remains AT YOUR OWN SEVERITY, each with a status (mitigated = the plan genuinely handles it; accepted = it remains but is a reasonable trade-off; open = unhandled) and where_to_verify — the concrete thing the executing agent should check in the real repo to confirm it.
 - unverified_claims: every assertion the plan makes about repo state (a file exists, a path is public, a format is X) that was NOT checked against the actual repository. Be thorough here. The executing agent will treat each as work, and an unverified claim silently inherited is how this loop has produced wrong plans before.
-- remaining_blocking: titles of the open blocking risks.
+- remaining_blocking: titles of the risks YOU rate blocking.
 
 An empty residual_risks is a strong claim — return it only if you genuinely cannot name a way this plan fails.
 
-THIS ROUND'S BLOCKING HOLES (reference, JSON):
-${JSON.stringify(holes.filter((h) => h.severity === 'blocking')).slice(0, 8000)}
+ALSO CHECK WHAT THE PANEL BUILT. This loop revises the plan between rounds, so some risks may attack machinery the panel itself introduced rather than anything the author proposed. Where you can tell, say so in the risk's `why` — "this attacks an addition from round N, not the original plan" — because the cheapest fix for those is often to drop the addition.
+
+ALL OF THIS ROUND'S HOLES (every severity, JSON — you are re-rating them, so you get the full set, not a pre-filtered one):
+${JSON.stringify(holes).slice(0, 12000)}
 
 REVISED PLAN:
 ${planText}

@@ -179,6 +179,40 @@ here is why" is valid and required. That is what makes *did it improve* answerab
 **This file, `frame-schema.yaml`, and `method-moves.yaml` are all standing tier and all change through
 this same gate.** The schema is not exempt.
 
+## The adversarial fork: `/plan-hardening` on the frame
+
+**A frame is a plan-shaped artifact**, so the same panel that stress-tests a plan stress-tests a
+frame. This is a **fork, not the default path** — it costs roughly 20 agents and 20 minutes, which is
+worth it before an irreversible or high-stakes delivery and wasteful on a routine run.
+
+**Fire it when:** the artifact goes in front of a room that can reject it, the engagement is
+one-shot (`d1.mode.shots: one`), or the deterministic gate came back clean and that cleanliness is
+itself suspicious. **Skip it when:** the gate found real failures — fix those first, since a panel
+attacking a frame with known defects spends its rounds on what you already know.
+
+**Where it slots:** after the deterministic gate passes, before the artifact is locked. Pass the
+frame plus the `d1` block as the plan, and the engagement's context as `context`.
+
+**What it returns is a residual risk register, not a pass.** There is deliberately no `airtight`
+boolean. Read the register.
+
+**Three properties that make it usable here, all added 2026-08-13:**
+
+1. **It validates its own claims on an independent model.** The Validate phase takes every
+   `unverified_claim` and every risk premise and checks it against the real repo, instructed to
+   refute first. `REFUTED` comes back separately, because a refuted premise makes its risk unsound
+   rather than merely open. `UNVERIFIABLE` is never a pass.
+2. **The judge derives its own severity.** It receives every hole at every severity — not a set
+   pre-filtered by the critics' ratings, which is how an under-rated hole used to become invisible —
+   and records `critic_severity` and `severity_disagreement` alongside its own call. **A register
+   where every row reads "agrees" is a judge that did not judge.**
+3. **It reports which risks attack its own additions.** The loop revises the plan between rounds, so
+   later rounds can attack machinery the panel introduced. Those are flagged, and the cheapest fix is
+   usually to drop the addition rather than build what it demands.
+
+**UNCONVERGED means the design is still growing, not that it is unsound.** Diff the hardened artifact
+against what you submitted before acting on the register.
+
 ## What a run must record, or lose forever
 
 Cheap during the run, impossible to reconstruct afterward. Non-negotiable.
