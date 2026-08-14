@@ -29,7 +29,14 @@ So: don't try to catch the claim. **Inject the reminder at the moment the risky 
 | Script | `tools/check_status_query_verification.py` |
 | Failure mode | Benign — worst case is a redundant reminder on a status question |
 
-**Why non-blocking:** per the project's warn-vs-block hook design rule, reserve BLOCK for unambiguous violations. This is a heuristic trigger on natural language; blocking would be wrong.
+**Why non-blocking:** this is a heuristic trigger on natural language; blocking would be wrong.
+
+**Why exit 0 is nonetheless correct HERE, unlike on PreToolUse** (clarified 2026-08-14): on
+`UserPromptSubmit`, stdout **context injection is the delivery mechanism** — the hook's output
+reaches the model by design, so exit 0 delivers. On `PreToolUse`, exit 0 + stderr is *not* surfaced
+by Claude Code at all, so a WARN there reaches nobody. Do not generalize this spec's "always exit 0"
+to a PreToolUse hook. See `memory/feedback_warn_vs_block_hook_design.md`, whose pre-2026-05-28
+"default to WARN" form is superseded, and `tools/HOOK_AUTHORING.md` L77.
 
 **⚠️ `UserPromptSubmit` is NOT currently wired in `.claude/settings.json`.** Currently wired: `PreToolUse`, `PostToolUse`, `Stop`. This hook adds a new event type — a settings.json addition, not a code problem, but budget a few minutes for it and verify the event name against current Claude Code docs before writing the handler.
 
