@@ -52,6 +52,12 @@ const FINDINGS_SCHEMA = {
   required: ['system', 'angle', 'findings', 'angle_recommendation'],
 }
 
+// Bound by framework/review-findings-protocol.md. Two rules bite here:
+// `uncertain` is never a pass, and `dropped` is not a disposition. Before 2026-08-14 the
+// synthesizer was told "refuted claims dropped" and the evidence table was "confirmed/corrected
+// only", so a refuted claim and an unverifiable one both vanished — and a vanished claim is
+// indistinguishable from one that was never raised. Every checked claim now carries a
+// disposition forward into the ledger, including the ones that did not survive.
 const VERDICT_SCHEMA = {
   type: 'object',
   properties: {
@@ -63,12 +69,30 @@ const VERDICT_SCHEMA = {
         type: 'object',
         properties: {
           claim: { type: 'string' },
-          verdict: { type: 'string', enum: ['confirmed', 'refuted', 'uncertain'] },
+          verdict: {
+            type: 'string',
+            enum: ['confirmed', 'refuted', 'uncertain'],
+            description: 'confirmed = a source checked THIS run proves it. refuted = a source checked THIS run disproves it. uncertain = could not establish either way. Default to uncertain over guessing; uncertain is NEVER treated as confirmed.',
+          },
+          researcher_confidence: {
+            type: 'string',
+            enum: ['High', 'Med', 'Low', 'none'],
+            description: "What the researching agent rated it. 'none' if you raised the claim yourself. This is an input you are re-deciding, not a rating you inherit.",
+          },
+          confidence_disagreement: {
+            type: 'string',
+            description: "One line on why your verdict diverges from the researcher's confidence, or 'agrees'. A set where every row reads 'agrees' is a validator that did not validate.",
+          },
+          disposition: {
+            type: 'string',
+            enum: ['carried', 'corrected', 'rejected', 'rejected - could not verify'],
+            description: 'What happens to it downstream. Every claim gets one. There is no silent drop: a refuted claim is `rejected` and an uncertain one is `rejected - could not verify`, and both still appear in the ledger.',
+          },
           reason: { type: 'string' },
           corrected_claim: { type: 'string' },
           sources: { type: 'array', items: { type: 'string' } },
         },
-        required: ['claim', 'verdict', 'reason'],
+        required: ['claim', 'verdict', 'researcher_confidence', 'confidence_disagreement', 'disposition', 'reason'],
       },
     },
     surviving_recommendation: { type: 'string' },
@@ -99,25 +123,42 @@ SYSTEM: ${item.system}
 ANGLE: ${item.angle}
 RESEARCH TO VALIDATE (JSON): ${JSON.stringify(research).slice(0, 6000)}
 
-For each claim: verdict (confirmed/refuted/uncertain), a reason grounded in a source you checked THIS run, and (if not confirmed) a corrected_claim. Then give surviving_recommendation with refuted claims removed. Return ONLY the structured object.`
+For each claim: verdict (confirmed/refuted/uncertain), a reason grounded in a source you checked THIS run, and (if not confirmed) a corrected_claim.
+
+You also re-rate confidence rather than inheriting it. Record researcher_confidence (what the research agent claimed, or 'none' if you raised the claim yourself) and confidence_disagreement (one line on why yours differs, or 'agrees').
+
+Every claim gets a disposition and NONE are dropped: carried, corrected, rejected, or 'rejected - could not verify'. Do not silently omit a claim you refuted or could not check — a claim that disappears here is indistinguishable from one nobody raised, and only one of those is a decision. uncertain is never a pass; default to it over guessing.
+
+Then give surviving_recommendation built from the carried and corrected claims only. Return ONLY the structured object.`
 }
 
 function synthPrompt(system, items) {
   const payload = items.map((v) => ({ angle: v.item.angle, research: v.research, validation: v.verdict }))
-  return `You are the synthesizer for ONE system. Using ONLY validated findings (refuted claims dropped), write a self-contained markdown SECTION (start with '## ${system.name}').
+  return `You are the synthesizer for ONE system. Build your recommendation from the claims dispositioned 'carried' or 'corrected' ONLY — but do not let the others vanish, they belong in the Findings Ledger below. Write a self-contained markdown SECTION (start with '## ${system.name}').
 
 SUBJECT: ${SUBJECT}
 SYSTEM: ${system.name}
 CURRENT IMPLEMENTATION: ${system.currentState}
 VALIDATED RESEARCH (JSON): ${JSON.stringify(payload).slice(0, 14000)}
 
-Subsections: **BLUF** (is it stale + the single most important change); **Verdict: KEEP/EVOLVE/REPLACE** (with justification tied to scale); **Evidence table** (Claim | Approach | Confidence | Source URL, confirmed/corrected only, real URLs); **Proposed redesign** (concrete, right-sized); **Where it does NOT fit / risks** (non-empty); **Migration steps** (ordered, each independently shippable). Be decisive. Return ONLY the markdown section.`
+Subsections: **BLUF** (is it stale + the single most important change); **Verdict: KEEP/EVOLVE/REPLACE** (with justification tied to scale); **Evidence table** (Claim | Approach | Confidence | Source URL, carried/corrected only, real URLs); **Proposed redesign** (concrete, right-sized); **Where it does NOT fit / risks** (non-empty); **Migration steps** (ordered, each independently shippable); then **Findings Ledger** (see below). Be decisive. Return ONLY the markdown section.
+
+The Findings Ledger is mandatory and the section is not done without it. One row per checked claim, INCLUDING every rejected one, per framework/review-findings-protocol.md:
+
+| Claim | Researcher confidence | Validator verdict | Disposition | Why |
+
+Count the rows against the number of claims checked; if the ledger is shorter, something was dropped and you must go back and add it. A ledger where confidence and verdict agree on every row, or one with zero rejections, means no independent validation happened and you should say so in the BLUF rather than present the section as validated.`
 }
 
-function finalPrompt(sections, path) {
+function finalPrompt(sections, path, coverage) {
   return `Assemble the final recommendations document and save it with Write to ${path}.
 
-Structure: '# Best-Practices Audit & Proposed Redesign'; a 'Last updated' line; '## Executive Summary' (a System | Verdict | Headline change | Effort table + 3-5 cross-cutting bullets); '## How to read this'; the system sections VERBATIM below; '## Open questions' (the decisions the owner must make); '## Sources' (deduplicated real URLs).
+Structure: '# Best-Practices Audit & Proposed Redesign'; a 'Last updated' line; '## Executive Summary' (a System | Verdict | Headline change | Effort table + 3-5 cross-cutting bullets); '## How to read this'; '## Coverage' (see below); the system sections VERBATIM below; '## Open questions' (the decisions the owner must make); '## Sources' (deduplicated real URLs).
+
+The '## Coverage' section states what this audit did NOT cover, in the same sentence as any claim about what it did: the angles that returned nothing and the systems skipped for lack of surviving research, both listed below. If both are empty, say "all N angles across M systems returned research" with the real numbers. A document that reports only what it found reads as complete regardless of how much it missed.
+
+COVERAGE FACTS (use verbatim, do not soften):
+${coverage}
 
 SYSTEM SECTIONS (verbatim, in order):
 ${sections.join('\n\n---\n\n').slice(0, 60000)}
@@ -137,16 +178,54 @@ const validated = await pipeline(
       .then((verdict) => ({ research, verdict, item })),
 )
 
+// A pipeline item that throws resolves to null, so `.filter(Boolean)` used to make a dead
+// angle indistinguishable from one that was never requested — the same silent-drop defect the
+// validator schema closes, one layer up. Name the casualties; a count alone reads as coverage.
 const live = validated.filter(Boolean)
+const lostAngles = ANGLES.filter((_, i) => !validated[i]).map((a) => `${a.system}: ${a.angle}`)
+if (lostAngles.length) {
+  log(`⚠️ ${lostAngles.length} of ${ANGLES.length} angle(s) returned nothing and are NOT covered below:`)
+  for (const a of lostAngles) log(`   - ${a}`)
+}
+
 const bySystem = {}
 for (const r of live) { (bySystem[r.item.system] || (bySystem[r.item.system] = [])).push(r) }
 
 phase('Synthesize')
-const sections = (await parallel(
-  SYSTEMS.map((s) => () => agent(synthPrompt(s, bySystem[s.name] || []), { label: `synth:${s.name}`, phase: 'Synthesize' })),
-)).filter(Boolean)
+// A system whose angles all failed has NO research behind it. Synthesizing it anyway produces a
+// confident section built from nothing, which is worse than a missing section because it reads
+// identically to a real one. Skip it and say so.
+const starved = SYSTEMS.filter((s) => !(bySystem[s.name] || []).length).map((s) => s.name)
+if (starved.length) log(`⚠️ No surviving research for: ${starved.join(', ')} — these are SKIPPED, not synthesized.`)
+const researched = SYSTEMS.filter((s) => (bySystem[s.name] || []).length)
+
+const rawSections = await parallel(
+  researched.map((s) => () => agent(synthPrompt(s, bySystem[s.name]), { label: `synth:${s.name}`, phase: 'Synthesize' })),
+)
+const sections = rawSections.filter(Boolean)
+// Third instance of the same class: a synthesizer that dies takes its whole section with it, and
+// the assembled doc would simply not mention that system. Researched-but-unsynthesized is the
+// most misleading of the three, because the research exists and the reader never learns it.
+const unsynthesized = researched.filter((_, i) => !rawSections[i]).map((s) => s.name)
+if (unsynthesized.length) log(`⚠️ Research succeeded but synthesis FAILED for: ${unsynthesized.join(', ')}`)
 
 const outPath = `${cfg.outDir || 'output/analysis'}/${cfg.date}-best-practices-audit.md`
-const execSummary = await agent(finalPrompt(sections, outPath), { label: 'synthesize:final-doc', phase: 'Synthesize' })
+const coverage = [
+  `Angles requested: ${ANGLES.length}. Angles that returned research: ${live.length}.`,
+  lostAngles.length ? `Angles that returned NOTHING (not covered): ${lostAngles.join('; ')}` : 'No angles were lost.',
+  starved.length ? `Systems SKIPPED for lack of surviving research: ${starved.join(', ')}` : 'No systems were skipped.',
+  unsynthesized.length
+    ? `Systems where research succeeded but SYNTHESIS FAILED (no section below, despite research existing): ${unsynthesized.join(', ')}`
+    : 'Every researched system was synthesized.',
+].join('\n')
+const execSummary = await agent(finalPrompt(sections, outPath, coverage), { label: 'synthesize:final-doc', phase: 'Synthesize' })
 
-return { outPath, angles: ANGLES.length, validated: live.length, sections: sections.length, execSummary }
+return {
+  outPath,
+  angles: ANGLES.length,
+  validated: live.length,
+  sections: sections.length,
+  lostAngles,
+  skippedSystems: starved,
+  execSummary,
+}
