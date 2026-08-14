@@ -21,6 +21,106 @@ Format:
 
 ---
 
+## 2026-08-14 | C001 falsified and rejected; C002 replaces it | v1.5, NO standing change
+
+**Source:** post-hoc. C001 (the frame-freeze gate) sat at `occurrences: 1`, which promotes only
+if a blind agent FAILS to construct a problem statement where the rule flips. Nobody had run it.
+The operator asked for the run.
+
+**Gate result: FAILED. Two of three agents constructed a counter-case, so C001 does not promote.**
+
+**Method.** Three blind agents, each given only the rule text plus neutral definitions, barred BY
+NAME from `rule-candidates.yaml`, `analysis-method.md`, `frame-schema.yaml`, `deck-rubric.md`,
+`output/` and `coaching/`. Two hunted counter-cases from different angles (scenario-first,
+domain-sweep); the third attacked the internal logic. **Discount that all three found problems —
+they were told to attack, so that is near-guaranteed and is not evidence.** What cannot be
+prompted is convergence on the same mechanism from different angles, and that is what happened.
+
+**THE CONVERGED FINDING: C001 conflates the author revising the frame with the world invalidating
+it, and punishes both identically.** One agent located it in the passive voice — *"if the frame
+changes"* hides which of the two occurred.
+
+**The sharpest consequence, reached independently by all three:** the rule bars acting on the
+output of its own best detector. Rehearsal is the first time an argument is spoken end to end
+under questioning, which makes it the cheapest frame-defect instrument available. Stated as a
+dilemma: if rehearsal never finds frame defects the freeze costs nothing and the rule is idle; if
+it does find them the rule mandates ignoring them. **There is no state in which the rule is both
+active and beneficial on that axis.** F3 is the check that has fired hardest across both corpora,
+so a rule forbidding a late-discovered F3 fix is aimed at the wrong failure.
+
+**Changed:** nothing in the standing tier. `rule-candidates.yaml` is the holding pen, not standing.
+C001 is `rejected: yes` with the counter-cases and the full reasoning recorded so it cannot be
+re-proposed from scratch next cycle. **C002 added**, carrying the kernel that survived: freeze
+against AUTHOR revision, reopen on a named external trigger, re-rehearse the changed branch rather
+than resetting the window, and a mandatory rehearsed limitation statement when the date is
+immovable — because "the change does not ship" is not a neutral null option, it prescribes
+fluently defending a structure you believe is broken.
+
+**Not changed, and why:**
+- **C002 is NOT promoted, and must not inherit C001's falsification.** It was derived from an
+  attack on a different rule, which is not the same as surviving one. It needs its own blind run,
+  with the agents barred from C001 and from the holding pen.
+- **N stays absent.** No single number can work: the freeze point is driven by two independent
+  clocks — rehearsal (a function of frame complexity) and information (when other people's inputs
+  land). Days is also the wrong unit. Operator confirmed the unit should be REPS.
+- **No hook, no skill edit.** A candidate in the holding pen is not enforced anywhere by design.
+
+**What this entry is really evidence of.** The loop refused a rule that felt right to both the
+operator and to Claude, on evidence, from agents that could not see the origin story. That is the
+falsification step being load-bearing rather than ceremonial — and it is the first time it has run.
+
+## 2026-08-14 | F13: the schema said `required` and nothing read it | v1.4 -> v1.5
+
+**Source:** in-flight. The operator asked whether the run is being tracked at all, so that starting a
+forward run does not mean starting blind. The check that answered it found the hole.
+
+**What was actually wrong.** `frame-schema.yaml` marked `proposals` and `prediction` as backfill
+impossible and `required`. Nothing read that. `required:` in the schema is DOCUMENTATION: the
+`validation:` block enumerates every rule the checker implements and not one of them asserts that a
+required field is present. **A locked frame that had lost both run-record ledgers returned clean.**
+Verified two ways before building: `grep` over the checker found no schema-required parsing, and the
+schema's own `validation:` list has no such entry.
+
+This is the third instance in one session of the same shape — specified precisely, never wired.
+The other two: the standing tier has no runner, and this changelog's own "every session writes an
+entry" had nothing writing it. **The specification being correct is not the scarce thing. The
+enforcement surface is.**
+
+**Changed:**
+- **F13** in `tools/check_frame_integrity.py`: on a `locked: true` frame, `proposals` and
+  `prediction.will_be_probed` must both be non-empty. CANNOT_RUN while unlocked, so an open run is
+  never pushed to invent a prediction before there is anything to predict about.
+- **`prediction` narrowed to `{made_at_version, will_be_probed}`.** `will_break` dropped: it invites a
+  confidence forecast, and a prepared operator's honest forecast is always "it will go well", which
+  carries no information. Where the room pushes is a different question from how the operator performs.
+  **Operator's call, and he is right** — the objection that surfaced it was "if I'm prepared I should
+  not have any gaps."
+- **The field's justification was amended, not just its shape.** It rested on "cold self-reads
+  documented as near-perfectly calibrated across five consecutive instances." The 2026-08-13 outcome
+  debrief had already corrected that — measured against an annotation, not an outcome, and graded
+  against reality the self-read splits by block. The correction had never propagated here. The field
+  now stands on the opposite reasoning: introspection demonstrably does not reach frame defects, so the
+  informative quantity is the DIVERGENCE between this prediction and a blind agent's.
+- **`limits.required_is_documentation`** added, stating plainly that every other `required: true` in
+  the schema is still unenforced and that `checks:` is the only real signal.
+- Acceptance test re-measured: **FAIL 7, was 6.** F13 fails the real 2026-08-05 reconstruction.
+
+**Measured, not predicted.** F13 was run against the real reconstruction after being written, not
+before: `proposals: []` and `prediction: null`, both offenders named in the output. 67 tests pass
+(11 new). The 8/5 delivery really did lose both, and unlike F2b — whose inputs are unknowable after
+the fact — these are knowably absent, so FAIL is the honest verdict rather than CANNOT_RUN.
+
+**Not changed, and why:**
+- **Binding each `will_be_probed` entry to an element id was rejected by the operator as too costly to
+  maintain.** Consequence, recorded so it is not rediscovered: the comparison against what actually got
+  probed stays manual and cannot be mechanized.
+- **Schema version stays at 3.** Dropping an optional sub-field from a type string orphans no frame;
+  no frame on disk carries a `prediction` at all.
+- **No promotion gate was run.** The operator classed this as learning-while-building, the same
+  disposition as the v1 -> v2 field additions: structural fields the run protocol cannot function
+  without, discovered by building it. No rule changed.
+- **Pairing the operator's prediction with a blind agent's is a live candidate, not built.**
+
 ## 2026-08-13 | Second corpus run: the gate generalises, and it found two bugs in itself | v1.3 -> v1.4
 
 **Source:** in-flight. The gate was run against a second, unrelated engagement — a small-business

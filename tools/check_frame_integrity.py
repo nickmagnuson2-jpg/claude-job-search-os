@@ -569,6 +569,46 @@ def check_F12(frame):
     return Result("F12", PASS, "confidence stated and next action names who disposes it")
 
 
+def check_F13(frame):
+    """The backfill-impossible run record exists on any frame that went in the room.
+
+    Triggered by `locked: true`, never by mere field presence. A retrospective
+    reconstruction genuinely cannot carry a pre-room prediction or a live rejection
+    record, so an unconditional requirement would fail the two corpora the acceptance
+    regressions are pinned to. Lock is the moment the record stops being
+    reconstructible, so it is exactly when the requirement should bite.
+
+    WHY THIS CHECK EXISTS AT ALL: the schema marked these fields `required` and
+    nothing ever read that. `required:` in frame-schema.yaml is documentation --
+    grep the schema's own `validation:` block and there is no rule asserting a
+    required field is present. A frame that lost both ledgers came back clean.
+    """
+    if frame.get("locked") is not True:
+        return Result("F13", CANNOT_RUN,
+                      "frame is not `locked: true`; the run record is still open")
+
+    missing = []
+    if not frame.get("proposals"):
+        missing.append(
+            "`proposals` is empty -- the rejection record is the only signal that "
+            "separates an improved decision from a restated one")
+
+    pred = frame.get("prediction")
+    probed = pred.get("will_be_probed") if isinstance(pred, dict) else None
+    if isinstance(probed, str):
+        probed = probed.strip()
+    if not probed:
+        missing.append(
+            "`prediction.will_be_probed` is empty -- it is contaminated the instant "
+            "feedback arrives, so it cannot be added after the room")
+
+    if missing:
+        return Result("F13", FAIL,
+                      "locked frame is missing backfill-impossible run record", missing)
+    return Result("F13", PASS,
+                  "rejection record and pre-room prediction both present at lock")
+
+
 # --------------------------------------------------------------------------
 # driver
 # --------------------------------------------------------------------------
@@ -591,6 +631,7 @@ def run_checks(frame, prior=None):
         check_F9(frame, prior),
         check_F10struct(frame),
         check_F12(frame),
+        check_F13(frame),
     ]
 
 

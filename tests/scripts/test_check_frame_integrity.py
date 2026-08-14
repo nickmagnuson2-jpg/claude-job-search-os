@@ -65,6 +65,18 @@ def clean_frame():
             "confidence": "medium",
             "next_action": {"who": "the sponsor", "what": "approve two weeks of measurement"},
         },
+        # The backfill-impossible pair. This fixture carried `locked: True` and
+        # NEITHER of these until 2026-08-14, which is precisely the hole F13 closes:
+        # the canonical "clean" frame had lost both run-record ledgers and still
+        # passed everything.
+        "proposals": [
+            {"stage": "B", "proposed": "rank by raw volume",
+             "status": "rejected", "reason": "volume is not convertible volume"},
+        ],
+        "prediction": {
+            "made_at_version": 2,
+            "will_be_probed": "the denominator under expected impact",
+        },
     }
 
 
@@ -93,7 +105,7 @@ def test_clean_frame_passes_every_runnable_check():
     # F2b and F9 legitimately cannot run on a single uniform-version frame
     assert st["F2b"] == cfi.CANNOT_RUN
     assert st["F9"] == cfi.CANNOT_RUN
-    for rule in ("F1a", "F1b", "F2a", "F3", "F5", "F8a", "F8b", "F10struct", "F12"):
+    for rule in ("F1a", "F1b", "F2a", "F3", "F5", "F8a", "F8b", "F10struct", "F12", "F13"):
         assert st[rule] == cfi.PASS, (rule, st[rule])
 
 
@@ -560,7 +572,12 @@ def test_acceptance_measured_result_is_pinned():
     # The headline: the double-counted input the room actually interrogated.
     assert st["F3"] == cfi.FAIL
 
-    expected_fail = {"F1a", "F2a", "F3", "F5", "F10struct", "F12"}
+    # F13 added 2026-08-14. It FAILs here, and that is a substantive finding rather
+    # than an artifact of the frame being retrospective: the 2026-08-05 delivery
+    # really did go in the room with `proposals: []` and `prediction: null`. Unlike
+    # F2b, whose inputs are unknowable after the fact, this one is knowably absent.
+    # A reconstruction cannot manufacture either, and it should not be able to.
+    expected_fail = {"F1a", "F2a", "F3", "F5", "F10struct", "F12", "F13"}
     expected_cannot = {"F1b", "F2b", "F8b", "F9"}
     expected_pass = {"F8a"}
 
@@ -571,3 +588,96 @@ def test_acceptance_measured_result_is_pinned():
     assert got_fail == expected_fail, f"FAIL drift: {got_fail ^ expected_fail}"
     assert got_cannot == expected_cannot, f"CANNOT_RUN drift: {got_cannot ^ expected_cannot}"
     assert got_pass == expected_pass, f"PASS drift: {got_pass ^ expected_pass}"
+
+
+# ---------------------------------------------------------------- F13
+# The backfill-impossible run record. Added 2026-08-14 because the schema marked
+# `proposals` and `prediction` required and NOTHING READ THAT -- `required:` in
+# frame-schema.yaml is documentation, and no rule in `validation:` asserted field
+# presence. A locked frame that lost both came back clean.
+
+
+def test_F13_fails_locked_frame_with_no_rejection_record():
+    frame = clean_frame()
+    frame["proposals"] = []
+    assert states(frame)["F13"] == cfi.FAIL
+
+
+def test_F13_fails_locked_frame_with_no_prediction():
+    frame = clean_frame()
+    frame["prediction"] = None
+    assert states(frame)["F13"] == cfi.FAIL
+
+
+def test_F13_fails_when_will_be_probed_is_whitespace_only():
+    """An empty string dressed as a value is still a lost record."""
+    frame = clean_frame()
+    frame["prediction"] = {"made_at_version": 2, "will_be_probed": "   "}
+    assert states(frame)["F13"] == cfi.FAIL
+
+
+def test_F13_names_both_losses_not_just_the_first():
+    """Reporting one of two missing ledgers would understate what the run lost."""
+    frame = clean_frame()
+    frame["proposals"] = []
+    frame["prediction"] = None
+    result = [r for r in cfi.run_checks(frame) if r.rule == "F13"][0]
+    assert result.state == cfi.FAIL
+    assert len(result.offenders) == 2
+    blob = " ".join(result.offenders)
+    assert "proposals" in blob and "will_be_probed" in blob
+
+
+def test_F13_cannot_run_while_the_frame_is_unlocked():
+    """An open run has not lost anything yet. Requiring it early would push the
+    operator to invent a prediction before there is anything to predict about."""
+    frame = clean_frame()
+    frame["locked"] = False
+    frame["proposals"] = []
+    frame["prediction"] = None
+    assert states(frame)["F13"] == cfi.CANNOT_RUN
+
+
+def test_F13_cannot_run_when_locked_is_absent_entirely():
+    frame = clean_frame()
+    del frame["locked"]
+    frame["proposals"] = []
+    assert states(frame)["F13"] == cfi.CANNOT_RUN
+
+
+def test_F13_cannot_run_is_not_a_pass():
+    """The three-state rule, restated for this check specifically: an unlocked frame
+    missing both ledgers must never read as covered."""
+    frame = clean_frame()
+    frame["locked"] = False
+    frame["proposals"] = []
+    frame["prediction"] = None
+    result = [r for r in cfi.run_checks(frame) if r.rule == "F13"][0]
+    assert result.state != cfi.PASS
+    assert result.detail.strip()
+
+
+def test_F13_passes_when_both_ledgers_are_present_at_lock():
+    assert states(clean_frame())["F13"] == cfi.PASS
+
+
+def test_F13_accepts_a_list_for_will_be_probed():
+    """Free text is the contract, but a list of probes is the natural shape and
+    must not be rejected on type."""
+    frame = clean_frame()
+    frame["prediction"] = {"made_at_version": 2,
+                           "will_be_probed": ["the denominator", "the closure claim"]}
+    assert states(frame)["F13"] == cfi.PASS
+
+
+def test_F13_rejects_an_empty_list_for_will_be_probed():
+    frame = clean_frame()
+    frame["prediction"] = {"made_at_version": 2, "will_be_probed": []}
+    assert states(frame)["F13"] == cfi.FAIL
+
+
+def test_F13_is_registered_in_the_schema_validation_block():
+    """A check the code runs but the schema does not document drifts silently.
+    The schema is the contract; this pins them together."""
+    schema = yaml.safe_load(SCHEMA.read_text(encoding="utf-8"))
+    assert "F13" in schema["validation"]

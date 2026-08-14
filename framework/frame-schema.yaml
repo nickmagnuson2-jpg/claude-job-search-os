@@ -313,6 +313,7 @@ fields:
     type: list[{stage, proposed, status, reason}]
     required: false
     class: derived
+    checks: [F13]
     note: >
       status is accepted | rejected | modified. THE REJECTIONS ARE THE POINT. A system
       that stores only accepted output learns the operator's existing decisions rather
@@ -331,14 +332,33 @@ fields:
     class: derived
     note: a stage that never changes the frame is a demotion candidate for the stage itself
   prediction:
-    type: "{made_at_version, will_be_probed, will_break}"
+    type: "{made_at_version, will_be_probed}"
     required: false
     class: per_engagement
+    checks: [F13]
     note: >
-      Stamped BEFORE the room. Contaminated the instant feedback arrives, so it cannot
-      be added later. Cold self-reads in this corpus are documented as near-perfectly
-      calibrated across five consecutive instances, and that calibration is only
-      measurable if the prediction predates the outcome.
+      Stamped BEFORE the room, and enforced at lock by F13. Contaminated the instant
+      feedback arrives, so it cannot be added later.
+
+      WHAT GETS QUESTIONED, NOT HOW IT WILL GO. `will_break` was dropped 2026-08-14:
+      it invites a confidence forecast, and a prepared operator's honest confidence
+      forecast is always "it will go well", which carries no information. Where the
+      room pushes is a different question from how the operator performs, and only
+      the first one is worth recording. Free text is deliberate -- binding each entry
+      to an element id was considered and rejected as too costly to maintain, which
+      means the comparison against what actually got probed stays manual.
+
+      JUSTIFICATION AMENDED 2026-08-14. This field previously rested on "cold
+      self-reads in this corpus are documented as near-perfectly calibrated across
+      five consecutive instances". The 2026-08-13 outcome debrief corrected that: the
+      calibration was measured against an annotation, not against an outcome, and
+      graded against reality the self-read SPLITS BY BLOCK -- the operator identified
+      a knowledge gap himself and did not identify a frame defect, because a knowledge
+      gap is self-evident and a frame feels coherent from the inside. So this field is
+      NOT justified by trusting introspection. It is justified because introspection
+      demonstrably does not reach frame defects, which makes the divergence between
+      this prediction and a blind agent's prediction the informative quantity. Pairing
+      the two is a live candidate, not built.
 
 # ---------------------------------------------------------------------------
 # VALIDATION the checker implements. Six of these fail the 2026-08-05 frame,
@@ -356,10 +376,20 @@ validation:
   F9: "diff against the most recent `locked: true` version; fail on a dropped `measure` for any element with `protected: true`"
   F10struct: "every unknown has a disposition, and its disposition's required sub-fields are present"
   F12: "`recommendation.confidence` and `recommendation.next_action` are both present"
+  F13: "on a `locked: true` frame, `proposals` and `prediction.will_be_probed` are both non-empty (CANNOT_RUN while unlocked)"
   schema: "refuse any frame whose `schema_version` is unknown to this checker"
 
 # What the deterministic layer CANNOT do. Stated so it is never mistaken for coverage.
 limits:
+  required_is_documentation: >
+    `required: true` on a field in this file is DOCUMENTATION. The checker does not
+    read it. Only a field named in a `checks:` list is actually enforced, and only to
+    the extent that check tests it. Discovered 2026-08-14: `proposals` and
+    `prediction` were both marked required and a frame missing both returned clean,
+    because no rule in `validation:` asserts field presence. F13 now covers those two
+    at lock. EVERY OTHER `required: true` IN THIS FILE IS STILL UNENFORCED -- treat it
+    as intent, never as a guarantee, and check the `checks:` key before believing a
+    field is protected.
   F2_vocabulary: >
     The deterministic F2 catches a MISSING citation. It cannot catch a citation to a fact
     that is itself provenance rather than derivation. In the 2026-08-05 reconstruction the
@@ -375,7 +405,13 @@ limits:
     MEASURED 2026-08-13 by running tools/check_frame_integrity.py against the blind
     reconstruction of the 2026-08-05 frame. Not predicted - the prediction was wrong
     three times and is not recorded here.
-    FAIL (6): F1a, F2a, F3, F5, F10struct, F12.
+    FAIL (7): F1a, F2a, F3, F5, F10struct, F12, F13.
+    F13 was added 2026-08-14 and re-measured against the same frame the same day; it
+    FAILS. That is substantive, not an artifact of the frame being retrospective: the
+    2026-08-05 delivery really did go in the room with `proposals: []` and
+    `prediction: null`. Unlike F2b, whose inputs are unknowable after the fact, these
+    two are knowably absent -- the run lost them, and a reconstruction cannot and
+    should not be able to manufacture either.
     CANNOT_RUN (4): F1b and F8b because the reconstruction predates the surface and
     metric_roles fields; F2b because a finished artifact carries no version history;
     F9 because compression needs two locked versions.

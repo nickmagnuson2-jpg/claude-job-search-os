@@ -73,6 +73,105 @@ candidates:
       What is N? Same-day written prep is documented not to transfer, so N is at least 2.
       Not yet grounded in evidence. Do not encode a number until it is.
     falsification:
+      attempted: yes
+      by: >
+        Three blind agents, 2026-08-14, each given ONLY the rule text plus neutral
+        definitions of frame/artifact/delivery/rehearsal, and barred BY NAME from this
+        file, analysis-method.md, frame-schema.yaml, deck-rubric.md, output/ and
+        coaching/. Two were asked to construct a counter-case (one scenario-first, one
+        domain-sweep); the third was asked to attack the rule's internal logic.
+      counter_case: >
+        FOUND, by 2 of 3. The rule fails when a frame change is EXOGENOUS (the world
+        moved, not the author's taste) AND the delivery clock belongs to someone else.
+        Agent A: a recommendation whose top option becomes legally unavailable three
+        days out, where the board slot is the last before an option expires -- the date
+        hatch is self-defeating because the rule RESETS the rehearsal window, so it
+        cannot buy the three days that would have sufficed. Agent B: incident response,
+        where forensics routinely revises scope and root cause after comms prep begins
+        and the clock is statutory; and a steering committee where the client's own
+        late data collapses two of four options into one.
+      survived: no
+    promoted: no
+    rejected: yes
+    superseded_by: C002
+    rejection_reason: >
+      The gate promotes at one occurrence only if the falsification attempt FAILS to
+      construct a counter-case. Two of three constructed one, so this does not promote.
+      Rejected as written; the surviving kernel moves to C002.
+
+      THE CONVERGENCE IS THE FINDING, not either counter-case on its own. Three agents
+      attacking from different angles independently named the same defect: the rule
+      conflates THE AUTHOR REVISING THE FRAME with THE WORLD INVALIDATING IT, and
+      punishes both identically. Agent B put it on the passive voice -- "if the frame
+      changes" hides which of the two happened.
+
+      Three further findings, all held for C002:
+        1. THE RULE BARS ACTING ON ITS OWN BEST DETECTOR. All three reached this
+           unprompted. Rehearsal is the first time the argument is spoken end to end
+           under questioning, which makes it the cheapest frame-defect instrument
+           available. Agent C's form: if rehearsal never finds frame defects the freeze
+           costs nothing and the rule is idle; if it does find them the rule mandates
+           ignoring them. There is no state where the rule is both active and
+           beneficial on this axis. Given F3 is the check that has fired hardest across
+           both corpora, a rule forbidding a late-discovered F3 fix points at the wrong
+           failure.
+        2. "THE CHANGE DOES NOT SHIP" IS NOT A NEUTRAL NULL OPTION. It prescribes
+           fluently defending a structure you now believe is broken. The freeze protects
+           FLUENCY, and once correctness is known-broken fluency has negative value: a
+           smooth defense of a bad frame converts a structural error into a judgment
+           error in the room's eyes.
+        3. THE BINARY RESET IS MISCALIBRATED. A rename and a total rebuild carry the
+           same price, which is exactly what makes reclassifying a small structural fix
+           as "artifact" attractive. The cost model was built for ADDITIVE changes and
+           applied to all changes.
+
+      Agent C also showed the frame/artifact split is not a partition of the edit space
+      (the frame has no existence apart from the artifact, so classification is always
+      an inference, assigned to the party with a schedule incentive), and that the rule
+      PUNISHES THE PRECISE FRAME AND EXEMPTS THE VAGUE ONE, since the penalty scales
+      with how specifically the frame was stated.
+    note: >
+      FIRST CANDIDATE PRODUCED BY THE COMPOUNDING LOOP FROM REAL FEEDBACK, AND THE GATE
+      STOPPED IT. That is the loop working: a rule that felt right to the operator and
+      to Claude was refused entry to the standing tier on evidence, by agents that could
+      not see the origin story. Recorded because the near-miss is the evidence that the
+      falsification step is load-bearing rather than ceremonial.
+
+  - id: C002
+    rule: >
+      The frame freezes against AUTHOR REVISION once rehearsal begins. After the freeze the
+      author may not restructure the frame because a better structure occurred to them.
+      The freeze does NOT bind when the world invalidates the frame: a named external
+      trigger (an element is now demonstrably false, or a load-bearing element is missing)
+      REOPENS it. A reopen takes the smallest element change that restores correctness and
+      costs re-rehearsal of the changed branch, not a reset of the whole window. When the
+      date is immovable and the reps are unavailable, the frame ships unchanged WITH a
+      rehearsed limitation statement naming what is wrong and which conclusions it does and
+      does not move. Silently delivering a frame you believe is broken is never permitted.
+    source: post_hoc
+    source_detail: >
+      Same origin event as C001 (outcome debrief 2026-08-13; see coaching/progress/ for the
+      dated file). DERIVED 2026-08-14 by falsifying C001 -- this is the kernel that survived
+      three independent blind attacks, not a new observation. Operator disposition the same
+      day: reject C001, replace with this.
+    why_it_matters: >
+      Keeps what C001 got right -- rehearsal is bound to a specific structure, and changing
+      the structure silently invalidates the rehearsal -- while removing the two properties
+      that made it fail: it no longer punishes the world for moving, and it no longer treats
+      "ship what you believe is broken" as a neutral default.
+    occurrences: 1
+    first_seen: 2026-08-13
+    last_seen: 2026-08-14
+    target_tier: analysis-method
+    open_question: >
+      N IS DELIBERATELY ABSENT, and should stay absent. Agent C showed no single number can
+      work: the freeze point is driven by two independent clocks -- the REHEARSAL clock (a
+      function of frame complexity) and the INFORMATION clock (when other people's inputs
+      land, unrelated to your frame). A scalar cannot track two independent variables.
+      Days is also the wrong unit; five days with no free evenings is zero reps. Operator
+      confirmed 2026-08-14 that the unit should be REPS. Open: what defines "rehearsal has
+      begun", and how the changed-branch re-rehearsal cost gets estimated.
+    falsification:
       attempted: no
       by: null
       counter_case: null
@@ -80,9 +179,17 @@ candidates:
     promoted: no
     rejected: no
     note: >
-      FIRST CANDIDATE PRODUCED BY THE COMPOUNDING LOOP FROM REAL FEEDBACK. The schema already
-      carries `locked:` as a marker but attaches no timing requirement to it, so the gate has
-      a natural home if this promotes.
+      DO NOT PROMOTE ON C001's FALSIFICATION. This rule has never been attacked; it was
+      DERIVED from an attack on a different rule, which is not the same thing and is exactly
+      the shortcut the gate exists to refuse. It needs its own blind run, and the agents
+      must not be shown C001 or this file.
+
+      TWO THINGS THIS REPO ALREADY HAS that make it cheaper than it reads. Agent C's central
+      amendment was "the frame must be written down at freeze or it is deniable" -- that is
+      frame.yaml, and frame_write.py's spec versions every write to frame.v<N>.yaml, so
+      "re-rehearse proportional to the delta" is a DIFF here rather than a judgment call.
+      Its second amendment was "downgrading a frame change to artifact-only requires a
+      second person, not the author" -- that is blind_canary.py.
 
 # Demotion candidates: standing rules that have stopped firing.
 #
