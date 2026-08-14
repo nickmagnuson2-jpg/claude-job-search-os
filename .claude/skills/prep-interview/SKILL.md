@@ -272,6 +272,19 @@ This is the highest-EV move and the #1 recurring miss. Produce all three:
 ## Frame-Import Guard (B2)
 The bridge and any story draft use ONLY details Nick explicitly provided: his verbatim numbers, sequence, and words. Do NOT import settings, durations, or actions from the interviewer's vocabulary because they would "land well." The mirror to the interviewer happens at the observation level (a closing "sounds like the same shape as how you built it at X"), never inside Nick's own story. Test each line: could Nick say this cold, without the prep doc? If no, cut it.
 
+## Opener & Bridge Authorship (B2b — components, never a finished line)
+
+**Never write a finished opener or seam sentence into the prep doc and mark it as "the line to land."** Nick does not recite well; a line he did not generate reads as someone else's framing and he will either reject it live or deliver it flat. He thinks by reacting.
+
+**What the doc supplies instead:** the raw components — his current role, what the work *actually* was (per the role-title rules in CLAUDE.md Hard Rules), and the seam to the target role. Frame it as a question: *"the bridge is X + Y — what does that sound like in your words?"* Then refine from his language.
+
+Two refinements, both learned the hard way:
+
+1. **Lead with a concrete ownable fact, not an abstraction.** "Operator at the intersection of strategy and implementation" is the tracked generic-self-description anti-pattern — Nick's own verdict was "too not very unique." A concrete opener leads with a number or a named thing he actually did, then bridges. "Intersection of X and Y" buries the one differentiator only he can claim.
+2. **When he is BLOCKED generating** ("I don't know how to do a concrete first sentence"), give **2-3 concrete, disposable options to react to** — never one line to memorize. Plural options unblock without anchoring; he assembled a strong opener immediately after seeing three. The unlock is optionality plus a model of the shape, not a script.
+
+This is B2 (above) applied to authorship rather than content: B2 bans importing the *interviewer's* framing into Nick's story; this bans importing *Claude's*. Same test — could he say this cold, without the doc? Origin: 2026-06-16 and 2026-06-22 drills. See `memory/feedback_interview_opener_components_not_finished_line.md`.
+
 ## Polished-Arc Guard (B3)
 Add this pre-call checklist item: "Count my clarifying questions before my first action verb; zero means the polished-arc reversion fired." The tell is a smooth problem-to-goal-to-action answer in under two minutes with no clarifying questions (it looks collaborative, so the "did a framework fire" check misses it). In case/behavioral drills, require 3+ self-generated clarifying questions before proposing any action.
 
@@ -294,6 +307,21 @@ Add this pre-call checklist item: "Count my clarifying questions before my first
 **Orthogonality line (one sentence, also required):** name the pair of criteria most likely to be accused of overlap, and the one-sentence distinction. If an input appears under two criteria, that is a MECE defect and it must be resolved before the round, not defended in it. Full gate: `framework/adversarial-analysis-pipeline.md` §7.4.
 
 **Origin:** an onsite at a target company. Eight turns to establish what "expected impact" meant, and the interviewer found a real MECE violation (CSAT load-bearing in criteria 1 and 3) that six days of review had never checked. Same defect fired in the other block on an integration primitive. See [[feedback_audit_frame_structure_not_only_claim_truth]] and the tracker's "Supplies a rationale when asked for a definition".
+
+## Grounded Decision Panel (B4b — whenever Nick brings a deliverable, NOT a generic critic)
+
+**Fires with B4** — any round where Nick presents or defends something he authored (take-home deck, brief, case recommendation, scorecard).
+
+**Build the actual decision panel, not a McKinsey-partner critic.** A generic senior-partner persona attacks at the wrong altitude: it critiques craft and structure, while the real room asks "does this change what I do on Monday?" Construct one seat per real decision-maker from the dossier + `data/people/<slug>.md` — their function, what they own, what this deliverable costs or gains them — and critique through those seats.
+
+**Run it twice, and the second run is the one that gets skipped:**
+
+1. **Prep pressure-test** — before drafting, to find the shape.
+2. **Pre-send QC on the FINISHED artifact** — give each seat the verbatim prompt *plus* the actual built deliverable, isolated from each other (anti-anchoring, per the global multi-agent rule), and ask for **concrete corrections** ("the brief claims X but…"), never approval.
+
+**Cross-seat convergence is the signal.** When independent seats name the *same* hole, that is must-fix. Single-seat hits are triage. On the 2026-06-29 brief, all four seats independently named the same methodological hole (a recalibration read from rejected-only data — selective-labels censoring), caught with ~2 hours left to fix it.
+
+**Origin:** 2026-06-27 + 2026-06-29, two fires. See `memory/feedback_ground_pressure_test_in_decision_panel_not_generic_partner.md`. Composes with B4 above (bare definitions) and the frame hygiene gate at `framework/adversarial-analysis-pipeline.md` §7.4 — B4 tests whether the terms are defined, this tests whether the *decision* lands.
 
 ## Custody Rehearsal (B5 — presentation-defense rounds only)
 
