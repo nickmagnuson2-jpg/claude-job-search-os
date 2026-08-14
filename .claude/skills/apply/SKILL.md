@@ -300,7 +300,7 @@ If `pipeline_stage == "To Apply"`: add a one-line reminder under this section: *
 - Review the CV: `/review-cv output/<company-slug>/MMDDYY-magnuson.md`
 - Open the printable PDF: `open output/<company-slug>/MMDDYY-magnuson.pdf`
 - When ready to interview: `/prep-interview "[Company]"`
-- To re-render after edits: `cd output/<company-slug> && rendercv render MMDDYY-magnuson.yaml --pdf-path MMDDYY-magnuson.pdf --markdown-path MMDDYY-magnuson.md --dont-generate-html --dont-generate-png`
+- To re-render after edits (no `cd` — the shell cwd resets between tool calls, so a relative `cd` is a latent false-confirmation bug; `--pdf-path`/`--markdown-path` resolve relative to the input file, `--output-folder` against the cwd): `~/.local/bin/rendercv render output/<company-slug>/MMDDYY-magnuson.yaml --pdf-path MMDDYY-magnuson.pdf --markdown-path MMDDYY-magnuson.md --output-folder output/<company-slug>/rendercv_output --dont-generate-html --dont-generate-png`
 ```
 
 ## Edge Cases

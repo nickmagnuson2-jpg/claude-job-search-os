@@ -238,13 +238,22 @@ After all six agents return, produce the full critique report and enhanced hybri
 
 Merge all critique findings from Agents 1–5 into a single unified issue table. Deduplication rules:
 - If multiple agents flag the same underlying issue, merge into one row listing all flagging agents
-- Use the highest severity assigned by any agent for the merged row
+- Record the highest severity any agent assigned as the row's **`Agent severity`** — it is an input, not the verdict
 - Combine the detail from all flagging agents for a richer description
 
-Assign severity based on these definitions:
-- **BLOCKER** — must fix before execution; plan is unsafe or unexecutable as written. Maps to: any `[blocker]` from Agent 2, or any `[gap]` rated HIGH by Agent 1, or any `[ordering]` that makes a step unrunnable.
-- **WARNING** — should fix; risk of silent failure, data loss, or significantly degraded result. Maps to: Agent 2 `[warning]`, Agent 1 `[gap]` rated MEDIUM, Agent 3 `[conflict]`, Agent 5 `[ordering]` that is suboptimal but not unrunnable.
-- **SUGGESTION** — nice to fix; improves quality or efficiency without blocking execution. Maps to: Agent 4 findings, Agent 3 `[reuse]` and `[convention]`, Agent 1 `[gap]` rated LOW, Agent 5 `[parallelizable]` and `[checkpoint]`.
+**Then derive `My severity` yourself, from the plan text, per `framework/review-findings-protocol.md`.**
+The definitions below are what you apply by reading the artifact. The agent tags are priors that tell
+you where to look, never a lookup that answers for you — a tag-to-severity mapping is inheritance
+wearing a mapping, and a row where `Agent severity` and `My severity` match on every finding is a
+relay, not a judgment.
+
+- **BLOCKER** — must fix before execution; plan is unsafe or unexecutable as written. Typically raised by an Agent 2 `[blocker]`, an Agent 1 HIGH `[gap]`, or an `[ordering]` that makes a step unrunnable — confirm against the plan text before assigning.
+- **WARNING** — should fix; risk of silent failure, data loss, or significantly degraded result. Typically raised by an Agent 2 `[warning]`, an Agent 1 MEDIUM `[gap]`, an Agent 3 `[conflict]`, or an Agent 5 `[ordering]` that is suboptimal but not unrunnable.
+- **SUGGESTION** — nice to fix; improves quality or efficiency without blocking execution. Typically raised by Agent 4 findings, Agent 3 `[reuse]` and `[convention]`, Agent 1 LOW `[gap]`, Agent 5 `[parallelizable]` and `[checkpoint]`.
+
+**Severity moves in both directions on re-derivation.** An agent that calls a defect an imprecise word
+when the whole claim is false is understating it; one that calls an uncommitted working-tree issue an
+already-shipped leak is overstating it. Both have happened.
 
 #### 4b. Diff Codex vs Claude (Agent 6)
 
@@ -267,15 +276,15 @@ Compare Codex's steps (from Step 1) against Agent 6's independent plan step-by-s
 
 ### Critique Report (Agents 1–5)
 
-| # | Dimension | Severity | Tag | Issue | Fix |
-|---|-----------|----------|-----|-------|-----|
-| 1 | Risk | BLOCKER | [blocker] | ... | ... |
-| 2 | Completeness | WARNING | [gap] | ... | ... |
-| 3 | Alignment | WARNING | [conflict] | ... | ... |
-| 4 | Scope | SUGGESTION | [scope-creep] | ... | ... |
-| ... | | | | | |
+| # | Dimension | Agent severity | My severity | Tag | Issue | Fix |
+|---|-----------|----------------|-------------|-----|-------|-----|
+| 1 | Risk | BLOCKER | BLOCKER | [blocker] | ... | ... |
+| 2 | Completeness | WARNING | BLOCKER | [gap] | ... | ... |
+| 3 | Alignment | WARNING | SUGGESTION | [conflict] | ... | ... |
+| 4 | Scope | SUGGESTION | SUGGESTION | [scope-creep] | ... | ... |
+| ... | | | | | | |
 
-**Summary:** N blockers · N warnings · N suggestions
+**Summary (counted on `My severity`, not the agents'):** N blockers · N warnings · N suggestions
 
 ---
 
@@ -312,7 +321,9 @@ Compare Codex's steps (from Step 1) against Agent 6's independent plan step-by-s
   verification bar below** — never relayed on the agent's say-so
 - Each step: action + files touched + how to verify success]
 
-**Verification bar — every finding, before it enters the plan.** Synthesis is this skill's job, so
+**Verification bar — every finding, before it enters the plan.** Canonical version and rationale:
+`framework/review-findings-protocol.md`. Restated here because this is the run-time enforcement point;
+if the two ever disagree, the protocol wins. Synthesis is this skill's job, so
 "apply nothing" would gut it. What is banned is applying a finding *silently, unverified, in the
 agent's own framing*.
 
@@ -352,6 +363,8 @@ row, no independent judgment happened and the synthesis is a relay.
 **Anything you could not verify goes in as `rejected — could not verify`, never silently dropped.**
 A finding that vanishes between critique and plan is indistinguishable from one that was considered
 and refused, and only one of those is a decision.
+
+Ledger schema, disposition vocabulary, and the three tells: `framework/review-findings-protocol.md`.
 
 Origin: `feedback_verify_and_present_review_findings` (2026-08-13 audit). This skill previously
 instructed "Simplifications from Agent 4 applied inline" and "Reordering applied per Agent 5
