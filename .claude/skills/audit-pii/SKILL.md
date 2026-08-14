@@ -209,6 +209,20 @@ right six times out of six has not been observed yet (2026-08-14: two of six wer
   entering the pipeline is invisible to the deterministic layer **by construction** — `output/archive/`
   holds several. The semantic pass is load-bearing there, not a backstop, and a green Step 1 alone
   does not cover it.
+- **Pipeline membership does NOT imply BLOCK-tier coverage — the second gap, found 2026-08-14.**
+  `gen_pii_denylist.py` routes single-token company names that are also ordinary English words to
+  `tools/.pii-denylist-ambiguous.txt` (WARN) instead of the BLOCK denylist, so matching them will not
+  false-positive on ordinary prose. That reasoning is sound, but **a PreToolUse WARN is exit 0 +
+  stderr, which Claude Code does not surface** (`tools/HOOK_AUTHORING.md` L77). So for this class of
+  company the always-on hook detects the token, prints a correct warning, and **nobody reads it**.
+  A live pipeline company reached two public files that way; it was caught by hand at staging, not
+  by the hook.
+
+  Two consequences for this skill: (1) never conclude "not on the denylist" from grepping the BLOCK
+  list alone — check the ambiguous list too, and prefer *running* the hook over inspecting either;
+  (2) **`ambiguous_hits[]` from Step 1 is the only place this tier becomes visible.** Treat a
+  non-empty `ambiguous_hits[]` as requiring an explicit verdict per entry, not as advisory noise —
+  this skill is the reader that the write-path warning never had.
 - **Treat a subagent "clean" verdict as a hypothesis, not a conclusion.** Cross-check
   its clean calls against the deterministic denylist scan (Step 1) and a direct grep
   for known real entities (recent `data/networking.md` / `data/job-pipeline.md` names,
