@@ -3,6 +3,47 @@
 All notable changes to this job search system are recorded here.
 Format: newest entries at the top.
 
+## 2026-08-14: the PII ambiguous-tier problem dissolved by renaming, not by a smarter guard
+
+A real pipeline-target company had a single-word name that is also an ordinary English word.
+`gen_pii_denylist.py` builds the denylist from the pipeline company column, so that word became a
+token — but it appears 396 times as ordinary prose across the private trees and 76 times across 32
+public tracked files. The generator therefore routed it to the ambiguous WARN tier, which exits 0
+and is not surfaced, so it protected nothing.
+
+**What did not work:** designing a discriminator. A `/plan-hardening` pass (47 agents, ~2.9M tokens)
+returned UNCONVERGED and correctly concluded the design could not work — public files are
+overwhelmingly markdown, capitalization does not separate the cases, and the hook sees only
+`new_string` on an Edit so surrounding context is unavailable.
+
+**What worked:** Nick renamed the pipeline cell to the company's domain-style form, which is not an
+English word. Measured before/after — ambiguous tier 1 → 0, BLOCK list 0 → 1 (plus the slug form);
+an ordinary-prose public write now exits 0 unflagged, and a public write containing the company
+token exits 2 and blocks. A three-byte edit where the alternative was unshippable. The dossier and
+JD were renamed to match and the output directory moved to the `output/<slug>/<slug>.md` convention;
+the company's own product terminology and the append-only daily log were left verbatim.
+
+**This entry is itself evidence the fix works.** The first draft named the company in prose and
+`check_public_pii.py` BLOCKED the write at exit 2 — the token is now on the deterministic denylist
+instead of the invisible WARN tier, and it caught a real public-artifact leak minutes after shipping.
+
+**The lesson, captured as a rule:** when a guard cannot separate a true positive from a false
+positive, the ambiguity is upstream in the data it reads, not in the detector. CLAUDE.md Step 3
+already mandates tracing to source before building a guard; the miss was skipping grey-area step (0),
+which is itself a Hard Rule and exists to make rules like that bind. A user-named process
+("run /plan-hardening first") occupied the slot where the pre-check belongs. Parked a Low todo for
+the structural gate with a 4th-fire REOPEN trigger.
+
+**Also fixed:** two docs indexed (`tools-reference.md` was never listed either), three stale counts
+corrected (7 → 11 memory shards in two places, 35 → 38 skills), and the memory-hygiene handoff
+regenerated to rev 5 from live detector output — backlog 40/432, and rev 4's "start with the two at
+5 fires" advice replaced, having been tested and found wrong.
+
+**Known and unpatched, logged to `memory/friction-log.md` at 1 fire:** `check_save_claims.py:184`
+and `check_stale_file_claim.py:234` both prune directories starting with `.`, so nothing under
+`.claude/` is findable by bare basename — all 38 skills, every workflow, `settings.json`. Confirmed
+live. Convention is log at 1 fire, patch at 3.
+
 ## 2026-08-14: plan-hardening workflow was unrunnable — unescaped backticks in a prompt
 
 `.claude/workflows/plan-hardening.js` failed to parse when invoked, aborting before any agent
