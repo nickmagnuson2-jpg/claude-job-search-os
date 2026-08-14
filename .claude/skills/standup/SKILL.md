@@ -336,6 +336,33 @@ Output the brief in this exact format:
 [1–2 honest sentences assessing search momentum based on the data above.
 Be direct — if momentum is stalling, say so. If it's strong, say that.
 Base it on: pipeline activity, outreach cadence (are sends going out, are replies coming back), todo completion pace. Do not cite a response-rate percentage.
+
+**Engine vs output (mandatory — classify the last 7 days before writing the sentences).**
+Split the last 7 days of completed work into two columns internally; print the split only when
+the output column is thin, otherwise let it shape the momentum sentences.
+
+| Output — moved toward a job | Engine — improved the system |
+|---|---|
+| applications sent, calls taken, prep done, outreach sent, an artifact Nick can *speak from* | skills, hooks, tools, docs refactors, memory hygiene, dashboards |
+
+Three calls this has to get right, or the classification is worse than not doing it:
+
+- **Package-to-speak is OUTPUT, refactor-to-organize is ENGINE, and they feel identical from the
+  inside.** Articulating principles so Nick can use them in an interview is output. Cleaning up the
+  OS docs that hold those principles is engine. The tell is the phrase *"codify / organize /
+  refactor my OS."*
+- **Clear-mind activity counts as output.** Walking Phil, yoga, Peloton — when they bring his best
+  self they are not the absence of work. Never score them as slack.
+- **Engine weeks are not automatically bad.** `goals.md` Search Principle 4 arbitrates, in its
+  stated order: (1) did it displace the morning foundational window? (2) was a judgment or ship rep
+  available and avoided? (3) otherwise it compounds legitimately, and the energy is a signal, not a
+  guilt trigger. The crowding-out test wins ties.
+
+**If the 7-day output column is thin, say so plainly and make Today's Top 3 output-shaped.** Nick
+asked to be held to this. This lives here, on the daily surface, because the identical check at
+`/weekly-review` Step 5c is anchored to a skill he does not run reliably — per
+[[user_nick_invokes_standup_not_weekly_review]] and [[feedback_verify_the_surface_fires_before_anchoring_to_it]].
+Rolling 7 days rather than a calendar week so a daily invocation needs no stored state.
 Examples:
 - "Pipeline is active with 4 companies in motion, but 2 applications are stale — outreach would unblock both."
 - "Search has slowed — no new applications this week and 3 todos are overdue. Worth a focused session today."
