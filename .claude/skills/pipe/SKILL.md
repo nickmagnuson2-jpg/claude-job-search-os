@@ -65,7 +65,25 @@ All pipeline data lives in `data/job-pipeline.md`.
 
 ### Command: `update <company> <new-stage>`
 
-0. **Fit-reason capture on fit-forming stage changes.** When the new stage is a decline / self-pass / close (`Closed`, `Considered - passed`, `Withdrawn`, `Rejected`) — these are Nick's **highest-signal fit-negatives** — OR Nick volunteers a fit read, ask one line: *"One-line fit read for the ledger — why did this fit or not?"* and pass it in step 1 as `--fit-reason "<his words>"` (+ `--fit-verdict` if named). Light and optional (accept a skip); do not block the update. Skip the prompt for routine mechanical advances (e.g. Researching → Applied) unless Nick offers a read.
+0. ⛔ **`update` NEVER closes a row. Closing is `remove --stage`.** If the new stage is terminal —
+   anything meaning the opportunity is over (`Closed`, `Closed - they passed`, `Considered - passed`,
+   `Declined`, `Skipped`, `Withdrawn`, `Rejected`) — **stop and use the `remove` command below
+   instead.** `update` leaves the row in `## Active Pipeline` with a freeform stage string, which:
+   - keeps it counted as a live company by `todo_write.py sync`, so its prep/research to-dos can
+     never be auto-withdrawn, and
+   - puts it in sync's "still live" set, which **blocks that company from ever syncing** even after a
+     later correct archive.
+
+   Measured 2026-08-14: **30 companies** were in this state, some for four months, because this step
+   used to list close stages as valid `update` targets. A `check_pipe_close_via_update.py` hook now
+   BLOCKs it. See `docs/CHANGELOG.md` 2026-08-14.
+
+1. **Fit-reason capture on fit-forming stage changes.** When Nick declines, self-passes, or a company
+   passes — his **highest-signal fit-negatives** — OR he volunteers a fit read, ask one line: *"One-line
+   fit read for the ledger — why did this fit or not?"* and pass it as `--fit-reason "<his words>"`
+   (+ `--fit-verdict` if named) **on the `remove` call**. Light and optional (accept a skip); do not
+   block. Skip the prompt for routine mechanical advances (e.g. Researching → Applied) unless Nick
+   offers a read.
 1. Call `pipe_write.py update`:
    ```bash
    PYTHONIOENCODING=utf-8 python3 tools/pipe_write.py --repo-root . update "<company>" "<new-stage>" [--role ROLE] [--next-action TEXT] [--fit-reason "..."] [--fit-verdict fit|not-fit|neutral|unknown]
@@ -74,14 +92,33 @@ All pipeline data lives in `data/job-pipeline.md`.
 3. If result `code == "not_found"`: tell user no active entry was found.
 4. On success: display the updated entry with stage-appropriate action items and any relevant coaching links.
 
-### Command: `remove <company>`
+### Command: `remove <company>` — this is also how you CLOSE a row
 
-1. Call `pipe_write.py remove`:
+1. **Ask which terminal stage, do not derive it.** `--stage` takes exactly one of
+   `Withdrawn | Rejected | Accepted`, and the distinction is a fact about what happened:
+
+   | Stage | Means | Use when |
+   |---|---|---|
+   | `Rejected` | **They** passed on Nick | company declined, ghosted an application, or stopped advancing him |
+   | `Withdrawn` | **Nick** passed on them | self-pass, failed a hard filter, or the role evaporated |
+   | `Accepted` | offer taken | — |
+
+   ⛔ **Never infer this from the row's Notes.** Classifying 30 closes from their notes on 2026-08-14
+   was right ~28/30, and the misses *inverted a fact about someone else's decision*. `Closed - no
+   response` meant Withdrawn for one company and Rejected for three others on the same day; only Nick
+   knows whether he actually applied and how far they engaged. Present the classification for
+   confirmation, in one batch. Per [[feedback_pipeline_applied_status_must_be_user_confirmed]].
+   The tool's own help says it: *"archiving a rejection as a withdrawal inverts the fact."*
+
+2. Call `pipe_write.py remove`:
    ```bash
-   PYTHONIOENCODING=utf-8 python3 tools/pipe_write.py --repo-root . remove "<company>" [--role ROLE]
+   PYTHONIOENCODING=utf-8 python3 tools/pipe_write.py --repo-root . remove "<company>" \
+     [--role ROLE] --stage Withdrawn|Rejected|Accepted [--fit-reason "..."] [--fit-verdict ...]
    ```
-2. If `code == "ambiguous_match"`: show `matches[]` and ask user which role to remove.
-3. On success: confirm removal (soft-deleted to ## Archived with Withdrawn stage).
+   `--stage` defaults to `Withdrawn` if omitted — do not rely on the default when the company passed.
+3. If `code == "ambiguous_match"`: show `matches[]` and ask user which role to remove. A company with
+   two roles can have two different outcomes; resolve each separately.
+4. On success: confirm the archive (moved to `## Archived` under the chosen terminal stage).
 
 ## Pipeline Stages
 
