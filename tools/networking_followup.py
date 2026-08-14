@@ -26,8 +26,48 @@ Usage:
 import argparse
 import json
 import re
+import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+# Shared freeform-stage classifier (single source of truth). See stage_vocab.py.
+from stage_vocab import is_terminal_stage  # noqa: E402
+
+
+def build_closed_company_index(pipeline_content: str) -> dict[str, str]:
+    """Map company (lowercased) -> ISO date of its most recent terminal pipeline row.
+
+    Two rules, both learned the hard way elsewhere in this codebase:
+
+    * A company with ANY non-terminal row is not closed, regardless of what a stale
+      row says. Same rule todo_write.sync uses; origin 2026-08-08.
+    * Use the LATEST terminal row. A company can be closed twice (an old withdrawn
+      application, then a real rejection months later), and comparing against the
+      older date makes a pre-close touch look post-close.
+    """
+    latest: dict[str, str] = {}
+    live: set[str] = set()
+
+    for line in pipeline_content.splitlines():
+        if (not line.startswith("|")
+                or line.startswith("| Company")
+                or re.match(r"^\|\s*:?-+", line)):
+            continue
+        cols = [c.strip() for c in line.strip().strip("|").split("|")]
+        if len(cols) < 4 or not cols[0]:
+            continue
+        company, stage, updated = cols[0].lower(), cols[2], cols[3]
+        if not is_terminal_stage(stage):
+            live.add(company)
+            continue
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", updated):
+            continue
+        if company not in latest or updated > latest[company]:
+            latest[company] = updated
+
+    return {c: d for c, d in latest.items() if c not in live}
 
 
 def parse_args():
@@ -205,17 +245,22 @@ def extract_followup_from_interaction_log(content: str, name: str) -> tuple[str,
     return ("", None)
 
 
-def parse_networking(content: str, today: date, days_overdue_threshold: int) -> dict:
+def parse_networking(content: str, today: date, days_overdue_threshold: int,
+                     closed_index: dict[str, str] | None = None) -> dict:
     """Parse networking.md contacts table and interaction log follow-ups."""
     followup_due = []
     followup_overdue = []
+    suppressed_closed = []
+    closed_index = closed_index or {}
 
     contacts = parse_contacts_table(content)
     if not contacts:
         return {
             "followup_due": [],
             "followup_overdue": [],
-            "summary": {"total_contacts": 0, "due_today": 0, "overdue": 0},
+            "suppressed_closed": [],
+            "summary": {"total_contacts": 0, "due_today": 0, "overdue": 0,
+                        "suppressed_closed": 0},
         }
 
     total_contacts = len(contacts)
@@ -274,6 +319,20 @@ def parse_networking(content: str, today: date, days_overdue_threshold: int) -> 
             "is_stale": is_stale,
         }
 
+        # Silence children of a closed pipeline row — but ONLY when the contact has not
+        # been touched since the close. A touch after the close is deliberate
+        # relationship work and outlives the opportunity by design.
+        close_date = closed_index.get((contact["company"] or "").strip().lower())
+        if close_date and last_interaction_str < close_date:
+            entry["pipeline_closed"] = True
+            entry["close_date"] = close_date
+            entry["suppression_reason"] = (
+                f"{contact['company']} closed {close_date}; last touch "
+                f"{last_interaction_str} predates it, so this nudge is a ghost."
+            )
+            suppressed_closed.append(entry)
+            continue
+
         if followup_date <= today:
             # Strictly-before the cutoff is overdue; a follow-up due exactly today
             # (or within the grace window) is "due", not "overdue". With the default
@@ -293,10 +352,12 @@ def parse_networking(content: str, today: date, days_overdue_threshold: int) -> 
     return {
         "followup_due": followup_due,
         "followup_overdue": followup_overdue,
+        "suppressed_closed": suppressed_closed,
         "summary": {
             "total_contacts": total_contacts,
             "due_today": len([e for e in followup_due if e["days_until"] == 0]),
             "overdue": len(followup_overdue),
+            "suppressed_closed": len(suppressed_closed),
         },
     }
 
@@ -310,7 +371,11 @@ def main():
     repo_root = Path(args.repo_root) if args.repo_root else Path.cwd()
     content = read_file(repo_root / "data" / "networking.md")
 
-    result = parse_networking(content, today, args.days_overdue)
+    # Graceful degradation: no pipeline file means no suppression, never a crash.
+    pipeline_content = read_file(repo_root / "data" / "job-pipeline.md")
+    closed_index = build_closed_company_index(pipeline_content) if pipeline_content else {}
+
+    result = parse_networking(content, today, args.days_overdue, closed_index)
     result["target_date"] = today.strftime("%Y-%m-%d")
 
     print(json.dumps(result, indent=2, ensure_ascii=False))

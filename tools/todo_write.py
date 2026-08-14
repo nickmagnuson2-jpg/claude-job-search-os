@@ -11,7 +11,9 @@ Commands:
   withdraw <task_fragment>             — mark matching row Withdrawn, not Done (NOT a completion;
                                          also corrects a row already mis-marked Completed)
   clear                                — move Done/Withdrawn rows to Completed
-  sync                                 — auto-withdraw based on pipeline Archived section
+  sync                                 — auto-withdraw Active todos whose company has a
+                                         terminal stage anywhere in the pipeline (either
+                                         section); a live row for that company always wins
   list [--status <Status>] [--grep <substring>]
                                         — print todos (Active + Completed) as structured JSON;
                                          verify a mutation landed without grepping the raw file.
@@ -38,11 +40,23 @@ import sys
 from datetime import date
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+# Shared freeform-stage classifier (single source of truth). See stage_vocab.py.
+# Enrolled 2026-08-14: this module previously carried its own exact-match
+# TERMINAL_STAGES = {"Withdrawn","Rejected","Accepted"}, which made `sync` blind to
+# every descriptive close ("Closed - they passed", "Declined", "Considered - passed").
+from stage_vocab import is_terminal_stage  # noqa: E402
+
 TODOS_FILE = "data/job-todos.md"
 PIPELINE_FILE = "data/job-pipeline.md"
 COMPLETED_HEADER = "| Task | Priority | Completed | Notes |"
 COMPLETED_SEP = "| --- | --- | --- | --- |"
-TERMINAL_STAGES = {"Withdrawn", "Rejected", "Accepted"}
+
+# Statuses in the TODO table's Status column that mean the row is finished. This is a
+# different vocabulary from pipeline stages and must not be conflated with them: the
+# writer only ever emits Pending / In Progress / Done / Withdrawn for a todo.
+TERMINAL_TODO_STATUSES = {"Done", "Withdrawn"}
 
 
 # ---------------------------------------------------------------------------
@@ -391,7 +405,7 @@ def cmd_supersede(args: list[str], todos_path: Path) -> None:
             cols = parse_cols(lines[i])
             status = cols[3] if len(cols) > 3 else ""
             if (cols and cols[0] and cols[0].lower().startswith(prefix)
-                    and status not in TERMINAL_STAGES and status != "Done"):
+                    and status not in TERMINAL_TODO_STATUSES):
                 matches.append((i, cols))
 
     if not matches:
@@ -466,8 +480,25 @@ def cmd_clear(todos_path: Path) -> None:
            done=done_count, withdrawn=withdrawn_count, archived=done_count + withdrawn_count)
 
 
-def cmd_sync(todos_path: Path, pipeline_path: Path) -> None:
-    """Auto-withdraw Active todos for terminal pipeline companies."""
+def cmd_sync(todos_path: Path, pipeline_path: Path, apply: bool = False) -> None:
+    """Report (default) or withdraw (--apply) Active todos for terminal companies.
+
+    PREVIEW BY DEFAULT, deliberately. Company-name matching against the task column
+    cannot tell an opportunity todo from a todo that merely names the company, and on
+    real data the difference is most of the result. Measured 2026-08-14 against the
+    owner's live files: 31 candidates, of which roughly 4 were genuine. The rest were
+
+      * name collisions with ordinary English (a company literally named after a common
+        verb matched every todo using that verb),
+      * live work matched through a shared channel or marketplace name,
+      * relationship follow-ups ("Follow up: Casey Doe"), which outlive the opportunity
+        by design and are the category the owner most wants preserved,
+      * infra and learning todos that name-drop a company in the task text.
+
+    Deciding which is which is judgment, so it belongs to the caller (a skill pass or
+    the owner), not to a regex here. This command's job is to find candidates and report
+    them honestly. `--apply` writes; bare `sync` never touches the file.
+    """
     today_str = date.today().strftime("%Y-%m-%d")
 
     pipeline_content = read_file(pipeline_path)
@@ -475,54 +506,50 @@ def cmd_sync(todos_path: Path, pipeline_path: Path) -> None:
         out_ok("sync", "Pipeline file not found — skipping sync", withdrawn=0)
         return
 
-    # Fast path: check if Archived section has any data rows at all
-    archived_match = re.search(r"## Archived.*?\n(.*?)(?=\n## |\Z)", pipeline_content, re.DOTALL)
-    if not archived_match:
-        out_ok("sync", "No Archived section in pipeline — nothing to sync", withdrawn=0)
-        return
-
-    has_data = any(
-        line.startswith("|")
-        and not line.startswith("| Company")
-        and not re.match(r"^\|\s*:?-+", line)
-        for line in archived_match.group(1).splitlines()
-    )
-    if not has_data:
-        out_ok("sync", "Archived pipeline is empty — nothing to sync", withdrawn=0)
-        return
-
-    # Companies with a LIVE (non-terminal) row in Active Pipeline are never terminal,
-    # even if a stale Archived row says otherwise. A company can legitimately appear
-    # in both sections (an old withdrawn application plus a current live loop); the
-    # live row wins. Origin: 2026-08-08, a stale duplicate row mass-withdrew 18 todos.
-    live: set[str] = set()
-    active_match = re.search(r"## Active Pipeline.*?\n(.*?)(?=\n## |\Z)",
-                             pipeline_content, re.DOTALL)
-    if active_match:
-        for line in active_match.group(1).splitlines():
+    def _stage_rows(section: str | None):
+        """Yield (company, stage) for every data row in a pipeline section."""
+        if not section:
+            return
+        for line in section.splitlines():
             if (not line.startswith("|")
                     or line.startswith("| Company")
                     or re.match(r"^\|\s*:?-+", line)):
                 continue
             cols = parse_cols(line)
-            if len(cols) >= 3 and cols[0] and cols[2] not in TERMINAL_STAGES:
-                live.add(cols[0].lower())
+            if len(cols) >= 3 and cols[0]:
+                yield cols[0], cols[2]
 
-    # Extract terminal companies from Archived section
+    archived_match = re.search(r"## Archived.*?\n(.*?)(?=\n## |\Z)", pipeline_content, re.DOTALL)
+    active_match = re.search(r"## Active Pipeline.*?\n(.*?)(?=\n## |\Z)",
+                             pipeline_content, re.DOTALL)
+    archived_section = archived_match.group(1) if archived_match else None
+    active_section = active_match.group(1) if active_match else None
+
+    # Companies with a LIVE (non-terminal) row anywhere are never terminal, even if a
+    # stale row elsewhere says otherwise. A company can legitimately appear twice (an
+    # old withdrawn application plus a current live loop); the live row wins.
+    # Origin: 2026-08-08, a stale duplicate row mass-withdrew 18 todos.
+    live: set[str] = {
+        company.lower()
+        for company, stage in _stage_rows(active_section)
+        if not is_terminal_stage(stage)
+    }
+
+    # Terminal companies come from BOTH sections. Archiving is the tidy path, but a row
+    # closed in place with a descriptive stage ("Closed - they passed") is just as
+    # terminal, and on 2026-08-14 that was 30 of them on the live pipeline — every one
+    # invisible to this command while it used an exact-match stage set.
+    seen: set[str] = set()
     terminal: list[tuple[str, str]] = []
-    for line in archived_match.group(1).splitlines():
-        if (not line.startswith("|")
-                or line.startswith("| Company")
-                or re.match(r"^\|\s*:?-+", line)):
+    for company, stage in (*_stage_rows(archived_section), *_stage_rows(active_section)):
+        key = company.lower()
+        if key in live or key in seen or not is_terminal_stage(stage):
             continue
-        cols = parse_cols(line)
-        if len(cols) >= 3 and cols[0] and cols[2] in TERMINAL_STAGES:
-            if cols[0].lower() in live:
-                continue
-            terminal.append((cols[0], cols[2]))
+        seen.add(key)
+        terminal.append((company, stage))
 
     if not terminal:
-        out_ok("sync", "No terminal-stage companies in Archived section", withdrawn=0)
+        out_ok("sync", "No terminal-stage companies in the pipeline", withdrawn=0)
         return
 
     content, lines = load_todos(todos_path)
@@ -551,7 +578,23 @@ def cmd_sync(todos_path: Path, pipeline_path: Path) -> None:
                 break
 
     if not to_withdraw:
-        out_ok("sync", "No active todos matched terminal pipeline companies", withdrawn=0)
+        out_ok("sync", "No active todos matched terminal pipeline companies",
+               withdrawn=0, candidates=[])
+        return
+
+    candidates = [
+        {"task": cols[0], "priority": cols[1] if len(cols) > 1 else "Med",
+         "company": company, "stage": stage}
+        for _, cols, company, stage in to_withdraw
+    ]
+
+    if not apply:
+        out_ok(
+            "sync",
+            f"{len(candidates)} candidate(s) found — NOTHING WRITTEN. "
+            f"Review, then re-run with --apply to withdraw.",
+            withdrawn=0, candidates=candidates, applied=False,
+        )
         return
 
     # Build completed rows
@@ -689,7 +732,13 @@ def main() -> None:
     # fail, 2026-06-06).
     # Per memory/feedback_atomic_script_positional_args.md (script-tier promotion 2026-05-21).
     # `list` is the one query subcommand and takes real --flags (--status, --grep).
-    allowed_flags = {"--status", "--grep"} if cmd == "list" else set()
+    # `sync` takes --apply: it previews by default and only writes when asked.
+    if cmd == "list":
+        allowed_flags = {"--status", "--grep"}
+    elif cmd == "sync":
+        allowed_flags = {"--apply"}
+    else:
+        allowed_flags = set()
     unknown_flags = [
         a for a in filtered if a.startswith("--") and len(a) > 2 and a not in allowed_flags
     ]
@@ -717,7 +766,7 @@ def main() -> None:
     elif cmd == "clear":
         cmd_clear(todos_path)
     elif cmd == "sync":
-        cmd_sync(todos_path, pipeline_path)
+        cmd_sync(todos_path, pipeline_path, apply="--apply" in extra_args)
     elif cmd == "list":
         cmd_list(extra_args, todos_path)
     else:

@@ -24,7 +24,22 @@ import pytest
 
 from conftest import run_script, write_fixture, TOOLS_DIR
 
-CONSUMERS = ["pipe_read.py", "pipeline_staleness.py", "networking_read.py", "outreach_pending.py"]
+CONSUMERS = ["pipe_read.py", "pipeline_staleness.py", "networking_read.py", "outreach_pending.py",
+             # Enrolled 2026-08-14. todo_write.py `sync` kept its own exact-match
+             # TERMINAL_STAGES = {"Withdrawn","Rejected","Accepted"} and was therefore
+             # blind to every freeform terminal stage ("Closed - they passed",
+             # "Considered - passed", "Declined"). Measured on the live pipeline that
+             # day: 30 companies that stage_vocab called terminal were invisible to
+             # sync, so their prep/research todos could never be auto-withdrawn — and
+             # worse, those rows landed in sync's "still live" set, actively blocking
+             # the companies from ever syncing. Same drift class as the four originals;
+             # it survived only because it was never enrolled here.
+             "todo_write.py",
+             # Enrolled 2026-08-14 alongside the closed-company suppression it gained
+             # that day. networking_followup.py had no stage awareness at all, so a
+             # closed pipeline row never silenced its networking children — first
+             # reported 2026-05-13 (4 ghost nudges in one standup), parked 3 months.
+             "networking_followup.py"]
 
 # Local re-definitions that used to cause the drift — none of these may reappear in a
 # consumer (they belong only in stage_vocab.py).

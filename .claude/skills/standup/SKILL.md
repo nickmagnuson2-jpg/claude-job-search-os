@@ -140,6 +140,21 @@ Origin: [[feedback_no_confabulation_in_corpus_synthesis]] (Conviction Workbook P
 - `followup_overdue[]` — contacts with overdue follow-ups (show first)
 - `followup_due[]` — contacts with follow-ups due within 7 days (show after overdue)
 - Each entry has: `name`, `company`, `follow_up_action`
+- `suppressed_closed[]` — nudges withheld because the contact's company reached a
+  terminal pipeline stage AND the contact has not been touched since that close. Each
+  carries `close_date` and `suppression_reason`. **Report the count as a single line
+  under Follow-Up Due, never the full list:**
+  ```
+  🔇 N nudge(s) suppressed — company closed, no contact since. Run `/networking` to review.
+  ```
+  Do not silently drop them: a suppressed nudge is still a row someone may want to
+  retire properly. Suppression is display-only and writes nothing.
+
+  **A contact touched *after* the close is never suppressed** — that touch is deliberate
+  relationship work (the "close the loop, buy you a beer" text) and outlives the
+  opportunity. Origin: 2026-05-13 (4 ghost rows in one standup, parked 3 months) and
+  2026-08-14, when a recruiting coordinator surfaced as due-today with prep
+  instructions for a loop whose company had closed four days earlier.
 
 **From inbox/:**
 

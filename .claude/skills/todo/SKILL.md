@@ -60,19 +60,44 @@ If a to-do has no links, display it normally without annotation lines.
 
 ### Pipeline Sync (auto-run before any display)
 
-Before displaying to-dos in **any command**, run the sync script:
+Before displaying to-dos in **any command**, run the sync script. It **previews by
+default and writes nothing**:
 
 ```bash
 PYTHONIOENCODING=utf-8 python3 tools/todo_write.py sync
 ```
 
-Parse the JSON result:
-- If `withdrawn > 0`, display a notice **above** the to-do list:
+Parse the JSON result. `candidates[]` holds `{task, priority, company, stage}` for
+every Active todo whose company has reached a terminal pipeline stage.
+
+- If `candidates` is empty, skip silently.
+- Otherwise **judge each candidate before proposing anything.** A company-name match is
+  evidence, not a verdict. Withdraw only *opportunity work* — apply / research / prep /
+  print-the-deck-for-that-company. Keep everything else:
+
+  | Keep | Why |
+  |---|---|
+  | `Follow up: <person>` rows | Relationships outlive the opportunity. This is the category Nick most wants preserved. |
+  | `PARKED — <system build>`, `[INFRA] …` | Infra todos that merely name-drop a company. |
+  | "Capture X learnings into …" | Learning tasks survive the company closing. |
+  | Anything naming a **live** company alongside the closed one | e.g. a submission package routed through a closed marketplace. |
+  | Matches on a company whose name is an ordinary English word | Check whether the word is being used as the company or as the verb. |
+
+- Present the survivors for confirmation, then apply:
+  ```bash
+  PYTHONIOENCODING=utf-8 python3 tools/todo_write.py sync --apply
   ```
-  ⚡ Pipeline sync: N to-do(s) auto-withdrawn — [Company] marked [Stage]
+  ⚠️ `--apply` withdraws **every** candidate, not a subset. If only some should go, use
+  `todo_write.py withdraw "<fragment>"` per row instead.
+- After applying, display the notice above the list:
   ```
-  (Use `summary` from the JSON for the notice text.)
-- If `withdrawn == 0` (or `action` is `sync` with no withdrawals), skip silently.
+  ⚡ Pipeline sync: N to-do(s) withdrawn — [Company] marked [Stage]
+  ```
+
+**Why this is gated.** Measured against the live files on 2026-08-14: 31 candidates,
+roughly 4 genuine. The rest were name collisions, live work matched through a shared
+channel name, relationship follow-ups, and infra todos. The matcher finds candidates
+honestly; the judgment is yours. See `cmd_sync`'s docstring in `tools/todo_write.py`.
 
 Then read `data/job-todos.md` (it may have been updated by the sync) along with `data/job-pipeline.md` and `data/networking.md` for display.
 

@@ -213,3 +213,135 @@ def test_recruiter_followup_bug_regression(tmp_path):
     entry = [e for e in result["followup_due"] if e["name"] == "Robin Diaz"][0]
     assert entry["followup_date"] == "2026-03-16"
     assert entry["days_until"] == 6
+
+
+# ---------------------------------------------------------------------------
+# Closed-company suppression (2026-08-14)
+#
+# A closed pipeline row did not silence its networking children, so /standup kept
+# nudging dead threads. First reported 2026-05-13 (4 ghost rows in one morning) and
+# parked for three months; on 2026-08-14 it surfaced a recruiting coordinator as "due
+# today" with prep instructions for a loop whose company had closed four days earlier.
+#
+# The discriminator is deliberately NOT judgment: suppress only when the contact's last
+# interaction PREDATES the close. A touch after the close is intentional relationship
+# work (the "close the loop, buy you a beer" text) and must survive.
+# ---------------------------------------------------------------------------
+
+PIPELINE_CLOSED = """\
+# Job Pipeline
+
+## Active Pipeline
+
+| Company | Role | Stage | Date Updated | Next Action | CV Used | Notes | URL |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| LiveCo | Ops Lead | Onsite scheduled | 2026-08-12 | Prep | — | — | — |
+
+## Archived
+
+| Company | Role | Stage | Date Updated | Next Action | CV Used | Notes | URL |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| ClosedCo | GTM Ops | Withdrawn | 2026-05-08 | — | — | — | — |
+| ClosedCo | Strategist | Rejected | 2026-08-10 | — | — | — | — |
+"""
+
+
+def _closed_setup(tmp_path, contacts, log):
+    write_fixture(tmp_path, "data/networking.md", make_fixture(contacts, log))
+    write_fixture(tmp_path, "data/job-pipeline.md", PIPELINE_CLOSED)
+    return run_script("networking_followup.py",
+                      "--target-date", "2026-08-14",
+                      "--repo-root", str(tmp_path))
+
+
+def test_followup_predating_the_close_is_suppressed(tmp_path):
+    """The incident shape: last touch 7/31, company closed 8/10, nudge fires 8/14."""
+    result = _closed_setup(
+        tmp_path,
+        "| Casey Doe | ClosedCo | Recruiting coordinator | recruiter | 2026-07-01 | 2026-07-31 | c@x.com |\n",
+        "### Casey Doe — ClosedCo\n\n"
+        "#### 2026-07-31 | email | Onsite logistics\n\n"
+        "**Follow-up:** Accept the calendar invite today. Research the panel before 8/5.\n\n",
+    )
+    live = [e["name"] for e in result["followup_due"] + result["followup_overdue"]]
+    assert "Casey Doe" not in live
+    assert "Casey Doe" in [e["name"] for e in result["suppressed_closed"]]
+
+
+def test_followup_after_the_close_survives(tmp_path):
+    """Deliberate post-close relationship work. Suppressing this is the costly error."""
+    result = _closed_setup(
+        tmp_path,
+        "| Jordan Sample | ClosedCo | Building agents | warm | 2026-06-10 | 2026-08-13 | j@x.com |\n",
+        "### Jordan Sample — ClosedCo\n\n"
+        "#### 2026-08-13 | text | Closed the loop after the no\n\n"
+        "**Follow-up:** Nudge 2026-08-18 about the beer she was offered\n\n",
+    )
+    live = [e["name"] for e in result["followup_due"] + result["followup_overdue"]]
+    assert "Jordan Sample" in live
+    assert "Jordan Sample" not in [e["name"] for e in result["suppressed_closed"]]
+
+
+def test_close_date_uses_the_most_recent_terminal_row(tmp_path):
+    """ClosedCo has two terminal rows (5/08 and 8/10). Against the stale 5/08 row a
+    7/31 touch looks post-close and would wrongly survive."""
+    result = _closed_setup(
+        tmp_path,
+        "| Casey Doe | ClosedCo | Recruiting coordinator | recruiter | 2026-07-01 | 2026-07-31 | c@x.com |\n",
+        "### Casey Doe — ClosedCo\n\n"
+        "#### 2026-07-31 | email | Onsite logistics\n\n"
+        "**Follow-up:** Accept the calendar invite today\n\n",
+    )
+    entry = [e for e in result["suppressed_closed"] if e["name"] == "Casey Doe"][0]
+    assert entry["close_date"] == "2026-08-10"
+
+
+def test_same_day_touch_is_not_suppressed(tmp_path):
+    """Passed on the day of the close, then a same-day note. Not 'before' the close."""
+    pipeline = PIPELINE_CLOSED.replace(
+        "| ClosedCo | Strategist | Rejected | 2026-08-10 |",
+        "| ClosedCo | Strategist | Rejected | 2026-08-06 |")
+    write_fixture(tmp_path, "data/networking.md", make_fixture(
+        "| Alex Example | ClosedCo | Founder | founder | 2026-07-20 | 2026-08-06 | a@x.com |\n",
+        "### Alex Example — ClosedCo\n\n"
+        "#### 2026-08-06 | email | Post-pass note, no ask\n\n"
+        "**Follow-up:** Reconnect on a trigger, not a calendar. Fallback window ~Nov.\n\n",
+    ))
+    write_fixture(tmp_path, "data/job-pipeline.md", pipeline)
+    result = run_script("networking_followup.py", "--target-date", "2026-08-14",
+                        "--repo-root", str(tmp_path))
+    live = [e["name"] for e in result["followup_due"] + result["followup_overdue"]]
+    assert "Alex Example" in live
+
+
+def test_live_row_beats_a_terminal_row_for_the_same_company(tmp_path):
+    """Same rule sync uses: a company with any non-terminal row is not closed."""
+    pipeline = PIPELINE_CLOSED.replace(
+        "| LiveCo | Ops Lead | Onsite scheduled | 2026-08-12 | Prep | — | — | — |",
+        "| ClosedCo | Ops Lead | Onsite scheduled | 2026-08-12 | Prep | — | — | — |")
+    write_fixture(tmp_path, "data/networking.md", make_fixture(
+        "| Casey Doe | ClosedCo | Recruiting coordinator | recruiter | 2026-07-01 | 2026-07-31 | c@x.com |\n",
+        "### Casey Doe — ClosedCo\n\n"
+        "#### 2026-07-31 | email | Onsite logistics\n\n"
+        "**Follow-up:** Accept the calendar invite today\n\n",
+    ))
+    write_fixture(tmp_path, "data/job-pipeline.md", pipeline)
+    result = run_script("networking_followup.py", "--target-date", "2026-08-14",
+                        "--repo-root", str(tmp_path))
+    live = [e["name"] for e in result["followup_due"] + result["followup_overdue"]]
+    assert "Casey Doe" in live
+
+
+def test_missing_pipeline_degrades_gracefully(tmp_path):
+    """No pipeline file: suppress nothing, never crash. Per the graceful-degradation rule."""
+    write_fixture(tmp_path, "data/networking.md", make_fixture(
+        "| Casey Doe | ClosedCo | Recruiting coordinator | recruiter | 2026-07-01 | 2026-07-31 | c@x.com |\n",
+        "### Casey Doe — ClosedCo\n\n"
+        "#### 2026-07-31 | email | Onsite logistics\n\n"
+        "**Follow-up:** Accept the calendar invite today\n\n",
+    ))
+    result = run_script("networking_followup.py", "--target-date", "2026-08-14",
+                        "--repo-root", str(tmp_path))
+    assert result["suppressed_closed"] == []
+    live = [e["name"] for e in result["followup_due"] + result["followup_overdue"]]
+    assert "Casey Doe" in live
