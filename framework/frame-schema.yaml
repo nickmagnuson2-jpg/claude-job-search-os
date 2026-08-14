@@ -1,0 +1,305 @@
+# frame-schema.yaml
+#
+# The schema for output/<slug>/frame.yaml, the whole-engagement state file.
+#
+# STANDING TIER. This file changes only through the promotion gate in
+# framework/analysis-method.md: two occurrences, or one candidate whose blind-agent
+# falsification attempt survives. Every change lands in
+# framework/analysis-method-CHANGELOG.md.
+#
+# tools/check_frame_integrity.py reads this file. A frame.yaml whose schema_version
+# is unknown to the checker is REFUSED, never silently accepted.
+
+schema_version: 1
+
+# ---------------------------------------------------------------------------
+# The three judgment classes. Design objective: maximize `derived`, migrate
+# `per_engagement` into `standing` only where a falsification attempt fails,
+# never by convenience.
+# ---------------------------------------------------------------------------
+judgment_classes:
+  standing:
+    decided: once, encoded in the framework
+    run_time_cost: free
+    owner: nobody
+  per_engagement:
+    decided: every time, because the problem statement changed
+    run_time_cost: the operator's judgment, the scarce resource
+    owner: operator
+    test: >
+      Try to construct a problem statement where the answer flips. If you can, it is
+      per_engagement. If you genuinely cannot, it is standing, and the attempt gets
+      recorded in the frame's `falsification:` block.
+  derived:
+    decided: not decided at all, falls out of the two above
+    run_time_cost: free
+    owner: agent
+
+# The six per-engagement judgment moments this schema demands. Nothing else in a
+# frame.yaml requires the operator. If a change to this file adds a seventh, that is
+# a design regression and must be argued for explicitly.
+judgment_moments:
+  1: the problem statement
+  2: "the problem type (highest leverage - one call unlocks the whole Section G lookup)"
+  3: the two mode parameters
+  4: which elements are in the set, and why it closes there
+  5: the disposition of each unknown
+  6: the recommendation, and any override
+
+# ---------------------------------------------------------------------------
+# FIELDS
+# ---------------------------------------------------------------------------
+fields:
+
+  # ---- META ----
+  schema_version: {type: int, required: true, class: derived}
+  version: {type: int, required: true, class: derived, note: bumped on every write}
+  locked:
+    type: bool
+    required: true
+    class: per_engagement
+    note: >
+      true marks the version that went in the room. F9 diffs current against the
+      most recent locked version. Timestamps cannot do this job; the private data
+      backup commits on a fixed interval and carries no semantics.
+  locked_at: {type: timestamp, required: false, class: derived}
+  engagement: {type: string, required: true, class: derived}
+
+  # ---- D1: SPECIFICATION DISCOVERY. Must complete before D2 opens. ----
+  d1.problem_statement:
+    type: string
+    required: true
+    class: per_engagement
+    judgment_moment: 1
+    checks: [F8]
+  d1.metric_roles:
+    type: map[metric -> enum]
+    required: true
+    class: per_engagement
+    judgment_moment: 1
+    values: [target, guardrail, constraint, diagnostic]
+    checks: [F8]
+    note: >
+      ADDED v1.1. The role the LOCKED PROBLEM STATEMENT assigns each metric. Without
+      this field F8 has nothing to run against and silently passes.
+      A metric declared `guardrail` is a floor to be held, NOT a ranking axis. An
+      element that uses a guardrail metric as a ranking input has reassigned its role,
+      which is the documented drift: the locked question read "raise <target metric>
+      WITHOUT LOSING <guardrail metric>", and a ranking criterion then took the
+      guardrail metric as an input. Nothing checked step 2 against step 1.
+
+  d1.problem_type:
+    type: enum
+    required: true
+    class: per_engagement
+    judgment_moment: 2
+    values: [prioritization, system_design, diagnostic, sizing, product_sense, pen_and_paper, engagement, validation]
+    note: keys the framework/method-moves.yaml lookup and the instantiation table
+  d1.mode.data_obtainable:
+    type: bool
+    required: true
+    class: per_engagement
+    judgment_moment: 3
+    note: sets the disposition of unknowns. false = assumption-heavy, true = data requests are live
+  d1.mode.shots:
+    type: enum
+    required: true
+    class: per_engagement
+    judgment_moment: 3
+    values: [one, iterative]
+    note: sets the weight on custody and rehearsal
+  d1.scope_out:
+    type: list[{item, reason}]
+    required: true
+    class: per_engagement
+    note: scope excluded WITH reasons. An empty list is a defect, not a clean scope
+  d1.deliverable: {type: "{artifact, audience, format}", required: true, class: per_engagement}
+
+  # ---- D2: DATA DISCOVERY. Stops when these are populated, NOT when the topic is exhausted. ----
+  facts:
+    type: map[id -> {text, tier, source, first_seen}]
+    required: true
+    class: derived
+    checks: [F2, F8]
+    note: >
+      tier is A (primary/official), B (reputable secondary), or C (aggregator/crowd).
+      first_seen is the `version` at which this fact entered the file. It is what makes
+      F2 mechanically checkable: an element citing a fact whose first_seen is LATER than
+      the element's own is a retrofitted citation, which is provenance posing as
+      derivation. Cheap to record, impossible to reconstruct afterward.
+  unknowns:
+    type: map[id -> {text, disposition, basis, sensitivity, owner, due}]
+    required: true
+    class: per_engagement
+    judgment_moment: 5
+    checks: [F10, F11]
+    note: >
+      disposition is assumption | question | data_request.
+      assumption requires basis + sensitivity. data_request requires owner + due.
+      question requires a named human. The disposition changes by mode; the item does not.
+  unknowns_undispositioned:
+    type: list[string]
+    required: false
+    class: derived
+    note: >
+      Recorded at lock time: unknowns that surfaced in D2 and never received a
+      disposition. Afterward you can only see what you handled, never what you failed
+      to notice. Backfill-impossible.
+
+  # ---- INPUTS REGISTRY. Declared once, referenced by id. ----
+  inputs:
+    type: map[id -> {name, aka}]
+    required: true
+    class: per_engagement
+    checks: [F3]
+    note: >
+      THE F3 FIX. Elements reference input ids, never free text. `aka` lists synonyms so
+      that two names for the same underlying quantity collide by construction. Free-text
+      inputs would sail straight past the exact bug this check exists to catch.
+      Costs one extra authoring step per run: declare inputs before writing elements.
+
+  # ---- THE FRAME ----
+  elements:
+    type: list[{id, name, name_surface, measure, measure_surface, because, inputs, protected, first_seen}]
+    required: true
+    class: per_engagement
+    judgment_moment: 4
+    checks: [F1, F2, F3, F8, F9]
+    note: >
+      measure = the level below the name, short. The cap is a FORM, not a number: it must
+      leave the mouth in one breath. The operator's ear outranks any word count.
+      because = list of fact ids, and it must be NON-EMPTY. An element with no `because`
+      is untraced, and an empty list resolves vacuously, so a check that only validates
+      the ids present would pass exactly the element that cites nothing.
+      inputs = list of input ids. protected defaults to TRUE for every frame element.
+
+      name_surface / measure_surface ADDED v1.1. F1 says the level below sits "on the
+      surface that names it," and a bare `measure` string cannot express WHERE it sits.
+      In the 2026-08-05 reconstruction the criteria surface carried no measures at all;
+      three of four were recoverable only from surfaces five to seven pages downstream,
+      and the fourth nowhere. That is the reachability failure appearing inside F1, and
+      it was invisible until the surfaces were named. Same value in both fields = pass.
+  closure: {type: string, required: true, class: per_engagement, judgment_moment: 4, checks: [F5]}
+  exclusions:
+    type: list[{element, reason}]
+    required: true
+    class: per_engagement
+    judgment_moment: 4
+    checks: [F5]
+    note: at least one plausible element deliberately excluded, with its reason
+  interaction:
+    type: "{type, pairs, opposed_actions}"
+    required: true
+    class: derived
+    checks: [F4]
+    note: >
+      Filled by a BLIND agent that has seen element names and one-line definitions only,
+      never the artifact. An agent holding the artifact rationalises overlap as emphasis.
+  falsification:
+    type: list[{claim, attempt, survived}]
+    required: false
+    class: derived
+    note: >
+      The guard on any standing designation. The documented root error in the 2026-08-05
+      engagement was promoting a per-engagement judgment to standing by fiat and then
+      shielding the reasoning underneath it. A standing claim carries the attempt that
+      justified it.
+
+  # ---- OUTPUT ----
+  recommendation.text:
+    type: string
+    required: true
+    class: per_engagement
+    judgment_moment: 6
+    note: imperative verb + quantified object + named constraint, one sentence
+  recommendation.confidence: {type: enum, required: true, class: per_engagement, values: [high, medium, low], checks: [F12]}
+  recommendation.next_action: {type: "{who, what}", required: true, class: per_engagement, checks: [F12]}
+  overrides:
+    type: list[{against, chose, because, holds_unless}]
+    required: false
+    class: per_engagement
+    judgment_moment: 6
+    note: >
+      The operator disagreed with the workflow, in writing, with a falsifiable release
+      condition. ALSO A CANDIDATE-RULE GENERATOR: an override is a rule under test and
+      feeds framework/rule-candidates.yaml.
+
+  # ---- LEDGERS. All backfill-impossible; recorded during the run or lost. ----
+  compression_ledger:
+    type: list[{was, definition_was, now_lives}]
+    required: true
+    class: derived
+    checks: [F9]
+    note: '"nowhere on the surface carrying the element" is a defect, not an entry'
+  proposals:
+    type: list[{stage, proposed, status, reason}]
+    required: false
+    class: derived
+    note: >
+      status is accepted | rejected | modified. THE REJECTIONS ARE THE POINT. A system
+      that stores only accepted output learns the operator's existing decisions rather
+      than improving on them, and the rejection record is the only training signal that
+      distinguishes the two.
+  checks_fired:
+    type: list[rule_id]
+    required: true
+    class: derived
+    note: >
+      Which rules actually fired this run. Feeds the demotion gate: a rule with zero
+      fires across N runs is decoration. F5's own logic, turned on the rulebook.
+  stages_run:
+    type: list[{stage, requires_operator, changed_frame}]
+    required: true
+    class: derived
+    note: a stage that never changes the frame is a demotion candidate for the stage itself
+  prediction:
+    type: "{made_at_version, will_be_probed, will_break}"
+    required: false
+    class: per_engagement
+    note: >
+      Stamped BEFORE the room. Contaminated the instant feedback arrives, so it cannot
+      be added later. Cold self-reads in this corpus are documented as near-perfectly
+      calibrated across five consecutive instances, and that calibration is only
+      measurable if the prediction predates the outcome.
+
+# ---------------------------------------------------------------------------
+# VALIDATION the checker implements. Six of these fail the 2026-08-05 frame,
+# which is the acceptance test for tools/check_frame_integrity.py.
+# ---------------------------------------------------------------------------
+validation:
+  F1a: "every element has a non-empty `measure`"
+  F1b: "every element's `measure_surface` equals its `name_surface` (the level below sits where the name does)"
+  F2a: "every element's `because` is NON-EMPTY and every id in it resolves to a real fact id"
+  F2b: "every cited fact's `first_seen` is <= the citing element's `first_seen` (FORWARD-ONLY, see limits)"
+  F3: "no input id appears in more than one element's `inputs`"
+  F5: "`closure` is non-empty AND `exclusions` has at least one entry with a reason"
+  F8a: "every fact cited by an element exists in `facts`"
+  F8b: "no element takes as a ranking `input` any metric that `d1.metric_roles` declares a `guardrail`"
+  F9: "diff against the most recent `locked: true` version; fail on a dropped `measure` for any element with `protected: true`"
+  F10struct: "every unknown has a disposition, and its disposition's required sub-fields are present"
+  F12: "`recommendation.confidence` and `recommendation.next_action` are both present"
+  schema: "refuse any frame whose `schema_version` is unknown to this checker"
+
+# What the deterministic layer CANNOT do. Stated so it is never mistaken for coverage.
+limits:
+  F2_vocabulary: >
+    The deterministic F2 catches a MISSING citation. It cannot catch a citation to a fact
+    that is itself provenance rather than derivation. In the 2026-08-05 reconstruction the
+    top criterion cited a fact amounting to "<term> is the word the brief uses" - it
+    resolves cleanly and PASSES, and it is the canonical F2 failure. The blind agent is
+    load-bearing for F2, not a supplement to it.
+  F2b_forward_only: >
+    Creation order cannot be reconstructed from a finished artifact, so F2b is untestable
+    against any retrospective frame and every `first_seen` in one is a placeholder.
+  F9_needs_two: >
+    F9 requires a prior `locked: true` version. It cannot run on a single-version frame.
+  acceptance_test: >
+    Against the 2026-08-05 reconstruction the runnable failures are F1a, F1b, F2a, F3, F5,
+    F8b and F12. F8a passes, F2b and F9 cannot run. The earlier claim of "six of the nine"
+    was wrong in both directions: F12 fails and was never on the nine-rule list, while F9
+    was on it and cannot execute.
+
+# Not deterministic, delegated. Recorded here so the split has one source of truth.
+delegated:
+  blind_agent: [F1_quality, F2_quality, F3_distinction_sentence, F4, F5_quality, F8_quality]
+  operator: [F6, F7, F10_which_disposition, F11]

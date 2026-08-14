@@ -1,0 +1,151 @@
+# method-moves.yaml
+#
+# Two lookups, both keyed by problem type. STANDING TIER: changes go through the
+# promotion gate in analysis-method.md.
+#
+# THE DESIGN PRINCIPLE: the judgment is the CATALOGUE, the check is a LOOKUP.
+# Identifying the problem type is one operator judgment. Everything below is then
+# derived. A move you consider and skip is fine; a move you never saw is a defect,
+# which is why the workflow records considered / not-considered-because per move.
+#
+# POPULATED BY RESEARCH, NOT AT ANALYSIS TIME. A versioned file with sourced entries
+# and a refresh cadence is fast and reproducible. A live web search mid-analysis is
+# slow, non-reproducible, and arrives too late to change the frame.
+
+schema_version: 1
+last_refreshed: 2026-08-13
+
+# ---------------------------------------------------------------------------
+# 1. THE INSTANTIATION TABLE
+#
+# Turns the standing invariant ("every named element carries the level below it")
+# into a per-engagement answer. The invariant is standing; what "the level below"
+# MEANS is a lookup; the lookup itself is derived.
+# ---------------------------------------------------------------------------
+instantiation:
+
+  validation:
+    named_element: a claim in an existing artifact
+    level_below: the independent re-derivation that would confirm or break it
+    stopping_question: "how would you know if this were wrong?"
+    note: >
+      The case where the deliverable already exists and the job is to establish
+      whether to trust it. Likely the most common shape of AI-assisted work, and it
+      was missing from the first version of this table. Standing move: rebuild and
+      diff, never review in place. The diff is the deliverable.
+
+  # TODO 2026-08-13: the remaining rows exist in prose in the build log (Phase 2c)
+  # and have NOT been transcribed here, deliberately, rather than reconstructed from
+  # memory. Transcribe them verbatim before the first run that needs them.
+  prioritization: {named_element: null, level_below: null, stopping_question: null}
+  system_design: {named_element: null, level_below: null, stopping_question: null}
+  diagnostic: {named_element: null, level_below: null, stopping_question: null}
+  sizing: {named_element: null, level_below: null, stopping_question: null}
+  product_sense: {named_element: null, level_below: null, stopping_question: null}
+  pen_and_paper: {named_element: null, level_below: null, stopping_question: null}
+  engagement: {named_element: null, level_below: null, stopping_question: null}
+
+# ---------------------------------------------------------------------------
+# 2. THE MOVE CATALOGUE
+#
+# Standard practitioner moves by problem type and domain. Every entry carries a
+# source tier: A primary/official, B reputable secondary, C aggregator or converging
+# trade consensus. TIER C ENTRIES ORIENT, THEY DO NOT GO ON A SLIDE AS TARGETS.
+# ---------------------------------------------------------------------------
+moves:
+
+  # Seeded 2026-07-30 from a validation research pass. These five were all absent from
+  # an analysis that shipped without them, ranked at the time by how much each would
+  # have changed the answer.
+  contact_center_operations:
+    applies_to: [prioritization, diagnostic, sizing]
+    catalogue:
+
+      - id: M001
+        name: "Resolution quality - First Contact Resolution and repeat-contact-within-7-days"
+        rank: 1
+        move: >
+          Containment with no check on what it contains is unfalsifiable. The standard
+          corrective is repeat contact in a 7-day window, same customer, same intent.
+        why_it_matters: containment can be abandonment in disguise
+        benchmarks_tier: C
+        benchmarks: "FCR 70-79% typical, 80%+ world class; Tier 1 repeat contact under 10-15% is top-performer"
+        caution: benchmark figures are converging trade-press consensus, orientation only
+        source: geckoboard.com/best-practice/kpi-examples/first-contact-resolution-rate/
+
+      - id: M002
+        name: Failure demand (Seddon)
+        rank: 2
+        move: >
+          Separate demand created by the organization's own failure to do something
+          right the first time from genuine value demand.
+        why_it_matters: >
+          THE MOVE MOST LIKELY TO CHANGE THE RECOMMENDATION. If a large share of volume
+          is self-inflicted, the highest-return investment is upstream root-cause
+          elimination, not better automation of the symptom.
+        benchmarks_tier: C
+        benchmarks: trade estimates of 40-60% of volume in traditional centers, directional only
+        source: en.wikipedia.org/wiki/Failure_demand
+
+      - id: M003
+        name: Agent-assist as a distinct third option
+        rank: 3
+        move: >
+          Break the false binary of "AI handles it" versus "human handles it." Agent-assist,
+          where AI supports a human who closes, has its own cost and conversion profile.
+        why_it_matters: >
+          Direct hedge where automation carries a disclosure or compliance constraint:
+          captures handle-time savings without entering the constrained condition.
+        source_tier: B
+        source: "gartner.com press release 2025-06-10, on organizations abandoning AI-driven CS workforce reduction"
+
+      - id: M004
+        name: Intent-level volume x automatability x risk matrix
+        rank: 4
+        move: >
+          Score each intent on volume, automatability, and risk.
+        critical_detail: >
+          RISK IS A VETO AXIS, NOT A WEIGHTED MODIFIER. An intent can be high-volume,
+          highly automatable, and still off the table. Weighting it averages away the veto.
+        why_it_matters: makes volume mix, revenue risk, and regulatory exposure combine into ONE decision rather than three separate observations
+        source_tier: C
+        source: well-attested across current practitioner writing, no single canonical named framework
+
+      - id: M005
+        name: Capacity and queue effects (Erlang C)
+        rank: 5
+        move: >
+          Model arrival rate and handle-time distribution for the RESIDUAL human-routed
+          volume, not the original mix.
+        why_it_matters: >
+          Automating intents changes both, usually upward, because the easy contacts leave
+          first. A CONTAINMENT GAIN DOES NOT TRANSLATE LINEARLY INTO HEADCOUNT SAVINGS.
+          Any cost model assuming it does overstates savings. A real and commonly made error.
+        source_tier: B/C mixed
+        source: Erlang C confirmed as the industry-standard contact-center staffing model
+
+# ---------------------------------------------------------------------------
+# 3. NOT SUBSTANTIATED — do not use as named practices
+#
+# Kept deliberately. A refuted candidate that is deleted gets re-proposed every cycle;
+# a refuted candidate that is recorded does not. Same logic as rule-candidates.yaml.
+# ---------------------------------------------------------------------------
+refuted:
+  - term: silent abandonment (as a coined Gartner term)
+    finding: no Tier A/B source found
+  - term: deflection cannibalization
+    finding: no source found
+  - term: AHT displacement (as a formally named metric)
+    finding: the underlying idea is real but lives inside Erlang-based planning
+  - term: named churn/NPS-to-containment linkage methodology
+    finding: no Tier A/B source found beyond generic CSAT-NPS-churn correlation claims
+
+# ---------------------------------------------------------------------------
+# 4. REFRESH
+# ---------------------------------------------------------------------------
+refresh:
+  cadence: on demand, when a new problem type or domain is first encountered
+  method: research pass populating sourced entries with tiers, never a live search at analysis time
+  rule: >
+    A domain with no entries is a gap to be filled before the run, not a reason to
+    skip the coverage check. Record it as a known-empty lookup rather than passing silently.

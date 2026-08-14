@@ -1,0 +1,94 @@
+# rule-candidates.yaml
+#
+# THE HOLDING PEN. Feedback produces candidates here, never direct edits to the
+# standing tier (analysis-method.md, frame-schema.yaml, method-moves.yaml,
+# deck-rubric.md).
+#
+# WHY THE GATE EXISTS: without one you accrue a rule per session and arrive at a
+# document nobody consumes. Promotion being gated is the only thing keeping the
+# standing tier thin enough to be usable.
+#
+# THE GATE. A candidate promotes when EITHER:
+#   (a) occurrences >= 2, or
+#   (b) occurrences == 1 AND a blind agent, given ONLY the candidate rule and asked
+#       to construct a problem statement where it flips, FAILS to construct one.
+#
+# The falsification attempt is NEVER run by the operator. Self-policing is the
+# documented failure mode this whole ladder exists to route around.
+#
+# On promotion: move the rule into the relevant standing file, set promoted: yes with
+# the tier and date, and write a changelog entry. On rejection: keep the row with
+# rejected: yes and the counter-case, so the same candidate does not get re-proposed
+# every cycle.
+#
+# DEMOTION runs the other way. Every run records checks_fired. A standing rule with
+# zero fires across N runs gets surfaced here as a demotion candidate. A rule whose
+# deletion changes nothing is not a rule.
+
+schema_version: 1
+
+# Candidate template. Copy, do not edit in place.
+#
+# - id: C001
+#   rule: "<the candidate rule, stated plainly>"
+#   source: post_hoc | in_flight
+#   source_detail: "debrief 2026-08-20 / override in <slug> frame v4 / check F6 waved through"
+#   occurrences: 1
+#   first_seen: 2026-08-20
+#   last_seen: 2026-08-20
+#   target_tier: analysis-method | frame-schema | method-moves | deck-rubric | workflow
+#   falsification:
+#     attempted: no
+#     by: null              # must be a blind agent, never the operator
+#     counter_case: null    # the problem statement where the rule flips, if one was found
+#     survived: null
+#   promoted: no
+#   rejected: no
+
+candidates:
+
+  - id: C001
+    rule: >
+      The frame freezes N days before delivery. After the freeze only the ARTIFACT may
+      change, never the frame. If the frame changes after the freeze, the rehearsal
+      window resets and the delivery date moves, or the change does not ship.
+    source: post_hoc
+    source_detail: >
+      Outcome debrief 2026-08-13 (private debrief record; see coaching/progress/ for the
+      dated file). Operator, unprompted: "I think I had all the building blocks, but with
+      my pivot, I just didn't have enough time to practice what I needed to say to defend it."
+      Independently corroborated: deck v1 on 8/3, v3-lean on 8/4, delivered 8/5; the blind
+      reconstruction found a criterion reworded between v1 and the delivered artifact; the
+      8/4 debrief already carried a zero-rehearsal note.
+    why_it_matters: >
+      Reframes the fix. Rehearsal was not skipped through negligence, it was crowded out by
+      a late structural change to the thing being rehearsed. "Rehearse more" is a discipline
+      rule and discipline rules do not convert. A freeze date is a scheduling gate and
+      scheduling gates convert, because they are checkable without in-moment judgment.
+    occurrences: 1
+    first_seen: 2026-08-13
+    last_seen: 2026-08-13
+    target_tier: analysis-method
+    open_question: >
+      What is N? Same-day written prep is documented not to transfer, so N is at least 2.
+      Not yet grounded in evidence. Do not encode a number until it is.
+    falsification:
+      attempted: no
+      by: null
+      counter_case: null
+      survived: null
+    promoted: no
+    rejected: no
+    note: >
+      FIRST CANDIDATE PRODUCED BY THE COMPOUNDING LOOP FROM REAL FEEDBACK. The schema already
+      carries `locked:` as a marker but attaches no timing requirement to it, so the gate has
+      a natural home if this promotes.
+
+# Demotion candidates: standing rules that have stopped firing.
+#
+# - rule_id: F4
+#   runs_since_last_fire: 6
+#   surfaced: 2026-10-01
+#   disposition: null       # keep | cut | rewrite
+
+demotion_candidates: []
