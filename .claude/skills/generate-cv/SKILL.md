@@ -198,12 +198,14 @@ The `.yaml` file is now complete and standalone — design + content baked toget
 ### Step 9b: Render PDF + Markdown + PNG
 
 ```bash
-cd output/<company-slug> && \
-  ~/.local/bin/rendercv render MMDDYY-magnuson.yaml \
-    --pdf-path      MMDDYY-magnuson.pdf \
-    --markdown-path MMDDYY-magnuson.md \
-    --dont-generate-html
+~/.local/bin/rendercv render output/<company-slug>/MMDDYY-magnuson.yaml \
+  --pdf-path       MMDDYY-magnuson.pdf \
+  --markdown-path  MMDDYY-magnuson.md \
+  --output-folder  output/<company-slug>/rendercv_output \
+  --dont-generate-html
 ```
+
+**No `cd`, deliberately.** `--pdf-path` and `--markdown-path` are resolved *relative to the input file* (verified against `rendercv render --help`), so the artifacts land beside the YAML exactly as before. `--output-folder` is the one path resolved against the cwd, so it is pinned explicitly. The shell cwd resets between tool calls in this harness, which makes a relative `cd` a latent false-confirmation bug — see `memory/feedback_bash_confirm_must_chain_to_operation.md`.
 
 The PDF is the artifact you send. The markdown is the rendercv-emitted version used by `/review-cv` and `/review-cv-deep`. The PNG (in `rendercv_output/*_1.png`) is for the layout verification in Step 9b-verify — do NOT delete `rendercv_output/` until after that step.
 

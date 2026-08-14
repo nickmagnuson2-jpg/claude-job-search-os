@@ -57,12 +57,12 @@ CVs are generated as **YAML, not markdown**, and rendered to PDF by RenderCV (Ty
 
 **To re-render after edits** (no skill needed):
 ```bash
-cd output/<slug>
-rendercv render MMDDYY-magnuson.yaml \
+rendercv render output/<slug>/MMDDYY-magnuson.yaml \
   --pdf-path MMDDYY-magnuson.pdf \
   --markdown-path MMDDYY-magnuson.md \
+  --output-folder output/<slug>/rendercv_output \
   --dont-generate-html --dont-generate-png
-rm -rf rendercv_output/
+rm -rf output/<slug>/rendercv_output/
 ```
 
 ### Render & verify (do this before presenting any CV)

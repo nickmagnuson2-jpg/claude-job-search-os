@@ -184,13 +184,15 @@ PYTHONIOENCODING=utf-8 python3 tools/cv_merge_theme.py \
   --out     output/<company-slug>/MMDDYY-magnuson.yaml \
   --json
 
-cd output/<company-slug> && \
-  ~/.local/bin/rendercv render MMDDYY-magnuson.yaml \
-    --pdf-path      MMDDYY-magnuson.pdf \
-    --markdown-path MMDDYY-magnuson.md \
-    --dont-generate-html \
-    --dont-generate-png
+~/.local/bin/rendercv render output/<company-slug>/MMDDYY-magnuson.yaml \
+  --pdf-path       MMDDYY-magnuson.pdf \
+  --markdown-path  MMDDYY-magnuson.md \
+  --output-folder  output/<company-slug>/rendercv_output \
+  --dont-generate-html \
+  --dont-generate-png
 ```
+
+**No `cd`, deliberately.** `--pdf-path`/`--markdown-path` resolve relative to the input file, so output lands beside the YAML as before; `--output-folder` resolves against cwd and is pinned. A relative `cd` is a latent false-confirmation bug in this harness (the cwd resets between tool calls) — see `memory/feedback_bash_confirm_must_chain_to_operation.md`.
 
 Delete the auto-generated `rendercv_output/` subfolder once canonical files are in place. The `.yaml` is design+content baked together (reproducible standalone); the `.pdf` is the send artifact; the `.md` is for review skills.
 
