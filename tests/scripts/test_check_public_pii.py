@@ -165,6 +165,40 @@ def test_is_public_path_covers_examples_and_plugins():
     assert cpp.is_public_path("plugins/README.md")
 
 
+def test_is_public_path_covers_claude_workflows():
+    """Regression, 2026-08-13.
+
+    .claude/workflows/ is tracked and public and carried three .js files that the
+    always-on hook had NEVER scanned, because the directory was missing from
+    PUBLIC_PREFIXES. Anything committed there was ungated.
+
+    The gap surfaced only because the tool refuses to report a clean sweep over zero
+    files. A scanner that answered "clean" for an empty scope would have concealed it
+    indefinitely -- which is why that refusal is a feature and must stay.
+    """
+    assert cpp.is_public_path(".claude/workflows/plan-hardening.js")
+    assert cpp.is_public_path(".claude/workflows/anything.js")
+    # sibling public surface must not regress
+    assert cpp.is_public_path(".claude/skills/foo/SKILL.md")
+
+
+def test_empty_scope_is_never_reported_as_clean():
+    """An empty sweep is an error, not a pass.
+
+    This is the property that exposed the workflows gap above. If a future change
+    makes a zero-file scan return clean, coverage holes become invisible again.
+    """
+    r = subprocess.run(
+        [sys.executable, str(SCRIPT), "--scan",
+         "data/definitely-gitignored-not-public.md"],
+        capture_output=True, text=True, cwd=str(SCRIPT.parents[1]),
+    )
+    payload = json.loads(r.stdout)
+    assert payload.get("clean") is not True, payload
+    assert payload.get("scanned") == 0
+    assert "error" in payload
+
+
 def test_is_binary_flags_pdf_and_images_not_text():
     assert cpp.is_binary("examples/output/sample-cv.pdf")
     assert cpp.is_binary("docs/diagram.png")

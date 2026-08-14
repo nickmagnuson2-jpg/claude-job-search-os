@@ -6,6 +6,7 @@ export const meta = {
     { title: 'Critique', detail: 'N independent adversarial lenses per round' },
     { title: 'Revise', detail: 'fold surviving holes into the plan' },
     { title: 'Judge', detail: 'fresh judge: residual risk register + unverified repo-state claims' },
+    { title: 'Validate', detail: 'independent model checks every claim against real repo state', model: 'fable' },
   ],
 }
 
@@ -118,6 +119,53 @@ const JUDGE_SCHEMA = {
     reason: { type: 'string' },
   },
   required: ['residual_risks', 'unverified_claims', 'remaining_blocking', 'reason'],
+}
+
+// The Judge emits `unverified_claims` and `where_to_verify` and then NOTHING checks
+// them. That is the gap this schema closes. A panel reasoning from a false premise
+// about repo state produces confident, well-argued, wrong risks — and the register
+// reads identically whether the premises were true or not.
+//
+// THREE STATES, and UNVERIFIABLE is never a pass. Same discipline as the frame gate:
+// a claim nobody could check is not a confirmed claim, and collapsing the two is how
+// "we verified it" comes to mean "we looked at it."
+const VALIDATION_SCHEMA = {
+  type: 'object',
+  properties: {
+    verdict: {
+      type: 'string',
+      enum: ['CONFIRMED', 'REFUTED', 'UNVERIFIABLE'],
+      description: 'CONFIRMED = evidence found proving it true. REFUTED = evidence found proving it false. UNVERIFIABLE = could not establish either way. Default to UNVERIFIABLE over guessing.',
+    },
+    evidence: {
+      type: 'string',
+      description: 'The concrete artifact: file:line, the command run and its output, or the specific absence checked and the scope of that check. A verdict with no evidence is not a verdict.',
+    },
+    consequence: {
+      type: 'string',
+      description: 'If REFUTED: what in the plan or the risk register rests on this false premise and must change. Otherwise a short note.',
+    },
+  },
+  required: ['verdict', 'evidence', 'consequence'],
+}
+
+function validatePrompt(claim, kind) {
+  return `You are an independent verifier. A different model produced the claim below while stress-testing a plan. NOBODY has checked it against the actual repository. Your only job is to establish whether it is true.
+
+DOMAIN CONTEXT: ${CONTEXT}
+
+CLAIM TO VERIFY (${kind}):
+${claim}
+
+METHOD — this is not optional:
+- Actually run commands and open files. A verdict from reasoning alone is worthless here.
+- Cite concrete evidence: file:line, or the command you ran and what it returned.
+- To assert something does NOT exist, you must state the scope you searched. "Not found" without a named scope is not evidence of absence.
+- REPO TRAP, read this before searching: the shell's \`grep\` is ripgrep-backed and honours .gitignore. Gitignored trees are INVISIBLE to a repo-root grep and return empty results indistinguishable from a true negative. Name candidate directories explicitly, or bypass with: find . -path ./.git -prune -o -name '*.md' -print | xargs /usr/bin/grep -l "<term>"
+
+BIAS INSTRUCTION: you are here to REFUTE. The claim arrived with confidence attached and no evidence. Try to prove it wrong first. If you cannot establish it either way, return UNVERIFIABLE — do not upgrade a plausible-sounding claim to CONFIRMED because it seems reasonable.
+
+Return ONLY the structured object.`
 }
 
 // Lexical (NOT semantic) dedup signature for a hole. Deterministic and agent-free:
@@ -255,6 +303,46 @@ const stoppedBecause = quietRounds >= QUIET_ROUNDS_TO_STOP
   ? `no new blocking holes for ${quietRounds} round(s)`
   : `hit maxRounds (${MAX_ROUNDS}) with new blocking holes still arriving — treat this plan as UNCONVERGED`
 
+// ---------------------------------------------------------------------------
+// VALIDATE — the step that stops the register resting on unchecked premises.
+//
+// Runs on a DIFFERENT model to the panel, deliberately. Same-model verification
+// inherits the same blind spots that produced the claim; an independent model is
+// the cheapest real independence available. Skip with args.skipValidation.
+// ---------------------------------------------------------------------------
+phase('Validate')
+
+const claimsToCheck = [
+  ...(lastVerdict?.unverified_claims || []).map((c) => ({ claim: c, kind: 'unverified repo-state claim' })),
+  ...(lastVerdict?.residual_risks || [])
+    .filter((r) => r.where_to_verify)
+    .map((r) => ({ claim: `RISK: ${r.risk}\nTO VERIFY: ${r.where_to_verify}`, kind: 'residual risk premise' })),
+]
+
+let validations = []
+if (cfg.skipValidation) {
+  log('Validation SKIPPED by caller — every claim below is unchecked.')
+} else if (claimsToCheck.length === 0) {
+  log('Validation: the judge emitted no checkable claims. That is itself worth noticing.')
+} else {
+  log(`Validating ${claimsToCheck.length} claim(s) against real repo state on an independent model...`)
+  validations = (await parallel(claimsToCheck.map((c, i) => () =>
+    agent(validatePrompt(c.claim, c.kind), {
+      label: `validate:${i + 1}`,
+      phase: 'Validate',
+      model: 'fable',
+      schema: VALIDATION_SCHEMA,
+    }).then((v) => (v ? { ...v, claim: c.claim, kind: c.kind } : null)),
+  ))).filter(Boolean)
+
+  const refuted = validations.filter((v) => v.verdict === 'REFUTED')
+  const unver = validations.filter((v) => v.verdict === 'UNVERIFIABLE')
+  log(`Validation: ${validations.filter((v) => v.verdict === 'CONFIRMED').length} confirmed, ${refuted.length} REFUTED, ${unver.length} unverifiable.`)
+  if (refuted.length) {
+    log(`${refuted.length} claim(s) were FALSE. Any risk resting on them is unsound and must be re-read, not just noted.`)
+  }
+}
+
 const outPath = cfg.outPath || `scratchpad/plan-hardened.md`
 await agent(
   `Write the following hardened plan to ${outPath} exactly as given (it is final). Then return a 3-sentence summary of its final shape.\n\nPLAN:\n${planText.slice(0, 60000)}`,
@@ -271,6 +359,18 @@ return {
   residual_risks: lastVerdict?.residual_risks || [],
   unverified_claims: lastVerdict?.unverified_claims || [],
   open_blocking: (lastVerdict?.residual_risks || []).filter((r) => r.status === 'open' && r.severity === 'blocking').map((r) => r.risk),
+
+  // Validation results. READ `refuted` FIRST — a refuted claim means the panel
+  // reasoned from a false premise, so the risk built on it is unsound rather than
+  // merely open. `unverifiable` is NOT a pass; those claims remain unchecked work.
+  validation: {
+    ran: !cfg.skipValidation && claimsToCheck.length > 0,
+    checked: validations.length,
+    refuted: validations.filter((v) => v.verdict === 'REFUTED'),
+    unverifiable: validations.filter((v) => v.verdict === 'UNVERIFIABLE'),
+    confirmed: validations.filter((v) => v.verdict === 'CONFIRMED'),
+  },
+
   outPath,
   history,
   finalPlanChars: planText.length,

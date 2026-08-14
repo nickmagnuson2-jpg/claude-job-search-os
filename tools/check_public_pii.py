@@ -34,7 +34,15 @@ AMBIGUOUS_REL = "tools/.pii-denylist-ambiguous.txt"
 
 # Public-repo path prefixes/globs. A file outside these is not a public artifact.
 # examples/ + plugins/ are tracked public surface too (fable-audit 2026-07-07 #10/#17).
-PUBLIC_PREFIXES = ("tests/", ".claude/skills/", "framework/", "docs/", "examples/", "plugins/")
+# .claude/workflows/ added 2026-08-13: it is tracked and public, carried three .js
+# files, and was NOT in this tuple -- so the always-on hook had never once scanned
+# them. Found because the tool refused to report a clean sweep over zero files
+# instead of returning a green result. The refusal is what surfaced the gap; a
+# tool that had answered "clean" for an empty scope would have hidden it.
+PUBLIC_PREFIXES = (
+    "tests/", ".claude/skills/", ".claude/workflows/", "framework/", "docs/",
+    "examples/", "plugins/",
+)
 # Plus: tools/*.{py,md,sh} and top-level *.md (README.md, CLAUDE.md, ...).
 
 # Binary / non-text extensions: never text-scanned for denylist tokens. A PDF's byte

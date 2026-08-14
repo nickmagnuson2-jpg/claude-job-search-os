@@ -50,6 +50,13 @@ NON_HOOK_CHECKERS = {
     # files that do not exist in a clean clone, and the check is whole-corpus rather
     # than per-edit.
     "check_doc_precedence.py",
+    # The Section F frame-integrity gate. Deliberately NOT a hook: it runs against a
+    # whole frame.yaml at defined points in the analysis workflow, and a frame is
+    # INCOMPLETE by design for most of its life -- D1 is authored before D2, elements
+    # before closure. A per-edit hook would block every intermediate save and would
+    # make authoring impossible. It is invoked as a gate before an artifact ships,
+    # the same shape as check_prep_doc.py.
+    "check_frame_integrity.py",
 }
 
 
