@@ -21,6 +21,56 @@ Format:
 
 ---
 
+## 2026-08-13 | Second corpus run: the gate generalises, and it found two bugs in itself | v1.3 -> v1.4
+
+**Source:** in-flight. The gate was run against a second, unrelated engagement — a small-business
+takeover decision in a different vault, never graded, no outcome to anchor to. Blind reconstruction,
+same anti-anchoring protocol as the first.
+
+**THE GENERALISATION QUESTION IS ANSWERED: it travels.** 9 of 11 checks executed on a problem type
+Section F was never designed against, versus 7 on the corpus it was built from. The largest open
+concern about the rubric — that it might only work on prioritization decks — does not hold.
+
+**It found a real defect in the analysis: F3 fired five times.** Five inputs load-bearing across two
+elements each, in a four-criteria frame. The first corpus had exactly one such collision and that one
+is what lost the room. The source half-knew — it says in prose that one criterion's math *"silently
+assumes"* another's input — but caught one of five, and none structurally.
+
+**It found two bugs in the gate**, both invisible on the first corpus:
+
+1. **Flat dotted keys.** The schema declares field names in dotted notation, so the transcriber wrote
+   `d1.problem_statement:` as a flat top-level key. Ten fields landed that way. `validate_structure`
+   saw no `d1` parent and read every nested field as "not authored yet" — correct for an incomplete
+   frame, wrong here. The file passed structural validation and returned CANNOT_RUN on everything
+   reading `d1` or `recommendation`. **The root cause is the schema's own notation**, so it recurs
+   with any transcriber and had to be caught mechanically.
+2. **YAML dates.** An unquoted `2026-07-21` parses to a date object, and `timestamp` fields demanded
+   `str`, so a correctly-authored frame was reported malformed.
+
+## 2026-08-13 | Frame schema 2 -> 3: surfaces become identifiers | same run
+
+**F1b was running at a 50% false-positive rate and I would have reported its findings as real.**
+
+It compared two free-text surface DESCRIPTIONS for equality and failed 4 of 4 elements. Two were
+false: both said *"same line, stated parenthetically with the name"* — which is co-location — but the
+strings differed because one carried extra detail. Comparing prose for equality was never going to
+work.
+
+**Fix:** `name_surface` / `measure_surface` become **identifiers** (`p5`, `slide-8`, `step-1`), matched
+against a pattern that lives in the schema so tightening it stays a schema edit. The prose moves to
+optional `*_surface_note` fields that nothing compares, so no information is lost.
+
+**F1b now reports CANNOT_RUN on any frame below v3** rather than emitting findings it knows are
+unreliable. That is the three-state rule turned on the schema's own history: a check that cannot be
+trusted must say so. On the second corpus this took the result from 4 failures (2 false) to 3
+failures, all real — **the check got more honest, not weaker.**
+
+Operator's framing on the second schema change in one evening, and it is the right one: this is
+discovery, not amendment. Worth noting that a *schema* settling over three passes is normal, while a
+*rule* doing that would not be.
+
+---
+
 ## 2026-08-13 | Frame schema 1 -> 2: run-state fields | method v1.2 -> v1.3
 
 **Source:** in-flight, during design of the run protocol. Not a feedback event.

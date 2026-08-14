@@ -29,7 +29,7 @@ import check_frame_integrity as cfi  # noqa: E402
 def clean_frame():
     """A frame that should pass every runnable check."""
     return {
-        "schema_version": 1,
+        "schema_version": 3,
         "version": 2,
         "locked": True,
         "engagement": "acme",
@@ -151,6 +151,52 @@ def test_F1b_fails_when_measure_sits_off_the_naming_surface():
     f = clean_frame()
     f["elements"][0]["measure_surface"] = "p12"
     assert states(f)["F1b"] == cfi.FAIL
+
+
+def test_F1b_cannot_run_below_v3_because_surfaces_were_prose():
+    """Measured 2026-08-13 on a real frame: comparing prose surface DESCRIPTIONS for
+    equality produced 2 false failures out of 4. Both said "same line, stated
+    parenthetically with the name" -- co-located -- but the strings differed because
+    one carried extra detail.
+
+    A check that cannot be trusted must say so. Emitting findings it knows are
+    unreliable is worse than emitting none.
+    """
+    f = clean_frame()
+    f["schema_version"] = 2
+    r = [x for x in cfi.run_checks(f) if x.rule == "F1b"][0]
+    assert r.state == cfi.CANNOT_RUN
+    assert "prose" in r.detail
+
+
+def test_surfaces_must_be_identifiers_not_prose_at_v3():
+    """Without this the field drifts straight back to sentences and F1b silently
+    returns to comparing descriptions, which is the bug v3 exists to fix."""
+    schema = yaml.safe_load(SCHEMA.read_text(encoding="utf-8"))
+    f = clean_frame()
+    f["elements"][0]["measure_surface"] = (
+        "072126-doc.md, Step 4 workplan and the kill criterion in Step 7; deck slide 10")
+    errs = cfi.validate_surface_identifiers(f, schema)
+    assert errs, "prose in a surface field must be a structural error at v3"
+    assert "identifier" in errs[0]
+
+
+def test_identifier_pattern_comes_from_the_schema_not_from_code():
+    """Tightening the pattern must be a schema edit."""
+    schema = yaml.safe_load(SCHEMA.read_text(encoding="utf-8"))
+    assert schema.get("identifier_pattern")
+    src = (REPO / "tools" / "check_frame_integrity.py").read_text(encoding="utf-8")
+    assert "identifier_pattern" in src
+    assert "^[a-z0-9]" not in src, "pattern must not be hardcoded in the module"
+
+
+def test_prose_surfaces_are_not_flagged_below_v3():
+    """Old frames keep working; the constraint applies from v3 onward only."""
+    schema = yaml.safe_load(SCHEMA.read_text(encoding="utf-8"))
+    f = clean_frame()
+    f["schema_version"] = 2
+    f["elements"][0]["measure_surface"] = "a long prose description of where it sits"
+    assert cfi.validate_surface_identifiers(f, schema) == []
 
 
 def test_F2a_fails_on_empty_because_not_just_unresolved():
@@ -355,7 +401,7 @@ def test_schema_declares_which_frame_versions_it_supports():
     assert schema["schema_version"] in supported, "current version must support itself"
 
 
-@pytest.mark.parametrize("ver", [1, 2])
+@pytest.mark.parametrize("ver", [1, 2, 3])
 def test_every_supported_version_is_accepted(tmp_path, ver):
     schema = yaml.safe_load(SCHEMA.read_text(encoding="utf-8"))
     if ver not in schema.get("supports_frames_at", []):

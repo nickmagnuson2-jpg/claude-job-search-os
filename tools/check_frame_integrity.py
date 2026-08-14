@@ -34,6 +34,7 @@ from __future__ import annotations
 import argparse
 import datetime as _dt
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -163,6 +164,40 @@ def detect_flat_dotted_keys(frame, schema):
     ]
 
 
+def validate_surface_identifiers(frame, schema):
+    """Surfaces must be short comparable tokens, not sentences (v3+).
+
+    Without this the field drifts straight back to prose and F1b silently returns to
+    comparing descriptions, which is the bug v3 exists to fix. The pattern lives in
+    the schema so tightening it is a schema edit, not a code edit.
+    """
+    ver = frame.get("schema_version")
+    if not isinstance(ver, int) or ver < SURFACE_IDENTIFIER_MIN_VERSION:
+        return []
+    pattern = (schema or {}).get("identifier_pattern")
+    if not pattern:
+        return []
+    try:
+        rx = re.compile(pattern)
+    except re.error as exc:
+        return [f"schema identifier_pattern is not valid regex: {exc}"]
+
+    errors = []
+    for i, e in enumerate(_elements(frame)):
+        if not isinstance(e, dict):
+            continue
+        for field in ("name_surface", "measure_surface"):
+            val = e.get(field)
+            if val is None:
+                continue
+            if not isinstance(val, str) or not rx.match(val):
+                shown = str(val)[:60] + ("..." if len(str(val)) > 60 else "")
+                errors.append(
+                    f"{_label(e, i)}.{field} must be an identifier matching "
+                    f"{pattern} (e.g. p5, slide-8, step-1), got prose: {shown!r}")
+    return errors
+
+
 def validate_structure(frame, schema):
     """Type-check every PRESENT field against the schema's declared shape.
 
@@ -172,6 +207,7 @@ def validate_structure(frame, schema):
     silent CANNOT_RUN.
     """
     errors = list(detect_flat_dotted_keys(frame, schema))
+    errors += validate_surface_identifiers(frame, schema)
     fields = (schema or {}).get("fields")
     if not isinstance(fields, dict):
         return errors + ["schema has no `fields:` block to validate against"]
@@ -237,11 +273,32 @@ def check_F1a(frame):
     return Result("F1a", PASS, f"all {len(els)} elements carry a measure")
 
 
+SURFACE_IDENTIFIER_MIN_VERSION = 3
+
+
 def check_F1b(frame):
-    """`measure_surface` equals `name_surface` -- the level below sits where the name does."""
+    """`measure_surface` equals `name_surface` -- the level below sits where the name does.
+
+    Only meaningful when surfaces are IDENTIFIERS. Below v3 they were free prose, and
+    comparing two prose descriptions for equality produced 2 false failures out of 4 on
+    a real frame: both elements said "same line, stated parenthetically with the name",
+    which IS co-location, but the strings differed because one carried extra detail.
+
+    A check that cannot be trusted must say so rather than emit findings. CANNOT_RUN is
+    the honest verdict on a pre-v3 frame, not a best-effort string compare.
+    """
     els = _elements(frame)
     if not els:
         return Result("F1b", CANNOT_RUN, "no `elements` in frame")
+
+    ver = frame.get("schema_version")
+    if isinstance(ver, int) and ver < SURFACE_IDENTIFIER_MIN_VERSION:
+        return Result("F1b", CANNOT_RUN,
+                      f"frame is at schema v{ver}, where surfaces are free prose. "
+                      "Comparing prose descriptions for equality is unreliable "
+                      f"(measured: 2 false failures of 4), so co-location is not "
+                      f"checkable below v{SURFACE_IDENTIFIER_MIN_VERSION}")
+
     have = [e for e in els
             if isinstance(e, dict) and ("name_surface" in e or "measure_surface" in e)]
     if not have:
