@@ -99,6 +99,93 @@ def _label(el, idx):
 
 
 # --------------------------------------------------------------------------
+# structural validation
+#
+# ADDED 2026-08-13 after an adversarial panel found, and a live test confirmed,
+# that a frame with `elements` as a STRING and `d1` as a STRING returned
+# clean=true and exit 0. Every reader helper coerces a malformed field to an
+# empty list or dict, so the checks all degraded to CANNOT_RUN, and CANNOT_RUN
+# does not block. The result was a green light on a structurally invalid file:
+# artifacts of rigor without the rigor, rebuilt inside the gate meant to catch it.
+#
+# The schema's `fields:` block was pure documentation until now -- nothing read
+# it. This is what reads it.
+# --------------------------------------------------------------------------
+
+def _shape_of(decl_type: str):
+    """Coarse expected python type from the schema's `type:` string."""
+    t = str(decl_type or "").strip()
+    if t.startswith("list["):
+        return list
+    if t.startswith("map[") or t.startswith("{"):
+        return dict
+    if t == "bool":
+        return bool
+    if t == "int":
+        return int
+    if t in ("string", "timestamp", "enum"):
+        return str
+    return None  # unknown/unconstrained
+
+
+def validate_structure(frame, schema):
+    """Type-check every PRESENT field against the schema's declared shape.
+
+    Absent fields are NOT errors here -- a frame is legitimately incomplete for most
+    of its life (D1 is authored before D2, elements before closure). This checks only
+    that what IS there has the right shape. A wrong shape is a hard error, never a
+    silent CANNOT_RUN.
+    """
+    errors = []
+    fields = (schema or {}).get("fields")
+    if not isinstance(fields, dict):
+        return ["schema has no `fields:` block to validate against"]
+
+    for dotted, spec in fields.items():
+        if not isinstance(spec, dict):
+            continue
+        expected = _shape_of(spec.get("type"))
+        if expected is None:
+            continue
+
+        parts = dotted.split(".")
+        cur, ok = frame, True
+        for p in parts[:-1]:
+            if not isinstance(cur, dict):
+                errors.append(f"{'.'.join(parts[:-1])} must be a mapping, got "
+                              f"{type(cur).__name__}")
+                ok = False
+                break
+            if p not in cur:
+                ok = False  # parent absent: field simply not authored yet
+                break
+            cur = cur[p]
+        if not ok or not isinstance(cur, dict):
+            continue
+        leaf = parts[-1]
+        if leaf not in cur or cur[leaf] is None:
+            continue  # absent or explicitly null is fine
+
+        val = cur[leaf]
+        # bool is a subclass of int in python; check it first so True != 1
+        if expected is int and isinstance(val, bool):
+            errors.append(f"{dotted} must be int, got bool")
+        elif not isinstance(val, expected):
+            errors.append(f"{dotted} must be {expected.__name__}, got "
+                          f"{type(val).__name__}")
+
+    # Dedup, order-preserving: one malformed parent (e.g. `d1.mode` as a string)
+    # is hit once per child field declared under it, which reports the same error
+    # N times and buries the distinct ones.
+    seen, unique = set(), []
+    for e in errors:
+        if e not in seen:
+            seen.add(e)
+            unique.append(e)
+    return unique
+
+
+# --------------------------------------------------------------------------
 # the checks
 # --------------------------------------------------------------------------
 
@@ -463,21 +550,36 @@ def main(argv=None):
                               "detail": f"cannot read {args.prior}: {exc}"}, indent=2))
             return 4
 
+    # --- structural gate: a malformed field must never degrade into CANNOT_RUN ---
+    structural = validate_structure(frame, schema)
+
     results = run_checks(frame, prior)
     fails = [r for r in results if r.state == FAIL]
     cannot = [r for r in results if r.state == CANNOT_RUN]
     passes = [r for r in results if r.state == PASS]
 
+    # COVERAGE FLOOR. `clean` on a frame where almost nothing could execute is a
+    # meaningless green light -- the exact result that exposed this bug (1 pass,
+    # 0 fail, 10 cannot_run, clean=true). If fewer than two checks actually ran,
+    # the frame has not been meaningfully tested and cannot be called clean.
+    executed = len(passes) + len(fails)
+    MIN_EXECUTED = 2
+    under_floor = executed < MIN_EXECUTED
+
     payload = {
         "status": "ok",
         "frame": str(frame_path),
         "schema_version": got,
+        "structural_errors": structural,
         "checks": [r.as_dict() for r in results],
-        "counts": {"pass": len(passes), "fail": len(fails), "cannot_run": len(cannot)},
-        # clean == no FAILs. fully_covered == additionally no CANNOT_RUNs.
-        # A CANNOT_RUN is never a pass; read both fields.
-        "clean": not fails,
-        "fully_covered": not fails and not cannot,
+        "counts": {"pass": len(passes), "fail": len(fails), "cannot_run": len(cannot),
+                   "executed": executed},
+        # clean requires: no FAILs, no structural errors, AND enough checks actually ran.
+        # A CANNOT_RUN is never a pass. fully_covered additionally means nothing
+        # went untested. Read all three.
+        "clean": not fails and not structural and not under_floor,
+        "under_coverage_floor": under_floor,
+        "fully_covered": not fails and not structural and not cannot,
         "delegated_not_checked_here": {
             "blind_agent": ["F4", "F1 quality", "F2 vocabulary-vs-derivation",
                             "F3 distinction sentence", "F5 quality"],
@@ -490,19 +592,32 @@ def main(argv=None):
     else:
         print(f"\nframe: {frame_path}")
         print(f"schema_version: {got}\n")
+        if structural:
+            print("  STRUCTURAL ERRORS -- fields present but the wrong shape:")
+            for e in structural:
+                print(f"    ! {e}")
+            print("    (a malformed field silently empties every check that reads it,")
+            print("     so these are hard errors and not CANNOT_RUN)\n")
         for r in results:
             icon = {"PASS": "ok  ", "FAIL": "FAIL", "CANNOT_RUN": "----"}[r.state]
             print(f"  [{icon}] {r.rule:<10} {r.detail}")
             for o in r.offenders:
                 print(f"           - {o}")
         c = payload["counts"]
-        print(f"\n  {c['pass']} pass, {c['fail']} fail, {c['cannot_run']} cannot run")
+        print(f"\n  {c['pass']} pass, {c['fail']} fail, {c['cannot_run']} cannot run "
+              f"({c['executed']} actually executed)")
         print(f"  clean={payload['clean']}  fully_covered={payload['fully_covered']}")
+        if under_floor:
+            print(f"\n  UNDER COVERAGE FLOOR: only {executed} check(s) executed "
+                  f"(min {MIN_EXECUTED}).\n  This frame has not been meaningfully "
+                  "tested and is NOT clean regardless of failures.")
         if cannot:
             print("\n  NOTE: a CANNOT_RUN is not a pass. Those rules were not tested.")
         print()
 
-    return 2 if fails else 0
+    # Structural errors and an untested frame are both failures of the gate's
+    # purpose, not merely absences. Exit non-zero for all three conditions.
+    return 2 if (fails or structural or under_floor) else 0
 
 
 if __name__ == "__main__":

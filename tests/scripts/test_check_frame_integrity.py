@@ -308,6 +308,79 @@ def test_any_failure_exits_2(tmp_path):
     assert run(write(tmp_path, f)).returncode == 2
 
 
+# ---------------------------------------------------------------- structural gate
+#
+# Origin 2026-08-13: an adversarial panel predicted, and a live run confirmed, that a
+# frame with `elements` as a STRING and `d1` as a STRING returned clean=true and exit
+# 0. Malformed fields made every reader helper return empty, so all checks degraded to
+# CANNOT_RUN, and CANNOT_RUN does not block. A green light on a structurally invalid
+# file -- the project's documented failure mode, rebuilt inside the gate meant to catch
+# it. These tests exist so it cannot come back.
+
+def garbage_frame():
+    return {
+        "schema_version": 1,
+        "engagement": 12345,                     # should be str
+        "d1": "this should be a mapping",        # should be dict
+        "closure": "x",
+        "exclusions": [{"element": "y", "reason": "z"}],
+        "elements": "this should be a list",     # should be list
+    }
+
+
+def test_the_original_bug_case_is_not_clean(tmp_path):
+    r = run(write(tmp_path, garbage_frame()))
+    payload = json.loads(r.stdout)
+    assert payload["clean"] is False, "a structurally invalid frame must never be clean"
+    assert r.returncode == 2
+    assert payload["structural_errors"], "malformed shapes must be reported, not swallowed"
+
+
+def test_malformed_field_is_a_hard_error_not_a_cannot_run(tmp_path):
+    """The precise mechanism: wrong type -> empty reader -> CANNOT_RUN -> not a failure."""
+    payload = json.loads(run(write(tmp_path, garbage_frame())).stdout)
+    joined = " ".join(payload["structural_errors"])
+    assert "elements must be list" in joined
+    assert "d1" in joined
+
+
+def test_structural_errors_are_deduplicated(tmp_path):
+    """One malformed parent is hit once per child declared under it."""
+    errs = json.loads(run(write(tmp_path, garbage_frame())).stdout)["structural_errors"]
+    assert len(errs) == len(set(errs))
+
+
+def test_absent_fields_are_not_structural_errors():
+    """A frame is legitimately incomplete for most of its life. Absent != malformed."""
+    f = clean_frame()
+    del f["closure"], f["exclusions"], f["recommendation"]
+    schema = yaml.safe_load(SCHEMA.read_text(encoding="utf-8"))
+    assert cfi.validate_structure(f, schema) == []
+
+
+def test_bool_is_not_accepted_where_int_is_declared():
+    schema = yaml.safe_load(SCHEMA.read_text(encoding="utf-8"))
+    f = clean_frame()
+    f["version"] = True                      # bool subclasses int in python
+    errs = cfi.validate_structure(f, schema)
+    assert any("version" in e and "bool" in e for e in errs), errs
+
+
+def test_coverage_floor_blocks_a_frame_nothing_could_test(tmp_path):
+    """clean=true on 1 executed check is a meaningless green light."""
+    payload = json.loads(run(write(tmp_path, {"schema_version": 1, "engagement": "x"})).stdout)
+    assert payload["under_coverage_floor"] is True
+    assert payload["clean"] is False
+    assert payload["counts"]["executed"] < 2
+
+
+def test_real_frame_has_no_structural_errors(tmp_path):
+    """The fix must not fire on a well-formed frame."""
+    payload = json.loads(run(write(tmp_path, clean_frame())).stdout)
+    assert payload["structural_errors"] == []
+    assert payload["clean"] is True
+
+
 # ---------------------------------------------------------------- acceptance regression
 
 def _find_reconstruction():
