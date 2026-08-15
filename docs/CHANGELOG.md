@@ -3,6 +3,51 @@
 All notable changes to this job search system are recorded here.
 Format: newest entries at the top.
 
+## 2026-08-14: the ECONNRESET drops are upstream, proved by TTL, after two wrong answers of my own
+
+Four days of investigation had narrowed the recurring `API Error: Connection dropped (ECONNRESET)`
+to a hard ~180s cliff but could not identify who owned the timer: home router NAT, ISP CGNAT, or
+the server edge. A packet capture settled it.
+
+**The answer: Anthropic's edge resets live connections.** Of 37 connections captured, **17 were
+reset by the server with no client FIN first** (one took 13 consecutive RSTs). A further 8 were
+benign client-close-then-server-RST pool teardowns, which is the trap — counting those as failures
+inflates the result, so each RST was paired against its own connection's prior events.
+
+**The discriminator was TTL.** Every packet from the API IP — the RSTs, the bare option-less ones,
+and the ordinary data packets — arrives at `ttl=57`. An RST injected by a middlebox on our side of
+the path would carry a different hop count. **Home router and ISP are both eliminated.** Nothing on
+this machine fixes it; the keepalive sysctl applied earlier was reverted, having targeted a local
+path timer that does not exist.
+
+**Two of my own conclusions had to be retracted first, and both failures were measurement, not
+reasoning:**
+
+1. **An investigation contaminates its own corpus.** Counting transcript lines containing
+   `ECONNRESET` returned 89 records; only **18** were real (`isApiErrorMessage: true`). The other
+   80% were us *discussing* the problem — prose, changelog quotes, and recursively the tool result
+   from reading the investigation doc. The count rises the more you investigate, in the direction
+   that makes the problem look urgent. It nearly shipped a "16x worse after the fix" finding.
+2. **A sleep-resume theory I called "conclusive" was refuted an hour later.** Debug logs showed
+   errors 0.5s after resume-from-idle, which looked decisive. But on clean data **0 of 18 real
+   errors follow a ≥10min idle**, while 72% land in the 150–230s band. Two distinct phenomena had
+   been conflated: transient dead-pool sockets that self-heal via retry and never surface, versus
+   the user-visible ~180s failures.
+
+**The contaminated data had also produced the original investigation's wrong refutation.** It
+dismissed keep-alive idle reuse because "73% of resets occur within 15s of the previous entry" —
+that 73% was entirely discussion records, which naturally sit seconds apart mid-conversation. On
+real errors it is **0%**. The contamination was hiding the cliff, not creating it.
+
+**Method note:** the capture nearly produced a false negative twice. A 0-byte pcap was write
+buffering, and a `wc -l` of 0 was a failed `sudo` producing no output — neither was a measurement.
+A positive control (open/close a TCP connection and confirm it was recorded) is what separated
+"no events" from "instrument not working."
+
+Evidence preserved at `output/analysis/evidence/081426-econnreset-rst-capture.pcap`; full writeup
+in the RESOLVED banner atop `output/analysis/081426-econnreset-investigation.md` (both gitignored,
+private-backup only).
+
 ## 2026-08-14: the PII ambiguous-tier problem dissolved by renaming, not by a smarter guard
 
 A real pipeline-target company had a single-word name that is also an ordinary English word.
