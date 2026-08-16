@@ -66,6 +66,15 @@ Per `memory/feedback_guard_must_hard_abort_on_empty_input.md`.
 - [ ] **Run one mutation pass per advertised guarantee.** Break the behavior on purpose and
       confirm a test fails. Two of eighteen mutants survived a 124-test suite because every
       assertion checked internal consistency rather than coverage of known-present items.
+- [ ] **When a mutant SURVIVES, check reachability before blaming the test.** A guard can
+      survive because the condition it checks cannot occur from the entry point — an upstream
+      filter already prevents it. That guard is defence-in-depth against a future edit, and it
+      is untestable through the CLI by construction. Extract it to a named function and unit-test
+      it directly with a deliberately bad payload (plus one clean payload, so the fix for a
+      narrowing is not an over-broad widening). Diagnose in this order: weak assertion →
+      self-consistency-not-coverage → **unreachable** → equivalent mutant, and only conclude
+      "equivalent" last. (2026-08-16, `blind_view.py`: a leak assertion killed 0 of 14 tests
+      when removed, while its two sibling guards killed 10 and 1.)
 - [ ] **Extractors: assert that named known items ARE captured, and near-misses are not.**
       Self-consistency is not coverage — a detector can be perfectly consistent about the
       39 lines it sees and silently miss the 201 it does not.

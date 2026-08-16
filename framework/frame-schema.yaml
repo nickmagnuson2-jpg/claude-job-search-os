@@ -319,6 +319,35 @@ fields:
       that stores only accepted output learns the operator's existing decisions rather
       than improving on them, and the rejection record is the only training signal that
       distinguishes the two.
+  check_log:
+    type: list[{version, segment, states, counts, clean, fully_covered}]
+    required: false
+    class: derived
+    note: >
+      ADDED 2026-08-16. One RAW OBSERVATION per write: what the checker reported at that
+      version, rule id to PASS/FAIL/CANNOT_RUN, unaggregated and unreclassified.
+
+      IT IS NOT A VERDICT, AND THAT IS THE POINT. Two definitions of a computed
+      `checks_fired` were designed and BOTH saturate: "ever PASSed" because rules with no
+      CANNOT_RUN branch always pass eventually, and "ever FAILed" because ordinary
+      authoring order fails most content rules at least once on a partly-authored frame.
+      Either way every rule looks alive and the demotion gate can never cut anything.
+      Recording the observation and letting a future consumer define "fired" is the only
+      form of this capture that cannot be wrong at capture time. Per-version history is
+      also the part that is impossible to reconstruct afterward.
+
+      NO schema_version BUMP. This field is optional and additive, so a v3 frame without
+      it stays valid and `supports_frames_at` is untouched. A bump would force every
+      consumer to re-declare support and, done carelessly, would make the checker refuse
+      frames it can read perfectly well.
+
+      KNOWN AND DEFERRED, 2026-08-16: this list grows without bound, and it lives INSIDE
+      the file that is re-read, re-serialised and re-validated on every write, which is
+      O(n^2) in the number of writes. Fine at ten writes, bad at two hundred. The right
+      home for an append-only observation log is a sibling `check-log.jsonl`, not the
+      CAS'd state file. Deferred deliberately until a real engagement's write count is
+      known, because moving it later means migrating live frames.
+
   checks_fired:
     type: list[rule_id]
     required: true

@@ -21,6 +21,177 @@ Format:
 
 ---
 
+## 2026-08-16 | The blind view becomes a mechanism; first live run finds a frame defect | v1.5, NO standing change
+
+**Source:** in-flight. Built `tools/blind_view.py` and ran it against the reconstructed
+2026-08-05 frame, the only frame on disk with known ground truth.
+
+**What changed, and why it is not a doc edit.** `frame-schema.yaml` says `interaction` must be
+filled by a blind agent that has "seen element names and one-line definitions only, never the
+artifact." That was an INSTRUCTION, and anti-anchoring failure is silent by construction: a
+contaminated agent's output is indistinguishable from an independent one, so there is no tell to
+catch afterward. It is now an extraction. The agent is handed a redacted file that cannot contain
+the artifact, rather than told not to look at it. Three views (`interaction`, `closure`,
+`distinction`), each a WHITELIST of permitted keys with a refusal on anything else, plus a hard
+abort on an empty element set (an agent handed nothing returns a confident "no problems found",
+which is a false clean rather than an absence of evidence).
+
+**MUTATION-TESTED, and one guarantee was theater.** Three saboteur runs against the suite:
+removing the whitelist filter killed 10 tests, removing the empty-input abort killed 1, and
+**removing the leak assertion killed NOTHING**. It could not be tested inline, because the
+whitelist upstream means its trigger condition never occurs in production. Extracted to
+`assert_no_leak()` so a test can hand it a contaminated payload directly; all three mutants now
+die. This is the "a guard whose trigger has never occurred is not yet evidence of anything"
+shape, caught only because the saboteur pass was actually run rather than assumed.
+
+**THE FINDING, which is about the frame and not the tool.** The deterministic F3 finds `i_csat`
+load-bearing in e1 and e3 by set intersection. **The blind agent could not find it, and the reason
+is in the frame:** e1's measure states "CSAT held at or above 3.7"; **e3's measure never mentions
+CSAT at all, though e3 declares `i_csat` as an input.** Verified directly against the frame file.
+So either e3 genuinely uses CSAT and its measure under-discloses, or `i_csat` does not belong on
+e3 and the declaration is wrong. **Unreconciled: it needs the operator, because only he knows what
+e3 was meant to weigh.** Raised as C006 in `rule-candidates.yaml`.
+
+**The design conclusion, which reversed an assumption.** The blind view was expected to VALIDATE
+F3 by reproducing its finding. It does not, and should not: **F3 checks declared-input overlap;
+the blind read checks semantic overlap in what the measures actually say.** Different questions.
+That is also the argument for keeping `inputs` withheld -- handing them over would make an agent
+re-derive, expensively and less exactly, what set intersection already does. **The divergence
+between the two instruments is the informative quantity**, and an element flagged by one and not
+the other is under-disclosing its own measure. That is exactly what e3 turned out to be.
+
+**What the blind agent returned, recorded so a future reader does not assume it found the known
+defect:** it flagged e1xe3 as overlapping but on write privilege, arguing opposite valence makes
+it a tradeoff rather than a double-count; it headlined a different pair (e2xe3) at ~70% with a
+concrete falsifier, plausible and unverified and not acted on; and it passed the calibration check
+on e4's null measure, adding that an unmeasured criterion with an evocative name is where other
+elements' content gets re-imported as narrative and counted twice invisibly.
+
+**Also landed:** HARD segment ordering in `frame_write.py`. A segment refuses to write until its
+predecessor is complete, and completion refuses while that segment's exit condition is unmet --
+without exit conditions "completed" means "somebody said so" and the ordering guarantees nothing.
+D1-before-D2 is now a refusal that states its own reason rather than a convention. `segment_completed`
+became derived. The two-decline rule is enforced: a third consecutive decline is refused, naming the
+way out. **LOCK is ordered like every other segment and now requires D complete** -- freezing a frame
+with no recommendation is what hard ordering exists to prevent; this changed an existing command and
+broke two tests, which is how it was noticed. Suite **1835 passing**, up from 1790 at the start of the
+weekend.
+
+**Not changed, and why:** C006 is unreconciled pending the operator's call on e3, and the runner
+(`SKILL.md` + the segment workflow) is still unbuilt. The tool layer beneath it is now done.
+
+---
+
+## 2026-08-16 | The fork ran to 7.63M tokens and did not converge; scope cut instead | v1.5, NO standing change
+
+**Source:** in-flight. The adversarial fork was run to convergence on the tool-layer plan and
+**failed to converge**, which is itself the result this entry exists to record.
+
+**MEASURED COST OF THE FORK, across both runs on the same plan.** `analysis-method.md` estimates the
+fork at "roughly 20 agents and 20 minutes."
+
+| Run | Rounds | Agents | Subagent tokens | Wall clock | Outcome |
+|---|---|---|---|---|---|
+| 1 | 2 (ceiling) | 37 | 2,612,756 | 46 min | UNCONVERGED |
+| 2 | 6 (ceiling) | 63 | 5,018,104 | 2 h 28 min | UNCONVERGED |
+| **Total** | **8** | **100** | **7,630,860** | **~3 h 14 min** | **never converged** |
+
+**That is 5x the documented agent estimate and roughly 10x the time, on one plan.** Recorded here
+because the fork's own cost line is standing-tier text that nothing was measuring, and a demotion
+decision about the fork needs this number. NOT yet proposed as a doc correction: two runs on ONE
+plan is a sample of one plan, and the estimate may hold for the frame-shaped use it was written for.
+The correction needs a second subject before it earns the standing tier.
+
+**THE DIAGNOSTIC FINDING, which is worth more than any individual hole.** In the final register,
+nearly every risk carries `critic_severity: "none"` -- meaning the JUDGE raised it, not the critics --
+and several state outright that they attack machinery the panel itself added in an earlier round.
+Rounds 3-6 were substantially the panel attacking rounds 1-2's additions. `analysis-method.md`
+already names this signal: "It reports which risks attack its own additions, and the cheapest fix is
+usually to drop the addition rather than build what it demands."
+
+**So the plan was not converging because it was still GROWING.** It began as three changes and had
+accreted `check_states`, `check_states_baseline`, `answers_watermark`, a `stage-record` subcommand,
+two-phase validation, and three hand-maintained classification tables coupled to the checker's
+`detail` prefix strings. Nearly all of it existed to feed a demotion gate that **has no runner and
+was explicitly out of scope** -- round 1's fatal-lens finding, never actually answered: the capture
+is write-only by construction.
+
+**Changed: scope cut, on the operator's call.** Build only what is genuinely backfill-impossible and
+keep it as simple as it can be: `init`; `answers-add`; and RAW per-version check observations rather
+than a computed verdict. Recording observations instead of a verdict also dissolves the saturation
+problem that killed both earlier definitions of `checks_fired` -- the judge's own cheapest-honest-fix
+was to stop calling the list "fired" and let a future consumer define firing.
+
+**Deferred, every item whose only justification was the absent gate:** the computed `checks_fired`,
+the `PRECONDITIONED` / `DUE_FROM` / `VACUOUS` tables, `check_states_baseline`, `stage-record`, the
+run-id binding, and the F9 `--prior` resolution.
+
+**Also fixed today, small and real:** `prediction` is now caller-blocked as a whole subtree in
+`frame_write.py`. `prediction.made_at_version` resolves F9's comparison target, and it was verified
+settable (`set --field prediction.made_at_version=99` landed on a scratch frame), so a caller could
+aim the compression check at a snapshot that was never the locked one and get a substantive-looking
+PASS against the wrong baseline. Two tests added, including one asserting `lock` still stamps
+prediction, since the guard must block callers and not the lock path. **Suite 1797 passing.**
+
+**Two panel claims worth keeping, both verified against the real code:**
+- **F9's `--prior` is unavailable at the FIRST post-lock write, not merely at lock.**
+  `run_checker(tmp)` is `frame_write.py:217`; `snapshot.write_text` is `:223`. The lock-point
+  snapshot does not exist yet when the checker runs. The deferred F9 work must account for this.
+- **The plan reasoned from a false premise about this repo:** it asserted the acceptance corpus frame
+  is schema v3. It is v1 (the reconstructed acceptance-corpus frame). A `supports_frames_at`
+  instruction written from that premise would have bricked every write on a schema bump.
+
+**Not changed, and why:** the demotion gate still has no runner. That is now a deliberate,
+recorded position rather than an oversight -- the capture layer is being built to feed it, and the
+gate gets built when there is a run to feed it with.
+
+---
+
+## 2026-08-15 | Two live defects in the sole mutation path, found by the adversarial fork | v1.5, NO standing change
+
+**Source:** in-flight, in its strongest form. Not a check waved through by an operator: the gate was
+structurally incapable of firing. `tools/frame_write.py` guaranteed that "a frame that fails the
+schema gate never reaches disk," and it did not.
+
+**What was found.** Two independent defects that chain into a PERMANENT validation bypass through the
+only sanctioned write path.
+
+1. `run_checker` discarded the checker's exit code and refused only on `status == "error"` or truthy
+   `structural_errors`. A schema refusal emits `status: "refused"` with neither, at exit 3, so a
+   refusal read as a pass.
+2. `schema_version` is `class: derived` in `frame-schema.yaml` but was absent from `DERIVED_FIELDS`,
+   so a caller could set it.
+
+Chained and measured live on a scratch frame: `set --field schema_version=9` landed, and the three
+following writes all returned `status: ok` with `clean`, `fully_covered` and `counts` **all null**.
+A third defect was latent: `patch` compared exact keys while `set_dotted` nested the value anyway,
+masked today only because every derived field happens to be list-shaped.
+
+**Changed:** code only, no standing rule. `run_checker` returns the returncode, and a new
+`verdict_refuses` refuses unless the code is in `(0, 2)`, `status` is `ok`, `structural_errors` is
+empty, and `counts` is present. `schema_version` added to `DERIVED_FIELDS`. `patch` compares dotted
+roots, as `set` always did. Four regression tests; suite **1795 passing, up from 1790**. Re-measured
+after the fix: a sparse mid-run frame that genuinely FAILs rules still writes, so the gate was not
+over-tightened into unusability.
+
+**Candidate raised:** C003 in `rule-candidates.yaml`, at one occurrence, not promoted.
+
+**Not changed, and why:** the demotion gate still has no runner, and `checks_fired` is still specified
+in a form the same review showed saturates in BOTH candidate directions. Both stay open rather than
+get patched under time pressure on the day they were found.
+
+**Fork yield, recorded because it cannot be reconstructed.** `analysis-method.md` estimates the
+adversarial fork at roughly 20 agents and 20 minutes. Measured on this run: **37 agents, 46 minutes,
+2.6M subagent tokens, returning UNCONVERGED at 2 rounds with new blocking holes still arriving.**
+Beyond the two live defects it proved that both candidate definitions of `checks_fired` saturate, so
+the demotion gate goes inert either way, and that the planned `changed_frame` diff would have
+inverted on nested writes because `new = dict(current)` is a shallow copy and `current["d1"] is
+new["d1"]`. That last one would have shipped as a working-looking metric that was wrong on exactly
+the segments carrying content. **First recorded firing of the fork against a plan rather than a
+frame.**
+
+---
+
 ## 2026-08-14 | C001 falsified and rejected; C002 replaces it | v1.5, NO standing change
 
 **Source:** post-hoc. C001 (the frame-freeze gate) sat at `occurrences: 1`, which promotes only

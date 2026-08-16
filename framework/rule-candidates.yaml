@@ -191,6 +191,212 @@ candidates:
       Its second amendment was "downgrading a frame change to artifact-only requires a
       second person, not the author" -- that is blind_canary.py.
 
+  - id: C006
+    rule: >
+      An element's stated MEASURE must disclose every input it declares. Where the declared
+      inputs and the stated measure disagree, the measure is under-disclosing and the
+      element is not reachable: a reader (or a room) sees only the measure, so an input
+      that drives the element invisibly is a hidden dependency. Run the deterministic
+      input-intersection check AND a measure-only blind read, and treat any element flagged
+      by one and not the other as under-disclosed until reconciled.
+    source: in_flight
+    source_detail: >
+      2026-08-16, first live run of tools/blind_view.py against the reconstructed 2026-08-05
+      frame. The deterministic F3 finds i_csat load-bearing in e1 and e3 by set intersection.
+      A blind agent seeing names and measures only (inputs withheld) could NOT find it, and
+      the reason is in the frame, not the agent: e1's measure states "CSAT held at or above
+      3.7", while e3's measure ("how far a mistake travels: what the journey writes, and
+      whether the error is recoverable") never mentions CSAT at all, though e3 declares
+      i_csat as an input. Verified directly against the frame.
+    occurrences: 1
+    first_seen: 2026-08-16
+    last_seen: 2026-08-16
+    target_tier: frame-schema
+    falsification:
+      attempted: no
+      by: null
+      counter_case: null
+      survived: null
+    promoted: no
+    rejected: no
+    worked_example:
+      element: "Blast radius (e3), 2026-08-05 delivered frame"
+      declared_inputs: [i_write_surface, i_csat]
+      measure_as_delivered: >
+        How far a mistake travels: what the journey writes, and whether the error is
+        recoverable inside the conversation or leaves your control.
+      defect: >
+        The measure declares i_csat as an input and never mentions CSAT. The room read
+        CSAT on the criterion anyway (it was on the page), so the omission was in the
+        MEASURE LINE, not in the thinking.
+      measure_disclosed: >
+        How far a mistake travels: what the journey writes, whether the error is
+        recoverable inside the conversation or leaves your control, and the DISPERSION of
+        CSAT on the affected intents. (Criterion 1 reads CSAT as an outcome LEVEL; this
+        reads its VARIABILITY, which is the known way this journey disappoints.)
+      why_it_would_have_worked: >
+        The distinction between level and dispersion is the exact answer that already
+        existed elsewhere in the artifact and never came out of his mouth. Writing the
+        measure to disclose its own
+        input FORCES that distinction onto the criterion, where the room reads it, instead
+        of leaving it in a warn box three slides away. This rule does not merely flag a
+        bookkeeping mismatch; on the one real case available it would have prevented the
+        failure.
+
+    note: >
+      EVIDENCE, from the delivery debrief. The interviewer asked, in substance, how the two
+      criteria differed when both of them named the same quality metric. So i_csat on e3 is
+      an ACCURATE record of what was delivered, not a transcription error, and the debrief
+      calls it "a genuine MECE violation." The operator's initial read was that the metric
+      had been wrongly attached; the transcript overruled it. FIX IS (a) FIX THE MEASURE,
+      not (b) remove the input.
+      (Paraphrased deliberately: the debrief holds the verbatim line, and a private
+      interviewer's speech does not belong in a public file even unattributed.)
+
+      DO NOT EDIT THE LOCKED FRAME TO APPLY THIS. Considered and rejected 2026-08-16. The
+      reconstruction records what went in the room, and what went in the room is a measure
+      that did not disclose CSAT -- that omission IS the finding. Editing it would make the
+      frame claim a delivery that never happened and would delete this rule's only evidence.
+      Writing a second "corrected" frame was also rejected: locked: true means "this went in
+      a room", so a corrected locked frame fabricates a lock, and it would have tested F9's
+      PASS path (the correction ADDS disclosure) rather than its FAIL path, which needs a
+      purpose-built fixture instead. The corrected measure lives HERE, above, which is where
+      a future author meets it.
+
+      WHY THIS IS NOT JUST F3 AGAIN. F3 checks DECLARED-input overlap; the blind read checks
+      SEMANTIC overlap in what the measures actually say. They answer different questions,
+      and the divergence between them is the informative quantity. That is also the argument
+      for keeping `inputs` WITHHELD from the interaction view: handing them over would make
+      the agent re-derive, expensively and worse, what set intersection already does exactly.
+
+      TWO READINGS OF THE e3 CASE, and they need different fixes. Either (a) e3 really does
+      use CSAT and its measure under-discloses -- fix the measure -- or (b) i_csat does not
+      belong on e3 and the declaration is wrong -- fix the inputs, which would also retire
+      the documented F3 failure. NOT YET RECONCILED. Deciding it needs the operator, because
+      only he knows what e3 was actually meant to weigh.
+
+      MECHANISABLE FORM, if this promotes: a check cannot match input ids against free-text
+      measures reliably (that is the prose-comparison trap frame-schema v3 exists to avoid).
+      The tractable version is a REPORT, not a rule: emit each element's declared inputs
+      beside its measure and require the operator to confirm each input is visible in the
+      measure. One judgment moment, and it would have caught this at authoring time.
+
+      WHAT THE BLIND AGENT ACTUALLY RETURNED, recorded because a future reader will assume it
+      found the known defect and it did not: it flagged e1xe3 as OVERLAPPING but on write
+      privilege, and argued opposite valence makes that a tradeoff rather than a double-count.
+      It headlined a DIFFERENT pair (e2xe3, shared write integrations) at ~70% with a concrete
+      falsifier. Plausible, unverified, not acted on. It did pass the calibration check on e4's
+      null measure, and added that an unmeasured criterion with an evocative name is precisely
+      where other elements' content gets re-imported as narrative and counted twice invisibly.
+
+  - id: C004
+    rule: >
+      An append-only observation log does not belong inside a compare-and-swapped state
+      file. The state file is re-read, re-serialised and re-validated on every write, so
+      an unbounded log inside it makes each write O(total writes so far). Append-only
+      records belong in a sibling file whose growth costs the state path nothing.
+    source: in_flight
+    source_detail: >
+      check_log was built into frame.yaml on 2026-08-16 knowing this. Fine at ten writes,
+      bad at two hundred. Deferred deliberately: the right threshold is unknown until a
+      real engagement's write count exists, and moving it later means migrating live
+      frames, so the decision was left to evidence rather than guessed at now.
+    occurrences: 1
+    first_seen: 2026-08-16
+    last_seen: 2026-08-16
+    target_tier: frame-schema
+    falsification:
+      attempted: no
+      by: null
+      counter_case: null
+      survived: null
+    promoted: no
+    rejected: no
+    note: >
+      REOPEN GATE, and it is measurable rather than a date: reopen when any single
+      engagement's frame.yaml exceeds ~50 check_log rows, or when a write takes visibly
+      long. The migration is mechanical (move the list to check-log.jsonl beside the
+      frame, keyed by version) but it is NOT free once frames exist in the wild, which is
+      the whole reason to decide it on evidence rather than on the day.
+
+  - id: C005
+    rule: >
+      A file holding a metric that no other file can reconstruct must carry the same
+      durability discipline as the file it measures. If frame.yaml gets compare-and-swap,
+      a snapshot per write, and byte-identical-on-failure, then answers.yaml, which is the
+      SOLE source of operator_answer_count and re_ask_count, cannot have none of them.
+    source: in_flight
+    source_detail: >
+      answers-add shipped 2026-08-16 with correct lock ORDERING (frame lock, then answers
+      lock, matching the order frame writes take, so a concurrent frame write cannot
+      interleave) and a monotonic row_index so a lost row shows as a gap. It has no CAS,
+      no version, and no snapshot. A truncation or a bad restore silently loses the
+      numerator for the governing objective.
+    occurrences: 1
+    first_seen: 2026-08-16
+    last_seen: 2026-08-16
+    target_tier: frame-schema
+    falsification:
+      attempted: no
+      by: null
+      counter_case: null
+      survived: null
+    promoted: no
+    rejected: no
+    note: >
+      DEFERRED ON AN EXPLICIT OPERATOR CALL, 2026-08-16: build the simplest thing that is
+      genuinely backfill-impossible, and durability hardening is not that. Recorded here so
+      the gap is a position rather than an oversight.
+
+      REOPEN GATE: the first time an answers.yaml is lost, truncated, or restored from an
+      older copy, or the first time re_ask_count is used in an argument that matters. The
+      cheap fix is answers.vN.yaml on every append, mirroring frame.vN.yaml.
+
+      THE ASYMMETRY IS THE ARGUMENT. frame.yaml is defended by four guarantees, each paid
+      for by a specific past failure. answers.yaml holds the metric the whole method is
+      optimised against and is defended by none of them.
+
+  - id: C003
+    rule: >
+      A wrapper that re-derives a verdict from a subprocess must REFUSE anything it does
+      not positively recognise as a judgement: exit code in the callee's documented judged
+      set, the expected status, and the fields a real verdict carries all present.
+      Default-allow on an unrecognised verdict shape is a bypass, not a pass.
+    source: in_flight
+    source_detail: >
+      tools/frame_write.py's run_checker read a `status: refused` verdict as a pass,
+      disabling validation for an engagement permanently. Found by /plan-hardening
+      2026-08-15 and reproduced live before the fix.
+    occurrences: 1
+    first_seen: 2026-08-15
+    last_seen: 2026-08-15
+    target_tier: analysis-method
+    falsification:
+      attempted: no
+      by: null
+      counter_case: null
+      survived: null
+    promoted: no
+    rejected: no
+    note: >
+      WHY analysis-method AND NOT workflow. This is not a generic engineering tip. It is
+      the method's existing three-state rule applied one level up. The method already says
+      that collapsing CANNOT_RUN into PASS produces a green result that means nothing and
+      reads like coverage; this defect is the identical shape applied to the CHECKER'S
+      WRAPPER, collapsing `refused` into `pass`. The rule generalises: wherever one
+      component judges and another interprets the judgement, the interpreter must
+      enumerate what counts as a judgement rather than assume anything it fails to
+      recognise is fine.
+
+      THE MEASURED FORM OF THE FAILURE, kept because it is the cheap tell. Every poisoned
+      write returned `clean: null, fully_covered: null, counts: null` alongside
+      `status: ok`. The evidence that the verdict judged nothing was present in the
+      success payload, on every single write, and nothing looked at it.
+
+      NOT PROMOTED ON DISCOVERY. One occurrence. It promotes only on a second, or on a
+      blind agent failing to construct a problem statement where it flips. The agents must
+      not be shown this file.
+
 # Demotion candidates: standing rules that have stopped firing.
 #
 # - rule_id: F4
