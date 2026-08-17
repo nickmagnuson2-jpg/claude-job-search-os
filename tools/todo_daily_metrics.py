@@ -75,6 +75,39 @@ def _is_separator_row(*values: str) -> bool:
     return any(v.strip() in ("---", "—", "") for v in values[:1])
 
 
+SECTION_RE = r"^## {header}.*?\n(.*?)(?=^## |\Z)"
+
+
+def _section_text(content: str, header: str) -> str | None:
+    """Extract one section's body using THIS module's section detection.
+
+    Single source of truth for "where does the reader think a section starts and
+    stops" -- todo_write.py's round-trip guard calls through here rather than
+    reimplementing it, because a reimplementation would share the writer's blind
+    spots and prove nothing. See tests/scripts/test_todo_write_roundtrip.py.
+    """
+    m = re.search(SECTION_RE.format(header=header), content, re.DOTALL | re.MULTILINE)
+    return m.group(1) if m else None
+
+
+def _is_row(line: str) -> bool:
+    """Data-row predicate, matching todo_write.is_data_row's semantics."""
+    if not line.startswith("|"):
+        return False
+    if re.match(r"^\|\s*:?-+:?\s*\|", line):   # separator
+        return False
+    return not line.startswith("| Task")           # header
+
+
+def section_row_counts(content: str) -> tuple[int, int]:
+    """(active_rows, completed_rows) as the READER sees them. -1 for a missing section."""
+    out = []
+    for header in ("Active", "Completed"):
+        body = _section_text(content, header)
+        out.append(-1 if body is None else sum(1 for l in body.splitlines() if _is_row(l)))
+    return out[0], out[1]
+
+
 def parse_todos(content: str, today: date) -> tuple[list, list, list]:
     """Parse job-todos.md into completed_today, active, overdue lists. Strips '---' separator rows."""
     # Fail loudly (not silently) if the live file's Active-section header has
@@ -87,8 +120,13 @@ def parse_todos(content: str, today: date) -> tuple[list, list, list]:
 
     today_str = today.strftime("%Y-%m-%d")
 
-    # Find Active section
-    active_match = re.search(r"## Active.*?\n(.*?)(?=\n## |\Z)", content, re.DOTALL)
+    # Find Active section.
+    # ^-anchored + MULTILINE, deliberately: an unanchored search matches ANYWHERE,
+    # so a notes cell containing the literal "## Completed" acts as a phantom header
+    # and silently truncates the section. Fired live 2026-08-17 -- completed_today
+    # reported 0 while five rows read "Completed 2026-08-17". A table row always
+    # starts with "|", so ^## can only match a real header.
+    active_match = re.search(r"^## Active.*?\n(.*?)(?=^## |\Z)", content, re.DOTALL | re.MULTILINE)
     if active_match:
         active_text = active_match.group(1)
         # Parse markdown table rows (skip header/separator)
@@ -118,7 +156,7 @@ def parse_todos(content: str, today: date) -> tuple[list, list, list]:
                     pass
 
     # Find Completed section — look for today's date in Notes or Completed column
-    completed_match = re.search(r"## Completed.*?\n(.*?)(?=\n## |\Z)", content, re.DOTALL)
+    completed_match = re.search(r"^## Completed.*?\n(.*?)(?=^## |\Z)", content, re.DOTALL | re.MULTILINE)
     if completed_match:
         completed_text = completed_match.group(1)
         assert_schema(find_header_line(completed_text, "| Task |"),
@@ -340,7 +378,7 @@ def parse_pipeline(content: str) -> dict:
     buckets = {"active_process": [], "evaluation_backlog": [], "terminal": []}
 
     # Find the Active section (or fall back to whole file)
-    active_match = re.search(r"## Active.*?\n(.*?)(?=\n## |\Z)", content, re.DOTALL)
+    active_match = re.search(r"^## Active.*?\n(.*?)(?=^## |\Z)", content, re.DOTALL | re.MULTILINE)
     if not active_match:
         active_match = re.search(r"\n(.*)", content, re.DOTALL)
     if not active_match:
@@ -426,8 +464,8 @@ def parse_upcoming_scheduled(pipeline_content: str, today: date,
     window_end = today + timedelta(days=window_days)
     results = []
 
-    active_match = re.search(r"## Active.*?\n(.*?)(?=\n## |\Z)",
-                             pipeline_content, re.DOTALL)
+    active_match = re.search(r"^## Active.*?\n(.*?)(?=^## |\Z)",
+                             pipeline_content, re.DOTALL | re.MULTILINE)
     if not active_match:
         active_match = re.search(r"\n(.*)", pipeline_content, re.DOTALL)
     if not active_match:

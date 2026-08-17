@@ -3,6 +3,61 @@
 All notable changes to this job search system are recorded here.
 Format: newest entries at the top.
 
+## 2026-08-17: a note that broke a parser, and the invariant that will catch the next one
+
+Three defects in `data/job-todos.md` tooling, found in sequence, each exposed by fixing the one
+before it. The last is the only one that generalises.
+
+**1. Eighteen rows were unreachable.** The 2026-08-05 bad `sync` withdrew 18 todos; the
+restore-from-backup put them back under `## Completed` with their status still `Pending`. `done`
+and `update` search the Active section only, so those rows were invisible to both — and to anyone
+reading the Active list — while `todo_daily_metrics.py` kept counting them Pending. They had been
+inflating the overdue count on every `/standup` since early August. The producer was already fixed
+on 8/10 (verified in code, not assumed); this was the backward sweep that fix skipped.
+
+Built: an `audit` subcommand (read-only, reports section/status disagreement with line numbers), a
+`done` fallback that repairs a misfiled row in place and reports `repaired_misfiled`, an `update`
+refusal that names the section instead of the bare "No ACTIVE task found" that had sent an earlier
+investigation chasing match-string variants, and `withdraw` scrub + disambiguation.
+
+Disposition of the 18 was 5 Completed / 10 Withdrawn / 3 back to Active — deliberately not a bulk
+close, because three were live parked work that a mechanical sweep would have destroyed. Pending
+253 → 245, overdue 131 → 116.
+
+**2. Two defects the fixture suite could not see.** Both surfaced only on the real file. A misfiled
+row is in ACTIVE column format inside a COMPLETED-format section, so its status word lands where
+that schema reads `notes` — `withdraw` set the date correctly and left the literal string "Pending"
+in ten rows. And because `withdraw` searches Active first, running it after re-adding a recovered
+row withdraws the *new* row, leaving two same-named Completed rows and a permanent "Multiple
+matches" bail.
+
+**3. A Notes cell impersonated a section header, and every check missed it.** A recovery note
+written during (1) contained the literal text `## Completed`. `todo_daily_metrics.py` found sections
+with an *unanchored* regex, so it matched inside the table row and collapsed the Completed section
+from 744 rows to 2. **`completed_today` reported 0 while five rows in the file read
+"Completed 2026-08-17".** No error, no warning, a plausible number — flowing straight into the daily
+log, the streak, and velocity.
+
+Every check the writer had passed, because `todo_write.py` walks lines and was never vulnerable: the
+writer's checks and the writer's bug were on the same side of the boundary. It was caught only
+because a number failed to reconcile.
+
+**The fix is two-layered.** All four section regexes are now `^`-anchored with `MULTILINE` (a table
+row starts with `|`, so `^##` can only match a real header), guarded by a test that greps the source
+for the unanchored form — which immediately caught two more call sites that had been missed. And
+`save_lines`, the single choke point all eleven mutation paths funnel through, now **verifies every
+write with the downstream consumer**: it re-reads the file via `todo_daily_metrics.section_row_counts`
+and rolls back if the reader sees different counts or a missing section. Proven against the live
+file: a forced divergence returned writer `(252, 746)` vs reader `(1, 1)`, rejected, file
+byte-identical.
+
+The generalisable lesson is not about markdown in cells. It is that **verifying a mutation with the
+tool that made it proves nothing about the tool that reads it** — the same shape as the green fixture
+suite in (2) and the unswept damage in (1). The invariant is in the write path because a rule about
+what may be typed into a note converts at zero.
+
+Suite 1854 → 1869.
+
 ## 2026-08-14: the ECONNRESET drops are upstream, proved by TTL, after two wrong answers of my own
 
 Four days of investigation had narrowed the recurring `API Error: Connection dropped (ECONNRESET)`

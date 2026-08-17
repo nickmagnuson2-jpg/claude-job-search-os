@@ -138,7 +138,7 @@ slug = person name lowercased, accents folded, spaces→hyphens (matches the `ou
 
 Edit silently fails on rows >500 chars. Mutate via:
 
-- `data/job-todos.md` → `tools/todo_write.py`
+- `data/job-todos.md` → `tools/todo_write.py` (`audit` finds Pending rows stranded in Completed, invisible to `done` and to the Active list)
 - `data/job-pipeline.md` → `tools/pipe_write.py`
 - All `output/**/*.md` dossiers → re-read and Write full content
 

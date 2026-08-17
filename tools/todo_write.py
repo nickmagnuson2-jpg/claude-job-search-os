@@ -41,6 +41,12 @@ Commands:
                                          Done/Withdrawn); --grep filters task+notes substring
                                          (case-insensitive). Filters compose (AND).
 
+Every mutation is ROUND-TRIP VERIFIED: save_lines re-reads the written file with
+todo_daily_metrics.section_row_counts (the downstream consumer) and rolls the file back
+if the reader sees different per-section row counts, or a missing section. Verifying a
+write with the tool that made it proves nothing about the tool that reads it -- see
+tests/scripts/test_todo_write_roundtrip.py for the 2026-08-17 failure this closes.
+
 Output: JSON to stdout
   Success: {"status": "ok", "action": "...", "summary": "...", ...extra}
   Failure: {"status": "error", "message": "..."}
@@ -277,12 +283,100 @@ def load_todos(todos_path: Path) -> tuple[str, list[str]]:
     return content, lines
 
 
+def _count_rows(lines: list[str], header: str) -> int:
+    """Data rows under `header`, counted the WRITER's way (line-by-line walk)."""
+    start, end = find_section(lines, header)
+    if start == -1:
+        return -1
+    return sum(1 for i in range(start, end) if is_data_row(lines[i]))
+
+
+def writer_section_counts(lines: list[str]) -> tuple[int, int]:
+    """(active_rows, completed_rows) as this module sees them."""
+    return _count_rows(lines, "## Active"), _count_rows(lines, "## Completed")
+
+
+def reader_section_counts(path: Path) -> tuple[int, int]:
+    """(active_rows, completed_rows) as the DOWNSTREAM CONSUMER sees them.
+
+    Deliberately imported from todo_daily_metrics rather than reimplemented: the
+    entire point is to cross the writer/reader boundary. A local reimplementation
+    would share this module's blind spots and prove nothing.
+    """
+    import todo_daily_metrics as tdm
+
+    return tdm.section_row_counts(path.read_text(encoding="utf-8"))
+
+
 def save_lines(path: Path, lines: list[str], original_content: str) -> None:
-    """Rejoin lines and write atomically, preserving trailing newline."""
+    """Rejoin lines, write atomically, then VERIFY WITH THE CONSUMER.
+
+    Round-trip invariant: after the write, the downstream parser must see the same
+    number of rows in each section that this module just wrote. On divergence the
+    file is rolled back to `original_content` and the command errors, so a mutation
+    that would corrupt the reader's view never lands.
+
+    Why this exists (2026-08-17): a Notes cell containing the literal "## Completed"
+    made todo_daily_metrics' unanchored section regex match inside a table row. Its
+    Completed section collapsed from 744 rows to 2 and `completed_today` reported 0
+    while five rows read "Completed 2026-08-17". Every check this module had passed,
+    because they all walk lines and were never vulnerable — the writer's checks and
+    the writer's bug were on the same side of the boundary. The regex is now anchored,
+    but the class is not regex-specific: any future divergence between how these two
+    modules read the file is caught here, at the write, instead of surfacing as a
+    plausible-looking wrong number in the daily log.
+
+    Cost is one extra parse per mutation on a file that is written a handful of times
+    a day. Cheap enough not to think about.
+    """
     content = "\n".join(lines)
     if original_content.endswith("\n"):
         content += "\n"
     write_atomic(path, content)
+
+    expected = writer_section_counts(lines)
+    try:
+        actual = reader_section_counts(path)
+    except Exception as exc:  # parser raised (schema drift, etc.) -> still a divergence
+        write_atomic(path, original_content)
+        out_error(
+            f"Round-trip check could not parse the file after the write, so the "
+            f"mutation was rolled back: {type(exc).__name__}: {exc}",
+            reason="roundtrip_unreadable",
+        )
+        return
+
+    # A missing section (-1) must fail even when both sides agree it is missing:
+    # count-equality alone would happily pass a file whose header was deleted, since
+    # writer and reader would concur on "not found". Structure is an invariant, not a
+    # quantity. Caught by test_guard_catches_a_real_section_destroying_write.
+    if -1 in expected or -1 in actual:
+        write_atomic(path, original_content)
+        out_error(
+            f"Round-trip check found a MISSING SECTION after the write — "
+            f"writer (active={expected[0]}, completed={expected[1]}), "
+            f"reader (active={actual[0]}, completed={actual[1]}); -1 means the "
+            f"section header was not found. The mutation was ROLLED BACK. "
+            f"job-todos.md must always carry both '## Active' and '## Completed'.",
+            reason="roundtrip_missing_section",
+            writer_counts=list(expected),
+            reader_counts=list(actual),
+        )
+        return
+
+    if expected != actual:
+        write_atomic(path, original_content)
+        out_error(
+            f"Round-trip mismatch — the write landed but the downstream parser sees a "
+            f"different file. Writer counted (active={expected[0]}, "
+            f"completed={expected[1]}); reader sees (active={actual[0]}, "
+            f"completed={actual[1]}). The mutation was ROLLED BACK and the file is "
+            f"unchanged. Most likely a cell contains text the reader mistakes for "
+            f"structure (a literal '## Active'/'## Completed' at the start of a line).",
+            reason="roundtrip_mismatch",
+            writer_counts=list(expected),
+            reader_counts=list(actual),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -829,9 +923,10 @@ def cmd_sync(todos_path: Path, pipeline_path: Path, apply: bool = False) -> None
             if len(cols) >= 3 and cols[0]:
                 yield cols[0], cols[2]
 
-    archived_match = re.search(r"## Archived.*?\n(.*?)(?=\n## |\Z)", pipeline_content, re.DOTALL)
-    active_match = re.search(r"## Active Pipeline.*?\n(.*?)(?=\n## |\Z)",
-                             pipeline_content, re.DOTALL)
+    archived_match = re.search(r"^## Archived.*?\n(.*?)(?=^## |\Z)", pipeline_content,
+                              re.DOTALL | re.MULTILINE)
+    active_match = re.search(r"^## Active Pipeline.*?\n(.*?)(?=^## |\Z)",
+                             pipeline_content, re.DOTALL | re.MULTILINE)
     archived_section = archived_match.group(1) if archived_match else None
     active_section = active_match.group(1) if active_match else None
 
