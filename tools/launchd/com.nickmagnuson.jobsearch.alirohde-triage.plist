@@ -20,8 +20,13 @@
         <string>/opt/homebrew/bin:/usr/bin:/bin</string>
     </dict>
 
+    <!-- /tmp, not the repo: this job runs via `bash -c`, and bash calls
+         getcwd() at startup. launchd agents lack TCC access to ~/Documents,
+         so a repo cwd logged "getcwd: cannot access parent directories:
+         Operation not permitted" on every run. Every path in
+         ProgramArguments is absolute, so cwd is not otherwise used. -->
     <key>WorkingDirectory</key>
-    <string>/Users/mag/Documents/Obsidian/30-projects/job-search</string>
+    <string>/tmp</string>
 
     <key>StartCalendarInterval</key>
     <dict>
