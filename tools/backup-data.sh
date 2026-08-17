@@ -97,6 +97,7 @@ $GIT add --force \
   "$WORK_TREE/coaching/" \
   "$WORK_TREE/memory/" \
   "$WORK_TREE/inbox/" \
+  "$WORK_TREE/frames/" \
   "$WORK_TREE/_archive/" \
   "$WORK_TREE/framework/voice-reference.md" \
   "$WORK_TREE/framework/slide-craft-mckinsey.md" \
