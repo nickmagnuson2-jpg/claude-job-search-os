@@ -24,6 +24,16 @@ Commands:
   sync                                 — auto-withdraw Active todos whose company has a
                                          terminal stage anywhere in the pipeline (either
                                          section); a live row for that company always wins
+  audit                                — READ-ONLY. Report rows whose physical section
+                                         disagrees with their status column (a row under
+                                         ## Completed still marked Pending). Such rows are
+                                         invisible to done/update and to the Active list,
+                                         yet todos_summary.py still counts them, so they
+                                         inflate the overdue count indefinitely. 18 existed
+                                         in the live file on 2026-08-17, produced by the
+                                         2026-08-05 bad sync + restore-from-backup.
+                                         Reports line numbers; never writes — disposition
+                                         (done vs withdraw vs back-to-Active) is judgment.
   list [--status <Status>] [--grep <substring>]
                                         — print todos (Active + Completed) as structured JSON;
                                          verify a mutation landed without grepping the raw file.
@@ -42,6 +52,7 @@ Usage:
   PYTHONIOENCODING=utf-8 python3 tools/todo_write.py sync
   PYTHONIOENCODING=utf-8 python3 tools/todo_write.py list --status Pending
   PYTHONIOENCODING=utf-8 python3 tools/todo_write.py list --grep "acme corp"
+  PYTHONIOENCODING=utf-8 python3 tools/todo_write.py audit
 """
 import json
 import os
@@ -94,9 +105,60 @@ def out_ok(action: str, summary: str, **extra) -> None:
     print(json.dumps(d, ensure_ascii=False))
 
 
-def out_error(message: str) -> None:
-    print(json.dumps({"status": "error", "message": message}, ensure_ascii=False))
+def out_error(message: str, **extra) -> None:
+    d = {"status": "error", "message": message}
+    d.update(extra)
+    print(json.dumps(d, ensure_ascii=False))
     sys.exit(1)
+
+
+# ---------------------------------------------------------------------------
+# Misfiled rows
+# ---------------------------------------------------------------------------
+# A "misfiled row" sits physically under ## Completed while its status column still
+# reads Pending / In Progress. It is produced by a bad `sync` + restore-from-backup:
+# the 2026-08-05 sync withdrew 18 todos, the file was restored, and the restore left a
+# contiguous block relocated into Completed with their status untouched.
+#
+# Such a row is invisible to `done` and `update` (both search ## Active only) and
+# invisible to anyone reading the Active list -- yet todos_summary.py still counts it
+# Pending, so it inflates the overdue count on every /standup indefinitely. An audit on
+# 2026-08-17 found 18 of them in the owner's live file.
+#
+# The column-shift trap: a misfiled row is in ACTIVE format
+#   Task | Priority | Due | Status | Notes
+# inside a section whose schema is COMPLETED format
+#   Task | Priority | Completed | Notes
+# so the STATUS value lands in the position the Completed schema reads as `notes`.
+# Any repair that ignores this leaves the literal string "Pending" in a completed row's
+# notes column. That is what MISFILED_STATUSES + the notes-scrub in cmd_done handle.
+#
+# Origin: memory/feedback_todo_write_done_misses_misfiled_rows.md (2 fires: 8/06, 8/17).
+
+MISFILED_STATUSES = {"pending", "in progress"}
+
+
+def is_misfiled_row(cols: list[str]) -> bool:
+    """True if a row inside ## Completed still carries an un-finished status value.
+
+    Discriminates on the STATUS VALUE, not on mere presence in the section -- a
+    genuinely completed row lives there legitimately and must not be flagged.
+    """
+    if len(cols) < 4:
+        return False
+    return cols[3].strip().lower() in MISFILED_STATUSES
+
+
+def find_misfiled(lines: list[str]) -> list[tuple[int, list[str]]]:
+    """Return [(line_index, cols)] for every misfiled row under ## Completed."""
+    comp_start, comp_end = find_section(lines, "## Completed")
+    if comp_start == -1:
+        return []
+    return [
+        (i, parse_cols(lines[i]))
+        for i in range(comp_start, comp_end)
+        if is_data_row(lines[i]) and is_misfiled_row(parse_cols(lines[i]))
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -293,6 +355,37 @@ def cmd_done(args: list[str], todos_path: Path) -> None:
             matches.append((i, cols))
 
     if not matches:
+        # Fallback: the row may be MISFILED -- physically in ## Completed but still
+        # Pending. Repair it in place (it is already in the right section; only the
+        # status cell is wrong) and say so, rather than reporting a false absence.
+        # Deliberately narrow: only rows whose status is un-finished qualify, so a
+        # genuine completion is never matched and never silently re-dated.
+        misfiled = [
+            (i, cols) for i, cols in find_misfiled(lines)
+            if cols and cols[0] and fragment in cols[0].lower()
+        ]
+        if len(misfiled) > 1:
+            opts = "\n".join(f"  - {c[0]}" for _, c in misfiled)
+            out_error(f"Multiple misfiled matches — be more specific:\n{opts}")
+        if len(misfiled) == 1:
+            row_idx, cols = misfiled[0]
+            task = cols[0]
+            priority = cols[1] if len(cols) > 1 else "Med"
+            # cols[2] is the Due date under the ACTIVE schema; cols[3] is the status
+            # word, which must NOT survive into the notes column. Anything past cols[3]
+            # is the real notes payload.
+            orig_due = cols[2].strip() if len(cols) > 2 else ""
+            tail = " | ".join(cols[4:]).strip() if len(cols) > 4 else ""
+            bits = [f"Completed {today_str}", "repaired misfiled row 2026-08-17"]
+            if orig_due and orig_due != "—":
+                bits.append(f"was due {orig_due}")
+            if tail:
+                bits.append(tail)
+            lines[row_idx] = fmt_completed(task, priority, today_str, " | ".join(bits))
+            save_lines(todos_path, lines, content)
+            out_ok("done", f"Completed (repaired misfiled row): {task}",
+                   task=task, repaired_misfiled=True, found_in_section="## Completed")
+            return
         out_error(f"No task found matching: {args[0]}")
     if len(matches) > 1:
         options = "\n".join(f"  - {c[0]}" for _, c in matches)
@@ -367,22 +460,48 @@ def cmd_withdraw(args: list[str], todos_path: Path) -> None:
     if comp_start != -1:
         matches = _find_in_section(lines, comp_start, comp_end, fragment)
         if len(matches) > 1:
-            opts = "\n".join(f"  - {c[0]}" for _, c in matches)
-            out_error(f"Multiple matches — be more specific:\n{opts}")
+            # Among Completed matches these are NOT equally plausible targets: a
+            # MISFILED row (status still Pending) is the only un-finished one, so it
+            # is uniquely identifiable and is what the caller meant. Narrow to it.
+            # Deliberately narrow -- two misfiled rows remain genuinely ambiguous.
+            # Origin 2026-08-17: repairing the live file created exactly this state (a
+            # recovered duplicate beside the stranded original) and withdraw deadlocked.
+            misfiled_matches = [(i, c) for i, c in matches if is_misfiled_row(c)]
+            if len(misfiled_matches) == 1:
+                matches = misfiled_matches
+            else:
+                opts = "\n".join(f"  - {c[0]}" for _, c in matches)
+                out_error(f"Multiple matches — be more specific:\n{opts}")
         if len(matches) == 1:
             row_idx, cols = matches[0]
             task = cols[0]
             priority = cols[1] if len(cols) > 1 else "Med"
             completed_cell = cols[2] if len(cols) > 2 else ""
             notes = cols[3] if len(cols) > 3 else "—"
+            # A MISFILED row's status word sits in the position this schema reads as
+            # `notes`, so scrub it or the repaired row ends up saying "Pending" forever.
+            # Caught on REAL data 2026-08-17 after the fixture suite passed: withdraw
+            # only ever stripped a leading "Completed <date>" marker.
+            stranded_status = notes.strip().lower() in MISFILED_STATUSES
             if "withdrawn" in completed_cell.lower() or "withdrawn" in notes.lower():
-                out_ok("withdrawn", f"Already withdrawn: {task}", task=task, changed=False)
+                if not stranded_status:
+                    out_ok("withdrawn", f"Already withdrawn: {task}", task=task, changed=False)
+                    return
+                # Already withdrawn but carrying the residue of a pre-fix repair: scrub
+                # it in place rather than leaving a permanently confusing row.
+                lines[row_idx] = fmt_completed(task, priority, completed_cell,
+                                               "— | was misfiled, status residue scrubbed 2026-08-17")
+                save_lines(todos_path, lines, content)
+                out_ok("withdrawn", f"Scrubbed stranded status on: {task}",
+                       task=task, changed=True, scrubbed_status_residue=True)
                 return
             # Preserve the original date if present, else use today.
             m = re.search(r"\d{4}-\d{2}-\d{2}", f"{completed_cell} {notes}")
             date_token = m.group(0) if m else today_str
             # Strip a leading "Completed <date>" marker from notes so no completion marker remains.
             clean_notes = re.sub(r"^Completed\s+\d{4}-\d{2}-\d{2}\s*\|?\s*", "", notes).strip() or "—"
+            if stranded_status:
+                clean_notes = "— | was misfiled under ## Completed, repaired 2026-08-17"
             lines[row_idx] = fmt_completed(task, priority, f"Withdrawn {date_token}", clean_notes)
             save_lines(todos_path, lines, content)
             out_ok("withdrawn", f"Corrected to Withdrawn: {task}", task=task, changed=True)
@@ -482,6 +601,24 @@ def cmd_update(args: list[str], todos_path: Path) -> None:
 
     matches = _find_in_section(lines, act_start, act_end, fragment)
     if not matches:
+        # Refuse accurately. Mutating a stranded row's fields would cement the
+        # strandedness, so update does NOT repair -- but a bare "No ACTIVE task found"
+        # is what sent the 2026-08-06 investigation chasing match-string variants for
+        # four turns against a row that was visibly alive in the file. Name the section.
+        misfiled = [
+            (i, cols) for i, cols in find_misfiled(lines)
+            if cols and cols[0] and fragment in cols[0].lower()
+        ]
+        if misfiled:
+            names = ", ".join(repr(c[0]) for _, c in misfiled)
+            out_error(
+                f"Found {names} in ## Completed with an un-finished status — this is a "
+                f"MISFILED ROW, not an absent one. `update` will not mutate a stranded "
+                f"row. Run `todo_write.py audit` to see all of them, then `done` or "
+                f"`withdraw` to resolve this one.",
+                reason="misfiled_row",
+                found_in_section="## Completed",
+            )
         out_error(f"No ACTIVE task found matching: {fragment_raw}")
     if len(matches) > 1:
         opts = "\n".join(f"  - {c[0]}" for _, c in matches)
@@ -876,6 +1013,34 @@ def cmd_list(args: list[str], todos_path: Path) -> None:
 # Entry point
 # ---------------------------------------------------------------------------
 
+def cmd_audit(todos_path: Path) -> None:
+    """Report rows whose physical section disagrees with their status column. READ-ONLY.
+
+    Exists because this class of damage is otherwise found by accident: the rows are
+    invisible to `done`/`update` and to a human reading the Active list, while
+    todos_summary.py still counts them. Reports line numbers so a hand-repair is
+    possible, and never writes -- disposition (done vs withdraw vs move back to Active)
+    is a judgment call that belongs to the caller.
+    """
+    _, lines = load_todos(todos_path)
+    misfiled = find_misfiled(lines)
+    rows = [
+        {
+            "line": i + 1,
+            "task": cols[0],
+            "priority": cols[1] if len(cols) > 1 else "",
+            "due": cols[2] if len(cols) > 2 else "",
+            "status": cols[3] if len(cols) > 3 else "",
+        }
+        for i, cols in misfiled
+    ]
+    summary = (
+        f"{len(rows)} misfiled row(s): under ## Completed but still un-finished"
+        if rows else "No misfiled rows — every row's section agrees with its status"
+    )
+    out_ok("audit", summary, misfiled_count=len(rows), misfiled=rows)
+
+
 def main() -> None:
     # Extract --repo-root from anywhere in argv so it works before or after the command
     argv = sys.argv[1:]
@@ -928,7 +1093,7 @@ def main() -> None:
             "Usage: add <task> [priority] [due] [notes]  |  "
             "update <fragment> [--task|--priority|--due|--notes|--notes-append|--notes-prepend] X  |  "
             "done <fragment>  |  withdraw <fragment>  |  supersede <prefix>  |  clear  |  sync  |  "
-            "list [--status <Status>] [--grep <substring>]  |  --repo-root <path> (anywhere)"
+            "list [--status <Status>] [--grep <substring>]  |  audit  |  --repo-root <path> (anywhere)"
         )
 
     todos_path = repo_root / TODOS_FILE
@@ -950,8 +1115,10 @@ def main() -> None:
         cmd_sync(todos_path, pipeline_path, apply="--apply" in extra_args)
     elif cmd == "list":
         cmd_list(extra_args, todos_path)
+    elif cmd == "audit":
+        cmd_audit(todos_path)
     else:
-        out_error(f"Unknown command: {cmd}. Use: add, update, done, withdraw, supersede, clear, sync, list")
+        out_error(f"Unknown command: {cmd}. Use: add, update, done, withdraw, supersede, clear, sync, list, audit")
 
 
 if __name__ == "__main__":
