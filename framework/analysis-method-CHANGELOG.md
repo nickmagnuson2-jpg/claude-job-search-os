@@ -21,6 +21,62 @@ Format:
 
 ---
 
+## 2026-08-16 (later) | First live run on a real subject | v1.5, NO standing change, ONE candidate parked
+
+**Source:** in-flight. The <target-company> demo-breakdown session ran early (pulled from 8/18) as the method's
+first run against a real subject rather than a reconstruction. Frame: `frames/<target-company>-demo/frame.yaml`,
+engagement `<target-company>-demo-breakdown`. Working file:
+`output/<target-company>/081626-demo-breakdown-working.md`.
+
+**What ran:** Segment A complete (problem statement, `problem_type: system_design`, metric roles, both
+mode parameters, scope-out, deliverable). Segment B partial: 8 facts, 1 unknown. Four agent stages:
+S1 screens-only inventory, S2 level-below on screens, **S2b transcripts-only (new stage)**, S4
+contradiction pass across all three.
+
+**What did NOT run, stated plainly:** Segment C (elements, closure, exclusions), Segment D
+(recommendation), LOCK (including the backfill-impossible prediction), Segment E. **The run is
+incomplete against its own schema and the checker says so: F5 FAIL, 9 CANNOT_RUN, 2 executed.** Any
+claim about this run's yield must carry that denominator.
+
+**Anti-anchoring turned out to be structural rather than advisory.** The orchestrating context read
+both transcripts in order to answer an unrelated operator question, which disqualified it from
+performing the screens-only stage. The blindness could not be recovered inside that context; the stage
+had to be delegated. Recording this because the method treats anti-anchoring as a rule about agents and
+it is really a rule about *whoever holds the context*, including the orchestrator.
+
+**Two hypotheses were refuted by the run, one held by the orchestrator and one by the operator.** The
+orchestrator proposed that four architecture cards plus two extra feed channels were the "six modules";
+a blind agent that never saw the screens produced the actual six, quoted, and they are business decision
+types. The operator proposed that the unnamed exemplar outcomes lead was <Person A>; the transcript names
+nobody, and the circumstantial evidence points to <Person B>. **A first run that refutes both of its authors is
+better evidence that the machinery works than a clean one would have been.**
+
+**A prediction from the 8/13 plan was confirmed.** The plan asserted a contradiction pass would find at
+least one case of two modules recommending opposing actions on the same object, on paid social. It did.
+
+**Candidate:** an **operator-first reaction stage**, run BEFORE any agent, in which the operator looks
+at the artifact cold and records what he does not buy, with no structure and no enumeration. That output
+becomes a source alongside the agent stages rather than downstream of them.
+
+**Basis.** The sharpest question the run produced came from the operator, not from any agent, and it
+came from an objection rather than an audit. The agents generate by enumerating missing levels, which
+yields coverage; the operator generates by disagreeing with a specific claim, which yielded the one
+question that survived adversarial poking and relocated to stronger ground when its first ground was
+challenged. The two generators are different and the method currently only has the first.
+
+**Gate: NOT MET. Parked, not adopted.** n=1 on one subject, and the operator produced that question
+*after* seeing the agent output, so he was anchored when he did it, which means the stage's own premise
+is untested. **Reopen on either (a) a second run where an operator objection outperforms the agent
+audit, or (b) a blind-agent falsification attempt against the claim "objection and audit are different
+generators with different yield" that survives.**
+
+**Not changed, and why:** the demotion gate still has no runner, and this run does not license building
+one. The changelog's own recorded position is that the gate gets built when there is a run to feed it
+with. There is now one run, incomplete, whose promoted facts were selected by the orchestrator from an
+agent's synthesis rather than from the raw sources. **That is one contaminated data point on stage
+yield, which is the exact quantity the gate consumes.** Building on it would repeat the accretion this
+changelog already recorded and cut.
+
 ## 2026-08-16 | The blind view becomes a mechanism; first live run finds a frame defect | v1.5, NO standing change
 
 **Source:** in-flight. Built `tools/blind_view.py` and ran it against the reconstructed

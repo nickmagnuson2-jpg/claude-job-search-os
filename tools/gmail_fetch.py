@@ -421,10 +421,21 @@ def _write_token_atomic(token_path: Path, content: str) -> None:
     JSONDecodeError at from_authorized_user_file. os.replace is atomic on the
     same filesystem, so readers see either the old token or the new one.
     Matches the write_atomic convention in act_apply.py.
+
+    The temp file is per-process (".tmp.<pid>"). The gmail-fetch and
+    gmail-fetch-personal launchd jobs share this single token file and both
+    run on a 900s interval, so a shared temp name let whichever process
+    reached os.replace first consume the other's temp file, crashing the
+    loser with FileNotFoundError on an otherwise healthy token refresh.
     """
-    tmp = token_path.with_suffix(token_path.suffix + ".tmp")
-    tmp.write_text(content, encoding="utf-8")
-    os.replace(tmp, token_path)
+    tmp = token_path.with_suffix(token_path.suffix + f".tmp.{os.getpid()}")
+    try:
+        tmp.write_text(content, encoding="utf-8")
+        os.replace(tmp, token_path)
+    finally:
+        # Per-pid temps are never reused, so a crash between write and
+        # replace would otherwise leave litter behind forever.
+        tmp.unlink(missing_ok=True)
 
 
 def _load_token_or_exit(Credentials, token_path: Path, tools_dir: Path):

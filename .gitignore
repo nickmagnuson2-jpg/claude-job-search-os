@@ -133,3 +133,10 @@ scratchpad/
 # transcript_exclusions / check_prep_doc / check_doc_precedence. Holds real names,
 # real output paths and verbatim quotes; the committed tests use placeholders only.
 tools/.local-validators.json
+
+# Analysis-method frame state files. Hold verbatim problem statements, quotes from
+# private recruiting calls, named-person hypotheses and live engagement analysis.
+# The schema documents `output/<slug>/frame.yaml`, which inherits this protection
+# because /output/ is already ignored; a dedicated top-level tree does NOT, so it is
+# ignored explicitly here. Added 2026-08-16 on the first live run, before any commit.
+frames/
