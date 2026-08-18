@@ -158,9 +158,9 @@ Fetches open roles from every company listed in `data/scan-targets.yaml`, scores
 To configure targets, edit `data/scan-targets.yaml`:
 
 ```yaml
-- name: Ramp
+- name: Northwind
   ats: ashby
-  slug: ramp
+  slug: northwind
   active: true
   role_filters:
     - "operations"
