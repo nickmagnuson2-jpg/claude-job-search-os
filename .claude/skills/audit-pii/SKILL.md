@@ -80,10 +80,18 @@ Then collect the changed **public, non-gitignored** files:
 git status --porcelain
 ```
 
-For each changed/untracked path, keep it only if BOTH:
-- it is a public artifact: under `tests/`, `.claude/skills/`, `framework/`, `docs/`,
-  or is `tools/*.{py,md,sh}`, or a top-level `*.md`; AND
+For each changed/untracked path, keep it if:
 - `git check-ignore -q <path>` returns non-zero (NOT ignored).
+
+**That single condition IS the definition of a public artifact.** Anything git does not
+ignore reaches the public remote on the next `git add -A`. `tests/`, `.claude/skills/`,
+`.claude/workflows/`, `framework/`, `docs/`, `examples/`, `plugins/`, `tools/*.{py,md,sh}`
+and top-level `*.md` are the common cases, and `check_public_pii.py` keeps them as a fast
+path — but **do not use that list as the test.** It has under-covered twice: 2026-08-13
+(`.claude/workflows/*.js`, tracked and public, never once scanned by the always-on hook)
+and 2026-08-18 (`.claude/settings.json`, tracked, plus a stray `.claude/settings.json.bak`
+that was untracked, NOT gitignored, and one `git add -A` from shipping). Both times the fix
+had been to append another prefix, which treats the symptom.
 
 Skip everything else (private `data/**`, gitignored caches, `output/**`, the denylist).
 If the public-file set is empty, report "No public files changed — nothing to audit" and stop.

@@ -599,7 +599,7 @@ Override flags (for rare legitimate bypasses): `DRAFT_OVERRIDE=1`, `PROJECTS_OVE
 
 ### Public-repo PII safety
 
-This repo is public, so real contacts and pipeline-target companies must never reach a public artifact (`tests/`, `.claude/skills/`, `framework/`, `docs/`, `tools/*`, top-level `*.md`). Two layers enforce it:
+This repo is public, so real contacts and pipeline-target companies must never reach a public artifact (any file git does not ignore; the directory list is a fast path, not the definition). Two layers enforce it:
 
 1. **`check_public_pii.py`** — an always-on PreToolUse hook that blocks a known real name or company (from the gitignored denylist) the moment it is written to a public file.
 2. **`/audit-pii`** — run before committing or pushing any public-file change. It regenerates the denylist, runs the deterministic scan over changed public files, then dispatches an anti-anchored subagent for a semantic pass that catches new real names the denylist hasn't learned yet.

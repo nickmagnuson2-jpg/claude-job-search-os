@@ -204,3 +204,81 @@ def test_is_binary_flags_pdf_and_images_not_text():
     assert cpp.is_binary("docs/diagram.png")
     assert not cpp.is_binary("examples/data/notes.md")
     assert not cpp.is_binary("tools/foo.py")
+
+
+# ---------------------------------------------------------------------------
+# Public-path predicate: the allowlist is a fast path, gitignore is the authority.
+# Two fires of the same defect, both regression-guarded here.
+#   2026-08-13: .claude/workflows/*.js tracked+public but absent from PUBLIC_PREFIXES
+#   2026-08-18: .claude/settings.json (tracked) and a stray .bak beside it (untracked,
+#               NOT gitignored) both reported "not a public artifact"
+# ---------------------------------------------------------------------------
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
+import check_public_pii as cpp  # noqa: E402
+
+
+def _repo(tmp_path):
+    """A throwaway git repo whose .gitignore mirrors the real one's shape."""
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    (tmp_path / ".gitignore").write_text("data/\noutput/\nmemory/\nscratchpad/\n", encoding="utf-8")
+    for d in ("data", "output", ".claude", ".claude/workflows", "tools", "docs"):
+        (tmp_path / d).mkdir(parents=True, exist_ok=True)
+    return tmp_path
+
+
+def test_allowlisted_prefixes_still_public_without_git(tmp_path):
+    """The fast path must not depend on git being answerable."""
+    for rel in ("tests/x.py", ".claude/skills/s/SKILL.md", "framework/f.md",
+                "docs/d.md", "tools/t.py", "CLAUDE.md"):
+        assert cpp.is_public_path(rel) is True, rel
+
+
+def test_data_is_never_public_even_if_git_says_otherwise(tmp_path):
+    root = _repo(tmp_path)
+    assert cpp.is_public_path("data/goals.md", root) is False
+
+
+def test_gitignored_trees_are_not_public(tmp_path):
+    root = _repo(tmp_path)
+    for rel in ("output/analysis/x.md", "memory/feedback_x.md", "scratchpad/tmp.py"):
+        assert cpp.is_public_path(rel, root) is False, rel
+
+
+def test_regression_2026_08_18_claude_settings_json_is_public(tmp_path):
+    """settings.json is tracked and ships publicly; the allowlist did not cover it."""
+    root = _repo(tmp_path)
+    (root / ".claude" / "settings.json").write_text("{}", encoding="utf-8")
+    assert cpp.is_public_path(".claude/settings.json", root) is True
+
+
+def test_regression_2026_08_18_stray_untracked_backup_is_public(tmp_path):
+    """An untracked file that is NOT gitignored is one `git add -A` from shipping."""
+    root = _repo(tmp_path)
+    (root / ".claude" / "settings.json.bak-081726").write_text("{}", encoding="utf-8")
+    assert cpp.is_public_path(".claude/settings.json.bak-081726", root) is True
+
+
+def test_regression_2026_08_13_claude_workflows_is_public(tmp_path):
+    root = _repo(tmp_path)
+    assert cpp.is_public_path(".claude/workflows/plan-hardening.js", root) is True
+
+
+def test_unknown_git_state_does_not_widen_the_surface(tmp_path):
+    """No git repo -> the fallback must NOT claim an unlisted path is public.
+
+    Fail-open here is deliberate: this hook BLOCKs at exit 2, so a fallback that
+    said 'public' whenever git could not answer would block every write in any
+    directory git cannot resolve.
+    """
+    not_a_repo = tmp_path / "bare"
+    not_a_repo.mkdir()
+    assert cpp.git_ignore_state(not_a_repo, "whatever.json") == "unknown"
+    assert cpp.is_public_path("whatever.json", not_a_repo) is False
+
+
+def test_git_ignore_state_distinguishes_all_three(tmp_path):
+    root = _repo(tmp_path)
+    assert cpp.git_ignore_state(root, "data/goals.md") == "ignored"
+    assert cpp.git_ignore_state(root, "docs/readme.md") == "not-ignored"
+    assert cpp.git_ignore_state(tmp_path / "nope", "x.md") == "unknown"

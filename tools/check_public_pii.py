@@ -61,7 +61,44 @@ def is_binary(rel: str) -> bool:
     return ext in BINARY_EXTS
 
 
-def is_public_path(rel: str) -> bool:
+def git_ignore_state(root: Path, rel: str) -> str:
+    """'ignored' | 'tracked-or-untracked-but-not-ignored' | 'unknown'.
+
+    Distinguishes "git says not ignored" from "git could not answer", which
+    is-gitignored's bool cannot express. The fallback in is_public_path needs
+    that distinction: a missing git must NOT be read as "this file is public."
+    """
+    try:
+        r = subprocess.run(
+            ["git", "-C", str(root), "check-ignore", "-q", rel],
+            capture_output=True, timeout=5,
+        )
+    except Exception:
+        return "unknown"
+    if r.returncode == 0:
+        return "ignored"
+    if r.returncode == 1:
+        return "not-ignored"
+    return "unknown"          # 128 = not a repo, or any other git failure
+
+
+def is_public_path(rel: str, root: Path | None = None) -> bool:
+    """Does this path ship to the PUBLIC remote?
+
+    The prefix allowlist below is a FAST PATH, not the definition. What actually
+    determines public exposure is gitignore: anything git does not ignore reaches
+    the public repo on the next `git add -A`.
+
+    An allowlist under-covers by construction, and this one has now done so twice.
+    2026-08-13: `.claude/workflows/` was tracked and public but absent from the tuple,
+    so the always-on hook had never scanned its three .js files. 2026-08-18:
+    `.claude/settings.json` (tracked, public) plus a stray `.claude/settings.json.bak`
+    (untracked, NOT gitignored, and one `git add -A` from shipping) were both reported
+    "not a public artifact." Each time the fix had been to append another prefix, which
+    treats the symptom. The gitignore fallback below is the source fix; the tuple is
+    kept only so the common case avoids a subprocess and so behaviour degrades safely
+    when git cannot answer.
+    """
     if rel.startswith("data/"):
         return False
     if any(rel.startswith(p) for p in PUBLIC_PREFIXES):
@@ -69,6 +106,8 @@ def is_public_path(rel: str) -> bool:
     if rel.startswith("tools/") and rel.rsplit(".", 1)[-1] in ("py", "md", "sh"):
         return True
     if "/" not in rel and rel.endswith(".md"):  # top-level markdown
+        return True
+    if root is not None and git_ignore_state(root, rel) == "not-ignored":
         return True
     return False
 
@@ -153,7 +192,7 @@ def scan_paths(paths: list[str]) -> int:
         if rel.startswith(".."):
             result["skipped"].append({"path": rel, "why": "outside repo"})
             continue
-        if not is_public_path(rel):
+        if not is_public_path(rel, root):
             result["skipped"].append({"path": rel, "why": "not a public artifact"})
             continue
         if is_gitignored(root, rel):
@@ -220,7 +259,7 @@ def main():
         return
 
     rel = rel.replace(os.sep, "/")
-    if not is_public_path(rel) or is_gitignored(root, rel):
+    if not is_public_path(rel, root) or is_gitignored(root, rel):
         return
     if is_binary(rel):
         return  # never text-scan binary blobs (a PDF byte stream false-positives, #18)
