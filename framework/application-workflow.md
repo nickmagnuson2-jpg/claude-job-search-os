@@ -262,6 +262,43 @@ Template:
 
 If a check genuinely has nothing to flag, write "n/a — [one-line reason]", not just "clean".
 
+## Application Answers (portal / recruiter-form questions)
+
+**A distinct artifact from the CV, with its own failure modes.** The CV standards above do not cover it, and in the one case where it was the only thing sent, the CV standards could not have helped. Origin: 2026-08, a client-facing strategy role sourced through a recruiter marketplace. See [[feedback_hard_filter_needs_demonstrating_artifact_confirmed_sent]] and [[feedback_overridden_dissent_needs_owner_and_reread_trigger]].
+
+### Hard-filter demonstration gate (BLOCKING)
+
+Identify the JD's **hard filter**: the one explicit experience bar it states as a requirement (e.g. "N+ years in a client-facing consulting role, working directly with enterprise customers"). Then, before send, name all three:
+
+1. **Which artifact demonstrates it** (a specific answer, or the CV).
+2. **Which passage inside that artifact** demonstrates it — quote the line.
+3. **Confirmation that artifact is in the outbound package.**
+
+**Any hard filter that cannot name all three BLOCKS the send.** Two specific rejections:
+
+- **Assertion is not demonstration.** A clause claiming the experience does not satisfy the filter; a story showing it does. If the question-clause checklist row reads `ASSERTED, NOT DEMONSTRATED` or `PARTIAL` against the hard filter, that is a block, not a note. In the origin incident that exact row shipped, and the company came back citing that exact gap.
+- **"Optional" on the form is not optional to the case.** When the answers do not demonstrate the filter, the CV becomes mandatory regardless of what the form says. In the origin incident the answers left the filter "resting entirely on the resume" by the document's own words, and no resume was sent.
+
+### Slot assignment: sort by filter, not by recency
+
+When choosing which story fills a question, the sort key is **relevance to the hard filter**, not recency and not which story is best rehearsed. A more recent story that structurally cannot evidence the filter is the wrong choice even when it is the better-told story. In the origin incident the third answer was drafted against the consulting engagement (the only story hitting all three legs of the question), then pivoted to a more recent internal story, and the resulting answer could not evidence enterprise-client work because no version of it contains an external client.
+
+**Corollary for the CV.** Reverse-chron buries the filter when the qualifying work is not the top role. If the hard filter lives in job three, the summary must carry it explicitly into the six-second scan.
+
+### Do not volunteer the disqualifying frame
+
+The "Avoid Self-Sabotage" rules above apply to answers, and one addition specific to them. Scope-honesty guardrails written for interview accuracy become disqualifiers when pre-emptively stated in a screening artifact:
+
+- "My lane was strategy; [someone else] owned delivery" reads as *no delivery experience*.
+- "This was internal to [employer]" reads as *no client experience*.
+- Flagging a target as not-yet-a-result reads as *no result*.
+
+All three are correct and must stay true under a direct question in an interview. **None of them needs to be volunteered in a screening artifact.** Precision about what the candidate did is not the same as narrating what he did not do. Rewriting a negation into a positive assignment ("X owned delivery" instead of "I did not do delivery") does not fix this: it is the same information and a filtering screener reads it the same way.
+
+### Accepted costs get a to-do, not a paragraph
+
+If the answers document records an "accepted cost," "live consequence," "recorded rather than resolved," or a "reversal path if wanted," that residual gets a dated row via `tools/todo_write.py` **at the moment it is written**, naming the owner and the mitigating artifact. A residual filed as prose inside the document that recorded it has no owner and does not resurface. In the origin incident the residual was recorded accurately, in a section with that literal heading, and was still paid in full.
+
 ## Cheat Sheet Structure
 
 Generate a pre-interview cheat sheet alongside each CV. Contents:
