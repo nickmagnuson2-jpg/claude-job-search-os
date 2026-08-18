@@ -190,8 +190,24 @@ one-shot (`d1.mode.shots: one`), or the deterministic gate came back clean and t
 itself suspicious. **Skip it when:** the gate found real failures — fix those first, since a panel
 attacking a frame with known defects spends its rounds on what you already know.
 
-**Where it slots:** after the deterministic gate passes, before the artifact is locked. Pass the
-frame plus the `d1` block as the plan, and the engagement's context as `context`.
+**Where it slots:** after the deterministic gate passes, before the artifact is locked.
+
+**Exact invocation contract. `args` MUST be a JSON object, never a prose string** — the workflow
+calls `JSON.parse` on a string arg and dies in 17ms with `Unexpected identifier` before a single
+agent runs. The key is `planPath` or `planText`, **not `plan`**:
+
+```
+Workflow({ name: "plan-hardening", args: {
+  planPath: "output/<slug>/frame.yaml",   // OR planText: "<the plan markdown>"
+  context:  "<1-paragraph domain context every critic needs>",
+  rounds:   3,                            // optional
+  lenses:   [...], outPath: "..."         // optional
+}})
+```
+
+Pass the frame plus the `d1` block as `planPath`/`planText`, and the engagement's context as
+`context`. Fired 2026-08-17: this block previously said "as the plan," which reads as a `plan:`
+key and as free prose; both fail.
 
 **What it returns is a residual risk register, not a pass.** There is deliberately no `airtight`
 boolean. Read the register.

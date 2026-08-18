@@ -105,3 +105,41 @@ Args are passed as a **JSON object**, not a bare string — `{"planPath": "...",
 | `agent-discover-collect` | Weekly (Mon 09:45) | `agent_collect.py` → runs each monitored Exa Agent preset, drips new companies/people to `data/inbox.md` (review-gated). **Measured cost: $0.15 per run** ($0.025 lane-a + $0.10 lane-b + $0.025 deployment-leads; ~$7.80/yr weekly) — real but negligible. Corrected 2026-08-11 from a stale "$0.05 / 2 presets / ~$2.60/yr" claim: a 3rd preset was added and lane-b costs 4x the others. Verified against a live run producing 34 new companies (lane-a 2, lane-b 31, deployment-leads 1). Re-measure whenever a preset is added — the cost scales per preset, not per job. ⚠️ **`install.sh` installs this job unconditionally** along with the other 7 — there is no opt-out flag, so any `bash tools/launchd/install.sh install` restarts it. The doc previously said "NOT installed by default," which was false. **Currently ON** (verified loaded 2026-08-10, Mon 09:45) — briefly unloaded that day, then restored once the cost was measured at ~$2.60/yr against a live lead source. Disable: `launchctl bootout gui/$(id -u)/com.nickmagnuson.jobsearch.agent-discover-collect && rm ~/Library/LaunchAgents/com.nickmagnuson.jobsearch.agent-discover-collect.plist`. Check state: `launchctl list \| grep agent-discover-collect`. |
 
 
+---
+
+## Environment & per-workflow recipes
+
+> Moved verbatim from `CLAUDE.md` `## Tools & Environment` on 2026-08-18 to hold that
+> always-loaded file under its 40 KB budget. Nothing was reworded. The two prohibitions
+> from that section (the `PYTHONIOENCODING` requirement and the `tools/launchd/logs/`
+> provenance-xattr rule) deliberately stayed in CLAUDE.md.
+
+Python 3.10+ (several `tools/*.py` use PEP 604 `X | None` annotations evaluated at def time — e.g. `networking_read.py`, `networking_followup.py`, `pipe_read.py`, `pipeline_staleness.py`). `pip install -r requirements.txt` for PDF features. **All `tools/*.py` scripts require `PYTHONIOENCODING=utf-8` prefix or they crash on Unicode.**
+
+**CV PDFs use RenderCV** (`~/.local/bin/rendercv render <yaml>`) — see `/generate-cv` and `/apply` SKILL.md for the full pipeline. Reference YAML: `output/example-ventures/042826-cos-example.yaml`. Theme: `framework/cv-themes/tuck-mbb.yaml`.
+
+**Email drafts.** Use `tools/open_draft.py` (Google MCP lacks draft-creation permissions). Write `tools/.pending-draft.txt`:
+
+```
+TO: recipient@example.com
+CC: optional@example.com
+SUBJECT: Subject line
+BODY:
+Email body here
+```
+
+`CC:` is optional (omit the line entirely if unused). Then `PYTHONIOENCODING=utf-8 python3 tools/open_draft.py` opens Gmail compose pre-filled.
+
+**Post-interview workflow:**
+1. `data/company-notes/<slug>.md` — call intel, newest at top
+2. `pipe_write.py` — stage, next-action, notes
+3. `networking_write.py log` — interaction
+4. `todo_write.py add` — follow-up task
+5. `tools/open_draft.py` — thank-you email
+6. If a mock session preceded the call: update `coaching/progress-recruiter/`
+
+**Gotchas:**
+- Filter separator-row noise from script output: `[e for e in entries if e.get("task") != "---"]`.
+- Edit-safety hook (`.claude/settings.json`) runs `tools/check_edit_safety.py` on every `.md` Edit.
+
+The (now-historical) n8n setup (`tools/run_n8n.bat`, dashboard at localhost:5678) was replaced by launchd ~2026-04-28; n8n binaries may still exist but no jobs run there.

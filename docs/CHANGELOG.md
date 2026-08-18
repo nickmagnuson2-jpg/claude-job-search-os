@@ -3,6 +3,96 @@
 All notable changes to this job search system are recorded here.
 Format: newest entries at the top.
 
+## 2026-08-18 (later): the Self-Improvement Loop, compressed in CLAUDE.md, justification split out
+
+`## Self-Improvement Loop` was 9,939 bytes, 24.8% of an always-loaded file, and the only section
+describing a multi-step procedure. It was compressed in place to 7,613 bytes rather than moved,
+because directives must not be paged out of the always-loaded tier.
+
+**The justification went to `docs/self-improvement-loop.md`, and that file contains NO directives.**
+The first design put a full verbatim copy there. That was rejected on Nick's question "how do I
+mitigate duplication drift?", and the honest answer was that a line saying "change it in both
+places" is prose, which by this repo's own first Hard Rule is not built. **Two copies of this exact
+protocol have already drifted once**, costing 384 of 403 `feedback_*.md` files their visibility to
+the promotion detector for a month. So the fix is structural: the two files share no prose, and
+there is nothing to keep in sync. Verified mechanically at zero shared substantive lines.
+
+**The verbatim pre-compression text lives in git** (`git show 67e0ada:CLAUDE.md`), which is a better
+archive than a second copy because it cannot drift.
+
+**A rewrite cannot be verified the way a move can**, so three instruments were used instead of one:
+
+1. **Blind two-agent enumeration.** Two agents independently listed every normative directive, one
+   seeing only the original and one only the compressed text, neither told a compression test was
+   running, neither shown the other's output. **72 directives in the original, 71 in the compressed,
+   zero lost, zero invented.**
+2. **Union rule conservation**, which **HARD ABORTED at 20 lost lines.** It was not loosened. All 20
+   were adjudicated individually: 14 were reworded-and-present; the other 6 were the body-section
+   labels (Rule / Why / Origin / How to apply / Connections / Tier ladder), collapsed from six
+   bullets into one 364-character prose line.
+3. **A direct label-and-qualifier check** confirming all six survived with their qualifiers.
+
+**The abort earned its keep even though nothing was lost.** Collapsing six enumerated bullets into
+one prose line preserves the directives while degrading exactly the property this repo measures as
+load-bearing: enumerated, absolute, small-N converts, prose does not. That is the highest-stakes item
+in the section, since the body schema is what the 384-of-403 failure was about. **The six bullets
+were restored verbatim** (+150 bytes), which also brought the line-exact diff from 20 to 14.
+
+**A finding about method.** A hand-built 28-row directive inventory was drafted first and would have
+been an unsafe instrument: the blind reader found **72**, splitting the YAML block into eight
+obligations the hand list treated as one. A dropped frontmatter key would have diffed clean against
+it. Self-derived inventories are not a check.
+
+**CLAUDE.md across the day: 41,310 to 38,264 bytes (40.3 KB to 37.4 KB), 301 to 268 lines.**
+3,046 bytes off the per-session tax, with the anti-pattern list and five origin traces still one
+triggered pointer away.
+
+**Verification:** union rule conservation adjudicated to zero genuine losses · zero shared prose
+between CLAUDE.md and the new doc · full suite 1,881 passed · the one test citing the section does so
+in a docstring narrative, not an assertion.
+
+## 2026-08-18: CLAUDE.md back under budget, and what deliberately did NOT move
+
+`CLAUDE.md` crossed its 40 KB always-loaded budget (41,310 bytes) after the 08-17 source fixes
+that taught it the three memory roots and the mandatory grep-mirror prunes. Trimmed via
+`/trim-context-file` to **40,024 bytes (39.1 KB), 301 to 274 lines**.
+
+**What moved: `## Tools & Environment`, partially, verbatim, to `docs/tools-reference.md`**
+(new `## Environment & per-workflow recipes` section, which names its origin and date). Moved:
+the Python 3.10+/PEP-604 constraint, the RenderCV invocation, the `.pending-draft.txt` format
+block, the post-interview 6-step workflow, the separator-row and edit-safety-hook gotchas, and
+the historical n8n note. This is the split the 2026-08-14 entry flagged as needed rather than a
+wholesale move.
+
+**What stayed, and why:** the `PYTHONIOENCODING=utf-8` requirement and the
+`tools/launchd/logs/` provenance-xattr prohibition. Both are things Claude must not violate
+*without knowing*, which is the always-loaded test. The router line that replaced the section
+carries a widened trigger, naming email drafts, CV rendering, and post-interview work explicitly,
+because a pointer without a trigger condition is a pointer nobody follows.
+
+**Rejected the script's advice in two places.** `context_file_audit.py` suggested MOVE on
+`## Data Files`; its first subsection is the Write-Only Files table, which encodes a rule
+(`Edit` fails silently on rows >500 chars, so mutate via `todo_write.py`/`pipe_write.py`). That
+is the exact case the skill names as a load-bearing table that reads as a lookup table. It stays.
+It also flagged `## Repository Structure` as REVIEW; the three-memory-roots tree added 08-17 is
+rule-bearing (never search the rsync mirrors, never delete them) and was the source fix for a
+trap that had fired three times.
+
+**`## Self-Improvement Loop` (9,913 bytes, 24.8%) stays in CLAUDE.md by Nick's call.** A
+compression-in-place is queued instead of a move, and it is a REWRITE, not a relocation, so byte
+conservation cannot vouch for it and the rules diff fails open by construction (same detector on
+both sides). It gets a rule-by-rule preservation table reviewed before anything is written.
+
+**Verification:** Step 0 gate passed (13 blocks reconstructing 41,310 bytes exactly,
+`rule_count=69`). Byte conservation: every moved fragment byte-identical to its Step 0 block.
+Rule conservation against the UNION of trimmed source plus destination: **0 of 69 baseline rules
+lost** (union 95). Full suite: 1,881 passed. No artifact cited the moved section by heading, so
+no back-propagation was required.
+
+**Still over budget, tracked, not addressed here:** `memory/index-system.md` (29.3 KB) and
+`memory/index-verification.md` (31.3 KB) against a ~24 KB shard budget. Sharding buys headroom;
+it does not stop growth.
+
 ## 2026-08-17: a note that broke a parser, and the invariant that will catch the next one
 
 Three defects in `data/job-todos.md` tooling, found in sequence, each exposed by fixing the one

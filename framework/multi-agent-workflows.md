@@ -136,7 +136,7 @@ run time, never hardcoded (this repo is public). Invoke by name, or via `scriptP
 
 | Template | Pattern(s) | Give it (`args`) | Produces |
 |---|---|---|---|
-| `plan-hardening.js` | #3 convergence | a plan (path/text) + domain context + round cap (+ optional `quietRoundsToStop`, `maxGrowthPerRound`) | a hardened plan + a residual risk register + unverified repo-state claims + round-by-round changelog |
+| `plan-hardening.js` | #3 convergence | `planPath` **or** `planText` (NOT `plan`) + `context` + `rounds` (+ optional `lenses`, `outPath`, `quietRoundsToStop`, `maxGrowthPerRound`) | a hardened plan + a residual risk register + unverified repo-state claims + round-by-round changelog |
 | `research-audit.js` | #1 fan-out + #2 verify | a subject + systems, each with current-state + research angles | cited, adversarially-validated recommendations |
 | `extract-verify.js` | #4 extract→verify | a manifest of entities + their source files + a label taxonomy | a verified per-entity ledger with provenance |
 
