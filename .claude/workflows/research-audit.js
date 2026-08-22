@@ -21,6 +21,11 @@ const cfg = typeof args === 'string' ? JSON.parse(args) : (args || {})
 const SUBJECT = cfg.subject || 'No subject context supplied.'
 const SYSTEMS = (cfg.systems || []).concat(cfg.crossCutting ? [cfg.crossCutting] : [])
 if (!SYSTEMS.length) throw new Error('research-audit: args.systems is required (fail loud).')
+// `date` is interpolated into the output filename and has NO default. Workflow scripts cannot call
+// new Date() (it throws, so runs stay resumable), so it can only come from args. Without this guard
+// the run completes and writes `undefined-best-practices-audit.md` — a silent success with a
+// corrupt name, which is worse than an abort. Found by audit 2026-08-21.
+if (!cfg.date) throw new Error('research-audit: args.date is required (it lands in the output filename; fail loud).')
 
 const ANGLES = SYSTEMS.flatMap((s) =>
   (s.angles || []).map((a, i) => ({ system: s.name, currentState: s.currentState, angle: a, idx: i })),

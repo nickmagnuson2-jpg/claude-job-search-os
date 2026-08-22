@@ -6,8 +6,9 @@ Format: newest entries at the top.
 ## 2026-08-21 (latest): plan-hardening v2 — bounded probes and per-defect retest replace the adversarial panel
 
 `.claude/workflows/plan-hardening.js` was rewritten against `framework/plan-hardening-v2-spec.md`.
-Suite **2114 to 2147** (33 tests in `test_plan_hardening_invariants.py`, up from 0). Committed
-`fc8b449`.
+Suite **2114 to 2155** (33 tests in `test_plan_hardening_invariants.py` + 8 in
+`test_workflow_arg_contracts.py`, both up from 0). Committed `fc8b449`, with audit corrections in
+`689dfdd` and the arg-contract guard in the commit below.
 
 **Why the old design had to go, measured not argued.** Two instrumented v1 runs on the same plan:
 88 agents / 5.24M tokens / 5 rounds and 46 agents / 2.94M tokens / 2 rounds. **Neither converged.**
@@ -104,6 +105,17 @@ rather than the file on disk, and announces nothing. A run launched at 09:43 exe
 workflow while v2 had been on disk since 09:41. **Always launch with `scriptPath`** and verify the
 persisted script's header first. Docs updated accordingly in `framework/analysis-method.md` and
 `framework/multi-agent-workflows.md`.
+
+**A guard against the defect class this entry keeps describing.** Three separate arg-contract
+defects landed in one day — `registerPath`/`outPath` advertised but never read; `targets` read but
+silently dropped from the contract, and it bypasses a whole stage; `extract-verify.js` advertising a
+`date` it never reads. A fourth was adjacent: `research-audit.js` read `cfg.date` with no default and
+no guard, so omitting it wrote `undefined-best-practices-audit.md` — a silent success with a corrupt
+filename. `tests/scripts/test_workflow_arg_contracts.py` now enforces the contract in **both**
+directions across every `.claude/workflows/*.js`: every advertised arg must be read, and every read
+arg must be advertised. Exemptions require a written reason, same contract as `mutation-allow.json`.
+Four mutants, all killed — including one that was **equivalent on the first attempt** (relocating the
+guard "after" the filename actually left it before) and had to be re-cut to mean anything.
 
 **Docs swept in the same pass** (per the back-propagation rule — a new design enforced forward while
 old descriptions still describe the dead one is how a rule sits "captured" while artifacts rot):
