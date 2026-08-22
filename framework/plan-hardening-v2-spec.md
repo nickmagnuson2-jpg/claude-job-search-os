@@ -1,0 +1,365 @@
+# Plan Hardening v2 — Specification
+
+**Status: BUILT, with one named gap (2026-08-21).** `.claude/workflows/plan-hardening.js`
+implements the S0-S6 stage graph; five of the six §9 invariants are assertions in that script,
+each broken on purpose by a test in `tests/scripts/test_plan_hardening_invariants.py` (30 tests,
+mutation-verified); and one run has executed end to end with the register persisted
+(`output/analysis/082126-plan-hardening-register-v2run1.json`, run `wf_a440ab49-405`).
+
+**The gap, named rather than glossed:** §9.4's *cross-pass* half is NOT built. Hole IDs are
+assigned deterministically within a pass and retest verdicts key to them, but no prior register is
+ever read back, so an ID from pass *n* is not guaranteed to denote the same hole in pass *n+1*.
+Single-pass runs are sound; a second pass over the same plan is not yet trustworthy. That matters
+now rather than hypothetically: the first live run returned `OPEN` with 14 holes still firing, so a
+second pass is required work, not a thought experiment.
+
+Cite this document as built for what §11 lists as done, and never for cross-pass behavior.
+
+**Supersedes:** the v1 behavior of `.claude/workflows/plan-hardening.js` (unbounded multi-round
+critique with a revision loop). v1 is not deleted; it is superseded, and §10 records the measured
+reasons so the design is not re-derived from scratch.
+
+---
+
+## 1. What v1 got wrong, measured
+
+Two runs against the same plan, instrumented.
+
+| | Run 1 | Run 2 |
+|---|---|---|
+| Agents | 88 | ~35 (2-round cap) |
+| Tokens | 5.24M | — |
+| Rounds | 5 | 2 |
+| Converged | **No** | — |
+| Holes per round | 82 / 84 / 78 / 75 / 76 | — |
+| *New* blocking per round | 30 / 24 / 30 / 25 / 26 | — |
+
+Five defects, each of which v2 addresses by construction:
+
+**D1 — the question was unbounded, so the loop could not converge.** "Attack this plan" has no
+terminating answer. Each round's critics were fresh, re-derived overlapping objections, and every
+one registered as new. Total hole volume never dropped across five rounds.
+
+**D2 — the plan mutated under the panel.** A revise step folded holes into the plan between rounds,
+so by the final round the critics were attacking an artifact the panel itself had authored. The loop
+closed on itself.
+
+**D3 — payload loss was silent.** The final reviser received the literal string `ial` instead of the
+plan body, **reconstructed the worklist from the critics' paraphrases**, renamed items, and dropped
+others. It flagged this in its own header, which is the only reason it was caught. Nothing asserted
+the payload.
+
+**D4 — premise findings were reported as peers of execution findings.** The deepest finding in run 1
+was that the plan's goal might be aimed at a channel carrying almost no traffic. It arrived phrased
+as one of 82 holes and was not extracted. Crisp execution findings crowd out soft premise findings
+in a flat register, every time.
+
+**D5 — volume was mistaken for rigor.** 82 holes is a haystack, not a review. The findings that
+mattered had to be hand-extracted afterward, which is the work the harness was supposed to do.
+
+Two things v1 got right and v2 keeps: **scoped adversarial critique** (round 1 alone produced
+several genuinely load-bearing findings), and **repo-grounded validation** (an independent pass that
+checks factual claims against real state was the most reliable arm in both runs).
+
+---
+
+## 2. Core design claim
+
+> **Bounded questions converge. Unbounded questions do not.**
+
+Every stage below asks a question with a decidable answer. "Is hole E4 closed?" terminates. "Attack
+this plan" does not. Termination becomes arithmetic rather than hope.
+
+The second claim, equally load-bearing:
+
+> **Premise findings are upstream of execution findings and must gate them, not sit beside them.**
+
+If the goal is wrong, execution findings are not 21 problems; they are 21 items pending the
+resolution of one. Merging them into a flat count misrepresents the state and buries the premise.
+
+---
+
+## 3. Two layers, one register, hard stop between them
+
+- **Premise layer** — is `G` the right goal? Is the problem framed correctly?
+- **Execution layer** — given `G`, does the plan achieve it?
+
+**The gate is a HARD STOP.** If `premise_status` is `open`, the execution stage does not run. This
+is deliberate and it is the expensive choice: the observed failure was five rounds of execution
+critique polishing a plan whose aim had never been checked. A banner would be more forgiving when
+time-boxed; it also reproduces the failure. Hard stop.
+
+---
+
+## 4. Stage graph
+
+```
+  S0  GOAL EXTRACTION      2 agents, independent, one blind to the plan
+       |
+  S1  PREMISE GATE         1 agent + deterministic diff   ── HARD STOP ──┐
+       |                                                                 |
+  S2  TARGET GENERATION    1 agent (typed, from 4 generators)            |
+       |                                                          premise_status: open
+  S3  SCOPED PROBES        N agents (1/target) + 1 unscoped              |
+       |                                                                 |
+  S4  FIX                  orchestrator or operator; keyed to hole IDs   |
+       |                                                                 |
+  S5  RETEST               N agents (1/hole ID) + 1 new-holes-only       |
+       |                                                                 |
+  S6  VALIDATION           1 agent, repo-grounded, independent model     |
+       |                                                                 |
+     REGISTER  <───────────────────────────────────────────────────────  ┘
+```
+
+### S0 — Goal extraction (2 agents)
+
+Two agents produce a goal statement for the same work:
+
+- **`goal_from_plan`** — reads the plan, states what it is trying to achieve.
+- **`goal_from_problem`** — reads **only the problem context, never the plan**, and states what a
+  plan in this situation should achieve.
+
+The blindness is mandatory, per the anti-anchoring rule: an agent that has read the plan recovers
+the plan's own self-description, which is precisely the artifact under suspicion.
+
+**This pair is the oracle arm.** It bypasses the plan the way an injected rule bypasses retrieval,
+and the delta attributes the failure to *aim* versus *execution*.
+
+### S1 — Premise gate (1 agent + diff)
+
+A third agent receives both goal statements, **not the plan**, and answers two bounded questions:
+
+1. Is the delta between them material or immaterial? (material = they describe different outcomes,
+   different success conditions, or different beneficiaries)
+2. Independent of the delta: is `goal_from_problem` itself the right goal, or is the problem framed
+   wrongly upstream of both?
+
+Output sets `premise_status`:
+
+- `resolved` → proceed to S2.
+- `open` → **STOP.** Emit the premise findings and the register. Do not run S2-S5. The deliverable
+  is the premise finding; that is a successful run, not a failed one.
+
+### S2 — Target generation (1 agent)
+
+Targets are derived, never freeformed. Two inputs.
+
+**(a) Type the plan.** Exactly one of four:
+
+| Type | Success is | Failure mode it invites |
+|---|---|---|
+| **Diagnostic** | the question is answered, *including "no"* | can only confirm, never falsify |
+| **Intervention** | pre-registered before/after delta | no baseline, so no attribution |
+| **Guard** | fires on real violations, silent on near-misses | activation measured, restraint never |
+| **Deliverable** | acceptance criteria met **and someone uses it** | ships to a surface nobody runs |
+
+**A plan that resists typing is doing more than one thing and should be split. Emit that as a
+premise finding and stop.**
+
+**(b) Run the four generators** over the plan, each producing candidate targets:
+
+1. **Stated constraints** — the plan's own declared rules. Self-violation is the highest-yield
+   target class and the cheapest to check.
+2. **Irreversible steps** — anything that cannot be undone, plus anything whose damage propagates
+   (backups, mirrors, published artifacts, sent messages).
+3. **Cost drivers** — the two or three steps consuming most of the budget. Underestimates here
+   dominate the plan's real cost.
+4. **Load-bearing assumptions** — claims that, if false, collapse an item. Especially claims about
+   system state that were asserted rather than measured.
+
+Plus the type's own failure mode from the table, always included as a target.
+
+Output: 5-9 named targets, each with an explicit **"what would count as a hole here."** Fewer than 5
+suggests a shallow read; more than 9 reproduces v1's volume problem.
+
+### S3 — Scoped probes (N + 1 agents)
+
+One agent per target. Each is told to find holes **only within its target** and to return few,
+high-confidence holes rather than volume. Each hole carries a concrete failure scenario: inputs or
+circumstances → the wrong outcome. A hole with no failure scenario is not a hole.
+
+**Plus exactly one unscoped agent** whose only question is: *"what did this target list miss?"*
+
+This agent is not optional and is the deliberate cost of scoping. Scoping structurally cannot find
+the hole nobody thought to look for. In run 1, the single best finding (an irreversible step whose
+damage propagated through a nightly mirror, with no rollback path) came from an angle that would not
+have appeared on a generated target list.
+
+### S4 — Fix
+
+For each open hole, the plan is edited and the fix recorded against the **hole ID**. Three
+dispositions, and every one is explicit:
+
+- `fixed` — the plan changed; record what changed.
+- `accepted` — deliberately not fixed. **Requires a written reason.** Same contract as
+  `tools/mutation-allow.json`: an allowlist without justification is how a gate decays back into
+  "we looked at it."
+- `moot(<premise-id>)` — invalidated by an unresolved premise finding.
+
+### S5 — Retest (N + 1 agents)
+
+**This is the stage that distinguishes v2 from v1.** For each hole ID, a fresh agent receives *the
+original hole* and *the revised plan* and answers one bounded question: **does this specific hole
+still fire?**
+
+`closed` · `still-fires` · `fix-introduced-a-new-problem`
+
+This is the regression discipline applied to plans rather than code: a fix is not verified until it
+is checked against the specific defect it claims to remove. v1 instead threw the revised plan to a
+general panel, which is the equivalent of re-running a whole suite and hoping the relevant assertion
+exists.
+
+**Plus exactly one agent scoped to new holes only:** "the following changed since the last pass;
+did any of these changes introduce a NEW blocking hole?" It is shown the diff, not the whole plan,
+so it cannot re-derive the original findings.
+
+### S6 — Validation (1 agent, independent model)
+
+Every factual claim about system state — in the plan **and in the findings** — is checked against
+reality by an agent on a different model with tool access. Verdicts: `CONFIRMED` · `REFUTED` ·
+`UNVERIFIABLE`.
+
+Two rules learned from v1, where the validator itself produced false refutations:
+
+- **Name the scope in the same sentence as the verdict.** A refutation must state what was checked
+  and why that scope would have contained the thing. v1's validator refuted a true file count by
+  comparing a raw recursive file count against a filtered one — two different denominators, reported
+  as a contradiction.
+- **Check configuration in every location it can live**, not only the nearest one. v1's validator
+  declared a capability absent after checking one local config file while it was configured in the
+  global one. That was its top blocking finding and it was wrong.
+
+---
+
+## 5. Register schema
+
+One durable record per plan. **Hole IDs are stable across passes** — that is what makes S5 possible
+at all.
+
+```yaml
+plan: <stable-id>
+pass: <n>
+plan_type: diagnostic | intervention | guard | deliverable
+
+goal_from_problem: "<authored WITHOUT the plan in context>"
+goal_from_plan:    "<authored FROM the plan>"
+goal_delta:        material | immaterial
+premise_status:    open | resolved        # HARD GATE on the execution stage
+
+findings:
+  - id: P1
+    layer: premise
+    claim: "<one sentence>"
+    failure_scenario: "<concrete>"
+    status: open | fixed | accepted
+    reason: "<required when accepted>"
+    invalidates: [E2, E5]
+
+  - id: E2
+    layer: execution
+    target: irreversibility            # which target produced it; unscoped agent uses `unscoped`
+    claim: "<one sentence>"
+    failure_scenario: "<concrete>"
+    status: open | fixed | accepted | moot(P1)
+    reason: "<required when accepted>"
+    retest: closed | still-fires | fix-introduced-new | not-yet-run
+    validation: CONFIRMED | REFUTED | UNVERIFIABLE | n/a
+```
+
+`moot(P1)` is the field that makes the two layers fold into one analysis without merging them. The
+execution finding stays in the register — the work is not lost — but it does not count as open while
+its premise is unresolved.
+
+---
+
+## 6. Termination
+
+The pass ends when **every finding is `fixed`, `accepted` with a reason, or `moot`**, and the S5
+retest confirms each `fixed` hole is `closed`.
+
+Contrast with v1, which ended when "no new blocking hole appears" — a condition that never fired
+because the question generating the holes was unbounded.
+
+Three terminal states, all legitimate outcomes:
+
+- `PREMISE-OPEN` — stopped at S1. The premise finding is the deliverable.
+- `CLOSED` — all findings resolved and retested.
+- `RESIDUAL` — some findings `accepted` with reasons. **This is normal.** The output is a residual
+  risk register, never a pass/fail certificate.
+
+---
+
+## 7. Cost model
+
+| Stage | Agents |
+|---|---|
+| S0 goal extraction | 2 |
+| S1 premise gate | 1 |
+| S2 target generation | 1 |
+| S3 probes | N + 1 |
+| S5 retest | M + 1 |
+| S6 validation | 1 |
+
+**≈ N + M + 7.** At N=7 targets and M=6 surviving holes: **~20 agents**, against v1's 88 for a
+worse result. A run that stops at the premise gate costs **4**.
+
+---
+
+## 8. Harness self-check
+
+The metric that says the process is working rather than producing volume: **when premise findings
+arrive.**
+
+- Healthy: premise findings surface at S1, and are rare at S3.
+- Unhealthy: premise findings only appear from the S3 unscoped agent, meaning goal extraction is too
+  weak and is being rescued by luck.
+
+Track the ratio across passes. It is the one number that audits the harness itself, and both v1 runs
+lacked it entirely.
+
+---
+
+## 9. Invariants the implementation must enforce
+
+Not prose — these are assertions the script makes, and each is a check a gate reads:
+
+1. **Payload assertion.** Before any stage that consumes the plan, assert the plan text is non-empty
+   and above a floor length. A short payload **aborts the run**; it must never be reconstructed.
+   (v1 rebuilt a plan from a 3-character payload.)
+2. **Blindness assertion.** The `goal_from_problem` agent's prompt must not contain the plan text.
+   Assert structurally, not by instruction.
+3. **Gate assertion.** S2-S5 are unreachable while `premise_status: open`.
+4. **ID stability.** A hole ID assigned in pass *n* refers to the same hole in pass *n+1*. Retest
+   verdicts are keyed to IDs, never to positions or titles.
+5. **Reason requirement.** `status: accepted` without a non-empty `reason` fails the run.
+6. **No plan mutation between probe and retest** except through recorded, hole-keyed fixes. The diff
+   handed to the new-holes agent must equal the sum of recorded fixes.
+
+---
+
+## 10. Relationship to the layer split
+
+The premise/execution split is the same instrument as separating retrieval failure from judgment
+failure in a rule-governed system: two layers, and an **oracle arm** that bypasses the suspect layer
+to attribute the failure. Here the oracle arm is the plan-blind `goal_from_problem` agent.
+
+The general principle, worth stating because it recurs: **when a system can fail at two layers, a
+single verdict hides which one broke. Measuring the layers separately and adding an arm that
+bypasses one of them is what makes the diagnosis actionable.**
+
+---
+
+## 11. What would make this real
+
+This spec is not built. It becomes built when all of the following exist:
+
+1. `.claude/workflows/plan-hardening.js` implements the S0-S6 stage graph.
+2. The six invariants in §9 are assertions in that script, not comments.
+3. A test suite in `tests/scripts/` that, for each invariant, **breaks it on purpose and observes a
+   failure** — per the standing rule that a green test is not evidence and mutation survival is.
+   Specifically: a truncated payload must abort; a plan-contaminated blind prompt must fail; an
+   `accepted` finding with an empty reason must fail; an execution stage reached under
+   `premise_status: open` must fail.
+4. One run executed end to end against a real plan, with the register persisted.
+
+Until then, cite this document as a design, never as a behavior.

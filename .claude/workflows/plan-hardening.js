@@ -1,51 +1,186 @@
 export const meta = {
   name: 'plan-hardening',
-  description: 'Adversarial panel pokes holes in a plan over multiple rounds, stopping when no NEW blocking hole appears; returns a residual risk register, not a pass/fail certificate',
-  whenToUse: 'Before executing an expensive/irreversible plan you want stress-tested. Pattern #3 (iterative refinement with a DELTA convergence gate). Returns residual_risks + unverified_claims — there is deliberately no airtight boolean; read the register. See framework/multi-agent-workflows.md.',
+  description: 'Two-layer plan hardening: a premise gate that HARD STOPS before execution critique, then scoped probes with per-hole regression retest. Returns a residual risk register.',
+  whenToUse: 'Before executing an expensive or irreversible plan. Implements framework/plan-hardening-v2-spec.md. Bounded questions converge; "attack this plan" does not — v1 ran 5 rounds x ~26 new blocking holes and never converged. ARGS MUST BE AN OBJECT, never a prose string: {planText OR planPath (required), context (required), outPath?, registerPath?, minPlanChars?, minRetention?}. Passing prose dies with a JSON parse error in ~15ms before any agent runs.',
   phases: [
-    { title: 'Critique', detail: 'N independent adversarial lenses per round' },
-    { title: 'Revise', detail: 'fold surviving holes into the plan' },
-    { title: 'Judge', detail: 'fresh judge: residual risk register + unverified repo-state claims' },
-    { title: 'Validate', detail: 'independent model checks every claim against real repo state', model: 'fable' },
+    { title: 'Goal', detail: 'two independent goal statements, one blind to the plan' },
+    { title: 'Premise', detail: 'is G the right goal — HARD STOP if open' },
+    { title: 'Targets', detail: 'type the plan, derive targets from four generators' },
+    { title: 'Probe', detail: 'one agent per target, plus one unscoped' },
+    { title: 'Fix', detail: 'one agent per hole decides it, then one reviser applies the edits' },
+    { title: 'Retest', detail: 'per-hole: does this specific hole still fire?' },
+    { title: 'Validate', detail: 'repo-grounded check of factual claims', model: 'fable' },
+    { title: 'Persist', detail: 'write the register and revised plan to disk' },
   ],
 }
 
-// REUSABLE TEMPLATE — no personal/subject data hardcoded. Everything specific comes
-// from `args` at run time (this repo is public). Copy + adapt prompts for your domain.
+// Implements framework/plan-hardening-v2-spec.md. Read that before editing this file.
 //
-// args = {
-//   planPath?:  string   // path to a markdown plan the bootstrap agent reads
-//   planText?:  string   // OR the plan text inline (one of planPath/planText required)
-//   context:    string   // 1-paragraph domain context every critic needs
-//   maxRounds?: number   // default 3
-//   lenses?:    [{key, prompt}]   // optional override of the default critic lenses
-//   outPath?:   string   // where to persist the hardened plan (default scratchpad)
-// }
+// WHAT CHANGED FROM v1 AND WHY (both measured, same plan, 2026-08-21):
+//   run 1: 88 agents, 5.24M tokens, 5 rounds, UNCONVERGED (82/84/78/75/76 holes,
+//          ~26 NEW blocking every round). Its final reviser received a 3-character
+//          payload and RECONSTRUCTED the plan from critics' paraphrases.
+//   run 2: 46 agents, 2.94M tokens, 2 rounds, UNCONVERGED. Plan silently renamed.
+//
+// Root cause: "attack this plan" is an UNBOUNDED question, so fresh critics re-derive
+// it forever and a delta gate can never fire. Every stage below asks a question with a
+// decidable answer. Second cause: premise findings were reported as peers of execution
+// findings and got buried; they are upstream and now gate them.
 
-// args may arrive as a JSON string depending on the caller; normalize defensively.
 const cfg = typeof args === 'string' ? JSON.parse(args) : (args || {})
-
-const MAX_ROUNDS = cfg.maxRounds || 3
 const CONTEXT = cfg.context || 'No domain context supplied.'
+const MIN_PLAN_CHARS = cfg.minPlanChars || 500
+const MAX_GROWTH = 1.15
+const MIN_RETENTION = cfg.minRetention || 0.6
+// Absolute allowance per commissioned fix. A flat growth ratio encodes "a few small fixes"
+// and silently becomes a blocker at scale — the same defect class as the single-agent fix
+// stage that could not disposition 25 holes. Budget must scale with work commissioned.
+const PER_FIX_CHARS = cfg.perFixChars || 800
+// Hard ceiling regardless of hole count. Without it the per-fix allowance dominates on a short
+// plan and the accretion guard goes toothless (measured: a 1.3KB plan with 25 fixes permitted
+// 12.66x). A plan that triples is being re-authored in substance even if its lines survive.
+const MAX_TOTAL_GROWTH = cfg.maxTotalGrowth || 3
 
-// Default lenses — a broad, reusable panel. Override via args.lenses for a domain.
-const DEFAULT_LENSES = [
-  { key: 'correctness', prompt: 'Attack whether the plan actually produces correct results. Where are the assumptions wrong, the edge cases unhandled, the logic flawed?' },
-  { key: 'methodology', prompt: 'Attack the method/statistics/rigor. Are the techniques valid at this scale? Are thresholds and metrics defensible? Any measurement that would mislead?' },
-  { key: 'reliability', prompt: 'Attack execution reliability. Failure modes, silent errors, things that break under real inputs, steps that can produce garbage that looks fine.' },
-  { key: 'architecture', prompt: 'Attack the structure/design. Coupling, ordering, races, cost/complexity blowup, a simpler decomposition that would be more robust.' },
-  { key: 'safety-privacy', prompt: 'Attack data-handling and safety. Sensitive/sealed content that must not leak, PII in outputs, irreversible or destructive steps, missing guards.' },
-  { key: 'scope-yagni', prompt: 'Attack scope. Is this over-engineered? What is the simplest version that still meets the goal? Which outputs are load-bearing vs nice-to-have?' },
-  { key: 'bias-validity', prompt: 'Attack causal/decision validity. Selection/survivorship bias, feedback loops that entrench the status quo, whether conclusions generalize beyond the sample.' },
-  { key: 'red-team-fatal', prompt: 'Assume the finished result is worthless. Name the SINGLE most likely reason and what the plan must add to de-risk it. Be ruthless; do not hedge.' },
-]
-const LENSES = cfg.lenses || DEFAULT_LENSES
+const PLAN_TYPES = {
+  diagnostic: 'success = the question is answered, INCLUDING "no". Failure mode: can only confirm, never falsify.',
+  intervention: 'success = a pre-registered before/after delta. Failure mode: no baseline, so no attribution.',
+  guard: 'success = fires on real violations AND stays silent on near-misses. Failure mode: activation measured, restraint never.',
+  deliverable: 'success = acceptance criteria met AND someone uses it. Failure mode: ships to a surface nobody runs.',
+}
+
+// ---------------------------------------------------------------- schemas
+
+const GOAL_SCHEMA = {
+  type: 'object',
+  properties: {
+    goal: { type: 'string', description: 'One or two sentences. The outcome, not the activities.' },
+    success_observation: { type: 'string', description: 'What you would observe, after execution, that means this worked.' },
+    failure_observation: { type: 'string', description: 'What you would observe that means it FAILED. If you cannot name one, say so explicitly — an unfalsifiable goal is the finding.' },
+    beneficiary: { type: 'string', description: 'Who is better off, and how you would know.' },
+  },
+  required: ['goal', 'success_observation', 'failure_observation', 'beneficiary'],
+}
+
+const PREMISE_SCHEMA = {
+  type: 'object',
+  properties: {
+    delta: { type: 'string', enum: ['material', 'immaterial'], description: 'material = the two goal statements describe different outcomes, different success conditions, or different beneficiaries.' },
+    delta_explanation: { type: 'string' },
+    goal_is_right: { type: 'string', enum: ['yes', 'no', 'unclear'], description: 'Independent of the delta: is the problem-derived goal itself the right goal, or is the problem framed wrongly upstream of both?' },
+    premise_status: { type: 'string', enum: ['open', 'resolved'] },
+    findings: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          claim: { type: 'string' },
+          failure_scenario: { type: 'string', description: 'Concretely: what goes wrong downstream if this premise defect is not fixed.' },
+        },
+        required: ['claim', 'failure_scenario'],
+      },
+    },
+  },
+  required: ['delta', 'delta_explanation', 'goal_is_right', 'premise_status', 'findings'],
+}
+
+const TARGET_SCHEMA = {
+  type: 'object',
+  properties: {
+    plan_type: { type: 'string', enum: ['diagnostic', 'intervention', 'guard', 'deliverable', 'untypeable'] },
+    plan_type_reason: { type: 'string' },
+    targets: {
+      type: 'array',
+      description: '5 to 9 targets. Fewer suggests a shallow read; more reproduces the volume problem this design exists to fix.',
+      items: {
+        type: 'object',
+        properties: {
+          key: { type: 'string', description: 'short kebab-case slug' },
+          generator: { type: 'string', enum: ['stated-constraints', 'irreversible-steps', 'cost-drivers', 'load-bearing-assumptions', 'type-failure-mode'] },
+          question: { type: 'string', description: 'The bounded question this target asks of the plan.' },
+          what_counts_as_a_hole: { type: 'string' },
+        },
+        required: ['key', 'generator', 'question', 'what_counts_as_a_hole'],
+      },
+    },
+  },
+  required: ['plan_type', 'plan_type_reason', 'targets'],
+}
 
 const HOLES_SCHEMA = {
   type: 'object',
   properties: {
-    lens: { type: 'string' },
+    target: { type: 'string' },
     holes: {
+      type: 'array',
+      description: 'FEW and HIGH-CONFIDENCE. Volume is a failure mode here, not thoroughness.',
+      items: {
+        type: 'object',
+        properties: {
+          title: { type: 'string' },
+          severity: { type: 'string', enum: ['blocking', 'major', 'minor'] },
+          problem: { type: 'string' },
+          failure_scenario: { type: 'string', description: 'Concrete inputs or circumstances -> the wrong outcome. A hole with no failure scenario is not a hole.' },
+          suggested_fix: { type: 'string' },
+        },
+        required: ['title', 'severity', 'problem', 'failure_scenario', 'suggested_fix'],
+      },
+    },
+  },
+  required: ['target', 'holes'],
+}
+
+const DISPOSITION_SCHEMA = {
+  type: 'object',
+  properties: {
+    status: { type: 'string', enum: ['fixed', 'accepted'] },
+    note: { type: 'string', description: 'If fixed: what must change, concretely. If accepted: WHY the risk is acceptable. An empty or hand-waving reason on an accepted finding FAILS THE RUN.' },
+    edit_instruction: { type: 'string', description: 'Only when status=fixed. The precise edit: which section, what text to replace, and the replacement. A reviser who has not seen this hole must be able to apply it verbatim.' },
+  },
+  required: ['status', 'note'],
+}
+
+const REVISE_SCHEMA = {
+  type: 'object',
+  properties: {
+    revised_plan: { type: 'string', description: 'The FULL revised plan markdown, with every supplied edit applied.' },
+    applied: { type: 'array', items: { type: 'string' }, description: 'The hole IDs whose edits you actually applied.' },
+  },
+  required: ['revised_plan', 'applied'],
+}
+
+const FIX_SCHEMA = {
+  type: 'object',
+  properties: {
+    revised_plan: { type: 'string', description: 'The FULL revised plan markdown.' },
+    dispositions: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', description: 'The hole ID exactly as given. Every hole must appear exactly once.' },
+          status: { type: 'string', enum: ['fixed', 'accepted'] },
+          note: { type: 'string', description: 'If fixed: what changed. If accepted: WHY it is acceptable. An empty reason on an accepted finding fails the run.' },
+        },
+        required: ['id', 'status', 'note'],
+      },
+    },
+  },
+  required: ['revised_plan', 'dispositions'],
+}
+
+const RETEST_SCHEMA = {
+  type: 'object',
+  properties: {
+    verdict: { type: 'string', enum: ['closed', 'still-fires', 'fix-introduced-new'] },
+    evidence: { type: 'string', description: 'Quote the plan text that closes it, or show where it still fires. A verdict with no quoted text is not a verdict.' },
+  },
+  required: ['verdict', 'evidence'],
+}
+
+const NEWHOLES_SCHEMA = {
+  type: 'object',
+  properties: {
+    new_holes: {
       type: 'array',
       items: {
         type: 'object',
@@ -53,383 +188,621 @@ const HOLES_SCHEMA = {
           title: { type: 'string' },
           severity: { type: 'string', enum: ['blocking', 'major', 'minor'] },
           problem: { type: 'string' },
-          suggested_fix: { type: 'string' },
+          failure_scenario: { type: 'string' },
         },
-        required: ['title', 'severity', 'problem', 'suggested_fix'],
-      },
-    },
-    overall_read: { type: 'string' },
-  },
-  required: ['lens', 'holes', 'overall_read'],
-}
-
-const REVISION_SCHEMA = {
-  type: 'object',
-  properties: {
-    revised_plan: { type: 'string', description: 'The FULL revised plan markdown' },
-    changelog: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          hole: { type: 'string' },
-          action: { type: 'string', enum: ['fixed', 'rejected', 'deferred'] },
-          note: { type: 'string' },
-        },
-        required: ['hole', 'action', 'note'],
+        required: ['title', 'severity', 'problem', 'failure_scenario'],
       },
     },
   },
-  required: ['revised_plan', 'changelog'],
+  required: ['new_holes'],
 }
 
-// Bound by framework/review-findings-protocol.md — the canonical rules for verifying, re-rating,
-// and dispositioning review findings. This file was fixed 2026-08-13, a day before the protocol
-// was written, so it is the one surface whose compliance predates the doc; if the two ever
-// disagree, the protocol wins.
-//
-// The judge returns a RESIDUAL RISK REGISTER, not a pass/fail certificate.
-//
-// WHY (promoted from [[feedback_adversarial_panel_needs_delta_stopping_rule]], 2 fires):
-// `airtight: true` is a claim the panel makes about itself, and it has been wrong twice.
-// On 2026-08-12 a run returned airtight:true on a 470-line spec; executing it surfaced 7
-// real defects, TWO of which the panel had flagged as blocking in round 1 and silently
-// dropped in round 2. A boolean invites the reader to stop thinking. A register of named
-// residual risks, each explicitly accepted or mitigated, is always achievable and tells
-// the executing agent where to look.
-const JUDGE_SCHEMA = {
-  type: 'object',
-  properties: {
-    residual_risks: {
-      type: 'array',
-      description: 'Every blocking/major risk that remains. Empty ONLY if genuinely none remain.',
-      items: {
-        type: 'object',
-        properties: {
-          risk: { type: 'string' },
-          severity: {
-            type: 'string',
-            enum: ['blocking', 'major'],
-            description: "THE JUDGE'S OWN rating, derived from the plan text — not the critic's rating relayed.",
-          },
-          critic_severity: {
-            type: 'string',
-            enum: ['blocking', 'major', 'minor', 'none'],
-            description: "What the critic who raised it called it. 'none' if the judge raised it independently.",
-          },
-          severity_disagreement: {
-            type: 'string',
-            description: "One line on why the judge's rating differs from the critic's, or 'agrees'. Makes inheritance visible: a register where every row reads 'agrees' is a judge that did not judge.",
-          },
-          status: { type: 'string', enum: ['mitigated', 'accepted', 'open'] },
-          why: { type: 'string', description: 'Why it is mitigated/acceptable, or why it is still open. Note here if the risk attacks machinery the panel itself added rather than the original plan.' },
-          where_to_verify: { type: 'string', description: 'What the executing agent should check to confirm this in the real repo' },
-        },
-        required: ['risk', 'severity', 'critic_severity', 'severity_disagreement', 'status', 'why', 'where_to_verify'],
-      },
-    },
-    unverified_claims: {
-      type: 'array',
-      description: 'Repo-state claims the plan asserts that were NOT verified against the actual repo this round. The executing agent must treat each as work.',
-      items: { type: 'string' },
-    },
-    remaining_blocking: { type: 'array', items: { type: 'string' } },
-    reason: { type: 'string' },
-  },
-  required: ['residual_risks', 'unverified_claims', 'remaining_blocking', 'reason'],
-}
-
-// The Judge emits `unverified_claims` and `where_to_verify` and then NOTHING checks
-// them. That is the gap this schema closes. A panel reasoning from a false premise
-// about repo state produces confident, well-argued, wrong risks — and the register
-// reads identically whether the premises were true or not.
-//
-// THREE STATES, and UNVERIFIABLE is never a pass. Same discipline as the frame gate:
-// a claim nobody could check is not a confirmed claim, and collapsing the two is how
-// "we verified it" comes to mean "we looked at it."
 const VALIDATION_SCHEMA = {
   type: 'object',
   properties: {
-    verdict: {
-      type: 'string',
-      enum: ['CONFIRMED', 'REFUTED', 'UNVERIFIABLE'],
-      description: 'CONFIRMED = evidence found proving it true. REFUTED = evidence found proving it false. UNVERIFIABLE = could not establish either way. Default to UNVERIFIABLE over guessing.',
-    },
-    evidence: {
-      type: 'string',
-      description: 'The concrete artifact: file:line, the command run and its output, or the specific absence checked and the scope of that check. A verdict with no evidence is not a verdict.',
-    },
-    consequence: {
-      type: 'string',
-      description: 'If REFUTED: what in the plan or the risk register rests on this false premise and must change. Otherwise a short note.',
-    },
+    verdict: { type: 'string', enum: ['CONFIRMED', 'REFUTED', 'UNVERIFIABLE'] },
+    evidence: { type: 'string', description: 'file:line, or the command run and its output, or the specific absence checked AND why that scope would have contained the thing.' },
+    consequence: { type: 'string' },
   },
   required: ['verdict', 'evidence', 'consequence'],
 }
 
+// ---------------------------------------------------------------- prompts
+
+const REPO_TRAP = `REPO TRAP: the shell's \`grep\` is ripgrep-backed and honours .gitignore, so gitignored trees are INVISIBLE to a repo-root grep and return empty results indistinguishable from a true negative. Name candidate directories explicitly or bypass with /usr/bin/grep. CONFIG TRAP: settings can live in BOTH a project-local and a global file — checking one and concluding absence is a known false-refutation in this harness's own history.`
+
+function goalFromPlanPrompt(planText) {
+  return `Read the plan below and state what it is actually trying to achieve.
+
+DOMAIN CONTEXT: ${CONTEXT}
+
+PLAN:
+${planText}
+
+State the OUTCOME, not the activities. "Re-key 488 descriptions" is an activity; the outcome is whatever that activity is supposed to cause. Name what you would observe if it worked and what you would observe if it failed. If you cannot name a failure observation, say so explicitly — an unfalsifiable goal is itself the finding.
+
+Return ONLY the structured object.`
+}
+
+function goalFromProblemPrompt() {
+  return `You are given a PROBLEM SITUATION and no plan. Nobody has shown you any proposed solution, and you must not speculate about what one might contain.
+
+PROBLEM SITUATION: ${CONTEXT}
+
+State what a plan in this situation SHOULD achieve. What is the outcome worth having? What would you observe if it worked, and what would you observe if it failed? Who is better off?
+
+Answer from the problem alone. Return ONLY the structured object.`
+}
+
+function premisePrompt(fromPlan, fromProblem) {
+  return `You are the premise gate. You have NOT been shown the plan, deliberately.
+
+DOMAIN CONTEXT: ${CONTEXT}
+
+GOAL AS DERIVED FROM THE PLAN:
+${JSON.stringify(fromPlan, null, 1)}
+
+GOAL AS DERIVED FROM THE PROBLEM ALONE (author never saw the plan):
+${JSON.stringify(fromProblem, null, 1)}
+
+Two bounded questions.
+
+1. Is the delta between these MATERIAL or IMMATERIAL? Material means they describe different outcomes, different success conditions, or different beneficiaries. Wording differences are immaterial. A plan aimed at something adjacent to the real problem is material even if it sounds similar.
+
+2. Independent of the delta: is the PROBLEM-derived goal itself right, or is the problem framed wrongly upstream of both?
+
+Set premise_status to "open" if the delta is material OR goal_is_right is "no"/"unclear". Otherwise "resolved".
+
+premise_status: open HARD STOPS the whole run before any execution critique. That is intended and it is a successful outcome, not a failure — the premise finding is the deliverable. Do not soften a material delta to let the run continue, and do not manufacture one to look rigorous.
+
+Return ONLY the structured object.`
+}
+
+function targetPrompt(planText) {
+  const types = Object.entries(PLAN_TYPES).map(([k, v]) => `- ${k}: ${v}`).join('\n')
+  return `You generate the target list for a plan-hardening pass. Targets are DERIVED, never freeformed.
+
+DOMAIN CONTEXT: ${CONTEXT}
+
+STEP 1 — type the plan as EXACTLY ONE of:
+${types}
+
+If the plan genuinely resists typing, it is doing more than one thing and should be split. Return plan_type "untypeable" and explain — that stops the run, which is correct.
+
+STEP 2 — run these four generators over the plan and produce 5-9 targets total:
+1. STATED CONSTRAINTS — the plan's own declared rules. Self-violation is the highest-yield target class and the cheapest to check.
+2. IRREVERSIBLE STEPS — anything that cannot be undone, plus anything whose damage PROPAGATES (backups, mirrors, published artifacts, sent messages).
+3. COST DRIVERS — the two or three steps consuming most of the budget. Underestimates here dominate real cost.
+4. LOAD-BEARING ASSUMPTIONS — claims that, if false, collapse an item. Especially claims about system state that were asserted rather than measured.
+
+ALWAYS include one target for the failure mode of the type you assigned.
+
+Each target needs a BOUNDED question and an explicit "what counts as a hole here."
+
+PLAN:
+${planText}
+
+Return ONLY the structured object.`
+}
+
+function probePrompt(target, planText) {
+  return `You are an adversarial reviewer with ONE narrow target. Ignore everything outside it.
+
+DOMAIN CONTEXT: ${CONTEXT}
+
+YOUR TARGET: ${target.key}
+QUESTION: ${target.question}
+WHAT COUNTS AS A HOLE HERE: ${target.what_counts_as_a_hole}
+
+Return FEW, HIGH-CONFIDENCE holes. Volume is a failure mode of this harness, not a sign of thoroughness — a prior version produced 82 holes in one round and none of them could be acted on. If the plan handles your target well, say so and return an empty list. Do not manufacture holes to look useful.
+
+Every hole needs a CONCRETE failure scenario: specific inputs or circumstances leading to a specific wrong outcome. A hole with no failure scenario is not a hole and will be discarded.
+
+${REPO_TRAP}
+
+PLAN:
+${planText}
+
+Return ONLY the structured object.`
+}
+
+function unscopedPrompt(targets, planText) {
+  return `Every other reviewer on this pass was given a narrow target. You are the completeness critic and your ONLY question is: WHAT DID THE TARGET LIST MISS?
+
+DOMAIN CONTEXT: ${CONTEXT}
+
+TARGETS ALREADY COVERED (do NOT re-raise anything inside these):
+${targets.map(t => `- ${t.key}: ${t.question}`).join('\n')}
+
+You exist because scoping structurally cannot find the hole nobody thought to look for. In a prior run the single best finding — an irreversible step whose damage propagated through a nightly backup mirror, with no rollback path — came from an angle no generated target list contained.
+
+Find what falls between or outside those targets. Few, high-confidence, each with a concrete failure scenario.
+
+${REPO_TRAP}
+
+PLAN:
+${planText}
+
+Return ONLY the structured object with target set to "unscoped".`
+}
+
+function dispositionPrompt(hole, planText) {
+  return `You decide the fate of ONE specific hole in a plan. This is a bounded question with a decidable answer. Do not review the rest of the plan; other agents own the other holes.
+
+DOMAIN CONTEXT: ${CONTEXT}
+
+THE HOLE (${hole.id}, severity ${hole.severity}, from target "${hole.target}"):
+title: ${hole.title}
+problem: ${hole.problem}
+failure scenario: ${hole.failure_scenario}
+suggested fix: ${hole.suggested_fix || '(none offered)'}
+
+THE PLAN:
+${planText}
+
+TWO DISPOSITIONS ONLY:
+- "fixed" — the plan should change. Supply an edit_instruction precise enough that a reviser who has NOT seen this hole can apply it verbatim: name the section, quote the text to replace, give the replacement.
+- "accepted" — deliberately not fixed. The note must say WHY the risk is acceptable and what is being knowingly carried. An empty or hand-waving reason FAILS THE RUN, the same contract as a mutation allowlist: an exception without a justification is how a gate decays into "we looked at it."
+
+PREFER REPLACING weak text over APPENDING caveats. Accretion is how this loop failed before: appended prose becomes attack surface for the next round. Do not rename, renumber, or restructure the plan's items — a prior run silently renamed every item and made retest impossible.
+
+Return ONLY the structured object.`
+}
+
+function revisePrompt(planText, decided) {
+  // Must match the INVARIANT 6b arithmetic exactly. A reviser told one limit while the gate
+  // enforces another is a guard lying to the thing it guards.
+  const budget = Math.round(Math.min(planText.length * MAX_GROWTH + decided.length * PER_FIX_CHARS, planText.length * MAX_TOTAL_GROWTH))
+  return `You are the plan reviser. You are NOT a reviewer: every decision below has already been made by another agent. Your only job is to APPLY the supplied edits to the plan faithfully.
+
+DOMAIN CONTEXT: ${CONTEXT}
+
+HARD RULES:
+- Apply every edit listed. Do not re-litigate, soften, or skip one because you disagree.
+- Do NOT re-author the plan. Keep every untouched section VERBATIM, character for character. A run is ABORTED automatically if too little of the original survives or the plan grows past ~${budget} characters (current: ${planText.length}). Two prior runs died exactly here, one by rebuilding the plan from paraphrase and one by silently renaming every item.
+- Do not rename, renumber, or restructure items. Identifiers stay stable so each hole can be retested.
+
+EDITS TO APPLY (JSON):
+${JSON.stringify(decided).slice(0, 24000)}
+
+CURRENT PLAN:
+${planText}
+
+Return the FULL revised plan and the list of hole IDs you applied. Return ONLY the structured object.`
+}
+
+function persistPrompt(path, content, what) {
+  return `Write a file. This is a mechanical persistence task, not an authoring task.
+
+TARGET PATH (relative to the repo root): ${path}
+
+Write EXACTLY the content below to that path, byte for byte. Do not summarize it, reformat it, pretty-print it differently, add commentary, add a header, or truncate it. Create parent directories if needed. If the file exists, overwrite it.
+
+After writing, verify by reading the file back and confirming its byte length matches ${content.length}. Report the path and the byte count you observed.
+
+CONTENT (${what}, ${content.length} bytes):
+${content}`
+}
+
+function retestPrompt(hole, revisedPlan) {
+  return `You are a regression tester for a single, specific defect. You did not write this plan or the fix.
+
+DOMAIN CONTEXT: ${CONTEXT}
+
+THE ORIGINAL HOLE (${hole.id}):
+title: ${hole.title}
+problem: ${hole.problem}
+failure_scenario: ${hole.failure_scenario}
+
+ONE BOUNDED QUESTION: against the revised plan below, does THIS SPECIFIC hole still fire?
+
+- "closed" — the revised plan makes this failure scenario no longer reachable. Quote the text that does it.
+- "still-fires" — the fix is cosmetic, or addresses something adjacent, or the failure scenario still runs. Show where.
+- "fix-introduced-new" — this hole is closed but the fix created a different problem. Describe it.
+
+Do NOT look for other holes. Do NOT re-critique the plan. Answer only about ${hole.id}. A verdict without quoted plan text is not a verdict.
+
+REVISED PLAN:
+${revisedPlan}
+
+Return ONLY the structured object.`
+}
+
+function newHolesPrompt(diff) {
+  return `A plan was just revised. You are shown ONLY the changes, not the whole plan, so that you cannot re-derive the findings that motivated them.
+
+DOMAIN CONTEXT: ${CONTEXT}
+
+ONE BOUNDED QUESTION: do any of these CHANGES introduce a NEW blocking or major problem that did not exist before?
+
+Not "is the plan good." Not "what else is wrong." Only: did these edits break something. Fixes frequently introduce new defects — a constraint added in one section can contradict a step in another, and a deferral can strand a dependency. Empty list is the expected answer and is fine.
+
+CHANGES:
+${diff.slice(0, 20000)}
+
+Return ONLY the structured object.`
+}
+
 function validatePrompt(claim, kind) {
-  return `You are an independent verifier. A different model produced the claim below while stress-testing a plan. NOBODY has checked it against the actual repository. Your only job is to establish whether it is true.
+  return `You are an independent verifier. A different model produced the claim below while stress-testing a plan. NOBODY has checked it against the actual repository.
 
 DOMAIN CONTEXT: ${CONTEXT}
 
 CLAIM TO VERIFY (${kind}):
 ${claim}
 
-METHOD — this is not optional:
-- Actually run commands and open files. A verdict from reasoning alone is worthless here.
-- Cite concrete evidence: file:line, or the command you ran and what it returned.
-- To assert something does NOT exist, you must state the scope you searched. "Not found" without a named scope is not evidence of absence.
-- REPO TRAP, read this before searching: the shell's \`grep\` is ripgrep-backed and honours .gitignore. Gitignored trees are INVISIBLE to a repo-root grep and return empty results indistinguishable from a true negative. Name candidate directories explicitly, or bypass with: find . -path ./.git -prune -o -name '*.md' -print | xargs /usr/bin/grep -l "<term>"
+METHOD:
+- Actually run commands and open files. A verdict from reasoning alone is worthless.
+- Cite concrete evidence: file:line, or the command and its output.
+- To assert something does NOT exist you must state the scope searched AND why that scope would have contained it if it existed.
+- NAME THE SCOPE IN THE SAME SENTENCE AS THE VERDICT. Two false refutations in this harness's own history came from comparing different denominators and from checking one config file of two.
 
-BIAS INSTRUCTION: you are here to REFUTE. The claim arrived with confidence attached and no evidence. Try to prove it wrong first. If you cannot establish it either way, return UNVERIFIABLE — do not upgrade a plausible-sounding claim to CONFIRMED because it seems reasonable.
+${REPO_TRAP}
 
-Return ONLY the structured object.`
-}
-
-// Lexical (NOT semantic) dedup signature for a hole. Deterministic and agent-free:
-// lowercase, strip non-alphanumerics, collapse whitespace, take a bounded prefix of
-// title+problem. Two rounds producing the "same" hole in slightly different words will
-// usually collide; genuinely new holes will not. Honest about being lexical — a
-// reworded restatement can slip through, which is why the stopping rule needs K
-// consecutive quiet rounds rather than one.
-function holeSignature(hole) {
-  const raw = `${hole.title || ''} ${hole.problem || ''}`
-  return raw.toLowerCase().replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim().slice(0, 140)
-}
-
-function critiquePrompt(lens, planText, round) {
-  return `You are an adversarial reviewer on a plan-hardening panel (round ${round}).
-
-DOMAIN CONTEXT: ${CONTEXT}
-
-YOUR LENS: ${lens.prompt}
-
-Critique ONLY through your lens. Find real holes, not style nits. For each: a severity (blocking = the plan produces wrong/worthless results or violates a hard constraint; major = materially degrades quality; minor = worth fixing), the concrete problem, and a specific suggested fix. If the plan already handles your lens well, say so and return few/no holes — do not manufacture holes.
-
-PLAN UNDER REVIEW:
-${planText}
+BIAS INSTRUCTION: try to REFUTE first. If you cannot establish it either way, return UNVERIFIABLE — never upgrade a plausible-sounding claim to CONFIRMED.
 
 Return ONLY the structured object.`
 }
 
-function revisePrompt(planText, holes, beforeChars) {
-  const budget = Math.round(beforeChars * MAX_GROWTH)
-  return `You are the plan reviser. Fix every blocking and major hole you AGREE with, and explicitly REJECT (with reason) any hole you think is wrong or out of scope — do not cargo-cult fixes. Keep the plan concrete and executable; do not bloat it.
+// ---------------------------------------------------------------- helpers
 
-HARD LENGTH BUDGET: the revised plan must be at most ~${budget} characters (the current plan is ${beforeChars}). **Prefer REPLACING weak text over APPENDING caveats.** Every round of accretion adds attack surface for the next round of critics, which is how this loop fails to converge. If a fix cannot fit in the budget, cut something that earns less.
-
-DOMAIN CONTEXT: ${CONTEXT}
-
-CURRENT PLAN:
-${planText}
-
-PANEL HOLES (JSON):
-${JSON.stringify(holes).slice(0, 18000)}
-
-Return the FULL revised plan markdown in revised_plan, plus a changelog (fixed/rejected/deferred + note) for every hole. Return ONLY the structured object.`
+function lineDiff(before, after) {
+  const b = new Set(before.split('\n'))
+  const added = after.split('\n').filter(l => l.trim() && !b.has(l))
+  const a = new Set(after.split('\n'))
+  const removed = before.split('\n').filter(l => l.trim() && !a.has(l))
+  return `--- ADDED (${added.length} lines) ---\n${added.join('\n')}\n\n--- REMOVED (${removed.length} lines) ---\n${removed.join('\n')}`
 }
 
-function judgePrompt(planText, holes, round) {
-  return `You are a FRESH convergence judge (round ${round}) — you did not write or revise this plan.
-
-DOMAIN CONTEXT: ${CONTEXT}
-
-Your job is NOT to certify the plan. It is to produce a RESIDUAL RISK REGISTER: what could still go wrong, and whether that is acceptable.
-
-Independently re-examine the plan text — do NOT trust that the listed holes were actually fixed. A hole marked "fixed" in the changelog but absent from the plan text is an OPEN risk, and this is the single most common failure of this loop: a blocking hole gets flagged in one round and silently dropped in the next.
-
-DERIVE SEVERITY YOURSELF. DO NOT INHERIT IT.
-
-The holes below carry a severity assigned by the critic who raised it. That rating is an INPUT you are re-deciding, never a verdict you are relaying. For every risk you keep, judge its severity from the plan text and the domain context on your own, then record:
-- severity: YOUR rating.
-- critic_severity: what the critic called it (or "none" if you raised it yourself).
-- severity_disagreement: if yours differs, one line on why. If they match, "agrees".
-
-Escalating a critic's "major" to blocking, and demoting a critic's "blocking" to major, are both expected outcomes and neither needs justifying beyond that line. A judge that returns the critics' ratings unchanged across every risk has not judged.
-
-Return:
-- residual_risks: every risk that remains AT YOUR OWN SEVERITY, each with a status (mitigated = the plan genuinely handles it; accepted = it remains but is a reasonable trade-off; open = unhandled) and where_to_verify — the concrete thing the executing agent should check in the real repo to confirm it.
-- unverified_claims: every assertion the plan makes about repo state (a file exists, a path is public, a format is X) that was NOT checked against the actual repository. Be thorough here. The executing agent will treat each as work, and an unverified claim silently inherited is how this loop has produced wrong plans before.
-- remaining_blocking: titles of the risks YOU rate blocking.
-
-An empty residual_risks is a strong claim — return it only if you genuinely cannot name a way this plan fails.
-
-ALSO CHECK WHAT THE PANEL BUILT. This loop revises the plan between rounds, so some risks may attack machinery the panel itself introduced rather than anything the author proposed. Where you can tell, say so in the risk's \`why\` — "this attacks an addition from round N, not the original plan" — because the cheapest fix for those is often to drop the addition.
-
-ALL OF THIS ROUND'S HOLES (every severity, JSON — you are re-rating them, so you get the full set, not a pre-filtered one):
-${JSON.stringify(holes).slice(0, 12000)}
-
-REVISED PLAN:
-${planText}
-
-Return ONLY the structured object.`
-}
-
-// ---- Run -------------------------------------------------------------------
-let planText = cfg.planText
-if (!planText && cfg.planPath) {
-  log('Reading plan...')
-  planText = await agent(`Read the file ${cfg.planPath} and return its FULL contents verbatim (markdown only, nothing else).`, { label: 'bootstrap:read-plan', phase: 'Critique' })
-}
-if (!planText) throw new Error('plan-hardening: neither cfg.planText nor a readable cfg.planPath was provided (fail loud, do not critique a blank plan).')
-
-const history = []
-const seenBlocking = new Set()   // lexical signatures of every blocking hole ever raised
-let round = 0
-let quietRounds = 0              // consecutive rounds yielding no NEW blocking hole
-let lastVerdict = null
-
-// DELTA STOPPING RULE. The old gate was "loop until the judge says airtight", which is
-// anti-convergent by construction: every fix adds prose, new prose is new attack
-// surface, and N fresh critics primed to attack will essentially always find something.
-// Stop instead when a round surfaces no NEW blocking hole (K consecutive quiet rounds),
-// which is always reachable. Origin: 2026-08-10 (74->70->70 holes, never converged) and
-// 2026-08-12 (airtight:true certified over 7 residual defects).
-const QUIET_ROUNDS_TO_STOP = cfg.quietRoundsToStop || 1
-const MAX_GROWTH = cfg.maxGrowthPerRound || 1.10   // reviser may not bloat the plan
-
-while (round < MAX_ROUNDS && quietRounds < QUIET_ROUNDS_TO_STOP) {
-  round += 1
-  phase('Critique')
-  log(`Round ${round}: ${LENSES.length} adversarial lenses attacking the plan...`)
-  const critiques = await parallel(
-    LENSES.map((lens) => () =>
-      agent(critiquePrompt(lens, planText, round), { label: `critique:${lens.key}:r${round}`, phase: 'Critique', schema: HOLES_SCHEMA }),
-    ),
-  )
-  const holes = critiques.filter(Boolean).flatMap((c) => c.holes.map((h) => ({ ...h, lens: c.lens })))
-  const blockingHoles = holes.filter((h) => h.severity === 'blocking')
-  const major = holes.filter((h) => h.severity === 'major').length
-
-  // Only holes never raised before count toward convergence.
-  const fresh = blockingHoles.filter((h) => !seenBlocking.has(holeSignature(h)))
-  fresh.forEach((h) => seenBlocking.add(holeSignature(h)))
-  quietRounds = fresh.length === 0 ? quietRounds + 1 : 0
-
-  log(`Round ${round}: ${holes.length} holes (${blockingHoles.length} blocking, ${fresh.length} NEW, ${major} major). Revising...`)
-
-  phase('Revise')
-  const beforeChars = planText.length
-  const revision = await agent(revisePrompt(planText, holes, beforeChars), { label: `revise:r${round}`, phase: 'Revise', schema: REVISION_SCHEMA })
-  const grew = revision.revised_plan.length / Math.max(beforeChars, 1)
-  if (grew > MAX_GROWTH) {
-    log(`Round ${round}: plan grew ${Math.round((grew - 1) * 100)}% (cap ${Math.round((MAX_GROWTH - 1) * 100)}%) — accretion, not revision. Flagged in history.`)
+// The workflow DSL has NO filesystem access, so persistence goes through an agent with
+// Write tools — the same way planPath is already READ by a bootstrap agent. Before this
+// existed, `registerPath` and `outPath` were advertised in the meta and silently ignored:
+// the argument contract documented a behavior the code did not have, which is the exact
+// "written down and followed" tier this harness exists to refuse.
+async function register(obj) {
+  const out = JSON.parse(JSON.stringify(obj))
+  const jobs = []
+  if (cfg.registerPath) {
+    const body = JSON.stringify(out, null, 2)
+    jobs.push(() => agent(persistPrompt(cfg.registerPath, body, 'the residual risk register, JSON'),
+      { label: 'persist:register', phase: 'Persist' }))
   }
-  planText = revision.revised_plan
-
-  phase('Judge')
-  lastVerdict = await agent(judgePrompt(planText, holes, round), { label: `judge:r${round}`, phase: 'Judge', schema: JUDGE_SCHEMA })
-  history.push({
-    round, holes: holes.length, blocking: blockingHoles.length, newBlocking: fresh.length, major,
-    growth: Number(grew.toFixed(3)), overGrowthCap: grew > MAX_GROWTH,
-    changelog: revision.changelog, verdict: lastVerdict,
-  })
-  const openRisks = (lastVerdict.residual_risks || []).filter((r) => r.status === 'open').length
-  log(`Round ${round}: ${fresh.length} new blocking, ${openRisks} open residual risk(s), ${(lastVerdict.unverified_claims || []).length} unverified claim(s).`)
+  if (cfg.outPath && out.revised_plan) {
+    jobs.push(() => agent(persistPrompt(cfg.outPath, out.revised_plan, 'the revised plan, markdown'),
+      { label: 'persist:plan', phase: 'Persist' }))
+  }
+  if (jobs.length) {
+    phase('Persist')
+    const done = await parallel(jobs)
+    out.persisted = {
+      register: cfg.registerPath || null,
+      plan: (cfg.outPath && out.revised_plan) ? cfg.outPath : null,
+      // A null here means the write agent died. The register still returns, but the caller
+      // must not report it as durable — an unverified write is how a result quietly evaporates.
+      confirmations: done.map(d => (typeof d === 'string' ? d.slice(0, 200) : d)),
+      all_writes_returned: done.every(Boolean),
+    }
+  }
+  return out
 }
 
-const stoppedBecause = quietRounds >= QUIET_ROUNDS_TO_STOP
-  ? `no new blocking holes for ${quietRounds} round(s)`
-  : `hit maxRounds (${MAX_ROUNDS}) with new blocking holes still arriving — treat this plan as UNCONVERGED`
+// ---------------------------------------------------------------- run
 
-// ---------------------------------------------------------------------------
-// VALIDATE — the step that stops the register resting on unchecked premises.
+phase('Goal')
+
+let planText = cfg.planText || ''
+if (!planText && cfg.planPath) {
+  const boot = await agent(
+    `Read the file at ${cfg.planPath} and return its ENTIRE contents verbatim as plain text. No summary, no commentary, no truncation.`,
+    { label: 'read-plan', phase: 'Goal' })
+  planText = typeof boot === 'string' ? boot : String(boot || '')
+}
+
+// INVARIANT 1 — payload floor. v1 received a 3-character payload and RECONSTRUCTED the
+// plan from critics' paraphrases, producing a hardened version of an artifact nobody read.
+// A short payload aborts. It is never reconstructed, never inferred, never worked around.
+if (planText.trim().length < MIN_PLAN_CHARS) {
+  throw new Error(
+    `INVARIANT 1 (payload floor) FAILED: plan text is ${planText.trim().length} chars, ` +
+    `floor is ${MIN_PLAN_CHARS}. Aborting rather than hardening a truncated or empty plan. ` +
+    `Check planPath (${cfg.planPath || 'none'}) and that the bootstrap agent returned file contents.`)
+}
+log(`plan loaded: ${planText.length} chars`)
+
+// INVARIANT 2 — blindness. The problem-derived goal is the oracle arm; it only works if
+// that agent never sees the plan. Asserted structurally, not by instruction, because an
+// agent told not to anchor still anchors.
+const blindPrompt = goalFromProblemPrompt()
+const planProbe = planText.trim().slice(0, 200)
+if (planProbe && blindPrompt.includes(planProbe)) {
+  throw new Error('INVARIANT 2 (blindness) FAILED: plan text leaked into the plan-blind goal prompt.')
+}
+
+const [goalFromPlan, goalFromProblem] = await parallel([
+  () => agent(goalFromPlanPrompt(planText), { label: 'goal:from-plan', phase: 'Goal', schema: GOAL_SCHEMA }),
+  () => agent(blindPrompt, { label: 'goal:from-problem (plan-blind)', phase: 'Goal', schema: GOAL_SCHEMA }),
+])
+if (!goalFromPlan || !goalFromProblem) throw new Error('goal extraction returned nothing; aborting')
+
+phase('Premise')
+const premise = await agent(premisePrompt(goalFromPlan, goalFromProblem),
+  { label: 'premise-gate', phase: 'Premise', schema: PREMISE_SCHEMA })
+if (!premise) throw new Error('premise gate returned nothing; aborting')
+
+const premiseFindings = (premise.findings || []).map((f, i) => ({
+  id: `P${i + 1}`, layer: 'premise', ...f, status: 'open',
+}))
+
+// INVARIANT 3 — the gate. Execution critique is UNREACHABLE while the premise is open.
+// This is the expensive choice and it is deliberate: the observed failure was five rounds
+// of execution critique polishing a plan whose aim had never been checked.
+if (premise.premise_status === 'open') {
+  log(`PREMISE OPEN — hard stop. delta=${premise.delta}, goal_is_right=${premise.goal_is_right}`)
+  phase('Validate')
+  const checked = await parallel(premiseFindings.map(f => () =>
+    agent(validatePrompt(f.claim, 'premise finding'), { label: `validate:${f.id}`, phase: 'Validate', model: 'fable', schema: VALIDATION_SCHEMA })
+      .then(v => ({ ...f, validation: v }))))
+  return await register({
+    terminal_state: 'PREMISE-OPEN',
+    spec: 'framework/plan-hardening-v2-spec.md',
+    note: 'Execution critique did NOT run. This is the gate working as designed, not a failed run. The premise finding is the deliverable.',
+    goal_from_plan: goalFromPlan,
+    goal_from_problem: goalFromProblem,
+    goal_delta: premise.delta,
+    delta_explanation: premise.delta_explanation,
+    goal_is_right: premise.goal_is_right,
+    premise_status: 'open',
+    findings: checked.filter(Boolean),
+    agents_used: 'S0-S1 + validation only',
+  })
+}
+
+phase('Targets')
+const targeting = await agent(targetPrompt(planText),
+  { label: 'target-generation', phase: 'Targets', schema: TARGET_SCHEMA })
+if (!targeting) throw new Error('target generation returned nothing; aborting')
+
+if (targeting.plan_type === 'untypeable') {
+  return await register({
+    terminal_state: 'PREMISE-OPEN',
+    spec: 'framework/plan-hardening-v2-spec.md',
+    note: 'Plan could not be typed, which means it is doing more than one thing and should be split. Emitted as a premise finding per the spec.',
+    goal_from_plan: goalFromPlan,
+    goal_from_problem: goalFromProblem,
+    premise_status: 'open',
+    findings: [...premiseFindings, {
+      id: `P${premiseFindings.length + 1}`, layer: 'premise', status: 'open',
+      claim: 'Plan is untypeable and should be split',
+      failure_scenario: targeting.plan_type_reason,
+    }],
+  })
+}
+
+const targets = cfg.targets || targeting.targets || []
+log(`plan typed as ${targeting.plan_type}; ${targets.length} targets`)
+
+phase('Probe')
+const probeResults = await parallel([
+  ...targets.map(t => () => agent(probePrompt(t, planText), { label: `probe:${t.key}`, phase: 'Probe', schema: HOLES_SCHEMA })),
+  () => agent(unscopedPrompt(targets, planText), { label: 'probe:unscoped', phase: 'Probe', schema: HOLES_SCHEMA }),
+])
+
+// INVARIANT 4 — ID stability. Assigned once, deterministically, by probe order. Retest
+// verdicts key to IDs, never to positions or titles.
+let n = 0
+const holes = probeResults.filter(Boolean).flatMap(r =>
+  (r.holes || [])
+    .filter(h => h.severity !== 'minor')
+    .map(h => ({ id: `E${++n}`, layer: 'execution', target: r.target, ...h })))
+log(`${holes.length} blocking/major holes across ${targets.length + 1} probes`)
+
+if (holes.length === 0) {
+  return await register({
+    terminal_state: 'CLOSED',
+    spec: 'framework/plan-hardening-v2-spec.md',
+    plan_type: targeting.plan_type,
+    goal_from_plan: goalFromPlan, goal_from_problem: goalFromProblem,
+    premise_status: 'resolved', targets, findings: premiseFindings,
+    note: 'No blocking or major execution holes found.',
+  })
+}
+
+phase('Fix')
+
+// S4 IS SPLIT IN TWO, and the split is load-bearing rather than cosmetic.
+// Measured 2026-08-21 (run wf_a440ab49-405): a single agent asked to disposition 25 holes AND
+// rewrite the plan in one response returned dispositions for E1-E8 and stopped. INVARIANT 4
+// caught it and aborted, which is correct, but the stage could not complete on any plan
+// yielding more than ~8 holes. "Disposition 25 holes" is an unbounded ask in the same family
+// as "attack this plan"; "what happens to hole E9" is bounded and terminates.
+//   S4a — one agent per hole, deciding ONLY that hole. ID coverage becomes structural: one
+//         agent in, one disposition out, so there is no way to silently drop the tail.
+//   S4b — one reviser that APPLIES the recorded edits and reviews nothing.
+// One retry per hole. Measured across three runs: an invariant violation from a SINGLE agent
+// discarded the entire downstream (retest, validate, persist) twice, ~2.6M tokens, to learn
+// two things a bounded retry catches in-loop. The guarantee is unchanged — INVARIANT 4 below
+// still aborts if a hole ends with no disposition — but one flaky agent no longer costs a run.
+const decideOne = async (h) => {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const d = await agent(dispositionPrompt(h, planText),
+      { label: attempt ? `fix:${h.id}:retry` : `fix:${h.id}`, phase: 'Fix', schema: DISPOSITION_SCHEMA })
+    if (d && d.status) return { id: h.id, ...d }
+  }
+  return null
+}
+const decisions = await parallel(holes.map(h => () => decideOne(h)))
+
+// INVARIANT 4 — ID coverage. A null here means that hole's agent died; the run must not
+// proceed as though the hole were resolved. Silence is the failure mode being guarded.
+const byId = new Map(decisions.filter(Boolean).map(d => [d.id, d]))
+const missing = holes.filter(h => !byId.has(h.id)).map(h => h.id)
+if (missing.length) throw new Error(`INVARIANT 4 (ID coverage) FAILED: no disposition for ${missing.join(', ')}`)
+
+// INVARIANT 5 — an accepted finding without a written reason fails the run.
+const unreasoned = [...byId.values()]
+  .filter(d => d.status === 'accepted' && (!d.note || d.note.trim().length < 20))
+  .map(d => d.id)
+if (unreasoned.length) {
+  throw new Error(`INVARIANT 5 (reason required) FAILED: accepted without a reason: ${unreasoned.join(', ')}`)
+}
+
+const toApply = [...byId.values()].filter(d => d.status === 'fixed')
+  .map(d => ({ id: d.id, edit_instruction: d.edit_instruction || d.note }))
+log(`${toApply.length} fixed, ${byId.size - toApply.length} accepted with reasons`)
+
+// The reviser gets ONE bounded retry with the specific violation quoted back. A 2.30x plan is
+// a correctable output, not a reason to discard 40 agents of upstream work — and the retry is
+// bounded, so this cannot become v1's unbounded revise loop. The invariants still decide.
+const checkMutation = (revised) => {
+  const sig = (t) => t.split('\n').map(l => l.trim()).filter(l => l.length >= 25)
+  const before = sig(planText)
+  const after = new Set(sig(revised))
+  const kept = before.filter(l => after.has(l)).length
+  const retention = before.length ? kept / before.length : 1
+  const budget = Math.round(Math.min(planText.length * MAX_GROWTH + toApply.length * PER_FIX_CHARS, planText.length * MAX_TOTAL_GROWTH))
+  return { growth: revised.length / planText.length, retention, budget, length: revised.length,
+           ok: retention >= MIN_RETENTION && revised.length <= budget && revised.trim().length >= MIN_PLAN_CHARS }
+}
+let revision = null
+if (toApply.length) {
+  let feedback = ''
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const r = await agent(revisePrompt(planText, toApply) + feedback,
+      { label: attempt ? 'revise:retry' : 'revise', phase: 'Fix', schema: REVISE_SCHEMA })
+    if (r && r.revised_plan) {
+      const m = checkMutation(r.revised_plan)
+      revision = r
+      if (m.ok) break
+      feedback = `\n\nYOUR PREVIOUS ATTEMPT WAS REJECTED BY THE GATE. It was ${m.length} chars ` +
+        `against a budget of ${m.budget}, with ${(m.retention * 100).toFixed(0)}% of the original's ` +
+        `substantive lines surviving verbatim (floor ${(MIN_RETENTION * 100).toFixed(0)}%). ` +
+        `REPLACE weak text instead of APPENDING to it, and keep untouched sections byte-identical. ` +
+        `Apply the same edits again, within budget.`
+      log(`revise attempt ${attempt + 1} rejected (${m.growth.toFixed(2)}x, ${(m.retention * 100).toFixed(0)}% retention); retrying once`)
+    }
+  }
+} else {
+  revision = { revised_plan: planText, applied: [] }
+}
+if (!revision || !revision.revised_plan) throw new Error('revise stage returned no revised plan; aborting')
+const fix = { revised_plan: revision.revised_plan, dispositions: [...byId.values()] }
+
+// INVARIANT 1 again — the revised plan is a payload too, and this is exactly where v1 died.
+if (fix.revised_plan.trim().length < MIN_PLAN_CHARS) {
+  throw new Error(`INVARIANT 1 FAILED at fix stage: revised plan is ${fix.revised_plan.trim().length} chars.`)
+}
+
+// INVARIANT 6 — the revised plan must be a BOUNDED MUTATION of the original, not a
+// reconstruction. Two checks that were originally conflated under one name, and separated
+// on 2026-08-21 after the first live fire proved they measure different things:
 //
-// Runs on a DIFFERENT model to the panel, deliberately. Same-model verification
-// inherits the same blind spots that produced the claim; an independent model is
-// the cheapest real independence available. Skip with args.skipValidation.
-// ---------------------------------------------------------------------------
-phase('Validate')
+//   (a) RETENTION — the anti-reconstruction guard, and the real one. Independent of how many
+//       fixes were commissioned. Catches run-2's shape: a reviser paraphrases the plan, lands
+//       inside any length budget, and the retest then judges an artifact nobody reviewed.
+//   (b) ACCRETION — a budget on growth. Measured 2026-08-21: 25 commissioned fixes produced a
+//       2.30x plan at 84% retention with identical section headers — a faithful edit, not a
+//       re-authoring, yet a flat 1.15x cap aborted it. A ratio alone cannot tell "padded" from
+//       "absorbed 25 real fixes," so the budget scales with the work actually commissioned.
+//       It still aborts, because the spec names accretion as how v1 died: appended prose
+//       becomes the next round's attack surface.
+const inv6 = (() => {
+  const revised = fix.revised_plan
+  const sig = (t) => t.split('\n').map(l => l.trim()).filter(l => l.length >= 25)
+  const before = sig(planText)
+  const after = new Set(sig(revised))
+  const kept = before.filter(l => after.has(l)).length
+  const retention = before.length ? kept / before.length : 1
+  const budget = Math.round(Math.min(planText.length * MAX_GROWTH + toApply.length * PER_FIX_CHARS, planText.length * MAX_TOTAL_GROWTH))
+  return { growth: revised.length / planText.length, retention, budget, length: revised.length }
+})()
 
-const claimsToCheck = [
-  ...(lastVerdict?.unverified_claims || []).map((c) => ({ claim: c, kind: 'unverified repo-state claim' })),
-  ...(lastVerdict?.residual_risks || [])
-    .filter((r) => r.where_to_verify)
-    .map((r) => ({ claim: `RISK: ${r.risk}\nTO VERIFY: ${r.where_to_verify}`, kind: 'residual risk premise' })),
+if (inv6.retention < MIN_RETENTION) {
+  throw new Error(
+    `INVARIANT 6a (reconstruction) FAILED: only ${(inv6.retention * 100).toFixed(0)}% of the ` +
+    `original plan's substantive lines survive verbatim (floor ${(MIN_RETENTION * 100).toFixed(0)}%). ` +
+    `The reviser re-authored the plan rather than editing it; the retest would be run against ` +
+    `an artifact nobody reviewed.`)
+}
+if (inv6.length > inv6.budget) {
+  throw new Error(
+    `INVARIANT 6b (accretion) FAILED: revised plan is ${inv6.length} chars against a budget of ` +
+    `${inv6.budget} (${planText.length} original x ${MAX_GROWTH} + ${toApply.length} fixes x ` +
+    `${PER_FIX_CHARS}). Retention was ${(inv6.retention * 100).toFixed(0)}%, so this is padding, ` +
+    `not reconstruction. Replace weak text instead of appending caveats.`)
+}
+log(`INV6 ok: ${inv6.growth.toFixed(2)}x growth (budget ${(inv6.budget / planText.length).toFixed(2)}x), ${(inv6.retention * 100).toFixed(0)}% retention`)
+
+const revised = fix.revised_plan
+const diff = lineDiff(planText, revised)
+
+phase('Retest')
+const toRetest = holes.filter(h => byId.get(h.id).status === 'fixed')
+const [retests, newHoles] = await parallel([
+  () => parallel(toRetest.map(h => () =>
+    agent(retestPrompt(h, revised), { label: `retest:${h.id}`, phase: 'Retest', schema: RETEST_SCHEMA })
+      .then(v => ({ id: h.id, ...v })))),
+  () => agent(newHolesPrompt(diff), { label: 'retest:new-holes-only', phase: 'Retest', schema: NEWHOLES_SCHEMA }),
+])
+
+const retestById = new Map((retests || []).filter(Boolean).map(r => [r.id, r]))
+const findings = [
+  ...premiseFindings.map(f => ({ ...f, status: 'resolved-at-gate' })),
+  ...holes.map(h => {
+    const d = byId.get(h.id)
+    const r = retestById.get(h.id)
+    return {
+      id: h.id, layer: 'execution', target: h.target, severity: h.severity,
+      claim: h.title, problem: h.problem, failure_scenario: h.failure_scenario,
+      status: d.status, reason: d.note,
+      retest: r ? r.verdict : 'not-yet-run', retest_evidence: r ? r.evidence : null,
+    }
+  }),
 ]
 
-let validations = []
-if (cfg.skipValidation) {
-  log('Validation SKIPPED by caller — every claim below is unchecked.')
-} else if (claimsToCheck.length === 0) {
-  log('Validation: the judge emitted no checkable claims. That is itself worth noticing.')
-} else {
-  log(`Validating ${claimsToCheck.length} claim(s) against real repo state on an independent model...`)
-  validations = (await parallel(claimsToCheck.map((c, i) => () =>
-    agent(validatePrompt(c.claim, c.kind), {
-      label: `validate:${i + 1}`,
-      phase: 'Validate',
-      model: 'fable',
-      schema: VALIDATION_SCHEMA,
-    }).then((v) => (v ? { ...v, claim: c.claim, kind: c.kind } : null)),
-  ))).filter(Boolean)
+phase('Validate')
+const claims = [
+  ...findings.filter(f => f.layer === 'execution' && f.retest === 'still-fires').map(f => ({ text: f.claim + ' :: ' + f.failure_scenario, kind: 'unclosed hole' })),
+  ...(newHoles && newHoles.new_holes ? newHoles.new_holes.filter(h => h.severity === 'blocking').map(h => ({ text: h.title + ' :: ' + h.problem, kind: 'new hole from the fix' })) : []),
+].slice(0, 12)
 
-  const refuted = validations.filter((v) => v.verdict === 'REFUTED')
-  const unver = validations.filter((v) => v.verdict === 'UNVERIFIABLE')
-  log(`Validation: ${validations.filter((v) => v.verdict === 'CONFIRMED').length} confirmed, ${refuted.length} REFUTED, ${unver.length} unverifiable.`)
-  if (refuted.length) {
-    log(`${refuted.length} claim(s) were FALSE. Any risk resting on them is unsound and must be re-read, not just noted.`)
-  }
-}
+const validations = await parallel(claims.map(c => () =>
+  agent(validatePrompt(c.text, c.kind), { label: 'validate', phase: 'Validate', model: 'fable', schema: VALIDATION_SCHEMA })
+    .then(v => ({ claim: c.text, kind: c.kind, ...v }))))
 
-// The register is persisted WITH the plan, not only returned. Before 2026-08-14 this wrote the
-// hardened plan alone, so the artifact surviving on disk was a clean-looking final plan with the
-// register naming where it still fails stripped off — and a reader opening it a week later has no
-// way to tell it was ever stress-tested. Returning the register to a caller that may discard it is
-// not persistence. Per framework/review-findings-protocol.md: findings outlive the session that
-// produced them, or they are not findings.
-const outPath = cfg.outPath || `scratchpad/plan-hardened.md`
-const registerMd = [
-  `## Residual Risk Register`,
-  ``,
-  `Rounds: ${round}. Stopped because: ${stoppedBecause}.`,
-  `**There is deliberately no \`airtight\` verdict. Read the register and decide.**`,
-  ``,
-  `| Risk | My severity | Critic severity | Disagreement | Status | Why | Where to verify |`,
-  `|---|---|---|---|---|---|---|`,
-  ...(lastVerdict?.residual_risks || []).map(
-    (r) => `| ${r.risk} | ${r.severity} | ${r.critic_severity} | ${r.severity_disagreement} | ${r.status} | ${r.why} | ${r.where_to_verify} |`,
-  ),
-  ``,
-  `**A register where every Disagreement reads "agrees" is a judge that did not judge.**`,
-  ``,
-  `### Unverified repo-state claims`,
-  ``,
-  ...((lastVerdict?.unverified_claims || []).length
-    ? (lastVerdict.unverified_claims || []).map((c) => `- ${c}`)
-    : ['- none recorded']),
-  ``,
-  `The executing agent must treat each as work, not as background.`,
-].join('\n')
+const stillFires = findings.filter(f => f.retest === 'still-fires')
+const introduced = findings.filter(f => f.retest === 'fix-introduced-new')
+const accepted = findings.filter(f => f.status === 'accepted')
+const newBlocking = (newHoles && newHoles.new_holes ? newHoles.new_holes : []).filter(h => h.severity === 'blocking')
 
-await agent(
-  `Write the following to ${outPath} exactly as given (it is final), the plan first and the register immediately after it under a horizontal rule. Then return a 3-sentence summary of its final shape.\n\nPLAN:\n${planText.slice(0, 60000)}\n\n---\n\n${registerMd}`,
-  { label: 'persist:final-plan', phase: 'Judge' },
-)
+const terminal = (stillFires.length === 0 && introduced.length === 0 && newBlocking.length === 0)
+  ? (accepted.length ? 'RESIDUAL' : 'CLOSED')
+  : 'OPEN'
 
-// NO `airtight` FIELD, deliberately. Callers that want a green light must read the
-// register and decide for themselves. See JUDGE_SCHEMA above for the two fires that
-// removed it.
-return {
-  rounds: round,
-  stoppedBecause,
-  converged: stoppedBecause.startsWith('no new blocking'),
-  residual_risks: lastVerdict?.residual_risks || [],
-  unverified_claims: lastVerdict?.unverified_claims || [],
-  open_blocking: (lastVerdict?.residual_risks || []).filter((r) => r.status === 'open' && r.severity === 'blocking').map((r) => r.risk),
-
-  // Validation results. READ `refuted` FIRST — a refuted claim means the panel
-  // reasoned from a false premise, so the risk built on it is unsound rather than
-  // merely open. `unverifiable` is NOT a pass; those claims remain unchecked work.
-  validation: {
-    ran: !cfg.skipValidation && claimsToCheck.length > 0,
-    checked: validations.length,
-    refuted: validations.filter((v) => v.verdict === 'REFUTED'),
-    unverifiable: validations.filter((v) => v.verdict === 'UNVERIFIABLE'),
-    confirmed: validations.filter((v) => v.verdict === 'CONFIRMED'),
+return await register({
+  terminal_state: terminal,
+  spec: 'framework/plan-hardening-v2-spec.md',
+  plan_type: targeting.plan_type,
+  plan_type_reason: targeting.plan_type_reason,
+  goal_from_plan: goalFromPlan,
+  goal_from_problem: goalFromProblem,
+  goal_delta: premise.delta,
+  premise_status: 'resolved',
+  targets: targets.map(t => ({ key: t.key, generator: t.generator, question: t.question })),
+  counts: {
+    holes: holes.length, fixed: toRetest.length, accepted: accepted.length,
+    closed: findings.filter(f => f.retest === 'closed').length,
+    still_fires: stillFires.length, fix_introduced_new: introduced.length,
+    new_blocking_from_fix: newBlocking.length,
   },
-
-  outPath,
-  history,
-  finalPlanChars: planText.length,
-}
+  findings,
+  bounded_mutation: inv6,
+  new_holes_from_fix: newHoles ? newHoles.new_holes : [],
+  validations: validations.filter(Boolean),
+  revised_plan: revised,
+  outPath: cfg.outPath || null,
+  harness_self_check: {
+    premise_findings_at_gate: premiseFindings.length,
+    premise_findings_late: 0,
+    note: 'Healthy = premise findings surface at the gate. If premise-shaped findings only appear from the unscoped probe, goal extraction is too weak and is being rescued by luck.',
+  },
+})
