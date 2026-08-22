@@ -141,6 +141,6 @@ Keep internal go/no-go material out of anything shared externally. Mark shareabl
 - `framework/adversarial-analysis-pipeline.md` — the adversarial layer in depth
 - `framework/multi-agent-workflows.md` — fan-out, adversarial verification, convergence gates
 - `framework/problem-solving-mckinsey.md` — stage 2's 7-step method and issue trees
-- `/plan-hardening` — adversarial panel over a written plan, usable at stage 5
+- `/plan-hardening` — premise gate then scoped probes with a per-hole retest over a written plan, usable at stage 5
 - `/research-audit` — fan-out research with claim validation, usable at stage 1
 - `/megastorm` — multi-lens ideation, usable at stage 3

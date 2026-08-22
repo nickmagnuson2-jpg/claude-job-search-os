@@ -187,7 +187,8 @@ record-keeping, not the judgment.** When landing this protocol on `review-cv-dee
 ## What this is not
 
 - **Not `/plan-hardening` versus `/critique-plan`.** Different tools, opposite output contracts.
-  plan-hardening returns a residual risk register and edits nothing; critique-plan synthesizes a
+  plan-hardening returns a residual risk register with a per-hole retest verdict and never edits
+  your working tree (it writes only its own register and revised-plan copy); critique-plan synthesizes a
   hybrid plan. Both are bound by this file; neither is the other.
 - **Not the F9 compression ledger** (`deck-rubric.md`, `frame-schema.yaml`), which tracks what a frame
   element was when it got cut.
@@ -226,10 +227,14 @@ rejection count is zero. All three are the tells above, and all three are arithm
 
 What blocks it is that the ledger has **no fixed on-disk location**. `review-cv-deep` writes to
 `output/**-DEEP-REVIEW.md`, `research-audit.js` to `output/analysis/`, and `critique-plan` and
-`plan-hardening` emit inline and persist nothing. A hook cannot check a file that was never written.
-**So the real next step is smaller than the hook: give the two inline surfaces a persisted ledger
-path.** Until then this protocol is enforced by the five skills that cite it, which is skill tier,
-which is the tier with a documented history of not holding.
+`plan-hardening` emitted inline and persisted nothing. A hook cannot check a file that was never
+written. **`plan-hardening` closed its half on 2026-08-21**: `registerPath` and `outPath` now write
+the register and the revised artifact to disk (verified on run `wf_a440ab49-405`). Before that both
+keys were advertised in the workflow's argument contract and silently ignored by the code — the
+"written down and followed" defect, one layer out, in an *interface*. `critique-plan` remains
+inline-only, so the hook is still blocked on that one surface. Until then this protocol is enforced
+by the five skills that cite it, which is skill tier, which is the tier with a documented history of
+not holding.
 
 ## Pointers
 

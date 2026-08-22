@@ -181,9 +181,10 @@ this same gate.** The schema is not exempt.
 
 ## The adversarial fork: `/plan-hardening` on the frame
 
-**A frame is a plan-shaped artifact**, so the same panel that stress-tests a plan stress-tests a
-frame. This is a **fork, not the default path** — it costs roughly 20 agents and 20 minutes, which is
-worth it before an irreversible or high-stakes delivery and wasteful on a routine run.
+**A frame is a plan-shaped artifact**, so the same instrument that stress-tests a plan stress-tests a
+frame. This is a **fork, not the default path**. Cost on the first v2 run: **81 agents, 2.88M tokens,
+40 minutes** for a 25-hole plan (the spec's model is ~N+M+7 agents; a run that stops at the premise
+gate costs 4). Worth it before an irreversible or high-stakes delivery, wasteful on a routine run.
 
 **Fire it when:** the artifact goes in front of a room that can reject it, the engagement is
 one-shot (`d1.mode.shots: one`), or the deterministic gate came back clean and that cleanliness is
@@ -197,13 +198,18 @@ calls `JSON.parse` on a string arg and dies in 17ms with `Unexpected identifier`
 agent runs. The key is `planPath` or `planText`, **not `plan`**:
 
 ```
-Workflow({ name: "plan-hardening", args: {
+Workflow({ scriptPath: ".claude/workflows/plan-hardening.js", args: {
   planPath: "output/<slug>/frame.yaml",   // OR planText: "<the plan markdown>"
-  context:  "<1-paragraph domain context every critic needs>",
-  rounds:   3,                            // optional
-  lenses:   [...], outPath: "..."         // optional
+  context:  "<1-paragraph domain context, and NOT the plan itself — an agent",
+                                          //  authors a goal from this while blind to the plan>
+  outPath:      "output/<slug>/frame-v2.yaml",   // optional, now actually written
+  registerPath: "output/<slug>/hardening-register.json",  // optional, now actually written
 }})
 ```
+
+**Use `scriptPath`, not `name`.** `name` resolves a stale snapshot of the script and says nothing
+when it does; measured 2026-08-21, a run executed the previous version for 40 minutes.
+**`rounds` and `lenses` are gone** — v2 has no rounds. The stage graph is a single bounded pass.
 
 Pass the frame plus the `d1` block as `planPath`/`planText`, and the engagement's context as
 `context`. Fired 2026-08-17: this block previously said "as the plan," which reads as a `plan:`
