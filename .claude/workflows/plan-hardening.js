@@ -1,7 +1,7 @@
 export const meta = {
   name: 'plan-hardening',
   description: 'Two-layer plan hardening: a premise gate that HARD STOPS before execution critique, then scoped probes with per-hole regression retest. Returns a residual risk register.',
-  whenToUse: 'Before executing an expensive or irreversible plan. Implements framework/plan-hardening-v2-spec.md. Bounded questions converge; "attack this plan" does not — v1 ran 5 rounds x ~26 new blocking holes and never converged. ARGS MUST BE AN OBJECT, never a prose string: {planText OR planPath (required), context (required), outPath?, registerPath?, minPlanChars?, minRetention?}. Passing prose dies with a JSON parse error in ~15ms before any agent runs.',
+  whenToUse: 'Before executing an expensive or irreversible plan. Implements framework/plan-hardening-v2-spec.md. Bounded questions converge; "attack this plan" does not — v1 ran 5 rounds x ~26 new blocking holes and never converged. ARGS MUST BE AN OBJECT, never a prose string: {planText OR planPath (required), context (required), outPath?, registerPath?, targets? (SUPPLYING THIS BYPASSES S2 TARGET GENERATION), minPlanChars?, minRetention?, perFixChars?, maxTotalGrowth?}. Passing prose dies with a JSON parse error in ~15ms before any agent runs.',
   phases: [
     { title: 'Goal', detail: 'two independent goal statements, one blind to the plan' },
     { title: 'Premise', detail: 'is G the right goal — HARD STOP if open' },
@@ -763,9 +763,17 @@ phase('Validate')
 const claims = [
   ...findings.filter(f => f.layer === 'execution' && f.retest === 'still-fires').map(f => ({ text: f.claim + ' :: ' + f.failure_scenario, kind: 'unclosed hole' })),
   ...(newHoles && newHoles.new_holes ? newHoles.new_holes.filter(h => h.severity === 'blocking').map(h => ({ text: h.title + ' :: ' + h.problem, kind: 'new hole from the fix' })) : []),
-].slice(0, 12)
+]
+const VALIDATION_CAP = 12
+// No silent caps. The repo's own rule: a workflow that bounds coverage must SAY what it dropped,
+// or a truncated pass reads as "everything was checked." The 2026-08-21 run hit this cap exactly
+// (12 of 16) and said nothing.
+if (claims.length > VALIDATION_CAP) {
+  log(`WARNING: ${claims.length} claims to validate, capping at ${VALIDATION_CAP}. ${claims.length - VALIDATION_CAP} NOT validated.`)
+}
+const cappedClaims = claims.slice(0, VALIDATION_CAP)
 
-const validations = await parallel(claims.map(c => () =>
+const validations = await parallel(cappedClaims.map(c => () =>
   agent(validatePrompt(c.text, c.kind), { label: 'validate', phase: 'Validate', model: 'fable', schema: VALIDATION_SCHEMA })
     .then(v => ({ claim: c.text, kind: c.kind, ...v }))))
 
@@ -798,6 +806,7 @@ return await register({
   bounded_mutation: inv6,
   new_holes_from_fix: newHoles ? newHoles.new_holes : [],
   validations: validations.filter(Boolean),
+  validation_coverage: { claims_eligible: claims.length, claims_validated: cappedClaims.length, cap: VALIDATION_CAP },
   revised_plan: revised,
   outPath: cfg.outPath || null,
   harness_self_check: {

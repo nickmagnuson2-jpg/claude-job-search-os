@@ -1,19 +1,32 @@
 # Plan Hardening v2 — Specification
 
 **Status: BUILT, with one named gap (2026-08-21).** `.claude/workflows/plan-hardening.js`
-implements the S0-S6 stage graph; five of the six §9 invariants are assertions in that script,
-each broken on purpose by a test in `tests/scripts/test_plan_hardening_invariants.py` (30 tests,
-mutation-verified); and one run has executed end to end with the register persisted
+implements the S0-S6 stage graph. **Four of the six §9 invariants are assertions exactly as
+specified** (§9.1, §9.2, §9.3, §9.5); §9.4 is half-built and §9.6 was *replaced* rather than
+implemented — see both gaps below. Each implemented guard is broken on purpose by a test in
+`tests/scripts/test_plan_hardening_invariants.py` (**33 tests**; the guards were mutation-tested by
+hand — `tools/mutation_check.py` is a Python AST mutator and cannot parse JavaScript, so this repo's
+mutation instrument has never run against this file). One run has executed end to end with the
+register persisted
 (`output/analysis/082126-plan-hardening-register-v2run1.json`, run `wf_a440ab49-405`).
 
-**The gap, named rather than glossed:** §9.4's *cross-pass* half is NOT built. Hole IDs are
+**Gap 1, named rather than glossed:** §9.4's *cross-pass* half is NOT built. Hole IDs are
 assigned deterministically within a pass and retest verdicts key to them, but no prior register is
 ever read back, so an ID from pass *n* is not guaranteed to denote the same hole in pass *n+1*.
 Single-pass runs are sound; a second pass over the same plan is not yet trustworthy. That matters
 now rather than hypothetically: the first live run returned `OPEN` with 14 holes still firing, so a
 second pass is required work, not a thought experiment.
 
-Cite this document as built for what §11 lists as done, and never for cross-pass behavior.
+**Gap 2 — §9.6 as written was never implemented.** §9.6 specifies "the diff handed to the new-holes
+agent must equal the sum of recorded fixes." No such check exists. What the code enforces under the
+name INVARIANT 6 is two *different* properties, added 2026-08-21 and both well-tested: **6a
+retention** (≥60% of substantive lines survive verbatim) and **6b accretion** (length ≤ a budget
+that scales with commissioned fixes, hard-capped at 3x). They guard the same failure v1 exhibited —
+a reviser re-authoring the plan — by a different mechanism. §9 has been updated to describe what is
+actually enforced, and the original §9.6 text is preserved there as unimplemented.
+
+Cite this document as built for what §11 lists as done, and never for cross-pass behavior or for a
+diff-equals-sum-of-fixes guarantee.
 
 **Supersedes:** the v1 behavior of `.claude/workflows/plan-hardening.js` (unbounded multi-round
 critique with a revision loop). v1 is not deleted; it is superseded, and §10 records the measured
@@ -125,9 +138,12 @@ the plan's own self-description, which is precisely the artifact under suspicion
 **This pair is the oracle arm.** It bypasses the plan the way an injected rule bypasses retrieval,
 and the delta attributes the failure to *aim* versus *execution*.
 
-### S1 — Premise gate (1 agent + diff)
+### S1 — Premise gate (1 agent)
 
-A third agent receives both goal statements, **not the plan**, and answers two bounded questions:
+A third agent receives both goal statements, **not the plan**, and answers two bounded questions.
+(Earlier drafts said "1 agent + deterministic diff." **There is no deterministic diff** — the
+materiality of the delta is the model's judgment, returned in `PREMISE_SCHEMA.delta`. Treat it as a
+judgment, not a computation.)
 
 1. Is the delta between them material or immaterial? (material = they describe different outcomes,
    different success conditions, or different beneficiaries)
@@ -185,10 +201,18 @@ the hole nobody thought to look for. In run 1, the single best finding (an irrev
 damage propagated through a nightly mirror, with no rollback path) came from an angle that would not
 have appeared on a generated target list.
 
-### S4 — Fix
+### S4 — Fix (SPLIT IN TWO — S4a: 1 agent per hole; S4b: 1 reviser)
 
-For each open hole, the plan is edited and the fix recorded against the **hole ID**. Three
-dispositions, and every one is explicit:
+**Implementation note, 2026-08-21.** A single agent asked to disposition 25 holes *and* rewrite the
+plan returned dispositions for E1-E8 and stopped. "Disposition N holes" is unbounded in the same
+family as "attack this plan." The stage is therefore split: **S4a** runs one agent per hole (one
+retry each), so ID coverage is structural; **S4b** runs one reviser that applies the recorded edits
+and reviews nothing, with one bounded retry if it violates §9.6's replacement. Agent count is
+therefore **≈ N_holes + 1**, not the "orchestrator or operator" this section originally described.
+
+For each open hole, the plan is edited and the fix recorded against the **hole ID**. **The
+implementation offers two dispositions, not three** — `DISPOSITION_SCHEMA` is `fixed | accepted`.
+`moot` is specified below and is NOT implemented; see §5.
 
 - `fixed` — the plan changed; record what changed.
 - `accepted` — deliberately not fixed. **Requires a written reason.** Same contract as
@@ -234,7 +258,14 @@ Two rules learned from v1, where the validator itself produced false refutations
 ## 5. Register schema
 
 One durable record per plan. **Hole IDs are stable across passes** — that is what makes S5 possible
-at all.
+at all. *(Aspirational: see Gap 1. IDs are stable WITHIN a pass; no prior register is read back.)*
+
+⚠️ **Five fields below are specified and NOT emitted by the implementation** (verified 2026-08-21
+against the live register): `plan`, `pass`, per-finding `validation:`, `invalidates:`, and the
+`moot(<premise-id>)` status. Validations are emitted as a separate top-level `validations` array,
+not keyed onto findings. The implementation additionally emits `bounded_mutation`,
+`validation_coverage`, `new_holes_from_fix`, `harness_self_check`, and `persisted`, none of which
+appear below. **Read the live register for the real shape; this block is the design target.**
 
 ```yaml
 plan: <stable-id>
@@ -277,6 +308,12 @@ its premise is unresolved.
 The pass ends when **every finding is `fixed`, `accepted` with a reason, or `moot`**, and the S5
 retest confirms each `fixed` hole is `closed`.
 
+⚠️ **`moot` is not implementable today** — the schema offers only `fixed | accepted`, so this
+termination condition cannot be reached by that route. The implementation adds a fourth terminal
+state, **`OPEN`**, for the case this section does not cover: findings dispositioned `fixed` whose
+retest returns `still-fires`. The first live run terminated `OPEN` with 14 such holes. Terminal
+states in the code are `PREMISE-OPEN | CLOSED | RESIDUAL | OPEN`.
+
 Contrast with v1, which ended when "no new blocking hole appears" — a condition that never fired
 because the question generating the holes was unbounded.
 
@@ -297,11 +334,16 @@ Three terminal states, all legitimate outcomes:
 | S1 premise gate | 1 |
 | S2 target generation | 1 |
 | S3 probes | N + 1 |
+| **S4a dispositions** | **N_holes** (1 per hole, +1 retry each on failure) |
+| **S4b revise** | **1** (+1 bounded retry if it violates 6a/6b) |
 | S5 retest | M + 1 |
-| S6 validation | 1 |
+| S6 validation | **up to 12** (one per claim, capped; the cap is logged) |
 
-**≈ N + M + 7.** At N=7 targets and M=6 surviving holes: **~20 agents**, against v1's 88 for a
-worse result. A run that stops at the premise gate costs **4**.
+**Corrected 2026-08-21.** The original "≈ N + M + 7" **omitted S4 entirely** and counted S6 as one
+agent. The real shape is **≈ N_targets + N_holes + M_retests + ~16**. The first live run:
+**81 agents, 2.88M tokens, 40 minutes** on a plan yielding 25 holes — against v1's 88 agents and
+5.24M tokens for a worse, unconverged result. A run that stops at the premise gate still costs
+**~4 plus one validator per premise finding**.
 
 ---
 
@@ -332,8 +374,20 @@ Not prose — these are assertions the script makes, and each is a check a gate 
 4. **ID stability.** A hole ID assigned in pass *n* refers to the same hole in pass *n+1*. Retest
    verdicts are keyed to IDs, never to positions or titles.
 5. **Reason requirement.** `status: accepted` without a non-empty `reason` fails the run.
-6. **No plan mutation between probe and retest** except through recorded, hole-keyed fixes. The diff
-   handed to the new-holes agent must equal the sum of recorded fixes.
+6. **Bounded mutation.** *(REPLACED 2026-08-21. The original text — "no plan mutation between probe
+   and retest except through recorded, hole-keyed fixes; the diff handed to the new-holes agent must
+   equal the sum of recorded fixes" — was **never implemented**, and is retained here so the
+   substitution is visible rather than silent.)* What the code enforces instead, as two separate
+   assertions, because the first live fire proved they measure different things:
+   - **6a reconstruction** — ≥`MIN_RETENTION` (default 0.6) of the original's substantive lines must
+     survive **verbatim**. Independent of hole count. Catches a reviser that paraphrases the plan and
+     lands inside any length budget.
+   - **6b accretion** — length ≤ `min(original × 1.15 + fixes × perFixChars, original × maxTotalGrowth)`
+     (defaults 800 and 3). Scales with commissioned work, because a flat ratio encodes "a few small
+     fixes" and aborts a faithful 25-fix edit. The 3x ceiling is required: without it, 25 fixes on a
+     short plan permitted 12.66x.
+   Both are reported in the register as `bounded_mutation` on success as well as failure, so
+   accretion is visible rather than silent.
 
 ---
 
@@ -351,15 +405,27 @@ bypasses one of them is what makes the diagnosis actionable.**
 
 ## 11. What would make this real
 
-This spec is not built. It becomes built when all of the following exist:
+**Superseded by the status header at the top of this file, which is authoritative.** This section is
+retained as the *criteria*, each marked against a fresh-agent audit run 2026-08-21 that checked every
+claim in this document against the code.
 
-1. `.claude/workflows/plan-hardening.js` implements the S0-S6 stage graph.
-2. The six invariants in §9 are assertions in that script, not comments.
-3. A test suite in `tests/scripts/` that, for each invariant, **breaks it on purpose and observes a
-   failure** — per the standing rule that a green test is not evidence and mutation survival is.
-   Specifically: a truncated payload must abort; a plan-contaminated blind prompt must fail; an
-   `accepted` finding with an empty reason must fail; an execution stage reached under
-   `premise_status: open` must fail.
-4. One run executed end to end against a real plan, with the register persisted.
+1. **DONE** — `.claude/workflows/plan-hardening.js` implements the S0-S6 stage graph. The audit
+   corrected three descriptions that had drifted: S1 has no deterministic diff, S4 is split in two
+   and was omitted from the §7 cost model entirely, and S6 fans out to as many as 12 validators
+   rather than 1. Those corrections are recorded in §4 and §7.
+2. **PARTIAL — 4 of 6.** §9.1 (payload floor), §9.2 (structural blindness), §9.3 (gate
+   unreachability) and §9.5 (written reason) are assertions exactly as specified. **§9.4 is half**
+   — IDs are stable within a pass, nothing reads a prior register (Gap 1). **§9.6 was replaced, not
+   implemented** (Gap 2); the substitute guards are real and tested, but they are not what §9.6 said.
+3. **DONE** — 33 tests; 10 assert failure plus the specific invariant string, and the driver
+   executes the real workflow source under a stubbed DSL rather than regex-matching it, so a syntax
+   error fails rather than passing vacuously. All four cases named in the original criterion exist.
+   There are also restraint arms (a legitimate fix must NOT trip 6a/6b; no persist agent runs when no
+   path is given; a failed write must not report as durable). **Caveat:** the guards were mutated by
+   hand. `tools/mutation_check.py` is a Python AST mutator and cannot parse JavaScript, so this
+   repo's mutation instrument has never run against this file, and there is no
+   `tools/mutation-allow.json` entry for it.
+4. **DONE** — run `wf_a440ab49-405`, register persisted to
+   `output/analysis/082126-plan-hardening-register-v2run1.json`.
 
-Until then, cite this document as a design, never as a behavior.
+Cite this document against the header's two named gaps, never as uniformly built.

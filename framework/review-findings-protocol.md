@@ -84,6 +84,14 @@ For workflow-tier surfaces, the same shape as schema fields: `finding`, `severit
 `agrees`), `verdict`, `evidence` (`path:line`, or the command run and its output, or the specific
 absence checked **and the scope of that check**), `disposition`, `why`.
 
+⚠️ **`critic_severity` and `severity_disagreement` presume a critic→judge architecture.** A workflow
+with no judge stage cannot emit them — `plan-hardening.js` lost its judge in the 2026-08-21 v2
+rewrite. Where that pair does not apply, the substitute obligation is the same one it existed to
+serve: **show that the severity was re-derived rather than relayed.** In v2 that is the per-hole
+`retest` verdict, which is an independent agent re-deciding each finding against the revised
+artifact — and on the first live run it disagreed with the disposition on 14 of 25. A register where
+every retest reads `closed` is a retest that did not test.
+
 ### The dispositions
 
 `applied` · `presented` · `rejected` · `rejected — could not verify`
@@ -133,7 +141,7 @@ how an under-rated finding becomes invisible without anyone deciding to ignore i
 
 | Surface | Verifies | Own severity | Presents, not applies | Ledger | Status |
 |---|---|---|---|---|---|
-| `.claude/workflows/plan-hardening.js` | ✅ Validate phase, independent model | ✅ `critic_severity` + `severity_disagreement` | ✅ register, edits nothing | ✅ | **Done** 2026-08-13 |
+| `.claude/workflows/plan-hardening.js` | ✅ Validate phase, independent model (capped at 12 claims; `validation_coverage` reports the drop) | ⚠️ **the v2 rewrite removed the judge stage** — `critic_severity` / `severity_disagreement` no longer exist. Severity is decided per hole at S4a and `minor` is filtered at probe time | ✅ register + `revised_plan`, persisted via `registerPath`/`outPath`; edits nothing of yours | ✅ | **Re-verified** 2026-08-21 |
 | `.claude/skills/critique-plan/SKILL.md` | ✅ verification bar | ✅ ledger + Step 4a derives `My severity`; agent rating recorded as an input | ✅ inline, approval before execute | ✅ | **Done** 2026-08-14 |
 | `.claude/skills/review-cv-deep/SKILL.md` | ✅ Step 5a, three verdicts against the CV | ✅ Step 5b; max-of-perspectives banned | ✅ writes a report | ✅ | **Done** 2026-08-14 |
 | `.claude/skills/audit-pii/SKILL.md` | ✅ Step 3a, both directions (clean AND positive) | ✅ own SCRUB/AMBIGUOUS/CLEAR verdict | ✅ approval-gated | ⚖️ inline disagreements only, by design | **Done** 2026-08-14 |

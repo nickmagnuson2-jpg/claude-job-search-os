@@ -6,7 +6,7 @@ Format: newest entries at the top.
 ## 2026-08-21 (latest): plan-hardening v2 — bounded probes and per-defect retest replace the adversarial panel
 
 `.claude/workflows/plan-hardening.js` was rewritten against `framework/plan-hardening-v2-spec.md`.
-Suite **2141 to 2147** (33 tests in `test_plan_hardening_invariants.py`, up from 0). Committed
+Suite **2114 to 2147** (33 tests in `test_plan_hardening_invariants.py`, up from 0). Committed
 `fc8b449`.
 
 **Why the old design had to go, measured not argued.** Two instrumented v1 runs on the same plan:
@@ -45,9 +45,11 @@ cannot tell a real fix from a topic that got mentioned. On the first v2 run, 25 
 dispositioned `fixed` and **14 did not close** — that gap is invisible under v1 by construction. It
 is the plan-level analogue of CLAUDE.md's rule that a green test is not evidence.
 
-**Five invariants abort the run rather than warn** (spec §9): payload floor, structurally-asserted
-blindness on the plan-blind goal agent, execution stages unreachable while `premise_status: open`,
-ID coverage, a written reason on every `accepted` finding, and bounded mutation. Each is broken on
+**Six guards abort the run rather than warn**: payload floor, structurally-asserted blindness on the
+plan-blind goal agent, execution stages unreachable while `premise_status: open`, ID coverage, a
+written reason on every `accepted` finding, and bounded mutation (6a retention + 6b accretion).
+Against spec §9 that is **four of six as specified** — §9.4's cross-pass half is unbuilt and §9.6 as
+written was replaced rather than implemented. Each implemented guard is broken on
 purpose by a test; the driver executes the real workflow source under a stubbed DSL rather than
 regex-matching it, because a suite that only ran the happy path would prove nothing about a guard.
 
@@ -64,7 +66,7 @@ regex-matching it, because a suite that only ran the happy path would prove noth
    no filesystem access, so persistence now runs through an agent with Write tools, mirroring how
    `planPath` is already read.
 3. **INVARIANT 6 conflated two different failures.** A flat 1.15x growth cap aborted a **faithful**
-   edit — 2.30x growth but 84% verbatim line retention and identical section headers. Split into
+   edit — 2.30x growth but 83% verbatim line retention and identical section headers. Split into
    **6a reconstruction** (retention floor, independent of hole count) and **6b accretion** (budget =
    original x 1.15 + fixes x 800, with a hard 3x ceiling). The ceiling was necessary: without it a
    short plan with 25 fixes permitted **12.66x**, so the first version of the fix passed its own
@@ -75,10 +77,12 @@ threshold until the run passes. Measuring what it actually caught — retention,
 separated a false positive from a real catch. A test now protects the **calibration itself**:
 zeroing the per-fix allowance reinstates the false positive and fails the suite.
 
-**Mutation-checked per CLAUDE.md:23.** Ten mutants run against the new guards; nine killed
-immediately. One **survived**: `all_writes_returned: true` meant nothing detected a failed write
-being reported as success — the payload-loss shape one layer out. A test was added and the mutant
-now dies. Suite passes in isolation and in full (2144).
+**Mutation-tested by hand, and the caveat matters.** `tools/mutation_check.py` is a **Python AST**
+mutator and cannot parse JavaScript, so this repo's mutation instrument has never run against this
+file and there is no `tools/mutation-allow.json` entry for it. Each new guard was instead broken on
+purpose in the source and the suite re-run. Every mutant died except one: `all_writes_returned: true`
+meant nothing detected a failed write being reported as success — the payload-loss shape one layer
+out. A test was added and the mutant now dies. Suite passes in isolation and in full (**2147**).
 
 **Efficiency: bounded retry, capped at one attempt.** Two runs (999k and 1.6M tokens) were discarded
 whole because a single agent produced one bad output. A flaky hole agent is now retried once, and a
@@ -107,7 +111,11 @@ old descriptions still describe the dead one is how a rule sits "captured" while
 the comparison table), `docs/tools-reference.md`, `framework/review-findings-protocol.md` (its
 "persists nothing" blocker is now half-closed), `framework/analysis-method.md` (invocation contract:
 `rounds`/`lenses` removed, they no longer exist), `framework/smb-decision-analysis.md`. Historical
-CHANGELOG entries were left as written — they record what was true at the time.
+CHANGELOG entries were left as written — they record what was true at the time. **One exception,
+found by audit and disclosed here:** commit 33bd0da also carried a pre-existing uncommitted
+working-tree edit to an older entry, redacting a real Gmail label ID to `--job-search-label`. A
+correct redaction in a public file, not authored as part of this work, swept in by staging the whole
+file.
 
 ## 2026-08-19: three verification tools that could not describe their own scope
 

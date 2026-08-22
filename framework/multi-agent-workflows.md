@@ -75,7 +75,7 @@ S0 goal extraction (2 agents, one BLIND to the plan)  → S1 premise gate — HA
 | | #3 rounds (v1) | #3b bounded (v2) |
 |---|---|---|
 | Agents / tokens | 88 / 5.24M | 81 / 2.88M |
-| Converged | **No**, 5 rounds | **Yes**, one pass |
+| Converged | **No**, 5 rounds | **Yes** — the *harness* terminated in one pass. The *plan* came back `OPEN`, with 14 holes still firing and 2 new blocking ones. Those are different claims. |
 | Output | 82 holes, hand-extraction required | 25 holes, each with a verdict |
 | Could it tell a real fix from a claimed one? | **No** | **Yes — 14 of 25 "fixed" holes still fired** |
 | Premise defects | buried among 82 peers | gated upstream, 3 surfaced at S1 |
@@ -100,6 +100,13 @@ Five properties do the work, and each maps to a measured v1 failure:
 
 **Its known limit:** hole IDs are stable *within* a pass but no prior register is read back, so a
 second pass over the same artifact is not yet trustworthy. See the spec's status header.
+
+#### The superseded v1 body, kept for the reasoning that still holds
+
+> ⚠️ **Everything from here to the end of this subsection describes the REPLACED round-based
+> design.** It sat under the §3b heading unmarked until 2026-08-21, so a reader following the
+> deprecation banner landed on round-based guidance. Do not implement from it. What still holds:
+> distinct critic lenses, a reviser allowed to reject with a reason, and no pass/fail certificate.
 
 Generate → critique → revise → **judge** → loop, stopping when a round surfaces no
 **new** blocking hole (or a round cap). The explicit stopping rule is what separates
@@ -186,14 +193,16 @@ misses the long tail; the "consecutive-dry" or budget rule is the correct shape.
 
 ## The three reusable templates (`.claude/workflows/`)
 
-Each is PII-free and parameterized: your specific subject/data flows in via `args` at
-run time, never hardcoded (this repo is public). Invoke by name, or via `scriptPath`.
+Each flows its subject/data in via `args` at run time rather than hardcoding it (this repo is
+public). **Invoke via `scriptPath` — see the warning below the table.** Note that `extract-verify.js`
+is only partly parameterized: job-search field names and schema are baked into its prompts, so
+reusing it in another domain means editing prompt bodies, not just `args`.
 
 | Template | Pattern(s) | Give it (`args`) | Produces |
 |---|---|---|---|
-| `plan-hardening.js` | **#3b bounded probe + retest** | `planPath` **or** `planText` (NOT `plan`) + `context` (+ optional `outPath`, `registerPath`, `minPlanChars`, `minRetention`) | a revised plan + a residual risk register with a per-hole retest verdict + repo-grounded validations, both **persisted to disk** |
-| `research-audit.js` | #1 fan-out + #2 verify | a subject + systems, each with current-state + research angles | cited, adversarially-validated recommendations |
-| `extract-verify.js` | #4 extract→verify | a manifest of entities + their source files + a label taxonomy | a verified per-entity ledger with provenance |
+| `plan-hardening.js` | **#3b bounded probe + retest** | `planPath` **or** `planText` (NOT `plan`) + `context` (+ optional `outPath`, `registerPath`, `minPlanChars`, `minRetention`, `perFixChars`, `maxTotalGrowth`, and **`targets` — supplying it BYPASSES S2 target generation**) | a revised plan + a residual risk register with a per-hole retest verdict + repo-grounded validations, both **persisted to disk** |
+| `research-audit.js` | #1 fan-out + #2 verify | a subject + systems, each with current-state + research angles + **`date` (REQUIRED — no default, and it lands in the output filename, so omitting it writes `undefined-best-practices-audit.md`)** (+ optional `crossCutting`, `outDir`) | cited, adversarially-validated recommendations |
+| `extract-verify.js` | #4 extract→verify | `manifestPath` + **`count` (REQUIRED — the script throws without it)** + a label `taxonomy` (+ optional `denylist`, `extractionGuidance`, `recordShape`, `batchSize`, `globals`, `preferenceSources`, `outDir`). **`date` is documented in the script's own header and is never read.** | a verified per-entity ledger with provenance |
 
 **Invoke with `scriptPath`, not `name`.** `Workflow({name: "..."})` resolves a **stale snapshot**
 of the script rather than the file on disk, and announces nothing when it does. Measured

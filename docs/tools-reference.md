@@ -73,7 +73,7 @@ these tables.
 | `/extract-verify` | Extract records, then re-derive each in a fresh context (anti-anchoring) | Turning a messy corpus into a labeled dataset with provenance |
 | `/research-audit` | Fan-out research per angle + adversarial claim validation | Deciding whether existing systems are stale and what to change |
 
-Args are passed as a **JSON object**, not a bare string — `{"planPath": "...", "context": "...", "maxRounds": 3, "lenses": [...]}`. A bare string fails at parse time before any agent runs.
+Args are passed as a **JSON object**, not a bare string — e.g. `{"planPath": "...", "context": "...", "registerPath": "...", "outPath": "..."}`. A bare string fails at parse time before any agent runs. (`maxRounds` and `lenses` appeared in this example until 2026-08-21; **both were deleted in the v2 rewrite and no workflow reads them.**)
 
 
 ## Private local config
