@@ -259,6 +259,55 @@ def test_importing_the_module_does_not_run_main():
     assert "IMPORT_OK True" in r.stdout, (r.stdout, r.stderr)
 
 
+# --- _first_word return-type contract ----------------------------------------
+
+def _load_module():
+    """Import the hook by file path, in-process, so its helpers can be called
+    directly. The module puts its own directory on sys.path, so the
+    hook_command_lint import resolves without help."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("cpes_under_test", str(SCRIPT))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+@pytest.mark.parametrize("stage", [
+    " (tail -5)",        # subshell — `(` is not a command-word char
+    ' "tail" -5',        # quoted command name
+    " $FMT -5",          # variable-expanded command name
+    " !sed",             # history-expansion char
+    " ",                 # whitespace-only stage
+    "",                  # empty stage
+    " VAR=1 (tail)",     # var prefix stripped, still no command word
+])
+def test_first_word_returns_empty_string_not_none_when_no_command_word(stage):
+    """Kills RETURN_NONE on `return ""` (line 107). `_first_word` is annotated
+    `-> str` and its result is handed to a string-set membership test in
+    `_terminal_formatter`; the documented no-match value is the empty STRING.
+    Returning None instead silently changes the helper's contract for every
+    caller, so assert the value and the type."""
+    mod = _load_module()
+    got = mod._first_word(stage)
+    assert got == "", (stage, got)
+    assert got is not None, stage
+    assert isinstance(got, str), (stage, type(got).__name__)
+
+
+@pytest.mark.parametrize("stage,expected", [
+    (" tail -14", "tail"),
+    (" /usr/bin/sed -n 1p", "sed"),
+    (" PYTHONIOENCODING=utf-8 python3 tool.py", "python3"),
+])
+def test_first_word_returns_the_basename_of_a_real_command_word(stage, expected):
+    """Companion to the above: the match branch returns a basename-normalised
+    str, so the two branches are pinned to the same declared return type."""
+    mod = _load_module()
+    got = mod._first_word(stage)
+    assert got == expected, (stage, got)
+    assert isinstance(got, str), (stage, type(got).__name__)
+
+
 # --- fail-open ---------------------------------------------------------------
 
 def test_bad_json_fails_open():
