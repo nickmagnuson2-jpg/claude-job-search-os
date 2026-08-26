@@ -45,6 +45,32 @@ def _write(path: str, content: str):
     return _run("Write", {"file_path": path, "content": content})
 
 
+# --- the blocking verdict, asserted with named expectations ------------------
+# Deliberately FIRST in the file. The mutation harness runs pytest with `-x`, so the
+# first failing test is the one that classifies the kill, and a bare `assert code == 2`
+# renders under `--tb=line` as `file:52: assert 0 == 2` — the word "AssertionError"
+# never appears, so a real assertion kill is reported as a weak (crash) kill. Carrying
+# a message on each assert makes the failure say WHICH property of the verdict broke.
+
+def test_blocking_verdict_reports_exit_code_count_line_and_reason():
+    code, err = _write("output/acme/082526-prep.md",
+                       "intro line\nthe load-bearing claim\n")
+    assert code == 2, f"expected BLOCK (exit 2), got exit {code}; stderr={err!r}"
+    assert "BLOCKED (banned phrase)" in err, f"verdict header missing from stderr: {err!r}"
+    assert "1 occurrence(s)" in err, f"occurrence count wrong in stderr: {err!r}"
+    assert "line 2:" in err, f"line number of the hit missing from stderr: {err!r}"
+    assert "'load-bearing'" in err, f"matched text missing from stderr: {err!r}"
+    assert "banned LLM-tell metaphor" in err, f"reason missing from stderr: {err!r}"
+    assert "output/acme/082526-prep.md" in err, f"target path missing from stderr: {err!r}"
+
+
+def test_clean_prose_produces_no_verdict_at_all():
+    code, err = _write("output/acme/082526-prep.md",
+                       "intro line\nthe claim that matters is pricing\n")
+    assert code == 0, f"expected CLEAN (exit 0), got exit {code}; stderr={err!r}"
+    assert err == "", f"a clean write must print nothing to stderr, got {err!r}"
+
+
 # --- ORIGIN: the incident that created the rule -----------------------------
 
 def test_blocks_the_origin_prep_doc_line():
