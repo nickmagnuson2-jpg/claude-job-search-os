@@ -22,9 +22,19 @@ PYTHONIOENCODING=utf-8 python3 tools/mutation_sweep.py --targets
 ```
 
 Deterministic selection, not a judgment call: every `tools/*.py` that has a matching
-`tests/scripts/test_<name>.py` and no entry in `tools/mutation-allow.json`.
-`mutation_check.py` excludes itself by design — a tool that rewrites live source must never
-rewrite itself. Prints the counts and writes `targets.json`. Runs no mutations.
+`tests/scripts/test_<name>.py` and no entry in `tools/mutation-allow.json`. Prints the
+counts and writes `targets.json`. Runs no mutations.
+
+**Two files self-exclude**, for one reason at two layers: `mutation_check.py` refuses
+itself, and `mutation_sweep.py` skips itself because the sweep *runs from* that file, so
+targeting it rewrites live source under the running process. Both appear in the
+`self_excluded` list with `mutants: -1` rather than vanishing, so `selected` minus
+`self_excluded` equals `auditable` and neither can quietly leave the corpus. Measure either
+one by hand, when no sweep is in flight:
+
+```
+PYTHONIOENCODING=utf-8 python3 tools/mutation_check.py tools/mutation_sweep.py --isolation
+```
 
 ## Run it (and resume it)
 
@@ -60,6 +70,28 @@ Then confirm the tree is clean. Both commands should print nothing:
 git status --short tools/
 find . -name '*.mutation_backup' -not -path './.git/*'
 ```
+
+## The harness measures itself
+
+Closed 2026-08-26. Both driving tools had no test file when they were built, which made
+them invisible to the sweep they run — a tool demanding mutation evidence while carrying
+none is the hypocrisy this whole instrument exists to detect.
+
+| tool | tests | mutants | survivors | crash-only kills |
+|---|---|---|---|---|
+| `mutation_sweep.py` | 32 | 49 | **0** | 14 of 49 (29%) |
+| `mutation_report.py` | 30 | 55 | **0** | 17 of 55 (31%) |
+
+Both pass `--isolation`, and neither reports an assertion-free or tautological test. The
+15 survivors found on the first pass are the reason several assertions look like they are
+testing prose: three progress lines and the `SWEEP COMPLETE` marker could all be deleted
+with the suite green, and for an unattended 5-hour job the log **is** the entire UI. Two
+others were worse — `if args.targets:` forced true turns the bare command into a silent
+no-op that measures nothing, and dropping `return run_sweep(...)` hands `sys.exit(None)`,
+which is exit 0: a failed overnight run reporting success.
+
+Re-run either after changing them; a survivor here means the harness can break without the
+suite noticing, which is the one place that cannot be allowed to go stale.
 
 ## Read the result
 

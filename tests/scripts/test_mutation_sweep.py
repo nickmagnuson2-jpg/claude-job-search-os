@@ -1,0 +1,585 @@
+#!/usr/bin/env python3
+"""Tests for tools/mutation_sweep.py — the harness that measures the whole tool corpus.
+
+This tool drives the sweep that produces the repo's only real number for how much of a
+2,842-test suite protects anything. Until now it had no test file of its own, so it was
+invisible to the sweep it runs — the gap its own commit named.
+
+The properties worth protecting, in order:
+
+  1. SELECTION IS DETERMINISTIC. It is a mechanical rule, not a judgment call, and it is
+     what makes "68 tools unmeasured" a fact rather than an opinion. A bug here silently
+     shrinks the corpus and every downstream ratio is then computed over the wrong
+     denominator.
+  2. AN UNMEASURED TOOL IS NEVER RECORDED AS CLEAN. A timeout, a crash, or unparseable
+     output must land as UNAUDITED_*, because "no survivors found" and "nothing was
+     looked at" render identically in a report and mean opposite things.
+  3. RESUME MUST NOT LOSE OR REDO WORK. Banked tools are skipped and the state file is
+     appended, never truncated: an unattended 5-hour run that costs its whole history
+     to a reboot is not resumable, whatever the docstring says.
+  4. IT MUST NOT SWEEP ITSELF. The runner executes from this file; mutating it rewrites
+     live source under the running process.
+
+Driven in-process against a synthetic repo rooted at tmp_path (MUTATION_REPO_ROOT, the
+same seam test_mutation_check.py uses), with a stub mutation_check.py standing in for the
+real engine. In-process and value-asserting on purpose: a subprocess test that re-raises
+an unexpected exit as AssertionError dresses a crash as an assertion and inflates this
+tool's own strong-kill count, which is the caveat documented in the runbook.
+"""
+import importlib.util
+import json
+import os
+import subprocess
+import sys
+import textwrap
+from pathlib import Path
+
+import pytest
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+TOOL = REPO_ROOT / "tools" / "mutation_sweep.py"
+
+
+# --- harness ----------------------------------------------------------------
+
+def load(root, monkeypatch):
+    """Import mutation_sweep as a FRESH module object rooted at `root`.
+
+    A fresh object rather than importlib.reload: REPO_ROOT is computed at import time,
+    so reloading a shared module leaks the last test's root into the next one.
+    """
+    monkeypatch.setenv("MUTATION_REPO_ROOT", str(root))
+    spec = importlib.util.spec_from_file_location("mutation_sweep_under_test", TOOL)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+STUB = '''\
+import json, os, sys, time
+root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ctl = json.load(open(os.path.join(root, "control.json"), encoding="utf-8"))
+target = sys.argv[1]
+with open(os.path.join(root, "calls.log"), "a", encoding="utf-8") as fh:
+    fh.write(json.dumps({"target": target, "argv": sys.argv[2:],
+                         "encoding": os.environ.get("PYTHONIOENCODING")}) + "\\n")
+if "--list" in sys.argv:
+    print(json.dumps({"mutants": ctl["mutants"][target]})
+          if target in ctl.get("mutants", {}) else ctl.get("list_garbage", "not json"))
+    sys.exit(0)
+time.sleep(ctl.get("sleep", {}).get(target, 0))
+res = ctl.get("results", {}).get(target)
+if res is None:
+    print(ctl.get("run_garbage", "<<not json>>")); sys.exit(1)
+print(json.dumps(res)); sys.exit(res.get("_rc", 0))
+'''
+
+
+@pytest.fixture
+def repo(tmp_path):
+    """A synthetic repo: tools/, tests/scripts/, a stub engine, and a control file."""
+    (tmp_path / "tools").mkdir()
+    (tmp_path / "tests" / "scripts").mkdir(parents=True)
+    (tmp_path / "tools" / "mutation_check.py").write_text(STUB, encoding="utf-8")
+    (tmp_path / "control.json").write_text(json.dumps({"mutants": {}}), encoding="utf-8")
+    return tmp_path
+
+
+def add_tool(repo, name, src="import sys\n\n\ndef go(p):\n    return p.read_text()\n",
+             tested=True, mutants=None):
+    (repo / "tools" / f"{name}.py").write_text(src, encoding="utf-8")
+    if tested:
+        (repo / "tests" / "scripts" / f"test_{name}.py").write_text(
+            "def test_x():\n    assert 1 == 1\n", encoding="utf-8")
+    if mutants is not None:
+        set_control(repo, mutants={**control(repo).get("mutants", {}),
+                                   f"tools/{name}.py": mutants})
+    return f"tools/{name}.py"
+
+
+def control(repo):
+    return json.loads((repo / "control.json").read_text(encoding="utf-8"))
+
+
+def set_control(repo, **kw):
+    (repo / "control.json").write_text(json.dumps({**control(repo), **kw}), encoding="utf-8")
+
+
+def calls(repo):
+    p = repo / "calls.log"
+    return [json.loads(l) for l in p.read_text(encoding="utf-8").splitlines()] \
+        if p.exists() else []
+
+
+def write_targets(repo, rows, state=None):
+    state = state or (repo / "state")
+    state.mkdir(parents=True, exist_ok=True)
+    (state / "targets.json").write_text(json.dumps(rows), encoding="utf-8")
+    return state
+
+
+def banked(state):
+    p = state / "baseline.jsonl"
+    return [json.loads(l) for l in p.read_text(encoding="utf-8").splitlines() if l.strip()] \
+        if p.exists() else []
+
+
+# --- 1. count_tests: AST, not a regex ---------------------------------------
+
+def test_class_nested_and_async_tests_are_counted(repo, monkeypatch):
+    """The regression this function exists for. `^def test_` missed class-nested tests
+    entirely and undercounted context_file_audit.py as 0 when it has 110 — an undercount
+    feeds the ranking that decides which tool gets worked on next."""
+    mod = load(repo, monkeypatch)
+    f = repo / "t.py"
+    f.write_text(textwrap.dedent('''
+        def test_module_level():
+            pass
+
+        async def test_async():
+            pass
+
+        class TestGroup:
+            def test_nested_one(self):
+                pass
+
+            def test_nested_two(self):
+                pass
+
+            def helper(self):
+                pass
+
+        def not_a_test():
+            pass
+    '''), encoding="utf-8")
+    assert mod.count_tests(f) == 4
+
+
+def test_count_tests_returns_zero_for_unparseable_and_missing_files(repo, monkeypatch):
+    """0, not a crash: one malformed test file must not abort the whole target build."""
+    mod = load(repo, monkeypatch)
+    bad = repo / "bad.py"
+    bad.write_text("def test_x(:\n", encoding="utf-8")
+    assert mod.count_tests(bad) == 0
+    assert mod.count_tests(repo / "nope.py") == 0
+
+
+# --- 2. selection is deterministic ------------------------------------------
+
+def test_only_tools_with_a_matching_test_file_are_selected(repo, monkeypatch):
+    add_tool(repo, "has_tests", tested=True, mutants=5)
+    add_tool(repo, "no_tests", tested=False)
+    mod = load(repo, monkeypatch)
+    assert [r["tool"] for r in mod.build_targets()] == ["tools/has_tests.py"]
+
+
+def test_allowlisted_tools_are_excluded_including_mutant_scoped_keys(repo, monkeypatch):
+    """mutation-allow.json keys carry a `::mutant-id` suffix. Splitting on `::` is what
+    makes an allowlist entry for ONE mutant exclude the tool from selection."""
+    add_tool(repo, "plain", mutants=3)
+    add_tool(repo, "scoped", mutants=3)
+    (repo / "tools" / "mutation-allow.json").write_text(
+        json.dumps({"tools/scoped.py::mutant-7": "reason"}), encoding="utf-8")
+    mod = load(repo, monkeypatch)
+    assert [r["tool"] for r in mod.build_targets()] == ["tools/plain.py"]
+
+
+def test_a_corrupt_allowlist_does_not_silently_exclude_everything(repo, monkeypatch):
+    """Failing open here is the safe direction: an unreadable allowlist must not empty
+    the corpus, which would read downstream as a clean sweep of nothing."""
+    add_tool(repo, "plain", mutants=3)
+    (repo / "tools" / "mutation-allow.json").write_text("{not json", encoding="utf-8")
+    mod = load(repo, monkeypatch)
+    assert [r["tool"] for r in mod.build_targets()] == ["tools/plain.py"]
+
+
+def test_the_sweep_refuses_to_target_itself(repo, monkeypatch):
+    """The runner executes from mutation_sweep.py. Sweeping it rewrites live source under
+    the running process — the hazard mutation_check.py already refuses itself for."""
+    (repo / "tools" / "mutation_sweep.py").write_text("x = 1\n", encoding="utf-8")
+    (repo / "tests" / "scripts" / "test_mutation_sweep.py").write_text(
+        "def test_a():\n    assert 1 == 1\n", encoding="utf-8")
+    set_control(repo, mutants={"tools/mutation_sweep.py": 99})
+    mod = load(repo, monkeypatch)
+    rows = {r["tool"]: r for r in mod.build_targets()}
+    assert rows["tools/mutation_sweep.py"]["mutants"] == -1, \
+        "must be recorded as non-auditable, not given a real mutant count"
+    assert not any(c["target"] == "tools/mutation_sweep.py" for c in calls(repo)), \
+        "must not even be enumerated by the engine"
+    assert rows["tools/mutation_sweep.py"]["h"] is False, \
+        "the row is skipped from measurement, but its metadata must still be truthful"
+
+
+def test_self_exclusion_is_visible_in_the_accounting_not_silently_dropped(repo, monkeypatch,
+                                                                         capsys):
+    """A dropped row would make `selected` and `auditable` agree while a tool went
+    unmeasured — exactly the false-completeness this report is built to prevent."""
+    (repo / "tools" / "mutation_sweep.py").write_text("x = 1\n", encoding="utf-8")
+    (repo / "tests" / "scripts" / "test_mutation_sweep.py").write_text(
+        "def test_a():\n    assert 1 == 1\n", encoding="utf-8")
+    add_tool(repo, "real", mutants=4)
+    mod = load(repo, monkeypatch)
+    mod.main(["--state-dir", str(repo / "state"), "--targets"])
+    out = json.loads(capsys.readouterr().out)
+    assert out["selected"] == 2 and out["auditable"] == 1
+    assert out["self_excluded"] == ["tools/mutation_sweep.py"]
+
+
+def test_mutant_counts_come_from_the_engine(repo, monkeypatch):
+    add_tool(repo, "a", mutants=17)
+    mod = load(repo, monkeypatch)
+    assert mod.build_targets()[0]["mutants"] == 17
+
+
+def test_unparseable_engine_output_is_minus_one_not_zero(repo, monkeypatch):
+    """-1 and 0 diverge downstream: `mutants > 0` filters both out of the run, but the
+    report prints `self_excluded` from the -1 rows and would otherwise call an engine
+    failure a self-exclusion."""
+    add_tool(repo, "a")                       # no entry in control["mutants"]
+    set_control(repo, list_garbage="engine exploded")
+    mod = load(repo, monkeypatch)
+    assert mod.build_targets()[0]["mutants"] == -1
+
+
+def test_writer_detection_flags_every_write_shape(repo, monkeypatch):
+    """`w` drives the blast-radius ranking: a writer that corrupts a real data file
+    outranks a hook that misfires."""
+    add_tool(repo, "w_open", src="def f(p):\n    open(p, 'w').write('x')\n", mutants=1)
+    add_tool(repo, "w_append", src="def f(p):\n    open(p, 'a').write('x')\n", mutants=1)
+    add_tool(repo, "w_replace", src="import os\n\n\ndef f(a, b):\n    os.replace(a, b)\n",
+             mutants=1)
+    add_tool(repo, "w_text", src="def f(p):\n    p.write_text('x')\n", mutants=1)
+    add_tool(repo, "r_only", src="def f(p):\n    return p.read_text()\n", mutants=1)
+    mod = load(repo, monkeypatch)
+    flags = {r["tool"]: r["w"] for r in mod.build_targets()}
+    assert flags == {"tools/w_open.py": True, "tools/w_append.py": True,
+                     "tools/w_replace.py": True, "tools/w_text.py": True,
+                     "tools/r_only.py": False}
+
+
+def test_the_self_excluded_row_still_reports_its_hook_wiring(repo, monkeypatch):
+    """Skipped from measurement is not the same as unknown: the row still feeds the
+    accounting, so an inverted flag there is a quiet lie in the target list."""
+    (repo / "tools" / "mutation_sweep.py").write_text("x = 1\n", encoding="utf-8")
+    (repo / "tests" / "scripts" / "test_mutation_sweep.py").write_text(
+        "def test_a():\n    assert 1 == 1\n", encoding="utf-8")
+    (repo / ".claude").mkdir()
+    (repo / ".claude" / "settings.json").write_text("mutation_sweep.py", encoding="utf-8")
+    mod = load(repo, monkeypatch)
+    rows = {r["tool"]: r for r in mod.build_targets()}
+    assert rows["tools/mutation_sweep.py"]["h"] is True
+
+
+def test_hooked_flag_tracks_the_settings_file(repo, monkeypatch):
+    add_tool(repo, "wired_tool", mutants=1)
+    add_tool(repo, "loose_tool", mutants=1)
+    (repo / ".claude").mkdir()
+    (repo / ".claude" / "settings.json").write_text(
+        json.dumps({"hooks": {"PreToolUse": [{"command": "tools/wired_tool.py"}]}}),
+        encoding="utf-8")
+    mod = load(repo, monkeypatch)
+    flags = {r["tool"]: r["h"] for r in mod.build_targets()}
+    assert flags == {"tools/wired_tool.py": True, "tools/loose_tool.py": False}
+
+
+def test_a_missing_settings_file_leaves_everything_unhooked(repo, monkeypatch):
+    add_tool(repo, "a", mutants=1)
+    mod = load(repo, monkeypatch)
+    assert mod.build_targets()[0]["h"] is False
+
+
+def test_ranking_is_writers_then_hooked_then_most_tested(repo, monkeypatch):
+    """The order IS the work list. Blast radius first, then coverage of the guard, then
+    the tools with the most tests to be disappointed by."""
+    add_tool(repo, "plain_tool", src="def f(p):\n    return p.read_text()\n", mutants=1)
+    add_tool(repo, "writer_few", src="def f(p):\n    p.write_text('x')\n", mutants=1)
+    add_tool(repo, "writer_many", src="def f(p):\n    p.write_text('x')\n", mutants=1)
+    add_tool(repo, "writer_hooked", src="def f(p):\n    p.write_text('x')\n", mutants=1)
+    (repo / "tests" / "scripts" / "test_writer_many.py").write_text(
+        "def test_a():\n    assert 1 == 1\n\n\ndef test_b():\n    assert 2 == 2\n",
+        encoding="utf-8")
+    (repo / ".claude").mkdir()
+    (repo / ".claude" / "settings.json").write_text("writer_hooked.py", encoding="utf-8")
+    mod = load(repo, monkeypatch)
+    assert [r["tool"] for r in mod.build_targets()] == [
+        "tools/writer_hooked.py", "tools/writer_many.py", "tools/writer_few.py",
+        "tools/plain_tool.py"]
+
+
+# --- 3. --targets runs no mutations -----------------------------------------
+
+def test_targets_mode_enumerates_but_never_mutates(repo, monkeypatch, capsys):
+    """`--targets` is the safe command: it is what you run to look before leaping."""
+    add_tool(repo, "a", mutants=4)
+    add_tool(repo, "b", mutants=6)
+    mod = load(repo, monkeypatch)
+    rc = mod.main(["--state-dir", str(repo / "state"), "--targets"])
+    out = json.loads(capsys.readouterr().out)
+
+    assert rc == 0
+    assert out["mutants"] == 10 and out["auditable"] == 2
+    assert (repo / "state" / "targets.json").exists()
+    assert all("--list" in c["argv"] for c in calls(repo)), \
+        "--targets must only enumerate; an --isolation call here would mutate the tree"
+    assert not (repo / "state" / "baseline.jsonl").exists()
+
+
+def test_targets_mode_creates_a_missing_state_dir(repo, monkeypatch, capsys):
+    add_tool(repo, "a", mutants=1)
+    mod = load(repo, monkeypatch)
+    mod.main(["--state-dir", str(repo / "deep" / "nested"), "--targets"])
+    capsys.readouterr()
+    assert (repo / "deep" / "nested" / "targets.json").exists()
+
+
+# --- 4. run_sweep: an unmeasured tool is never recorded as clean -------------
+
+def test_no_target_list_is_an_error_not_an_empty_clean_sweep(repo, monkeypatch, capsys):
+    mod = load(repo, monkeypatch)
+    state = repo / "state"
+    state.mkdir()
+    rc = mod.run_sweep(state)
+    assert rc == 1
+    assert "--targets" in capsys.readouterr().err
+    assert not (state / "baseline.jsonl").exists()
+
+
+def test_each_measured_tool_banks_one_record_with_its_result(repo, monkeypatch, capsys):
+    state = write_targets(repo, [{"tool": "tools/a.py", "w": True, "h": False,
+                                  "tests": 3, "mutants": 10}])
+    set_control(repo, results={"tools/a.py": {"status": "survivors", "killed": 7,
+                                              "survived": 3, "weak_kill_count": 2,
+                                              "isolation_failures": [],
+                                              "survivors": ["m1", "m2", "m3"]}})
+    mod = load(repo, monkeypatch)
+    assert mod.run_sweep(state) == 0
+    capsys.readouterr()
+
+    rows = banked(state)
+    assert len(rows) == 1
+    r = rows[0]
+    assert r["tool"] == "tools/a.py" and r["status"] == "survivors"
+    assert r["survived"] == 3 and r["killed"] == 7 and r["weak"] == 2
+    assert r["mutants"] == 10 and r["tests"] == 3 and r["w"] is True
+    assert r["survivors"] == ["m1", "m2", "m3"]
+    assert isinstance(r["elapsed"], float)
+
+
+def test_tools_with_no_mutants_are_never_run(repo, monkeypatch, capsys):
+    """A -1 row is a self-exclusion and a 0 row has nothing to mutate; handing either to
+    the engine wastes a slot and banks a meaningless record."""
+    state = write_targets(repo, [
+        {"tool": "tools/skip_neg.py", "w": False, "h": False, "tests": 1, "mutants": -1},
+        {"tool": "tools/skip_zero.py", "w": False, "h": False, "tests": 1, "mutants": 0},
+        {"tool": "tools/run_me.py", "w": False, "h": False, "tests": 1, "mutants": 2}])
+    set_control(repo, results={"tools/run_me.py": {"status": "clean", "killed": 2,
+                                                   "survived": 0}})
+    mod = load(repo, monkeypatch)
+    mod.run_sweep(state)
+    capsys.readouterr()
+    assert [c["target"] for c in calls(repo)] == ["tools/run_me.py"]
+    assert [r["tool"] for r in banked(state)] == ["tools/run_me.py"]
+
+
+def test_a_timeout_is_recorded_as_unaudited_not_as_zero_survivors(repo, monkeypatch, capsys):
+    """The whole point of the status field. A tool that never finished has NO result;
+    recording it as 0 survivors would promote silence into evidence."""
+    state = write_targets(repo, [{"tool": "tools/slow.py", "w": False, "h": False,
+                                  "tests": 1, "mutants": 5}])
+    set_control(repo, sleep={"tools/slow.py": 30},
+                results={"tools/slow.py": {"status": "clean", "survived": 0}})
+    mod = load(repo, monkeypatch)
+    mod.TOOL_TIMEOUT = 1
+    mod.run_sweep(state)
+    capsys.readouterr()
+
+    r = banked(state)[0]
+    assert r["status"] == "UNAUDITED_TIMEOUT"
+    assert r.get("survived") is None, "a timeout must not carry a survivor count"
+    assert "NOT clean" in r["note"]
+
+
+def test_unparseable_engine_output_is_recorded_as_unaudited_with_the_evidence(
+        repo, monkeypatch, capsys):
+    """Keeping stdout/stderr is what makes an unattended failure diagnosable the next
+    morning instead of just absent."""
+    state = write_targets(repo, [{"tool": "tools/boom.py", "w": False, "h": False,
+                                  "tests": 1, "mutants": 5}])
+    set_control(repo, run_garbage="Traceback: the engine died")
+    mod = load(repo, monkeypatch)
+    mod.run_sweep(state)
+    capsys.readouterr()
+
+    r = banked(state)[0]
+    assert r["status"] == "UNAUDITED_ERROR"
+    assert r.get("survived") is None
+    assert "the engine died" in r["stdout"]
+    assert r["error"]
+
+
+# --- 5. resume must not lose or redo work -----------------------------------
+
+def test_banked_tools_are_skipped_on_resume(repo, monkeypatch, capsys):
+    state = write_targets(repo, [
+        {"tool": "tools/done.py", "w": False, "h": False, "tests": 1, "mutants": 3},
+        {"tool": "tools/todo.py", "w": False, "h": False, "tests": 1, "mutants": 3}])
+    (state / "baseline.jsonl").write_text(
+        json.dumps({"tool": "tools/done.py", "status": "clean", "survived": 0}) + "\n",
+        encoding="utf-8")
+    set_control(repo, results={"tools/todo.py": {"status": "clean", "survived": 0}})
+    mod = load(repo, monkeypatch)
+    mod.run_sweep(state)
+    capsys.readouterr()
+    assert [c["target"] for c in calls(repo)] == ["tools/todo.py"]
+
+
+def test_resume_appends_and_never_truncates_the_state_file(repo, monkeypatch, capsys):
+    """A 5-hour unattended run that loses its history to a reboot is not resumable,
+    whatever the docstring says."""
+    state = write_targets(repo, [
+        {"tool": "tools/done.py", "w": False, "h": False, "tests": 1, "mutants": 3},
+        {"tool": "tools/todo.py", "w": False, "h": False, "tests": 1, "mutants": 3}])
+    (state / "baseline.jsonl").write_text(
+        json.dumps({"tool": "tools/done.py", "status": "clean", "survived": 0}) + "\n",
+        encoding="utf-8")
+    set_control(repo, results={"tools/todo.py": {"status": "survivors", "survived": 2}})
+    mod = load(repo, monkeypatch)
+    mod.run_sweep(state)
+    capsys.readouterr()
+    assert [r["tool"] for r in banked(state)] == ["tools/done.py", "tools/todo.py"]
+
+
+def test_blank_lines_in_the_state_file_do_not_break_resume(repo, monkeypatch, capsys):
+    """A run killed mid-write leaves ragged output; resume must survive its own crash."""
+    state = write_targets(repo, [{"tool": "tools/todo.py", "w": False, "h": False,
+                                  "tests": 1, "mutants": 3}])
+    (state / "baseline.jsonl").write_text("\n\n", encoding="utf-8")
+    set_control(repo, results={"tools/todo.py": {"status": "clean", "survived": 0}})
+    mod = load(repo, monkeypatch)
+    assert mod.run_sweep(state) == 0
+    capsys.readouterr()
+    assert [c["target"] for c in calls(repo)] == ["tools/todo.py"]
+
+
+# --- 6. the child environment -----------------------------------------------
+
+def test_the_engine_is_run_with_isolation_and_utf8(repo, monkeypatch, capsys):
+    """PYTHONIOENCODING is mandatory — every tools/*.py crashes on Unicode without it,
+    and unattended that surfaces as a red baseline recorded as a finding. --isolation is
+    what catches a test file that only passes inside the suite."""
+    state = write_targets(repo, [{"tool": "tools/a.py", "w": False, "h": False,
+                                  "tests": 1, "mutants": 3}])
+    set_control(repo, results={"tools/a.py": {"status": "clean", "survived": 0}})
+    monkeypatch.delenv("PYTHONIOENCODING", raising=False)
+    mod = load(repo, monkeypatch)
+    mod.run_sweep(state)
+    capsys.readouterr()
+    c = calls(repo)[0]
+    assert c["encoding"] == "utf-8"
+    assert "--isolation" in c["argv"] and "--json" in c["argv"]
+
+
+def test_a_nonzero_engine_exit_is_still_banked_with_its_result(repo, monkeypatch, capsys):
+    """mutation_check exits nonzero when survivors exist. That is the normal case for an
+    unmeasured corpus, not an error — treating it as one would bank nothing at all."""
+    state = write_targets(repo, [{"tool": "tools/a.py", "w": False, "h": False,
+                                  "tests": 1, "mutants": 4}])
+    set_control(repo, results={"tools/a.py": {"status": "survivors", "survived": 4,
+                                              "killed": 0, "_rc": 2}})
+    mod = load(repo, monkeypatch)
+    assert mod.run_sweep(state) == 0
+    capsys.readouterr()
+    r = banked(state)[0]
+    assert r["rc"] == 2 and r["survived"] == 4 and r["status"] == "survivors"
+
+
+# --- 7. the exit code and the default command -------------------------------
+#
+# Both of these started as surviving mutants, and both are the kind that only bite
+# unattended. `if args.targets:` forced true turns the bare command -- the one the
+# runbook tells you to run -- into a silent no-op that re-enumerates and measures
+# nothing. Dropping the return value hands sys.exit(None), which is exit 0: a failed
+# 5-hour run that reports success to whatever launched it.
+
+def test_the_bare_command_runs_the_sweep_rather_than_rebuilding_targets(repo, monkeypatch,
+                                                                        capsys):
+    state = write_targets(repo, [{"tool": "tools/a.py", "w": False, "h": False,
+                                  "tests": 1, "mutants": 3}])
+    set_control(repo, results={"tools/a.py": {"status": "clean", "survived": 0}})
+    mod = load(repo, monkeypatch)
+    rc = mod.main(["--state-dir", str(state)])
+    capsys.readouterr()
+    assert rc == 0
+    assert [c["target"] for c in calls(repo)] == ["tools/a.py"], \
+        "no --targets means MEASURE; re-enumerating instead measures nothing"
+    assert banked(state), "a bare run must bank results"
+
+
+def test_a_failed_sweep_exits_nonzero(repo, monkeypatch, capsys):
+    """sys.exit(None) is exit 0. An unattended failure that reports success is worse
+    than one that reports nothing."""
+    mod = load(repo, monkeypatch)
+    (repo / "state").mkdir()
+    rc = mod.main(["--state-dir", str(repo / "state")])
+    capsys.readouterr()
+    assert rc == 1
+
+
+# --- 8. the log is the only observability an unattended run has -------------
+#
+# There is no UI. The runbook's "check on it" step is `tail -5 sweep.log`, so these
+# three lines ARE the progress bar, the resume receipt, and the did-it-finish signal.
+# Each was a surviving mutant: all three could be deleted with the suite green.
+
+def test_the_start_line_reports_how_much_is_left_and_how_much_resumed(repo, monkeypatch,
+                                                                     capsys):
+    state = write_targets(repo, [
+        {"tool": "tools/done.py", "w": False, "h": False, "tests": 1, "mutants": 3},
+        {"tool": "tools/todo.py", "w": False, "h": False, "tests": 1, "mutants": 3}])
+    (state / "baseline.jsonl").write_text(
+        json.dumps({"tool": "tools/done.py", "status": "clean"}) + "\n", encoding="utf-8")
+    set_control(repo, results={"tools/todo.py": {"status": "clean", "survived": 0}})
+    mod = load(repo, monkeypatch)
+    mod.run_sweep(state)
+    out = capsys.readouterr().out
+    assert "1 tools to measure (1 already banked)" in out
+
+
+def test_each_tool_reports_its_verdict_as_it_lands(repo, monkeypatch, capsys):
+    """Per tool, not just at the end: a run killed at hour four must still have told you
+    what it learned in hours one through three."""
+    state = write_targets(repo, [{"tool": "tools/a.py", "w": False, "h": False,
+                                  "tests": 1, "mutants": 10}])
+    set_control(repo, results={"tools/a.py": {"status": "survivors", "survived": 4,
+                                              "killed": 6}})
+    mod = load(repo, monkeypatch)
+    mod.run_sweep(state)
+    out = capsys.readouterr().out
+    assert "[1/1] tools/a.py: status=survivors survived=4 of 10" in out
+
+
+def test_a_finished_sweep_says_so(repo, monkeypatch, capsys):
+    """Without this line a completed run and a killed one look identical in the log,
+    and the difference is whether the remaining tools are unmeasured or clean."""
+    state = write_targets(repo, [{"tool": "tools/a.py", "w": False, "h": False,
+                                  "tests": 1, "mutants": 3}])
+    set_control(repo, results={"tools/a.py": {"status": "clean", "survived": 0}})
+    mod = load(repo, monkeypatch)
+    mod.run_sweep(state)
+    assert "SWEEP COMPLETE" in capsys.readouterr().out
+
+
+# --- 9. the real tool, end to end -------------------------------------------
+
+def test_the_real_tool_reports_its_own_self_exclusion(tmp_path):
+    """Guards the wiring, not just the function: run the shipped file as the runbook
+    documents and confirm mutation_sweep.py is named as non-auditable."""
+    r = subprocess.run(
+        [sys.executable, str(TOOL), "--targets", "--state-dir", str(tmp_path)],
+        capture_output=True, text=True, cwd=str(REPO_ROOT),
+        env={**os.environ, "PYTHONIOENCODING": "utf-8"})
+    assert r.returncode == 0, r.stderr
+    out = json.loads(r.stdout)
+    assert "tools/mutation_sweep.py" in out["self_excluded"]
+    assert "tools/mutation_check.py" in out["self_excluded"]
+    assert out["selected"] - len(out["self_excluded"]) == out["auditable"]

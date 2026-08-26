@@ -10,8 +10,14 @@ A green suite is not evidence; this produces the count that is.
 
 SELECTION IS DETERMINISTIC, not a judgment call: every `tools/*.py` that has a matching
 `tests/scripts/test_<name>.py` and no entry in `tools/mutation-allow.json`.
-`mutation_check.py` excludes itself by design (a tool that rewrites live source must never
-rewrite itself).
+
+TWO FILES SELF-EXCLUDE, for the same reason and at different layers. `mutation_check.py`
+refuses itself (a tool that rewrites live source must never rewrite itself). This file
+excludes itself here, because the sweep executes FROM it: making it a target means
+rewriting live source under the running process. Both are RECORDED as `mutants: -1` rather
+than dropped, so `self_excluded` names them and the selected-vs-auditable accounting still
+adds up. Neither is unmeasurable -- run `mutation_check.py` on either one directly, with no
+sweep in flight. Both have test files as of 2026-08-26.
 
 SERIAL ON PURPOSE. `mutation_check` rewrites its target in place, so two concurrent runs in
 one tree corrupt each other -- agents hit `isolation_failed` purely from a sibling's
@@ -49,6 +55,11 @@ REPO_ROOT = Path(os.environ.get("MUTATION_REPO_ROOT",
 DEFAULT_STATE = REPO_ROOT / "output" / "analysis" / "082626-mutation-baseline"
 TOOL_TIMEOUT = 45 * 60          # one tool may not eat the whole night
 
+# The sweep executes FROM this file. Letting it become a target means rewriting live
+# source out from under the running process -- the same hazard mutation_check.py refuses
+# itself for. Matched by NAME, not by resolved path, because REPO_ROOT is overridable.
+SELF_NAME = Path(__file__).name
+
 # A tool that opens anything for writing can silently corrupt a real data file, which is a
 # higher blast radius than a hook misfiring. Recorded per tool so the report can rank by it.
 _WRITER_RE = re.compile(r"os\.replace|open\([^)]*['\"][wa]['\"]|write_atomic|\.write_text\(")
@@ -83,6 +94,14 @@ def build_targets() -> list[dict]:
         rel = f"tools/{tool.name}"
         test_file = REPO_ROOT / "tests" / "scripts" / f"test_{tool.stem}.py"
         if not test_file.exists() or rel in allowed:
+            continue
+        if tool.name == SELF_NAME:
+            # Recorded, not silently dropped: a -1 row lands in `self_excluded` so the
+            # selected-vs-auditable accounting still names it. Measuring this file is
+            # still possible -- run mutation_check.py on it directly, with no sweep in
+            # flight.
+            rows.append({"tool": rel, "w": True, "h": tool.name in wired,
+                         "tests": count_tests(test_file), "mutants": -1})
             continue
         proc = subprocess.run(
             [sys.executable, "tools/mutation_check.py", rel, "--list"],
