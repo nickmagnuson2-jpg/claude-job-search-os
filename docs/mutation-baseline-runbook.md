@@ -109,11 +109,29 @@ the real `data/job-pipeline.md` on the next `/pipe` archive. The hazard was writ
 prose hours earlier in the same run, and then fired again — prose is not an enforcement tier.
 `arm_restore()` now installs a handler for SIGTERM/SIGINT/SIGHUP with an atexit backstop.
 
-## Known instrument defect: `weak_kill_count`
+## `weak_kill_count` — repaired 2026-08-26, now worth reading
 
-`mutation_report.py` deliberately does not rank on it. It measures whether an assertion
-carries a **message**, not whether a test asserts: pytest renders a bare `assert x == y` as
-`assert`, which the classifier does not match, so idiomatic assertion kills are
-systematically misfiled as crash kills. Adding message strings to existing tests moved it
-from 31 to 11 on one tool with zero code change. Do not gate on it until the classifier
-distinguishes pytest's bare-assert rendering from a real error.
+A weak kill is one where the suite noticed the mutation only because the code **crashed**,
+not because a test checked a value. That is much weaker evidence, so this is the field that
+separates "a test asserted" from "Python threw."
+
+It was broken until 2026-08-26: it measured pytest's *rendering*. Under `--tb=line` pytest
+prefixes `AssertionError:` only when it generates a multi-line explanation, so
+`assert 'neg' == 'pos'` classified correctly while `assert 1 == 2` was filed as a crash.
+Conditional on the compared type, which made the number incomparable between an int-heavy
+tool and a string-heavy one, and is why adding message strings to tests moved it 31 -> 11
+with no code change. Commit `a4a07fe` adds pytest's bare-`assert` token to the assertion
+kinds; `assert` is a keyword so it can never be an exception name.
+
+Verified before/after on one real tool at the same commit: `blind_view.py` weak 13 -> 8,
+with `killed=34` and `survived=10` unchanged. **The fix moves only kill classification,
+never survivor counts.**
+
+Read it as: of the mutants that died, how many died to an actual assertion. A tool with few
+survivors and mostly weak kills is not well tested — it just crashes readily.
+
+**Still not fixed, and it runs the other way:** a test that launches the tool as a
+subprocess and re-raises an unexpected exit as `AssertionError: unexpected exit 1` dresses
+a crash as an assertion. That inflates the strong count and cannot be fixed in the
+classifier — it is a test-authoring pattern. `check_scanner_examined_something` reports
+`weak_kill_count: 0` while genuinely having crash-shaped kills for exactly this reason.

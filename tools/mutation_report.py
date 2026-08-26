@@ -96,13 +96,26 @@ def build(state_dir: Path) -> str:
       "ALONE, so it is relying on suite ordering"
       + (": " + ", ".join(f"`{r['tool'][6:]}`" for r in iso) if iso else "."))
 
-    w("\n\n### Caveat on `weak_kill_count`\n")
-    w("Not reported above, deliberately. It measures whether an assertion carries a "
-      "MESSAGE, not whether a test asserts: pytest renders a bare `assert x == y` as "
-      "`assert`, which the classifier does not match, so idiomatic assertion kills are "
-      "systematically misfiled as crash kills. Adding message strings to existing tests "
-      "moved it from 31 to 11 on one tool with zero code change. Do not gate on it until "
-      "the classifier is fixed.")
+    w("\n\n### Crash kills — of the mutants that died, how many died to an assertion\n")
+    w("A weak kill means the suite noticed the mutation only because the code CRASHED, "
+      "not because a test checked a value. Few survivors plus mostly weak kills is not a "
+      "well-tested tool; it is one that crashes readily.\n")
+    weak_rows = [r for r in ok if r.get("weak") is not None and (r.get("killed") or 0)]
+    if weak_rows:
+        w("| tool | killed | weak (crash-only) | share |")
+        w("|---|---|---|---|")
+        for r in sorted(weak_rows, key=lambda x: -(x.get("weak") or 0))[:15]:
+            k, wk = r["killed"], r["weak"]
+            w(f"| `{r['tool'][6:]}` | {k} | {wk} | {100*wk/k:.0f}% |")
+        tw = sum(r["weak"] for r in weak_rows); tk = sum(r["killed"] for r in weak_rows)
+        w(f"\n**{tw} of {tk} kills ({100*tw/tk:.0f}%) were crash-only** across the "
+          f"{len(weak_rows)} tools reporting both numbers.")
+    w("\n\nThis field was repaired 2026-08-26 (commit a4a07fe); it previously measured "
+      "pytest's rendering rather than whether a test asserted, and was conditional on the "
+      "compared type. Results measured before that commit are not comparable — see "
+      "docs/mutation-baseline-runbook.md. It still over-credits one pattern: a test that "
+      "re-raises a subprocess's unexpected exit as AssertionError dresses a crash as an "
+      "assertion, which no classifier change can fix.")
     return "\n".join(out)
 
 
