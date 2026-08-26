@@ -56,6 +56,48 @@ def _bash(command: str) -> int:
 
 
 # --------------------------------------------------------------------------
+# Named-outcome smoke test, deliberately FIRST in the file.
+#
+# It asserts the two ends of the Write branch as outcomes (exit code AND the
+# stderr the user actually sees), each with an explicit assertion message.
+#
+# The message is not decoration. mutation_check.py classifies a kill by
+# scraping pytest's `--tb=line` output, and pytest renders a bare
+# `assert a == b` as `path:N: assert 0 == 2` -- the token it captures is
+# "assert", which is not in _ASSERTION_KINDS {"AssertionError", "Failed"}, so
+# a real assertion kill is filed as a weak "error" kill. With a message pytest
+# renders `path:N: AssertionError: <msg>` and the same kill classifies
+# correctly. Keeping this case first (pytest runs with -x) means the mutants
+# that break the core Write path are judged by an assertion, not by whichever
+# unrelated structural test happened to explode first.
+# --------------------------------------------------------------------------
+def test_write_branch_blocks_and_passes_with_named_outcomes():
+    bad = _proc({"tool_name": "Write", "tool_input": {
+        "file_path": "output/acme-corp/091026-magnuson.md",
+        "content": "position: Chief of Staff to Head of Product and Technology",
+    }})
+    assert bad.returncode == 2, (
+        f"stale title must BLOCK with exit 2, got {bad.returncode}; "
+        f"stderr={bad.stderr[:200]!r}")
+    assert "BLOCKED (check_zuora_principal_title.py)" in bad.stderr, (
+        f"a block must name itself on stderr; stderr={bad.stderr[:200]!r}")
+    assert f"Chief of Staff to the {'Chief Product and Technology Officer'}" \
+        in bad.stderr, (
+        f"the block must name the canonical fix; stderr={bad.stderr[:400]!r}")
+
+    good = _proc({"tool_name": "Write", "tool_input": {
+        "file_path": "output/acme-corp/091026-magnuson.md",
+        "content": "position: Chief of Staff to the Chief Product and "
+                   "Technology Officer",
+    }})
+    assert good.returncode == 0, (
+        f"canonical title must pass with exit 0, got {good.returncode}; "
+        f"stderr={good.stderr[:200]!r}")
+    assert good.stderr == "", (
+        f"a clean write must be silent; stderr={good.stderr[:200]!r}")
+
+
+# --------------------------------------------------------------------------
 # ORIGIN INPUT — 2026-06-11 Otterbrook/Harrison CV, built on the fractional-ai
 # baseline, which rendered the stale title in 4 places. The clean variant is the
 # file's current on-disk text, with "Chief Product and Technology Officer".
