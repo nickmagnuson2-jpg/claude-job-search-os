@@ -88,11 +88,31 @@ def test_no_op_is_reported_unchanged_not_applied(corpus, tmp_path):
 
 
 def test_keys_outside_the_schema_are_rejected(corpus, tmp_path):
+    """`description` became allowed on 2026-08-25 (D3), so this now uses `name`.
+
+    `name` is the sharpest available probe: it is a real top-level frontmatter key,
+    so a permissive implementation would happily rewrite it, and rewriting it would
+    break every [[wikilink]] pointing at the rule.
+    """
     v = tmp_path / "v.txt"
-    v.write_text("feedback_example.md\tdescription=hijacked\n", encoding="utf-8")
+    v.write_text("feedback_example.md\tname=hijacked\n", encoding="utf-8")
     rc, rep = run(corpus, v, "--apply")
     assert rc == 2, rep  # no valid pairs remain -> empty change-set
     assert (corpus / "feedback_example.md").read_text(encoding="utf-8") == FILE
+
+
+def test_body_prose_that_looks_like_a_description_is_never_touched(corpus, tmp_path):
+    """The decoy guard, for the new key: a `description:` line in the BODY must survive."""
+    f = corpus / "feedback_example.md"
+    f.write_text(FILE + "\ndescription: this line is prose, not frontmatter.\n",
+                 encoding="utf-8")
+    v = tmp_path / "v.txt"
+    v.write_text("feedback_example.md\tdescription=real one\n", encoding="utf-8")
+    rc, rep = run(corpus, v, "--apply")
+    assert rc == 0 and rep["changed"] == 1, rep
+    after = f.read_text(encoding="utf-8")
+    assert "description: this line is prose, not frontmatter." in after
+    assert _strict_fm(after)["description"] == "real one"
 
 
 def test_missing_file_is_reported_not_silently_skipped(corpus, tmp_path):
@@ -265,3 +285,149 @@ def test_terminal_reason_lands_after_terminal_not_after_promoted(corpus, tmp_pat
     assert rc == 0
     lines = (corpus / "feedback_example.md").read_text(encoding="utf-8").splitlines()
     assert lines.index('  terminal_reason: "because"') == lines.index("  terminal: true") + 1
+
+
+# --- description support (D3 precondition, added 2026-08-25) -------------------
+# `description` is the recall key. The 2026-08-25 tier split measured it as the only
+# channel that carries traffic, so D3 re-keys all 503 of them. It differs from every
+# other allowed key in two ways that matter: it is TOP-LEVEL (not indented under
+# `metadata:`) and it holds arbitrary prose, so a colon or a `#` in the value can
+# produce frontmatter that the in-house regex parser reads happily and a strict YAML
+# reader rejects. That is the 2026-08-20 failure shape, so these tests assert against
+# yaml.safe_load, never against the tool's own parser.
+import yaml  # noqa: E402
+
+DESC_CASES = {
+    "plain": "After a plain rewrite",
+    "colon": "When asserting absence, name the scope: say why it would have contained it",
+    "hash": "Bump occurrences on every repeat fire #2 onward",
+    "quote": 'Prose saying "written down and followed" is not built yet',
+    "both": 'Trigger: the phrase "let us plan X" #gate',
+    "leading_pct": "%50 of runs skip the gate",
+}
+
+
+def _strict_fm(text: str) -> dict:
+    """Parse with the STRICTEST reader available, never the tool's own regex."""
+    m = amv.FRONTMATTER_RE.match(text)
+    assert m, "frontmatter missing"
+    return yaml.safe_load(m.group(1))
+
+
+def _write_desc(corpus, tmp_path, value):
+    v = tmp_path / "v.txt"
+    v.write_text(f"feedback_example.md\tdescription={value}\n", encoding="utf-8")
+    return run(corpus, v, "--apply")
+
+
+@pytest.mark.parametrize("label", sorted(DESC_CASES))
+def test_description_roundtrips_under_strict_yaml(corpus, tmp_path, label):
+    val = DESC_CASES[label]
+    rc, rep = _write_desc(corpus, tmp_path, val)
+    assert rc == 0, rep
+    assert rep["changed"] == 1, rep
+    got = _strict_fm((corpus / "feedback_example.md").read_text(encoding="utf-8"))
+    assert got["description"] == val, f"{label}: round-trip lost the value"
+
+
+def test_description_rewrite_leaves_body_and_other_keys_untouched(corpus, tmp_path):
+    before = (corpus / "feedback_example.md").read_text(encoding="utf-8")
+    rc, rep = _write_desc(corpus, tmp_path, DESC_CASES["colon"])
+    assert rc == 0 and rep["changed"] == 1, rep
+    after = (corpus / "feedback_example.md").read_text(encoding="utf-8")
+    assert after != before, "nothing was written -- test would pass vacuously"
+    assert after.split("---", 2)[2] == before.split("---", 2)[2]
+    fm = _strict_fm(after)
+    assert fm["metadata"]["occurrences"] == 1
+    assert fm["metadata"]["promoted"] is False or fm["metadata"]["promoted"] == "no"
+    assert fm["name"] == "feedback_example"
+    assert len(after.splitlines()) == len(before.splitlines())
+
+
+def test_multiline_description_is_refused_not_written(corpus, tmp_path):
+    """A newline would truncate the key or swallow the following line."""
+    text = (corpus / "feedback_example.md").read_text(encoding="utf-8")
+    _, status = amv.set_key(text, "description", "line one\nline two")
+    assert status != "set", "a multi-line description must be refused"
+
+
+def test_description_absent_is_reported_not_inserted(tmp_path):
+    """All 503 files carry one; an absent key is a schema defect, never an insert."""
+    f = tmp_path / "feedback_nodesc.md"
+    f.write_text("---\nname: feedback_nodesc\nmetadata:\n  occurrences: 1\n---\n\nbody\n",
+                 encoding="utf-8")
+    v = tmp_path / "v.txt"
+    v.write_text("feedback_nodesc.md\tdescription=anything\n", encoding="utf-8")
+    rc, rep = run(tmp_path, v, "--apply")
+    assert rep["changed"] == 0
+    assert "description: anything" not in f.read_text(encoding="utf-8")
+
+
+# --- the strict-YAML gate must actually refuse, not merely exist ---------------
+# Added 2026-08-25 after `mutation_check --isolation` left 5 mutants alive inside
+# strict_roundtrip_ok: every early `return False` could be flipped with the suite
+# still green, i.e. the guard was decorative at exactly the spots that justify it.
+
+def test_roundtrip_rejects_text_with_no_frontmatter():
+    assert amv.strict_roundtrip_ok("no frontmatter here\n", "description", "x") is False
+
+
+def test_roundtrip_rejects_frontmatter_that_is_not_valid_yaml():
+    text = '---\ndescription: "unterminated\nmetadata: [1, 2\n---\n\nbody\n'
+    assert amv.strict_roundtrip_ok(text, "description", "unterminated") is False
+
+
+def test_roundtrip_rejects_frontmatter_that_parses_to_a_non_mapping():
+    text = "---\n- just\n- a\n- list\n---\n\nbody\n"
+    assert amv.strict_roundtrip_ok(text, "description", "x") is False
+
+
+def test_roundtrip_rejects_a_value_that_parses_back_differently():
+    """Parsing is not enough. It must give back exactly what was intended."""
+    text = '---\ndescription: yes\n---\n\nbody\n'
+    # YAML reads a bare `yes` as the boolean True, not the string "yes".
+    assert amv.strict_roundtrip_ok(text, "description", "yes") is False
+
+
+def test_roundtrip_accepts_a_correctly_quoted_value():
+    text = '---\ndescription: "a: b #c"\n---\n\nbody\n'
+    assert amv.strict_roundtrip_ok(text, "description", "a: b #c") is True
+
+
+def test_malformed_frontmatter_blocks_the_write_end_to_end(tmp_path):
+    """The gate must be wired into main, not just callable."""
+    f = tmp_path / "feedback_broken.md"
+    original = '---\nname: feedback_broken\ndescription: "old"\nmetadata: [1, 2\n---\n\nbody\n'
+    f.write_text(original, encoding="utf-8")
+    v = tmp_path / "v.txt"
+    v.write_text("feedback_broken.md\tdescription=new value\n", encoding="utf-8")
+    rc, rep = run(tmp_path, v, "--apply")
+    assert rc == 1, rep
+    assert any("strict YAML round-trip failed" in e for e in rep["failed"]), rep
+    assert f.read_text(encoding="utf-8") == original, "refused write still mutated the file"
+
+
+# ---------------------------------------------------------------- nested-key round-trip
+# 2026-08-25: strict_roundtrip_ok did a top-level lookup only, so every key living under
+# `metadata:` came back None and the check refused the write while blaming the value.
+
+NESTED_FM = (
+    '---\nname: x\ndescription: "top level"\nmetadata:\n  occurrences: 1\n'
+    '  detector_signature: "\\\\berror\\\\b"\n---\nBody\n'
+)
+
+
+def test_strict_roundtrip_finds_a_key_nested_under_metadata():
+    assert amv.strict_roundtrip_ok(NESTED_FM, "detector_signature", r"\berror\b") is True
+
+
+def test_strict_roundtrip_still_finds_a_top_level_key():
+    assert amv.strict_roundtrip_ok(NESTED_FM, "description", "top level") is True
+
+
+def test_strict_roundtrip_rejects_a_wrong_nested_value():
+    assert amv.strict_roundtrip_ok(NESTED_FM, "detector_signature", "something else") is False
+
+
+def test_strict_roundtrip_rejects_a_key_that_is_absent_everywhere():
+    assert amv.strict_roundtrip_ok(NESTED_FM, "not_a_key", "v") is False

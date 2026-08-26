@@ -148,3 +148,68 @@ def test_unreadable_input_exits_4(tmp_path):
     s, o, a = build(tmp_path, SCRATCH, ARTIFACT, "x")
     code, _ = run(s, o, tmp_path / "does-not-exist.txt")
     assert code == 4
+
+
+# ===========================================================================
+# Self-describing scope (2026-08-19)
+#
+# `--control ""` used to skip the mechanism-unproven block entirely, so the
+# payload came back status:ok / clean:true with NO `control` key at all. A
+# reader could not tell a proven-clean run from an unproven one, and a WRONG
+# token refuses correctly -- so an EMPTY one silently passing was backwards.
+#
+# The fix is a self-describing report, NOT input rejection: `control.checked`
+# states whether the proof ran. Exit codes and `status` are deliberately
+# unchanged, because a clean-but-unproven run is still a legitimate result --
+# it just must not be readable as a proven one.
+# ===========================================================================
+
+@pytest.mark.parametrize("control", ["", "   ", None])
+def test_control_block_is_always_emitted(tmp_path, control):
+    """The key must exist even when no proof was run. Its ABSENCE was the defect."""
+    s, o, a = build(tmp_path, SCRATCH, ARTIFACT, "The two elements look orthogonal.\n")
+    code, p = run(s, o, a, control=control)
+    assert "control" in p, "control key absent: a reader cannot tell proven from unproven"
+    assert p["control"]["checked"] is False
+    assert p["control"]["proves_agent_read_input"] is False
+    assert p["control"]["token"] is None
+    assert "UNPROVEN" in p["control"]["note"]
+
+
+@pytest.mark.parametrize("control", ["", "   ", None])
+def test_unproven_run_still_reports_its_own_limits_when_clean(tmp_path, control):
+    """The regression that matters: clean + unproven must not read as clean + proven."""
+    s, o, a = build(tmp_path, SCRATCH, ARTIFACT, "The two elements look orthogonal.\n")
+    code, p = run(s, o, a, control=control)
+    assert p["clean"] is True, "fixture should produce a clean result"
+    assert p["control"]["checked"] is False, "clean result claims a proof that never ran"
+
+
+def test_exit_code_and_status_unchanged_for_unproven_run(tmp_path):
+    """Additive-only contract. blind_canary is referenced by the analysis method;
+    flipping its exit code to close this would break callers to prevent a defect
+    that has never fired organically."""
+    s, o, a = build(tmp_path, SCRATCH, ARTIFACT, "The two elements look orthogonal.\n")
+    code, p = run(s, o, a, control="")
+    assert code == 0
+    assert p["status"] == "ok"
+
+
+def test_proven_run_marks_itself_proven(tmp_path):
+    """Happy path: control planted AND echoed means the mechanism is demonstrated."""
+    s, o, a = build(tmp_path, SCRATCH, ARTIFACT,
+                    f"{CONTROL} acknowledged. The two elements look orthogonal.\n")
+    code, p = run(s, o, a)
+    assert code == 0
+    assert p["control"]["checked"] is True
+    assert p["control"]["proves_agent_read_input"] is True
+
+
+def test_wrong_control_token_still_refuses(tmp_path):
+    """Guard on the guard: the pre-existing refusal must survive the rewrite."""
+    s, o, a = build(tmp_path, SCRATCH, ARTIFACT, "The two elements look orthogonal.\n")
+    code, p = run(s, o, a, control="NEVER-PLANTED-XYZ")
+    assert code == 3
+    assert p["status"] == "refused"
+    assert p["control"]["checked"] is True
+    assert p["control"]["proves_agent_read_input"] is False

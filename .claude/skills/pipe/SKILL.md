@@ -86,8 +86,12 @@ All pipeline data lives in `data/job-pipeline.md`.
    offers a read.
 1. Call `pipe_write.py update`:
    ```bash
-   PYTHONIOENCODING=utf-8 python3 tools/pipe_write.py --repo-root . update "<company>" "<new-stage>" [--role ROLE] [--next-action TEXT] [--fit-reason "..."] [--fit-verdict fit|not-fit|neutral|unknown]
+   PYTHONIOENCODING=utf-8 python3 tools/pipe_write.py --repo-root . update "<company>" "<new-stage>" [--role ROLE] [--new-role ROLE] [--next-action TEXT] [--fit-reason "..."] [--fit-verdict fit|not-fit|neutral|unknown]
    ```
+   `--role` SELECTS which row when a company has several; `--new-role` SETS the Role cell.
+   Use `--new-role` to correct a title that arrived after the row was created. Do NOT
+   remove-and-re-add for a rename: `remove` soft-deletes, so it leaves a duplicate company
+   row behind, and the next `update` then fails with `ambiguous_match`.
 2. If result `code == "ambiguous_match"`: show the `matches[]` list and ask user to specify `--role`.
 3. If result `code == "not_found"`: tell user no active entry was found.
 4. On success: display the updated entry with stage-appropriate action items and any relevant coaching links.

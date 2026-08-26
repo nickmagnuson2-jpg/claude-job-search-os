@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-check_public_pii.py — PreToolUse hook (Write|Edit).
+check_public_pii.py — PreToolUse hook (Write|Edit|Bash).
 
 Blocks writing a real name / pipeline-target company into a PUBLIC-repo artifact.
 The job-search OS repo is public; tests, skill docs, framework docs, and tool
@@ -20,7 +20,9 @@ time. So this hook is intentionally high-precision, not high-recall.
 
 Exit 2 = block. Any other path = allow. Fails OPEN on any error.
 
-Triggered by .claude/settings.json PreToolUse hook on Write|Edit.
+Triggered by .claude/settings.json PreToolUse hooks on Write|Edit AND on Bash
+(Bash added 2026-08-18; see the write-target extractor below).
+NOT wired on MultiEdit or NotebookEdit — those write paths are ungated.
 """
 import json
 import os
@@ -59,6 +61,311 @@ BINARY_EXTS = frozenset({
 def is_binary(rel: str) -> bool:
     ext = rel.rsplit(".", 1)[-1].lower() if "." in rel else ""
     return ext in BINARY_EXTS
+
+
+# --- Bash write-target extraction -------------------------------------------
+# WHY THIS EXISTS: until 2026-08-18 this hook was wired on `Write|Edit` only, so any
+# file written through Bash -- `cat > docs/x.md <<'EOF'`, `echo ... >> README.md`,
+# `tee`, `sed -i` -- reached the PUBLIC repo without ever being scanned. The gate
+# read as always-on and had a hole the size of the most common way an agent writes a
+# file. Found 2026-08-18 by reading the matchers in .claude/settings.json.
+#
+# Detection shape is deliberately INVERTED from a normal command hook. The usual
+# command-hook problem (HOOK_AUTHORING.md) is a token matching where it is not
+# invoked, so those hooks strip quoted spans and heredoc bodies. Here the heredoc
+# body IS the payload -- it is the content about to land in a public file. So we do
+# NOT strip literals: we scan the whole raw command, and gate on whether the command
+# WRITES to a public path. A denylist hit plus a public write target is a leak
+# regardless of which syntactic position the token sits in.
+_QUOTED = r'"[^"]*"|\'[^\']*\''
+_BARE = r'[^\s;|&<>()]+'
+# `\d?>>?` catches `>`, `>>`, `2>`, `1>>`. `(?!&)` drops `>&1` / `2>&1`, which
+# duplicate a descriptor and never name a file.
+#
+# MUTATION NOTE (2026-08-18): removing `(?!&)` kills no test, and that is correct
+# rather than a coverage hole -- _BARE already excludes `&`, so the lookahead cannot
+# change the outcome today. It is kept as defence-in-depth against a future widening
+# of _BARE, and is unreachable-by-construction from the CLI. The BEHAVIOUR it guards
+# (a descriptor dup is never read as a filename) is covered by
+# test_extract_skips_descriptor_dup and test_bash_stderr_dup_is_not_a_file_target,
+# which hold whichever of the two mechanisms is doing the work.
+# `\|?` catches the noclobber-override form `>| file`, which slipped through until
+# 2026-08-19: `|` is excluded from _BARE, so no target was captured and the write
+# was invisible to the gate.
+_REDIRECT_RE = re.compile(rf'(?:^|[\s;|&(])\d?>>?\|?\s*(?!&)({_QUOTED}|{_BARE})')
+# tee takes MANY files. Capturing only the first let `tee data/a.md docs/leak.md`
+# through (2026-08-19): put the public file anywhere but first and it was unseen.
+_TEE_RE = re.compile(rf'(?:^|[\s;|&(])tee\s+((?:-\S+\s+)*)((?:{_QUOTED}|{_BARE})(?:\s+(?:{_QUOTED}|{_BARE}))*)')
+_SED_I_RE = re.compile(r'(?:^|[\s;|&(])sed\s+([^;|&]*?-i\b[^;|&]*)')
+_DD_OF_RE = re.compile(rf'(?:^|[\s;|&(])dd\s+[^;|&]*?\bof=({_QUOTED}|{_BARE})')
+
+# Descriptor sinks and device files: a write here never reaches the repo.
+_NON_FILE_TARGETS = frozenset({"/dev/null", "/dev/stdout", "/dev/stderr", "/dev/tty", "-"})
+
+
+def _unquote(tok: str) -> str:
+    tok = tok.strip()
+    if len(tok) >= 2 and tok[0] == tok[-1] and tok[0] in "\"'":
+        return tok[1:-1]
+    return tok
+
+
+_HEREDOC_START = re.compile(r"""<<-?\s*(["']?)([A-Za-z_][A-Za-z0-9_]*)\1""")
+
+
+def split_command_segments(command: str) -> list[str]:
+    """Split a shell command into independently-evaluated segments.
+
+    WHY: the first live smoke of the Bash branch (2026-08-18) FALSE-POSITIVED on a
+    single compound call that wrote clean content to docs/ in step 1 and a
+    denylisted token to a PRIVATE path in step 2. Scanning the command as one
+    string saw "a public target exists" AND "a token exists" and blocked, though
+    the token was never headed for the public file. Compound commands are the
+    normal way work happens here, so that FP would have made the hook unusable and
+    the predictable next step is someone disabling it.
+
+    Splits on `;`, `&&`, `||`, and newlines. Deliberately does NOT split on a single
+    `|`: in `echo BODY | tee docs/a.md` the content and its target sit on opposite
+    sides of the pipe, so splitting there would hide the leak it exists to catch.
+    Quoted spans and heredoc bodies are consumed whole, so a `;` or newline inside
+    either never splits the segment away from the redirect that owns it.
+    """
+    segs: list[str] = []
+    cur: list[str] = []
+    i, n = 0, len(command)
+    quote = None
+    heredoc_delim = None
+    depth = 0          # nesting of { } and ( ) groups
+
+    while i < n:
+        ch = command[i]
+
+        if heredoc_delim is not None:
+            cur.append(ch)
+            if ch == "\n":
+                j = command.find("\n", i + 1)
+                end = j if j != -1 else n
+                if command[i + 1:end].strip() == heredoc_delim:
+                    cur.append(command[i + 1:end])
+                    i = end
+                    heredoc_delim = None
+                    continue
+            i += 1
+            continue
+
+        if quote:
+            cur.append(ch)
+            if ch == quote:
+                quote = None
+            i += 1
+            continue
+
+        if ch in "\"'":
+            quote = ch
+            cur.append(ch)
+            i += 1
+            continue
+
+        m = _HEREDOC_START.match(command, i)
+        if m:
+            cur.append(m.group(0))
+            heredoc_delim = m.group(2)
+            i = m.end()
+            continue
+
+        # A GROUP's redirect applies to the whole group, so a separator inside it must
+        # NOT end the segment. Splitting at the `;` in `{ echo TOKEN; } > docs/f.md`
+        # put the token in one segment and the public target in another, and the write
+        # sailed through (found 2026-08-19 by an adversarial review of the very
+        # segment-splitting added the day before to fix a false positive -- the fix for
+        # one direction opened the other).
+        if ch in "{(":
+            depth += 1
+            cur.append(ch); i += 1; continue
+        if ch in "})":
+            depth = max(0, depth - 1)
+            cur.append(ch); i += 1; continue
+
+        if depth == 0 and (command.startswith("&&", i) or command.startswith("||", i)):
+            segs.append("".join(cur)); cur = []; i += 2; continue
+        if depth == 0 and (ch == ";" or ch == "\n"):
+            segs.append("".join(cur)); cur = []; i += 1; continue
+
+        cur.append(ch)
+        i += 1
+
+    if cur:
+        segs.append("".join(cur))
+    return [x for x in segs if x.strip()]
+
+
+_SED_SUBST_RE = re.compile(r"s([/|#,@])((?:\\.|(?!\1).)*)\1((?:\\.|(?!\1).)*)\1([gipw0-9]*)")
+
+
+def strip_sed_search_sides(command: str) -> str:
+    """Blank out the SEARCH half of every `s/x/y/` expression.
+
+    A token on the search side is being DELETED from the file, not written to it, so
+    scrubbing a leaked name out of a public file must not itself be blocked. The
+    Write/Edit path already behaves this way -- it scans `new_string` and ignores
+    `old_string` -- and until 2026-08-19 the Bash path did the opposite, so
+    `sed -i '' 's/RealName/Casey Doe/' docs/f.md` (the remediation for a leak) tripped
+    the gate that exists to catch the leak.
+
+    The REPLACEMENT side is preserved and still scanned: writing a real name IN is
+    exactly what must block.
+    """
+    return _SED_SUBST_RE.sub(lambda m: f"s{m.group(1)}{m.group(1)}{m.group(3)}{m.group(1)}{m.group(4)}", command)
+
+
+def mask_heredoc_bodies(command: str) -> str:
+    """Blank out heredoc BODIES so they cannot yield spurious write targets.
+
+    A heredoc body is CONTENT, never syntax: no `>`, `tee`, `sed -i` or `dd of=` inside
+    it names a file the shell will write. The body is still scanned verbatim for denylist
+    tokens -- that is the entire point of the Bash branch -- because only TARGET
+    EXTRACTION is masked here. `judge()` continues to receive the raw segment.
+
+    WHY (2026-08-24; 5 fires, friction ladder said "script-patch (mandatory)" from the 3rd):
+    ANY `>` inside a heredoc body was read as a redirect and the next token captured as a
+    filename. Two observed surfaces, and the second is why "markdown blockquote" is too
+    narrow a description of the bug:
+
+      * a markdown blockquote line, `> **Casey:** "..."`  -> target `**Casey:**`
+      * a Python comparison, `if nw >= 300:`              -> target `=300`
+
+    Those bogus names then DEFEATED the safety net rather than being harmless. They match no
+    PUBLIC_PREFIXES entry, are not under `tools/`, and contain no `/`, so `is_public_path`
+    fell through to its gitignore fallback -- where `git check-ignore` exits 1 on a path that
+    does not exist, which reads as "not-ignored" and therefore "public". Net effect: a write
+    whose REAL target was gitignored (`/coaching/`, `/output/`) got scanned as a public
+    artifact and BLOCKED.
+
+    This invalidated the standing assumption in `extract_write_targets`' own docstring --
+    "a spurious target cannot block on its own" -- which holds only while the command carries
+    no denylist token. A private debrief about real people carries many.
+
+    The fix is here rather than in `is_public_path` on purpose. Loosening the gitignore
+    fallback would fail in the UNSAFE direction (a real public target misread as private);
+    refusing to mine file targets out of content fails safe and removes the whole class.
+
+    The body does not begin until after the newline ending the heredoc's own line, so
+    `cat <<'EOF' > docs/x.md` keeps its redirect visible.
+    """
+    out: list[str] = []
+    i, n = 0, len(command)
+    quote = None
+    heredoc_delim = None
+    in_body = False
+
+    while i < n:
+        ch = command[i]
+
+        if heredoc_delim is not None:
+            if not in_body:
+                # Still on the line that OPENED the heredoc; redirects here are real.
+                out.append(ch)
+                if ch == "\n":
+                    in_body = True
+                i += 1
+                continue
+            if ch == "\n":
+                j = command.find("\n", i + 1)
+                end = j if j != -1 else n
+                if command[i + 1:end].strip() == heredoc_delim:
+                    out.append("\n")
+                    out.append(command[i + 1:end])
+                    i = end
+                    heredoc_delim = None
+                    in_body = False
+                    continue
+                out.append("\n")
+            else:
+                out.append(" ")
+            i += 1
+            continue
+
+        if quote:
+            out.append(ch)
+            if ch == quote:
+                quote = None
+            i += 1
+            continue
+
+        if ch in "\"'":
+            quote = ch
+            out.append(ch)
+            i += 1
+            continue
+
+        m = _HEREDOC_START.match(command, i)
+        if m:
+            out.append(m.group(0))
+            heredoc_delim = m.group(2)
+            in_body = False
+            i = m.end()
+            continue
+
+        out.append(ch)
+        i += 1
+
+    return "".join(out)
+
+
+def extract_write_targets(command: str) -> list[str]:
+    """Paths this shell command may WRITE to.
+
+    Covers the shapes that actually land content in a file from a command line:
+    redirects (`>`, `>>`, incl. a leading fd digit), `tee`, `tee -a`, `sed -i`
+    (GNU and the macOS `-i ''` form), and `dd of=`.
+
+    KNOWN GAP, deliberately not covered: `cp` / `mv` / `rsync`. Those move bytes that
+    are not present in the command string, so scanning the command text finds nothing
+    to match -- extracting their destination would add target surface with no
+    detection behind it. A private->public copy is caught by /audit-pii at commit
+    time, not here. Documented rather than silently missing.
+
+    Over-extraction is cheap in this hook ONLY while the command carries no denylist
+    token: a spurious target cannot block on its own. That assumption failed 5 times
+    between 2026-08-19 and 2026-08-24 on private writes whose CONTENT was full of real
+    names, so heredoc bodies are masked below before any target is mined out of them.
+    """
+    command = mask_heredoc_bodies(command)
+    targets: list[str] = []
+
+    for m in _REDIRECT_RE.finditer(command):
+        targets.append(_unquote(m.group(1)))
+    for m in _TEE_RE.finditer(command):
+        for tok in m.group(2).split():
+            if not tok.startswith("-"):
+                targets.append(_unquote(tok))
+    for m in _DD_OF_RE.finditer(command):
+        targets.append(_unquote(m.group(1)))
+
+    # `sed -i` writes in place. The script expression is normally quoted, and the
+    # macOS backup-suffix arg is an empty quoted string, so the BARE tokens after -i
+    # are the files. Flags are skipped.
+    for m in _SED_I_RE.finditer(command):
+        seen_i = False
+        for tok in m.group(1).split():
+            if tok.startswith("-i"):
+                seen_i = True
+                continue
+            if not seen_i or tok.startswith("-"):
+                continue
+            if tok[0] in "\"'":       # script expression or macOS '' suffix
+                continue
+            targets.append(tok)
+
+    out = []
+    for t in targets:
+        t = t.strip()
+        if not t or t in _NON_FILE_TARGETS or t.startswith("/dev/"):
+            continue
+        if t.startswith("$") or t.startswith("`"):   # unresolvable at hook time
+            continue
+        out.append(t)
+    return out
 
 
 def git_ignore_state(root: Path, rel: str) -> str:
@@ -226,49 +533,46 @@ def scan_paths(paths: list[str]) -> int:
     return 2 if result["hits"] else (1 if result["scanned"] == 0 else 0)
 
 
-def main():
-    # --scan <paths...> | --scan --stdin-paths : sweep mode (NOT the hook path).
-    argv = sys.argv[1:]
-    if argv and argv[0] == "--scan":
-        rest = [a for a in argv[1:] if a != "--stdin-paths"]
-        paths = rest or [ln.strip() for ln in sys.stdin.read().splitlines() if ln.strip()]
-        sys.exit(scan_paths(paths))
+def resolve_public_targets(candidates: list[str], root: Path,
+                           skip_binary: bool = True) -> list[str]:
+    """Repo-relative paths from `candidates` that actually ship to the public remote.
 
-    try:
-        data = json.load(sys.stdin)
-    except Exception:
-        return
+    A relative Bash target resolves against the hook process cwd, which is the session
+    cwd. That is the repo root in normal use; when it is not, the path falls outside
+    the repo and is skipped -- fail open, never a false block.
+    """
+    out = []
+    for cand in candidates:
+        if not cand:
+            continue
+        try:
+            # realpath, not abspath: a repo reached through a symlink resolved to a
+            # path 'outside the repo' and failed open (2026-08-19).
+            rel = os.path.relpath(os.path.realpath(cand), os.path.realpath(root))
+        except Exception:
+            continue
+        if rel.startswith(".."):  # outside the repo
+            continue
+        rel = rel.replace(os.sep, "/")
+        if not is_public_path(rel, root) or is_gitignored(root, rel):
+            continue
+        # The binary skip exists because a PDF's BYTE STREAM false-positives. On the
+        # Bash path the scanned text is the COMMAND, not the file, so the extension is
+        # irrelevant -- and skipping let `echo TOKEN > docs/leak.pdf` write a plain-text
+        # name into a tracked file unchecked (2026-08-19).
+        if skip_binary and is_binary(rel):
+            continue
+        out.append(rel)
+    return out
 
-    tool_name = data.get("tool_name", "")
-    tool_input = data.get("tool_input", {}) or {}
-    file_path = tool_input.get("file_path", "")
-    if not file_path:
-        return
 
-    # Derive repo root from this file's location (tools/), not cwd() — the hook
-    # runs with an absolute script path, so __file__ is reliable even when the
-    # session is launched from outside the repo root. (fable-audit 2026-07-07 #3)
-    # PII_REPO_ROOT overrides for tests, which inject a fixture repo + denylist.
-    root_env = os.environ.get("PII_REPO_ROOT")
-    root = Path(root_env).resolve() if root_env else Path(__file__).resolve().parent.parent
-    try:
-        rel = os.path.relpath(os.path.abspath(file_path), root)
-    except Exception:
-        return
-    if rel.startswith(".."):  # outside the repo
-        return
+def judge(content: str, public_targets: list[str], root: Path) -> None:
+    """WARN or BLOCK on `content` headed for `public_targets`. Exits 2 to block.
 
-    rel = rel.replace(os.sep, "/")
-    if not is_public_path(rel, root) or is_gitignored(root, rel):
-        return
-    if is_binary(rel):
-        return  # never text-scan binary blobs (a PDF byte stream false-positives, #18)
-
-    if tool_name == "Write":
-        content = tool_input.get("content", "")
-    elif tool_name == "Edit":
-        content = tool_input.get("new_string", "")
-    else:
+    Shared by the Write/Edit and Bash paths so the two can never drift -- a drifted
+    copy is what caused the 4th/5th fires in the command-hook family (HOOK_AUTHORING).
+    """
+    if not public_targets:
         return
 
     tokens = load_denylist(root)
@@ -276,6 +580,7 @@ def main():
         return  # fail open — no denylist, nothing to enforce
 
     hits = find_pii(content, tokens)
+    names = ", ".join(Path(t).name for t in public_targets)
 
     # WARN tier (added 2026-08-10). Single-token company names that are also ordinary
     # English words are excluded from the BLOCK list above, because matching them would
@@ -286,7 +591,7 @@ def main():
     if amb_hits and not hits:
         uniq_amb = sorted(set(amb_hits))
         print(
-            f"WARN: {Path(file_path).name} contains token(s) that match a pipeline company "
+            f"WARN: {names} contains token(s) that match a pipeline company "
             f"name which is also an ordinary word: {', '.join(uniq_amb)}.\n"
             "Not blocking — this is very often a false positive. But if any of these refers "
             "to the real company, replace it with a placeholder (ActiveCo / ClosedCo / Acme) "
@@ -297,10 +602,9 @@ def main():
     if not hits:
         return
 
-    name = Path(file_path).name
     uniq = sorted(set(hits))
     msg = [
-        f"BLOCKED: {name} is a public-repo artifact and the content contains real PII.",
+        f"BLOCKED: {names} is a public-repo artifact and the content contains real PII.",
         "",
         f"Matched denylisted token(s): {', '.join(uniq)}",
         "",
@@ -317,6 +621,62 @@ def main():
     ]
     print("\n".join(msg), file=sys.stderr)
     sys.exit(2)
+
+
+def main():
+    # --scan <paths...> | --scan --stdin-paths : sweep mode (NOT the hook path).
+    argv = sys.argv[1:]
+    if argv and argv[0] == "--scan":
+        rest = [a for a in argv[1:] if a != "--stdin-paths"]
+        paths = rest or [ln.strip() for ln in sys.stdin.read().splitlines() if ln.strip()]
+        sys.exit(scan_paths(paths))
+
+    try:
+        data = json.load(sys.stdin)
+    except Exception:
+        return
+
+    tool_name = data.get("tool_name", "")
+    tool_input = data.get("tool_input", {}) or {}
+
+    # Derive repo root from this file's location (tools/), not cwd() — the hook
+    # runs with an absolute script path, so __file__ is reliable even when the
+    # session is launched from outside the repo root. (fable-audit 2026-07-07 #3)
+    # PII_REPO_ROOT overrides for tests, which inject a fixture repo + denylist.
+    root_env = os.environ.get("PII_REPO_ROOT")
+    root = Path(root_env).resolve() if root_env else Path(__file__).resolve().parent.parent
+
+    # What is about to land, and in which file(s)?
+    #   Write/Edit -> one declared file_path; content comes from the payload.
+    #   Bash       -> targets parsed out of the command, per segment, with the
+    #                 segment text ITSELF as the content (heredoc bodies included).
+    #                 Added 2026-08-18: Bash was outside the matcher entirely, so
+    #                 every heredoc write to a public file skipped this gate.
+    if tool_name == "Write":
+        judge(tool_input.get("content", ""),
+              resolve_public_targets([tool_input.get("file_path", "")], root), root)
+    elif tool_name == "Edit":
+        judge(tool_input.get("new_string", ""),
+              resolve_public_targets([tool_input.get("file_path", "")], root), root)
+    elif tool_name == "MultiEdit":
+        # Ungated until 2026-08-19: MultiEdit is a routine write path and was in
+        # NEITHER the matcher nor this dispatch, so every edit through it skipped the
+        # gate entirely. Each edit's new_string is scanned; old_string is not, since
+        # that text is being removed (same rule as the Edit branch).
+        edits = tool_input.get("edits") or []
+        content = "\n".join(e.get("new_string", "") for e in edits if isinstance(e, dict))
+        judge(content, resolve_public_targets([tool_input.get("file_path", "")], root), root)
+    elif tool_name == "NotebookEdit":
+        judge(tool_input.get("new_source", ""),
+              resolve_public_targets([tool_input.get("notebook_path", "")], root), root)
+    elif tool_name == "Bash":
+        command = tool_input.get("command", "")
+        for segment in split_command_segments(command):
+            targets = resolve_public_targets(extract_write_targets(segment), root,
+                                             skip_binary=False)
+            if targets:
+                judge(strip_sed_search_sides(segment), targets, root)
+    return
 
 
 if __name__ == "__main__":

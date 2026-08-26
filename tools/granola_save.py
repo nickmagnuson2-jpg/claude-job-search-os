@@ -41,6 +41,9 @@ import os
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from meeting_vocab import split_transcript_turns  # noqa: E402
+
 
 SEALED_HEADER_THERAPY = """> **SEALED.** This is sensitive personal therapy material. Per `<personal-vault>/CLAUDE.md`, contents of `personal/data/therapy/` never appear in CVs, cover letters, recruiter prep, voice exports, networking notes, or any external-facing artifact. The verbatim transcript is preserved here as source-of-truth; do not paraphrase or excerpt outside this folder."""
 
@@ -191,6 +194,42 @@ def find_existing_by_meeting_id(directory: Path, meeting_id: str):
     return None
 
 
+def attribution_warning(transcript: str) -> str | None:
+    """Warn AT CAPTURE TIME when a transcript's speakers were never separated.
+
+    Granola emits Me/Them only when system audio and the microphone are captured on separate
+    channels. On a speakerphone call (or when system audio is not captured) every voice lands
+    on the mic and the whole conversation is attributed to the owner. The transcript is still
+    good CONTENT; it is only per-speaker COUNTING that becomes meaningless.
+
+    WHY HERE AND NOT ONLY IN ANALYSIS (2026-08-25): a 2026-06-24 call sat in the corpus for
+    two months with every word attributed to Nick, and was ranked 4th on a filler-density
+    table before anyone noticed. Nothing about the file looked wrong. Surfacing it at capture
+    is the difference between "your mic setup collapsed that call, fix it before the next one"
+    and discovering it during an audit long after the setup is unreproducible.
+
+    Not recoverable after the fact: re-fetching such a meeting returns one undifferentiated
+    block, so the diarization never existed upstream either.
+    """
+    owner, other = split_transcript_turns(transcript)
+    if not owner and not other:
+        return ("no recognised speaker labels in this transcript -- it will parse to zero "
+                "turns and drop out of every per-speaker analysis. Check the label format.")
+    ow = sum(len(x.split()) for x in owner)
+    tw = sum(len(x.split()) for x in other)
+    total = ow + tw
+    if not total:
+        return None
+    share = tw / total * 100
+    if share >= 10.0:
+        return None
+    return (f"SPEAKER CHANNELS NOT SEPARATED: the counterpart holds {share:.1f}% of the words "
+            f"({tw} vs {ow}). Both voices landed on one channel, so this transcript cannot be "
+            "used for per-speaker measurement (filler density, airtime). The CONTENT is fine. "
+            "Not fixable afterwards -- if this recurs, capture system audio separately rather "
+            "than on speakerphone.")
+
+
 def cmd_write(data: dict, output: Path, no_overwrite: bool = False) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     transcript_basename = output.stem
@@ -228,14 +267,18 @@ def cmd_write(data: dict, output: Path, no_overwrite: bool = False) -> None:
     summary_content = summary_frontmatter(data, transcript_basename) + "\n" + summary_body(data, transcript_basename)
     write_atomic(summary_path, summary_content)
 
-    print(json.dumps({
+    result = {
         "status": "ok",
         "action": "write",
         "transcript_path": str(output),
         "summary_path": str(summary_path),
         "transcript_bytes": len(transcript_content),
         "summary_bytes": len(summary_content),
-    }))
+    }
+    warning = attribution_warning(data.get("transcript", "") or "")
+    if warning:
+        result["attribution_warning"] = warning
+    print(json.dumps(result))
 
 
 def load_input(path: str | None) -> dict:

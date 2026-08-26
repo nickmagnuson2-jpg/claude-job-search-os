@@ -157,3 +157,27 @@ def test_no_public_file_hardcodes_the_vault_root():
         "the personal-vault root is hardcoded again in: " + ", ".join(offenders)
         + " — derive it from tools/vault_paths.py instead"
     )
+
+
+# --- personal_mail_dir (added 2026-08-18 for gmail_fetch --personal) ---------
+
+def test_personal_mail_dir_is_a_directory_under_data(tmp_path):
+    """A DIRECTORY, not inbox.md: gmail_fetch writes one markdown file per message,
+    so pointing it at a file would try to write files into a file."""
+    cfg = _conf(tmp_path, "/srv/vault\n")
+    # <root>/inbox, matching the destination the live gmail-fetch-personal job has
+    # always used. An earlier draft invented <root>/data/mail; see the docstring.
+    assert vp.personal_mail_dir(cfg) == Path("/srv/vault/inbox")
+
+
+def test_personal_mail_dir_is_distinct_from_personal_inbox(tmp_path):
+    cfg = _conf(tmp_path, "/srv/vault\n")
+    assert vp.personal_mail_dir(cfg) != vp.personal_inbox(cfg)
+
+
+def test_personal_mail_dir_raises_when_unconfigured(tmp_path):
+    """Loud failure, never a silent fallback: guessing could write personal mail
+    into the PUBLIC repo. (_clear_env is autouse, so the real env is already out.)"""
+    missing = tmp_path / "absent.conf"
+    with pytest.raises(vp.VaultRootMissing):
+        vp.personal_mail_dir(missing)

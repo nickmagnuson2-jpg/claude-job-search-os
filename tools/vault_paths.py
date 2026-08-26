@@ -96,6 +96,21 @@ def personal_inbox(config_path: Path | None = None) -> Path:
     return require_vault_root(config_path) / "data" / "inbox.md"
 
 
+def personal_mail_dir(config_path: Path | None = None) -> Path:
+    """Fetched Personal-label email lands here, one markdown file per message.
+
+    A directory, not the inbox.md file: gmail_fetch.py writes one file per message
+    (mirroring the job-search `inbox/`), so pointing it at inbox.md would try to
+    write files INTO a markdown file.
+
+    CORRECTED 2026-08-19: the first version returned `<root>/data/mail`, which was
+    INVENTED. The live gmail-fetch-personal launchd job had been writing to
+    `<root>/inbox` for months, and that directory exists. Verified against the
+    running job, not assumed.
+    """
+    return require_vault_root(config_path) / "inbox"
+
+
 def personal_voice_corpus_dir(config_path: Path | None = None) -> Path:
     return require_vault_root(config_path) / "data" / "voice-corpus" / "granola"
 

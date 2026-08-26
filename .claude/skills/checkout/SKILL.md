@@ -153,7 +153,7 @@ Origin: 2026-05-27 task #4 reflexive close — see `memory/feedback_diagnose_une
 
 **Audit surfaces (run each):**
 
-1. **Claude Code session task state.** Call `TaskList`. For each task with `status: in_progress`:
+1. **Claude Code session task state.** Call `TaskList` **if it is available in this session** — it is not present in every harness build. If the tool does not exist, do NOT silently skip: state one line in the State Audit section ("`TaskList` unavailable this session — stuck-task surface not audited") and continue with the other four surfaces. An unaudited surface reported as clean is the failure this whole step exists to prevent. When available, for each task with `status: in_progress`:
    - Note when it was last updated (from the task data).
    - State your best guess at root cause: "work completed but never closed," "work blocked," "abandoned," "actively in progress."
    - Surface the task + cause to Nick. Do NOT close it without explicit confirmation.

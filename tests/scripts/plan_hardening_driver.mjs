@@ -28,6 +28,11 @@ const S = {
   blindness: { contextIsPlan: true },
   premise_open: { premise: { delta: 'material', delta_explanation: 'aimed elsewhere', goal_is_right: 'no', premise_status: 'open', findings: [{ claim: 'wrong aim', failure_scenario: 'ships the wrong thing' }] } },
   untypeable: { plan_type: 'untypeable' },
+  // INVARIANT 7 — the measurement gate. The model returns premise_status RESOLVED while
+  // declaring a cheap measurement it has not run. The gate must override it and stop.
+  unmeasured_premise: { premise: { delta: 'immaterial', delta_explanation: 'same', goal_is_right: 'yes', premise_status: 'resolved', findings: [], measurable_premises: [{ claim: 'recall is the bottleneck', cheapest_measurement: 'grep the transcripts for shard reads', est_cost: '15 min', measured: 'no', observed: '' }] } },
+  // the same premise, already measured -> the gate must NOT fire
+  measured_premise: { premise: { delta: 'immaterial', delta_explanation: 'same', goal_is_right: 'yes', premise_status: 'resolved', findings: [], measurable_premises: [{ claim: 'recall is the bottleneck', cheapest_measurement: 'grep the transcripts for shard reads', est_cost: '15 min', measured: 'yes', observed: '142 of 143 are hygiene sessions' }] } },
   reason_required: { withHoles: true, dispositions: (h) => h.map(x => ({ id: x.id, status: 'accepted', note: 'ok' })) },
   // one hole's agent dies -> that id has no disposition -> INV4 must abort
   id_coverage: { withHoles: true, dispositions: (h) => h.slice(1).map(x => ({ id: x.id, status: 'fixed', note: 'changed the thing' })) },
@@ -91,7 +96,7 @@ globalThis.agent = async (prompt, opts = {}) => {
   calls.push({ kind: 'agent', label })
   if (label.startsWith('goal:')) return goal(label)
   if (label === 'premise-gate') {
-    return S.premise || { delta: 'immaterial', delta_explanation: 'same', goal_is_right: 'yes', premise_status: 'resolved', findings: [] }
+    return S.premise || { delta: 'immaterial', delta_explanation: 'same', goal_is_right: 'yes', premise_status: 'resolved', findings: [], measurable_premises: [] }
   }
   if (label === 'target-generation') {
     return {

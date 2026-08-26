@@ -271,3 +271,91 @@ def test_oversized_reporting_is_advisory_and_never_mutates(tmp_path):
     hits = [o for o in report["oversized_context_files"] if o["file"] == "index-big.md"]
     assert len(hits) == 1 and hits[0]["bytes"] == 30 * 1024
     assert big.read_bytes() == before, "reporting must never touch the file"
+
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
+import scan_promotion_candidates as sp  # noqa: E402
+
+
+# ---------------------------------------------------------------- frozen shards (2026-08-25)
+# The ~24KB shard budget existed to keep a file small enough to be READ. The shards were
+# frozen after measuring effectively zero consultations in ordinary sessions across 1229
+# transcripts, so their size stopped being a tax. Counting them kept the headline number
+# tracking a budget nobody was bound by, which buried CLAUDE.md -- the one file whose bytes
+# still cost something every session.
+
+def _oversized_shard(tmp_path, name, frozen: bool):
+    banner = ("# Title\n\n> **FROZEN 2026-08-25 -- ARCHIVED, NOT MAINTAINED.**\n\n"
+              if frozen else "# Title\n\n")
+    (tmp_path / name).write_text(banner + ("x" * 40000), encoding="utf-8")
+
+
+def test_a_frozen_shard_is_exempt_from_the_byte_budget(tmp_path):
+    _oversized_shard(tmp_path, "index-frozen.md", frozen=True)
+    out = sp.oversized_context_files(tmp_path, tmp_path)
+    assert [d["file"] for d in out] == [], (
+        "a frozen shard is not loaded, so its size is not a per-session tax"
+    )
+
+
+def test_an_UNfrozen_oversized_shard_is_still_reported(tmp_path):
+    _oversized_shard(tmp_path, "index-live.md", frozen=False)
+    out = sp.oversized_context_files(tmp_path, tmp_path)
+    assert [d["file"] for d in out] == ["index-live.md"], (
+        "the exemption must key on the banner, not silence the budget for every shard"
+    )
+
+
+def test_the_exemption_does_not_leak_to_MEMORY_md(tmp_path):
+    """MEMORY.md is the only channel measured to reach the model; it is never exempt."""
+    (tmp_path / "MEMORY.md").write_text(
+        "# M\n\n> **FROZEN 2026-08-25 -- ARCHIVED, NOT MAINTAINED.**\n\n" + "x" * 40000,
+        encoding="utf-8")
+    out = sp.oversized_context_files(tmp_path, tmp_path)
+    assert [d["file"] for d in out] == ["MEMORY.md"]
+
+
+def test_is_frozen_shard_reads_only_the_head(tmp_path):
+    """A banner buried past the head must not exempt the file, or any shard that ever
+    quoted the banner text in a body entry would silently drop out of the budget."""
+    p = tmp_path / "index-x.md"
+    p.write_text("# Title\n\n" + ("y" * 5000) + "\nARCHIVED, NOT MAINTAINED\n", encoding="utf-8")
+    assert sp.is_frozen_shard(p) is False
+
+
+def test_is_frozen_shard_on_an_unreadable_path_is_false(tmp_path):
+    assert sp.is_frozen_shard(tmp_path / "absent.md") is False
+
+
+def test_a_shard_UNDER_budget_is_not_reported(tmp_path):
+    """Kills the mutant that forces `size > limit` true: without this, the budget
+    comparison itself can be made a no-op and every file reports as oversized."""
+    (tmp_path / "index-small.md").write_text("# Title\n\nshort\n", encoding="utf-8")
+    assert sp.oversized_context_files(tmp_path, tmp_path) == []
+
+
+def test_the_report_carries_the_overage_arithmetic(tmp_path):
+    (tmp_path / "index-live.md").write_text("# T\n\n" + "x" * 40000, encoding="utf-8")
+    row = sp.oversized_context_files(tmp_path, tmp_path)[0]
+    assert row["bytes"] == row["limit"] + row["over_by"]
+    assert row["ratio"] == round(row["bytes"] / row["limit"], 2)
+
+
+def test_CLAUDE_md_is_measured_against_its_own_larger_budget(tmp_path):
+    """CLAUDE.md is always-loaded and carries a different limit than a shard. Without this,
+    the line that registers it as a target can be deleted with the suite green -- and it is
+    the only file the budget signal currently fires on."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "CLAUDE.md").write_text("x" * (sp.CLAUDE_MD_LIMIT_BYTES + 100), encoding="utf-8")
+    out = sp.oversized_context_files(tmp_path, repo)
+    assert [d["file"] for d in out] == ["CLAUDE.md"]
+    assert out[0]["limit"] == sp.CLAUDE_MD_LIMIT_BYTES
+    assert out[0]["over_by"] == 100
+
+
+def test_a_CLAUDE_md_under_its_budget_is_not_reported(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "CLAUDE.md").write_text("x" * (sp.CLAUDE_MD_LIMIT_BYTES - 1), encoding="utf-8")
+    assert sp.oversized_context_files(tmp_path, repo) == []

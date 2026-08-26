@@ -3,7 +3,9 @@
 gen_pii_denylist.py — Generate the gitignored PII denylist used by check_public_pii.py.
 
 Reads the canonical real-entity sources (data/networking.md contacts + interaction
-log, data/job-pipeline.md company column) and emits distinctive tokens that must
+log, data/job-pipeline.md company column, data/scan-targets.yaml, plus the
+hand-maintained tools/.pii-manual-additions.txt for real entities that live only in
+data/projects/, source articles, or the personal vault) and emits distinctive tokens that must
 NEVER appear in a public-repo artifact (tests/, .claude/skills/, framework/, docs/,
 root *.md, tool comments). Output: tools/.pii-denylist.txt (one token per line,
 gitignored — the list itself is PII).
@@ -32,6 +34,33 @@ from pathlib import Path
 
 OUTPUT_REL = "tools/.pii-denylist.txt"
 AMBIGUOUS_REL = "tools/.pii-denylist-ambiguous.txt"
+MANUAL_REL = "tools/.pii-manual-additions.txt"
+
+MANUAL_TEMPLATE = """# Hand-maintained PII additions — GITIGNORED, do not commit.
+#
+# WHY THIS FILE EXISTS: the generator's automatic sources are data/networking.md,
+# data/job-pipeline.md and data/scan-targets.yaml. A real person or company that
+# exists ONLY in data/projects/, a source article, a reflection, or the personal
+# vault is invisible to all three, so the deterministic hook cannot protect them.
+# Routing them through networking.md just for coverage would pollute the job-search
+# roster with people who are not job-search contacts.
+#
+# FORMAT: one name or company per line. Blank lines and # comments ignored.
+#   [block]      (default) exact-phrase match, BLOCKS the write.
+#   [ambiguous]  WARN-only tier, for a single word that is also ordinary English.
+#
+# Entries here are MERGED on every regen; this file is never overwritten.
+#
+# SECTION ORDER IS DELIBERATE: [block] is LAST so appending a line to the end of the
+# file -- the obvious thing to do -- lands it in the STRICTER tier. An earlier draft
+# ended with [ambiguous], so a naive append silently became WARN-only, and a
+# PreToolUse WARN is never surfaced by Claude Code. The entry would have looked added
+# and protected nothing.
+
+[ambiguous]
+
+[block]
+"""
 
 # Public-safe entities — real employers, schools, public-figure authors, generic
 # products. These appear legitimately in public skill/framework docs. Lowercased.
@@ -49,8 +78,21 @@ KEEP = {
 # dictionary might miss. Deliberately holds NO real company names (that would itself be PII).
 STOPWORDS = {
     "the", "a", "an", "of", "and", "co", "inc", "ai", "labs", "health",
-    "care", "agents", "robotics", "ventures", "capital", "partners", "group", "omni",
+    "care", "agents", "robotics", "ventures", "capital", "partners", "group",
 }
+# REMOVED 2026-08-19: one entry here was a REAL pipeline company (present in both
+# job-pipeline.md and networking.md). Suppressing it kept it out of BOTH the block
+# denylist and the ambiguous tier, so the always-on hook would not have stopped that
+# company's name reaching a public artifact. It is not in the system dictionary, so with
+# the suppression gone it qualifies as distinctive and lands on the BLOCK tier.
+#
+# Found by the /audit-pii semantic pass. The deterministic layer could not find it BY
+# CONSTRUCTION: the hole was in the deterministic layer itself.
+#
+# The token is deliberately NOT named here. The first draft of this very comment spelled
+# it out, which put the company into this public file and tripped the hook the fix had
+# just repaired -- documenting a leak must not re-commit it. The live check is the
+# data-driven test in tests/scripts/test_gen_pii_stopwords_guard.py, not a name here.
 
 
 SYSTEM_DICT = Path("/usr/share/dict/words")
@@ -241,6 +283,43 @@ def parse_scan_target_companies(path: Path) -> set[str]:
     return out
 
 
+def load_manual_additions(path: Path) -> tuple[set[str], set[str]]:
+    """Read the hand-maintained additions file -> (block_tokens, ambiguous_tokens).
+
+    A missing file is NOT an error: it is created from a template on first run so the
+    affordance is discoverable, and an empty template yields two empty sets.
+    """
+    if not path.exists():
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(MANUAL_TEMPLATE, encoding="utf-8")
+        except OSError:
+            pass  # read-only checkout: the file is optional, never fatal
+        return set(), set()
+
+    block: set[str] = set()
+    ambiguous: set[str] = set()
+    section = block
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return set(), set()
+
+    for raw in lines:
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        low = line.lower()
+        if low == "[block]":
+            section = block
+            continue
+        if low == "[ambiguous]":
+            section = ambiguous
+            continue
+        section.add(line)
+    return block, ambiguous
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--repo-root", default=None)
@@ -259,9 +338,19 @@ def main():
     tokens = build_denylist(names, companies, dictionary)
     ambiguous = build_ambiguous_list(companies, dictionary)
 
+    # Hand-maintained additions merge LAST and bypass the distinctiveness filters on
+    # purpose: a human put them there deliberately, so the generator must not
+    # second-guess them the way it does an auto-parsed token.
+    manual_block, manual_ambiguous = load_manual_additions(root / MANUAL_REL)
+    manual_added = sorted(t for t in manual_block if t not in set(tokens))
+    tokens = sorted(set(tokens) | manual_block)
+    ambiguous = sorted((set(ambiguous) | manual_ambiguous) - manual_block)
+
     if args.dry_run:
         print(json.dumps({"count": len(tokens), "tokens": tokens,
-                          "ambiguous_count": len(ambiguous), "ambiguous": ambiguous},
+                          "ambiguous_count": len(ambiguous), "ambiguous": ambiguous,
+                          "manual_added": manual_added,
+                          "manual_source": str(root / MANUAL_REL)},
                          indent=2, ensure_ascii=False))
         return
 
@@ -292,7 +381,9 @@ def main():
     amb_path.write_text(amb_header + "\n".join(ambiguous) + "\n", encoding="utf-8")
 
     print(json.dumps({"status": "ok", "written": str(out_path), "count": len(tokens),
-                      "ambiguous_written": str(amb_path), "ambiguous_count": len(ambiguous)},
+                      "ambiguous_written": str(amb_path), "ambiguous_count": len(ambiguous),
+                      "manual_added_count": len(manual_added),
+                      "manual_added": manual_added},
                      ensure_ascii=False))
 
 

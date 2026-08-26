@@ -10,8 +10,9 @@ Accepts:
   --repo-root PATH         Repository root. Defaults to cwd.
   --dry-run                Return JSON contract without writing.
 
-Destination types handled:
-Destination types handled (11):
+Destination types handled (12):
+  personal_capture → <personal-vault>/data/inbox.md — #personal short-circuit;
+                     writes NOTHING into this repo (see remember_classify step 0)
   contact_note    → data/networking.md — append to contact's section
   outreach_reply  → data/outreach-log.md — update Status to Replied
   pipeline_note   → data/job-pipeline.md — append to Notes cell
@@ -581,7 +582,48 @@ def apply_deferred_idea(note: str, dest: dict, repo_root: Path) -> dict:
 # Dispatch
 # ---------------------------------------------------------------------------
 
+def apply_personal_capture(note: str, dest: dict, repo_root: Path) -> dict:
+    """Append a #personal capture to the personal-OS vault inbox.
+
+    Deliberately does NOT write anywhere in this repo. The destination resolves
+    through tools/vault_paths.py, so the private vault location never appears in
+    this public file, and an unconfigured vault is a LOUD failure rather than a
+    fallback: silently writing personal content into the job-search repo is the
+    exact outcome this routing exists to prevent, so failing is strictly better
+    than guessing. (todo #10, built 2026-08-19)
+    """
+    try:
+        from vault_paths import personal_inbox, VaultRootMissing
+    except ModuleNotFoundError:
+        from tools.vault_paths import personal_inbox, VaultRootMissing
+
+    try:
+        target = personal_inbox()
+    except VaultRootMissing as e:
+        return {"status": "error", "type": "personal_capture",
+                "code": "vault_unconfigured",
+                "message": f"#personal capture not written: {e}"}
+
+    stamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+    entry = f"- {stamp} — {note.strip()}\n"
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    existing = read_file(target)
+    if not existing.strip():
+        existing = "# Inbox\n\n<!-- Personal captures. Review and route periodically. -->\n\n"
+    if not existing.endswith("\n"):
+        existing += "\n"
+    write_atomic(target, existing + entry)
+
+    # The absolute path is NOT returned: this JSON is echoed into the session
+    # transcript, and the vault location is the private fact vault_paths exists
+    # to keep out of it.
+    return {"status": "ok", "type": "personal_capture",
+            "file": "<personal-vault>/data/inbox.md"}
+
+
 HANDLERS = {
+    "personal_capture": apply_personal_capture,
     "contact_note":   apply_contact_note,
     "outreach_reply": apply_outreach_reply,
     "pipeline_note":  apply_pipeline_note,

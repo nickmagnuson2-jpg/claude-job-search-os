@@ -36,17 +36,17 @@ def dest_json(*dests):
 
 # ---------------------------------------------------------------------------
 # Destination-count guard (fable-audit Theme 2 doc-drift)
-# Locks HANDLERS at 11 so a handler added/removed without updating the docstring,
+# Locks HANDLERS at 12 so a handler added/removed without updating the docstring,
 # CLAUDE.md, and docs/methodology.md (all of which state the count) fails loudly.
 # ---------------------------------------------------------------------------
 
-def test_handler_count_is_eleven():
+def test_handler_count_is_twelve():
     import importlib.util
     spec = importlib.util.spec_from_file_location(
         "remember_apply", str(TOOLS_DIR / "remember_apply.py"))
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
-    assert len(mod.HANDLERS) == 11, sorted(mod.HANDLERS)
+    assert len(mod.HANDLERS) == 12, sorted(mod.HANDLERS)
 
 
 # ---------------------------------------------------------------------------

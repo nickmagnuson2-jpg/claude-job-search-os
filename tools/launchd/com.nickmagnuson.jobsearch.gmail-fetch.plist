@@ -9,8 +9,7 @@
     <array>
         <string>/opt/homebrew/bin/python3</string>
         <string>/Users/mag/Documents/Obsidian/30-projects/job-search/tools/gmail_fetch.py</string>
-        <string>--label-id</string>
-        <string>Label_7175134973725917628</string>
+        <string>--job-search-label</string>
     </array>
 
     <key>EnvironmentVariables</key>

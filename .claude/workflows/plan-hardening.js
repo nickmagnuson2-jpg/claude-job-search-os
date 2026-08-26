@@ -80,7 +80,22 @@ const PREMISE_SCHEMA = {
       },
     },
   },
-  required: ['delta', 'delta_explanation', 'goal_is_right', 'premise_status', 'findings'],
+    measurable_premises: {
+      type: 'array',
+      description: 'Every premise this plan RESTS ON that could be settled by a cheap measurement (a grep, a count, a query, one API call, reading a log) rather than by argument. Empty ONLY if the plan genuinely rests on nothing measurable.',
+      items: {
+        type: 'object',
+        properties: {
+          claim: { type: 'string', description: 'The premise, stated so it could be false.' },
+          cheapest_measurement: { type: 'string', description: 'The concrete command, query, or count that would settle it.' },
+          est_cost: { type: 'string', description: 'Rough time or money. "15 min", "$0.30", "one grep".' },
+          measured: { type: 'string', enum: ['yes', 'no'], description: 'Has it ALREADY been run, with the observed value present in the plan? Planning to run it later is "no".' },
+          observed: { type: 'string', description: 'The observed value if measured=yes, else "".' },
+        },
+        required: ['claim', 'cheapest_measurement', 'est_cost', 'measured', 'observed'],
+      },
+    },
+  required: ['delta', 'delta_explanation', 'goal_is_right', 'measurable_premises', 'premise_status', 'findings'],
 }
 
 const TARGET_SCHEMA = {
@@ -251,7 +266,11 @@ Two bounded questions.
 
 2. Independent of the delta: is the PROBLEM-derived goal itself right, or is the problem framed wrongly upstream of both?
 
-Set premise_status to "open" if the delta is material OR goal_is_right is "no"/"unclear". Otherwise "resolved".
+3. THE MEASUREMENT QUESTION. What premises does this work rest on that a CHEAP MEASUREMENT would settle - a grep, a count, a query, one API call, reading a log - rather than argument? For each, give the concrete command and its rough cost, and whether it has ALREADY been run with the observed value in hand. Intending to measure later is "no".
+
+   Be adversarial about this. The most expensive error in plan critique is arguing at length about a question a fifteen-minute count would answer. Critique can only explore answers someone already imagined; a measurement can return an answer that was in nobody's hypothesis space. If a premise is genuinely not measurable, do not invent a measurement for it - an empty list is the right answer for a plan that rests on nothing measurable.
+
+Set premise_status to "open" if the delta is material OR goal_is_right is "no"/"unclear" OR any measurable premise has measured="no". Otherwise "resolved".
 
 premise_status: open HARD STOPS the whole run before any execution critique. That is intended and it is a successful outcome, not a failure — the premise finding is the deliverable. Do not soften a material delta to let the run continue, and do not manufacture one to look rigorous.
 
@@ -532,6 +551,26 @@ if (!premise) throw new Error('premise gate returned nothing; aborting')
 const premiseFindings = (premise.findings || []).map((f, i) => ({
   id: `P${i + 1}`, layer: 'premise', ...f, status: 'open',
 }))
+
+// INVARIANT 7 — the measurement gate. Enforced in code, not by instruction, because the
+// whole point is that the model will rationalise past a soft version of this.
+// Origin 2026-08-25, 2nd fire of feedback_measure_before_restructuring_a_thesis: an
+// 88-agent/5.24M-token hardening run returned UNCONVERGED and its output was marked
+// do-not-execute, while a ~15 minute measurement the next session invalidated one worklist
+// item outright, re-scoped the largest one, and returned a third option that was in nobody's
+// hypothesis space. Critique explores imagined answers; measurement returns the real one.
+const unmeasured = (premise.measurable_premises || []).filter(m => m.measured === 'no')
+if (unmeasured.length) {
+  log(`MEASUREMENT GATE — ${unmeasured.length} cheap measurement(s) not yet run. Forcing premise_status=open.`)
+  premise.premise_status = 'open'
+  unmeasured.forEach((m, i) => premiseFindings.push({
+    id: `M${i + 1}`, layer: 'premise', status: 'open',
+    claim: `UNMEASURED PREMISE: ${m.claim}`,
+    failure_scenario: `This plan rests on it and it has not been measured. ` +
+      `Run this first: ${m.cheapest_measurement} (est ${m.est_cost}). ` +
+      `Hardening a plan around an unmeasured premise argues about a question the measurement answers.`,
+  }))
+}
 
 // INVARIANT 3 — the gate. Execution critique is UNREACHABLE while the premise is open.
 // This is the expensive choice and it is deliberate: the observed failure was five rounds

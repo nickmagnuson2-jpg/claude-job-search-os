@@ -247,9 +247,107 @@ def test_speaker_label_falls_back():
     assert _speaker_label({"speaker": {}, "text": "hi"}) == "Speaker"
 
 
-def test_speaker_label_uses_source_when_no_diarization():
+def test_speaker_label_maps_bare_source_to_me_them():
+    """SUPERSEDES the old assertion that a bare source rendered as "microphone".
+
+    That test encoded the pre-2026-08-24 behavior. A corpus-wide count that day
+    found 8,330 lines carrying `source` with no `attribution`, plus 814 carrying
+    both -- and in every one of the 814, microphone pairs with me and speaker
+    pairs with them. The channel is translatable to a person; emitting the raw
+    channel name leaves the transcript unparseable by every downstream consumer.
+    """
     from tools.granola_auto_debrief import _speaker_label
-    assert _speaker_label({"speaker": {"source": "microphone"}}) == "microphone"
+    assert _speaker_label({"speaker": {"source": "microphone"}}) == "Me"
+    assert _speaker_label({"speaker": {"source": "speaker"}}) == "Them"
+
+
+def test_speaker_label_diarization_outranks_bare_source():
+    """A real diarization label is more specific than the channel; keep it."""
+    from tools.granola_auto_debrief import _speaker_label
+    seg = {"speaker": {"source": "microphone", "diarization_label": "Speaker A"}}
+    assert _speaker_label(seg) == "Speaker A"
+
+
+def test_speaker_label_unknown_source_is_not_silently_me_or_them():
+    from tools.granola_auto_debrief import _speaker_label
+    assert _speaker_label({"speaker": {"source": "bluetooth"}}) == "bluetooth"
+    assert _speaker_label({"speaker": {}}) == "Speaker"
+
+
+def test_speaker_label_maps_attribution_to_me_them():
+    """The shape Granola REST actually returns, measured 2026-08-24.
+
+    Two live transcripts were saved with 58 lines labelled
+    ``{'source': 'microphone', 'attribution': 'me'}``. Reading `source` first
+    yields "microphone"/"speaker" -- better than a stringified dict, still wrong,
+    and still unparseable by every downstream consumer, which splits on Me:/Them:.
+    `attribution` is the field that actually carries who spoke.
+    """
+    from tools.granola_auto_debrief import _speaker_label
+    assert _speaker_label({"speaker": {"source": "microphone", "attribution": "me"}}) == "Me"
+    assert _speaker_label({"speaker": {"source": "speaker", "attribution": "them"}}) == "Them"
+
+
+def test_speaker_label_attribution_outranks_source():
+    """`source` is the audio channel, `attribution` is the person. Person wins."""
+    from tools.granola_auto_debrief import _speaker_label
+    seg = {"speaker": {"source": "microphone", "attribution": "them"}}
+    assert _speaker_label(seg) == "Them"
+
+
+def test_speaker_label_attribution_is_case_insensitive():
+    from tools.granola_auto_debrief import _speaker_label
+    assert _speaker_label({"speaker": {"attribution": "ME"}}) == "Me"
+    assert _speaker_label({"speaker": {"attribution": "Them"}}) == "Them"
+
+
+def test_speaker_label_unknown_attribution_does_not_win():
+    """An attribution value that is not me/them must not be emitted raw.
+
+    It falls through to the diarization label, then to the channel mapping --
+    an unrecognised attribution does not stop `microphone` from still meaning Me.
+    """
+    from tools.granola_auto_debrief import _speaker_label
+    assert _speaker_label({"speaker": {"attribution": "unknown", "source": "microphone"}}) == "Me"
+    assert _speaker_label(
+        {"speaker": {"attribution": "unknown", "diarization_label": "Speaker A"}}
+    ) == "Speaker A"
+    # and with nothing else to go on, it must not invent a person
+    assert _speaker_label({"speaker": {"attribution": "unknown"}}) == "Speaker"
+
+
+def test_granola_cli_renders_labels_through_the_shared_helper():
+    """`granola_cli.py pull` had its own copy of the label logic and never got
+    the fix, so the CLI path kept writing raw dicts into the voice corpus while
+    the auto-debrief path was clean. Single source of truth: the CLI must call
+    the shared helper, not re-derive the label.
+    """
+    import inspect
+    from tools import granola_cli
+
+    pull_src = inspect.getsource(granola_cli.cmd_pull)
+    assert "_render_transcript" in pull_src, \
+        "cmd_pull must delegate transcript rendering, not inline it"
+    assert "seg.get('speaker'" not in pull_src and 'seg.get("speaker"' not in pull_src, \
+        "cmd_pull must not re-derive the speaker label inline"
+
+    render_src = inspect.getsource(granola_cli._render_transcript)
+    assert "_speaker_label" in render_src, \
+        "_render_transcript must use the shared _speaker_label helper"
+    assert "seg.get('speaker'" not in render_src and 'seg.get("speaker"' not in render_src, \
+        "_render_transcript must not re-derive the speaker label either"
+
+
+def test_granola_cli_pull_produces_me_them_for_attribution_dicts():
+    """End-to-end on the rendering expression the CLI actually uses."""
+    from tools.granola_cli import _render_transcript
+    segs = [
+        {"speaker": {"source": "microphone", "attribution": "me"}, "text": "hello"},
+        {"speaker": {"source": "speaker", "attribution": "them"}, "text": "hi back"},
+    ]
+    out = _render_transcript(segs)
+    assert out == "Me: hello\nThem: hi back"
+    assert "{" not in out and "attribution" not in out
 
 
 # --- sealed-material leak regression (adversarial review F1) ---------------

@@ -25,6 +25,19 @@ _PENINSULA_SOUTHBAY = [
 _BAY_TERMS = ["bay area", "oakland", "berkeley", "alameda", "emeryville"]
 
 
+def is_peninsula(location: str) -> bool:
+    """True if the location is a Peninsula / South-Bay commute town.
+
+    Exposed separately from geo_gate because the two consumers want different
+    behaviour for the same fact. The company-discovery path wants Peninsula
+    *flagged* (penalty 0.6, still scored); the nightly role scan wants it
+    *dropped*, per the goals.md hard filter. Splitting the predicate out lets
+    the role path apply the stricter rule without changing geo_gate's return
+    contract, which discovery depends on.
+    """
+    return any(t in (location or "").strip().lower() for t in _PENINSULA_SOUTHBAY)
+
+
 def geo_gate(location: str) -> dict:
     """Hard geography gate.
 

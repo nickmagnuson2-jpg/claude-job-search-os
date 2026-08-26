@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  detector-scan: run the memory-rule detectors over session transcripts nightly.
+
+  WHY LAUNCHD AND NOT A HOOK. This is a batch sweep over every transcript, not a per-edit
+  decision, so a PreToolUse/PostToolUse hook is the wrong shape. It is also the top of this
+  project's own surface ranking (launchd > hook > CLAUDE.md > /standup > a rarely-run
+  skill): a tool with no auto-loaded entry point is dead on arrival, which is the recorded
+  3rd fire of feedback_verify_the_surface_fires_before_anchoring_to_it.
+
+  DRY RUN BY DESIGN. No the apply flag. The job REPORTS; it never increments a counter unattended.
+  Fire counts are still being calibrated against an uncontaminated transcript window, and an
+  over-firing detector would inflate the very number that gates real build work.
+
+  LOG FILES: never create, touch, or truncate anything in tools/launchd/logs/ from a Claude
+  Code Bash call - files created that way inherit a com.apple.provenance xattr that launchd
+  cannot open, and the job dies at EX_CONFIG (78) before the script runs, logging nothing.
+  Rotation must DELETE and let launchd recreate. See reference_launchd_ex_config_provenance_xattr.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.nickmagnuson.jobsearch.detector-scan</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>-lc</string>
+        <string>cd "$HOME/Documents/Obsidian/30-projects/job-search" &amp;&amp; PYTHONIOENCODING=utf-8 /usr/bin/env python3 tools/detector_run.py --memory-dir "$HOME/.claude/projects/-Users-mag-Documents-Obsidian-30-projects-job-search/memory" --transcripts "$HOME/.claude/projects/-Users-mag-Documents-Obsidian-30-projects-job-search" --json</string>
+    </array>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key><integer>3</integer>
+        <key>Minute</key><integer>20</integer>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>/Users/mag/Documents/Obsidian/30-projects/job-search/tools/launchd/logs/detector-scan.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/mag/Documents/Obsidian/30-projects/job-search/tools/launchd/logs/detector-scan.err</string>
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>

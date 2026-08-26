@@ -606,7 +606,11 @@ def scan_substantive_work(repo_root: Path, today: date) -> dict:
     )
 
     # Memory dir is in ~/.claude/projects/<sanitized-cwd>/memory/
-    sanitized_cwd = "-" + str(repo_root).replace("/", "-").lstrip("-")
+    # .resolve() is load-bearing: the sanitized key is built from the PATH TEXT, so a
+    # relative --repo-root (e.g. `.`, the convention everywhere else in this repo)
+    # produced the key "-." , missed the directory, and silently reported
+    # memories_today: 0 instead of 23. A wrong answer with no error. Fixed 2026-08-19.
+    sanitized_cwd = "-" + str(Path(repo_root).resolve()).replace("/", "-").lstrip("-")
     memory_dir = Path.home() / ".claude" / "projects" / sanitized_cwd / "memory"
     memories_n, memories_paths = (0, [])
     if memory_dir.exists():

@@ -35,6 +35,21 @@ Ad-hoc search (read-only; does not touch sync state or inbox/):
   to search everything, --label-id <ID> for another label, --max N to cap results
   (default 25), --body to print each plain-text body (truncated).
 
+  --search REQUIRES A NON-EMPTY QUERY. There is no "search with no query" listing
+  mode. `--search ""` exits 2 rather than doing something surprising: before the
+  2026-08-19 guard, an empty string was falsy, so the read-only branch was skipped
+  and control fell through to the forward SYNC below, which WRITES to inbox/ and
+  advances .gmail_state.json. Same guard on --label-id / --since / --inbox-dir /
+  --state-file: an empty or whitespace-only value is an error, never a silent
+  fallback to the default.
+
+To LIST a label read-only (the thing `--search ""` looks like it would do):
+  PYTHONIOENCODING=utf-8 python3 tools/gmail_fetch.py --backfill --label-id <ID> \
+      --max 25 --dry-run --repo-root .
+  --backfill leaves historyId untouched; --dry-run prints "[dry-run] Would write:"
+  plus a 300-char preview per message and creates no files (it does still mkdir the
+  inbox dir if absent). Drop --dry-run only when you want the messages imported.
+
 State file: tools/.gmail_state.json
   {"historyId": "...", "last_refresh": "ISO-datetime"}
 
@@ -72,10 +87,73 @@ MAX_BODY_CHARS = 2000
 # Default scope for --search: the "Job Search" Gmail label. Free-text searches
 # default to this label unless --label-id overrides it or --all-mail widens it.
 # (Matches the label-id used by the gmail-fetch launchd job.)
-JOB_SEARCH_LABEL_ID = "Label_7175134973725917628"
+# GMAIL_LABELS_CONF_PATH overrides for tests, mirroring the PII_REPO_ROOT /
+# SESSION_REPO_ROOT seams. Without it the unconfigured-path test cannot be written
+# honestly: the CLI exits on the missing Gmail token first, so the test would pass
+# for the wrong reason and stay green with the error path deleted.
+GMAIL_LABELS_CONF = Path(os.environ.get(
+    "GMAIL_LABELS_CONF_PATH",
+    str(Path(__file__).resolve().parent / ".gmail-labels.conf")))
+GMAIL_LABEL_ENV = "GMAIL_JOB_SEARCH_LABEL_ID"
+
+
+def gmail_label_id(key: str) -> str | None:
+    """A configured Gmail label ID by key ("job_search", "personal").
+
+    Gmail label IDs are account-specific identifiers. They were hardcoded in this
+    public file AND in two tracked launchd plists until 2026-08-19. Resolution
+    mirrors vault_paths.py:
+
+      1. environment: GMAIL_<KEY>_LABEL_ID  (e.g. GMAIL_JOB_SEARCH_LABEL_ID)
+      2. tools/.gmail-labels.conf, `<key>=<id>` (gitignored)
+
+    Returns None when unconfigured; callers choose their failure mode.
+    """
+    env = os.environ.get(f"GMAIL_{key.upper()}_LABEL_ID", "").strip()
+    if env:
+        return env
+    try:
+        for line in GMAIL_LABELS_CONF.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            # `startswith("#")` is redundant today -- a commented line's key keeps the
+            # "#" and so never equals the key -- kept as defence-in-depth.
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, _, value = line.partition("=")
+            if k.strip() == key and value.strip():
+                return value.strip()
+    except OSError:
+        pass
+    return None
+
+
+def personal_label_id() -> str | None:
+    """The Personal Gmail label ID (see gmail_label_id)."""
+    return gmail_label_id("personal")
+
 
 XML_OPEN = '<email-content source="gmail" sanitized="true">'
 XML_CLOSE = "</email-content>"
+
+
+def job_search_label_id() -> str | None:
+    """The "Job Search" Gmail label ID, resolved from private config.
+
+    A Gmail label ID is an account-specific identifier. It was hardcoded here (and in
+    the launchd plist) until 2026-08-19, when the /audit-pii semantic pass flagged it:
+    this repo is PUBLIC, and the repo's own --personal design deliberately resolves the
+    vault path through config for exactly this reason while the label ID sat literal two
+    constants away. Resolution order mirrors vault_paths.py:
+
+      1. the GMAIL_JOB_SEARCH_LABEL_ID environment variable
+      2. tools/.gmail-labels.conf, `job_search=<id>` (gitignored)
+
+    Returns None when unconfigured. Callers decide their failure mode: --job-search-label
+    errors loudly, while the free-text --search default falls back to all-mail scope,
+    which is a widening rather than a wrong destination.
+    """
+    return gmail_label_id("job_search")
+
 
 # Prompt injection phrases that should be redacted from email content.
 # These patterns cover the most common LLM injection vectors seen in adversarial emails.
@@ -787,7 +865,7 @@ def fetch_labeled_messages(
 
     Used for --backfill. Does NOT touch historyId state — forward-sync is unaffected.
 
-    label_id:     Gmail label ID (e.g., "Label_7175134973725917628")
+    label_id:     Gmail label ID (e.g., "Label_XXXXXXXXXXXXXXXXXXX")
     since_date:   ISO date string "YYYY-MM-DD" — only fetch messages after this date.
                   Uses Gmail query syntax (after:YYYY/MM/DD).
     max_messages: Hard cap on total messages fetched (newest first).
@@ -924,6 +1002,33 @@ def search_messages(
 
 # ── Main ───────────────────────────────────────────────────────────────────────
 
+def resolve_inbox_dir(personal: bool, inbox_dir_arg, repo_root: Path) -> Path:
+    """Where fetched mail is written.
+
+    EXTRACTED so the routing is testable. Through the CLI the destination is
+    unobservable (the run exits on the missing Gmail token first), and a mutation
+    pass on 2026-08-18 showed that making --personal a no-op broke NO test. The
+    behaviour it guards -- personal mail must not land in the PUBLIC job-search
+    repo -- is exactly the kind that must not rest on an untested branch.
+
+    --personal resolves through vault_paths so the private vault location never
+    appears in this public file or in a tracked launchd plist. require_vault_root
+    raises VaultRootMissing when unconfigured: guessing could write personal mail
+    into the public repo, so a loud failure beats a silent fallback.
+    """
+    if personal:
+        # Import works whether this runs as `python3 tools/gmail_fetch.py`
+        # (sys.path[0] == tools/) or as a `tools.` package module.
+        try:
+            from vault_paths import personal_mail_dir
+        except ModuleNotFoundError:
+            from tools.vault_paths import personal_mail_dir
+        return personal_mail_dir()
+    if inbox_dir_arg:
+        return Path(inbox_dir_arg).expanduser().resolve()
+    return repo_root / "inbox"
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Incremental Gmail sync — writes sanitized emails to inbox/."
@@ -971,6 +1076,28 @@ def main():
         help="Cap the number of messages fetched during --backfill (e.g., --max 50).",
     )
     parser.add_argument(
+        "--job-search-label",
+        action="store_true",
+        help=(
+            "Scope to the configured Job Search label, resolved from "
+            "GMAIL_JOB_SEARCH_LABEL_ID or tools/.gmail-labels.conf. Lets the launchd "
+            "plist (tracked, public) avoid hardcoding an account-specific label ID. "
+            "Mutually exclusive with --label-id."
+        ),
+    )
+    parser.add_argument(
+        "--personal",
+        action="store_true",
+        help=(
+            "Route fetched mail to the personal-OS vault instead of the job-search inbox/. "
+            "Resolves the destination through tools/vault_paths.py so the private vault "
+            "path never has to be typed on a command line or into a tracked launchd plist "
+            "(this repo is public). The personal LABEL is resolved from that same config, "
+            "so no label ID is needed on the command line either. "
+            "Mutually exclusive with --inbox-dir."
+        ),
+    )
+    parser.add_argument(
         "--inbox-dir",
         default=None,
         help=(
@@ -1010,9 +1137,56 @@ def main():
     )
     args = parser.parse_args()
 
+    # ── Empty-string guard for the optional string flags ──────────────────
+    # Every flag below defaults to None and is tested for TRUTHINESS downstream,
+    # so an empty string is indistinguishable from "never supplied": the flag is
+    # accepted, parsed, and silently ignored.
+    #
+    # For --search that is not a degraded parameter, it is a MODE CHANGE. The
+    # read-only search branch is skipped and control falls through to the
+    # forward-sync path, which writes files into inbox/ and advances
+    # .gmail_state.json. `--search "" --max 25` reads as "list 25 messages" and
+    # actually performs a sync. Fail loudly instead of guessing.
+    # Origin: 2026-08-19, hit while trying to list a label read-only.
+    for _flag, _dest in (
+        ("--search", "search"),
+        ("--label-id", "label_id"),
+        ("--since", "since"),
+        ("--inbox-dir", "inbox_dir"),
+        ("--state-file", "state_file"),
+    ):
+        _value = getattr(args, _dest)
+        if _value is not None and not _value.strip():
+            parser.error(
+                f"{_flag} was given an empty value. Omit the flag to use the default, "
+                f"or supply a real one. (To list a label read-only, use "
+                f"--backfill --max N; a bare --search does not do that.)"
+            )
+
     repo_root = Path(args.repo_root).resolve()
     tools_dir = repo_root / "tools"
-    inbox_dir = Path(args.inbox_dir).expanduser().resolve() if args.inbox_dir else repo_root / "inbox"
+    if args.job_search_label and args.label_id:
+        parser.error("--job-search-label and --label-id are mutually exclusive.")
+    if args.job_search_label:
+        args.label_id = job_search_label_id()
+        if not args.label_id:
+            parser.error(
+                f"--job-search-label: no label configured. Set {GMAIL_LABEL_ENV}, or add "
+                f"`job_search=<id>` to {GMAIL_LABELS_CONF}."
+            )
+    # --personal implies the personal mailbox scope as well as the personal
+    # destination, so the tracked launchd plist need not carry either.
+    if args.personal and not args.label_id:
+        args.label_id = personal_label_id()
+        if not args.label_id:
+            parser.error(
+                "--personal: no personal label configured. Set GMAIL_PERSONAL_LABEL_ID, "
+                f"or add `personal=<id>` to {GMAIL_LABELS_CONF}."
+            )
+    if args.personal and args.inbox_dir:
+        parser.error("--personal and --inbox-dir are mutually exclusive: "
+                     "--personal already resolves the destination via vault_paths.")
+    inbox_dir = resolve_inbox_dir(args.personal, args.inbox_dir, repo_root)
     state_path = Path(args.state_file).expanduser().resolve() if args.state_file else tools_dir / ".gmail_state.json"
     token_path = tools_dir / "gmail_token.json"
 
@@ -1034,7 +1208,11 @@ def main():
         return
 
     # ── Search mode: free-text read-only Gmail search ─────────────────────
-    if args.search:
+    # `is not None`, not truthiness: this selects the MODE, and falling through
+    # to the sync path writes files. The empty-string guard above already
+    # rejects "", so this is belt-and-braces, but the mode selector should not
+    # depend on that guard staying in place.
+    if args.search is not None:
         creds = get_or_refresh_creds(tools_dir, auth_mode=False)
         try:
             from googleapiclient.discovery import build
@@ -1048,7 +1226,7 @@ def main():
         elif args.label_id:
             label_id = args.label_id
         else:
-            label_id = JOB_SEARCH_LABEL_ID
+            label_id = job_search_label_id()
         max_results = args.max_messages if args.max_messages else 25
         search_messages(
             service,

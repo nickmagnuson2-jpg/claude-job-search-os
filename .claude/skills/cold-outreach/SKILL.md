@@ -152,6 +152,12 @@ See `memory/feedback_voice_pure_diff_minimal.md`, `memory/feedback_minimize_poli
 
 ### Step 6: Draft the Message
 
+**SPINE FIRST.** Before drafting, write one sentence answering *why is Nick going after this class
+of seat?* — from `data/goals.md`, in plain speech, not taxonomy. That sentence is the email's spine;
+the Step 4 research hook is seasoning and must never be the spine. **Step 7 row 4 will demand this
+sentence back, quoted verbatim from the draft**, so a draft written without it fails the gate rather
+than sailing through it. Carry all three pillars (Step 7's pillar table enumerates them).
+
 **Generate FROM the matched exemplar, not from the structure below.** The framework (Step 5) sets argument order; the structure below sets length and what each part must accomplish. Neither supplies voice — the `voice-reference.md` exemplar does. Adapt the exemplar to this recipient; any quoted text below is a spec of intent, never a sentence to paste or lightly reword. If the draft could have been sent to any contact at any company, the exemplar didn't drive it — restart from the exemplar, do not patch.
 
 Follow channel constraints from `framework/outreach-guide.md`:
@@ -189,57 +195,72 @@ Follow channel constraints from `framework/outreach-guide.md`:
 
 ### Step 6b: Substance-Provenance Audit (mandatory)
 
-Before the quality gate, label the provenance of every substantive sentence in the draft. This is the gate that catches Claude-generated self-positioning content before it reaches Nick's voice as a fait accompli — most acute in cold outreach because the recipient has no prior context to fact-check Claude's framing.
+**Before this step, apply `framework/writing-discipline.md`.** It is canonical for the four provenance labels (`N` / `C` / `I` / `G`), what counts as a substantive sentence, the audit output format, and the invariant that `G` is blocked in any slot carrying a claim about who Nick is, what he brings, what he wants, or what he has done. **This step adds only the slot table below.** Do not restate the labels here; if they need to change, change them there.
 
-**Provenance labels:**
-- **N** — Nick-dictated *this session* (the spine Nick just provided)
-- **C** — Nick-corpus (verbatim or near-verbatim phrase from `voice-reference.md`, prior `data/reflections/`, sent emails, or `data/professional-identity.md` / `data/goals.md`)
-- **I** — Claude-inferred from cited research (research dossier, public bio, role posting, public LinkedIn/company source — must be specifically citable)
-- **G** — Claude-generated (no source — synthesized from general training / pattern-matching)
+Label the provenance of every substantive sentence before the quality gate. Most acute in cold outreach because the recipient has no prior context to fact-check Claude's framing.
 
-**What counts as a "substantive sentence":** identity hook / credibility line / personalization / ask / value-prop / closing CTA. Standard pleasantries are not substantive; skip them.
+**Substantive sentences in cold outreach:** identity hook / credibility line / personalization / ask / value-prop / closing CTA. Standard pleasantries are not substantive; skip them.
 
-**Audit rule:**
+**Audit rule (slot table for this artifact):**
 
 | Slot | G allowed? | If G found |
 |---|---|---|
 | Identity hook (who Nick is) | **No** | STOP. Pull from `data/professional-identity.md` or ask Nick. |
 | Credibility line (specific achievement / experience) | **No** | STOP. Pull from `data/projects/*.md` or ask Nick. |
-| Personalization (recipient-specific opener / connection) | **No** | STOP. Either it's `I` with a citable source, or it's speculation — replace. Cold outreach without real personalization fails worse than slightly-less-personalized outreach. |
+| Personalization (recipient-specific opener / connection) | **No** | STOP. Either it's `I` with a citable source, or it's speculation - replace. Cold outreach without real personalization fails worse than slightly-less-personalized outreach. |
+| **Reader-provenance of the hook** (added 2026-08-25) | **No** | **A citable source makes the FACT real; it does not make the READING Nick's.** Never write a sentence asserting Nick read, saw, or noticed something Claude found in research. Either attribute it to the company / public record ("the company's own line is..."), or confirm with Nick that he has seen it, or cut it. Origin 2026-08-25: a draft asserted Nick had read a LinkedIn post Claude found via Exa; the audit passed clean because the slot was `I` with a real URL, and Nick's verdict was "does not work at all." |
 | Bridge sentence (linking recipient's situation to Nick's offer) | **No** | STOP. Ask Nick for the link or extract from corpus. |
 | Ask (what Nick wants from this contact) | **No** | STOP. Ask Nick for the specific ask. |
 | Standard pleasantries | Yes | Proceed. |
 | Sign-off | Yes | Proceed. |
 
-For every **I** sentence, name the source inline in working notes (`[Source: <path or URL>]`) — does not have to appear in the final email, but must be traceable before Step 7.
+If any `G` blocks fire, return to Step 6 (draft) and request the spine for those slots, or surface a "this slot needs research" gap to Nick before continuing. Do not proceed to Step 7 with `G` in any blocked slot. Trace every `I` to its source before Step 7.
 
-**Output of this step** (in working notes, not the email):
-
-```
-Substance audit:
-- Identity hook: "..." → C (professional-identity.md)
-- Credibility: "..." → C (data/projects/zuora.md Key Achievements)
-- Personalization: "..." → I (recipient's recent Substack post — [URL])
-- Ask: "..." → N (Nick dictated 5/21 17:10)
-```
-
-If any `G` blocks fire, return to Step 6 (draft) and request the spine for those slots, or surface a "this slot needs research" gap to Nick before continuing. Do not proceed to Step 7 with `G` in any blocked slot.
-
-**Cold-outreach-specific note:** Cold recipients judge Nick almost entirely on the credibility + personalization slots. A `G` in those slots converts a cold-outreach into a generic-template-spam read. The cost of stopping here (one Nick turn) is much lower than the cost of sending a generic-coded message that burns the contact permanently.
-
-**Why this exists:** Voice corruption in self-positioning content is the highest-frequency failure mode of email drafting (~10 separate behavioral rules in memory all instance this defect). This step collapses them into one structural gate. Origin: 2026-05-21 memory audit.
+**Cold-outreach-specific note:** Cold recipients judge Nick almost entirely on the credibility + personalization slots. A `G` in those slots converts a cold outreach into a generic-template-spam read. The cost of stopping here (one Nick turn) is much lower than the cost of sending a generic-coded message that burns the contact permanently.
 
 ### Step 7: Quality Gate
 
-Run the three-question test from `framework/outreach-guide.md`. For each question, write a **specific one-sentence answer** — not just a rating:
+**This gate is an EXTRACTION, not a rating (rewritten 2026-08-25).** For each question you must
+**quote the sentence in the draft that does the work, verbatim.** Do not paraphrase and do not
+score. **An empty quote box is a STOP, not a low score** — it means the draft is missing that thing.
 
-1. **"Why you?"** — Why this specific person? (e.g., "She led the Series B ops buildout and would understand my scaling background" — NOT "She works at the company")
-2. **"Why now?"** — What timing trigger makes this relevant? (e.g., "They just announced a COO hire, signaling ops investment" — NOT "Job search")
-3. **"Why me?"** — What establishes the sender's credibility for this specific ask? (e.g., "Scaled a 3-person ops team to 25 across two geographies" — NOT "Relevant experience")
+Why it changed: ratings are self-graded and effectively always pass. A draft that scored
+Strong/Strong/Strong on 2026-08-25 had no organizing claim in it at all and one sentence that was
+false about Nick. A rating tests the strength of what is present and is structurally blind to what
+is absent. Quoting cannot be blind to absence: either the sentence exists or the box is empty.
 
-Rate each: **Strong** / **Adequate** / **Weak**
+| # | Question | What to quote |
+|---|---|---|
+| 1 | **Why you?** | The sentence proving this is *this specific person*, not anyone at the company. |
+| 2 | **Why now?** | The sentence carrying the timing trigger. |
+| 3 | **Why me?** | The sentence establishing credibility **for this specific ask**. |
+| 4 | **Why this class of role?** | The **organizing claim**: the sentence saying why Nick is going after this *kind* of seat. Added 2026-08-25. This is the spine, and it is the box that was empty on the draft that passed 3-for-3. |
 
-If any answer is **Weak** or generic (the kind of thing any applicant could say), revise the draft to strengthen that dimension before presenting. If **Adequate**, note what would strengthen it.
+Rules for the extraction:
+
+- **Quote verbatim from the draft.** If you find yourself writing the answer rather than copying it,
+  the sentence is not in the draft, and the box is empty.
+- **One box empty → STOP and revise before presenting.** Not "note what would strengthen it."
+- **Question 4 cannot be satisfied by a proof point.** "I ran a contact center pilot" is evidence of
+  capability; it is not a claim about what Nick is going after. The spine names the *class of role*
+  and why it fits. Pull it from `data/goals.md` and state it in plain speech, never in taxonomy.
+- **A quote may serve only one row.** If the same sentence is doing double duty, one of the two jobs
+  is not actually being done.
+
+**Pillar coverage (mandatory, enumerated — no judgment call).** Fill all three rows. Enumerated
+checklists convert; abstract instructions do not (measured: an 18-item list produced zero violations
+live while every abstract rule failed). Pillars come from `data/goals.md` and
+`data/professional-identity.md`; as of 2026-08-25 they are consulting / operator / builder.
+
+| Pillar | In draft? | Sentence |
+|---|---|---|
+| Consulting | ✓ or ✗ | quote or `—` |
+| Operator | ✓ or ✗ | quote or `—` |
+| Builder | ✓ or ✗ | quote or `—` |
+
+**Any `✗` requires a written reason in the Step 8 block.** Dropping a pillar because it fits the
+recipient's product least is *under-selection*, the defect class measured 2026-08-20 at 6 of 13
+send-time edits. It is a real choice sometimes; it is never a silent one.
 
 **Tonal self-check (mandatory — the hook cannot catch this).** The three-question gate above tests *persuasion strength*, not voice fidelity; `check_draft_voice.py` is mechanical-only. Read the draft cold against the matched `voice-reference.md` exemplar and answer:
 
@@ -270,10 +291,19 @@ Show the draft with metadata:
 
 ---
 
-**Quality Gate:**
-- **Why you?** [Strong/Adequate/Weak] — [one-sentence specific answer]
-- **Why now?** [Strong/Adequate/Weak] — [one-sentence specific answer]
-- **Why me?** [Strong/Adequate/Weak] — [one-sentence specific answer]
+**Quality Gate (extraction — quote the draft verbatim; an empty box is a STOP):**
+- **Why you?** "[quoted sentence]"
+- **Why now?** "[quoted sentence]"
+- **Why me?** "[quoted sentence]"
+- **Why this class of role?** "[quoted organizing claim]"
+
+**Pillar coverage:**
+| Pillar | In draft? | Sentence |
+|---|---|---|
+| Consulting | [✓/✗] | "[quote]" or — |
+| Operator | [✓/✗] | "[quote]" or — |
+| Builder | [✓/✗] | "[quote]" or — |
+[Any ✗ needs a one-line reason here.]
 
 **Metrics:**
 - Word count: [N] (target: 75–125)

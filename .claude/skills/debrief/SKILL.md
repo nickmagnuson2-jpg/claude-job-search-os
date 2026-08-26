@@ -183,6 +183,37 @@ Now read the transcript and rubric. For each dimension:
 
 Save under `## Claude's Annotation`.
 
+**Dimension 2 is MECHANICAL. Run the tool; do not hand-build a comparison table.**
+
+```bash
+PYTHONIOENCODING=utf-8 python3 tools/filler_baseline.py --rank <slug-fragment>
+PYTHONIOENCODING=utf-8 python3 tools/filler_baseline.py --top 12          # the ranked set
+```
+
+Quote the `citable_claim` field verbatim. It is pre-formatted as *"N% filler, rank R of D
+(scope, >=W Nick-words)"* precisely so a position cannot be reported without its denominator.
+
+**Three hard constraints on any Dim-2 claim:**
+
+1. **No superlative without the computed set.** "Lowest", "worst", "best", "first", "only" are
+   available ONLY from a `--top` run in this session. A five-row table assembled by hand
+   supports a pairwise claim ("lower than X and Y") and nothing more.
+2. **If `excluded_corrupt` is non-zero, say so in the debrief and treat every ranking as
+   provisional.** Those files parse to zero turns and are invisible to the comparison. Repair
+   them (`data/voice-corpus/granola/_duplicates/README.md` documents the label formats) before
+   citing a rank as settled.
+3. **Never cite a row flagged `[UNRELIABLE ATTRIBUTION]`** as a comparator. In-person captures
+   put the room on the owner channel; the number is real and means nothing.
+
+**Origin, 2026-08-24.** A debrief reported *"lowest filler density in the corpus, on the highest
+Nick-word count in the corpus."* It was rank 9 of 42. The splitter had been validated correctly
+against three logged files, and that validation was treated as licence for a corpus-wide
+superlative built from a hand-picked five-row table. 25 label-corrupted transcripts were
+meanwhile parsing to zero turns and dropping out silently, hiding seven real calls that beat
+the claimed best. 13th fire of `feedback_name_the_scope_before_stating_the_conclusion`.
+**Validating the instrument is not computing the denominator.** This step exists so the correct
+move is also the cheapest one.
+
 ### Step 4: Disagreement trigger
 
 For any dimension where Claude's score ≠ Nick's by ≥1 point:

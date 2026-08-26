@@ -132,6 +132,30 @@ Confident, specific, brief.
 - Make a direct ask that advances the conversation: "I'd welcome the chance to discuss how [specific approach] maps to [Company]'s [specific challenge]."
 - No "I look forward to hearing from you" — that's passive. Propose something.
 
+### Step 5b: Substance-Provenance Audit (mandatory)
+
+**Before this step, apply `framework/writing-discipline.md`.** It is canonical for the four provenance labels (`N` / `C` / `I` / `G`), what counts as a substantive sentence, the audit output format, and the invariant that `G` is blocked in any slot carrying a claim about who Nick is, what he brings, what he wants, or what he has done. **This step adds only the slot table below.** Do not restate the labels here; if they need to change, change them there.
+
+Label the provenance of every substantive sentence in the letter before the quality gates.
+
+**Substantive sentences in a cover letter:** thesis / their-problem statement / proof-point framing / self-positioning / bridge / closing CTA. Salutation and sign-off are not substantive; skip them.
+
+**Audit rule (slot table for this artifact):**
+
+| Slot | G allowed? | If G found |
+|---|---|---|
+| Thesis / opening claim (why this company, why now) | **No** | STOP. Ask Nick to dictate the thesis. |
+| Their-problem statement (the challenge the letter leads with) | **No** | STOP. Either it's `I` with a citable research source, or it's speculation - replace. |
+| Proof-point framing (what the achievement means and why it matters here) | **No** | STOP. The facts come from `data/projects/*.md`; the framing must be `N` or `C`. |
+| Self-positioning (who Nick is, what he brings, what he wants) | **No** | STOP. Ask Nick to dictate that slot. |
+| Bridge (their problem to Nick's experience) | **No** | STOP. Ask Nick for the link or extract from corpus. |
+| Closing CTA / logistics | Yes | Proceed. |
+| Salutation / sign-off | Yes | Proceed. |
+
+If any `G` blocks fire, return to Step 5 and request the spine for those slots. Do not proceed to Step 6 with `G` in any blocked slot. Trace every `I` to its source before Step 6.
+
+**Expect this to block, and do not treat that as a failure of the gate.** A cover letter is self-positioning nearly end to end, so the blocked-slot fraction is far higher than in an email. If most substantive sentences come back `G`, the finding is not "fix those sentences." It is that the letter should not be drafted yet: run the dictation-first trigger test in `framework/voice-pure-dictation.md` and ask Nick for the spine. A letter assembled from `G` in these slots is exactly the artifact the search cannot afford, because the first screen will ask him to expand on a line he never thought.
+
 ### Step 6: Quality Gates (mandatory — fix in place before saving)
 
 Run every check. Fix issues directly in the draft — don't just flag them.

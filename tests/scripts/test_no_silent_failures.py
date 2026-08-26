@@ -38,6 +38,36 @@ SETTINGS = REPO / ".claude" / "settings.json"
 # Anything added here needs a reason -- the default expectation is that a
 # tools/check_*.py is wired into settings.json.
 NON_HOOK_CHECKERS = {
+    # BUILT 2026-08-25, NOT YET WIRED, and deliberately so. All five pass their tests
+    # (169 total) and the two I hand-verified block their origin inputs. But mutation
+    # leaves 56 survivors across them -- and they are not CLI plumbing: 9 of the 18 in
+    # check_scanner_examined_something sit inside _verdict, the function that decides
+    # whether to block. A BLOCKING hook that is decorative at 9 points in its own verdict
+    # logic is worse than no hook, because everything downstream assumes it fired.
+    # Per the repo rule: a green test is not evidence, mutation survival is. Wire each one
+    # only after its survivors are killed or allowlisted with written reasons.
+    "check_pipeline_exit_status.py",        # 40 tests, 8 survivors
+    "check_scanner_examined_something.py",  # 35 tests, 18 survivors (9 in _verdict)
+    "check_workflow_scriptpath.py",         # 17 tests, 8 survivors
+    "check_banned_phrase.py",               # 34 tests, 9 survivors
+    "check_zuora_principal_title.py",       # 43 tests, 13 survivors
+    # RETIRED 2026-08-25, unwired from settings.json. Its trigger could not be made to
+    # work: the original estimator summed every prose duration ("saves ~20 hrs/week",
+    # "first 30 days", "sanction 5 days ago") and fired on 18 of 37 in-scope plan docs
+    # with absurd totals (1,340h for an onsite prep plan). Corrected to count only
+    # annotation shapes -- (4h), table cells, Effort: labels -- it then fired on 0 of 37,
+    # because only 9 of those docs carry ANY effort annotation and the largest totals 5.25h.
+    # A 49% false-positive rate and a never-fires rate are both useless. The rule it served
+    # (feedback_partner_pressuretest_above_10hr) is unaffected and stays at memory tier.
+    # Kept, not deleted: tests/scripts/test_check_plan_partner_critique.py pins the
+    # corrected estimator, so a future attempt starts from a working one.
+    "check_plan_partner_critique.py",
+    # Audits the hook stack itself, so it cannot BE a hook: it runs over
+    # .claude/settings.json as a whole and asserts a property of every wired tool, which
+    # is a suite-time invariant rather than a per-edit decision. Enforced by
+    # tests/scripts/test_check_hook_warn_tier.py::test_the_live_hook_stack_is_clean_or_declared,
+    # which fails the suite when a new hook is wired warn-only without declaring itself.
+    "check_hook_warn_tier.py",
     # Invoked by /standup and by the automation-health launchd job, not as a hook.
     "check_automation_health.py",
     # Run on demand against a specific prep doc. Deliberately NOT a hook: the
@@ -57,6 +87,13 @@ NON_HOOK_CHECKERS = {
     # make authoring impossible. It is invoked as a gate before an artifact ships,
     # the same shape as check_prep_doc.py.
     "check_frame_integrity.py",
+    # Run on demand against a finished voice-sim probe prompt, before a rep. Not a hook:
+    # a probe prompt is INCOMPLETE for most of its authoring life (the probe block is
+    # written before the follow-ups, the handshake before either), so a per-edit gate
+    # would block every intermediate save. Same gate-before-it-ships shape as
+    # check_prep_doc.py and check_frame_integrity.py. Property 8 (position) is not
+    # file-checkable at all, so no hook could close this rule anyway.
+    "check_probe_prompt.py",
 }
 
 

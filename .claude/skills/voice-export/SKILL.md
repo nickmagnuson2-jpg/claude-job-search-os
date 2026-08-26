@@ -115,7 +115,47 @@ Build the prompt following this exact section order (use `##` headers):
 
    Omit this section only when the sim genuinely has no scenario.
 
-### Step 7: Quality Check
+### Step 7: Structural pre-handover gate (MANDATORY - eight properties)
+
+**Run this before Step 7b. A prompt that fails any property is not ready to hand over, however well
+it reads.** The prose describing a role does almost none of the work; these eight structural
+properties do, and each has to be BUILT rather than STATED. If the answer to any check is "it says so
+in the prose," it is not built.
+
+Origin: four consecutive failed sim attempts across two days, then two more structural defects a day
+later. Every textual fix failed; the first structural fix held immediately. Full incident record:
+`memory/feedback_persona_sim_prompts_need_structural_role_binding.md`.
+
+| # | Property | The check | Fails when |
+|---|---|---|---|
+| 1 | **First words, literal** | The exact opening utterance appears at the top, followed by "and nothing else." | The prompt ends with a handshake line like "Say Start to begin" - ambiguous about who speaks, and a trailing instruction is the one most likely to be read as addressed to the model. |
+| 2 | **Role bound to the speaker by name** | The prompt states *the person speaking to you is the candidate, his name is <Name>*, plus the corollary: if the candidate asks something the scenario should answer, **invent a plausible specific answer in character**. | "You are running a session with a candidate" - the model has no way to know the person talking to it IS that candidate. Produces mid-session role flips. |
+| 3 | **Prohibition with a pre-send self-check** | The prohibition has its own section, enumerates the specific forbidden moves, and attaches a self-check: *if what you are about to say contains a suggested phrasing, an evaluation, or the word "better", delete it and ask a follow-up instead.* | Stated once in passing. Assistant-tuned models drift toward coaching over ~20 turns; a single mention loses to default helpfulness. |
+| 4 | **Under ~6KB per paste** | Byte-count each paste. | One long document. Persona and rules at the top decay by mid-session. **Note: this ceiling is necessary, not sufficient - a 5,773-byte prompt still failed on task shape.** |
+| 5 | **Each paste standalone** | Every paste repeats the role binding, the prohibition, and the first-words block. | A part-two prompt that says "same rules as before" inherits nothing when pasted into a fresh conversation. |
+| 6 | **Position** | The durable half goes in the host's **persistent instructions field**, set once. The variable half is the **first message** of a new chat. | The persona is pasted as message one. It is then just message one of a conversation, carries no privileged status, and decays after roughly one turn. This defect survived three separate content rewrites before it was diagnosed. |
+| 7 | **Task shape: one probe per chat** | Unless the prompt explicitly declares case mode, it carries exactly ONE probe. | A multi-probe prompt invites the partner to develop the opening question into a case. In the worst run, 7 of 8 scheduled probes never ran. **Drift is impossible when there is nothing to drift into.** |
+| 8 | **Handshake** | The partner replies with one word (`Ready.`), says nothing else, and delivers the probe only after the operator says `go`. | The opening line arrives as text before the mic is live and gets read rather than heard, silently destroying a blind design. |
+
+**Property 6 is the one to check first**, because a prompt can satisfy the other seven and still fail
+completely. Properties 1-5 are all "state the rule more structurally." Property 6 is "put the rule
+where it gets re-read," which is the same distinction as the CLAUDE.md enforcement-tier law: a rule
+stated in a place that scrolls away is not built.
+
+**Property 7 carries a diagnosis worth reusing.** When an instruction repeatedly loses to the model's
+reading of the task, **change the task, not the wording.** The failing probe was itself case-shaped,
+so telling a competent interviewer model to develop nothing fought the semantics of the question it
+had just been handed.
+
+**Operator setup steps are part of the prompt surface.** A setup step that lives only in the
+operator's head silently costs the measurement - recording software left off made three probes nearly
+unscoreable. If the rep depends on it, put it in the artifact.
+
+**Output requirement:** print the eight-property verdict alongside the Step 8 summary, one line each,
+`ok` or the property number plus what is missing. A silent pass is the `[[feedback_llm_self_policing_fails]]`
+failure this gate exists to prevent.
+
+### Step 7b: Quality Check
 
 1. **Count words.** If > 8,000, apply compression strategies from `framework/voice-export.md` in priority order.
 2. **Scan for file references.** If any path-like string (`data/...`, `coaching/...`, `output/...`) appears in the prompt, remove it — everything must be inline.

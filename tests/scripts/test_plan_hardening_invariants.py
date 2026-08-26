@@ -292,3 +292,56 @@ def test_retry_is_capped_and_still_aborts_on_a_persistently_bad_reviser():
     assert not r["ok"]
     assert "INVARIANT 6b" in r["error"], r["error"]
     assert r["calls"].count("revise:retry") <= 1, r["calls"]
+
+
+# --- INVARIANT 7: the measurement gate (spec section 9) -----------------------
+# Added 2026-08-25, 2nd fire of feedback_measure_before_restructuring_a_thesis.
+# An 88-agent / 5.24M-token hardening run returned UNCONVERGED and its output was marked
+# do-not-execute; a ~15 minute measurement the next session invalidated one worklist item
+# outright and returned a third option that was in nobody's hypothesis space. The gate has
+# to be enforced in code: a prose instruction is exactly what the model rationalises past,
+# which is why these tests drive a premise agent that returns RESOLVED while admitting an
+# unrun measurement.
+
+def test_invariant7_unmeasured_premise_forces_the_gate_open():
+    """The model said resolved. The gate must overrule it."""
+    r = run("unmeasured_premise")
+    assert r["ok"], r.get("error")
+    assert r["result"]["premise_status"] == "open"
+    assert r["result"]["terminal_state"] == "PREMISE-OPEN"
+
+
+def test_invariant7_no_execution_agent_runs_on_an_unmeasured_premise():
+    r = run("unmeasured_premise")
+    forbidden = [c for c in r["calls"]
+                 if c == "target-generation" or c.startswith("probe:")
+                 or c.startswith("fix:") or c.startswith("retest:")]
+    assert forbidden == [], f"execution critique ran on an unmeasured premise: {forbidden}"
+
+
+def test_invariant7_emits_a_finding_that_names_the_command_to_run():
+    """A stop that doesn't say what to measure just blocks the user."""
+    r = run("unmeasured_premise")
+    findings = r["result"]["findings"]
+    m = [f for f in findings if f["id"].startswith("M")]
+    assert m, f"no measurement finding emitted: {findings}"
+    assert "recall is the bottleneck" in m[0]["claim"]
+    assert "grep the transcripts" in m[0]["failure_scenario"]
+    assert "15 min" in m[0]["failure_scenario"]
+
+
+def test_invariant7_does_not_fire_when_the_measurement_was_already_run():
+    """The guard must discriminate, not just always stop."""
+    r = run("measured_premise")
+    assert r["ok"], r.get("error")
+    assert r["result"]["premise_status"] == "resolved"
+    assert r["result"]["terminal_state"] != "PREMISE-OPEN"
+    assert any(c == "target-generation" for c in r["calls"]), \
+        "a fully measured premise must proceed to execution critique"
+
+
+def test_invariant7_does_not_fire_when_nothing_is_measurable():
+    """An empty list is a legitimate answer and must not deadlock the run."""
+    r = run("happy_no_holes")
+    assert r["ok"], r.get("error")
+    assert r["result"]["premise_status"] == "resolved"

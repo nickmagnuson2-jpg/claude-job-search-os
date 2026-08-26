@@ -166,10 +166,29 @@ def main(argv=None) -> int:
         return 2
 
     # --- refusal 2: mechanism unproven ---
-    if args.control:
+    # The `control` key is ALWAYS emitted, including when no token was supplied.
+    # Rationale (2026-08-19): `--control ""` used to skip this block entirely, so the
+    # payload came back status:ok / clean:true with no `control` key at all -- a reader
+    # could not distinguish a proven-clean run from an unproven one. A WRONG token
+    # correctly refuses, so an EMPTY one silently passing was backwards. The fix is to
+    # make the report state its own scope rather than to reject the input: `checked`
+    # says whether the proof ran, so a clean result can never be over-read.
+    # Additive only -- `status`, `clean`, and every exit code are unchanged.
+    if not args.control or not args.control.strip():
+        payload["control"] = {
+            "token": None,
+            "checked": False,
+            "proves_agent_read_input": False,
+            "note": ("no control token supplied, so blindness is UNPROVEN. A clean result "
+                     "below means no leaked token was found, NOT that the mechanism was "
+                     "shown able to find one. Plant a token and pass --control to prove it."),
+        }
+    else:
         control_in_scratch = args.control.lower() in scratch_text.lower()
         control_in_output = args.control.lower() in agent_text.lower()
         payload["control"] = {"token": args.control,
+                              "checked": True,
+                              "proves_agent_read_input": control_in_scratch and control_in_output,
                               "present_in_scratch": control_in_scratch,
                               "present_in_agent_output": control_in_output}
         if not control_in_scratch:

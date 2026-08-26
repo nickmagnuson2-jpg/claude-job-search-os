@@ -109,7 +109,7 @@ time-boxed; it also reproduces the failure. Hard stop.
 ```
   S0  GOAL EXTRACTION      2 agents, independent, one blind to the plan
        |
-  S1  PREMISE GATE         1 agent + deterministic diff   ── HARD STOP ──┐
+  S1  PREMISE GATE         1 agent + measurement gate     ── HARD STOP ──┐
        |                                                                 |
   S2  TARGET GENERATION    1 agent (typed, from 4 generators)            |
        |                                                          premise_status: open
@@ -149,11 +149,28 @@ judgment, not a computation.)
    different success conditions, or different beneficiaries)
 2. Independent of the delta: is `goal_from_problem` itself the right goal, or is the problem framed
    wrongly upstream of both?
+3. **The measurement question (added 2026-08-25).** Which premises does this work rest on that a
+   *cheap measurement* would settle — a grep, a count, a query, one API call, reading a log — rather
+   than argument? Return each with its concrete command, rough cost, and whether it has **already
+   been run with the observed value in hand**. Intending to measure later is `no`. An empty list is
+   the right answer for a plan that genuinely rests on nothing measurable; do not invent
+   measurements to look rigorous.
+
+   **Why this sits in the premise gate and not in the critique.** Critique can only explore answers
+   somebody already imagined. A measurement can return an answer that was in nobody's hypothesis
+   space — which is not a hypothetical: on 2026-08-21 an 88-agent, 5.24M-token hardening run of the
+   memory-hygiene plan returned `UNCONVERGED`, produced a revision no participant had read, and its
+   own handoff says do not execute it. On 2026-08-25 a roughly 15-minute measurement invalidated one
+   worklist item outright, re-scoped the largest one, and returned a third option the plan's own
+   binary had no slot for. The expensive error in plan critique is arguing at length about a question
+   a fifteen-minute count answers.
 
 Output sets `premise_status`:
 
 - `resolved` → proceed to S2.
-- `open` → **STOP.** Emit the premise findings and the register. Do not run S2-S5. The deliverable
+- `open` → **STOP.** Set by a material delta, by `goal_is_right` of `no`/`unclear`, **or by any
+  `measurable_premises` entry with `measured: no`** — the last of these is forced in code after the
+  agent returns, not left to the agent's own status field (see Invariant 7). Emit the premise findings and the register. Do not run S2-S5. The deliverable
   is the premise finding; that is a successful run, not a failed one.
 
 ### S2 — Target generation (1 agent)
@@ -388,6 +405,14 @@ Not prose — these are assertions the script makes, and each is a check a gate 
      short plan permitted 12.66x.
    Both are reported in the register as `bounded_mutation` on success as well as failure, so
    accretion is visible rather than silent.
+7. **Measurement gate.** *(Added 2026-08-25.)* If the premise agent returns any `measurable_premises`
+   entry with `measured: "no"`, the orchestrator **overrides `premise_status` to `open`** and emits
+   one `M<n>` premise finding per unrun measurement, each naming the concrete command and its
+   estimated cost. Enforced in code after the agent returns, deliberately: a prose instruction is
+   precisely what a model rationalises past, and the whole point of this gate is that the plan does
+   not get argued about until the cheap facts are in hand. The guard must discriminate, not merely
+   stop — a fully measured premise proceeds, and an empty `measurable_premises` list is legitimate.
+   Origin: 2nd fire of `feedback_measure_before_restructuring_a_thesis`.
 
 ---
 

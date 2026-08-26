@@ -70,9 +70,13 @@ shortcut it, and do not batch-generate templated variants:
    `NEEDS-RESEARCH` in the queue and move on — do NOT draft on the headline alone.
 2. **Step 6 (draft from the matched `voice-reference.md` exemplar)** + the flow-gap
    guardrails (warm opener, no thesis-jargon recital, one resonance beat, tight length).
-3. **Step 6b (substance-provenance audit):** label every substantive sentence N/C/I/G.
+3. **Step 6b (substance-provenance audit):** per `framework/writing-discipline.md`
+   (canonical for the `N`/`C`/`I`/`G` labels) plus the `/cold-outreach` slot table.
    A `G` in any blocked slot (identity / credibility / personalization / bridge / ask)
    means STOP for that contact — mark the slot `NEEDS-SPINE` in the queue, don't invent.
+   **Batch amplifies this risk:** N drafts are audited in one pass with no per-contact
+   dictation, so the temptation to let a `G` slide is highest here and the blast radius
+   is N contacts, not one. `NEEDS-SPINE` is the correct outcome, not a failed run.
 4. **Step 7 (quality gate + tonal self-check + Content-Rules Pass):** the three-question
    test, the ex-colleague readability bar, AND the `/cold-outreach` Content-Rules Pass —
    rule-gate `framework/content-rules.md` to the cold-draft rules (`L2`/`L3`/`I1`/`A3`/`C1`/`C3`,
