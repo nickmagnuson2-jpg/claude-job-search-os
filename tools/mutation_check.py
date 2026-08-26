@@ -48,10 +48,12 @@ from __future__ import annotations
 
 import argparse
 import ast
+import atexit
 import hashlib
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 from pathlib import Path
@@ -356,6 +358,57 @@ def recover_if_stranded(target: Path) -> str | None:
         return "FOUND a stranded backup but could not restore it -- restore by hand"
 
 
+_IN_FLIGHT: tuple[Path, str] | None = None
+
+
+def _restore_in_flight() -> None:
+    """Put the target back. Safe to call twice; the `finally` and atexit both call it."""
+    global _IN_FLIGHT
+    if _IN_FLIGHT is None:
+        return
+    target, original = _IN_FLIGHT
+    _IN_FLIGHT = None
+    try:
+        if target.read_text(encoding="utf-8") != original:
+            target.write_text(original, encoding="utf-8")
+    except OSError:
+        pass
+    try:
+        backup_path(target).unlink()
+    except OSError:
+        pass
+
+
+def _on_signal(signum, _frame):
+    _restore_in_flight()
+    raise SystemExit(128 + signum)
+
+
+def arm_restore(target: Path, original: str) -> None:
+    """Restore the target even if this process is SIGTERMed mid-mutation.
+
+    THE INCIDENT THIS EXISTS FOR (2026-08-26). `finally` covers a clean exit and it
+    covers SIGINT, because SIGINT raises KeyboardInterrupt in Python. It does NOT cover
+    SIGTERM, which kills the interpreter outright. An overnight sweep was stopped that
+    way and left four live tools mutated on disk with stranded backups -- one of them
+    pipe_write.py with its archive-section test inverted, which would have appended a
+    duplicate `## Archived` header to the real job-pipeline.md on the next /pipe call.
+    The hazard had been written up in prose hours earlier, in the same run that then
+    tripped over it again. A handler is the enforcement tier; the write-up was not.
+    """
+    global _IN_FLIGHT
+    _IN_FLIGHT = (target, original)
+    atexit.register(_restore_in_flight)
+    for name in ("SIGTERM", "SIGINT", "SIGHUP"):
+        sig = getattr(signal, name, None)
+        if sig is None:
+            continue
+        try:
+            signal.signal(sig, _on_signal)
+        except (ValueError, OSError):
+            pass          # not on the main thread, or unsupported on this platform
+
+
 def assert_intact(target: Path, original: str) -> None:
     """Hard-abort if the target does not match its pre-run content.
 
@@ -415,6 +468,7 @@ def main() -> int:
 
     original = target.read_text(encoding="utf-8")
     backup_path(target).write_text(original, encoding="utf-8")
+    arm_restore(target, original)
     src_lines = original.splitlines()
     try:
         tree = ast.parse(original)
