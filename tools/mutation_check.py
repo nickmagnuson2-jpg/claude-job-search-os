@@ -202,7 +202,22 @@ _SUMMARY_RE = re.compile(r"^(?:FAILED|ERROR)\s+\S+\s+-\s+([A-Za-z_][\w.]*)", re.
 _TB_RE = re.compile(r"^\S+:\d+:\s+([A-Za-z_][\w.]*)", re.M)
 # `Failed` is what pytest.raises emits when the expected exception does NOT arrive.
 # That is an assertion about behavior, not an incidental crash, so it counts as one.
-_ASSERTION_KINDS = {"AssertionError", "Failed"}
+#
+# `assert` is pytest's rendering of a BARE assertion, and it is here because omitting it
+# made this whole metric measure the wrong thing (found 2026-08-26). Under `--tb=line`
+# pytest prefixes "AssertionError:" only when it generates a multi-line explanation:
+#
+#   assert 'neg' == 'pos'   ->  test.py:3: AssertionError: assert 'neg' == 'pos'
+#   assert 1 == 2           ->  test.py:3: assert 1 == 2
+#
+# so an ordinary `assert got == 2` was filed as a CRASH kill, while the same assertion
+# over strings was filed correctly. The bug was conditional on the compared TYPE, which
+# made weak_kill_count incomparable between an int-heavy tool and a string-heavy one and
+# is why adding message strings to existing tests moved it 31 -> 11 with no code change.
+#
+# Capturing the bare token is unambiguous: `assert` is a Python keyword, so it can never
+# be the name of an exception class arriving on that line.
+_ASSERTION_KINDS = {"AssertionError", "Failed", "assert"}
 
 
 def run_tests(test_files: list[Path], timeout: int) -> tuple[bool, str]:

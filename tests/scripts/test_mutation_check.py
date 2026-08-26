@@ -106,11 +106,25 @@ def test_crash_only_kill_is_reported_as_weak(tmp_path):
     assert d["weak_kill_count"] >= 1, "a crash-only kill must be flagged weak"
 
 
-def test_unparseable_reason_is_unknown_not_weak():
+def test_unparseable_reason_is_unknown_not_weak(tmp_path, monkeypatch):
     """A false accusation is worse than a missing signal: an unreadable failure reason
-    must NOT be reported as 'this test asserts nothing'."""
-    assert "unknown" in mc.run_tests.__doc__ or True
-    assert mc._ASSERTION_KINDS == {"AssertionError", "Failed"}
+    must NOT be reported as 'this test asserts nothing'.
+
+    Rewritten 2026-08-26. The previous version asserted
+    `"unknown" in mc.run_tests.__doc__ or True` -- a tautology that cannot fail, the exact
+    shape mc.audit_test_quality flags -- plus an exact-set equality on _ASSERTION_KINDS,
+    which pinned the implementation rather than the behaviour and had to be edited to
+    change a constant. This drives the real function instead.
+    """
+    class _Result:
+        returncode, stdout, stderr = 1, "totally unparseable output\n", ""
+
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: _Result())
+    passed, kind = mc.run_tests([tmp_path / "test_x.py"], timeout=5)
+    assert passed is False, "a non-zero return code means the mutant was killed"
+    assert kind == "unknown", (
+        f"an unreadable failure reason must classify as 'unknown', not a weak kill; got "
+        f"{kind!r} -- reporting it as weak accuses a correct test of checking nothing")
 
 
 def test_pytest_raises_counts_as_an_assertion():
@@ -395,3 +409,59 @@ def test_arm_restore_installs_a_handler_for_sigterm(tmp_path):
     finally:
         signal.signal(signal.SIGTERM, before)
         mc._IN_FLIGHT = None
+
+
+# --- 6. the weak-kill classifier must not misfile bare asserts ---------------
+#
+# THE DEFECT (found 2026-08-26). weak_kill_count was measuring pytest's RENDERING, not
+# whether a test asserted. Under `--tb=line` pytest prefixes "AssertionError:" only when
+# it generates a multi-line explanation -- string diffs get it, simple scalar comparisons
+# do not. So `assert got == 2` renders as "test.py:3: assert 1 == 2", the regex captures
+# the token `assert`, which was absent from _ASSERTION_KINDS, and an ordinary assertion
+# kill was filed as a crash.
+#
+# It is conditional on the compared TYPE, which is worse than a uniform bug: the metric is
+# noisy in a way that tracks the data a tool happens to handle rather than test quality,
+# so weak_kill_count is not comparable between an int-heavy and a string-heavy tool. The
+# earlier write-up called it systematic; it is not, and a string-comparing fixture cannot
+# reproduce it at all. That is why this fixture compares INTEGERS.
+
+def _int_fixture(tmp_path, test_body):
+    """Subject returning ints, so pytest renders bare asserts WITHOUT 'AssertionError:'."""
+    (tmp_path / "tools").mkdir(parents=True, exist_ok=True)
+    src = tmp_path / "tools" / "subject.py"
+    src.write_text("def score(n):\n    if n > 0:\n        return 2\n    return 1\n",
+                   encoding="utf-8")
+    t = tmp_path / "test_subject.py"
+    t.write_text(textwrap.dedent(test_body), encoding="utf-8")
+    return src, t
+
+
+def test_a_bare_scalar_assert_is_an_assertion_kill_not_a_crash(tmp_path):
+    """`assert got == 2` with no message is idiomatic pytest. It must not be filed as a
+    crash kill merely because pytest renders it without an exception name."""
+    src, t = _int_fixture(tmp_path, """
+        import sys; sys.path.insert(0, r'%s')
+        from subject import score
+        def test_pos(): assert score(1) == 2
+        def test_neg(): assert score(-1) == 1
+    """ % (tmp_path / "tools"))
+    d = json.loads(_run([str(src), "--tests", str(t)], cwd=tmp_path).stdout)
+    assert d["killed"] >= 1, "the mutants must actually die first, or this proves nothing"
+    assert d["weak_kill_count"] == 0, (
+        "a bare scalar `assert` was misfiled as a crash kill; weak kills reported: "
+        f"{d['weak_kills']}")
+
+
+def test_a_genuine_crash_kill_is_still_reported_as_weak(tmp_path):
+    """The fix must not go the other way and call every kill an assertion. A test that
+    only CALLS the code, asserting nothing, observes the mutation solely by crashing."""
+    src, t = _int_fixture(tmp_path, """
+        import sys; sys.path.insert(0, r'%s')
+        from subject import score
+        def test_smoke():
+            score(1).bit_length()     # AttributeError if None; asserts nothing
+    """ % (tmp_path / "tools"))
+    d = json.loads(_run([str(src), "--tests", str(t)], cwd=tmp_path).stdout)
+    assert d["weak_kill_count"] >= 1, \
+        "a crash-only kill must still be flagged weak, or the metric is inverted"
