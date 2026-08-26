@@ -342,6 +342,52 @@ def test_resolve_script_path_returns_the_resolved_candidate(fake_repo):
     assert os.path.isfile(resolved)
 
 
+def test_absolute_scriptpath_resolves_without_consulting_candidate_roots(fake_repo):
+    """Kills IF_FALSE on the line-88 `os.path.isabs()` branch.
+
+    The docstring's contract is "absolute paths are checked as given"; relative ones
+    are joined against the candidate roots. On POSIX `os.path.join(root, "/abs")`
+    returns "/abs", so with roots present BOTH branches return the same string and
+    the branch is invisible. Emptying the roots separates them: the real code still
+    resolves the absolute path from its own text, while a code path that fell through
+    to the root loop has nothing to iterate and returns None.
+    """
+    module = _import_hook_module()
+    module._candidate_roots = lambda data: []
+    abs_script = str(fake_repo / REAL_SCRIPT)
+    assert os.path.isfile(abs_script)
+    assert module.resolve_script_path(abs_script, {}) == abs_script
+    # And the negative arm still reports None rather than a bogus hit.
+    assert module.resolve_script_path(str(fake_repo / "nope" / "missing.js"), {}) is None
+
+
+def test_main_exits_zero_explicitly_on_the_clean_path(fake_repo):
+    """Kills DROP_CALL on the line-183 `sys.exit(0)`.
+
+    A subprocess cannot see this: dropping the final exit still lets the interpreter
+    fall off the end of main() and terminate 0. The hook contract is that main()
+    ALWAYS terminates by naming its exit code — every other outcome in this function
+    is a `sys.exit`/`_block` — so the clean path must raise SystemExit(0), not return
+    None to its caller.
+    """
+    module = _import_hook_module()
+    payload = json.dumps(
+        {
+            "tool_name": "Workflow",
+            "cwd": str(fake_repo),
+            "tool_input": {"scriptPath": REAL_SCRIPT, "args": {"context": "x"}},
+        }
+    )
+    original_stdin = sys.stdin
+    sys.stdin = io.StringIO(payload)
+    try:
+        with pytest.raises(SystemExit) as excinfo:
+            module.main()
+    finally:
+        sys.stdin = original_stdin
+    assert excinfo.value.code == 0
+
+
 @pytest.mark.parametrize(
     "payload",
     [
