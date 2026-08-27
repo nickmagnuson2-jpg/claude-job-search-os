@@ -293,22 +293,45 @@ def test_a_missing_settings_file_leaves_everything_unhooked(repo, monkeypatch):
     assert mod.build_targets()[0]["h"] is False
 
 
-def test_ranking_is_writers_then_hooked_then_most_tested(repo, monkeypatch):
-    """The order IS the work list. Blast radius first, then coverage of the guard, then
-    the tools with the most tests to be disappointed by."""
-    add_tool(repo, "plain_tool", src="def f(p):\n    return p.read_text()\n", mutants=1)
-    add_tool(repo, "writer_few", src="def f(p):\n    p.write_text('x')\n", mutants=1)
-    add_tool(repo, "writer_many", src="def f(p):\n    p.write_text('x')\n", mutants=1)
-    add_tool(repo, "writer_hooked", src="def f(p):\n    p.write_text('x')\n", mutants=1)
-    (repo / "tests" / "scripts" / "test_writer_many.py").write_text(
-        "def test_a():\n    assert 1 == 1\n\n\ndef test_b():\n    assert 2 == 2\n",
-        encoding="utf-8")
-    (repo / ".claude").mkdir()
-    (repo / ".claude" / "settings.json").write_text("writer_hooked.py", encoding="utf-8")
+def test_scheduling_is_cheapest_first_so_a_partial_run_measures_the_most(repo, monkeypatch):
+    """SUPERSEDED ORDERING, kept as a regression. This used to sort writers-then-hooked-
+    then-most-tested, i.e. blast radius first. That is the right order for a HUMAN work
+    list and the wrong one for a scheduler: the report ranks worst-first by survivors on
+    its own, and a run is far more often stopped or resumed than finished.
+
+    Cost is mutants x mapped test files, because every mutant re-runs every mapped file.
+    Measured 2026-08-26 at ~8s/mutant, so the corpus is ~24h. Under the old order the
+    first tools were the giants -- todo_write.py is 541 x 15 = 8115 test-runs, exceeds the
+    120-minute cap, and a timeout banks NO information -- so a night could end with a
+    handful of timeouts and nothing measured.
+    """
+    add_tool(repo, "cheap", src="def f(p):\n    return p.read_text()\n", mutants=5)
+    add_tool(repo, "huge", src="def f(p):\n    p.write_text('x')\n", mutants=500)
+    add_tool(repo, "mid", src="def f(p):\n    p.write_text('x')\n", mutants=50)
     mod = load(repo, monkeypatch)
     assert [r["tool"] for r in mod.build_targets()] == [
-        "tools/writer_hooked.py", "tools/writer_many.py", "tools/writer_few.py",
-        "tools/plain_tool.py"]
+        "tools/cheap.py", "tools/mid.py", "tools/huge.py"]
+
+
+def test_cost_counts_test_files_not_just_mutants(repo, monkeypatch):
+    """A 40-mutant tool mapped to 10 files costs more than a 100-mutant tool mapped to 1.
+    Sorting on mutants alone would schedule the expensive one first and mis-spend the run."""
+    add_tool(repo, "many_files", mutants=40)
+    for i in range(9):
+        (repo / "tests" / "scripts" / f"test_extra_{i}.py").write_text(
+            "import many_files\n\n\ndef test_a():\n    assert 1 == 1\n", encoding="utf-8")
+    add_tool(repo, "one_file", mutants=100)
+    mod = load(repo, monkeypatch)
+    rows = mod.build_targets()
+    assert rows[0]["tool"] == "tools/one_file.py", "100x1 is cheaper than 40x10"
+    assert rows[1]["test_files"] == 10
+
+
+def test_the_target_row_records_how_many_test_files_grade_it(repo, monkeypatch):
+    """Recorded so the cost is auditable from targets.json rather than recomputed."""
+    add_tool(repo, "a", mutants=3)
+    mod = load(repo, monkeypatch)
+    assert mod.build_targets()[0]["test_files"] == 1
 
 
 # --- 3. --targets runs no mutations -----------------------------------------

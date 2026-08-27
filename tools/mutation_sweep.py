@@ -116,7 +116,7 @@ def build_targets() -> list[dict]:
             # flight.
             rows.append({"tool": rel, "w": True, "h": tool.name in wired,
                          "tests": sum(count_tests(f) for f in test_files),
-                         "mutants": -1})
+                         "test_files": len(test_files), "mutants": -1})
             continue
         proc = subprocess.run(
             [sys.executable, "tools/mutation_check.py", rel, "--list"],
@@ -130,8 +130,21 @@ def build_targets() -> list[dict]:
                      "w": bool(_WRITER_RE.search(tool.read_text(encoding="utf-8"))),
                      "h": tool.name in wired,
                      "tests": sum(count_tests(f) for f in test_files),
+                     "test_files": len(test_files),
                      "mutants": mutants})
-    rows.sort(key=lambda r: (not r["w"], not r["h"], -r["tests"]))
+    # SCHEDULING, not priority. The report ranks worst-first by survivors and does its
+    # own sorting, so this order only decides what gets measured per hour -- and that
+    # matters because a run is often stopped or resumed rather than finished.
+    #
+    # Cost is mutants x mapped test files: each mutant re-runs EVERY mapped file. Measured
+    # 2026-08-26 at ~8s per mutant on a 2-file tool, so the corpus is ~24h, far past one
+    # night. Running the expensive tools first is actively wasteful: todo_write.py is
+    # 541 mutants x 15 files = 8115 test-runs, will exceed the 120-minute cap, and a
+    # timeout yields NO information at all -- where the same two hours spent on cheap
+    # tools yields twenty finished measurements. Blast radius still decides what a HUMAN
+    # works on next; it should not decide what a partial run spends its night on.
+    rows.sort(key=lambda r: (max(r["mutants"], 0) * max(r["test_files"], 1),
+                             not r["w"], not r["h"]))
     return rows
 
 
