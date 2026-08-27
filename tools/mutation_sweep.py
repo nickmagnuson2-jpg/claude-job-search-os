@@ -53,7 +53,9 @@ from pathlib import Path
 REPO_ROOT = Path(os.environ.get("MUTATION_REPO_ROOT",
                                 Path(__file__).resolve().parents[1])).resolve()
 DEFAULT_STATE = REPO_ROOT / "output" / "analysis" / "082626-mutation-baseline"
-TOOL_TIMEOUT = 45 * 60          # one tool may not eat the whole night
+# pipe_write.py needs 68 minutes and was lost at the old 45-minute cap, taking the rest
+# of the run's isolation results with it. 120 leaves headroom for a slow newcomer.
+TOOL_TIMEOUT = 120 * 60
 
 # The sweep executes FROM this file. Letting it become a target means rewriting live
 # source out from under the running process -- the same hazard mutation_check.py refuses
@@ -81,11 +83,13 @@ def count_tests(path: Path) -> int:
 
 
 def build_targets() -> list[dict]:
-    allow_file = REPO_ROOT / "tools" / "mutation-allow.json"
-    try:
-        allowed = {k.split("::")[0] for k in json.loads(allow_file.read_text(encoding="utf-8"))}
-    except (OSError, json.JSONDecodeError):
-        allowed = set()
+    # NO tool-level allowlist exclusion. `mutation-allow.json` is keyed per MUTANT
+    # (`tools/x.py::func::OP::hash`) and mutation_check.py already honours it that way,
+    # counting an allowlisted mutant as `allowlisted` rather than as a survivor. Dropping
+    # the whole tool here meant justifying ONE mutant silently removed the tool from the
+    # corpus forever -- and it had removed check_public_pii.py, the always-on hook that
+    # keeps real names out of this PUBLIC repo, along with 8 others. Doing the right thing
+    # must not delete the measurement. (2026-08-26)
     settings = (REPO_ROOT / ".claude" / "settings.json")
     wired = settings.read_text(encoding="utf-8") if settings.exists() else ""
 
@@ -93,7 +97,7 @@ def build_targets() -> list[dict]:
     for tool in sorted((REPO_ROOT / "tools").glob("*.py")):
         rel = f"tools/{tool.name}"
         test_file = REPO_ROOT / "tests" / "scripts" / f"test_{tool.stem}.py"
-        if not test_file.exists() or rel in allowed:
+        if not test_file.exists():
             continue
         if tool.name == SELF_NAME:
             # Recorded, not silently dropped: a -1 row lands in `self_excluded` so the
@@ -118,6 +122,27 @@ def build_targets() -> list[dict]:
                      "mutants": mutants})
     rows.sort(key=lambda r: (not r["w"], not r["h"], -r["tests"]))
     return rows
+
+
+def repair_stranded(rel: str) -> str | None:
+    """Restore a target left mutated on disk, and say so.
+
+    `subprocess.run(timeout=)` kills the child with SIGKILL, which cannot be caught -- so
+    mutation_check's SIGTERM/SIGINT/SIGHUP handler, added for exactly this class of
+    failure, does not cover the sweep's own timeout path. On 2026-08-26 that left
+    pipe_write.py mutated on disk with a stranded backup, and every later tool's
+    `--isolation` run then tripped tests/conftest.py's refusal and was recorded as
+    `isolation_failed`: 41 consecutive false findings from one timeout.
+
+    Checked after EVERY tool, not just after a timeout. A crash that outruns the handler
+    leaves the same wreckage, and the cost of looking is one stat() call.
+    """
+    target = REPO_ROOT / rel
+    backup = target.with_suffix(target.suffix + ".mutation_backup")
+    if not backup.exists():
+        return None
+    os.replace(backup, target)
+    return f"restored {rel} from a stranded .mutation_backup"
 
 
 def run_sweep(state_dir: Path) -> int:
@@ -156,6 +181,13 @@ def run_sweep(state_dir: Path) -> int:
 
         base = {k: t[k] for k in ("tool", "w", "h", "tests", "mutants")}
         base |= {"elapsed": round(time.time() - start, 1), "rc": rc}
+
+        # Before the next tool starts: a mutated file left here contaminates every
+        # measurement after it, not just this one.
+        repaired = repair_stranded(t["tool"])
+        if repaired:
+            base["repaired"] = repaired
+            print(f"{time.strftime('%H:%M:%S')}  REPAIRED {repaired}", flush=True)
 
         if timed_out:
             # An empty or skipped scan is never a clean result.

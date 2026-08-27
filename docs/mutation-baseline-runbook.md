@@ -22,8 +22,20 @@ PYTHONIOENCODING=utf-8 python3 tools/mutation_sweep.py --targets
 ```
 
 Deterministic selection, not a judgment call: every `tools/*.py` that has a matching
-`tests/scripts/test_<name>.py` and no entry in `tools/mutation-allow.json`. Prints the
-counts and writes `targets.json`. Runs no mutations.
+`tests/scripts/test_<name>.py`. Prints the counts and writes `targets.json`. Runs no
+mutations.
+
+**`mutation-allow.json` is NOT consulted here** (corrected 2026-08-26). It is keyed per
+MUTANT, and `mutation_check.py` honours it at that level, counting an allowlisted mutant
+as `allowlisted` rather than as a survivor. Selection used to drop the whole TOOL when any
+of its mutants was allowlisted, so justifying one survivor silently removed the tool from
+the corpus permanently. It had removed 9, including **`check_public_pii.py`** — the
+always-on hook that keeps real names out of this PUBLIC repo. All 47 live entries are
+mutant-scoped; not one is a whole-tool key, so the exclusion was serving no case at all.
+
+**Coverage is 76 of 145 tools, not 76 of 76.** The report's "all auditable tools were
+measured" is true and easy to misread: 58 tools have no `test_<name>.py` and are invisible
+to selection by construction. Auditable means "has a test file", never "is safe".
 
 **Two files self-exclude**, for one reason at two layers: `mutation_check.py` refuses
 itself, and `mutation_sweep.py` skips itself because the sweep *runs from* that file, so
@@ -130,6 +142,33 @@ each other. On 2026-08-26 agents hit `isolation_failed` purely from a sibling's 
 backup, and every suite-green claim in that run became worthless. Backgrounding several
 copies of the sweep recreates the exact bug it works around. If parallelism is wanted, the
 answer is **one git worktree per runner**, never one tree.
+
+## The timeout used to poison the rest of the run (fixed 2026-08-26)
+
+`subprocess.run(timeout=)` kills the child with **SIGKILL**, which cannot be caught — so
+the SIGTERM/SIGINT/SIGHUP handler below, built for exactly this class of failure, never
+covered the sweep's own timeout path. On 2026-08-26 `pipe_write.py` hit the old 45-minute
+cap and was left mutated on disk with a stranded backup. `tests/conftest.py` then refused
+to run for every later `--isolation` check, and **41 consecutive tools were recorded as
+`isolation_failed`** — every one of them a false accusation, later disproven by running
+each file alone. The boundary was exact: tools 1-10 clean, tool 11 the timeout, tools
+12-53 all "failing".
+
+Three changes, because it was three bugs:
+
+1. `repair_stranded()` runs after **every** tool, restoring a target from its backup and
+   printing `REPAIRED`. Recorded in the row, never silent.
+2. The cap is **120 minutes**. `pipe_write.py` needs 68 and was never going to fit in 45.
+3. `mutation_check` now distinguishes conftest's exit 3 (**"I refused to look"**) from a
+   real failure, reporting `isolation_refused` and status `isolation_unmeasured`.
+   Unmeasured and failing must not render the same.
+
+A separate second instance the same night, worth its own warning: `test_mutation_check.py`
+ran mutation runs against the **live** `tools/vault_paths.py`. During the sweep that was a
+nested mutation run colliding with the outer one, and it left vault_paths.py mutated for
+two hours **with no `.mutation_backup`** — so every stranded-backup check reported the tree
+clean. Those tests now operate on a byte-copy in `tmp_path`. **A tree can be corrupt with
+no backup present; absence of a backup is not evidence of a clean tree.**
 
 ## Crash-safety (fixed 2026-08-26)
 

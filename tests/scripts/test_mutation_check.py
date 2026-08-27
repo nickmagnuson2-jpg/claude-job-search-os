@@ -40,11 +40,36 @@ def _run(args, cwd=None):
 
 # --- 1. safety: the target file must survive --------------------------------
 
+def _live_tool_copy(tmp_path):
+    """A byte-copy of a REAL tool and its REAL test file, in a throwaway repo.
+
+    These two tests used to run against `tools/vault_paths.py` ITSELF. That makes an
+    ordinary `pytest tests/` run a live in-place mutation of a live tool, and on
+    2026-08-26 it fired: the suite ran while the corpus sweep was mid-flight, the nested
+    mutation run collided with the outer one, and vault_paths.py was left MUTATED on disk
+    for two hours -- with NO .mutation_backup, so every stranded-backup check reported the
+    tree clean. vault_paths.py is the single resolver for the personal-vault root, used by
+    granola_auto_debrief (launchd, every 3h), living_log_append and personal_todo_write.
+
+    Copying keeps what the test was actually for -- a real tool, real complexity, a real
+    test file, not a toy -- and removes the live blast radius entirely.
+    """
+    (tmp_path / "tools").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "tests" / "scripts").mkdir(parents=True, exist_ok=True)
+    src = tmp_path / "tools" / "vault_paths.py"
+    src.write_bytes((REPO_ROOT / "tools" / "vault_paths.py").read_bytes())
+    t = tmp_path / "tests" / "scripts" / "test_vault_paths.py"
+    t.write_bytes((REPO_ROOT / "tests" / "scripts" / "test_vault_paths.py").read_bytes())
+    (tmp_path / "tests" / "conftest.py").write_bytes(
+        (REPO_ROOT / "tests" / "conftest.py").read_bytes())
+    return src, t
+
+
 def test_target_file_is_restored_byte_for_byte(tmp_path):
-    """It rewrites a LIVE file. If this property breaks, the tool corrupts source."""
-    target = REPO_ROOT / "tools" / "vault_paths.py"
+    """It rewrites the file in place. If this property breaks, the tool corrupts source."""
+    target, t = _live_tool_copy(tmp_path)
     before = target.read_bytes()
-    _run([str(target), "--tests", "tests/scripts/test_vault_paths.py"])
+    _run([str(target), "--tests", str(t)], cwd=tmp_path)
     assert target.read_bytes() == before
 
 
@@ -243,9 +268,9 @@ def test_assert_intact_repairs_and_aborts_on_mismatch(tmp_path):
     assert src.read_text(encoding="utf-8") == original, "must repair, not just complain"
 
 
-def test_a_normal_run_leaves_no_backup_residue():
-    target = REPO_ROOT / "tools" / "vault_paths.py"
-    _run([str(target), "--tests", "tests/scripts/test_vault_paths.py"])
+def test_a_normal_run_leaves_no_backup_residue(tmp_path):
+    target, t = _live_tool_copy(tmp_path)
+    _run([str(target), "--tests", str(t)], cwd=tmp_path)
     assert not mc.backup_path(target).exists()
 
 
@@ -465,3 +490,63 @@ def test_a_genuine_crash_kill_is_still_reported_as_weak(tmp_path):
     d = json.loads(_run([str(src), "--tests", str(t)], cwd=tmp_path).stdout)
     assert d["weak_kill_count"] >= 1, \
         "a crash-only kill must still be flagged weak, or the metric is inverted"
+
+
+# --- 6. a refusal is not a failure ------------------------------------------
+
+def test_a_conftest_refusal_is_not_reported_as_an_isolation_failure(tmp_path):
+    """THE INCIDENT (2026-08-26). One tool hit the sweep's timeout, was SIGKILLed, and
+    left a stranded .mutation_backup. tests/conftest.py then refused to run (exit 3) for
+    every later --isolation check, and all 41 were recorded as `isolation_failed` -- a
+    false accusation against 41 innocent test files, indistinguishable in the report from
+    a real suite-ordering defect. The main mutation runs were exempt because they carry
+    MUTATION_CHECK_ACTIVE; the isolation subprocess does not, which is the whole asymmetry.
+
+    Unmeasured and failing must not render the same. Exit 3 means `I refused to look`.
+    """
+    target, t = _live_tool_copy(tmp_path)
+    # a SIBLING's wreckage, not this tool's: recover_if_stranded only restores its own
+    (tmp_path / "tools" / "other.py").write_text("X = 1\n", encoding="utf-8")
+    (tmp_path / "tools" / "other.py.mutation_backup").write_text("X = 1\n", encoding="utf-8")
+
+    r = _run([str(target), "--tests", str(t), "--isolation", "--json"], cwd=tmp_path)
+    d = json.loads(r.stdout)
+
+    assert d["isolation_failures"] == [], \
+        "a refusal must never be filed as a failing test file"
+    assert d.get("isolation_refused"), "the refusal must be recorded, not dropped"
+    assert d["status"] == "isolation_unmeasured", \
+        "unmeasured is its own status; it must not read as either clean or failed"
+
+
+def test_a_genuine_isolation_failure_is_still_reported(tmp_path):
+    """The other direction: the refusal carve-out must not swallow real failures.
+
+    A real ordering dependency needs TWO files -- one that only passes because a sibling
+    ran first in the same process. A single file that fails alone also fails in the
+    baseline, which aborts the run before isolation is ever reached (my first attempt at
+    this test did exactly that and proved nothing).
+    """
+    (tmp_path / "tools").mkdir(parents=True, exist_ok=True)
+    src = tmp_path / "tools" / "subject.py"
+    src.write_text("def f(n):\n    if n > 0:\n        return 'pos'\n    return 'neg'\n",
+                   encoding="utf-8")
+    setup = tmp_path / "test_0_setup.py"
+    setup.write_text(
+        "import builtins\n"
+        "def test_sets_process_state(): builtins._SWEPT_MARK = 1\n", encoding="utf-8")
+    dep = tmp_path / "test_1_dep.py"
+    dep.write_text(
+        "import builtins, sys; sys.path.insert(0, r'%s')\n"
+        "from subject import f\n"
+        "def test_needs_the_neighbour():\n"
+        "    assert getattr(builtins, '_SWEPT_MARK', None) == 1\n"
+        "    assert f(1) == 'pos'\n" % (tmp_path / "tools"), encoding="utf-8")
+
+    r = _run([str(src), "--tests", str(setup), str(dep), "--isolation", "--json"],
+             cwd=tmp_path)
+    d = json.loads(r.stdout)
+    assert str(dep) in d["isolation_failures"], \
+        "a test file that genuinely fails alone must still be named"
+    assert d["status"] == "isolation_failed"
+    assert not d.get("isolation_refused"), "nothing refused here; only a real failure"

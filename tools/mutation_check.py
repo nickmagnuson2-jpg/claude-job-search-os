@@ -65,6 +65,10 @@ from pathlib import Path
 REPO_ROOT = Path(os.environ.get("MUTATION_REPO_ROOT",
                                 str(Path(__file__).resolve().parent.parent)))
 ALLOW_FILE = REPO_ROOT / "tools" / "mutation-allow.json"
+
+# tests/conftest.py exits with this when a *.mutation_backup exists anywhere in the tree.
+# It means "I refused to measure", never "your test failed".
+CONFTEST_REFUSAL = 3
 DEFAULT_TIMEOUT = 300
 
 
@@ -584,13 +588,23 @@ def main() -> int:
     }
 
     if args.isolation:
-        lonely = []
+        lonely, refused = [], []
         for t in test_files:
             cmd = [sys.executable, "-m", "pytest", "-q", "--no-header", str(t)]
             r = subprocess.run(cmd, cwd=str(REPO_ROOT), capture_output=True, text=True)
-            if r.returncode != 0:
+            if r.returncode == CONFTEST_REFUSAL:
+                # tests/conftest.py refused to run because a *.mutation_backup exists
+                # somewhere in the tree -- a sibling run's wreckage, not a property of
+                # this test file. Recording it as an isolation failure is a false
+                # accusation, and on 2026-08-26 it produced 41 of them from one stranded
+                # backup. Unmeasured is not the same as failing.
+                refused.append(str(t))
+            elif r.returncode != 0:
                 lonely.append(str(t))
         result["isolation_failures"] = lonely
+        if refused:
+            result["isolation_refused"] = refused
+            result["status"] = "isolation_unmeasured"
         if lonely:
             result["status"] = "isolation_failed"
 

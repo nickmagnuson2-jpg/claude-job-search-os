@@ -173,20 +173,25 @@ def test_only_tools_with_a_matching_test_file_are_selected(repo, monkeypatch):
     assert [r["tool"] for r in mod.build_targets()] == ["tools/has_tests.py"]
 
 
-def test_allowlisted_tools_are_excluded_including_mutant_scoped_keys(repo, monkeypatch):
-    """mutation-allow.json keys carry a `::mutant-id` suffix. Splitting on `::` is what
-    makes an allowlist entry for ONE mutant exclude the tool from selection."""
-    add_tool(repo, "plain", mutants=3)
-    add_tool(repo, "scoped", mutants=3)
+def test_the_allowlist_is_not_consulted_at_selection_time_at_all(repo, monkeypatch):
+    """SUPERSEDED BEHAVIOUR, kept as a regression. This test used to assert the opposite:
+    that a `tools/x.py::mutant-7` entry excluded tools/x.py from the corpus. That was the
+    bug. `mutation-allow.json` is keyed per MUTANT and mutation_check.py honours it there
+    (counting an allowlisted mutant as `allowlisted`, never as a survivor), so excluding
+    at selection time meant justifying ONE mutant deleted the whole tool from measurement
+    permanently. All 47 live entries are mutant-scoped; not one is a whole-tool key, so
+    there is no case this exclusion was serving."""
+    add_tool(repo, "guarded", mutants=9)
     (repo / "tools" / "mutation-allow.json").write_text(
-        json.dumps({"tools/scoped.py::mutant-7": "reason"}), encoding="utf-8")
+        json.dumps({"tools/guarded.py::f::DROP_CALL::abc": "a written reason"}),
+        encoding="utf-8")
     mod = load(repo, monkeypatch)
-    assert [r["tool"] for r in mod.build_targets()] == ["tools/plain.py"]
+    assert [r["tool"] for r in mod.build_targets()] == ["tools/guarded.py"]
 
 
-def test_a_corrupt_allowlist_does_not_silently_exclude_everything(repo, monkeypatch):
-    """Failing open here is the safe direction: an unreadable allowlist must not empty
-    the corpus, which would read downstream as a clean sweep of nothing."""
+def test_an_unreadable_allowlist_cannot_affect_selection(repo, monkeypatch):
+    """It is not read here any more, so a corrupt one must be a non-event rather than an
+    empty corpus that reads downstream as a clean sweep of nothing."""
     add_tool(repo, "plain", mutants=3)
     (repo / "tools" / "mutation-allow.json").write_text("{not json", encoding="utf-8")
     mod = load(repo, monkeypatch)
@@ -569,7 +574,92 @@ def test_a_finished_sweep_says_so(repo, monkeypatch, capsys):
     assert "SWEEP COMPLETE" in capsys.readouterr().out
 
 
-# --- 9. the real tool, end to end -------------------------------------------
+# --- 10. the 2026-08-26 contamination, in both directions -------------------
+#
+# One timeout produced 41 consecutive FALSE `isolation_failed` findings, and separately
+# hid a real tool mutated on disk for two hours. Both halves are regressions now.
+
+def test_a_justified_allowlist_entry_does_not_delete_the_tool_from_the_corpus(repo,
+                                                                              monkeypatch):
+    """mutation-allow.json is keyed per MUTANT and mutation_check honours it that way.
+    Excluding the whole TOOL meant justifying one mutant silently removed it from
+    measurement forever -- it had removed check_public_pii.py, the always-on hook keeping
+    real names out of a PUBLIC repo, plus 8 others. Doing the right thing must not delete
+    the measurement."""
+    add_tool(repo, "guarded", mutants=40)
+    (repo / "tools" / "mutation-allow.json").write_text(
+        json.dumps({"tools/guarded.py::f::DROP_CALL::abc123": "justified, see incident"}),
+        encoding="utf-8")
+    mod = load(repo, monkeypatch)
+    rows = {r["tool"]: r for r in mod.build_targets()}
+    assert "tools/guarded.py" in rows, "an allowlisted MUTANT must not exclude the TOOL"
+    assert rows["tools/guarded.py"]["mutants"] == 40
+
+
+def test_a_timed_out_tool_is_restored_before_the_next_one_starts(repo, monkeypatch, capsys):
+    """subprocess.run(timeout=) kills with SIGKILL, which no handler can catch -- so the
+    SIGTERM/SIGINT/SIGHUP restore does NOT cover this path. A file left mutated here
+    contaminates every measurement after it: on 2026-08-26 conftest then refused every
+    later --isolation run and 41 tools were recorded as isolation_failed."""
+    state = write_targets(repo, [
+        {"tool": "tools/slow.py", "w": True, "h": False, "tests": 1, "mutants": 5},
+        {"tool": "tools/next.py", "w": False, "h": False, "tests": 1, "mutants": 2}])
+    target = repo / "tools" / "slow.py"
+    target.write_text("PRISTINE = 1\n", encoding="utf-8")
+    backup = repo / "tools" / "slow.py.mutation_backup"
+
+    # exactly the wreckage SIGKILL leaves: target mutated, backup stranded
+    def strand():
+        backup.write_text("PRISTINE = 1\n", encoding="utf-8")
+        target.write_text("MUTATED = 999\n", encoding="utf-8")
+    strand()
+
+    set_control(repo, sleep={"tools/slow.py": 30},
+                results={"tools/next.py": {"status": "clean", "survived": 0}})
+    mod = load(repo, monkeypatch)
+    mod.TOOL_TIMEOUT = 1
+    mod.run_sweep(state)
+    out = capsys.readouterr().out
+
+    assert target.read_text(encoding="utf-8") == "PRISTINE = 1\n", \
+        "the timed-out target must be restored, not left mutated for the rest of the run"
+    assert not backup.exists(), "the stranded backup must be cleared"
+    assert "REPAIRED" in out, "a silent repair hides that the run was ever contaminated"
+    assert banked(state)[0]["repaired"]
+
+
+def test_the_repair_is_recorded_not_silent(repo, monkeypatch, capsys):
+    """An unattended run that quietly fixes itself teaches you the timeout is harmless."""
+    state = write_targets(repo, [{"tool": "tools/a.py", "w": False, "h": False,
+                                  "tests": 1, "mutants": 2}])
+    (repo / "tools" / "a.py").write_text("X = 1\n", encoding="utf-8")
+    (repo / "tools" / "a.py.mutation_backup").write_text("X = 1\n", encoding="utf-8")
+    set_control(repo, results={"tools/a.py": {"status": "clean", "survived": 0}})
+    mod = load(repo, monkeypatch)
+    mod.run_sweep(state)
+    capsys.readouterr()
+    assert "restored tools/a.py" in banked(state)[0]["repaired"]
+
+
+def test_a_clean_tool_records_no_repair(repo, monkeypatch, capsys):
+    """The field must mean something: present only when wreckage was actually found."""
+    state = write_targets(repo, [{"tool": "tools/a.py", "w": False, "h": False,
+                                  "tests": 1, "mutants": 2}])
+    set_control(repo, results={"tools/a.py": {"status": "clean", "survived": 0}})
+    mod = load(repo, monkeypatch)
+    mod.run_sweep(state)
+    capsys.readouterr()
+    assert "repaired" not in banked(state)[0]
+
+
+def test_the_timeout_cap_covers_the_slowest_known_tool(repo, monkeypatch):
+    """pipe_write.py needs 68 minutes and was lost at 45. A cap below it is a cap that
+    loses the highest-blast-radius writer in the corpus every single run."""
+    mod = load(repo, monkeypatch)
+    assert mod.TOOL_TIMEOUT >= 68 * 60
+
+
+# --- 11. the real tool, end to end -------------------------------------------
 
 def test_the_real_tool_reports_its_own_self_exclusion(tmp_path):
     """Guards the wiring, not just the function: run the shipped file as the runbook
