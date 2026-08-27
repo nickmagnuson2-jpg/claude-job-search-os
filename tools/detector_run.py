@@ -195,27 +195,105 @@ def iter_text_units(raw_line: str):
 # matches how the false-positive rate was measured in the first place.
 MAX_LINE_CHARS = 200_000
 
+# The unit of analysis, take three. `iter_text_units` fixed "the raw JSON envelope" by
+# yielding authored text blocks instead. Measured 2026-08-27, that is still far too coarse:
+# a text block is a whole pasted document, median 10-25 KB for the top-firing rules, so a
+# regex matching one common fragment anywhere inside it scored the entire document as one
+# fire. The logged evidence was the document's first 300 characters, which is why the top
+# hits looked unrelated to the pattern that supposedly found them.
+#
+# So the scannable unit is a LINE. That is also what makes a hit adjudicable: the evidence
+# recorded is the text the regex actually matched, not the container it was sitting in.
+#
+# The cap is generous because a markdown paragraph is one line, and it is COUNTED rather
+# than silently applied -- an unscanned line must never be indistinguishable from a clean one.
+MAX_SCAN_LINE_CHARS = 4_000
 
-def scan_text(text: str, session: str, proven: list[dict], seen: set) -> list[dict]:
-    """Find fires in one transcript. Scans authored TEXT, deduped by (rule, session, text)."""
+# Recalled memory and injected context arrive inside <system-reminder> blocks. Their content
+# is the corpus talking about itself, never a session doing work, so scanning it counts the
+# rule's own statement as evidence that the rule was broken.
+_SYSTEM_REMINDER = re.compile(r"<system-reminder>.*?</system-reminder>", re.DOTALL)
+
+# The unmistakable marker of a memory rule file's frontmatter. A text unit carrying it is a
+# rule file that was read into the session, not authored work.
+_CORPUS_MARKER = re.compile(r"^\s*node_type:\s*memory\s*$", re.MULTILINE)
+
+# Frontmatter key lines carry the detector's own control string verbatim. Measured
+# 2026-08-27: `name_the_scope_before_stating_the_conclusion` fired on its own
+# `detector_control:` line. Left alone, every memory-hygiene session inflates every counter,
+# which is handoff section 6 pattern 4 ("this project reading its own corpus") reappearing
+# one level down.
+_CORPUS_KEY_LINE = re.compile(
+    r"^\s*(?:name|description|node_type|type|occurrences|promoted|promoted_date|exit_path"
+    r"|detector_signature|detector_control|reopen_gate|last_cited|originSessionId|modified)\s*:"
+)
+
+
+def strip_system_reminders(text: str) -> str:
+    """Drop <system-reminder> blocks: injected context, never authored work."""
+    return _SYSTEM_REMINDER.sub(" ", text)
+
+
+def is_corpus_text(unit: str) -> bool:
+    """True when this text unit is a memory rule file read into the session."""
+    return bool(_CORPUS_MARKER.search(unit))
+
+
+def iter_scan_lines(unit: str):
+    """Yield (line, oversized) for each scannable line of one text unit.
+
+    Corpus text yields nothing at all. Oversized lines are yielded flagged rather than
+    dropped, so the caller can report them instead of quietly shrinking its own denominator.
+    """
+    if is_corpus_text(unit):
+        return
+    for raw in strip_system_reminders(unit).splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if _CORPUS_KEY_LINE.match(line):
+            continue
+        yield line, len(line) > MAX_SCAN_LINE_CHARS
+
+
+def scan_text(text: str, session: str, proven: list[dict], seen: set) -> dict:
+    """Find fires in one transcript, one authored LINE at a time.
+
+    Returns fires plus the denominator they were found against. A hit count without the
+    number of lines it was drawn from is a bare numerator, and this repo has a rule about
+    reporting one of those.
+
+    `match` carries the span the regex actually matched. That is the field an adjudicator
+    reads: a detector is judged on what it matched, never on the count of how often.
+    """
     compiled = [(d, re.compile(d["regex"])) for d in proven]
     fires = []
+    lines_scanned = 0
+    lines_oversized = 0
     for raw in text.splitlines():
         if not raw or len(raw) > MAX_LINE_CHARS:
             continue
         for unit in iter_text_units(raw):
             if not unit:
                 continue
-            for d, pat in compiled:
-                if not pat.search(unit):
+            for line, oversized in iter_scan_lines(unit):
+                if oversized:
+                    lines_oversized += 1
                     continue
-                key = _fire_key(d["name"], session, unit)
-                if key in seen:
-                    continue
-                seen.add(key)
-                fires.append({"rule": d["name"], "session": session, "line": unit[:300],
-                              "occurrences_before": d["occurrences"]})
-    return fires
+                lines_scanned += 1
+                for d, pat in compiled:
+                    m = pat.search(line)
+                    if not m:
+                        continue
+                    key = _fire_key(d["name"], session, line)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    fires.append({"rule": d["name"], "session": session,
+                                  "line": line[:300], "match": m.group(0)[:200],
+                                  "occurrences_before": d["occurrences"]})
+    return {"fires": fires, "lines_scanned": lines_scanned,
+            "lines_oversized": lines_oversized}
 
 
 def count_oversized(text: str) -> int:
@@ -241,6 +319,8 @@ def scan(memory_dir: Path, transcripts: list[Path]) -> dict:
     fires: list[dict] = []
     scanned = 0
     skipped = 0
+    lines_scanned = 0
+    lines_oversized = 0
     for path in transcripts:
         try:
             text = path.read_text(encoding="utf-8", errors="replace")
@@ -248,7 +328,10 @@ def scan(memory_dir: Path, transcripts: list[Path]) -> dict:
             continue
         scanned += 1
         skipped += count_oversized(text)
-        fires.extend(scan_text(text, path.stem, proven, seen))
+        result = scan_text(text, path.stem, proven, seen)
+        fires.extend(result["fires"])
+        lines_scanned += result["lines_scanned"]
+        lines_oversized += result["lines_oversized"]
 
     return {
         "registered": len(detectors),
@@ -257,6 +340,8 @@ def scan(memory_dir: Path, transcripts: list[Path]) -> dict:
         "fires": fires,
         "transcripts_scanned": scanned,
         "lines_skipped_oversized": skipped,
+        "lines_scanned": lines_scanned,
+        "lines_over_scan_cap": lines_oversized,
         "ok": not refused,
     }
 

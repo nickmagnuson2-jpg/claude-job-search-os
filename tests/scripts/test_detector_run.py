@@ -449,3 +449,143 @@ def test_unparseable_frontmatter_yields_a_real_dict():
 def test_non_dict_frontmatter_yields_a_real_dict():
     out = dr.parse_frontmatter("---\n- a\n- b\n---\nbody\n")
     assert out == {} and isinstance(out, dict)
+
+
+# ------------------------------------------------- the unit of analysis is a LINE
+#
+# Measured 2026-08-27 over 86 transcripts: matching against a whole authored text block
+# scored a document as one fire because a common fragment appeared somewhere inside it.
+# The top-firing rules had a median matched unit of 10-25 KB, and the evidence logged was
+# the container's first 300 characters rather than the text the regex matched.
+
+def _transcript(tmp_path: Path, name: str, text: str) -> Path:
+    """One assistant record carrying `text` as its authored content."""
+    rec = {"type": "assistant",
+           "message": {"role": "assistant", "content": [{"type": "text", "text": text}]}}
+    p = tmp_path / name
+    p.write_text(json.dumps(rec) + "\n", encoding="utf-8")
+    return p
+
+
+def test_a_match_is_confined_to_its_own_line(tmp_path):
+    """The killer case: needle and a far-away neighbour must not merge into one unit."""
+    rule(tmp_path, "feedback_a.md", sig=r"\bNEEDLE\b", control="NEEDLE here")
+    t = _transcript(tmp_path, "s1.jsonl", "clean prose line\nNEEDLE on its own line\nmore prose")
+    fires = dr.scan(tmp_path, [t])["fires"]
+    assert len(fires) == 1
+    assert fires[0]["line"] == "NEEDLE on its own line", (
+        "the evidence must be the matched LINE, never the enclosing block")
+
+
+def test_two_matching_lines_in_one_block_are_two_fires(tmp_path):
+    """Document granularity collapsed these to one, hiding the real hit count."""
+    rule(tmp_path, "feedback_a.md", sig=r"\bNEEDLE\b", control="NEEDLE here")
+    t = _transcript(tmp_path, "s1.jsonl", "NEEDLE one\nfiller\nNEEDLE two")
+    assert len(dr.scan(tmp_path, [t])["fires"]) == 2
+
+
+def test_the_matched_span_is_recorded_for_adjudication(tmp_path):
+    """A detector is judged on WHAT it matched. Without the span there is nothing to judge."""
+    rule(tmp_path, "feedback_a.md", sig=r"\d+%", control="up 12% today")
+    t = _transcript(tmp_path, "s1.jsonl", "revenue rose 12% last quarter")
+    assert dr.scan(tmp_path, [t])["fires"][0]["match"] == "12%"
+
+
+def test_lines_scanned_is_reported_as_the_denominator(tmp_path):
+    """A hit count without the lines it was drawn from is a bare numerator."""
+    rule(tmp_path, "feedback_a.md", sig=r"\bNEEDLE\b", control="NEEDLE here")
+    t = _transcript(tmp_path, "s1.jsonl", "one\ntwo\nNEEDLE")
+    assert dr.scan(tmp_path, [t])["lines_scanned"] == 3
+
+
+def test_a_line_over_the_scan_cap_is_counted_not_silently_dropped(tmp_path):
+    rule(tmp_path, "feedback_a.md", sig=r"\bNEEDLE\b", control="NEEDLE here")
+    t = _transcript(tmp_path, "s1.jsonl", "x " * dr.MAX_SCAN_LINE_CHARS + "NEEDLE")
+    report = dr.scan(tmp_path, [t])
+    assert report["fires"] == []
+    assert report["lines_over_scan_cap"] == 1, (
+        "an unscanned line must never be indistinguishable from a clean one")
+
+
+# ------------------------------------------------- the corpus must not fire its own detectors
+
+def test_a_rule_file_read_into_a_session_does_not_fire_its_own_detector(tmp_path):
+    """Otherwise every memory-hygiene session inflates every counter."""
+    rule(tmp_path, "feedback_a.md", sig=r"\bNEEDLE\b", control="NEEDLE here")
+    t = _transcript(tmp_path, "s1.jsonl",
+                    "---\nname: feedback_a\nmetadata:\n  node_type: memory\n"
+                    "  detector_control: NEEDLE here\n---\nNEEDLE in the body")
+    assert dr.scan(tmp_path, [t])["fires"] == []
+
+
+def test_a_detector_control_line_never_counts_as_a_fire(tmp_path):
+    """Measured: name_the_scope fired on its own `detector_control:` line."""
+    rule(tmp_path, "feedback_a.md", sig=r"\bNEEDLE\b", control="NEEDLE here")
+    t = _transcript(tmp_path, "s1.jsonl", "detector_control: \"NEEDLE here\"")
+    assert dr.scan(tmp_path, [t])["fires"] == []
+
+
+def test_recalled_memory_in_a_system_reminder_does_not_fire(tmp_path):
+    rule(tmp_path, "feedback_a.md", sig=r"\bNEEDLE\b", control="NEEDLE here")
+    t = _transcript(tmp_path, "s1.jsonl",
+                    "<system-reminder>NEEDLE was recalled</system-reminder>")
+    assert dr.scan(tmp_path, [t])["fires"] == []
+
+
+def test_authored_text_beside_a_system_reminder_still_fires(tmp_path):
+    """The exclusion must be scoped to the block, or it silences real work."""
+    rule(tmp_path, "feedback_a.md", sig=r"\bNEEDLE\b", control="NEEDLE here")
+    t = _transcript(tmp_path, "s1.jsonl",
+                    "<system-reminder>context</system-reminder>\nNEEDLE in real work")
+    assert len(dr.scan(tmp_path, [t])["fires"]) == 1
+
+
+def test_ordinary_prose_mentioning_a_frontmatter_word_still_fires(tmp_path):
+    """The corpus filter keys on `key:` at line start, not the bare word anywhere."""
+    rule(tmp_path, "feedback_a.md", sig=r"\bNEEDLE\b", control="NEEDLE here")
+    t = _transcript(tmp_path, "s1.jsonl", "the occurrences of NEEDLE are worth counting")
+    assert len(dr.scan(tmp_path, [t])["fires"]) == 1
+
+
+def test_is_corpus_text_needs_the_memory_marker(tmp_path):
+    assert dr.is_corpus_text("metadata:\n  node_type: memory\n")
+    assert not dr.is_corpus_text("we discussed node_type memory yesterday")
+
+
+def test_strip_system_reminders_leaves_surrounding_text(tmp_path):
+    out = dr.strip_system_reminders("before<system-reminder>gone</system-reminder>after")
+    assert "gone" not in out and "before" in out and "after" in out
+
+
+def test_the_line_granularity_fixture_detector_is_actually_PROVEN(tmp_path):
+    """Guard against the false pass these tests were first written with.
+
+    `sig=r"NEEDLE"` has no regex metacharacters, so `extract_patterns` yields nothing, the
+    detector is REFUSED, and every assertion of the form `fires == []` goes green for a
+    reason that has nothing to do with the behaviour under test. Four corpus-exclusion
+    cases passed that way before this was caught. If the shared fixture ever stops being a
+    real detector, this fails first and says so.
+    """
+    rule(tmp_path, "feedback_a.md", sig=r"\bNEEDLE\b", control="NEEDLE here")
+    report = dr.scan(tmp_path, [_transcript(tmp_path, "s1.jsonl", "nothing to see")])
+    assert report["proven"] == 1 and report["refused"] == []
+
+
+def test_a_blank_line_is_not_counted_in_the_denominator(tmp_path):
+    """Blank lines would inflate `lines_scanned`, deflating every per-line rate computed
+    from it -- a detector would look more restrained than it is."""
+    rule(tmp_path, "feedback_a.md", sig=r"\bNEEDLE\b", control="NEEDLE here")
+    t = _transcript(tmp_path, "s1.jsonl", "one\n\n   \ntwo")
+    assert dr.scan(tmp_path, [t])["lines_scanned"] == 2
+
+
+def test_an_oversized_raw_record_is_not_scanned_at_all(tmp_path):
+    """The catastrophic-backtracking guard: a huge JSONL record must be skipped before the
+    regexes ever touch it, and must not contribute fires or denominator."""
+    rec = {"type": "assistant", "message": {"role": "assistant", "content": [
+        {"type": "text", "text": "x" * (dr.MAX_LINE_CHARS + 10) + "\nNEEDLE"}]}}
+    p = tmp_path / "s1.jsonl"
+    p.write_text(json.dumps(rec) + "\n", encoding="utf-8")
+    rule(tmp_path, "feedback_a.md", sig=r"\bNEEDLE\b", control="NEEDLE here")
+    report = dr.scan(tmp_path, [p])
+    assert report["fires"] == [] and report["lines_scanned"] == 0
