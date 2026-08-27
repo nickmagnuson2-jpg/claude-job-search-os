@@ -50,6 +50,16 @@ import sys
 import time
 from pathlib import Path
 
+# ONE source of truth for "which tests cover this tool". Restating the rule here is what
+# let selection and measurement drift apart.
+#
+# The path insert is load-bearing, not defensive boilerplate: `python3 tools/mutation_sweep.py`
+# puts tools/ on sys.path[0], but importing this file BY PATH (spec_from_file_location, which
+# is how its own tests load it) does not, and the bare import then dies with
+# ModuleNotFoundError. Same file, two import mechanisms, and only one of them worked.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import mutation_check  # noqa: E402
+
 REPO_ROOT = Path(os.environ.get("MUTATION_REPO_ROOT",
                                 Path(__file__).resolve().parents[1])).resolve()
 DEFAULT_STATE = REPO_ROOT / "output" / "analysis" / "082626-mutation-baseline"
@@ -96,8 +106,8 @@ def build_targets() -> list[dict]:
     rows = []
     for tool in sorted((REPO_ROOT / "tools").glob("*.py")):
         rel = f"tools/{tool.name}"
-        test_file = REPO_ROOT / "tests" / "scripts" / f"test_{tool.stem}.py"
-        if not test_file.exists():
+        test_files = mutation_check.map_tests(tool, REPO_ROOT)
+        if not test_files:
             continue
         if tool.name == SELF_NAME:
             # Recorded, not silently dropped: a -1 row lands in `self_excluded` so the
@@ -105,7 +115,8 @@ def build_targets() -> list[dict]:
             # still possible -- run mutation_check.py on it directly, with no sweep in
             # flight.
             rows.append({"tool": rel, "w": True, "h": tool.name in wired,
-                         "tests": count_tests(test_file), "mutants": -1})
+                         "tests": sum(count_tests(f) for f in test_files),
+                         "mutants": -1})
             continue
         proc = subprocess.run(
             [sys.executable, "tools/mutation_check.py", rel, "--list"],
@@ -118,7 +129,7 @@ def build_targets() -> list[dict]:
         rows.append({"tool": rel,
                      "w": bool(_WRITER_RE.search(tool.read_text(encoding="utf-8"))),
                      "h": tool.name in wired,
-                     "tests": count_tests(test_file),
+                     "tests": sum(count_tests(f) for f in test_files),
                      "mutants": mutants})
     rows.sort(key=lambda r: (not r["w"], not r["h"], -r["tests"]))
     return rows

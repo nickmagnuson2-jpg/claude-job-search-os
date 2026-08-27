@@ -659,7 +659,83 @@ def test_the_timeout_cap_covers_the_slowest_known_tool(repo, monkeypatch):
     assert mod.TOOL_TIMEOUT >= 68 * 60
 
 
-# --- 11. the real tool, end to end -------------------------------------------
+# --- 12. selection must not restate a rule that lives elsewhere -------------
+#
+# The sweep runs `mutation_check.py <tool>` with NO --tests, so mutation_check's
+# map_tests() is what actually decides which tests grade the mutants. Selection used to
+# require the exact name tests/scripts/test_<stem>.py, so the two disagreed and 24 tools
+# with real tests under other names were dropped as "untested" -- among them
+# todo_write.py, which mutates the real data/job-todos.md and has THREE test files.
+# Coverage was reported as 76 of 76 while it was really 76 of 145.
+
+def test_a_tool_tested_under_a_prefixed_name_is_selected(repo, monkeypatch):
+    """The todo_write.py case: test_todo_write_roundtrip.py and friends exist, but
+    test_todo_write.py does not. Note map_tests matches on file CONTENT, not on the
+    filename -- only the exact test_<stem>.py is matched by name -- so the covering file
+    has to actually mention the module, as a real one does by importing it."""
+    (repo / "tools" / "widget.py").write_text("def f(n):\n    return n + 1\n",
+                                              encoding="utf-8")
+    (repo / "tests" / "scripts" / "test_widget_roundtrip.py").write_text(
+        "import widget\n\n\ndef test_a():\n    assert widget.f(1) == 2\n",
+        encoding="utf-8")
+    set_control(repo, mutants={"tools/widget.py": 12})
+    mod = load(repo, monkeypatch)
+    assert [r["tool"] for r in mod.build_targets()] == ["tools/widget.py"]
+
+
+def test_a_tool_covered_only_by_reference_is_selected(repo, monkeypatch):
+    """A test file that drives the tool without being named after it still covers it."""
+    (repo / "tools" / "widget.py").write_text("def f(n):\n    return n + 1\n",
+                                              encoding="utf-8")
+    (repo / "tests" / "scripts" / "test_something_else.py").write_text(
+        "import widget\n\n\ndef test_a():\n    assert widget.f(1) == 2\n",
+        encoding="utf-8")
+    set_control(repo, mutants={"tools/widget.py": 5})
+    mod = load(repo, monkeypatch)
+    assert [r["tool"] for r in mod.build_targets()] == ["tools/widget.py"]
+
+
+def test_a_tool_with_no_test_presence_is_still_excluded(repo, monkeypatch):
+    """The gate must still be a gate: broader is not the same as absent."""
+    (repo / "tools" / "orphan.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+    mod = load(repo, monkeypatch)
+    assert [r["tool"] for r in mod.build_targets()] == []
+
+
+def test_the_test_count_sums_every_mapped_file(repo, monkeypatch):
+    """The count feeds the worst-first ranking. Counting one file of three understates
+    how much coverage a tool already has and mis-sorts the work list."""
+    (repo / "tools" / "widget.py").write_text("def f(n):\n    return n + 1\n",
+                                              encoding="utf-8")
+    for name, n in (("test_widget.py", 2), ("test_widget_extra.py", 3)):
+        (repo / "tests" / "scripts" / name).write_text(
+            "import widget\n\n\n" + "".join(
+                f"def test_{i}():\n    assert widget.f({i}) == {i + 1}\n\n\n"
+                for i in range(n)), encoding="utf-8")
+    set_control(repo, mutants={"tools/widget.py": 7})
+    mod = load(repo, monkeypatch)
+    assert mod.build_targets()[0]["tests"] == 5
+
+
+def test_selection_agrees_with_mutation_check_on_the_real_repo(repo, monkeypatch):
+    """SINGLE SOURCE OF TRUTH guard, per CLAUDE.md: when the same domain rule appears in a
+    second tool, it gets one implementation plus a cross-tool parity test. Selection and
+    measurement disagreeing is not hypothetical here -- it is the bug this section exists
+    for, and a reimplementation would pass every test above while silently diverging."""
+    import sys
+    sys.path.insert(0, str(REPO_ROOT / "tools"))
+    import mutation_check as mc
+
+    mod = load(REPO_ROOT, monkeypatch)
+    selected = {r["tool"] for r in mod.build_targets()}
+    expected = {f"tools/{p.name}" for p in sorted((REPO_ROOT / "tools").glob("*.py"))
+                if mc.map_tests(p, REPO_ROOT)}
+    assert selected == expected, (
+        "build_targets must select exactly what mutation_check.map_tests covers; "
+        f"only in selection: {selected - expected}; only in map_tests: {expected - selected}")
+
+
+# --- 13. the real tool, end to end -------------------------------------------
 
 def test_the_real_tool_reports_its_own_self_exclusion(tmp_path):
     """Guards the wiring, not just the function: run the shipped file as the runbook

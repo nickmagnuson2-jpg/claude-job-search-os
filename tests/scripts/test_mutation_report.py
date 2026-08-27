@@ -349,11 +349,17 @@ def test_the_real_tool_runs_against_the_live_sweep_state(tmp_path):
     """Verified on real data, not only fixtures: a green fixture suite hides real-data
     divergence, which is a standing rule in this repo."""
     live = REPO_ROOT / "output" / "analysis" / "082626-mutation-baseline"
-    if not (live / "targets.json").exists():
+    # Guard on the files this test actually READS, not on a neighbour. Guarding on
+    # targets.json alone made the test explode in a git worktree, where `--targets` had
+    # created targets.json but no results file existed -- a skip condition that skipped
+    # the wrong thing.
+    results = next((live / n for n in ("baseline.jsonl", "baseline.run1-contaminated.jsonl",
+                                       "baseline.pre-weakfix.jsonl")
+                    if (live / n).exists()), None)
+    if not (live / "targets.json").exists() or results is None:
         pytest.skip("no live sweep state in this tree")
     rows = [json.loads(l) for l in
-            (live / "baseline.pre-weakfix.jsonl").read_text(encoding="utf-8").splitlines()
-            if l.strip()]
+            results.read_text(encoding="utf-8").splitlines() if l.strip()]
     d = state(tmp_path, json.loads((live / "targets.json").read_text(encoding="utf-8")),
               rows)
     r = subprocess.run(

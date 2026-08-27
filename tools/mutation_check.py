@@ -175,10 +175,16 @@ def mutant_key(rel_path: str, func: str, op: str, source_line: str) -> str:
 # Test mapping
 # ---------------------------------------------------------------------------
 
-def map_tests(target: Path) -> list[Path]:
-    """Test files that plausibly cover `target`, by name and by import reference."""
+def map_tests(target: Path, repo_root: Path | None = None) -> list[Path]:
+    """Test files that plausibly cover `target`, by name and by import reference.
+
+    `repo_root` is explicit for callers in another module. mutation_sweep imports this
+    function to decide selection, and a module-level REPO_ROOT resolved at ITS import time
+    can differ from the caller's -- which is exactly how selection and measurement drifted
+    apart before. Passing it removes the coupling instead of documenting it.
+    """
     stem = target.stem
-    tests_dir = REPO_ROOT / "tests"
+    tests_dir = (repo_root or REPO_ROOT) / "tests"
     if not tests_dir.exists():
         return []
     hits = set()
