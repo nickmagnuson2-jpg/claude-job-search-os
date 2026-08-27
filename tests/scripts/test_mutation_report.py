@@ -369,3 +369,180 @@ def test_the_real_tool_runs_against_the_live_sweep_state(tmp_path):
     assert r.returncode == 0, r.stderr
     assert f"Sweep coverage: {len(rows)} of" in r.stdout
     assert "NOT MEASURED" in r.stdout
+
+
+# --- 10. the loudest findings ------------------------------------------------
+#
+# Two things the sweep already knew and the report never said, both added 2026-08-27.
+# A tool whose mapped tests kill ZERO mutants is not "poorly covered", it is uncovered
+# while displaying a test count -- and ranking by absolute survivors buried it:
+# check_email_via_skill.py had all 23 mutants survive and still sorted tenth.
+
+def test_a_tool_whose_tests_kill_nothing_gets_its_own_section(tmp_path):
+    d = state(tmp_path, [target("tools/dead.py", mutants=23, tests=13)],
+              [result("tools/dead.py", survived=23, killed=0, mutants=23, tests=13)])
+    body = load().build(d)
+    assert "kill NOTHING" in body
+    assert "1 tools where not one mutant died" in body
+    assert "`dead.py`" in body.split("kill NOTHING")[1].split("###")[0]
+
+
+def test_the_dead_section_reports_the_test_count_that_reads_as_coverage(tmp_path):
+    """The count is the whole reason this is worse than having no tests: a reader checks
+    `tests=13` and moves on."""
+    d = state(tmp_path, [target("tools/dead.py", mutants=23, tests=13)],
+              [result("tools/dead.py", survived=23, killed=0, mutants=23, tests=13)])
+    section = load().build(d).split("kill NOTHING")[1].split("### By category")[0]
+    assert "| 23 |" in section and "| 13 |" in section
+
+
+def test_the_dead_section_names_how_many_files_were_mapped(tmp_path):
+    """Mapped-file count is the tell for a selection artifact: files mapped by an
+    incidental string match look like coverage and exercise nothing."""
+    tgt = target("tools/dead.py", mutants=9, tests=2)
+    tgt["test_files"] = 1
+    d = state(tmp_path, [tgt], [result("tools/dead.py", survived=9, killed=0, mutants=9)])
+    section = load().build(d).split("kill NOTHING")[1].split("### By category")[0]
+    assert "files mapped" in section
+
+
+def test_a_tool_with_any_kill_is_not_in_the_dead_section(tmp_path):
+    """One kill means the tests reach the code. That is a different finding."""
+    d = state(tmp_path, [target("tools/weak.py", mutants=10)],
+              [result("tools/weak.py", survived=9, killed=1, mutants=10)])
+    body = load().build(d)
+    assert "kill NOTHING" not in body
+
+
+def test_a_tool_with_no_mutants_is_not_accused_of_killing_nothing(tmp_path):
+    """Nothing to kill is not the same as killing nothing, and the accusation would send
+    someone to write tests for a file with no mutable decisions."""
+    d = state(tmp_path, [target("tools/tiny.py", mutants=0)],
+              [result("tools/tiny.py", survived=0, killed=0, mutants=0)])
+    assert "kill NOTHING" not in load().build(d)
+
+
+def test_the_dead_section_comes_before_the_ranked_work_list(tmp_path):
+    """Position IS the point: the ranked list is what buried this finding."""
+    d = state(tmp_path, [target("tools/dead.py", mutants=23), target("tools/big.py")],
+              [result("tools/dead.py", survived=23, killed=0, mutants=23),
+               result("tools/big.py", survived=5)])
+    body = load().build(d)
+    assert body.index("kill NOTHING") < body.index("Ranked worst-first")
+
+
+def test_no_dead_tools_means_no_section_at_all(tmp_path):
+    """`0 tools where not one mutant died` is noise that trains the reader to skip it."""
+    d = state(tmp_path, [target("tools/ok.py")], [result("tools/ok.py", survived=1)])
+    assert "kill NOTHING" not in load().build(d)
+
+
+def test_assertion_free_tests_are_named_with_their_location(tmp_path):
+    """Collected by the sweep since it existed and never displayed -- the same defect as
+    the suppressed weak_kill_count: measured, recorded, invisible."""
+    d = state(tmp_path, [target("tools/a.py")],
+              [result("tools/a.py", survived=1, assertion_free_tests=[
+                  {"file": "tests/scripts/test_a.py", "test": "test_nothing", "line": 43}])])
+    body = load().build(d)
+    assert "Tests that cannot fail" in body
+    assert "1 tests contain no assertion at all" in body
+    assert "`test_nothing`" in body and "tests/scripts/test_a.py:43" in body
+
+
+def test_tautological_assertions_are_reported_separately(tmp_path):
+    """A missing assertion and an assertion that cannot fail are different repairs."""
+    d = state(tmp_path, [target("tools/a.py")],
+              [result("tools/a.py", survived=1, tautological_assertions=[
+                  {"file": "tests/scripts/test_a.py", "test": "test_always", "line": 7}])])
+    body = load().build(d)
+    assert "tautological" in body
+    assert "`test_always`" in body
+
+
+def test_the_cannot_fail_section_is_absent_when_there_is_nothing_to_report(tmp_path):
+    d = state(tmp_path, [target("tools/a.py")], [result("tools/a.py", survived=1)])
+    assert "Tests that cannot fail" not in load().build(d)
+
+
+def test_unaudited_rows_contribute_to_neither_new_section(tmp_path):
+    """A timed-out tool has no result. Reporting it as killing nothing would be an
+    accusation built on silence."""
+    d = state(tmp_path, [target("tools/slow.py", mutants=50)],
+              [{"tool": "tools/slow.py", "status": "UNAUDITED_TIMEOUT", "mutants": 50,
+                "assertion_free_tests": [{"file": "f.py", "test": "t", "line": 1}]}])
+    body = load().build(d)
+    assert "kill NOTHING" not in body
+    assert "Tests that cannot fail" not in body
+
+
+# --- 11. the new sections have to render as documents too --------------------
+#
+# Every assertion below was a surviving mutant. A Markdown table missing its |---|
+# separator does not render as a table, and a section that appears with an empty body
+# because its guard was forced true is worse than no section: it reads as "checked,
+# nothing found" when nothing was checked.
+
+def test_the_dead_table_keeps_its_header_and_separator(tmp_path):
+    d = state(tmp_path, [target("tools/dead.py", mutants=9)],
+              [result("tools/dead.py", survived=9, killed=0, mutants=9)])
+    body = load().build(d)
+    header = "| tool | mutants | all survived | tests mapped | files mapped |"
+    assert header in body
+    assert body.split(header)[1].splitlines()[1] == "|---|---|---|---|---|"
+
+
+def test_the_dead_section_keeps_its_remediation_guidance(tmp_path):
+    """Two different repairs hide behind one symptom -- tests that do not exercise the
+    tool, and tests that exercise it without asserting. Naming both is the difference
+    between an actionable finding and a scolding."""
+    d = state(tmp_path, [target("tools/dead.py", mutants=9)],
+              [result("tools/dead.py", survived=9, killed=0, mutants=9)])
+    body = load().build(d)
+    assert "do not actually exercise the tool" in body
+    assert "without asserting" in body
+
+
+def test_the_cannot_fail_section_keeps_its_explanation(tmp_path):
+    """Without it the tables read as more mutation results. These are STATIC findings and
+    mean something different: not weak, decorative."""
+    d = state(tmp_path, [target("tools/a.py")],
+              [result("tools/a.py", survived=1, assertion_free_tests=[
+                  {"file": "f.py", "test": "t", "line": 1}])])
+    body = load().build(d)
+    assert "Found statically, not by mutation" in body
+
+
+def test_assertion_free_table_renders_when_it_is_the_only_finding(tmp_path):
+    d = state(tmp_path, [target("tools/a.py")],
+              [result("tools/a.py", survived=1, assertion_free_tests=[
+                  {"file": "f.py", "test": "t", "line": 1}])])
+    body = load().build(d)
+    header = "| tool | test | file:line |"
+    assert header in body
+    assert body.split(header)[1].splitlines()[1] == "|---|---|---|"
+
+
+def test_tautological_table_renders_when_it_is_the_only_finding(tmp_path):
+    d = state(tmp_path, [target("tools/a.py")],
+              [result("tools/a.py", survived=1, tautological_assertions=[
+                  {"file": "f.py", "test": "t", "line": 1}])])
+    body = load().build(d)
+    header = "| tool | test | file:line |"
+    assert header in body
+    assert body.split(header)[1].splitlines()[1] == "|---|---|---|"
+
+
+def test_only_tautological_findings_do_not_claim_missing_assertions(tmp_path):
+    """Forcing the assertion-free guard true prints its heading over an empty table --
+    an accusation of a defect that was not found."""
+    d = state(tmp_path, [target("tools/a.py")],
+              [result("tools/a.py", survived=1, tautological_assertions=[
+                  {"file": "f.py", "test": "t", "line": 1}])])
+    assert "contain no assertion at all" not in load().build(d)
+
+
+def test_only_assertion_free_findings_do_not_claim_tautologies(tmp_path):
+    d = state(tmp_path, [target("tools/a.py")],
+              [result("tools/a.py", survived=1, assertion_free_tests=[
+                  {"file": "f.py", "test": "t", "line": 1}])])
+    assert "tautological" not in load().build(d)

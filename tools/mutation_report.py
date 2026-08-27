@@ -67,6 +67,38 @@ def build(state_dir: Path) -> str:
           f"mutants = {100*tot_s/tot_m:.1f}% survival.** {tot_k} killed. A survivor is a "
           f"decision that was changed with the whole suite still green.\n")
 
+    # THE LOUDEST FINDING GOES FIRST, above the ranked list.
+    #
+    # A tool whose mapped tests kill ZERO mutants is not "poorly covered" -- it is
+    # UNCOVERED while reporting a test count, which is worse, because the count is what a
+    # reader checks. Ranking by absolute survivors buries it: check_email_via_skill.py has
+    # every one of its 23 mutants survive and still sorts tenth, under tools that are
+    # partially working. These are different kinds of finding and interleaving them by
+    # count hides the severe one.
+    #
+    # It also diagnoses the SELECTION rule. map_tests() maps a test file to a tool when the
+    # file's text mentions it, so a tool can be swept in by an incidental string match --
+    # cv_merge_theme.py's two "tests" include test_pyyaml_actually_importable, which does
+    # not exercise it at all. Zero kills with mapped tests present means the map claimed
+    # coverage that does not exist. Mutation survival is the only instrument that tells
+    # those apart, so the report says it rather than the selection rule guessing.
+    dead = [r for r in ok if r["mutants"] and not (r.get("killed") or 0)]
+    if dead:
+        w("\n### ⛔ Mapped tests that kill NOTHING\n")
+        w(f"**{len(dead)} tools where not one mutant died.** Every decision in these files "
+          "can be changed with the whole suite green. They carry a test count, which is "
+          "what makes them worse than a tool with no tests at all: the count reads as "
+          "coverage.\n")
+        w("| tool | mutants | all survived | tests mapped | files mapped |")
+        w("|---|---|---|---|---|")
+        for r in sorted(dead, key=lambda x: -x["mutants"]):
+            files = targets.get(r["tool"], {}).get("test_files", "?")
+            w(f"| `{r['tool'][6:]}` | {r['mutants']} | **{r.get('survived')}** | "
+              f"{r.get('tests')} | {files} |")
+        w("\nFor each: either the mapped files do not actually exercise the tool (a "
+          "selection artifact -- write real tests), or they exercise it without asserting "
+          "anything about the result. Both look identical from a green suite.\n")
+
     w("\n### By category\n")
     w("| category | tools | mutants | survivors | survival |")
     w("|---|---|---|---|---|")
@@ -95,6 +127,29 @@ def build(state_dir: Path) -> str:
     w(f"\n\n**{len(iso)} tools fail `--isolation`** — the test file does not pass when run "
       "ALONE, so it is relying on suite ordering"
       + (": " + ", ".join(f"`{r['tool'][6:]}`" for r in iso) if iso else "."))
+
+    # Collected by the sweep since it existed and never displayed until 2026-08-27 --
+    # the same defect as the suppressed weak_kill_count: measured, recorded, invisible.
+    af = [(r["tool"], t) for r in ok for t in (r.get("assertion_free_tests") or [])]
+    ta = [(r["tool"], t) for r in ok for t in (r.get("tautological_assertions") or [])]
+    if af or ta:
+        w("\n\n### Tests that cannot fail\n")
+        w("Found statically, not by mutation: these run and report green whatever the "
+          "code does. A mutation survivor tells you a test is weak; this tells you a "
+          "test is decorative.\n")
+    if af:
+        w(f"\n**{len(af)} tests contain no assertion at all.**\n")
+        w("| tool | test | file:line |")
+        w("|---|---|---|")
+        for tool, t in af:
+            w(f"| `{tool[6:]}` | `{t.get('test')}` | {t.get('file')}:{t.get('line')} |")
+    if ta:
+        w(f"\n**{len(ta)} assertions are tautological** (cannot fail regardless of the "
+          "code -- e.g. `assert x or True`).\n")
+        w("| tool | test | file:line |")
+        w("|---|---|---|")
+        for tool, t in ta:
+            w(f"| `{tool[6:]}` | `{t.get('test')}` | {t.get('file')}:{t.get('line')} |")
 
     w("\n\n### Crash kills — of the mutants that died, how many died to an assertion\n")
     w("A weak kill means the suite noticed the mutation only because the code CRASHED, "
