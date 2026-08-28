@@ -64,8 +64,14 @@ REPO_ROOT = Path(os.environ.get("MUTATION_REPO_ROOT",
                                 Path(__file__).resolve().parents[1])).resolve()
 DEFAULT_STATE = REPO_ROOT / "output" / "analysis" / "082626-mutation-baseline"
 # pipe_write.py needs 68 minutes and was lost at the old 45-minute cap, taking the rest
-# of the run's isolation results with it. 120 leaves headroom for a slow newcomer.
-TOOL_TIMEOUT = 120 * 60
+# of the run's isolation results with it.
+#
+# Raised 120 -> 300 on 2026-08-28. Cost is mutants x mapped test files, and todo_write.py
+# is 541 x 15 = 8115 test-runs. Calibrated against pipe_write's measured 68 minutes for
+# 2431 runs (~1.7s/run), that is ~227 minutes, so at 120 it could never finish: it burned
+# two hours and returned UNAUDITED_TIMEOUT, which is no information at all. The cap exists
+# to stop one tool eating a whole night, not to be shorter than the corpus's largest tool.
+TOOL_TIMEOUT = 300 * 60
 
 # The sweep executes FROM this file. Letting it become a target means rewriting live
 # source out from under the running process -- the same hazard mutation_check.py refuses

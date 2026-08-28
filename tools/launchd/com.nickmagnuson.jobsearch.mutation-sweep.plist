@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  mutation-sweep: finish the corpus mutation baseline overnight.
+
+  TEMPORARY, NOT PART OF THE STANDING SET. This is deliberately absent from install.sh's
+  PLISTS array so a routine `install.sh` never resurrects it. It exists to re-measure the
+  8 tools that came back baseline_red on 2026-08-27, and should be unloaded once the
+  sweep reports SWEEP COMPLETE:
+      launchctl unload ~/Library/LaunchAgents/com.nickmagnuson.jobsearch.mutation-sweep.plist
+      rm ~/Library/LaunchAgents/com.nickmagnuson.jobsearch.mutation-sweep.plist
+
+  IT RECURS UNTIL UNLOADED, AND THAT IS SAFE. mutation_sweep resumes by tool name against
+  baseline.jsonl, so a second 16:00 fire finds 0 unbanked tools and exits in seconds. The
+  cost of forgetting is noise in the log, not a re-run.
+
+  CAFFEINATE. The run is ~7 hours. Without -is the Mac idle-sleeps partway and the sweep
+  is suspended mid-tool, which strands a .mutation_backup and makes the next run refuse
+  at conftest. -i blocks idle sleep, -s blocks system sleep while on AC power.
+
+  LOG FILES: never create, touch, or truncate anything in tools/launchd/logs/ from a Claude
+  Code Bash call - files created that way inherit a com.apple.provenance xattr that launchd
+  cannot open, and the job dies at EX_CONFIG (78) before the script runs, logging nothing.
+  Rotation must DELETE and let launchd recreate. See reference_launchd_ex_config_provenance_xattr.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.nickmagnuson.jobsearch.mutation-sweep</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>-lc</string>
+        <string>cd "$HOME/Documents/Obsidian/30-projects/job-search" &amp;&amp; PYTHONIOENCODING=utf-8 /usr/bin/caffeinate -is /usr/bin/env python3 tools/mutation_sweep.py</string>
+    </array>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key><integer>16</integer>
+        <key>Minute</key><integer>0</integer>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>/Users/mag/Documents/Obsidian/30-projects/job-search/tools/launchd/logs/mutation-sweep.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/mag/Documents/Obsidian/30-projects/job-search/tools/launchd/logs/mutation-sweep.err</string>
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>

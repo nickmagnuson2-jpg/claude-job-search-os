@@ -31,10 +31,31 @@ import mutation_check as mc  # noqa: E402
 
 
 def _run(args, cwd=None):
+    """Spawn mutation_check.py in a DETERMINISTIC environment.
+
+    MUTATION_CHECK_ACTIVE is stripped, never inherited. It is the flag `run_tests` sets to
+    exempt its own subprocesses from the conftest stranded-backup refusal, so when these
+    tests are themselves run from inside a mutation run, the ambient value leaks into every
+    subprocess spawned here and silently changes what is being tested.
+
+    THE INCIDENT (2026-08-27). The corpus sweep banked 109 tools and MEASURED only 101.
+    Eight returned `baseline_red` in ~21s, which reads as "this tool's suite is broken" and
+    is not what happened: 7 of the 8 map `test_mutation_check.py`, whose refusal test needs
+    conftest to actually refuse. Under an inherited MUTATION_CHECK_ACTIVE the refusal never
+    fires, `isolation_refused` is never recorded, the assertion fails, and mutation_check
+    declares the baseline red for a tool whose own tests are entirely green. The suite
+    passed standalone every time, which is exactly why it went unnoticed: the failure only
+    exists when the tool runs itself.
+
+    Stripping it here makes these tests measure the tool's behaviour rather than the
+    caller's environment. Do NOT replace this with `{**os.environ}`.
+    """
+    env = {k: v for k, v in os.environ.items() if k != "MUTATION_CHECK_ACTIVE"}
+    env["PYTHONIOENCODING"] = "utf-8"
+    if cwd:
+        env["MUTATION_REPO_ROOT"] = str(cwd)
     r = subprocess.run([sys.executable, str(TOOL), *args], capture_output=True, text=True,
-                       cwd=str(cwd or REPO_ROOT),
-                       env={**os.environ, "PYTHONIOENCODING": "utf-8",
-                            **({"MUTATION_REPO_ROOT": str(cwd)} if cwd else {})})
+                       cwd=str(cwd or REPO_ROOT), env=env)
     return r
 
 
