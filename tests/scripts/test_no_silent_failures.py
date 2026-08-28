@@ -233,20 +233,55 @@ def test_every_checker_is_registered_or_explicitly_exempt():
 # launchd scheduled jobs
 # --------------------------------------------------------------------------
 
+def _launchd_script_refs(plist_path):
+    """Every .py path referenced by a plist's ProgramArguments.
+
+    Scans INSIDE each argument string rather than matching whole arguments. Every plist
+    here invokes `/bin/bash -lc "<compound command>"`, so the script name is a token in
+    the middle of one long string, not an argument of its own.
+
+    THE OLD PARSER WAS `arg.endswith(".py")`, which inspected 5 of the 9 real references
+    and checked ZERO of them correctly: an argument only ends in `.py` when the script
+    takes no flags, so agent-discover-collect, alirohde-triage, automation-health and
+    detector-scan (all of which pass arguments) were skipped entirely, while the four
+    that matched were matching a whole shell command against `Path.is_file()`. The test
+    that exists to catch a moved script would not have caught a moved script. Found
+    2026-08-28 when a new plist ending in `tools/mutation_sweep.py` tripped it by
+    accident: the first true assertion the check had ever made was a false positive.
+    """
+    refs = []
+    for arg in plistlib.loads(plist_path.read_bytes()).get("ProgramArguments", []):
+        if isinstance(arg, str):
+            refs.extend(re.findall(r"[\w./@-]+\.py", arg))
+    return refs
+
+
 def test_every_launchd_plist_points_at_an_existing_script():
     """A scheduled job whose script moved fails on a timer, into a log nobody reads."""
     missing = []
     for plist in sorted((REPO / "tools" / "launchd").glob("*.plist")):
-        data = plistlib.loads(plist.read_bytes())
-        for arg in data.get("ProgramArguments", []):
-            if not isinstance(arg, str) or not arg.endswith(".py"):
-                continue
-            candidate = Path(arg)
+        for ref in _launchd_script_refs(plist):
+            candidate = Path(ref)
             if not candidate.is_absolute():
-                candidate = REPO / arg
+                candidate = REPO / ref
             if not candidate.is_file():
-                missing.append(f"  {plist.name}: {arg}")
+                missing.append(f"  {plist.name}: {ref}")
     assert not missing, "launchd jobs reference non-existent scripts:\n" + "\n".join(missing)
+
+
+def test_launchd_script_ref_parser_sees_every_plist():
+    """The parser above is the whole value of the check; a silent miss makes it vacuous.
+
+    Guards the exact regression just fixed: every plist must yield at least one script
+    reference. If a future plist shape parses to zero refs, the job it schedules is
+    unchecked and this fails loudly instead of passing green.
+    """
+    unparsed = [p.name for p in sorted((REPO / "tools" / "launchd").glob("*.plist"))
+                if not _launchd_script_refs(p)]
+    # career-scan invokes a skill, not a script, so it legitimately references no .py.
+    unparsed = [n for n in unparsed if "career-scan" not in n]
+    assert not unparsed, ("launchd plists yielding no script reference (their job is "
+                          "unchecked by the test above):\n  " + "\n  ".join(unparsed))
 
 
 def test_every_launchd_plist_has_a_schedule():
