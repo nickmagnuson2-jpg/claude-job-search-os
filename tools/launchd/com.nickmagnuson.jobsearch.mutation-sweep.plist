@@ -31,7 +31,7 @@
     <array>
         <string>/bin/bash</string>
         <string>-lc</string>
-        <string>cd "$HOME/Documents/Obsidian/30-projects/job-search" &amp;&amp; PYTHONIOENCODING=utf-8 /usr/bin/caffeinate -is /usr/bin/env python3 tools/mutation_sweep.py</string>
+        <string>cd "$HOME/Documents/Obsidian/30-projects/job-search" &amp;&amp; PYTHONIOENCODING=utf-8 /usr/bin/caffeinate -is /opt/homebrew/bin/python3 tools/mutation_sweep.py</string>
     </array>
     <key>StartCalendarInterval</key>
     <dict>

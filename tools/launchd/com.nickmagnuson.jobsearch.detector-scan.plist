@@ -26,7 +26,7 @@
     <array>
         <string>/bin/bash</string>
         <string>-lc</string>
-        <string>cd "$HOME/Documents/Obsidian/30-projects/job-search" &amp;&amp; PYTHONIOENCODING=utf-8 /usr/bin/env python3 tools/detector_run.py --memory-dir "$HOME/.claude/projects/-Users-mag-Documents-Obsidian-30-projects-job-search/memory" --transcripts "$HOME/.claude/projects/-Users-mag-Documents-Obsidian-30-projects-job-search" --json</string>
+        <string>cd "$HOME/Documents/Obsidian/30-projects/job-search" &amp;&amp; PYTHONIOENCODING=utf-8 /opt/homebrew/bin/python3 tools/detector_run.py --memory-dir "$HOME/.claude/projects/-Users-mag-Documents-Obsidian-30-projects-job-search/memory" --transcripts "$HOME/.claude/projects/-Users-mag-Documents-Obsidian-30-projects-job-search" --json</string>
     </array>
     <key>StartCalendarInterval</key>
     <dict>

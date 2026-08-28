@@ -20,6 +20,7 @@ PLISTS=(
     "com.nickmagnuson.jobsearch.memory-promotion-scan"
     "com.nickmagnuson.jobsearch.automation-health"
     "com.nickmagnuson.jobsearch.agent-discover-collect"
+    "com.nickmagnuson.jobsearch.detector-scan"
 )
 
 case "${1:-install}" in
