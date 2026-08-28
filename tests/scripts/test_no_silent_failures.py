@@ -294,5 +294,104 @@ def test_every_launchd_plist_has_a_schedule():
     assert not unscheduled, "launchd plists have no schedule:\n" + "\n".join(unscheduled)
 
 
+# An unattended job runs with nobody reading the output, so a write flag there is a
+# mutation nobody reviews. Each entry needs a written reason, same discipline as
+# tools/mutation-allow.json and tools/hook-unwired-allow.json: a list without
+# justification is how a rule decays into "we thought about it once".
+UNATTENDED_WRITE_FLAGS = {
+    ("detector_run.py", "--apply"): (
+        "Writes `occurrences` on the memory corpus from detector regexes whose PRECISION "
+        "is unmeasured. Measured 2026-08-27 over 86 transcripts: sampled detectors matched "
+        "any timezone-stamped time, and any number-plus-percent near a noun. Applying those "
+        "nightly would inflate the counter that gates promotion work, and the backlog would "
+        "fill with noise that looks like evidence. Safe only while the job stays --json. "
+        "Do not add --apply until an adjudication step exists."),
+}
+
+
+def test_no_launchd_job_passes_a_corpus_WRITE_flag():
+    """The detector-scan job is dry-run by flag, not by design. This makes it by design.
+
+    Nothing structural stops someone adding `--apply` to a plist; it is one word, in a file
+    nobody re-reads, feeding a job that runs at 03:20 with no observer. That is the exact
+    shape of `feedback_a_stated_intention_is_not_an_action`: the safety lives in a habit
+    rather than in a check.
+    """
+    violations = []
+    for plist in sorted((REPO / "tools" / "launchd").glob("*.plist")):
+        args = " ".join(a for a in plistlib.loads(plist.read_bytes()).get("ProgramArguments", [])
+                        if isinstance(a, str))
+        for (script, flag), reason in UNATTENDED_WRITE_FLAGS.items():
+            if script in args and re.search(rf"(?<![\w-]){re.escape(flag)}(?![\w-])", args):
+                violations.append(f"  {plist.name}: runs {script} with {flag}. {reason}")
+    assert not violations, ("unattended launchd jobs carry a corpus-write flag:\n"
+                            + "\n".join(violations))
+
+
+def test_the_write_flag_guard_can_actually_fail(tmp_path):
+    """A guard whose forbidden pattern never matches anything is decorative.
+
+    Proves the matcher fires on the exact string it is meant to catch, so a green result
+    above means "no plist has it" rather than "the check cannot see it".
+    """
+    script, flag = next(iter(UNATTENDED_WRITE_FLAGS))
+    args = f'cd "$HOME/x" && python3 tools/{script} --memory-dir /m {flag} --json'
+    assert re.search(rf"(?<![\w-]){re.escape(flag)}(?![\w-])", args) and script in args
+    clean = f'cd "$HOME/x" && python3 tools/{script} --memory-dir /m --json'
+    assert not re.search(rf"(?<![\w-]){re.escape(flag)}(?![\w-])", clean)
+
+
+def test_every_unattended_write_flag_entry_carries_a_reason():
+    empty = [f"{s} {f}" for (s, f), r in UNATTENDED_WRITE_FLAGS.items() if not str(r).strip()]
+    assert not empty, f"entries with no written reason: {empty}"
+
+
+def test_no_tracked_tools_file_was_left_ast_unparsed():
+    """A file rewritten by ast.unparse and never restored is silently corrupted source.
+
+    THE INCIDENT (found 2026-08-28). `tools/vault_paths.py` sat in the working tree with its
+    shebang and coding line stripped and every string re-quoted -- the signature of an
+    ast.unparse round-trip. It imported fine and no test failed, so nothing surfaced it.
+    `mutation_check.py` already recovers a STRANDED TARGET, but `_restore_in_flight` restores
+    only the target and `recover_if_stranded` needs a `.mutation_backup` to exist; a BYSTANDER
+    file mutated without a backup is recovered by nothing. Its own docstring records the same
+    file being corrupted this way once before, on 2026-08-19.
+
+    The detector is the shebang: 139 of 146 tools/*.py carry `#!/usr/bin/env python3` and an
+    unparse drops it. Rather than require it everywhere (7 legitimately lack it), this is a
+    RATCHET -- a file that has one in HEAD may not lose it in the working tree.
+    """
+    ls = subprocess.run(["git", "diff", "--name-only", "--", "tools"],
+                        capture_output=True, text=True, cwd=str(REPO))
+    # An empty before-set makes this vacuously true, so a failed git call must ABORT rather
+    # than read as clean. Per feedback_guard_must_hard_abort_on_empty_input.
+    assert ls.returncode == 0, f"git diff failed, so this check proved NOTHING: {ls.stderr}"
+
+    changed = [f for f in ls.stdout.split() if f.endswith(".py")]
+    corrupted = []
+    for rel in changed:
+        head = subprocess.run(["git", "show", f"HEAD:{rel}"],
+                              capture_output=True, text=True, cwd=str(REPO))
+        if head.returncode != 0:
+            continue                                  # newly added file, no HEAD version
+        head_first = head.stdout.splitlines()[:1]
+        work_first = (REPO / rel).read_text(encoding="utf-8", errors="replace").splitlines()[:1]
+        if head_first and head_first[0].startswith("#!") and work_first != head_first:
+            corrupted.append(f"  {rel}: HEAD starts {head_first[0]!r}, working tree starts "
+                             f"{(work_first or [''])[0]!r}")
+    assert not corrupted, (
+        "tracked tools/*.py lost their shebang -- the ast.unparse signature of a mutation run "
+        "that never restored the file:\n" + "\n".join(corrupted)
+        + "\n\nRestore with: git checkout -- <path>")
+
+
+def test_the_unparse_ratchet_can_actually_fail(tmp_path):
+    """Positive control. The comparison must be able to FIRE, or a green run means nothing."""
+    head_first = ["#!/usr/bin/env python3"]
+    work_first = ['"""vault_paths.py - the one place the root is resolved."""']
+    assert head_first[0].startswith("#!") and work_first != head_first
+    assert not (head_first[0].startswith("#!") and head_first != head_first)
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))
