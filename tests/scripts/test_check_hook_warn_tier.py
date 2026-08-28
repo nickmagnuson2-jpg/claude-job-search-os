@@ -212,10 +212,36 @@ def test_json_output_is_parseable(tmp_path, capsys):
 # ---------------------------------------------------------------- the live repo
 
 def test_the_live_hook_stack_is_clean_or_declared():
-    """The real settings.json. Fails when a new hook is wired warn-only without saying so."""
-    r = hw.audit(hw.DEFAULT_SETTINGS, REPO_ROOT / "tools", hw.load_allow(hw.DEFAULT_ALLOW))
+    """The real settings.json. Fails when a new hook is wired warn-only without saying so.
+
+    Scoped to the WARN tier deliberately: the unwired-gate dimension is a separate, currently
+    unresolved defect and is asserted by the ratchet below. Folding them together would let a
+    fix to one mask a regression in the other.
+    """
+    r = hw.audit(hw.DEFAULT_SETTINGS, REPO_ROOT / "tools", hw.load_allow(hw.DEFAULT_ALLOW),
+                 unwired_allow={g: "not under test here"
+                                for g in [x["tool"] for x in hw.unwired_gates(
+                                    REPO_ROOT / "tools",
+                                    hw.wired_hooks(json.loads(
+                                        hw.DEFAULT_SETTINGS.read_text(encoding="utf-8"))),
+                                    {})]})
     assert r["violations"] == []
     assert r["checked"] >= 20, "the audit should be seeing the whole wired stack"
+
+
+@pytest.mark.xfail(strict=True, reason=(
+    "KNOWN OPEN DEFECT, measured 2026-08-27: six tools/check_*.py declare themselves hooks "
+    "on their docstring summary line, carry passing suites, and are wired in NO settings "
+    "file -- check_banned_phrase, check_pipeline_exit_status, check_plan_partner_critique, "
+    "check_scanner_examined_something, check_workflow_scriptpath, check_zuora_principal_title. "
+    "strict=True makes this a RATCHET: once they are wired or declared CLI-only with a written "
+    "reason, this XPASSes and the suite fails until the marker is deleted, so the defect cannot "
+    "be silently re-normalised."))
+def test_the_live_stack_has_no_undeclared_unwired_gates():
+    r = hw.audit(hw.DEFAULT_SETTINGS, REPO_ROOT / "tools", hw.load_allow(hw.DEFAULT_ALLOW),
+                 extra_settings=hw.DEFAULT_EXTRA_SETTINGS,
+                 unwired_allow=hw.load_allow(hw.DEFAULT_UNWIRED_ALLOW))
+    assert [v for v in r["violations"] if "wired in NO settings file" in v] == []
 
 
 def test_every_live_allowlist_entry_carries_a_reason():
@@ -273,3 +299,85 @@ def test_a_nonliteral_exit_code_does_not_count_as_blocking():
 def test_a_malformed_event_value_does_not_crash_discovery():
     """settings.json hand-edited to a string instead of a list of groups."""
     assert hw.wired_hooks({"hooks": {"PreToolUse": "python3 tools/a.py"}}) == {}
+
+
+
+# ------------------------------------------------- unwired gates: a gate wired to nothing
+#
+# `wired_hooks` builds the audited population FROM settings.json, so a hook wired nowhere
+# was never in the denominator. `wired 28 | checked 28` read clean while 6 tested gates
+# guarded nothing.
+
+DECLARED_HOOK = '"""check_thing.py -- PreToolUse hook for Bash."""\nimport sys\n'
+NO_DECLARATION = '"""check_thing.py -- a command line report."""\nimport sys\n'
+
+
+def test_a_declared_hook_wired_nowhere_is_a_violation(tmp_path):
+    s = settings(tmp_path)
+    tool(tmp_path, "check_x.py", STDERR_EXIT2)
+    tool(tmp_path, "check_orphan.py", DECLARED_HOOK)
+    r = hw.audit(s, tmp_path / "tools", {})
+    assert any("check_orphan.py" in v and "wired in NO settings file" in v
+               for v in r["violations"])
+
+
+def test_a_tool_that_does_not_declare_a_hook_role_is_not_flagged(tmp_path):
+    s = settings(tmp_path)
+    tool(tmp_path, "check_x.py", STDERR_EXIT2)
+    tool(tmp_path, "check_cli.py", NO_DECLARATION)
+    assert hw.audit(s, tmp_path / "tools", {})["violations"] == []
+
+
+def test_a_hook_wired_only_in_an_EXTRA_settings_file_is_not_called_unwired(tmp_path):
+    """The correctness requirement. A single-file scan manufactures a false positive on a
+    correctly-installed gate, and a guard that cries wolf is one everyone routes around."""
+    s = settings(tmp_path)
+    tool(tmp_path, "check_x.py", STDERR_EXIT2)
+    tool(tmp_path, "check_orphan.py", DECLARED_HOOK)
+    local = tmp_path / "local.json"
+    local.write_text(json.dumps({"hooks": {"PreToolUse": [
+        {"matcher": "Bash", "hooks": [{"command": "python3 tools/check_orphan.py"}]}]}}),
+        encoding="utf-8")
+    r = hw.audit(s, tmp_path / "tools", {}, extra_settings=[local])
+    assert r["violations"] == []
+
+
+def test_a_missing_extra_settings_file_is_skipped_not_fatal(tmp_path):
+    s = settings(tmp_path)
+    tool(tmp_path, "check_x.py", STDERR_EXIT2)
+    r = hw.audit(s, tmp_path / "tools", {}, extra_settings=[tmp_path / "absent.json"])
+    assert r["ok"] is True
+
+
+def test_an_unwired_gate_declared_CLI_only_is_allowed(tmp_path):
+    s = settings(tmp_path)
+    tool(tmp_path, "check_x.py", STDERR_EXIT2)
+    tool(tmp_path, "check_orphan.py", DECLARED_HOOK)
+    r = hw.audit(s, tmp_path / "tools", {},
+                 unwired_allow={"check_orphan.py": "run by hand from /audit-pii"})
+    assert r["violations"] == []
+
+
+def test_an_unwired_allowlist_entry_with_an_empty_reason_fails(tmp_path):
+    s = settings(tmp_path)
+    tool(tmp_path, "check_x.py", STDERR_EXIT2)
+    tool(tmp_path, "check_orphan.py", DECLARED_HOOK)
+    r = hw.audit(s, tmp_path / "tools", {}, unwired_allow={"check_orphan.py": "   "})
+    assert any("empty reason" in v for v in r["violations"])
+
+
+def test_declaration_is_read_from_the_summary_line_only():
+    """The self-trigger case. This module's own docstring quotes another tool's Stop-hook
+    role while discussing it; searching the whole docstring flagged this file as an unwired
+    Stop hook. Real hooks declare on line 0."""
+    assert hw.declared_hook_role('"""x.py -- PreToolUse hook for Bash."""') == "PreToolUse"
+    assert hw.declared_hook_role(
+        '"""x.py -- a report.\n\nBackground: check_other.py, a Stop hook, was silent."""') is None
+
+
+def test_a_file_with_no_docstring_declares_nothing():
+    assert hw.declared_hook_role("import sys\n") is None
+
+
+def test_unparseable_source_declares_nothing_rather_than_crashing():
+    assert hw.declared_hook_role("def (((") is None

@@ -52,6 +52,9 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_SETTINGS = REPO_ROOT / ".claude" / "settings.json"
 DEFAULT_ALLOW = REPO_ROOT / "tools" / "hook-warn-allow.json"
+DEFAULT_UNWIRED_ALLOW = REPO_ROOT / "tools" / "hook-unwired-allow.json"
+DEFAULT_EXTRA_SETTINGS = (REPO_ROOT / ".claude" / "settings.local.json",
+                          Path.home() / ".claude" / "settings.json")
 
 _TOOL_IN_COMMAND = re.compile(r"tools/([A-Za-z0-9_]+\.py)")
 
@@ -110,6 +113,59 @@ def can_block(tree) -> bool:
     return False
 
 
+# A gate that exists and is wired to NOTHING is the same failure one level up, and this
+# tool could not see it: `wired_hooks` enumerates from settings.json, so an unwired hook is
+# absent from the population being audited. Measured 2026-08-27: 12 `tools/check_*.py` were
+# referenced by no settings file at all, and six of those declared themselves hooks in their
+# own docstring and carried passing test suites -- 266 tests guarding nothing.
+#
+# `wired 28 | checked 28` reported clean the whole time, because 28 of 28 wired hooks were
+# fine. The denominator was the defect.
+_DECLARES_HOOK = re.compile(
+    r"\b(PreToolUse|PostToolUseFailure|PostToolUse|SessionStart|Stop)\b[^.\n]{0,40}\bhook\b",
+    re.IGNORECASE)
+
+
+def declared_hook_role(source: str) -> str | None:
+    """The hook event a tool claims in its own module docstring, or None.
+
+    Read from the DOCSTRING, not the whole file, because tools routinely mention hook
+    events in prose about other tools -- this very module names four of them in its own
+    header. Parsing the docstring keeps the claim to the tool's own self-description.
+    """
+    try:
+        doc = ast.get_docstring(ast.parse(source))
+    except SyntaxError:
+        return None
+    if not doc:
+        return None
+    # SUMMARY LINE ONLY. Searching the whole docstring made this fire on its own header,
+    # which quotes `check_changelog_currency.py, a Stop hook` while discussing a different
+    # tool -- `feedback_hook_self_trigger_in_documentation` reproduced exactly, on the hook
+    # being written to catch unwired hooks. Measured over all 30 `tools/check_*.py`: 29 real
+    # hooks declare on line 0 and the single line-9 match was the false positive, so the
+    # summary line is 100% precise here and prose about other tools cannot reach it.
+    summary = doc.splitlines()[0] if doc.splitlines() else ""
+    m = _DECLARES_HOOK.search(summary)
+    return m.group(1) if m else None
+
+
+def unwired_gates(tools_dir: Path, wired: dict, allow: dict) -> list:
+    """Tools that call themselves hooks, exist on disk, and are wired nowhere."""
+    out = []
+    for path in sorted(tools_dir.glob("check_*.py")):
+        if path.name in wired:
+            continue
+        try:
+            role = declared_hook_role(path.read_text(encoding="utf-8"))
+        except OSError:
+            continue
+        if role:
+            out.append({"tool": path.name, "declares": role,
+                        "allowlisted": path.name in allow})
+    return out
+
+
 def load_allow(path: Path) -> dict:
     if not path.exists():
         return {}
@@ -119,9 +175,24 @@ def load_allow(path: Path) -> dict:
     return data
 
 
-def audit(settings_path: Path, tools_dir: Path, allow: dict) -> dict:
+def audit(settings_path: Path, tools_dir: Path, allow: dict,
+          extra_settings=(), unwired_allow: dict | None = None) -> dict:
+    """Audit wired hooks for the warn tier, and unwired ones for existing at all.
+
+    EVERY settings file must be merged before deciding a tool is unwired. A hook wired only
+    in `.claude/settings.local.json` or the global `~/.claude/settings.json` is wired; a
+    single-file scan would report it missing and manufacture a false positive on a
+    correctly-installed gate, which is how a guard becomes the thing everyone routes around.
+    """
+    unwired_allow = unwired_allow or {}
     settings = json.loads(settings_path.read_text(encoding="utf-8"))
     wired = wired_hooks(settings)
+    for extra in extra_settings:
+        extra = Path(extra)
+        if not extra.is_file():
+            continue
+        for tool, events in wired_hooks(json.loads(extra.read_text(encoding="utf-8"))).items():
+            wired.setdefault(tool, set()).update(events)
     if not wired:
         raise ValueError(f"no tools/*.py hooks wired in {settings_path}")
 
@@ -155,8 +226,22 @@ def audit(settings_path: Path, tools_dir: Path, allow: dict) -> dict:
             violations.append(f"{tool}: allowlisted as a warn-only hook but is not wired in "
                               "settings.json. Remove the stale entry")
 
+    unwired = unwired_gates(tools_dir, wired, unwired_allow)
+    for g in unwired:
+        if not g["allowlisted"]:
+            violations.append(
+                f"{g['tool']}: declares itself a {g['declares']} hook in its own docstring, "
+                "exists in tools/, and is wired in NO settings file, so it guards nothing. "
+                f"Either wire it, or declare it CLI-only with a written reason in "
+                f"{DEFAULT_UNWIRED_ALLOW.name}")
+    for tool, reason in unwired_allow.items():
+        if not str(reason).strip():
+            violations.append(f"{tool}: unwired-allowlist entry has an empty reason. An "
+                              "allowlist without justification is how this decays back "
+                              "into green-means-done")
+
     return {"wired": len(wired), "checked": checked, "silent": silent,
-            "violations": violations, "ok": not violations}
+            "unwired": unwired, "violations": violations, "ok": not violations}
 
 
 def main(argv: list) -> int:
@@ -164,6 +249,9 @@ def main(argv: list) -> int:
     ap.add_argument("--settings", type=Path, default=DEFAULT_SETTINGS)
     ap.add_argument("--tools-dir", type=Path, default=REPO_ROOT / "tools")
     ap.add_argument("--allow", type=Path, default=DEFAULT_ALLOW)
+    ap.add_argument("--unwired-allow", type=Path, default=DEFAULT_UNWIRED_ALLOW)
+    ap.add_argument("--extra-settings", type=Path, nargs="*", default=list(DEFAULT_EXTRA_SETTINGS),
+                    help="additional settings files merged before deciding a hook is unwired")
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args(argv)
 
@@ -171,7 +259,9 @@ def main(argv: list) -> int:
         print(f"settings file not found: {args.settings}", file=sys.stderr)
         return 1
     try:
-        report = audit(args.settings, args.tools_dir, load_allow(args.allow))
+        report = audit(args.settings, args.tools_dir, load_allow(args.allow),
+                       extra_settings=args.extra_settings,
+                       unwired_allow=load_allow(args.unwired_allow))
     except (ValueError, SyntaxError, json.JSONDecodeError) as exc:
         print(str(exc), file=sys.stderr)
         return 1
@@ -180,8 +270,10 @@ def main(argv: list) -> int:
         print(json.dumps(report, indent=2))
     else:
         allow_n = sum(1 for s in report["silent"] if s["allowlisted"])
+        unwired_n = sum(1 for g in report["unwired"] if not g["allowlisted"])
         print(f"wired {report['wired']} | checked {report['checked']} | "
-              f"stderr-only {len(report['silent'])} ({allow_n} declared warn-only)")
+              f"stderr-only {len(report['silent'])} ({allow_n} declared warn-only) | "
+              f"declared-but-UNWIRED {unwired_n}")
         for v in report["violations"]:
             print(f"  VIOLATION {v}")
     return 0 if report["ok"] else 2
