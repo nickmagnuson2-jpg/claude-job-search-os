@@ -33,8 +33,10 @@ tools/.session-mutations.json
 tools/.transcript-scan-cursor.json
 tools/.transcript-scan-cursor.json.tmp
 tools/.changelog-currency-cursor.json
-tools/.hook-trace.log
-tools/.hook-trace.log.1
+# Glob, not two exact paths: the rotation writes .log.1 and macOS duplicates produce
+# '.hook-trace 2.log'. An exact-path pair left every such variant UNIGNORED in a public
+# repo, and one `git add -A` would have shipped it. Found 2026-08-28.
+tools/.hook-trace*
 tools/launchd/logs/
 logs/
 
