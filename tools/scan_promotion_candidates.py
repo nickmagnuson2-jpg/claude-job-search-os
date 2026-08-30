@@ -170,7 +170,25 @@ def is_promoted(fm: dict) -> bool:
     v = str(fm.get("promoted", "no")).strip().lower()
     if v.startswith("partial"):
         return False
-    return v not in ("no", "false", "", "0")
+    # A value that EXPLAINS why a rule is unpromoted must still read as unpromoted.
+    #
+    # This branch used to be `v not in ("no", "false", "", "0")`, an exact match, so any
+    # annotated value was taken for a promotion tier. The 2026-08-25 adversarial
+    # re-verification run wrote `promoted: "no -- CORRECTED ..."` onto rules whose
+    # promotion claims it had just REFUTED, and every one of them silently left the
+    # backlog: 11 rules at >=2 fires, three at 5, including
+    # feedback_verify_the_surface_fires_before_anchoring_to_it, whose own subject is
+    # mechanisms that report as landed while being dead. Writing down WHY a rule was
+    # unpromoted was the act that hid it.
+    #
+    # Same defect as the `partial` branch above (2026-08-13, recovered 23 candidates),
+    # in a different value shape. Prefix-match both, for the same reason.
+    #
+    # `\b` keeps this from swallowing a real tier that merely starts with these letters:
+    # "none" and "notation" do not match, "no -- reason" and "not promoted" do.
+    if re.match(r"^(?:no|not|false)\b", v) or v in ("", "0"):
+        return False
+    return True
 
 
 def is_terminal(fm: dict) -> bool:

@@ -359,3 +359,89 @@ def test_a_CLAUDE_md_under_its_budget_is_not_reported(tmp_path):
     repo.mkdir()
     (repo / "CLAUDE.md").write_text("x" * (sp.CLAUDE_MD_LIMIT_BYTES - 1), encoding="utf-8")
     assert sp.oversized_context_files(tmp_path, repo) == []
+
+
+# ---------------------------------------------------------------------------
+# is_promoted(): a value that EXPLAINS why a rule is unpromoted must still
+# count as unpromoted.
+#
+# ORIGIN 2026-08-28. `is_promoted` returned `v not in ("no", "false", "", "0")`,
+# so it treated any annotated value as a promotion tier. The 2026-08-25
+# adversarial re-verification run wrote `promoted: "no -- CORRECTED ..."` onto
+# rules it had just REFUTED, and every one of them silently left the backlog:
+# 11 rules at >=2 fires, three of them at 5, including
+# feedback_verify_the_surface_fires_before_anchoring_to_it -- whose own subject
+# is mechanisms that report as landed while being dead.
+#
+# This is the same defect the `partial` branch was added to fix on 2026-08-13,
+# in a different value shape. Writing down WHY a rule is unpromoted was the act
+# that hid it.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("value", [
+    "no",
+    "no -- CORRECTED 2026-08-25 by adversarial re-verification, which refuted the claim",
+    "no -- gate met 2026-08-17, promotion recommended, pending Nick's decision",
+    "No -- capitalised, because frontmatter is written by hand",
+    "not promoted -- the surface it would land on never fires",
+    "false",
+    "",
+    "0",
+    "partial -- only the sweep half landed",
+])
+def test_values_meaning_unpromoted_are_not_counted_as_promoted(value):
+    assert sp.is_promoted({"promoted": value}) is False, (
+        f"{value!r} means UNPROMOTED; counting it as promoted drops the rule "
+        "from the backlog while it is still accumulating fires"
+    )
+
+
+@pytest.mark.parametrize("value", [
+    "yes -- CLAUDE.md Hard Rule",
+    "yes",
+    "skill",
+    "hook",
+    "principle",
+    "hard-rule",
+])
+def test_real_promotion_tiers_still_count_as_promoted(value):
+    assert sp.is_promoted({"promoted": value}) is True, (
+        f"{value!r} is a real promotion tier; a rule that IS enforced must leave "
+        "the backlog or the list fills with noise"
+    )
+
+
+def test_missing_promoted_key_defaults_to_unpromoted():
+    """Absent means nobody has promoted it, which is the safe direction."""
+    assert sp.is_promoted({}) is False
+
+
+def test_an_annotated_no_still_reaches_the_candidate_list(tmp_path):
+    """End-to-end guard, not just the predicate.
+
+    A unit test on is_promoted can pass while the caller filters the file out
+    some other way. This asserts the rule actually arrives in the output.
+    """
+    mem = tmp_path / "memory"
+    mem.mkdir()
+    (mem / "feedback_annotated_no.md").write_text(
+        "---\n"
+        "name: feedback_annotated_no\n"
+        "description: a refuted rule that still carries fires\n"
+        "metadata:\n"
+        "  node_type: memory\n"
+        "  type: feedback\n"
+        "  occurrences: 3\n"
+        '  promoted: "no -- CORRECTED 2026-08-25, the claim was refuted"\n'
+        '  reopen_gate: "3rd fire"\n'
+        "  last_cited: 2026-08-25\n"
+        "---\n\nbody\n",
+        encoding="utf-8",
+    )
+    out = json.loads(subprocess.run(
+        [sys.executable, str(SCRIPT), "--memory-dir", str(mem), "--dry-run"],
+        capture_output=True, text=True, check=True).stdout)
+    names = [c["file"] for c in out["promotion_candidates"]]
+    assert "feedback_annotated_no.md" in names, (
+        f"annotated-no rule missing from candidates: {names}"
+    )
