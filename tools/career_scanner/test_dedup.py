@@ -16,8 +16,8 @@ from tools.career_scanner.dedup import (
 def sample_pipeline():
     """Pipeline entries mimicking pipe_read.py active_entries output."""
     return [
-        {"company": "Ramp", "role": "Senior Product Manager"},
-        {"company": "Discord", "role": "Head of Operations"},
+        {"company": "Northwind", "role": "Senior Product Manager"},
+        {"company": "Contoso", "role": "Head of Operations"},
         {"company": "Stripe", "role": "Chief of Staff"},
     ]
 
@@ -28,10 +28,10 @@ def sample_pipeline():
 
 class TestIsDuplicateExact:
     def test_exact_company_and_title(self, sample_pipeline):
-        assert is_duplicate("Senior Product Manager", "Ramp", sample_pipeline) is True
+        assert is_duplicate("Senior Product Manager", "Northwind", sample_pipeline) is True
 
     def test_exact_company_and_title_different_case(self, sample_pipeline):
-        assert is_duplicate("senior product manager", "ramp", sample_pipeline) is True
+        assert is_duplicate("senior product manager", "northwind", sample_pipeline) is True
 
 
 # ---------------------------------------------------------------------------
@@ -41,16 +41,16 @@ class TestIsDuplicateExact:
 class TestIsDuplicateFuzzy:
     def test_fuzzy_title_above_threshold(self, sample_pipeline):
         # "Sr Product Manager" vs "Senior Product Manager" should be >= 0.80
-        assert is_duplicate("Sr. Product Manager", "Ramp", sample_pipeline) is True
+        assert is_duplicate("Sr. Product Manager", "Northwind", sample_pipeline) is True
 
     def test_fuzzy_title_below_threshold(self, sample_pipeline):
         # Completely different title at same company
-        assert is_duplicate("Junior Frontend Developer", "Ramp", sample_pipeline) is False
+        assert is_duplicate("Junior Frontend Developer", "Northwind", sample_pipeline) is False
 
     def test_very_similar_title(self, sample_pipeline):
         # Minor variation: "Head of Operation" vs "Head of Operations"
         # SequenceMatcher ratio ~ 0.97
-        assert is_duplicate("Head of Operation", "Discord", sample_pipeline) is True
+        assert is_duplicate("Head of Operation", "Contoso", sample_pipeline) is True
 
 
 # ---------------------------------------------------------------------------
@@ -82,7 +82,7 @@ class TestIsDuplicateEdgeCases:
 
     def test_empty_title(self, sample_pipeline):
         # Empty title won't fuzzy match above 0.80
-        assert is_duplicate("", "Ramp", sample_pipeline) is False
+        assert is_duplicate("", "Northwind", sample_pipeline) is False
 
 
 # ---------------------------------------------------------------------------
@@ -92,7 +92,7 @@ class TestIsDuplicateEdgeCases:
 class TestFilterDuplicates:
     def test_filters_known_duplicates(self, sample_pipeline):
         roles = [
-            {"title": "Senior Product Manager", "company": "Ramp"},
+            {"title": "Senior Product Manager", "company": "Northwind"},
             {"title": "New Role", "company": "NewCo"},
             {"title": "Chief of Staff", "company": "Stripe"},
         ]
