@@ -1,6 +1,6 @@
 ---
 name: cold-outreach
-description: Draft personalized cold emails and LinkedIn messages to new contacts — research-informed, tone-matched, with auto-logging
+description: Research a contact and produce an Outreach Brief (why-now, sourced proofs, positioning, hard don'ts) for Nick to write in his own voice — escalates to a full drafted email/LinkedIn message only on explicit request. Auto-logs either way.
 argument-hint: <name> <company> [role] [channel:email|linkedin] [context]
 user-invocable: true
 allowed-tools: Read(*), Glob(data/*), Grep(data/*), Edit(data/networking.md), Write(data/networking.md), Write(data/job-todos.md), Write(tools/.pending-draft.txt), Write(tools/.pending-draft.source), Edit(data/outreach-log.md), Write(data/outreach-log.md), Write(output/**), Edit(framework/style-guidelines.md), Write(memory/lessons.md), mcp__exa__web_search_exa, mcp__exa__web_fetch_exa, WebSearch, WebFetch
@@ -8,7 +8,18 @@ allowed-tools: Read(*), Glob(data/*), Grep(data/*), Edit(data/networking.md), Wr
 
 # Cold Outreach — First-Contact Messages
 
-Draft personalized cold emails and LinkedIn messages to new contacts. Loads sender context, researches the recipient, selects the best framework, and drafts a message that passes the three-question quality gate. Auto-logs the contact and creates a follow-up to-do.
+> ## ⚠️ DEFAULT CHANGED 2026-08-26 — READ BEFORE RUNNING
+>
+> **This skill no longer drafts the message by default. It produces an Outreach Brief and stops.**
+> Nick writes the prose. See **Step 5b: Outreach Brief Mode**, which is now ON unless he explicitly
+> asks for a draft ("put a draft together" / "draft it for me" / "write it"). **"Send it," "let's go,"
+> and time pressure are NOT that ask** — urgency is precisely when the old default used to win.
+>
+> Steps 6-8 (drafting, quality gate, `.pending-draft.txt`, `open_draft.py`) run **only** on that
+> explicit escalation. Research, verification, positioning and logging are all still automated; only
+> the sentences are his. Origin: `memory/feedback_give_nick_beats_not_a_polished_script.md`, 4th fire.
+
+Research a recipient and hand Nick everything he needs to write a first-contact message in his own voice: sender context, verified recipient facts, the why-now, sourced proofs, positioning, and the hard don'ts. On explicit request, escalate to a full drafted message that passes the three-question quality gate. Auto-logs the contact and creates a follow-up to-do either way.
 
 ## Arguments
 
@@ -138,9 +149,43 @@ Use the waterfall personalization logic from `framework/outreach-guide.md`:
 
 Select the framework matching the highest-priority signal available. Note the signal and framework choice for the output.
 
-### Step 5b: Voice-Pure Dictation Mode (when Nick provides a guide)
+### Step 5b: Outreach Brief Mode — **THE DEFAULT for cold outreach** (flipped 2026-08-26)
 
-**Trigger:** Nick passes a voice-pure dictation guide via argument or earlier in the conversation ("use this as the spine: '...'"), OR signals he'll author the substance himself ("give me the spine," "I want to put it in my words," "I'll write it myself").
+> **STOP. For cold outreach this mode is ON unless Nick asks for a draft.** Do not fall through to
+> Steps 6-8. Produce the Outreach Brief below, hand it to Nick, and stop. He writes the prose.
+
+**Why this is the default and not a flag** (Nick, 2026-08-26): *"how can I just get the beats to do the
+research on the company, on the role, on what I would bring, how I should position myself, and then I
+do the outreach? We automate everything around it so that it's still getting my voice."* An opt-in rule
+requires him to remember to invoke it at the exact moment he is moving fast, which is the moment he
+reaches for the finished draft instead. **The 2026-08-25 cold email to a target company is the worked example: it ran
+through this skill, it worked (reply in 20 minutes, call inside 24 hours), and he still wanted the
+prose to have been his.** A rule that only fires when he remembers to ask loses to urgency. Per
+`memory/feedback_give_nick_beats_not_a_polished_script.md` (4th fire) and his Tier-1 authenticity
+non-negotiable. It is NOT grounded in a recipient objection — the one recipient who noticed said the
+opposite (see that file's 2026-08-26 supplement before citing anyone).
+
+**Escalate to a full draft ONLY on an explicit ask** — "put a draft together," "draft it for me,"
+"write it." Then run Steps 6-8 as normal. "Send it," "let's go," or time pressure are NOT that ask.
+
+**The Outreach Brief — deliberately stops where the writing starts.** No subject line, no opener, no
+sentences to edit. Anything Nick could paste is a violation of this step.
+
+1. **Company** — what they do, stage, and **the one thing that changed recently**. This is the why-now
+   and it is the beat most often missing (the 2026-08-25 email had the funding round, the launch press coverage
+   and the posting date all available and used none of them).
+2. **Role** — the verbatim JD lines that matter, both shapes if it carries two, and the open screens.
+3. **Recipient** — verified facts only. Flag every Wispr-dictated proper noun as unconfirmed.
+4. **What Nick would bring** — 2-3 candidate proofs, **each with its source line** (`data/projects/*.md`,
+   a transcript, an archive). A proof with no source line does not go in the brief.
+5. **Positioning** — the thesis in one sentence, and which prong carries it.
+6. **The hook** — a real, cited research fact. The company's own words, never a headline alone.
+7. **Hard don'ts** — the falsifiable traps for this specific recipient (bad-overlap dates, claims Nick
+   cannot make, a framing the company has moved off).
+
+Then stop. Nick dictates; the mechanical-diff rule below governs cleanup of what he dictates.
+
+**Trigger for the dictation-cleanup rule below:** Nick passes a voice-pure dictation guide via argument or earlier in the conversation ("use this as the spine: '...'"), OR signals he'll author the substance himself ("give me the spine," "I want to put it in my words," "I'll write it myself"), OR — now the common path — dictates his prose after receiving the Brief above.
 
 **Rule:** The polished output's diff from the guide must be **mechanical only** — grammar, punctuation, Wispr-homophone silent-correct, sentence-boundary cleanup. Do NOT add new sentences, qualitative adjectives ("solid concept," "really cool"), feature-list descriptors when products are named, volume/scale estimates Nick didn't include, a second ask, or URLs to a company's own docs when the recipient works there. Do NOT reorganize structure beyond the dictation. If something seems missing, pause and ask Nick before adding.
 

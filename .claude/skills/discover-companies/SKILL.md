@@ -66,9 +66,27 @@ For each candidate, add a one-line fit read the deterministic score cannot captu
 - Mission/energy alignment against `data/goals.md` and `data/professional-identity.md`.
 - The SF-the-city nuance: a `geo_flag: true` means the HQ is Bay-Area-but-not-SF
   or unknown - call that out (the hard filter is SF in-person/hybrid).
+- **Founding-team read (added 2026-08-26) — a RANKING signal, never a rejection.** From public
+  data only (LinkedIn, the company site, an Exa `category:people` lookup), answer one question:
+  **is there anyone on this team who has done the commercial or delivery craft before?** Report
+  what you actually found in one line — approximate headcount, roughly how many non-engineers,
+  and the founders' prior roles — then tag the candidate:
+  - `bench: yes` — someone has held the seat or an adjacent one (an ex-consultant founder, a
+    commercial lead with delivery history, a second-time operator).
+  - `bench: thin` — engineer-heavy with one recent commercial hire.
+  - `bench: unknown` — public data too sparse to say. **This is a real and common answer. Say it.**
+
+  **Sort `thin` and `unknown` down; do NOT drop them.** Two reasons this is not a filter: public
+  data is stale often enough to matter (2026-08-26: Exa reported a target's commercial lead at
+  7 months tenure, he said two on the call), and the part that actually decides it — whether the
+  guidance is real, whether there is any structure — is not visible from outside and needs the
+  conversation. Per the `goals.md` non-negotiable added 2026-08-26. Worked example (2026-08-26): a target
+  company would have tagged `bench: thin` and sorted down; it still would have been worth the cold
+  email, and the call is what settled it.
 - Recommend or hold.
 
-Do NOT re-score; the number is deterministic. You are adding judgment on top.
+Do NOT re-score; the number is deterministic. You are adding judgment on top — the founding-team
+read is a sort key and an annotation, not an input to the score.
 
 ### Step 4: Write the proposal (atomic, review-gated)
 

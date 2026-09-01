@@ -295,6 +295,65 @@ The "Avoid Self-Sabotage" rules above apply to answers, and one addition specifi
 
 All three are correct and must stay true under a direct question in an interview. **None of them needs to be volunteered in a screening artifact.** Precision about what the candidate did is not the same as narrating what he did not do. Rewriting a negation into a positive assignment ("X owned delivery" instead of "I did not do delivery") does not fix this: it is the same information and a filtering screener reads it the same way.
 
+### Close every application with a loop-log entry (mandatory, at the close of the run)
+
+Append one entry to **`output/analysis/application-loop-log.md`** before the session ends. The file
+carries the fixed capture shape; follow it so entries are countable against each other.
+
+**Write it in the session that observed the run.** Do NOT reconstruct a past application from its output
+files: edits and judgments are not recoverable from artifacts days later, and plausible-but-unverifiable
+loop data is worse than a smaller sample. Two runs from 2026-08-27 are listed in that file as "Not
+captured" for exactly this reason, and their absence is what makes Run 1's four-for-four on answer length
+a hypothesis rather than a finding.
+
+**Minimum content:** Nick's touch count split into irreducibly-human vs avoidable-machine-failure; the
+judgments only he could make; every edit he made with word counts where the artifact has them; skills and
+agent counts; machine failures he absorbed; and any recurring pattern that fired, with its occurrence
+number.
+
+**Why this is a step and not a suggestion:** the point of the ledger is sample size. A capture that
+depends on remembering does not accumulate, and a single vivid run then gets built on as if it were
+evidence. Origin: Nick, 2026-08-31, on why he wanted the log at all: *"I want to make sure that I have
+the data and I continue to revise it so that when I do end up building something, it's based off it and
+has a high sample size."*
+
+### Draft at final length the first time (measured target)
+
+**Target 150-170 words for a substantive free-text answer** ("tell me about," "why us," "what are you
+proudest of," "what are you looking for"). Short factual questions (how did you hear about us, visa,
+location) stay under 50.
+
+**This is a measured default, not a preference.** On a 2026-08-31 application, all four
+substantive answers were drafted long and Nick cut every one of them on request:
+
+| Question | First draft | After Nick asked to tighten | Cut |
+|---|---|---|---|
+| Why are you interested | 250 | 159 | 36% |
+| Most proud of | 201 | 167 | 17% |
+| Looking for in next role | 200 | 169 | 16% |
+| Technology that excites you | 215 | 163 | 24% |
+
+Four for four is a default, not four independent misjudgments. Every long draft costs a full round trip
+at the exact moment Nick is trying to submit.
+
+**What gets cut when drafting to length, in this order:**
+1. **Sentences that assert the point the next sentence demonstrates.** "That is the kind of call I
+   respect" before a sentence that shows the respect.
+2. **Restated claims already carried by another answer.** Check across the whole set before finalising:
+   on 8/31, tightening one answer moved an idea into it that the last answer was already closing on, and
+   the application would have made the same argument twice.
+3. **Wants stated as evidence.** "I would rather do this for operators than for myself" is a preference,
+   not a proof, and the question rarely asked for it.
+4. **Duration and scope hedges that invite a question.** "I spent a year at X" where the tenure was
+   eleven months: name the title, drop the duration.
+
+**Do not cut:** the load-bearing scope guards (modeled vs delivered, the correction-comment wording from
+`data/projects/*.md`), or the one detail that answers the JD's stated bar.
+
+**Nick rewrites these in his own voice regardless.** Drafting to final length is not about producing
+final prose; it is about handing him a piece the right size to work on, so the loop is rewrite-once
+rather than tighten-then-rewrite. Origin: `output/analysis/083126-application-human-loop-log.md` §6.1.
+
 ### Accepted costs get a to-do, not a paragraph
 
 If the answers document records an "accepted cost," "live consequence," "recorded rather than resolved," or a "reversal path if wanted," that residual gets a dated row via `tools/todo_write.py` **at the moment it is written**, naming the owner and the mitigating artifact. A residual filed as prose inside the document that recorded it has no owner and does not resurface. In the origin incident the residual was recorded accurately, in a section with that literal heading, and was still paid in full.
