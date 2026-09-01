@@ -22,7 +22,7 @@ Examples:
 - `/remember "decided not to pursue Lumen — too similar to what I want to leave"` → `data/decisions.md` (prompts for what drove it / what changes if wrong)
 - `/remember "shipped the Lane B dossier"` → `data/accomplishments.md` (prompts for why it matters)
 - `/remember "Acme Series B was pre-empted by a growth fund, not a standard raise"` → appended to company research dossier or pipeline notes
-- `/remember "recruiter at Talkiatry is Sarah Kim, reached out on LinkedIn"` → creates or updates networking contact entry
+- `/remember "recruiter at Northwind is Sarah Chen, reached out on LinkedIn"` → creates or updates networking contact entry
 
 ## Instructions
 

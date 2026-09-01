@@ -182,7 +182,7 @@ Analyze the interaction history to determine the follow-up type:
    ```
    - "Beacon is worth moving on quickly" → "This one is worth moving on quickly." [verbatim]
    - "which verticals are they building out" → "depends on which verticals they are actively building out" — tied to NORTHWIND, not Beacon
-   - "insurance-brokerage in my lane" → NO source line. INVENTED. Cut or recast to the role-shape claim.
+   - "adjacent-vertical experience in my lane" → NO source line. INVENTED. Cut or recast to the role-shape claim.
    ```
 3. **Any claim with no source line is invented** — cut it, recast it to something grounded, or ask Nick. This is stricter than Step 6b's after-the-fact provenance labeling: re-read their actual words; do not label an un-checked claim as "grounded."
 4. **Cross-assignment check:** explicitly verify each attribute is attached to the entity the contact attached it to (the Beacon-vs-Northwind swap is the canonical miss).
@@ -274,7 +274,7 @@ Follow channel constraints from `framework/outreach-guide.md`.
 
 Keep it shorter than the original message. Follow-ups should be 50–100 words (shorter than initial outreach).
 
-**Ask scope — broad-open default for nudges** (added 2026-05-21): when the next-step context isn't known (recruiter went silent, founder didn't reply, scheduling pending), prefer **broad-open asks** over narrow-specific asks. Example from sent corpus 2026-05-21: Nick edited `scheduling for the live mortgage-servicing case` → `about next steps`. Pinning the topic forecloses paths the recipient might offer. Use narrow scope only when (a) the recipient explicitly asked you to follow up about a specific item or (b) the only outstanding gate IS that specific item. See `memory/feedback_always_follow_up_with_recruiters.md` + voice-reference.md §1 "Broad-open ask > narrow-specific ask in nudges."
+**Ask scope — broad-open default for nudges** (added 2026-05-21): when the next-step context isn't known (recruiter went silent, founder didn't reply, scheduling pending), prefer **broad-open asks** over narrow-specific asks. Example from sent corpus 2026-05-21: Nick edited `scheduling for the case study we discussed` → `about next steps`. Pinning the topic forecloses paths the recipient might offer. Use narrow scope only when (a) the recipient explicitly asked you to follow up about a specific item or (b) the only outstanding gate IS that specific item. See `memory/feedback_always_follow_up_with_recruiters.md` + voice-reference.md §1 "Broad-open ask > narrow-specific ask in nudges."
 
 **Iteration safety — re-anchor pass at round 3+** (added 2026-05-21): if Nick has revised the draft 3+ times since this skill was invoked, the voice anchor has drifted (each inline edit bypasses Steps 1-7). Re-load `framework/voice-reference.md` and scan against §2 (anti-patterns) explicitly — phrase by phrase, not vibes-only. The 3-question qualitative tonal self-check in Step 7 is necessary but not sufficient. See `memory/feedback_voice_anchor_pass_at_iteration_3.md`.
 

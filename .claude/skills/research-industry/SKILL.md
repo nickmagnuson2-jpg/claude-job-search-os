@@ -20,7 +20,7 @@ Use this when exploring a new industry, preparing for interviews in an unfamilia
 
 Examples:
 - `/research-industry "behavioral health tech" "exploring pivot from consulting"`
-- `/research-industry "climate tech" "interview at Watershed, want to understand the landscape"`
+- `/research-industry "climate tech" "interview at Northwind, want to understand the landscape"`
 - `/research-industry "defense tech" "networking with people in this space"`
 - `/research-industry fintech` — general landscape research, no specific context
 
@@ -39,7 +39,7 @@ Usage: /research-industry <industry-name> [context]
 
 Examples:
   /research-industry "behavioral health tech" "exploring pivot from consulting"
-  /research-industry "climate tech" "interview at Watershed, want to understand the landscape"
+  /research-industry "climate tech" "interview at Northwind, want to understand the landscape"
   /research-industry fintech
 ```
 
@@ -50,7 +50,7 @@ Examples:
 - Contains "explore" or "learn" or "understand" → `exploration`
 - Otherwise → `general`
 
-**Extract company name** from the context string if present (e.g., "interview at Watershed" → anchor company is "Watershed"). Look for patterns like "at [Company]", "role at [Company]", "[Company] interview".
+**Extract company name** from the context string if present (e.g., "interview at Northwind" → anchor company is "Northwind"). Look for patterns like "at [Company]", "role at [Company]", "[Company] interview".
 
 **Generate a slug** from the industry name for the output filename: lowercase, spaces/special chars replaced with hyphens (e.g., "behavioral health tech" → `behavioral-health-tech`).
 

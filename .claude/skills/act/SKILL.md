@@ -120,9 +120,9 @@ Display the full categorized plan. **Do not execute anything yet.** Show all sec
 | # | Type | Task | URL / Source |
 |---|------|------|-------------|
 | 1 | Careers check | Check Playlist-EGYM careers — S&O/Ops roles | playlist.com/careers |
-| 2 | Company research | Deep-dive Talkiatry — #2 BH target | 5 agents + dossier (~5 min) |
+| 2 | Company research | Deep-dive Northwind — #2 BH target | 5 agents + dossier (~5 min) |
 | 3 | Company research | Deep-dive Northwind — #3 BH target | 5 agents + dossier (~5 min) |
-| 4 | Company research | Deep-dive Tessera — #4 BH target | 5 agents + dossier (~5 min) |
+| 4 | Company research | Deep-dive Contoso — #4 BH target | 5 agents + dossier (~5 min) |
 | 5 | Company research | Deep-dive Lumen | 5 agents + dossier (~5 min) |
 | 6 | Article read | Jordan Lee — care-retention white paper | industry-pub.example.com |
 | 7 | Article read | (inbox) an industry publication article on care delivery | industry-pub.example.com |
@@ -338,7 +338,7 @@ Research process:
 
 3. Save the completed dossier to: output/[slug]/[slug].md
    File header must include: `Last updated: [today's date in YYYY-MM-DD format]`
-   Slug format: lowercase company name with spaces replaced by hyphens (e.g., "Tessera" → tessera)
+   Slug format: lowercase company name with spaces replaced by hyphens (e.g., "Contoso" → contoso)
    The directory will be created automatically by the Write tool.
 
 4. Return only the Executive Summary (3-5 sentences) — the full dossier is in the file.
@@ -462,10 +462,10 @@ Write the updated `data/job-todos.md`.
 
 ### Company Research
 
-**Talkiatry** — dossier saved: `output/talkiatry/talkiatry.md`
+**Northwind** — dossier saved: `output/northwind/northwind.md`
 > $210M Series D (Feb 2026), 600+ psychiatrists on platform, telehealth-first SMI focus.
 > Strategy & Ops team actively hiring. Strong fit for S&O background.
-> Run `/research-company "Talkiatry"` for deeper refresh, or `/prep-interview "Talkiatry"` when applying.
+> Run `/research-company "Northwind"` for deeper refresh, or `/prep-interview "Northwind"` when applying.
 
 **Northwind** — dossier saved: `output/northwind/northwind.md`
 > ...

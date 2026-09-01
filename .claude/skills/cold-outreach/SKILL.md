@@ -159,7 +159,7 @@ research on the company, on the role, on what I would bring, how I should positi
 do the outreach? We automate everything around it so that it's still getting my voice."* An opt-in rule
 requires him to remember to invoke it at the exact moment he is moving fast, which is the moment he
 reaches for the finished draft instead. **The 2026-08-25 cold email to a target company is the worked example: it ran
-through this skill, it worked (reply in 20 minutes, call inside 24 hours), and he still wanted the
+through this skill, it worked (a same-day reply and a call inside a day), and he still wanted the
 prose to have been his.** A rule that only fires when he remembers to ask loses to urgency. Per
 `memory/feedback_give_nick_beats_not_a_polished_script.md` (4th fire) and his Tier-1 authenticity
 non-negotiable. It is NOT grounded in a recipient objection — the one recipient who noticed said the
