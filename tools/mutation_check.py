@@ -68,7 +68,9 @@ ALLOW_FILE = REPO_ROOT / "tools" / "mutation-allow.json"
 
 # tests/conftest.py exits with this when a *.mutation_backup exists anywhere in the tree.
 # It means "I refused to measure", never "your test failed".
-CONFTEST_REFUSAL = 3
+# Imported, never re-declared: tests/conftest.py produces this exit code and this file
+# matches on it. A second literal would drift silently. See tools/conftest_guard.py.
+from conftest_guard import CONFTEST_REFUSAL  # noqa: E402
 DEFAULT_TIMEOUT = 300
 
 

@@ -255,6 +255,43 @@ docstrings and comments excluded), with three deliberate choices about which way
   something that imports it. Of the 66 selections the tightening dropped, 2 had such a path; both are
   recovered.
 
+## One orphan file silently voided every isolation result (fixed 2026-09-01)
+
+A stray `tools/todo_write.py 2.mutation_backup` — a macOS/sync-style " 2" duplicate whose source
+`tools/todo_write.py 2` never existed — sat in the tree. `tests/conftest.py` globbed **every**
+`*.mutation_backup` and refused to run when any was present, so the `--isolation` subprocess of all
+108 tools in a sweep was refused. Every one came back `isolation_unmeasured`.
+
+**Nothing failed and nothing was flagged.** The isolation signal was simply gone for a whole run,
+and the only visible symptom was a status word in a field the sweep record does not even copy
+(`isolation_refused` is dropped when `mutation_sweep` builds its row, so the row showed
+`isolation_refused: None` while the status said otherwise — the contradiction that led to the cause).
+
+Where it came from: `mutation_sweep --targets` runs `mutation_check --list` over all ~110 tools,
+each of which writes a backup beside its target. `todo_write.py` is the largest tool, so it had the
+widest write window, and a file-sync process duplicated the backup before cleanup removed the
+original. The duplicate is not tracked by the restore handler, so it stranded permanently.
+
+Two fixes, both in `tools/conftest_guard.py` (new — the single source both `tests/conftest.py` and
+`tools/mutation_check.py` import, so the two can no longer drift):
+
+- **An orphan does not block.** A backup counts as stranded only if its implied source EXISTS. An
+  orphan cannot be an in-flight mutation, because `mutation_check` only ever writes a backup beside
+  a file it is rewriting. A *live* backup sitting next to an orphan still refuses — the narrowing
+  must not invert into a silent pass while the tree really is mutated.
+- **The orphan is still reported**, through the terminal reporter rather than `print()`. pytest
+  captures stdout from a session fixture, so the first version of that note produced exactly zero
+  visible characters in a default run — a warning nobody sees, which is the failure mode the
+  hook-tier rule already forbids elsewhere.
+
+**The refusal exit code moved from 3 to 86.** pytest reserves 0–5, and 3 is INTERNALERROR — so a
+test file that genuinely blew up was indistinguishable from a refusal and got filed as a benign
+`isolation_unmeasured` instead of being surfaced as broken.
+
+**If you copy `tests/conftest.py` into a fixture tree, copy `tools/conftest_guard.py` too.** The
+import resolves relative to the copied tree's own root; without it, pytest cannot collect and
+`mutation_check` returns an error dict with no isolation keys at all.
+
 ## Crash-safety (fixed 2026-08-26)
 
 `mutation_check` had no crash handler. `finally` covers a clean exit and SIGINT — which

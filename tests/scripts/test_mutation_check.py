@@ -83,6 +83,14 @@ def _live_tool_copy(tmp_path):
     t.write_bytes((REPO_ROOT / "tests" / "scripts" / "test_vault_paths.py").read_bytes())
     (tmp_path / "tests" / "conftest.py").write_bytes(
         (REPO_ROOT / "tests" / "conftest.py").read_bytes())
+    # conftest.py imports tools/conftest_guard.py (the single source of the refusal code
+    # and of what counts as a stranded backup), resolved relative to ITS OWN repo root --
+    # which here is tmp_path. Without this the copied conftest raises ImportError, pytest
+    # cannot collect, and mutation_check returns an error dict with no isolation keys at
+    # all. Added 2026-09-01 when exactly that broke
+    # test_a_conftest_refusal_is_not_reported_as_an_isolation_failure.
+    (tmp_path / "tools" / "conftest_guard.py").write_bytes(
+        (REPO_ROOT / "tools" / "conftest_guard.py").read_bytes())
     return src, t
 
 

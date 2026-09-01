@@ -3,11 +3,19 @@
 Currently one: refuse to run while a mutation run owns a source file.
 """
 import os
+import sys
 from pathlib import Path
 
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+
+# Single source of truth for the refusal code and for what counts as a stranded backup,
+# shared with tools/mutation_check.py, which matches on the exit code. See that module.
+sys.path.insert(0, str(REPO_ROOT / "tools"))
+from conftest_guard import (  # noqa: E402
+    CONFTEST_REFUSAL, orphan_backups, stranded_backups,
+)
 
 # Set by tools/mutation_check.py in the env of the pytest subprocesses it spawns.
 # Those runs are SUPPOSED to see a mutated tree -- that is the whole mechanism.
@@ -15,14 +23,18 @@ MUTATION_ENV = "MUTATION_CHECK_ACTIVE"
 
 
 def _stranded_backups() -> list[Path]:
-    """Backup files left by tools/mutation_check.py.
+    """Backup files left by tools/mutation_check.py that mean the tree is really mutated.
 
     The tool copies <target> to <target>.mutation_backup for the duration of a run and
-    rewrites the target in place. The backup existing therefore means one of two things,
-    and both invalidate a test result: a run is in progress right now, or a previous run
-    crashed and left the tree mutated.
+    rewrites the target in place. Such a backup means one of two things, and both
+    invalidate a test result: a run is in progress right now, or a previous run crashed
+    and left the tree mutated.
+
+    A backup whose implied source does NOT exist is an orphan and is deliberately excluded
+    -- it cannot be an active mutation, and treating one as if it were cost a 108-tool
+    sweep its entire isolation signal on 2026-08-31. See tools/conftest_guard.py.
     """
-    return sorted(REPO_ROOT.glob("**/*.mutation_backup"))
+    return stranded_backups(REPO_ROOT)
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -53,7 +65,29 @@ def _refuse_to_run_under_an_active_mutation(request):
         return  # spawned BY mutation_check; seeing a mutated tree is the point
 
     stranded = _stranded_backups()
+    orphans = orphan_backups(REPO_ROOT)
     if not stranded:
+        if orphans:
+            # Junk, not an in-flight mutation, so it must not halt the run -- but it is
+            # still junk, and staying silent is how one of these sat in the tree long
+            # enough to void a whole sweep's isolation signal.
+            #
+            # Written through the terminal reporter, NOT print(): pytest captures stdout
+            # from a session fixture, so a print here is invisible in a default run --
+            # which would make this exactly the kind of warning nobody ever sees that the
+            # project's hook-tier rule exists to forbid. Verified by
+            # test_the_orphan_note_is_actually_VISIBLE_in_default_output.
+            junk = "\n".join(f"    {p.relative_to(REPO_ROOT)}" for p in orphans)
+            msg = (
+                "\nNOTE: orphaned mutation backup(s) present -- no source file beside "
+                "them, so\nthey do not indicate a live mutation and are NOT blocking "
+                f"this run:\n{junk}\nDelete them; they are stale copies.\n"
+            )
+            reporter = request.config.pluginmanager.get_plugin("terminalreporter")
+            if reporter is not None:
+                reporter.write_line(msg, yellow=True)
+            else:
+                print(msg)
         return
 
     names = "\n".join(f"    {p.relative_to(REPO_ROOT)}" for p in stranded)
@@ -71,5 +105,5 @@ def _refuse_to_run_under_an_active_mutation(request):
         "         startup (recover_if_stranded), or restore the .mutation_backup by hand.\n\n"
         "Do NOT delete the backup to make this message go away: it is the only copy of\n"
         "the unmutated source while a run is in flight.\n",
-        returncode=3,
+        returncode=CONFTEST_REFUSAL,
     )
