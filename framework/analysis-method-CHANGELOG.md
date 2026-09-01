@@ -1,3 +1,43 @@
+# Analysis Method — Changelog
+
+## 2026-08-31 — the frame location became canonical and enforced
+
+**Decision (Nick):** `output/<slug>/frame.yaml` is the canonical location for frame state.
+`framework/analysis-method.md` had declared this since v1; nothing enforced it, and three
+conventions were live in the tree simultaneously:
+
+| Path | Status now |
+|---|---|
+| `output/<slug>/frame.yaml` | **CANONICAL** |
+| `frames/<slug>/frame.yaml` | Legacy. One `frames/<target-company>-demo/` instance remains, UNMIGRATED |
+| `output/<target-company>/casework/frame-<MMDDYY>-reconstructed.yaml` | Legacy, non-conforming filename |
+
+**Why it mattered.** Nothing globs for frames (verified 2026-08-31 across `tools/*.py`), so a
+frame written to a non-canonical path is not discoverable and not enumerable — the compounding
+loop has no population to compound over, and F9's diff-against-last-locked assumes the prior file
+can be found. The location was whatever the caller guessed, and a guess cannot be wrong if nothing
+checks it.
+
+**Enforcement (not documentation).** `tools/frame_write.py` now runs
+`enforce_canonical_location()` for every subcommand that names a frame, before any read or write.
+An in-repo path that is not `output/<slug>/frame.yaml` is refused with structured JSON naming the
+exact canonical path it wants — refusing without naming the target merely relocates the guess.
+Paths outside the repo are unconstrained; that is what the convention governs and it is also what
+keeps the test suite runnable.
+
+**Also fixed the same day:** `frame_write.py init` did not create its parent directory, so the
+FIRST command any new engagement runs died with an uncaught `FileNotFoundError` — no `die()`, no
+structured JSON, just a traceback, from the tool that is the sole sanctioned mutation path. It
+survived because every test used pytest's `tmp_path`, which always exists, so the suite was
+structurally blind to init's own precondition. Four init tests validated its semantics and none
+its precondition.
+
+**Migrated:** the active engagement frame moved to `output/<slug>/frame.yaml`, verified
+byte-identical. **Not migrated:** the legacy `frames/<target-company>-demo/` frame and the
+reconstructed casework frame.
+
+---
+
 # Analysis Method — changelog
 
 **This file is the evidence that the method improves.** The acceptance criterion is that it gets better
