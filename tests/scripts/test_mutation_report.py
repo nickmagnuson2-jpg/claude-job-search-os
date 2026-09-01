@@ -21,6 +21,7 @@ So the properties worth protecting are, in order:
 Driven in-process against synthetic state files: build() is a pure function of two files
 on disk, which is exactly what makes it cheap to assert against.
 """
+import datetime
 import importlib.util
 import json
 import os
@@ -546,3 +547,53 @@ def test_only_assertion_free_findings_do_not_claim_tautologies(tmp_path):
               [result("tools/a.py", survived=1, assertion_free_tests=[
                   {"file": "f.py", "test": "t", "line": 1}])])
     assert "tautological" not in load().build(d)
+
+
+class TestStaleBaselineBanner:
+    """Origin 2026-08-31. mutation_check.py spawned pytest WITHOUT
+    PYTHONDONTWRITEBYTECODE, so CPython's (mtime, size) .pyc invalidation could execute a
+    later mutant as an earlier one's bytecode. That produces FALSE KILLS, which means a
+    baseline taken before the fix UNDER-reports survivors: it is optimistic, the dangerous
+    direction. The 082626 baseline (109 records, Aug 26-29) predates the fix entirely.
+
+    A note in a file would not reach the tool-hardening work; the report is what that work
+    reads, and it already states coverage FIRST so a partial run cannot read as complete.
+    Staleness gets the same treatment for the same reason."""
+
+    def _state(self, tmp_path, mtime):
+        (tmp_path / "targets.json").write_text(
+            json.dumps([target("tools/a.py", mutants=4)]), encoding="utf-8")
+        b = tmp_path / "baseline.jsonl"
+        b.write_text(json.dumps({"tool": "tools/a.py", "mutants": 4, "killed": 4,
+                                 "survived": 0, "status": "ok"}) + "\n", encoding="utf-8")
+        os.utime(b, (mtime, mtime))
+        return tmp_path
+
+    STALE = datetime.datetime(2026, 8, 29, tzinfo=datetime.timezone.utc).timestamp()
+    FRESH = datetime.datetime(2026, 9, 5, tzinfo=datetime.timezone.utc).timestamp()
+
+    def test_baseline_older_than_the_bytecode_fix_is_banner_flagged(self, tmp_path):
+        body = load().build(self._state(tmp_path, self.STALE))
+        assert "false kill" in body.lower(), (
+            "a pre-fix baseline is reported without any staleness warning; the "
+            "tool-hardening work would read inflated kill counts as real"
+        )
+
+    def test_the_banner_appears_before_the_numbers(self, tmp_path):
+        low = load().build(self._state(tmp_path, self.STALE)).lower()
+        assert low.index("false kill") < low.index("sweep coverage"), (
+            "staleness warning must precede the counts it invalidates"
+        )
+
+    def test_the_banner_says_which_DIRECTION_the_error_runs(self, tmp_path):
+        """'May be wrong' is not actionable. The reader has to know the baseline reads
+        CLEANER than reality, or they will assume the safe direction and skip the re-run."""
+        low = load().build(self._state(tmp_path, self.STALE)).lower()
+        assert "under-reported" in low or "optimistic" in low
+
+    def test_a_baseline_taken_after_the_fix_gets_no_banner(self, tmp_path):
+        body = load().build(self._state(tmp_path, self.FRESH))
+        assert "false kill" not in body.lower(), (
+            "a post-fix baseline must not carry the warning, or the banner becomes noise "
+            "everyone learns to skip"
+        )

@@ -13,10 +13,23 @@ USAGE
 from __future__ import annotations
 
 import argparse
+import datetime as _dt
 import json
 import os
 import sys
 from pathlib import Path
+
+# The moment mutation_check.py started spawning pytest with PYTHONDONTWRITEBYTECODE=1.
+# Before it, CPython's (mtime, size) .pyc invalidation could execute a later mutant as an
+# EARLIER mutant's bytecode, so a mutant that genuinely survives could be recorded KILLED.
+# Measured that day on ss_route_conversation.py: survives 3 of 3 by hand, reported KILLED
+# in 5 of 6 tool runs, correct only on the first run after __pycache__ was cleared.
+#
+# The direction is what makes this urgent: false KILLS mean a pre-fix baseline
+# UNDER-reports survivors. It reads cleaner than the corpus actually is, so tools that
+# look done may not be. Any baseline written before this timestamp must be re-run before
+# its numbers are used to decide what is already hardened.
+BYTECODE_FIX_UTC = _dt.datetime(2026, 8, 31, tzinfo=_dt.timezone.utc).timestamp()
 
 REPO_ROOT = Path(os.environ.get("MUTATION_REPO_ROOT",
                                 Path(__file__).resolve().parents[1])).resolve()
@@ -48,6 +61,18 @@ def build(state_dir: Path) -> str:
     out: list[str] = []
     w = out.append
     w("## Survivor map — mutation survival across the tool corpus\n")
+
+    # Staleness BEFORE the numbers, for the same reason coverage comes before them: a
+    # reader who sees the counts first has already believed them.
+    baseline_mtime = (state_dir / "baseline.jsonl").stat().st_mtime
+    if baseline_mtime < BYTECODE_FIX_UTC:
+        taken = _dt.datetime.fromtimestamp(baseline_mtime, _dt.timezone.utc).date()
+        w(f"> ⚠️ **THIS BASELINE MAY CONTAIN FALSE KILLS — RE-RUN BEFORE TRUSTING IT.**\n"
+          f"> Taken {taken}, before the 2026-08-31 fix that made `mutation_check.py` spawn\n"
+          f"> pytest with `PYTHONDONTWRITEBYTECODE=1`. Without it a stale `.pyc` could run\n"
+          f"> one mutant as another's bytecode and record a SURVIVING mutant as killed.\n"
+          f"> **The error is optimistic:** survivors are under-reported, so a tool that\n"
+          f"> looks hardened here may not be. Re-sweep, then compare against this file.\n")
     w(f"**Sweep coverage: {len(rows)} of {len(auditable)} auditable tools measured.** "
       f"Selection is deterministic: every `tools/*.py` with a matching "
       f"`tests/scripts/test_<name>.py` and no `mutation-allow.json` entry "
