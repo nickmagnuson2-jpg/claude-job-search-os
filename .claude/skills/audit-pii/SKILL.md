@@ -212,11 +212,32 @@ right six times out of six has not been observed yet (2026-08-14: two of six wer
   with the reasoning for why each was a real entity, would disclose more than the strings already do.
   A bare hostname in an examples block reads as a placeholder; a note confirming it was a genuine
   target does not.
-- **The structural gap behind that entry is worth knowing.** `gen_pii_denylist.py` builds only from
-  `networking.md` and `job-pipeline.md`, so an entity that was researched and archived without ever
-  entering the pipeline is invisible to the deterministic layer **by construction** — `output/archive/`
-  holds several. The semantic pass is load-bearing there, not a backstop, and a green Step 1 alone
-  does not cover it.
+- **The structural gap behind that entry is worth knowing.** `gen_pii_denylist.py` harvests from
+  `networking.md`, `job-pipeline.md` and `scan-targets.yaml`, so an entity that was researched and
+  archived without ever entering any of those is invisible to the deterministic layer **by
+  construction** — `output/archive/` holds several. The semantic pass is load-bearing there, not a
+  backstop, and a green Step 1 alone does not cover it.
+- **Two more gaps were found and CLOSED on 2026-09-01, both by a live leak rather than by reasoning.**
+  (a) *Components.* A multi-token company was emitted only as the whole phrase plus its slug, and
+  `find_pii` matches a phrase literally — so a public file naming ONE word of a two-word company was not
+  a hit. 171 of 470 entries were multi-token. Distinctive components now reach BLOCK, ordinary-English
+  ones the WARN tier, and a person contributes a surname but never a bare first name (the fictional cast
+  would otherwise turn every placeholder into a block). (b) *Retired targets.* The list was rebuilt from
+  CURRENT `data/` each run, so a company that left `scan-targets.yaml` lost its coverage while its name
+  stayed in files written while it WAS a target — exactly how a retargeted-away company sat on the public
+  remote on neither tier. Tokens now accumulate in a gitignored `tools/.pii-denylist-retired.txt`, merged
+  into every rebuild and hand-prunable. See [[feedback_coverage_must_outlive_the_source_it_was_derived_from]].
+- **What is still NOT covered, and is the next thing to build.** A single-token company whose name is an
+  ordinary English word still routes to WARN, which on the write path reaches nobody. That rule
+  ([[feedback_pii_denylist_drops_common_word_company_names]]) tripped its 2nd-fire gate on 2026-09-01 and
+  its fix — an allowlist of actual target names that bypasses the dictionary filter — is **owed, not
+  built**. Do not read the two closures above as covering it.
+- **Calibration for how much the deterministic layer is worth on the semantic class.** On 2026-09-01 it
+  scanned all 523 tracked files and returned **zero BLOCK hits**, in the same minute that a semantic pass
+  found **nine real leaks** in six public skill files — a date-plus-outcome fingerprint, a verbatim
+  sentence from a sent email, an industry vertical, and a real company published with its rank in the
+  target list. None contained a denylisted token. **Never report a green Step 1 as "the public tree is
+  clean."**
 - **Pipeline membership does NOT imply BLOCK-tier coverage — the second gap, found 2026-08-14.**
   `gen_pii_denylist.py` routes single-token company names that are also ordinary English words to
   `tools/.pii-denylist-ambiguous.txt` (WARN) instead of the BLOCK denylist, so matching them will not

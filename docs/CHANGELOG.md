@@ -3,7 +3,57 @@
 All notable changes to this job search system are recorded here.
 Format: newest entries at the top.
 
-## 2026-08-21 (latest): plan-hardening v2 — bounded probes and per-defect retest replace the adversarial panel
+## 2026-09-01 (latest): the mutation instrument was optimistic, and the PII gate matched half a phrase
+
+Four independent defects, three of them found by something failing rather than by review.
+
+**`mutation_check.py` recorded surviving mutants as KILLED.** It rewrites its target dozens of times per
+second and spawned pytest without `PYTHONDONTWRITEBYTECODE`; CPython invalidates a cached `.pyc` by
+`(mtime, size)`, coarse enough that a later mutant could run as an earlier one's bytecode. The direction is
+what matters: false *kills* mean survivors are **under-reported**, so a baseline reads cleaner than the
+corpus is and a tool that looks hardened may not be. **Every "mutation-clean" claim made before 2026-08-31
+is unverified.** `mutation_report.py` now prints a staleness banner above the numbers for any pre-fix
+baseline, and it disappears on its own once a post-fix baseline exists. Second defect in the same file:
+`map_tests` selected covering tests by bare substring over raw source, which chose 15 files instead of 6
+for `todo_write.py`, blew the 5h cap, and left that tool unmeasured entirely. Selection is now AST-derived.
+
+**launchd fired into the tree the sweep was mutating, ~80 times a night.** `conftest.py` refuses to run
+while a mutation is in flight, which covers pytest and nothing else. `gmail-fetch` (every 900s),
+`granola-auto-debrief` (every 3h) and `detector-scan` all shell into the same `tools/*.py`; `gmail_fetch.py`
+carries 377 mutants, so during its own measurement window a fetch job would run mutated mail code against
+real Gmail. New `tools/job_quiesce.py` unloads the jobs for the run and restores exactly what was up. The
+guard could not live inside the scheduled tools — mutating a guard's own `if` is what the sweep does. The
+sweep also moved 16:00 to 18:00, because an unattended run that makes the tree unsafe belongs after the
+workday.
+
+**The PII denylist matched phrases literally, so half a phrase walked through.** A multi-token company was
+emitted only as the whole phrase plus its slug; 171 of 470 entries were multi-token. Separately, the list
+was rebuilt from *current* `data/` every run, so a company that left `scan-targets.yaml` lost its coverage
+while its name stayed in files written while it was a target. Both closed: distinctive components now
+reach BLOCK and ordinary-English ones the WARN tier, and tokens accumulate in a gitignored retired file
+merged into every rebuild. The first tightening produced **7 false positives across 522 public files** —
+the system dictionary has no plurals, so ordinary plurals read as brand tokens; a general fix for the
+compound cases was written and rejected the same hour because it also dissolved a legitimate brand name
+into two ordinary words. Final: 565 tokens, **zero** false positives, and the sentence that leaked now
+blocks.
+
+**Nine real leaks were live in public skill files, with the deterministic scanner reporting clean.** A
+date-plus-outcome fingerprint, a verbatim sentence from a sent email, two industry verticals, a private
+company note copied into a test fixture, and two real companies published with their rank in the target
+list. None contained a denylisted token — the same 523-file scan returned zero BLOCK hits in the same
+minute. All scrubbed. **A green deterministic sweep is not evidence about this class**; only the semantic
+pass or a human reading the line is.
+
+Also: `act_apply.py` interpolated a literal `" | "` into a Notes cell, making every source-tagged pipeline
+row 11 fields wide and shifting the URL column into Notes — new `check_table_integrity.py` hook catches the
+shape. `frame_write.py` gained canonical-location enforcement (three frame conventions were live at once,
+and nothing globs for frames, so a misplaced one was simply lost) and a fix for an uncaught
+`FileNotFoundError` on its own first `init`. A stale unmerged branch was deleted from the public remote.
+
+Suite **3222 to 3269**. Commits `f10e644`, `2ae4af9`, `b22e76b`, `9bdfd45`, `98fbcfa`, `e44d2a8`,
+`295dce0`, `3b41d0f`, `3ad7bfa`, `0a3381d`, `43af02e`.
+
+## 2026-08-21: plan-hardening v2 — bounded probes and per-defect retest replace the adversarial panel
 
 `.claude/workflows/plan-hardening.js` was rewritten against `framework/plan-hardening-v2-spec.md`.
 Suite **2114 to 2155** (33 tests in `test_plan_hardening_invariants.py` + 8 in

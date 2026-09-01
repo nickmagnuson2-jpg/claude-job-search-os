@@ -205,6 +205,56 @@ two hours **with no `.mutation_backup`** — so every stranded-backup check repo
 clean. Those tests now operate on a byte-copy in `tmp_path`. **A tree can be corrupt with
 no backup present; absence of a backup is not evidence of a clean tree.**
 
+## A stale `.pyc` reported surviving mutants as KILLED (fixed 2026-08-31)
+
+**The most important thing to know about every number this tool produced before 2026-08-31.**
+
+`mutation_check.py` rewrites its target dozens of times per second and spawned pytest **without**
+`PYTHONDONTWRITEBYTECODE`. CPython invalidates a cached `.pyc` by `(mtime, size)`, a granularity coarse
+enough that a later mutant could execute as an **earlier mutant's bytecode**. The mismatch registers as a
+test failure, which the tool recorded as a KILL.
+
+**The direction is what makes it urgent.** False *kills* mean survivors are **under-reported**: a baseline
+reads cleaner than the corpus actually is, and a tool that looks hardened may not be. The opposite error
+would only cost a redundant test; this one certifies that a suite protects a behaviour it does not, which
+is the exact claim this instrument exists to license.
+
+Measured on `ss_route_conversation.py`, mutant `resolve_person::NEGATE_CMP`:
+
+| Condition | Verdict |
+|---|---|
+| Hand-applied mutation, 3 runs | **SURVIVED 3/3** |
+| Tool, warm `__pycache__`, 5 runs (pre-fix) | KILLED 5/5 — *false* |
+| Tool, first run after clearing `__pycache__` | SURVIVED — correct |
+| Tool, post-fix, warm cache, 5 runs | SURVIVED 5/5 — stable |
+
+Fixed at both subprocess sites (`run_tests` and the `--isolation` pass). `mutation_report.py` prints a
+banner above the numbers for any `baseline.jsonl` older than the fix, and the banner disappears on its own
+once a post-fix baseline is written — nothing to remember to remove.
+
+**Any "mutation-clean" claim made before 2026-08-31 is unverified**, including ones written into commit
+messages. When comparing a new sweep against an old one, every tool whose survivor count **RISES** is work
+this bug hid.
+
+## Test selection: substring matching over-selected and blew the cap (fixed 2026-08-31)
+
+`map_tests` chose covering test files with `if stem in text` over the raw source — a bare substring scan,
+no word boundary, comments and prose included. For `todo_write.py` that selected 15 files instead of 6; at
+541 mutants the run blew the 5-hour cap and recorded `UNAUDITED_TIMEOUT`, so **the tool went unmeasured
+entirely**. The worst match was the string `personal_todo_write` — a *different* tool whose name contains
+this one — inside a comment listing launchd jobs.
+
+Selection now runs over an AST-derived view of each test file (identifiers, imports, string literals;
+docstrings and comments excluded), with three deliberate choices about which way to err:
+
+- **String literals are KEPT** — many tests invoke a tool as a subprocess rather than importing it, and
+  dropping literals would un-cover every CLI-invoked tool and convert real kills into survivors.
+- **Unparseable files fail OPEN** — a file that will not parse stays selected. Excluding it would drop
+  real coverage; including it only costs runtime.
+- **Transitive imports are followed** — a test can exercise a target without naming it, by importing
+  something that imports it. Of the 66 selections the tightening dropped, 2 had such a path; both are
+  recovered.
+
 ## Crash-safety (fixed 2026-08-26)
 
 `mutation_check` had no crash handler. `finally` covers a clean exit and SIGINT — which
