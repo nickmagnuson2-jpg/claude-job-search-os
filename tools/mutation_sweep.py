@@ -178,14 +178,28 @@ def repair_stranded(rel: str) -> str | None:
 
 
 def _report_quiesce(action: str, res: dict) -> None:
-    """One line per outcome, in the log launchd writes. A job left down is a debt on
-    Nick's mail, not a property of the measurement, so it is printed rather than folded
-    into the exit status where the sweep's own result would hide it."""
+    """Report a quiesce or restore into the log launchd writes.
+
+    ALWAYS prints, including on success. A clean run that says nothing leaves no evidence
+    the jobs ever went down, and "was the run actually protected?" becomes unanswerable
+    from a 10-hour unattended log the next morning. The jobs are NAMED, not counted: the
+    useful question at 08:00 is which one is still down, not how many.
+
+    A job left down is a debt on Nick's mail, not a property of the measurement, so it is
+    printed rather than folded into the exit status where the sweep's own result hides it.
+    """
+    done = res.get("quiesced" if action == "quiesce" else "restored") or []
+    stamp = time.strftime("%H:%M:%S")
+    if done:
+        print(f"{stamp}  {action}d {len(done)} launchd job(s): {', '.join(done)}",
+              flush=True)
+    else:
+        print(f"{stamp}  {action}: no launchd jobs affected", flush=True)
     for note in res.get("notes") or []:
-        print(f"{time.strftime('%H:%M:%S')}  {action}: {note}", flush=True)
+        print(f"{stamp}  {action}: {note}", flush=True)
     if res.get("failed"):
-        print(f"{time.strftime('%H:%M:%S')}  !! {len(res['failed'])} launchd job(s) "
-              f"STILL DOWN after {action}: {', '.join(res['failed'])} -- restore with "
+        print(f"{stamp}  !! {len(res['failed'])} launchd job(s) STILL DOWN after "
+              f"{action}: {', '.join(res['failed'])} -- restore with "
               f"`bash tools/launchd/install.sh install`", flush=True)
 
 

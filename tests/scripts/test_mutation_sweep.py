@@ -920,3 +920,35 @@ def test_the_restore_is_paid_once_not_once_per_exit_path(repo, monkeypatch, caps
         mod.run_sweep(state)
     capsys.readouterr()
     assert spy.events.count("restore") == 1
+
+
+def test_the_log_records_what_was_quiesced_and_restored_even_on_success(
+        repo, monkeypatch, capsys):
+    """A clean run that prints nothing leaves no evidence the jobs ever went down. The
+    morning read of an unattended 10-hour log has to show the takedown AND the restore,
+    or 'did it protect the run?' is unanswerable after the fact."""
+    state = _one_tool_state(repo)
+    mod = load(repo, monkeypatch)
+    monkeypatch.setattr(mod, "job_quiesce", SpyQuiesce())
+    mod.run_sweep(state)
+    out = capsys.readouterr().out
+
+    assert "quiesce" in out.lower() and "restore" in out.lower()
+    assert "gmail-fetch" in out, "the log must name the jobs, not just count them"
+
+
+def test_a_quiesce_that_took_nothing_down_says_so_rather_than_going_quiet(
+        repo, monkeypatch, capsys):
+    """Zero jobs quiesced means launchctl was unreachable or nothing was loaded. Both are
+    worth seeing: the run went ahead unprotected."""
+    state = _one_tool_state(repo)
+    mod = load(repo, monkeypatch)
+    spy = SpyQuiesce()
+    monkeypatch.setattr(spy, "quiesce",
+                        lambda *a, **k: {"quiesced": [], "failed": [], "notes": []})
+    monkeypatch.setattr(spy, "restore",
+                        lambda *a, **k: {"restored": [], "failed": [], "notes": []})
+    monkeypatch.setattr(mod, "job_quiesce", spy)
+    mod.run_sweep(state)
+    out = capsys.readouterr().out
+    assert "no launchd jobs" in out.lower()
