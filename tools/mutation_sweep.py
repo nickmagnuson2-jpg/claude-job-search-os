@@ -11,13 +11,18 @@ A green suite is not evidence; this produces the count that is.
 SELECTION IS DETERMINISTIC, not a judgment call: every `tools/*.py` that has a matching
 `tests/scripts/test_<name>.py` and no entry in `tools/mutation-allow.json`.
 
-TWO FILES SELF-EXCLUDE, for the same reason and at different layers. `mutation_check.py`
+THREE FILES ARE EXCLUDED, for the same reason at different layers. `mutation_check.py`
 refuses itself (a tool that rewrites live source must never rewrite itself). This file
 excludes itself here, because the sweep executes FROM it: making it a target means
 rewriting live source under the running process. Both are RECORDED as `mutants: -1` rather
 than dropped, so `self_excluded` names them and the selected-vs-auditable accounting still
 adds up. Neither is unmeasurable -- run `mutation_check.py` on either one directly, with no
 sweep in flight. Both have test files as of 2026-08-26.
+
+The third is `job_quiesce.py`, added 2026-09-01: it is the runner's own restore path for
+the launchd jobs the sweep takes down, and a SIGKILL mid-mutation would leave the NEXT run
+importing a mutated restorer at startup. Same remedy -- measure it directly, not in a
+sweep.
 
 SERIAL ON PURPOSE. `mutation_check` rewrites its target in place, so two concurrent runs in
 one tree corrupt each other -- agents hit `isolation_failed` purely from a sibling's
@@ -80,6 +85,15 @@ TOOL_TIMEOUT = 300 * 60
 # itself for. Matched by NAME, not by resolved path, because REPO_ROOT is overridable.
 SELF_NAME = Path(__file__).name
 
+# Modules the RUNNER depends on, which therefore must not be rewritten as targets.
+# job_quiesce.py is the restore path for the launchd jobs this sweep takes down. The
+# parent holds it in sys.modules for the whole run, so mutating it on disk is harmless
+# while the run is alive -- the hazard is the NEXT run. A SIGKILL mid-mutation leaves a
+# mutated job_quiesce.py behind, and the following sweep imports it at startup and uses it
+# to restore whatever the dead run stranded. A mutated restorer deciding whether Nick's
+# mail fetch comes back is precisely the failure that module exists to prevent.
+RUNNER_DEPENDENCIES = {"job_quiesce.py"}
+
 # A tool that opens anything for writing can silently corrupt a real data file, which is a
 # higher blast radius than a hook misfiring. Recorded per tool so the report can rank by it.
 _WRITER_RE = re.compile(r"os\.replace|open\([^)]*['\"][wa]['\"]|write_atomic|\.write_text\(")
@@ -117,7 +131,7 @@ def build_targets() -> list[dict]:
         test_files = mutation_check.map_tests(tool, REPO_ROOT)
         if not test_files:
             continue
-        if tool.name == SELF_NAME:
+        if tool.name == SELF_NAME or tool.name in RUNNER_DEPENDENCIES:
             # Recorded, not silently dropped: a -1 row lands in `self_excluded` so the
             # selected-vs-auditable accounting still names it. Measuring this file is
             # still possible -- run mutation_check.py on it directly, with no sweep in

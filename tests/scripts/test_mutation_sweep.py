@@ -952,3 +952,26 @@ def test_a_quiesce_that_took_nothing_down_says_so_rather_than_going_quiet(
     mod.run_sweep(state)
     out = capsys.readouterr().out
     assert "no launchd jobs" in out.lower()
+
+
+def test_the_quiesce_module_is_self_excluded_like_the_runner_itself(repo, monkeypatch):
+    """job_quiesce.py is the sweep's own restore path and must never be a target.
+
+    The parent process holds it in sys.modules for the whole run, so mutating it on disk
+    is harmless WHILE the run is alive. The hazard is the next run: a SIGKILL mid-mutation
+    leaves a mutated job_quiesce.py on disk, and the following sweep imports it AT STARTUP
+    and uses it to restore the launchd jobs the previous run stranded. A mutated restorer
+    deciding whether Nick's mail fetch comes back is the one failure this module exists to
+    prevent.
+
+    Recorded as mutants:-1 rather than dropped, matching how mutation_sweep and
+    mutation_check name themselves - the selected-vs-auditable accounting still has to add
+    up, and it stays measurable by running mutation_check.py on it directly.
+    """
+    # mutants=5 matters: without it the stub engine returns unparseable output and the
+    # row is -1 anyway, so the test would pass whether the exclusion existed or not.
+    add_tool(repo, "job_quiesce", mutants=5)
+    mod = load(repo, monkeypatch)
+    rows = {r["tool"]: r for r in mod.build_targets()}
+    assert "tools/job_quiesce.py" in rows, "must be recorded, not silently dropped"
+    assert rows["tools/job_quiesce.py"]["mutants"] == -1
