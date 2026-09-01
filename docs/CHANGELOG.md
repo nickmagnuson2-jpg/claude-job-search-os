@@ -1477,7 +1477,7 @@ Two scripts (`networking_followup.py` and `outreach_pending.py`) and the data mo
 - **`tools/md_to_pdf.py`** — major rewrite for 1-page CV output: switched from Helvetica to Calibri (registered via ReportLab TTFont from `C:/Windows/Fonts/`), tightened page margins (8mm/13mm), reduced line-height to 1.1, reduced body font-size to 8.5pt, tightened section spacing throughout.
 - **`framework/style-guidelines.md`** — added Nick's CV formatting preferences: no em dashes or en dashes (use hyphens everywhere), comma separators for skills lists (not dots or bullets).
 - **`CLAUDE.md`** — added `todo_write.py` to repo structure listing; updated Write-Only Files section to specify that mutations must use `todo_write.py`; added `todo_write.py` usage examples to Tools & Environment section.
-- **`.claude/settings.local.json`** — added pre-approved WebFetch domains (luma.com, oceantechhackathon.org, sofarocean.com, propellervc.com, aquatic-labs.com) and pre-approved Bash patterns (`git add:*`, `PYTHONIOENCODING=utf-8 python:*`).
+- **`.claude/settings.local.json`** — added pre-approved WebFetch domains (five event and target-company domains) and pre-approved Bash patterns (`git add:*`, `PYTHONIOENCODING=utf-8 python:*`).
 
 ### Tests added
 - `tests/scripts/test_linkedin_scanner_parser.py` — unit tests for LinkedIn profile parser

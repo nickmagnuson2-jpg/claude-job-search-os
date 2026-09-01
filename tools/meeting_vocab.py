@@ -383,7 +383,7 @@ _TURN_RE = re.compile(
 _CORRUPT_DICT_LABEL_RE = re.compile(r"\{'source':[^}]*\}:")
 
 
-# A NAMED-speaker turn: `**Nick:**`, `Nick:`, `*Darren:*`. Markdown bold around the label is
+# A NAMED-speaker turn: `**Nick:**`, `Nick:`, `*Taylor:*`. Markdown bold around the label is
 # common in hand-formatted transcripts and was what hid this format for months -- the earlier
 # pattern required a capital letter directly after whitespace, and `**` sat in between.
 _NAMED_TURN_RE = re.compile(
@@ -398,7 +398,7 @@ _MIN_NAMED_TURNS = 3
 
 
 def _named_speaker_turns(text: str, owner_ids: tuple) -> tuple[list[str], list[str]] | None:
-    """Split a transcript labelled with real names, e.g. `**Nick:**` / `**Darren:**`.
+    """Split a transcript labelled with real names, e.g. `**Nick:**` / `**Taylor:**`.
 
     Returns None when the text does not clearly use this scheme, so the caller can fall
     through rather than guess. Deliberately conservative: it must find at least two distinct
@@ -455,7 +455,7 @@ def split_transcript_turns(text: str) -> tuple[list[str], list[str]]:
     parts = _TURN_RE.split(text)
     if len(parts) < 3:
         # No channel-style label. Try NAMED speakers before giving up: a transcript written
-        # `**Nick:** / **Darren:**` is perfectly attributable, and treating it as unparseable
+        # `**Nick:** / **Taylor:**` is perfectly attributable, and treating it as unparseable
         # is what kept a real behavioural screen out of every per-speaker analysis.
         named = _named_speaker_turns(text, NICK_IDENTIFIERS)
         return named if named else ([], [])

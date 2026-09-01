@@ -3,7 +3,7 @@
 check_zuora_principal_title.py — PreToolUse hook (Write|Edit|MultiEdit|Bash).
 
 Blocks the stale rendering of Nick's Zuora principal's title from landing in a
-new artifact. The person he was Chief of Staff to ("Pete") is the **Chief
+new artifact. The person he was Chief of Staff to is the **Chief
 Product and Technology Officer (CPTO)**. "Head of Product and Technology",
 "Head of Product & Technology", "Head of Product and Tech", and "Chief of Staff
 to the Head of Product" are shorthand Nick uses in casual speech — they are NOT
@@ -17,8 +17,8 @@ This is the 3rd-fire promotion named in the rule's own reopen_gate:
 string check, since the failure is a literal string that a grep can catch and
 prose has now failed twice."
 
-  Fire 1 (2026-06-11, the Origin): the Otterbrook/Harrison CV
-  `output/otterbrook/061126-magnuson.md` was generated off the fractional-ai
+  Fire 1 (2026-06-11, the Origin): the recruiter-channel CV
+  `output/<recruiter-slug>/061126-magnuson.md` was generated off a prior-application
   baseline, which rendered "Head of Product and Technology" in 4 places
   (summary, position line, bullet 1, the AI-workflow bullet). It survived a
   full deep review. Nick caught it: "it should be Chief Product and Technology
@@ -36,7 +36,7 @@ Measured scope before building (2026-08-25, `/usr/bin/grep -rin` over the repo
 including the gitignored trees): the Zuora-linked variant appears in 20+ frozen
 historical artifacts under `output/` and `inbox/`. Those are past outputs and
 sent mail — a hook only sees NEW writes, so they are untouched. Bare "Head of
-Product" for OTHER people (Michelle Fechtor's actual title in networking.md, the
+Product" for OTHER people (another contact's actual title in networking.md, the
 generic "Head of Product" persona in data/principles.md) appears far more often
 than the Zuora one, which is exactly why this check never fires on bare
 "Head of Product" alone.
@@ -58,7 +58,7 @@ Case-insensitive, on the content being written:
 
 Bare "Head of Product" with no Zuora linkage is ALLOWED — other companies'
 heads of product are real people with that real title (rule: "Different
-companies' 'head of product' (Jupiter, Feltsense) correctly untouched").
+companies' 'head of product' (other target companies) correctly untouched").
 
 TWO NARROWED EXCEPTIONS (both from the rule's own dated supplements)
 --------------------------------------------------------------------
@@ -191,7 +191,7 @@ def judge(content: str, path: str) -> None:
         "against data/projects/zuora.md — baselines propagate label errors.\n"
         "\n"
         "Reference: memory/feedback_zuora_principal_title_is_cpto.md (2 fires:\n"
-        "2026-06-11 Otterbrook CV, 2026-08-24 live interview coaching).\n",
+        "2026-06-11 recruiter-channel CV, 2026-08-24 live interview coaching).\n",
         file=sys.stderr,
     )
     sys.exit(2)

@@ -193,8 +193,8 @@ def test_none_required_followup_skipped(tmp_path):
 def test_recruiter_followup_bug_regression(tmp_path):
     """Regression test: Robin emailed 2026-03-09 with follow-up ~2026-03-16 should NOT be overdue on 2026-03-10."""
     write_fixture(tmp_path, "data/networking.md", make_fixture(
-        "| Robin Diaz | Tessera | — | cold-outreach | 2026-03-09 | 2026-03-09 | — |\n",
-        "### Robin Diaz — Tessera\n\n"
+        "| Robin Diaz | Northwind | — | cold-outreach | 2026-03-09 | 2026-03-09 | — |\n",
+        "### Robin Diaz — Northwind\n\n"
         "#### 2026-03-09 | email | Re: Manager, Business Operations application\n\n"
         "> Hi Robin, ...\n\n"
         "**Follow-up:** Wait for response — check back ~2026-03-16 if no reply\n\n",

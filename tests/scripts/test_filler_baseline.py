@@ -344,7 +344,7 @@ def test_barely_present_counterpart_still_counts_as_collapsed(tmp_path):
     assert out["ranked"][0]["unreliable"], "1 counterpart word in 400 is still collapsed"
 
 
-# --- named-speaker format (**Nick:** / **Darren:**) -------------------------
+# --- named-speaker format (**Nick:** / **Taylor:**) -------------------------
 # A fourth on-disk format, found 2026-08-25. Markdown bold around the label is what hid it:
 # the channel-style pattern required a capital letter directly after whitespace and `**` sat
 # in between, so a real behavioural screen with 23 turns each side parsed to zero and sat
@@ -352,11 +352,11 @@ def test_barely_present_counterpart_still_counts_as_collapsed(tmp_path):
 # guesses, because a wrong split silently attributes the counterpart's words to the owner.
 
 def test_named_speakers_with_markdown_bold_are_split():
-    text = ("**Darren:** Hey Nick, how is it going?\n\n"
+    text = ("**Taylor:** Hey Nick, how is it going?\n\n"
             "**Nick:** Doing well, thanks.\n\n"
-            "**Darren:** Good to hear.\n\n"
+            "**Taylor:** Good to hear.\n\n"
             "**Nick:** Likewise.\n\n"
-            "**Darren:** Shall we start?\n\n"
+            "**Taylor:** Shall we start?\n\n"
             "**Nick:** Ready.\n\n")
     owner, other = split_transcript_turns(text)
     assert owner == ["Doing well, thanks.", "Likewise.", "Ready."]
@@ -364,7 +364,7 @@ def test_named_speakers_with_markdown_bold_are_split():
 
 
 def test_named_speakers_without_bold_also_split():
-    text = "".join(f"Darren: q{i}\nNick: a{i}\n" for i in range(4))
+    text = "".join(f"Taylor: q{i}\nNick: a{i}\n" for i in range(4))
     owner, other = split_transcript_turns(text)
     assert owner == [f"a{i}" for i in range(4)]
     assert len(other) == 4
@@ -401,7 +401,7 @@ def test_sub_threshold_label_is_excluded_from_the_split():
     """A name used once or twice is prose or a passing mention, not a speaker. Including it
     would attribute stray text to the counterpart and inflate their word share -- which is
     the signal the collapsed-channel check reads."""
-    text = ("".join(f"Darren: q{i}\nNick: a{i}\n" for i in range(4))
+    text = ("".join(f"Taylor: q{i}\nNick: a{i}\n" for i in range(4))
             + "Moderator: a one-off aside\n")
     owner, other = split_transcript_turns(text)
     assert owner == [f"a{i}" for i in range(4)]

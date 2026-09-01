@@ -5,7 +5,7 @@ Structure mirrors tests/scripts/test_check_bare_python.py: every case pipes a re
 hook JSON payload through the script as a subprocess and asserts the exit code.
 
 The load-bearing case is `test_blocks_origin_input`: the verbatim shape of the
-2026-06-11 Otterbrook CV that created the rule, and the corrected version of the
+2026-06-11 recruiter-channel CV that created the rule, and the corrected version of the
 same file that must stay clean.
 """
 import importlib.util
@@ -98,11 +98,11 @@ def test_write_branch_blocks_and_passes_with_named_outcomes():
 
 
 # --------------------------------------------------------------------------
-# ORIGIN INPUT — 2026-06-11 Otterbrook/Harrison CV, built on the fractional-ai
+# ORIGIN INPUT — 2026-06-11 recruiter-channel CV, built on a prior-application
 # baseline, which rendered the stale title in 4 places. The clean variant is the
 # file's current on-disk text, with "Chief Product and Technology Officer".
 # --------------------------------------------------------------------------
-ORIGIN_PATH = "output/otterbrook/061126-magnuson.content.yaml"
+ORIGIN_PATH = "output/acme-corp/061126-magnuson.content.yaml"
 
 ORIGIN_INPUT = """\
 sections:
@@ -160,8 +160,8 @@ def test_blocks_stale_title(content):
     # canonical rendering
     "Chief of Staff to the Chief Product and Technology Officer",
     "position: Chief of Staff to the Chief Product and Technology Officer",
-    # OTHER companies' real heads of product (rule: Jupiter/Feltsense untouched)
-    "| Michelle Fechtor | Airsignal | Head of Product (startup) | peer |",
+    # OTHER companies' real heads of product (rule: other companies untouched)
+    "| Jordan Lee | Northwind | Head of Product (startup) | peer |",
     "Build named personas - Hiring Manager, CEO, Head of Product, Recruiter.",
     "They just hired a Head of Product from Stripe.",
     # self-correcting line: documents the error alongside the canonical title
@@ -247,7 +247,7 @@ def test_bash_write_blocks(command):
     "grep -rin 'head of product and technology' output/ data/",
     "/usr/bin/grep -rn \"Chief of Staff to the Head of Product\" .",
     "rg 'head of product & technology' --glob '*.md'",
-    "ls output/otterbrook/",
+    "ls output/acme-corp/",
     # writes with the canonical title
     "cat > output/acme-corp/cv.md <<'EOF'\n"
     "*Chief of Staff to the Chief Product and Technology Officer*\nEOF",

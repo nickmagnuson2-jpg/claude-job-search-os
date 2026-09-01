@@ -60,7 +60,7 @@ Parse the JSON output. Present results as a formatted table sorted by score desc
 
 | Score | Role | Company | Location | Link |
 |-------|------|---------|----------|------|
-| 8/10  | Strategy & Ops Manager | Ramp | New York, NY | [View](url) |
+| 8/10  | Strategy & Ops Manager | Northwind | New York, NY | [View](url) |
 | 7/10  | Business Operations Lead | Notion | San Francisco | [View](url) |
 | ...   | ... | ... | ... | ... |
 ```
@@ -87,9 +87,9 @@ If the user asks to add or remove companies, edit `data/scan-targets.yaml` direc
 
 | ATS | URL pattern | Example |
 |-----|-------------|---------|
-| Greenhouse | `boards.greenhouse.io/SLUG` | `slug: discord` |
+| Greenhouse | `boards.greenhouse.io/SLUG` | `slug: northwind` |
 | Lever | `jobs.lever.co/SLUG` | `slug: netflix` |
-| Ashby | `jobs.ashbyhq.com/SLUG` | `slug: ramp` |
+| Ashby | `jobs.ashbyhq.com/SLUG` | `slug: contoso` |
 | Generic | Full careers page URL | `careers_url: "https://example.com/careers"` |
 
 **Entry format:**

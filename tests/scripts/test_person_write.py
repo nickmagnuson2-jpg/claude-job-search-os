@@ -37,19 +37,19 @@ def people_dir(repo_root):
 # ---------------------------------------------------------------------------
 
 def test_create_writes_file_with_filled_placeholders(tmp_path):
-    res, rc = run_pw("create", "Priya Anand González",
+    res, rc = run_pw("create", "Priya Anand Fábrega",
                      "--company", "Acme AI", "--role", "Interviewer",
                      "--relationship", "interviewer", repo_root=tmp_path)
     assert rc == 0 and res["status"] == "ok" and res["action"] == "create"
-    assert res["slug"] == "priya-anand-gonzalez"
-    f = people_dir(tmp_path) / "priya-anand-gonzalez.md"
+    assert res["slug"] == "priya-anand-fabrega"
+    f = people_dir(tmp_path) / "priya-anand-fabrega.md"
     assert f.exists()
     text = f.read_text(encoding="utf-8")
-    assert text.startswith("# Priya Anand González")
+    assert text.startswith("# Priya Anand Fábrega")
     assert "**Company:** Acme AI" in text
     assert "**Role:** Interviewer" in text
     assert "**Relationship:** interviewer" in text
-    assert "**Slug:** priya-anand-gonzalez" in text
+    assert "**Slug:** priya-anand-fabrega" in text
     # No unfilled placeholders remain.
     assert "{NAME}" not in text and "{COMPANY}" not in text and "{SLUG}" not in text
 
@@ -124,7 +124,7 @@ def test_add_entry_each_section(tmp_path):
 
 
 def test_add_entry_fuzzy_resolve_by_partial_name(tmp_path):
-    run_pw("create", "Priya Anand González", repo_root=tmp_path)
+    run_pw("create", "Priya Anand Fábrega", repo_root=tmp_path)
     res, rc = run_pw("add-entry", "Priya", "--section", "commitments",
                      "--text", "fuzzy hit", repo_root=tmp_path)
     assert rc == 0 and res["action"] == "add-entry"
