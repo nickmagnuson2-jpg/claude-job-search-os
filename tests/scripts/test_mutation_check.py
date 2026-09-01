@@ -571,3 +571,233 @@ def test_a_genuine_isolation_failure_is_still_reported(tmp_path):
         "a test file that genuinely fails alone must still be named"
     assert d["status"] == "isolation_failed"
     assert not d.get("isolation_refused"), "nothing refused here; only a real failure"
+
+
+class TestBytecodeCachingCannotFakeAKill:
+    """Origin 2026-08-31. mutation_check rewrites the target dozens of times per second;
+    CPython invalidates a cached .pyc by (mtime, size), and mtime has coarse granularity,
+    so a later mutant could be executed as EARLIER bytecode. Measured on
+    ~/.claude/skills/ss/scripts/ss_route_conversation.py: a NEGATE_CMP mutant that
+    survives by hand 3 of 3 was reported KILLED in 5 of 6 tool runs. The first run after
+    clearing __pycache__ was correct (54/3); runs 2 and 3 reported 55/2.
+
+    A FALSE KILL is the worst defect this tool can have. A false survivor sends someone
+    to write a test they may not need; a false kill certifies that a suite protects a
+    behavior it does not, which is the exact claim the 'green test is not evidence' Hard
+    Rule uses this tool to justify. Every subprocess this tool spawns must therefore run
+    with bytecode writing disabled."""
+
+    def test_run_tests_disables_bytecode_writing(self, monkeypatch, tmp_path):
+        import mutation_check as mc
+        seen = {}
+
+        class _R:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        def fake_run(cmd, **kw):
+            seen.update(kw.get("env") or {})
+            return _R()
+
+        monkeypatch.setattr(mc.subprocess, "run", fake_run)
+        mc.run_tests([tmp_path / "test_x.py"], timeout=5)
+        assert seen.get("PYTHONDONTWRITEBYTECODE") == "1", (
+            "run_tests spawns pytest without PYTHONDONTWRITEBYTECODE=1, so a stale .pyc "
+            "can make a surviving mutant report as killed"
+        )
+
+    def test_every_pytest_subprocess_disables_bytecode_writing(self, monkeypatch, tmp_path):
+        """Behavioural, NOT a source grep. The first version of this test searched the
+        isolation block's SOURCE TEXT for the env var name and passed even with the
+        `env=` kwarg deleted -- because the explanatory comment above the call contains
+        the same string. Asserting on a comment is not asserting on behavior; the mutant
+        that removed the real kwarg survived it. This version drives the actual code path
+        with subprocess.run patched, so only a real env can satisfy it."""
+        import ast
+        import mutation_check as mc
+        envs = []
+
+        class _R:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        def fake_run(cmd, **kw):
+            envs.append(kw.get("env") or {})
+            return _R()
+
+        target = tmp_path / "sample.py"
+        target.write_text("def f(x):\n    if x > 1:\n        return 1\n    return 0\n",
+                          encoding="utf-8")
+        tests = tmp_path / "test_sample.py"
+        tests.write_text("def test_ok():\n    assert True\n", encoding="utf-8")
+
+        monkeypatch.setattr(mc.subprocess, "run", fake_run)
+        monkeypatch.setattr(mc, "REPO_ROOT", tmp_path)
+        monkeypatch.setattr(mc.sys, "argv",
+                            ["mutation_check.py", str(target),
+                             "--tests", str(tests), "--isolation", "--json"])
+        try:
+            mc.main()
+        except SystemExit:
+            pass
+
+        assert envs, "no pytest subprocess was spawned"
+        missing = [i for i, e in enumerate(envs)
+                   if e.get("PYTHONDONTWRITEBYTECODE") != "1"]
+        assert not missing, (
+            f"{len(missing)} of {len(envs)} pytest subprocesses ran without "
+            f"PYTHONDONTWRITEBYTECODE=1; a stale .pyc can then fake a kill"
+        )
+
+
+class TestMapTestsIgnoresProse:
+    """Origin 2026-08-31. map_tests selected test files with a bare substring scan of the
+    whole file (`if stem in text`) - no word boundary, comments and docstrings included.
+
+    Measured consequence on tools/todo_write.py: 15 files selected instead of the 6 real
+    test_todo_write_*.py files, 56s per run instead of 2s. At 541 mutants that is 8.4h
+    against the sweep's 5h cap, so the tool came back UNAUDITED_TIMEOUT - unmeasured, and
+    the report says plainly that unmeasured is not clean.
+
+    The three expensive extras named sample_tool only in prose. The sharpest was
+    test_mutation_check.py, whose match was `personal_sample_tool` - a DIFFERENT tool whose
+    name merely contains this one - inside a comment listing launchd jobs.
+
+    Corpus-wide at the time: at least 16% of the 302 mapped selections were prose-only.
+    """
+
+    def _mod(self, tmp_path, body, name="test_x.py"):
+        tests = tmp_path / "tests" / "scripts"
+        tests.mkdir(parents=True, exist_ok=True)
+        (tests / name).write_text(body, encoding="utf-8")
+        tools = tmp_path / "tools"
+        tools.mkdir(exist_ok=True)
+        target = tools / "sample_tool.py"
+        target.write_text("def f():\n    return 1\n", encoding="utf-8")
+        return target, tests / name
+
+    def _mapped(self, tmp_path, body):
+        import mutation_check as mc
+        target, _ = self._mod(tmp_path, body)
+        return {p.name for p in mc.map_tests(target, repo_root=tmp_path)}
+
+    def test_mention_in_a_comment_does_not_select_the_file(self, tmp_path):
+        assert self._mapped(tmp_path, "# sample_tool.py sync does a thing\ndef test_a():\n    assert True\n") == set()
+
+    def test_mention_in_a_module_docstring_does_not_select_the_file(self, tmp_path):
+        assert self._mapped(tmp_path, '"""Explains how sample_tool.py behaves."""\ndef test_a():\n    assert True\n') == set()
+
+    def test_mention_in_a_function_docstring_does_not_select_the_file(self, tmp_path):
+        assert self._mapped(tmp_path, 'def test_a():\n    """sample_tool.py sync is why."""\n    assert True\n') == set()
+
+    def test_a_longer_tool_name_that_CONTAINS_this_one_does_not_select(self, tmp_path):
+        """The exact match that pulled a 20s subprocess suite into sample_tool's set 541
+        times: `personal_sample_tool` contains `sample_tool`. Word boundaries, not substrings."""
+        assert self._mapped(tmp_path, "import personal_sample_tool\ndef test_a():\n    assert personal_sample_tool\n") == set()
+
+    def test_a_real_import_still_selects(self, tmp_path):
+        assert self._mapped(tmp_path, "import sample_tool\ndef test_a():\n    assert sample_tool\n") == {"test_x.py"}
+
+    def test_from_import_still_selects(self, tmp_path):
+        assert self._mapped(tmp_path, "from sample_tool import main\ndef test_a():\n    assert main\n") == {"test_x.py"}
+
+    def test_a_string_literal_naming_the_file_still_selects(self, tmp_path):
+        """Many tests shell out rather than import: subprocess.run([... 'tools/sample_tool.py']).
+        Dropping those would silently un-cover every CLI-invoked tool, turning real kills
+        into survivors - the failure this fix must not cause."""
+        assert self._mapped(tmp_path, "import subprocess\ndef test_a():\n    subprocess.run(['python3', 'tools/sample_tool.py', 'add'])\n") == {"test_x.py"}
+
+    def test_importlib_by_name_still_selects(self, tmp_path):
+        assert self._mapped(tmp_path, "import importlib\ndef test_a():\n    importlib.import_module('sample_tool')\n") == {"test_x.py"}
+
+    def test_a_function_name_alone_does_not_select(self, tmp_path):
+        """A test FUNCTION named after the tool, in a file that neither imports it nor
+        names its path, cannot kill one of its mutants - killing requires actually running
+        the code. The authoring signal that does count is the FILE name, below."""
+        assert self._mapped(tmp_path, "def test_sample_tool_roundtrip():\n    assert True\n") == set()
+
+    def test_the_split_suite_filename_convention_still_selects(self, tmp_path):
+        """This repo splits a tool's suite across test_<stem>_<aspect>.py - sample_tool has
+        six (guard, misfiled, roundtrip, sync, update, withdraw). Selection is by filename
+        prefix, so they are chosen regardless of content."""
+        import mutation_check as mc
+        target, _ = self._mod(tmp_path, "def test_a():\n    assert True\n",
+                              name="test_sample_tool_roundtrip.py")
+        assert {p.name for p in mc.map_tests(target, repo_root=tmp_path)} == {"test_sample_tool_roundtrip.py"}
+
+    def test_a_longer_tools_split_suite_is_NOT_selected(self, tmp_path):
+        """The prefix is anchored: test_personal_sample_tool_*.py belongs to a different
+        tool and must not be pulled into this one's set."""
+        import mutation_check as mc
+        target, _ = self._mod(tmp_path, "def test_a():\n    assert True\n",
+                              name="test_personal_sample_tool_sync.py")
+        assert {p.name for p in mc.map_tests(target, repo_root=tmp_path)} == set()
+
+    def test_an_unparseable_test_file_FAILS_OPEN_and_is_still_selected(self, tmp_path):
+        """A file we cannot parse must be included, not excluded. Excluding it would drop
+        real coverage and inflate survivors; including it only costs runtime. When the
+        analysis is uncertain, err toward measuring more."""
+        assert self._mapped(tmp_path, "def test_a(:\n  sample_tool\n") == {"test_x.py"}
+
+    def test_the_directly_named_test_file_is_always_selected(self, tmp_path):
+        """tests/scripts/test_<stem>.py is selected by NAME and must not depend on content."""
+        import mutation_check as mc
+        target, _ = self._mod(tmp_path, "def test_a():\n    assert True\n",
+                              name="test_sample_tool.py")
+        assert {p.name for p in mc.map_tests(target, repo_root=tmp_path)} == {"test_sample_tool.py"}
+
+
+class TestIndirectCoverageIsKept:
+    """The tightening of map_tests must drop PROSE, never real coverage. A test can
+    exercise a target without naming it, by importing a module that imports it."""
+
+    def _tree(self, tmp_path):
+        tools = tmp_path / "tools"
+        tools.mkdir(parents=True, exist_ok=True)
+        (tools / "leaf.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+        (tools / "middle.py").write_text("import leaf\ndef g():\n    return leaf.f()\n",
+                                         encoding="utf-8")
+        tests = tmp_path / "tests" / "scripts"
+        tests.mkdir(parents=True, exist_ok=True)
+        return tools, tests
+
+    def test_a_test_that_only_imports_the_IMPORTER_still_covers_the_target(self, tmp_path):
+        """test imports middle; middle imports leaf. Mutating leaf can fail this test, so
+        it is real coverage and must stay selected even though it never says 'leaf'."""
+        import mutation_check as mc
+        tools, tests = self._tree(tmp_path)
+        (tests / "test_middle.py").write_text(
+            "import middle\ndef test_g():\n    assert middle.g() == 1\n", encoding="utf-8")
+        got = {p.name for p in mc.map_tests(tools / "leaf.py", repo_root=tmp_path)}
+        assert "test_middle.py" in got
+
+    def test_an_unrelated_test_is_still_not_selected(self, tmp_path):
+        """The transitive rule must not become 'select everything'."""
+        import mutation_check as mc
+        tools, tests = self._tree(tmp_path)
+        (tests / "test_other.py").write_text(
+            "def test_x():\n    assert True\n", encoding="utf-8")
+        got = {p.name for p in mc.map_tests(tools / "leaf.py", repo_root=tmp_path)}
+        assert "test_other.py" not in got
+
+    def test_prose_about_the_importer_still_does_not_select(self, tmp_path):
+        """Indirect coverage counts only through CODE. A comment naming the importer is
+        still prose and still worthless for killing a mutant."""
+        import mutation_check as mc
+        tools, tests = self._tree(tmp_path)
+        (tests / "test_prosey.py").write_text(
+            "# middle.py explains how leaf works\ndef test_x():\n    assert True\n",
+            encoding="utf-8")
+        got = {p.name for p in mc.map_tests(tools / "leaf.py", repo_root=tmp_path)}
+        assert "test_prosey.py" not in got
+
+    def test_an_import_cycle_terminates(self, tmp_path):
+        """covering_names runs to a fixpoint; a cycle must not hang it."""
+        import mutation_check as mc
+        tools, tests = self._tree(tmp_path)
+        (tools / "a.py").write_text("import b\n", encoding="utf-8")
+        (tools / "b.py").write_text("import a\nimport leaf\n", encoding="utf-8")
+        names = mc.covering_names("leaf", tools)
+        assert {"leaf", "middle", "b", "a"} <= names

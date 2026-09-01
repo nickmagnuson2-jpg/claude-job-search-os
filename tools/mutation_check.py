@@ -175,6 +175,100 @@ def mutant_key(rel_path: str, func: str, op: str, source_line: str) -> str:
 # Test mapping
 # ---------------------------------------------------------------------------
 
+def code_text(source: str) -> str:
+    """The parts of a test file that can actually REFERENCE a module: identifiers,
+    attribute names, def/class names, imported module names, and string literals - with
+    comments and docstrings excluded.
+
+    Origin 2026-08-31. map_tests selected files with `if stem in text` over the raw source:
+    a bare substring scan, no word boundary, prose included. For tools/todo_write.py that
+    chose 15 files instead of 6 (56s per run instead of 2s), and at 541 mutants the sweep
+    blew its 5h cap and recorded UNAUDITED_TIMEOUT - the tool went unmeasured. The three
+    costly extras named the tool only in prose, and the worst match was the string
+    `personal_todo_write` (a DIFFERENT tool that merely contains this name) inside a
+    comment listing launchd jobs.
+
+    Two deliberate choices about which way to err:
+
+    STRING LITERALS ARE KEPT. Many tests invoke a tool as a subprocess rather than
+    importing it (`subprocess.run([..., "tools/todo_write.py"])`). Dropping literals would
+    un-cover every CLI-invoked tool and convert real kills into survivors.
+
+    UNPARSEABLE FILES FAIL OPEN. A file that will not parse returns its full text, so it
+    stays selected. Excluding it would drop real coverage; including it only costs
+    runtime. When the analysis is uncertain, measure more rather than less.
+    """
+    try:
+        tree = ast.parse(source)
+    except (SyntaxError, ValueError):
+        return source  # fail open
+
+    docstrings = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef,
+                             ast.AsyncFunctionDef)):
+            body = getattr(node, "body", None) or []
+            first = body[0] if body else None
+            if (isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant)
+                    and isinstance(first.value.value, str)):
+                docstrings.add(id(first.value))
+
+    parts: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name):
+            parts.append(node.id)
+        elif isinstance(node, ast.Attribute):
+            parts.append(node.attr)
+        elif isinstance(node, ast.arg):
+            parts.append(node.arg)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            parts.append(node.name)
+        elif isinstance(node, ast.Import):
+            for a in node.names:
+                parts.extend([a.name, a.asname or ""])
+        elif isinstance(node, ast.ImportFrom):
+            parts.append(node.module or "")
+            for a in node.names:
+                parts.extend([a.name, a.asname or ""])
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+            if id(node) not in docstrings:
+                parts.append(node.value)
+    return "\n".join(parts)
+
+
+def covering_names(stem: str, tools_dir: Path) -> set[str]:
+    """`stem` plus every tools/ module that transitively imports it.
+
+    A test can exercise a target WITHOUT naming it: it imports `check_pipe_close_via_update`,
+    which imports `hook_command_lint`, so mutating hook_command_lint can fail that test -- a
+    real kill. Selecting only on the target's own name would drop that file and report the
+    mutant as a survivor.
+
+    Found 2026-08-31 while tightening map_tests off raw-substring matching: of 66 selections
+    the tightening dropped, exactly 2 had such an indirect path
+    (hook_command_lint <- test_check_pipe_close_via_update, todo_daily_metrics <-
+    test_todo_write_roundtrip). Both are cheap to keep, and losing a real kill is the one
+    error this whole change exists to avoid.
+    """
+    imports: dict[str, set[str]] = {}
+    for f in tools_dir.glob("*.py"):
+        try:
+            text = f.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        imports[f.stem] = set(re.findall(r"^\s*(?:import|from)\s+(\w+)", text, re.M))
+
+    covering = {stem}
+    changed = True
+    while changed:                      # fixpoint; terminates, `covering` only grows
+        changed = False
+        for mod, deps in imports.items():
+            if mod not in covering and deps & covering:
+                covering.add(mod)
+                changed = True
+    return covering
+
+
 def map_tests(target: Path, repo_root: Path | None = None) -> list[Path]:
     """Test files that plausibly cover `target`, by name and by import reference.
 
@@ -188,15 +282,22 @@ def map_tests(target: Path, repo_root: Path | None = None) -> list[Path]:
     if not tests_dir.exists():
         return []
     hits = set()
-    direct = tests_dir / "scripts" / f"test_{stem}.py"
-    if direct.exists():
-        hits.add(direct)
+    # Selection by NAME. `test_<stem>.py` plus the split-suite convention this repo
+    # actually uses (`test_todo_write_guard.py`, `_roundtrip`, `_sync`, ...). A filename
+    # is a deliberate authoring signal and carries no prose, so it is matched by prefix
+    # rather than by word boundary - `test_todo_write_roundtrip.py` has no word break
+    # after the stem, and requiring one would drop all six of that tool's real suites.
+    # `test_personal_todo_write*.py` is NOT selected: the prefix is anchored at the start.
+    for path in (tests_dir / "scripts").glob(f"test_{stem}*.py"):
+        hits.add(path)
+    names = covering_names(stem, target.parent)
+    word = re.compile(r"\b(?:" + "|".join(re.escape(n) for n in sorted(names)) + r")\b")
     for path in tests_dir.rglob("test_*.py"):
         try:
             text = path.read_text(encoding="utf-8", errors="ignore")
         except OSError:
             continue
-        if stem in text:
+        if word.search(code_text(text)):
             hits.add(path)
     return sorted(hits)
 
@@ -259,7 +360,16 @@ def run_tests(test_files: list[Path], timeout: int) -> tuple[bool, str]:
     # (2026-08-24 incident, see that fixture's docstring). These subprocesses are the ONE
     # caller for which a mutated tree is correct, so they are exempted explicitly rather
     # than by the fixture trying to guess who spawned it.
-    env = {**os.environ, "MUTATION_CHECK_ACTIVE": "1"}
+    # PYTHONDONTWRITEBYTECODE: this loop rewrites the target dozens of times per second,
+    # and CPython invalidates a cached .pyc by (mtime, size) -- a granularity coarse enough
+    # that a later mutant can be executed as an EARLIER mutant's bytecode. That produces
+    # FALSE KILLS, the one error this tool must never make: a false survivor costs a test
+    # nobody needed, a false kill certifies that a suite protects a behavior it does not.
+    # Measured 2026-08-31 on ss_route_conversation.py -- a mutant that survives by hand
+    # 3 of 3 reported KILLED in 5 of 6 runs, correct only on the first run after the cache
+    # was cleared. Writing no bytecode at all makes the whole class unreachable.
+    env = {**os.environ, "MUTATION_CHECK_ACTIVE": "1",
+           "PYTHONDONTWRITEBYTECODE": "1"}
     try:
         r = subprocess.run(cmd, cwd=str(REPO_ROOT), capture_output=True,
                            text=True, timeout=timeout, env=env)
@@ -597,7 +707,10 @@ def main() -> int:
         lonely, refused = [], []
         for t in test_files:
             cmd = [sys.executable, "-m", "pytest", "-q", "--no-header", str(t)]
-            r = subprocess.run(cmd, cwd=str(REPO_ROOT), capture_output=True, text=True)
+            # PYTHONDONTWRITEBYTECODE for the same reason as run_tests: this pass must not
+            # repopulate the .pyc cache that the mutation loop depends on being absent.
+            r = subprocess.run(cmd, cwd=str(REPO_ROOT), capture_output=True, text=True,
+                               env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"})
             if r.returncode == CONFTEST_REFUSAL:
                 # tests/conftest.py refused to run because a *.mutation_backup exists
                 # somewhere in the tree -- a sibling run's wreckage, not a property of
