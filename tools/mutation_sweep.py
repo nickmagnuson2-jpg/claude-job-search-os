@@ -92,7 +92,14 @@ SELF_NAME = Path(__file__).name
 # mutated job_quiesce.py behind, and the following sweep imports it at startup and uses it
 # to restore whatever the dead run stranded. A mutated restorer deciding whether Nick's
 # mail fetch comes back is precisely the failure that module exists to prevent.
-RUNNER_DEPENDENCIES = {"job_quiesce.py"}
+#
+# conftest_guard.py is worse, and the hazard is THIS run rather than the next. It owns
+# backup_path() -- where a backup is written -- and prune_orphans(), which DELETES backups
+# whose source_of() no longer resolves. mutation_check calls both on every run. Pruning is
+# safe only because source_of() is correct, so a mutant there makes LIVE backups look
+# orphaned and removes them, destroying the only copy of the unmutated source for whatever
+# tool is in flight. That is data loss on an unattended run, not a bad measurement.
+RUNNER_DEPENDENCIES = {"job_quiesce.py", "conftest_guard.py"}
 
 # A tool that opens anything for writing can silently corrupt a real data file, which is a
 # higher blast radius than a hook misfiring. Recorded per tool so the report can rank by it.

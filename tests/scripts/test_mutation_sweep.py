@@ -1024,3 +1024,25 @@ def test_a_conftest_refusal_reaches_the_banked_record(repo, monkeypatch, capsys)
     assert row["isolation_refused"] == ["tests/scripts/test_a.py"], \
         "a refusal must name what refused, or the status cannot be explained"
     assert row["status"] == "isolation_unmeasured"
+
+
+def test_the_backup_path_module_is_self_excluded_too(repo, monkeypatch):
+    """conftest_guard.py computes WHERE backups are written and DELETES orphaned ones, so
+    it cannot be a target.
+
+    mutation_check calls prune_orphans() and then backup_path() on every run. Pruning is
+    safe only because source_of() correctly resolves a backup to its source -- a mutant
+    there makes LIVE backups look orphaned and they are deleted, destroying the only copy
+    of the unmutated source for whatever tool is in flight. A mutated backup_path() writes
+    the backup somewhere the restore will not look. Both are unattended-overnight data
+    loss, not a bad measurement.
+
+    Same treatment and same reason as job_quiesce.py: recorded as mutants:-1 so the
+    accounting still names it, and still measurable by running mutation_check.py on it
+    directly with no sweep in flight.
+    """
+    add_tool(repo, "conftest_guard", mutants=7)
+    mod = load(repo, monkeypatch)
+    rows = {r["tool"]: r for r in mod.build_targets()}
+    assert "tools/conftest_guard.py" in rows, "must be recorded, not silently dropped"
+    assert rows["tools/conftest_guard.py"]["mutants"] == -1
