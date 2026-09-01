@@ -34,6 +34,7 @@ from pathlib import Path
 
 OUTPUT_REL = "tools/.pii-denylist.txt"
 AMBIGUOUS_REL = "tools/.pii-denylist-ambiguous.txt"
+RETIRED_REL = "tools/.pii-denylist-retired.txt"
 MANUAL_REL = "tools/.pii-manual-additions.txt"
 
 MANUAL_TEMPLATE = """# Hand-maintained PII additions — GITIGNORED, do not commit.
@@ -156,6 +157,17 @@ def parse_pipeline_companies(content: str) -> set[str]:
     return companies
 
 
+# Closed-compound sector words the system dictionary omits. They are not brand names and
+# must never BLOCK on their own: "<Something> Healthcare" is a naming convention, not an
+# identifier. Kept as an explicit list because the general rule that would derive it
+# (split into two dictionary words) also dissolves real brands - see _is_ordinary_word.
+INDUSTRY_WORDS = {
+    "healthcare", "healthtech", "fintech", "biotech", "edtech", "insurtech", "adtech",
+    "medtech", "proptech", "agtech", "cleantech", "deeptech", "martech", "regtech",
+    "hardware", "software", "wellness", "marketplace", "ecommerce", "workflow",
+}
+
+
 def is_distinctive_single(token: str, dictionary: set[str]) -> bool:
     """A single-word token is safe to denylist only if it is a distinctive brand name,
     not a common English word (which would match ordinary prose in skill/framework docs)."""
@@ -166,7 +178,89 @@ def is_distinctive_single(token: str, dictionary: set[str]) -> bool:
     # "7x.ai", "FooBar.ai", "LocateThing") — always distinctive regardless of the dictionary.
     if any(ch.isdigit() for ch in token) or "." in token or re.search(r"[a-z][A-Z]", token):
         return True
-    return t not in dictionary
+    return not _is_ordinary_word(t, dictionary)
+
+
+def _is_ordinary_word(t: str, dictionary: set[str]) -> bool:
+    """Is `t` ordinary English, allowing for what the system dictionary leaves out?
+
+    THE DICTIONARY IS NOT A WORD LIST. /usr/share/dict/words holds singulars and omits
+    closed compounds, so a bare `t in dictionary` test called ordinary plurals and sector
+    compounds distinctive brand tokens. Measured 2026-09-01 across all 522 tracked
+    public files: 7 BLOCK hits, 6 of them this exact shape, firing on the repo's own
+    documentation. A gate that cries wolf on its own docs is a gate that gets bypassed.
+
+    Plurals get a general rule: strip a trailing "s"/"es" and re-test, requiring the stem
+    to be >= 4 characters so "Labs" does not become "Lab" by accident.
+
+    CLOSED COMPOUNDS DO NOT. A split-into-two-dictionary-words test was written and
+    REJECTED the same day: "Northwind" is "north" + "wind", both ordinary words, and the
+    rule dissolved the repo's own placeholder brand. Nothing structural separates a
+    compound brand from a compound common noun, so the compounds that actually appear here
+    are named explicitly in INDUSTRY_WORDS. A short honest list beats a general rule that
+    silently deletes coverage.
+    """
+    if t in dictionary or t in INDUSTRY_WORDS:
+        return True
+    # Stem floor of 3, not 4: a 4-letter plural of a 3-letter word (the "<X>s" shape) is
+    # the common case and a floor of 4 silently skipped every one of them.
+    for suffix in ("es", "s"):
+        if t.endswith(suffix) and len(t) - len(suffix) >= 3:
+            if t[: -len(suffix)] in dictionary or t[: -len(suffix)] in INDUSTRY_WORDS:
+                return True
+    return False
+
+
+# Words that carry no identifying weight on their own. A company is routinely "<Name> AI"
+# or "<Name> Labs", and promoting the suffix alone would fire on most files in this repo -
+# which is how a gate stops being trusted and starts being bypassed.
+CORPORATE_SUFFIXES = {
+    "ai", "inc", "llc", "ltd", "co", "corp", "corporation", "company", "labs", "lab",
+    "group", "technologies", "technology", "tech", "systems", "software", "solutions",
+    "services", "holdings", "partners", "ventures", "capital", "global", "digital",
+    "media", "networks", "studio", "studios", "works", "collective", "io", "com",
+}
+
+
+def company_components(company: str, dictionary: set[str]) -> tuple[list[str], list[str]]:
+    """Split a multi-token company into (block_worthy, warn_worthy) component tokens.
+
+    THE GAP THIS CLOSES (2026-09-01). A multi-token company was emitted only as the whole
+    phrase plus its slug. `find_pii` matches a phrase literally, so a public file naming
+    ONE word of a two-word company was not a hit -- which is exactly how a real pipeline
+    company reached a public framework file with the always-on hook enabled. 171 of 470
+    entries were multi-token, so the exposure was general, not a one-off.
+
+    The tier split is the whole design. A distinctive component (not in the dictionary,
+    not a corporate suffix) is safe to BLOCK. An ordinary-English component goes to the
+    WARN tier instead: blocking it would fire on ordinary prose, and dropping it is what
+    made the leak invisible in the first place.
+    """
+    block, warn = [], []
+    for tok in re.split(r"[^A-Za-z0-9]+", company):
+        if len(tok) < 4 or tok.lower() in CORPORATE_SUFFIXES or tok.lower() in KEEP:
+            continue
+        (block if is_distinctive_single(tok, dictionary) else warn).append(tok)
+    return block, warn
+
+
+def person_components(name: str, dictionary: set[str]) -> list[str]:
+    """The BLOCK-worthy component tokens of a person's name: the SURNAME only.
+
+    Never the first name. This repo's public docs run on a fictional cast -- Sarah Chen,
+    Jordan Lee, Priya Anand -- and a real contact who shares a first name with any of them
+    would turn every placeholder into a block. The surname carries the identifying weight
+    anyway, and a surname that is also an ordinary word (Brown, Field, Baker) is filtered
+    by the same distinctiveness test the rest of this module uses.
+    """
+    toks = [x for x in re.split(r"[^A-Za-zÀ-ÿ'\-]+", name) if x]
+    if len(toks) < 2:
+        return []
+    # No length or KEEP guard here on purpose: is_distinctive_single already rejects both
+    # (< 4 chars, and anything in KEEP). Restating them produced a branch that could be
+    # inverted with no observable effect - a mutant nothing could kill, which is a guard
+    # that is not doing work.
+    return [toks[-1]] if is_distinctive_single(toks[-1], dictionary) else []
 
 
 def build_denylist(names: set[str], companies: set[str], dictionary: set[str]) -> list[str]:
@@ -186,6 +280,9 @@ def build_denylist(names: set[str], companies: set[str], dictionary: set[str]) -
             slug = slugify(clean)
             if slug and slug not in KEEP:
                 out.add(slug)
+            # Surname on its own: a public file citing "<Surname>'s actual title" is the
+            # same leak as one citing the full name, and the phrase matcher misses it.
+            out.update(person_components(clean, dictionary))
 
     for company in companies:
         clean = company.strip().strip("*").strip()
@@ -200,6 +297,10 @@ def build_denylist(names: set[str], companies: set[str], dictionary: set[str]) -
                 slug = slugify(clean)
                 if slug and slug not in KEEP:
                     out.add(slug)
+                # Distinctive components ADD to the phrase, never replace it: dropping
+                # the phrase would stop catching files that spell the name in full.
+                block_parts, _ = company_components(clean, dictionary)
+                out.update(block_parts)
         elif is_distinctive_single(clean, dictionary):
             out.add(clean)
             slug = slugify(clean)
@@ -243,14 +344,69 @@ def build_ambiguous_list(companies: set[str], dictionary: set[str]) -> list[str]
     out = set()
     for company in companies:
         clean = company.strip().strip("*").strip()
-        if not clean or " " in clean:
-            continue  # multi-word names are distinctive enough for the BLOCK tier
+        if not clean:
+            continue
+        if " " in clean:
+            # The PHRASE is distinctive enough for BLOCK and is emitted there. Its
+            # ordinary-English COMPONENTS are not, and used to be emitted nowhere at all
+            # -- the 2026-09-01 gap. They land here so /audit-pii still sees them, rather
+            # than being blocked (which would fire on ordinary prose) or dropped (which
+            # is what made the leak invisible).
+            _, warn_parts = company_components(clean, dictionary)
+            out.update(w for w in warn_parts
+                       if w.lower() not in STOPWORDS and w.lower() not in KEEP)
+            continue
         if is_distinctive_single(clean, dictionary):
             continue  # already in the BLOCK tier
         if clean.lower() in STOPWORDS or clean.lower() in KEEP:
             continue
         out.add(clean)
     return sorted(out)
+
+
+def merge_retired(tokens: list[str], retired_path: Path) -> list[str]:
+    """Union `tokens` with every token this generator has emitted before.
+
+    THE GAP THIS CLOSES (2026-09-01). The denylist is rebuilt from CURRENT data/ on every
+    run, so the moment a company leaves scan-targets.yaml it loses its protection -- while
+    its name stays in whatever public files were written while it WAS a target. Measured
+    that day: a company retargeted away a week earlier sat in two files on the public
+    remote, on neither tier, because the generator had already forgotten it.
+
+    Coverage has to outlive the pursuit. The name in the public file does not disappear
+    when the row does.
+
+    Hand-editable ON PURPOSE. Sticky accumulation with no way out means one bad token
+    poisons the gate forever, so the file is a plain sorted list: delete a line and it
+    stays deleted. A missing file is a first run, not an error -- raising here would stop
+    the denylist being built at all, which fails the gate open.
+    """
+    keep = set(tokens)
+    try:
+        for line in Path(retired_path).read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line and not line.startswith("#"):
+                keep.add(line)
+    except (FileNotFoundError, PermissionError, IsADirectoryError):
+        pass
+    return sorted(keep, key=lambda s: (s.lower(), s))
+
+
+def record_retired(tokens: list[str], retired_path: Path) -> None:
+    """Append this run's tokens to the retired file, deduplicated and sorted.
+
+    Written on the way OUT so the next run inherits them. Sorted so the diff of a
+    gitignored file a human is expected to prune by hand stays readable.
+    """
+    merged = merge_retired(list(tokens), retired_path)
+    header = (
+        "# Tokens the PII denylist generator has emitted at any point.\n"
+        "# Merged into every rebuild so a company that leaves data/ keeps its coverage:\n"
+        "# the row goes away, the name in the already-written public file does not.\n"
+        "# Hand-prunable -- delete a line and it stays deleted. Gitignored.\n"
+    )
+    Path(retired_path).parent.mkdir(parents=True, exist_ok=True)
+    Path(retired_path).write_text(header + "\n".join(merged) + "\n", encoding="utf-8")
 
 
 def parse_scan_target_companies(path: Path) -> set[str]:
@@ -344,6 +500,10 @@ def main():
     manual_block, manual_ambiguous = load_manual_additions(root / MANUAL_REL)
     manual_added = sorted(t for t in manual_block if t not in set(tokens))
     tokens = sorted(set(tokens) | manual_block)
+    # Coverage outlives the pursuit: fold in every token ever emitted, then bank this
+    # run's own so the next rebuild inherits them.
+    retired_path = root / RETIRED_REL
+    tokens = merge_retired(tokens, retired_path)
     ambiguous = sorted((set(ambiguous) | manual_ambiguous) - manual_block)
 
     if args.dry_run:
@@ -362,6 +522,10 @@ def main():
         "# Regenerate after adding contacts/pipeline/scan-target rows. Hand-edits are overwritten on regen.\n"
     )
     out_path.write_text(header + "\n".join(tokens) + "\n", encoding="utf-8")
+
+    # Bank this run's tokens AFTER the denylist is safely on disk. Doing it earlier would
+    # let a crash between the two leave a retired file naming tokens no denylist carries.
+    record_retired(tokens, retired_path)
 
     # Second tier: single-word company names that are ordinary English words.
     # WARN-only. Excluding them entirely is what let a live pipeline company reach six
@@ -382,6 +546,7 @@ def main():
 
     print(json.dumps({"status": "ok", "written": str(out_path), "count": len(tokens),
                       "ambiguous_written": str(amb_path), "ambiguous_count": len(ambiguous),
+                      "retired_written": str(retired_path),
                       "manual_added_count": len(manual_added),
                       "manual_added": manual_added},
                      ensure_ascii=False))

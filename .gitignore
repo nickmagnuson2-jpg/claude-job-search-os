@@ -103,6 +103,9 @@ tools/.daily_stoic_state.json
 tools/.pii-denylist.txt
 # Ambiguous tier: single-word company names that are also ordinary words (WARN-only)
 tools/.pii-denylist-ambiguous.txt
+# Every token the generator has ever emitted, so a company that leaves data/ keeps
+# its coverage. Holds real names by construction - must never be tracked.
+tools/.pii-denylist-retired.txt
 # Hand-maintained PII additions: real people/companies that exist only in
 # data/projects/, data/source-articles/ or the personal vault, so the generator's
 # automatic sources cannot see them. Holds real names -- never commit.
