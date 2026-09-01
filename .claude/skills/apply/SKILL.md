@@ -1,6 +1,9 @@
 ---
 name: apply
 description: Research a role end to end and produce the outreach that actually gets sent - dossier, then the people, then a cold-outreach brief for the hiring manager, then a CV seeded with all of it. Cover letter only when the application demands one.
+argument-hint: "<job-url-or-jd> [context] [--cover-letter] [--no-deep-review] [--skip-research]"
+user-invocable: true
+allowed-tools: Read(*), Glob(data/*), Glob(framework/*), Glob(plugins/*), Write(output/**), Bash(PYTHONIOENCODING=utf-8 python3 tools/pipe_write.py:*), Bash(curl -s https://jobs.ashbyhq.com/api/non-user-graphql*), mcp__exa__web_search_exa, mcp__exa__web_fetch_exa, WebFetch, WebSearch
 ---
 
 # Apply — Research First, Outreach Second, CV Last
