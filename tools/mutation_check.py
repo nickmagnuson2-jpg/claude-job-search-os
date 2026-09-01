@@ -70,7 +70,14 @@ ALLOW_FILE = REPO_ROOT / "tools" / "mutation-allow.json"
 # It means "I refused to measure", never "your test failed".
 # Imported, never re-declared: tests/conftest.py produces this exit code and this file
 # matches on it. A second literal would drift silently. See tools/conftest_guard.py.
-from conftest_guard import CONFTEST_REFUSAL  # noqa: E402
+# Sibling import: resolve tools/ explicitly rather than relying on sys.path[0] being
+# the script dir. Running this as a script works either way, but importing it (a test
+# helper, mutation_sweep, an ad-hoc loader) does not, and a bare import made this
+# module unimportable outside a pytest run that had already inserted tools/.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from conftest_guard import (  # noqa: E402
+    CONFTEST_REFUSAL, backup_dir, backup_path, prune_orphans,
+)
 DEFAULT_TIMEOUT = 300
 
 
@@ -463,8 +470,9 @@ def audit_test_quality(test_files: list[Path]) -> dict:
 SELF = Path(__file__).resolve()
 
 
-def backup_path(target: Path) -> Path:
-    return target.with_suffix(target.suffix + ".mutation_backup")
+# backup_path is imported from conftest_guard, not defined here: the guard, the sweep's
+# repair step and this file must agree on where a backup lives, and it moved out of the
+# working tree on 2026-09-01 (iCloud was making conflict copies of it). One definition.
 
 
 def recover_if_stranded(target: Path) -> str | None:
@@ -601,9 +609,13 @@ def main() -> int:
                                      "tests/scripts/test_mutation_check.py instead."}))
         return 1
 
+    # Unrestorable leftovers from trees that no longer exist. The store is shared and
+    # outside every tree it serves, so nothing else would ever clear them.
+    prune_orphans()
     recovered = recover_if_stranded(target)
 
     original = target.read_text(encoding="utf-8")
+    backup_dir().mkdir(parents=True, exist_ok=True)
     backup_path(target).write_text(original, encoding="utf-8")
     arm_restore(target, original)
     src_lines = original.splitlines()

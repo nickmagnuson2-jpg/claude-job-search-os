@@ -292,6 +292,41 @@ test file that genuinely blew up was indistinguishable from a refusal and got fi
 import resolves relative to the copied tree's own root; without it, pytest cannot collect and
 `mutation_check` returns an error dict with no isolation keys at all.
 
+## Backups moved OUT of the working tree (2026-09-01)
+
+`~/Documents` is inside iCloud Drive (Desktop & Documents sync is on), and `mutation_check`
+rewrites its target dozens of times per second. iCloud responded the way it always does to a
+rapidly-changing file: it made conflict copies — `todo_write.py 2.mutation_backup` — inside
+`tools/`. One of those, whose source `tools/todo_write.py 2` never existed, cost a 108-tool sweep
+its entire isolation signal.
+
+Backups now live in **`~/Library/Caches/claude-mutation-backups/`**, outside every synced tree, so
+there is nothing in the working tree for iCloud to duplicate. `MUTATION_BACKUP_DIR` overrides the
+location; tests use it to isolate their own store.
+
+Three consequences worth knowing:
+
+- **The filename is the percent-encoded absolute source path** (`/` → `%2F`), not a hash, because
+  the guard must recover the source from the backup alone. "Does the source still exist?" is the
+  entire orphan rule, and a hash cannot answer it.
+- **Scoping is by decoded source, not by where the backup sits.** The repo and every tmp fixture
+  tree share one store, so `stranded_backups(root)` filters on the source path. Without that a
+  fixture's leftover would make the real repo's suite refuse to run — the same outage, reintroduced
+  from the other side.
+- **Orphans are pruned on every `mutation_check` startup.** A backup beside its target used to die
+  with the tmp tree that held it; a shared store keeps them forever instead. 27 accumulated in one
+  afternoon before pruning existed. Pruning only ever removes backups whose source is gone, so it
+  cannot touch a live run's only copy.
+
+**Verified end to end, not just by unit tests** (this is the third time the overnight sweep has been
+burned, so green tests were not treated as sufficient): a real 2-tool sweep returned
+`status=survivors` rather than `isolation_unmeasured` — the isolation pass measures again — and
+restored all 9 quiesced launchd jobs; a real run SIGTERMed mid-flight left the target byte-identical
+to pristine with zero backups anywhere; and planted SIGKILL-style wreckage (target mutated, backup
+stranded) was detected, repaired, and — new — **reported in the banked record**. `mutation_check`
+recovers at its own startup, so the sweep's `repaired` field never saw it and the row read as
+pristine; `recovered_stranded_file` and `isolation_refused` are now carried into the record too.
+
 ## Crash-safety (fixed 2026-08-26)
 
 `mutation_check` had no crash handler. `finally` covers a clean exit and SIGINT — which

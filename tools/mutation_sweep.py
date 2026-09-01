@@ -184,7 +184,10 @@ def repair_stranded(rel: str) -> str | None:
     leaves the same wreckage, and the cost of looking is one stat() call.
     """
     target = REPO_ROOT / rel
-    backup = target.with_suffix(target.suffix + ".mutation_backup")
+    # Same function mutation_check writes with and tests/conftest.py scans -- the location
+    # moved out of the working tree on 2026-09-01 and a second derivation here would have
+    # silently stopped finding anything.
+    backup = mutation_check.backup_path(target)
     if not backup.exists():
         return None
     os.replace(backup, target)
@@ -302,6 +305,14 @@ def _run_sweep_inner(targets, out: Path) -> int:
                 d = json.loads(stdout)
                 rec = {**base, "status": d.get("status"), "killed": d.get("killed"),
                        "survived": d.get("survived"), "weak": d.get("weak_kill_count"),
+                       # Carried, not dropped. mutation_check recovers a previous crash's
+                       # wreckage at ITS startup, so `repaired` below (which only sees what
+                       # is left AFTER a tool) stays None and the run looks pristine. An
+                       # unattended run that quietly fixes itself teaches you the crash was
+                       # harmless. Same omission class as isolation_refused, which made a
+                       # 108-tool sweep report a status its own record could not explain.
+                       "recovered_stranded_file": d.get("recovered_stranded_file"),
+                       "isolation_refused": d.get("isolation_refused"),
                        "isolation_failures": d.get("isolation_failures"),
                        "assertion_free_tests": d.get("assertion_free_tests"),
                        "tautological_assertions": d.get("tautological_assertions"),

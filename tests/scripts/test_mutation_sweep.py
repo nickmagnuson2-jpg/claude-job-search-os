@@ -629,7 +629,13 @@ def test_a_timed_out_tool_is_restored_before_the_next_one_starts(repo, monkeypat
         {"tool": "tools/next.py", "w": False, "h": False, "tests": 1, "mutants": 2}])
     target = repo / "tools" / "slow.py"
     target.write_text("PRISTINE = 1\n", encoding="utf-8")
-    backup = repo / "tools" / "slow.py.mutation_backup"
+    # Backups live in a cache store outside the working tree since 2026-09-01 (iCloud was
+    # making conflict copies of a file rewritten dozens of times per second). Plant it
+    # through the SAME function repair_stranded reads, or the wreckage is invisible.
+    monkeypatch.setenv("MUTATION_BACKUP_DIR", str(repo / "_bakstore"))
+    import conftest_guard as _g
+    backup = _g.backup_path(target)
+    backup.parent.mkdir(parents=True, exist_ok=True)
 
     # exactly the wreckage SIGKILL leaves: target mutated, backup stranded
     def strand():
@@ -656,7 +662,11 @@ def test_the_repair_is_recorded_not_silent(repo, monkeypatch, capsys):
     state = write_targets(repo, [{"tool": "tools/a.py", "w": False, "h": False,
                                   "tests": 1, "mutants": 2}])
     (repo / "tools" / "a.py").write_text("X = 1\n", encoding="utf-8")
-    (repo / "tools" / "a.py.mutation_backup").write_text("X = 1\n", encoding="utf-8")
+    monkeypatch.setenv("MUTATION_BACKUP_DIR", str(repo / "_bakstore"))
+    import conftest_guard as _g
+    _b = _g.backup_path(repo / "tools" / "a.py")
+    _b.parent.mkdir(parents=True, exist_ok=True)
+    _b.write_text("X = 1\n", encoding="utf-8")
     set_control(repo, results={"tools/a.py": {"status": "clean", "survived": 0}})
     mod = load(repo, monkeypatch)
     mod.run_sweep(state)
@@ -975,3 +985,42 @@ def test_the_quiesce_module_is_self_excluded_like_the_runner_itself(repo, monkey
     rows = {r["tool"]: r for r in mod.build_targets()}
     assert "tools/job_quiesce.py" in rows, "must be recorded, not silently dropped"
     assert rows["tools/job_quiesce.py"]["mutants"] == -1
+
+
+# --- 15. fields the record used to drop -------------------------------------
+
+def test_a_recovery_done_by_mutation_check_reaches_the_banked_record(
+        repo, monkeypatch, capsys):
+    """`repaired` only sees wreckage left AFTER a tool finishes. mutation_check recovers a
+    previous crash's wreckage at ITS OWN startup, so that path left `repaired: None` and
+    the run read as pristine -- an unattended sweep that quietly fixes itself teaches you
+    the crash was harmless. Verified by hand 2026-09-01: real stranded wreckage was
+    repaired correctly and the banked row said nothing about it."""
+    state = write_targets(repo, [{"tool": "tools/a.py", "w": False, "h": False,
+                                  "tests": 1, "mutants": 2}])
+    set_control(repo, results={"tools/a.py": {
+        "status": "clean", "killed": 2, "survived": 0,
+        "recovered_stranded_file": "restored a file stranded by a previous crashed run"}})
+    mod = load(repo, monkeypatch)
+    mod.run_sweep(state)
+    capsys.readouterr()
+    assert banked(state)[0]["recovered_stranded_file"] == \
+        "restored a file stranded by a previous crashed run"
+
+
+def test_a_conftest_refusal_reaches_the_banked_record(repo, monkeypatch, capsys):
+    """The omission that made the 2026-08-31 diagnosis hard: the row carried
+    `status: isolation_unmeasured` while `isolation_refused` was absent, so the record
+    contradicted itself and could not say WHICH file caused the refusal."""
+    state = write_targets(repo, [{"tool": "tools/a.py", "w": False, "h": False,
+                                  "tests": 1, "mutants": 2}])
+    set_control(repo, results={"tools/a.py": {
+        "status": "isolation_unmeasured", "killed": 2, "survived": 0,
+        "isolation_failures": [], "isolation_refused": ["tests/scripts/test_a.py"]}})
+    mod = load(repo, monkeypatch)
+    mod.run_sweep(state)
+    capsys.readouterr()
+    row = banked(state)[0]
+    assert row["isolation_refused"] == ["tests/scripts/test_a.py"], \
+        "a refusal must name what refused, or the status cannot be explained"
+    assert row["status"] == "isolation_unmeasured"

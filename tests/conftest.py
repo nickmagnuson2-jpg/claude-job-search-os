@@ -14,12 +14,26 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 # shared with tools/mutation_check.py, which matches on the exit code. See that module.
 sys.path.insert(0, str(REPO_ROOT / "tools"))
 from conftest_guard import (  # noqa: E402
-    CONFTEST_REFUSAL, orphan_backups, stranded_backups,
+    CONFTEST_REFUSAL, orphan_backups, source_of, stranded_backups,
 )
 
 # Set by tools/mutation_check.py in the env of the pytest subprocesses it spawns.
 # Those runs are SUPPOSED to see a mutated tree -- that is the whole mechanism.
 MUTATION_ENV = "MUTATION_CHECK_ACTIVE"
+
+
+def _show(backup: Path) -> str:
+    """Render a backup as the SOURCE file it protects, repo-relative where possible.
+
+    Backups live outside the working tree since 2026-09-01, so `relative_to(REPO_ROOT)` on
+    the backup path itself raises ValueError -- and the backup's own filename is a
+    percent-encoded absolute path, which is not what a reader needs. The source is.
+    """
+    src = source_of(backup)
+    try:
+        return f"{src.relative_to(REPO_ROOT)}  (backup: {backup})"
+    except ValueError:
+        return f"{src}  (backup: {backup})"
 
 
 def _stranded_backups() -> list[Path]:
@@ -77,7 +91,7 @@ def _refuse_to_run_under_an_active_mutation(request):
             # which would make this exactly the kind of warning nobody ever sees that the
             # project's hook-tier rule exists to forbid. Verified by
             # test_the_orphan_note_is_actually_VISIBLE_in_default_output.
-            junk = "\n".join(f"    {p.relative_to(REPO_ROOT)}" for p in orphans)
+            junk = "\n".join(f"    {_show(p)}" for p in orphans)
             msg = (
                 "\nNOTE: orphaned mutation backup(s) present -- no source file beside "
                 "them, so\nthey do not indicate a live mutation and are NOT blocking "
@@ -90,7 +104,7 @@ def _refuse_to_run_under_an_active_mutation(request):
                 print(msg)
         return
 
-    names = "\n".join(f"    {p.relative_to(REPO_ROOT)}" for p in stranded)
+    names = "\n".join(f"    {_show(p)}" for p in stranded)
     pytest.exit(
         "\n"
         "REFUSING TO RUN: a mutation run owns the source tree.\n\n"

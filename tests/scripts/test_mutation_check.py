@@ -535,9 +535,24 @@ def test_a_conftest_refusal_is_not_reported_as_an_isolation_failure(tmp_path):
     """
     target, t = _live_tool_copy(tmp_path)
     # a SIBLING's wreckage, not this tool's: recover_if_stranded only restores its own
-    (tmp_path / "tools" / "other.py").write_text("X = 1\n", encoding="utf-8")
-    (tmp_path / "tools" / "other.py.mutation_backup").write_text("X = 1\n", encoding="utf-8")
+    other = tmp_path / "tools" / "other.py"
+    other.write_text("X = 1\n", encoding="utf-8")
+    # Planted through the SHARED backup_path, not beside the target: backups moved to a
+    # cache store outside the working tree on 2026-09-01 (iCloud was making conflict
+    # copies of a file rewritten dozens of times per second). Writing it here by hand
+    # would put it where nothing looks, and the refusal would never fire.
+    import os as _os
+    import sys as _sys
+    _sys.path.insert(0, str(REPO_ROOT / "tools"))
+    import conftest_guard as _g
+    # Isolate the store: without this the backup lands in the developer's real
+    # ~/Library/Caches store and lingers until its tmp source is rotated away.
+    _os.environ["MUTATION_BACKUP_DIR"] = str(tmp_path / "_bakstore")
+    _bak = _g.backup_path(other)
+    _bak.parent.mkdir(parents=True, exist_ok=True)
+    _bak.write_text("X = 1\n", encoding="utf-8")
 
+    # _run copies os.environ, so the MUTATION_BACKUP_DIR set above reaches the subprocess.
     r = _run([str(target), "--tests", str(t), "--isolation", "--json"], cwd=tmp_path)
     d = json.loads(r.stdout)
 
