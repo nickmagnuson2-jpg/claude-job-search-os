@@ -181,6 +181,15 @@
             "command": "PYTHONIOENCODING=utf-8 python3 $CLAUDE_PROJECT_DIR/tools/check_edit_after_mutation.py --mode record"
           }
         ]
+      },
+      {
+        "matcher": "Bash|Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "PYTHONIOENCODING=utf-8 python3 $CLAUDE_PROJECT_DIR/tools/check_table_integrity.py"
+          }
+        ]
       }
     ],
     "PostToolUseFailure": [
