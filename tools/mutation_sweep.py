@@ -45,6 +45,7 @@ import ast
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 import time
@@ -59,6 +60,7 @@ from pathlib import Path
 # ModuleNotFoundError. Same file, two import mechanisms, and only one of them worked.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import mutation_check  # noqa: E402
+import job_quiesce  # noqa: E402
 
 REPO_ROOT = Path(os.environ.get("MUTATION_REPO_ROOT",
                                 Path(__file__).resolve().parents[1])).resolve()
@@ -175,12 +177,56 @@ def repair_stranded(rel: str) -> str | None:
     return f"restored {rel} from a stranded .mutation_backup"
 
 
+def _report_quiesce(action: str, res: dict) -> None:
+    """One line per outcome, in the log launchd writes. A job left down is a debt on
+    Nick's mail, not a property of the measurement, so it is printed rather than folded
+    into the exit status where the sweep's own result would hide it."""
+    for note in res.get("notes") or []:
+        print(f"{time.strftime('%H:%M:%S')}  {action}: {note}", flush=True)
+    if res.get("failed"):
+        print(f"{time.strftime('%H:%M:%S')}  !! {len(res['failed'])} launchd job(s) "
+              f"STILL DOWN after {action}: {', '.join(res['failed'])} -- restore with "
+              f"`bash tools/launchd/install.sh install`", flush=True)
+
+
 def run_sweep(state_dir: Path) -> int:
     targets_file, out = state_dir / "targets.json", state_dir / "baseline.jsonl"
     if not targets_file.exists():
         print(f"no target list at {targets_file}; run with --targets first", file=sys.stderr)
         return 1
     targets = json.loads(targets_file.read_text(encoding="utf-8"))
+
+    # THE SCHEDULED JOBS COME DOWN FIRST, before any tool is mutated. gmail-fetch fires
+    # every 900s and granola-auto-debrief every 3h, both shelling into the tools/*.py
+    # this loop rewrites; unattended overnight that is dozens of mutant executions
+    # against real Gmail and real data files. conftest guards pytest, not launchd.
+    # See tools/job_quiesce.py for why the guard cannot live inside the mutated files.
+    marker = state_dir / ".quiesced-jobs.json"
+    restored_once = []
+
+    def put_jobs_back():
+        if restored_once:
+            return
+        restored_once.append(True)
+        _report_quiesce("restore", job_quiesce.restore(REPO_ROOT, marker))
+
+    def _on_signal(signum, _frame):
+        # launchd SIGTERMs a job it wants gone and Nick may ctrl-C the run. Neither
+        # unwinds `finally` by itself, so without this the jobs stay down until the
+        # next sweep or the 08:00 health check notices the stranded marker.
+        put_jobs_back()
+        raise SystemExit(128 + signum)
+
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        signal.signal(sig, _on_signal)
+    _report_quiesce("quiesce", job_quiesce.quiesce(REPO_ROOT, marker))
+    try:
+        return _run_sweep_inner(targets, out)
+    finally:
+        put_jobs_back()
+
+
+def _run_sweep_inner(targets, out: Path) -> int:
 
     done = set()
     if out.exists():

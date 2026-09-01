@@ -43,6 +43,12 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+# Sibling import: the quiesce/restore primitive mutation_sweep uses. Same path-insert
+# reason as elsewhere in tools/ -- this file is loaded both as a script (tools/ on
+# sys.path[0]) and by path from its own tests (where it is not).
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import job_quiesce  # noqa: E402
+
 JOB_PREFIX = "com.nickmagnuson.jobsearch."
 
 
@@ -197,6 +203,57 @@ def check_long_runs(repo_root: Path, stall_hours: float = 4.0,
     return entries, warnings
 
 
+def check_quiesced_jobs(repo_root: Path, running=_process_running,
+                        restorer=None) -> tuple[list, list]:
+    """Find launchd jobs left unloaded by a mutation sweep, and put them back.
+
+    mutation_sweep unloads the scheduled jobs for the length of a run -- they shell into
+    the tools/*.py it rewrites, and gmail-fetch alone would fire ~40 times against a
+    mutated tree overnight. It restores them in a `finally` and on SIGTERM/SIGINT.
+    SIGKILL has neither, and then the jobs stay down with a marker file as the only
+    record. This is the recovery path that does not require the sweep to run again.
+
+    THE DISTINCTION THAT MATTERS: a marker while the sweep is alive is the system working
+    as designed, and warning about it would train the reader to ignore the one case that
+    is a real fault. Only a marker with no sweep process behind it is a stranded job.
+
+    Never raises, for the same reason `_process_running` returns False on error: this
+    runs unattended at 08:00 and a watchdog that dies on a broken dependency is exactly
+    as useful as no watchdog.
+    """
+    restorer = restorer or job_quiesce.restore
+    entries, warnings = [], []
+    for marker in sorted((repo_root / "output" / "analysis").glob("*/.quiesced-jobs.json")):
+        alive = running("tools/mutation_sweep.py")
+        entry = {"run": marker.parent.name, "sweep_running": alive}
+        if alive:
+            entries.append(entry)
+            continue                      # down on purpose, for now
+        try:
+            res = restorer(repo_root, marker)
+        except Exception as exc:          # noqa: BLE001 - a watchdog must not die
+            entries.append({**entry, "error": str(exc)})
+            warnings.append(f"Could not restore launchd jobs quiesced by "
+                            f"'{marker.parent.name}': {exc}. Restore by hand with: "
+                            f"bash tools/launchd/install.sh install")
+            continue
+        entry |= {"restored": res.get("restored") or [],
+                  "failed": res.get("failed") or []}
+        entries.append(entry)
+        if entry["restored"]:
+            warnings.append(
+                f"A mutation sweep died without restoring launchd jobs; put back: "
+                f"{', '.join(entry['restored'])}.")
+        if entry["failed"]:
+            warnings.append(
+                f"launchd job(s) STILL DOWN after a failed restore: "
+                f"{', '.join(entry['failed'])}. Automation is off for them. Run: "
+                f"bash tools/launchd/install.sh install")
+        for note in res.get("notes") or []:
+            warnings.append(f"quiesce marker '{marker.parent.name}': {note}")
+    return entries, warnings
+
+
 def write_inbox_alert(repo_root: Path, warnings: list) -> Path | None:
     """When run headless (launchd), surface warnings by writing a dated alert to
     inbox/ so /standup or /act catches an outage even if the watchdog is never
@@ -243,11 +300,12 @@ def main() -> int:
     gmail, gw = check_gmail(repo_root, args.gmail_stale_hours)
     jobs, jw = check_jobs(repo_root)
     runs, rw = check_long_runs(repo_root, args.stall_hours)
-    warnings = gw + jw + rw
+    quiesced, qw = check_quiesced_jobs(repo_root)
+    warnings = gw + jw + rw + qw
     if args.inbox_on_warn:
         write_inbox_alert(repo_root, warnings)
     print(json.dumps({"warnings": warnings, "gmail": gmail, "jobs": jobs,
-                      "long_runs": runs}, indent=2))
+                      "long_runs": runs, "quiesced_jobs": quiesced}, indent=2))
     return 0
 
 

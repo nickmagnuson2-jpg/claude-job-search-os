@@ -131,9 +131,44 @@ file in `tools/` is transiently broken.
   files, with no warning.
 - **`git add -A`: do not.** It would stage a mutant and its backup.
 - **Editing `tools/`: pointless.** Each target is restored from the runner's in-memory copy.
+- **launchd: handled automatically since 2026-09-01.** This was the worst case and the one
+  nothing covered. `gmail-fetch` and `gmail-fetch-personal` fire every 900s and
+  `granola-auto-debrief` every 3h, all shelling into `tools/*.py`; an 18:00 to 04:00 run
+  overlaps roughly 80 fires. `gmail_fetch.py` alone carries 377 mutants, so during its own
+  measurement window a fetch job would run mutated mail-handling code against real Gmail.
+  The sweep now unloads those jobs for the duration -- see below.
 
 Safe while it runs: reading anything, and editing `data/`, `output/`, `.claude/skills/`,
 or docs. The sweep only touches `tools/*.py`.
+
+## The scheduled jobs are taken down for the duration
+
+`tools/job_quiesce.py`. On startup the sweep `launchctl bootout`s every
+`com.nickmagnuson.jobsearch.*` job that is currently loaded (never its own), records what
+went down in `<state-dir>/.quiesced-jobs.json`, and restores them when it finishes.
+
+**The guard cannot live inside the tools.** The obvious design is a
+"refuse if a `.mutation_backup` exists" check at the top of each scheduled tool. Mutating
+that check's own `if` is exactly what the sweep does, so the protection has to sit outside
+the blast radius. Unloading the jobs does that; a guard in the file does not.
+
+**Restore is the whole risk**, so there are four defences:
+
+1. The marker is written **before** the first bootout, so any crash after it leaves a
+   record of the debt.
+2. Only jobs that were **actually loaded and actually booted out** are recorded. Restore
+   never starts a job you deliberately turned off.
+3. A **failed restore keeps the marker**, so the next pass retries. Stuck and loud beats
+   clean and wrong.
+4. Recovery does not depend on the sweep running again: the next sweep restores a stranded
+   marker at startup, and `check_automation_health` (daily 08:00) restores it whenever a
+   marker exists with no `mutation_sweep` process behind it. A marker **while the sweep is
+   alive** is reported and not warned about -- it is the system working.
+
+SIGTERM and SIGINT are handled explicitly. Neither unwinds a `finally` on its own, and
+launchd SIGTERMs a job it wants gone. SIGKILL is the case defence 4 exists for.
+
+**If you ever need to put them back by hand:** `bash tools/launchd/install.sh install`.
 
 ## Why serial, and why not to "speed it up"
 

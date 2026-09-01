@@ -4,14 +4,21 @@
   mutation-sweep: finish the corpus mutation baseline overnight.
 
   TEMPORARY, NOT PART OF THE STANDING SET. This is deliberately absent from install.sh's
-  PLISTS array so a routine `install.sh` never resurrects it. It exists to re-measure the
-  8 tools that came back baseline_red on 2026-08-27, and should be unloaded once the
-  sweep reports SWEEP COMPLETE:
+  PLISTS array so a routine `install.sh` never resurrects it. As of 2026-09-01 it drives
+  the FROM-SCRATCH re-sweep of all 108 auditable tools (10,811 mutants) that the
+  2026-08-31 PYTHONDONTWRITEBYTECODE fix made necessary - every pre-fix number may be a
+  false kill. Unload it once the sweep reports SWEEP COMPLETE:
       launchctl unload ~/Library/LaunchAgents/com.nickmagnuson.jobsearch.mutation-sweep.plist
       rm ~/Library/LaunchAgents/com.nickmagnuson.jobsearch.mutation-sweep.plist
 
+  18:00, NOT 16:00 (moved 2026-09-01). While this runs, one tools/*.py is mutated on disk
+  at any instant and the tree is unsafe for ordinary work - tests/conftest.py refuses to
+  run, and skills that shell out to tools/*.py would execute a mutant against real data.
+  A 16:00 start put that inside a working afternoon. 18:00 is after the workday, and the
+  run is long enough (~10h at the 2026-08 rate) that it wants the whole night anyway.
+
   IT RECURS UNTIL UNLOADED, AND THAT IS SAFE. mutation_sweep resumes by tool name against
-  baseline.jsonl, so a second 16:00 fire finds 0 unbanked tools and exits in seconds. The
+  baseline.jsonl, so a second 18:00 fire finds 0 unbanked tools and exits in seconds. The
   cost of forgetting is noise in the log, not a re-run.
 
   CAFFEINATE. The run is ~7 hours. Without -is the Mac idle-sleeps partway and the sweep
@@ -35,7 +42,7 @@
     </array>
     <key>StartCalendarInterval</key>
     <dict>
-        <key>Hour</key><integer>16</integer>
+        <key>Hour</key><integer>18</integer>
         <key>Minute</key><integer>0</integer>
     </dict>
     <key>StandardOutPath</key>

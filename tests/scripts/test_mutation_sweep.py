@@ -772,3 +772,151 @@ def test_the_real_tool_reports_its_own_self_exclusion(tmp_path):
     assert "tools/mutation_sweep.py" in out["self_excluded"]
     assert "tools/mutation_check.py" in out["self_excluded"]
     assert out["selected"] - len(out["self_excluded"]) == out["auditable"]
+
+
+# --- 14. quiescing the scheduled jobs for the duration -----------------------
+#
+# The sweep mutates one tools/*.py at a time. launchd jobs shell into those same files
+# every 15 minutes, so an unattended overnight run executes mutants against real Gmail
+# and real data files. tests/conftest.py cannot help: it guards pytest, not launchd.
+# These tests are all about the RESTORE, because turning jobs off is the easy half.
+
+class SpyQuiesce:
+    """Stands in for the job_quiesce module on the loaded sweep."""
+
+    def __init__(self, fail_restore=False):
+        self.events = []
+        self.fail_restore = fail_restore
+        self.DEFAULT_MARKER = Path("marker.json")
+
+    def quiesce(self, repo_root, marker, runner=None):
+        self.events.append("quiesce")
+        return {"quiesced": ["com.nickmagnuson.jobsearch.gmail-fetch"],
+                "failed": [], "notes": []}
+
+    def restore(self, repo_root, marker, runner=None):
+        self.events.append("restore")
+        failed = ["com.nickmagnuson.jobsearch.gmail-fetch"] if self.fail_restore else []
+        return {"restored": [] if failed else ["com.nickmagnuson.jobsearch.gmail-fetch"],
+                "failed": failed, "notes": []}
+
+
+def _one_tool_state(repo):
+    state = write_targets(repo, [{"tool": "tools/a.py", "w": False, "h": False,
+                                  "tests": 1, "mutants": 3}])
+    set_control(repo, results={"tools/a.py": {"status": "clean", "survived": 0,
+                                              "killed": 3}})
+    return state
+
+
+def test_the_scheduled_jobs_are_quiesced_before_the_first_tool_is_mutated(
+        repo, monkeypatch, capsys):
+    """After the first mutation lands on disk is too late: a 900s job can fire in the
+    seconds between. Ordering is asserted against the engine's own call log rather than
+    by patching subprocess -- `mod.subprocess` IS the stdlib module, and replacing its
+    `run` breaks pytest itself."""
+    state = _one_tool_state(repo)
+    mod = load(repo, monkeypatch)
+    spy = SpyQuiesce()
+    seen = {}
+
+    def record(repo_root, marker, runner=None):
+        seen["engine_had_run"] = (repo / "calls.log").exists()
+        return {"quiesced": [], "failed": [], "notes": []}
+
+    monkeypatch.setattr(spy, "quiesce", record)
+    monkeypatch.setattr(mod, "job_quiesce", spy)
+    mod.run_sweep(state)
+    capsys.readouterr()
+
+    assert seen["engine_had_run"] is False, "a tool was mutated before the jobs went down"
+    assert calls(repo), "the engine must still have run afterwards"
+
+
+def test_the_jobs_are_restored_when_the_sweep_finishes(repo, monkeypatch, capsys):
+    state = _one_tool_state(repo)
+    mod = load(repo, monkeypatch)
+    spy = SpyQuiesce()
+    monkeypatch.setattr(mod, "job_quiesce", spy)
+    mod.run_sweep(state)
+    capsys.readouterr()
+    assert spy.events == ["quiesce", "restore"]
+
+
+def test_the_jobs_are_restored_even_when_the_sweep_blows_up_mid_run(
+        repo, monkeypatch, capsys):
+    """The whole risk of this feature. A sweep that dies between the two calls leaves
+    Nick's mail fetch silently off, so the restore cannot sit on the happy path."""
+    state = _one_tool_state(repo)
+    mod = load(repo, monkeypatch)
+    spy = SpyQuiesce()
+    monkeypatch.setattr(mod, "job_quiesce", spy)
+
+    def boom(_tool):
+        raise RuntimeError("engine exploded")
+
+    monkeypatch.setattr(mod, "repair_stranded", boom)
+    with pytest.raises(RuntimeError):
+        mod.run_sweep(state)
+    capsys.readouterr()
+    assert "restore" in spy.events
+
+
+def test_a_failed_restore_is_printed_loudly_rather_than_returned_quietly(
+        repo, monkeypatch, capsys):
+    """Exit status belongs to the measurement. A job left down is a separate debt and
+    has to be visible in the log the next morning."""
+    state = _one_tool_state(repo)
+    mod = load(repo, monkeypatch)
+    monkeypatch.setattr(mod, "job_quiesce", SpyQuiesce(fail_restore=True))
+    mod.run_sweep(state)
+    out = capsys.readouterr().out
+    assert "gmail-fetch" in out
+    assert "STILL DOWN" in out.upper()
+
+
+def test_a_terminating_signal_restores_the_jobs_before_dying(repo, monkeypatch, capsys):
+    """launchd SIGTERMs a job it wants gone, and Nick may ctrl-C the run. Neither unwinds
+    a `finally` on its own, so without a handler the jobs stay down until the next sweep.
+
+    The handler is fired MID-RUN, which is the only moment it matters: invoked after the
+    sweep has already returned it is correctly a no-op, because the restore is
+    once-only and the `finally` has already paid the debt."""
+    state = _one_tool_state(repo)
+    mod = load(repo, monkeypatch)
+    spy = SpyQuiesce()
+    monkeypatch.setattr(mod, "job_quiesce", spy)
+    installed = {}
+    monkeypatch.setattr(mod.signal, "signal",
+                        lambda sig, handler: installed.setdefault(sig, handler))
+
+    def sigterm_arrives(_tool):
+        installed[mod.signal.SIGTERM](mod.signal.SIGTERM, None)
+
+    monkeypatch.setattr(mod, "repair_stranded", sigterm_arrives)
+    with pytest.raises(SystemExit) as exc:
+        mod.run_sweep(state)
+    capsys.readouterr()
+
+    assert mod.signal.SIGINT in installed, "ctrl-C must be handled too"
+    assert exc.value.code == 128 + int(mod.signal.SIGTERM)
+    assert spy.events == ["quiesce", "restore"]
+
+
+def test_the_restore_is_paid_once_not_once_per_exit_path(repo, monkeypatch, capsys):
+    """A signal handler AND a `finally` both run on a signalled exit. Bootstrapping a
+    job twice is not harmless -- the second call fails, which would report a healthy
+    restore as a failed one."""
+    state = _one_tool_state(repo)
+    mod = load(repo, monkeypatch)
+    spy = SpyQuiesce()
+    monkeypatch.setattr(mod, "job_quiesce", spy)
+    installed = {}
+    monkeypatch.setattr(mod.signal, "signal",
+                        lambda sig, handler: installed.setdefault(sig, handler))
+    monkeypatch.setattr(mod, "repair_stranded",
+                        lambda _t: installed[mod.signal.SIGTERM](mod.signal.SIGTERM, None))
+    with pytest.raises(SystemExit):
+        mod.run_sweep(state)
+    capsys.readouterr()
+    assert spy.events.count("restore") == 1

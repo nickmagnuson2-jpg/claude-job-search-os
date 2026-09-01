@@ -295,3 +295,140 @@ def test_a_target_list_with_nothing_auditable_is_not_a_tracked_run(tmp_path):
     entries, warnings = cah.check_long_runs(tmp_path, stall_hours=0.0,
                                             running=lambda p: False)
     assert entries == [] and warnings == []
+
+
+# --- stranded quiesce markers -------------------------------------------------
+#
+# mutation_sweep unloads the scheduled launchd jobs for the duration of a run (they shell
+# into the tools/*.py it mutates) and restores them in a `finally`. A SIGKILL has no
+# `finally`, so the jobs stay down and the only record is a marker file. This watchdog is
+# the recovery path that does not depend on the sweep ever running again.
+
+import json as _qjson  # noqa: E402
+
+
+def _marker(repo, labels):
+    d = repo / "output" / "analysis" / "run-1"
+    d.mkdir(parents=True, exist_ok=True)
+    m = d / ".quiesced-jobs.json"
+    m.write_text(_qjson.dumps({"labels": labels}), encoding="utf-8")
+    return m
+
+
+def test_no_marker_means_nothing_to_say(tmp_path):
+    repo = _mk_repo(tmp_path, ["gmail-fetch"])
+    entries, warnings = cah.check_quiesced_jobs(repo, running=lambda _p: False)
+    assert entries == [] and warnings == []
+
+
+def test_a_marker_while_the_sweep_runs_is_expected_not_a_fault(tmp_path):
+    """The jobs are down ON PURPOSE for the length of the run. Warning here would train
+    Nick to ignore the one alert that matters when the sweep is NOT running."""
+    repo = _mk_repo(tmp_path, ["gmail-fetch"])
+    _marker(repo, ["com.nickmagnuson.jobsearch.gmail-fetch"])
+    called = []
+    entries, warnings = cah.check_quiesced_jobs(
+        repo, running=lambda _p: True,
+        restorer=lambda *a, **k: called.append(1) or {"restored": [], "failed": [],
+                                                      "notes": []})
+    assert warnings == []
+    assert called == [], "a live sweep's jobs must not be restored underneath it"
+    assert entries[0]["sweep_running"] is True
+
+
+def test_a_marker_with_no_sweep_running_restores_the_jobs(tmp_path):
+    """The SIGKILL case. Nothing else puts these back: the `finally` never ran, and the
+    next sweep is 24h away."""
+    repo = _mk_repo(tmp_path, ["gmail-fetch"])
+    _marker(repo, ["com.nickmagnuson.jobsearch.gmail-fetch"])
+    entries, warnings = cah.check_quiesced_jobs(
+        repo, running=lambda _p: False,
+        restorer=lambda *a, **k: {"restored": ["com.nickmagnuson.jobsearch.gmail-fetch"],
+                                  "failed": [], "notes": []})
+    assert entries[0]["restored"] == ["com.nickmagnuson.jobsearch.gmail-fetch"]
+    assert any("gmail-fetch" in w for w in warnings)
+
+
+def test_a_restore_that_fails_warns_loudly_and_names_the_jobs(tmp_path):
+    repo = _mk_repo(tmp_path, ["gmail-fetch"])
+    _marker(repo, ["com.nickmagnuson.jobsearch.gmail-fetch"])
+    _, warnings = cah.check_quiesced_jobs(
+        repo, running=lambda _p: False,
+        restorer=lambda *a, **k: {"restored": [],
+                                  "failed": ["com.nickmagnuson.jobsearch.gmail-fetch"],
+                                  "notes": []})
+    assert any("STILL DOWN" in w.upper() and "gmail-fetch" in w for w in warnings)
+
+
+def test_a_watchdog_never_raises_on_a_restorer_that_blows_up(tmp_path):
+    """A watchdog that dies on a broken dependency is exactly as useful as no watchdog -
+    the same rule _process_running already follows."""
+    repo = _mk_repo(tmp_path, ["gmail-fetch"])
+    _marker(repo, ["com.nickmagnuson.jobsearch.gmail-fetch"])
+
+    def boom(*a, **k):
+        raise RuntimeError("launchctl gone")
+
+    _, warnings = cah.check_quiesced_jobs(repo, running=lambda _p: False, restorer=boom)
+    assert any("launchctl gone" in w for w in warnings)
+
+
+def test_stranded_markers_are_reported_by_main(tmp_path, monkeypatch):
+    """Guards the wiring, not just the function: an unwired check is a check that never
+    fires, which is the failure this whole file exists to catch."""
+    repo = _mk_repo(tmp_path, ["gmail-fetch"])
+    _marker(repo, ["com.nickmagnuson.jobsearch.gmail-fetch"])
+    monkeypatch.setattr(cah, "_process_running", lambda _p: False)
+    monkeypatch.setattr(cah.job_quiesce, "restore",
+                        lambda *a, **k: {"restored": [], "failed": [],
+                                         "notes": ["marker cleared"]})
+    monkeypatch.setattr(sys, "argv", ["x", "--repo-root", str(repo)])
+    monkeypatch.setattr(cah, "check_jobs", lambda r: ([], []))
+    monkeypatch.setattr(cah, "check_gmail", lambda r, h: ([], []))
+    cah.main()
+
+
+def test_the_restorer_error_is_kept_in_the_entry_not_only_the_warning(tmp_path):
+    """The JSON is what the launchd log preserves; a warning string alone leaves nothing
+    machine-readable to explain why a job is still down."""
+    repo = _mk_repo(tmp_path, ["gmail-fetch"])
+    _marker(repo, [PREFIX + "gmail-fetch"])
+
+    def boom(*a, **k):
+        raise RuntimeError("launchctl gone")
+
+    entries, _ = cah.check_quiesced_jobs(repo, running=lambda _p: False, restorer=boom)
+    assert "launchctl gone" in entries[0]["error"]
+
+
+def test_a_restore_that_put_nothing_back_does_not_claim_a_sweep_died(tmp_path):
+    """An empty marker is not evidence of a crashed sweep. Warning on it every morning
+    is how a real 'the sweep died' alert stops being read."""
+    repo = _mk_repo(tmp_path, ["gmail-fetch"])
+    _marker(repo, [])
+    _, warnings = cah.check_quiesced_jobs(
+        repo, running=lambda _p: False,
+        restorer=lambda *a, **k: {"restored": [], "failed": [], "notes": []})
+    assert warnings == []
+
+
+def test_a_fully_successful_restore_raises_no_still_down_alarm(tmp_path):
+    repo = _mk_repo(tmp_path, ["gmail-fetch"])
+    _marker(repo, [PREFIX + "gmail-fetch"])
+    _, warnings = cah.check_quiesced_jobs(
+        repo, running=lambda _p: False,
+        restorer=lambda *a, **k: {"restored": [PREFIX + "gmail-fetch"], "failed": [],
+                                  "notes": []})
+    assert not any("STILL DOWN" in w.upper() for w in warnings)
+
+
+def test_notes_from_the_restorer_reach_the_warning_list(tmp_path):
+    """A kept marker or an unreadable one is reported only through notes. Dropping them
+    turns a stuck recovery into a silent one."""
+    repo = _mk_repo(tmp_path, ["gmail-fetch"])
+    _marker(repo, [PREFIX + "gmail-fetch"])
+    _, warnings = cah.check_quiesced_jobs(
+        repo, running=lambda _p: False,
+        restorer=lambda *a, **k: {"restored": [], "failed": [],
+                                  "notes": ["marker kept; next pass retries"]})
+    assert any("next pass retries" in w for w in warnings)
