@@ -158,12 +158,21 @@ def _extract_target_seniority(text: str) -> str:
             m = re.search(r"(?:target seniority)[:\s*]+\s*(\w+)", lower)
             if m:
                 return m.group(1).capitalize()
-    # Fallback: look for seniority keywords in the search thesis
-    for line in text.splitlines():
-        if line.startswith(">"):
-            for keyword in SENIORITY_LEVELS:
-                if keyword in line.lower():
-                    return keyword.capitalize()
+    # NO blockquote fallback. Removed 2026-09-02.
+    #
+    # This used to scan every blockquote line for any SENIORITY_LEVELS keyword. In the
+    # live goals.md it matched "head" inside a blockquoted FILE PATH, resolving target
+    # seniority to 'Head' (level 8). Since extract_seniority() defaults an unkeyworded
+    # title to 4, the owner's own #1 target title "Deployment Strategist" then scored
+    # 10 - |4-8|*2 = 2.0 on 25% of the weight, while "Regional Director, Forward
+    # Deployed Engineering" scored 10.0. The ranking was inverted against his lane.
+    #
+    # Returning "" is correct and not a regression: _resolve_target_level() infers the
+    # level from the target TITLES, which is the deliberate path added for fable-audit
+    # Theme 3 precisely because goals.md states titles rather than levels. The
+    # blockquote scan was shadowing that inference with prose noise.
+    # Guarded by tests/scripts/test_scorer.py::test_a_seniority_word_inside_a_
+    # blockquoted_path_is_not_a_target_level.
     return ""
 
 

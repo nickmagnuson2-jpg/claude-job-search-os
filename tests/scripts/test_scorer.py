@@ -440,3 +440,53 @@ def test_real_fit_spec_loads_and_screens():
     real = {"title": "Deployment Strategist",
             "description_plain": "own enterprise deployments, build the playbook, forward-deployed"}
     assert score_role(gtm, ctx) < score_role(real, ctx)
+
+
+# ---------------------------------------------------------------------------
+# Seniority extraction must not match keywords inside prose or file paths
+#
+# Origin 2026-09-02. `_extract_target_seniority` fell through to scanning any
+# blockquote line in goals.md for a seniority keyword, and matched "head" inside a
+# blockquoted FILE PATH ("> Origin and full working: data/workbooks/..."). Target level
+# resolved to 8. Because `extract_seniority` defaults an unkeyworded title to 4, the
+# owner's own target title "Deployment Strategist" then scored 10 - |4-8|*2 = 2.0 on
+# 25% of the weight, while "Regional Director, Forward Deployed Engineering" scored
+# 10.0. The ranking was inverted against his lane.
+# ---------------------------------------------------------------------------
+
+def test_a_seniority_word_inside_a_blockquoted_path_is_not_a_target_level():
+    """The regression: prose containing 'head' must not set target seniority."""
+    from tools.career_scanner.scorer import _extract_target_seniority
+    goals = (
+        "## Search Thesis\n"
+        "A deployment-strategist seat at an AI-native company.\n"
+        "\n"
+        "> Origin and full working: data/workbooks/head-of-lane-value-prop.md. Written\n"
+        "> because the cold email took nine rounds and the argument was being invented.\n"
+    )
+    assert _extract_target_seniority(goals) == "", (
+        "a seniority keyword appearing inside blockquoted prose or a file path was "
+        "treated as an explicit target seniority"
+    )
+
+
+def test_an_explicit_target_seniority_line_is_still_honoured():
+    """Guard on the guard: removing the fallback must not break the real path."""
+    from tools.career_scanner.scorer import _extract_target_seniority
+    assert _extract_target_seniority("**Target seniority:** Senior\n") == "Senior"
+
+
+def test_target_level_falls_back_to_titles_not_to_prose():
+    """With no explicit line, the level must come from the target TITLES.
+
+    That inference path was added deliberately (fable-audit Theme 3) and is correct;
+    the blockquote scan was shadowing it with noise.
+    """
+    from tools.career_scanner.scorer import _extract_target_seniority, _resolve_target_level
+    goals = "> a blockquote mentioning head of something\n"
+    assert _extract_target_seniority(goals) == ""
+    lvl = _resolve_target_level("", ["Deployment Strategist", "Engagement Manager"])
+    assert lvl is None or lvl <= 6, (
+        f"target level {lvl} inferred from IC-shaped titles is too senior; an "
+        "unkeyworded target title must not resolve to director/head level"
+    )
