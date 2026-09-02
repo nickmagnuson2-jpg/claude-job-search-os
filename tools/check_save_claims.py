@@ -139,7 +139,22 @@ def extract_claimed_paths(text: str):
     text = strip_code_blocks(text)
     seen = set()
     out = []
+    # Spans of every path-ish token, so a claim verb sitting INSIDE a filename cannot
+    # start a window.
+    #
+    # `\b` on the verb guards against underscores (a word char, so \b will not fire
+    # mid-identifier) but NOT against dots and hyphens, which are exactly what filenames
+    # are made of. In `tide-chart-schedule.SAVED-noaa-090226.html` the `.` and `-` around
+    # SAVED are both word boundaries, so `\bsaved\b` matched inside the filename, the
+    # window opened at the verb's end, and the hook blocked on the fragment
+    # `-noaa-090226.html` -- a "file" that appeared nowhere in the message and existed
+    # nowhere on disk, while the real file had been written correctly.
+    # Fired 2026-09-02 (friction ledger). Same class as the mid-word bug documented at
+    # CLAIM_RE, which the \b fix only half-solved.
+    path_spans = [pm.span() for pm in PATH_TOKEN.finditer(text)]
     for m in CLAIM_RE.finditer(text):
+        if any(s <= m.start() and m.end() <= e for s, e in path_spans):
+            continue
         before = text[max(0, m.start() - LOOKBEHIND):m.start()]
         if FUTURE_MARKERS.search(before):
             continue

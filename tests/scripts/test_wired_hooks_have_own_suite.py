@@ -29,11 +29,11 @@ TESTS = REPO_ROOT / "tests" / "scripts"
 
 # Wired before this test existed, measured on 2026-09-02. Each is real exposure.
 KNOWN_MISSING = {
-    "check_data_projects": "no tests anywhere; never entered the mutation baseline",
-    "check_edit_safety": "no tests anywhere; never entered the mutation baseline",
-    "check_no_confabulation": "no tests anywhere; never entered the mutation baseline",
-    "check_script_error_logged": "no tests anywhere; never entered the mutation baseline",
-    "log_tool_failure": "no tests anywhere; never entered the mutation baseline",
+    # check_data_projects retired 2026-09-02: tests/scripts/test_check_data_projects.py
+    # check_edit_safety retired 2026-09-02: tests/scripts/test_check_edit_safety.py
+    # check_no_confabulation retired 2026-09-02: tests/scripts/test_check_no_confabulation.py
+    # check_script_error_logged retired 2026-09-02: tests/scripts/test_check_script_error_logged.py
+    # log_tool_failure retired 2026-09-02: tests/scripts/test_log_tool_failure.py
     # check_email_via_skill retired 2026-09-02: tests/scripts/test_check_email_via_skill.py
     # scan_transcript_failures retired 2026-09-02: tests/scripts/test_scan_transcript_failures.py
 }

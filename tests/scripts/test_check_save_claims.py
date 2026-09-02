@@ -298,3 +298,30 @@ def test_two_claims_in_separate_paragraphs_each_keep_their_own_referent():
     text = ("Saved to docs/first.md here.\n\nAlso wrote docs/second.md there.\n")
     got = csc.extract_claimed_paths(text)
     assert "docs/first.md" in got and "docs/second.md" in got
+
+
+def test_claim_verb_inside_a_filename_does_not_open_a_window():
+    """A verb between a dot and a hyphen is \\b-delimited but is NOT a claim.
+
+    `\\b` guards against underscores (word chars) but not dots and hyphens, which are
+    what filenames are made of. Before the fix, `...schedule.SAVED-noaa-090226.html`
+    matched `\\bsaved\\b` inside the name, the window opened after the verb, and the hook
+    blocked on the fragment `-noaa-090226.html`. Fired 2026-09-02.
+    """
+    got = csc.extract_claimed_paths(
+        "- `tide-chart-schedule.SAVED-noaa-090226.html` on disk"
+    )
+    assert "-noaa-090226.html" not in got
+
+
+def test_a_dotted_filename_is_still_reported_whole_when_really_claimed():
+    """The fix must not swallow a genuine claim whose path contains a verb."""
+    got = csc.extract_claimed_paths("I wrote tools/foo.SAVED-bar.py just now.")
+    assert "tools/foo.SAVED-bar.py" in got
+
+
+def test_a_filename_containing_a_verb_alone_is_not_a_claim():
+    got = csc.extract_claimed_paths(
+        "The file baseline.pre-bytecode-fix-083126.jsonl is the old one."
+    )
+    assert got == []

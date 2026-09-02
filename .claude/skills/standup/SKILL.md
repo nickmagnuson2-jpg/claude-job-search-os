@@ -3,7 +3,7 @@ name: standup
 description: Morning briefing — pipeline health, today's top 3 actions, pending outreach, corpus state, and a momentum read of the search state
 argument-hint: [none]
 user-invocable: true
-allowed-tools: Read(*), Glob(inbox/*), Glob(data/reflections/*), Glob(data/workbooks/*), Bash(PYTHONIOENCODING=utf-8 python3 tools/pipeline_staleness.py:*), Bash(PYTHONIOENCODING=utf-8 python3 tools/outreach_pending.py:*), Bash(PYTHONIOENCODING=utf-8 python3 tools/networking_followup.py:*), Bash(PYTHONIOENCODING=utf-8 python3 tools/todos_summary.py:*), Bash(PYTHONIOENCODING=utf-8 python3 tools/check_automation_health.py:*), Bash(PYTHONIOENCODING=utf-8 python3 tools/attention.py:*), Bash(PYTHONIOENCODING=utf-8 python3 tools/conversations_metric.py:*), Bash(ls:*), Bash(stat:*)
+allowed-tools: Read(*), Glob(inbox/*), Glob(data/reflections/*), Glob(data/workbooks/*), Bash(PYTHONIOENCODING=utf-8 python3 tools/pipeline_staleness.py:*), Bash(PYTHONIOENCODING=utf-8 python3 tools/outreach_pending.py:*), Bash(PYTHONIOENCODING=utf-8 python3 tools/networking_followup.py:*), Bash(PYTHONIOENCODING=utf-8 python3 tools/todos_summary.py:*), Bash(PYTHONIOENCODING=utf-8 python3 tools/check_automation_health.py:*), Bash(PYTHONIOENCODING=utf-8 python3 tools/attention.py:*), Bash(PYTHONIOENCODING=utf-8 python3 tools/conversations_metric.py:*), Bash(PYTHONIOENCODING=utf-8 python3 tools/fetch_source_email.py:*), Bash(ls:*), Bash(stat:*)
 ---
 
 # Standup — Morning Briefing
@@ -273,6 +273,46 @@ This section enforces `memory/feedback_volume_as_cope_yellow_flag.md` (2026-05-0
 
 5. **List the unsharpened reflection filenames** (just the dated stems, max 5) so Nick can see what's queued for the next sharpening pass.
 
+### Step: Reflection staleness + commonplace intake
+
+Two cheap checks. Both are **nudges, never questions** — standup does not ask reflection questions
+inline. Reflection needs its own space; the only job here is to stop it going invisible.
+
+**a) Days since the last reflection.**
+
+```bash
+ls data/reflections/[0-9]*.md | sort -r | head -1
+```
+
+Take the leading `YYYY-MM-DD` from the basename (NOT the mtime — files get edited later, which would
+reset the clock and hide a real gap). Compute days since. **Surface a line only when it is 5+ days.**
+Under 5, print nothing at all: a daily "you reflected 2 days ago" is noise that trains him to skip the
+whole block. Ignore `_`-prefixed files (`_themes.md`, `_stoic-prompts.md` and friends are not
+reflections). If the glob matches nothing, skip silently.
+
+**b) Unreacted commonplace intake.**
+
+```bash
+PYTHONIOENCODING=utf-8 python3 tools/fetch_source_email.py --label "Interesting thoughts" --list --json --repo-root . --max 40
+```
+
+Read-only: it enumerates the Gmail label and diffs it against `data/source-emails/` by Message-ID.
+Writes nothing. Parse the JSON and use `unpulled_count`.
+
+- This makes a network call. **On any failure, non-zero exit, or unparseable output, skip the block
+  silently** and continue standup. Never fail the brief on it.
+- If `source_dir_exists` is false, say so instead of reporting the count: every message reads as
+  unpulled when the directory is missing, which is a false alarm, not a backlog.
+- **Report the count, do not list the subjects.** The brief stays scannable, and the subjects are
+  real correspondents.
+
+**Why this is here at all:** the intake path existed since 2026-06-13 and went dormant after one day,
+because the tool required `--match` and there was no way to ask what was sitting unread. This
+reverses the earlier deliberate "manual-first, do not automate surfacing" decision in
+`memory/project_commonplace_book_system.md`. Nick called it on 2026-09-02 with the dormancy as the
+evidence. **Surfacing only — never auto-pull, never auto-write a take.** The take is voice-pure and
+stays his (`memory/feedback_commonplace_take_is_voice_pure.md`).
+
 ### Step: Daily Stoic prompt
 
 1. Archive any new meditation and read state:
@@ -353,6 +393,22 @@ Output the brief in this exact format:
 3. [Third priority]
 
 > [N] total pending to-dos — run `/todo` to see the full list.
+
+---
+
+### Reflection & Reading
+
+[Only render this section if at least one of the two lines below fires. If both are silent, omit the
+whole section including its heading -- an empty section is a daily reminder that nothing is wrong.]
+
+[If days since the newest dated reflection is 5+:]
+> 🪞 Last reflection was [N] days ago. `/reflect` when you want it.
+
+[If unpulled_count >= 1:]
+> 📚 **[N] unread in "Interesting thoughts"** — `/analyze` or pull one into `data/source-emails/`. Each needs your own take before it counts.
+
+[If source_dir_exists is false:]
+> ⚠️ `data/source-emails/` not found — the unread count is unreliable (everything reads as unpulled).
 
 ---
 
