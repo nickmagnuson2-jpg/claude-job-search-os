@@ -271,3 +271,40 @@ def test_a_distinctive_mononym_is_not_treated_as_a_surname(dictionary):
     without it a one-word entry is read as its own surname and promoted to BLOCK."""
     assert gen.person_components("Zorptech", dictionary) == []
     assert gen.person_components("Sarah Zorptech", dictionary) == ["Zorptech"]
+
+
+# ── GAP 3: a FIXTURE name harvested from real data blocks its own placeholders ──
+#
+# Found 2026-09-02, live. A fixture name used by the act_apply contact-add tests
+# reached data/networking.md as a real-looking `### Name — Company` section. The
+# harvester cannot tell a demo row from a real contact, so it promoted the name to
+# BLOCK, and the always-on PreToolUse hook then blocked three public files that use
+# it as a placeholder -- including the skill doc documenting the command that made it.
+#
+# The trap that makes this its own gap rather than a variant of GAP 2: deleting the
+# row from networking.md does NOT release the block, because merge_retired() folds
+# the retired file back in on every run. The ratchet is right for real entities and
+# wrong for fixtures, so the exclusion must be declarative and permanent.
+
+def test_a_declared_fixture_name_is_never_promoted_to_the_denylist(dictionary):
+    """The regression: a fixture name must be excluded even when it arrives via the
+    same `### Name — Company` shape a real contact uses."""
+    tokens = gen.build_denylist(
+        names={"Alex Park"}, companies=set(), dictionary=dictionary
+    )
+    assert "Alex Park" not in tokens, (
+        "a fixture name reached the denylist; it will block the public files that "
+        "use it as a placeholder"
+    )
+
+
+def test_the_fixture_exclusion_does_not_also_swallow_a_real_contact(dictionary):
+    """Guard on the guard. The exclusion must be narrow: a real two-word contact
+    sharing the fixture's FIRST name must still be promoted, or 'exclude the
+    fixture' quietly becomes 'exclude everyone called Alex'."""
+    tokens = gen.build_denylist(
+        names={"Alex Kowalczyk"}, companies=set(), dictionary=dictionary
+    )
+    assert "Alex Kowalczyk" in tokens, (
+        "the fixture exclusion widened to a real contact sharing a first name"
+    )

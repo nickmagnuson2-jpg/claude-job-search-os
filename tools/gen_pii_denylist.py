@@ -112,6 +112,22 @@ def _declared_sample_persona(root: Path) -> set[str]:
 _FIXTURE_CAST = {
     "jordan lee", "sarah chen", "casey doe", "casey morgan",
     "sam carter", "alex chen",
+    # Added 2026-09-02. A fixture name used by the act_apply contact-add tests reached
+    # data/networking.md as a real-looking `### Name — Company` section, was harvested
+    # here, and then BLOCKED the three public files that legitimately use it as a
+    # placeholder, including the skill doc that documents the command.
+    #
+    # Deleting the row from networking.md does NOT undo that: merge_retired() folds
+    # .pii-denylist-retired.txt back in on every run, so any name ever harvested is
+    # ratcheted in permanently. The ratchet is correct for real entities and exactly
+    # wrong for fixtures, so the exclusion has to live here and the retired file had
+    # to be purged by hand once.
+    #
+    # A second fixture caught in the same block shared a name with a real person in
+    # output/. It is deliberately NOT excluded here: that would have silently retired
+    # a real person's gate protection forever. The FIXTURE was renamed to `casey doe`
+    # instead. Rename the fixture, never widen the guard.
+    "alex park",
 }
 
 

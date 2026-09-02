@@ -161,11 +161,11 @@ def test_contact_add_source_file_in_log(tmp_path):
     write_fixture(tmp_path, "data/networking.md", NETWORKING_MD)
     run_act_apply(
         "--repo-root", str(tmp_path),
-        "contact-add", "Tom Brown",
-        "--source-file", "tom-capture.md",
+        "contact-add", "Casey Doe",
+        "--source-file", "casey-capture.md",
     )
     content = (tmp_path / "data/networking.md").read_text(encoding="utf-8")
-    assert "tom-capture.md" in content
+    assert "casey-capture.md" in content
 
 
 def test_contact_add_missing_file_returns_error(tmp_path):
