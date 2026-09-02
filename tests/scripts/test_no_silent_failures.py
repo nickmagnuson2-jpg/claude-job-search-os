@@ -38,6 +38,19 @@ SETTINGS = REPO / ".claude" / "settings.json"
 # Anything added here needs a reason -- the default expectation is that a
 # tools/check_*.py is wired into settings.json.
 NON_HOOK_CHECKERS = {
+    # check_dark_inputs.py is a DIAGNOSTIC, not a PreToolUse hook. It has no single
+    # tool call to intercept: it measures whether extracted values can affect the
+    # outcomes they feed (discrimination), which requires running the real scorer
+    # against live data. Wiring it to Write|Edit would fire it on every keystroke and
+    # tell nobody anything.
+    #
+    # It is NOT unwatched, which is the thing this test actually cares about:
+    # test_dark_input_debt_does_not_grow (below) runs it every suite pass and fails if
+    # the known-dark set grows. That is the same frozen-allowlist pattern the mutation
+    # gates use. Exempting it here without that test would make it exactly the dead
+    # checker this file exists to prevent - and would be a fine irony, given the
+    # detector was built to catch things that look built and do nothing.
+    "check_dark_inputs.py",
     # BUILT 2026-08-25, NOT YET WIRED, and deliberately so. All five pass their tests
     # (169 total) and the two I hand-verified block their origin inputs. But mutation
     # leaves 56 survivors across them -- and they are not CLI plumbing: 9 of the 18 in
@@ -395,3 +408,54 @@ def test_the_unparse_ratchet_can_actually_fail(tmp_path):
 
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))
+
+
+# ---------------------------------------------------------------------------
+# Dark-input debt: frozen, and allowed to shrink only.
+#
+# tools/check_dark_inputs.py exits 2 while any probe is dark. Three are, as of
+# 2026-09-02, and they are real unfixed defects rather than detector noise:
+#   - _extract_target_industries returns prose sentences no JD can contain
+#   - _score_industry_match returns an identical 3.0 for a target-title role and an
+#     unrelated one, so 20% of the scoring weight cannot discriminate at all
+#   - _score_keyword_overlap returns 0.0 for both, so another 20% is dead too
+#
+# Asserting exit 0 would mean deleting the tool or widening its thresholds until it
+# lied. Asserting the SET does not grow records the debt honestly and blocks new debt.
+# Drain this list; do not extend it.
+# ---------------------------------------------------------------------------
+
+KNOWN_DARK_PROBES = {
+    "scorer._extract_target_industries",
+    "scorer._score_industry_match",
+    "scorer._score_keyword_overlap",
+}
+
+
+def test_dark_input_debt_does_not_grow():
+    """A new dark probe is a new prose->machine boundary that went inert."""
+    import json
+    import subprocess
+    import sys as _sys
+
+    proc = subprocess.run(
+        [_sys.executable, str(REPO / "tools" / "check_dark_inputs.py"),
+         "--repo-root", str(REPO), "--json"],
+        capture_output=True, text=True,
+    )
+    assert proc.returncode in (0, 2), (
+        f"detector crashed (exit {proc.returncode}): {proc.stderr[-400:]}"
+    )
+    payload = json.loads(proc.stdout)
+    dark = {r["name"] for r in payload["results"] if r["verdict"] != "OK"}
+
+    new = dark - KNOWN_DARK_PROBES
+    assert not new, (
+        "new DARK probe(s) - an extraction went inert, or a consumer stopped being "
+        f"able to use it: {sorted(new)}"
+    )
+    fixed = KNOWN_DARK_PROBES - dark
+    assert not fixed, (
+        f"these probes are clean now: {sorted(fixed)}. Remove them from "
+        "KNOWN_DARK_PROBES so the debt list stays honest and cannot silently refill."
+    )
