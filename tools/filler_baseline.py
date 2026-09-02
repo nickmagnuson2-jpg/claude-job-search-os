@@ -58,13 +58,26 @@ EXTRA = {
     "just": r"\bjust\b",
 }
 
-DRILL_RE = re.compile(
-    r"sim|probs|drill|rep-|-rep|concept-probe|scaling-judgment|"
-    r"authorization-and-access|claim-retrieval|handoff"
-)
-NONCALL_RE = re.compile(
-    r"endowment|west-point-inn|how-to-build-a-business|article|insights-on|podcast"
-)
+# Classification by filename. Generic markers stay as substrings; anything that would
+# name a real organisation, counterpart, or interview domain is keyed by the capture's
+# DATE-TIME PREFIX instead, exactly as UNRELIABLE_PREFIXES below does and for the same
+# reason: this repo is public and transcript filenames carry real entities. A prefix
+# identifies a capture uniquely without naming anything, and survives a rename.
+# (2026-09-02: these two regexes still held a real organisation and two interview-domain
+# titles after the UNRELIABLE_PREFIXES fix landed in the same file.)
+DRILL_RE = re.compile(r"sim|probs|drill|rep-|-rep|concept-probe|claim-retrieval|handoff")
+DRILL_PREFIXES = ("2026-08-20-1034", "2026-08-20-1506")
+
+NONCALL_RE = re.compile(r"article|insights-on|podcast")
+NONCALL_PREFIXES = ("2026-05-07-1556", "2026-05-21-1717", "2026-05-26-1859")
+
+
+def _is_drill(name: str) -> bool:
+    return name.startswith(DRILL_PREFIXES) or bool(DRILL_RE.search(name))
+
+
+def _is_noncall(name: str) -> bool:
+    return name.startswith(NONCALL_PREFIXES) or bool(NONCALL_RE.search(name))
 CORRUPT_RE = re.compile(r"\{'source':[^}]*\}:")
 
 # Files whose per-speaker attribution cannot be trusted, with the reason. These are RANKED
@@ -145,8 +158,8 @@ def parse_file(p: Path) -> dict:
     counts = {k: len(re.findall(v, text)) for k, v in CORE.items()}
     extra = {k: len(re.findall(v, text)) for k, v in EXTRA.items()}
     core = sum(counts.values())
-    kind = ("drill" if DRILL_RE.search(p.name)
-            else "non-call" if NONCALL_RE.search(p.name) else "real")
+    kind = ("drill" if _is_drill(p.name)
+            else "non-call" if _is_noncall(p.name) else "real")
     return {
         "file": p.name, "excluded": False, "kind": kind,
         "nick_words": nw, "them_words": tw,
