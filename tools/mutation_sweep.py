@@ -49,6 +49,7 @@ import argparse
 import ast
 import json
 import os
+import pathlib
 import re
 import signal
 import subprocess
@@ -132,6 +133,19 @@ def build_targets() -> list[dict]:
     settings = (REPO_ROOT / ".claude" / "settings.json")
     wired = settings.read_text(encoding="utf-8") if settings.exists() else ""
 
+    def has_own_suite(tool: pathlib.Path) -> bool:
+        """Is there a test file NAMED for this tool, or only ones that mention it?
+
+        `mutation_check.map_tests` selects by filename AND by import reference, so a tool
+        with no suite of its own still gets a survival rate -- computed from tests written
+        for something else. That number is not evidence about the tool, and it reads
+        exactly like a real one: on 2026-09-02 `check_email_via_skill` (23/23) and
+        `open_draft` (113/113) were both reported as "tests that catch nothing" when the
+        truth was "no tests at all". Recording the distinction is what stops the
+        misreading; the mapping itself is doing its job and is left alone.
+        """
+        return bool(list((REPO_ROOT / "tests" / "scripts").glob(f"test_{tool.stem}*.py")))
+
     rows = []
     for tool in sorted((REPO_ROOT / "tools").glob("*.py")):
         rel = f"tools/{tool.name}"
@@ -144,6 +158,7 @@ def build_targets() -> list[dict]:
             # still possible -- run mutation_check.py on it directly, with no sweep in
             # flight.
             rows.append({"tool": rel, "w": True, "h": tool.name in wired,
+                         "own": has_own_suite(tool),
                          "tests": sum(count_tests(f) for f in test_files),
                          "test_files": len(test_files), "mutants": -1})
             continue
@@ -158,6 +173,7 @@ def build_targets() -> list[dict]:
         rows.append({"tool": rel,
                      "w": bool(_WRITER_RE.search(tool.read_text(encoding="utf-8"))),
                      "h": tool.name in wired,
+                     "own": has_own_suite(tool),
                      "tests": sum(count_tests(f) for f in test_files),
                      "test_files": len(test_files),
                      "mutants": mutants})
@@ -294,6 +310,7 @@ def _run_sweep_inner(targets, out: Path) -> int:
             stdout, stderr, rc, timed_out = "", "", None, True
 
         base = {k: t[k] for k in ("tool", "w", "h", "tests", "mutants")}
+        base["own"] = t.get("own")
         base |= {"elapsed": round(time.time() - start, 1), "rc": rc}
 
         # Before the next tool starts: a mutated file left here contaminates every

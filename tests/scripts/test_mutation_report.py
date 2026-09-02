@@ -369,7 +369,18 @@ def test_the_real_tool_runs_against_the_live_sweep_state(tmp_path):
         env={**os.environ, "PYTHONIOENCODING": "utf-8"})
     assert r.returncode == 0, r.stderr
     assert f"Sweep coverage: {len(rows)} of" in r.stdout
-    assert "NOT MEASURED" in r.stdout
+    # Conditional ON PURPOSE. A bare `assert "NOT MEASURED" in r.stdout` asserts the live
+    # corpus is INCOMPLETE, so it passes only while the sweep is unfinished and fails the
+    # moment one succeeds -- which is exactly how it broke on 2026-09-02 at 110 of 110.
+    # The invariant that actually holds on any live state is the biconditional. Both
+    # rendering directions are already covered by fixtures above; this asserts the tool
+    # agrees with real state, which is what a real-data test is for.
+    targets = json.loads((live / "targets.json").read_text(encoding="utf-8"))
+    measured = {row["tool"] for row in rows}
+    gaps = [t for t in targets if t["tool"] not in measured and t.get("mutants", 0) > 0]
+    assert ("NOT MEASURED" in r.stdout) == bool(gaps), (
+        f"{len(gaps)} unmeasured target(s) in live state but the report "
+        f"{'omitted' if gaps else 'emitted'} the NOT MEASURED section")
 
 
 # --- 10. the loudest findings ------------------------------------------------
