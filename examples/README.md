@@ -58,11 +58,11 @@ keeps pushing on the fact that I've never personally carried a quota.
 The model creates a complete job profile on the fly and then drops straight into character as the hiring manager:
 
 > **Enterprise Account Executive**
-> Company: Tessera Data, Inc. -- San Francisco, CA
+> Company: Meridian Data, Inc. -- San Francisco, CA
 > Industry: Data Infrastructure / AI | Team: ~12 AEs, founder-led sales
 > Comp: $150k base / $300k OTE + equity
 >
-> Tessera sells a real-time data platform to engineering and data teams at
+> Meridian sells a real-time data platform to engineering and data teams at
 > mid-market and enterprise accounts. The sales motion is technical and
 > consultative, often multi-threaded across a VP of Engineering, a data lead,
 > and a CFO. Average deal size $120k ACV, 3-6 month cycle.

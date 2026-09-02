@@ -72,6 +72,26 @@ KEEP = {
     "claude", "granola", "wispr", "obsidian", "vercel", "neon",
 }
 
+# The repo's own FICTIONAL CAST, used across public skill docs, examples/ and test
+# fixtures. Declared fictional in examples/README.md and relied on by person_components'
+# first-name rule above.
+#
+# These must never reach the denylist, and the path by which they can is not hypothetical:
+# on 2026-09-02 `data/networking.md` was found to contain a demo interaction logged against
+# a cast persona. The harvester cannot tell a demo row from a real contact -- both are
+# `### Name — Company` -- so fixing the status-prefix bug promoted a fictional surname to
+# BLOCK and the always-on hook immediately blocked three legitimate public files, including
+# the examples README that DEFINES the persona.
+#
+# Excluded by NAME here rather than by trying to detect demo rows: the cast is a short,
+# known, declared list, and a heuristic that guesses which log entries are real would fail
+# in the dangerous direction.
+FICTIONAL_CAST = {
+    "priya anand", "jordan lee", "sarah chen", "casey doe", "casey morgan",
+    "sam carter", "robin", "alex chen",
+}
+FICTIONAL_SURNAMES = {n.split()[-1] for n in FICTIONAL_CAST if " " in n}
+
 # Generic glue / industry-suffix words. A single-token company name that is just one
 # of these (or, via the system dictionary, any ordinary English word) is excluded from
 # the deterministic denylist and left to the semantic subagent audit. The dictionary is
@@ -141,8 +161,44 @@ def parse_networking_names(content: str) -> set[str]:
         # Interaction-log subsection headers: ### Name — Company
         m = re.match(r"^###\s+(.+?)(?:\s+[—–|]\s+.+)?$", line)
         if m:
-            names.add(m.group(1).strip())
+            names.add(_strip_status_prefix(m.group(1).strip()))
     return names
+
+
+def _strip_status_prefix(value: str) -> str:
+    """Drop a leading `[ARCHIVED]`-style status tag from a header.
+
+    Without this the captured name is `[ARCHIVED] First Last`, which matches nothing, so
+    the real name reaches no tier at all. Seven headers carried one on 2026-09-02 and the
+    contact in the first of them was on no denylist tier.
+    """
+    return re.sub(r"^\[[^\]]{1,24}\]\s*", "", value).strip()
+
+
+def parse_networking_companies(content: str) -> set[str]:
+    """Company names from the RIGHT half of a `### Name — Company` header.
+
+    `parse_networking_names` keeps only group(1) and discards this half by design, so a
+    company that appears only in an interaction-log header reached NO tier. On 2026-09-02
+    that was 179 headers, and one of those companies was sitting in a tracked public file
+    as a test fixture while the deterministic scan reported the tree clean.
+
+    These route to the AMBIGUOUS/WARN tier, not BLOCK: they are parsed out of prose-shaped
+    headers rather than a structured column, so the extraction is less trustworthy than
+    `parse_pipeline_companies`, and a false BLOCK on an always-on PreToolUse hook stops
+    real work. /audit-pii Step 1 is the reader that makes this tier visible.
+    """
+    out: set[str] = set()
+    for line in content.splitlines():
+        m = re.match(r"^###\s+.+?\s+[—–|]\s+(.+?)\s*$", line)
+        if not m:
+            continue
+        company = _strip_status_prefix(m.group(1))
+        # Trailing parentheticals and trailing punctuation are annotation, not the name.
+        company = re.sub(r"\s*\([^)]*\)\s*$", "", company).strip(" .,;:-")
+        if len(company) >= 3:
+            out.add(company)
+    return out
 
 
 def parse_pipeline_companies(content: str) -> set[str]:
@@ -253,8 +309,12 @@ def person_components(name: str, dictionary: set[str]) -> list[str]:
     anyway, and a surname that is also an ordinary word (Brown, Field, Baker) is filtered
     by the same distinctiveness test the rest of this module uses.
     """
+    if name.strip().lower() in FICTIONAL_CAST:
+        return []
     toks = [x for x in re.split(r"[^A-Za-zÀ-ÿ'\-]+", name) if x]
     if len(toks) < 2:
+        return []
+    if toks[-1].lower() in FICTIONAL_SURNAMES:
         return []
     # No length or KEEP guard here on purpose: is_distinctive_single already rejects both
     # (< 4 chars, and anything in KEEP). Restating them produced a branch that could be
@@ -270,7 +330,7 @@ def build_denylist(names: set[str], companies: set[str], dictionary: set[str]) -
         clean = name.strip().strip("*").strip()
         # Drop trailing parentheticals / qualifiers
         clean = re.sub(r"\s*\(.*\)$", "", clean).strip()
-        if not clean or clean.lower() in KEEP:
+        if not clean or clean.lower() in KEEP or clean.lower() in FICTIONAL_CAST:
             continue
         tokens = clean.split()
         # Only keep multi-token full names — distinctive, low false-positive risk.
@@ -287,7 +347,7 @@ def build_denylist(names: set[str], companies: set[str], dictionary: set[str]) -
     for company in companies:
         clean = company.strip().strip("*").strip()
         clean = re.sub(r"\s*\(.*\)$", "", clean).strip()
-        if not clean or clean.lower() in KEEP:
+        if not clean or clean.lower() in KEEP or clean.lower() in FICTIONAL_CAST:
             continue
         tokens = clean.split()
         if len(tokens) >= 2:
@@ -493,6 +553,10 @@ def main():
     dictionary = load_dictionary()
     tokens = build_denylist(names, companies, dictionary)
     ambiguous = build_ambiguous_list(companies, dictionary)
+    # WARN tier, per the 2026-09-02 decision: harvested from prose-shaped headers, so less
+    # trustworthy than the pipeline column, and a false BLOCK on an always-on hook is worse
+    # than a missed WARN that /audit-pii Step 1 surfaces to a human anyway.
+    ambiguous = sorted(set(ambiguous) | parse_networking_companies(networking))
 
     # Hand-maintained additions merge LAST and bypass the distinctiveness filters on
     # purpose: a human put them there deliberately, so the generator must not

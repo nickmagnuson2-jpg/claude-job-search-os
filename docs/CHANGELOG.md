@@ -3,7 +3,82 @@
 All notable changes to this job search system are recorded here.
 Format: newest entries at the top.
 
-## 2026-09-01 (latest): the mutation instrument was optimistic, and the PII gate matched half a phrase
+## 2026-09-02 (latest): coverage that existed and never ran, and a rate that measured something else
+
+The re-sweep put a valid number on the corpus for the first time since the bytecode fix:
+**10,794 mutants, 3,657 survived, 33.88% of all decisions unprotected.** Reading it surfaced two
+failure modes that are worse than a bad survival rate, because both look like coverage in every
+count that matters.
+
+**A survival rate is only evidence when the tool has its own suite.** `map_tests` selects covering
+tests by filename *and by import reference*, so a tool with no `tests/scripts/test_<stem>.py` still
+gets a number — computed from tests written for something else. That produced `check_email_via_skill`
+at 23/23 and `open_draft` at 113/113, both of which read as "tests that catch nothing" when the truth
+was "no tests at all"; 13 of 106 scored tools were in that state. `mutation_sweep` now records an
+`own` field on every row, and a new gate fails if a hook wired in `settings.json` has no suite named
+for it. The sweep structurally could not see this: a tool mapping to zero test files is skipped by
+`build_targets`, so those hooks were absent from the baseline rather than failing in it.
+
+**Coverage can exist and never run.** `tools/test_schema_guard.py` was 148 lines of real regression
+coverage for the 2026-06-08 column-drift incident, sitting in `tools/` — which the suite does not
+collect and `map_tests` does not glob. It stopped running in June and nothing noticed. A repo scan
+found **129 test functions** across `tools/` and `tools/career_scanner/` that had never executed; all
+are now ported into `tests/scripts/` and a second gate blocks the next one. It catches two shapes,
+and the second is why `git mv` is not always the fix: a pytest file nothing collects, and a
+`test_*.py` that is really an assert script with its own PASS/FAIL counters, which pytest reports
+`no tests ran` on. (The first count of that scan said 38 — it anchored `def test_` at column 0 and
+missed every class-based test.)
+
+**Four guards went from unmeasured to measured.** `schema_guard` 18/26 → 0 (`ok`),
+`check_email_via_skill` 23/23 → 0 (`ok`), `scan_promotion_candidates` 47/125 → 16,
+`scan_transcript_failures` 135/177 → 46. Suite 3,539 → 3,684 passing. Writing them found three
+vacuous assertions in the new tests themselves — predicates over lists that contain nothing bad, so
+inverting them stayed green — each fixed by asserting the real predicate against synthetic input.
+The orphan gate's own vacuity guard had to be rebuilt twice: `len(found) >= 5` stopped meaning
+anything once the debt was paid, and its replacement `len(found) == 0 or all(...)` was vacuous in
+exactly the way that file exists to catch.
+
+**The PII harvester was harvesting half a line, and the fix immediately over-fired.**
+`gen_pii_denylist.parse_networking_names` kept only `group(1)` of a `### Name — Company`
+header and **discarded the company half by design**, so 179 companies named that way reached
+no tier; a leading `[ARCHIVED]` tag was also captured as part of the name, so the person's
+name reached none either. Both fixed, with harvested header companies routed to the
+**WARN tier, never BLOCK** — they are parsed from prose-shaped headers, and a false BLOCK on
+an always-on PreToolUse hook stops real work.
+
+It stopped real work within minutes. `data/networking.md` turns out to contain a demo
+interaction logged against the repo's own **fictional cast**, and the harvester cannot tell a
+demo row from a real contact because both are `### Name — Company`. Fixing the status-prefix
+bug promoted a fictional surname to BLOCK and the hook blocked three legitimate public files
+— including `examples/README.md`, the file that *defines* that persona as fictional. The cast
+is now excluded by declared name (not by a heuristic guessing which rows are demos), and the
+append-forever retired-tokens list had to be purged by hand, because a token that lands once
+persists through every later rebuild.
+
+**A correction to an earlier claim in this session.** That demo row was first reported as a
+confirmed real contact and employer leaking into a tracked public file. It was not; it was
+cast data. Three fictional-cast name collisions were renamed anyway, and one genuinely
+real-entity reference — a transcript filename carrying a company and a person, in
+`filler_baseline.py` and already on `origin/main` — was scrubbed. `UNRELIABLE` there is now
+keyed by a date-time prefix instead of a filename, matched by `startswith`.
+
+**New guard: `tests/scripts/test_mutation_allow_analysis.py`.** A surviving mutant already
+needed a written reason; "non-empty" is a low bar, and an allowlist that accepts assertions
+is how a corpus decays back into "green means done". An entry now needs substance, a named
+verdict class (equivalent / dead branch / unreachable by construction / non-portable / CLI
+plumbing / whitespace-only), and a traced mechanism. Profiling the existing 87 first mattered:
+the first rule failed 32 of them, several using vocabulary the rule had not listed. Seven were
+genuinely thin and were upgraded rather than the rule widened to admit them — including a
+57-character cross-reference, which is precisely the shape that lets an unverified entry ride
+in behind a verified one.
+
+**New: `tools/mutation_trend.py`** (`record` / `show`) — the longitudinal series each sweep used to
+overwrite. Append-only, refuses an unchanged baseline so a second `record` cannot invent a flat data
+point, and excludes no-verdict tools from the denominator rather than counting them clean.
+
+---
+
+## 2026-09-01: the mutation instrument was optimistic, and the PII gate matched half a phrase
 
 Four independent defects, three of them found by something failing rather than by review.
 

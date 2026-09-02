@@ -405,3 +405,146 @@ def test_an_empty_memory_dir_reports_ok_with_zero_counts(tmp_path):
     out = _scan(tmp_path)
     assert out["status"] == "ok"
     assert out["promotion_count"] == 0 and out["demotion_count"] == 0
+
+
+# --- cron mode: the unattended half ------------------------------------------
+#
+# The weekly memory-promotion-scan job runs this path with nobody watching, and it both
+# WRITES a living doc and CREATES a todo. Everything above drives interactive mode, which
+# left 23 of 30 surviving mutants in main(). A silent break here means the backlog quietly
+# stops regenerating while the JSON report still looks correct.
+
+def _cron(memory_dir: Path, repo_root: Path, *extra) -> dict:
+    r = _sp.run([sys.executable, str(TOOL), "--memory-dir", str(memory_dir),
+                 "--repo-root", str(repo_root), "--mode", "cron", *extra],
+                capture_output=True, text=True, cwd=str(REPO_ROOT),
+                env={"PYTHONIOENCODING": "utf-8", "PATH": "/usr/bin:/bin"})
+    assert r.returncode == 0, r.stderr
+    return _json.loads(r.stdout)
+
+
+def test_cron_mode_writes_the_backlog_doc(tmp_path):
+    mem = tmp_path / "memory"; mem.mkdir()
+    _write(mem, "feedback_a.md", fm(occurrences=3, promoted="no",
+                                    reopen_gate="3rd fire"))
+    out = _cron(mem, tmp_path)
+    backlog = mem / "promotion-backlog.md"
+    assert backlog.exists()
+    assert out["backlog_written"] == str(backlog)
+    body = backlog.read_text(encoding="utf-8")
+    assert "feedback_a.md" in body
+    assert "(3x)" in body
+    assert "gate: 3rd fire" in body
+
+
+def test_the_backlog_says_none_rather_than_going_blank(tmp_path):
+    """An empty section and a missing section read the same to a skimmer; only one of
+    them means 'the scan ran and found nothing'."""
+    mem = tmp_path / "memory"; mem.mkdir()
+    _write(mem, "feedback_a.md", fm(occurrences=1, promoted="no"))
+    _cron(mem, tmp_path)
+    body = (mem / "promotion-backlog.md").read_text(encoding="utf-8")
+    assert "_none_" in body
+    assert "## Promotion candidates" in body
+    assert "## Demotion candidates" in body
+
+
+def test_the_backlog_carries_signal_health_next_to_the_candidates(tmp_path):
+    """The 2026-08-13 lesson, in the doc a human actually reads: a short candidate list
+    against low coverage is an empty scan, not an all-clear."""
+    mem = tmp_path / "memory"; mem.mkdir()
+    _write(mem, "feedback_a.md", fm(occurrences=2, promoted="no"))
+    _write(mem, "feedback_b.md", "---\nname: b\n---\n")
+    _cron(mem, tmp_path)
+    body = (mem / "promotion-backlog.md").read_text(encoding="utf-8")
+    assert "Schema coverage" in body
+    assert "Never cited" in body
+    assert "Needs review" in body
+    assert "UNKNOWN, not once" in body, "a backfilled 1 must not read as 'fired once'"
+
+
+def test_the_demotion_heading_states_the_threshold_actually_used(tmp_path):
+    mem = tmp_path / "memory"; mem.mkdir()
+    _write(mem, "feedback_a.md", fm(occurrences=1))
+    _cron(mem, tmp_path, "--stale-days", "45")
+    assert "unread >= 45d" in (mem / "promotion-backlog.md").read_text(encoding="utf-8")
+
+
+def test_a_demotion_candidate_is_listed_with_its_age(tmp_path):
+    mem = tmp_path / "memory"; mem.mkdir()
+    old = (date.today() - timedelta(days=90)).isoformat()
+    _write(mem, "feedback_a.md", fm(occurrences=1, last_cited=old))
+    _cron(mem, tmp_path)
+    body = (mem / "promotion-backlog.md").read_text(encoding="utf-8")
+    assert f"last cited {old}" in body
+    assert "d ago" in body
+
+
+def test_dry_run_computes_without_writing(tmp_path):
+    """The flag exists so the job can be exercised without mutating the memory tree."""
+    mem = tmp_path / "memory"; mem.mkdir()
+    _write(mem, "feedback_a.md", fm(occurrences=3, promoted="no"))
+    out = _cron(mem, tmp_path, "--dry-run")
+    assert out["backlog_written"] is None
+    assert not (mem / "promotion-backlog.md").exists()
+    assert out["promotion_count"] == 1, "dry-run must still compute the real answer"
+
+
+def test_cron_mode_creates_a_todo_when_candidates_exist(tmp_path):
+    """The backlog doc is passive; the todo is the only part that reaches Nick. If this
+    stops firing, the scan runs weekly forever and nothing surfaces."""
+    mem = tmp_path / "memory"; mem.mkdir()
+    (tmp_path / "tools").mkdir()
+    marker = tmp_path / "todo-called.txt"
+    (tmp_path / "tools" / "todo_write.py").write_text(
+        "import sys, pathlib\n"
+        f"pathlib.Path({str(marker)!r}).write_text(' '.join(sys.argv[1:]), encoding='utf-8')\n",
+        encoding="utf-8")
+    _write(mem, "feedback_a.md", fm(occurrences=3, promoted="no"))
+    _cron(mem, tmp_path)
+    assert marker.exists(), "todo_write.py was never invoked"
+    args = marker.read_text(encoding="utf-8")
+    assert "add" in args and "Low" in args
+    assert "1 promotion" in args
+
+
+def test_no_todo_is_created_when_there_is_nothing_to_report(tmp_path):
+    """A weekly todo that says 'nothing to do' is how a real one gets ignored."""
+    mem = tmp_path / "memory"; mem.mkdir()
+    (tmp_path / "tools").mkdir()
+    marker = tmp_path / "todo-called.txt"
+    (tmp_path / "tools" / "todo_write.py").write_text(
+        f"import pathlib; pathlib.Path({str(marker)!r}).write_text('x')\n", encoding="utf-8")
+    _write(mem, "feedback_a.md", fm(occurrences=1, promoted="no"))
+    _cron(mem, tmp_path)
+    assert not marker.exists()
+
+
+def test_dry_run_creates_no_todo_either(tmp_path):
+    mem = tmp_path / "memory"; mem.mkdir()
+    (tmp_path / "tools").mkdir()
+    marker = tmp_path / "todo-called.txt"
+    (tmp_path / "tools" / "todo_write.py").write_text(
+        f"import pathlib; pathlib.Path({str(marker)!r}).write_text('x')\n", encoding="utf-8")
+    _write(mem, "feedback_a.md", fm(occurrences=5, promoted="no"))
+    _cron(mem, tmp_path, "--dry-run")
+    assert not marker.exists()
+
+
+def test_a_missing_todo_script_does_not_break_the_run(tmp_path):
+    """The job must survive a repo root where todo_write.py is absent, or one missing
+    file takes down the whole weekly scan."""
+    mem = tmp_path / "memory"; mem.mkdir()
+    _write(mem, "feedback_a.md", fm(occurrences=3, promoted="no"))
+    out = _cron(mem, tmp_path)
+    assert out["promotion_count"] == 1
+
+
+def test_cron_mode_still_emits_the_full_json_report(tmp_path):
+    """Both modes share one detection path; the report must not thin out in cron."""
+    mem = tmp_path / "memory"; mem.mkdir()
+    _write(mem, "feedback_a.md", fm(occurrences=2, promoted="no"))
+    out = _cron(mem, tmp_path)
+    for key in ("promotion_candidates", "demotion_candidates", "schema_coverage",
+                "never_cited_count", "terminal_rules", "oversized_context_files"):
+        assert key in out, key

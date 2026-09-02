@@ -105,6 +105,52 @@ which is exit 0: a failed overnight run reporting success.
 Re-run either after changing them; a survivor here means the harness can break without the
 suite noticing, which is the one place that cannot be allowed to go stale.
 
+## A survival rate is only evidence when the tool has its own suite
+
+`mutation_check.map_tests` selects covering tests two ways: by filename, **and by import
+reference** — any test file that mentions the module. So a tool with no
+`tests/scripts/test_<stem>.py` still comes back with a survival rate, computed from tests
+written for something else. That number looks exactly like a real one.
+
+On 2026-09-02 it produced `check_email_via_skill` at 23/23 and `open_draft` at 113/113, and
+both were read as "tests that catch nothing" when the truth was "no tests at all". Thirteen
+of 106 scored tools were in that state.
+
+Two things now record the distinction rather than leaving it to the reader:
+
+- `mutation_sweep` writes an `own` field on every target and result row.
+- `tests/scripts/test_wired_hooks_have_own_suite.py` fails if a tool wired as a hook in
+  `settings.json` has no suite named for it. **The sweep structurally cannot see this** — a
+  tool that maps to zero test files is skipped by `build_targets`, so a wired hook with no
+  tests never enters the baseline at all. It is absent, not failing.
+
+## Coverage can exist and never run
+
+`tools/test_schema_guard.py` was 148 lines of real regression coverage for the 2026-06-08
+column-drift incident, sitting in `tools/` — which the suite does not collect and
+`map_tests` does not glob. It stopped running in June and nothing noticed, while
+`schema_guard.py` reported 18 of 26 mutants surviving.
+
+A repo scan on 2026-09-02 found **129 test functions** across `tools/` and
+`tools/career_scanner/` that had never executed. All have been ported into
+`tests/scripts/`, and `tests/scripts/test_no_orphaned_test_files.py` blocks the next one.
+It catches two shapes, and the second is why a `git mv` is not always the fix:
+
+1. a pytest file outside `tests/` — collectible, but nothing collects it;
+2. a `test_*.py` that is a standalone assert script with its own PASS/FAIL counters and a
+   `sys.exit()`. pytest reports `no tests ran` on those, so they must be rewritten.
+
+**Count test functions with `^\s*def test_`, not `^def test_`.** The first pass at that
+scan anchored at column 0, missed every class-based test, and reported 38 instead of 129.
+
+## Track the number over time
+
+A sweep overwrites the last one, so the corpus-level figure exists only in whatever report
+you happened to read. `tools/mutation_trend.py record` appends one dated row per sweep and
+`show` prints the series with deltas. Baseline: **33.88% of decisions unprotected**
+(3,657 of 10,794 mutants, 2026-09-02). Run `record` after every sweep; it refuses an
+unchanged baseline, so a second call is a no-op rather than a fake flat data point.
+
 ## Read the result
 
 ```

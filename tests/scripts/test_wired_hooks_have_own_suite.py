@@ -34,7 +34,7 @@ KNOWN_MISSING = {
     "check_no_confabulation": "no tests anywhere; never entered the mutation baseline",
     "check_script_error_logged": "no tests anywhere; never entered the mutation baseline",
     "log_tool_failure": "no tests anywhere; never entered the mutation baseline",
-    "check_email_via_skill": "23/23 survivors, all from unrelated files that mention it",
+    # check_email_via_skill retired 2026-09-02: tests/scripts/test_check_email_via_skill.py
     # scan_transcript_failures retired 2026-09-02: tests/scripts/test_scan_transcript_failures.py
 }
 
