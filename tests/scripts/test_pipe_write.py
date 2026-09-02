@@ -191,6 +191,76 @@ def test_update_stage(tmp_path):
     assert cols[1] == "Director"       # Role unchanged
 
 
+def test_update_new_role_renames_role_column(tmp_path):
+    """--new-role rewrites the Role cell; stage and other columns still update."""
+    write_fixture(tmp_path, "data/job-pipeline.md", PIPELINE_WITH_ROW)
+    result, code = run_pipe_write(
+        "--repo-root", str(tmp_path), "update", "Acme Corp", "Applied",
+        "--new-role", "AI Field Operations",
+    )
+    assert code == 0
+    assert result["status"] == "ok"
+    assert result["role"] == "AI Field Operations"
+
+    content = (tmp_path / "data/job-pipeline.md").read_text(encoding="utf-8")
+    rows = [l for l in content.splitlines() if l.startswith("| Acme Corp |")]
+    assert len(rows) == 1, "rename must not duplicate the row"
+    cols = [c.strip() for c in rows[0].strip("|").split("|")]
+    assert cols[1] == "AI Field Operations"   # Role renamed
+    assert cols[2] == "Applied"               # Stage still applied
+
+
+def test_update_without_new_role_preserves_role(tmp_path):
+    """Omitting --new-role leaves the Role cell untouched (guards the default path)."""
+    write_fixture(tmp_path, "data/job-pipeline.md", PIPELINE_WITH_ROW)
+    result, code = run_pipe_write(
+        "--repo-root", str(tmp_path), "update", "Acme Corp", "Applied"
+    )
+    assert code == 0
+    assert result["role"] == "Director"
+
+    content = (tmp_path / "data/job-pipeline.md").read_text(encoding="utf-8")
+    rows = [l for l in content.splitlines() if l.startswith("| Acme Corp |")]
+    cols = [c.strip() for c in rows[0].strip("|").split("|")]
+    assert cols[1] == "Director"
+
+
+def test_update_new_role_selects_with_role_then_renames(tmp_path):
+    """--role selects which of two rows to rename; the sibling row is untouched."""
+    write_fixture(tmp_path, "data/job-pipeline.md", PIPELINE_TWO_ROLES)
+    result, code = run_pipe_write(
+        "--repo-root", str(tmp_path), "update", "MultiCo", "Interview",
+        "--role", "Director", "--new-role", "Deployments",
+    )
+    assert code == 0
+    assert result["role"] == "Deployments"
+
+    content = (tmp_path / "data/job-pipeline.md").read_text(encoding="utf-8")
+    rows = [l for l in content.splitlines() if l.startswith("| MultiCo |")]
+    assert len(rows) == 2, "rename must not add or drop rows"
+    roles = sorted(
+        [c.strip() for c in r.strip("|").split("|")][1] for r in rows
+    )
+    assert roles == ["Deployments", "PM"], "only the selected row is renamed"
+
+
+def test_update_new_role_sanitizes_pipe(tmp_path):
+    """A '|' in --new-role cannot break the table into extra columns."""
+    write_fixture(tmp_path, "data/job-pipeline.md", PIPELINE_WITH_ROW)
+    result, code = run_pipe_write(
+        "--repo-root", str(tmp_path), "update", "Acme Corp", "Applied",
+        "--new-role", "Deployments | Field Ops",
+    )
+    assert code == 0
+
+    content = (tmp_path / "data/job-pipeline.md").read_text(encoding="utf-8")
+    rows = [l for l in content.splitlines() if l.startswith("| Acme Corp |")]
+    assert len(rows) == 1
+    cols = [c.strip() for c in rows[0].strip("|").split("|")]
+    assert len(cols) == 8, "row must still have exactly 8 columns"
+    assert "|" not in cols[1]
+
+
 def test_update_ambiguous_returns_error(tmp_path):
     """Two roles for same company without --role returns ambiguous_match error."""
     write_fixture(tmp_path, "data/job-pipeline.md", PIPELINE_TWO_ROLES)

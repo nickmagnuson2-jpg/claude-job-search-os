@@ -117,7 +117,7 @@ def test_cross_reference_networking_reply(tmp_path):
 
         | Date | Type | Channel | Name | Company | Subject | Status |
         |------|------|---------|------|---------|---------|--------|
-        | 2026-03-03 | cold-outreach | text | Sam Carter | Tessera Cheese | Coffee ask | Sent |
+        | 2026-03-03 | cold-outreach | text | Sam Carter | Meridian Cheese | Coffee ask | Sent |
     """)
 
     write_fixture(tmp_path, "data/networking.md", """\
@@ -125,11 +125,11 @@ def test_cross_reference_networking_reply(tmp_path):
 
         | Name | Company | Role | Relationship | Added | Last Interaction | Email |
         | --- | --- | --- | --- | --- | --- | --- |
-        | Sam Carter | Tessera Cheese | Owner | personal | 2026-03-03 | 2026-03-10 | — |
+        | Sam Carter | Meridian Cheese | Owner | personal | 2026-03-03 | 2026-03-10 | — |
 
         ## Interaction Log
 
-        ### Sam Carter — Tessera Cheese
+        ### Sam Carter — Meridian Cheese
 
         #### 2026-03-10 | text | Sam replied. Call scheduled Friday 2026-03-13 at 11am.
 
@@ -162,7 +162,7 @@ def test_cross_reference_no_later_interaction(tmp_path):
 
         | Date | Type | Channel | Name | Company | Subject | Status |
         |------|------|---------|------|---------|---------|--------|
-        | 2026-03-03 | cold-outreach | text | Sam Carter | Tessera Cheese | Coffee ask | Sent |
+        | 2026-03-03 | cold-outreach | text | Sam Carter | Meridian Cheese | Coffee ask | Sent |
     """)
 
     write_fixture(tmp_path, "data/networking.md", """\
@@ -170,11 +170,11 @@ def test_cross_reference_no_later_interaction(tmp_path):
 
         | Name | Company | Role | Relationship | Added | Last Interaction | Email |
         | --- | --- | --- | --- | --- | --- | --- |
-        | Sam Carter | Tessera Cheese | Owner | personal | 2026-03-03 | 2026-03-03 | — |
+        | Sam Carter | Meridian Cheese | Owner | personal | 2026-03-03 | 2026-03-03 | — |
 
         ## Interaction Log
 
-        ### Sam Carter — Tessera Cheese
+        ### Sam Carter — Meridian Cheese
 
         #### 2026-03-03 | text | Sent cold text via a mutual contact's intro
 
@@ -358,7 +358,7 @@ def test_cross_reference_no_networking_file(tmp_path):
 
         | Date | Type | Channel | Name | Company | Subject | Status |
         |------|------|---------|------|---------|---------|--------|
-        | 2026-03-03 | cold-outreach | text | Sam Carter | Tessera Cheese | Coffee ask | Sent |
+        | 2026-03-03 | cold-outreach | text | Sam Carter | Meridian Cheese | Coffee ask | Sent |
     """)
 
     result = run_script("outreach_pending.py",

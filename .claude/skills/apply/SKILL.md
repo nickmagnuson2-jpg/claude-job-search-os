@@ -1,315 +1,272 @@
 ---
 name: apply
-description: Generate tailored CV + cover letter and add to pipeline in one command — the complete apply bundle
-argument-hint: "<job-url-or-jd> [context]"
+description: Research a role end to end and produce the outreach that actually gets sent - dossier, then the people, then a cold-outreach brief for the hiring manager, then a CV seeded with all of it. Cover letter only when the application demands one.
+argument-hint: "<job-url-or-jd> [context] [--cover-letter] [--no-deep-review] [--skip-research]"
 user-invocable: true
-allowed-tools: Read(*), Glob(data/*), Glob(framework/*), Glob(plugins/*), Write(output/**), Write(data/job-pipeline.md), mcp__exa__web_search_exa, mcp__exa__web_fetch_exa, WebFetch, WebSearch, Bash(python3 tools/projects_to_yaml.py:*), Bash(python3 tools/cv_merge_theme.py:*), Bash(~/.local/bin/rendercv render:*), Bash(rendercv render:*), Bash(rm -rf output/**/rendercv_output)
+allowed-tools: Read(*), Glob(data/*), Glob(framework/*), Glob(plugins/*), Write(output/**), Bash(PYTHONIOENCODING=utf-8 python3 tools/pipe_write.py:*), Bash(curl -s https://jobs.ashbyhq.com/api/non-user-graphql*), mcp__exa__web_search_exa, mcp__exa__web_fetch_exa, WebFetch, WebSearch
 ---
 
-# Apply — One-Command Application Bundle
+# Apply — Research First, Outreach Second, CV Last
 
-Generate a tailored CV, companion cheat sheet, and cover letter for a specific role — then add (or update) the company in the pipeline. Replaces the 3-command flow of `/generate-cv` + `/cover-letter` + `/pipe add`.
+Run a complete application campaign for one role. **The cold outreach email to a named human is the
+deliverable, and the CV is of equal importance.** Neither supports the other; both get sent, both get read,
+both get the full quality bar. What the order below buys is **context flow**: the CV is generated last so it
+can be seeded with everything the research and the outreach positioning surfaced, and so it says the same
+thing the email says.
 
 ## Arguments
 
-- **`<job-url-or-jd>`** (required) — URL to the job posting, or pasted job description text
-- **`[context]`** (optional) — additional instructions, e.g. `"emphasize McKinsey"`, `"US format, 1 page"`, `"warm tone, mention coffee chat with Jordan"` (Alex = an illustrative contact name)
-- **`--deep-review`** or **`--deep`** (optional flag) — after generating the bundle, automatically run `/review-cv-deep` against the saved CV. Produces a six-perspective audit (Recruiter / Hiring Manager / Competitor / Skeptic / Copy Editor / Source Auditor) saved to `output/<slug>/MMDDYY-magnuson-DEEP-REVIEW.md`. Use for high-stakes applications where the ~5-minute cost is justified.
+- **`<job-url-or-jd>`** (required) — URL to the job posting, or pasted job description text.
+- **`[context]`** (optional) — extra instructions, e.g. `"emphasize the McKinsey work"`, `"warm intro via a mutual contact"`. Passed through to every delegate verbatim.
 
-Examples:
-- `/apply https://jobs.impossible.com/cos-role` — full bundle from URL
-- `/apply "Chief of Staff, Northwind..." "emphasize food/FMCG experience"` — pasted JD with context
-- `/apply https://jobs.lever.co/acme/xyz "warm tone, mention coffee chat with Jordan"`
+Flags, all optional and all off by default:
+- **`--cover-letter`** — the application form requires one. Runs Step 7. Skipped otherwise.
+- **`--no-deep-review`** — passes through to `/generate-cv` for fast iteration. The deep review is otherwise always on.
+- **`--skip-research`** — reuse an existing dossier without refreshing. Only valid when `output/<slug>/<slug>.md` exists and is under 14 days old; otherwise ignored with a note.
 
-If no arguments provided:
 ```
-Usage: /apply <job-url-or-jd> [context]
-
-Examples:
-  /apply https://company.com/jobs/role
-  /apply "Job description text..." "emphasize operations experience"
-  /apply https://company.com/job "US format, keep to 1 page"
+Usage: /apply <job-url-or-jd> [context] [--cover-letter] [--no-deep-review] [--skip-research]
 ```
+
+## Why this order
+
+Rewritten 2026-09-01 after a run that produced the bundle in the old order (CV first, cover letter, research
+never). Three things went wrong and all three trace to sequencing:
+
+1. **The CV was written from the job description**, because that was the only context available at Step 5. It
+   claimed things the record did not support, and read as a paraphrase of the posting - which one review
+   agent scored as a *strength*.
+2. **The cover letter was generated, audited, and never used.** What Nick actually sent was an email to the
+   hiring manager with the CV attached. The bundle spent its effort on the one artifact nobody read. The
+   cover letter is the thing to cut under time pressure - never the quality of either co-equal artifact.
+3. **The research ran afterwards, by hand, and immediately made everything better** - it found the hiring
+   manager, her standing public invitation to be messaged, the company's own published deployment doctrine,
+   and a dated convergence with Nick's own prior work that became the strongest line in the email.
+
+The dossier is the seed. Everything downstream is better for having it, and nothing downstream is cheap to
+redo once it is wrong.
 
 ## Instructions
 
-### Step 1: Parse Arguments & Fetch JD
+### Step 1: Parse arguments and fetch the JD
 
-Parse `$ARGUMENTS`:
-1. **Detect `--deep-review` or `--deep` flag** anywhere in the argument string. If present, set `deep_review = true` and strip the flag from the remaining arguments before further parsing.
-2. If the first remaining token contains `http` or a recognisable domain, treat it as a URL. Use WebFetch to retrieve the job posting. If fetch fails, ask user to paste the JD directly.
-3. Otherwise treat the full first argument (before any quoted context string) as pasted JD text.
-4. Extract any quoted or trailing string as the `[context]` override.
-
-### Step 2: Profile Guard
-
-Check that both `data/profile.md` and `data/goals.md` exist and contain real content (not just TODO placeholders):
-- If `data/profile.md` is missing or has only TODOs: "⚠️ `data/profile.md` is missing or incomplete. Run `/import-cv` first."
-- If `data/goals.md` is missing or has only TODOs: "⚠️ `data/goals.md` is missing or incomplete. Run `/setup-goals` first."
-- Do not proceed until both files have real content.
-
-### Step 3: Load Candidate Context (parallel)
-
-Read all files listed in `framework/application-workflow.md` § Candidate Context Loading (both "CV" and "Cover Letter" columns — `/apply` needs the superset). Skip any that don't exist, never fail.
-
-Check for plugins per the § Candidate Context Loading plugin instructions.
-
-### Step 4: Analyse the Role
-
-From the job posting text, extract:
-
-- **Company name** and generate a slug (lowercase, hyphens — e.g. `beacon`)
-- **Role title** and a role slug (e.g. `chief-of-staff`)
-- **Required skills** (must-haves)
-- **Nice-to-have skills**
-- **Seniority level**
-- **Top 10 ATS keywords** — the most important terms for ATS passage
-- **Market** — US / UK / DACH / international (default US if unclear)
-- **Industry** — infer from company and role
-- **Mission / core challenge** — what problem does this company solve? What's the role's primary mandate?
-- **Top 3 required qualities** — the most important attributes beyond just skills
-- **Tone signals** from the JD
-
-Now read:
-- `data/company-notes/<company-slug>.md` — personal notes (skip if doesn't exist)
-- `data/networking.md` — check for any contact at this company (informs cover letter hook)
-- Company dossier at `output/<company-slug>/<company-slug>.md` — run the **Company Dossier Staleness Check** from `framework/application-workflow.md` § Company Dossier Staleness Check
-
-### Step 5: Select Projects & Generate Factual Stubs
-
-1. Read `data/project-index.md` — scan all entries for relevance to the role's required skills, industry, seniority level, and company type.
-2. Select **3–6 most relevant projects**. Criteria: skill overlap with required skills > industry/domain match > seniority match > recency.
-3. **Side-project trigger:** if the JD mentions technical background, engineering, CS/EE/ML, applied AI, or "builds products," scan side-projects (type: `side-project`) in the project-index regardless of seniority and include the strongest one in a compact Selected Projects section on the CV.
-4. Read the full project files for each selected project from `data/projects/`.
-4b. **Reconcile against source corrections (mandatory, before drafting any prose):**
+1. Strip and record the flags above. Leave everything else in `[context]` untouched for pass-through.
+2. If the first remaining token is a URL, fetch it. **Ashby, Greenhouse and Lever postings are
+   JavaScript-rendered and WebFetch returns a shell.** For Ashby, hit the GraphQL API directly:
    ```bash
-   PYTHONIOENCODING=utf-8 python3 tools/source_corrections.py data/projects/<slug>.md [more...]
+   curl -s "https://jobs.ashbyhq.com/api/non-user-graphql?op=ApiJobPosting" -H 'content-type: application/json' \
+     -d '{"operationName":"ApiJobPosting","variables":{"organizationHostedJobsPageName":"<org>","jobPostingId":"<id>"},"query":"query ApiJobPosting($organizationHostedJobsPageName: String!, $jobPostingId: String!) { jobPosting(organizationHostedJobsPageName: $organizationHostedJobsPageName, jobPostingId: $jobPostingId) { id title departmentName locationName employmentType descriptionHtml } }"}'
    ```
-   Corrections live in HTML comments pinned to the bullet they correct, which makes them invisible exactly when you paraphrase that bullet. Draft from the **corrected** wording, and note that one live correction says "keep this wording, but the underlying fact is X" — that one means the bullet stands and the cheat sheet carries the real fact. Fired twice (2026-07-08 CVs, 2026-08-07 application answer), both caught only by after-the-fact review agents. See `memory/feedback_cv_em_dash_and_source_verb_regression.md`.
-5. **NEVER read or use files from `data/project-background/`.**
-6. Note the rationale for each selected project (used in the cheat sheet).
-7. **Generate factual EXPERIENCE stubs.** Run:
-   ```bash
-   PYTHONIOENCODING=utf-8 python3 tools/projects_to_yaml.py --include <slug1>,<slug2>,... --out /tmp/cv-experience-stubs.yaml --json
-   ```
-   Where `<slug>` matches the filename (no `.md`) of each selected project, in order most-recent-first. The resulting YAML is the **source-of-truth baseline** for company, position, date, location, and highlights. Per lesson #54, every quantified claim on the final CV must trace to this stub or to `data/projects/<slug>.md`. Tailored phrasing is fine; invented numbers are not.
+   Both values come from the posting URL. Strip the HTML. If the fetch fails, ask for a paste; do not
+   reconstruct a JD from the URL slug.
+3. Derive the company slug and role slug. Record the **department** (it tells you which org the seat sits in,
+   which matters for Step 3).
 
-### Step 6: Generate the CV YAML
+### Step 2: Profile guard
 
-The CV is emitted as a **RenderCV YAML** in the same shape as the canonical reference `output/example-ventures/042826-cos-example.yaml`. The design block is NOT included — it composes in at Step 10a. See `/generate-cv` SKILL.md § Step 6 for the full YAML template.
+Verify `data/profile.md` and `data/goals.md` exist with real content, not TODOs. If either is missing or all
+TODOs, stop and say to run `/import-cv` or fill `data/goals.md` from `framework/templates/goals.md`. Never
+fall back to generic candidate context.
 
-Apply all **Tailoring Rules** and **CV Quality Standards** from `framework/application-workflow.md`:
+### Step 3: Company dossier — FIRST, and DELEGATED to `/research-company`
 
-- **Professional summary** — 3–4 lines tailored to this role. Hook tied to the company's mission or the role's core challenge.
-- **Experience entries** — start from the Step 5 stubs verbatim. Tailor bullet PHRASING for JD relevance. Do NOT invent quantified claims not present in the stubs or `data/projects/<slug>.md` (lesson #54).
-- **Experience ordering** — strict reverse-chronological. Do not reorder by relevance.
-- **Skills section** — emphasise skills appearing in the JD. Every Skills line item must be substantively evidenced by an experience bullet; hedge words (`-adjacent`, `partnership` without a verb, `exposure`, `familiarity`) are forbidden (lessons #31, #53).
-- **ATS keyword coverage** — all 10 extracted keywords must appear at least once.
-- **Achievements over responsibilities** — quantified outcomes from stubs, not invented.
-- **No content from `data/project-background/`.**
-- **No em dashes** (CLAUDE.md hard rule) — but EN DASH (`–`) is used in date ranges per the reference YAML.
+**Invoke `/research-company`. Do not do an inline search pass instead.**
 
-### Step 6b: Inline CV Quality Review (mandatory — do NOT skip)
-
-Run all 18 checks from `framework/application-workflow.md` § CV Quality Checks. Fix issues in place — never just flag.
-
-After all fixes, record a QC summary using the template in `framework/application-workflow.md` § QC Summary Template. The template requires per-check line citations — a bare "clean" without evidence is not acceptable.
-
-### Step 7: Generate the Cover Letter (Problem-Solution Format)
-
-Use the **Problem-Solution** structure — leads with their challenge, proves you've solved it, bridges to what you'd do for them. Total target: **250-350 words**. The resume covers the past; the cover letter addresses the future. Never summarize the CV.
-
-**Section 1 — The Hook (2-3 sentences)**
-- Open with something specific to this company: a challenge they face (from JD language, dossier, or news), a recent event, or a personal connection from `data/networking.md`.
-- Name the company in the first sentence. Always.
-- The uniqueness test: could another applicant send this same opener to a different company? If yes, rewrite.
-- Never open with: "I'm writing to apply for...", "I've always been passionate about...", "I'm a [trait] professional with X years..."
-
-**Section 2 — The Proof (3-5 sentences)**
-- Present 1-2 specific examples of how you've solved a problem similar to the company's challenge.
-- Lead with the problem you faced, then action, then quantified result.
-- Frame as analogy: "When [Company/Project] faced [similar problem], I [action] which resulted in [outcome]."
-- Do NOT reproduce CV bullet points verbatim — synthesize into narrative.
-- Choose proof points that complement (not duplicate) the CV's top bullets.
-
-**Section 3 — The Bridge (2-3 sentences)**
-- Connect your capability to their specific needs: "At [Company], I'd apply this approach to [their specific challenge]."
-- Reference 1-2 concrete priorities from the JD or research.
-- Position as thought partner, not task executor (especially for senior roles).
-
-**Section 4 — The Close (1-2 sentences)**
-- Express genuine enthusiasm tied to something specific about this company.
-- Direct ask that advances the conversation: "I'd welcome the chance to discuss how [specific approach] maps to [Company]'s [specific challenge]."
-
-**Cover letter quality gates:**
-- **Uniqueness test:** each section must be specific enough that it can't be sent to another company unchanged.
-- **Resume separation:** the letter must add what the CV can't (the "why", connective tissue, future vision).
-- **Length:** 250-350 words. Hard ceiling 400. If over 350, trim section 2 to one proof point.
-- **Anti-patterns:** no hedging ("I believe I could", "hoping to"), no filler openers, no em dashes, no trait claims without evidence, no generic enthusiasm.
-- **ATS:** 3-5 key JD terms woven naturally into the letter body.
-- **Company name** appears at least twice and is spelled correctly.
-- **Language variant** consistent (US/UK — match the JD).
-
-Apply any `[context]` overrides: `"emphasize [project]"`, `"more informal tone"`, `"keep to 200 words"`, `"mention coffee chat with [name]"`, etc.
-
-### Step 8: Generate Companion Cheat Sheet
-
-Generate a pre-interview cheat sheet following the structure, quality rules, and markdown template in `framework/application-workflow.md` § Cheat Sheet Structure.
-
-### Step 9: Determine Output Filenames
-
-- Date prefix: `MMDDYY` (today's date)
-- Company subfolder: `output/<company-slug>/`
-- **CV artifacts all use the `MMDDYY-magnuson` stem** (Nick's preference — clean person-named files for submission, no role title in CV filenames):
-  - CV YAML source (content-only): `output/<company-slug>/MMDDYY-magnuson.content.yaml`
-  - CV YAML (final, design baked in): `output/<company-slug>/MMDDYY-magnuson.yaml`
-  - CV PDF (the artifact you send): `output/<company-slug>/MMDDYY-magnuson.pdf`
-  - CV Markdown (rendercv-emitted, used by review skills): `output/<company-slug>/MMDDYY-magnuson.md`
-- Cheat sheet **does** include the role slug (role-specific): `output/<company-slug>/MMDDYY-[role-slug]-cheatsheet.md`
-- Cover letter: `output/<company-slug>/MMDDYY-cover-letter.md`
-- If a CV file at that path already exists (e.g. two apps at same company same day): append `-v2`, `-v3` etc. to ALL four CV files.
-
-### Step 10: Save CV Source YAML
-
-Write the tailored content-only YAML from Step 6 to:
-`output/<company-slug>/MMDDYY-magnuson.content.yaml`
-
-Must NOT contain a `design:` block — composed in by Step 10a. `tools/cv_merge_theme.py` errors if duplication is detected.
-
-### Step 10a: Compose Theme + Render
-
-```bash
-PYTHONIOENCODING=utf-8 python3 tools/cv_merge_theme.py \
-  --content output/<company-slug>/MMDDYY-magnuson.content.yaml \
-  --out     output/<company-slug>/MMDDYY-magnuson.yaml \
-  --json
-
-~/.local/bin/rendercv render output/<company-slug>/MMDDYY-magnuson.yaml \
-  --pdf-path       MMDDYY-magnuson.pdf \
-  --markdown-path  MMDDYY-magnuson.md \
-  --output-folder  output/<company-slug>/rendercv_output \
-  --dont-generate-html \
-  --dont-generate-png
+```
+/research-company "<Company>" <company URL if known> "applying for <role>; <[context]>"
 ```
 
-**No `cd`, deliberately.** `--pdf-path`/`--markdown-path` resolve relative to the input file, so output lands beside the YAML as before; `--output-folder` resolves against cwd and is pinned. A relative `cd` is a latent false-confirmation bug in this harness (the cwd resets between tool calls) — see `memory/feedback_bash_confirm_must_chain_to_operation.md`.
+Pass the specific questions this role raises, not just the company name. At minimum ask for: funding and
+runway, real customer traction versus self-reported claims, the org shape around this seat and who it
+reports to, competitive set, and **anything published in the company's own voice about how they work** -
+engineering blogs, deployment write-ups, founder interviews. That last one is consistently the highest-value
+input to Step 5 and the easiest to miss.
 
-Delete the auto-generated `rendercv_output/` subfolder once canonical files are in place. The `.yaml` is design+content baked together (reproducible standalone); the `.pdf` is the send artifact; the `.md` is for review skills.
+**If a dossier already exists** at `output/<slug>/<slug>.md`: under 14 days old and `--skip-research` was
+passed, reuse it. Otherwise refresh. Never proceed on a dossier older than 30 days without saying so.
 
-### Step 10c: Save Cheat Sheet & Cover Letter
+**Carry forward:** opportunity rating, the two or three facts that would change whether Nick wants this, the
+company's own language for what it does, and any risk Nick should decide about before he spends more time.
 
-1. **Cheat sheet** → `output/<company-slug>/MMDDYY-[role-slug]-cheatsheet.md` (role-slug — cheat sheets are role-specific)
-2. **Cover letter** → `output/<company-slug>/MMDDYY-cover-letter.md`
+**Surface the risks to Nick now, not in the final summary.** If the research turns up something that could
+change his mind about applying at all - ownership structure, runway, political exposure, a founder story that
+does not hold up - say it here, plainly, before the outreach work begins. He decides whether to continue.
 
-### Step 10d: Deep Review (only if `deep_review = true`)
+### Step 4: Find the person — who does this actually go to?
 
-If the `--deep-review` or `--deep` flag was set in Step 1, invoke `/review-cv-deep` against the just-saved CV before updating the pipeline. Pass two arguments: the CV filename (just the filename — the skill reads from `output/`) and the JD (pass the URL if one was provided; otherwise write the JD text to a temp file and pass that path).
+The dossier's people section is the starting point, not the answer. Determine specifically:
 
-The deep-review skill produces `output/<company-slug>/MMDDYY-magnuson-DEEP-REVIEW.md` — a six-perspective audit with CRITICAL / IMPORTANT / MINOR / NITPICK findings and a Top 5 Highest-Impact Changes table.
+1. **Who is the hiring manager for THIS req?** Search for the role title plus the company; hiring managers
+   frequently post their own openings and say "message me." That post is the single best outreach signal
+   available and it expires.
+2. **Who else is a legitimate door?** A vertical lead, a functional peer already in the seat, someone with a
+   shared institution. Rank by whether they can actually decide, not by how reachable they are.
+3. **Check `data/networking.md` and `data/people/` for existing ties** before treating anyone as cold. Use an
+   explicit grep; a matcher's negative is an absence assertion.
+4. **Verify every person fact against a primary source.** Agent-drip entries in `data/inbox.md` are
+   unreviewed and have been wrong: on 2026-08-17 a scan stamped the company HQ onto two people who were
+   actually eight time zones away, and both sat unquestioned until checked.
+5. **Find the contact route.** If email, establish the domain pattern from a public source rather than
+   guessing blind, and tell Nick the confidence and the fallback. If the person named a channel themselves
+   ("message me"), that channel wins.
 
-Wait for deep-review to complete before proceeding to Step 11. Capture the key verdicts (Recruiter phone-screen decision, Hiring Manager interview decision, Competitor shortlist rank, Top 3 critical issues) for the Step 12 summary display.
+**If no named person can be found**, say so plainly and ask Nick whether to submit cold or hold. Do not
+default to submitting into a portal because the research was inconclusive.
 
-If the flag was not set, skip this step entirely.
+### Step 5: Cold outreach — DELEGATED to `/cold-outreach`
 
-### Step 10e: Confirm submission status (mandatory — do NOT skip)
+**This is the deliverable, co-equal with the CV. Invoke `/cold-outreach`.**
 
-`/apply` generates artifacts; submission is a separate human action. Before any pipeline write that would flip stage to `Applied`, ask the user:
+```
+/cold-outreach "<Name>" "<Company>" "<Role>" channel:<email|linkedin|inmail> "<everything from Steps 3 and 4 that matters: the why-now, the verified facts about this person, the company's own words, the open screens, [context]>"
+```
 
-> Did you submit this application to **[Company]** just now? (Y/N)
+Pass the dossier findings in the argument. The delegate will do its own research pass, but it should not have
+to rediscover what Step 3 already established.
 
-Branch on answer (capture as `pipeline_stage`):
+**Brief mode is the default and stays the default.** `/cold-outreach` produces an Outreach Brief - the
+why-now, verified recipient facts, sourced proofs, positioning, the hook, hard don'ts - and **stops**. Nick
+writes the sentences. It escalates to a full draft only on an explicit ask ("draft it," "write it"). Urgency
+is not that ask. Per Nick 2026-08-26 and the authenticity non-negotiable behind it.
 
-- **Y** → `pipeline_stage = "Applied"`; proceed to Step 11.
-- **N** → `pipeline_stage = "To Apply"`; default next-action = `Submit when ready — bundle generated [today]`; proceed to Step 11.
+**Carry forward into Step 6:** the positioning spine, the proofs the brief selected, and the hook. **These
+are the seed for the CV.** A CV written after the positioning is settled says the same thing as the outreach;
+a CV written before it says whatever the job description said.
 
-**Why this exists:** auto-flipping the pipeline row to `Applied` whenever a bundle is generated creates ghost rows when Nick generates artifacts but doesn't actually submit. Origin: 2026-05-28 a target-company row — `/apply` produced output/<slug>/ artifacts on 2026-05-08; pipeline showed `Applied 5/8` for ~3 weeks even though Nick never submitted (warm-intro path was pending). The post-gen confirmation closes this silent corruption surface. See `memory/feedback_pipeline_applied_status_must_be_user_confirmed.md`.
+### Step 6: CV — DELEGATED to `/generate-cv`, seeded with everything above
 
-**When using `--deep-review`:** if the verdict suggests fixing before submitting, answering **N** here captures the bundle on disk + adds the row at `To Apply` without committing to `Applied` prematurely.
+**Invoke `/generate-cv`. Do not select projects, write CV YAML, or apply CV quality rules here.**
 
-### Step 10f: Fit-reason capture (mandatory prompt, optional answer)
+```
+/generate-cv <JD from Step 1> "<[context]>. Seeded by /apply: positioning spine is <spine from Step 5>; the proofs the outreach leads with are <proofs>; the company's own framing is <their language>. Do NOT update the pipeline, /apply owns that step. <pass --no-deep-review through if set>"
+```
 
-Applying is a fit-forming moment — Nick just decided this role is worth a tailored bundle, so his fit read is fresh. Ask one line:
+`/generate-cv` owns the CV end to end: project selection and factual stubs, the source-corrections
+reconciliation gate, the tailored YAML, its inline quality checks, theme merge, render, the mandatory
+render-and-verify pass, the companion cheat sheet, and the always-on six-perspective deep review, including
+auto-applying that review's mechanical fixes.
 
-> One-line fit read for the calibration ledger — why is this in your lane (or where's the reservation)?
+**Why this is a delegation and not a copy.** These rules used to live in both skills and they drifted. On
+2026-08-25 `/generate-cv` gained content rules `/apply` never received - "do not lead with a credential-first
+opener," "the Building entry lives in ADDITIONAL INFORMATION and NEVER in EXPERIENCE," "name the AI products
+by capability, never by listing internal primitives," a ban on JD-mirroring competency phrases in Skills, an
+always-on deep review, and a render-and-verify gate. On 2026-09-01 an `/apply` run reproduced every one and
+Nick corrected each by hand against rules that already existed six days earlier. **One source of truth.** If a
+CV rule needs to change, change it in `/generate-cv`.
 
-Capture his answer as `fit_reason` (verbatim, one line) and, if he names one, `fit_verdict` ∈ {fit, not-fit, neutral, unknown}. Light and optional — accept a skip, do not block the bundle. Rationale: this is the source-coverage input the calibration loop needs; the blind machine re-run abstained on 9 of 52 of Nick's fit calls because his reasoning lived only in his head (`output/analysis/071526-machine-vs-human-agreement.md`). Sanitize any `|` out of his words (it would break the table row); replace with `/`.
+**Carry forward:** CV paths, cheat sheet path, selected projects and rationale, the deep review verdicts, and
+any finding the delegate deliberately left as a judgment call.
 
-### Step 11: Update Pipeline
+**Then surface the judgment calls to Nick before anything ships.** Not a list of mechanical edits - the
+delegate already applied those - but the claim-level and voice-level decisions he has to stand behind.
 
-1. Read `data/job-pipeline.md`.
-2. Search for the company name (case-insensitive substring match).
-3. **If found:** Update the entry:
-   - Set **CV Used** to the CV filename (just the filename, not full path)
-   - Append the cover letter filename to **CV Used** (separate with `, `)
-   - **Stage transition rules:**
-     - If current stage is `Researching` and `pipeline_stage == "Applied"`: update to `Applied`
-     - If current stage is `Researching` and `pipeline_stage == "To Apply"`: update to `To Apply`
-     - If current stage is `To Apply` and `pipeline_stage == "Applied"`: update to `Applied`
-     - If current stage is `Applied` or later (Phone Screen, Interview, Offer, etc.): **do NOT regress** the stage; only update CV Used field. The edge-case rule below applies.
-4. **If not found:** Add a new row to the Active section:
-   - Stage: `pipeline_stage` (from Step 10e — either `Applied` or `To Apply`)
-   - Date Added: today
-   - Date Updated: today
-   - CV Used: [cv filename]
-   - Next Action: if `pipeline_stage == "To Apply"`: `Submit when ready — bundle generated [today]`; else default per stage convention
-   - Notes: if `pipeline_stage == "Applied"`: `Added by /apply on [today's date]`; else `Bundle generated by /apply on [today's date] — pending submission`
-4b. **Append the fit-reason tag (both branches)** if `fit_reason` was captured in Step 10f: append ` [fit-reason [today's date] <fit_verdict>: <fit_reason>]` to the Notes cell (omit `<fit_verdict> ` if none named). Format must match `pipe_write.py`'s `compose_fit_note` exactly so the extractor/scorer can grep it: `[fit-reason YYYY-MM-DD verdict: reason]`. Keep it inside the single Notes cell (no stray `|`).
-5. Write `data/job-pipeline.md`.
+### Step 7: Cover letter — ONLY if `--cover-letter` was passed
 
-### Step 12: Display Summary
+Skipped by default. Most applications do not read one, and on 2026-09-01 a fully generated and audited cover
+letter went unused because the real artifact was an email.
+
+When the form does require one, follow the Problem-Solution structure in
+`framework/application-workflow.md`: lead with their challenge, prove you have solved something like it,
+bridge to what you would do for them. 250-350 words, hard ceiling 400.
+
+**Then run the Substance-Provenance Audit.** Apply `framework/writing-discipline.md`, which is canonical for
+the `N` / `C` / `I` / `G` labels and the invariant that `G` is blocked in any slot carrying a claim about who
+Nick is, what he brings, what he wants, or what he has done.
+
+| Slot | `G` allowed? | If `G` found |
+|---|---|---|
+| Thesis / opening claim | **No** | STOP. Ask Nick to dictate it. |
+| Their-problem statement | **No** | STOP. Either `I` with a citable source, or it is speculation. |
+| Proof-point framing | **No** | STOP. Facts come from `data/projects/*.md`; framing must be `N` or `C`. |
+| Self-positioning | **No** | STOP. Ask Nick to dictate that slot. |
+| Bridge | **No** | STOP. Ask for the link or extract from corpus. |
+| Closing CTA / logistics | Yes | Proceed. |
+| Salutation / sign-off | Yes | Proceed. |
+
+**Expect this to block, and do not treat that as a failure.** A cover letter is self-positioning nearly end
+to end. If most substantive sentences come back `G`, the finding is that the letter should not be drafted
+yet - ask Nick for the spine.
+
+Save to `output/<company-slug>/MMDDYY-cover-letter.md`. This is the only filename `/apply` owns; CV and cheat
+sheet names belong to the delegate.
+
+### Step 8: Confirm submission status (mandatory — do NOT skip)
+
+`/apply` produces artifacts. Submission is a separate human action. Before any pipeline write that would set
+`Applied`, ask:
+
+> Did you submit this application to **[Company]**? (Y/N)
+
+- **Y** → `pipeline_stage = "Applied"`.
+- **N** → `pipeline_stage = "To Apply"`, next action `Submit when ready - bundle generated [today]`.
+
+**Why:** auto-flipping to `Applied` on artifact generation creates ghost rows. Origin 2026-05-28: `/apply`
+produced artifacts on 2026-05-08 and the row read `Applied 5/8` for three weeks while Nick never submitted.
+See `memory/feedback_pipeline_applied_status_must_be_user_confirmed`.
+
+**The same discipline applies to the outreach.** Do not log a drafted message into `data/networking.md` as
+though it were sent. Log it only once Nick confirms it went, and log **his** text, not the draft - he edits
+on send, and a log entry is indistinguishable from a record of what happened. Fired twice: 2026-08-19 and
+2026-09-01.
+
+### Step 9: Fit-reason capture (mandatory prompt, optional answer)
+
+> One-line fit read for the calibration ledger - why is this in your lane, or where is the reservation?
+
+Capture verbatim as `fit_reason`, plus `fit_verdict` ∈ {fit, not-fit, neutral, unknown} if he names one.
+Accept a skip; never block on it. Sanitize any `|` to `/` so the table row survives.
+
+Rationale: this is the source-coverage input the calibration loop needs. The blind machine re-run abstained
+on 9 of 52 of Nick's fit calls because his reasoning lived only in his head
+(`output/analysis/071526-machine-vs-human-agreement.md`).
+
+### Step 10: Update the pipeline
+
+Use `tools/pipe_write.py` (never Edit — rows exceed the Edit-safe length).
+
+- **Not in the pipeline:** `add` with `--stage <pipeline_stage>`, `--url`, and the fit-reason flags.
+- **Already present:** `update`. Set CV Used, next action, notes. **Never regress a stage** - if the row is
+  already `Applied` or later, leave it and note that in the summary.
+- **`--notes` REPLACES the Notes cell**, so it drops any existing `[fit-reason ...]` tag. Re-apply the
+  fit-reason in a separate `update` call after setting notes, or compose both in one call.
+
+### Step 11: Display summary
 
 ```markdown
-## Application Bundle Ready — [Role Title] at [Company]
+## [Role] at [Company] — [Applied / bundle ready]
 
-### Files Saved
-- **CV PDF (send file):** `output/<company-slug>/MMDDYY-magnuson.pdf`
-- **CV YAML (source):** `output/<company-slug>/MMDDYY-magnuson.yaml`
-- **CV Markdown (for review):** `output/<company-slug>/MMDDYY-magnuson.md`
-- **Cheat sheet:** `output/<company-slug>/MMDDYY-[role-slug]-cheatsheet.md`
-- **Cover letter:** `output/<company-slug>/MMDDYY-cover-letter.md`
+### The person
+[Name, role, why them, the channel, and the confidence on the contact route]
 
-### CV Quality Summary
-- **Keyword coverage:** N/10 matched [list any unfixable gaps]
-- **Claims verified:** N checked, N corrected
-- **Issues fixed:** [list or "none"]
-- **Language consistency:** clean / N items fixed
+### Outreach
+[Brief delivered / draft sent. If sent: date, channel, attachment.]
 
-### Deep Review Verdict (only if `--deep-review` was used)
-- **Deep review file:** `output/<company-slug>/MMDDYY-magnuson-DEEP-REVIEW.md`
-- **Recruiter (phone invite?):** Yes / No / Maybe
-- **Hiring Manager (interview?):** Yes / No / Maybe
-- **Competitor shortlist rank:** N of 8
-- **Top 3 critical issues surfaced:** [one-line each]
-- **Recommendation:** [one-line — proceed, fix before submitting, or reconsider]
+### Research
+**Opportunity rating:** [High/Med/Low] — [one line]
+**Worth knowing before you go further:** [the one or two facts that could change his mind, or "none"]
+**Dossier:** `output/<slug>/<slug>.md`
 
-### Cover Letter
-- **Word count:** N words [within target / over — consider trimming]
-- **Hook angle:** [one-line summary]
-- **Proof points:** [projects used]
+### CV
+- **PDF:** `output/<slug>/MMDDYY-magnuson.pdf`
+- **Deep review:** `output/<slug>/MMDDYY-magnuson-DEEP-REVIEW.md`
+- **Recruiter / Hiring Manager verdicts:** [from the delegate]
+- **Judgment calls left for you:** [claim and voice decisions only, not mechanical edits]
 
 ### Pipeline
-[✅ Pipeline updated — [Company] stage: `<pipeline_stage>`, CV Used set] OR [✅ New pipeline entry added — [Company] / [Role] / `<pipeline_stage>`]
+[stage, and the follow-up date]
 
-If `pipeline_stage == "To Apply"`: add a one-line reminder under this section: *"Run `/pipe update <Company> stage:Applied` after submitting."*
-
-### Projects Selected
-1. [Project name] — [one-line rationale]
-2. ...
-
-### Suggested Next Step
-- Review the CV: `/review-cv output/<company-slug>/MMDDYY-magnuson.md`
-- Open the printable PDF: `open output/<company-slug>/MMDDYY-magnuson.pdf`
-- When ready to interview: `/prep-interview "[Company]"`
-- To re-render after edits (no `cd` — the shell cwd resets between tool calls, so a relative `cd` is a latent false-confirmation bug; `--pdf-path`/`--markdown-path` resolve relative to the input file, `--output-folder` against the cwd): `~/.local/bin/rendercv render output/<company-slug>/MMDDYY-magnuson.yaml --pdf-path MMDDYY-magnuson.pdf --markdown-path MMDDYY-magnuson.md --output-folder output/<company-slug>/rendercv_output --dont-generate-html --dont-generate-png`
+### Open
+[Anything unresolved, stated plainly. Guessed email addresses, unverified facts, untested changes.]
 ```
 
-## Edge Cases
+## Edge cases
 
-- **URL fetch fails:** Ask user to paste the JD directly. Do not attempt to reconstruct.
-- **Too few projects:** If fewer than 3 relevant projects exist, use all available. Note in summary.
-- **Missing profile.md:** Proceed without personal details. Leave name/contact as placeholders in cover letter. Flag in summary.
-- **Cover letter > 350 words:** Flag in summary with suggestion to trim paragraph 2 to 2 evidence points.
-- **Personal connection in networking.md:** Mention in the cover letter hook paragraph — "After speaking with [First Name]..."
-- **Existing pipeline entry already at Applied or later:** Do not regress the stage, even if Step 10e returned `N`. Only update CV Used field. Surface a note in the Step 12 summary: *"Existing stage `<current_stage>` preserved; CV Used updated."*
-- **Keyword not coverable:** If a keyword can't be added naturally (candidate lacks the skill), flag as `⚠️ Gap — omit` in the ATS coverage table.
-- **Company dossier stale (>30 days):** Surface inline warning (see Step 4) but continue.
+- **JD fetch fails:** ask for a paste. Never reconstruct from a URL slug.
+- **No dossier possible** (stealth company, no public footprint): say so, proceed, and mark every downstream
+  claim about the company as unverified.
+- **Company name collides with a better-known company:** check this explicitly in Step 3 and warn Nick. On
+  2026-09-01 a target company was roughly 100x less indexed than an unrelated firm with nearly the same name,
+  which made plain web search return up to 100% wrong-company results.
+- **Hiring manager unreachable:** offer the peer path or the portal, and say which you recommend.
+- **Existing pipeline entry at `Applied` or later:** never regress; update CV Used only and surface a note.
+- **Research surfaces a genuine reason not to apply:** stop and say so. Finishing the bundle is not the goal.

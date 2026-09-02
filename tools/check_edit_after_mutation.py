@@ -4,8 +4,11 @@ check_edit_after_mutation.py — read-state guard for Claude Code.
 
 Two modes, sharing one session state file (tools/.session-mutations.json):
 
-  --mode record   (PostToolUse on Read|Write|Edit|MultiEdit)
+  --mode record   (PostToolUse on Read|Write|Edit|MultiEdit|Bash)
       Records the file's mtime as Claude last saw it, keyed by session_id.
+      Bash reads (cat/sed/head/grep/...) are parsed out of the command and
+      recorded too, so the ledger reflects what was actually read rather
+      than only what the Read tool touched (added 2026-08-18).
 
   --mode check    (PreToolUse on Edit|MultiEdit)
       Before an Edit, compares the file's CURRENT mtime to the recorded one.
@@ -44,11 +47,30 @@ try:
 except Exception:
     pass
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+# SESSION_REPO_ROOT overrides for tests, which inject a fixture repo. Mirrors the
+# PII_REPO_ROOT seam in check_public_pii.py -- an in-repo-only filter is otherwise
+# untestable from a tmp_path fixture.
+REPO_ROOT = Path(os.environ.get(
+    "SESSION_REPO_ROOT", str(Path(__file__).resolve().parents[1])))
 STATE_FILE = Path(os.environ.get(
     "SESSION_MUTATIONS_FILE", str(REPO_ROOT / "tools" / ".session-mutations.json")))
 
-RECORD_TOOLS = {"Read", "Write", "Edit", "MultiEdit"}
+RECORD_TOOLS = {"Read", "Write", "Edit", "MultiEdit", "Bash"}
+
+# Shell commands whose file operands are READS. Recording these is what makes the
+# ledger reflect reality.
+#
+# WHY (2026-08-18): the ledger recorded only the Read tool, so a file opened with
+# `cat` / `sed -n` / `head` was invisible to it. Measured mid-session while building
+# this: the live ledger held ONE file, while dozens had genuinely been read via Bash,
+# because the harness instructs Bash-first reading. Any downstream gate asking "was
+# this cited file actually read?" would therefore have fired on almost every correct
+# session -- the FP class that gets a guard switched off, leaving it present-looking
+# and enforcing nothing.
+BASH_READ_COMMANDS = frozenset({
+    "cat", "head", "tail", "less", "more", "nl", "wc",
+    "sed", "awk", "grep", "egrep", "fgrep", "rg", "jq", "diff", "md5", "shasum",
+})
 CHECK_TOOLS = {"Edit", "MultiEdit"}
 PRUNE_AFTER = 86400  # drop entries older than 24h (stale-session defense)
 
@@ -122,6 +144,70 @@ def file_mtime(file_path: str):
         return None
 
 
+def extract_bash_read_targets(command: str, root: Path) -> list[str]:
+    """Existing in-repo files this shell command READ.
+
+    Conservative on purpose: a path is recorded only if it survives every filter --
+    the segment starts with a known read command, the token is not a flag, is not a
+    quoted script/pattern operand (`sed -n '1,50p'`, `grep "foo"`), and the file
+    actually EXISTS inside the repo. Over-recording is the dangerous direction here:
+    a phantom entry would tell a downstream gate that an unread file was read, which
+    is precisely the failure such a gate exists to catch. Under-recording only costs
+    a redundant re-read.
+    """
+    out: list[str] = []
+    for segment in _split_segments(command):
+        toks = segment.split()
+        if not toks:
+            continue
+        cmd = toks[0].rsplit("/", 1)[-1]        # /usr/bin/grep -> grep
+        if cmd not in BASH_READ_COMMANDS:
+            continue
+        for tok in toks[1:]:
+            if tok.startswith("-"):
+                continue
+            # Quoted operands (`sed -n '1,50p'`), variables and redirect glyphs.
+            # MUTATION NOTE (2026-08-18): removing this kills no test, and that is
+            # honest rather than a coverage hole -- such a token never names an
+            # existing file, so the is_file() check below always catches it first.
+            # Kept as defence-in-depth for a pathological filename that literally
+            # contains a quote character. The load-bearing filters are the command
+            # allowlist, is_file(), and the repo-scope check, all three of which
+            # have mutants that DO die.
+            if tok[:1] in "\"'$`<>|&":
+                continue
+            cand = Path(tok)
+            try:
+                abs_p = cand if cand.is_absolute() else (root / tok)
+                if not abs_p.is_file():
+                    continue
+                rel = os.path.relpath(abs_p.resolve(), root)
+                if rel.startswith(".."):         # outside the repo
+                    continue
+            except OSError:
+                continue
+            out.append(str(abs_p.resolve()))
+    return out
+
+
+def _split_segments(command: str) -> list[str]:
+    """Split on `;`, `|`, `&&`, `||` and newlines. Pipelines matter here: in
+    `cat f.md | grep x` the read is the `cat` stage, so the segments must be
+    inspected separately."""
+    buf, segs = [], []
+    i, n = 0, len(command)
+    while i < n:
+        ch = command[i]
+        if command.startswith("&&", i) or command.startswith("||", i):
+            segs.append("".join(buf)); buf = []; i += 2; continue
+        if ch in ";|\n":
+            segs.append("".join(buf)); buf = []; i += 1; continue
+        buf.append(ch); i += 1
+    if buf:
+        segs.append("".join(buf))
+    return [x for x in segs if x.strip()]
+
+
 def _mode_from_argv() -> str:
     if "--mode" in sys.argv:
         i = sys.argv.index("--mode")
@@ -141,6 +227,21 @@ def main() -> None:
     tool_input = data.get("tool_input", {}) or {}
     file_path = tool_input.get("file_path", "")
     session_id = data.get("session_id", "_nosession")
+
+    # Bash carries no file_path: its read targets are parsed out of the command.
+    if mode == "record" and tool_name == "Bash":
+        try:
+            command = tool_input.get("command", "") or ""
+            state = load_state()
+            now = time.time()
+            for target in extract_bash_read_targets(command, REPO_ROOT):
+                mtime = file_mtime(target)
+                if mtime is not None:
+                    state = record(state, session_id, target, mtime, now, "Bash")
+            save_state(state)
+        except Exception:
+            pass  # fail-open: a guard must never break the workflow
+        sys.exit(0)
 
     if not file_path:
         sys.exit(0)

@@ -81,21 +81,21 @@ def test_pipeline_add_correct_row(tmp_path):
     write_fixture(tmp_path, "data/job-pipeline.md", PIPELINE_MD)
     result, code = run_act_apply(
         "--repo-root", str(tmp_path),
-        "pipeline-add", "OpenAI",
+        "pipeline-add", "Northwind",
         "--role", "CoS",
-        "--url", "https://openai.com/careers/cos",
+        "--url", "https://northwind.example.com/careers/cos",
     )
     assert code == 0
     assert result["status"] == "ok"
     assert result["action"] == "pipeline_add"
 
     content = (tmp_path / "data/job-pipeline.md").read_text(encoding="utf-8")
-    rows = [l for l in content.splitlines() if l.startswith("| OpenAI |")]
+    rows = [l for l in content.splitlines() if l.startswith("| Northwind |")]
     assert len(rows) == 1
     cols = [c.strip() for c in rows[0].strip("|").split("|")]
-    assert cols[0] == "OpenAI"
+    assert cols[0] == "Northwind"
     assert cols[2] == "Researching"
-    assert cols[7] == "https://openai.com/careers/cos"
+    assert cols[7] == "https://northwind.example.com/careers/cos"
 
 
 def test_pipeline_add_source_file_in_notes(tmp_path):
@@ -131,7 +131,7 @@ def test_contact_add_row_and_log_section(tmp_path):
     result, code = run_act_apply(
         "--repo-root", str(tmp_path),
         "contact-add", "Priya Anand",
-        "--company", "Tessera",
+        "--company", "Northwind",
         "--role", "Head of Ops",
     )
     assert code == 0
@@ -140,7 +140,7 @@ def test_contact_add_row_and_log_section(tmp_path):
 
     content = (tmp_path / "data/networking.md").read_text(encoding="utf-8")
     assert "| Priya Anand |" in content
-    assert "### Priya Anand — Tessera" in content
+    assert "### Priya Anand — Northwind" in content
 
 
 def test_contact_add_content_in_blockquote(tmp_path):
@@ -271,14 +271,14 @@ def test_notes_add_with_slug_goes_to_company_notes(tmp_path):
     result, code = run_act_apply(
         "--repo-root", str(tmp_path),
         "notes-add",
-        "--content", "Office is in the Dogpatch neighborhood",
-        "--company-slug", "tessera",
+        "--content", "Office is in the SoMa neighborhood",
+        "--company-slug", "northwind",
     )
     assert code == 0
-    note_path = tmp_path / "data/company-notes/tessera.md"
+    note_path = tmp_path / "data/company-notes/northwind.md"
     assert note_path.exists()
     content = note_path.read_text(encoding="utf-8")
-    assert "Office is in the Dogpatch neighborhood" in content
+    assert "Office is in the SoMa neighborhood" in content
 
 
 def test_notes_add_without_slug_goes_to_notes_md(tmp_path):
@@ -369,11 +369,11 @@ def test_company_note_add_context_in_header(tmp_path):
     """--context value appears in the ## YYYY-MM-DD | <context> header."""
     run_act_apply(
         "--repo-root", str(tmp_path),
-        "company-note-add", "sofar-ocean",
-        "--content", "Sarah confirmed interest in CoS role",
+        "company-note-add", "contoso",
+        "--content", "Contact confirmed interest in CoS role",
         "--context", "inbound email",
     )
-    content = (tmp_path / "data/company-notes/sofar-ocean.md").read_text(encoding="utf-8")
+    content = (tmp_path / "data/company-notes/contoso.md").read_text(encoding="utf-8")
     assert "| inbound email" in content
 
 
@@ -381,12 +381,12 @@ def test_company_note_add_source_file_in_header(tmp_path):
     """--source-file value appears in the header label."""
     run_act_apply(
         "--repo-root", str(tmp_path),
-        "company-note-add", "openai",
+        "company-note-add", "acme-corp",
         "--content", "Recruiter outreach for eng role",
-        "--source-file", "openai-recruiter.md",
+        "--source-file", "acme-recruiter.md",
     )
-    content = (tmp_path / "data/company-notes/openai.md").read_text(encoding="utf-8")
-    assert "openai-recruiter.md" in content
+    content = (tmp_path / "data/company-notes/acme-corp.md").read_text(encoding="utf-8")
+    assert "acme-recruiter.md" in content
 
 
 def test_company_note_add_dry_run(tmp_path):

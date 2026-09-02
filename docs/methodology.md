@@ -640,7 +640,7 @@ tools/                           ← Python utilities
   ├── remember_classify.py        ← Classifies note text into routing destinations → JSON
   ├── pipe_write.py               ← Atomic add/update/remove for job-pipeline.md
   ├── networking_write.py         ← Atomic add/log/remove for networking.md
-  ├── remember_apply.py           ← 11 destination handlers for note routing
+  ├── remember_apply.py           ← 12 destination handlers for note routing
   ├── act_apply.py                ← pipeline-add/contact-add/notes-add/company-note-add for inbox routing
   ├── gmail_fetch.py              ← Incremental Gmail OAuth sync → inbox/ files
   ├── daily_stoic.py              ← Archive Daily Stoic meditations → data/source-emails/ (used by /standup)
@@ -668,7 +668,7 @@ Every data file mutation (pipeline, networking, notes, todos) goes through a ded
 | `todo_write.py` | `data/job-todos.md` | add, done, withdraw, supersede, clear, sync |
 | `pipe_write.py` | `data/job-pipeline.md` | add, update, remove |
 | `networking_write.py` | `data/networking.md` + `data/outreach-log.md` | add, log (flips outreach status to Replied only when the *recipient* replied), remove |
-| `remember_apply.py` | 11 destinations (pipeline, networking, notes, profile, decisions, accomplishments, etc.) | route-and-write |
+| `remember_apply.py` | 12 destinations (pipeline, networking, notes, profile, decisions, accomplishments, personal-vault, etc.) | route-and-write |
 | `act_apply.py` | pipeline, networking, notes, company-notes (via inbox routing) | pipeline-add, contact-add, notes-add, company-note-add |
 
 **Why scripts instead of inline LLM writes?** Three reasons: (1) markdown table format is brittle — slight variations break parsing in subsequent skill reads; (2) write logic appears in 5+ skills — a format change would require updating every skill; (3) scripts are testable in isolation — 520 unit tests cover all mutation paths, which LLM-inline writes cannot have. The LLM focuses on judgment (what to write); the script handles mechanics (how to write it correctly every time).

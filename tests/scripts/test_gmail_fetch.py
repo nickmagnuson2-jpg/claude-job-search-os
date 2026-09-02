@@ -414,3 +414,298 @@ def test_act_classify_non_gmail_file_no_source_type(tmp_path):
     assert len(result["inbox_items"]) == 1
     item = result["inbox_items"][0]
     assert "source_type" not in item
+
+
+# ===========================================================================
+# --personal routing (added 2026-08-18, todo #33)
+#
+# Personal-label mail must land in the personal-OS vault, not the job-search
+# inbox/. The destination is resolved through tools/vault_paths.py rather than
+# passed as --inbox-dir, because the literal vault path in a TRACKED launchd
+# plist would disclose where sealed material lives -- this repo is public, and
+# that disclosure is the exact thing vault_paths.py was built to prevent.
+# ===========================================================================
+import subprocess
+
+SCRIPT = Path(__file__).resolve().parents[2] / "tools" / "gmail_fetch.py"
+
+
+def _cli(args, env=None):
+    return subprocess.run(
+        [sys.executable, str(SCRIPT), *args],
+        capture_output=True, text=True,
+        env={**os.environ, "PYTHONIOENCODING": "utf-8", **(env or {})},
+    )
+
+
+def test_personal_and_inbox_dir_are_mutually_exclusive(tmp_path):
+    """Two destinations is ambiguous, and silently picking one could route personal
+    mail into the public repo."""
+    # A label MUST be supplied here, or this goes red on any fresh clone / CI box: in
+    # main() the label resolution runs BEFORE the exclusivity check, so without config
+    # the process exits on "no personal label configured" and never reaches this
+    # assertion. It passed only because the developer's private .gmail-labels.conf
+    # exists on this machine. Found by an adversarial test-quality audit, 2026-08-19.
+    r = _cli(["--personal", "--inbox-dir", str(tmp_path), "--repo-root", str(tmp_path)],
+             env={"GMAIL_PERSONAL_LABEL_ID": "Label_TEST"})
+    assert r.returncode != 0
+    assert "mutually exclusive" in r.stderr, f"wrong failure reason: {r.stderr[-200:]}"
+    assert "mutually exclusive" in r.stderr
+
+
+def test_personal_routes_through_vault_paths_not_a_literal_path(tmp_path):
+    """The destination must be resolved in code, never hardcoded here.
+
+    (An earlier version of this test asserted `returncode != 0` for an unconfigured
+    vault. That passed for the WRONG reason -- the CLI exits 1 on the missing Gmail
+    token long before any vault lookup -- so it would have stayed green with the
+    loud-failure logic deleted. The loud-failure contract is unit-tested properly in
+    test_vault_paths.py::test_personal_mail_dir_raises_when_unconfigured; what
+    belongs here is that gmail_fetch DELEGATES rather than embedding a path.)
+    """
+    src = SCRIPT.read_text(encoding="utf-8")
+    assert "personal_mail_dir" in src, "must delegate to vault_paths"
+    assert "Obsidian" not in src, "no literal vault path may appear in this public file"
+
+
+def test_personal_flag_is_documented_in_help():
+    r = _cli(["--help"])
+    assert "--personal" in r.stdout
+    assert "vault_paths" in r.stdout or "personal-OS" in r.stdout
+
+
+def test_default_destination_is_unchanged_without_the_flag(tmp_path):
+    """Regression: the job-search path must not move."""
+    r = _cli(["--help"])
+    assert "<repo_root>/inbox" in r.stdout
+
+
+# --- resolve_inbox_dir: the routing branch itself ---------------------------
+# Extracted from main() on 2026-08-18 because a mutation pass showed that turning
+# --personal into a no-op broke NO test: through the CLI the destination is
+# unobservable (the run exits on the missing Gmail token first). The behaviour is
+# "personal mail must not land in the PUBLIC repo", so it cannot rest on an
+# untested branch.
+
+def test_resolve_default_is_repo_inbox(tmp_path):
+    assert gmail_fetch.resolve_inbox_dir(False, None, tmp_path) == tmp_path / "inbox"
+
+
+def test_resolve_explicit_inbox_dir_wins_over_default(tmp_path):
+    got = gmail_fetch.resolve_inbox_dir(False, str(tmp_path / "custom"), tmp_path)
+    assert got == (tmp_path / "custom").resolve()
+
+
+def test_resolve_personal_goes_to_vault_not_repo(tmp_path, monkeypatch):
+    """THE mutant-killer: --personal must NOT fall back to the repo inbox."""
+    monkeypatch.setenv("PERSONAL_VAULT_ROOT", str(tmp_path / "vault"))
+    got = gmail_fetch.resolve_inbox_dir(True, None, tmp_path)
+    # <root>/inbox — the destination the live gmail-fetch-personal job has always
+    # used. An earlier draft asserted an invented <root>/data/mail.
+    assert got == tmp_path / "vault" / "inbox"
+    assert got != tmp_path / "inbox"
+    assert tmp_path / "inbox" not in got.parents
+
+
+def test_resolve_personal_raises_when_vault_unconfigured(tmp_path, monkeypatch):
+    """Loud failure, not a silent fallback into the public repo."""
+    monkeypatch.delenv("PERSONAL_VAULT_ROOT", raising=False)
+    # resolve_inbox_dir imports the BARE `vault_paths` module (sys.path[0] == tools/),
+    # which is a different module object from `tools.vault_paths`. Patching the wrong
+    # one silently no-ops and the test passes for free -- patch the one in use.
+    import vault_paths as vp_bare
+    monkeypatch.setattr(vp_bare, "DEFAULT_CONFIG", tmp_path / "absent.conf")
+    with pytest.raises(vp_bare.VaultRootMissing):
+        gmail_fetch.resolve_inbox_dir(True, None, tmp_path)
+
+
+# ===========================================================================
+# job_search_label_id — private config resolution (added 2026-08-19)
+#
+# The label ID was hardcoded in this public file AND in the tracked launchd plist
+# until the /audit-pii semantic pass flagged it. A Gmail label ID is an
+# account-specific identifier; the repo's own --personal design already resolves
+# the vault path through config for exactly this reason, while the label ID sat
+# literal two constants away.
+# ===========================================================================
+
+def test_label_id_env_var_wins(monkeypatch):
+    monkeypatch.setenv("GMAIL_JOB_SEARCH_LABEL_ID", "Label_FROMENV")
+    assert gmail_fetch.job_search_label_id() == "Label_FROMENV"
+
+
+def test_label_id_read_from_conf(monkeypatch, tmp_path):
+    monkeypatch.delenv("GMAIL_JOB_SEARCH_LABEL_ID", raising=False)
+    conf = tmp_path / ".gmail-labels.conf"
+    conf.write_text("# comment\n\njob_search=Label_FROMCONF\n", encoding="utf-8")
+    monkeypatch.setattr(gmail_fetch, "GMAIL_LABELS_CONF", conf)
+    assert gmail_fetch.job_search_label_id() == "Label_FROMCONF"
+
+
+def test_label_id_conf_ignores_comments_blanks_and_other_keys(monkeypatch, tmp_path):
+    monkeypatch.delenv("GMAIL_JOB_SEARCH_LABEL_ID", raising=False)
+    conf = tmp_path / ".gmail-labels.conf"
+    conf.write_text("# job_search=Label_COMMENTED\n\nother=Label_OTHER\njob_search=Label_REAL\n",
+                    encoding="utf-8")
+    monkeypatch.setattr(gmail_fetch, "GMAIL_LABELS_CONF", conf)
+    assert gmail_fetch.job_search_label_id() == "Label_REAL"
+
+
+def test_label_id_returns_none_when_unconfigured(monkeypatch, tmp_path):
+    """None, not a guess: callers choose their own failure mode."""
+    monkeypatch.delenv("GMAIL_JOB_SEARCH_LABEL_ID", raising=False)
+    monkeypatch.setattr(gmail_fetch, "GMAIL_LABELS_CONF", tmp_path / "absent.conf")
+    assert gmail_fetch.job_search_label_id() is None
+
+
+def test_job_search_label_and_label_id_are_mutually_exclusive(tmp_path):
+    r = _cli(["--job-search-label", "--label-id", "Label_9", "--repo-root", str(tmp_path)])
+    assert r.returncode != 0
+    assert "mutually exclusive" in r.stderr
+
+
+def test_job_search_label_errors_loudly_when_unconfigured(tmp_path):
+    """The launchd job depends on this flag, so an unconfigured box must fail with a
+    message that names the fix, not silently fetch an unscoped mailbox."""
+    r = _cli(["--job-search-label", "--repo-root", str(tmp_path)],
+             env={"GMAIL_JOB_SEARCH_LABEL_ID": "",
+                  "GMAIL_LABELS_CONF_PATH": str(tmp_path / "absent.conf")})
+    assert r.returncode != 0
+    # Assert the REASON, not just the exit code: without this the test passes because
+    # the CLI exits on the missing Gmail token, and would stay green with the error
+    # path deleted (a mutant proved exactly that on 2026-08-19).
+    assert "no label configured" in r.stderr
+
+
+def test_no_real_label_id_literal_in_this_public_file():
+    """Regression: the whole point of the change."""
+    src = SCRIPT.read_text(encoding="utf-8")
+    import re
+    reals = [m for m in re.findall(r"Label_(\w+)", src)
+             if m.isdigit() and len(m) > 8]
+    assert not reals, f"an account-specific label ID is back in a public file: {len(reals)} occurrence(s)"
+
+
+# --- generalized label resolver + personal scope (2026-08-19) ---------------
+# Found while updating docs: the tracked gmail-fetch-personal plist hardcoded BOTH
+# the private vault path and a label ID. --personal now supplies both from config.
+
+def test_gmail_label_id_is_key_addressable(monkeypatch, tmp_path):
+    monkeypatch.delenv("GMAIL_JOB_SEARCH_LABEL_ID", raising=False)
+    monkeypatch.delenv("GMAIL_PERSONAL_LABEL_ID", raising=False)
+    conf = tmp_path / ".gmail-labels.conf"
+    conf.write_text("job_search=Label_JS\npersonal=Label_P\n", encoding="utf-8")
+    monkeypatch.setattr(gmail_fetch, "GMAIL_LABELS_CONF", conf)
+    assert gmail_fetch.gmail_label_id("job_search") == "Label_JS"
+    assert gmail_fetch.gmail_label_id("personal") == "Label_P"
+    assert gmail_fetch.personal_label_id() == "Label_P"
+    assert gmail_fetch.job_search_label_id() == "Label_JS"
+
+
+def test_personal_and_job_search_keys_do_not_collide(monkeypatch, tmp_path):
+    """A key must match exactly; `personal` must not read `job_search`'s value."""
+    monkeypatch.delenv("GMAIL_PERSONAL_LABEL_ID", raising=False)
+    conf = tmp_path / ".gmail-labels.conf"
+    conf.write_text("job_search=Label_JS\n", encoding="utf-8")
+    monkeypatch.setattr(gmail_fetch, "GMAIL_LABELS_CONF", conf)
+    assert gmail_fetch.personal_label_id() is None
+
+
+def test_personal_env_override(monkeypatch):
+    monkeypatch.setenv("GMAIL_PERSONAL_LABEL_ID", "Label_ENVP")
+    assert gmail_fetch.personal_label_id() == "Label_ENVP"
+
+
+def test_personal_errors_when_label_unconfigured(tmp_path):
+    """The launchd job now relies on --personal for BOTH scope and destination, so an
+    unconfigured box must name the fix rather than silently fetching all mail."""
+    r = _cli(["--personal", "--repo-root", str(tmp_path)],
+             env={"GMAIL_PERSONAL_LABEL_ID": "",
+                  "GMAIL_LABELS_CONF_PATH": str(tmp_path / "absent.conf")})
+    assert r.returncode != 0
+    assert "no personal label configured" in r.stderr
+
+
+def test_personal_plist_carries_no_secrets():
+    """Regression for the 2026-08-19 finding: the TRACKED plist must not hardcode the
+    private vault path or an account-specific label ID."""
+    plist = (Path(__file__).resolve().parents[2] / "tools" / "launchd" /
+             "com.nickmagnuson.jobsearch.gmail-fetch-personal.plist")
+    text = plist.read_text(encoding="utf-8")
+    import re
+    assert "30-projects/personal" not in text, "private vault path is back in a tracked plist"
+    assert not re.search(r"Label_\w+", text), "an account-specific label ID is back in a tracked plist"
+
+
+# ===========================================================================
+# Empty-string flag guard (2026-08-19)
+#
+# Every optional string flag defaults to None and was tested for TRUTHINESS
+# downstream, so `--flag ""` was accepted and silently ignored. For --search
+# that was a mode change rather than a degraded parameter: the read-only search
+# branch was skipped and control fell through to the forward SYNC, which writes
+# to inbox/ and advances .gmail_state.json. `--search "" --max 25` read as
+# "list 25 messages read-only" and actually performed a sync.
+#
+# These run before any credential or label resolution, so they pass on a fresh
+# clone with no token and no .gmail-labels.conf.
+# ===========================================================================
+
+@pytest.mark.parametrize("flag", [
+    "--search", "--label-id", "--since", "--inbox-dir", "--state-file",
+])
+def test_empty_string_flag_is_rejected(flag, tmp_path):
+    """An empty value must fail loudly, never degrade to the flag's default."""
+    r = _cli([flag, "", "--repo-root", str(tmp_path)])
+    assert r.returncode != 0, f"{flag} '' was accepted"
+    assert "empty value" in r.stderr, f"wrong failure reason: {r.stderr[-300:]}"
+
+
+@pytest.mark.parametrize("flag", [
+    "--search", "--label-id", "--since", "--inbox-dir", "--state-file",
+])
+def test_whitespace_only_flag_is_rejected(flag, tmp_path):
+    """Whitespace is the same defect wearing a disguise: it is truthy in Python,
+    so it would pass the guard and then fail somewhere less legible."""
+    r = _cli([flag, "   ", "--repo-root", str(tmp_path)])
+    assert r.returncode != 0, f"{flag} '   ' was accepted"
+    assert "empty value" in r.stderr, f"wrong failure reason: {r.stderr[-300:]}"
+
+
+def test_empty_search_does_not_reach_the_sync_path(tmp_path):
+    """The specific regression: the failure must be the ARGUMENT guard, not a
+    downstream symptom. Without this assertion the test above would still pass
+    if the guard were deleted and the run merely died on a missing token, which
+    is exactly how the original bug stayed invisible."""
+    r = _cli(["--search", "", "--max", "25", "--repo-root", str(tmp_path)])
+    assert r.returncode != 0
+    assert "empty value" in r.stderr
+    combined = r.stdout + r.stderr
+    assert "new message" not in combined, "fell through to the sync path"
+    assert "Wrote:" not in combined, "wrote a file while 'searching'"
+    assert not (tmp_path / "inbox").exists(), "created inbox/ during a search"
+
+
+def test_empty_flag_guard_names_the_read_only_listing_alternative(tmp_path):
+    """The error has to say what to do instead, since '--search with no query'
+    is the natural way to reach for a listing and it is not the listing path."""
+    r = _cli(["--search", "", "--repo-root", str(tmp_path)])
+    assert "--backfill" in r.stderr
+
+
+def test_omitting_the_flags_entirely_is_still_valid(tmp_path):
+    """Regression guard on the guard: None must remain the accepted default, or
+    every normal invocation, including the launchd jobs, breaks."""
+    r = _cli(["--help"])
+    assert r.returncode == 0
+    r2 = _cli(["--repo-root", str(tmp_path)])
+    # No token on a fresh box, so this fails -- but it must NOT fail on the guard.
+    assert "empty value" not in r2.stderr
+
+
+def test_nonempty_search_still_selects_search_mode(tmp_path):
+    """The mode selector must accept a real query. It cannot reach Gmail without
+    credentials, so assert only that it did not trip the guard and did not write."""
+    r = _cli(["--search", "from:example", "--repo-root", str(tmp_path)])
+    assert "empty value" not in r.stderr
+    assert "Wrote:" not in (r.stdout + r.stderr), "search mode wrote a file"

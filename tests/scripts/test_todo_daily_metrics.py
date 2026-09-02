@@ -299,3 +299,38 @@ def test_upcoming_scheduled_sorted_event_before_followup(tmp_path):
                         "--repo-root", str(tmp_path))
     up = result["upcoming_scheduled"]
     assert [e["company"] for e in up] == ["EventCo", "FollowCo"]
+
+
+# ===========================================================================
+# repo_root must be resolved before building the memory-dir key (2026-08-19)
+#
+# The auto-memory directory lives OUTSIDE the repo at
+# ~/.claude/projects/<sanitized-cwd>/memory/, and the key is built from the
+# repo path TEXT. A relative --repo-root (`.` — the documented convention
+# everywhere else in this repo) produced the key "-." , missed the directory,
+# and reported memories_today: 0 while 23 memory files had been written that
+# day. No error, no warning: a confident wrong number in the /checkout summary,
+# which then reads as "quiet day."
+# ===========================================================================
+
+# (A companion unit test was written and then DELETED: it recomputed the sanitized
+# key itself rather than importing the source, so it passed whether or not the fix
+# was present -- a tautological assertion, the shape CLAUDE.md:23 warns about. The
+# end-to-end test below is the real guard: verified to FAIL when .resolve() is
+# reverted.)
+def test_relative_and_absolute_repo_root_agree_on_substantive_work():
+    """End-to-end guard: the two spellings must not disagree on any count.
+
+    Runs against the REAL repo deliberately — the whole failure mode was that a
+    fixture tree would have passed while the live invocation returned 0, since
+    the miss depends on the actual out-of-repo memory directory existing.
+    """
+    rel = run_script(
+        "todo_daily_metrics.py", "--target-date", "2026-08-19", "--repo-root", ".",
+    )
+    absolute = run_script(
+        "todo_daily_metrics.py", "--target-date", "2026-08-19",
+        "--repo-root", str(REPO_ROOT),
+    )
+    assert rel["substantive_work"] == absolute["substantive_work"], \
+        "relative vs absolute --repo-root disagree on substantive_work"

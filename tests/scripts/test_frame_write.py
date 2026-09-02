@@ -284,6 +284,104 @@ def test_init_creates_version_one_and_refuses_a_second(tmp_path):
     assert md5(f) == before, "init must never overwrite a live frame"
 
 
+def test_an_in_repo_frame_outside_output_is_refused(tmp_path):
+    """CANONICAL LOCATION. `analysis-method.md` declares State lives at
+    `output/<slug>/frame.yaml`. Before this gate there were THREE conventions in the
+    tree at once (`frames/<slug>/`, `output/<slug>/`, and a date-prefixed
+    `output/<target-company>/casework/frame-*.yaml`) and NOTHING enforced any of them, so the
+    location was whatever the caller guessed. Nothing discovers frames either, so a
+    frame written to the wrong place is simply lost. Fixed 2026-08-31."""
+    import shutil
+    bad = REPO / "frames" / "zz-refusal-probe" / "frame.yaml"
+    # These two tests are the only ones that touch REPO paths rather than tmp_path, so
+    # they are the only ones that can leave state behind. Under MUTATION testing a mutant
+    # that disables the location gate lets init through and WRITES this file -- which is
+    # how the mutant gets killed, and also how the file survives the run. Without the
+    # cleanup below the next run of this file failed on a stale artifact, which surfaced
+    # as an isolation_failure in mutation_check. Clean before AND after: before, because a
+    # previous crashed run may have left it; after, because this run may create it.
+    shutil.rmtree(bad.parent, ignore_errors=True)
+    try:
+        code, res = run("init", "--frame", bad, "--engagement", "x", "--today", "2026-08-31")
+        assert code != 0, "an in-repo frame outside output/ must be refused"
+        assert "output/" in res.get("message", ""), res
+        assert not bad.exists(), "a refusal must write nothing"
+    finally:
+        shutil.rmtree(bad.parent, ignore_errors=True)
+
+
+def test_the_refusal_names_the_canonical_path_it_wants(tmp_path):
+    """A refusal that does not say where the frame SHOULD go just moves the guess."""
+    import shutil
+    bad = REPO / "frames" / "acme" / "frame.yaml"
+    shutil.rmtree(bad.parent, ignore_errors=True)
+    try:
+        code, res = run("init", "--frame", bad, "--engagement", "acme", "--today", "2026-08-31")
+        assert code != 0
+        assert "output/acme/frame.yaml" in res.get("message", ""), (
+            f"refusal must name the exact canonical path, got: {res}")
+    finally:
+        shutil.rmtree(bad.parent, ignore_errors=True)
+
+
+def test_a_canonical_in_repo_path_is_accepted(tmp_path):
+    """The gate must not refuse the location it is asking for."""
+    slug = "zz-canonical-probe"  # leading char must be [a-z0-9] per the slug pattern
+    good = REPO / "output" / slug / "frame.yaml"
+    import shutil
+    if good.parent.exists():
+        shutil.rmtree(good.parent)
+    try:
+        code, res = run("init", "--frame", good, "--engagement", "probe",
+                        "--today", "2026-08-31")
+        assert code == 0, f"canonical path must be accepted, got: {res}"
+        assert good.exists()
+    finally:
+        if good.parent.exists():
+            shutil.rmtree(good.parent)
+
+
+def test_paths_outside_the_repo_are_unconstrained(tmp_path):
+    """Enforcement anchors to the repo. A frame outside it (every test in this file)
+    is not the thing the convention governs, and constraining it would make the whole
+    suite unable to run."""
+    f = tmp_path / "anything" / "frame.yaml"
+    code, res = run("init", "--frame", f, "--engagement", "x", "--today", "2026-08-31")
+    assert code == 0, f"out-of-repo paths must stay unconstrained, got: {res}"
+
+
+def test_init_creates_the_frame_directory_when_it_does_not_exist(tmp_path):
+    """init is the FIRST command any new engagement runs, and every other test in this
+    file uses pytest's `tmp_path`, which always exists -- so the whole suite is
+    structurally blind to init's own precondition.
+
+    Before the fix, init wrote its validation temp file to `frame_path.parent` without
+    ensuring that directory existed, and died with an UNCAUGHT FileNotFoundError:
+    no `die()`, no structured JSON, just a traceback. A caller parsing stdout as JSON
+    got nothing to parse. Regression for 2026-08-31.
+    """
+    f = tmp_path / "brand-new-slug" / "frame.yaml"
+    assert not f.parent.exists(), "precondition: the slug directory must NOT exist"
+
+    code, res = run("init", "--frame", f, "--engagement", "brand-new-slug",
+                    "--today", "2026-08-31")
+
+    assert code == 0, f"init must create its own directory, got: {res}"
+    assert f.exists(), "frame.yaml was not written"
+    d = yaml.safe_load(f.read_text())
+    assert d["version"] == 1 and d["engagement"] == "brand-new-slug"
+    assert not (f.parent / ".frame.yaml.init").exists(), "temp file must be cleaned up"
+
+
+def test_init_failure_is_structured_not_a_raw_traceback(tmp_path):
+    """Every other refusal in this tool exits via `die()` with parseable JSON. A raw
+    exception is a different contract, and callers that parse stdout cannot see it."""
+    f = tmp_path / "a" / "b" / "c" / "frame.yaml"
+    code, res = run("init", "--frame", f, "--engagement", "deep", "--today", "2026-08-31")
+    assert code == 0, f"nested parents must be created too, got: {res}"
+    assert f.exists()
+
+
 def test_init_omits_content_fields_rather_than_seeding_blanks(tmp_path):
     """`problem_statement: ""` reads as authored-and-blank, which is a DIFFERENT claim
     from not-yet-authored, and telling those apart is the resume point's whole job."""

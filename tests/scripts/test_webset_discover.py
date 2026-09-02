@@ -58,8 +58,8 @@ def test_build_search_payload_caps_criteria_at_5():
 
 
 def test_filter_known_removes_matching_names():
-    candidates = [{"name": "Ramp"}, {"name": "Brand New Co"}, {"name": "notion"}]
-    known = {"ramp", "notion", "discord"}
+    candidates = [{"name": "Northwind"}, {"name": "Brand New Co"}, {"name": "contoso"}]
+    known = {"northwind", "contoso", "acme-ai"}
     out = filter_known(candidates, known)
     assert [c["name"] for c in out] == ["Brand New Co"]
 
@@ -126,13 +126,13 @@ def test_run_webset_timeout_returns_partial_not_crash():
 
 def test_load_known_names_reads_yaml_and_md(tmp_path):
     targets = tmp_path / "scan-targets.yaml"
-    targets.write_text("companies:\n  - name: Ramp\n  - name: Notion\n", encoding="utf-8")
+    targets.write_text("companies:\n  - name: Northwind\n  - name: Contoso\n", encoding="utf-8")
     pipe = tmp_path / "job-pipeline.md"
-    pipe.write_text("| Company | Stage |\n| Discord | Applied |\n", encoding="utf-8")
+    pipe.write_text("| Company | Stage |\n| Acme AI | Applied |\n", encoding="utf-8")
     names = load_known_names([str(targets), str(pipe)])
-    assert "ramp" in names
-    assert "notion" in names
-    assert any("discord" in n for n in names)
+    assert "northwind" in names
+    assert "contoso" in names
+    assert any("acme ai" in n for n in names)
 
 
 def test_load_known_names_missing_files_skip_silently(tmp_path):

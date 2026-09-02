@@ -177,12 +177,12 @@ Analyze the interaction history to determine the follow-up type:
 
 **This step exists because:** the highest-frequency cause of multi-spin reply churn is drafting from a *self-summary* of the inbound (including the paraphrase passed into this skill's context arg) instead of the verbatim source — which silently carries mis-assigned attributes (which thing they said about which entity) and invented positioning claims. "Quick / ASAP" makes this MORE important, not skippable. Origin: 2026-06-15 recruiter-reply incident, 7 versions. See `memory/feedback_ground_email_draft_in_verbatim_source_not_paraphrase.md`.
 
-1. **Pull the verbatim inbound.** If not already in context, fetch it: `tools/gmail_fetch.py --all-mail --search "<query>" --body`. Read it line by line — do NOT work from a summary.
+1. **Pull the verbatim inbound.** If not already in context, fetch it: `tools/gmail_fetch.py --all-mail --search "<query>" --body`. Read it line by line — do NOT work from a summary. **`<query>` must be a real non-empty query** (`from:`, `subject:`, a name). An empty one exits 2 by design since 2026-08-19: there is no empty-query listing mode, and before the guard it fell through to a SYNC that wrote to `inbox/`. To browse rather than search, use `--backfill --label-id <ID> --max N --dry-run`.
 2. **Build a claim→source map (working notes, not the email).** For every substantive sentence the draft will make about the contact's message — per entity / per role / per offer — quote the verbatim line it grounds in:
    ```
    - "Beacon is worth moving on quickly" → "This one is worth moving on quickly." [verbatim]
    - "which verticals are they building out" → "depends on which verticals they are actively building out" — tied to NORTHWIND, not Beacon
-   - "insurance-brokerage in my lane" → NO source line. INVENTED. Cut or recast to the role-shape claim.
+   - "adjacent-vertical experience in my lane" → NO source line. INVENTED. Cut or recast to the role-shape claim.
    ```
 3. **Any claim with no source line is invented** — cut it, recast it to something grounded, or ask Nick. This is stricter than Step 6b's after-the-fact provenance labeling: re-read their actual words; do not label an un-checked claim as "grounded."
 4. **Cross-assignment check:** explicitly verify each attribute is attached to the entity the contact attached it to (the Beacon-vs-Northwind swap is the canonical miss).
@@ -274,7 +274,7 @@ Follow channel constraints from `framework/outreach-guide.md`.
 
 Keep it shorter than the original message. Follow-ups should be 50–100 words (shorter than initial outreach).
 
-**Ask scope — broad-open default for nudges** (added 2026-05-21): when the next-step context isn't known (recruiter went silent, founder didn't reply, scheduling pending), prefer **broad-open asks** over narrow-specific asks. Example from sent corpus 2026-05-21: Nick edited `scheduling for the live mortgage-servicing case` → `about next steps`. Pinning the topic forecloses paths the recipient might offer. Use narrow scope only when (a) the recipient explicitly asked you to follow up about a specific item or (b) the only outstanding gate IS that specific item. See `memory/feedback_always_follow_up_with_recruiters.md` + voice-reference.md §1 "Broad-open ask > narrow-specific ask in nudges."
+**Ask scope — broad-open default for nudges** (added 2026-05-21): when the next-step context isn't known (recruiter went silent, founder didn't reply, scheduling pending), prefer **broad-open asks** over narrow-specific asks. Example from sent corpus 2026-05-21: Nick edited `scheduling for the case study we discussed` → `about next steps`. Pinning the topic forecloses paths the recipient might offer. Use narrow scope only when (a) the recipient explicitly asked you to follow up about a specific item or (b) the only outstanding gate IS that specific item. See `memory/feedback_always_follow_up_with_recruiters.md` + voice-reference.md §1 "Broad-open ask > narrow-specific ask in nudges."
 
 **Iteration safety — re-anchor pass at round 3+** (added 2026-05-21): if Nick has revised the draft 3+ times since this skill was invoked, the voice anchor has drifted (each inline edit bypasses Steps 1-7). Re-load `framework/voice-reference.md` and scan against §2 (anti-patterns) explicitly — phrase by phrase, not vibes-only. The 3-question qualitative tonal self-check in Step 7 is necessary but not sufficient. See `memory/feedback_voice_anchor_pass_at_iteration_3.md`.
 
@@ -290,17 +290,13 @@ Keep it shorter than the original message. Follow-ups should be 50–100 words (
 
 #### Step 6b: Substance-Provenance Audit (mandatory)
 
-Before the quality gate, label the provenance of every substantive sentence in the draft. This is the gate that catches Claude-generated self-positioning content before it reaches Nick's voice as a fait accompli.
+**Before this step, apply `framework/writing-discipline.md`.** It is canonical for the four provenance labels (`N` / `C` / `I` / `G`), what counts as a substantive sentence, the audit output format, and the invariant that `G` is blocked in any slot carrying a claim about who Nick is, what he brings, what he wants, or what he has done. **This step adds only the slot table below.** Do not restate the labels here; if they need to change, change them there.
 
-**Provenance labels:**
-- **N** — Nick-dictated *this session* (the spine Nick just provided)
-- **C** — Nick-corpus (verbatim or near-verbatim phrase from `voice-reference.md`, prior `data/reflections/`, sent emails, or `data/professional-identity.md` / `data/goals.md`)
-- **I** — Claude-inferred from a cited source (research dossier, public bio, role posting, public LinkedIn/company source, OR a just-pulled interview transcript / debrief per Step 3b — must be specifically citable). Transcript-sourced callbacks are `I`, not `G`: they trace to a real line the interviewer said.
-- **G** — Claude-generated (no source — synthesized from general training / pattern-matching)
+Label the provenance of every substantive sentence before the quality gate.
 
-**What counts as a "substantive sentence":** opener / new-value-add / ask / value-prop / bridge sentence / story beat / closing CTA. Logistical sentences and standard pleasantries are not substantive; skip them.
+**Substantive sentences in a follow-up:** opener / new-value-add / ask / value-prop / bridge sentence / story beat / closing CTA. Logistical sentences and standard pleasantries are not substantive; skip them.
 
-**Audit rule:**
+**Audit rule (slot table for this artifact):**
 
 | Slot | G allowed? | If G found |
 |---|---|---|
@@ -308,24 +304,13 @@ Before the quality gate, label the provenance of every substantive sentence in t
 | New-value-add (the article / insight / connection this follow-up adds) | **No** | STOP. Ask Nick what's actually new. |
 | Bridge sentence (linking recipient's situation to Nick's offer) | **No** | STOP. Ask Nick for the link or extract from corpus. |
 | Story / anecdote | **No** | STOP. Ask Nick for the actual story or pull from prior sent corpus. |
-| Opener referencing recipient's work / product / strategy | **No** | STOP. Either it's `I` with a citable source, or it's speculation — replace with corpus-grounded line. |
+| Opener referencing recipient's work / product / strategy | **No** | STOP. Either it's `I` with a citable source, or it's speculation - replace with corpus-grounded line. |
 | Logistics / scheduling / standard pleasantries | Yes | Proceed. |
 | Sign-off | Yes | Proceed. |
 
-For every **I** sentence, name the source inline in working notes (`[Source: <path or URL>]`) — does not have to appear in the final email, but must be traceable before Step 7.
+If any `G` blocks fire, return to Step 4 (sequence-aware drafting) and request the spine for those slots. Do not proceed to Step 7 with `G` in any blocked slot. Trace every `I` to its source before Step 7.
 
-**Output of this step** (in working notes, not the email):
-
-```
-Substance audit:
-- Opener: "..." → C (prior thread, 5/14)
-- New value-add: "..." → N (Nick dictated 5/21 17:10)
-- Bridge: "..." → G ❌ STOP — need Nick to provide
-```
-
-If any `G` blocks fire, return to Step 4 (sequence-aware drafting) and request the spine for those slots. Do not proceed to Step 7 with `G` in any blocked slot.
-
-**Why this exists:** Voice corruption in self-positioning content is the highest-frequency failure mode of email drafting (~10 separate behavioral rules in memory all instance this defect). This step collapses them into one structural gate. Origin: 2026-05-21 memory audit.
+**Follow-up-specific note on `I`:** a callback sourced from a just-pulled interview transcript or debrief (Step 3b) is `I`, not `G`. It traces to a real line the interviewer said. Cite the transcript path in working notes.
 
 #### Step 7: Quality Gate
 

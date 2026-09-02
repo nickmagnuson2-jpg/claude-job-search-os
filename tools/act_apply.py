@@ -41,6 +41,10 @@ from pathlib import Path
 # Sibling import: fuzzy name-duplicate guard (stdlib-only module in tools/).
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from name_dedup import find_near_duplicates  # noqa: E402
+# Single source of truth for markdown-table cell escaping. Do NOT reimplement: a raw "|"
+# in any user-supplied cell silently shifts every later column of the row, and nothing
+# downstream complains. See tools/pipe_write.py:sanitize_cell.
+from pipe_write import sanitize_cell  # noqa: E402
 
 PIPELINE_FILE      = "data/job-pipeline.md"
 NETWORKING_FILE    = "data/networking.md"
@@ -150,14 +154,18 @@ def table_insert_pos(lines: list, sec_start: int, sec_end: int) -> int:
 
 def cmd_pipeline_add(args, pipeline_path: Path, dry_run: bool) -> None:
     today   = date.today().strftime("%Y-%m-%d")
-    role    = args.role        if args.role    else "—"
-    url     = args.url         if args.url     else "—"
-    source  = args.source_file if args.source_file else ""
-    base_notes = args.notes if args.notes else "—"
-    notes = f"{base_notes} | Added from inbox/{source}" if source else base_notes
+    company = sanitize_cell(args.company)
+    role    = sanitize_cell(args.role)        if args.role        else "—"
+    url     = sanitize_cell(args.url)         if args.url         else "—"
+    source  = sanitize_cell(args.source_file) if args.source_file else ""
+    base_notes = sanitize_cell(args.notes) if args.notes else "—"
+    # Separator is " - ", NOT " | ". A literal pipe here is a column separator, so every
+    # row added with a source file came out 11 fields instead of 10, shifting the URL
+    # column into Notes. Found and fixed 2026-08-31 on a row written months earlier.
+    notes = f"{base_notes} - Added from inbox/{source}" if source else base_notes
 
     next_action = "Run /research-company, then /generate-cv"
-    row = f"| {args.company} | {role} | Researching | {today} | {next_action} | — | {notes} | {url} |"
+    row = f"| {company} | {role} | Researching | {today} | {next_action} | — | {notes} | {url} |"
 
     if dry_run:
         out_ok("pipeline_add", f"Would add pipeline entry: {args.company}",
@@ -187,13 +195,16 @@ def cmd_pipeline_add(args, pipeline_path: Path, dry_run: bool) -> None:
 
 def cmd_contact_add(args, networking_path: Path, dry_run: bool) -> None:
     today   = date.today().strftime("%Y-%m-%d")
-    company = args.company     if args.company     else "—"
-    role    = args.role        if args.role        else "—"
-    source  = args.source_file if args.source_file else ""
+    name    = sanitize_cell(args.name)
+    company = sanitize_cell(args.company)     if args.company     else "—"
+    role    = sanitize_cell(args.role)        if args.role        else "—"
+    source  = sanitize_cell(args.source_file) if args.source_file else ""
     content_text = args.content if args.content else ""
 
+    # networking.md is pipe-delimited too, so every cell is sanitized for the same reason
+    # cmd_pipeline_add sanitizes its own.
     contact_row = (
-        f"| {args.name} | {company} | {role} | other | {today} | — | — |"
+        f"| {name} | {company} | {role} | other | {today} | — | — |"
     )
     log_source = f"inbox/{source}" if source else "inbox"
     interaction_summary = f"Captured from {log_source}"
@@ -220,14 +231,14 @@ def cmd_contact_add(args, networking_path: Path, dry_run: bool) -> None:
                     existing_names.append((cols[0], cols[1] if len(cols) > 1 else ""))
 
     for nm, co in existing_names:
-        if nm.lower() == args.name.lower():
+        if nm.lower() == name.lower():
             out_ok("duplicate_warning",
-                   f"{args.name} already exists in contacts",
+                   f"{name} already exists in contacts",
                    existing_company=co)
             return
 
     if not getattr(args, "force", False):
-        near = find_near_duplicates(args.name, [nm for nm, _ in existing_names])
+        near = find_near_duplicates(name, [nm for nm, _ in existing_names])
         if near:
             co_by_name = {nm: co for nm, co in existing_names}
             candidates = [
@@ -237,14 +248,14 @@ def cmd_contact_add(args, networking_path: Path, dry_run: bool) -> None:
             out_error(
                 "Possible duplicate of existing contact(s): "
                 + ", ".join(f"{c['name']} ({c['similarity']})" for c in candidates)
-                + f". If {args.name} is genuinely a different person, re-run with --force. "
+                + f". If {name} is genuinely a different person, re-run with --force. "
                   f"Otherwise log to the existing contact instead of adding a new one.",
                 code="possible_duplicate",
                 candidates=candidates,
             )
 
     if dry_run:
-        out_ok("contact_add", f"Would add contact: {args.name}",
+        out_ok("contact_add", f"Would add contact: {name}",
                dry_run=True, would_mutate=[{"file": str(networking_path)}])
         return
 
@@ -259,7 +270,7 @@ def cmd_contact_add(args, networking_path: Path, dry_run: bool) -> None:
     # Add interaction log entry
     log_start, log_end = find_section(lines, r"^##\s+Interaction\s+Log")
     company_part = company if company != "—" else None
-    heading = f"### {args.name} — {company_part}" if company_part else f"### {args.name}"
+    heading = f"### {name} — {company_part}" if company_part else f"### {name}"
     entry_lines = [
         heading,
         "",
@@ -289,8 +300,8 @@ def cmd_contact_add(args, networking_path: Path, dry_run: bool) -> None:
         new_content += "\n"
     write_atomic(networking_path, new_content)
 
-    out_ok("contact_add", f"Added contact: {args.name} | {company}",
-           name=args.name, company=company)
+    out_ok("contact_add", f"Added contact: {name} | {company}",
+           name=name, company=company)
 
 
 def cmd_notes_add(args, repo_root: Path, dry_run: bool) -> None:

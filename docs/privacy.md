@@ -84,7 +84,7 @@ Key points:
 
 Beyond gitignore (which keeps your data directories out of git entirely), a second layer guards the *public* files you do commit:
 
-- **`check_public_pii.py`** — an always-on hook that **blocks** a write to any public artifact (`tests/`, `.claude/skills/`, `framework/`, `docs/`, `tools/*`, top-level `*.md`) the moment it contains a real contact name or pipeline-target company from your gitignored denylist. Regenerate the denylist with `tools/gen_pii_denylist.py` after adding contacts.
+- **`check_public_pii.py`** — an always-on hook that **blocks** a write to any public artifact (any file git does not ignore; the directory list is a fast path, not the definition) the moment it contains a real contact name or pipeline-target company from your gitignored denylist. Regenerate the denylist with `tools/gen_pii_denylist.py` after adding contacts.
 - **`/audit-pii`** — run it before committing or pushing any public-file change. It refreshes the denylist, runs the deterministic scan, then dispatches a semantic reviewer that catches new real names the denylist hasn't learned yet.
 
 ## What a push actually exposes

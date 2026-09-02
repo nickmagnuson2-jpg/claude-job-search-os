@@ -393,13 +393,65 @@ def _extract_company_slug_from_task(task: str) -> str | None:
 # Inbox classification
 # ─────────────────────────────────────────────────────────────────────────────
 
+def load_user_email(repo_root: Path) -> str | None:
+    """The user's own email address, read from gitignored data/profile.md.
+
+    Never hardcode it: tools/ and tests/ are public (public-repo PII gate), and
+    the address is personal data that lives only in gitignored files.
+
+    Returns None if profile.md is missing or has no E-Mail line — callers must
+    degrade gracefully rather than fail the classification run.
+    """
+    profile = repo_root / "data" / "profile.md"
+    if not profile.exists():
+        return None
+    try:
+        m = re.search(
+            r"^\s*[-*]?\s*\*{0,2}E-?Mail:?\*{0,2}\s*:?\s*([a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+)",
+            profile.read_text(encoding="utf-8"),
+            re.IGNORECASE | re.MULTILINE,
+        )
+        return m.group(1).lower() if m else None
+    except Exception:
+        return None
+
+
+# A reply is NEW information, never a duplicate of an earlier capture. Detected
+# two ways because either alone is defeatable: a "Re:" subject, or a quoted
+# attribution line ("On <date>, <name> <addr> wrote:") inside the body.
+_REPLY_SUBJECT_RE = re.compile(r"^\s*re\s*:", re.IGNORECASE)
+_QUOTED_ATTRIBUTION_RE = re.compile(r"^\s*>*\s*On .{0,120}wrote:\s*$", re.IGNORECASE | re.MULTILINE)
+
+
+def is_reply_email(content: str, subject: str = "") -> bool:
+    """True when the email is a reply to an earlier message.
+
+    Load-bearing for detect_stale_routed: `sender_already_in_networking` means
+    "this contact is already logged, so re-routing would duplicate the row."
+    That reasoning holds for a FIRST capture and is false for every reply — a
+    reply carries content that exists nowhere else yet.
+
+    Origin 2026-08-25: a cold email drew a reply in 20 minutes. The contact had
+    been written to networking.md an hour before, so the sender matched and the
+    REPLY was flagged stale. /act auto-deletes stale inbox files with no
+    approval, so the response to live outreach was queued for silent deletion.
+    The failure scales the wrong way: the faster someone answers, the more
+    likely their answer is destroyed.
+    """
+    if subject and _REPLY_SUBJECT_RE.search(subject):
+        return True
+    return bool(_QUOTED_ATTRIBUTION_RE.search(content))
+
+
 def detect_stale_routed(content: str, repo_root: Path) -> dict | None:
     """
     Detect inbox files whose content has already been routed to a destination.
 
     Cases handled:
       1. Gmail emails whose sender's email address already appears in data/networking.md
-         (means the contact was already logged — re-routing would duplicate)
+         (means the contact was already logged — re-routing would duplicate).
+         EXCEPTION: replies are exempt. A reply is new information, not a
+         duplicate capture — see is_reply_email() for the 2026-08-25 origin.
       2. Gmail emails whose company slug already has a non-terminal pipeline entry
          (means the job_ad was already pipelined — re-routing would duplicate)
 
@@ -434,7 +486,21 @@ def detect_stale_routed(content: str, repo_root: Path) -> dict | None:
         r"From:\*{0,2}\s*[^<\n]*<([a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+)>",
         content,
     )
+
+    # The user's OWN sent copy is a carbon copy of something they already did —
+    # never routable, whatever its reply status. Checked BEFORE the networking
+    # rule and deliberately NOT gated on is_reply_email(): own sent mail quotes
+    # the thread too, so gating it there is what left these queued as noise.
     if sender_match:
+        user_email = load_user_email(repo_root)
+        if user_email and sender_match.group(1).lower() == user_email:
+            return {
+                "reason": "own_sent_copy",
+                "detail": "sent by the user, not received",
+                "destination": "delete (own sent copy — already actioned)",
+            }
+
+    if sender_match and not is_reply_email(content, subject):
         sender_email = sender_match.group(1).lower()
         networking = repo_root / "data" / "networking.md"
         if networking.exists():

@@ -176,7 +176,7 @@ See `memory/feedback_voice_pure_diff_minimal.md` and `memory/feedback_minimize_p
 
 **This step exists because:** the highest-frequency cause of multi-spin reply churn is drafting from a *self-summary* of the inbound instead of the verbatim source — which silently carries mis-assigned attributes (which thing they said about which entity) and invented positioning claims. "Quick / ASAP" makes this MORE important, not skippable. Origin: 2026-06-15 recruiter-reply incident, 7 versions. See `memory/feedback_ground_email_draft_in_verbatim_source_not_paraphrase.md`.
 
-1. **Pull the verbatim inbound.** If not already in context, fetch it: `tools/gmail_fetch.py --all-mail --search "<query>" --body`. Read it line by line — do NOT work from a summary.
+1. **Pull the verbatim inbound.** If not already in context, fetch it: `tools/gmail_fetch.py --all-mail --search "<query>" --body`. Read it line by line — do NOT work from a summary. **`<query>` must be a real non-empty query** (`from:`, `subject:`, a name). An empty one exits 2 by design since 2026-08-19: there is no empty-query listing mode, and before the guard it fell through to a SYNC that wrote to `inbox/`. To browse rather than search, use `--backfill --label-id <ID> --max N --dry-run`.
 2. **Build a claim→source map (working notes, not the email).** For every substantive sentence the draft will make about the sender's message — per entity/role — quote the verbatim line it grounds in. Any claim with no source line is invented: cut it, recast it, or ask Nick.
 3. **Cross-assignment check:** verify each attribute is attached to the entity the sender attached it to.
 4. **Mirror their framing where agreeing:** echo the sender's own structure/words where Nick is agreeing with their read.
@@ -313,41 +313,24 @@ If the email type doesn't match any category above:
 
 ### Step 5b: Substance-Provenance Audit (mandatory)
 
-Before the quality check, label the provenance of every substantive sentence in the draft. This is the gate that catches Claude-generated self-positioning content before it reaches Nick's voice as a fait accompli.
+**Before this step, apply `framework/writing-discipline.md`.** It is canonical for the four provenance labels (`N` / `C` / `I` / `G`), what counts as a substantive sentence, the audit output format, and the invariant that `G` is blocked in any slot carrying a claim about who Nick is, what he brings, what he wants, or what he has done. **This step adds only the slot table below.** Do not restate the labels here; if they need to change, change them there.
 
-**Provenance labels:**
-- **N** — Nick-dictated *this session* (the spine Nick just provided)
-- **C** — Nick-corpus (verbatim or near-verbatim phrase from `voice-reference.md`, prior `data/reflections/`, sent emails, or `data/professional-identity.md` / `data/goals.md`)
-- **I** — Claude-inferred from cited research (research dossier, public bio, role posting, public LinkedIn/company source — must be specifically citable)
-- **G** — Claude-generated (no source — synthesized from general training / pattern-matching)
+Label the provenance of every substantive sentence before the quality check.
 
-**What counts as a "substantive sentence":** opener / ask / value-prop / bridge sentence / story beat / closing CTA. Logistical sentences ("Wednesday at 2pm works," "I'll send the deck Friday") are not substantive; skip them.
+**Substantive sentences in an email:** opener / ask / value-prop / bridge sentence / story beat / closing CTA. Logistical sentences ("Wednesday at 2pm works," "I'll send the deck Friday") are not substantive; skip them.
 
-**Audit rule:**
+**Audit rule (slot table for this artifact):**
 
 | Slot | G allowed? | If G found |
 |---|---|---|
 | Self-positioning (who Nick is, what he brings, what he wants) | **No** | STOP. Ask Nick to dictate that slot. |
 | Bridge sentence (linking recipient's situation to Nick's offer) | **No** | STOP. Ask Nick for the link or extract from corpus. |
 | Story / anecdote | **No** | STOP. Ask Nick for the actual story or pull from prior sent corpus. |
-| Opener referencing recipient's work / product / strategy | **No** | STOP. Either it's `I` with a citable source, or it's speculation — replace with corpus-grounded line. |
+| Opener referencing recipient's work / product / strategy | **No** | STOP. Either it's `I` with a citable source, or it's speculation - replace with corpus-grounded line. |
 | Logistics / scheduling / standard pleasantries | Yes | Proceed. |
 | Sign-off | Yes | Proceed. |
 
-For every **I** sentence, name the source inline in working notes (`[Source: <path or URL>]`) — does not have to appear in the final email, but must be traceable before Step 6.
-
-**Output of this step** (in working notes, not the email):
-
-```
-Substance audit:
-- Opener: "..." → C (voice-reference.md Exemplar 3)
-- Value-prop: "..." → N (Nick dictated 5/21 17:10)
-- Bridge: "..." → G ❌ STOP — need Nick to provide
-```
-
-If any `G` blocks fire, return to Step 4b (dictation mode) and request the spine for those slots. Do not proceed to Step 6 with `G` in any blocked slot.
-
-**Why this exists:** Voice corruption in self-positioning content is the highest-frequency failure mode of email drafting (~10 separate behavioral rules in memory all instance this defect — dictation_first, dictate_then_polish, dev_jargon_to_ceo, dont_import_interviewer_frames, no_false_voice_provenance, voice_anchor_pass_at_iteration_3, voice_asset_must_be_generative_spine, anchor_review_lenses, no_speculative_framing, address_wife). This step collapses them into one structural gate. Origin: 2026-05-21 memory audit.
+If any `G` blocks fire, return to Step 4b (dictation mode) and request the spine for those slots. Do not proceed to Step 6 with `G` in any blocked slot. Trace every `I` to its source before Step 6.
 
 ### Step 6: Quality Check
 

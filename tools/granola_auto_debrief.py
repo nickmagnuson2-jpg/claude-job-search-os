@@ -43,6 +43,48 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 DEFAULT_REPO_ROOT = SCRIPT_DIR.parent
 
+# Meeting classification moved to tools/meeting_vocab.py on 2026-08-19 so the two
+# orchestrators (this launchd job and granola_cli.py) share one module instead of the
+# CLI importing rules out of a sibling orchestrator. Re-exported here so every existing
+# importer -- including `from tools.granola_auto_debrief import classify_meeting` in
+# granola_cli.py and the test suite -- keeps working unchanged.
+try:
+    from meeting_vocab import (  # noqa: F401
+        THERAPY_TITLE_KEYWORDS,
+        NICK_IDENTIFIERS,
+        DEFAULT_THERAPY_CONFIG,
+        DEFAULT_OWNER_IDENTITY_CONFIG,
+        DEFAULT_PERSONAL_PROJECTS_CONFIG,
+        _load_owner_identifiers,
+        load_therapy_classifier_config,
+        load_personal_projects_config,
+        match_personal_project,
+        _speaker_label,
+        _transcript_text,
+        _is_nick,
+        _attendee_is_therapist,
+        _transcript_names_therapist,
+        classify_meeting,
+    )
+except ModuleNotFoundError:  # imported as a `tools.` package module
+    from tools.meeting_vocab import (  # noqa: F401
+        THERAPY_TITLE_KEYWORDS,
+        NICK_IDENTIFIERS,
+        DEFAULT_THERAPY_CONFIG,
+        DEFAULT_OWNER_IDENTITY_CONFIG,
+        DEFAULT_PERSONAL_PROJECTS_CONFIG,
+        _load_owner_identifiers,
+        load_therapy_classifier_config,
+        load_personal_projects_config,
+        match_personal_project,
+        _speaker_label,
+        _transcript_text,
+        _is_nick,
+        _attendee_is_therapist,
+        _transcript_names_therapist,
+        classify_meeting,
+    )
+
 # Import sibling modules
 sys.path.insert(0, str(DEFAULT_REPO_ROOT))
 from tools.granola_fetch import (
@@ -63,9 +105,6 @@ import re
 # "session with" was removed 2026-08-07: as a bare substring it sealed ordinary
 # business calls ("Strategy session with the contractor") into the therapy vault,
 # where they vanish from every surface with only a line in an unread log.
-THERAPY_TITLE_KEYWORDS = (
-    "therapy", "couples", "psychiatrist", "psychotherapy", "counseling",
-)
 
 # Nick's own handle — used to find EXTERNAL attendees. The NAME is fork-safe public
 # identity; a live email ADDRESS is not (in a public repo it is a scrape surface, and
@@ -73,30 +112,12 @@ THERAPY_TITLE_KEYWORDS = (
 # identities below). Additional identifiers — email addresses, alternate handles — load
 # from the gitignored tools/.owner-identity.txt, one per line, '#' comments allowed.
 # With no config file present the name alone is used, so forks work unchanged.
-DEFAULT_OWNER_IDENTITY_CONFIG = DEFAULT_REPO_ROOT / "tools" / ".owner-identity.txt"
 
 
-def _load_owner_identifiers(config_path=None) -> tuple:
-    """Owner identifiers: the public name plus any gitignored private ones.
-
-    Best-effort: a missing or unreadable config degrades to the name only.
-    """
-    ids = ["nick magnuson"]
-    path = config_path or DEFAULT_OWNER_IDENTITY_CONFIG
-    try:
-        for line in Path(path).read_text(encoding="utf-8").splitlines():
-            tok = line.strip().lower()
-            if tok and not tok.startswith("#"):
-                ids.append(tok)
-    except OSError:
-        pass
-    return tuple(ids)
 
 
-NICK_IDENTIFIERS = _load_owner_identifiers()
 
 # Gitignored allowlist of real therapist identities.
-DEFAULT_THERAPY_CONFIG = DEFAULT_REPO_ROOT / "tools" / ".therapy-classifier.txt"
 
 VOICE_CORPUS_DIR = DEFAULT_REPO_ROOT / "data/voice-corpus/granola"
 
@@ -129,7 +150,6 @@ def personal_inbox() -> Path:
     return vault_paths.personal_inbox()
 
 
-DEFAULT_PERSONAL_PROJECTS_CONFIG = DEFAULT_REPO_ROOT / "tools" / ".personal-projects.txt"
 
 # Durable review surface for meetings the collector refused to route. Previously
 # these were printed to stderr only, which lands in a gitignored launchd log that
@@ -139,89 +159,8 @@ DEFAULT_PERSONAL_PROJECTS_CONFIG = DEFAULT_REPO_ROOT / "tools" / ".personal-proj
 PENDING_CLASSIFICATION = DEFAULT_REPO_ROOT / "tools" / ".granola-pending-classification.json"
 
 
-def load_therapy_classifier_config(path=None) -> dict:
-    """Load the gitignored therapist allowlist.
-
-    Format (one directive per line; '#' comments and blanks ignored):
-      attendee: <name-or-email>   matched against meeting attendees (virtual sessions)
-      name: <full name>           matched against transcript text (in-person sessions)
-
-    Returns {'attendees': set[str lowercased], 'names': list[str]}.
-    A missing file yields an empty config. The fail-closed default still protects
-    safety on its own: an attendee-less, signal-less meeting is 'unknown' regardless.
-    """
-    path = Path(path) if path else DEFAULT_THERAPY_CONFIG
-    attendees: set = set()
-    names: list = []
-    if not path.is_file():
-        return {"attendees": attendees, "names": names}
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or ":" not in line:
-            continue
-        key, val = line.split(":", 1)
-        key, val = key.strip().lower(), val.strip()
-        if not val:
-            continue
-        if key == "attendee":
-            attendees.add(val.lower())
-        elif key == "name":
-            names.append(val)
-    return {"attendees": attendees, "names": names}
 
 
-def load_personal_projects_config(path=None) -> dict:
-    """Load the gitignored personal-OS project allowlist.
-
-    Format (one directive per line; '#' comments and blanks ignored). Directives
-    attach to the most recent 'project:' header, so a file reads as blocks:
-
-      project: <project-slug>
-      attendee: <email-or-name>    matched against meeting attendees
-      name: <full name>            matched against transcript text (in-person)
-      title: <keyword>             matched as a substring of the meeting title
-
-    Returns {'rules': [ {project, attendees:set, names:list, titles:list}, ... ]}
-    in file order; the first matching rule wins. A missing file yields no rules,
-    which preserves the pre-existing routing exactly.
-    """
-    path = Path(path) if path else DEFAULT_PERSONAL_PROJECTS_CONFIG
-    rules: list = []
-    if not path.is_file():
-        return {"rules": rules}
-    current = None
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or ":" not in line:
-            continue
-        key, val = line.split(":", 1)
-        key, val = key.strip().lower(), val.strip()
-        if not val:
-            continue
-        if key == "project":
-            current = {"project": val, "attendees": set(), "names": [], "titles": [],
-                       "vault": None}
-            rules.append(current)
-            continue
-        if key == "vault" and current is not None:
-            # Destination seam. Personal-OS is the default, but work meetings are
-            # not personal-OS under the synthesis-destination test, so a project
-            # can name its own vault root and the collector follows it. Set this
-            # per project rather than hardcoding, so standing up a work vault is a
-            # config line rather than a migration.
-            current["vault"] = str(Path(val).expanduser())
-            continue
-        # Directives before any 'project:' header have no home — ignore rather
-        # than crash, so a malformed allowlist degrades instead of killing cron.
-        if current is None:
-            continue
-        if key == "attendee":
-            current["attendees"].add(val.lower())
-        elif key == "name":
-            current["names"].append(val)
-        elif key == "title":
-            current["titles"].append(val.lower())
-    return {"rules": rules}
 
 
 def vault_for_project(project: str, pconfig: dict = None) -> Path:
@@ -237,177 +176,16 @@ def vault_for_project(project: str, pconfig: dict = None) -> Path:
     return personal_vault()
 
 
-def match_personal_project(meeting: dict, pconfig: dict = None):
-    """Return the personal-OS project slug this meeting belongs to, or None.
-
-    Checks, per rule in file order: attendee identity, then a title keyword,
-    then (only when the meeting has no attendees, the in-person case) a name in
-    the transcript text. The transcript scan is deliberately scoped the same way
-    the therapy one is: a call that HAS attendees is never routed on a passing
-    mention of someone's name.
-    """
-    if not pconfig:
-        return None
-    title = str(meeting.get("title", "")).lower()
-    attendees = [a for a in (meeting.get("attendees") or []) if isinstance(a, dict)]
-    text = _transcript_text(meeting.get("transcript", "")).lower()
-
-    for rule in pconfig.get("rules", []):
-        for a in attendees:
-            name = str(a.get("name", "")).lower()
-            email = str(a.get("email", "")).lower()
-            for ident in rule["attendees"]:
-                if ident and (ident == email or ident == name or ident in name):
-                    return rule["project"]
-        if any(kw and kw in title for kw in rule["titles"]):
-            return rule["project"]
-        if not attendees:
-            for full in rule["names"]:
-                full_low = full.lower().strip()
-                if full_low and full_low in text:
-                    return rule["project"]
-    return None
 
 
-def _transcript_text(transcript) -> str:
-    """Normalize a transcript (str or list of segment dicts) to plain text.
-
-    Speaker labels are included — in a Granola transcript the speaker label may BE
-    the therapist's name, which is exactly the in-person signal we want to catch.
-    """
-    if isinstance(transcript, list):
-        parts = []
-        for seg in transcript:
-            if isinstance(seg, dict):
-                # "Speaker: text", one per line. The colon and the line break are
-                # load-bearing: speaker-position detection (see
-                # _transcript_names_therapist) needs to tell a speaker label from a
-                # passing mention, and a space-joined blob erases that distinction.
-                parts.append(f"{_speaker_label(seg)}: {seg.get('text', '')}")
-            else:
-                parts.append(str(seg))
-        return "\n".join(parts)
-    return transcript or ""
 
 
-def _is_nick(attendee: dict) -> bool:
-    name = str(attendee.get("name", "")).lower()
-    email = str(attendee.get("email", "")).lower()
-    return any(tok in name or tok in email for tok in NICK_IDENTIFIERS)
 
 
-def _attendee_is_therapist(attendee: dict, config: dict) -> bool:
-    name = str(attendee.get("name", "")).lower()
-    email = str(attendee.get("email", "")).lower()
-    for ident in config.get("attendees", set()):
-        if ident and (ident == email or ident == name or ident in name):
-            return True
-    return False
 
 
-def _transcript_names_therapist(text: str, config: dict) -> bool:
-    """Guard: does the transcript indicate a therapist was actually IN this session?
-
-    Two tiers of evidence, because the two have very different false-positive rates:
-
-    - **Full name anywhere** ("Inperson Therapist") — strong. Coincidence is unlikely,
-      so a passing mention counts.
-    - **First name alone** — weak, and only counts at a SPEAKER-LABEL position
-      (`Firstname:` at the start of a line). A first name is common enough that a
-      passing mention proves nothing: on 2026-08-07 a therapist's first name appeared
-      as an ordinary third party in a side-business transcript, and bare first-name
-      matching sealed the entire business call into the therapy vault. In a real
-      session the therapist speaks, so requiring the speaker position keeps the
-      signal and drops the coincidences.
-    """
-    low = text.lower()
-    for full in config.get("names", []):
-        full_low = full.lower().strip()
-        if not full_low:
-            continue
-        if full_low in low:
-            return True
-        first = full_low.split()[0]
-        # Speaker label: the name followed by a colon, at the start of a line OR
-        # after a sentence break (Granola sometimes returns turns run together on
-        # one line: "Me: I wanted to talk about that. Inperson: tell me more.").
-        if re.search(r"(?mi)(?:^|[.!?]\s+)\s*" + re.escape(first) + r"[^:\n]{0,20}:", text):
-            return True
-    return False
 
 
-def classify_meeting(meeting: dict, config: dict = None, pconfig: dict = None) -> str:
-    """Four-way, fail-closed classification of a Granola meeting.
-
-    Returns 'therapy' | 'personal' | 'networking' | 'unknown':
-      therapy    -> seal to the personal vault, never inbox
-      personal   -> personal-OS: personal vault corpus + personal inbox
-      networking -> job-search corpus + job-search inbox
-      unknown    -> fail-closed: persist nowhere, flag for manual /granola-pull
-
-    Signals, in priority order:
-      1. an attendee matches the therapist allowlist             -> therapy
-      2. the title matches a generic therapy keyword             -> therapy
-      3. (no-attendee branch only) the transcript names a therapist -> therapy
-      4. the meeting matches a personal-OS project rule          -> personal
-      5. an external (non-Nick, non-therapist) attendee          -> networking
-      6. otherwise                                               -> unknown
-
-    Therapy always outranks personal: a therapy signal can never be downgraded
-    by a project keyword. Personal outranks networking so a side-business call
-    with a real attendee stops landing in the job-search inbox.
-
-    `pconfig` defaults to no rules rather than loading from disk, so callers that
-    predate project routing keep their exact previous behavior.
-    """
-    if config is None:
-        config = load_therapy_classifier_config()
-    if pconfig is None:
-        pconfig = {"rules": []}
-
-    title = str(meeting.get("title", "")).lower()
-    attendees = [a for a in (meeting.get("attendees") or []) if isinstance(a, dict)]
-    text = _transcript_text(meeting.get("transcript", ""))
-
-    # 1. Therapist on the attendee list (the virtual-session pattern: attendees populate).
-    if any(_attendee_is_therapist(a, config) for a in attendees):
-        return "therapy"
-
-    # 2. Generic therapy keyword in the title.
-    if any(kw in title for kw in THERAPY_TITLE_KEYWORDS):
-        return "therapy"
-
-    # An EXTERNAL party (not Nick, not a known therapist) is what makes a meeting
-    # verifiably a real multi-party call. Granola populates attendees from the
-    # calendar, so an in-person session has either no attendees at all OR just
-    # Nick (a self-created event). Both mean "nobody external is on record."
-    external = [a for a in attendees if not _is_nick(a) and not _attendee_is_therapist(a, config)]
-
-    # 3. No external attendee on record: scan the transcript for a therapist name.
-    #    Gated on `external`, NOT on `attendees`. Gating on `attendees` skipped this
-    #    scan whenever Granola listed Nick as sole attendee, so a solo-attendee
-    #    therapy session fell through to the project matcher and could be routed
-    #    'personal' with the therapist's name sitting in the transcript. Before
-    #    project routing existed that case merely fell to 'unknown' (safe); adding
-    #    step 4 turned a fail-closed hole into a sealed-material leak.
-    #    Confined to the no-external case so a real multi-party call can never be
-    #    mis-sealed by a passing mention of someone's name.
-    if not external and _transcript_names_therapist(text, config):
-        return "therapy"
-
-    # 4. Personal-OS project match beats the networking default, and rescues the
-    #    in-person case that would otherwise fail closed and be dropped entirely
-    #    (the 2026-08-06 in-person regression). Reached only after every therapy
-    #    signal above has been given its chance.
-    if match_personal_project(meeting, pconfig):
-        return "personal"
-
-    # 5. An external party means a real job-search-side call.
-    if external:
-        return "networking"
-
-    # 6. No external party, no therapy signal, no project match -> fail closed.
-    return "unknown"
 
 
 def slugify(text: str) -> str:
@@ -418,28 +196,6 @@ def slugify(text: str) -> str:
     return s[:60] or "untitled"
 
 
-def _speaker_label(seg: dict) -> str:
-    """Human-readable speaker label for one transcript segment.
-
-    Granola's REST transcript sometimes returns `speaker` as a plain string
-    ("Me", "Speaker A") and sometimes as a dict like
-    {'source': 'microphone', 'diarization_label': 'Speaker A'}. The old code
-    interpolated the segment's `speaker` value directly, so the dict form was
-    stringified into every single line of the saved transcript:
-
-        {'source': 'microphone', 'diarization_label': 'Speaker A'}: And then...
-
-    That is unreadable, inflates the file by ~25%, and corrupts the voice corpus
-    (the tier that exists precisely to be a clean record of what was said).
-    Prefer the diarization label, then a plain-string speaker, then 'Speaker'.
-    """
-    sp = seg.get("speaker")
-    if isinstance(sp, dict):
-        label = sp.get("diarization_label") or sp.get("label") or sp.get("source")
-        return str(label) if label else "Speaker"
-    if sp:
-        return str(sp)
-    return "Speaker"
 
 
 def resolve_destination(meeting: dict, meeting_type: str, project: str = None,
@@ -562,15 +318,18 @@ def persist_via_granola_save(meeting: dict, summary: str, private_notes: str,
     # Vault-existence guard. granola_save.py mkdirs its parent, so an unmounted or
     # renamed vault would silently grow a shadow tree that Obsidian and every skill
     # ignore — transcripts landing where nothing will ever look. Fail closed instead.
-    if type_ != "networking":
-        # Use the resolved vault root, never parent-walking from output_path: the two
-        # destinations sit at different depths (<vault>/data/therapy/ vs
-        # <vault>/data/voice-corpus/granola/), so a fixed number of .parent hops is
-        # right for one and wrong for the other. It previously pointed at
-        # <vault>/data for personal calls, which still failed closed by luck but
-        # named the wrong path in the error.
+    # Gate on the DESTINATION, not the type. Only therapy and personal land in the
+    # vault; recruiter/networking/general land in the repo at VOICE_CORPUS_DIR, and
+    # `personal` is remapped to `general` inside resolve_destination, so any
+    # type-keyed test is both wrong and defeatable by that remap. Keying on the
+    # resolved path is immune to both. Origin 2026-08-20: `granola_cli.py pull`
+    # crashed with AttributeError on every recruiter transcript, because the old
+    # `type_ != "networking"` test sent it down the vault branch and `vault_root`
+    # is None whenever the personal vault is unconfigured (which vault_paths
+    # deliberately allows, failing loud rather than guessing).
+    if not str(output_path).startswith(str(VOICE_CORPUS_DIR)):
         vault_marker = vault_therapy_dir().parent.parent if type_ == "therapy" else vault_root
-        if not vault_marker.is_dir():
+        if vault_marker is None or not vault_marker.is_dir():
             print(f"  [error] vault not found at {vault_marker} — refusing to create it. "
                   f"'{title}' NOT persisted.", file=sys.stderr)
             return {"status": "error", "reason": "vault-missing", "expected_vault": str(vault_marker)}

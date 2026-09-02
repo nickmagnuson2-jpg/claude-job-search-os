@@ -202,3 +202,68 @@ def test_wrong_directory_still_blocks():
         (real / "doc.md").write_text("x", encoding="utf-8")
         r = _run("Saved to coaching/doc.md for later.", td)
         assert r.returncode == 2
+
+
+# --- Regression: claim verbs embedded inside filenames (2026-09-01, 3rd fire) -------
+# CLAIM_RE had no word boundaries, so a verb matched INSIDE an identifier. Because the
+# path window starts at the verb's end, the extracted token was the tail of the word that
+# contained it, producing a path that appeared nowhere in the message and existed nowhere
+# on disk — while the file it was really about had been written correctly.
+
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.insert(0, str(_Path(__file__).resolve().parents[2] / "tools"))
+import check_save_claims as _csc  # noqa: E402
+
+
+class TestClaimVerbEmbeddedInFilename:
+    def test_rendered_inside_filename_yields_no_path(self):
+        got = _csc.extract_claimed_paths(
+            "- `reference_recovering_js_rendered_share_links.md`")
+        assert got == [], f"phantom path from embedded 'rendered': {got!r}"
+
+    def test_created_inside_filename_yields_no_path(self):
+        got = _csc.extract_claimed_paths(
+            "- `feedback_an_artifact_created_by_what_you_are_verifying_is_not_evidence.md`")
+        assert got == [], f"phantom path from embedded 'created': {got!r}"
+
+    def test_no_extracted_token_ever_starts_with_a_separator(self):
+        """The truncation signature: a token beginning with _ , - or . is a tail,
+        never a real filename anyone would write."""
+        for text in (
+            "- `reference_recovering_js_rendered_share_links.md`",
+            "- `feedback_an_artifact_created_by_what_you_are_verifying.md`",
+            "- `notes_saved_by_hand.md`",
+            "- `report_written_up.md`",
+            "- `x_added_later.md`",
+            "- `y_copied_over.md`",
+            "- `z_placed_here.md`",
+            "- `w_persisted_state.md`",
+            "- `v_wrote_up.md`",
+        ):
+            for tok in _csc.extract_claimed_paths(text):
+                assert not tok.startswith(("_", "-", ".")), \
+                    f"truncated token {tok!r} from {text!r}"
+
+    def test_every_claim_verb_is_boundary_anchored(self):
+        """Each verb in the vocabulary, embedded in an identifier, must not match."""
+        for verb in ("saved", "written", "wrote", "created", "persisted",
+                     "rendered", "copied", "placed", "added"):
+            text = f"- `prefix_{verb}_suffix.md`"
+            assert _csc.extract_claimed_paths(text) == [], \
+                f"verb {verb!r} matched inside an identifier"
+
+    def test_real_claims_are_still_detected(self):
+        """The fix must not blind the hook to genuine claims."""
+        for text, expect in (
+            ("I wrote tools/real_file.py just now.", ["tools/real_file.py"]),
+            ("Saved data/notes.md for you.", ["data/notes.md"]),
+            ("Created output/x/report.md.", ["output/x/report.md"]),
+            ("Persisted output/y/state.json already.", ["output/y/state.json"]),
+        ):
+            assert _csc.extract_claimed_paths(text) == expect, text
+
+    def test_verb_adjacent_to_punctuation_still_matches(self):
+        """\\b must not break normal prose where the verb abuts punctuation."""
+        assert _csc.extract_claimed_paths(
+            '(Wrote) tools/x.py.') == ["tools/x.py"]

@@ -65,6 +65,46 @@ except ImportError:
 
 from inbox_lock import file_lock  # noqa: E402  (the existing advisory-lock primitive)
 
+REPO = Path(__file__).resolve().parents[1]
+
+# THE CANONICAL FRAME LOCATION. `framework/analysis-method.md` declares the State layer
+# as `output/<slug>/frame.yaml`, one file per engagement. Until 2026-08-31 nothing
+# enforced that, and THREE conventions existed in the tree simultaneously:
+# `frames/<slug>/frame.yaml` (the only real precedent), `output/<slug>/frame.yaml` (the
+# doc), and `output/<target-company>/casework/frame-<date>-reconstructed.yaml`. Nothing globs for
+# frames either, so there is no enumeration to catch a stray one -- a frame written to
+# the wrong place is silently lost, and the compounding loop has no population.
+#
+# Enforcement anchors to the REPO. A path inside it must be canonical; a path outside it
+# is not what the convention governs and is left alone (this is also what keeps the test
+# suite, which writes to pytest tmp dirs, able to run at all).
+CANONICAL_DIR = "output"
+SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,39}$")
+
+
+def enforce_canonical_location(frame_path: Path) -> None:
+    """Refuse an in-repo frame that is not at output/<slug>/frame.yaml.
+
+    Refusing without naming the wanted path just relocates the guess, so the message
+    carries the exact canonical path for the slug the caller implied.
+    """
+    resolved = frame_path.resolve()
+    try:
+        rel = resolved.relative_to(REPO)
+    except ValueError:
+        return  # outside the repo: not governed
+    parts = rel.parts
+    ok = (len(parts) == 3 and parts[0] == CANONICAL_DIR
+          and SLUG_RE.match(parts[1]) and parts[2] == "frame.yaml")
+    if ok:
+        return
+    slug = parts[1] if len(parts) >= 2 and SLUG_RE.match(parts[1]) else "<slug>"
+    die(f"{rel} is not the canonical frame location. Inside this repo a frame MUST live "
+        f"at {CANONICAL_DIR}/<slug>/frame.yaml (one file, whole engagement, per "
+        f"framework/analysis-method.md). Use {CANONICAL_DIR}/{slug}/frame.yaml.",
+        canonical=f"{CANONICAL_DIR}/{slug}/frame.yaml", given=str(rel))
+
+
 CHECKER = Path(__file__).resolve().parent / "check_frame_integrity.py"
 SCHEMA = Path(__file__).resolve().parents[1] / "framework" / "frame-schema.yaml"
 
@@ -433,6 +473,17 @@ def init_frame(frame_path: Path, engagement: str, today: str) -> dict:
     }
     body = yaml.safe_dump(skeleton, sort_keys=False, allow_unicode=True)
 
+    # init is the FIRST command a new engagement runs, so its parent directory is
+    # normally absent -- `frames/<new-slug>/` does not exist until something makes it.
+    # Without this, the validation temp-file write below died with an UNCAUGHT
+    # FileNotFoundError: no die(), no structured JSON, just a traceback, from the tool
+    # that is the SOLE sanctioned mutation path. It survived because every test in
+    # test_frame_write.py uses pytest's `tmp_path`, which always exists, so the suite
+    # was structurally blind to init's own precondition. Fixed 2026-08-31.
+    # `exist_ok=True` because re-running init on an existing directory is legitimate;
+    # the O_EXCL below is what refuses to overwrite an existing FRAME.
+    frame_path.parent.mkdir(parents=True, exist_ok=True)
+
     tmp = frame_path.parent / f".{frame_path.name}.init"
     tmp.write_text(body, encoding="utf-8")
     try:
@@ -651,6 +702,12 @@ def main(argv=None):
     p_s.add_argument("--frame", required=True)
 
     a = ap.parse_args(argv)
+
+    # Location gate: runs for EVERY subcommand that names a frame, before any read or
+    # write, so a non-canonical path cannot be created, mutated, or even shown.
+    if getattr(a, "frame", None):
+        enforce_canonical_location(Path(a.frame))
+
 
     if a.cmd == "init":
         out(init_frame(Path(a.frame), a.engagement, a.today))

@@ -1,6 +1,6 @@
 ---
 name: cold-outreach
-description: Draft personalized cold emails and LinkedIn messages to new contacts — research-informed, tone-matched, with auto-logging
+description: Research a contact and produce an Outreach Brief (why-now, sourced proofs, positioning, hard don'ts) for Nick to write in his own voice — escalates to a full drafted email/LinkedIn message only on explicit request. Auto-logs either way.
 argument-hint: <name> <company> [role] [channel:email|linkedin] [context]
 user-invocable: true
 allowed-tools: Read(*), Glob(data/*), Grep(data/*), Edit(data/networking.md), Write(data/networking.md), Write(data/job-todos.md), Write(tools/.pending-draft.txt), Write(tools/.pending-draft.source), Edit(data/outreach-log.md), Write(data/outreach-log.md), Write(output/**), Edit(framework/style-guidelines.md), Write(memory/lessons.md), mcp__exa__web_search_exa, mcp__exa__web_fetch_exa, WebSearch, WebFetch
@@ -8,7 +8,18 @@ allowed-tools: Read(*), Glob(data/*), Grep(data/*), Edit(data/networking.md), Wr
 
 # Cold Outreach — First-Contact Messages
 
-Draft personalized cold emails and LinkedIn messages to new contacts. Loads sender context, researches the recipient, selects the best framework, and drafts a message that passes the three-question quality gate. Auto-logs the contact and creates a follow-up to-do.
+> ## ⚠️ DEFAULT CHANGED 2026-08-26 — READ BEFORE RUNNING
+>
+> **This skill no longer drafts the message by default. It produces an Outreach Brief and stops.**
+> Nick writes the prose. See **Step 5b: Outreach Brief Mode**, which is now ON unless he explicitly
+> asks for a draft ("put a draft together" / "draft it for me" / "write it"). **"Send it," "let's go,"
+> and time pressure are NOT that ask** — urgency is precisely when the old default used to win.
+>
+> Steps 6-8 (drafting, quality gate, `.pending-draft.txt`, `open_draft.py`) run **only** on that
+> explicit escalation. Research, verification, positioning and logging are all still automated; only
+> the sentences are his. Origin: `memory/feedback_give_nick_beats_not_a_polished_script.md`, 4th fire.
+
+Research a recipient and hand Nick everything he needs to write a first-contact message in his own voice: sender context, verified recipient facts, the why-now, sourced proofs, positioning, and the hard don'ts. On explicit request, escalate to a full drafted message that passes the three-question quality gate. Auto-logs the contact and creates a follow-up to-do either way.
 
 ## Arguments
 
@@ -138,9 +149,43 @@ Use the waterfall personalization logic from `framework/outreach-guide.md`:
 
 Select the framework matching the highest-priority signal available. Note the signal and framework choice for the output.
 
-### Step 5b: Voice-Pure Dictation Mode (when Nick provides a guide)
+### Step 5b: Outreach Brief Mode — **THE DEFAULT for cold outreach** (flipped 2026-08-26)
 
-**Trigger:** Nick passes a voice-pure dictation guide via argument or earlier in the conversation ("use this as the spine: '...'"), OR signals he'll author the substance himself ("give me the spine," "I want to put it in my words," "I'll write it myself").
+> **STOP. For cold outreach this mode is ON unless Nick asks for a draft.** Do not fall through to
+> Steps 6-8. Produce the Outreach Brief below, hand it to Nick, and stop. He writes the prose.
+
+**Why this is the default and not a flag** (Nick, 2026-08-26): *"how can I just get the beats to do the
+research on the company, on the role, on what I would bring, how I should position myself, and then I
+do the outreach? We automate everything around it so that it's still getting my voice."* An opt-in rule
+requires him to remember to invoke it at the exact moment he is moving fast, which is the moment he
+reaches for the finished draft instead. **The 2026-08-25 cold email to a target company is the worked example: it ran
+through this skill, it worked (a same-day reply and a call inside a day), and he still wanted the
+prose to have been his.** A rule that only fires when he remembers to ask loses to urgency. Per
+`memory/feedback_give_nick_beats_not_a_polished_script.md` (4th fire) and his Tier-1 authenticity
+non-negotiable. It is NOT grounded in a recipient objection — the one recipient who noticed said the
+opposite (see that file's 2026-08-26 supplement before citing anyone).
+
+**Escalate to a full draft ONLY on an explicit ask** — "put a draft together," "draft it for me,"
+"write it." Then run Steps 6-8 as normal. "Send it," "let's go," or time pressure are NOT that ask.
+
+**The Outreach Brief — deliberately stops where the writing starts.** No subject line, no opener, no
+sentences to edit. Anything Nick could paste is a violation of this step.
+
+1. **Company** — what they do, stage, and **the one thing that changed recently**. This is the why-now
+   and it is the beat most often missing (the 2026-08-25 email had the funding round, the launch press coverage
+   and the posting date all available and used none of them).
+2. **Role** — the verbatim JD lines that matter, both shapes if it carries two, and the open screens.
+3. **Recipient** — verified facts only. Flag every Wispr-dictated proper noun as unconfirmed.
+4. **What Nick would bring** — 2-3 candidate proofs, **each with its source line** (`data/projects/*.md`,
+   a transcript, an archive). A proof with no source line does not go in the brief.
+5. **Positioning** — the thesis in one sentence, and which prong carries it.
+6. **The hook** — a real, cited research fact. The company's own words, never a headline alone.
+7. **Hard don'ts** — the falsifiable traps for this specific recipient (bad-overlap dates, claims Nick
+   cannot make, a framing the company has moved off).
+
+Then stop. Nick dictates; the mechanical-diff rule below governs cleanup of what he dictates.
+
+**Trigger for the dictation-cleanup rule below:** Nick passes a voice-pure dictation guide via argument or earlier in the conversation ("use this as the spine: '...'"), OR signals he'll author the substance himself ("give me the spine," "I want to put it in my words," "I'll write it myself"), OR — now the common path — dictates his prose after receiving the Brief above.
 
 **Rule:** The polished output's diff from the guide must be **mechanical only** — grammar, punctuation, Wispr-homophone silent-correct, sentence-boundary cleanup. Do NOT add new sentences, qualitative adjectives ("solid concept," "really cool"), feature-list descriptors when products are named, volume/scale estimates Nick didn't include, a second ask, or URLs to a company's own docs when the recipient works there. Do NOT reorganize structure beyond the dictation. If something seems missing, pause and ask Nick before adding.
 
@@ -151,6 +196,12 @@ Select the framework matching the highest-priority signal available. Note the si
 See `memory/feedback_voice_pure_diff_minimal.md`, `memory/feedback_minimize_polish_on_voice_pure_dictation.md`, `memory/feedback_no_product_docs_to_employees.md`, `memory/feedback_give_nick_beats_not_a_polished_script.md`.
 
 ### Step 6: Draft the Message
+
+**SPINE FIRST.** Before drafting, write one sentence answering *why is Nick going after this class
+of seat?* — from `data/goals.md`, in plain speech, not taxonomy. That sentence is the email's spine;
+the Step 4 research hook is seasoning and must never be the spine. **Step 7 row 4 will demand this
+sentence back, quoted verbatim from the draft**, so a draft written without it fails the gate rather
+than sailing through it. Carry all three pillars (Step 7's pillar table enumerates them).
 
 **Generate FROM the matched exemplar, not from the structure below.** The framework (Step 5) sets argument order; the structure below sets length and what each part must accomplish. Neither supplies voice — the `voice-reference.md` exemplar does. Adapt the exemplar to this recipient; any quoted text below is a spec of intent, never a sentence to paste or lightly reword. If the draft could have been sent to any contact at any company, the exemplar didn't drive it — restart from the exemplar, do not patch.
 
@@ -189,57 +240,72 @@ Follow channel constraints from `framework/outreach-guide.md`:
 
 ### Step 6b: Substance-Provenance Audit (mandatory)
 
-Before the quality gate, label the provenance of every substantive sentence in the draft. This is the gate that catches Claude-generated self-positioning content before it reaches Nick's voice as a fait accompli — most acute in cold outreach because the recipient has no prior context to fact-check Claude's framing.
+**Before this step, apply `framework/writing-discipline.md`.** It is canonical for the four provenance labels (`N` / `C` / `I` / `G`), what counts as a substantive sentence, the audit output format, and the invariant that `G` is blocked in any slot carrying a claim about who Nick is, what he brings, what he wants, or what he has done. **This step adds only the slot table below.** Do not restate the labels here; if they need to change, change them there.
 
-**Provenance labels:**
-- **N** — Nick-dictated *this session* (the spine Nick just provided)
-- **C** — Nick-corpus (verbatim or near-verbatim phrase from `voice-reference.md`, prior `data/reflections/`, sent emails, or `data/professional-identity.md` / `data/goals.md`)
-- **I** — Claude-inferred from cited research (research dossier, public bio, role posting, public LinkedIn/company source — must be specifically citable)
-- **G** — Claude-generated (no source — synthesized from general training / pattern-matching)
+Label the provenance of every substantive sentence before the quality gate. Most acute in cold outreach because the recipient has no prior context to fact-check Claude's framing.
 
-**What counts as a "substantive sentence":** identity hook / credibility line / personalization / ask / value-prop / closing CTA. Standard pleasantries are not substantive; skip them.
+**Substantive sentences in cold outreach:** identity hook / credibility line / personalization / ask / value-prop / closing CTA. Standard pleasantries are not substantive; skip them.
 
-**Audit rule:**
+**Audit rule (slot table for this artifact):**
 
 | Slot | G allowed? | If G found |
 |---|---|---|
 | Identity hook (who Nick is) | **No** | STOP. Pull from `data/professional-identity.md` or ask Nick. |
 | Credibility line (specific achievement / experience) | **No** | STOP. Pull from `data/projects/*.md` or ask Nick. |
-| Personalization (recipient-specific opener / connection) | **No** | STOP. Either it's `I` with a citable source, or it's speculation — replace. Cold outreach without real personalization fails worse than slightly-less-personalized outreach. |
+| Personalization (recipient-specific opener / connection) | **No** | STOP. Either it's `I` with a citable source, or it's speculation - replace. Cold outreach without real personalization fails worse than slightly-less-personalized outreach. |
+| **Reader-provenance of the hook** (added 2026-08-25) | **No** | **A citable source makes the FACT real; it does not make the READING Nick's.** Never write a sentence asserting Nick read, saw, or noticed something Claude found in research. Either attribute it to the company / public record ("the company's own line is..."), or confirm with Nick that he has seen it, or cut it. Origin 2026-08-25: a draft asserted Nick had read a LinkedIn post Claude found via Exa; the audit passed clean because the slot was `I` with a real URL, and Nick's verdict was "does not work at all." |
 | Bridge sentence (linking recipient's situation to Nick's offer) | **No** | STOP. Ask Nick for the link or extract from corpus. |
 | Ask (what Nick wants from this contact) | **No** | STOP. Ask Nick for the specific ask. |
 | Standard pleasantries | Yes | Proceed. |
 | Sign-off | Yes | Proceed. |
 
-For every **I** sentence, name the source inline in working notes (`[Source: <path or URL>]`) — does not have to appear in the final email, but must be traceable before Step 7.
+If any `G` blocks fire, return to Step 6 (draft) and request the spine for those slots, or surface a "this slot needs research" gap to Nick before continuing. Do not proceed to Step 7 with `G` in any blocked slot. Trace every `I` to its source before Step 7.
 
-**Output of this step** (in working notes, not the email):
-
-```
-Substance audit:
-- Identity hook: "..." → C (professional-identity.md)
-- Credibility: "..." → C (data/projects/zuora.md Key Achievements)
-- Personalization: "..." → I (recipient's recent Substack post — [URL])
-- Ask: "..." → N (Nick dictated 5/21 17:10)
-```
-
-If any `G` blocks fire, return to Step 6 (draft) and request the spine for those slots, or surface a "this slot needs research" gap to Nick before continuing. Do not proceed to Step 7 with `G` in any blocked slot.
-
-**Cold-outreach-specific note:** Cold recipients judge Nick almost entirely on the credibility + personalization slots. A `G` in those slots converts a cold-outreach into a generic-template-spam read. The cost of stopping here (one Nick turn) is much lower than the cost of sending a generic-coded message that burns the contact permanently.
-
-**Why this exists:** Voice corruption in self-positioning content is the highest-frequency failure mode of email drafting (~10 separate behavioral rules in memory all instance this defect). This step collapses them into one structural gate. Origin: 2026-05-21 memory audit.
+**Cold-outreach-specific note:** Cold recipients judge Nick almost entirely on the credibility + personalization slots. A `G` in those slots converts a cold outreach into a generic-template-spam read. The cost of stopping here (one Nick turn) is much lower than the cost of sending a generic-coded message that burns the contact permanently.
 
 ### Step 7: Quality Gate
 
-Run the three-question test from `framework/outreach-guide.md`. For each question, write a **specific one-sentence answer** — not just a rating:
+**This gate is an EXTRACTION, not a rating (rewritten 2026-08-25).** For each question you must
+**quote the sentence in the draft that does the work, verbatim.** Do not paraphrase and do not
+score. **An empty quote box is a STOP, not a low score** — it means the draft is missing that thing.
 
-1. **"Why you?"** — Why this specific person? (e.g., "She led the Series B ops buildout and would understand my scaling background" — NOT "She works at the company")
-2. **"Why now?"** — What timing trigger makes this relevant? (e.g., "They just announced a COO hire, signaling ops investment" — NOT "Job search")
-3. **"Why me?"** — What establishes the sender's credibility for this specific ask? (e.g., "Scaled a 3-person ops team to 25 across two geographies" — NOT "Relevant experience")
+Why it changed: ratings are self-graded and effectively always pass. A draft that scored
+Strong/Strong/Strong on 2026-08-25 had no organizing claim in it at all and one sentence that was
+false about Nick. A rating tests the strength of what is present and is structurally blind to what
+is absent. Quoting cannot be blind to absence: either the sentence exists or the box is empty.
 
-Rate each: **Strong** / **Adequate** / **Weak**
+| # | Question | What to quote |
+|---|---|---|
+| 1 | **Why you?** | The sentence proving this is *this specific person*, not anyone at the company. |
+| 2 | **Why now?** | The sentence carrying the timing trigger. |
+| 3 | **Why me?** | The sentence establishing credibility **for this specific ask**. |
+| 4 | **Why this class of role?** | The **organizing claim**: the sentence saying why Nick is going after this *kind* of seat. Added 2026-08-25. This is the spine, and it is the box that was empty on the draft that passed 3-for-3. |
 
-If any answer is **Weak** or generic (the kind of thing any applicant could say), revise the draft to strengthen that dimension before presenting. If **Adequate**, note what would strengthen it.
+Rules for the extraction:
+
+- **Quote verbatim from the draft.** If you find yourself writing the answer rather than copying it,
+  the sentence is not in the draft, and the box is empty.
+- **One box empty → STOP and revise before presenting.** Not "note what would strengthen it."
+- **Question 4 cannot be satisfied by a proof point.** "I ran a contact center pilot" is evidence of
+  capability; it is not a claim about what Nick is going after. The spine names the *class of role*
+  and why it fits. Pull it from `data/goals.md` and state it in plain speech, never in taxonomy.
+- **A quote may serve only one row.** If the same sentence is doing double duty, one of the two jobs
+  is not actually being done.
+
+**Pillar coverage (mandatory, enumerated — no judgment call).** Fill all three rows. Enumerated
+checklists convert; abstract instructions do not (measured: an 18-item list produced zero violations
+live while every abstract rule failed). Pillars come from `data/goals.md` and
+`data/professional-identity.md`; as of 2026-08-25 they are consulting / operator / builder.
+
+| Pillar | In draft? | Sentence |
+|---|---|---|
+| Consulting | ✓ or ✗ | quote or `—` |
+| Operator | ✓ or ✗ | quote or `—` |
+| Builder | ✓ or ✗ | quote or `—` |
+
+**Any `✗` requires a written reason in the Step 8 block.** Dropping a pillar because it fits the
+recipient's product least is *under-selection*, the defect class measured 2026-08-20 at 6 of 13
+send-time edits. It is a real choice sometimes; it is never a silent one.
 
 **Tonal self-check (mandatory — the hook cannot catch this).** The three-question gate above tests *persuasion strength*, not voice fidelity; `check_draft_voice.py` is mechanical-only. Read the draft cold against the matched `voice-reference.md` exemplar and answer:
 
@@ -270,10 +336,19 @@ Show the draft with metadata:
 
 ---
 
-**Quality Gate:**
-- **Why you?** [Strong/Adequate/Weak] — [one-sentence specific answer]
-- **Why now?** [Strong/Adequate/Weak] — [one-sentence specific answer]
-- **Why me?** [Strong/Adequate/Weak] — [one-sentence specific answer]
+**Quality Gate (extraction — quote the draft verbatim; an empty box is a STOP):**
+- **Why you?** "[quoted sentence]"
+- **Why now?** "[quoted sentence]"
+- **Why me?** "[quoted sentence]"
+- **Why this class of role?** "[quoted organizing claim]"
+
+**Pillar coverage:**
+| Pillar | In draft? | Sentence |
+|---|---|---|
+| Consulting | [✓/✗] | "[quote]" or — |
+| Operator | [✓/✗] | "[quote]" or — |
+| Builder | [✓/✗] | "[quote]" or — |
+[Any ✗ needs a one-line reason here.]
 
 **Metrics:**
 - Word count: [N] (target: 75–125)

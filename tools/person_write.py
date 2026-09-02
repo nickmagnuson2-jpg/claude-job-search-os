@@ -139,8 +139,8 @@ def out_error(message: str, code: str = "error", **extra) -> None:
 # ---------------------------------------------------------------------------
 
 def slugify(name: str) -> str:
-    """Lowercase, accent-fold, hyphenate. 'Priya Anand González' ->
-    'priya-anand-gonzalez' (matches the output/<slug> convention)."""
+    """Lowercase, accent-fold, hyphenate. 'Priya Anand Fábrega' ->
+    'priya-anand-fabrega' (matches the output/<slug> convention)."""
     nfkd = unicodedata.normalize("NFKD", name)
     ascii_str = "".join(c for c in nfkd if not unicodedata.combining(c))
     ascii_str = ascii_str.lower()

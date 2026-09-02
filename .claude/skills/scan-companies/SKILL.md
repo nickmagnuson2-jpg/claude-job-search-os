@@ -60,7 +60,7 @@ Parse the JSON output. Present results as a formatted table sorted by score desc
 
 | Score | Role | Company | Location | Link |
 |-------|------|---------|----------|------|
-| 8/10  | Strategy & Ops Manager | Ramp | New York, NY | [View](url) |
+| 8/10  | Strategy & Ops Manager | Northwind | New York, NY | [View](url) |
 | 7/10  | Business Operations Lead | Notion | San Francisco | [View](url) |
 | ...   | ... | ... | ... | ... |
 ```
@@ -81,15 +81,15 @@ For lower-scoring roles, no specific suggestions needed, but remind the user the
 
 ### Step 5: Managing Targets
 
-If the user asks to add or remove companies, edit `data/scan-targets.yaml` directly.
+If the user asks to add or remove companies, edit `data/scan-targets.yaml` directly. **Adding a company crosses the promotion gate documented at the top of that file** (added 2026-08-26): answer *"is there anyone on this team who has done the commercial or delivery craft before?"* and record it as `bench: yes|thin|unknown`. It is a **sort signal, not a veto** - `thin` and `unknown` still get added, they rank lower, and the deciding read needs a conversation. Note this is a COMPANY-level property settled at promotion, so do NOT re-check it per-role on every scan; that is the wrong layer.
 
 **ATS options and how to find slugs:**
 
 | ATS | URL pattern | Example |
 |-----|-------------|---------|
-| Greenhouse | `boards.greenhouse.io/SLUG` | `slug: discord` |
+| Greenhouse | `boards.greenhouse.io/SLUG` | `slug: northwind` |
 | Lever | `jobs.lever.co/SLUG` | `slug: netflix` |
-| Ashby | `jobs.ashbyhq.com/SLUG` | `slug: ramp` |
+| Ashby | `jobs.ashbyhq.com/SLUG` | `slug: contoso` |
 | Generic | Full careers page URL | `careers_url: "https://example.com/careers"` |
 
 **Entry format:**

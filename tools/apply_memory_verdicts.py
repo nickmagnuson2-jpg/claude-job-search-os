@@ -49,20 +49,39 @@ import json
 import os
 import re
 import sys
+
+import yaml
 import tempfile
 from collections import Counter
 from difflib import SequenceMatcher
 from pathlib import Path
 
 ALLOWED_KEYS = {"occurrences", "promoted", "needs_review", "reopen_gate",
-                "terminal", "terminal_reason"}
+                "terminal", "terminal_reason", "description",
+                # The exit record (2026-08-25). A promotion that leaves no dated record is
+                # not an observable event, so the drain rate cannot be measured: only 37 of
+                # 149 promoted files carried a date anywhere. Enforced by
+                # tools/promotion_schema.py, which BLOCKS a promoted rule missing them.
+                "promoted_date", "exit_path", "detector_signature", "detector_control"}
+
+# Keys whose value is free prose and must therefore be emitted as an explicitly
+# quoted YAML scalar, then re-parsed with a STRICT reader before the write is
+# allowed. `description` is top-level (not under `metadata:`) and routinely contains
+# a colon, a `#`, or a quote -- all of which the in-house regex parser reads happily
+# and yaml.safe_load rejects. Verifying with the convenient reader instead of the
+# strictest one is the 2026-08-20 failure; this is the guard against repeating it.
+QUOTED_KEYS = {"description", "detector_signature", "detector_control"}
 
 # Keys that may be CREATED when absent, rather than only overwritten. Deliberately
 # narrow: `occurrences` missing from a file is a schema defect worth surfacing as
 # `key-absent`, but the 41 self-declared terminal-behavioral files legitimately have
 # no `terminal:` line yet -- the key was introduced after they were written. Anything
 # not listed here still fails loudly, so a typo'd key name can never append a new line.
-INSERTABLE_KEYS = {"terminal", "terminal_reason"}
+INSERTABLE_KEYS = {"terminal", "terminal_reason",
+                   # These three are new as of 2026-08-25, so EVERY pre-existing file
+                   # legitimately lacks them -- the same situation `terminal` was in.
+                   "promoted_date", "exit_path", "detector_signature",
+                   "detector_control"}
 
 # Where a newly created key is placed, in preference order per key. This yields
 # promoted -> terminal -> terminal_reason, matching the 17 files that already carry
@@ -70,8 +89,47 @@ INSERTABLE_KEYS = {"terminal", "terminal_reason"}
 INSERT_AFTER = {
     "terminal": ("promoted", "occurrences", "type"),
     "terminal_reason": ("terminal", "promoted", "occurrences", "type"),
+    "promoted_date": ("promoted", "occurrences", "type"),
+    "exit_path": ("promoted_date", "promoted", "occurrences", "type"),
+    "detector_signature": ("exit_path", "promoted_date", "promoted", "occurrences", "type"),
+    "detector_control": ("detector_signature", "exit_path", "promoted_date", "promoted", "occurrences", "type"),
 }
 FRONTMATTER_RE = re.compile(r"\A---\n(.*?\n)---\n", re.DOTALL)
+
+
+def _yaml_scalar(value: str) -> str:
+    """Emit `value` as a single-line double-quoted YAML scalar."""
+    return yaml.safe_dump(value, default_style='"', width=10**9,
+                          allow_unicode=True).rstrip("\n")
+
+
+def strict_roundtrip_ok(text: str, key: str, value: str) -> bool:
+    """Re-read the whole frontmatter with the strictest reader and confirm the value.
+
+    Not "does it parse" -- does it parse AND give back exactly what was intended.
+    A value that parses into something else is a silent corruption, which is worse
+    than a crash.
+    """
+    m = FRONTMATTER_RE.match(text)
+    if not m:
+        return False
+    try:
+        loaded = yaml.safe_load(m.group(1))
+    except yaml.YAMLError:
+        return False
+    if not isinstance(loaded, dict):
+        return False
+    # The key may be top-level (`description`) or nested under `metadata:` (everything in
+    # the schema block). A top-level-only lookup silently returns None for every nested
+    # key, so the check refused EVERY write of detector_signature / detector_control while
+    # reporting a round-trip failure -- failing safe, but blocking legitimate writes and
+    # blaming the value rather than the lookup. Found 2026-08-25 writing 50 detectors.
+    if key in loaded:
+        return loaded[key] == value
+    meta = loaded.get("metadata")
+    if isinstance(meta, dict) and key in meta:
+        return meta[key] == value
+    return False
 KV_LINE = "  {key}: {value}\n"
 
 
@@ -109,6 +167,10 @@ def set_key(text: str, key: str, value: str) -> tuple[str, str]:
     if not m:
         return text, "no-frontmatter"
     fm = m.group(1)
+    if key in QUOTED_KEYS:
+        if "\n" in value or "\r" in value:
+            return text, "multiline-refused"
+        value = _yaml_scalar(value)
     pat = re.compile(rf"^(\s*){re.escape(key)}:[ \t]*(.*)$", re.M)
     found = pat.search(fm)
     if not found:
@@ -215,6 +277,12 @@ def main(argv: list[str]) -> int:
             continue
         if not conservation_ok(original, text):
             failed.append(f"{fname}: conservation check failed -- not written")
+            continue
+        bad_roundtrip = [k for k in changes if k in QUOTED_KEYS
+                         and not strict_roundtrip_ok(text, k, kv[k])]
+        if bad_roundtrip:
+            failed.append(f"{fname}: strict YAML round-trip failed for "
+                          f"{','.join(sorted(bad_roundtrip))} -- not written")
             continue
         applied.append({"file": fname, "changes": changes})
         if args.apply:

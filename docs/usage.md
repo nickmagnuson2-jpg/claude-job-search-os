@@ -158,9 +158,9 @@ Fetches open roles from every company listed in `data/scan-targets.yaml`, scores
 To configure targets, edit `data/scan-targets.yaml`:
 
 ```yaml
-- name: Ramp
+- name: Northwind
   ats: ashby
-  slug: ramp
+  slug: northwind
   active: true
   role_filters:
     - "operations"
@@ -586,7 +586,7 @@ A set of PreToolUse and PostToolUse hooks in `.claude/settings.json` that enforc
 | `check_voice_pure.py` | PreToolUse on Write/Edit | Blocks Claude-voice prose in dated reflection files (`data/reflections/YYYY-MM-DD*.md`) |
 | `check_data_projects.py` | PreToolUse on Write/Edit to `data/projects/` | Surfaces solo-agency overclaim verbs (Built, Designed, Led, etc.) in Key Achievements — warn-only |
 | `check_no_confabulation.py` | PreToolUse on Write/Edit | Blocks placeholder tokens (`[N]`, `TBD`, `x measurable outcomes`) in shippable prep/synthesis artifacts |
-| `check_public_pii.py` | PreToolUse on Write/Edit | Blocks real contact names / pipeline-target companies (from the gitignored denylist) in public artifacts (`tests/`, `.claude/skills/`, `framework/`, `docs/`, `tools/*`, top-level `*.md`); pairs with the `/audit-pii` semantic pass |
+| `check_public_pii.py` | PreToolUse on Write/Edit **and Bash** | Blocks real contact names / pipeline-target companies (from the gitignored denylist) in public artifacts (`tests/`, `.claude/skills/`, `framework/`, `docs/`, `tools/*`, top-level `*.md`); pairs with the `/audit-pii` semantic pass |
 | `check_todo_write_kwargs.py` | PreToolUse on Bash | Blocks kwarg-style invocation of the atomic to-do writer |
 | `check_edit_after_mutation.py` | PreToolUse on Edit/MultiEdit | Read-state guard, warns when a file changed on disk since last read this session, or was never read |
 | `check_replace_all_safety.py` | PreToolUse on Edit/MultiEdit | Blocks a `replace_all: true` when `old_string` is a short token embedded inside a longer word in the target file (the substring-corruption class); `REPLACE_ALL_OVERRIDE=1` bypasses |
@@ -599,7 +599,7 @@ Override flags (for rare legitimate bypasses): `DRAFT_OVERRIDE=1`, `PROJECTS_OVE
 
 ### Public-repo PII safety
 
-This repo is public, so real contacts and pipeline-target companies must never reach a public artifact (`tests/`, `.claude/skills/`, `framework/`, `docs/`, `tools/*`, top-level `*.md`). Two layers enforce it:
+This repo is public, so real contacts and pipeline-target companies must never reach a public artifact (any file git does not ignore; the directory list is a fast path, not the definition). Two layers enforce it:
 
 1. **`check_public_pii.py`** — an always-on PreToolUse hook that blocks a known real name or company (from the gitignored denylist) the moment it is written to a public file.
 2. **`/audit-pii`** — run before committing or pushing any public-file change. It regenerates the denylist, runs the deterministic scan over changed public files, then dispatches an anti-anchored subagent for a semantic pass that catches new real names the denylist hasn't learned yet.
@@ -634,6 +634,11 @@ PYTHONIOENCODING=utf-8 python3 tools/friction_log.py append \
 PYTHONIOENCODING=utf-8 python3 tools/friction_log.py list --unpromoted
 PYTHONIOENCODING=utf-8 python3 tools/friction_log.py query "flag"
 ```
+
+`list` reports `filters_applied` and `total_rows` alongside `count`. Check them before reading a
+result as scoped: `--surface ""` is falsy, so the filter is skipped and the WHOLE ledger comes
+back looking exactly like a scoped answer. The ladder above counts fires per surface, so an
+unfiltered read overstates every rung at once.
 
 Ledger: `memory/friction-log.md`.
 

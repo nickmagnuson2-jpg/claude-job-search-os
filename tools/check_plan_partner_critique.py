@@ -41,16 +41,46 @@ IN_SCOPE_PATTERNS = [
     re.compile(r"\.planning/.+/PLAN\.md$"),
 ]
 
-# Time-estimate regexes — capture the number and unit
+# Time-estimate regexes -- capture the number and unit.
+#
+# CORRECTED 2026-08-25. The previous version matched BARE prose durations anywhere in the
+# document, which made the estimate meaningless. Measured against its own IN_SCOPE_PATTERNS
+# over 37 real files: it fired on 18 of them (49%), scoring an onsite prep plan at 1,340h, a
+# diligence plan at 963h, and a morning-starter doc at 720h. What it was actually summing:
+#
+#   "Saves loan officers ~20 hrs/week"        a business metric
+#   "USDA sanction 5 days ago"                a date reference
+#   "My first 30 days would be discovery"     narrative  ("first 90 days" x85 in output/)
+#   "12.5 hours, against the 79 hours ..."    one sentence, counted twice
+#
+# An effort ESTIMATE in this repo is annotated, not prose: "(4h)", "(2 hrs)", "(half day)",
+# a table cell, or an explicit Effort:/Estimate: label. Prose durations are excluded, which
+# is what makes the total mean something. Requiring the annotation shape also inherently
+# rejects rates ("5 days/week", 28 occurrences) and temporal references, because neither is
+# ever written in an annotation position.
+_UNITS_H = r"(?:hrs?|hours?|h)"
+_UNITS_M = r"(?:mins?|minutes?|m)"
+_UNITS_D = r"(?:days?|d)"
 TIME_PATTERNS = [
-    # "(2hr)" "(2 hrs)" "(2 hours)" "2hr" "2 hours" — bare or parenthesized
-    (re.compile(r"(?:\(|\b)(\d+(?:\.\d+)?)\s*(?:hr|hrs|hour|hours)\b", re.IGNORECASE), "h"),
-    # "2h" — short form (be specific to avoid catching "2h2" hex strings)
-    (re.compile(r"(?:\(|\s)(\d+(?:\.\d+)?)h\b", re.IGNORECASE), "h"),
-    # "(1 day)" "1 day" "2 days"
-    (re.compile(r"(?:\(|\b)(\d+(?:\.\d+)?)\s*(?:day|days)\b", re.IGNORECASE), "d"),
-    # "(half day)" — count as 4h
-    (re.compile(r"(?:\(|\b)(half)\s*(?:day|days)\b", re.IGNORECASE), "halfd"),
+    # "(4h)" "(2 hrs)" "(1 hour)" -- the annotation shape, and the one the docstring advertises
+    (re.compile(r"\((\d+(?:\.\d+)?)\s*" + _UNITS_H + r"\)", re.IGNORECASE), "h"),
+    (re.compile(r"\((\d+(?:\.\d+)?)\s*" + _UNITS_D + r"\)", re.IGNORECASE), "d"),
+    (re.compile(r"\((half)\s*days?\)", re.IGNORECASE), "halfd"),
+    # minutes. The repo annotates at minute granularity ("| 10 min |", "(45 min)"), which
+    # an hours-only estimator silently scores as zero -- the failure that produced a
+    # degenerate 0-of-37 on the first pass of this correction.
+    (re.compile(r"\((\d+(?:\.\d+)?)\s*" + _UNITS_M + r"\)", re.IGNORECASE), "m"),
+    (re.compile(r"\|\s*(\d+(?:\.\d+)?)\s*" + _UNITS_M + r"\s*\|", re.IGNORECASE), "m"),
+    (re.compile(r"\b(?:effort|estimate|est)\s*[:=]\s*~?\s*(\d+(?:\.\d+)?)\s*" + _UNITS_M + r"\b",
+                re.IGNORECASE), "m"),
+    # table cell: "| 2h |" "| 45 hrs |"
+    (re.compile(r"\|\s*(\d+(?:\.\d+)?)\s*" + _UNITS_H + r"\s*\|", re.IGNORECASE), "h"),
+    (re.compile(r"\|\s*(\d+(?:\.\d+)?)\s*" + _UNITS_D + r"\s*\|", re.IGNORECASE), "d"),
+    # explicit label: "Effort: 2h" "Estimate: 3 hours" "Est: 1.5 hrs"
+    (re.compile(r"\b(?:effort|estimate|est)\s*[:=]\s*~?\s*(\d+(?:\.\d+)?)\s*" + _UNITS_H + r"\b",
+                re.IGNORECASE), "h"),
+    (re.compile(r"\b(?:effort|estimate|est)\s*[:=]\s*~?\s*(\d+(?:\.\d+)?)\s*" + _UNITS_D + r"\b",
+                re.IGNORECASE), "d"),
 ]
 
 THRESHOLD_HOURS = 10
@@ -92,6 +122,9 @@ def estimate_hours(content: str) -> tuple[float, list[str]]:
                 if unit == "h":
                     hours = n
                     display = f"{m.group(0)}"
+                elif unit == "m":
+                    hours = n / 60.0
+                    display = f"{m.group(0)} -> {hours:.2f}h"
                 elif unit == "d":
                     hours = n * 8
                     display = f"{m.group(0)} → {hours}h"

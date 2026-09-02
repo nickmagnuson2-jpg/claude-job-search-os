@@ -170,7 +170,25 @@ def is_promoted(fm: dict) -> bool:
     v = str(fm.get("promoted", "no")).strip().lower()
     if v.startswith("partial"):
         return False
-    return v not in ("no", "false", "", "0")
+    # A value that EXPLAINS why a rule is unpromoted must still read as unpromoted.
+    #
+    # This branch used to be `v not in ("no", "false", "", "0")`, an exact match, so any
+    # annotated value was taken for a promotion tier. The 2026-08-25 adversarial
+    # re-verification run wrote `promoted: "no -- CORRECTED ..."` onto rules whose
+    # promotion claims it had just REFUTED, and every one of them silently left the
+    # backlog: 11 rules at >=2 fires, three at 5, including
+    # feedback_verify_the_surface_fires_before_anchoring_to_it, whose own subject is
+    # mechanisms that report as landed while being dead. Writing down WHY a rule was
+    # unpromoted was the act that hid it.
+    #
+    # Same defect as the `partial` branch above (2026-08-13, recovered 23 candidates),
+    # in a different value shape. Prefix-match both, for the same reason.
+    #
+    # `\b` keeps this from swallowing a real tier that merely starts with these letters:
+    # "none" and "notation" do not match, "no -- reason" and "not promoted" do.
+    if re.match(r"^(?:no|not|false)\b", v) or v in ("", "0"):
+        return False
+    return True
 
 
 def is_terminal(fm: dict) -> bool:
@@ -199,9 +217,29 @@ SHARD_LIMIT_BYTES = 24 * 1024
 CLAUDE_MD_LIMIT_BYTES = 40 * 1024
 
 
+FROZEN_MARKERS = ("ARCHIVED, NOT MAINTAINED", "FROZEN 2026-08-25")
+
+
+def is_frozen_shard(path: Path) -> bool:
+    """A shard carrying the frozen banner is out of the budget, because nothing loads it.
+
+    The ~24KB shard budget existed to keep a file small enough to be READ. The shards were
+    frozen on 2026-08-25 after the channel measured effectively zero consultations in
+    ordinary working sessions across 1229 transcripts, so their size is no longer a tax on
+    anything. Counting them keeps the headline number tracking a budget nobody is bound by,
+    which buries the one file whose bytes still cost something on every single session.
+    """
+    try:
+        head = path.read_text(encoding="utf-8", errors="replace")[:2000]
+    except OSError:
+        return False
+    return any(m in head for m in FROZEN_MARKERS)
+
+
 def oversized_context_files(memory_dir: Path, repo_root: Path) -> list[dict]:
     """Always-loaded files past their size budget. Reporting only -- never mutates."""
-    targets = [(p, SHARD_LIMIT_BYTES) for p in sorted(memory_dir.glob("index-*.md"))]
+    targets = [(p, SHARD_LIMIT_BYTES) for p in sorted(memory_dir.glob("index-*.md"))
+               if not is_frozen_shard(p)]
     mem = memory_dir / "MEMORY.md"
     if mem.is_file():
         targets.append((mem, SHARD_LIMIT_BYTES))

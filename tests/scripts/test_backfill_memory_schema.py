@@ -215,3 +215,174 @@ def test_file_without_frontmatter_is_reported_not_written(tmp_path):
     assert rc == 0
     assert report["skipped_no_frontmatter"] == ["feedback_broken.md"]
     assert (tmp_path / "feedback_broken.md").read_text(encoding="utf-8") == "no frontmatter here\n"
+
+
+# --- mutation-hardening additions ------------------------------------------
+
+FLAT_WITH_NODE_TYPE = """---
+name: feedback_flat_nodetype
+node_type: memory
+type: feedback
+---
+
+Body.
+"""
+
+FLAT_NO_TYPE = """---
+name: A flat legacy file naming neither node_type nor type
+description: nothing but a name
+---
+
+Body.
+"""
+
+# `  promoted: no` also appears EARLIER in the frontmatter, so the naive
+# "delete the added lines" reversal removes the wrong occurrence and the
+# conservation anchor must refuse the write.
+DUP_LINE_FILE = """---
+name: feedback_dup
+other:
+  promoted: no
+metadata:
+  type: feedback
+---
+
+Body.
+"""
+
+
+def run_no_date(root: Path, *extra: str) -> tuple[int, dict]:
+    proc = subprocess.run(
+        [sys.executable, str(SCRIPT), "--memory-dir", str(root), *extra],
+        capture_output=True, text=True,
+    )
+    return proc.returncode, json.loads(proc.stdout)
+
+
+def test_stamp_raises_on_a_file_with_no_frontmatter():
+    """stamp() is the last line of defence if main's pre-filter is ever bypassed."""
+    with pytest.raises(ValueError) as exc:
+        bms.stamp("no frontmatter here\n", DATE)
+    assert "no frontmatter" in str(exc.value), "ValueError must name the cause"
+
+
+def test_new_keys_land_after_the_last_existing_metadata_child(tmp_path):
+    """Position, not just indentation: the keys go INSIDE and at the END of metadata."""
+    write_corpus(tmp_path)
+    run(tmp_path, "--apply")
+    text = (tmp_path / "feedback_with_metadata.md").read_text(encoding="utf-8")
+    i_header = text.index("metadata:")
+    i_last_child = text.index("modified: 2026-08-05")
+    i_occ = text.index("occurrences: 1")
+    assert i_header < i_occ, "occurrences was written before the metadata: header"
+    assert i_last_child < i_occ, "occurrences was written before an existing metadata child"
+    assert text.index("promoted: no") > i_last_child, "promoted jumped ahead of existing children"
+    assert text.index("needs_review: true") > i_last_child, "needs_review jumped ahead"
+
+
+def test_metadata_block_is_rewritten_exactly(tmp_path):
+    """Byte-exact expectation for the into-metadata path."""
+    write_corpus(tmp_path)
+    run(tmp_path, "--apply")
+    text = (tmp_path / "feedback_with_metadata.md").read_text(encoding="utf-8")
+    expected = (
+        "metadata:\n"
+        "  node_type: memory\n"
+        "  type: feedback\n"
+        "  originSessionId: abc-123\n"
+        "  modified: 2026-08-05T04:20:23.769Z\n"
+        "  occurrences: 1\n"
+        "  promoted: no\n"
+        f'  reopen_gate: "{bms.BACKFILL_GATE.format(date=DATE)}"\n'
+        "  needs_review: true\n"
+        "---\n"
+    )
+    assert expected in text, f"metadata block not as specified:\n{text}"
+
+
+def test_date_flag_is_the_provenance_stamped_into_the_gate(tmp_path):
+    write_corpus(tmp_path)
+    run(tmp_path, "--apply")
+    fm = parse_frontmatter((tmp_path / "feedback_with_metadata.md").read_text(encoding="utf-8"))
+    assert DATE in fm["reopen_gate"], f"--date not honoured: {fm['reopen_gate']!r}"
+
+
+def test_default_date_is_today_not_a_none_placeholder(tmp_path):
+    from datetime import date as _date
+    write_corpus(tmp_path)
+    rc, _ = run_no_date(tmp_path, "--apply")
+    assert rc == 0
+    fm = parse_frontmatter((tmp_path / "feedback_with_metadata.md").read_text(encoding="utf-8"))
+    gate = fm["reopen_gate"]
+    assert _date.today().isoformat() in gate, f"default date is not today: {gate!r}"
+    assert "None" not in gate, f"args.date=None leaked into the gate: {gate!r}"
+
+
+def test_flat_file_already_naming_node_type_does_not_get_a_duplicate(tmp_path):
+    (tmp_path / "feedback_flat_nodetype.md").write_text(FLAT_WITH_NODE_TYPE, encoding="utf-8")
+    rc, report = run(tmp_path, "--apply")
+    assert rc == 0 and report["stamped"] == 1
+    text = (tmp_path / "feedback_flat_nodetype.md").read_text(encoding="utf-8")
+    assert text.count("node_type:") == 1, f"node_type duplicated:\n{text}"
+    assert text.count("type: feedback") == 1, f"type duplicated:\n{text}"
+
+
+def test_flat_file_naming_neither_key_gets_both(tmp_path):
+    (tmp_path / "feedback_flat_notype.md").write_text(FLAT_NO_TYPE, encoding="utf-8")
+    rc, report = run(tmp_path, "--apply")
+    assert rc == 0 and report["stamped"] == 1
+    text = (tmp_path / "feedback_flat_notype.md").read_text(encoding="utf-8")
+    assert "metadata:\n  node_type: memory\n  type: feedback\n" in text, (
+        f"node_type/type not synthesised for a file naming neither:\n{text}"
+    )
+
+
+def test_conservation_failure_skips_the_file_and_reports_partial(tmp_path):
+    """A file whose frontmatter already contains one of the added lines verbatim.
+
+    The reversal removes the wrong occurrence, so the anchor must refuse the write.
+    """
+    (tmp_path / "feedback_dup.md").write_text(DUP_LINE_FILE, encoding="utf-8")
+    rc, report = run(tmp_path, "--apply")
+    assert rc == 1, f"a refused write must exit 1, got {rc}: {report}"
+    assert report["status"] == "partial", f"status should be partial: {report}"
+    assert report["stamped"] == 0, "a file failing conservation must not count as stamped"
+    assert report["failed"] == ["feedback_dup.md: conservation check failed -- not written"], report
+    assert (tmp_path / "feedback_dup.md").read_text(encoding="utf-8") == DUP_LINE_FILE, (
+        "the file was written despite failing the conservation anchor"
+    )
+
+
+def test_mode_counts_are_per_mode_not_a_total(tmp_path):
+    (tmp_path / "feedback_a.md").write_text(WITH_METADATA, encoding="utf-8")
+    (tmp_path / "feedback_b.md").write_text(WITH_METADATA, encoding="utf-8")
+    (tmp_path / "feedback_c.md").write_text(FLAT_FRONTMATTER, encoding="utf-8")
+    rc, report = run(tmp_path, "--apply")
+    assert rc == 0, report
+    assert report["modes"] == {"into-metadata": 2, "new-metadata-block": 1}, report["modes"]
+
+
+def test_missing_directory_reason_names_the_directory_problem(tmp_path):
+    missing = tmp_path / "nope"
+    rc, report = run(missing)
+    assert rc == 2
+    assert "not a directory" in report["reason"], (
+        f"a missing dir must be reported as such, not as an empty sweep: {report}"
+    )
+    assert str(missing) in report["reason"], report
+
+
+def test_failed_write_leaves_no_stranded_tmp_file(tmp_path, monkeypatch, capsys):
+    """os.replace blowing up must not leave a .tmp turd in the memory dir."""
+    (tmp_path / "feedback_boom.md").write_text(WITH_METADATA, encoding="utf-8")
+
+    def boom(src, dst):
+        raise RuntimeError("replace failed")
+
+    monkeypatch.setattr(bms.os, "replace", boom)
+    with pytest.raises(RuntimeError):
+        bms.main(["--memory-dir", str(tmp_path), "--date", DATE, "--apply"])
+    capsys.readouterr()
+    leftovers = sorted(p.name for p in tmp_path.iterdir() if p.suffix == ".tmp")
+    assert leftovers == [], f"stranded temp file(s) after a failed write: {leftovers}"
+    assert (tmp_path / "feedback_boom.md").read_text(encoding="utf-8") == WITH_METADATA

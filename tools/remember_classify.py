@@ -243,6 +243,23 @@ def find_matching_companies(
 
 # ── Classifier ────────────────────────────────────────────────────────────────
 
+PERSONAL_TAG_RE = re.compile(r"(?<![\w#])#personal\b", re.IGNORECASE)
+
+
+def is_personal_capture(note: str) -> bool:
+    """True when the note carries the #personal tag.
+
+    Tag-only, never inferred from topic. A heuristic here would be a one-way door:
+    misrouting a job-search note to the personal vault loses it from the search
+    workflow, and misrouting a personal note into a PUBLIC-repo-adjacent tree is
+    worse. An explicit tag is the only signal that cannot silently misfire.
+
+    The lookbehind stops `##personal` and `foo#personal` from matching, so a heading
+    or a URL fragment is not mistaken for the tag.
+    """
+    return bool(PERSONAL_TAG_RE.search(note or ""))
+
+
 def classify_note(
     note: str,
     contacts: list[str],
@@ -251,6 +268,26 @@ def classify_note(
 ) -> dict:
     destinations = []
     warnings = []
+
+    # ── 0. #personal — SHORT-CIRCUIT, before any job-search matching ──────
+    # A personal capture belongs in the personal-OS vault, not the job-search repo.
+    # This returns IMMEDIATELY and deliberately: falling through would let the note
+    # ALSO match a contact or company rule and be written into data/networking.md or
+    # a company note, so the capture would exist in both places. "Route it elsewhere"
+    # and "also keep a copy here" are different things, and only the first is asked
+    # for. Personal content in the job-search repo is also the class of material the
+    # sealed-content rules exist to keep out. (todo #10, built 2026-08-19)
+    if is_personal_capture(note):
+        return {
+            "note":         note,
+            "destinations": [{
+                "type":   "personal_capture",
+                "file":   "<personal-vault>/data/inbox.md",
+                "entity": None,
+            }],
+            "ambiguous": False,
+            "warnings":  warnings,
+        }
 
     matching_contacts = find_matching_contacts(note, contacts)
     matching_companies = find_matching_companies(note, pipeline_companies, dossier_slugs)

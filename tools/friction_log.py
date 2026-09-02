@@ -473,7 +473,25 @@ def cmd_list(args: argparse.Namespace) -> None:
         ]
     if getattr(args, "unresolved", False):
         out = [r for r in out if not is_resolved(r["fix"])]
-    ok({"count": len(out), "rows": out})
+    # Scope, stated next to the conclusion (2026-08-19). `--surface ""` is falsy, so the
+    # filter was silently skipped and a scoped query returned all 257 rows looking exactly
+    # like a 1-row answer. The ladder counts fires PER SURFACE, so an unfiltered read
+    # misstates a rung. Additive only: status and exit codes are unchanged.
+    ok({
+        "count": len(out),
+        "total_rows": len(parsed),
+        "filters_applied": {
+            # Mirrors the EXACT condition the filter above uses, deliberately.
+            # An earlier version reported .strip()-emptiness, which meant
+            # `--surface "   "` filtered (to zero rows) while the report said no
+            # filter ran -- a report that lies about its own scope is worse than
+            # the silent-skip it was meant to fix.
+            "surface": args.surface if args.surface else None,
+            "unpromoted": bool(args.unpromoted),
+            "unresolved": bool(getattr(args, "unresolved", False)),
+        },
+        "rows": out,
+    })
 
 
 def cmd_query(args: argparse.Namespace) -> None:

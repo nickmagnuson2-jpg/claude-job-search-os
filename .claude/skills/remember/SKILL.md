@@ -22,9 +22,31 @@ Examples:
 - `/remember "decided not to pursue Lumen — too similar to what I want to leave"` → `data/decisions.md` (prompts for what drove it / what changes if wrong)
 - `/remember "shipped the Lane B dossier"` → `data/accomplishments.md` (prompts for why it matters)
 - `/remember "Acme Series B was pre-empted by a growth fund, not a standard raise"` → appended to company research dossier or pipeline notes
-- `/remember "recruiter at Talkiatry is Sarah Kim, reached out on LinkedIn"` → creates or updates networking contact entry
+- `/remember "recruiter at Northwind is Sarah Chen, reached out on LinkedIn"` → creates or updates networking contact entry
 
 ## Instructions
+
+### Step 0: `#personal` short-circuits everything
+
+If the note carries the **`#personal`** tag, `remember_classify.py` returns a single
+`personal_capture` destination and stops. The note is appended to the personal-OS
+vault inbox and **nothing is written into this repo.**
+
+- The tag is the ONLY trigger — never infer "this looks personal" from the topic.
+  Misrouting a job-search note loses it from the search workflow; misrouting a
+  personal note into the job-search repo is worse. An explicit tag cannot misfire.
+- The short-circuit is deliberate. Classification is otherwise multi-destination, so
+  without it a personal note that happens to mention a known contact or company would
+  be filed in the vault **and** copied into `data/networking.md` or a company note.
+- The vault path resolves through `tools/vault_paths.py` and is never printed. If the
+  vault is unconfigured the capture FAILS LOUDLY rather than falling back to this repo.
+
+```bash
+PYTHONIOENCODING=utf-8 python3 tools/remember_classify.py --note "#personal book the vet"
+# -> {"destinations":[{"type":"personal_capture","file":"<personal-vault>/data/inbox.md"}]}
+```
+
+Built 2026-08-19 (todo #10). Tests: `tests/scripts/test_remember_personal_routing.py`.
 
 ### Step 1: Classify the Note
 

@@ -60,9 +60,16 @@ from tools.granola_fetch import (  # noqa: E402
     fetch_note_full,
     extract_summary_and_notes,
 )
-from tools.granola_auto_debrief import (  # noqa: E402
+# Classification comes from the shared vocabulary module (extracted 2026-08-19);
+# persistence still comes from the orchestrator. Importing the rules from
+# meeting_vocab rather than from the 1149-line launchd script is the point of the
+# split -- the interactive path no longer drags in the scheduled-run module.
+from tools.meeting_vocab import (  # noqa: E402
+    _speaker_label,
     classify_meeting,
     load_therapy_classifier_config,
+)
+from tools.granola_auto_debrief import (  # noqa: E402
     persist_via_granola_save,
 )
 
@@ -144,6 +151,22 @@ def resolve_ref(ref: str) -> str:
     sys.exit(1)
 
 
+def _render_transcript(segments: list) -> str:
+    """Render REST transcript segments as `Label: text` lines.
+
+    Delegates the label to tools.meeting_vocab._speaker_label -- the single
+    source of truth. This logic used to live inline in cmd_pull, reading the raw
+    speaker key with a plain-string default, which meant the fix applied to
+    granola_auto_debrief.py never reached the CLI path: `granola_cli.py pull`
+    kept stringifying the whole speaker dict into every line of the voice corpus.
+    Two live transcripts were saved corrupted that way on 2026-08-20.
+    """
+    return "\n".join(
+        f"{_speaker_label(seg)}: {seg.get('text', '')}"
+        for seg in segments if isinstance(seg, dict)
+    )
+
+
 def cmd_pull(args) -> int:
     meeting_id = resolve_ref(args.ref)
     note = fetch_note_full(meeting_id)
@@ -159,10 +182,7 @@ def cmd_pull(args) -> int:
     summary, _ = extract_summary_and_notes(note)
 
     if isinstance(transcript, list):
-        transcript_str = "\n".join(
-            f"{seg.get('speaker', 'Speaker')}: {seg.get('text', '')}"
-            for seg in transcript if isinstance(seg, dict)
-        )
+        transcript_str = _render_transcript(transcript)
     else:
         transcript_str = transcript or ""
 

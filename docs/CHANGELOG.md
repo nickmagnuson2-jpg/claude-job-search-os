@@ -3,6 +3,511 @@
 All notable changes to this job search system are recorded here.
 Format: newest entries at the top.
 
+## 2026-09-02 (latest): coverage that existed and never ran, and a rate that measured something else
+
+The re-sweep put a valid number on the corpus for the first time since the bytecode fix:
+**10,794 mutants, 3,657 survived, 33.88% of all decisions unprotected.** Reading it surfaced two
+failure modes that are worse than a bad survival rate, because both look like coverage in every
+count that matters.
+
+**A survival rate is only evidence when the tool has its own suite.** `map_tests` selects covering
+tests by filename *and by import reference*, so a tool with no `tests/scripts/test_<stem>.py` still
+gets a number — computed from tests written for something else. That produced `check_email_via_skill`
+at 23/23 and `open_draft` at 113/113, both of which read as "tests that catch nothing" when the truth
+was "no tests at all"; 13 of 106 scored tools were in that state. `mutation_sweep` now records an
+`own` field on every row, and a new gate fails if a hook wired in `settings.json` has no suite named
+for it. The sweep structurally could not see this: a tool mapping to zero test files is skipped by
+`build_targets`, so those hooks were absent from the baseline rather than failing in it.
+
+**Coverage can exist and never run.** `tools/test_schema_guard.py` was 148 lines of real regression
+coverage for the 2026-06-08 column-drift incident, sitting in `tools/` — which the suite does not
+collect and `map_tests` does not glob. It stopped running in June and nothing noticed. A repo scan
+found **129 test functions** across `tools/` and `tools/career_scanner/` that had never executed; all
+are now ported into `tests/scripts/` and a second gate blocks the next one. It catches two shapes,
+and the second is why `git mv` is not always the fix: a pytest file nothing collects, and a
+`test_*.py` that is really an assert script with its own PASS/FAIL counters, which pytest reports
+`no tests ran` on. (The first count of that scan said 38 — it anchored `def test_` at column 0 and
+missed every class-based test.)
+
+**Four guards went from unmeasured to measured.** `schema_guard` 18/26 → 0 (`ok`),
+`check_email_via_skill` 23/23 → 0 (`ok`), `scan_promotion_candidates` 47/125 → 16,
+`scan_transcript_failures` 135/177 → 46. Suite 3,539 → 3,684 passing. Writing them found three
+vacuous assertions in the new tests themselves — predicates over lists that contain nothing bad, so
+inverting them stayed green — each fixed by asserting the real predicate against synthetic input.
+The orphan gate's own vacuity guard had to be rebuilt twice: `len(found) >= 5` stopped meaning
+anything once the debt was paid, and its replacement `len(found) == 0 or all(...)` was vacuous in
+exactly the way that file exists to catch.
+
+**The PII harvester was harvesting half a line, and the fix immediately over-fired.**
+`gen_pii_denylist.parse_networking_names` kept only `group(1)` of a `### Name — Company`
+header and **discarded the company half by design**, so 179 companies named that way reached
+no tier; a leading `[ARCHIVED]` tag was also captured as part of the name, so the person's
+name reached none either. Both fixed, with harvested header companies routed to the
+**WARN tier, never BLOCK** — they are parsed from prose-shaped headers, and a false BLOCK on
+an always-on PreToolUse hook stops real work.
+
+It stopped real work within minutes. `data/networking.md` turns out to contain a demo
+interaction logged against the repo's own **fictional cast**, and the harvester cannot tell a
+demo row from a real contact because both are `### Name — Company`. Fixing the status-prefix
+bug promoted a fictional surname to BLOCK and the hook blocked three legitimate public files
+— including `examples/README.md`, the file that *defines* that persona as fictional. The cast
+is now excluded by declared name (not by a heuristic guessing which rows are demos), and the
+append-forever retired-tokens list had to be purged by hand, because a token that lands once
+persists through every later rebuild.
+
+**A correction to an earlier claim in this session.** That demo row was first reported as a
+confirmed real contact and employer leaking into a tracked public file. It was not; it was
+cast data. Three fictional-cast name collisions were renamed anyway, and one genuinely
+real-entity reference — a transcript filename carrying a company and a person, in
+`filler_baseline.py` and already on `origin/main` — was scrubbed. `UNRELIABLE` there is now
+keyed by a date-time prefix instead of a filename, matched by `startswith`.
+
+**New guard: `tests/scripts/test_mutation_allow_analysis.py`.** A surviving mutant already
+needed a written reason; "non-empty" is a low bar, and an allowlist that accepts assertions
+is how a corpus decays back into "green means done". An entry now needs substance, a named
+verdict class (equivalent / dead branch / unreachable by construction / non-portable / CLI
+plumbing / whitespace-only), and a traced mechanism. Profiling the existing 87 first mattered:
+the first rule failed 32 of them, several using vocabulary the rule had not listed. Seven were
+genuinely thin and were upgraded rather than the rule widened to admit them — including a
+57-character cross-reference, which is precisely the shape that lets an unverified entry ride
+in behind a verified one.
+
+**New: `tools/mutation_trend.py`** (`record` / `show`) — the longitudinal series each sweep used to
+overwrite. Append-only, refuses an unchanged baseline so a second `record` cannot invent a flat data
+point, and excludes no-verdict tools from the denominator rather than counting them clean.
+
+---
+
+## 2026-09-01: the mutation instrument was optimistic, and the PII gate matched half a phrase
+
+Four independent defects, three of them found by something failing rather than by review.
+
+**`mutation_check.py` recorded surviving mutants as KILLED.** It rewrites its target dozens of times per
+second and spawned pytest without `PYTHONDONTWRITEBYTECODE`; CPython invalidates a cached `.pyc` by
+`(mtime, size)`, coarse enough that a later mutant could run as an earlier one's bytecode. The direction is
+what matters: false *kills* mean survivors are **under-reported**, so a baseline reads cleaner than the
+corpus is and a tool that looks hardened may not be. **Every "mutation-clean" claim made before 2026-08-31
+is unverified.** `mutation_report.py` now prints a staleness banner above the numbers for any pre-fix
+baseline, and it disappears on its own once a post-fix baseline exists. Second defect in the same file:
+`map_tests` selected covering tests by bare substring over raw source, which chose 15 files instead of 6
+for `todo_write.py`, blew the 5h cap, and left that tool unmeasured entirely. Selection is now AST-derived.
+
+**launchd fired into the tree the sweep was mutating, ~80 times a night.** `conftest.py` refuses to run
+while a mutation is in flight, which covers pytest and nothing else. `gmail-fetch` (every 900s),
+`granola-auto-debrief` (every 3h) and `detector-scan` all shell into the same `tools/*.py`; `gmail_fetch.py`
+carries 377 mutants, so during its own measurement window a fetch job would run mutated mail code against
+real Gmail. New `tools/job_quiesce.py` unloads the jobs for the run and restores exactly what was up. The
+guard could not live inside the scheduled tools — mutating a guard's own `if` is what the sweep does. The
+sweep also moved 16:00 to 18:00, because an unattended run that makes the tree unsafe belongs after the
+workday.
+
+**The PII denylist matched phrases literally, so half a phrase walked through.** A multi-token company was
+emitted only as the whole phrase plus its slug; 171 of 470 entries were multi-token. Separately, the list
+was rebuilt from *current* `data/` every run, so a company that left `scan-targets.yaml` lost its coverage
+while its name stayed in files written while it was a target. Both closed: distinctive components now
+reach BLOCK and ordinary-English ones the WARN tier, and tokens accumulate in a gitignored retired file
+merged into every rebuild. The first tightening produced **7 false positives across 522 public files** —
+the system dictionary has no plurals, so ordinary plurals read as brand tokens; a general fix for the
+compound cases was written and rejected the same hour because it also dissolved a legitimate brand name
+into two ordinary words. Final: 565 tokens, **zero** false positives, and the sentence that leaked now
+blocks.
+
+**Nine real leaks were live in public skill files, with the deterministic scanner reporting clean.** A
+date-plus-outcome fingerprint, a verbatim sentence from a sent email, two industry verticals, a private
+company note copied into a test fixture, and two real companies published with their rank in the target
+list. None contained a denylisted token — the same 523-file scan returned zero BLOCK hits in the same
+minute. All scrubbed. **A green deterministic sweep is not evidence about this class**; only the semantic
+pass or a human reading the line is.
+
+Also: `act_apply.py` interpolated a literal `" | "` into a Notes cell, making every source-tagged pipeline
+row 11 fields wide and shifting the URL column into Notes — new `check_table_integrity.py` hook catches the
+shape. `frame_write.py` gained canonical-location enforcement (three frame conventions were live at once,
+and nothing globs for frames, so a misplaced one was simply lost) and a fix for an uncaught
+`FileNotFoundError` on its own first `init`. A stale unmerged branch was deleted from the public remote.
+
+Suite **3222 to 3269**. Commits `f10e644`, `2ae4af9`, `b22e76b`, `9bdfd45`, `98fbcfa`, `e44d2a8`,
+`295dce0`, `3b41d0f`, `3ad7bfa`, `0a3381d`, `43af02e`.
+
+## 2026-08-21: plan-hardening v2 — bounded probes and per-defect retest replace the adversarial panel
+
+`.claude/workflows/plan-hardening.js` was rewritten against `framework/plan-hardening-v2-spec.md`.
+Suite **2114 to 2155** (33 tests in `test_plan_hardening_invariants.py` + 8 in
+`test_workflow_arg_contracts.py`, both up from 0). Committed `fc8b449`, with audit corrections in
+`689dfdd` and the arg-contract guard in the commit below.
+
+**Why the old design had to go, measured not argued.** Two instrumented v1 runs on the same plan:
+88 agents / 5.24M tokens / 5 rounds and 46 agents / 2.94M tokens / 2 rounds. **Neither converged.**
+Hole counts across run 1's five rounds were 82 / 84 / 78 / 75 / 76, with ~26 *new* blocking holes
+every round. The delta gate could never fire because **"attack this plan" is an unbounded question**
+— fresh critics re-derive it indefinitely. Three compounding defects: the revise step mutated the
+plan between rounds so late critics attacked the panel's own output; premise findings were reported
+as peers of execution findings and got buried (run 1's deepest finding arrived as one of 82 and had
+to be hand-extracted); and the final reviser received a **3-character payload** and reconstructed
+the plan from critics' paraphrases, which it disclosed only in its own header.
+
+**What v2 does differently.** Every stage asks a question with a decidable answer:
+
+```
+S0 goal extraction (2 agents, one BLIND to the plan) → S1 premise gate — HARD STOP if open
+→ S2 typed target generation → S3 scoped probes (1/target + 1 unscoped)
+→ S4a one agent per hole decides it → S4b one reviser applies the edits
+→ S5 per-hole retest → S6 repo-grounded validation → persisted register
+```
+
+**The value, on the same plan:**
+
+| | v1 rounds | v2 bounded |
+|---|---|---|
+| Agents / tokens | 88 / 5.24M | 81 / 2.88M |
+| Converged | **No** | **Yes**, one pass |
+| Output | 82 holes, hand-extraction required | 25 holes, each with a verdict |
+| Real fix vs. claimed fix | **indistinguishable** | **14 of 25 "fixed" holes still fired** |
+| Premise defects | buried among 82 peers | gated upstream; 3 surfaced at S1 |
+| Payload integrity | rebuilt a plan from 3 chars | asserted; run aborts instead |
+
+**The per-defect retest is where the value concentrates.** A fix is not verified until it is checked
+against the specific defect it claims to remove. v1 threw the revised plan at a fresh panel, which
+cannot tell a real fix from a topic that got mentioned. On the first v2 run, 25 holes were all
+dispositioned `fixed` and **14 did not close** — that gap is invisible under v1 by construction. It
+is the plan-level analogue of CLAUDE.md's rule that a green test is not evidence.
+
+**Six guards abort the run rather than warn**: payload floor, structurally-asserted blindness on the
+plan-blind goal agent, execution stages unreachable while `premise_status: open`, ID coverage, a
+written reason on every `accepted` finding, and bounded mutation (6a retention + 6b accretion).
+Against spec §9 that is **four of six as specified** — §9.4's cross-pass half is unbuilt and §9.6 as
+written was replaced rather than implemented. Each implemented guard is broken on
+purpose by a test; the driver executes the real workflow source under a stubbed DSL rather than
+regex-matching it, because a suite that only ran the happy path would prove nothing about a guard.
+
+**Three defects found by RUNNING it, none of which reasoning had surfaced:**
+
+1. **The fix stage could not scale.** One agent asked to disposition 25 holes and rewrite the plan
+   returned dispositions for E1-E8 and stopped. INVARIANT 4 aborted the run — correct behavior, and
+   v1 would have dropped 17 holes silently — but the stage could not complete on any plan yielding
+   more than ~8 holes. Split into S4a (one agent per hole) + S4b (a reviser that applies edits and
+   reviews nothing), so ID coverage is **structural** rather than checked after the fact.
+2. **`registerPath` and `outPath` were advertised fiction.** Both sat in the workflow's argument
+   contract and were never read by the code. This is the "written down and followed" defect one
+   layer out, in an *interface*: the contract documented behavior that did not exist. The DSL has
+   no filesystem access, so persistence now runs through an agent with Write tools, mirroring how
+   `planPath` is already read.
+3. **INVARIANT 6 conflated two different failures.** A flat 1.15x growth cap aborted a **faithful**
+   edit — 2.30x growth but 83% verbatim line retention and identical section headers. Split into
+   **6a reconstruction** (retention floor, independent of hole count) and **6b accretion** (budget =
+   original x 1.15 + fixes x 800, with a hard 3x ceiling). The ceiling was necessary: without it a
+   short plan with 25 fixes permitted **12.66x**, so the first version of the fix passed its own
+   test for the wrong reason.
+
+**The lesson from (3), which generalizes:** the tempting move when a guard fires is to raise the
+threshold until the run passes. Measuring what it actually caught — retention, header diff — is what
+separated a false positive from a real catch. A test now protects the **calibration itself**:
+zeroing the per-fix allowance reinstates the false positive and fails the suite.
+
+**Mutation-tested by hand, and the caveat matters.** `tools/mutation_check.py` is a **Python AST**
+mutator and cannot parse JavaScript, so this repo's mutation instrument has never run against this
+file and there is no `tools/mutation-allow.json` entry for it. Each new guard was instead broken on
+purpose in the source and the suite re-run. Every mutant died except one: `all_writes_returned: true`
+meant nothing detected a failed write being reported as success — the payload-loss shape one layer
+out. A test was added and the mutant now dies. Suite passes in isolation and in full (**2147**).
+
+**Efficiency: bounded retry, capped at one attempt.** Two runs (999k and 1.6M tokens) were discarded
+whole because a single agent produced one bad output. A flaky hole agent is now retried once, and a
+reviser that breaks the budget gets one retry with the specific numbers quoted back. The cap is part
+of the guarantee, not a tuning knob — an unbounded revise-recheck loop is precisely how v1 died.
+
+**What did NOT get built, named rather than glossed.** Spec §9.4's *cross-pass* half. Hole IDs are
+stable within a pass, but no prior register is read back, so an ID from pass *n* is not guaranteed to
+denote the same hole in pass *n+1*. Single-pass runs are sound; **a second pass is not yet
+trustworthy**, and with 14 holes still open that is blocking rather than hypothetical. The spec's
+status header says `BUILT, with one named gap` for exactly this reason.
+
+**Deliberately NOT done: batching the retest.** It would cut ~25 agents to ~8 and reintroduce the
+truncation failure in (1). Saving tokens by reinstating a known failure mode is a cheaper way to be
+wrong, not an efficiency.
+
+**Tooling gotcha, cost 40 minutes.** `Workflow({name: "..."})` resolves a **stale script snapshot**
+rather than the file on disk, and announces nothing. A run launched at 09:43 executed the v1
+workflow while v2 had been on disk since 09:41. **Always launch with `scriptPath`** and verify the
+persisted script's header first. Docs updated accordingly in `framework/analysis-method.md` and
+`framework/multi-agent-workflows.md`.
+
+**A guard against the defect class this entry keeps describing.** Three separate arg-contract
+defects landed in one day — `registerPath`/`outPath` advertised but never read; `targets` read but
+silently dropped from the contract, and it bypasses a whole stage; `extract-verify.js` advertising a
+`date` it never reads. A fourth was adjacent: `research-audit.js` read `cfg.date` with no default and
+no guard, so omitting it wrote `undefined-best-practices-audit.md` — a silent success with a corrupt
+filename. `tests/scripts/test_workflow_arg_contracts.py` now enforces the contract in **both**
+directions across every `.claude/workflows/*.js`: every advertised arg must be read, and every read
+arg must be advertised. Exemptions require a written reason, same contract as `mutation-allow.json`.
+Four mutants, all killed — including one that was **equivalent on the first attempt** (relocating the
+guard "after" the filename actually left it before) and had to be re-cut to mean anything.
+
+**Docs swept in the same pass** (per the back-propagation rule — a new design enforced forward while
+old descriptions still describe the dead one is how a rule sits "captured" while artifacts rot):
+`framework/multi-agent-workflows.md` (pattern #3 marked superseded, new #3b with the stage graph and
+the comparison table), `docs/tools-reference.md`, `framework/review-findings-protocol.md` (its
+"persists nothing" blocker is now half-closed), `framework/analysis-method.md` (invocation contract:
+`rounds`/`lenses` removed, they no longer exist), `framework/smb-decision-analysis.md`. Historical
+CHANGELOG entries were left as written — they record what was true at the time. **One exception,
+found by audit and disclosed here:** commit 33bd0da also carried a pre-existing uncommitted
+working-tree edit to an older entry, redacting a real Gmail label ID to `--job-search-label`. A
+correct redaction in a public file, not authored as part of this work, swept in by staging the whole
+file.
+
+## 2026-08-19: three verification tools that could not describe their own scope
+
+Suite **2034 to 2053**. Follow-on from the `gmail_fetch --search ""` fix earlier the same day.
+
+**An audit of the whole class.** An AST scan over all 130 `tools/*.py` (72 declare argparse) found
+**79 (file, flag) pairs across 31 files** where a string flag with `default=None` is later
+truthiness-tested, so "supplied but empty" is indistinguishable from "never supplied." **69 are
+harmless parameters.** Ten were flagged, three verified live, and all three sit in verification
+instruments whose failure mode is a false clean bill of health:
+`blind_canary.py --control ""` returned `ok / clean:true` with the `control` key **absent
+entirely** while a WRONG token correctly refuses; `audit_rule_violations.py --ext ""` turned 588
+violations into `count:0 status:ok`; `friction_log.py list --surface ""` returned 257 rows where
+the scoped query returns 1.
+
+**Fixed by making the reports self-describing, not by rejecting input.** Scope now travels with
+the conclusion: `control.checked` / `proves_agent_read_input`; `files_scanned` / `exts_applied` /
+`exts_defaulted`; `total_rows` / `filters_applied`. **Additive JSON fields only** — no status value
+and no exit code moved, because all three tools are prescribed in always-loaded CLAUDE.md (lines
+23, 33, 86) and breaking a live prescribed invocation to prevent a never-observed one has an
+inverted risk sign. Mutation-checked per CLAUDE.md:23 with `--isolation`: **no mutation to any of
+the new code survived** in any of the three.
+
+**The tests found two defects in the session's own work, which is the part worth keeping.**
+(1) The audit asserted `files: 0` was the tell in `audit_rule_violations`. It is not — `files`
+counts files WITH violations, so it reads 0 on a genuine clean sweep too, meaning the output had
+**no scope signal at all**. That is why `files_scanned` now exists, and the audit doc carries a
+dated correction. (2) The first `friction_log` fix reported `surface: null` whenever `.strip()`
+was empty, but `"   "` is truthy and DID filter to zero rows: a report lying about its own scope
+is worse than the silent skip it replaced. It now mirrors the filter's exact condition.
+
+**A plan-hardening pass ran and returned UNCONVERGED** (3 rounds, 56 agents, 3.67M tokens). Two
+legitimate catches: no mutation step in a plan whose entire deliverable was guards and their
+tests, and a `dest=` collision risk in the proposed helper. Its top-rated blocking finding was
+about machinery **the panel itself added** during revision, and it said so. Recorded because the
+cost/yield ratio is the finding.
+
+**Also corrected: an exposure claim that was wrong.** "Measured exposure: zero" came from a grep
+whose pattern omitted three of the nine tools and which searched plists rather than always-loaded
+prose. Three ARE prescribed in CLAUDE.md. What survives is narrower and still decision-relevant:
+**non-zero at the tool level, zero at the flag level** — these tools run, but not through the
+vulnerable doors.
+
+**Two tiers deliberately NOT built, with the reasoning recorded** in
+`output/analysis/081826-build-batch-plan.md` as `[SKIP]` rows: the shared `reject_empty` helper
+(superseded by the self-describing design) and the AST-detector allowlist guard test (judged a net
+negative — ~69 hand-maintained entries encoding a judgement the AST can rank but not decide, which
+would read as coverage). Both carry REOPEN gates. `tools-reference.md` gained rows for all three
+tools, none of which had one.
+
+## 2026-08-19 (later): a flag that silently changed mode, and the article that filled a prep gap
+
+Suite **2034 passed / 0 failed**.
+
+**`gmail_fetch.py --search ""` ran a forward SYNC instead of a read-only search.** Every
+optional string flag defaults to `None` and was tested for *truthiness*, so an empty string was
+indistinguishable from "never supplied": the flag was accepted, parsed, and silently ignored.
+For `--search` that is not a degraded parameter, it is a **mode change** — the read-only branch
+was skipped and control fell through to the sync path, which writes files into `inbox/` and
+advances `.gmail_state.json`. `--search "" --max 25` read as "list 25 messages" and performed a
+sync. Found by hitting it, not by review: the accidental run happened to fetch the exact email
+being looked for, so the failure was invisible because the outcome was useful.
+
+Fixed as a class rather than a line. A guard after `parse_args()` rejects empty or
+whitespace-only values on **`--search`, `--label-id`, `--since`, `--inbox-dir`, `--state-file`**
+with exit 2, naming `--backfill --max N` as the read-only listing path; the mode selector is now
+`is not None` regardless, so it does not depend on the guard staying in place. Whitespace is in
+the guard because `"   "` is truthy and would otherwise fail somewhere less legible. 12 new
+tests, **mutation-checked** (reverting the source fails 12, restoring passes 62).
+
+**The generalizable half:** an argparse flag with `default=None` that is later truthiness-tested
+cannot distinguish *supplied but empty* from *never supplied*. Harmless when the flag is a
+parameter that degrades to a default, dangerous when it selects a **mode**. An AST scan
+(`scan_flag_class.py`, scratchpad) found the same shape across ~30 `tools/*.py`; almost all are
+parameters, but the mode-selecting subset is unaudited and is the real follow-up.
+
+**Docs swept, not just the code.** Per the source-fix rule, the module docstring, the
+`tools-reference.md` table (which had **no `gmail_fetch.py` row at all** despite CLAUDE.md
+pointing there before invoking any tool), `/draft-email` and `/follow-up` (both prescribe
+`--search "<query>"`), and the memory-tier rule that makes `--search` the Gmail reflex all now
+carry the no-empty-query constraint and the listing recipe. The listing recipe was verified live
+before shipping: it lists, writes zero files, and leaves `historyId` untouched.
+
+**Prep, unrelated to the above.** `/analyze` on Michel Tricot's "Designing Agent State Machines
+for Long-Running Business Workflows" → `output/analysis/081926-designing-agent-state-machines.md`.
+A grep of the active target's `output/<company>/` prep tree returned **zero** hits for "state machine" and "long-running", which
+located an empty axis in the eight-concept drill card: all eight assume the process is alive at
+the moment it acts, none asks what holds a workflow between Monday and Friday. Added as concept
+9. The off-lens finding from the same run: **every REOPEN gate in the memory corpus is a waiting
+state with no clock and no destination**, which is what 40 of 432 parked rules look like from
+the outside.
+
+## 2026-08-19 (later): mutation_check.py, and the tool that corrupted the repo
+
+Added `tools/mutation_check.py` and a CLAUDE.md Hard Rule: **a green test is not evidence,
+mutation survival is.** The rule exists because four separate green-suite illusions surfaced
+in one session, including a flag deciding whether PRIVATE mail lands in this PUBLIC repo that
+could be made a no-op with zero test failures.
+
+Beyond plain mutation it classifies HOW a mutant died — an assertion firing versus a bare
+crash — because mutation survival measures observability, not assertion quality. A suite that
+kills every mutant by crashing scores perfectly and asserts nothing.
+
+**Then it corrupted two files.** Run on itself, a mutant of its own restore logic left
+`vault_paths.py` and `gen_pii_denylist.py` damaged — the latter silently disabling a security
+feature built hours earlier. Only the full suite going red caught it. Self-mutation is now
+refused, with a sidecar backup and an integrity assert; both files were reconstructed.
+
+**It is NOT wired to anything.** `/plan-hardening` returned UNCONVERGED after 2 rounds, with
+several of its own round-1 fixes failing verification. Full reasoning:
+`output/analysis/081826-build-batch-plan.md`.
+
+## 2026-08-19: the Bash PII hole, a disarmed guard, and two extractions
+
+An overnight build session off a bulk to-do triage. Suite went from **1888 passed / 1 failed** at the session's true start (1923/1 is the count after the first fix landed)
+to **1998 passed / 0 failed**.
+
+**The PII gate had a hole the size of the most common write.** `check_public_pii.py` was wired
+on `Write|Edit` only, so `cat > docs/x.md <<'EOF'` — the usual way an agent writes a file —
+reached the public repo unscanned. Now wired on `Bash` too, with write targets parsed out of
+the command (redirects incl. `2>`, `tee`, `sed -i`, `dd of=`) and the command text itself
+scanned, heredoc body included. Evaluation is **per command-segment**: the first live smoke
+false-positived on a compound call that wrote clean content to `docs/` and a real name to a
+private path, and a guard that false-positives on normal work gets switched off.
+
+**A stopword silently disarmed the guard for a live pipeline company.** `/audit-pii`'s semantic
+pass found a real company sitting in `STOPWORDS`, whose docstring promises it holds none. Being
+there kept it out of BOTH denylist tiers, so nothing would have blocked that name reaching a
+public file. The deterministic layer could not find this **by construction** — the hole was in
+the deterministic layer. Removed (denylist 434 → 436, now BLOCK-tier) and pinned by a new
+`test_gen_pii_stopwords_guard.py` that hashes the token rather than naming it.
+
+**Documenting a leak re-committed it.** The first incident comment for that fix wrote the
+company name into a public file and tripped the hook that had just been repaired.
+
+**Account-specific Gmail label IDs left the public repo.** They were hardcoded in
+`gmail_fetch.py` and in two tracked plists. Now resolved by key from the gitignored
+`tools/.gmail-labels.conf` via `--job-search-label` / `--personal`. Updating the docs surfaced
+the worse case: the tracked `gmail-fetch-personal` plist also hardcoded the **private vault
+path**, the exact disclosure `vault_paths.py` exists to prevent. Both jobs reloaded and
+kickstarted clean.
+
+**`personal_mail_dir()` was corrected against reality.** Its first version returned an invented
+`<root>/data/mail`; the live job had been writing to `<root>/inbox` for months. Caught by
+reading the running plist, not by testing.
+
+**Two extractions, each with an anti-drift guard.** `tools/meeting_vocab.py` now owns meeting
+classification (`granola_auto_debrief.py` 1149 → 905 lines; the interactive CLI no longer
+imports rules from the launchd script), and `resolve_inbox_dir()` was pulled out of `main()`
+because a mutation proved `--personal` could be a no-op with no test failing.
+
+**`/remember` gained `#personal` routing**, which short-circuits classification entirely — a
+personal note that mentions a known contact must not be filed in the vault *and* copied into
+`data/networking.md`.
+
+**Also:** the read-ledger (`check_edit_after_mutation.py`) now records Bash reads. It held ONE
+file mid-session while dozens had been read via `cat`/`sed`, because the harness instructs
+Bash-first reading — so any "was this cited file actually read?" gate built on it would have
+fired on nearly every correct session. And the long-standing `content-rules` B7/B8 parity
+failure was a single `<!-- phrases -->` comment sitting under the wrong bullet.
+
+**The pattern worth keeping:** every real defect this session was caught by *running* the thing
+— live smoke, a kickstarted job, a mutation pass. Green unit tests were never sufficient
+evidence, and two tests were found passing for the wrong reason and rewritten.
+
+## 2026-08-18 (later): the Self-Improvement Loop, compressed in CLAUDE.md, justification split out
+
+`## Self-Improvement Loop` was 9,939 bytes, 24.8% of an always-loaded file, and the only section
+describing a multi-step procedure. It was compressed in place to 7,613 bytes rather than moved,
+because directives must not be paged out of the always-loaded tier.
+
+**The justification went to `docs/self-improvement-loop.md`, and that file contains NO directives.**
+The first design put a full verbatim copy there. That was rejected on Nick's question "how do I
+mitigate duplication drift?", and the honest answer was that a line saying "change it in both
+places" is prose, which by this repo's own first Hard Rule is not built. **Two copies of this exact
+protocol have already drifted once**, costing 384 of 403 `feedback_*.md` files their visibility to
+the promotion detector for a month. So the fix is structural: the two files share no prose, and
+there is nothing to keep in sync. Verified mechanically at zero shared substantive lines.
+
+**The verbatim pre-compression text lives in git** (`git show 67e0ada:CLAUDE.md`), which is a better
+archive than a second copy because it cannot drift.
+
+**A rewrite cannot be verified the way a move can**, so three instruments were used instead of one:
+
+1. **Blind two-agent enumeration.** Two agents independently listed every normative directive, one
+   seeing only the original and one only the compressed text, neither told a compression test was
+   running, neither shown the other's output. **72 directives in the original, 71 in the compressed,
+   zero lost, zero invented.**
+2. **Union rule conservation**, which **HARD ABORTED at 20 lost lines.** It was not loosened. All 20
+   were adjudicated individually: 14 were reworded-and-present; the other 6 were the body-section
+   labels (Rule / Why / Origin / How to apply / Connections / Tier ladder), collapsed from six
+   bullets into one 364-character prose line.
+3. **A direct label-and-qualifier check** confirming all six survived with their qualifiers.
+
+**The abort earned its keep even though nothing was lost.** Collapsing six enumerated bullets into
+one prose line preserves the directives while degrading exactly the property this repo measures as
+load-bearing: enumerated, absolute, small-N converts, prose does not. That is the highest-stakes item
+in the section, since the body schema is what the 384-of-403 failure was about. **The six bullets
+were restored verbatim** (+150 bytes), which also brought the line-exact diff from 20 to 14.
+
+**A finding about method.** A hand-built 28-row directive inventory was drafted first and would have
+been an unsafe instrument: the blind reader found **72**, splitting the YAML block into eight
+obligations the hand list treated as one. A dropped frontmatter key would have diffed clean against
+it. Self-derived inventories are not a check.
+
+**CLAUDE.md across the day: 41,310 to 38,264 bytes (40.3 KB to 37.4 KB), 301 to 268 lines.**
+3,046 bytes off the per-session tax, with the anti-pattern list and five origin traces still one
+triggered pointer away.
+
+**Verification:** union rule conservation adjudicated to zero genuine losses · zero shared prose
+between CLAUDE.md and the new doc · full suite 1,881 passed · the one test citing the section does so
+in a docstring narrative, not an assertion.
+
+## 2026-08-18: CLAUDE.md back under budget, and what deliberately did NOT move
+
+`CLAUDE.md` crossed its 40 KB always-loaded budget (41,310 bytes) after the 08-17 source fixes
+that taught it the three memory roots and the mandatory grep-mirror prunes. Trimmed via
+`/trim-context-file` to **40,024 bytes (39.1 KB), 301 to 274 lines**.
+
+**What moved: `## Tools & Environment`, partially, verbatim, to `docs/tools-reference.md`**
+(new `## Environment & per-workflow recipes` section, which names its origin and date). Moved:
+the Python 3.10+/PEP-604 constraint, the RenderCV invocation, the `.pending-draft.txt` format
+block, the post-interview 6-step workflow, the separator-row and edit-safety-hook gotchas, and
+the historical n8n note. This is the split the 2026-08-14 entry flagged as needed rather than a
+wholesale move.
+
+**What stayed, and why:** the `PYTHONIOENCODING=utf-8` requirement and the
+`tools/launchd/logs/` provenance-xattr prohibition. Both are things Claude must not violate
+*without knowing*, which is the always-loaded test. The router line that replaced the section
+carries a widened trigger, naming email drafts, CV rendering, and post-interview work explicitly,
+because a pointer without a trigger condition is a pointer nobody follows.
+
+**Rejected the script's advice in two places.** `context_file_audit.py` suggested MOVE on
+`## Data Files`; its first subsection is the Write-Only Files table, which encodes a rule
+(`Edit` fails silently on rows >500 chars, so mutate via `todo_write.py`/`pipe_write.py`). That
+is the exact case the skill names as a load-bearing table that reads as a lookup table. It stays.
+It also flagged `## Repository Structure` as REVIEW; the three-memory-roots tree added 08-17 is
+rule-bearing (never search the rsync mirrors, never delete them) and was the source fix for a
+trap that had fired three times.
+
+**`## Self-Improvement Loop` (9,913 bytes, 24.8%) stays in CLAUDE.md by Nick's call.** A
+compression-in-place is queued instead of a move, and it is a REWRITE, not a relocation, so byte
+conservation cannot vouch for it and the rules diff fails open by construction (same detector on
+both sides). It gets a rule-by-rule preservation table reviewed before anything is written.
+
+**Verification:** Step 0 gate passed (13 blocks reconstructing 41,310 bytes exactly,
+`rule_count=69`). Byte conservation: every moved fragment byte-identical to its Step 0 block.
+Rule conservation against the UNION of trimmed source plus destination: **0 of 69 baseline rules
+lost** (union 95). Full suite: 1,881 passed. No artifact cited the moved section by heading, so
+no back-propagation was required.
+
+**Still over budget, tracked, not addressed here:** `memory/index-system.md` (29.3 KB) and
+`memory/index-verification.md` (31.3 KB) against a ~24 KB shard budget. Sharding buys headroom;
+it does not stop growth.
+
 ## 2026-08-17: a note that broke a parser, and the invariant that will catch the next one
 
 Three defects in `data/job-todos.md` tooling, found in sequence, each exposed by fixing the one
@@ -1012,7 +1517,7 @@ Two scripts (`networking_followup.py` and `outreach_pending.py`) and the data mo
 
 ### Added
 - **4 n8n workflows** built and active at http://localhost:5678 (`n8n start` via `tools/run_n8n.bat`):
-  - **Gmail Fetch** (every 15 min) — runs `gmail_fetch.py --label-id Label_7175134973725917628`; replaces Windows Task Scheduler task
+  - **Gmail Fetch** (every 15 min) — runs `gmail_fetch.py --job-search-label`; replaces Windows Task Scheduler task
   - **Standup Cache Warm** (weekdays 8am) — runs `act_classify.py` + `pipeline_staleness.py` in parallel; writes pre-computed JSON to `tools/.cache/`
   - **Follow-up Nudge + Dossier Freshness** (daily 9am) — runs `n8n_outreach_nudge.py` + `n8n_dossier_nudge.py` in parallel; writes inbox items when overdue follow-ups or stale dossiers are found
   - **Weekly Review Reminder** (Friday 4pm) — runs `n8n_weekly_reminder.py`; writes `inbox/YYYYMMDD-weekly-review-reminder.md`
@@ -1097,7 +1602,7 @@ Two scripts (`networking_followup.py` and `outreach_pending.py`) and the data mo
 - **`tools/md_to_pdf.py`** — major rewrite for 1-page CV output: switched from Helvetica to Calibri (registered via ReportLab TTFont from `C:/Windows/Fonts/`), tightened page margins (8mm/13mm), reduced line-height to 1.1, reduced body font-size to 8.5pt, tightened section spacing throughout.
 - **`framework/style-guidelines.md`** — added Nick's CV formatting preferences: no em dashes or en dashes (use hyphens everywhere), comma separators for skills lists (not dots or bullets).
 - **`CLAUDE.md`** — added `todo_write.py` to repo structure listing; updated Write-Only Files section to specify that mutations must use `todo_write.py`; added `todo_write.py` usage examples to Tools & Environment section.
-- **`.claude/settings.local.json`** — added pre-approved WebFetch domains (luma.com, oceantechhackathon.org, sofarocean.com, propellervc.com, aquatic-labs.com) and pre-approved Bash patterns (`git add:*`, `PYTHONIOENCODING=utf-8 python:*`).
+- **`.claude/settings.local.json`** — added pre-approved WebFetch domains (five event and target-company domains) and pre-approved Bash patterns (`git add:*`, `PYTHONIOENCODING=utf-8 python:*`).
 
 ### Tests added
 - `tests/scripts/test_linkedin_scanner_parser.py` — unit tests for LinkedIn profile parser

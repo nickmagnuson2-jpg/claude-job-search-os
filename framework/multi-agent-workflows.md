@@ -46,6 +46,68 @@ that no amount of better prompting on the generator will.
   claim can fail multiple ways.
 
 ### 3. Iterative refinement with a convergence gate (quality through rounds)
+
+> ⚠️ **This pattern failed twice under measurement. It has been REPLACED, not patched.**
+> Two instrumented runs of `plan-hardening.js` produced 82/84/78/75/76 holes across five rounds with
+> ~26 *new* blocking holes every round: the gate never fired, because **"attack this artifact" is an
+> unbounded question and fresh critics re-derive it indefinitely.** The revise step also mutated the
+> artifact between rounds, so late critics attacked the panel's own output.
+>
+> **The replacement shipped 2026-08-21** and is specified in `framework/plan-hardening-v2-spec.md`.
+> Do not reuse the round-based design below for anything expensive; use the v2 stage graph instead.
+> What survives from the text below: distinct critic lenses, a reviser allowed to reject with a
+> reason, and the residual-risk-register-not-a-certificate rule.
+
+### 3b. Bounded probe + per-defect regression retest (the replacement for #3)
+
+**Use this instead of #3 whenever the artifact is expensive or irreversible.** Every stage asks a
+question with a decidable answer, which is what makes termination arithmetic rather than hope.
+
+```
+S0 goal extraction (2 agents, one BLIND to the plan)  → S1 premise gate — HARD STOP if open
+→ S2 typed target generation → S3 scoped probes (1/target + 1 unscoped)
+→ S4a one agent per hole decides it → S4b one reviser applies the edits
+→ S5 per-hole retest ("does hole E4 still fire?") → S6 repo-grounded validation → register
+```
+
+**Why this is worth more than #3, measured on the same plan rather than argued:**
+
+| | #3 rounds (v1) | #3b bounded (v2) |
+|---|---|---|
+| Agents / tokens | 88 / 5.24M | 81 / 2.88M |
+| Converged | **No**, 5 rounds | **Yes** — the *harness* terminated in one pass. The *plan* came back `OPEN`, with 14 holes still firing and 2 new blocking ones. Those are different claims. |
+| Output | 82 holes, hand-extraction required | 25 holes, each with a verdict |
+| Could it tell a real fix from a claimed one? | **No** | **Yes — 14 of 25 "fixed" holes still fired** |
+| Premise defects | buried among 82 peers | gated upstream, 3 surfaced at S1 |
+| Payload integrity | reconstructed a plan from 3 chars | asserted; run aborts instead |
+
+Five properties do the work, and each maps to a measured v1 failure:
+
+1. **Bounded questions.** "Does hole E4 still fire?" terminates; "attack this plan" does not.
+2. **A premise gate that hard-stops.** If the goal is wrong, execution findings are not 21 problems
+   but 21 items pending one. v1 reported premise findings as peers of execution findings and they
+   got buried — the deepest finding in run 1 arrived as one of 82 and had to be hand-extracted.
+3. **An oracle arm.** Two goal statements, one authored **without ever seeing the plan**. The delta
+   attributes failure to *aim* versus *execution*. Blindness is asserted structurally, not requested
+   in a prompt.
+4. **Per-defect regression retest — the single highest-value stage.** A fix is not verified until
+   it is checked against the specific defect it claims to remove. On the first live run this caught
+   **14 of 25** claimed fixes that did not close their hole. v1 threw the revised plan at a fresh
+   panel, which cannot distinguish a real fix from a topic that got mentioned.
+5. **Invariants that abort rather than warn.** Payload floor, structural blindness, gate
+   unreachability, ID coverage, a written reason on every accepted risk, and bounded mutation
+   (retention floor + an accretion budget that scales with commissioned fixes).
+
+**Its known limit:** hole IDs are stable *within* a pass but no prior register is read back, so a
+second pass over the same artifact is not yet trustworthy. See the spec's status header.
+
+#### The superseded v1 body, kept for the reasoning that still holds
+
+> ⚠️ **Everything from here to the end of this subsection describes the REPLACED round-based
+> design.** It sat under the §3b heading unmarked until 2026-08-21, so a reader following the
+> deprecation banner landed on round-based guidance. Do not implement from it. What still holds:
+> distinct critic lenses, a reviser allowed to reject with a reason, and no pass/fail certificate.
+
 Generate → critique → revise → **judge** → loop, stopping when a round surfaces no
 **new** blocking hole (or a round cap). The explicit stopping rule is what separates
 this from endless tinkering — but it must be a *delta* rule, not "until the judge is
@@ -131,18 +193,22 @@ misses the long tail; the "consecutive-dry" or budget rule is the correct shape.
 
 ## The three reusable templates (`.claude/workflows/`)
 
-Each is PII-free and parameterized: your specific subject/data flows in via `args` at
-run time, never hardcoded (this repo is public). Invoke by name, or via `scriptPath`.
+Each flows its subject/data in via `args` at run time rather than hardcoding it (this repo is
+public). **Invoke via `scriptPath` — see the warning below the table.** Note that `extract-verify.js`
+is only partly parameterized: job-search field names and schema are baked into its prompts, so
+reusing it in another domain means editing prompt bodies, not just `args`.
 
 | Template | Pattern(s) | Give it (`args`) | Produces |
 |---|---|---|---|
-| `plan-hardening.js` | #3 convergence | a plan (path/text) + domain context + round cap (+ optional `quietRoundsToStop`, `maxGrowthPerRound`) | a hardened plan + a residual risk register + unverified repo-state claims + round-by-round changelog |
-| `research-audit.js` | #1 fan-out + #2 verify | a subject + systems, each with current-state + research angles | cited, adversarially-validated recommendations |
-| `extract-verify.js` | #4 extract→verify | a manifest of entities + their source files + a label taxonomy | a verified per-entity ledger with provenance |
+| `plan-hardening.js` | **#3b bounded probe + retest** | `planPath` **or** `planText` (NOT `plan`) + `context` (+ optional `outPath`, `registerPath`, `minPlanChars`, `minRetention`, `perFixChars`, `maxTotalGrowth`, and **`targets` — supplying it BYPASSES S2 target generation**) | a revised plan + a residual risk register with a per-hole retest verdict + repo-grounded validations, both **persisted to disk** |
+| `research-audit.js` | #1 fan-out + #2 verify | a subject + systems, each with current-state + research angles + **`date` (REQUIRED — no default, and it lands in the output filename, so omitting it writes `undefined-best-practices-audit.md`)** (+ optional `crossCutting`, `outDir`) | cited, adversarially-validated recommendations |
+| `extract-verify.js` | #4 extract→verify | `manifestPath` + **`count` (REQUIRED — the script throws without it)** + a label `taxonomy` (+ optional `denylist`, `extractionGuidance`, `recordShape`, `batchSize`, `globals`, `preferenceSources`, `outDir`). **`date` is documented in the script's own header and is never read.** | a verified per-entity ledger with provenance |
 
-**Invoke a saved workflow** with `Workflow({name: "plan-hardening", args: {...}})`. If
-name-resolution isn't wired in your harness, invoke the same file via
-`Workflow({scriptPath: ".claude/workflows/plan-hardening.js", args: {...}})`.
+**Invoke with `scriptPath`, not `name`.** `Workflow({name: "..."})` resolves a **stale snapshot**
+of the script rather than the file on disk, and announces nothing when it does. Measured
+2026-08-21: a run launched two minutes after a rewrite executed the *previous* version for 40
+minutes. Use `Workflow({scriptPath: ".claude/workflows/plan-hardening.js", args: {...}})`, and
+verify the persisted script's header before letting an expensive run proceed.
 
 To adapt one, copy it, keep the skeleton (the loop / fan-out / schema discipline),
 and change the prompts and schema for your domain. The skeleton is the reusable part;
@@ -154,9 +220,9 @@ the prompts are the disposable part.
 A real analysis in this repo chained three of them:
 1. **research-audit** over three scoring systems → a cited best-practices doc with
    per-system verdicts (fan-out research, each finding adversarially validated).
-2. **plan-hardening** on the follow-up data-extraction plan → an adversarial panel
-   found blocking holes (sealed-data leakage risk, selection-bias, n-too-small) and
-   the plan was revised until a fresh judge passed it.
+2. **plan-hardening** on the follow-up data-extraction plan → found blocking holes
+   (sealed-data leakage risk, selection-bias, n-too-small). *That run used the superseded
+   round-based design; the v2 stage graph above replaced it on 2026-08-21.*
 3. **extract-verify** over the corpus → a verified outcome ledger, each label
    re-derived by a fresh-context agent, feeding a measurement harness.
 

@@ -4,7 +4,7 @@ pipe_write.py — Atomic mutations for data/job-pipeline.md.
 
 Subcommands:
   add <company> <role> [--url URL] [--stage STAGE]
-  update <company> <new-stage> [--role ROLE] [--next-action TEXT]
+  update <company> <new-stage> [--role ROLE] [--new-role ROLE] [--next-action TEXT]
                                [--cv-used TEXT] [--notes TEXT]
   remove <company> [--role ROLE]
 
@@ -296,9 +296,16 @@ def cmd_update(args, pipeline_path: Path, dry_run: bool) -> None:
         new_notes = compose_fit_note(new_notes, args.fit_reason, getattr(args, "fit_verdict", None), today)
     url             = cols[7] if len(cols) > 7 else "—"
 
+    existing_role = cols[1] if len(cols) > 1 else "—"
+    new_role = (
+        sanitize_cell(args.new_role)
+        if getattr(args, "new_role", None)
+        else existing_role
+    )
+
     updated_row = fmt_row(
         cols[0],
-        cols[1] if len(cols) > 1 else "—",
+        new_role,
         args.new_stage,
         today,
         new_next_action,
@@ -310,7 +317,8 @@ def cmd_update(args, pipeline_path: Path, dry_run: bool) -> None:
     save_lines(pipeline_path, lines, content)
 
     out_ok("update", f"Updated: {args.company} → {args.new_stage}",
-           company=args.company, stage=args.new_stage,
+           company=args.company, role=new_role, stage=args.new_stage,
+           role_renamed=bool(getattr(args, "new_role", None)),
            fit_reason_logged=bool(getattr(args, "fit_reason", None)))
 
 
@@ -442,7 +450,11 @@ def parse_args():
     upd_p = sub.add_parser("update")
     upd_p.add_argument("company")
     upd_p.add_argument("new_stage")
-    upd_p.add_argument("--role", default=None)
+    upd_p.add_argument("--role", default=None,
+                       help="Select WHICH row to update when a company has several.")
+    upd_p.add_argument("--new-role", default=None,
+                       help="Rewrite the Role cell. --role selects, --new-role sets; "
+                            "without this the Role cell is preserved.")
     upd_p.add_argument("--next-action", dest="next_action", default=None)
     upd_p.add_argument("--cv-used",     dest="cv_used",     default=None)
     upd_p.add_argument("--notes",                           default=None)

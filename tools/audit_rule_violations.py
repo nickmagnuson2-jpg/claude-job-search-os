@@ -78,10 +78,12 @@ def main(argv: list[str]) -> None:
     exts = {e if e.startswith(".") else "." + e for e in args.ext} if args.ext else DEFAULT_EXTS
 
     violations = []
+    files_scanned = 0
     for p in iter_files(root, exts):
         rel = str(p.relative_to(root))
         if any(x in rel for x in args.exclude):
             continue
+        files_scanned += 1
         try:
             text = p.read_text(encoding="utf-8")
         except (UnicodeDecodeError, OSError):
@@ -98,6 +100,17 @@ def main(argv: list[str]) -> None:
         "violations": violations,
         "count": len(violations),
         "files": len(files),
+        # Scope, stated next to the conclusion (2026-08-19). `--ext ""` normalizes to
+        # {"."} and matches nothing, turning 588 violations into count:0 status:ok.
+        # NOTE: `files` above counts files WITH violations, so it is 0 on a genuine
+        # clean sweep too -- before this change the output carried NO signal that
+        # separated "scanned 215 files, found nothing" from "scanned nothing at all".
+        # `files_scanned` is that signal. This tool is prescribed at CLAUDE.md:86 as a
+        # mandatory step, so a false clean here silently skips a back-propagation.
+        # Additive only: status and exit codes are unchanged.
+        "files_scanned": files_scanned,
+        "exts_applied": sorted(exts),
+        "exts_defaulted": args.ext is None,
         "file_list": files,
     }) + "\n")
     sys.exit(0)

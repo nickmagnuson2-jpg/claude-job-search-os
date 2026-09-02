@@ -306,7 +306,7 @@ Add this pre-call checklist item: "Count my clarifying questions before my first
 
 **Orthogonality line (one sentence, also required):** name the pair of criteria most likely to be accused of overlap, and the one-sentence distinction. If an input appears under two criteria, that is a MECE defect and it must be resolved before the round, not defended in it. Full gate: `framework/adversarial-analysis-pipeline.md` §7.4.
 
-**Origin:** an onsite at a target company. Eight turns to establish what "expected impact" meant, and the interviewer found a real MECE violation (CSAT load-bearing in criteria 1 and 3) that six days of review had never checked. Same defect fired in the other block on an integration primitive. See [[feedback_audit_frame_structure_not_only_claim_truth]] and the tracker's "Supplies a rationale when asked for a definition".
+**Origin:** an onsite at a target company. Eight turns to establish what a named scoring criterion actually meant, and the interviewer found a real MECE violation (one metric load-bearing in two different criteria) that six days of review had never checked. Same defect fired in the other block on an integration primitive. See [[feedback_audit_frame_structure_not_only_claim_truth]] and the tracker's "Supplies a rationale when asked for a definition".
 
 ## Grounded Decision Panel (B4b — whenever Nick brings a deliverable, NOT a generic critic)
 
@@ -319,7 +319,7 @@ Add this pre-call checklist item: "Count my clarifying questions before my first
 1. **Prep pressure-test** — before drafting, to find the shape.
 2. **Pre-send QC on the FINISHED artifact** — give each seat the verbatim prompt *plus* the actual built deliverable, isolated from each other (anti-anchoring, per the global multi-agent rule), and ask for **concrete corrections** ("the brief claims X but…"), never approval.
 
-**Cross-seat convergence is the signal.** When independent seats name the *same* hole, that is must-fix. Single-seat hits are triage. On the 2026-06-29 brief, all four seats independently named the same methodological hole (a recalibration read from rejected-only data — selective-labels censoring), caught with ~2 hours left to fix it.
+**Cross-seat convergence is the signal.** When independent seats name the *same* hole, that is must-fix. Single-seat hits are triage. On one deliverable, all four seats independently named the same methodological hole (a recalibration read from rejected-only data — selective-labels censoring), caught with ~2 hours left to fix it.
 
 **Origin:** 2026-06-27 + 2026-06-29, two fires. See `memory/feedback_ground_pressure_test_in_decision_panel_not_generic_partner.md`. Composes with B4 above (bare definitions) and the frame hygiene gate at `framework/adversarial-analysis-pipeline.md` §7.4 — B4 tests whether the terms are defined, this tests whether the *decision* lands.
 
@@ -331,7 +331,7 @@ Every delivery rehearsal assumes the deck advances. **The likeliest real failure
 
 ## Reset-Carrier Rule (B6 — MANDATORY on every prep doc, no exceptions)
 
-**The problem this solves:** a prep doc that is correct and never read is worth zero. On 2026-08-06 (founder screen, SMB-motion AI company) the doc was generated that morning, carried a same-day dossier refresh, and Nick did not open it. Consequence: **zero of six prepared questions asked**, the strongest unfakeable proof unused, the company's own role framing unused — and he led with five enterprise-scale signals at a small-business-motion company, which was the founder's stated reason for passing. The role mismatch was real; the doc had already corrected the frame that made it look bigger.
+**The problem this solves:** a prep doc that is correct and never read is worth zero. On one founder screen the doc was generated that morning, carried a same-day dossier refresh, and Nick did not open it. Consequence: **zero of six prepared questions asked**, the strongest unfakeable proof unused, the company's own role framing unused — and he led with five enterprise-scale signals at a small-business-motion company, which was the founder's stated reason for passing. The role mismatch was real; the doc had already corrected the frame that made it look bigger.
 
 This is a **different and upstream** defect from the known read-but-not-retrieved failure (2026-07-22: the governor line was read back aloud and still did not fire live). Here the artifact never entered the loop, so every prep-doc-resident behavior-change clause — H4's live-need bridge and governor, B3's clarifying-question count, B4's bare definitions, the NN probe questions — silently did not run. **Any debrief of such a call will misattribute the resulting misses to skill rather than to non-consumption.**
 

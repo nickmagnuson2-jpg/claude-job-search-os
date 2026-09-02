@@ -33,8 +33,10 @@ tools/.session-mutations.json
 tools/.transcript-scan-cursor.json
 tools/.transcript-scan-cursor.json.tmp
 tools/.changelog-currency-cursor.json
-tools/.hook-trace.log
-tools/.hook-trace.log.1
+# Glob, not two exact paths: the rotation writes .log.1 and macOS duplicates produce
+# '.hook-trace 2.log'. An exact-path pair left every such variant UNIGNORED in a public
+# repo, and one `git add -A` would have shipped it. Found 2026-08-28.
+tools/.hook-trace*
 tools/launchd/logs/
 logs/
 
@@ -101,6 +103,16 @@ tools/.daily_stoic_state.json
 tools/.pii-denylist.txt
 # Ambiguous tier: single-word company names that are also ordinary words (WARN-only)
 tools/.pii-denylist-ambiguous.txt
+# Every token the generator has ever emitted, so a company that leaves data/ keeps
+# its coverage. Holds real names by construction - must never be tracked.
+tools/.pii-denylist-retired.txt
+# Hand-maintained PII additions: real people/companies that exist only in
+# data/projects/, data/source-articles/ or the personal vault, so the generator's
+# automatic sources cannot see them. Holds real names -- never commit.
+tools/.pii-manual-additions.txt
+
+# Gmail label IDs — account-specific identifiers, never commit.
+tools/.gmail-labels.conf
 
 # Owner identity (live email address; the public name is compiled in as the default)
 tools/.owner-identity.txt
@@ -140,3 +152,6 @@ tools/.local-validators.json
 # because /output/ is already ignored; a dedicated top-level tree does NOT, so it is
 # ignored explicitly here. Added 2026-08-16 on the first live run, before any commit.
 frames/
+
+# pytest-cov artifact
+.coverage

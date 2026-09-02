@@ -262,6 +262,102 @@ Template:
 
 If a check genuinely has nothing to flag, write "n/a — [one-line reason]", not just "clean".
 
+## Application Answers (portal / recruiter-form questions)
+
+**A distinct artifact from the CV, with its own failure modes.** The CV standards above do not cover it, and in the one case where it was the only thing sent, the CV standards could not have helped. Origin: 2026-08, a client-facing strategy role sourced through a recruiter marketplace. See [[feedback_hard_filter_needs_demonstrating_artifact_confirmed_sent]] and [[feedback_overridden_dissent_needs_owner_and_reread_trigger]].
+
+### Hard-filter demonstration gate (BLOCKING)
+
+Identify the JD's **hard filter**: the one explicit experience bar it states as a requirement (e.g. "N+ years in a client-facing consulting role, working directly with enterprise customers"). Then, before send, name all three:
+
+1. **Which artifact demonstrates it** (a specific answer, or the CV).
+2. **Which passage inside that artifact** demonstrates it — quote the line.
+3. **Confirmation that artifact is in the outbound package.**
+
+**Any hard filter that cannot name all three BLOCKS the send.** Two specific rejections:
+
+- **Assertion is not demonstration.** A clause claiming the experience does not satisfy the filter; a story showing it does. If the question-clause checklist row reads `ASSERTED, NOT DEMONSTRATED` or `PARTIAL` against the hard filter, that is a block, not a note. In the origin incident that exact row shipped, and the company came back citing that exact gap.
+- **"Optional" on the form is not optional to the case.** When the answers do not demonstrate the filter, the CV becomes mandatory regardless of what the form says. In the origin incident the answers left the filter "resting entirely on the resume" by the document's own words, and no resume was sent.
+
+### Slot assignment: sort by filter, not by recency
+
+When choosing which story fills a question, the sort key is **relevance to the hard filter**, not recency and not which story is best rehearsed. A more recent story that structurally cannot evidence the filter is the wrong choice even when it is the better-told story. In the origin incident the third answer was drafted against the consulting engagement (the only story hitting all three legs of the question), then pivoted to a more recent internal story, and the resulting answer could not evidence enterprise-client work because no version of it contains an external client.
+
+**Corollary for the CV.** Reverse-chron buries the filter when the qualifying work is not the top role. If the hard filter lives in job three, the summary must carry it explicitly into the six-second scan.
+
+### Do not volunteer the disqualifying frame
+
+The "Avoid Self-Sabotage" rules above apply to answers, and one addition specific to them. Scope-honesty guardrails written for interview accuracy become disqualifiers when pre-emptively stated in a screening artifact:
+
+- "My lane was strategy; [someone else] owned delivery" reads as *no delivery experience*.
+- "This was internal to [employer]" reads as *no client experience*.
+- Flagging a target as not-yet-a-result reads as *no result*.
+
+All three are correct and must stay true under a direct question in an interview. **None of them needs to be volunteered in a screening artifact.** Precision about what the candidate did is not the same as narrating what he did not do. Rewriting a negation into a positive assignment ("X owned delivery" instead of "I did not do delivery") does not fix this: it is the same information and a filtering screener reads it the same way.
+
+### Close every application with a loop-log entry (mandatory, at the close of the run)
+
+Append one entry to **`output/analysis/application-loop-log.md`** before the session ends. The file
+carries the fixed capture shape; follow it so entries are countable against each other.
+
+**Write it in the session that observed the run.** Do NOT reconstruct a past application from its output
+files: edits and judgments are not recoverable from artifacts days later, and plausible-but-unverifiable
+loop data is worse than a smaller sample. Two runs from 2026-08-27 are listed in that file as "Not
+captured" for exactly this reason, and their absence is what makes Run 1's four-for-four on answer length
+a hypothesis rather than a finding.
+
+**Minimum content:** Nick's touch count split into irreducibly-human vs avoidable-machine-failure; the
+judgments only he could make; every edit he made with word counts where the artifact has them; skills and
+agent counts; machine failures he absorbed; and any recurring pattern that fired, with its occurrence
+number.
+
+**Why this is a step and not a suggestion:** the point of the ledger is sample size. A capture that
+depends on remembering does not accumulate, and a single vivid run then gets built on as if it were
+evidence. Origin: Nick, 2026-08-31, on why he wanted the log at all: *"I want to make sure that I have
+the data and I continue to revise it so that when I do end up building something, it's based off it and
+has a high sample size."*
+
+### Draft at final length the first time (measured target)
+
+**Target 150-170 words for a substantive free-text answer** ("tell me about," "why us," "what are you
+proudest of," "what are you looking for"). Short factual questions (how did you hear about us, visa,
+location) stay under 50.
+
+**This is a measured default, not a preference.** On a 2026-08-31 application, all four
+substantive answers were drafted long and Nick cut every one of them on request:
+
+| Question | First draft | After Nick asked to tighten | Cut |
+|---|---|---|---|
+| Why are you interested | 250 | 159 | 36% |
+| Most proud of | 201 | 167 | 17% |
+| Looking for in next role | 200 | 169 | 16% |
+| Technology that excites you | 215 | 163 | 24% |
+
+Four for four is a default, not four independent misjudgments. Every long draft costs a full round trip
+at the exact moment Nick is trying to submit.
+
+**What gets cut when drafting to length, in this order:**
+1. **Sentences that assert the point the next sentence demonstrates.** "That is the kind of call I
+   respect" before a sentence that shows the respect.
+2. **Restated claims already carried by another answer.** Check across the whole set before finalising:
+   on 8/31, tightening one answer moved an idea into it that the last answer was already closing on, and
+   the application would have made the same argument twice.
+3. **Wants stated as evidence.** "I would rather do this for operators than for myself" is a preference,
+   not a proof, and the question rarely asked for it.
+4. **Duration and scope hedges that invite a question.** "I spent a year at X" where the tenure was
+   eleven months: name the title, drop the duration.
+
+**Do not cut:** the load-bearing scope guards (modeled vs delivered, the correction-comment wording from
+`data/projects/*.md`), or the one detail that answers the JD's stated bar.
+
+**Nick rewrites these in his own voice regardless.** Drafting to final length is not about producing
+final prose; it is about handing him a piece the right size to work on, so the loop is rewrite-once
+rather than tighten-then-rewrite. Origin: `output/analysis/083126-application-human-loop-log.md` §6.1.
+
+### Accepted costs get a to-do, not a paragraph
+
+If the answers document records an "accepted cost," "live consequence," "recorded rather than resolved," or a "reversal path if wanted," that residual gets a dated row via `tools/todo_write.py` **at the moment it is written**, naming the owner and the mitigating artifact. A residual filed as prose inside the document that recorded it has no owner and does not resurface. In the origin incident the residual was recorded accurately, in a section with that literal heading, and was still paid in full.
+
 ## Cheat Sheet Structure
 
 Generate a pre-interview cheat sheet alongside each CV. Contents:

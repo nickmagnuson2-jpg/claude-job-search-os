@@ -12,6 +12,7 @@ Functions:
 
 CLI: Use cli.py for command-line invocation.
 """
+import re
 import sys
 import time
 import yaml
@@ -52,6 +53,50 @@ def load_targets(repo_root: Path) -> list[dict]:
         c for c in data["companies"]
         if c.get("active", True) and c.get("ats")
     ]
+
+
+# A title whose ROLE PROPER (the text before the first comma) is an engineering
+# seat is never Nick's lane. "Forward Deployed Engineer" and "Deployment
+# Strategist" are different jobs; the Engineer variant is most of the volume on
+# every FDE board. Matching on the head noun rather than the whole string is
+# load-bearing: "Pre-Sales Program Lead, Forward Deployed Engineering" is a
+# Strategist-shaped seat and a substring test would wrongly drop it.
+_ENGINEER_HEAD = re.compile(r"\bengineer(s|ing)?\b", re.IGNORECASE)
+
+
+def title_matches(title: str, includes: list, excludes: list | None = None,
+                  allow_engineer: bool = False) -> bool:
+    """Whether a role title survives the configured title filters.
+
+    Empty `includes` means "no title filter" and everything passes, matching the
+    prior contract. Order matters: the engineer head-noun test and the explicit
+    excludes both run BEFORE the include test, so an exclusion cannot be
+    overridden by an unrelated include token appearing later in the title.
+    """
+    t = title or ""
+    head = t.split(",")[0]
+    if not allow_engineer and _ENGINEER_HEAD.search(head):
+        return False
+    for bad in (excludes or []):
+        if bad.lower() in t.lower():
+            return False
+    if not includes:
+        return True
+    return any(f.lower() in t.lower() for f in includes)
+
+
+def geo_ok(location: str) -> bool:
+    """Whether a role's location clears the goals.md SF hard filter.
+
+    Drops anything outside the Bay AND anything on the Peninsula / South Bay.
+    An empty location is NOT dropped: unknown is not the same as disqualifying,
+    and geo_gate flags it for review rather than excluding it.
+    """
+    from tools.career_scanner.company_scorer import geo_gate, is_peninsula
+    loc = location or ""
+    if geo_gate(loc)["excluded"]:
+        return False
+    return not is_peninsula(loc)
 
 
 def fetch_company_roles(target: dict) -> list[dict]:
@@ -99,12 +144,25 @@ def fetch_company_roles(target: dict) -> list[dict]:
     for r in roles:
         r["company"] = name
 
-    # Apply role_filters if specified (empty list = all roles)
+    # A configured board that returns nothing raw is the silent-dead-slug case:
+    # every parser returns [] on HTTP error, so a dead slug is indistinguishable
+    # from an empty board. Say so loudly instead of reporting a quiet zero.
+    if not roles:
+        print(f"  WARNING: {name} ({ats}) returned ZERO raw roles - "
+              f"verify the slug is still live", file=sys.stderr)
+        return []
+
+    # Title filters. Empty role_filters = all roles (unchanged contract).
     filters = target.get("role_filters", [])
-    if filters:
-        roles = [r for r in roles if any(
-            f.lower() in r.get("title", "").lower() for f in filters
-        )]
+    excludes = target.get("role_excludes", [])
+    allow_eng = bool(target.get("allow_engineer_titles", False))
+    roles = [r for r in roles
+             if title_matches(r.get("title", ""), filters, excludes, allow_eng)]
+
+    # Geography. On by default per the goals.md SF hard filter; a target can opt
+    # out with geo_filter: false if it should be watched regardless of location.
+    if target.get("geo_filter", True):
+        roles = [r for r in roles if geo_ok(r.get("location", ""))]
 
     return roles
 

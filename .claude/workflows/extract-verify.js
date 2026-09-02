@@ -22,8 +22,10 @@ export const meta = {
 //   globals?: object        // {name: path} of shared context files agents may read
 //   preferenceSources?: [{label, instruction}]  // optional Phase-Preferences agents
 //   outDir: string          // where synthesis writes outputs
-//   date: string
 // }
+// NOTE: a `date` arg was documented here until 2026-08-21 and was never read by this script
+// (outputs are fixed filenames). Removed rather than implemented — an advertised arg the code
+// ignores is documentation posing as a contract.
 
 const cfg = typeof args === 'string' ? JSON.parse(args) : (args || {})
 const BATCH = cfg.batchSize || 8

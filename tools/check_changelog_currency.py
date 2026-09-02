@@ -24,8 +24,16 @@ A new build commit (HEAD moves) re-evaluates and re-warns if still behind.
 
 "Changelog-worthy" is a judgment call, so this WARNs/reminds (stderr, exit 0) and
 never auto-writes or blocks — entry prose still needs a human/Claude. Per
-[[feedback_warn_vs_block_hook_design]]; PreToolUse WARN is invisible, so this
-lives on Stop where stderr surfaces (sibling of scan_transcript_failures.py).
+[[feedback_warn_vs_block_hook_design]].
+
+CORRECTED 2026-08-25. This docstring previously claimed "PreToolUse WARN is invisible, so
+this lives on Stop where stderr surfaces." That is FALSE and this hook is the proof: it
+became the 4th fire of that rule, recorded as "a STOP hook, silent across 6 pushes." On
+ANY hook surface, exit 0 + stderr reaches nobody -- Stop is not an exception. The claim is
+corrected here because a prescription surface is read at authoring time and outranks every
+corrected doc downstream; leaving it would keep generating new silent Stop hooks.
+This hook remains warn-only pending Nick's exit-0-to-exit-2 decision, declared in
+tools/hook-warn-allow.json rather than left implicit. See tools/check_hook_warn_tier.py.
 
 Exit codes: always 0 (WARN tier, fail-open on any git/parse error).
 """

@@ -6,7 +6,7 @@ relevance for outreach, using the candidate's profile as the reference.
 
 Usage:
     python scan.py --company "Acme AI" --num 20
-    python scan.py --company "Tessera" --num 10 --output-format json
+    python scan.py --company "Northwind" --num 10 --output-format json
     python scan.py --company "Northwind" --num 15 --headless
 """
 
