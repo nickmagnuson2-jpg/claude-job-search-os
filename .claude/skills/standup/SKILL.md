@@ -3,7 +3,7 @@ name: standup
 description: Morning briefing — pipeline health, today's top 3 actions, pending outreach, corpus state, and a momentum read of the search state
 argument-hint: [none]
 user-invocable: true
-allowed-tools: Read(*), Glob(inbox/*), Glob(data/reflections/*), Glob(data/workbooks/*), Bash(PYTHONIOENCODING=utf-8 python3 tools/pipeline_staleness.py:*), Bash(PYTHONIOENCODING=utf-8 python3 tools/outreach_pending.py:*), Bash(PYTHONIOENCODING=utf-8 python3 tools/networking_followup.py:*), Bash(PYTHONIOENCODING=utf-8 python3 tools/todos_summary.py:*), Bash(PYTHONIOENCODING=utf-8 python3 tools/check_automation_health.py:*), Bash(PYTHONIOENCODING=utf-8 python3 tools/attention.py:*), Bash(ls:*), Bash(stat:*)
+allowed-tools: Read(*), Glob(inbox/*), Glob(data/reflections/*), Glob(data/workbooks/*), Bash(PYTHONIOENCODING=utf-8 python3 tools/pipeline_staleness.py:*), Bash(PYTHONIOENCODING=utf-8 python3 tools/outreach_pending.py:*), Bash(PYTHONIOENCODING=utf-8 python3 tools/networking_followup.py:*), Bash(PYTHONIOENCODING=utf-8 python3 tools/todos_summary.py:*), Bash(PYTHONIOENCODING=utf-8 python3 tools/check_automation_health.py:*), Bash(PYTHONIOENCODING=utf-8 python3 tools/attention.py:*), Bash(PYTHONIOENCODING=utf-8 python3 tools/conversations_metric.py:*), Bash(ls:*), Bash(stat:*)
 ---
 
 # Standup — Morning Briefing
@@ -22,8 +22,43 @@ PYTHONIOENCODING=utf-8 python3 tools/networking_followup.py --target-date $(date
 PYTHONIOENCODING=utf-8 python3 tools/todos_summary.py --target-date $(date +%Y-%m-%d) --top-n 6
 PYTHONIOENCODING=utf-8 python3 tools/check_automation_health.py --repo-root .
 PYTHONIOENCODING=utf-8 python3 tools/attention.py --repo-root . --json
+PYTHONIOENCODING=utf-8 python3 tools/conversations_metric.py --repo-root . --target-date $(date +%Y-%m-%d)
 ```
 Parse JSON output from each script. If a script returns empty results (missing data file), continue — never fail.
+
+**OUTCOME METRIC (from `conversations_metric.py`) — surface THIRD, and it is the headline number of the brief.**
+
+Nick changed the primary metric on 2026-09-01: *"My metric that I first is outreach: number of outreach
+sent. I need to start thinking about interviews and conversations had. I need to actually get those
+outcomes up and then determine how I schedule my day based off of how I can get those things."*
+**Outreach sent is an INPUT. Conversations and interviews had is the OUTCOME.** Lead with the outcome.
+
+Render exactly one line, immediately under Queues:
+
+```
+🎯 **Conversations & interviews had:** 7d **N** · 30d **N** · 90d **N**   (outreach sent: 7d N · 30d N · 90d N)
+```
+
+Four rules, all mandatory:
+
+- **Never render a `null` count as `0`.** If `complete: false`, append
+  `⚠️ metric incomplete — unreadable: <unreadable_sources>`. A source that silently zeroes turns
+  "no conversations" into a lie, which is the one failure this metric exists to prevent.
+- **Never compute or state a conversion rate.** The script deliberately does not return one, because
+  conversations in a window are not caused by that window's outreach (lag, plus interviews also arrive
+  via applications). Show the two counts side by side and let the gap speak.
+- **`interviews.untagged[]` is surfaced when non-empty**, as
+  `(N progress file(s) have no stage: tag and were not counted)`. Uncounted is not zero.
+- **`outcome_counts` are NOT conversations.** They are loop results (offer/rejection news). Mention
+  them only if non-zero in 7d, as a separate clause.
+
+**This metric drives Today's Top 3 (mandatory).** After computing it, ask: *what would produce a
+conversation this week?* If the **7d conversations count is 0 or 1**, Today's Top 3 must be shaped
+toward creating conversations — follow-ups on live threads, scheduling asks, warm intros, recruiter
+replies — and **not** toward research, tooling, or corpus work, whatever `top_n` ranked. Say so
+explicitly in one line: `Top 3 is conversation-shaped: 7d conversations = N.` If 7d is 2+, rank
+normally. Origin: 2026-09-01, Nick's metric change, wired here rather than `/weekly-review` because
+he does not run that skill.
 
 **Queue depth (from `attention.py`) — surface SECOND, right below automation health.** This is the only place the promotion backlog is ever seen: the weekly scan writes it to `memory/promotion-backlog.md` and a Low-priority todo, and neither is read. Render a single compact block, never a duplicate of the Pipeline/Inbox sections below:
 
@@ -256,6 +291,10 @@ Output the brief in this exact format:
 [If complete=false: ⚠️ [N] of 4 queues unreadable: [names]]
 [If total_open=null: **Queues: UNREADABLE** — say this, never omit the line]
 
+🎯 **Conversations & interviews had:** 7d **[N]** · 30d **[N]** · 90d **[N]**   (outreach sent: 7d [N] · 30d [N] · 90d [N])
+[If complete=false: ⚠️ metric incomplete — unreadable: [sources]]
+[If interviews.untagged non-empty: ([N] progress file(s) untagged, not counted)]
+
 ---
 
 ### This Week's Focus
@@ -275,6 +314,7 @@ Output the brief in this exact format:
 ---
 
 ### Today's Top 3
+[If 7d conversations <= 1, first line is: **Top 3 is conversation-shaped: 7d conversations = [N].**]
 1. [Highest priority todo with due date if set]
 2. [Second priority]
 3. [Third priority]
@@ -351,6 +391,12 @@ Output the brief in this exact format:
 [1–2 honest sentences assessing search momentum based on the data above.
 Be direct — if momentum is stalling, say so. If it's strong, say that.
 Base it on: pipeline activity, outreach cadence (are sends going out, are replies coming back), todo completion pace. Do not cite a response-rate percentage.
+
+**Lead the momentum read with the outcome metric, not with activity.** The first sentence names
+conversations-and-interviews-had over 7d and 30d and whether that is moving. Outreach volume, todo
+pace, and pipeline motion are supporting detail *behind* that number, never a substitute for it. If
+7d conversations is 0, say that plainly in the first sentence — a busy week with zero conversations is
+a stalled week, and reporting the busyness first is how that gets obscured.
 
 **Engine vs output (mandatory — classify the last 7 days before writing the sentences).**
 Split the last 7 days of completed work into two columns internally; print the split only when

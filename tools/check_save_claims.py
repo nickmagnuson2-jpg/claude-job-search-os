@@ -65,7 +65,15 @@ FUTURE_MARKERS = re.compile(
 # A path-ish token: has a slash or a dot-extension, no spaces, not a URL.
 PATH_TOKEN = re.compile(r"[A-Za-z0-9_./~-]*[A-Za-z0-9_-]+\.[A-Za-z0-9]{1,6}\b")
 
-CLAIM_RE = re.compile(CLAIM_VERBS, re.I)
+# \b on BOTH sides is load-bearing, not decoration. Without it the verb matches INSIDE a
+# word, and since the path window starts at the verb's end, the extracted token is the tail
+# of whatever word contained it: "..._js_rendered_share_links.md" -> "_share_links.md", and
+# "feedback_an_artifact_created_by_..." -> "_by_what_you_are_verifying_is_not_evidence.md".
+# The hook then blocked on a path that appeared nowhere in the message and existed nowhere
+# on disk, while the file it was really about had been written correctly. Underscore is a
+# word character, so \b will not fire mid-identifier, which is exactly what is wanted.
+# Fired 3x before this fix (2026-09-01, friction ledger).
+CLAIM_RE = re.compile(rf"\b{CLAIM_VERBS}\b", re.I)
 
 # How far after a claim verb we look for the path it refers to.
 LOOKAHEAD = 140
