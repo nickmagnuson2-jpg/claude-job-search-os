@@ -566,3 +566,86 @@ def test_a_corrupt_cursor_file_does_not_crash_the_hook(hook):
     hook.cursor.write_text("{not json", encoding="utf-8")
     t = _write_transcript(hook.tmp / "s.jsonl")
     assert hook.run({"transcript_path": str(t), "session_id": "sess"}) == 0
+
+
+# --- the flush race (issue #15813 / friction-log 2026-06-10) ----------------
+#
+# Ported 2026-09-02 from tools/test_scan_transcript_failures.py, which pytest never
+# collected: it was a PASS/FAIL-counter script whose single pytest entry point asserted
+# `main() == 0`, so a failure named nothing and the per-scenario detail went to stdout.
+# Split into one test per pass so a break says which pass broke.
+#
+# The scenario: the Stop hook can advance `last_line` past a tool_result that has not been
+# durably flushed, permanently skipping a real error. Edit tool_use_errors bear the brunt --
+# they have no real-time PostToolUseFailure capture path. This is a fixture simulation of
+# the state the race leaves behind, deliberately NOT an attempt to reproduce the live race.
+
+@pytest.fixture
+def raced(tmp_path, monkeypatch):
+    """A transcript with one Edit error at line 22, padding either side, plus the cursor
+    position a lost flush race would have left behind."""
+    def use(tid, name, cmd=""):
+        return {"message": {"role": "assistant", "content": [
+            {"type": "tool_use", "id": tid, "name": name,
+             "input": {"command": cmd} if cmd else {"file_path": "/tmp/x.md"}}]}}
+
+    def res(tid, text, is_error):
+        return {"message": {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": tid, "content": text,
+             "is_error": is_error}]}}
+
+    rows = []
+    for i in range(10):
+        rows += [use(f"pad{i}", "Read"), res(f"pad{i}", "contents", False)]
+    rows.append(use("toolu_edit_err", "Edit"))
+    rows.append(res("toolu_edit_err",
+                    "<tool_use_error>File has not been read yet.</tool_use_error>", True))
+    error_line = len(rows)
+    for i in range(10, 30):
+        rows += [use(f"pad{i}", "Read"), res(f"pad{i}", "contents", False)]
+
+    p = tmp_path / "fixture-transcript.jsonl"
+    p.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+
+    calls = []
+    monkeypatch.setattr(st, "append_friction",
+                        lambda s, n, exit_hint="": calls.append((s, n)))
+    return type("R", (), {"path": p, "error_line": error_line, "calls": calls})
+
+
+def test_pass1_a_raced_cursor_misses_the_error_entirely(raced):
+    """The premise. If this ever passes something, the fixture stopped modelling the race
+    and every assertion below becomes meaningless."""
+    _, logged, _ = st.scan(raced.path, raced.error_line)
+    assert logged == 0
+    assert raced.calls == []
+
+
+def test_pass2_the_overlap_window_rewinds_past_the_error(raced):
+    assert max(0, raced.error_line - st.OVERLAP_LINES) < raced.error_line, (
+        "OVERLAP_LINES must rewind behind the missed line or recovery is impossible")
+
+
+def test_pass2_the_overlap_rescan_recovers_the_missed_error(raced):
+    start = max(0, raced.error_line - st.OVERLAP_LINES)
+    _, logged, ids = st.scan(raced.path, start)
+    assert logged == 1
+    assert raced.calls[0][0] == "tool:Edit"
+    assert "toolu_edit_err" in ids
+
+
+def test_pass3_rescanning_the_same_ground_does_not_double_log(raced):
+    """Without dedup the overlap window re-appends the same error every turn and inflates
+    friction_log's occurrence count, which is what drives the promotion ladder."""
+    start = max(0, raced.error_line - st.OVERLAP_LINES)
+    new_line, _, ids = st.scan(raced.path, start)
+    _, logged_again, _ = st.scan(raced.path, max(0, new_line - st.OVERLAP_LINES), ids)
+    assert logged_again == 0
+    assert len(raced.calls) == 1
+
+
+def test_an_old_cursor_with_no_logged_ids_still_recovers_it_once(raced):
+    """Backward compatibility: cursor files written before logged_ids existed pass None."""
+    start = max(0, raced.error_line - st.OVERLAP_LINES)
+    _, logged, _ = st.scan(raced.path, start, None)
+    assert logged == 1

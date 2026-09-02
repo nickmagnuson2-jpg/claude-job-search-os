@@ -314,7 +314,7 @@ def build_ambiguous_list(companies: set[str], dictionary: set[str]) -> list[str]
     """Single-token company names that ARE ordinary English words.
 
     These are deliberately excluded from the BLOCK denylist: matching them would
-    false-positive on ordinary prose (a "sierra" in a sentence, a "patch" in a code
+    false-positive on ordinary prose (a "summit" in a sentence, a "patch" in a code
     comment). But excluding them entirely is what let a live pipeline company reach
     six public files on 2026-08-10 while all three of its interviewers were correctly
     denylisted.

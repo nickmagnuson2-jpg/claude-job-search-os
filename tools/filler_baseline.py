@@ -81,11 +81,24 @@ MIN_COUNTERPART_SHARE_PCT = 10.0
 # split looks healthy, but the labels are wrong. An in-person capture is the known case --
 # the room arrives on the owner channel, so the counterpart's share looks normal while the
 # attribution is scrambled. Structural checks cannot see this; it needs a human who was there.
-UNRELIABLE = {
-    "2026-08-05-1712-nick-magnuson-sierra.md":
+#
+# KEYED BY THE DATE-TIME PREFIX, NOT THE FILENAME. This repo is public and transcript
+# filenames carry a real company and person; the prefix identifies the capture uniquely
+# without naming either. Matching is startswith, so the key stays stable if a file is
+# renamed. (2026-09-02: the full filename was here and reached the public remote.)
+UNRELIABLE_PREFIXES = {
+    "2026-08-05-1712":
         "in-person onsite; the laptop mic captured the room, so Me/Them attribution is "
         "unreliable and the density should not be cited",
 }
+
+
+def _unreliable_reason(name: str) -> str | None:
+    """Reason this capture's per-speaker attribution cannot be trusted, or None."""
+    for prefix, reason in UNRELIABLE_PREFIXES.items():
+        if name.startswith(prefix):
+            return reason
+    return None
 
 
 def _collapsed_channel_reason(owner_words: int, other_words: int) -> str | None:
@@ -142,7 +155,7 @@ def parse_file(p: Path) -> dict:
         "density_pct": round(core / nw * 100, 2) if nw else 0.0,
         "per_1k": round(core / nw * 1000, 1) if nw else 0.0,
         "counts": counts, "extra": extra,
-        "unreliable": UNRELIABLE.get(p.name) or _collapsed_channel_reason(nw, tw),
+        "unreliable": _unreliable_reason(p.name) or _collapsed_channel_reason(nw, tw),
     }
 
 
