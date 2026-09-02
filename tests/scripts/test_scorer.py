@@ -490,3 +490,57 @@ def test_target_level_falls_back_to_titles_not_to_prose():
         f"target level {lvl} inferred from IC-shaped titles is too senior; an "
         "unkeyworded target title must not resolve to director/head level"
     )
+
+
+# ---------------------------------------------------------------------------
+# A dimension whose comparison terms are unusable must go NEUTRAL, not zero.
+#
+# Origin 2026-09-02. `_extract_skills` pulls whole human-readable bullets out of
+# profile.md ("Strategic operations and planning (FY planning, OKRs, budget
+# management)"). Those can never appear as a substring in a job posting, so
+# `_score_keyword_overlap` matched nothing and returned 0.0 -- while a role with NO
+# description at all returned 3.0. Having a job description actively lowered the score,
+# on 20% of the total weight.
+#
+# The fix is not to invent matches. It is that an unusable input yields a neutral score
+# and is reported as dark, rather than being scored as a real zero.
+# ---------------------------------------------------------------------------
+
+def test_a_real_description_never_scores_worse_than_a_missing_one():
+    """The perverse asymmetry, stated as an invariant."""
+    from tools.career_scanner.scorer import _score_keyword_overlap
+    ctx = {"skills": [
+        "Strategic operations and planning (FY planning, OKRs, budget management)",
+        "Executive-level communication and stakeholder management (board-level deliverables)",
+    ]}
+    real_jd = (
+        "6+ years in customer-facing roles. Strong technical acumen: workflows, APIs, "
+        "system behavior. Familiarity with LLMs, APIs, JSON. Basic SQL literacy."
+    )
+    with_desc = _score_keyword_overlap({"description_plain": real_jd}, ctx)
+    without_desc = _score_keyword_overlap({"description_plain": ""}, ctx)
+    assert with_desc >= without_desc, (
+        f"a real JD scored {with_desc} while an empty one scored {without_desc}; "
+        "having a description must never be a penalty"
+    )
+
+
+def test_unusable_skill_terms_score_neutral_not_zero():
+    """Long prose terms are unusable input, not evidence of a bad match."""
+    from tools.career_scanner.scorer import _score_keyword_overlap
+    ctx = {"skills": ["Strategic operations and planning (FY planning, OKRs, budget management)"]}
+    score = _score_keyword_overlap({"description_plain": "Deployment Strategist, SQL, APIs"}, ctx)
+    assert score >= 3.0, (
+        f"unusable comparison terms produced a hard {score}; an input problem must not "
+        "masquerade as a poor candidate match"
+    )
+
+
+def test_short_usable_terms_still_match_and_score():
+    """Guard on the guard: the dimension must still WORK on usable terms, or the fix
+    is just 'always return neutral', which is a dimension that does nothing."""
+    from tools.career_scanner.scorer import _score_keyword_overlap
+    ctx = {"skills": ["SQL", "APIs", "JSON", "Excel"]}
+    score = _score_keyword_overlap(
+        {"description_plain": "Basic SQL literacy. Familiarity with LLMs, APIs, JSON."}, ctx)
+    assert score > 3.0, f"three usable terms matched but scored {score}"

@@ -392,6 +392,12 @@ def _score_industry_match(role: dict, context: dict) -> float:
     return 3.0
 
 
+# A comparison term longer than this cannot realistically appear verbatim in a job
+# posting, so it is unusable input rather than evidence of a poor match. Origin
+# 2026-09-02: profile.md skill bullets averaged ~9 words and matched nothing, ever.
+_MAX_USABLE_TERM_WORDS = 4
+
+
 def _score_keyword_overlap(role: dict, context: dict) -> float:
     """Dimension 4: Keyword overlap (weight 0.20).
 
@@ -403,6 +409,22 @@ def _score_keyword_overlap(role: dict, context: dict) -> float:
     if not skills or not description:
         return 3.0
 
+    # Only SHORT terms can match a posting. `_extract_skills` pulls whole
+    # human-readable bullets out of profile.md ("Strategic operations and planning
+    # (FY planning, OKRs, budget management)"), which cannot appear as a substring in
+    # any JD. Before 2026-09-02 those scored a hard 0.0 while a role with NO
+    # description scored 3.0 -- so having a job description actively lowered the score,
+    # on 20% of the total weight. That is an input problem masquerading as a poor
+    # candidate match.
+    #
+    # A term is usable only if it is <= _MAX_USABLE_TERM_WORDS words. If NO term is
+    # usable the dimension is dark: return neutral and say so, rather than scoring a
+    # real zero against the role. Guarded by
+    # tests/scripts/test_scorer.py::test_a_real_description_never_scores_worse_than_a_missing_one
+    usable = [s for s in skills if len(s.split()) <= _MAX_USABLE_TERM_WORDS]
+    if not usable:
+        return 3.0
+
     description_lower = description.lower()
-    matched = sum(1 for s in skills if s.lower() in description_lower)
+    matched = sum(1 for s in usable if s.lower() in description_lower)
     return min(10.0, float(matched * 2))
