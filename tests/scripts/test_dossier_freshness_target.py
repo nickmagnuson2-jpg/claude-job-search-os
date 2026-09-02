@@ -30,7 +30,7 @@ SCRIPT = REPO_ROOT / "tools" / "dossier_freshness.py"
 
 ACTIVE_TARGET = "northwind"        # active pipeline stage -> must alert
 TERMINAL_TARGET = "contoso"        # in pipeline but Withdrawn -> suppressed
-NOT_IN_PIPELINE = "good-eggs"      # abandoned lane -> suppressed
+NOT_IN_PIPELINE = "initech"        # abandoned lane -> suppressed
 ALSO_NOT_IN_PIPELINE = "zzz-fixture-only-co"
 FRESH = "fresh-co"
 STALE = {ACTIVE_TARGET, TERMINAL_TARGET, NOT_IN_PIPELINE, ALSO_NOT_IN_PIPELINE}
