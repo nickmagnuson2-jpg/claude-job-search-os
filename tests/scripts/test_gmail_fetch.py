@@ -709,3 +709,95 @@ def test_nonempty_search_still_selects_search_mode(tmp_path):
     r = _cli(["--search", "from:example", "--repo-root", str(tmp_path)])
     assert "empty value" not in r.stderr
     assert "Wrote:" not in (r.stdout + r.stderr), "search mode wrote a file"
+
+
+# ── search_messages: DRAFT must be distinguishable from SENT ──────────────────
+#
+# Origin 2026-09-02. `--all-mail --search "<name> OR <domain>"` returned five hits
+# and one of them was an unsent DRAFT sitting in the Drafts label. The printed
+# record for a draft is indistinguishable from a sent message -- it carries a
+# From:, a Date:, a Subject: and a Snippet: exactly like the others -- so it was
+# read as a fifth SENT email and reported to Nick as evidence that a duplicate
+# had reached the recipient. It had not. Nick caught it from his Gmail Sent view.
+#
+# The message resource is ALREADY fetched with labelIds populated, so printing
+# the mailbox costs nothing. See feedback_draft_archive_is_not_proof_of_send.md.
+
+class _FakeGmail:
+    """Minimal stand-in for the googleapiclient service, users().messages() only."""
+
+    def __init__(self, messages):
+        self._messages = messages
+
+    def users(self):
+        return self
+
+    def messages(self):
+        return self
+
+    def list(self, **kwargs):
+        return _FakeExec({"messages": [{"id": m["id"]} for m in self._messages]})
+
+    def get(self, **kwargs):
+        msg = next(m for m in self._messages if m["id"] == kwargs["id"])
+        return _FakeExec(msg)
+
+
+class _FakeExec:
+    def __init__(self, payload):
+        self._payload = payload
+
+    def execute(self):
+        return self._payload
+
+
+def _msg(msg_id, subject, label_ids):
+    return {
+        "id": msg_id,
+        "snippet": "snippet text",
+        "labelIds": label_ids,
+        "payload": {
+            "headers": [
+                {"name": "From", "value": "Sender Name <sender@example.com>"},
+                {"name": "Date", "value": "Wed, 26 Aug 2026 13:43:11 -0700"},
+                {"name": "Subject", "value": subject},
+            ],
+            "parts": [],
+        },
+    }
+
+
+def test_search_marks_a_draft_as_a_draft(capsys):
+    """The regression: a DRAFT hit must SAY it is a draft."""
+    svc = _FakeGmail([_msg("d1", "rejected teaser subject", ["DRAFT"])])
+    search_count = gmail_fetch.search_messages(svc, "q", None, 10, False)
+    out = capsys.readouterr().out
+    assert search_count == 1
+    assert "DRAFT" in out, (
+        "a draft printed with no mailbox marker is indistinguishable from a sent "
+        "message, which is the 2026-09-02 false-send defect"
+    )
+
+
+def test_search_marks_a_sent_message_as_sent(capsys):
+    """The other half: SENT must be labelled too, or 'no DRAFT marker' is
+    ambiguous between 'this was sent' and 'the marker feature is broken'."""
+    svc = _FakeGmail([_msg("s1", "the real subject", ["SENT"])])
+    gmail_fetch.search_messages(svc, "q", None, 10, False)
+    out = capsys.readouterr().out
+    assert "SENT" in out
+
+
+def test_search_distinguishes_a_draft_from_a_sent_message_in_one_result_set(capsys):
+    """The exact 2026-09-02 shape: both in one result set, 16 minutes apart,
+    near-identical bodies. The output must let a reader tell them apart."""
+    svc = _FakeGmail([
+        _msg("d1", "rejected teaser subject", ["DRAFT"]),
+        _msg("s1", "the real subject line that went out", ["SENT"]),
+    ])
+    gmail_fetch.search_messages(svc, "q", None, 10, False)
+    out = capsys.readouterr().out
+    draft_line = [l for l in out.splitlines() if "rejected teaser subject" in l]
+    assert draft_line, "draft subject missing from output"
+    # The two must not render identically apart from the subject.
+    assert out.count("DRAFT") >= 1 and out.count("SENT") >= 1

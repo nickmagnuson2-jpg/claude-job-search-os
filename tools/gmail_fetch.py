@@ -948,6 +948,28 @@ def _process_message(msg: dict) -> tuple[dict, str]:
     return msg_meta, raw_body
 
 
+def _mailbox_marker(label_ids: list[str]) -> str:
+    """Render the mailbox a search hit lives in, so a DRAFT can never be read as
+    a sent message.
+
+    `--all-mail` search includes the Drafts label, and a draft's printed record
+    carries a From:, Date:, Subject: and Snippet: identical in shape to a sent
+    message. On 2026-09-02 that made an abandoned draft look like a second email
+    delivered to a recipient 16 minutes after the real one. It had never been
+    sent. See memory/feedback_draft_archive_is_not_proof_of_send.md.
+
+    DRAFT is checked first and reported alone: a draft is the one state where
+    every other label on the message is misleading about delivery.
+    """
+    labels = set(label_ids or [])
+    if "DRAFT" in labels:
+        return "DRAFT — NOT SENT"
+    for state in ("SENT", "INBOX", "SPAM", "TRASH"):
+        if state in labels:
+            return state
+    return "unknown"
+
+
 def search_messages(
     service,
     query: str,
@@ -983,6 +1005,7 @@ def search_messages(
         full = service.users().messages().get(**get_kwargs).execute()
         headers = full.get("payload", {}).get("headers", [])
         print(f"  id:      {m['id']}")
+        print(f"  Mailbox: {_mailbox_marker(full.get('labelIds', []))}")
         print(f"  Date:    {_extract_header(headers, 'Date')}")
         print(f"  From:    {_extract_header(headers, 'From')}")
         print(f"  Subject: {_extract_header(headers, 'Subject') or '(no subject)'}")
