@@ -123,6 +123,39 @@ Check if an entry exists for **yesterday's date** (look for `### YYYY-MM-DD` hea
 
 If yesterday's entry exists, skip silently.
 
+### Step 1c: Overnight run (read last night, arm tonight)
+
+The nightly mutation sweep is DETERMINISTIC measurement; the fixing is agent work. This step
+closes the loop between them: read what last night measured, then arm tonight's run. Doing
+both here is what makes the loop self-perpetuating — a morning that only reads leaves the
+sweep to no-op, because it resumes by skipping tools already banked.
+
+```bash
+PYTHONIOENCODING=utf-8 python3 tools/mutation_trend.py record --note "overnight <date>"
+PYTHONIOENCODING=utf-8 python3 tools/mutation_trend.py show
+PYTHONIOENCODING=utf-8 python3 tools/mutation_report.py
+```
+
+**Read `record`'s status.** `skipped` means the baseline has not changed since the last
+recorded point — the sweep did not run, or ran and banked nothing. That is a finding, not a
+no-op: say so in the brief rather than reporting the old number as if it were fresh.
+
+**Arming tonight** (only when the sweep completed — `mutation_report` shows full coverage):
+
+```bash
+cd output/analysis/082626-mutation-baseline
+cp baseline.jsonl baseline.pre-$(date +%m%d%y).jsonl     # snapshot, never overwrite
+cd - && PYTHONIOENCODING=utf-8 python3 tools/mutation_sweep.py --targets
+: > output/analysis/082626-mutation-baseline/baseline.jsonl
+```
+
+`--targets` is not optional on a rebuild: it is what re-derives the tool list (a tool only
+enters the sweep once it has a collected suite, so ported tests ADD targets — 110 → 125 on
+2026-09-02) and what populates the `own` field.
+
+**Do NOT arm while a sweep is in flight** (`pgrep -f mutation_check`). Clearing the results
+file under a running sweep loses the night.
+
 ### Step 1b: Read Manifest (mandatory before synthesis)
 
 Before producing the brief in Step 3, emit a Read manifest as an internal-check step:
@@ -338,6 +371,27 @@ Output the brief in this exact format:
 [If `unsharpened_count >= 3` AND no `next_use` within 7 days:]
 > [N] unsharpened reflections accumulated, no upcoming use to anchor to. Fine to keep growing — flag for next weekly review if it crosses 5+.
 > Queued: [list dated stems]
+
+---
+
+### Overnight Run
+
+[If the sweep completed and the trend advanced:]
+> **Guard coverage: [pct]% of decisions unprotected** ([delta] since [last date]).
+> [N] tools measured, [K] fully clean, [M] with no verdict.
+
+[If any tool's survivor count ROSE — this is the only line here that should interrupt the day:]
+> ⚠️ **Survivors rose in [N] tool(s):** [tool] [old]→[new]. A rise means a behaviour lost its
+> test, not that the tool got worse. Check before anything else.
+
+[If `mutation_trend record` returned `skipped`:]
+> ⚠️ **The sweep did not run last night** — the baseline is unchanged since [date]. Check
+> `launchctl print gui/$(id -u)/com.nickmagnuson.jobsearch.mutation-sweep | grep "last exit"`;
+> exit 78 means a log-file provenance problem, not a code problem.
+
+[Open decisions, from the two gate allowlists — this is the queue Nick answers:]
+> **Needs your call:** [N] wired hook(s) with no suite (`KNOWN_MISSING`), [M] orphaned test
+> file(s) (`KNOWN_ORPHANS`). Both empty = the backlog is drained.
 
 ---
 

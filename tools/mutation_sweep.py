@@ -146,8 +146,21 @@ def build_targets() -> list[dict]:
         """
         return bool(list((REPO_ROOT / "tests" / "scripts").glob(f"test_{tool.stem}*.py")))
 
+    # iCloud CONFLICT COPIES ARE NOT TOOLS. This repo lives inside an iCloud-synced
+    # Documents tree and rapid writes produce `<name> 2.py` duplicates
+    # (reference_repo_is_inside_icloud_and_makes_conflict_copies). On 2026-09-02 a
+    # `--targets` rebuild ran while 33 of them existed and admitted three, including
+    # `mutation_sweep 2.py` -- a copy of THIS runner, which SELF_NAME does not match
+    # because it compares against `mutation_sweep.py`. The sweep would have mutated a copy
+    # of its own runner, and the other two would have failed on files deleted before the
+    # run. Excluded by shape, at selection, because a target list is built once and used
+    # for hours.
+    conflict = re.compile(r" [23]\.py$")
+
     rows = []
     for tool in sorted((REPO_ROOT / "tools").glob("*.py")):
+        if conflict.search(tool.name):
+            continue
         rel = f"tools/{tool.name}"
         test_files = mutation_check.map_tests(tool, REPO_ROOT)
         if not test_files:

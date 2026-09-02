@@ -179,3 +179,30 @@ def test_the_live_denylist_carries_no_cast_member():
                   if l.strip() and not l.startswith("#")}
         leaked = tokens & (g.FICTIONAL_CAST | {s.lower() for s in g.FICTIONAL_SURNAMES})
         assert not leaked, f"{rel} carries fictional-cast token(s): {sorted(leaked)}"
+
+
+def test_the_sample_persona_is_read_from_the_file_that_declares_it(tmp_path):
+    """Derived, not hand-listed. A literal roster would silently stop protecting the
+    persona the day it is renamed -- the same shape as the hand-maintained plist array
+    that left mutation-sweep uninstalled for weeks."""
+    (tmp_path / "examples").mkdir()
+    (tmp_path / "examples" / "README.md").write_text(
+        "# Example Data — Wilhelmina Okonkwo (Fictional)\n\nbody\n", encoding="utf-8")
+    assert g._declared_sample_persona(tmp_path) == {"wilhelmina okonkwo"}
+    assert "wilhelmina okonkwo" in g.fictional_cast(tmp_path)
+
+
+def test_a_missing_or_unrecognised_examples_readme_yields_no_persona(tmp_path):
+    """Fails toward the fixture set rather than crashing the generator."""
+    assert g._declared_sample_persona(tmp_path) == set()
+    (tmp_path / "examples").mkdir()
+    (tmp_path / "examples" / "README.md").write_text("# Something else\n", encoding="utf-8")
+    assert g._declared_sample_persona(tmp_path) == set()
+    assert g.fictional_cast(tmp_path) == g._FIXTURE_CAST
+
+
+def test_the_live_repo_declares_its_persona():
+    """If examples/README.md stops matching, the persona silently loses protection and
+    the 2026-08-10 / 2026-09-02 false positive returns."""
+    assert g._declared_sample_persona(REPO_ROOT), (
+        "examples/README.md no longer declares a fictional persona in the expected form")

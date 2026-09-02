@@ -267,3 +267,34 @@ class TestClaimVerbEmbeddedInFilename:
         """\\b must not break normal prose where the verb abuts punctuation."""
         assert _csc.extract_claimed_paths(
             '(Wrote) tools/x.py.') == ["tools/x.py"]
+
+
+# --- a claim does not reach across a paragraph break ------------------------
+
+def test_a_filename_in_the_next_paragraph_is_not_the_referent():
+    """The 3rd-fire false positive (friction ledger 2026-09-01..02). A /lessons-learned
+    proposal names candidate files that correctly do not exist yet -- the skill mandates
+    proposing before writing -- and a claim verb ending the previous paragraph swallowed
+    the next paragraph's heading. The sentence rule could not cut it: after "class."
+    comes "\\n\\n**[3]", and `*` is not `[A-Z]`."""
+    text = ("...in a file written specifically to catch this class.\n"
+            "\n"
+            "**[3] NEW — `feedback_some_proposed_rule.md`**\n")
+    assert "feedback_some_proposed_rule.md" not in csc.extract_claimed_paths(text)
+
+
+def test_a_claim_still_finds_its_referent_in_the_same_paragraph():
+    """The cut must not be so eager that real claims stop being caught."""
+    assert "docs/notes.md" in csc.extract_claimed_paths("Saved to docs/notes.md just now.")
+
+
+def test_a_claim_finds_a_referent_on_the_next_line_of_the_same_paragraph():
+    """A single newline is not a paragraph break; wrapping must not defeat the check."""
+    got = csc.extract_claimed_paths("I wrote the summary to\ndocs/notes.md for you.")
+    assert "docs/notes.md" in got
+
+
+def test_two_claims_in_separate_paragraphs_each_keep_their_own_referent():
+    text = ("Saved to docs/first.md here.\n\nAlso wrote docs/second.md there.\n")
+    got = csc.extract_claimed_paths(text)
+    assert "docs/first.md" in got and "docs/second.md" in got

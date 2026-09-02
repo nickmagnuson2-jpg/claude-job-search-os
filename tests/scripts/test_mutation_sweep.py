@@ -173,6 +173,37 @@ def test_only_tools_with_a_matching_test_file_are_selected(repo, monkeypatch):
     assert [r["tool"] for r in mod.build_targets()] == ["tools/has_tests.py"]
 
 
+def test_an_icloud_conflict_copy_is_not_a_target(repo, monkeypatch):
+    """`<name> 2.py` duplicates are sync artefacts, not tools.
+
+    This repo lives inside an iCloud-synced Documents tree and rapid writes produce them
+    (reference_repo_is_inside_icloud_and_makes_conflict_copies). On 2026-09-02 a --targets
+    rebuild ran while 33 existed and admitted three of them, including `mutation_sweep 2.py`
+    -- a copy of the RUNNER, which SELF_NAME does not catch because it compares against
+    `mutation_sweep.py`. The sweep would have spent the night mutating a copy of its own
+    runner, and the other two named files that were deleted before the run started.
+
+    Selection is the right place to drop them: a target list is built once and used for
+    hours, so a copy admitted here survives long after the duplicate on disk is gone.
+    """
+    add_tool(repo, "real", tested=True, mutants=5)
+    # A conflict copy of a tool, and one of the runner itself.
+    (repo / "tools" / "real 2.py").write_text("X = 1\n", encoding="utf-8")
+    (repo / "tools" / "mutation_sweep 2.py").write_text("X = 1\n", encoding="utf-8")
+    mod = load(repo, monkeypatch)
+    picked = [r["tool"] for r in mod.build_targets()]
+    assert picked == ["tools/real.py"], picked
+    assert not any(" 2.py" in t for t in picked)
+
+
+def test_a_legitimate_filename_containing_a_digit_is_still_a_target(repo, monkeypatch):
+    """The exclusion is anchored to ` <digit>.py` at the END. A tool legitimately named
+    with a digit must not be swept out with the artefacts."""
+    add_tool(repo, "base64_helper", tested=True, mutants=3)
+    mod = load(repo, monkeypatch)
+    assert "tools/base64_helper.py" in [r["tool"] for r in mod.build_targets()]
+
+
 def test_the_allowlist_is_not_consulted_at_selection_time_at_all(repo, monkeypatch):
     """SUPERSEDED BEHAVIOUR, kept as a regression. This test used to assert the opposite:
     that a `tools/x.py::mutant-7` entry excluded tools/x.py from the corpus. That was the

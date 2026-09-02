@@ -145,7 +145,17 @@ def extract_claimed_paths(text: str):
             continue
         window = text[m.end():m.end() + LOOKAHEAD]
         # Stop the window at a sentence boundary so we don't grab the next claim's path.
-        cut = re.search(r"(?<=[.!?])\s+[A-Z]", window)
+        #
+        # A BLANK LINE ENDS IT TOO, and that half is load-bearing. The sentence rule needs
+        # `[A-Z]` after the period, so a paragraph ending "...to catch this class." followed
+        # by "\n\n**[3] NEW — `feedback_x.md`**" did NOT cut: the next character is `*`.
+        # The window then ran into the next paragraph and reported its filename as a claimed
+        # write. That is the /lessons-learned Step 3 shape -- a PROPOSAL naming files that
+        # correctly do not exist yet, because the skill mandates proposing before writing --
+        # and it false-fired three times before this patch (friction ledger, 2026-09-01..02).
+        # A claim and its referent live in the same paragraph; nothing across a blank line
+        # is the referent of this verb.
+        cut = re.search(r"(?<=[.!?])\s+[A-Z]|\n[ \t]*\n", window)
         if cut:
             window = window[:cut.start()]
         for pm in PATH_TOKEN.finditer(window):

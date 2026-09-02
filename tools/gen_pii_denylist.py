@@ -86,10 +86,42 @@ KEEP = {
 # Excluded by NAME here rather than by trying to detect demo rows: the cast is a short,
 # known, declared list, and a heuristic that guesses which log entries are real would fail
 # in the dangerous direction.
-FICTIONAL_CAST = {
-    "priya anand", "jordan lee", "sarah chen", "casey doe", "casey morgan",
-    "sam carter", "robin", "alex chen",
+def _declared_sample_persona(root: Path) -> set[str]:
+    """The persona `examples/README.md` DECLARES fictional, read from the file itself.
+
+    Derived, not hand-listed. The rule this implements
+    (feedback_check_fictional_persona_before_scrubbing) prescribes harvesting from
+    `examples/`, and for good reason: a hardcoded roster is the same shape as the
+    hand-maintained plist array that let mutation-sweep go uninstalled for weeks. If the
+    example persona is ever renamed, this follows; a literal set would silently stop
+    protecting the new name and start protecting a name nobody uses.
+    """
+    readme = root / "examples" / "README.md"
+    try:
+        head = readme.read_text(encoding="utf-8", errors="ignore").splitlines()[0]
+    except (OSError, IndexError):
+        return set()
+    m = re.match(r"^#\s*Example Data\s*[—–-]\s*(.+?)\s*\(Fictional\)\s*$", head, re.I)
+    return {m.group(1).strip().lower()} if m else set()
+
+
+# Cast members that appear only in skill docs and test fixtures, so no file declares them
+# the way examples/README.md declares the sample persona. Kept explicit and SHORT; the
+# declared persona above is derived so the list cannot rot silently around the one name
+# that actually ships in examples/.
+_FIXTURE_CAST = {
+    "jordan lee", "sarah chen", "casey doe", "casey morgan",
+    "sam carter", "alex chen",
 }
+
+
+def fictional_cast(root: Path | None = None) -> set[str]:
+    return _FIXTURE_CAST | _declared_sample_persona(root or Path.cwd())
+
+
+# Module-level snapshot for callers that do not thread a root through. Recomputed per run
+# in main(); this default keeps the surname helper usable at import time.
+FICTIONAL_CAST = fictional_cast(Path(__file__).resolve().parents[1])
 FICTIONAL_SURNAMES = {n.split()[-1] for n in FICTIONAL_CAST if " " in n}
 
 # Generic glue / industry-suffix words. A single-token company name that is just one
