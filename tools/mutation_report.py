@@ -52,8 +52,18 @@ def build(state_dir: Path) -> str:
         r["cat"] = "hook" if r.get("h") or r.get("hooked") else (
             "writer" if r.get("w") or r.get("writer") else "other")
 
-    ok = [r for r in rows if str(r.get("status", "")).startswith("UNAUDITED") is False]
-    bad = [r for r in rows if str(r.get("status", "")).startswith("UNAUDITED")]
+    # MEASURED means a real verdict came back, not merely "did not time out".
+    # A row with killed=None was never measured: mutation_check refused (baseline_red,
+    # no_tests, self_mutation_refused) or the run errored. Admitting those to `ok`
+    # is what made the 2026-09-03 report state that check_public_pii.py's tests killed
+    # nothing, when it had killed 271 of 271 the previous day -- `not (killed or 0)`
+    # reads a null verdict as a zero score. The same coercion in the sums below counted
+    # unmeasured mutants in the denominator, which is why this report's own survival
+    # rate disagreed with mutation_trend's on the identical file.
+    #
+    # Null is not zero. An unmeasured tool is reported as unmeasured, never as a finding.
+    ok = [r for r in rows if r.get("killed") is not None]
+    bad = [r for r in rows if r.get("killed") is None]
     tot_m = sum(r["mutants"] for r in ok)
     tot_s = sum(r.get("survived") or 0 for r in ok)
     tot_k = sum(r.get("killed") or 0 for r in ok)
@@ -73,19 +83,27 @@ def build(state_dir: Path) -> str:
           f"> one mutant as another's bytecode and record a SURVIVING mutant as killed.\n"
           f"> **The error is optimistic:** survivors are under-reported, so a tool that\n"
           f"> looks hardened here may not be. Re-sweep, then compare against this file.\n")
-    w(f"**Sweep coverage: {len(rows)} of {len(auditable)} auditable tools measured.** "
+    w(f"**Sweep coverage: {len(ok)} of {len(auditable)} auditable tools measured.** "
       f"Selection is deterministic: every `tools/*.py` with a matching "
       f"`tests/scripts/test_<name>.py` and no `mutation-allow.json` entry "
       f"({len(targets)} selected; `mutation_check.py` self-excludes, leaving "
-      f"{len(auditable)} auditable).")
+      f"{len(auditable)} auditable)."
+      + (f" {len(bad)} more were ATTEMPTED and returned no verdict; attempting a tool "
+         f"is not measuring it." if bad else ""))
     if missing:
         w(f"\n**{len(missing)} NOT MEASURED — unaudited, not clean:** "
           + ", ".join(f"`{m[6:]}`" for m in missing) + "\n")
     else:
-        w("\nAll auditable tools were measured.\n")
+        w("\nEvery auditable tool was attempted.\n" if bad
+          else "\nAll auditable tools were measured.\n")
     if bad:
-        w(f"**{len(bad)} errored or timed out — unaudited, not clean:** "
-          + ", ".join(f"`{r['tool'][6:]}` ({r['status']})" for r in bad) + "\n")
+        w(f"**{len(bad)} UNMEASURED — no verdict, neither clean nor a finding:** "
+          + ", ".join(f"`{r['tool'][6:]}` ({r['status']}"
+                      + (f": {r['code']}" if r.get("code") else "") + ")" for r in bad) + "\n")
+        w("These are excluded from every count below, including the corpus survival rate. "
+          "`baseline_red` means the tool's own mapped tests were already failing on "
+          "unmutated source, so nothing could be measured -- fix those tests, then "
+          "re-run. It does NOT mean the tool is untested.\n")
 
     if tot_m:
         w(f"\n**Over the {len(ok)} tools measured cleanly: {tot_s} survivors of {tot_m} "
@@ -107,7 +125,8 @@ def build(state_dir: Path) -> str:
     # not exercise it at all. Zero kills with mapped tests present means the map claimed
     # coverage that does not exist. Mutation survival is the only instrument that tells
     # those apart, so the report says it rather than the selection rule guessing.
-    dead = [r for r in ok if r["mutants"] and not (r.get("killed") or 0)]
+    # `== 0`, never `not (x or 0)`: only a MEASURED zero is a finding here.
+    dead = [r for r in ok if r["mutants"] and r.get("killed") == 0]
     if dead:
         w("\n### ⛔ Mapped tests that kill NOTHING\n")
         w(f"**{len(dead)} tools where not one mutant died.** Every decision in these files "

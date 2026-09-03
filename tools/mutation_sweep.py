@@ -353,7 +353,20 @@ def _run_sweep_inner(targets, out: Path) -> int:
                        "isolation_failures": d.get("isolation_failures"),
                        "assertion_free_tests": d.get("assertion_free_tests"),
                        "tautological_assertions": d.get("tautological_assertions"),
-                       "survivors": d.get("survivors") or []}
+                       "survivors": d.get("survivors") or [],
+                       # WHY, not just THAT. mutation_check returns a structured
+                       # error -- code (baseline_red | no_tests |
+                       # self_mutation_refused), a message, and the mapped tests --
+                       # and this record dropped all three, keeping only
+                       # status="error". On 2026-09-03 that left 23 unexplained
+                       # errors in the baseline, undiagnosable after the fact
+                       # because the reason was never written down. The code is the
+                       # entire difference between "this tool has no tests" and
+                       # "this tool's tests were already failing".
+                       "code": d.get("code"),
+                       "message": d.get("message"),
+                       "error_tests": d.get("tests") if d.get("status") == "error" else None,
+                       "stderr": stderr[-1000:] if d.get("status") != "ok" else None}
             except (json.JSONDecodeError, AttributeError) as exc:
                 rec = {**base, "status": "UNAUDITED_ERROR", "error": str(exc)[:200],
                        "stdout": stdout[-1000:], "stderr": stderr[-1000:]}

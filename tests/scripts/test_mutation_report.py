@@ -116,7 +116,7 @@ def test_timed_out_and_errored_tools_are_excluded_from_the_totals(tmp_path):
                 "elapsed": 2700.0, "tests": 3}])
     body = load().build(d)
     assert "40 survivors of 100 mutants = 40.0% survival" in body
-    assert "1 errored or timed out — unaudited, not clean:" in body
+    assert "1 UNMEASURED — no verdict, neither clean nor a finding:" in body
     assert "`slow.py` (UNAUDITED_TIMEOUT)" in body
 
 
@@ -608,3 +608,103 @@ class TestStaleBaselineBanner:
             "a post-fix baseline must not carry the warning, or the banner becomes noise "
             "everyone learns to skip"
         )
+
+
+# =============================================================================
+# 2026-09-03: an ERRORED tool is UNMEASURED, and must never be rendered as one
+# whose tests killed nothing.
+#
+# Origin, and it reached Nick: the 2026-09-03 sweep errored on 23 of 118 tools
+# (baseline_red -- their mapped tests were failing on unmutated source, so
+# mutation_check correctly refused to measure). Those rows carry killed=null and
+# survived=null. `build()` put them in the "Mapped tests that kill NOTHING"
+# section, and that morning's standup told Nick his PUBLIC-REPO PII GATE had no
+# effective tests. It had killed 271 of 271 the day before.
+#
+# Two coercions caused it, both on rows the `ok` partition should never have
+# admitted: `not (r.get("killed") or 0)` reads null as zero, and the aggregate
+# sums do the same -- which is why the report's own headline survival rate
+# disagreed with mutation_trend's on the identical file.
+# =============================================================================
+
+def _state(tmp_path, rows):
+    targets = [{"tool": r["tool"], "mutants": r["mutants"], "test_files": 2} for r in rows]
+    (tmp_path / "targets.json").write_text(json.dumps(targets), encoding="utf-8")
+    (tmp_path / "baseline.jsonl").write_text(
+        "\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+    return tmp_path
+
+
+ERRORED = {"tool": "tools/check_public_pii.py", "mutants": 271, "tests": 240,
+           "rc": 1, "status": "error", "killed": None, "survived": None, "weak": None}
+REAL_DEAD = {"tool": "tools/open_draft.py", "mutants": 113, "tests": 7,
+             "rc": 0, "status": "ok", "killed": 0, "survived": 113, "weak": 0}
+HEALTHY = {"tool": "tools/check_banned_phrase.py", "mutants": 49, "tests": 77,
+           "rc": 0, "status": "ok", "killed": 49, "survived": 0, "weak": 0}
+
+
+def test_errored_tool_is_not_reported_as_killing_nothing(tmp_path):
+    """The exact defect that produced a false standup claim about the PII gate."""
+    body = load().build(_state(tmp_path, [ERRORED, HEALTHY]))
+    dead_section = body.split("kill NOTHING")[1] if "kill NOTHING" in body else ""
+    assert "check_public_pii" not in dead_section, (
+        "an UNMEASURED tool was listed as one whose tests kill nothing:\n" + dead_section[:600])
+
+
+def test_a_genuinely_dead_tool_is_still_reported(tmp_path):
+    """Guards the fix from being an over-broad silencing of the whole section.
+
+    Without this, deleting the section entirely would pass the test above.
+    """
+    body = load().build(_state(tmp_path, [ERRORED, REAL_DEAD, HEALTHY]))
+    assert "kill NOTHING" in body, "the real finding was suppressed along with the false one"
+    dead_section = body.split("kill NOTHING")[1]
+    assert "open_draft" in dead_section, (
+        "a tool that really killed 0 of 113 is missing from the section")
+
+
+def test_errored_tools_are_surfaced_as_unmeasured_not_silently_dropped(tmp_path):
+    """Unmeasured must be VISIBLE. Dropping the row is the same defect inverted:
+    a tool nobody measured would read as a tool with nothing wrong."""
+    body = load().build(_state(tmp_path, [ERRORED, HEALTHY]))
+    assert "check_public_pii" in body, "the errored tool vanished from the report entirely"
+
+
+def test_errored_mutants_are_excluded_from_the_aggregate(tmp_path):
+    """Why the report said 31.0% while mutation_trend said 37.34% on one file.
+
+    An errored tool contributed 271 mutants to the denominator and 0 kills to the
+    numerator, so the corpus survival rate was computed against work never done.
+    """
+    body = load().build(_state(tmp_path, [ERRORED, HEALTHY]))
+    assert "271" not in body.split("survival")[0][-400:] or "49" in body, body[:400]
+    # The healthy tool alone: 49 mutants, 0 survivors, 0% survival.
+    assert "0.0% survival" in body or "0% survival" in body, (
+        "aggregate still includes unmeasured mutants:\n" + body[:800])
+
+
+def test_no_unmeasured_section_when_every_tool_has_a_verdict(tmp_path):
+    """A clean sweep must not print an empty "0 UNMEASURED" banner.
+
+    Kills IF_TRUE on `if bad:`. Without this the guard could be forced always-true
+    and every clean report would carry a contradictory zero-count warning, which is
+    how a reader learns to skip the line that matters on the day it is non-zero.
+    """
+    body = load().build(_state(tmp_path, [HEALTHY, REAL_DEAD]))
+    assert "UNMEASURED" not in body, (
+        "a fully-measured sweep printed an unmeasured banner:\n" + body[:600])
+
+
+def test_unmeasured_section_explains_that_baseline_red_is_not_untested(tmp_path):
+    """Kills DROP_CALL on the explanation line.
+
+    The count alone reproduces the original harm in a quieter form: on 2026-09-03 a
+    reader saw errored tools and concluded their tests were worthless. The section
+    has to say that `baseline_red` means the tool's OWN tests were already failing,
+    so nothing could be measured -- not that the tool is unprotected.
+    """
+    body = load().build(_state(tmp_path, [ERRORED, HEALTHY]))
+    assert "baseline_red" in body, "the section does not name the code that explains it"
+    assert "does NOT mean the tool is untested" in body, (
+        "the section states a count without the interpretation that prevents "
+        "misreading it:\n" + body[:800])
