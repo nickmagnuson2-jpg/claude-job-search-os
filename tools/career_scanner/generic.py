@@ -10,7 +10,14 @@ import sys
 from urllib.parse import urljoin
 
 
-def fetch_generic(careers_url: str, company_name: str) -> list[dict]:
+def _fail(errors: list | None, reason: str) -> None:
+    """Record a fetch failure on the out-parameter. No-op when the caller passed none."""
+    if errors is not None:
+        errors.append({"reason": reason})
+
+
+def fetch_generic(careers_url: str, company_name: str,
+                  errors: list | None = None) -> list[dict]:
     """Extract job listings from an arbitrary careers page using Playwright.
 
     Uses heuristic CSS selectors to find job listing links. Best-effort:
@@ -19,6 +26,11 @@ def fetch_generic(careers_url: str, company_name: str) -> list[dict]:
     Args:
         careers_url: Full URL to the company's careers/jobs page.
         company_name: Company name for the role dicts.
+        errors: Optional list. Appended with {"reason": ...} on ANY failure path.
+            THE FALSE-ZERO CHANNEL (2026-09-02): this parser catches its own HTTP and
+            network errors and returns [], so without this out-parameter a dead slug
+            returning 404 is indistinguishable from a live board with no openings, and
+            a scan in which every board failed reports a clean zero.
 
     Returns:
         List of standardized role dicts, or [] on error.
@@ -30,6 +42,7 @@ def fetch_generic(careers_url: str, company_name: str) -> list[dict]:
             "Playwright not installed. Run: pip install playwright && playwright install chromium",
             file=sys.stderr,
         )
+        _fail(errors, "playwright not installed")
         return []
 
     roles = []
@@ -121,6 +134,7 @@ def fetch_generic(careers_url: str, company_name: str) -> list[dict]:
 
     except Exception as e:
         print(f"Generic parser error for {careers_url}: {e}", file=sys.stderr)
+        _fail(errors, f"{type(e).__name__}: {e}")
         return []
     finally:
         if browser:

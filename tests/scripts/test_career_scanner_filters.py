@@ -132,7 +132,11 @@ def test_is_peninsula_helper_does_not_flag_sf():
 def fake_ashby(monkeypatch):
     def _install(roles):
         import tools.career_scanner.ashby as mod
-        monkeypatch.setattr(mod, "fetch_ashby", lambda slug: list(roles))
+        # `errors` is accepted and ignored: these fakes model a SUCCESSFUL fetch.
+        # The signature must match the real parser or the dispatch would break here
+        # rather than in production, which is the point of pinning it.
+        monkeypatch.setattr(mod, "fetch_ashby",
+                            lambda slug, errors=None: list(roles))
     return _install
 
 
@@ -196,14 +200,16 @@ def _sf_role(title="Deployment Strategist"):
 
 def test_dispatches_to_greenhouse(monkeypatch):
     import tools.career_scanner.greenhouse as gh
-    monkeypatch.setattr(gh, "fetch_greenhouse", lambda slug: [_sf_role("GH Strategist")])
+    monkeypatch.setattr(gh, "fetch_greenhouse",
+                        lambda slug, errors=None: [_sf_role("GH Strategist")])
     out = fetch_company_roles(_target(ats="greenhouse"))
     assert [r["title"] for r in out] == ["GH Strategist"]
 
 
 def test_dispatches_to_lever(monkeypatch):
     import tools.career_scanner.lever as lv
-    monkeypatch.setattr(lv, "fetch_lever", lambda slug: [_sf_role("Lever Strategist")])
+    monkeypatch.setattr(lv, "fetch_lever",
+                        lambda slug, errors=None: [_sf_role("Lever Strategist")])
     out = fetch_company_roles(_target(ats="lever"))
     assert [r["title"] for r in out] == ["Lever Strategist"]
 
@@ -211,7 +217,7 @@ def test_dispatches_to_lever(monkeypatch):
 def test_dispatches_to_generic_with_careers_url(monkeypatch):
     import tools.career_scanner.generic as gen
     monkeypatch.setattr(gen, "fetch_generic",
-                        lambda url, name: [_sf_role("Generic Strategist")])
+                        lambda url, name, errors=None: [_sf_role("Generic Strategist")])
     out = fetch_company_roles(_target(ats="generic", careers_url="https://example.test/jobs"))
     assert [r["title"] for r in out] == ["Generic Strategist"]
 
@@ -230,7 +236,7 @@ def test_parser_exception_is_caught_and_warns(monkeypatch, capsys):
     """A throwing parser must not abort the whole nightly scan."""
     import tools.career_scanner.ashby as mod
 
-    def boom(slug):
+    def boom(slug, errors=None):
         raise RuntimeError("network exploded")
 
     monkeypatch.setattr(mod, "fetch_ashby", boom)
@@ -259,19 +265,107 @@ def test_fetch_records_a_failure_into_a_caller_supplied_list():
     assert "workday" in repr(errors).lower() or "unknown" in repr(errors).lower()
 
 
+def test_a_generic_target_with_no_careers_url_is_recorded_as_a_failure():
+    """A config error is a failure, not an empty board. Without this the row is
+    skipped every night and the scan still reports a clean zero -- and 24 of 45
+    configured companies were silently skipped this way before 2026-09-02."""
+    from tools.career_scanner.scanner import fetch_company_roles
+    errors = []
+    assert fetch_company_roles(_target(ats="generic"), errors=errors) == []
+    assert len(errors) == 1
+    assert "careers_url" in errors[0]["reason"]
+    assert errors[0]["company"] == "Placeholder Co"
+
+
 def test_fetch_without_an_error_list_still_works():
     """Backward compatibility: existing callers pass no errors list."""
     from tools.career_scanner.scanner import fetch_company_roles
     assert fetch_company_roles(_target(ats="workday")) == []
 
 
-def test_a_genuinely_empty_board_is_not_recorded_as_an_error():
+def test_a_genuinely_empty_board_is_not_recorded_as_an_error(fake_ashby):
     """Guard on the guard. If every empty board logged an error, the signal would be
-    noise and would be ignored -- which is how the stderr warning already failed."""
+    noise and would be ignored -- which is how the stderr warning already failed.
+
+    NOTE 2026-09-02: this test previously passed no fake and reached the LIVE Ashby
+    API, where slug 'placeholder' 404s. It asserted "no error recorded" against a real
+    HTTP failure and passed only because the parser swallowed it -- the exact defect
+    under test. Once the parser gained an error channel the test failed, correctly.
+    """
     from tools.career_scanner.scanner import fetch_company_roles
+    fake_ashby([{"title": "Warehouse Associate", "location": "San Francisco, CA"}])
     errors = []
-    fetch_company_roles(_target(), errors=errors)   # geo-filtered to empty, not failed
+    fetch_company_roles(_target(), errors=errors)   # filtered to empty, not failed
     assert errors == [], f"an empty-but-working board was recorded as a failure: {errors}"
+
+
+# --- the parser-caught failure: the case the first false-zero fix MISSED ------
+#
+# The 2026-09-02 fix recorded only unknown-ATS and missing-careers_url -- CONFIG
+# errors. Every parser catches HTTPError/URLError/OSError itself and returns [], so
+# those never reached the wrapper's try/except and a 404'd slug still reported
+# fetch_failures: 0. Commit b19caaf's message overclaimed this as fixed.
+
+@pytest.mark.parametrize("ats,module,func", [
+    ("ashby", "tools.career_scanner.ashby", "fetch_ashby"),
+    ("greenhouse", "tools.career_scanner.greenhouse", "fetch_greenhouse"),
+    ("lever", "tools.career_scanner.lever", "fetch_lever"),
+])
+def test_a_parser_caught_http_failure_reaches_the_error_list(monkeypatch, ats, module, func):
+    """A 404 the PARSER swallowed must still register as a fetch failure."""
+    import importlib
+    mod = importlib.import_module(module)
+
+    def dead_board(slug, errors=None):
+        if errors is not None:
+            errors.append({"reason": "HTTP 404"})
+        return []
+
+    monkeypatch.setattr(mod, func, dead_board)
+    errors = []
+    out = fetch_company_roles(_target(ats=ats), errors=errors)
+    assert out == []
+    assert errors, f"{ats}: a 404'd board reported a clean zero"
+    assert errors[0]["company"] == "Placeholder Co"
+    assert "404" in errors[0]["reason"]
+
+
+def test_a_parser_that_records_then_raises_keeps_both_signals(monkeypatch):
+    """The recorded failure must survive the exception, not be replaced by it."""
+    import tools.career_scanner.ashby as mod
+
+    def record_then_boom(slug, errors=None):
+        if errors is not None:
+            errors.append({"reason": "HTTP 404"})
+        raise RuntimeError("and then the socket died")
+
+    monkeypatch.setattr(mod, "fetch_ashby", record_then_boom)
+    errors = []
+    assert fetch_company_roles(_target(), errors=errors) == []
+    reasons = " ".join(e["reason"] for e in errors)
+    assert "404" in reasons and "RuntimeError" in reasons
+
+
+@pytest.mark.parametrize("module,func,args", [
+    ("tools.career_scanner.ashby", "fetch_ashby", ("slug",)),
+    ("tools.career_scanner.greenhouse", "fetch_greenhouse", ("slug",)),
+    ("tools.career_scanner.lever", "fetch_lever", ("slug",)),
+    ("tools.career_scanner.generic", "fetch_generic", ("url", "name")),
+])
+def test_every_parser_accepts_the_error_channel(module, func, args):
+    """Structural guard: a new or edited parser cannot silently omit `errors`.
+
+    Without this, dropping the parameter from one parser reintroduces the false zero
+    for that ATS alone -- and every other test would still pass.
+    """
+    import importlib
+    import inspect
+    fn = getattr(importlib.import_module(module), func)
+    sig = inspect.signature(fn)
+    assert "errors" in sig.parameters, f"{func} has no error channel"
+    assert sig.parameters["errors"].default is None, (
+        f"{func}'s errors parameter must be optional so existing callers keep working")
+    assert len(sig.parameters) == len(args) + 1
 
 
 # ---------------------------------------------------------------------------

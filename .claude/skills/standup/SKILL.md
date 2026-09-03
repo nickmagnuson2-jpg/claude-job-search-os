@@ -85,6 +85,23 @@ Four rules, all mandatory:
 - **Every role carries its literal `/apply <url>`.** The handoff is the point: surfaced
   → dossier → hiring manager → outreach brief → CV is one copy-paste, with no
   re-derivation of what the scan already knew.
+- **`pending_overflow: true` is surfaced** as `⚠️ [N] roles pending acknowledgement`.
+  It means the queue is accumulating faster than it is being read, i.e. this step has
+  been skipped or failing.
+
+**ACKNOWLEDGE, and only AFTER the roles are rendered above.** The queue is a pending
+log: reading does not consume it. If this step is skipped the same roles re-appear
+tomorrow (mild noise, deliberate); if it were done BEFORE rendering, a crash mid-render
+would lose them for good.
+
+```bash
+# Pass the ack_keys from the read above, one --ack per key. Never --ack-all unless
+# new_count <= the --top you rendered.
+PYTHONIOENCODING=utf-8 python3 tools/role_queue_read.py --repo-root . --ack '<key>'
+```
+
+Ack **by key, never by count**: keys identify what was actually put in front of Nick,
+so a role a scan inserted between the read and the ack is not silently consumed.
 
 Empty queue with `new_count: 0` renders **nothing at all** — a daily "0 new roles" line
 trains the reader to skip the section, which is how the original defect stayed invisible.

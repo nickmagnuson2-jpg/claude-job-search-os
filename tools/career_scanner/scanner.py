@@ -127,16 +127,20 @@ def fetch_company_roles(target: dict, errors: list | None = None) -> list[dict]:
     slug = target.get("slug", "")
     name = target.get("name", slug)
 
+    # Failures the PARSER catches internally land here and are re-labelled with the
+    # company below. Without this channel a 404'd slug and an empty board are the same
+    # value, which is how a scan where every board died reported fetch_failures: 0.
+    parser_errors: list[dict] = []
     try:
         if ats == "greenhouse":
             from tools.career_scanner.greenhouse import fetch_greenhouse
-            roles = fetch_greenhouse(slug)
+            roles = fetch_greenhouse(slug, errors=parser_errors)
         elif ats == "lever":
             from tools.career_scanner.lever import fetch_lever
-            roles = fetch_lever(slug)
+            roles = fetch_lever(slug, errors=parser_errors)
         elif ats == "ashby":
             from tools.career_scanner.ashby import fetch_ashby
-            roles = fetch_ashby(slug)
+            roles = fetch_ashby(slug, errors=parser_errors)
         elif ats == "generic":
             from tools.career_scanner.generic import fetch_generic
             careers_url = target.get("careers_url", "")
@@ -146,7 +150,7 @@ def fetch_company_roles(target: dict, errors: list | None = None) -> list[dict]:
                     errors.append({"company": name, "ats": ats,
                                    "reason": "generic target has no careers_url"})
                 return []
-            roles = fetch_generic(careers_url, name)
+            roles = fetch_generic(careers_url, name, errors=parser_errors)
         else:
             print(f"Unknown ATS '{ats}' for {name}", file=sys.stderr)
             if errors is not None:
@@ -159,6 +163,13 @@ def fetch_company_roles(target: dict, errors: list | None = None) -> list[dict]:
             errors.append({"company": name, "ats": ats,
                            "reason": f"{type(e).__name__}: {e}"})
         return []
+    finally:
+        # `finally` so a parser that both recorded a failure AND then raised is not
+        # silently reduced to the raise alone.
+        if errors is not None:
+            for pe in parser_errors:
+                errors.append({"company": name, "ats": ats,
+                               "reason": pe.get("reason", "unspecified parser failure")})
 
     # Override company name with display name from config
     for r in roles:
@@ -205,8 +216,19 @@ def scan_all_targets(repo_root: Path, dry_run: bool = False) -> dict:
 
     targets = load_targets(repo_root)
     if not targets:
-        return {"total_fetched": 0, "new_roles": 0, "skipped_dupes": 0,
-                "companies_scanned": 0, "roles": []}
+        # A config that yields no targets is a FAILURE, not a quiet clean scan. Before
+        # 2026-09-02 this path returned early without a queue or a fetch_failures key,
+        # so /standup kept rendering the last good queue while the scanner examined
+        # nothing at all -- the false-zero defect one layer above the parsers.
+        errors = [{"company": "-", "ats": "-",
+                   "reason": "no scannable targets in scan-targets.yaml"}]
+        summary = {"total_fetched": 0, "new_roles": 0, "skipped_dupes": 0,
+                   "companies_scanned": 0, "fetch_failures": len(errors),
+                   "fetch_failure_detail": errors, "new_since_last_scan": 0,
+                   "standing": 0, "roles": []}
+        if not dry_run:
+            write_role_queue(repo_root, [], [], errors)
+        return summary
 
     scoring_ctx = load_scoring_context(repo_root)
     pipeline_entries = load_pipeline_entries(repo_root)
@@ -242,8 +264,6 @@ def scan_all_targets(repo_root: Path, dry_run: bool = False) -> dict:
     # is what put the same ~30 roles into data/inbox.md every day for three weeks.
     seen = load_seen(repo_root)
     truly_new, standing = split_new_and_standing(new_roles, seen)
-    if not dry_run:
-        save_seen(repo_root, seen)
 
     summary = {
         "total_fetched": len(all_roles),
@@ -258,8 +278,13 @@ def scan_all_targets(repo_root: Path, dry_run: bool = False) -> dict:
         "roles": new_roles,
     }
 
+    # ORDER IS LOAD-BEARING: queue first, seen-set second. A crash between them then
+    # leaves a role pending-but-not-seen (it re-surfaces next scan, deduped by
+    # role_key -- mild noise) rather than seen-but-never-queued (permanently invisible
+    # -- data loss). Reversing these two lines re-opens the 2026-09-02 crash window.
     if not dry_run:
         write_role_queue(repo_root, truly_new, standing, errors)
+        save_seen(repo_root, seen)
 
     # NO LONGER WRITES data/inbox.md (2026-09-02). That file is 7,000+ lines, is under
     # a standing do-not-route-here instruction, and nothing has ever read the 56
@@ -343,31 +368,142 @@ def role_queue_path(repo_root: Path) -> Path:
     return Path(repo_root) / "tools" / ROLE_QUEUE_FILENAME
 
 
+# A pending log this long means the reader has stopped acknowledging. Nothing is
+# dropped at the cap -- dropping is the defect this whole mechanism exists to prevent
+# -- but the overflow is reported so a dead consumer is visible instead of silent.
+PENDING_WARN_AT = 200
+
+
+def _queue_lock(repo_root: Path, timeout: float = 30.0):
+    """Advisory lock over the queue file. Serialises lock-aware writers only.
+
+    Uses tools/inbox_lock, the one existing precedent in this repo, rather than a
+    second competing scheme. Honest scope, per that module: a writer that does not
+    take this lock (a hand edit, an editor save) is not excluded.
+    """
+    return inbox_lock.file_lock(role_queue_path(repo_root), timeout=timeout)
+
+
+def write_queue_payload(repo_root: Path, payload: dict) -> Path:
+    """Atomically replace the queue file. The single write path for the queue."""
+    import os
+    import tempfile
+
+    path = role_queue_path(repo_root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2, default=str)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+    return path
+
+
+def read_queue_payload(repo_root: Path) -> dict:
+    """The queue as a dict, or {} when absent/unreadable/wrong-shaped.
+
+    Never raises: this is called on the write path of a nightly job, and a corrupt
+    queue must degrade to "start a fresh one", never abort the scan.
+    """
+    path = role_queue_path(repo_root)
+    if not path.is_file():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        _quarantine(path, f"{type(exc).__name__}: {exc}")
+        return {}
+    if not isinstance(payload, dict):
+        _quarantine(path, f"top level is {type(payload).__name__}, expected an object")
+        return {}
+    return payload
+
+
+def _quarantine(path: Path, reason: str) -> None:
+    """Move a corrupt queue aside instead of overwriting it.
+
+    The pending log is the only record that roles were found and not yet seen. A
+    corrupt file therefore holds evidence, and the next scan would otherwise silently
+    replace it with a fresh empty one -- destroying the only trace of what was lost.
+    """
+    import os
+    print(f"  CORRUPT role queue at {path} ({reason}); "
+          f"quarantining to {path.name}.corrupt", file=sys.stderr)
+    try:
+        os.replace(path, path.with_suffix(path.suffix + ".corrupt"))
+    except OSError:
+        pass
+
+
+def read_pending(repo_root: Path) -> list[dict]:
+    """Roles written but NOT YET acknowledged by a reader.
+
+    THE PENDING LOG. Before 2026-09-02 the queue's `new` list was replaced wholesale on
+    every scan while the seen-set was stamped unconditionally, so a role written by
+    scan A and not read before scan B was marked seen, dropped from `new`, and became
+    permanently invisible. That happened live: 22 roles including three 7/10 in-lane
+    Deployment Strategist reqs, recovered only by clearing the seen-set by hand.
+
+    The seen-set tracks "written once". This tracks "surfaced to a human", and only an
+    explicit acknowledge() from the reader clears it. Fail-safe direction is deliberate
+    and must never be inverted: an unacknowledged role RE-SURFACES (mild noise), it does
+    not disappear (data loss).
+    """
+    new = read_queue_payload(repo_root).get("new", [])
+    return [r for r in new if isinstance(r, dict)] if isinstance(new, list) else []
+
+
 def write_role_queue(repo_root: Path, new_roles: list[dict],
                      standing: list[dict], errors: list[dict]) -> Path:
-    """Write the role queue atomically.
+    """Merge this scan's new roles into the pending log and write the queue atomically.
+
+    MERGE, never replace. See read_pending for why: replacement is the silent-loss
+    defect. `standing` and the failure detail describe THIS scan and are replaced;
+    `new` accumulates until acknowledged.
 
     Deliberately NOT data/inbox.md: that file is 7,000+ lines, is under a standing
     do-not-route-here instruction, and nothing reads it.
     """
-    import os
-    import tempfile
+    from datetime import datetime, timezone
+    from tools.career_scanner.dedup import role_key
+
+    # Read-modify-write under the lock. Atomic replace prevents a TORN file, not a
+    # LOST UPDATE: two scans could both read the same pending log, each append its own
+    # roles, and the second replace would drop the first's. `errors` and `standing`
+    # are last-writer-wins by design (they describe one scan); `new` must never be.
+    with _queue_lock(repo_root):
+        pending = read_pending(repo_root)
+        have = {role_key(r) for r in pending}
+        for role in new_roles:
+            key = role_key(role)
+            if key in have:
+                continue
+            have.add(key)
+            pending.append(role)
+        return write_queue_payload(repo_root, _queue_payload(
+            pending, new_roles, standing, errors))
+
+
+def _queue_payload(pending: list[dict], new_roles: list[dict],
+                   standing: list[dict], errors: list[dict]) -> dict:
     from datetime import datetime, timezone
 
-    payload = {
+    return {
         "scanned_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "new_count": len(new_roles),
+        # The count of what the reader OWES a look at, not of what this scan found.
+        "new_count": len(pending),
+        "new_this_scan": len(new_roles),
         "standing_count": len(standing),
         # A scan that examined nothing must never look like one that found nothing.
         "fetch_failures": len(errors),
         "fetch_failure_detail": errors,
-        "new": new_roles,
+        "pending_overflow": len(pending) > PENDING_WARN_AT,
+        "new": pending,
         "standing": standing[:25],
     }
-    path = role_queue_path(repo_root)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
-        json.dump(payload, f, indent=2, default=str)
-    os.replace(tmp, path)
-    return path

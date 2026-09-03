@@ -13,11 +13,22 @@ import urllib.error
 import urllib.request
 
 
-def fetch_ashby(slug: str) -> list[dict]:
+def _fail(errors: list | None, reason: str) -> None:
+    """Record a fetch failure on the out-parameter. No-op when the caller passed none."""
+    if errors is not None:
+        errors.append({"reason": reason})
+
+
+def fetch_ashby(slug: str, errors: list | None = None) -> list[dict]:
     """Fetch all jobs from an Ashby job board.
 
     Args:
         slug: Company identifier (e.g. 'ramp')
+        errors: Optional list. Appended with {"reason": ...} on ANY failure path.
+            THE FALSE-ZERO CHANNEL (2026-09-02): this parser catches its own HTTP and
+            network errors and returns [], so without this out-parameter a dead slug
+            returning 404 is indistinguishable from a live board with no openings, and
+            a scan in which every board failed reports a clean zero.
 
     Returns:
         List of standardized role dicts, or [] on error.
@@ -32,16 +43,24 @@ def fetch_ashby(slug: str) -> list[dict]:
             data = json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
         print(f"Ashby error for {slug}: HTTP {e.code}", file=sys.stderr)
+        _fail(errors, f"HTTP {e.code}")
         return []
     except (urllib.error.URLError, OSError) as e:
         print(f"Ashby network error for {slug}: {e}", file=sys.stderr)
+        _fail(errors, f"{type(e).__name__}: {e}")
         return []
 
     if not isinstance(data, dict):
+        _fail(errors, f"payload is {type(data).__name__}, expected a JSON object")
+        return []
+
+    jobs = data.get("jobs")
+    if not isinstance(jobs, list):
+        _fail(errors, "payload has no 'jobs' list")
         return []
 
     roles = []
-    for job in data.get("jobs", []):
+    for job in jobs:
         roles.append({
             "title": job.get("title", ""),
             "company": slug,

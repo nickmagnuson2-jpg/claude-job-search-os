@@ -26,7 +26,10 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
-from tools.career_scanner.scanner import role_queue_path  # noqa: E402
+from tools.career_scanner.scanner import (  # noqa: E402
+    _queue_lock, read_pending, role_queue_path, read_queue_payload,
+    write_queue_payload)
+from tools.career_scanner.dedup import role_key  # noqa: E402
 
 # A daily job that has not produced a queue in this long is not "quiet", it is broken.
 STALE_AFTER_HOURS = 36
@@ -56,6 +59,9 @@ def read_queue(repo_root: Path, top: int = 5) -> dict:
             stale_hours = None
 
     new = payload.get("new", [])
+    if not isinstance(new, list):
+        new = []
+    new = [r for r in new if isinstance(r, dict)]
     # Nick's stated ordering, 2026-09-02: "ranked by fit, and then secondarily by when
     # they were published." Score first, recency as the tiebreaker. Sorting by date
     # alone floated a 3/10 SEO role above every in-lane role on the first live run.
@@ -73,17 +79,73 @@ def read_queue(repo_root: Path, top: int = 5) -> dict:
         # nothing -- the false-zero defect.
         "fetch_failures": payload.get("fetch_failures", 0),
         "fetch_failure_detail": payload.get("fetch_failure_detail", []),
+        "pending_overflow": bool(payload.get("pending_overflow")),
         "roles": new[:top],
+        # The reader acknowledges BY KEY, never by count. Acking "the top 5" would
+        # silently consume whatever a scan inserted between the read and the ack.
+        "ack_keys": [role_key(r) for r in new[:top]],
     }
+
+
+def acknowledge(repo_root: Path, keys: list[str] | None = None) -> dict:
+    """Clear acknowledged roles from the pending log. THE ONLY consuming operation.
+
+    Reading does not consume: if /standup dies mid-render the roles must still be
+    there tomorrow. Only an explicit ack -- issued after the roles have actually been
+    put in front of Nick -- removes them.
+
+    Args:
+        keys: role_key values to clear, normally the `ack_keys` from the read that
+            rendered them. None clears the entire pending log; use it only when the
+            whole log was rendered, because anything a concurrent scan appended in the
+            meantime is cleared unread.
+
+    Returns:
+        {"acknowledged": N, "remaining": M}. A missing queue acks nothing and does not
+        raise -- /standup must never fail on this.
+    """
+    # Under the same lock the writer takes: ack is a read-modify-write on the same
+    # file, and an unlocked one would drop roles a concurrent scan had just appended.
+    with _queue_lock(repo_root):
+        payload = read_queue_payload(repo_root)
+        if not payload:
+            return {"acknowledged": 0, "remaining": 0,
+                    "reason": "no readable queue to acknowledge"}
+
+        pending = [r for r in payload.get("new", []) if isinstance(r, dict)] \
+            if isinstance(payload.get("new"), list) else []
+        if keys is None:
+            kept = []
+        else:
+            wanted = set(keys)
+            kept = [r for r in pending if role_key(r) not in wanted]
+
+        payload["new"] = kept
+        payload["new_count"] = len(kept)
+        payload["pending_overflow"] = False
+        payload["acknowledged_at"] = datetime.now(timezone.utc).isoformat(
+            timespec="seconds")
+        write_queue_payload(repo_root, payload)
+    return {"acknowledged": len(pending) - len(kept), "remaining": len(kept)}
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--repo-root", default=str(REPO_ROOT))
     ap.add_argument("--top", type=int, default=5)
-    ap.add_argument("--json", action="store_true", default=True)
+    ap.add_argument("--ack", action="append", metavar="KEY", default=[],
+                    help="acknowledge one rendered role by its ack_keys value; "
+                         "repeatable. Run AFTER the roles have been rendered.")
+    ap.add_argument("--ack-all", action="store_true",
+                    help="acknowledge the entire pending log. Only safe when the whole "
+                         "log was rendered -- prefer --ack with explicit keys.")
     args = ap.parse_args()
-    print(json.dumps(read_queue(Path(args.repo_root), args.top), indent=2, default=str))
+    root = Path(args.repo_root)
+    if args.ack or args.ack_all:
+        result = acknowledge(root, None if args.ack_all else args.ack)
+    else:
+        result = read_queue(root, args.top)
+    print(json.dumps(result, indent=2, default=str))
     return 0
 
 
