@@ -10,6 +10,8 @@ End-to-end job search OS. See [README.md](README.md) for description, `docs/usag
 
 - **Enforcement tier: name it before building anything.** A rule is only real if it lives where it executes: **a check a gate reads, a field a schema demands, or a record a run cannot skip.** Prose requiring in-moment judgment converts at zero (measured: an 18-item enumerated list, zero violations in ~80 min live, while every abstract rule failed; four written artifacts predicted a failure correctly and changed nothing on the day). Before adding any rule, guard, skill, or doc, state which of the three it is. **If the answer is "written down and followed," it is not built yet.** Upstream of every other Hard Rule: it governs what may become one. Derivation: `framework/analysis-method.md`, the conversion law.
 
+- **Remove all mannered prose.** Metaphor and flourish substituted for direct statement: "a dial worth turning" for *a parameter worth varying*, "earns its keep" for *still matters*. It displays the writer instead of conveying the idea. **When a literal phrase is available, use it.** Applies to chat, briefs, drafts, docs, commits. Nick's definition and full rationale: `~/.claude/CLAUDE.md` Hard Rules. **Enforced for LISTED PHRASES ONLY** by `tools/check_banned_phrase.py` reading `tools/mannered-phrases.txt` (PreToolUse, Write/Edit). Chat and Bash-written content are ungated, so a clean run is not evidence the prose is good.
+
 - **Profile guard.** Before any generative or research skill, verify `data/profile.md` and `data/goals.md` exist with real content (not TODOs). If either is missing or all TODOs, stop and tell the user to run `/import-cv` (profile) or fill `data/goals.md` from `framework/templates/goals.md`. Never fall back to generic candidate context.
 - **No em dashes** (—) in any output Nick will send. Use commas, periods, or hyphens.
 - **Never draft email bodies inline in chat.** Any outgoing email — subject + greeting + body + signoff, or any subset that constitutes a draftable message — MUST go through `/draft-email`, `/cold-outreach`, or `/follow-up`. The hook stack (`check_email_via_skill.py` + `check_draft_voice.py` + `.pending-draft.source` marker) gates the *tool-call* surface (Write/Edit/Bash on draft files); inline chat drafts bypass that surface entirely. Skill-tier voice anchoring (matched exemplar from `framework/voice-reference.md`) cannot fire when no skill runs. If Nick says "draft something quickly" or "send a quick note," the answer is to invoke the skill — not to skip it. Origin: 2026-05-20 inline-draft incident; tier escalation per `memory/feedback_llm_self_policing_fails.md`.
@@ -170,35 +172,18 @@ PostToolUse hook warns when Edit hits an affected file.
 > exploration and which get date prefixes; the therapy two-tier pattern; the reflections
 > two-voice pattern.
 
-### Three Identity Docs — Sharp Boundaries
+### Identity docs, workbook destinations, and the project schema
 
-Three layers, not three versions. Different consumers, different cadences. Drift is a problem; collapse would be worse (every weekly goals tweak would touch the file voice/positioning skills read).
-
-| Doc | Holds | Update cadence |
-|---|---|---|
-| `profile.md` | **Facts.** Career history, education, skills, availability. | Rarely (when a fact changes). |
-| `professional-identity.md` | **Self-understanding.** Strengths, growth edges, work style, values, narrative patterns, conditions for thriving. | Occasionally (after major reflection). |
-| `goals.md` | **Direction.** Thesis, target criteria, comp, phase, weekly focus, success metrics. | Frequently (weekly review, search shifts). |
-
-**Boundary rules:**
-- Comp facts (floor, target, equity) → `goals.md` only.
-- Work style and conditions for thriving → `professional-identity.md` only.
-- Target industries and role types → `goals.md` only (they shift). `professional-identity.md` describes *what kind of work Nick is drawn to*, not which sectors are on the list this month.
-
-### Workbook Outputs Update Existing Docs
-
-Outputs from `data/workbooks/*.md` update existing source-of-truth structures. The workbook is the instrument; the existing docs are the canon.
-
-| Workbook output | Destination |
-|---|---|
-| Conviction doc (3 paragraphs) | New top-level `data/conviction.md` (only genuinely new artifact) |
-| Sharpened achievement bullets (Part 4 STAR factual content) | `Key Achievements` in `data/projects/<name>.md` |
-| Spoken STAR delivery (Part 4) | `coaching/coached-answers/<question-type>.md` |
-| One-sentence value statement | `goals.md` thesis or `professional-identity.md` summary |
-| Conditions Statement (Part 2) | `professional-identity.md` Work Style |
-| Green/red flags + screen questions (Part 3) | `goals.md` Non-Negotiables |
-| Two-sentence Zuora chapter | `professional-identity.md` Career Direction + `coaching/coached-answers/why-did-you-leave.md` |
-| "What worked / didn't / learned" doc (Part 1) | New dated file in `data/reflections/` |
+> **Moved 2026-09-03 → [`docs/data-file-conventions.md`](docs/data-file-conventions.md)**
+> (verbatim; relocated to hold this file under its 40 KB always-loaded budget).
+>
+> **Read it before:** writing to `data/profile.md`, `data/professional-identity.md`, or
+> `data/goals.md` · routing the output of a `data/workbooks/*.md` exercise ·
+> creating or editing a file in `data/projects/`.
+>
+> **It covers:** the three-identity-doc boundary table and its boundary rules (comp facts
+> live in `goals.md` only; work style in `professional-identity.md` only); the
+> workbook-output destination table; the `data/projects/*.md` schema and its Type values.
 
 ### Resume Bullets vs Spoken STAR Stories — Different Artifacts
 
@@ -208,12 +193,6 @@ Same underlying experience, different forms. Do not conflate.
 - **Spoken STAR stories** → `coaching/coached-answers/<question-type>.md`. Conversational, practiced. Used by `/prep-interview`, `/voice-export`, `/debrief`. Optimized for spoken delivery — pacing, hedging-removal, emotional arc.
 
 Never use a CV bullet as an interview answer or a spoken story as a CV bullet.
-
-### Projects
-
-`data/projects/*.md` follows `framework/templates/project.md`: Period, Role, Client, Industry, Location, Type, Description, Responsibilities, Key Achievements, Technologies, Tags.
-
-Type values: `flagship` | `consulting` | `contract` | `employment` | `co-founded` | `internship` | `side-project`.
 
 ## Research Dossiers
 

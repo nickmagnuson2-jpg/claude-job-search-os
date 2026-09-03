@@ -9,6 +9,9 @@ file under its 40 KB budget. Nothing was reworded, summarized, or dropped in the
 - When routing a `/remember` capture between those two logs
 - Before creating a reflection, workbook, therapy doc, or identity file
 - When deciding whether a new file gets a `YYYY-MM-DD-` prefix
+- Before writing to `data/profile.md`, `data/professional-identity.md`, or `data/goals.md`
+- When routing the output of a `data/workbooks/*.md` exercise
+- Before creating or editing a file in `data/projects/`
 
 ## What is NOT here
 
@@ -42,3 +45,49 @@ Files in `data/project-background/` open with a boundary header forbidding use i
 **Therapy docs use a two-tier pattern, sealed in personal vault.** Per-session files (`YYYY-MM-DD-therapy-{therapist}-transcript.md`) are frozen and contain transcript + session-specific themes. The undated aggregate (`therapy-themes-job-search.md`) is the living cross-session synthesis. Both live at `<personal-vault>/data/therapy/` (relocated 2026-05-04 from this project's `data/project-background/` per the personal-vs-job-OS architecture; see `framework/personal-vs-job-os-architecture.md`). Same sealed-file rule applies: never appears in any external-facing artifact. When a new session adds themes that recur, refine, or contradict prior themes, promote them into the aggregate as a new dated supplement section; session-specific themes that don't generalize stay in the per-session file only.
 
 **Reflections use a two-voice pattern.** Dated files (`data/reflections/YYYY-MM-DD.md`) are Nick's voice, frozen at writing — never edit them with Claude-voice synthesis. The companion `data/reflections/_themes.md` is Claude's voice — co-authored reflections (theme, gap, reframe) appended after each `/reflect` session, newest first. Same two-tier logic as therapy docs: frozen per-session + living cross-session. Skills that surface longitudinal patterns (`/standup`, `/weekly-review`, `/my-world`, `/checkout`) read `_themes.md` for cross-reflection patterns once enough entries exist (~4+). Single-reflection content stays in the dated file only.
+
+
+---
+
+**Origin, second move:** the three sections below were moved verbatim out of `CLAUDE.md`
+on 2026-09-03, same reason as the 2026-08-14 move above: that file had reached its 40 KB
+always-loaded budget. Nothing was reworded, summarized, or dropped. The prohibition
+*"Never use a CV bullet as an interview answer or a spoken story as a CV bullet"* was
+deliberately LEFT in `CLAUDE.md` — it is phrased as a rule, so it stays always-loaded.
+
+### Three Identity Docs — Sharp Boundaries
+
+Three layers, not three versions. Different consumers, different cadences. Drift is a problem; collapse would be worse (every weekly goals tweak would touch the file voice/positioning skills read).
+
+| Doc | Holds | Update cadence |
+|---|---|---|
+| `profile.md` | **Facts.** Career history, education, skills, availability. | Rarely (when a fact changes). |
+| `professional-identity.md` | **Self-understanding.** Strengths, growth edges, work style, values, narrative patterns, conditions for thriving. | Occasionally (after major reflection). |
+| `goals.md` | **Direction.** Thesis, target criteria, comp, phase, weekly focus, success metrics. | Frequently (weekly review, search shifts). |
+
+**Boundary rules:**
+- Comp facts (floor, target, equity) → `goals.md` only.
+- Work style and conditions for thriving → `professional-identity.md` only.
+- Target industries and role types → `goals.md` only (they shift). `professional-identity.md` describes *what kind of work Nick is drawn to*, not which sectors are on the list this month.
+
+### Workbook Outputs Update Existing Docs
+
+Outputs from `data/workbooks/*.md` update existing source-of-truth structures. The workbook is the instrument; the existing docs are the canon.
+
+| Workbook output | Destination |
+|---|---|
+| Conviction doc (3 paragraphs) | New top-level `data/conviction.md` (only genuinely new artifact) |
+| Sharpened achievement bullets (Part 4 STAR factual content) | `Key Achievements` in `data/projects/<name>.md` |
+| Spoken STAR delivery (Part 4) | `coaching/coached-answers/<question-type>.md` |
+| One-sentence value statement | `goals.md` thesis or `professional-identity.md` summary |
+| Conditions Statement (Part 2) | `professional-identity.md` Work Style |
+| Green/red flags + screen questions (Part 3) | `goals.md` Non-Negotiables |
+| Two-sentence Zuora chapter | `professional-identity.md` Career Direction + `coaching/coached-answers/why-did-you-leave.md` |
+| "What worked / didn't / learned" doc (Part 1) | New dated file in `data/reflections/` |
+
+### Projects
+
+`data/projects/*.md` follows `framework/templates/project.md`: Period, Role, Client, Industry, Location, Type, Description, Responsibilities, Key Achievements, Technologies, Tags.
+
+Type values: `flagship` | `consulting` | `contract` | `employment` | `co-founded` | `internship` | `side-project`.
+

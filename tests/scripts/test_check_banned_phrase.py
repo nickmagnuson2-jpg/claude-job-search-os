@@ -26,6 +26,10 @@ _spec = importlib.util.spec_from_file_location("check_banned_phrase", SCRIPT)
 hook = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(hook)  # kills IF_TRUE on `if __name__ == "__main__":` (L187)
 
+# The SHIPPED table, not a fixture: these tests assert against the policy that
+# actually runs. A fixture table here would let the real one rot unnoticed.
+TABLE = hook.load_table(hook.TABLE_PATH)
+
 # Verbatim line from an origin-era prep doc (output/acme/050526-partner-call-prep.md).
 ORIGIN_LINE = (
     "## The two answers that need sharpening (load-bearing — see "
@@ -60,7 +64,7 @@ def test_blocking_verdict_reports_exit_code_count_line_and_reason():
     assert "1 occurrence(s)" in err, f"occurrence count wrong in stderr: {err!r}"
     assert "line 2:" in err, f"line number of the hit missing from stderr: {err!r}"
     assert "'load-bearing'" in err, f"matched text missing from stderr: {err!r}"
-    assert "banned LLM-tell metaphor" in err, f"reason missing from stderr: {err!r}"
+    assert "the thing that matters" in err, f"replacement missing from stderr: {err!r}"
     assert "output/acme/082526-prep.md" in err, f"target path missing from stderr: {err!r}"
 
 
@@ -233,31 +237,31 @@ def test_edits_payload_from_a_non_multiedit_tool_is_ignored():
 
 def test_violations_empty_inputs_return_empty_list():
     # kills RETURN_NONE on the empty path/content guard (violations L123).
-    assert hook.violations("", "the load-bearing claim") == []
-    assert hook.violations("output/acme/082526-prep.md", "") == []
+    assert hook.violations("", "the load-bearing claim", TABLE) == []
+    assert hook.violations("output/acme/082526-prep.md", "", TABLE) == []
 
 
 def test_violations_non_text_suffix_returns_empty_list():
     # kills RETURN_NONE on the suffix guard (violations L125).
-    assert hook.violations("tools/check_draft_voice.py", "the load-bearing claim") == []
+    assert hook.violations("tools/check_draft_voice.py", "the load-bearing claim", TABLE) == []
 
 
 def test_violations_exempt_path_returns_empty_list():
     # kills RETURN_NONE on the EXEMPT_PATH guard (violations L127).
-    assert hook.violations("tests/fixtures/prep/bad.md", "the load-bearing claim") == []
+    assert hook.violations("tests/fixtures/prep/bad.md", "the load-bearing claim", TABLE) == []
 
 
 def test_violations_ban_documentation_file_returns_empty_list():
     # kills RETURN_NONE on the FILE_MARKER guard (violations L129).
     content = "check_banned_phrase.py flags 'load-bearing' wherever it appears."
-    assert hook.violations("output/analysis/082526-audit.md", content) == []
+    assert hook.violations("output/analysis/082526-audit.md", content, TABLE) == []
 
 
 def test_violations_reports_line_number_matched_text_and_reason():
     """The blocking path returns one (line_no, matched_text, why) triple per hit."""
     hits = hook.violations("output/acme/082526-prep.md",
-                           "clean line\nthe load-bearing claim\n")
-    assert hits == [(2, "load-bearing", '"load-bearing" — banned LLM-tell metaphor')]
+                           "clean line\nthe load-bearing claim\n", TABLE)
+    assert hits == [(2, "load-bearing", 'the thing that matters')]
 
 
 # --- the >10 truncation footer ----------------------------------------------
@@ -283,3 +287,213 @@ def test_no_truncation_footer_at_exactly_ten_hits():
     assert "10 occurrence(s)" in err
     assert "line 10:" in err
     assert "more\n" not in err.split("Rewrite, do not reword")[0]
+
+
+# =============================================================================
+# The 2026-09-03 generalization: a scoped table, not one hardcoded phrase.
+#
+# Every test below names the finding it pins. They came out of a cross-model
+# review (output/analysis/090326-codex-*.md) that marked six of eight claims in
+# the build plan wrong. A test here that stops failing when its behavior breaks
+# is worse than no test, so each asserts the SHIPPED CLI exit code, not a helper.
+# =============================================================================
+
+MANNERED_PATH = "output/acme/090326-prep.md"
+
+
+def test_mannered_phrase_blocks_on_an_authored_surface():
+    """A listed mannered phrase in output/ blocks, and names its replacement."""
+    code, err = _write(MANNERED_PATH, "The connective tissue here is obvious.\n")
+    assert code == 2, f"expected BLOCK, got exit {code}; stderr={err!r}"
+    assert "connective tissue" in err, f"matched text missing: {err!r}"
+    assert "what actually connects them" in err, f"replacement missing: {err!r}"
+
+
+def test_north_star_is_deliberately_not_banned():
+    """Nick kept 'north star' on 2026-09-03 (94 corpus hits). Pins that decision.
+
+    If someone adds it to the table, this fails and they must re-ask Nick.
+    """
+    code, err = _write(MANNERED_PATH, "Our north star metric is retention.\n")
+    assert code == 0, f"expected clean, got exit {code}; stderr={err!r}"
+
+
+def test_scope_all_is_not_narrowed_by_the_authored_exemptions():
+    """F1: generalizing must not shrink the older load/bearing rule.
+
+    data/voice-corpus/ is exempt for mannered prose. The load/bearing row carries
+    scope=all and must still fire there. If a future edit drops per-row scope and
+    applies one shared exemption list, this is the test that dies.
+    """
+    code, err = _write("data/voice-corpus/granola/2026-09-03-call.md",
+                       "He said the claim was load-bearing.\n")
+    assert code == 2, f"scope=all was narrowed; got exit {code}; stderr={err!r}"
+
+
+def test_mannered_phrase_is_exempt_on_a_verbatim_transcript():
+    """The same path is clean for a scope=authored row: it is someone else's words."""
+    code, err = _write("data/voice-corpus/granola/2026-09-03-call.md",
+                       "He said it was table stakes for the role.\n")
+    assert code == 0, f"expected clean, got exit {code}; stderr={err!r}"
+
+
+def test_captures_tree_is_exempt_for_authored_scope():
+    """captures/ holds other people's verbatim words; a scope=authored row must not fire.
+
+    Origin 2026-09-03: freezing a third party's ChatGPT-written call summary into
+    a sibling repo's captures/ tree was blocked on 'force multiplier' inside that person's
+    own text. Paraphrasing to satisfy the gate would corrupt the capture, which is
+    what a verbatim tree exists to prevent. If a future edit drops the captures/
+    alternative from AUTHORED_EXEMPT, this test dies.
+    """
+    code, err = _write("captures/2026-09-03-call-summary.md",
+                       "She called it a long-term growth force multiplier.\n")
+    assert code == 0, f"expected clean, got exit {code}; stderr={err!r}"
+
+
+def test_captures_tree_does_not_narrow_scope_all():
+    """captures/ is exempt for mannered prose only. scope=all must still fire there."""
+    code, err = _write("captures/2026-09-03-call-summary.md",
+                       "He said the assumption was load-bearing.\n")
+    assert code == 2, f"scope=all was narrowed by the captures exemption; exit {code}; stderr={err!r}"
+
+
+def test_captures_must_be_a_path_segment_not_a_substring():
+    """A file merely named '...captures...' is not a verbatim tree and stays gated."""
+    code, err = _write("output/analysis/what-captures-attention.md",
+                       "It was table stakes for the role.\n")
+    assert code == 2, f"substring match leaked an exemption; exit {code}; stderr={err!r}"
+
+
+def test_claude_authored_synthesis_inside_coaching_is_gated():
+    """F3: coaching/progress/ holds debriefs Claude writes, so it is NOT exempt.
+
+    Exempting the whole tree would let mannered prose land in a debrief and be
+    copied into a gated prep artifact later.
+    """
+    code, err = _write("coaching/progress/2026-09-03-1000-acme-debrief.md",
+                       "Clearing the bar is table stakes.\n")
+    assert code == 2, f"laundering path is open; got exit {code}; stderr={err!r}"
+
+
+def test_synthesized_reflection_is_gated_but_nicks_dated_one_is_not():
+    """The underscore prefix is the Claude-voice marker in data/reflections/.
+
+    _longitudinal.md carries `voice: cloud-generated`; a dated file is Nick's.
+    """
+    synth, err_s = _write("data/reflections/_longitudinal.md", "It moves the needle.\n")
+    assert synth == 2, f"_-prefixed synthesis not gated; exit {synth}; stderr={err_s!r}"
+    dated, err_d = _write("data/reflections/2026-09-01.md", "It moves the needle for me.\n")
+    assert dated == 0, f"Nick's own reflection was gated; exit {dated}; stderr={err_d!r}"
+
+
+def test_synthesized_person_dossier_is_gated():
+    """data/people/ holds synthesized relationship judgments, not quoted words."""
+    code, err = _write("data/people/jane-doe.md", "Trust here is table stakes.\n")
+    assert code == 2, f"expected BLOCK, got exit {code}; stderr={err!r}"
+
+
+def test_interaction_log_and_nicks_own_files_are_exempt():
+    """networking.md quotes correspondence in full; goals.md is Nick's own writing."""
+    for path in ("data/networking.md", "data/goals.md", "data/job-pipeline.md"):
+        code, err = _write(path, "She called it table stakes.\n")
+        assert code == 0, f"{path} was gated; exit {code}; stderr={err!r}"
+
+
+def test_the_table_itself_can_be_edited():
+    """The denylist must be writable, or the phrases cannot be maintained."""
+    code, err = _write("tools/mannered-phrases.txt", "table stakes\tauthored\tthe minimum\n")
+    assert code == 0, f"the table blocked its own edit; exit {code}; stderr={err!r}"
+
+
+def test_block_message_disclaims_semantic_detection():
+    """F7: the overclaim must be refused on the operational surface, not only in a docstring.
+
+    A reader who sees a clean exit must not conclude the prose is good.
+    """
+    _code, err = _write(MANNERED_PATH, "The connective tissue here is obvious.\n")
+    assert "NOT a mannered-prose" in err, f"scope disclaimer missing: {err!r}"
+    assert "no regex can certify" in err, f"semantic disclaimer missing: {err!r}"
+
+
+# --- the failure contract (F6): a bad table BLOCKS, never passes, never exits 1 --
+
+def _run_with_table(tmp_path, table_text):
+    """Copy the hook beside a controlled table so the shipped one is untouched.
+
+    TABLE_PATH resolves next to the script, which is the injection seam. The
+    shipped CLI path stays non-overridable from the payload.
+    """
+    script = tmp_path / "check_banned_phrase.py"
+    script.write_bytes(SCRIPT.read_bytes())
+    if table_text is not None:
+        (tmp_path / "mannered-phrases.txt").write_bytes(table_text)
+    payload = json.dumps({"tool_name": "Write",
+                          "tool_input": {"file_path": MANNERED_PATH,
+                                         "content": "ordinary sentence\n"}})
+    r = subprocess.run([sys.executable, str(script)],
+                       input=payload, capture_output=True, text=True)
+    return r.returncode, r.stderr
+
+
+@pytest.mark.parametrize("label,table", [
+    ("missing file", None),
+    ("empty file", b""),
+    ("comments only", b"# nothing but a comment\n"),
+    ("no tab separator", b"foo bar baz\n"),
+    ("too many fields", b"foo\tall\tbar\tbaz\n"),
+    ("unknown scope", b"foo\tsideways\tbar\n"),
+    ("empty pattern", b"\tall\tbar\n"),
+    ("empty replacement", b"foo\tall\t\n"),
+    ("invalid regex", b"foo(\tall\tbar\n"),
+    ("invalid utf-8", b"\xff\xfe\x00bad\n"),
+])
+def test_unusable_table_blocks_with_exit_2(tmp_path, label, table):
+    """F6: every load failure is a deliberate exit 2, not 0 and not an uncaught 1.
+
+    Exit 1 is what an uncaught FileNotFoundError or re.error would produce, and it
+    is not the documented blocking verdict. Exit 0 would mean a gate that passes
+    every write the moment its own policy file breaks.
+    """
+    code, err = _run_with_table(tmp_path, table)
+    assert code == 2, f"{label}: expected exit 2, got {code}; stderr={err!r}"
+    assert "mannered-phrases.txt" in err, f"{label}: error does not name the table: {err!r}"
+
+
+def test_unusable_table_error_does_not_dump_the_table_contents(tmp_path):
+    """Name the file, not its rows: the diagnostic must not become a phrase leak."""
+    code, err = _run_with_table(tmp_path, b"seekrit-phrase-xyz\tall\tbar\nfoo(\tall\tbar\n")
+    assert code == 2
+    assert "seekrit-phrase-xyz" not in err, f"table contents leaked into stderr: {err!r}"
+
+
+def test_a_valid_injected_table_is_actually_used(tmp_path):
+    """Pins that the failure tests above prove something.
+
+    Without this, every parametrized case could pass because the copied script is
+    broken for an unrelated reason. A clean table must produce a clean exit, and
+    its own rows must fire.
+    """
+    ok, _ = _run_with_table(tmp_path, b"zzz-unlikely-token\tall\treplacement text\n")
+    assert ok == 0, "a valid injected table should let an ordinary write through"
+
+    script = tmp_path / "check_banned_phrase.py"
+    payload = json.dumps({"tool_name": "Write",
+                          "tool_input": {"file_path": MANNERED_PATH,
+                                         "content": "contains zzz-unlikely-token here\n"}})
+    r = subprocess.run([sys.executable, str(script)],
+                       input=payload, capture_output=True, text=True)
+    assert r.returncode == 2, "the injected table's own row did not fire"
+    assert "replacement text" in r.stderr
+
+
+def test_shipped_table_parses_and_carries_both_scopes():
+    """The real table must load, and must still contain the load/bearing row.
+
+    A table that lost scope=all entirely would leave the older rule unenforced
+    while every mannered-prose test still passed.
+    """
+    scopes = {scope for _pat, scope, _rep in TABLE}
+    assert scopes == {"all", "authored"}, f"shipped table scopes are {scopes}"
+    assert any(pat.search("this is load-bearing") for pat, scope, _ in TABLE if scope == "all"), \
+        "the load/bearing row is gone from the shipped table"

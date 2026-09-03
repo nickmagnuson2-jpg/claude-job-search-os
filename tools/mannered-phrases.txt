@@ -1,0 +1,63 @@
+# Enumerated-phrase denylist. Read by tools/check_banned_phrase.py.
+#
+# FORMAT: pattern <TAB> scope <TAB> literal replacement
+#   pattern     -- a regex, compiled case-insensitively and word-bounded by the loader
+#   scope       -- "all" or "authored" (see below)
+#   replacement -- what to write instead, shown in the block message
+#
+# SCOPE
+#   all       every text path except fixtures, tests and this rule's own docs.
+#             The load/bearing row keeps this so its documented scope ("anywhere in
+#             output to Nick, including memory writes") is not narrowed by the
+#             path exemptions added for mannered prose on 2026-09-03.
+#   authored  the surfaces Claude authors. Exempts verbatim trees (voice-corpus,
+#             source-emails), Nick's dated reflections, the interaction logs, and
+#             Nick's own identity/decision files. See AUTHORED_EXEMPT in the hook.
+#
+# MANNERED PROSE, Nick's definition (2026-09-03): metaphor and flourish substituted
+# for direct statement. "a dial worth turning" for "a parameter worth varying";
+# "this point earns its keep" for "this point still matters". The phrases exist to
+# display the writer, not to convey the idea. When a literal phrase is available,
+# use it.
+#
+# THIS TABLE IS NOT A MANNERED-PROSE DETECTOR. It matches the phrases listed here
+# and nothing else. Manneredness is a semantic property no regex can certify.
+#
+# "north star" is DELIBERATELY ABSENT -- Nick kept it, 2026-09-03 (94 corpus hits).
+
+load[\s\-_–—]?bearing	all	the thing that matters
+connective tissue	authored	what actually connects them
+table stakes	authored	the minimum / what is expected
+moves? the needle	authored	changes the outcome
+earns? (?:its|their) keep	authored	still matters
+dials? (?:worth turning|to turn)	authored	a parameter worth varying
+low[\s\-]hanging fruit	authored	the easy wins
+boil the ocean	authored	do everything at once
+silver bullet	authored	a single fix
+double[\s\-]edged sword	authored	it cuts both ways: say how
+elephant in the room	authored	the thing nobody is saying
+tip of the iceberg	authored	a small part of it
+canary in the coal mine	authored	an early warning
+force multiplier	authored	it makes X faster: say how much
+punch(?:es|ing)? above its weight	authored	does more than its size predicts
+long pole in the tent	authored	the slowest step
+peel(?:ing)? (?:back )?the onion	authored	look at the next layer
+square the circle	authored	reconcile the two
+beating heart of	authored	the central part of
+tapestry of	authored	a mix of
+masterclass in	authored	an unusually good example of
+sea change	authored	a large change
+watershed moment	authored	a turning point
+writing on the wall	authored	the obvious outcome
+shine a light on	authored	show / reveal
+breathe new life into	authored	revive / restart
+paints? a picture	authored	shows / describes
+speaks volumes	authored	says a lot: say what
+a testament to	authored	evidence of
+underscores the importance	authored	shows that X matters
+lifeblood of	authored	essential to
+linchpin	authored	the part everything depends on
+cornerstone	authored	the basis / the foundation
+delve into	authored	look at / examine
+stark contrast	authored	a clear difference
+held hostage	authored	blocked by
