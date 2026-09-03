@@ -1,15 +1,52 @@
 #!/bin/bash
-# pre-push PII gate for the PUBLIC repo (claude-job-search-os).
-# Fires ONLY when pushing to the public remote; private (the data-backup remote)
-# and upstream pushes are unaffected. Reusable logic lives in
-# tools/prepush_pii_guard.py (tracked). Override a false positive with
-# PUSH_PII_OVERRIDE=1. Install on other machines: copy this file to
-# .git/hooks/pre-push and chmod +x.
+# Pre-push gates for this repo. Two, in order of cost to get wrong.
+#
+# 1. PII gate (public remote only). Fires ONLY when pushing to the public remote;
+#    private (the data-backup remote) and upstream pushes are unaffected.
+# 2. Cross-model verification gate (every remote). A push carrying a governed
+#    document, a wired hook, or a large code change must be covered by a recorded
+#    Codex verification -- or by a waiver you type deliberately, which is recorded
+#    and counted. Origin: Nick, 2026-09-02, "for all of these important things we
+#    run codex as a verification", which stayed prose and converted at zero until
+#    it lived here.
+#
+# Overrides:  PUSH_PII_OVERRIDE=1        (PII false positive)
+#             CODEX_VERIFY_WAIVE="why"   (skip cross-model, recorded)
+#
+# Reusable logic lives in tools/prepush_pii_guard.py and tools/cross_model_gate.py
+# (both tracked). Install on other machines: bash tools/hooks/install.sh
 remote_url="$2"
+root="$(git rev-parse --show-toplevel)"
+
 case "$remote_url" in
   *claude-job-search-os*)
-    root="$(git rev-parse --show-toplevel)"
     PYTHONIOENCODING=utf-8 python3 "$root/tools/prepush_pii_guard.py" || exit 1
     ;;
 esac
+
+# The range actually being pushed, read from stdin per githooks(5):
+#   <local ref> <local sha1> <remote ref> <remote sha1>
+# A remote sha of all-zeros means a new branch; fall back to the upstream default so a
+# first push of a branch is not treated as pushing the entire history.
+base=""
+head=""
+while read -r _lref lsha _rref rsha; do
+  [ -z "$lsha" ] && continue
+  case "$lsha" in *[!0]*) ;; *) continue ;; esac   # deleting a ref: nothing to verify
+  head="$lsha"
+  case "$rsha" in
+    *[!0]*) base="$rsha" ;;
+    *)      base="$(git merge-base "$lsha" origin/main 2>/dev/null || echo '')" ;;
+  esac
+done
+
+[ -z "$head" ] && exit 0
+if [ -n "$base" ]; then range="$base..$head"; since_ref="$base"; else range="$head"; since_ref="$head"; fi
+
+since="$(git log -1 --format=%ct "$since_ref" 2>/dev/null || echo 0)"
+numstat="$(git diff --numstat "$range" 2>/dev/null || echo '')"
+[ -z "$numstat" ] && exit 0
+
+printf '%s\n' "$numstat" | PYTHONIOENCODING=utf-8 python3 \
+  "$root/tools/cross_model_gate.py" --repo-root "$root" --since "$since" || exit 1
 exit 0

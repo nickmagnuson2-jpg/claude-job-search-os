@@ -103,6 +103,31 @@ PYTHONIOENCODING=utf-8 python3 tools/role_queue_read.py --repo-root . --ack '<ke
 Ack **by key, never by count**: keys identify what was actually put in front of Nick,
 so a role a scan inserted between the read and the ack is not silently consumed.
 
+**Cross-model findings (from `cross_model_gate.py`) — surface whenever non-empty.**
+
+```bash
+PYTHONIOENCODING=utf-8 python3 -c "
+import sys; sys.path.insert(0,'.')
+from pathlib import Path
+from tools import cross_model_gate as g
+print(g.summary(Path('.')))"
+```
+
+This is the consumer half of `/codex-verify`. Built 2026-09-03 with the drain still
+fresh: a Codex report written to `output/analysis/` and read by nobody is the
+career-scan defect in a new costume, and the whole reason findings carry a
+`disposition` is so an unresolved one cannot be quietly filed away.
+
+- **Open findings are listed**, most severe first, as
+  `🔍 [P0] <summary> — from <report>`. A finding stays open until it is dispositioned
+  (fixed / rejected with a reason / parked with a reason).
+- **`waivers` is surfaced when non-zero**, as `⚠️ [N] cross-model waiver(s) recorded`.
+  Nick's condition for this not being theatre was that skipping is a conscious act; a
+  waiver count nobody sees is how it stops being one. A rising count is the signal that
+  the gate is being routed around rather than used.
+- **Zero open findings and zero waivers renders nothing at all** — same rule as the
+  role queue. A daily "0 findings" line trains the reader to skip the section.
+
 Empty queue with `new_count: 0` renders **nothing at all** — a daily "0 new roles" line
 trains the reader to skip the section, which is how the original defect stayed invisible.
 

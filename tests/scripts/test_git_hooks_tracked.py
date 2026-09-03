@@ -45,3 +45,49 @@ def test_installed_hook_matches_the_tracked_copy():
     assert installed.read_text(encoding="utf-8") == \
         (HOOKS_SRC / "pre-push").read_text(encoding="utf-8"), \
         "installed pre-push differs from tools/hooks/pre-push; re-run the installer"
+
+
+# ---------------------------------------------------------------------------
+# core.hooksPath. Found by cross-model review 2026-09-03, and it was LIVE: the
+# installer hardcoded "$root/.git/hooks", installed there, verified there, and printed
+# "ok: pre-push" -- while git's effective hooks directory was elsewhere and did not
+# exist. No pre-push hook ran at all, on a PUBLIC repo whose only push-time PII gate is
+# a pre-push hook, and the checker built to catch exactly this reported success.
+#
+# Same defect family as the one that created install.sh (a tracked guard whose hook was
+# untracked, so a fresh clone had no gate) and as the career-scan drain (healthy
+# producer, consumer pointing elsewhere, no error anywhere).
+# ---------------------------------------------------------------------------
+
+def test_installer_resolves_the_hooks_path_git_will_actually_use():
+    """It must ask git, not assume. `core.hooksPath` overrides .git/hooks entirely."""
+    src = REPO_ROOT / "tools" / "hooks" / "install.sh"
+    text = src.read_text(encoding="utf-8")
+    assert "git rev-parse --git-path hooks" in text, (
+        "install.sh assumes .git/hooks; core.hooksPath silently overrides that and "
+        "this repo has already shipped in that broken state")
+    assert 'dst="$root/.git/hooks"' not in text, (
+        "the hardcoded destination is back; core.hooksPath would be ignored again")
+
+
+def test_installer_refuses_when_the_configured_hooks_dir_is_missing():
+    """A configured-but-absent hooks dir means git runs NO hooks. Reporting success
+    there is worse than failing: it is a guard asserting it is armed while disarmed."""
+    src = (REPO_ROOT / "tools" / "hooks" / "install.sh").read_text(encoding="utf-8")
+    assert "does not exist" in src
+    assert "core.hooksPath" in src
+
+
+def test_the_effective_hooks_dir_is_usable_right_now():
+    """The live check. This is the assertion that would have caught it on any day
+    between the config being set and 2026-09-03."""
+    import subprocess
+    out = subprocess.run(["git", "rev-parse", "--git-path", "hooks"],
+                         cwd=str(REPO_ROOT), capture_output=True, text=True)
+    hooks = Path(out.stdout.strip())
+    if not hooks.is_absolute():
+        hooks = REPO_ROOT / hooks
+    assert hooks.is_dir(), (
+        f"git's effective hooks directory {hooks} does not exist, so NO git hook runs "
+        f"in this working tree -- including the pre-push PII gate on this public repo. "
+        f"Fix: git config --local --unset core.hooksPath")

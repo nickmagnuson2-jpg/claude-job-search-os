@@ -11,7 +11,27 @@
 set -euo pipefail
 root="$(git rev-parse --show-toplevel)"
 src="$root/tools/hooks"
-dst="$root/.git/hooks"
+
+# THE PATH GIT WILL ACTUALLY USE, not the one we assume. `core.hooksPath` overrides
+# .git/hooks entirely, and this repo runs an overlay GIT_DIR arrangement, so the two
+# can and did diverge. Until 2026-09-03 this script hardcoded "$root/.git/hooks":
+# it installed there, --check verified there, and it reported "ok: pre-push" while
+# core.hooksPath pointed at a directory that DID NOT EXIST. Net effect: no pre-push
+# hook ran at all -- on a PUBLIC repo whose only push-time PII gate lives in one --
+# and the checker that existed to catch exactly this said everything was fine.
+# Found by cross-model review, 2026-09-03.
+dst="$(git rev-parse --git-path hooks)"
+configured="$(git config --get core.hooksPath || true)"
+
+if [ -n "$configured" ] && [ ! -d "$dst" ]; then
+  echo "FATAL: core.hooksPath is set to '$configured' but that directory does not exist." >&2
+  echo "       Git runs NO hooks in this state, so every push-time gate is silently off." >&2
+  echo "       Fix one of:" >&2
+  echo "         git config --local --unset core.hooksPath   # use \$root/.git/hooks" >&2
+  echo "         mkdir -p '$configured'                      # keep the configured path" >&2
+  exit 1
+fi
+mkdir -p "$dst"
 check_only=0
 [ "${1:-}" = "--check" ] && check_only=1
 
@@ -22,7 +42,7 @@ for hook in "$src"/*; do
   target="$dst/$name"
   if [ "$check_only" -eq 1 ]; then
     if [ ! -f "$target" ]; then
-      echo "MISSING: $name is not installed in .git/hooks/"; status=1
+      echo "MISSING: $name is not installed in $dst"; status=1
     elif ! cmp -s "$hook" "$target"; then
       echo "DRIFTED: $target differs from the tracked $hook"; status=1
     else

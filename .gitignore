@@ -33,6 +33,9 @@ tools/.agent_seen.json
 # boards, so they must never reach this public repo. Added 2026-09-02 with the queue
 # itself; their sibling above was already ignored and these were one `git add -A` from
 # shipping.
+# Cross-model verification ledger. Gitignored like the other tools/ state files:
+# it quotes findings that can reference real pipeline content, and this repo is public.
+tools/.cross-model-ledger.jsonl
 tools/.role-queue.json
 tools/.career_seen.json
 tools/.session-mutations.json
