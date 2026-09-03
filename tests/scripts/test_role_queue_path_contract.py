@@ -754,3 +754,25 @@ def test_proceeding_without_the_lock_is_announced(tmp_path, monkeypatch, capsys)
                             PermissionError("read-only file system")))
     sc.write_role_queue(tmp_path, [_r("https://b/1")], [], [])
     assert "without the queue lock" in capsys.readouterr().err
+
+
+def test_the_reader_does_not_emit_whole_job_descriptions(tmp_path):
+    """The queue stores the full posting; /standup renders six fields. Emitting
+    description_plain puts tens of kilobytes of prose into the morning briefing."""
+    from tools.career_scanner.scanner import write_role_queue, read_pending
+    from tools.role_queue_read import read_queue
+    role = dict(_r("https://b/1"), description_plain="x" * 5000, department="Solutions")
+    write_role_queue(tmp_path, [role], [], [])
+    out = read_queue(tmp_path)
+    assert "description_plain" not in out["roles"][0]
+    # ...but the queue itself keeps everything, because /apply needs it.
+    assert read_pending(tmp_path)[0]["description_plain"] == "x" * 5000
+
+
+def test_the_reader_emits_what_standup_renders(tmp_path):
+    from tools.career_scanner.scanner import write_role_queue
+    from tools.role_queue_read import read_queue
+    write_role_queue(tmp_path, [_r("https://b/1")], [], [])
+    got = read_queue(tmp_path)["roles"][0]
+    for field in ("title", "company", "url", "score", "published_at"):
+        assert field in got, f"/standup renders {field} and the reader dropped it"

@@ -35,6 +35,18 @@ from tools.career_scanner.dedup import role_key  # noqa: E402
 STALE_AFTER_HOURS = 36
 
 
+# What /standup actually renders. The queue stores the whole posting, including
+# description_plain, which runs to several thousand characters per role; emitting all
+# of it puts tens of kilobytes of job-description prose into the briefing for no gain.
+# The full record stays in the queue file for /apply to use.
+SUMMARY_FIELDS = ("title", "company", "location", "url", "apply_url",
+                  "score", "published_at", "first_seen")
+
+
+def _summarise(role: dict) -> dict:
+    return {k: role[k] for k in SUMMARY_FIELDS if k in role}
+
+
 def read_queue(repo_root: Path, top: int = 5) -> dict:
     path = role_queue_path(repo_root)
     if not path.is_file():
@@ -108,7 +120,7 @@ def read_queue(repo_root: Path, top: int = 5) -> dict:
         "fetch_failures": payload.get("fetch_failures", 0),
         "fetch_failure_detail": payload.get("fetch_failure_detail", []),
         "pending_overflow": bool(payload.get("pending_overflow")),
-        "roles": new[:top],
+        "roles": [_summarise(r) for r in new[:top]],
         # The reader acknowledges BY KEY, never by count. Acking "the top 5" would
         # silently consume whatever a scan inserted between the read and the ack.
         "ack_keys": [role_key(r) for r in new[:top]],
