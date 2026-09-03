@@ -236,3 +236,102 @@ def test_parser_exception_is_caught_and_warns(monkeypatch, capsys):
     monkeypatch.setattr(mod, "fetch_ashby", boom)
     assert fetch_company_roles(_target()) == []
     assert "Error fetching" in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------------------
+# The false-zero: a failed board must not be indistinguishable from an empty one.
+#
+# Found by a cross-model review on 2026-09-02. Every ATS parser returns [] on HTTP
+# error, so a dead slug and a genuinely empty board are the same value. scanner.py
+# declared `errors = []` and never used it again -- a dead variable that never reached
+# the JSON summary. A scheduled scan in which every single board 404s therefore
+# reported total_fetched: 0, new_roles: 0 as clean success, with the only signal on
+# stderr, in a log that install.sh deletes on every load.
+# ---------------------------------------------------------------------------
+
+def test_fetch_records_a_failure_into_a_caller_supplied_list():
+    """An unknown ATS is a configuration failure, not an empty board."""
+    from tools.career_scanner.scanner import fetch_company_roles
+    errors = []
+    out = fetch_company_roles(_target(ats="workday"), errors=errors)
+    assert out == [], "return contract must not change; callers assert == []"
+    assert errors, "a failed fetch recorded nothing; it is indistinguishable from empty"
+    assert "workday" in repr(errors).lower() or "unknown" in repr(errors).lower()
+
+
+def test_fetch_without_an_error_list_still_works():
+    """Backward compatibility: existing callers pass no errors list."""
+    from tools.career_scanner.scanner import fetch_company_roles
+    assert fetch_company_roles(_target(ats="workday")) == []
+
+
+def test_a_genuinely_empty_board_is_not_recorded_as_an_error():
+    """Guard on the guard. If every empty board logged an error, the signal would be
+    noise and would be ignored -- which is how the stderr warning already failed."""
+    from tools.career_scanner.scanner import fetch_company_roles
+    errors = []
+    fetch_company_roles(_target(), errors=errors)   # geo-filtered to empty, not failed
+    assert errors == [], f"an empty-but-working board was recorded as a failure: {errors}"
+
+
+# ---------------------------------------------------------------------------
+# The seen-set: "new" must mean NEWLY SURFACED, not "not in your pipeline".
+#
+# Origin 2026-09-02. filter_duplicates compared only against job-pipeline.md, so any
+# role the owner had not promoted was re-emitted on every daily scan. Measured: 56
+# career-scan blocks in data/inbox.md, the same ~30 roles day after day, the file at
+# 7,050 lines. The daily output was structurally unable to answer "what is new today",
+# which was the entire question being asked of it.
+# ---------------------------------------------------------------------------
+
+def _role(company="Acme", title="Deployment Strategist", url="https://boards.example/1"):
+    return {"company": company, "title": title, "url": url}
+
+
+def test_a_role_is_new_the_first_time_and_standing_after(tmp_path):
+    from tools.career_scanner.dedup import split_new_and_standing, load_seen, save_seen
+    roles = [_role()]
+    seen = load_seen(tmp_path)
+    new, standing = split_new_and_standing(roles, seen)
+    assert len(new) == 1 and not standing
+    save_seen(tmp_path, seen)
+
+    seen2 = load_seen(tmp_path)
+    new2, standing2 = split_new_and_standing(roles, seen2)
+    assert not new2, "the same role surfaced as new twice; this is the 56-block bug"
+    assert len(standing2) == 1, "a seen role must still be reported, just not as new"
+
+
+def test_the_key_is_the_posting_url_not_the_company(tmp_path):
+    """Two different roles at one company must not collapse into one another."""
+    from tools.career_scanner.dedup import split_new_and_standing, load_seen, save_seen
+    seen = load_seen(tmp_path)
+    split_new_and_standing([_role(url="https://boards.example/1")], seen)
+    save_seen(tmp_path, seen)
+    seen = load_seen(tmp_path)
+    new, _ = split_new_and_standing([_role(title="Engagement Manager",
+                                           url="https://boards.example/2")], seen)
+    assert len(new) == 1, "a second distinct posting was swallowed by the first"
+
+
+def test_a_role_with_no_url_still_dedupes_on_company_and_title(tmp_path):
+    """Not every source supplies a stable posting id; the fallback must still work."""
+    from tools.career_scanner.dedup import split_new_and_standing, load_seen, save_seen
+    r = {"company": "Acme", "title": "Deployment Strategist", "url": ""}
+    seen = load_seen(tmp_path)
+    split_new_and_standing([r], seen)
+    save_seen(tmp_path, seen)
+    new, standing = split_new_and_standing([r], load_seen(tmp_path))
+    assert not new and len(standing) == 1
+
+
+def test_first_seen_is_stamped_so_age_can_be_shown(tmp_path):
+    from tools.career_scanner.dedup import split_new_and_standing, load_seen
+    new, _ = split_new_and_standing([_role()], load_seen(tmp_path))
+    assert new[0].get("first_seen"), "no first_seen stamp; the surface cannot show age"
+
+
+def test_a_missing_seen_file_is_an_empty_set_not_a_crash(tmp_path):
+    """First run on a fresh machine, and the nightly job must not die on it."""
+    from tools.career_scanner.dedup import load_seen
+    assert load_seen(tmp_path / "nonexistent") == {}

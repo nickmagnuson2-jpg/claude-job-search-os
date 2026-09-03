@@ -52,6 +52,43 @@ Four rules, all mandatory:
 - **`outcome_counts` are NOT conversations.** They are loop results (offer/rejection news). Mention
   them only if non-zero in 7d, as a separate clause.
 
+**New roles (from `role_queue_read.py`) — surface directly under the outcome metric.**
+
+```bash
+PYTHONIOENCODING=utf-8 python3 tools/role_queue_read.py --repo-root . --top 5
+```
+
+This is THE drain for the nightly career scan. From 2026-08-11 to 2026-09-02 the
+scanner ran daily, scored ~30 roles a night, and **nobody ever saw one**: it wrote
+`data/inbox.md` while this skill globbed the `inbox/` DIRECTORY for `*career-scan*`
+files that have never existed. Producer healthy, consumer pointing elsewhere, no error
+anywhere, for three weeks. Pinned by `tests/scripts/test_role_queue_path_contract.py`.
+
+Render, newest-posted first, only when `new_count` is non-zero:
+
+```
+🆕 **New roles:** [N] new · [M] standing
+- [7/10] Deployment Strategist — Acme AI (SF) · posted 6d ago · `/apply <url>`
+```
+
+Four rules, all mandatory:
+
+- **`exists: false` is NOT zero.** A missing queue means the scan has not run; render
+  `⚠️ career scan has not produced a queue — check the job`, never "0 new roles". The
+  same null-vs-zero discipline as the Queues block.
+- **`is_stale: true` is surfaced** as `⚠️ scan is [N]h old`. A daily job silent for 36h
+  is broken, not quiet.
+- **`fetch_failures > 0` is surfaced always**, as `⚠️ [N] board(s) failed to fetch:
+  [companies]`. Every ATS parser returns `[]` on HTTP error, so without this a scan in
+  which every board 404s reports a clean zero. A scan that examined nothing must never
+  look like a scan that found nothing.
+- **Every role carries its literal `/apply <url>`.** The handoff is the point: surfaced
+  → dossier → hiring manager → outreach brief → CV is one copy-paste, with no
+  re-derivation of what the scan already knew.
+
+Empty queue with `new_count: 0` renders **nothing at all** — a daily "0 new roles" line
+trains the reader to skip the section, which is how the original defect stayed invisible.
+
 **This metric drives Today's Top 3 (mandatory).** After computing it, ask: *what would produce a
 conversation this week?* If the **7d conversations count is 0 or 1**, Today's Top 3 must be shaped
 toward creating conversations — follow-ups on live threads, scheduling asks, warm intros, recruiter
@@ -226,7 +263,7 @@ Origin: [[feedback_no_confabulation_in_corpus_synthesis]] (Conviction Workbook P
 
 **From inbox/:**
 
-The `inbox/` folder is fed by launchd automation (gmail-fetch, gmail-fetch-personal, career-scan, alirohde-triage, granola-auto-debrief) PLUS ad-hoc captures. Surface them by category so the feeds actually surface — don't just count. (The dossier-freshness and follow-up/weekly-review nudge jobs were retired; those category patterns below now only match hand-dropped files, so they may stay empty.)
+The `inbox/` folder is fed by launchd automation (gmail-fetch, gmail-fetch-personal, alirohde-triage, granola-auto-debrief) PLUS ad-hoc captures. Surface them by category so the feeds actually surface — don't just count. (The dossier-freshness and follow-up/weekly-review nudge jobs were retired; those category patterns below now only match hand-dropped files, so they may stay empty.)
 
 Run:
 ```bash
@@ -237,7 +274,6 @@ Categorize each filename by pattern:
 - `*dossier-freshness-alert*` → **Dossier freshness** category
 - `*follow-up-nudge*` → **Follow-up nudges** category
 - `*weekly-review-reminder*` → **Weekly review reminders** category
-- `*career-scan*` or `*career-match*` → **Career-scan matches** category
 - `GMAIL-AUTH-FAILURE*` or `*-AUTH-FAILURE*` → **System alerts** category (always surface)
 - Anything else → **Captures** category (raw notes, emails, ad-hoc inputs)
 
@@ -483,9 +519,6 @@ whole section including its heading -- an empty section is a daily reminder that
 - **📊 Dossier freshness (N)** — companies with stale research:
   - [Company A, B, C — list up to 5 names, comma-separated]
 - **📅 Weekly review reminders (N)** — most recent: [date / week]
-- **🎯 Career-scan matches (N)** — newest matches:
-  - [Company / role]
-  - [Company / role]
 - **⚠️ System alerts (N)** — [always list all in full, e.g., "GMAIL-AUTH-FAILURE 2026-05-10"]
 - **📝 Captures (N)** — [count only; route via `/act` or `/remember`]
 

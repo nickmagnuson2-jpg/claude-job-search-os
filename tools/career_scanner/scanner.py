@@ -13,6 +13,7 @@ Functions:
 CLI: Use cli.py for command-line invocation.
 """
 import re
+import json
 import sys
 import time
 import yaml
@@ -99,7 +100,7 @@ def geo_ok(location: str) -> bool:
     return not is_peninsula(loc)
 
 
-def fetch_company_roles(target: dict) -> list[dict]:
+def fetch_company_roles(target: dict, errors: list | None = None) -> list[dict]:
     """Fetch roles for a single company using the appropriate parser.
 
     Dispatches to the correct ATS parser based on target config.
@@ -108,9 +109,19 @@ def fetch_company_roles(target: dict) -> list[dict]:
 
     Args:
         target: Company config dict from scan-targets.yaml
+        errors: Optional list. A FETCH FAILURE is appended here as a dict. This is an
+            out-parameter rather than a changed return type on purpose: every parser
+            returns [] on HTTP error, and callers plus ~8 tests already assert == [] on
+            the failure paths. Changing the return type would break them for no gain.
 
     Returns:
-        List of standardized role dicts.
+        List of standardized role dicts. [] means "no matching roles" and says NOTHING
+        about whether the board was reachable -- read `errors` for that.
+
+    Why this matters (2026-09-02, found by cross-model review): a dead slug and a
+    genuinely empty board produced the identical value, `errors` was declared in
+    scan_all_targets and never used, and so a scan in which every board 404'd reported
+    total_fetched: 0 as clean success. A check that cannot fail is not a check.
     """
     ats = target.get("ats", "generic")
     slug = target.get("slug", "")
@@ -131,13 +142,22 @@ def fetch_company_roles(target: dict) -> list[dict]:
             careers_url = target.get("careers_url", "")
             if not careers_url:
                 print(f"No careers_url for generic target '{name}'", file=sys.stderr)
+                if errors is not None:
+                    errors.append({"company": name, "ats": ats,
+                                   "reason": "generic target has no careers_url"})
                 return []
             roles = fetch_generic(careers_url, name)
         else:
             print(f"Unknown ATS '{ats}' for {name}", file=sys.stderr)
+            if errors is not None:
+                errors.append({"company": name, "ats": ats,
+                               "reason": f"unknown ATS '{ats}'"})
             return []
     except Exception as e:
         print(f"Error fetching {name} ({ats}): {e}", file=sys.stderr)
+        if errors is not None:
+            errors.append({"company": name, "ats": ats,
+                           "reason": f"{type(e).__name__}: {e}"})
         return []
 
     # Override company name with display name from config
@@ -179,6 +199,8 @@ def scan_all_targets(repo_root: Path, dry_run: bool = False) -> dict:
         companies_scanned, roles (list of scored/deduped role dicts).
     """
     from tools.career_scanner.scorer import score_role, load_scoring_context
+    from tools.career_scanner.dedup import (
+        load_seen, save_seen, split_new_and_standing)
     from tools.career_scanner.dedup import load_pipeline_entries, filter_duplicates
 
     targets = load_targets(repo_root)
@@ -195,7 +217,7 @@ def scan_all_targets(repo_root: Path, dry_run: bool = False) -> dict:
         name = target.get("name", "?")
         ats = target.get("ats", "?")
         print(f"Scanning {name} ({ats})...", file=sys.stderr)
-        roles = fetch_company_roles(target)
+        roles = fetch_company_roles(target, errors=errors)
         if roles:
             all_roles.extend(roles)
             print(f"  Found {len(roles)} matching roles", file=sys.stderr)
@@ -215,16 +237,35 @@ def scan_all_targets(repo_root: Path, dry_run: bool = False) -> dict:
     # Sort by score descending (D-05)
     new_roles.sort(key=lambda r: r.get("score", 0), reverse=True)
 
+    # Split on the ROLE-LEVEL seen-set. filter_duplicates above answered "is this in
+    # the pipeline"; this answers "have I shown Nick this before". Conflating the two
+    # is what put the same ~30 roles into data/inbox.md every day for three weeks.
+    seen = load_seen(repo_root)
+    truly_new, standing = split_new_and_standing(new_roles, seen)
+    if not dry_run:
+        save_seen(repo_root, seen)
+
     summary = {
         "total_fetched": len(all_roles),
         "new_roles": len(new_roles),
         "skipped_dupes": skipped,
         "companies_scanned": len(targets),
+        # A scan that examined nothing must never look like a scan that found nothing.
+        "fetch_failures": len(errors),
+        "fetch_failure_detail": errors,
+        "new_since_last_scan": len(truly_new),
+        "standing": len(standing),
         "roles": new_roles,
     }
 
-    if new_roles and not dry_run:
-        write_inbox(repo_root, new_roles)
+    if not dry_run:
+        write_role_queue(repo_root, truly_new, standing, errors)
+
+    # NO LONGER WRITES data/inbox.md (2026-09-02). That file is 7,000+ lines, is under
+    # a standing do-not-route-here instruction, and nothing has ever read the 56
+    # career-scan blocks it accumulated. The queue file below is the contract instead.
+    # write_inbox() is retained, unused by this path, because tests exercise it and a
+    # future caller may want the human-readable rendering.
 
     return summary
 
@@ -282,3 +323,51 @@ def write_inbox(repo_root: Path, roles: list[dict]):
               file=sys.stderr)
         return
     print(f"Wrote {len(roles)} roles to {inbox_path}", file=sys.stderr)
+
+
+# ---------------------------------------------------------------------------
+# The queue file: the machine-readable contract between this producer and /standup.
+# ---------------------------------------------------------------------------
+
+ROLE_QUEUE_FILENAME = ".role-queue.json"
+
+
+def role_queue_path(repo_root: Path) -> Path:
+    """THE path. /standup reads this exact function's output.
+
+    Producer and consumer pointing at different paths, silently, is the defect that
+    hid ~30 scored roles a day for three weeks: the scanner wrote data/inbox.md while
+    the standup skill globbed the inbox/ DIRECTORY for career-scan files that had never
+    existed. tests/scripts/test_role_queue_path_contract.py pins the pair.
+    """
+    return Path(repo_root) / "tools" / ROLE_QUEUE_FILENAME
+
+
+def write_role_queue(repo_root: Path, new_roles: list[dict],
+                     standing: list[dict], errors: list[dict]) -> Path:
+    """Write the role queue atomically.
+
+    Deliberately NOT data/inbox.md: that file is 7,000+ lines, is under a standing
+    do-not-route-here instruction, and nothing reads it.
+    """
+    import os
+    import tempfile
+    from datetime import datetime, timezone
+
+    payload = {
+        "scanned_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "new_count": len(new_roles),
+        "standing_count": len(standing),
+        # A scan that examined nothing must never look like one that found nothing.
+        "fetch_failures": len(errors),
+        "fetch_failure_detail": errors,
+        "new": new_roles,
+        "standing": standing[:25],
+    }
+    path = role_queue_path(repo_root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2, default=str)
+    os.replace(tmp, path)
+    return path

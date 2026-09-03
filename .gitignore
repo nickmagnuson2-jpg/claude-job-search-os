@@ -29,6 +29,12 @@ tools/.gmail_state_personal.json
 tools/.wispr-state.json
 tools/.alirohde_state.json
 tools/.agent_seen.json
+# Career-scan state. Both carry REAL company and role names harvested from live ATS
+# boards, so they must never reach this public repo. Added 2026-09-02 with the queue
+# itself; their sibling above was already ignored and these were one `git add -A` from
+# shipping.
+tools/.role-queue.json
+tools/.career_seen.json
 tools/.session-mutations.json
 tools/.transcript-scan-cursor.json
 tools/.transcript-scan-cursor.json.tmp
