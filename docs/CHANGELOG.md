@@ -3,7 +3,123 @@
 All notable changes to this job search system are recorded here.
 Format: newest entries at the top.
 
-## 2026-09-02 (latest): coverage that existed and never ran, and a rate that measured something else
+## 2026-09-03: a null read as a zero, an unwired gate, and a hold-back reversed
+
+Three changes, and the first one is the one that reached Nick as a false statement.
+
+**`mutation_report.py` reported unmeasured tools as tools whose tests kill nothing.** The morning
+brief told Nick that `check_public_pii.py`, the gate standing between this public repo and real
+names, had no effective tests. It had killed 271 of 271 the previous day. The line was
+`dead = [r for r in ok if r["mutants"] and not (r.get("killed") or 0)]`: the `ok` partition
+excluded only statuses starting with `UNAUDITED`, so a `status: "error"` row with `killed: null`
+was admitted, and `or 0` read a null verdict as a zero score. Twenty-three tools landed in that
+section; exactly one belonged there. The same coercion in the aggregate sums put unmeasured
+mutants in the denominator with no kills in the numerator, which is why the report's own survival
+rate (31.0%) disagreed with `mutation_trend`'s (37.34%) on the identical file. `ok` now requires a
+real verdict, `dead` tests `killed == 0`, and an UNMEASURED section names the tools and says that
+`baseline_red` means the tool's own tests were already failing, not that the tool is untested. The
+coverage line no longer prints "All auditable tools were measured" while 23 had no verdict; that
+sentence is what licensed arming the next sweep on a broken run. Verified against the real errored
+baseline: 24 claimed dead tools became 1. Mutation: 86 of 86 killed. Two survivors on the first
+pass were both in the new code and uncovered by the new tests; they were killed with tests, not
+allowlisted.
+
+**Why it was undiagnosable: `mutation_sweep.py` recorded that a tool errored and discarded why.**
+`mutation_check` returns a structured error with a `code` (`baseline_red`, `no_tests`,
+`self_mutation_refused`), a message, and the mapped tests. The sweep kept only `status`, so 23
+errors sat unexplained. It now records all three plus a stderr tail on any non-ok status. Root
+cause of the errors themselves is split: 2 tools (`attention.py`, `handoff_state.py`) failed
+because `test_handoff_state_block.py` was red from state drift, reproduced directly and fixed by
+regenerating the block; 20 failed because `test_no_silent_failures.py` was red during the sweep,
+established by a perfect correlation (every tool mapping that test errored, zero counterexamples,
+all 95 that do not map it succeeded) but with the specific assertion NOT identified, because it is
+green now. Two hypotheses were tested and rejected: `job_quiesce` uses `launchctl bootout` rather
+than editing plists, and the mutation backup store lives outside the tree it serves. Rather than
+guess a third time, the instrumentation above will record the reason on the next run.
+`tools/sweep.py` errored on both days and is a separate, uninvestigated cause.
+
+**`check_banned_phrase.py` was written, tested, and never wired.** It had judged nothing since its
+own build. It is now generalized from one hardcoded phrase to a table
+(`tools/mannered-phrases.txt`) and wired into the `Write|Edit|MultiEdit` block, deliberately not
+the block containing `NotebookEdit`, for which `new_content()` returns no content and the
+registration would have been decorative. The table carries a per-row `scope`: the load/bearing row
+is `all` and keeps its original reach, while the mannered-prose rows are `authored` and stand down
+on verbatim trees, Nick's dated reflections, the interaction logs, and his own identity files.
+`coaching/progress/`, `data/people/` and `_`-prefixed reflections are gated, because they hold
+Claude-authored synthesis and exempting those trees would let the prose land there and be copied
+into a gated artifact later. A cross-model review marked six of eight claims in the build plan
+wrong and produced that scope split. **It is an enumerated-phrase gate, not a mannered-prose
+detector**, and the block message says so: a clean exit means no listed phrase was found, never
+that the prose is good. Chat output and Bash-written content remain ungated. Mutation: 79 of 79.
+
+**Trim: `CLAUDE.md` 41,592 to 39,926 bytes**, against a 40,960 limit it had reached with one byte
+to spare. `Three Identity Docs`, `Workbook Outputs Update Existing Docs` and `Projects` moved
+verbatim to `docs/data-file-conventions.md`, joining the sibling subsection moved there on
+2026-08-14. **This reverses a deliberate hold-back.** The 2026-08-14 entry below records
+`Three Identity Docs` as held back for "boundary rules whose violation is silent." Nick was shown
+that entry and the arithmetic (restoring it alone puts the file back over the limit at 41,011) and
+chose to keep it moved; the pointer names all three identity files as its trigger. `Write-Only
+Files` and `Resume Bullets vs Spoken STAR` stayed resident, the latter because it is phrased as a
+prohibition. Byte-identical against the Step 0 blocks; rule conservation 0 of 67 missing against
+the union. The first conservation check reported a spurious HARD ABORT naming untouched sections
+because rule identity was keyed on line number and the trim shifted every line below; it was
+re-keyed on rule text rather than relaxed.
+
+## 2026-09-03: a rule that fired correctly and missed anyway, and a screen out of its population
+
+Two guard failures surfaced from ordinary use rather than from a sweep, and both are scope defects
+rather than logic defects. The rules were correct. What they were pointed at was wrong.
+
+**A correct rule, correctly followed, missed the thing it exists to catch.** `/ss` was asked to
+assess a document captured across five screenshots. `ls -t` sorts by time and the parse rule
+defaults to N=1, so one capture was read and a complete-looking assessment came out of it, with a
+recommendation and a confidence tag, and the shape of the subject backwards. The other four
+captures held the title, the pay band, the responsibilities and the reporting line. A rule for
+exactly this already existed from 2026-07-15 and did not fire: it was scoped to
+person-conversations inside the Step 2.7 gate, and this content was a job posting, so Step 2.7
+routed it away before the check was reachable. **The rule had generalized to the content type of
+its origin incident rather than to the mechanism.** Promoted to `~/.claude/skills/ss/SKILL.md`
+**Step 1.4**: the trigger is now timestamp clustering (2 or more captures within ~2 minutes of the
+pinned target are one document), it is content-type-independent by construction, and it runs before
+the source-read and before the classification, because by Step 2.7 the classification has already
+been made on partial evidence. Recorded as `promoted: partial`, not `yes`. Step 1.4 is prose
+requiring in-moment judgment, which the conversion law in CLAUDE.md prices at zero; the exit1 is to
+extend `ss_check_seen.py`, already invoked on the pinned paths at Step 1.5, to return cluster
+membership and a count so the target set is computed rather than judged. Not built. A 3rd fire is
+the trigger and is the proof the prose did not convert.
+
+**The general claim: partial input produces confident output, not visibly incomplete output.**
+Plausibility survives missing input, so this class cannot be caught by inspecting the output. The
+guard has to sit on input completeness, which is why the check moved upstream of every read.
+
+**A screening rule inherits the population it was calibrated on, and fails silently because it
+still returns a verdict.** The title-shape screen was derived from a larger company with
+real accounts and a real support function, where the distinction it tests was a live fact about the
+job. Pointed at a 10-person company whose posting promised renewals and a full book of accounts, it
+returned a clean negative. At 10 people, with the accounts the posting itself says the founding team
+still runs personally, nobody has a book of accounts and there is nothing to renew: the posting was
+describing the company the founders intend to become. The screen had gone out of population and had
+no way to say so. `feedback_jd_promises_are_not_filter_evidence` was extended from the PASS
+direction it was written for to **both** directions, with the new condition that below roughly 15
+employees a posting's role-shape language is presumed aspirational and converts into a question for
+a human rather than a verdict. An earlier company of comparable size, closed under the same
+title, is now a candidate mis-screen and is flagged for re-reading before it is cited as precedent
+again. The exit1 is named and deliberately not built, because it intersects fit-layer work in
+progress: make the source a field the schema demands, so `pipe_write.py --fit-verdict` requires a
+companion `--fit-source` and a verdict sourced from a posting cannot be written as `fit` or
+`not-fit` at all.
+
+**`promoted: partial` has a required shape and two of these files were written wrong.**
+`promotion_schema.py` rejected `partial` without `promoted_date`, then again without `exit_path`.
+Also worth recording as a writer-side error: a partial state written as
+`promoted: "yes -- ... PARTIAL: ..."` reads as fully promoted to `scan_promotion_candidates.py` and
+the rule vanishes from the detector. The schema already has a `partial -- <what is missing>` token
+for this and the wrong one was used first. Repo-wide promotion-schema violations went 41 to 38.
+
+**Docs.** `/ss` was absent from the Skills Reference table in `docs/usage.md` while `/wispr`, its
+sibling capture skill, was listed. Added.
+
+## 2026-09-02: coverage that existed and never ran, and a rate that measured something else
 
 The re-sweep put a valid number on the corpus for the first time since the bytecode fix:
 **10,794 mutants, 3,657 survived, 33.88% of all decisions unprotected.** Reading it surfaced two
@@ -1100,7 +1216,7 @@ Also: `backup-data.sh` now backs up the newly-private config files, and derives 
 - **Therapist PII scrubbed from public code.** Real therapist identities (names + emails) moved to the gitignored `tools/.therapy-classifier.txt` (new `.gitignore` entry, loaded at runtime); public code carries only generic keywords. Genericized stray therapist names in `granola_split_existing.py` and `granola_save.py` example paths/docstrings. Commit `6dcf357`.
 
 ### Origin
-- The leak case is the exact mis-titled, attendee-less in-person therapy session that `feedback_granola_autotitle_unreliable_for_classification` warned about — auto-titles can't be trusted for meeting-type classification, so the cron now classifies by attendee/transcript signal and fails closed when it can't. The hook closes the REOPEN gate parked in the 2026-06-04 memory-restructure entry (`feedback_replace_all_substring_check`, the `Reif`→`Reiff`→`Reifff` corruption class).
+- The leak case is the exact mis-titled, attendee-less in-person therapy session that `feedback_granola_autotitle_unreliable_for_classification` warned about — auto-titles can't be trusted for meeting-type classification, so the cron now classifies by attendee/transcript signal and fails closed when it can't. The hook closes the REOPEN gate parked in the 2026-06-04 memory-restructure entry (`feedback_replace_all_substring_check`, the `Smit`→`Smith`→`Smithh` corruption class).
 
 ---
 

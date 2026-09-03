@@ -345,3 +345,194 @@ def test_missing_pipeline_degrades_gracefully(tmp_path):
     assert result["suppressed_closed"] == []
     live = [e["name"] for e in result["followup_due"] + result["followup_overdue"]]
     assert "Casey Doe" in live
+
+
+# =============================================================================
+# 2026-09-03: a date CITED as history is not a date SET as a deadline.
+#
+# Origin: a contact was reported months overdue in a morning brief. The note's real
+# trigger was written as a month name, which the tilde branch cannot parse because
+# it only accepts ~YYYY-MM-DD. The parser fell through to "first ISO date anywhere
+# in the note" and matched an earlier date that the sentence was CITING as history,
+# then used it as the deadline -- one that fell before the most recent conversation.
+#
+# The fixtures below are synthetic and were written from scratch to exercise that
+# parse shape. They are deliberately NOT the real note with the name removed:
+# stripping a name from a verbatim private sentence does not genericize it, and the
+# distinctive phrasing plus the real dates still identify the record.
+#
+# The mechanical invariant: a follow-up cannot be due before the last time you
+# spoke. If it were, the conversation already happened.
+# =============================================================================
+
+import importlib.util as _ilu
+from datetime import date as _date, timedelta as _timedelta
+
+_SPEC = _ilu.spec_from_file_location(
+    "networking_followup_under_test",
+    Path(__file__).resolve().parents[2] / "tools" / "networking_followup.py")
+_nf = _ilu.module_from_spec(_SPEC)
+_SPEC.loader.exec_module(_nf)
+
+# Synthetic fixture. Shape only: an ISO date cited as HISTORY, and the real trigger
+# written as a month name. Written from scratch, not derived from any real note.
+CITATION_LAST = _date(2026, 3, 2)      # last interaction
+CITATION_CITED = _date(2026, 1, 15)    # the date the note merely mentions
+CITATION_DUE = _date(2026, 9, 15)      # what "mid-Sep 2026" must resolve to
+CITATION_NOTE = (
+    "They own the next step. If nothing changes by mid-Sep 2026, reach out again. "
+    "For background, this thread was opened 2026-01-15 and has been quiet since.")
+
+
+def test_historical_date_citation_is_not_treated_as_a_due_date():
+    """The note shape that produced the false months-overdue report."""
+    got = _nf.infer_followup_date(CITATION_LAST, CITATION_NOTE)
+    assert got != CITATION_CITED, (
+        "a date cited as history was used as the deadline -- the months-overdue bug")
+    assert got >= CITATION_LAST, (
+        f"inferred a due date of {got}, which precedes the last interaction")
+    assert got == CITATION_DUE, (
+        f"the month-name trigger should win once the citation is rejected; got {got}")
+
+
+def test_a_due_date_never_precedes_the_last_interaction():
+    """The general invariant, stated as a property rather than an example."""
+    last = _date(2026, 8, 18)
+    for note in ("follow up by 2026-01-01",
+                 "~2026-02-14 is the date",
+                 "discussed on 2026-03-05, revisit sometime",
+                 "see the 2020-01-01 thread"):
+        got = _nf.infer_followup_date(last, note)
+        assert got is None or got >= last, f"{note!r} -> {got}, which is before {last}"
+
+
+def test_a_future_iso_date_is_still_honoured():
+    """Guards against the fix degrading into 'ignore all explicit dates'.
+
+    Without this, deleting the explicit-date branches entirely would pass the
+    two tests above.
+    """
+    assert _nf.infer_followup_date(_date(2026, 8, 18), "nudge on 2026-09-20") == _date(2026, 9, 20)
+    assert _nf.infer_followup_date(_date(2026, 8, 18), "~2026-10-01 re-engage") == _date(2026, 10, 1)
+
+
+def test_month_name_trigger_is_parsed_rather_than_dropped():
+    """"~mid-Oct 2026" is a real deadline shape in the corpus and must not vanish.
+
+    Rejecting the bad citation is only half the fix: if nothing else parses, the
+    contact drops out of the nudge list entirely and the real mid-October trigger
+    never fires. A false alarm replaced by silence is not an improvement.
+    """
+    assert _nf.infer_followup_date(_date(2026, 8, 18), "re-engage ~mid-Oct 2026") == _date(2026, 10, 15)
+    assert _nf.infer_followup_date(_date(2026, 8, 18), "check back early Nov 2026") == _date(2026, 11, 5)
+    assert _nf.infer_followup_date(_date(2026, 8, 18), "late April 2027 at the earliest") == _date(2027, 4, 25)
+
+
+def test_month_name_without_a_year_resolves_forward_not_backward():
+    """A bare month name means the NEXT occurrence, never one already past."""
+    got = _nf.infer_followup_date(_date(2026, 8, 18), "circle back mid-July")
+    assert got is None or got >= _date(2026, 8, 18), f"resolved backwards to {got}"
+
+
+def test_citation_note_contact_is_not_reported_overdue(tmp_path):
+    """End-to-end through the shipped CLI, not just the helper.
+
+    Pins the reported symptom: a contact must not appear in followup_overdue on a
+    date when their real trigger has not yet arrived.
+    """
+    import json
+    contacts = "| Casey Doe | Acme | VP of Growth | warm | 2026-03-01 | 2026-03-02 | c@example.com |\n"
+    log = ("### Casey Doe — Acme\n\n"
+           "#### 2026-03-02 | linkedin | INBOUND reply, no ask, no date.\n\n"
+           "**Follow-up:** " + CITATION_NOTE + "\n")
+    write_fixture(tmp_path, "data/networking.md", make_fixture(contacts, log))
+    data = run_script("networking_followup.py",
+                      "--repo-root", str(tmp_path),
+                      "--target-date", "2026-09-03")
+    overdue = [e["name"] for e in data.get("followup_overdue", [])]
+    assert "Casey Doe" not in overdue, (
+        f"still reported overdue: {json.dumps(data.get('followup_overdue'), indent=1)}")
+
+
+def test_tilde_date_wins_over_an_earlier_plain_date():
+    """The tilde is a PRIORITY signal, not a synonym for the general date match.
+
+    Without this, the tilde branch is indistinguishable from the scan below it
+    (both find the same date when there is only one), and deleting it changes
+    nothing that any test can see.
+    """
+    note = "we discussed 2026-09-20 informally, but the real deadline is ~2026-12-01"
+    assert _nf.infer_followup_date(_date(2026, 8, 18), note) == _date(2026, 12, 1)
+
+
+def test_a_past_tilde_date_falls_through_to_a_later_valid_date():
+    """The past-date guard must SKIP a bad hit, not abort the whole inference.
+
+    If the guard returned its rejection instead of continuing, every note whose
+    first date is historical would infer nothing at all -- trading a false alarm
+    for silence, which is the failure this fix exists to avoid.
+    """
+    note = "originally flagged ~2026-02-11, now scheduled for 2026-09-20"
+    assert _nf.infer_followup_date(_date(2026, 8, 18), note) == _date(2026, 9, 20)
+
+
+def test_a_malformed_date_does_not_stop_the_scan():
+    """2026-13-45 is date-SHAPED but not a date. The scan must keep going."""
+    note = "bad ticket ref 2026-13-45, follow up 2026-09-20"
+    assert _nf.infer_followup_date(_date(2026, 8, 18), note) == _date(2026, 9, 20)
+
+
+def test_bare_month_name_rolls_to_next_year_when_this_year_is_past():
+    """"mid-July" said in November means next July, not four months ago."""
+    assert _nf.infer_followup_date(_date(2026, 11, 1), "circle back mid-July") == _date(2027, 7, 15)
+
+
+def test_bare_month_name_stays_in_this_year_when_still_ahead():
+    """Guards the roll-forward from becoming an unconditional +1 year."""
+    assert _nf.infer_followup_date(_date(2026, 8, 18), "circle back mid-Oct") == _date(2026, 10, 15)
+
+
+def test_month_name_with_a_past_year_is_rejected_not_used():
+    """An explicit past year is a citation too, and gets the same guard."""
+    last = _date(2026, 8, 18)
+    got = _nf.infer_followup_date(last, "we met late April 2024")
+    # NOT `is None`: this function has a 14-day default at the end, so it never
+    # returns None when last_date is set. Asserting None here (as an earlier
+    # revision of this test did) asserts a contract the function does not have,
+    # and it passed only because the pre-fix code returned None by short-circuit,
+    # wrongly skipping that default. The real property is the invariant.
+    assert got >= last, f"used a past month-name date as the deadline: {got}"
+    assert got == last + _timedelta(days=14), (
+        f"expected the 14-day default after rejecting the citation, got {got}")
+
+
+def test_an_explicit_year_is_used_rather_than_the_next_occurrence():
+    """Pins that the year branch and the no-year branch are actually different.
+
+    Both produce the same answer for every near-term date, so without a year far
+    enough out to diverge, the `if year_txt:` test can be inverted with no test
+    noticing.
+    """
+    assert _nf.infer_followup_date(_date(2026, 8, 18), "revisit mid-Oct 2028") == _date(2028, 10, 15)
+
+
+def test_a_historical_month_name_does_not_kill_a_later_real_trigger():
+    """The ISO fix, applied one layer down, to the branch the ISO fix introduced.
+
+    Found 2026-09-03 by asking whether the fix reproduced the defect it fixed. It
+    did: the month-name branch used re.search (first match wins) and returned from
+    inside the match block, so "we met late April 2024; next touch is mid-Oct 2026"
+    inferred NOTHING -- the citation was rejected and the real trigger never read.
+    Same shape as the bug this whole change exists to fix, one layer down.
+    """
+    last = _date(2026, 8, 18)
+    assert _nf.infer_followup_date(
+        last, "we met late April 2024; next touch is mid-Oct 2026") == _date(2026, 10, 15)
+    assert _nf.infer_followup_date(
+        last, "intro'd early Jan 2023, revisit mid-Nov 2026") == _date(2026, 11, 15)
+
+
+def test_both_citation_shapes_can_precede_the_real_trigger():
+    """An ISO citation AND a month-name citation, then the actual deadline."""
+    note = "flagged 2026-02-11 historically, met late April 2024, real trigger mid-Oct 2026"
+    assert _nf.infer_followup_date(_date(2026, 8, 18), note) == _date(2026, 10, 15)

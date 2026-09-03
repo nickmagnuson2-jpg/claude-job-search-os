@@ -95,21 +95,73 @@ def infer_followup_date(last_date: date, notes: str) -> date | None:
 
     notes_lower = notes.lower().strip()
 
+    # A due date can never precede the last interaction. If it did, the
+    # conversation it was waiting for has already happened.
+    #
+    # This guard exists because a follow-up note contains two KINDS of date and
+    # the text does not distinguish them: a deadline being SET, and a date being
+    # CITED as history. Origin 2026-09-03: a note whose real trigger was written
+    # as a month name also mentioned an earlier ISO date as background. The month
+    # name did not parse, the parser fell through to "first ISO date anywhere",
+    # and the background date became the deadline -- so a contact was reported
+    # months overdue in a morning brief, on a date preceding their most recent
+    # reply. Cheap, mechanical, and it needs no natural-language understanding of
+    # which date is which.
+    def _if_not_past(d: date | None) -> date | None:
+        return d if (d is not None and d >= last_date) else None
+
     # Explicit date with tilde: ~YYYY-MM-DD
     m = re.search(r"~(\d{4}-\d{2}-\d{2})", notes)
     if m:
         try:
-            return datetime.strptime(m.group(1), "%Y-%m-%d").date()
+            hit = _if_not_past(datetime.strptime(m.group(1), "%Y-%m-%d").date())
+            if hit:
+                return hit
         except ValueError:
             pass
 
     # Explicit date YYYY-MM-DD anywhere in notes
-    m = re.search(r"\b(\d{4}-\d{2}-\d{2})\b", notes)
-    if m:
+    for m in re.finditer(r"\b(\d{4}-\d{2}-\d{2})\b", notes):
         try:
-            return datetime.strptime(m.group(1), "%Y-%m-%d").date()
+            hit = _if_not_past(datetime.strptime(m.group(1), "%Y-%m-%d").date())
+            if hit:
+                return hit
         except ValueError:
-            pass
+            continue
+
+    # Month-name trigger: "~mid-Oct 2026", "early Nov 2026", "late April 2027".
+    # Without this, rejecting the bad citation above turns a false alarm into
+    # SILENCE -- the contact drops out of the nudge list and the real trigger
+    # never fires. Measured 2026-09-03: 6 such triggers in the live corpus.
+    # finditer, not search, and the same continue-past-a-rejection discipline as
+    # the ISO scan above. A first-match-wins search here reproduces the very bug
+    # this function was changed to fix: "we met late April 2024; next touch is
+    # mid-Oct 2026" rejected the citation and then never read the real trigger,
+    # inferring nothing. Found 2026-09-03 by testing the fix against its own
+    # failure shape rather than only against the original example.
+    for m in re.finditer(
+            r"\b(early|mid|late)[-\s]+"
+            r"(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?"
+            r"(?:\s+(\d{4}))?",
+            notes, re.IGNORECASE):
+        qualifier, month_name, year_txt = m.group(1).lower(), m.group(2).lower(), m.group(3)
+        day = {"early": 5, "mid": 15, "late": 25}[qualifier]
+        month = ("jan feb mar apr may jun jul aug sep oct nov dec"
+                 .split().index(month_name) + 1)
+        if year_txt:
+            try:
+                hit = _if_not_past(date(int(year_txt), month, day))
+            except ValueError:
+                continue
+            if hit:
+                return hit
+        else:
+            # No year given: the NEXT occurrence, never one already past.
+            # `day` is always 5, 15 or 25, so date() cannot raise for any month.
+            for year in (last_date.year, last_date.year + 1):
+                cand = date(year, month, day)
+                if cand >= last_date:
+                    return cand
 
     # "next week"
     if "next week" in notes_lower:
