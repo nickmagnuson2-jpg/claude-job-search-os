@@ -312,6 +312,33 @@ def _is_ordinary_word(t: str, dictionary: set[str]) -> bool:
         if t.endswith(suffix) and len(t) - len(suffix) >= 3:
             if t[: -len(suffix)] in dictionary or t[: -len(suffix)] in INDUSTRY_WORDS:
                 return True
+
+    # VERB INFLECTIONS, added 2026-09-03. The dictionary holds BASE FORMS, so "deploy"
+    # is present and "deployed" is not -- and the plural rule above does not reach an
+    # -ed/-ing form. Every one of them was therefore judged a distinctive brand token
+    # and promoted to hard BLOCK, which made the gate fire on this repo's own prose.
+    # Live consequence: the first real push through the repaired pre-push hook was
+    # refused because two tracked public files use an ordinary past-tense verb.
+    #
+    # Bounded on purpose, in the spirit of the compound-word decision above: a short
+    # honest list of real inflections, not a general stemmer that would dissolve
+    # genuine brands. Each candidate keeps the same stem floor of 3.
+    #
+    #   deployed  -> deploy      (strip "ed")
+    #   curated   -> curate      (strip "d", verb already ends in e)
+    #   deploying -> deploy      (strip "ing")
+    #   curating  -> curate      (strip "ing", restore the dropped e)
+    candidates = []
+    for suffix in ("ed", "d", "ing"):
+        if t.endswith(suffix):
+            stem = t[: -len(suffix)]
+            if len(stem) >= 3:
+                candidates.append(stem)
+                if suffix == "ing":
+                    candidates.append(stem + "e")
+    for stem in candidates:
+        if stem in dictionary or stem in INDUSTRY_WORDS:
+            return True
     return False
 
 
