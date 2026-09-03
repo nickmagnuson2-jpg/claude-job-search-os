@@ -389,3 +389,25 @@ def test_the_biggest_offender_is_named_first(tmp_path):
                            ("tools/huge.py", 500, 0)], since=0)
     line = [l for l in v.message.splitlines() if "--paths" in l][0]
     assert line.index("tools/huge.py") < line.index("tools/small.py")
+
+
+def test_the_hook_bounds_freshness_by_the_NEWEST_commit_pushed(tmp_path):
+    """Codex's P0 on this gate, 2026-09-03, confirmed with real numbers: the hook was
+    passing the BASE commit's time, so a verification recorded before the work was
+    written still cleared it. The bound must be the newest commit in the range."""
+    hook = (REPO_ROOT / "tools" / "hooks" / "pre-push").read_text(encoding="utf-8")
+    assert 'git log -1 --format=%ct "$head"' in hook
+    assert 'since_ref' not in hook, "the base-commit freshness bound is back"
+
+
+def test_a_verification_predating_the_newest_work_is_rejected(tmp_path):
+    """The property the hook fix exists to give. Stated at the gate, not just the shell,
+    so it survives a rewrite of either."""
+    import datetime as dt
+    verified = dt.datetime(2026, 9, 3, 8, 0, tzinfo=dt.timezone.utc)
+    work_committed = dt.datetime(2026, 9, 3, 9, 55, tzinfo=dt.timezone.utc)
+    _row(tmp_path, recorded=verified.isoformat(),
+         paths=["tools/career_scanner/scanner.py"])
+    v = g.check(tmp_path, [("tools/career_scanner/scanner.py", 200, 40)],
+                since=work_committed.timestamp())
+    assert v.blocked is True, "code written after its verification was let through"

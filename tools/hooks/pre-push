@@ -41,9 +41,15 @@ while read -r _lref lsha _rref rsha; do
 done
 
 [ -z "$head" ] && exit 0
-if [ -n "$base" ]; then range="$base..$head"; since_ref="$base"; else range="$head"; since_ref="$head"; fi
+if [ -n "$base" ]; then range="$base..$head"; else range="$head"; fi
 
-since="$(git log -1 --format=%ct "$since_ref" 2>/dev/null || echo 0)"
+# FRESHNESS BOUND = the NEWEST commit being pushed, not the base it diverged from.
+# Using the base let a verification recorded BEFORE the work still license it: on
+# 2026-09-03 the base was the previous evening at 19:09 while the pushed work was
+# committed at 09:55 the next morning, so anything recorded overnight would have
+# cleared code that did not exist yet. "Verify, then change it, then push" is not
+# verification. Found by cross-model review of this very gate.
+since="$(git log -1 --format=%ct "$head" 2>/dev/null || echo 0)"
 numstat="$(git diff --numstat "$range" 2>/dev/null || echo '')"
 [ -z "$numstat" ] && exit 0
 
