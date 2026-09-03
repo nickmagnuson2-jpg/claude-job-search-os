@@ -214,7 +214,7 @@ def test_the_pipeline_writes_the_queue_before_marking_seen(tmp_path, monkeypatch
     def explode(*a, **k):
         raise OSError("disk full")
 
-    monkeypatch.setattr(sc, "write_role_queue", explode)
+    monkeypatch.setattr(sc, "_write_role_queue_locked", explode)
     with pytest.raises(OSError):
         _run_scan(tmp_path, monkeypatch, [_r("https://b/1")])
     assert load_seen(tmp_path) == {}, (
@@ -315,8 +315,10 @@ def test_a_non_iterable_new_field_does_not_crash_the_reader(tmp_path):
     from tools.role_queue_read import read_queue
     path = role_queue_path(tmp_path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text('{"new": 5}', encoding="utf-8")
-    assert read_queue(tmp_path)["roles"] == []
+    path.write_text('{"scanned_at": "2026-09-02T00:00:00+00:00", "fetch_failures": 0,'
+                    ' "new": 5}', encoding="utf-8")
+    out = read_queue(tmp_path)
+    assert out["roles"] == [] and out["new_count"] == 0
 
 
 def test_roles_are_ordered_by_score_then_recency(tmp_path):
@@ -339,8 +341,8 @@ def _write_queue_at(tmp_path, scanned_at):
     from tools.career_scanner.scanner import role_queue_path
     path = role_queue_path(tmp_path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"scanned_at": scanned_at, "new": [], "new_count": 0}),
-                    encoding="utf-8")
+    path.write_text(json.dumps({"scanned_at": scanned_at, "new": [], "new_count": 0,
+                                "fetch_failures": 0}), encoding="utf-8")
 
 
 def test_a_stale_queue_is_reported_stale(tmp_path):
@@ -594,3 +596,161 @@ def test_the_scan_rate_limits_between_companies_but_not_after_the_last(tmp_path,
     monkeypatch.setattr(dd, "load_pipeline_entries", lambda root: [])
     sc.scan_all_targets(tmp_path, dry_run=True)
     assert calls == [0.5, 0.5], f"3 companies must sleep twice, got {calls}"
+
+
+# --- second-round findings (cross-model re-verification, 2026-09-02) -----------
+
+def test_an_empty_object_queue_is_not_a_clean_zero(tmp_path):
+    """`{}` is valid JSON that carries no verdict. Reading it as "0 new, 0 failures"
+    is the false zero one layer above the parsers."""
+    from tools.career_scanner.scanner import role_queue_path
+    from tools.role_queue_read import read_queue
+    path = role_queue_path(tmp_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("{}", encoding="utf-8")
+    out = read_queue(tmp_path)
+    assert out["exists"] is False and out["new_count"] is None
+
+
+@pytest.mark.parametrize("body", ["[]", '"a string"', "5", "null"])
+def test_a_non_object_queue_does_not_crash_the_reader(tmp_path, body):
+    """Each of these parses fine and then raises AttributeError on .get()."""
+    from tools.career_scanner.scanner import role_queue_path
+    from tools.role_queue_read import read_queue
+    path = role_queue_path(tmp_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(body, encoding="utf-8")
+    out = read_queue(tmp_path)
+    assert out["exists"] is False and out["new_count"] is None
+
+
+def test_a_lying_new_count_is_ignored_in_favour_of_the_list(tmp_path):
+    """A stored count that disagrees with the list would render "3 new roles" above
+    an empty list, or nothing above three."""
+    import json
+    from tools.career_scanner.scanner import role_queue_path
+    from tools.role_queue_read import read_queue
+    path = role_queue_path(tmp_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"scanned_at": "2026-09-02T00:00:00+00:00",
+                                "fetch_failures": 0, "new_count": 99,
+                                "new": [_r("https://b/1")]}), encoding="utf-8")
+    assert read_queue(tmp_path)["new_count"] == 1
+
+
+def test_a_partial_ack_does_not_switch_off_a_live_overflow_warning(tmp_path):
+    from tools.career_scanner.scanner import write_role_queue, PENDING_WARN_AT
+    from tools.role_queue_read import read_queue, acknowledge
+    write_role_queue(tmp_path, [_r(f"https://b/{i}")
+                                for i in range(PENDING_WARN_AT + 5)], [], [])
+    acknowledge(tmp_path, ["https://b/0"])
+    out = read_queue(tmp_path)
+    assert out["new_count"] == PENDING_WARN_AT + 4
+    assert out["pending_overflow"] is True, (
+        "the overflow warning was cleared while the overflow was still true")
+
+
+def test_a_full_ack_clears_the_overflow_warning(tmp_path):
+    from tools.career_scanner.scanner import write_role_queue, PENDING_WARN_AT
+    from tools.role_queue_read import read_queue, acknowledge
+    write_role_queue(tmp_path, [_r(f"https://b/{i}")
+                                for i in range(PENDING_WARN_AT + 5)], [], [])
+    acknowledge(tmp_path)
+    assert read_queue(tmp_path)["pending_overflow"] is False
+
+
+def test_the_scan_survives_an_unusable_lock_directory(tmp_path, monkeypatch):
+    """The lock sidecar lives outside the repo, so it can be unwritable in a sandbox,
+    a container, or a read-only home. Losing the whole nightly run to that would be a
+    far worse failure than the two-simultaneous-scans race the lock prevents."""
+    from tools.career_scanner import scanner as sc
+    monkeypatch.setenv("JOBSEARCH_LOCK_DIR", str(tmp_path / "nope" / "denied"))
+    monkeypatch.setattr(sc.inbox_lock, "file_lock",
+                        lambda *a, **k: (_ for _ in ()).throw(
+                            PermissionError("read-only file system")))
+    write_role_queue = sc.write_role_queue
+    write_role_queue(tmp_path, [_r("https://b/1")], [], [])
+    assert len(sc.read_pending(tmp_path)) == 1
+
+
+def test_a_failed_write_inside_the_lock_still_propagates(tmp_path, monkeypatch):
+    """The fail-open lock must fail open on ITS OWN failure, never swallow the body's.
+
+    An earlier version wrapped the yield in the same try, so a failed queue write was
+    swallowed -- and a swallowed queue write is exactly what lets save_seen run and
+    mark roles seen that were never queued. That is the P0 this whole change exists to
+    close, reintroduced by its own guard.
+    """
+    from tools.career_scanner import scanner as sc
+    monkeypatch.setattr(sc, "write_queue_payload",
+                        lambda *a, **k: (_ for _ in ()).throw(OSError("disk full")))
+    with pytest.raises(OSError):
+        sc.write_role_queue(tmp_path, [_r("https://b/1")], [], [])
+
+
+@pytest.mark.parametrize("stamp", [None, "", 12345, []])
+def test_an_unusable_timestamp_is_not_read_as_fresh(tmp_path, stamp):
+    """`null` crashed fromisoformat outright; `""` read as never-stale, so a queue
+    frozen for months rendered as this morning's news."""
+    import json
+    from tools.career_scanner.scanner import role_queue_path
+    from tools.role_queue_read import read_queue
+    path = role_queue_path(tmp_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"scanned_at": stamp, "fetch_failures": 0, "new": []}),
+                    encoding="utf-8")
+    out = read_queue(tmp_path)
+    assert out["exists"] is False and out["new_count"] is None
+
+
+def test_a_queue_missing_only_its_failure_count_is_not_trusted(tmp_path):
+    """fetch_failures is the field that distinguishes "examined nothing" from "found
+    nothing". A queue without it cannot make either claim."""
+    import json
+    from tools.career_scanner.scanner import role_queue_path
+    from tools.role_queue_read import read_queue
+    path = role_queue_path(tmp_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"scanned_at": "2026-09-02T00:00:00+00:00", "new": []}),
+                    encoding="utf-8")
+    out = read_queue(tmp_path)
+    assert out["exists"] is False and "fetch_failures" in out["reason"]
+
+
+def test_a_malformed_timestamp_is_not_read_as_fresh(tmp_path):
+    import json
+    from tools.career_scanner.scanner import role_queue_path
+    from tools.role_queue_read import read_queue
+    path = role_queue_path(tmp_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"scanned_at": "last Tuesday", "fetch_failures": 0,
+                                "new": []}), encoding="utf-8")
+    out = read_queue(tmp_path)
+    assert out["stale_hours"] is None and out["is_stale"] is False
+
+
+def test_the_queue_write_actually_takes_the_lock(tmp_path, monkeypatch):
+    """Without this, deleting the lock acquisition is invisible: every test here is
+    sequential, so nothing else notices an unlocked writer."""
+    import contextlib
+    from tools.career_scanner import scanner as sc
+    taken = []
+
+    @contextlib.contextmanager
+    def spy(path, timeout=None):
+        taken.append(Path(path).name)
+        yield path
+
+    monkeypatch.setattr(sc.inbox_lock, "file_lock", spy)
+    sc.write_role_queue(tmp_path, [_r("https://b/1")], [], [])
+    assert taken == [sc.role_queue_path(tmp_path).name]
+
+
+def test_proceeding_without_the_lock_is_announced(tmp_path, monkeypatch, capsys):
+    """Failing open silently would hide that the race protection is off."""
+    from tools.career_scanner import scanner as sc
+    monkeypatch.setattr(sc.inbox_lock, "file_lock",
+                        lambda *a, **k: (_ for _ in ()).throw(
+                            PermissionError("read-only file system")))
+    sc.write_role_queue(tmp_path, [_r("https://b/1")], [], [])
+    assert "without the queue lock" in capsys.readouterr().err

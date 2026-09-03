@@ -28,7 +28,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from tools.career_scanner.scanner import (  # noqa: E402
     _queue_lock, read_pending, role_queue_path, read_queue_payload,
-    write_queue_payload)
+    write_queue_payload, PENDING_WARN_AT)
 from tools.career_scanner.dedup import role_key  # noqa: E402
 
 # A daily job that has not produced a queue in this long is not "quiet", it is broken.
@@ -45,18 +45,43 @@ def read_queue(repo_root: Path, top: int = 5) -> dict:
     except (OSError, json.JSONDecodeError) as exc:
         return {"exists": False, "reason": f"unreadable queue: {exc}",
                 "new_count": None, "roles": []}
+    # A valid JSON list, string, number or null parses fine and then raises
+    # AttributeError on the first .get() below. Treat a wrong-shaped queue as
+    # unreadable rather than crashing /standup.
+    if not isinstance(payload, dict):
+        return {"exists": False,
+                "reason": f"unreadable queue: top level is {type(payload).__name__}, "
+                          f"expected an object",
+                "new_count": None, "roles": []}
+    # A queue missing the fields that carry the scan's own verdict is not a scan that
+    # found nothing -- it is a scan whose result cannot be read. `{}` parsed as a clean
+    # `0 new, 0 failures` before 2026-09-02, which is the false zero one layer up.
+    missing = [k for k in ("scanned_at", "new", "fetch_failures") if k not in payload]
+    if missing:
+        return {"exists": False,
+                "reason": f"queue is missing {', '.join(missing)}; it cannot be "
+                          f"trusted to say the scan found nothing",
+                "new_count": None, "roles": []}
+    # A present-but-unusable timestamp is worse than a missing one: `null` crashed
+    # fromisoformat, and an empty string silently read as "never stale", so a queue
+    # frozen since May would render as this morning's news.
+    if not isinstance(payload.get("scanned_at"), str) or not payload["scanned_at"]:
+        return {"exists": False,
+                "reason": "queue has no usable scanned_at; its age cannot be checked",
+                "new_count": None, "roles": []}
 
+    # scanned_at is guaranteed a non-empty string by the schema checks above, so this
+    # needs no truthiness guard -- only a parse guard for a malformed one.
     stale_hours = None
-    scanned_at = payload.get("scanned_at")
-    if scanned_at:
-        try:
-            ts = datetime.fromisoformat(scanned_at)
-            if ts.tzinfo is None:
-                ts = ts.replace(tzinfo=timezone.utc)
-            stale_hours = round(
-                (datetime.now(timezone.utc) - ts).total_seconds() / 3600, 1)
-        except ValueError:
-            stale_hours = None
+    scanned_at = payload["scanned_at"]
+    try:
+        ts = datetime.fromisoformat(scanned_at)
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        stale_hours = round(
+            (datetime.now(timezone.utc) - ts).total_seconds() / 3600, 1)
+    except ValueError:
+        stale_hours = None
 
     new = payload.get("new", [])
     if not isinstance(new, list):
@@ -73,7 +98,10 @@ def read_queue(repo_root: Path, top: int = 5) -> dict:
         "scanned_at": scanned_at,
         "stale_hours": stale_hours,
         "is_stale": stale_hours is not None and stale_hours > STALE_AFTER_HOURS,
-        "new_count": payload.get("new_count", len(new)),
+        # From the sanitized list, never from the stored count: a stored count that
+        # disagrees with the list would claim pending work while returning no roles,
+        # or claim zero while returning some.
+        "new_count": len(new),
         "standing_count": payload.get("standing_count"),
         # Surfaced so a scan that examined nothing cannot read as a scan that found
         # nothing -- the false-zero defect.
@@ -122,7 +150,9 @@ def acknowledge(repo_root: Path, keys: list[str] | None = None) -> dict:
 
         payload["new"] = kept
         payload["new_count"] = len(kept)
-        payload["pending_overflow"] = False
+        # RECOMPUTED, not cleared. Acking one role out of five hundred must not switch
+        # the overflow warning off while the overflow is still true.
+        payload["pending_overflow"] = len(kept) > PENDING_WARN_AT
         payload["acknowledged_at"] = datetime.now(timezone.utc).isoformat(
             timespec="seconds")
         write_queue_payload(repo_root, payload)

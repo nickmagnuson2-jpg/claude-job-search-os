@@ -59,7 +59,8 @@ def fetch_generic(careers_url: str, company_name: str,
                 "Chrome/120.0.0.0 Safari/537.36"
             )
         )
-        page.goto(careers_url, timeout=30000, wait_until="domcontentloaded")
+        response = page.goto(careers_url, timeout=30000,
+                             wait_until="domcontentloaded")
 
         # Wait briefly for dynamic content
         page.wait_for_timeout(2000)
@@ -82,18 +83,29 @@ def fetch_generic(careers_url: str, company_name: str,
             '[id*="opening"] li a, [id*="career"] li a',
         ]
 
+        response_status = getattr(response, "status", None) if response else None
+        if response_status is not None and response_status >= 400:
+            _fail(errors, f"careers page returned HTTP {response_status}")
+            return []
+
         seen_urls = set()
+        selector_failures = 0
+        extraction_failures = 0
+        candidates = 0
         for selector in selectors:
             try:
                 links = page.query_selector_all(selector)
             except Exception:
+                selector_failures += 1
                 continue
 
             for link in links:
+                candidates += 1
                 try:
                     text = (link.inner_text() or "").strip()
                     href = link.get_attribute("href") or ""
                 except Exception:
+                    extraction_failures += 1
                     continue
 
                 if not text or not href or len(text) < 3:
@@ -147,5 +159,23 @@ def fetch_generic(careers_url: str, company_name: str,
                 pw.stop()
             except Exception:
                 pass
+
+    # ZERO IS NOT EVIDENCE OF AN EMPTY BOARD HERE. Unlike the ATS parsers, this is a
+    # heuristic scraper: it reads an arbitrary page through hard-coded CSS selectors,
+    # so "found nothing" far more often means the page changed, the selectors missed,
+    # or every extraction threw, than that the company has no openings. Reporting a
+    # confident zero is the false-zero defect in its purest form, so an unproductive
+    # run says so instead.
+    if not roles:
+        if selector_failures == len(selectors):
+            _fail(errors, "every CSS selector raised; the page did not render")
+        elif extraction_failures and extraction_failures == candidates:
+            _fail(errors, f"all {candidates} candidate links failed to extract")
+        elif candidates == 0:
+            _fail(errors, "no candidate links matched any selector; the page layout "
+                          "has probably changed")
+        else:
+            _fail(errors, f"{candidates} candidate link(s) found but none survived "
+                          f"filtering; verify the careers page by hand")
 
     return roles

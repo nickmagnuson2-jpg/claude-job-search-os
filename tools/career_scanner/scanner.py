@@ -12,6 +12,7 @@ Functions:
 
 CLI: Use cli.py for command-line invocation.
 """
+import contextlib
 import re
 import json
 import sys
@@ -282,9 +283,15 @@ def scan_all_targets(repo_root: Path, dry_run: bool = False) -> dict:
     # leaves a role pending-but-not-seen (it re-surfaces next scan, deduped by
     # role_key -- mild noise) rather than seen-but-never-queued (permanently invisible
     # -- data loss). Reversing these two lines re-opens the 2026-09-02 crash window.
+    #
+    # Both writes sit under ONE lock hold. They were separately atomic but not jointly
+    # exclusive, so two scans could last-writer-wins away each other's disjoint seen
+    # entries while the queue merge quietly hid it -- breaking the finality that makes
+    # an acknowledgement stick.
     if not dry_run:
-        write_role_queue(repo_root, truly_new, standing, errors)
-        save_seen(repo_root, seen)
+        with _queue_lock(repo_root):
+            _write_role_queue_locked(repo_root, truly_new, standing, errors)
+            save_seen(repo_root, seen)
 
     # NO LONGER WRITES data/inbox.md (2026-09-02). That file is 7,000+ lines, is under
     # a standing do-not-route-here instruction, and nothing has ever read the 56
@@ -374,14 +381,35 @@ def role_queue_path(repo_root: Path) -> Path:
 PENDING_WARN_AT = 200
 
 
+@contextlib.contextmanager
 def _queue_lock(repo_root: Path, timeout: float = 30.0):
-    """Advisory lock over the queue file. Serialises lock-aware writers only.
+    """Advisory lock over the queue file AND the seen-set beside it.
 
     Uses tools/inbox_lock, the one existing precedent in this repo, rather than a
     second competing scheme. Honest scope, per that module: a writer that does not
     take this lock (a hand edit, an editor save) is not excluded.
+
+    FAILS OPEN, deliberately. The sidecar lives in ~/.cache/jobsearch-locks, outside
+    the repo, so it can be unwritable in a restricted environment (a sandbox, a
+    container, a read-only home). Locking is an optimisation against a race that needs
+    two simultaneous scans; losing the whole nightly run because a cache directory was
+    unwritable would be a far larger failure than the race it prevents. A guard must
+    never break the thing it guards.
+
+    Set JOBSEARCH_LOCK_DIR to relocate the sidecar.
     """
-    return inbox_lock.file_lock(role_queue_path(repo_root), timeout=timeout)
+    # The try wraps ACQUISITION ONLY. An earlier version wrapped the `yield` too, which
+    # made the contextmanager swallow every OSError raised by the body -- including a
+    # failed queue write, the exact failure whose propagation keeps save_seen from
+    # running. A fail-open guard must fail open on its own failure, never on yours.
+    with contextlib.ExitStack() as stack:
+        try:
+            stack.enter_context(
+                inbox_lock.file_lock(role_queue_path(repo_root), timeout=timeout))
+        except (OSError, inbox_lock.LockTimeout) as exc:
+            print(f"  WARNING: proceeding without the queue lock ({exc}); "
+                  f"a concurrent scan could race", file=sys.stderr)
+        yield
 
 
 def write_queue_payload(repo_root: Path, payload: dict) -> Path:
@@ -478,16 +506,24 @@ def write_role_queue(repo_root: Path, new_roles: list[dict],
     # roles, and the second replace would drop the first's. `errors` and `standing`
     # are last-writer-wins by design (they describe one scan); `new` must never be.
     with _queue_lock(repo_root):
-        pending = read_pending(repo_root)
-        have = {role_key(r) for r in pending}
-        for role in new_roles:
-            key = role_key(role)
-            if key in have:
-                continue
-            have.add(key)
-            pending.append(role)
-        return write_queue_payload(repo_root, _queue_payload(
-            pending, new_roles, standing, errors))
+        return _write_role_queue_locked(repo_root, new_roles, standing, errors)
+
+
+def _write_role_queue_locked(repo_root: Path, new_roles: list[dict],
+                             standing: list[dict], errors: list[dict]) -> Path:
+    """The merge itself. Caller MUST already hold _queue_lock."""
+    from tools.career_scanner.dedup import role_key
+
+    pending = read_pending(repo_root)
+    have = {role_key(r) for r in pending}
+    for role in new_roles:
+        key = role_key(role)
+        if key in have:
+            continue
+        have.add(key)
+        pending.append(role)
+    return write_queue_payload(repo_root, _queue_payload(
+        pending, new_roles, standing, errors))
 
 
 def _queue_payload(pending: list[dict], new_roles: list[dict],
