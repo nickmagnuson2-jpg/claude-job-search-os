@@ -325,3 +325,90 @@ def test_a_filename_containing_a_verb_alone_is_not_a_claim():
         "The file baseline.pre-bytecode-fix-083126.jsonl is the old one."
     )
     assert got == []
+
+
+# ---------- peer-repo resolution (friction ladder 3rd rung, 2026-09-04) ----------
+# Sibling projects live beside this repo (30-projects/job-search, .../mag5-advisors,
+# .../personal) and prose names their files repo-relatively. Resolving those against
+# CLAUDE_PROJECT_DIR reported genuine cross-repo writes as false claims, 3 times.
+
+def _peer_layout(tmp):
+    """Build 30-projects/{job-search,mag5-advisors} and return (root, peer)."""
+    projects = Path(tmp) / "30-projects"
+    root = projects / "job-search"
+    peer = projects / "mag5-advisors" / "data"
+    peer.mkdir(parents=True)
+    root.mkdir(parents=True)
+    return root, peer
+
+
+def test_peer_repo_file_that_exists_is_not_reported_missing():
+    with tempfile.TemporaryDirectory() as tmp:
+        root, peer = _peer_layout(tmp)
+        (peer / "method.md").write_text("x", encoding="utf-8")
+        assert csc.exists_anywhere("mag5-advisors/data/method.md", root) is True
+
+
+def test_peer_repo_file_that_does_not_exist_is_still_reported_missing():
+    """The guard must not blanket-pass anything with a sibling-looking prefix."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root, _ = _peer_layout(tmp)
+        assert csc.exists_anywhere("mag5-advisors/data/never-written.md", root) is False
+
+
+def test_unknown_first_segment_is_not_treated_as_a_peer_repo():
+    with tempfile.TemporaryDirectory() as tmp:
+        root, _ = _peer_layout(tmp)
+        assert csc.exists_anywhere("not-a-sibling/data/method.md", root) is False
+
+
+def test_peer_lookup_does_not_escape_via_dotdot():
+    with tempfile.TemporaryDirectory() as tmp:
+        root, peer = _peer_layout(tmp)
+        (peer / "method.md").write_text("x", encoding="utf-8")
+        assert csc.peer_repo_hit("../mag5-advisors/data/method.md", root) is False
+
+
+def test_own_repo_name_prefix_resolves_to_the_same_real_file():
+    """'job-search/tools/x.py' written from inside job-search names the SAME file,
+    because parent/tok == root/tools/x.py. It should pass when the file exists."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root, _ = _peer_layout(tmp)
+        (root / "tools").mkdir()
+        (root / "tools" / "real.py").write_text("x", encoding="utf-8")
+        assert csc.peer_repo_hit("job-search/tools/real.py", root) is True
+
+
+def test_own_repo_name_prefix_still_fails_when_the_file_is_absent():
+    with tempfile.TemporaryDirectory() as tmp:
+        root, _ = _peer_layout(tmp)
+        assert csc.peer_repo_hit("job-search/tools/nope.py", root) is False
+
+
+def test_bare_basename_still_takes_the_walk_path_not_the_peer_path():
+    with tempfile.TemporaryDirectory() as tmp:
+        root, _ = _peer_layout(tmp)
+        (root / "found.md").write_text("x", encoding="utf-8")
+        assert csc.peer_repo_hit("found.md", root) is False
+        assert csc.exists_anywhere("found.md", root) is True
+
+
+def test_bare_basename_is_not_resolved_against_the_projects_dir():
+    """Killing the leading-character guard would let a bare basename match a file
+    sitting in the projects directory itself. It must not."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root, _ = _peer_layout(tmp)
+        (root.parent / "found.md").write_text("x", encoding="utf-8")
+        assert csc.peer_repo_hit("found.md", root) is False
+
+
+def test_absolute_path_is_not_reresolved_under_the_projects_dir():
+    with tempfile.TemporaryDirectory() as tmp:
+        root, _ = _peer_layout(tmp)
+        assert csc.peer_repo_hit("/etc/hosts", root) is False
+
+
+def test_tilde_path_is_not_treated_as_a_peer_reference():
+    with tempfile.TemporaryDirectory() as tmp:
+        root, _ = _peer_layout(tmp)
+        assert csc.peer_repo_hit("~/Documents/x.md", root) is False

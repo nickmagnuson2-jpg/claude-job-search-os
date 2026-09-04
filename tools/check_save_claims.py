@@ -194,6 +194,37 @@ def resolve(tok: str, root: Path) -> Path:
     return p if p.is_absolute() else (root / p)
 
 
+def peer_repo_hit(tok: str, root: Path) -> bool:
+    """True when the token names a file in a SIBLING project that really exists.
+
+    Peer repos live beside this one (30-projects/job-search, .../mag5-advisors,
+    .../personal), and prose refers to their files repo-relatively:
+    "mag5-advisors/data/method.md". `resolve` joins that onto CLAUDE_PROJECT_DIR,
+    producing job-search/mag5-advisors/... which never exists, so a genuine
+    cross-repo write was reported as a false claim.
+
+    Fired 3x on this exact shape (2026-09-02 personal/, 2026-09-03
+    mag5-advisors/memory/README.md, 2026-09-04 mag5-advisors/data/
+    method-partner-contact-sourcing.md). The friction ladder's 3rd rung is a
+    mandatory script patch, which is this.
+
+    Only ever converts "missing" to "exists", and only when the file is on disk
+    at the sibling path, so it cannot mask a real unwritten-file claim.
+
+    A token prefixed with this repo's OWN name ("job-search/tools/x.py" written
+    from inside job-search) is deliberately allowed: parent/tok resolves to
+    root/tools/x.py, the same real file, so passing it is correct. An earlier
+    guard rejected that case and was removed after it survived mutation, which
+    is what proved it was not load-bearing. Two further guards (an explicit
+    ""/"."/".." check, and an is_dir() test on the first segment) were removed
+    for the same reason: the leading-character check already rejects the first,
+    and the final exists() subsumes the second.
+    """
+    if not tok or tok.startswith(("~", "/", ".")) or "/" not in tok:
+        return False
+    return (root.parent / tok).exists()
+
+
 PRUNE_DIRS = {".git", "node_modules", ".venv", "venv", "__pycache__", ".pytest_cache"}
 
 
@@ -210,6 +241,8 @@ def exists_anywhere(tok: str, root: Path) -> bool:
     """
     direct = resolve(tok, root)
     if direct.exists():
+        return True
+    if peer_repo_hit(tok, root):
         return True
     if "/" in tok or tok.startswith("~"):
         return False
