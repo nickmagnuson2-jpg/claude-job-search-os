@@ -14,7 +14,7 @@ SELECTION IS DETERMINISTIC, not a judgment call: every `tools/*.py` that has a m
 THREE FILES ARE EXCLUDED, for the same reason at different layers. `mutation_check.py`
 refuses itself (a tool that rewrites live source must never rewrite itself). This file
 excludes itself here, because the sweep executes FROM it: making it a target means
-rewriting live source under the running process. Both are RECORDED as `mutants: -1` rather
+rewriting live source under the running process. Both are RECORDED as `mutants: -1` (SELF_EXCLUDED; an engine failure is -2) rather
 than dropped, so `self_excluded` names them and the selected-vs-auditable accounting still
 adds up. Neither is unmeasurable -- run `mutation_check.py` on either one directly, with no
 sweep in flight. Both have test files as of 2026-08-26.
@@ -122,6 +122,44 @@ def count_tests(path: Path) -> int:
                and n.name.startswith("test_"))
 
 
+# A tool the engine could not analyse is NOT a tool we chose not to measure. Both
+# used -1, so `self_excluded` in the --targets output mixed a decision someone made
+# with a failure nobody saw. Split 2026-09-03 after a night where 23 of 118 tools
+# returned no verdict and the run still reported success.
+SELF_EXCLUDED = -1      # deliberate: the runner, its dependencies, and
+                        # any tool that refuses on purpose
+# Codes the child returns when it is DECLINING, not failing.
+DELIBERATE_REFUSALS = frozenset({"self_mutation_refused"})
+ENGINE_ERROR = -2       # mutation_check could not analyse this file
+
+
+def is_engine_failure(rec: dict) -> bool:
+    """Is this banked row an engine failure rather than a measurement?
+
+    NOT "the child exited non-zero". mutation_check exits 2 for GENUINE SURVIVORS,
+    which is the tool working and must stay a normal banked result. The failure
+    condition is a structured engine error, or any UNAUDITED_* row -- a scan that
+    did not happen. Getting this distinction wrong in either direction is costly:
+    too broad and every imperfect tool fails the sweep, too narrow and this whole
+    guard is decorative.
+    """
+    status = str((rec or {}).get("status") or "")
+    if status.startswith("UNAUDITED"):
+        return True
+    return status == "error"
+
+
+def completed_tools(rows: list[dict]) -> set:
+    """Tool names that are genuinely DONE, for resume.
+
+    Previously every banked tool NAME counted, whatever its status, so an errored
+    tool was banked, failed one run, was skipped the next night as "already done",
+    and the run after that returned 0 with the tool still unmeasured. A banked
+    failure is work remaining, not work finished.
+    """
+    return {r["tool"] for r in rows if r.get("tool") and not is_engine_failure(r)}
+
+
 def build_targets() -> list[dict]:
     # NO tool-level allowlist exclusion. `mutation-allow.json` is keyed per MUTANT
     # (`tools/x.py::func::OP::hash`) and mutation_check.py already honours it that way,
@@ -173,16 +211,27 @@ def build_targets() -> list[dict]:
             rows.append({"tool": rel, "w": True, "h": tool.name in wired,
                          "own": has_own_suite(tool),
                          "tests": sum(count_tests(f) for f in test_files),
-                         "test_files": len(test_files), "mutants": -1})
+                         "test_files": len(test_files), "mutants": SELF_EXCLUDED})
             continue
         proc = subprocess.run(
             [sys.executable, "tools/mutation_check.py", rel, "--list"],
             capture_output=True, text=True, cwd=str(REPO_ROOT),
             env={**os.environ, "PYTHONIOENCODING": "utf-8"})
+        # Read the child's REASON, not just the absence of a count. mutation_check
+        # refuses to mutate itself on purpose (code `self_mutation_refused`), which is
+        # a decision; anything else that fails to yield a count is an engine failure.
+        # Splitting the sentinel without reading the code got this backwards on the
+        # first attempt and filed the deliberate refusal as a breakage.
         try:
-            mutants = json.loads(proc.stdout)["mutants"]
-        except (json.JSONDecodeError, KeyError):
-            mutants = -1                      # self-refusal, or a tool that will not parse
+            payload = json.loads(proc.stdout)
+        except json.JSONDecodeError:
+            payload = {}
+        if "mutants" in payload:
+            mutants = payload["mutants"]
+        elif payload.get("code") in DELIBERATE_REFUSALS:
+            mutants = SELF_EXCLUDED
+        else:
+            mutants = ENGINE_ERROR
         rows.append({"tool": rel,
                      "w": bool(_WRITER_RE.search(tool.read_text(encoding="utf-8"))),
                      "h": tool.name in wired,
@@ -295,11 +344,19 @@ def run_sweep(state_dir: Path) -> int:
 
 def _run_sweep_inner(targets, out: Path) -> int:
 
-    done = set()
+    banked = []
     if out.exists():
         for line in out.read_text(encoding="utf-8").splitlines():
             if line.strip():
-                done.add(json.loads(line)["tool"])
+                banked.append(json.loads(line))
+    # Only genuinely-measured tools count as done. A banked engine failure is work
+    # remaining: counting it as complete is how one failed night became a clean run
+    # two nights later with the tool never measured.
+    done = completed_tools(banked)
+    retrying = sorted({r["tool"] for r in banked} - done)
+    if retrying:
+        print(f"{time.strftime('%H:%M:%S')}  retrying {len(retrying)} previously-errored "
+              f"tool(s): {', '.join(retrying)}", flush=True)
 
     todo = [t for t in targets if t["mutants"] > 0 and t["tool"] not in done]
     print(f"{time.strftime('%H:%M:%S')}  {len(todo)} tools to measure "
@@ -377,6 +434,20 @@ def _run_sweep_inner(targets, out: Path) -> int:
               f"status={rec.get('status')} survived={rec.get('survived')} "
               f"of {t['mutants']} ({base['elapsed']}s)", flush=True)
 
+    # Re-read the bank: a completed pass over a corpus that still contains
+    # unmeasured rows is not a successful sweep, whether they errored tonight or on
+    # a previous night. Genuine SURVIVORS are not failures -- that is the tool
+    # working, and mutation_check's own exit 2 already reports them.
+    final = []
+    if out.exists():
+        for line in out.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                final.append(json.loads(line))
+    unaudited = [r["tool"] for r in final if is_engine_failure(r)]
+    if unaudited:
+        print(f"{time.strftime('%H:%M:%S')}  SWEEP COMPLETE WITH {len(unaudited)} "
+              f"UNMEASURED TOOL(S): {', '.join(sorted(unaudited))}", flush=True)
+        return 1
     print(f"{time.strftime('%H:%M:%S')}  SWEEP COMPLETE", flush=True)
     return 0
 
@@ -397,13 +468,19 @@ def main(argv: list[str] | None = None) -> int:
         (args.state_dir / "targets.json").write_text(
             json.dumps(rows, indent=1), encoding="utf-8")
         auditable = [r for r in rows if r["mutants"] > 0]
-        print(json.dumps({"status": "ok", "selected": len(rows),
+        broken = [r["tool"] for r in rows if r["mutants"] == ENGINE_ERROR]
+        print(json.dumps({"status": "error" if broken else "ok",
+                          "selected": len(rows),
                           "auditable": len(auditable),
-                          "self_excluded": [r["tool"] for r in rows if r["mutants"] <= 0],
+                          "self_excluded": [r["tool"] for r in rows
+                                            if r["mutants"] == SELF_EXCLUDED],
+                          "engine_errors": broken,
                           "writers": sum(r["w"] for r in auditable),
                           "hooked": sum(r["h"] for r in auditable),
                           "mutants": sum(r["mutants"] for r in auditable)}, indent=2))
-        return 0
+        # A target list built over tools the engine could not read is not a target
+        # list. Fail here rather than measuring a silently smaller corpus.
+        return 1 if broken else 0
     return run_sweep(args.state_dir)
 
 

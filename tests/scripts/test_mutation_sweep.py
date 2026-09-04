@@ -267,14 +267,37 @@ def test_mutant_counts_come_from_the_engine(repo, monkeypatch):
     assert mod.build_targets()[0]["mutants"] == 17
 
 
-def test_unparseable_engine_output_is_minus_one_not_zero(repo, monkeypatch):
-    """-1 and 0 diverge downstream: `mutants > 0` filters both out of the run, but the
-    report prints `self_excluded` from the -1 rows and would otherwise call an engine
-    failure a self-exclusion."""
+def test_unparseable_engine_output_is_an_engine_error_not_a_self_exclusion(repo, monkeypatch):
+    """An engine failure and a deliberate exclusion must not share a sentinel.
+
+    Both were -1, and this test previously PINNED that conflation while its own
+    docstring described the harm ("would otherwise call an engine failure a
+    self-exclusion"). Split 2026-09-03: SELF_EXCLUDED stays -1, ENGINE_ERROR is -2,
+    and `--targets` fails rather than measuring a silently smaller corpus.
+
+    Both still filter out of the run via `mutants > 0`, so no downstream reader was
+    silently rebucketed by the new value -- audited at the same time, per the rule
+    that a third state needs every reader checked.
+    """
     add_tool(repo, "a")                       # no entry in control["mutants"]
     set_control(repo, list_garbage="engine exploded")
     mod = load(repo, monkeypatch)
-    assert mod.build_targets()[0]["mutants"] == -1
+    assert mod.build_targets()[0]["mutants"] == mod.ENGINE_ERROR
+    assert mod.ENGINE_ERROR != mod.SELF_EXCLUDED
+
+
+def test_a_deliberate_refusal_is_still_a_self_exclusion(repo, monkeypatch):
+    """The other half, and the half the first attempt got wrong.
+
+    mutation_check refuses to mutate itself on purpose and returns no mutant count.
+    Classifying on "no count" alone filed that decision as a breakage; the real
+    signal is the child's `code`. Found by running --targets against the live repo,
+    where mutation_check.py appeared as an engine error.
+    """
+    add_tool(repo, "a")
+    set_control(repo, list_garbage='{"status": "error", "code": "self_mutation_refused"}')
+    mod = load(repo, monkeypatch)
+    assert mod.build_targets()[0]["mutants"] == mod.SELF_EXCLUDED
 
 
 def test_writer_detection_flags_every_write_shape(repo, monkeypatch):
@@ -1077,3 +1100,76 @@ def test_the_backup_path_module_is_self_excluded_too(repo, monkeypatch):
     rows = {r["tool"]: r for r in mod.build_targets()}
     assert "tools/conftest_guard.py" in rows, "must be recorded, not silently dropped"
     assert rows["tools/conftest_guard.py"]["mutants"] == -1
+
+
+# =============================================================================
+# 2026-09-03: an engine error is not a successful sweep.
+#
+# Two fail-open paths, both found by cross-model review after a night in which 23
+# of 118 tools returned no verdict and the run still reported success:
+#
+#   1. build_targets() ignored the child's return code and turned any unparseable
+#      stdout into `mutants = -1`, which is the SAME marker used for deliberate
+#      self-exclusion. A tool the engine could not analyse was therefore filed as
+#      one the engine was told to skip, and dropped from the work list silently.
+#   2. run_sweep banked `status: error` rows, printed SWEEP COMPLETE and returned 0.
+#
+# The subtlety that makes a naive fix wrong: mutation_check returns exit 2 for
+# GENUINE SURVIVORS, which is a normal, expected result that must keep being banked.
+# "child exited non-zero" is not the error condition. The error condition is a
+# structured engine failure or an unaudited row.
+#
+# And the resume path launders it: `done` is built from every banked tool name
+# regardless of status, so an errored tool causes one failed run, is skipped the
+# next night, and the run after that returns 0 with the tool still unmeasured.
+# =============================================================================
+
+def test_engine_error_is_not_filed_as_a_deliberate_self_exclusion(tmp_path, monkeypatch):
+    ms = load(tmp_path, monkeypatch)
+    """A tool the engine could not analyse must be distinguishable from one it skipped.
+
+    Both used the sentinel -1. `self_excluded` in the --targets output therefore
+    mixed "we chose not to measure this" with "we could not", and only the first is
+    a decision anyone made.
+    """
+    assert hasattr(ms, "ENGINE_ERROR"), (
+        "no distinct sentinel for an engine failure; -1 still means both "
+        "'deliberately excluded' and 'could not be analysed'")
+    assert ms.ENGINE_ERROR != ms.SELF_EXCLUDED, (
+        "engine failure and deliberate exclusion share a sentinel")
+
+
+def test_a_survivor_exit_code_is_still_a_normal_banked_result(tmp_path, monkeypatch):
+    ms = load(tmp_path, monkeypatch)
+    """Guards the fix from over-broad 'non-zero child means failure'.
+
+    mutation_check exits 2 when real survivors exist. That is the tool working.
+    Without this test, hardening the sweep would make every imperfect tool an error.
+    """
+    assert ms.is_engine_failure({"status": "survivors", "killed": 10, "survived": 3}) is False
+    assert ms.is_engine_failure({"status": "ok", "killed": 10, "survived": 0}) is False
+
+
+def test_structured_engine_errors_and_unaudited_rows_are_failures(tmp_path, monkeypatch):
+    ms = load(tmp_path, monkeypatch)
+    for rec in ({"status": "error", "code": "baseline_red"},
+                {"status": "error", "code": "duplicate_mutant_key"},
+                {"status": "UNAUDITED_TIMEOUT"},
+                {"status": "UNAUDITED_ERROR"}):
+        assert ms.is_engine_failure(rec) is True, f"{rec} was not treated as a failure"
+
+
+def test_resume_does_not_launder_a_banked_error_into_success(tmp_path, monkeypatch):
+    ms = load(tmp_path, monkeypatch)
+    """The resume hole: `done` was every banked tool NAME, whatever its status.
+
+    So an errored tool is banked, fails one run, is skipped the next night as
+    'already done', and the run after that returns 0 with the tool never measured.
+    A banked failure must be retried, not counted as complete.
+    """
+    banked = [{"tool": "tools/a.py", "status": "ok", "killed": 5, "survived": 0},
+              {"tool": "tools/b.py", "status": "error", "code": "baseline_red"},
+              {"tool": "tools/c.py", "status": "UNAUDITED_TIMEOUT"}]
+    done = ms.completed_tools(banked)
+    assert done == {"tools/a.py"}, (
+        f"errored/unaudited tools were counted as complete: {sorted(done)}")

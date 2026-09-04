@@ -536,3 +536,16 @@ def test_both_citation_shapes_can_precede_the_real_trigger():
     """An ISO citation AND a month-name citation, then the actual deadline."""
     note = "flagged 2026-02-11 historically, met late April 2024, real trigger mid-Oct 2026"
     assert _nf.infer_followup_date(_date(2026, 8, 18), note) == _date(2026, 10, 15)
+
+
+def test_a_bad_year_in_a_month_name_does_not_stop_the_scan():
+    """Kills the month-name `except ValueError: continue`, which is NOT equivalent.
+
+    Dropping that `continue` reaches `if hit` with `hit` unbound. It was previously
+    covered by an allowlist reason written about a DIFFERENT statement -- the two
+    `continue`s in this function shared one mutant key until 2026-09-03. A four-digit
+    year of 0000 matches the regex and makes date() raise, so the handler is reachable
+    and the scan must go on to the later valid trigger.
+    """
+    note = "opened mid-Oct 0000 per the old record; real trigger mid-Nov 2026"
+    assert _nf.infer_followup_date(_date(2026, 8, 18), note) == _date(2026, 11, 15)
