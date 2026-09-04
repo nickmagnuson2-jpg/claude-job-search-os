@@ -70,6 +70,14 @@ KEEP = {
     "notion", "stripe", "anthropic", "google", "github", "openai", "linkedin",
     "ali rohde", "ryan holiday", "molly graham", "raphael", "daily stoic",
     "claude", "granola", "wispr", "obsidian", "vercel", "neon",
+    # The repo owner's own surname. Public by construction: it is the git author name and
+    # appears in README.md, docs/getting-started.md and CHANGELOG.md among 40 tracked files.
+    # It reaches person_components the moment any relative is added to networking.md, and on
+    # 2026-09-04 adding one promoted "Magnuson" to BLOCK and put all 40 of those public files
+    # one edit away from a refusal. Same shape as the fictional-cast incident documented below.
+    # The FULL phrase (a first name plus the surname) is unaffected and still blocks: only the bare
+    # surname is exempted, via the KEEP check inside is_distinctive_single.
+    "magnuson",
 }
 
 # The repo's own FICTIONAL CAST, used across public skill docs, examples/ and test
