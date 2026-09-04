@@ -1,0 +1,19 @@
+[
+ {
+  "company": "Acme Corp",
+  "function": "alliances",
+  "verdict": "FOUND",
+  "person": "Ada Placeholder",
+  "title": "VP Alliances",
+  "employer": "Acme Corp",
+  "source_url": "https://acme.invalid/team",
+  "source_type": "company_site",
+  "tier": "A",
+  "retrieved": "2026-09-03",
+  "titles_searched": [
+   "Alliances",
+   "Partnerships",
+   "Channel"
+  ]
+ }
+]

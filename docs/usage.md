@@ -514,6 +514,7 @@ Full list of all 38 skills:
 | `/remember` | `<note>` | Route a mid-session note to the right data file (decisions and accomplishments route to their chronological logs) |
 | `/audit-pii` | *(none)* | Pre-commit public-repo PII gate — deterministic denylist scan + anti-anchored semantic subagent pass over changed public files |
 | `/wispr` | *(none, or pasted dictation)* | Pull recent Wispr Flow voice dictations into the session; route to reflections, inbox, or active workflow |
+| `/ss` | `[N] [instruction]` | Read your most recent screenshot(s) and act on them. No arg = describe; `huh` = explain it and suggest a skill; `fix` = treat as an error and locate the code. Captures taken within ~2 min of each other are read as one document. An inbound message from a named person routes to a gated networking log |
 
 **Note on CV paths:** `/review-cv` and `/review-cv-deep` accept paths relative to `output/` (e.g., `verdant-foods/022526-chief-of-staff.md`). All other skills that take a CV path expect the full relative path from the repo root (e.g., `output/verdant-foods/022526-chief-of-staff.md`).
 

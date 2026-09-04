@@ -4,7 +4,7 @@ export const meta = {
   whenToUse: 'Deciding whether existing systems/approaches are stale and what to change. Patterns #1 (fan-out) + #2 (adversarial verify). See framework/multi-agent-workflows.md.',
   phases: [
     { title: 'Research', detail: 'one agent per (system, angle) runs live web/Exa research' },
-    { title: 'Validate', detail: 'adversarial refute-first validation of each angle\'s load-bearing claims' },
+    { title: 'Validate', detail: 'adversarial refute-first validation of each angle\'s load-bearing claims', model: 'fable' },
     { title: 'Synthesize', detail: 'per-system verdict + redesign, then a final assembled doc' },
   ],
 }
@@ -179,7 +179,7 @@ const validated = await pipeline(
   ANGLES,
   (item) => agent(researchPrompt(item), { label: `research:${item.system}:${short(item.angle)}`, phase: 'Research', schema: FINDINGS_SCHEMA }),
   (research, item) =>
-    agent(validatePrompt(research, item), { label: `verify:${item.system}:${item.idx}`, phase: 'Validate', schema: VERDICT_SCHEMA })
+    agent(validatePrompt(research, item), { label: `verify:${item.system}:${item.idx}`, phase: 'Validate', model: 'fable', schema: VERDICT_SCHEMA })
       .then((verdict) => ({ research, verdict, item })),
 )
 
