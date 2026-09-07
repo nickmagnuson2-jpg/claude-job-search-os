@@ -238,46 +238,71 @@ def report_written_this_run(report: Path, started: float) -> bool:
 
 
 def has_findings_block(report: Path) -> bool:
-    """A report without the machine-readable block verified nothing this gate can read.
+    """A report without a PARSEABLE machine-readable block verified nothing.
 
     Distinct from "zero findings": a clean review still emits the marker with an empty
-    array. A missing marker means the model did not follow the output contract, which
-    is a failed run, not a clean one.
+    array, and that is a successful run. What this rejects is a report the gate cannot
+    read -- no marker, or a marker followed by something that is not a JSON array.
+
+    The marker alone was the first cut and it was a fail-open inside the fix for a
+    fail-open: a report carrying the marker and a malformed array parsed to zero
+    findings, recorded verified=True, and cleared the push. Found by cross-model review
+    2026-09-06 (F4), the same night the surrounding fix was written.
     """
     try:
-        return FINDINGS_MARKER in report.read_text(encoding="utf-8")
+        text = report.read_text(encoding="utf-8")
     except OSError:
         return False
+    # No marker pre-check: _findings_array owns that decision. Checking it in both
+    # places made this line unreachable, which mutation testing surfaced immediately.
+    return _findings_array(text) is not None
 
 
-def parse_findings(report: Path) -> list[dict]:
-    """Pull the machine-readable block. Prose-only findings reach nobody by design."""
-    if not report.is_file():
-        return []
-    text = report.read_text(encoding="utf-8")
+def _findings_array(text: str) -> list | None:
+    """The parsed JSON array after the marker, or None if there is not one.
+
+    ONE scanner, used by both has_findings_block and parse_findings. They each had a
+    copy until 2026-09-06; the duplicate marker check made one of them unreachable and
+    mutation testing found it the same hour it was written.
+
+    Deliberately flat: the earlier version carried separate `start < 0` and
+    `end is None` exits that BOTH fell through to the same None, so each was an
+    equivalent mutant -- a branch that could be deleted with no observable change.
+    Returning from inside the scan removes them.
+    """
     if FINDINGS_MARKER not in text:
-        return []
+        return None
     tail = text.split(FINDINGS_MARKER, 1)[1]
     start = tail.find("[")
     if start < 0:
-        return []
-    depth, end = 0, None
+        return None
+    depth = 0
     for i, ch in enumerate(tail[start:], start):
         if ch == "[":
             depth += 1
         elif ch == "]":
             depth -= 1
             if depth == 0:
-                end = i + 1
-                break
-    if end is None:
+                try:
+                    items = json.loads(tail[start:i + 1])
+                except json.JSONDecodeError:
+                    return None
+                return items if isinstance(items, list) else None
+    return None            # brackets never balanced
+
+
+def parse_findings(report: Path) -> list[dict]:
+    """Pull the machine-readable block. Prose-only findings reach nobody by design."""
+    if not report.is_file():
         return []
-    try:
-        items = json.loads(tail[start:end])
-    except json.JSONDecodeError:
+    items = _findings_array(report.read_text(encoding="utf-8"))
+    if items is None:
         return []
     out = []
-    for it in items if isinstance(items, list) else []:
+    # _findings_array guarantees a list or None, and None returned above, so the
+    # old `if isinstance(items, list) else []` guard here was unreachable -- it
+    # also made the None check above deletable with the suite green.
+    for it in items:
         if isinstance(it, dict) and it.get("summary"):
             loc = it.get("location")
             loc = str(loc).strip() if isinstance(loc, str) and loc.strip() else None

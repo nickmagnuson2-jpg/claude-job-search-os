@@ -573,3 +573,53 @@ def test_the_prompt_defines_severity_by_consequence():
     """An undefined scale is the model's own, and it is not stable across runs."""
     for token in ("SEVERITY IS DEFINED BY CONSEQUENCE", "P0", "P1", "P2"):
         assert token in cv.REPORT_RULES
+
+
+def test_a_marker_with_a_malformed_array_is_NOT_verified(tmp_path):
+    """F4, cross-model review 2026-09-06. The marker alone was a fail-open inside the
+    fix for a fail-open: the report parsed to zero findings, recorded verified=True,
+    and cleared the push."""
+    p = tmp_path / "bad.md"
+    p.write_text("# R\n\n## FINDINGS (machine-readable)\n[{oops not json\n",
+                 encoding="utf-8")
+    assert cv.has_findings_block(p) is False
+    assert cv.parse_findings(p) == []
+
+
+def test_a_marker_with_a_json_object_instead_of_an_array_is_NOT_verified(tmp_path):
+    p = tmp_path / "obj.md"
+    p.write_text('# R\n\n## FINDINGS (machine-readable)\n{"id":"F1"}\n', encoding="utf-8")
+    assert cv.has_findings_block(p) is False
+
+
+def test_a_clean_empty_array_IS_still_verified(tmp_path):
+    """Zero findings is a successful run. The fix for F4 must not turn it into a
+    failed one, which would punish exactly the outcome REPORT_RULES asks for."""
+    p = tmp_path / "clean.md"
+    p.write_text("# R\n\n## FINDINGS (machine-readable)\n[]\n", encoding="utf-8")
+    assert cv.has_findings_block(p) is True
+
+
+@pytest.mark.parametrize("body,why", [
+    ("## FINDINGS (machine-readable)\nno bracket at all\n", "marker but no array opens"),
+    ("## FINDINGS (machine-readable)\n[{\"id\":\"F1\"}\n", "brackets never balance"),
+    ("## FINDINGS (machine-readable)\n[[{\"id\":\"F1\"}]\n", "nested and unbalanced"),
+])
+def test_an_unclosed_or_absent_array_is_not_a_verified_report(tmp_path, body, why):
+    """Each of these left a mutant alive in _findings_array on 2026-09-06: the scan
+    could be broken at that branch and the suite stayed green."""
+    p = tmp_path / "r.md"
+    p.write_text(f"# R\n\n{body}", encoding="utf-8")
+    assert cv.has_findings_block(p) is False, why
+    assert cv.parse_findings(p) == [], why
+
+
+def test_a_balanced_array_after_prose_still_parses(tmp_path):
+    """The counterpart: the bracket matcher must still find a well-formed array, or
+    the tests above would pass against a scanner that rejects everything."""
+    p = tmp_path / "r.md"
+    p.write_text('# R\n\n## FINDINGS (machine-readable)\n'
+                 '[{"id":"F1","severity":"P0","location":"a.py:1","summary":"s"}]\n',
+                 encoding="utf-8")
+    assert cv.has_findings_block(p) is True
+    assert [f["id"] for f in cv.parse_findings(p)] == ["F1"]
