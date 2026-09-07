@@ -18,9 +18,27 @@
 remote_url="$2"
 root="$(git rev-parse --show-toplevel)"
 
+# githooks(5) delivers the pushed refs on stdin, and stdin can be read ONCE. Both
+# consumers below need them, so capture first and feed each from the copy.
+#
+# WHY (2026-09-06, found by dry-running the hook under bash -x). prepush_pii_guard.py
+# calls sys.stdin.read(), which DRAINED the ref lines. The `while read` loop below then
+# saw nothing, $head stayed empty, and the hook took the `[ -z "$head" ] && exit 0`
+# path -- so the cross-model gate NEVER RAN on any push to the public remote, which is
+# the only remote the PII branch fires on. Silent, exit 0, no output. The five P0s that
+# cross-model review found in this gate on 2026-09-03 were all in code that could not
+# be reached from a real push.
+refs="$(cat)"
+
 case "$remote_url" in
   *claude-job-search-os*)
-    PYTHONIOENCODING=utf-8 python3 "$root/tools/prepush_pii_guard.py" || exit 1
+    # /dev/null for a manual invocation: the guard treats an empty pipe as "not a hook
+    # run" and falls back to a working-tree scan, which is the intended manual mode.
+    if [ -n "$refs" ]; then
+      printf '%s\n' "$refs" | PYTHONIOENCODING=utf-8 python3 "$root/tools/prepush_pii_guard.py" || exit 1
+    else
+      PYTHONIOENCODING=utf-8 python3 "$root/tools/prepush_pii_guard.py" < /dev/null || exit 1
+    fi
     ;;
 esac
 
@@ -38,7 +56,9 @@ while read -r _lref lsha _rref rsha; do
     *[!0]*) base="$rsha" ;;
     *)      base="$(git merge-base "$lsha" origin/main 2>/dev/null || echo '')" ;;
   esac
-done
+done <<REFS
+$refs
+REFS
 
 [ -z "$head" ] && exit 0
 if [ -n "$base" ]; then range="$base..$head"; else range="$head"; fi

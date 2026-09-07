@@ -743,3 +743,55 @@ def test_no_shortfall_note_when_every_wanted_model_is_wired(tmp_path, monkeypatc
     assert v.blocked is True
     assert "is wired" not in v.message
     assert "WIRED_MODELS" not in v.message
+
+
+# --- the hook must actually REACH the gate (2026-09-06) -------------------------
+
+def test_the_hook_captures_stdin_before_the_pii_guard_consumes_it():
+    """THE BUG THIS EXISTS FOR. githooks(5) delivers the pushed refs on stdin, and
+    stdin can be read once. prepush_pii_guard.py calls sys.stdin.read(); the hook then
+    ran its `while read` loop against an already-drained stdin, left $head empty, and
+    took the `[ -z "$head" ] && exit 0` path. The cross-model gate NEVER RAN on a push
+    to the public remote -- silently, exit 0, no output -- which is the only remote the
+    PII branch fires on.
+
+    Structural rather than behavioural because the behaviour depends on live ledger
+    state, but it pins the exact ordering that broke: capture, THEN consume.
+    """
+    src = (REPO_ROOT / "tools" / "hooks" / "pre-push").read_text(encoding="utf-8")
+    capture = src.index('refs="$(cat)"')
+    # the INVOCATION, not the mention in the header comment
+    guard = src.index('python3 "$root/tools/prepush_pii_guard.py"')
+    loop = src.index("while read -r")
+    assert capture < guard, "stdin must be captured BEFORE the PII guard reads it"
+    assert capture < loop, "stdin must be captured BEFORE the ref loop"
+    assert "<<REFS" in src, "the ref loop must read the captured copy, not raw stdin"
+
+
+def test_the_installed_hook_matches_the_tracked_one():
+    """.git/hooks/ is not version controlled. A fix landed in tools/hooks/ and never
+    installed is a fix that does not run."""
+    tracked = (REPO_ROOT / "tools" / "hooks" / "pre-push").read_bytes()
+    installed = REPO_ROOT / ".git" / "hooks" / "pre-push"
+    if not installed.is_file():
+        pytest.skip("no installed hook in this checkout")
+    assert installed.read_bytes() == tracked, (
+        "run: bash tools/hooks/install.sh")
+
+
+# REMOVED 2026-09-06: test_hook_and_gate_agree_on_the_current_HEAD_push.
+# It was written to catch the stdin-drain defect and it DID NOT. Verified by
+# reinstalling the defect deliberately (refs capture removed, heredoc removed,
+# confirmed applied) and re-running: the test still passed. Two revisions were tried,
+# the second requiring the gate's own "BLOCKED: cross-model verification" marker in
+# stderr rather than a bare nonzero exit; neither failed against the broken hook and
+# the reason was not established before the session ended.
+#
+# It is deleted rather than kept-and-weakened because a test named for a guarantee it
+# does not enforce is worse than no test: the name reads as coverage. That is the same
+# defect as the isinstance(v.blocked, bool) assertion replaced earlier today.
+#
+# The structural guard above IS proven -- it fails against the reinstalled defect --
+# and it pins the exact ordering that broke. A real behavioural parity test needs a
+# throwaway git repo with a controlled ledger so the verdict does not depend on live
+# state; that is the right shape and it was not built tonight.
