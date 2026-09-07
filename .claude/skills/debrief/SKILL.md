@@ -230,10 +230,12 @@ Record final scores under `## Final Scores`:
 - Per-dimension (1–5 with half-points)
 - Overall (combined; Nick's call)
 - Interviewer signal (low/med/high) + one-line evidence
-- **Live-Need Bridge binary (REQUIRED — H4 / `framework/answering-strategies/bridge-to-stated-need.md`).** Two yes/no, with one-line evidence each:
+- **Live-Need Bridge binary (REQUIRED — H4 / `framework/answering-strategies/bridge-to-stated-need.md`).** Three fields, with one-line evidence each. **A debrief that omits DELIVERY SHAPE is incomplete and may not be written to the H4 test log** — the split below is the hypothesis's dominant finding and it went unmeasured for ten calls because the field did not exist:
   - *Did the interviewer state a live need?* (a constraint they're under, OR a role/value description that echoes something Nick said) — Yes/No.
+  - *If yes: **DELIVERY SHAPE** — was the need asked **DIRECTLY at Nick** (a question addressed to him) or **EMBEDDED in the interviewer's own narration** (surfaced while they described their problem, their week, or the role)?* — Direct / Embedded. Required whenever the first answer is Yes.
   - *If yes: did Nick bridge to it within one turn* (one specific proof + "that's why I want this", not a generic affirm or a contradicting default story)? — Yes/No, with valence (positive-match / negative-constraint).
-  - This binary is canonical input to Step 7's H4 test-log row. Track it every call; the rate is the metric.
+  - This binary is canonical input to Step 7's H4 test-log row. Track it every call; **the rate is the metric, and it is now reported STRATIFIED BY DELIVERY SHAPE**, not pooled. Pooled, H4 reads 23 Support of 24 and looks healthy; split, it is 7-for-7 direct and **0-for-10 embedded** (as of 2026-08-26). A pooled rate hid a total failure inside a strong hypothesis for ten calls.
+  - **When the shape is Embedded, also record whether the unconditional governor ran** (did Nick name what they just said they needed at the handoff, before answering?) — Yes/No. This is the 2026-09-06 mitigation and this field is how it gets tested rather than assumed. Two prior cue-shaped mitigations failed; if this one produces no movement in the embedded rate by the 5th embedded observation after 2026-09-06, it is refuted and the next escalation must not be another prep-doc line.
 
 ### Step 6: Anti-pattern check
 

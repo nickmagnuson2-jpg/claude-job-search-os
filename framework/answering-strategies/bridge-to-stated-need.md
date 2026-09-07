@@ -49,6 +49,43 @@ Negative-valence example (what the negative-valence call should have gotten):
 
 ---
 
+## The delivery-shape split — the one that actually costs the calls
+
+**Added 2026-09-06.** Sorting the full H4 bridge log by *how the need was delivered* gives a
+clean split, and it is the dominant finding in the hypothesis:
+
+| How the need reached Nick | Record |
+|---|---|
+| Asked **directly at him** ("what would you do about X?", "how do you handle Y?") | **7 for 7 — lands** |
+| **Embedded in the interviewer's own narration** (they describe their problem, their week, the role, while talking about themselves) | **0 for 10 — misses** |
+
+Twenty-four H4 tests, 23 Support. The bridge muscle is not weak. It is **conditional on being
+addressed**, and it does not fire when the need arrives inside someone else's story.
+
+**Why the three tells above have not fixed this.** They are all embedded-shape tells, they are
+correct, and the embedded half is still 0-for-10. The tells describe what to notice; the failure
+is that nothing prompts the noticing. Two mitigations aimed at the noticing moment have now been
+tested and failed — the 8/05 proof-binding (half-failed) and the 8/11 trigger-detector (never
+built) — and the sibling three-gesture-close pattern failed the same way twice (`STOP` 0-for-7),
+including on 2026-09-04 when the prep doc fired the cue exactly as prescribed and the behavior
+still did not happen.
+
+**The mechanism that does work in this corpus is not a cue.** The filler-reset protocol produced
+the three lowest densities on record, and it is a rehearsed aloud action taken *before* the call,
+firing unconditionally. It never asks Nick to detect anything live.
+
+**So the move for embedded needs is unconditional, not triggered:**
+
+> **At every handoff back to you — every time they stop talking and it is your turn — the first
+> beat is: name what they just said they needed. Then answer.**
+
+This fires on every turn, so there is nothing to notice and nothing to miss. When they asked a
+direct question, naming the need costs one clause and is invisible. When they were narrating,
+that clause *is* the bridge, and it is the one that has never once happened.
+
+It converts a detection problem into a habit. Do not replace it with a better-worded cue; a cue
+is what has failed three times.
+
 ## Why This Works
 
 - Generic affirmation of a handed match ("Absolutely, that's exactly what I love") is **worse than silence** — it signals you heard the words but missed the gift; you read as agreeable, not aligned.

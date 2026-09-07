@@ -253,7 +253,7 @@ Company stage and interview type: [Company], [interview type], [stage from pipel
 
 **Item 1 is fixed and MANDATORY — emit it verbatim as the first line of every generated checklist, above any tailored items:**
 
-- [ ] **T-MINUS-2 SCAN, then the reset, then dial. Nothing substantive in between.** Re-read exactly three things in this doc: **THE ONE THING**, the **predicted live-need sentence**, and the **questions list**. Then run the filler reset aloud. Then dial. (~2 min total.)
+- [ ] **T-MINUS-2 SCAN, then the reps, then dial. Nothing substantive in between.** Re-read exactly three things in this doc: **THE ONE THING**, the **predicted live-need sentence**, and the **questions list**. Then run **two** aloud reps: the filler reset, and the **embedded-need rehearsal** sentence. Then dial. (~2 min total.)
 
 [Then top 6-9 tailored checklist items — pulled from anti-patterns.md + personal anti-pattern tracker, specific to this interview type and company]
 - [ ] [Item]
@@ -261,13 +261,17 @@ Company stage and interview type: [Company], [interview type], [stage from pipel
 
 ## Live-Need Bridge (REQUIRED — strategy: framework/answering-strategies/bridge-to-stated-need.md / hypothesis H4)
 
-This is the highest-EV move and the #1 recurring miss. Produce all three:
+This is the highest-EV move and the #1 recurring miss. Produce all four:
 
 **Predicted live-need sentence(s):** [1-2 sentences predicting how THIS interviewer will state what they need — a constraint they're under, a problem they're living, OR how they'll describe the role / what excites them. Ground in dossier + company-notes + interview type. e.g. founder: "we need X shipped before <event>"; hiring manager: "this person has to own <gap> from day one".]
 
 **My match (specific, quantified):** [the 1-2 owned, quantified proofs from profile/projects that map onto the predicted need — NOT a value restatement. e.g. "call-center pilot: built the listening framework, drove $10M rollout".]
 
-**In-call governor (read this line in the call):** *"When they name the live need (a constraint OR a role/value description that echoes me) → one specific bridge sentence + 'that's why I want this' → then stop. No default story. No generic affirm."*
+**In-call governor (read this line in the call):** *"Every time it comes back to me, FIRST name what they just said they needed. Then answer. One specific bridge sentence + 'that's why I want this' → then stop. No default story. No generic affirm."*
+
+**Why the governor is unconditional, not triggered (do not 'improve' this back into a cue).** Sorted by how the need was delivered, the H4 log splits 7-for-7 on needs asked DIRECTLY at Nick and **0-for-10 on needs embedded in the interviewer's own narration** (as of 2026-08-26). The old wording — "when they *name* the live need" — only fires on the direct shape, because an embedded need is never named. Two cue-shaped mitigations have been tested and failed (proof-binding 8/05 half-failed; trigger-detector 8/11 never built), and the sibling three-gesture close failed the same way on 2026-09-04 with the cue fired exactly as prescribed. What works in this corpus is the filler reset: an unconditional rehearsed action, never a live detection. This governor fires on EVERY handoff so there is nothing to notice. Full reasoning: `framework/answering-strategies/bridge-to-stated-need.md`, "The delivery-shape split".
+
+**Embedded-need rehearsal (aloud, once, in the T-minus-2 block):** [one sentence Nick says out loud before dialing, in the shape he would use if the need arrived buried in the interviewer's narration rather than as a question — e.g. *"So what you're describing is <their need in their words> — that's exactly what <one owned proof> was."* Modeled on the filler reset, which is the only mitigation in this corpus with a winning record: rehearse the shape cold so it is warm, rather than trusting live detection.]
 
 ## Frame-Import Guard (B2)
 The bridge and any story draft use ONLY details Nick explicitly provided: his verbatim numbers, sequence, and words. Do NOT import settings, durations, or actions from the interviewer's vocabulary because they would "land well." The mirror to the interviewer happens at the observation level (a closing "sounds like the same shape as how you built it at X"), never inside Nick's own story. Test each line: could Nick say this cold, without the prep doc? If no, cut it.
