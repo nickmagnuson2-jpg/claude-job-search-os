@@ -43,6 +43,9 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import inbox_lock  # noqa: E402
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LEDGER_NAME = ".cross-model-ledger.jsonl"
 
@@ -277,10 +280,25 @@ def row_is_usable(row: dict) -> bool:
 
 
 def append_row(repo_root: Path, row: dict) -> Path:
+    """Append one ledger row, under the same advisory lock finding_write.py takes.
+
+    An O_APPEND write is already atomic against other APPENDS, so this lock is not about
+    appends colliding with each other. It is about the whole-file REWRITE in
+    finding_write.set_disposition(): a row appended between that function's read and its
+    replace is absent from the snapshot and is erased by it, with both commands reporting
+    success and nothing recording that an audit row was destroyed.
+
+    Both sides must take the lock for it to mean anything -- locking only the rewriter
+    still loses the append. Found by adversarial cross-model verification 2026-09-06
+    (F1, P0): output/analysis/090626-codex-tools-finding-write-py-does-it-atomical.md
+    """
     path = ledger_path(repo_root)
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as fh:
-        fh.write(json.dumps(row) + "\n")
+    with inbox_lock.file_lock(path):
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(row) + "\n")
+            fh.flush()
+            os.fsync(fh.fileno())
     return path
 
 

@@ -282,3 +282,135 @@ def test_unlocated_filter_selects_only_findings_with_no_path_line(tmp_path):
 def test_cli_unlocated_flag(repo):
     out = json.loads(run_cli(repo, "list", "--unlocated").stdout)
     assert out["count"] == 3      # the fixture rows predate the field entirely
+
+
+# ---------------------------------------------------------------------------
+# Concurrency. Found by adversarial cross-model verification 2026-09-06 (F1, P0):
+# the whole-ledger read-modify-write was unlocked, so a concurrent disposition or an
+# appended audit row was silently restored away by a stale snapshot, with both
+# commands reporting success.
+# ---------------------------------------------------------------------------
+import os                                                        # noqa: E402
+import threading                                                 # noqa: E402
+import time                                                      # noqa: E402
+
+sys.path.insert(0, str(TOOLS_DIR))
+import inbox_lock  # noqa: E402
+import cross_model_gate as cmg  # noqa: E402
+
+
+def _hold_lock_in_another_thread(path, release):
+    """file_lock is RE-ENTRANT PER THREAD, so a same-thread hold proves nothing -- the
+    call under test would simply re-enter and pass. Contention has to come from a
+    different thread (or process)."""
+    holding = threading.Event()
+
+    def holder():
+        with inbox_lock.file_lock(path):
+            holding.set()
+            release.wait(timeout=10)
+
+    t = threading.Thread(target=holder, daemon=True)
+    t.start()
+    assert holding.wait(timeout=10), "holder never took the lock"
+    return t
+
+
+def test_set_disposition_waits_for_the_ledger_lock(repo):
+    path = fw.ledger_path(repo)
+    release = threading.Event()
+    t = _hold_lock_in_another_thread(path, release)
+    threading.Timer(0.3, release.set).start()
+    start = time.time()
+    fw.set_disposition(repo, "1.F1", "fixed", "why")
+    elapsed = time.time() - start
+    t.join(timeout=10)
+    assert elapsed >= 0.25, (
+        f"set_disposition returned in {elapsed:.3f}s while another thread held the "
+        f"ledger lock, so it is not taking it")
+
+
+def test_append_row_waits_for_the_same_lock(repo):
+    """Both sides must take it. Locking only the rewriter still loses the append."""
+    path = cmg.ledger_path(repo)
+    release = threading.Event()
+    t = _hold_lock_in_another_thread(path, release)
+    threading.Timer(0.3, release.set).start()
+    start = time.time()
+    cmg.append_row(repo, {"recorded": "x", "target": "t", "report": None,
+                          "paths": [], "findings": [], "waived": False})
+    elapsed = time.time() - start
+    t.join(timeout=10)
+    assert elapsed >= 0.25, (
+        f"append_row returned in {elapsed:.3f}s under a held lock, so it is not taking it")
+
+
+def test_an_append_during_a_disposition_is_not_erased(repo, monkeypatch):
+    """THE P0, end to end, with the race FORCED rather than hoped for.
+
+    The old code read the whole ledger then replaced it; a row appended in between was
+    absent from the snapshot and was deleted by the replace, with both commands printing
+    success. Slowing the commit while holding the lock guarantees the appender actually
+    contends -- without that the two can finish microseconds apart and the test passes
+    while proving nothing.
+    """
+    before = len(fw.read_lines(fw.ledger_path(repo)))
+    real_write = inbox_lock._write_atomic
+
+    def slow_write(path, text):
+        time.sleep(0.4)
+        return real_write(path, text)
+
+    monkeypatch.setattr(inbox_lock, "_write_atomic", slow_write)
+
+    errors, appended = [], threading.Event()
+
+    def appender():
+        try:
+            time.sleep(0.05)
+            cmg.append_row(repo, {"recorded": "2026-09-06T00:00:00+00:00",
+                                  "target": "APPENDED-DURING-WRITE",
+                                  "report": None, "paths": [], "findings": [],
+                                  "waived": False})
+            appended.set()
+        except Exception as exc:
+            errors.append(exc)
+
+    t = threading.Thread(target=appender, daemon=True)
+    t.start()
+    fw.set_disposition(repo, "1.F1", "fixed", "closed under concurrency")
+    t.join(timeout=30)
+    assert not errors, errors
+    assert appended.is_set(), "the appender never completed"
+
+    lines = fw.read_lines(fw.ledger_path(repo))
+    assert any("APPENDED-DURING-WRITE" in ln for ln in lines), (
+        "the appended audit row was erased by the whole-ledger rewrite")
+    assert len(lines) == before + 1
+
+    disp = [f for f in fw.collect(repo) if f["addr"] == "1.F1"][0]
+    assert disp["disposition"] == "fixed", "the disposition was lost"
+
+
+def test_a_duplicate_finding_id_is_refused_rather_than_shadowed(repo, tmp_path):
+    """F2. Nothing rejects duplicate ids at ingest, so a first-match write pins the
+    earlier one forever and the later one can never be selected. Fail loudly instead:
+    the address genuinely does not identify one record."""
+    path = fw.ledger_path(repo)
+    rows = fw.read_lines(path)
+    dup = json.dumps({
+        "recorded": "2026-09-06T00:00:00+00:00", "target": "dupes", "report": None,
+        "paths": [], "waived": False,
+        "findings": [
+            {"id": "D1", "severity": "P0", "summary": "first", "disposition": None},
+            {"id": "D1", "severity": "P1", "summary": "second", "disposition": None},
+        ]})
+    path.write_text("\n".join(rows + [dup]) + "\n", encoding="utf-8")
+    n = len(fw.read_lines(path))
+
+    with pytest.raises(KeyError) as exc:
+        fw.set_disposition(repo, f"{n}.D1", "fixed", "should refuse")
+    assert "does not identify one record" in str(exc.value)
+
+    after = fw.read_lines(path)
+    assert after[n - 1] == dup, "the ledger must be untouched on the error path"

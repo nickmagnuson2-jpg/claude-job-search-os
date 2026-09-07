@@ -29,6 +29,9 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import inbox_lock  # noqa: E402
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LEDGER_NAME = ".cross-model-ledger.jsonl"
 
@@ -121,45 +124,88 @@ def set_disposition(repo_root: Path, addr: str, disposition: str, why: str,
 
     run_no, fid = parse_addr(addr)
     path = ledger_path(repo_root)
-    lines = read_lines(path)
-    if run_no > len(lines):
-        raise KeyError(f"no run {run_no}: the ledger has {len(lines)} row(s)")
 
-    line = lines[run_no - 1]
-    try:
-        row = json.loads(line)
-    except json.JSONDecodeError as exc:
-        raise KeyError(f"run {run_no} is not valid JSON and cannot be edited") from exc
-    if not isinstance(row, dict):
-        raise KeyError(f"run {run_no} is not an object")
+    # LOCK-GUARDED READ-MODIFY-WRITE.
+    #
+    # The original rewrote the whole ledger from an unlocked snapshot. os.replace makes the
+    # RENAME atomic for readers; it does NOT make the read-modify-write atomic against
+    # other writers, and this file is append-only shared state. Two effects, both silent:
+    #
+    #   1. Two dispositions read version V, each changes a different finding, and the
+    #      second replacement restores its stale copy of the first one. Both print success.
+    #   2. A cross_model_gate.append_row() landing between the read and the replace is
+    #      absent from the snapshot and is DELETED by it -- an audit row destroyed by a
+    #      command that reports success.
+    #
+    # It also used a SHARED temp path (`<ledger>.tmp`), so two overlapping writers could
+    # have one install the other's bytes and then report its own in-memory result -- a
+    # disposition printed for finding A while the file records a change to B.
+    #
+    # atomic_update closes all of it: it holds the advisory lock across read/transform/
+    # write, re-stats immediately before committing so a writer that does NOT take the
+    # lock is detected rather than clobbered, and writes through a UNIQUE mkstemp temp in
+    # the same directory with fsync before replace.
+    #
+    # Reusing inbox_lock rather than adding a third lock: its docstring already describes
+    # exactly this defect for data/inbox.md, and a second implementation of the same
+    # primitive is how the two drift apart.
+    # Found by adversarial cross-model verification 2026-09-06 (F1, P0):
+    # output/analysis/090626-codex-tools-finding-write-py-does-it-atomical.md
+    captured: dict = {}
 
-    target = None
-    for f in row.get("findings") or []:
-        if isinstance(f, dict) and str(f.get("id")) == fid:
-            target = f
-            break
-    if target is None:
-        raise KeyError(f"run {run_no} has no finding {fid!r}")
+    def _transform(text: str) -> str:
+        # Deliberately re-derived from `text` on EVERY call, not closed over from an
+        # earlier read: atomic_update may invoke this more than once (it retries when it
+        # detects an external write), and reusing a stale parse is the bug being fixed.
+        lines = [ln for ln in text.splitlines() if ln.strip()]
+        if run_no > len(lines):
+            raise KeyError(f"no run {run_no}: the ledger has {len(lines)} row(s)")
 
-    existing = (target.get("disposition") or "").strip()
-    if existing and not force:
-        raise ValueError(
-            f"{addr} is already dispositioned {existing!r}; pass --force to change it. "
-            "Silently flipping a recorded decision is how the record stops meaning "
-            "anything.")
+        line = lines[run_no - 1]
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise KeyError(f"run {run_no} is not valid JSON and cannot be edited") from exc
+        if not isinstance(row, dict):
+            raise KeyError(f"run {run_no} is not an object")
 
-    target["disposition"] = disposition
-    target["why"] = why.strip()
-    target["dispositioned"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        # EXACTLY ONE match, never "the first". (F2, P1.) Nothing rejects duplicate ids at
+        # ingest, so a model emitting two findings called F1 makes `collect()` advertise
+        # both at the same address while a first-match write silently pins the earlier one
+        # forever: after it is dispositioned the second can never be selected, and --force
+        # just rewrites the first again. Failing loudly is the only honest answer, because
+        # the address genuinely does not identify one record.
+        matches = [f for f in (row.get("findings") or [])
+                   if isinstance(f, dict) and str(f.get("id")) == fid]
+        if not matches:
+            raise KeyError(f"run {run_no} has no finding {fid!r}")
+        if len(matches) > 1:
+            raise KeyError(
+                f"run {run_no} has {len(matches)} findings with id {fid!r}, so {addr!r} "
+                f"does not identify one record. Fix the duplicate ids in the ledger row "
+                f"before dispositioning it.")
+        target = matches[0]
 
-    lines[run_no - 1] = json.dumps(row, ensure_ascii=False)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    os.replace(tmp, path)
+        existing = (target.get("disposition") or "").strip()
+        if existing and not force:
+            raise ValueError(
+                f"{addr} is already dispositioned {existing!r}; pass --force to change it. "
+                "Silently flipping a recorded decision is how the record stops meaning "
+                "anything.")
 
-    return {"addr": addr, "severity": target.get("severity"),
+        target["disposition"] = disposition
+        target["why"] = why.strip()
+        target["dispositioned"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+        lines[run_no - 1] = json.dumps(row, ensure_ascii=False)
+        captured["result"] = {
+            "addr": addr, "severity": target.get("severity"),
             "summary": target.get("summary"), "disposition": disposition,
             "why": target["why"], "dispositioned": target["dispositioned"]}
+        return "\n".join(lines) + "\n"
+
+    inbox_lock.atomic_update(path, _transform)
+    return captured["result"]
 
 
 def main(argv=None) -> int:
