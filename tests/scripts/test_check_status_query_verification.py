@@ -530,3 +530,76 @@ def test_a_payload_whose_prompt_sits_past_the_byte_ceiling_does_not_fire():
     assert not r.stdout.strip(), (
         "read past the byte ceiling -- the payload was truncated to invalid JSON, "
         "so firing means the ceiling did not hold")
+
+
+def test_a_partial_first_read_cannot_push_the_total_past_the_ceiling():
+    """codex F3, with the payload size that actually discriminates.
+
+    THE SIZE IS THE WHOLE TEST. My first attempt used ceiling + 400,000 bytes,
+    which a clamped AND an unclamped reader both truncate, so it passed against
+    the reverted fix and proved nothing -- the fourth time in this session an
+    input failed for a second independent reason and hid the thing under test.
+    The overshoot is bounded by one chunk (65,535 bytes), so the ONLY payloads
+    that separate the two readers are those between ceiling+1 and
+    ceiling+65,535: an unclamped read swallows the whole document and fires, a
+    clamped one stops short and cannot parse it. Codex used ceiling + 1.
+
+    The tiny first write forces a partial read, which is what de-aligns `total`
+    from the chunk boundary and enables the overshoot at all.
+    """
+    filler = "x" * sq._MAX_STDIN_BYTES
+    body = json.dumps({"prompt": "what's left?", "padding": filler})
+    body = body[:sq._MAX_STDIN_BYTES + 1 - 2] + '"}'          # land just past the ceiling
+    assert sq._MAX_STDIN_BYTES < len(body) <= sq._MAX_STDIN_BYTES + 65535, \
+        f"fixture must sit inside the one-chunk overshoot window, got {len(body)}"
+    assert json.loads(body)["prompt"] == "what's left?", "fixture must be valid JSON that WOULD fire"
+
+    p = subprocess.Popen(
+        [sys.executable, HOOK], stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        env={**os.environ, "PYTHONIOENCODING": "utf-8"},
+    )
+    p.stdin.write(body[:1]); p.stdin.flush()
+    time.sleep(0.15)
+    out, _ = p.communicate(body[1:], timeout=20)
+    assert p.returncode == 0
+    assert not out.strip(), (
+        "fired on a payload past the byte ceiling -- the read overshot its "
+        "allowance and the document stayed parseable")
+
+
+def test_a_polling_failure_does_not_restore_an_unbounded_read(monkeypatch):
+    """codex F4. The fallback must fail open on collected bytes, never re-block.
+
+    The previous fallbacks called sys.stdin.read() -- the exact unbounded wait
+    this function exists to remove, reintroduced at the moment it was needed.
+    Injecting the failure at select() is legitimate here: select IS the thing
+    that fails in the scenario, and the assertion is about what the function
+    does next, not about the mock.
+    """
+    calls = {"stdin_read": 0}
+
+    def exploding_select(*a, **k):
+        raise OSError("simulated polling failure")
+
+    class Boom:
+        def fileno(self): return 0
+        def read(self, *a):
+            calls["stdin_read"] += 1
+            raise AssertionError("fell back to an unbounded sys.stdin.read()")
+
+    monkeypatch.setattr(sq.select, "select", exploding_select)
+    monkeypatch.setattr(sq.sys, "stdin", Boom())
+    result = sq.read_stdin_bounded(deadline_s=0.5)
+    assert result == "", "should fail open on what it had, which is nothing"
+    assert calls["stdin_read"] == 0
+
+
+def test_an_unusable_stdin_fails_open_without_blocking():
+    """The fileno() arm of the same F4 fix."""
+    class NoFileno:
+        def fileno(self): raise OSError("no descriptor")
+        def read(self, *a): raise AssertionError("fell back to an unbounded read")
+    import unittest.mock as m
+    with m.patch.object(sq.sys, "stdin", NoFileno()):
+        assert sq.read_stdin_bounded(deadline_s=0.5) == ""

@@ -200,10 +200,12 @@ def read_stdin_bounded(deadline_s: float = _STDIN_DEADLINE_S) -> str:
     try:
         fd = sys.stdin.fileno()
     except Exception:
-        try:
-            return sys.stdin.read()
-        except Exception:
-            return ""
+        # NO UNBOUNDED FALLBACK (codex F4, 2026-09-07). This used to call
+        # sys.stdin.read(), which is precisely the unbounded wait this function
+        # exists to remove -- a "graceful degradation" that abandoned both halves
+        # of the contract the moment it was needed. A bounded reader that cannot
+        # poll must fail open on what it has, which here is nothing.
+        return ""
 
     chunks: list[bytes] = []
     total = 0
@@ -215,14 +217,24 @@ def read_stdin_bounded(deadline_s: float = _STDIN_DEADLINE_S) -> str:
         try:
             ready, _, _ = select.select([fd], [], [], remaining)
         except (OSError, ValueError):
-            try:
-                return sys.stdin.read()
-            except Exception:
-                return b"".join(chunks).decode("utf-8", "replace")
+            # Same reasoning as the fileno() arm: never fall back to an unbounded
+            # read. Return what was already collected, which also stops the old
+            # behaviour of DISCARDING accumulated chunks on the way out.
+            break
         if not ready:
             break
+        # CLAMPED to the remaining allowance (codex F3, 2026-09-07). Asking for a
+        # full 64 KiB and checking the total AFTERWARDS lets a partial read
+        # de-align the running count from the chunk boundary, so a later read can
+        # cross the ceiling by up to 65,535 bytes. Reproduced through the CLI at
+        # 1,048,577 bytes: the hook read past its own declared limit, parsed the
+        # complete JSON, and fired. "At most 1 MiB" has to be enforced at the
+        # request, not audited after the fact.
+        want = min(65536, _MAX_STDIN_BYTES - total)
+        if want <= 0:
+            break              # volume ceiling reached exactly
         try:
-            chunk = os.read(fd, 65536)
+            chunk = os.read(fd, want)
         except (OSError, ValueError):
             break
         if not chunk:          # EOF, the normal path
