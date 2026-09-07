@@ -72,6 +72,79 @@ def _is_missing_action(value: str) -> bool:
     return stripped in ("", "—", "-", "–", "—")
 
 
+def parse_all_rows(content: str, today: date) -> list[dict]:
+    """Parse EVERY pipeline row, terminal ones included, with full 8-column data.
+
+    parse_pipeline() intentionally drops terminal rows (it only counts them) because
+    /pipe show is about live work. Consumers that need the whole table — the dashboard
+    TUI and db_sync.py — used to each keep their own reduced parser, which is how the
+    dashboard ended up carrying only 5 of the 8 columns. This is the single source of
+    truth for "all rows"; classification still defers to stage_vocab.
+
+    Adds `archived` (terminal stage OR sitting under an Archived/Withdrawn/Rejected
+    heading) on top of the fields parse_pipeline emits.
+    """
+    rows: list[dict] = []
+    in_archived = False
+
+    for line in content.splitlines():
+        if re.match(r"^##\s+", line):
+            section = line.strip("# ").strip().lower()
+            in_archived = any(t in section for t in ("archived", "withdrawn", "rejected"))
+            continue
+
+        if not line.startswith("|"):
+            continue
+        if re.match(r"\|\s*(Company|---)", line):
+            continue
+
+        cols = [c.strip() for c in line.strip("|").split("|")]
+        if len(cols) < 3 or not cols[0] or cols[0] == "---":
+            continue
+
+        def col(i: int) -> str:
+            return cols[i] if len(cols) > i else ""
+
+        company, role, stage = cols[0], col(1), col(2)
+        date_updated, next_action = col(3), col(4)
+        cv_used, notes, url = col(5), col(6), col(7)
+
+        archived = is_terminal_stage(stage) or in_archived
+
+        days_since_update = None
+        if date_updated and date_updated != "\u2014":
+            try:
+                dt = datetime.strptime(date_updated, "%Y-%m-%d").date()
+                days_since_update = (today - dt).days
+            except ValueError:
+                pass
+
+        threshold = STAGE_THRESHOLDS.get(stage, DEFAULT_THRESHOLD)
+        stale = (not archived
+                 and is_active_pursuit(stage)
+                 and days_since_update is not None
+                 and days_since_update >= threshold)
+        missing_action = (not archived) and _is_missing_action(next_action)
+
+        rows.append({
+            "company": company,
+            "role": role,
+            "stage": stage,
+            "date_updated": date_updated,
+            "next_action": next_action,
+            "cv_used": cv_used,
+            "notes": notes,
+            "url": url,
+            "days_since_update": days_since_update,
+            "archived": archived,
+            "stale": stale,
+            "missing_action": missing_action,
+            "needs_attention": stale or missing_action,
+        })
+
+    return rows
+
+
 def parse_pipeline(content: str, today: date) -> dict:
     active_entries: list[dict] = []
     archived_count = 0
