@@ -414,3 +414,22 @@ def test_a_duplicate_finding_id_is_refused_rather_than_shadowed(repo, tmp_path):
 
     after = fw.read_lines(path)
     assert after[n - 1] == dup, "the ledger must be untouched on the error path"
+
+
+def test_parked_filter_selects_only_deferred_debts(tmp_path):
+    (tmp_path / "tools").mkdir()
+    (tmp_path / "tools" / fw.LEDGER_NAME).write_text(json.dumps({
+        "recorded": "2026-09-07T10:00:00+00:00", "paths": [],
+        "findings": [
+            {"id": "F1", "severity": "P0", "summary": "deferred",
+             "disposition": "parked", "why": "design call"},
+            {"id": "F2", "severity": "P1", "summary": "done",
+             "disposition": "fixed", "why": "shipped"},
+            {"id": "F3", "severity": "P2", "summary": "untouched",
+             "disposition": None}]}) + "\n", encoding="utf-8")
+    assert [f["addr"] for f in fw.collect(tmp_path, parked_only=True)] == ["1.F1"]
+
+
+def test_cli_parked_flag(repo):
+    out = json.loads(run_cli(repo, "list", "--parked").stdout)
+    assert out["count"] == 0        # the fixture has fixed and open, no parked

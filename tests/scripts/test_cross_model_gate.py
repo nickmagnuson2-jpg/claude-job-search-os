@@ -795,3 +795,100 @@ def test_the_installed_hook_matches_the_tracked_one():
 # and it pins the exact ordering that broke. A real behavioural parity test needs a
 # throwaway git repo with a controlled ledger so the verdict does not depend on live
 # state; that is the right shape and it was not built tonight.
+
+
+# --- parked is a DEBT, not a closed state (2026-09-07) --------------------------
+
+def _f(fid, sev="P1", disp=None, why=None, summary="a finding"):
+    d = {"id": fid, "severity": sev, "summary": summary, "disposition": disp}
+    if why:
+        d["why"] = why
+    return d
+
+
+def test_a_parked_finding_still_appears_in_the_summary(tmp_path):
+    """THE BUG THIS EXISTS FOR. open_findings() filters on 'has any disposition', so
+    parking a finding gave it the same silence as fixed and rejected. Nine were parked
+    on 2026-09-07 -- including two live defects in the follow-up date logic that feeds
+    the morning brief -- and /standup stopped showing every one of them."""
+    _row(tmp_path, findings=[_f("F1", "P0", "parked", "real, deferred, needs a design call")])
+    out = g.summary(tmp_path)
+    assert "parked finding" in out
+    assert "a finding" in out
+    assert "needs a design call" in out
+
+
+def test_a_parked_finding_is_NOT_counted_as_open(tmp_path):
+    """The open count must keep meaning 'nobody has looked at these'. Folding parked
+    in would overstate it and destroy the distinction the drain was built for."""
+    _row(tmp_path, findings=[_f("F1", "P1", "parked", "deferred"), _f("F2")])
+    assert len(g.open_findings(tmp_path)) == 1
+    assert "1 open cross-model finding" in g.summary(tmp_path)
+
+
+@pytest.mark.parametrize("disp", ["fixed", "rejected"])
+def test_closed_states_do_NOT_appear_in_the_parked_section(tmp_path, disp):
+    """fixed and rejected are done. Surfacing them would make the section noise, and a
+    noisy section is one the reader learns to skip."""
+    _row(tmp_path, findings=[_f("F1", "P1", disp, "closed out")])
+    assert g.parked_findings(tmp_path) == []
+    assert "parked finding" not in g.summary(tmp_path)
+
+
+def test_a_ledger_with_ONLY_parked_findings_still_renders(tmp_path):
+    """The early return fires when there is nothing to say. A parked debt is something
+    to say, so it must not short-circuit to silence."""
+    _row(tmp_path, findings=[_f("F1", "P1", "parked", "deferred")])
+    assert g.summary(tmp_path) != ""
+
+
+def test_a_parked_finding_with_no_reason_still_shows(tmp_path):
+    """--why is required by the writer, but a hand-edited row may lack it. Dropping the
+    finding because its reason is missing would hide the debt to protect the format."""
+    _row(tmp_path, findings=[_f("F1", "P1", "parked", None, summary="no reason given")])
+    assert "no reason given" in g.summary(tmp_path)
+
+
+def test_parked_findings_are_ordered_most_severe_first(tmp_path):
+    _row(tmp_path, findings=[_f("F1", "P2", "parked", "c", summary="low"),
+                             _f("F2", "P0", "parked", "a", summary="high"),
+                             _f("F3", "P1", "parked", "b", summary="mid")])
+    out = g.summary(tmp_path)
+    assert out.index("high") < out.index("mid") < out.index("low")
+
+
+def test_no_parked_section_when_there_is_nothing_parked(tmp_path):
+    """test_closed_states_do_NOT_appear_in_the_parked_section passes for the WRONG
+    REASON: with no open findings and no waivers, summary() early-returns "" and the
+    parked branch is never reached, so the assertion holds trivially. This forces the
+    branch to be evaluated by giving it an open finding to render first."""
+    _row(tmp_path, findings=[_f("F1", "P1", None), _f("F2", "P2", "fixed", "done")])
+    out = g.summary(tmp_path)
+    assert out != ""
+    assert "open cross-model finding" in out
+    assert "parked finding" not in out
+
+
+def test_a_parked_finding_without_a_reason_prints_no_why_line(tmp_path):
+    """An empty `why:` label is worse than none: it reads as a reason that was given
+    and lost, rather than one that was never recorded."""
+    _row(tmp_path, findings=[_f("F1", "P1", "parked", None, summary="bare")])
+    out = g.summary(tmp_path)
+    assert "bare" in out
+    assert "why:" not in out
+
+
+def test_a_long_reason_is_truncated_with_an_ellipsis(tmp_path):
+    _row(tmp_path, findings=[_f("F1", "P1", "parked", "x" * 400, summary="s")])
+    out = g.summary(tmp_path)
+    assert "..." in out
+    assert "x" * 200 not in out
+
+
+def test_a_short_reason_is_printed_whole_without_an_ellipsis(tmp_path):
+    """The counterpart. Without it the comparison can be inverted and every reason
+    grows an ellipsis it did not earn."""
+    _row(tmp_path, findings=[_f("F1", "P1", "parked", "short and complete", summary="s")])
+    out = g.summary(tmp_path)
+    assert "why: short and complete" in out
+    assert "..." not in out

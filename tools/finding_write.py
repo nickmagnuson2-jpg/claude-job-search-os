@@ -71,7 +71,8 @@ def parse_addr(addr: str) -> tuple[int, str]:
 
 def collect(repo_root: Path, only_open: bool = False,
             severity: str | None = None,
-            unlocated_only: bool = False) -> list[dict]:
+            unlocated_only: bool = False,
+            parked_only: bool = False) -> list[dict]:
     """Every finding, addressed. Malformed rows contribute nothing but are not lost."""
     out = []
     for i, line in enumerate(read_lines(ledger_path(repo_root)), start=1):
@@ -90,6 +91,8 @@ def collect(repo_root: Path, only_open: bool = False,
             if severity and str(f.get("severity") or "") != severity:
                 continue
             if unlocated_only and (f.get("location") or "").strip():
+                continue
+            if parked_only and disp != "parked":
                 continue
             out.append({
                 "addr": f"{i}.{f.get('id')}",
@@ -219,6 +222,8 @@ def main(argv=None) -> int:
     p_list.add_argument("--severity", default=None, help="filter, e.g. P0")
     p_list.add_argument("--unlocated", action="store_true", dest="unlocated_only",
                         help="only findings with no path:line (unverifiable as written)")
+    p_list.add_argument("--parked", action="store_true", dest="parked_only",
+                        help="only findings verified real and deliberately deferred")
 
     p_set = sub.add_parser("set", help="disposition one finding")
     p_set.add_argument("addr", help="'<run>.<finding id>', e.g. 1.F3")
@@ -233,7 +238,8 @@ def main(argv=None) -> int:
 
     if args.cmd == "list":
         found = collect(root, only_open=args.only_open, severity=args.severity,
-                        unlocated_only=args.unlocated_only)
+                        unlocated_only=args.unlocated_only,
+                        parked_only=args.parked_only)
         print(json.dumps({"count": len(found), "findings": found}, indent=2))
         return 0
 

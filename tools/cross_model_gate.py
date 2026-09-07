@@ -333,6 +333,29 @@ def open_findings(repo_root: Path) -> list[dict]:
     return out
 
 
+def parked_findings(repo_root: Path) -> list[dict]:
+    """Findings someone verified as REAL and deliberately deferred.
+
+    THREE STATES, NOT TWO. `fixed` and `rejected` are CLOSED: the work is done or the
+    claim did not survive. `parked` is a DEBT -- verified, still true, not yet paid.
+
+    It was wired to the same silence as the closed states for a few hours on
+    2026-09-07, because open_findings() filters on "has any disposition". Nine findings
+    were parked that evening, including two live defects in the follow-up date logic
+    that feeds the morning brief, and /standup stopped showing every one of them. That
+    is the promotion failure this repo already has a rule about, in a new costume: the
+    status flips, the item leaves the backlog, and the detector goes quiet.
+
+    A debt that stops being displayed is a debt nobody pays.
+    """
+    out = []
+    for row in read_ledger(repo_root):
+        for f in row.get("findings") or []:
+            if isinstance(f, dict) and (f.get("disposition") or "").strip() == "parked":
+                out.append(f)
+    return out
+
+
 SEVERITY_ORDER = {"P0": 0, "P1": 1, "P2": 2}
 
 
@@ -346,7 +369,9 @@ def summary(repo_root: Path) -> str:
     openf = sorted(open_findings(repo_root),
                    key=lambda f: SEVERITY_ORDER.get(f.get("severity"), 9))
     waivers = waiver_count(repo_root)
-    if not openf and not waivers:
+    parked = sorted(parked_findings(repo_root),
+                    key=lambda f: SEVERITY_ORDER.get(f.get("severity"), 9))
+    if not openf and not waivers and not parked:
         return ""            # renders nothing; a daily "0" trains the reader to skip
     lines = []
     for f in openf:
@@ -365,6 +390,19 @@ def summary(repo_root: Path) -> str:
         w = (f"{waivers} cross-model waiver(s) recorded -- skipping is meant to be a "
              f"deliberate act; a rising count means the gate is being routed around")
         head = f"{head}\n{w}" if head else w
+    if parked:
+        # A SEPARATE section, deliberately. Folding these into the open count would
+        # overstate what nobody has looked at; dropping them entirely is what this
+        # function did until 2026-09-07. Reasons are truncated because they are written
+        # to be read at the ledger, not in a daily brief.
+        lines.append(f"\n{len(parked)} parked finding(s) -- verified real, deferred "
+                     f"with a reason. Not closed. `finding_write list --parked` for "
+                     f"addresses:")
+        for f in parked:
+            why = " ".join((f.get("why") or "").split())
+            lines.append(f"  [{f.get('severity', 'P2')}] {f.get('summary', '')}")
+            if why:
+                lines.append(f"        why: {why[:150]}{'...' if len(why) > 150 else ''}")
     return "\n".join([head] + lines) if lines else head
 
 
