@@ -188,6 +188,30 @@ def extract_claimed_paths(text: str):
     return out
 
 
+def project_root(raw: str | None = None) -> Path:
+    """The project root, canonicalized ONCE so every resolver below can trust it.
+
+    CLAUDE_PROJECT_DIR is normally absolute, but nothing guarantees it. A relative
+    value ("." or "job-search") produced a nonsense memory-tier slug, so the hook
+    searched a directory that does not exist and falsely blocked a real save. That
+    is the exact failure direction this hook's memory-tier support was added to
+    remove. Found by cross-model review 2026-09-07 (F1, P1).
+
+    Fixed HERE rather than inside `memory_tier_hit`, because root is consumed by
+    four different resolvers (`resolve`, `peer_repo_hit`, `memory_tier_hit`, and the
+    `os.walk` basename search) and all four are wrong for the same reason on a
+    relative root. Normalizing at the single point of derivation fixes them together
+    and leaves nothing to remember at the call sites.
+
+    `abspath` and not `resolve()`: it normalizes "." and ".." and makes the path
+    absolute WITHOUT following symlinks. Claude Code derives the memory-tier slug
+    from the literal project path, so resolving symlinks here could point at a
+    different tier than the one it actually writes to.
+    """
+    v = raw if raw is not None else (os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd())
+    return Path(os.path.abspath(os.path.expanduser(v)))
+
+
 def resolve(tok: str, root: Path) -> Path:
     t = os.path.expanduser(tok)
     p = Path(t)
@@ -225,6 +249,50 @@ def peer_repo_hit(tok: str, root: Path) -> bool:
     return (root.parent / tok).exists()
 
 
+def memory_tier_hit(tok: str, root: Path, home: Path | None = None) -> bool:
+    """True when the token names a file in this project's LIVE memory tier.
+
+    The live tier is `~/.claude/projects/<slugified-work-tree>/memory/`, which sits
+    OUTSIDE the repo. CLAUDE.md documents it as a primary write destination (all
+    `feedback_*`/`reference_*`/`project_*` rules and MEMORY.md live there), and it is
+    where the memory-writing protocol sends every new rule. `exists_anywhere` searches
+    for bare basenames with `os.walk(root)`, which structurally cannot reach it, so a
+    genuine memory write was reported as a fabricated save.
+
+    Fired 3x on this surface (2026-09-02 cross-vault `personal/`; 2026-09-07 twice,
+    the second being a rule file written to the live tier moments earlier). The
+    friction ladder's 3rd rung is a mandatory script patch, which is this.
+
+    Scope is deliberately narrow. It accepts a bare basename, or a token prefixed
+    `memory/` -- the exact two forms prose uses for these files. It does NOT relax the
+    rule that a multi-segment token is checked exactly: a wrong directory is still a
+    defect worth catching, and a general suffix match would mask it.
+
+    Only ever converts "missing" to "exists", and only when the file is really on disk
+    in that tier, so it cannot mask a real unwritten-file claim.
+    """
+    name = tok[len("memory/"):] if tok.startswith("memory/") else tok
+    # This single validation is load-bearing and is the ONLY guard here. Leading-"/",
+    # leading-"~", and multi-segment tokens all reach it carrying a "/" in `name`, and
+    # an empty or dot name is rejected outright, so the earlier guards this function was
+    # drafted with were redundant. Mutation testing showed them surviving, which is the
+    # same evidence that retired the guards documented in `peer_repo_hit`.
+    #
+    # What a reader can VERIFY here, since function and tests landed in one commit and
+    # the drafting sequence is not visible in the diff: the behavioural tests below
+    # assert the absolute, tilde, traversal, and multi-segment cases directly against
+    # the CURRENT code. They constrain this implementation on its own terms; they are
+    # not evidence about a prior draft. (Cross-model review 2026-09-07, F2.)
+    if not name or "/" in name or name in (".", ".."):
+        return False
+    slug = str(root).replace("/", "-")
+    tier = (home or Path.home()) / ".claude" / "projects" / slug / "memory"
+    # is_file(), NOT exists(): a DIRECTORY whose name looks like a file would otherwise
+    # satisfy a file claim and convert MISSING to EXISTS, which is the one thing this
+    # helper must never do. Found by cross-model review 2026-09-07 (F1, P1).
+    return (tier / name).is_file()
+
+
 PRUNE_DIRS = {".git", "node_modules", ".venv", "venv", "__pycache__", ".pytest_cache"}
 
 
@@ -243,6 +311,8 @@ def exists_anywhere(tok: str, root: Path) -> bool:
     if direct.exists():
         return True
     if peer_repo_hit(tok, root):
+        return True
+    if memory_tier_hit(tok, root):
         return True
     if "/" in tok or tok.startswith("~"):
         return False
@@ -271,7 +341,7 @@ def main() -> int:
     if not text:
         return 0
 
-    root = Path(os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd())
+    root = project_root()
     missing = []
     for tok in extract_claimed_paths(text):
         if not exists_anywhere(tok, root):
