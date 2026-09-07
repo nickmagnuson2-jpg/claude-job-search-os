@@ -251,6 +251,32 @@ def test_violations_exempt_path_returns_empty_list():
     assert hook.violations("tests/fixtures/prep/bad.md", "the load-bearing claim", TABLE) == []
 
 
+def test_violations_no_covering_rows_returns_empty_list():
+    """kills RETURN_NONE on the `if not rows` guard -- the FIFTH clean path.
+
+    The four tests above cover the four early guards. This one covers the guard
+    the series missed, and it was missed for a structural reason worth naming:
+    it is UNREACHABLE with the live TABLE. scope_covers() returns True for every
+    "all"-scoped row, and the real table has those, so `rows` is never empty no
+    matter what path you pass. Reaching it needs a table of ONLY "authored" rows
+    plus a path inside AUTHORED_EXEMPT, which is what this builds.
+
+    That is the same trap as an input that fails for a second independent
+    reason: a test written with the live fixture cannot observe this guard, and
+    no amount of varying the path or content fixes it. The fixture is the thing
+    that has to change.
+    """
+    authored_only = [row for row in TABLE if row[1] == "authored"]
+    assert authored_only, "fixture guard: the live table must still carry authored rows"
+    # data/reflections/<date>... is inside AUTHORED_EXEMPT, so scope_covers() is
+    # False for every row above and the covering set comes out empty.
+    assert hook.violations(
+        "data/reflections/2026-01-01-note.md",
+        "the load-bearing claim",
+        authored_only,
+    ) == []
+
+
 def test_violations_ban_documentation_file_returns_empty_list():
     # kills RETURN_NONE on the FILE_MARKER guard (violations L129).
     content = "check_banned_phrase.py flags 'load-bearing' wherever it appears."
