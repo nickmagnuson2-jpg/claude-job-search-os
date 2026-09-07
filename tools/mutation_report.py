@@ -36,6 +36,23 @@ REPO_ROOT = Path(os.environ.get("MUTATION_REPO_ROOT",
 DEFAULT_STATE = REPO_ROOT / "output" / "analysis" / "082626-mutation-baseline"
 
 
+def measured_rows(rows: list[dict]) -> list[dict]:
+    """The rows that actually produced a verdict.
+
+    ATTEMPTING A TOOL IS NOT MEASURING IT. A sweep row exists for every tool the runner
+    reached, including ones that returned baseline_red or errored, and those carry no
+    killed/survived counts. Coverage must be reported over this subset or it overstates
+    what is known.
+
+    Extracted 2026-09-07 so the test asserts the TOOL'S definition instead of its own
+    copy. The copy read `len(rows)` -- every line in the file -- an identity that held
+    only while every attempt succeeded. On a state file with 175 rows and 64 errors it
+    was off by 64, which made the test red, and that redness then propagated as
+    baseline_red to 8 unrelated tools through map_tests.
+    """
+    return [r for r in rows if r.get("killed") is not None]
+
+
 def build(state_dir: Path) -> str:
     targets = {r["tool"]: r for r in
                json.loads((state_dir / "targets.json").read_text(encoding="utf-8"))}
@@ -62,7 +79,7 @@ def build(state_dir: Path) -> str:
     # rate disagreed with mutation_trend's on the identical file.
     #
     # Null is not zero. An unmeasured tool is reported as unmeasured, never as a finding.
-    ok = [r for r in rows if r.get("killed") is not None]
+    ok = measured_rows(rows)
     bad = [r for r in rows if r.get("killed") is None]
     tot_m = sum(r["mutants"] for r in ok)
     tot_s = sum(r.get("survived") or 0 for r in ok)

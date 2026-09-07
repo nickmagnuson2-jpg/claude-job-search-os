@@ -368,7 +368,14 @@ def test_the_real_tool_runs_against_the_live_sweep_state(tmp_path):
         capture_output=True, text=True, cwd=str(REPO_ROOT),
         env={**os.environ, "PYTHONIOENCODING": "utf-8"})
     assert r.returncode == 0, r.stderr
-    assert f"Sweep coverage: {len(rows)} of" in r.stdout
+    # THE TOOL'S OWN DEFINITION, not a second copy of it. This asserted len(rows) --
+    # every line in the state file -- until 2026-09-07. That identity holds only while
+    # every attempted tool returns a verdict; the live file had 175 rows and 64 errors,
+    # so the assertion was off by 64 and the test went red. map_tests then mapped this
+    # file to 11 tools by mere mention, and every one of them recorded baseline_red:
+    # a wrong assertion in one test suppressing mutation measurement for eight others.
+    from tools.mutation_report import measured_rows
+    assert f"Sweep coverage: {len(measured_rows(rows))} of" in r.stdout
     # Conditional ON PURPOSE. A bare `assert "NOT MEASURED" in r.stdout` asserts the live
     # corpus is INCOMPLETE, so it passes only while the sweep is unfinished and fails the
     # moment one succeeds -- which is exactly how it broke on 2026-09-02 at 110 of 110.
@@ -708,3 +715,29 @@ def test_unmeasured_section_explains_that_baseline_red_is_not_untested(tmp_path)
     assert "does NOT mean the tool is untested" in body, (
         "the section states a count without the interpretation that prevents "
         "misreading it:\n" + body[:800])
+
+
+def test_coverage_counts_MEASURED_rows_not_every_row():
+    """Directly pins the identity that broke. A state file containing a mix of
+    verdict-bearing and errored rows must report only the former as coverage --
+    attempting a tool is not measuring it."""
+    from tools.mutation_report import measured_rows
+    rows = [
+        {"tool": "tools/a.py", "killed": 10, "survived": 2, "mutants": 12},
+        {"tool": "tools/b.py", "code": "baseline_red"},
+        {"tool": "tools/c.py", "killed": 0, "survived": 5, "mutants": 5},
+        {"tool": "tools/d.py", "code": "error"},
+    ]
+    got = measured_rows(rows)
+    assert [r["tool"] for r in got] == ["tools/a.py", "tools/c.py"]
+    assert len(got) != len(rows), (
+        "if these were equal the old assertion would still pass and the regression "
+        "would be invisible")
+
+
+def test_a_zero_killed_row_still_counts_as_measured():
+    """`killed: 0` is a real verdict. A truthiness check instead of `is not None`
+    would silently drop every tool whose mutants all survived -- the worst-protected
+    tools in the corpus, dropped from the coverage denominator."""
+    from tools.mutation_report import measured_rows
+    assert len(measured_rows([{"tool": "t", "killed": 0, "survived": 9}])) == 1
