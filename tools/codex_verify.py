@@ -42,6 +42,7 @@ from __future__ import annotations
 import argparse
 import json
 import subprocess
+import time
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -78,11 +79,30 @@ OUTPUT RULES.
    message, which is captured separately and discarded.
 2. End the file with a section titled exactly "## FINDINGS (machine-readable)" holding a
    JSON array. One object per finding: {{"id": "F1", "severity": "P0|P1|P2",
-   "summary": "<one sentence>"}}. This array is parsed. A finding you state only in prose
-   reaches nobody.
+   "location": "<path>:<line>", "summary": "<one sentence>"}}. This array is parsed. A
+   finding you state only in prose reaches nobody.
+   LOCATION IS REQUIRED and must name a real file and line in the material you were
+   given. Every finding is independently re-verified at that path and line before
+   anyone acts on it, so a finding without one cannot enter the process at all -- it is
+   recorded and flagged as unactionable rather than silently dropped. If you cannot
+   point at a line, you are describing a concern rather than reporting a defect; say it
+   in the prose body and leave it out of the array.
 3. Priority-order the findings. Say which of my claims are WRONG, which are UNPROVEN, and
    which are right for the wrong reason. Assume I am wrong and try to prove it.
-   Agreement is worth nothing; a defect I can act on is worth everything.
+4. SEVERITY IS DEFINED BY CONSEQUENCE, not by how much the code bothers you:
+     P0  Reachable in ordinary operation AND its effect is silent -- wrong data
+         recorded, a guard that does not guard, work destroyed, a claim that will be
+         repeated as fact. Nobody finds out by using the thing.
+     P1  A real defect that needs an unusual input or a specific sequence, or that
+         fails loudly enough to be noticed when it happens.
+     P2  Correctness is not at stake: clarity, redundancy, a missing test, a statement
+         that is imprecise rather than untrue.
+5. AN EMPTY ARRAY IS A VALID AND EXPECTED RESULT. Returning zero findings when you found
+   nothing is a successful run, not a wasted one, and it is more useful to me than a
+   padded list. Do NOT manufacture a finding to fill the report, and do not restate a
+   concern you cannot locate as though it were a defect: every finding is re-verified
+   at its path and line, so an invented one costs a full verification pass to discard.
+   Report only what you can point at.
 Do not ask questions."""
 
 
@@ -198,15 +218,46 @@ def build_prompt(repo_root: Path, target: str, question: str, report: Path,
     return "\n\n".join(parts)
 
 
+FINDINGS_MARKER = "## FINDINGS (machine-readable)"
+
+
+def report_written_this_run(report: Path, started: float) -> bool:
+    """Did THIS run produce the file, or was it already sitting there?
+
+    One second of slack: filesystem mtime granularity can round a write that happened
+    microseconds after `started` down to just before it, and a false negative here
+    would discard a genuine review.
+    """
+    # No is_file() pre-check: stat() already raises OSError when the file is absent,
+    # so the guard was a second spelling of the same branch -- and an unreachable one,
+    # which mutation testing surfaced as two survivors.
+    try:
+        return report.stat().st_mtime >= started - 1.0
+    except OSError:
+        return False
+
+
+def has_findings_block(report: Path) -> bool:
+    """A report without the machine-readable block verified nothing this gate can read.
+
+    Distinct from "zero findings": a clean review still emits the marker with an empty
+    array. A missing marker means the model did not follow the output contract, which
+    is a failed run, not a clean one.
+    """
+    try:
+        return FINDINGS_MARKER in report.read_text(encoding="utf-8")
+    except OSError:
+        return False
+
+
 def parse_findings(report: Path) -> list[dict]:
     """Pull the machine-readable block. Prose-only findings reach nobody by design."""
     if not report.is_file():
         return []
     text = report.read_text(encoding="utf-8")
-    marker = "## FINDINGS (machine-readable)"
-    if marker not in text:
+    if FINDINGS_MARKER not in text:
         return []
-    tail = text.split(marker, 1)[1]
+    tail = text.split(FINDINGS_MARKER, 1)[1]
     start = tail.find("[")
     if start < 0:
         return []
@@ -228,8 +279,19 @@ def parse_findings(report: Path) -> list[dict]:
     out = []
     for it in items if isinstance(items, list) else []:
         if isinstance(it, dict) and it.get("summary"):
+            loc = it.get("location")
+            loc = str(loc).strip() if isinstance(loc, str) and loc.strip() else None
             out.append({"id": str(it.get("id") or f"F{len(out) + 1}"),
                         "severity": str(it.get("severity") or "P2"),
+                        # REQUIRED by the prompt, RECORDED as null when absent -- never
+                        # a reason to drop the finding. review-findings-protocol.md
+                        # demands every finding be verified at path:line, so one without
+                        # a location cannot enter the process; but dropping it here
+                        # would be silent loss, the defect class this repo has now
+                        # shipped twice. Flag, do not discard. Consumers filter on it.
+                        # Origin: 1.F12, a hedge about residual risk with no location
+                        # and nothing to fix, which cost a full verification pass.
+                        "location": loc,
                         "summary": str(it["summary"]),
                         # Unset on purpose. An undispositioned finding is what /standup
                         # keeps surfacing, so a report cannot be quietly filed away.
@@ -249,11 +311,22 @@ def run(repo_root: Path, target: str, paths: list[str], question: str,
         return {"status": "printed", "report": str(report)}
 
     report.parent.mkdir(parents=True, exist_ok=True)
+    # Taken BEFORE the run so a report left behind by an EARLIER run cannot be mistaken
+    # for this one's output. Without it, a crashed run re-reads the stale file, records
+    # its findings as fresh, and writes a row that licenses the push.
+    started = time.time()
     proc = subprocess.run(
         ["codex", "exec", "--sandbox", "workspace-write", "--skip-git-repo-check", "-"],
         input=prompt, capture_output=True, text=True, cwd=str(repo_root))
 
-    findings = parse_findings(report)
+    # A row is written for EVERY run, including a failed one: the row is the audit
+    # trail. But a failed run verified nothing, so it is marked and the gate refuses to
+    # be cleared by it. Until 2026-09-06 rc and report_written were recorded here and
+    # read by nobody. Found by cross-model review 2026-09-03 (F5).
+    report_fresh = report_written_this_run(report, started)
+    findings = parse_findings(report) if report_fresh else []
+    verified = bool(proc.returncode == 0 and report_fresh
+                    and has_findings_block(report))
     row = {
         "recorded": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "target": target,
@@ -262,11 +335,18 @@ def run(repo_root: Path, target: str, paths: list[str], question: str,
         "paths": list(paths),
         "findings": findings,
         "waived": False,
+        # WHICH model produced this. The gate counts DISTINCT models per path, so an
+        # unstamped row would be indistinguishable from a second opinion.
+        "model": "codex",
         "rc": proc.returncode,
         "report_written": report.is_file(),
+        "report_fresh": report_fresh,
+        "verified": verified,
     }
     gate.append_row(repo_root, row)
-    return {"status": "ok" if report.is_file() else "no_report_written",
+    status = "ok" if verified else (
+        "no_report_written" if not report_fresh else "run_failed")
+    return {"status": status, "verified": verified,
             "rc": proc.returncode, "report": row["report"],
             "findings": len(findings),
             "open_findings": len([f for f in findings if not f["disposition"]]),

@@ -340,10 +340,19 @@ def test_no_waiver_text_when_there_are_none(tmp_path):
 def test_an_unusable_recorded_timestamp_does_not_clear_the_gate_by_accident(tmp_path,
                                                                            stamp):
     """A row whose timestamp cannot be read must not be treated as fresh enough to
-    license a push; nor may it crash the hook."""
+    license a push; nor may it crash the hook.
+
+    THIS ASSERTION WAS `isinstance(v.blocked, bool)` UNTIL 2026-09-06, which passes
+    whether the gate blocks or clears. The test carried the name of the guarantee and
+    enforced nothing, while the code it named did in fact fail open: check() marked a
+    row stale only `if recorded is not None`, so an unreadable stamp skipped the
+    staleness branch entirely and fell through to clear. A vacuous assertion is worse
+    than no test, because the name is read as coverage.
+    """
     _row(tmp_path, recorded=stamp, paths=["tools/career_scanner/scanner.py"])
     v = g.check(tmp_path, [("tools/career_scanner/scanner.py", 200, 40)], since=0)
-    assert isinstance(v.blocked, bool)
+    assert v.blocked is True
+    assert "unreadable timestamp" in v.message
 
 
 def test_a_naive_timestamp_is_read_as_utc(tmp_path):
@@ -411,3 +420,326 @@ def test_a_verification_predating_the_newest_work_is_rejected(tmp_path):
     v = g.check(tmp_path, [("tools/career_scanner/scanner.py", 200, 40)],
                 since=work_committed.timestamp())
     assert v.blocked is True, "code written after its verification was let through"
+
+
+# --- F3, F5, F7: the three fail-OPEN defects, fixed 2026-09-06 ------------------
+# Every failure mode this gate had pointed the same way: it CLEARED a push it should
+# have blocked. None of them ever blocked wrongly. A gate whose only failure direction
+# is permissive is not a gate, so these tests all assert on the blocking direction.
+
+def _multi(tmp_path, *paths, **kw):
+    """A push that qualifies on breadth, so `triggers` holds every path."""
+    return [(p, 20, 5) for p in paths]
+
+
+# F3 -- coverage is per-path, not per-push.
+
+def test_a_row_covering_ONE_triggering_path_does_not_clear_the_others(tmp_path):
+    """The whole F3 defect in one test: before 2026-09-06 a row naming a single path
+    cleared an arbitrarily large push that the review never saw."""
+    _row(tmp_path, paths=["tools/a.py"])
+    changes = _multi(tmp_path, *[f"tools/{c}.py" for c in "abcdef"])
+    v = g.check(tmp_path, changes, since=0)
+    assert v.blocked is True
+    assert "tools/b.py" in v.message
+    assert "Uncovered" in v.message
+
+
+def test_coverage_accumulates_across_rows(tmp_path):
+    """Two focused reviews must together clear a push spanning both. Otherwise the fix
+    for F3 forces one giant review, which is the payload size the wrapper caps."""
+    names = [f"tools/{c}.py" for c in "abcdef"]
+    _row(tmp_path, paths=names[:3])
+    _row(tmp_path, paths=names[3:])
+    assert g.check(tmp_path, _multi(tmp_path, *names), since=0).blocked is False
+
+
+def test_only_the_TRIGGERING_paths_need_coverage(tmp_path):
+    """A push that qualifies because of a hook must not also demand a review of the
+    unrelated README that rode along."""
+    _row(tmp_path, paths=["tools/check_thing.py"])
+    v = g.check(tmp_path, [("tools/check_thing.py", 3, 1), ("README.md", 40, 2)],
+                since=0)
+    assert v.blocked is False
+
+
+def test_a_sibling_repos_review_cannot_clear_a_code_push_here(tmp_path):
+    """Runs 11 and 12 in the live ledger verified a peer repo's client deliverable.
+    Under the old any-overlap rule such a row could license work here."""
+    _row(tmp_path, paths=["output/example-client/deliverable.xlsx", "tools/a.py"])
+    v = g.check(tmp_path, _multi(tmp_path, *[f"tools/{c}.py" for c in "abcdef"]),
+                since=0)
+    assert v.blocked is True
+
+
+# F5 -- a run that did not complete verified nothing.
+
+@pytest.mark.parametrize("row_kw,why", [
+    ({"verified": False}, "explicitly marked unverified"),
+    ({"rc": 1, "report_written": True}, "legacy row, non-zero exit"),
+    ({"rc": 0, "report_written": False}, "legacy row, no report"),
+])
+def test_a_failed_run_does_not_clear_the_gate(tmp_path, row_kw, why):
+    _row(tmp_path, paths=["tools/career_scanner/scanner.py"], **row_kw)
+    v = g.check(tmp_path, [("tools/career_scanner/scanner.py", 200, 40)], since=0)
+    assert v.blocked is True, why
+    assert "did not complete" in v.message
+
+
+def test_a_successful_run_still_clears(tmp_path):
+    _row(tmp_path, paths=["tools/career_scanner/scanner.py"], verified=True)
+    assert g.check(tmp_path, [("tools/career_scanner/scanner.py", 200, 40)],
+                   since=0).blocked is False
+
+
+def test_a_waiver_is_not_treated_as_a_failed_run(tmp_path):
+    """A waiver carries no rc and no report. It is a decision Nick typed, and the F5
+    fix must not silently revoke it."""
+    g.record_waiver(tmp_path, ["tools/career_scanner/scanner.py"], "deliberate")
+    assert g.check(tmp_path, [("tools/career_scanner/scanner.py", 200, 40)],
+                   since=0).blocked is False
+
+
+def test_legacy_rows_without_the_verified_field_still_clear(tmp_path):
+    """The twelve rows written before 2026-09-06 carry rc and report_written. The fix
+    must not invalidate them wholesale and block Nick's next push."""
+    _row(tmp_path, paths=["tools/career_scanner/scanner.py"], rc=0, report_written=True)
+    assert g.check(tmp_path, [("tools/career_scanner/scanner.py", 200, 40)],
+                   since=0).blocked is False
+
+
+# F7 -- unknown ledger state is not verified state.
+
+def test_a_corrupt_line_BESIDE_a_good_row_blocks(tmp_path):
+    """The pre-existing corrupt-ledger test used a ledger with NO valid rows, so it
+    passed for the wrong reason: it blocked on emptiness, not on corruption. With one
+    good row present, the old code shredded the bad line silently and cleared."""
+    _row(tmp_path, paths=["tools/career_scanner/scanner.py"])
+    with g.ledger_path(tmp_path).open("a", encoding="utf-8") as fh:
+        fh.write("{half a row\n")
+    v = g.check(tmp_path, [("tools/career_scanner/scanner.py", 200, 40)], since=0)
+    assert v.blocked is True
+    assert "unreadable" in v.message
+
+
+def test_a_valid_json_non_object_line_counts_as_corrupt(tmp_path):
+    _row(tmp_path, paths=["tools/career_scanner/scanner.py"])
+    with g.ledger_path(tmp_path).open("a", encoding="utf-8") as fh:
+        fh.write("[1, 2, 3]\n")
+    assert g.check(tmp_path, [("tools/career_scanner/scanner.py", 200, 40)],
+                   since=0).blocked is True
+
+
+def test_read_ledger_with_health_separates_rows_from_damage(tmp_path):
+    _row(tmp_path, paths=["tools/a.py"])
+    with g.ledger_path(tmp_path).open("a", encoding="utf-8") as fh:
+        fh.write("{bad\n\n[1]\n")
+    rows, corrupt = g.read_ledger_with_health(tmp_path)
+    assert len(rows) == 1
+    assert corrupt == 2
+
+
+def test_read_ledger_still_returns_only_rows(tmp_path):
+    """The wrapper's contract is unchanged for its other callers (summary,
+    open_findings, waiver_count)."""
+    _row(tmp_path, paths=["tools/a.py"])
+    assert len(g.read_ledger(tmp_path)) == 1
+
+
+# --- killing the 2026-09-06 mutation survivors ----------------------------------
+
+def test_a_waiver_recorded_after_a_failed_run_still_clears(tmp_path):
+    """The waiver branch must win on its own, not by accidentally falling through to
+    the no-provenance default. A waiver row that also carries rc=1 is the case that
+    separates the two, and without it the whole `if row.get("waived")` line can be
+    deleted with the suite still green."""
+    _row(tmp_path, paths=["tools/career_scanner/scanner.py"],
+         waived=True, rc=1, report_written=False)
+    assert g.check(tmp_path, [("tools/career_scanner/scanner.py", 200, 40)],
+                   since=0).blocked is False
+
+
+def test_the_block_message_names_only_the_conditions_that_actually_occurred(tmp_path):
+    """A message that always lists stale, unusable and failed counts -- including
+    zeros -- reads as diagnosis and is noise. Each clause must be conditional."""
+    v = g.check(tmp_path, [("tools/career_scanner/scanner.py", 200, 40)], since=0)
+    assert v.blocked is True
+    msg = v.message.lower()
+    assert "older" not in msg
+    assert "unreadable timestamp" not in msg
+    assert "did not complete" not in msg
+
+
+def test_a_stale_record_is_reported_without_the_other_two_clauses(tmp_path):
+    _row(tmp_path, recorded="2026-09-01T10:00:00+00:00",
+         paths=["tools/career_scanner/scanner.py"])
+    since = time.mktime(time.strptime("2026-09-02", "%Y-%m-%d"))
+    msg = g.check(tmp_path, [("tools/career_scanner/scanner.py", 200, 40)],
+                  since=since).message.lower()
+    assert "older" in msg
+    assert "unreadable timestamp" not in msg
+    assert "did not complete" not in msg
+
+
+def test_a_long_uncovered_list_is_truncated_with_a_count(tmp_path):
+    names = [f"tools/f{i}.py" for i in range(8)]
+    v = g.check(tmp_path, [(p, 20, 5) for p in names], since=0)
+    assert v.blocked is True
+    assert "(+2 more)" in v.message
+
+
+def test_a_short_uncovered_list_carries_no_more_suffix(tmp_path):
+    names = [f"tools/f{i}.py" for i in range(6)]
+    v = g.check(tmp_path, [(p, 30, 5) for p in names], since=0)
+    assert v.blocked is True
+    assert "more)" not in v.message
+
+
+# --- unlocated findings are surfaced, not silently equal ------------------------
+
+def test_summary_marks_a_finding_with_no_location(tmp_path):
+    _row(tmp_path, findings=[{"id": "F1", "severity": "P1", "summary": "vague",
+                              "disposition": None}])
+    out = g.summary(tmp_path)
+    assert "(no location)" in out
+    assert "1 with no location" in out
+
+
+def test_summary_does_not_mark_a_located_finding(tmp_path):
+    _row(tmp_path, findings=[{"id": "F1", "severity": "P1", "summary": "real",
+                              "location": "tools/x.py:9", "disposition": None}])
+    out = g.summary(tmp_path)
+    assert "no location" not in out
+
+
+def test_summary_counts_only_the_unlocated_ones(tmp_path):
+    _row(tmp_path, findings=[
+        {"id": "F1", "severity": "P0", "location": "a.py:1", "summary": "x",
+         "disposition": None},
+        {"id": "F2", "severity": "P1", "summary": "y", "disposition": None},
+        {"id": "F3", "severity": "P2", "location": "  ", "summary": "z",
+         "disposition": None}])
+    assert "2 with no location" in g.summary(tmp_path)
+
+
+# --- blast-radius tiers (2026-09-06) --------------------------------------------
+# Nick chose the axis: "the latter is blast radius." Diff SIZE ranked a 400-line test
+# refactor above a three-line Hard Rule edit. These tests pin the ordering that
+# replaced it, and the bound that keeps the gate from becoming unpassable.
+
+@pytest.mark.parametrize("path,tier", [
+    ("CLAUDE.md", 3),
+    ("memory/MEMORY.md", 3),
+    (".claude/settings.json", 3),
+    ("tools/check_public_pii.py", 3),
+    ("tools/prepush_pii_guard.py", 3),
+    ("output/example-client/090626-cover-letter.md", 3),
+    (".claude/skills/apply/SKILL.md", 2),
+    ("framework/style-guidelines.md", 2),
+    ("tools/pipe_write.py", 2),
+    ("output/analysis/090626-NEXT-HANDOFF.md", 2),
+    ("tools/mutation_report.py", 1),
+    ("tests/scripts/test_x.py", 1),
+    ("README.md", 0),
+    ("docs/usage.md", 0),
+])
+def test_blast_tier_of_a_path(path, tier):
+    assert g.blast_tier([path])[0] == tier
+
+
+def test_the_highest_tier_in_the_push_wins(the=None):
+    """A push is as dangerous as its most dangerous file, never its average."""
+    tier, triggers = g.blast_tier(["README.md", "tools/x.py", "CLAUDE.md"])
+    assert tier == 3
+    assert triggers == ["CLAUDE.md"]
+
+
+def test_a_three_line_hard_rule_edit_outranks_a_large_test_refactor():
+    """The whole point of the axis change, as one assertion."""
+    rule = g.qualifies([("CLAUDE.md", 2, 1)])
+    refactor = g.qualifies([("tests/scripts/test_x.py", 400, 380)])
+    assert rule.tier > refactor.tier
+
+
+def test_a_wired_hook_keeps_its_specific_reason_and_gets_tier_3():
+    """The tier branch must not preempt the reason a reader acts on. Both matter:
+    'changes a wired hook' says WHY, tier 3 says HOW MUCH."""
+    v = g.qualifies([("tools/check_public_pii.py", 1, 1)])
+    assert v.tier == 3
+    assert "wired hook" in v.reason
+
+
+# --- the WIRED_MODELS bound -----------------------------------------------------
+
+def test_the_requirement_is_bounded_by_the_models_that_exist(monkeypatch):
+    """Requiring two models while one is wired blocks every tier-2 push forever, and
+    a gate that can only be waived is theatre. The tier still asks for two; the gate
+    demands what is reachable."""
+    monkeypatch.setattr(g, "WIRED_MODELS", ("codex",))
+    assert g.TIER_MODELS[2] == 2
+    assert g.models_required(2) == 1
+
+
+def test_wiring_a_second_model_activates_the_real_requirement(monkeypatch):
+    """The activation step is one line. This asserts it is actually one line."""
+    monkeypatch.setattr(g, "WIRED_MODELS", ("codex", "gemini"))
+    assert g.models_required(2) == 2
+    assert g.models_required(3) == 2
+    assert g.models_required(1) == 1
+    assert g.models_required(0) == 0
+
+
+def test_two_rows_from_the_SAME_model_are_one_verification(tmp_path, monkeypatch):
+    """Independence is the product. A second pass by the same model reproduces the
+    same blind spots, so it must not satisfy a two-model tier."""
+    monkeypatch.setattr(g, "WIRED_MODELS", ("codex", "gemini"))
+    _row(tmp_path, paths=["CLAUDE.md"], model="codex")
+    _row(tmp_path, paths=["CLAUDE.md"], model="codex")
+    v = g.check(tmp_path, [("CLAUDE.md", 3, 1)], since=0)
+    assert v.blocked is True
+
+
+def test_two_rows_from_DIFFERENT_models_clear_a_tier_3_path(tmp_path, monkeypatch):
+    monkeypatch.setattr(g, "WIRED_MODELS", ("codex", "gemini"))
+    _row(tmp_path, paths=["CLAUDE.md"], model="codex")
+    _row(tmp_path, paths=["CLAUDE.md"], model="gemini")
+    assert g.check(tmp_path, [("CLAUDE.md", 3, 1)], since=0).blocked is False
+
+
+def test_an_unstamped_row_is_attributed_to_the_only_model_there_was():
+    """Every row before 2026-09-06 came from codex. Counting them as 'unknown' would
+    let two legacy rows read as two independent models."""
+    assert g.row_model({}) == "codex"
+    assert g.row_model({"model": "  "}) == "codex"
+    assert g.row_model({"model": "gemini"}) == "gemini"
+
+
+def test_the_block_message_says_the_second_model_is_missing(tmp_path, monkeypatch):
+    """A shortfall the operator cannot see is a shortfall they cannot fix."""
+    monkeypatch.setattr(g, "WIRED_MODELS", ("codex",))
+    v = g.check(tmp_path, [("CLAUDE.md", 3, 1)], since=0)
+    assert v.blocked is True
+    assert "only 1 is wired" in v.message
+    assert "WIRED_MODELS" in v.message
+
+
+def test_a_governed_document_keeps_its_own_reason(the=None):
+    """Since governed docs are now ALSO tier 2 via BLAST_RULES, the dedicated branch
+    can be deleted with qualification unchanged -- only the reason degrades from
+    'changes a governed document' to a generic tier line. The reason is what the
+    operator reads to decide what to verify, so it is load-bearing."""
+    v = g.qualifies([("output/analysis/090626-NEXT-HANDOFF.md", 4, 1)])
+    assert v.qualified is True
+    assert "governed document" in v.reason
+    assert v.tier == 2
+
+
+def test_no_shortfall_note_when_every_wanted_model_is_wired(tmp_path, monkeypatch):
+    """The counterpart to test_the_block_message_says_the_second_model_is_missing.
+    Without it the condition can be made unconditional and the gate reports a
+    shortfall that does not exist, which trains the reader to ignore the line."""
+    monkeypatch.setattr(g, "WIRED_MODELS", ("codex", "gemini"))
+    v = g.check(tmp_path, [("CLAUDE.md", 3, 1)], since=0)
+    assert v.blocked is True
+    assert "is wired" not in v.message
+    assert "WIRED_MODELS" not in v.message

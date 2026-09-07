@@ -442,3 +442,134 @@ def test_the_cli_emits_json_on_a_real_run(tmp_path, monkeypatch, capsys):
     cv.main(["--target", "t", "--repo-root", str(tmp_path),
              "--report", str(tmp_path / "r.md")])
     assert json.loads(capsys.readouterr().out)["status"] == "no_report_written"
+
+
+# --- F5: a run that did not complete must not be recorded as a verification -------
+# Origin: cross-model review 2026-09-03 found that codex_verify appended a
+# gate-clearing ledger row unconditionally. rc and report_written were recorded and
+# read by nobody; a crashed run, or one that re-read a report left behind by an
+# EARLIER run, cleared the push. Fixed 2026-09-06.
+
+def test_report_written_this_run_rejects_a_preexisting_file(tmp_path):
+    """The stale-report half of F5. A file older than the run is not this run's work."""
+    import time as _t
+    stale = tmp_path / "old.md"
+    stale.write_text("from yesterday", encoding="utf-8")
+    started = _t.time() + 10  # the run began after the file was written
+    assert cv.report_written_this_run(stale, started) is False
+
+
+def test_report_written_this_run_accepts_a_file_written_after_the_start(tmp_path):
+    import time as _t
+    started = _t.time()
+    fresh = tmp_path / "new.md"
+    fresh.write_text("this run", encoding="utf-8")
+    assert cv.report_written_this_run(fresh, started) is True
+
+
+def test_report_written_this_run_is_false_when_nothing_was_written(tmp_path):
+    import time as _t
+    assert cv.report_written_this_run(tmp_path / "absent.md", _t.time()) is False
+
+
+def test_has_findings_block_requires_the_exact_marker(tmp_path):
+    """A report that ignored the output contract verified nothing this gate can read.
+    Distinct from a clean review, which emits the marker with an empty array."""
+    p = tmp_path / "r.md"
+    p.write_text("# Report\n\nSome prose findings nobody can parse.\n", encoding="utf-8")
+    assert cv.has_findings_block(p) is False
+    p.write_text("# Report\n\n## FINDINGS (machine-readable)\n[]\n", encoding="utf-8")
+    assert cv.has_findings_block(p) is True
+
+
+def test_has_findings_block_is_false_for_a_missing_file(tmp_path):
+    assert cv.has_findings_block(tmp_path / "nope.md") is False
+
+
+def test_a_clean_review_with_zero_findings_still_counts_as_verified(tmp_path):
+    """Zero findings is a legitimate outcome and must not read as a failed run."""
+    p = tmp_path / "clean.md"
+    p.write_text("## FINDINGS (machine-readable)\n[]\n", encoding="utf-8")
+    assert cv.has_findings_block(p) is True
+    assert cv.parse_findings(p) == []
+
+
+# --- the location field (2026-09-06) --------------------------------------------
+# review-findings-protocol.md requires every finding be verified at path:line before
+# it enters anything. A finding with no location cannot be. 1.F12 was exactly that --
+# a hedge about residual risk, no location, nothing to fix -- and it cost a full
+# verification pass to discover. The field makes it visible at parse time.
+
+def _report(tmp_path, array_json: str):
+    p = tmp_path / "r.md"
+    p.write_text(f"# R\n\n## FINDINGS (machine-readable)\n{array_json}\n",
+                 encoding="utf-8")
+    return p
+
+
+def test_a_location_is_captured_when_present(tmp_path):
+    p = _report(tmp_path, '[{"id":"F1","severity":"P0",'
+                          '"location":"tools/x.py:42","summary":"boom"}]')
+    assert cv.parse_findings(p)[0]["location"] == "tools/x.py:42"
+
+
+def test_a_finding_without_a_location_is_KEPT_and_flagged_not_dropped(tmp_path):
+    """Dropping it would be silent loss -- the defect class this repo has shipped
+    twice, and the one the ledger itself was built in the shadow of. Flag, never
+    discard: the finding may be real even though it is not yet actionable."""
+    p = _report(tmp_path, '[{"id":"F1","severity":"P1","summary":"a vague worry"}]')
+    found = cv.parse_findings(p)
+    assert len(found) == 1
+    assert found[0]["location"] is None
+    assert found[0]["summary"] == "a vague worry"
+
+
+@pytest.mark.parametrize("bad", ['""', '"   "', "null", "123", "[]", "{}"])
+def test_a_non_string_or_blank_location_normalises_to_None(tmp_path, bad):
+    p = _report(tmp_path, f'[{{"id":"F1","severity":"P1","location":{bad},'
+                          f'"summary":"s"}}]')
+    assert cv.parse_findings(p)[0]["location"] is None
+
+
+def test_a_located_and_an_unlocated_finding_in_one_report_are_both_kept(tmp_path):
+    p = _report(tmp_path, '[{"id":"F1","severity":"P0","location":"a.py:1",'
+                          '"summary":"real"},'
+                          '{"id":"F2","severity":"P1","summary":"vague"}]')
+    found = cv.parse_findings(p)
+    assert [f["location"] for f in found] == ["a.py:1", None]
+
+
+def test_the_prompt_demands_a_location(tmp_path):
+    """The parser records the field; the prompt is what makes the model emit it.
+    If they drift apart every finding arrives unlocated and the flag becomes noise."""
+    assert '"location"' in cv.REPORT_RULES
+    assert "LOCATION IS REQUIRED" in cv.REPORT_RULES
+
+
+def test_parse_findings_returns_empty_for_a_report_with_no_marker(tmp_path):
+    """Without this the early return can be deleted and the suite stays green -- but
+    the deleted version raises IndexError on `text.split(MARKER, 1)[1]`, so a report
+    that ignored the output contract would crash the wrapper instead of recording an
+    unverified run. Mutation survivor, 2026-09-06."""
+    p = tmp_path / "no_marker.md"
+    p.write_text("# Report\n\nProse only. No machine-readable section at all.\n",
+                 encoding="utf-8")
+    assert cv.parse_findings(p) == []
+
+
+def test_parse_findings_returns_empty_for_a_missing_file(tmp_path):
+    assert cv.parse_findings(tmp_path / "absent.md") == []
+
+
+def test_the_prompt_permits_an_empty_findings_array():
+    """The old framing ("Agreement is worth nothing") made returning zero findings feel
+    like failure, and the measured result was P1 counts that never left 3-6 across
+    twelve runs. A model with no legitimate way to say "nothing here" invents one."""
+    assert "EMPTY ARRAY IS A VALID" in cv.REPORT_RULES
+    assert "Do NOT manufacture a finding" in cv.REPORT_RULES
+
+
+def test_the_prompt_defines_severity_by_consequence():
+    """An undefined scale is the model's own, and it is not stable across runs."""
+    for token in ("SEVERITY IS DEFINED BY CONSEQUENCE", "P0", "P1", "P2"):
+        assert token in cv.REPORT_RULES
