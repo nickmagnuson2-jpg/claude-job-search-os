@@ -892,3 +892,54 @@ def test_a_short_reason_is_printed_whole_without_an_ellipsis(tmp_path):
     out = g.summary(tmp_path)
     assert "why: short and complete" in out
     assert "..." not in out
+
+
+# --- the durability half of e998825 (2026-09-06) --------------------------------
+# append_row takes an advisory lock and then flushes and fsyncs. The lock is covered
+# by test_inbox_lock.py; the flush and the fsync were not covered by anything, and
+# both survived mutation -- the two lines that ARE the durability guarantee of a fix
+# whose commit subject is "the ledger writer erased audit rows it reported success
+# for" could be deleted with the whole suite green.
+#
+# Durability across a power loss is not observable in-process, and the enclosing
+# `with` closes the handle anyway, so neither line changes anything a normal test can
+# see. The one observable handle is ORDERING: at the instant fsync runs, the row must
+# already have left Python's userspace buffer, or fsync is syncing nothing.
+
+def test_append_row_fsyncs_and_does_it_AFTER_flushing(tmp_path, monkeypatch):
+    """Kills both survivors at once.
+
+    Drop os.fsync and the spy never fires. Drop fh.flush() and the spy fires while the
+    row is still buffered in userspace, so an independent read of the file at that
+    instant sees nothing -- which is precisely what fsync-without-flush means: a
+    durability call that persists an empty buffer.
+    """
+    import os as _os
+    seen: list[str] = []
+    real_fsync = _os.fsync
+
+    def spy(fd):
+        try:
+            seen.append(g.ledger_path(tmp_path).read_text(encoding="utf-8"))
+        except OSError:
+            seen.append("")
+        return real_fsync(fd)
+
+    monkeypatch.setattr(_os, "fsync", spy)
+    g.append_row(tmp_path, {"recorded": "2026-09-06T23:00:00+00:00",
+                            "target": "durability-probe", "paths": ["tools/x.py"],
+                            "findings": [], "waived": False})
+
+    assert seen, "os.fsync was never called: the durability guarantee is absent"
+    assert any("durability-probe" in s for s in seen), (
+        "fsync ran before the row left Python's buffer -- fh.flush() is missing, so "
+        "fsync is syncing an empty file and persists nothing")
+
+
+def test_the_row_is_on_disk_and_readable_after_append_row_returns(tmp_path):
+    """The weaker guarantee that must also hold, and that no test asserted either."""
+    g.append_row(tmp_path, {"recorded": "2026-09-06T23:00:00+00:00",
+                            "target": "visible", "paths": [], "findings": []})
+    rows, corrupt = g.read_ledger_with_health(tmp_path)
+    assert corrupt == 0
+    assert [r["target"] for r in rows] == ["visible"]
