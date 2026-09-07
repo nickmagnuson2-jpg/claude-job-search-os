@@ -611,19 +611,25 @@ class TestBytecodeCachingCannotFakeAKill:
     with bytecode writing disabled."""
 
     def test_run_tests_disables_bytecode_writing(self, monkeypatch, tmp_path):
+        # Spies on Popen, not run: run_tests switched to subprocess.Popen on 2026-09-06
+        # so a timeout can kill the whole PROCESS GROUP rather than just pytest, which
+        # was orphaning grandchildren. This test patched subprocess.run and went green-
+        # by-vacuity for exactly one commit -- the spy never fired, so `seen` stayed
+        # empty and the assertion below was the only thing that caught it.
         import mutation_check as mc
         seen = {}
 
-        class _R:
+        class _FakePopen:
             returncode = 0
-            stdout = ""
-            stderr = ""
+            pid = -1
 
-        def fake_run(cmd, **kw):
-            seen.update(kw.get("env") or {})
-            return _R()
+            def __init__(self, cmd, **kw):
+                seen.update(kw.get("env") or {})
 
-        monkeypatch.setattr(mc.subprocess, "run", fake_run)
+            def communicate(self, timeout=None):
+                return "", ""
+
+        monkeypatch.setattr(mc.subprocess, "Popen", _FakePopen)
         mc.run_tests([tmp_path / "test_x.py"], timeout=5)
         assert seen.get("PYTHONDONTWRITEBYTECODE") == "1", (
             "run_tests spawns pytest without PYTHONDONTWRITEBYTECODE=1, so a stale .pyc "
@@ -824,3 +830,88 @@ class TestIndirectCoverageIsKept:
         (tools / "b.py").write_text("import a\nimport leaf\n", encoding="utf-8")
         names = mc.covering_names("leaf", tools)
         assert {"leaf", "middle", "b", "a"} <= names
+
+
+# ---------------------------------------------------------------------------
+# Property 5: a timeout must reap DESCENDANTS, not just the direct child.
+#
+# subprocess.run's timeout SIGKILLs only the process it started. pytest is that
+# process; the tools it exercises spawn their own. Those grandchildren survive,
+# reparent to launchd, and run forever. Observed 2026-09-06: a sweep left
+# check_prep_doc.py at 98.8% CPU for 36 minutes, still going after the sweep exited.
+# ---------------------------------------------------------------------------
+
+def _pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _wait_for_death(pid: int, seconds: float = 8.0) -> bool:
+    deadline = time.time() + seconds
+    while time.time() < deadline:
+        if not _pid_alive(pid):
+            return True
+        time.sleep(0.1)
+    return not _pid_alive(pid)
+
+
+def _spawner(tmp_path, pidfile):
+    """A script that starts a long-lived grandchild, records its pid, then hangs."""
+    s = tmp_path / "spawner.py"
+    s.write_text(textwrap.dedent(f"""
+        import subprocess, sys, time
+        gc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(600)"])
+        open({str(pidfile)!r}, "w").write(str(gc.pid))
+        time.sleep(600)
+    """), encoding="utf-8")
+    return s
+
+
+def _read_pid(pidfile, seconds: float = 10.0) -> int:
+    deadline = time.time() + seconds
+    while time.time() < deadline:
+        if pidfile.exists():
+            txt = pidfile.read_text(encoding="utf-8").strip()
+            if txt:
+                return int(txt)
+        time.sleep(0.05)
+    raise AssertionError("spawner never recorded a grandchild pid")
+
+
+def test_timeout_reaps_the_whole_process_group(tmp_path):
+    """The fix. A hung mutant's grandchildren must not outlive the timeout."""
+    pidfile = tmp_path / "gc.pid"
+    script = _spawner(tmp_path, pidfile)
+    with pytest.raises(subprocess.TimeoutExpired):
+        mc._run_reaping_descendants([sys.executable, str(script)], dict(os.environ), 3)
+    gc_pid = _read_pid(pidfile)
+    assert _wait_for_death(gc_pid), (
+        f"grandchild {gc_pid} survived the timeout -- it will reparent to launchd and "
+        f"hold a core until the machine is rebooted")
+
+
+def test_plain_subprocess_run_would_leak_it(tmp_path):
+    """Positive control. Without the group kill the grandchild DOES survive.
+
+    Without this, a green test above could mean the grandchild simply exited on its
+    own and the reaping was never exercised.
+    """
+    pidfile = tmp_path / "gc.pid"
+    script = _spawner(tmp_path, pidfile)
+    with pytest.raises(subprocess.TimeoutExpired):
+        subprocess.run([sys.executable, str(script)], capture_output=True,
+                       text=True, timeout=3)
+    gc_pid = _read_pid(pidfile)
+    try:
+        assert _pid_alive(gc_pid), (
+            "the control did not reproduce the leak, so the test above proves nothing")
+    finally:
+        try:
+            os.kill(gc_pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass

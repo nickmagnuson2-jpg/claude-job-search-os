@@ -340,6 +340,57 @@ _TB_RE = re.compile(r"^\S+:\d+:\s+([A-Za-z_][\w.]*)", re.M)
 _ASSERTION_KINDS = {"AssertionError", "Failed", "assert"}
 
 
+def _kill_process_group(proc: subprocess.Popen) -> None:
+    """SIGKILL the child's entire process group, falling back to the child alone."""
+    try:
+        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+    except (ProcessLookupError, PermissionError, OSError):
+        try:
+            proc.kill()
+        except ProcessLookupError:
+            pass
+
+
+def _run_reaping_descendants(cmd: list[str], env: dict[str, str],
+                             timeout: int) -> subprocess.CompletedProcess:
+    """subprocess.run, except a timeout kills the whole PROCESS GROUP.
+
+    WHY THIS EXISTS (2026-09-06). `subprocess.run(timeout=...)` SIGKILLs only the DIRECT
+    child. Here that child is pytest, and the tools pytest exercises spawn subprocesses of
+    their own. Those GRANDCHILDREN survive the kill, are reparented to launchd (ppid 1),
+    and run forever.
+
+    Observed that day: a sweep spawned
+    `check_prep_doc.py tests/fixtures/w4/compliant-prep.md` four seconds in. The runner
+    timed out, moved to the next tool, and the sweep ran to completion -- while that
+    grandchild sat at 98.8% CPU and was still going 36 minutes later, after the sweep had
+    exited. It had to be killed by hand.
+
+    One orphan appeared in the first four seconds of a 33-minute run. The 2026-09-05 run
+    went unattended for over nine hours and ended with the machine wedged badly enough to
+    need a power cycle, with no panic and no clean shutdown recorded. Orphans accumulating
+    at that rate, each pinning a core, is the best-supported mechanism for it.
+
+    `start_new_session=True` puts the child in its own process group, so `killpg` reaches
+    every descendant it spawned rather than just the one process we can see.
+    """
+    proc = subprocess.Popen(cmd, cwd=str(REPO_ROOT), stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE, text=True, env=env,
+                            start_new_session=True)
+    try:
+        out, err = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        _kill_process_group(proc)
+        # Drain after the kill so the pipes close and no zombie is left behind. The
+        # group is already dead, so this returns immediately; the bound is paranoia.
+        try:
+            proc.communicate(timeout=10)
+        except subprocess.TimeoutExpired:
+            pass
+        raise
+    return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
+
+
 def run_tests(test_files: list[Path], timeout: int,
               target: Path | None = None) -> tuple[bool, str]:
     """(passed, kill_kind).
@@ -393,8 +444,7 @@ def run_tests(test_files: list[Path], timeout: int,
     if target is not None:
         env["MUTATION_CHECK_TARGET"] = str(target.relative_to(REPO_ROOT))
     try:
-        r = subprocess.run(cmd, cwd=str(REPO_ROOT), capture_output=True,
-                           text=True, timeout=timeout, env=env)
+        r = _run_reaping_descendants(cmd, env, timeout)
     except subprocess.TimeoutExpired:
         return False, "timeout"
     if r.returncode == 0:
