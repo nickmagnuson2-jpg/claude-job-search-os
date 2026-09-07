@@ -428,6 +428,31 @@ stays his (`memory/feedback_commonplace_take_is_voice_pure.md`).
 - Steps 1-6 (before anything is shown to Nick): if any sub-step errors, skip the entire stoic block silently and continue standup.
 - Step 7 (`--mark-prompted`, runs AFTER the prompt is already surfaced and logged): a failure here must NOT be silent. Add an inline warning in the briefing: "Note: stoic prompt shown but state update failed; it may reappear next standup." Nick needs to know the state is out of sync.
 
+### Step 2z: Resolve day context BEFORE any cadence or displacement line (mandatory)
+
+Run `date "+%A %Y-%m-%d"` and classify the day: **working day**, **weekend**, **holiday**
+(name it), or **holiday weekend**. Render the result on the `**Day context:**` line of the
+brief. That line is not optional — a brief without it is incomplete.
+
+**Then apply the gate.** Every cadence, streak, overdue-count, stale-pipeline, and
+displacement observation in this brief carries an implicit "during working days" scope,
+because that is the context those patterns were recorded in. On a non-working day:
+
+- **Report the observation, hold the recommendation.** "Three threads are waiting on you" is
+  a fact and is fine any time. "You should stop what you are doing and go send them" is the
+  part that needs the calendar check. Frame it "for Monday" and move on.
+- **Never count a non-working day toward a zero-activity streak.** Zero outreach on a
+  holiday has no signal in it; outreach sent on a holiday has near-zero expected value.
+- `data/goals.md` Search Principle 4 is the governing test for the infrastructure-vs-outreach
+  pattern specifically. **Read it, do not recall it** — it is a weekday-morning test by
+  construction and it states the energy is "a signal, not a guilt trigger."
+- Nick's own recorded ordering is evidence about his priorities, not a schedule he owes
+  compliance to on his own time.
+
+Origin: `feedback_check_calendar_context_before_surfacing_a_cadence_pattern`, fired
+2026-09-06 and again 2026-09-07 (both Labor Day weekend, same failure, second one after the
+rule was already written). Promoted to skill tier on the 2nd fire.
+
 ### Step 3: Generate the Brief
 
 Output the brief in this exact format:
@@ -437,6 +462,7 @@ Output the brief in this exact format:
 
 **Search thesis:** [one sentence from goals.md, or "— not set" if missing]
 **Current phase:** [phase from goals.md, or "— not set"]
+**Day context:** [Working day | Weekend | Holiday — <name> | Holiday weekend] — MANDATORY, never omit
 
 📥 **Queues:** inbox [N / N] · todos [N] overdue (oldest [N]d) · promotion [N] ([N] partial) · pipeline [N] stale — **total [N]**
 [If complete=false: ⚠️ [N] of 4 queues unreadable: [names]]

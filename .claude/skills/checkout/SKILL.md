@@ -232,6 +232,44 @@ PYTHONIOENCODING=utf-8 python3 tools/remember_apply.py \
 
 Match the file's entry style: a `What landed:` / `Why it matters:` / `Source:` body. The script writes a bare `## YYYY-MM-DD` header with the title on the next line; after writing, merge them into `## YYYY-MM-DD: <title>` to match the existing entries (sibling-format drift observed 2026-06-13). Wait for explicit approval before writing; if Nick declines or edits the wording, honor that verbatim.
 
+### Step 4f: Resolve day context BEFORE any cadence or displacement line (mandatory)
+
+Run `date "+%A %Y-%m-%d"` and classify the day: **working day**, **weekend**, **holiday**
+(name it), or **holiday weekend**. Render it on the `**Day context:**` line of the summary.
+That line is not optional — a checkout summary without it is incomplete.
+
+**Then apply the gate to everything downstream** — the Progress block, the State Audit, the
+"nothing moved outward" style of read, and Tomorrow's Top 3. Every cadence, streak,
+overdue-count, and displacement observation carries an implicit "during working days" scope,
+because that is the context those patterns were recorded in.
+
+On a non-working day:
+
+- **Report the observation, hold the recommendation.** "A pipeline row's gate date passed and no
+  reply came" is a fact and belongs in the log. "You should have spent tonight on it instead" is the
+  part that needs the calendar check. Frame it "for Monday" and move on.
+- **Never count a non-working day toward a zero-activity streak,** and never read zero outreach
+  on a holiday as a signal. Outreach sent on a holiday has near-zero expected value.
+- **The daily log is the longitudinal substrate.** If the entry records a holiday as a
+  displacement day, `/weekly-review` and `/my-world` will read it back as one. Write the day
+  context into the log entry itself, not only into the chat summary.
+- `data/goals.md` Search Principle 4 governs the infrastructure-vs-outreach pattern
+  specifically. **Read it, do not recall it** — it is a weekday-morning test by construction
+  and it states the energy is "a signal, not a guilt trigger."
+- Nick's own recorded ordering is evidence about his priorities, not a schedule he owes
+  compliance to on his own time.
+
+**Also check the session boundary, not just the calendar boundary.** `/checkout` metrics are
+date-bounded, so a session running past midnight is split in half and the entry undercounts it.
+Before writing "Completed today: 0", run
+`git log --since="<yesterday> 12:00" --pretty="%h %ad %s" --date=format:'%H:%M'` and, if the
+commit stream is continuous across midnight, say so in the entry and characterize the whole
+block. Origin 2026-09-07: a 22-commit, ~7-hour session was logged as a 10-commit tail.
+
+Origin: `feedback_check_calendar_context_before_surfacing_a_cadence_pattern`, fired 2026-09-06
+and again 2026-09-07 (both Labor Day weekend, same failure, second one after the rule was
+already written). Promoted to skill tier on the 2nd fire.
+
 ### Step 5: Identify Tomorrow's Top 3 (from active_remaining)
 
 From the current Active to-dos in `data/job-todos.md`, rank tomorrow's top 3:
@@ -259,6 +297,7 @@ Output in this exact format:
 ```markdown
 ## Checkout — [Day, Date spelled out: e.g., Thursday, February 26]
 
+**Day context:** [Working day | Weekend | Holiday — <name> | Holiday weekend] — MANDATORY, never omit
 **Today:** [N] done · [N] active · [N] overdue · Active Process: [N] · Eval Backlog: [N]
 
 #### Done Today
