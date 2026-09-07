@@ -340,7 +340,8 @@ _TB_RE = re.compile(r"^\S+:\d+:\s+([A-Za-z_][\w.]*)", re.M)
 _ASSERTION_KINDS = {"AssertionError", "Failed", "assert"}
 
 
-def run_tests(test_files: list[Path], timeout: int) -> tuple[bool, str]:
+def run_tests(test_files: list[Path], timeout: int,
+              target: Path | None = None) -> tuple[bool, str]:
     """(passed, kill_kind).
 
     kill_kind classifies HOW the suite noticed a mutation, which is the difference
@@ -379,6 +380,18 @@ def run_tests(test_files: list[Path], timeout: int) -> tuple[bool, str]:
     # was cleared. Writing no bytecode at all makes the whole class unreachable.
     env = {**os.environ, "MUTATION_CHECK_ACTIVE": "1",
            "PYTHONDONTWRITEBYTECODE": "1"}
+    # MUTATION_CHECK_TARGET names the ONE file this run is deliberately rewriting.
+    # A guard that detects corrupted source cannot tell an intended mutant from real
+    # corruption, so without this it fires on every mutant and the mutant is scored
+    # KILLED regardless of what the mutation changed -- a false-perfect survived=0.
+    # Measured 2026-09-06: every tool whose mapped tests include the unparse ratchet in
+    # test_no_silent_failures.py reported exactly 0 survivors (5 of 5 tools, 0 of 180
+    # mutants) while tools without it survived at 34.1%.
+    # Naming the single path rather than setting a blanket "suppress" flag is the point:
+    # BYSTANDER corruption still fails, and that is the case that actually recurs
+    # (vault_paths.py 2026-08-19 and 2026-08-28, todo_write.py 2026-09-05).
+    if target is not None:
+        env["MUTATION_CHECK_TARGET"] = str(target.relative_to(REPO_ROOT))
     try:
         r = subprocess.run(cmd, cwd=str(REPO_ROOT), capture_output=True,
                            text=True, timeout=timeout, env=env)
@@ -675,7 +688,10 @@ def main() -> int:
             if mutated == original:
                 continue
             target.write_text(mutated, encoding="utf-8")
-            passed, kind = run_tests(test_files, args.timeout)
+            # `target` is passed ONLY here, never on the baseline run above: at baseline
+            # the file is unmutated, so a ratchet firing on it means real corruption and
+            # must still turn the run baseline_red.
+            passed, kind = run_tests(test_files, args.timeout, target)
             if passed:
                 if key in allow and str(allow[key]).strip():
                     allowed.append({**entry, "reason": allow[key]})

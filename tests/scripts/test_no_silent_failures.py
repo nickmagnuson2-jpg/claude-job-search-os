@@ -359,6 +359,60 @@ def test_every_unattended_write_flag_entry_carries_a_reason():
     assert not empty, f"entries with no written reason: {empty}"
 
 
+def exempt_active_mutation_target(changed: list[str]) -> list[str]:
+    """Drop the ONE file a mutation run is deliberately rewriting, and nothing else.
+
+    tools/mutation_check.py sets MUTATION_CHECK_TARGET to the repo-relative path of the
+    file it is currently mutating, in the env of the pytest subprocesses it spawns.
+
+    WHY (2026-09-06). An ast.unparse mutant IS the corruption signature the ratchet below
+    detects, so without this the ratchet failed on the target of EVERY mutant and each
+    mutant was scored KILLED regardless of what it changed. Measured that day across 99
+    tools in baseline.jsonl: the 5 tools whose mapped tests include this file reported
+    exactly 0 survivors (0 of 180 mutants), against 34.1% survival for the other 94. A
+    false-perfect score is worse than a red one -- it reads as evidence of protection and
+    flows into the corpus statistics unchallenged.
+
+    NARROW ON PURPOSE. Suppressing on MUTATION_CHECK_ACTIVE instead would disable the
+    whole ratchet for the duration of a run, and BYSTANDER corruption -- a file mutated
+    without a backup, which recover_if_stranded cannot restore -- happens precisely then.
+    That is the failure this test was built for: vault_paths.py on 2026-08-19 and again
+    2026-08-28, todo_write.py on 2026-09-05.
+    """
+    active = os.environ.get("MUTATION_CHECK_TARGET")
+    if not active:
+        return list(changed)
+    return [f for f in changed if f != active]
+
+
+def test_the_target_exemption_removes_the_target(monkeypatch):
+    monkeypatch.setenv("MUTATION_CHECK_TARGET", "tools/alpha.py")
+    assert exempt_active_mutation_target(["tools/alpha.py"]) == []
+
+
+def test_the_target_exemption_keeps_bystanders(monkeypatch):
+    """The whole point. A second corrupted file during a run must still be caught."""
+    monkeypatch.setenv("MUTATION_CHECK_TARGET", "tools/alpha.py")
+    kept = exempt_active_mutation_target(["tools/alpha.py", "tools/bystander.py"])
+    assert kept == ["tools/bystander.py"]
+
+
+def test_no_exemption_outside_a_mutation_run(monkeypatch):
+    """With no mutation in flight nothing is exempt, or ordinary corruption goes unseen."""
+    monkeypatch.delenv("MUTATION_CHECK_TARGET", raising=False)
+    changed = ["tools/alpha.py", "tools/bystander.py"]
+    assert exempt_active_mutation_target(changed) == changed
+
+
+def test_mutation_check_actually_sets_the_variable():
+    """Contract with the producer. If mutation_check stops setting it, the exemption is
+    dead code and every mutation number silently reverts to a fake zero."""
+    src = (REPO / "tools" / "mutation_check.py").read_text(encoding="utf-8")
+    assert "MUTATION_CHECK_TARGET" in src, (
+        "tools/mutation_check.py no longer sets MUTATION_CHECK_TARGET; the exemption in "
+        "this file cannot fire and survived=0 results are meaningless again")
+
+
 def test_no_tracked_tools_file_was_left_ast_unparsed():
     """A file rewritten by ast.unparse and never restored is silently corrupted source.
 
@@ -381,6 +435,21 @@ def test_no_tracked_tools_file_was_left_ast_unparsed():
     assert ls.returncode == 0, f"git diff failed, so this check proved NOTHING: {ls.stderr}"
 
     changed = [f for f in ls.stdout.split() if f.endswith(".py")]
+
+    # EXEMPT THE FILE A MUTATION RUN IS DELIBERATELY REWRITING (added 2026-09-06).
+    # An ast.unparse mutant IS this corruption signature, so without the exemption this
+    # check fails on the target of every single mutant and the mutant is scored KILLED
+    # no matter what it changed. Measured that day: 5 of 5 tools mapping to this file
+    # reported exactly 0 survivors (0 of 180 mutants) against 34.1% survival for tools
+    # that do not map to it. A fake-perfect score is worse than a red one, because it
+    # reads as evidence of protection.
+    #
+    # Exempt the ONE named path, never the whole check: bystander corruption -- a file
+    # mutated with no backup, which recover_if_stranded cannot restore -- is the failure
+    # this test was built for and it happens DURING a run. Blanket-suppressing on
+    # MUTATION_CHECK_ACTIVE would blind it exactly then.
+    changed = exempt_active_mutation_target(changed)
+
     corrupted = []
     for rel in changed:
         head = subprocess.run(["git", "show", f"HEAD:{rel}"],
