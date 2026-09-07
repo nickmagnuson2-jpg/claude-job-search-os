@@ -3,6 +3,79 @@
 All notable changes to this job search system are recorded here.
 Format: newest entries at the top.
 
+## 2026-09-06: three measurements that reported success while losing information
+
+A crash post-mortem that turned into four fixes, all of the same family: something reporting a
+clean result while quietly destroying or fabricating the thing it measured.
+
+**The machine went down on 2026-09-05 and left a tool AST-unparsed for 34 hours.** The overnight
+sweep died mid-target at 07:27:53; `tools/todo_write.py` sat in the working tree with its shebang
+gone, every comment stripped and every string re-quoted, 620 deletions against HEAD. No panic file,
+no clean shutdown record, on AC at 100%. The stranded backup lives at
+`~/Library/Caches/claude-mutation-backups/` under a URL-encoded name, so a repo-scoped
+`find . -name "*.mutation_backup"` returns nothing and reads as all-clear -- a false absence this
+session produced twice before using `conftest_guard.stranded_backups()`, which is the only correct
+resolver. Restoring the file unblocked a test suite that had been refusing to collect since Friday.
+
+**The corruption ratchet was killing every mutant of its own target (`8efb8d3`).**
+`test_no_silent_failures.py` fails when a tracked `tools/*.py` loses the shebang it has in HEAD --
+the ast.unparse signature of a crashed mutation run. But mutating a file IS that transformation, so
+while `mutation_check` mutated tool X and ran X's mapped tests, the ratchet fired on X itself and
+every mutant scored KILLED regardless of what it changed. Measured across 99 tools in
+`baseline.jsonl`: the 5 whose mapped tests include that file reported **0 survivors of 180
+mutants**, against **34.1%** for the other 94 -- roughly 1-in-13,000 by chance. `run_tests` now
+exports `MUTATION_CHECK_TARGET` and the ratchet drops that one path, never the whole check, because
+BYSTANDER corruption is what it exists for and that happens during a run. Passed only from the
+mutation loop, never the baseline, so real corruption still returns `baseline_red`. Verified by
+outcome: `proof_domains.py` went `0 of 27` to `killed=21 survived=6`, all six survivors in `main()`
+argument handling. **17 tools totalling 1419 mutants still carry artifact numbers and need
+remeasuring; the corpus-wide 34.1% is wrong until they do.**
+
+**A hung mutant's grandchildren outlived the timeout forever (`9433149`, extended in `2be7b47`).**
+`subprocess.run(timeout=)` SIGKILLs only the direct child -- pytest -- and the tools pytest
+exercises spawn their own processes. Those reparent to launchd and run until reboot. Observed:
+`check_prep_doc.py` spawned four seconds into a run, still at 98.8% CPU **36 minutes later, after
+the sweep had exited**. Two such orphans were killed by hand this session. Both call sites now spawn
+with `start_new_session=True` and SIGKILL the whole process group on timeout. This is the
+best-supported mechanism for the 2026-09-05 wedge: orphans accumulating across a nine-hour
+unattended run, each holding a core.
+
+**Nothing stopped two mutation runs from owning the same tree (`2be7b47`).** It fired three times in
+one evening across four concurrent Claude sessions: one spurious `baseline_red` banked against an
+unrelated tool, and two suite refusals that read like corruption. `acquire_run_lock()` takes a
+per-repo exclusive flock -- not one global lock, since two checkouts are independent trees.
+`mutation_sweep` takes it before quiescing launchd, so a second sweep that bails cannot restore jobs
+the first still needs down, and sets `MUTATION_SWEEP_ACTIVE` so its own children pass through
+instead of deadlocking against their parent. flock rather than a pidfile deliberately: the OS
+releases it on SIGKILL or power loss, where a pidfile would have survived Friday's crash and blocked
+every later sweep until deleted by hand. Two defects the suite caught while building it are kept as
+comments where they bit -- flock is per open-file-description so the lock was not re-entrant and
+refused 28 sweep tests, and the reaping helper hardcoded the wrong `cwd` so fixture tests silently
+ran the engine in the real tree.
+
+**The findings ledger writer erased audit rows it reported success for (`e998825`).** Found by
+adversarial cross-model verification, run to satisfy the pre-push gate. `set_disposition` rewrote
+the whole append-only ledger from an unlocked snapshot: two dispositions read version V, each
+changed a different finding, and the second replacement restored its stale copy of the first, both
+printing success. A `cross_model_gate.append_row()` landing between the read and the replace was
+absent from the snapshot and deleted by it. It also used a shared temp path, so overlapping writers
+could have one install the other's bytes and print its own in-memory result. The tool built to drain
+the findings queue could destroy the findings queue, and with several sessions live the race was
+real rather than theoretical. Fixed by reusing `inbox_lock.atomic_update`, whose docstring already
+describes this exact defect for `data/inbox.md`; `append_row` takes the same lock, because locking
+only the rewriter still loses the append. `set_disposition` also now requires exactly one id match
+instead of taking the first.
+
+**Also this session, not code.** 47 stale `To Evaluate` pipeline rows closed with six per-row reason
+categories (`To Evaluate` 49 -> 2); 5 linked todos withdrawn; `todo_write.py sync` measured at ~36
+false positives out of 41 candidates and correctly left as preview-only. Four memory rules written
+and three existing ones tripped their promotion gates. Parked work is specced in
+`output/090626-post-sweep-execution-spec.md`, which opens with a GATE 0 checklist.
+
+**Other sessions committed the same night** -- `12c592f`, `ad481a6`, `6bde792`, `1d7e80c` -- including
+a test for the durability half of `e998825`. Those are described by their own authors; they are named
+here so this entry is not mistaken for the whole day.
+
 ## 2026-09-03: a null read as a zero, an unwired gate, and a hold-back reversed
 
 Three changes, and the first one is the one that reached Nick as a false statement.
