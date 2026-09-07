@@ -55,6 +55,51 @@ Ranked by measured value:
 4. **The prior report** (`--prior`). Makes it check whether what it raised was actually
    fixed, rather than re-deriving it.
 
+## Two questions that go in EVERY target, not just correctness ones
+
+Correctness questions ask "is this right." These two ask "is this the right shape,"
+and the answer compounds instead of decaying. Both earned their place on 2026-09-07,
+in the same run, on a 39-line hook fix.
+
+**1. What is now redundant, and what shape would let some of this be deleted?**
+
+A fix that makes the code simpler retires debt; a fix that only adds a branch creates
+it. Mutation testing cannot ask this question, because no mutant proposes a better
+design. Cross-model review can, and it is nearly free to ask since the model has
+already read the file.
+
+Measured that day: `tools/check_save_claims.py` had accumulated FOUR separate
+mechanisms answering one question, "does this token name a real file in a root other
+than the obvious one" (`resolve`, `peer_repo_hit`, `memory_tier_hit`, and an
+`os.walk` basename search). Each arrived as a separate fire-response with its own
+guards, its own tests, its own mutation round. Four of the six commits on that file
+are fixes to that one class. The simpler shape is one list of candidate roots, which
+would DELETE two functions rather than add a third.
+
+**2. What is the most upstream mechanism this defect comes from, and would fixing it
+there eliminate the downstream fixes?**
+
+Take the deepest fix available, not the cheapest one that closes the ticket. The test
+is not "does this stop the bug" but **"does this make the NEXT bug of this class
+cheaper or impossible."**
+
+Worked example from the same run: codex found that a relative `CLAUDE_PROJECT_DIR`
+produced a nonsense memory-tier slug. The cheap fix was to canonicalize inside the
+one function it flagged. The upstream fix was that `root` was never canonicalized at
+its point of derivation, and FOUR resolvers consume it, all wrong for the same reason
+on a relative root. One `project_root()` at the single point of derivation fixed them
+together and left nothing to remember at the call sites.
+
+**The distinction that keeps this from becoming its own complexity: extract
+MECHANISM, never POLICY.** Reading stdin safely, canonicalizing a root, finding the
+target paths, emitting a verdict, all identical across 41 hooks, are mechanism and
+belong in one tested module. What counts as a violation is policy, different in all
+41, and belongs in the hook. A shared judgment layer would be the same mistake one
+abstraction higher.
+
+Ask both questions even when the change is small. The 39-line fix above is what
+surfaced a 9,465-line duplication problem.
+
 ## The sandbox — do not loosen it
 
 `--sandbox workspace-write` is a **local execution policy** on shell commands the model
