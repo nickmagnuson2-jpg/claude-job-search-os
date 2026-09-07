@@ -144,6 +144,70 @@ def _lock_dir() -> Path:
     return Path(os.path.expanduser("~")) / ".cache" / "jobsearch-locks"
 
 
+# --- contention log ---------------------------------------------------------
+# ONE LINE PER KERNEL-LOCK ACQUISITION. Deliberately the smallest thing that could
+# answer the question it exists for: which files actually contend, between which
+# processes, and for how long. That is the dataset that decides whether this repo
+# needs a dispatcher above these locks, or whether four sessions sharing a filesystem
+# only ever needed the locks.
+#
+# NOT A LEDGER. No dedupe, no classification, no promotion ladder. `data/job-todos.md`
+# carries a parked item recording that the friction-log system drifted from
+# "lightweight auto-capture" into ~6 scripts and 2 hooks and is still awaiting a
+# KEEP / SIMPLIFY / DEPRECATE call. The failure mode of "log it, then build it" is that
+# the log becomes the project. Read this one and decide, or delete it.
+#
+# BEST EFFORT, ALWAYS. Every failure here is swallowed: a logging fault must never
+# break or delay a lock that callers depend on for correctness.
+ACQUISITION_LOG = _lock_dir() / "acquisitions.jsonl"
+
+
+# Only CONTENDED acquisitions. An acquisition that waited zero milliseconds answers
+# nothing the log exists to ask -- it says two processes did not collide, which is the
+# default. Logging every one produced 10,607 lines and 3.0 MB in 25 minutes on
+# 2026-09-07, roughly 170 MB a day, almost entirely test suites taking uncontended
+# locks in a loop. That is the same "log it, then build it" drift the module comment
+# above warns about, arriving as volume instead of features.
+#
+# Filtering to waits makes the file both smaller and MORE informative: 635 of those
+# 10,607 were real contention, and those 635 are the entire dataset.
+MIN_LOGGED_WAIT_S = 0.05
+
+
+def log_contention(target, waited: float) -> None:
+    """Public entry point for lock holders that are NOT file_lock.
+
+    mutation_check.py takes its own flock on the whole source tree rather than an
+    inbox_lock sidecar -- it guards a directory of files being rewritten, not one file.
+    That lock is where this repo's real contention lives (roughly 25 minutes of blocked
+    wall-clock across four sessions on 2026-09-06) and none of it reached this log,
+    which measured only the files that barely contend. A dataset that misses the
+    dominant source is worse than none: it invites a confident conclusion from a biased
+    sample.
+    """
+    _log_acquisition(target, None, waited)
+
+
+def _log_acquisition(target, lock_file, waited: float) -> None:
+    if waited < MIN_LOGGED_WAIT_S:
+        return
+    try:
+        rec = {
+            "at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+            "target": str(target),
+            "pid": os.getpid(),
+            "waited_ms": round(waited * 1000),
+            # Set by Claude Code; distinguishes concurrent sessions, which `git %an`
+            # cannot -- it reads the same configured user for every one of them.
+            "session": os.environ.get("CLAUDE_SESSION_ID", ""),
+        }
+        ACQUISITION_LOG.parent.mkdir(parents=True, exist_ok=True)
+        with ACQUISITION_LOG.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(rec) + "\n")
+    except Exception:
+        pass
+
+
 def lock_path_for(path: str | os.PathLike) -> Path:
     """Return the sidecar lock-file path used to guard `path`.
 
@@ -250,6 +314,7 @@ def file_lock(
                 raise
             entry["fd"] = fd
             took_kernel_lock = True
+            _log_acquisition(path, lock_file, time.monotonic() - (deadline - timeout))
 
         entry["depth"] += 1
         try:

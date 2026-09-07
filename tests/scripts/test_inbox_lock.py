@@ -22,6 +22,9 @@ import pytest
 TOOLS_DIR = Path(__file__).resolve().parents[2] / "tools"
 sys.path.insert(0, str(TOOLS_DIR))
 
+import json  # noqa: E402
+import inbox_lock  # noqa: E402  (the file below imports NAMES; these tests patch attrs)
+
 from inbox_lock import (  # noqa: E402
     ConcurrentModification,
     LockTimeout,
@@ -564,3 +567,40 @@ def test_two_processes_serialize_and_neither_write_is_lost(inbox, lock_dir):
     assert "- writer0" in body
     assert "- writer1" in body
     assert "- existing item" in body
+
+
+# --- the contention log records contention, not every acquisition ----------------
+
+def test_an_uncontended_acquisition_is_not_logged(tmp_path, monkeypatch):
+    """Logging every acquisition produced 10,607 lines and 3.0 MB in 25 minutes on
+    2026-09-07 -- about 170 MB a day, almost all of it test suites taking uncontended
+    locks in a loop. An acquisition that waited zero ms says two processes did not
+    collide, which is the default and answers nothing."""
+    log = tmp_path / "acq.jsonl"
+    monkeypatch.setattr(inbox_lock, "ACQUISITION_LOG", log)
+    with inbox_lock.file_lock(tmp_path / "target.md"):
+        pass
+    assert not log.exists() or log.read_text(encoding="utf-8") == ""
+
+
+def test_a_contended_acquisition_IS_logged(tmp_path, monkeypatch):
+    """The counterpart: filtering must not silence the signal it exists to capture."""
+    log = tmp_path / "acq.jsonl"
+    monkeypatch.setattr(inbox_lock, "ACQUISITION_LOG", log)
+    monkeypatch.setattr(inbox_lock, "MIN_LOGGED_WAIT_S", 0.0)
+    with inbox_lock.file_lock(tmp_path / "target.md"):
+        pass
+    rows = [json.loads(l) for l in log.read_text(encoding="utf-8").splitlines() if l.strip()]
+    assert len(rows) == 1
+    assert rows[0]["target"].endswith("target.md")
+    assert "waited_ms" in rows[0] and "pid" in rows[0]
+
+
+def test_a_logging_failure_never_breaks_the_lock(tmp_path, monkeypatch):
+    """A logging fault must not delay or break a lock callers depend on for
+    correctness. The log is best-effort by design."""
+    monkeypatch.setattr(inbox_lock, "ACQUISITION_LOG", tmp_path / "nope" / "x" / "a.jsonl")
+    monkeypatch.setattr(inbox_lock, "MIN_LOGGED_WAIT_S", 0.0)
+    monkeypatch.setattr(inbox_lock.os, "getpid", lambda: (_ for _ in ()).throw(RuntimeError("boom")))
+    with inbox_lock.file_lock(tmp_path / "target.md") as lf:
+        assert lf.exists()

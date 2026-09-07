@@ -374,8 +374,23 @@ def release_run_lock() -> None:
             pass
 
 
-def acquire_run_lock() -> tuple[bool, str]:
-    """Take an exclusive, non-blocking lock on the mutation tree. (acquired, holder).
+DEFAULT_RUN_LOCK_WAIT = 600.0
+
+
+def acquire_run_lock(wait: float = 0.0) -> tuple[bool, str]:
+    """Take an exclusive lock on the mutation tree. (acquired, holder).
+
+    WAIT, DO NOT REFUSE (2026-09-07). This refused instantly and told the caller to
+    "wait for it", which meant every caller hand-rolled the waiting. In one evening one
+    session was refused five times across four concurrent sessions and wrote the same
+    `while ls <backup dir>; do sleep; done` loop in bash each time -- roughly 25 minutes
+    of blocked wall-clock, plus a suite run whose 34 failures were pure concurrency
+    noise. A guard that is correct and unusable gets worked around, and a hand-rolled
+    wait polls the wrong thing: the backup directory is empty between mutants, so the
+    loop races back in mid-run.
+
+    Waiting here polls the lock itself, which is the only thing that is actually true.
+    `wait=0` keeps the old non-blocking behaviour for callers that want to fail fast.
 
     RE-ENTRANT WITHIN A PROCESS. flock is per open-file-description, so a second `open` of
     the same path from the SAME process conflicts with the first -- which broke 28 sweep
@@ -402,19 +417,41 @@ def acquire_run_lock() -> tuple[bool, str]:
         return True, ""                     # this process already holds it
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o644)
-    try:
-        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError:
+    started = time.monotonic()
+    deadline = started + max(0.0, wait)
+    announced = False
+    while True:
         try:
-            os.lseek(fd, 0, os.SEEK_SET)
-            holder = os.read(fd, 128).decode("utf-8", "replace").strip() or "unknown"
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            break
         except OSError:
-            holder = "unknown"
-        os.close(fd)
-        return False, holder
+            try:
+                os.lseek(fd, 0, os.SEEK_SET)
+                holder = os.read(fd, 128).decode("utf-8", "replace").strip() or "unknown"
+            except OSError:
+                holder = "unknown"
+            if time.monotonic() >= deadline:
+                os.close(fd)
+                return False, holder
+            if not announced:
+                # stderr, not stdout: stdout is the JSON contract and a caller
+                # parsing it must not receive progress chatter.
+                print(f"mutation_check: tree held by {holder}; waiting up to "
+                      f"{wait:.0f}s", file=sys.stderr, flush=True)
+                announced = True
+            time.sleep(min(2.0, max(0.0, deadline - time.monotonic())))
     os.ftruncate(fd, 0)
     os.write(fd, f"pid={os.getpid()} since={time.strftime('%Y-%m-%dT%H:%M:%S')}".encode())
     _RUN_LOCK_FDS[str(lock_path)] = fd
+    # Same log inbox_lock writes, so the two contention sources are comparable in one
+    # place. Best effort and deliberately last: a logging fault must never cost a lock
+    # that is already held.
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import inbox_lock
+        inbox_lock.log_contention("mutation-tree-lock", time.monotonic() - started)
+    except Exception:
+        pass
     return True, ""
 
 
@@ -735,6 +772,9 @@ def main() -> int:
                          "default: some code legitimately signals by raising, and a noisy "
                          "gate gets disabled, which is worse than no gate.")
     ap.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
+    ap.add_argument("--wait", type=float, default=DEFAULT_RUN_LOCK_WAIT,
+                    help="seconds to wait for the tree lock before giving up "
+                         "(0 = fail immediately, the pre-2026-09-07 behaviour)")
     args = ap.parse_args()
 
     target = Path(args.target)
@@ -759,11 +799,12 @@ def main() -> int:
     # under a live run from another process is how a file ends up holding another mutant's
     # source. The lock lives in the backup dir, which is outside the repo, so it can never
     # be committed and never appears in `git status` as mystery noise.
-    acquired, holder = acquire_run_lock()
+    acquired, holder = acquire_run_lock(wait=args.wait)
     if not acquired:
         print(json.dumps({
             "status": "error", "code": "run_in_flight",
-            "message": f"another mutation run owns the tree ({holder}); refusing to start. "
+            "message": f"another mutation run owns the tree ({holder}); gave up after "
+                       f"{args.wait:.0f}s. "
                        f"Two runs rewrite the same tools/*.py and restore from each other's "
                        f"backups. Wait for it, or check `ps aux | grep mutation_`."}))
         return 1
