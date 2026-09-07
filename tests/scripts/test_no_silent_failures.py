@@ -51,6 +51,22 @@ NON_HOOK_CHECKERS = {
     # checker this file exists to prevent - and would be a fine irony, given the
     # detector was built to catch things that look built and do nothing.
     "check_dark_inputs.py",
+    # UNWIRED ON PURPOSE, 2026-09-07. Built, bounded and tested (93 tests, mutation
+    # clean), but its TRIGGER PRECISION is unestablished: two adversarial reviews found
+    # it failing at P0 in BOTH directions, staying quiet on real status questions and
+    # firing on ordinary work. A hook that misses what it exists for and nags about
+    # everything else trains the reader to ignore it. Full reasoning, and the condition
+    # for wiring it -- a measured precision number on a labelled sample of real prompts,
+    # never another set of hand-picked examples -- is in tools/hook-unwired-allow.json;
+    # the open work is tracked in data/job-todos.md.
+    #
+    # NOTE THE TWO REGISTRIES, because this entry exists because I missed one. An
+    # unwired gate must be declared BOTH here and in hook-unwired-allow.json:
+    # check_hook_warn_tier reads that file, this test reads this set, and neither
+    # consults the other. Declaring in one and not the other passes the auditor at exit 0
+    # while failing the suite -- which is what happened, and was pushed, because the full
+    # suite was skipped before the push.
+    "check_status_query_verification.py",
     # ALL FIVE OF THE 2026-08-25 "BUILT, NOT YET WIRED" ENTRIES ARE NOW WIRED and have
     # been removed from this set, which is why nothing is listed here any more. Keeping a
     # wired tool in NON_HOOK_CHECKERS is invisible to the test below -- it only flags
