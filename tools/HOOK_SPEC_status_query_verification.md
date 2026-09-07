@@ -46,7 +46,7 @@ by Claude Code at all, so a WARN there reaches nobody. Do not generalize this sp
 to a PreToolUse hook. See `memory/feedback_warn_vs_block_hook_design.md`, whose pre-2026-05-28
 "default to WARN" form is superseded, and `tools/HOOK_AUTHORING.md` L77.
 
-**⚠️ `UserPromptSubmit` is NOT currently wired in `.claude/settings.json`.** Currently wired: `PreToolUse`, `PostToolUse`, `Stop`. This hook adds a new event type — a settings.json addition, not a code problem, but budget a few minutes for it and verify the event name against current Claude Code docs before writing the handler.
+**✅ RESOLVED 2026-09-07: `UserPromptSubmit` IS wired**, at `.claude/settings.json:250`, and this hook is what added the event type. The original text said it was not wired and listed only `PreToolUse`, `PostToolUse` and `Stop`; that was true when written and false from `9dc0d22` onward. It is corrected rather than deleted because an external review (codex F5, 2026-09-07) caught it contradicting this document's own updated header two screens above — a reminder that updating a doc's status line is not the same as updating the doc. The event name was verified against the Claude Code hook reference during that review: `UserPromptSubmit` input carries a `prompt` string, and plain-text stdout on exit 0 is added as context.
 
 ## 4. Trigger patterns (starting set — tune after live use)
 
