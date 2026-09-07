@@ -312,6 +312,18 @@ def run_sweep(state_dir: Path) -> int:
         return 1
     targets = json.loads(targets_file.read_text(encoding="utf-8"))
 
+    # LOCK BEFORE TOUCHING ANYTHING, and before the jobs come down. A second sweep that
+    # quiesced launchd and then bailed on the lock would restore jobs the FIRST sweep still
+    # needs down. Fired three times on 2026-09-06 with no lock at all: a second Claude Code
+    # session ran mutation_check against a live sweep, producing one spurious baseline_red
+    # and two suite refusals that read like corruption.
+    acquired, holder = mutation_check.acquire_run_lock()
+    if not acquired:
+        print(f"REFUSING: another mutation run owns the tree ({holder}). "
+              f"Two runs rewrite the same tools/*.py and restore from each other's backups.",
+              file=sys.stderr)
+        return 1
+
     # THE SCHEDULED JOBS COME DOWN FIRST, before any tool is mutated. gmail-fetch fires
     # every 900s and granola-auto-debrief every 3h, both shelling into the tools/*.py
     # this loop rewrites; unattended overnight that is dozens of mutant executions
@@ -340,6 +352,11 @@ def run_sweep(state_dir: Path) -> int:
         return _run_sweep_inner(targets, out)
     finally:
         put_jobs_back()
+        # Release explicitly rather than leaning on process exit: the test suite calls
+        # run_sweep many times in ONE pytest process, and a lock held past the first call
+        # would refuse every later one. The OS still releases it on a crash, which is the
+        # property flock was chosen for.
+        mutation_check.release_run_lock()
 
 
 def _run_sweep_inner(targets, out: Path) -> int:
@@ -365,16 +382,27 @@ def _run_sweep_inner(targets, out: Path) -> int:
     # Full environment, not a stripped one: unattended, a missing env var would turn into a
     # red baseline and get recorded as a finding. PYTHONIOENCODING is mandatory -- every
     # tools/*.py crashes on Unicode without it.
-    env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
+    # MUTATION_SWEEP_ACTIVE tells each mutation_check child that the lock is already held by
+    # its parent, so it runs instead of refusing. Without it every child would bounce off
+    # the lock this sweep took and the whole run would measure nothing.
+    env = {**os.environ, "PYTHONIOENCODING": "utf-8",
+           mutation_check.SWEEP_ENV: "1"}
 
     for i, t in enumerate(todo, 1):
         start = time.time()
         timed_out = False
         try:
-            proc = subprocess.run(
+            # Reaping variant, NOT subprocess.run. A plain run() timeout SIGKILLs only the
+            # mutation_check child; the pytest it spawned and everything pytest spawned
+            # survive, reparent to launchd, and hold a core forever. Observed 2026-09-06:
+            # check_prep_doc.py orphaned four seconds into a run, still at 98.8% CPU 36
+            # minutes later, after the sweep itself had exited. This call site is the outer
+            # one -- mutation_check has the same fix internally, but a timeout HERE kills
+            # mutation_check before its own handler can reap, so the subtree needs killing
+            # from this level too.
+            proc = mutation_check._run_reaping_descendants(
                 [sys.executable, "tools/mutation_check.py", t["tool"], "--isolation", "--json"],
-                capture_output=True, text=True, cwd=str(REPO_ROOT), env=env,
-                timeout=TOOL_TIMEOUT)
+                env, TOOL_TIMEOUT, cwd=REPO_ROOT)
             stdout, stderr, rc = proc.stdout, proc.stderr, proc.returncode
         except subprocess.TimeoutExpired:
             stdout, stderr, rc, timed_out = "", "", None, True

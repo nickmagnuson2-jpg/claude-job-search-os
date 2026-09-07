@@ -49,6 +49,7 @@ from __future__ import annotations
 import argparse
 import ast
 import atexit
+import fcntl
 import hashlib
 import json
 import os
@@ -56,6 +57,7 @@ import re
 import signal
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 # MUTATION_REPO_ROOT overrides for tests, mirroring the PII_REPO_ROOT /
@@ -340,6 +342,82 @@ _TB_RE = re.compile(r"^\S+:\d+:\s+([A-Za-z_][\w.]*)", re.M)
 _ASSERTION_KINDS = {"AssertionError", "Failed", "assert"}
 
 
+# Held for the life of the process. flock is released by the OS when the fd closes, so
+# this must stay referenced -- a garbage-collected fd silently drops the lock.
+_RUN_LOCK_FDS: dict[str, int] = {}
+
+# Set by mutation_sweep in the env of the mutation_check children it spawns. Those children
+# are running UNDER a lock the sweep already holds; making them queue for it would deadlock
+# the sweep against itself.
+SWEEP_ENV = "MUTATION_SWEEP_ACTIVE"
+
+
+def _run_lock_path() -> Path:
+    """One lock per REPO, keyed the way backups are.
+
+    NOT one global lock: two different checkouts are independent trees and must not block
+    each other. NOT the `.mutation_backup` suffix either -- `conftest_guard.stranded_backups`
+    matches on that suffix, so a lock file named that way would itself read as a stranded
+    mutation and refuse the entire test suite.
+    """
+    enc = str(REPO_ROOT).replace("%", "%25").replace("/", "%2F")
+    return backup_dir() / (enc + ".mutation-run.lock")
+
+
+def release_run_lock() -> None:
+    """Drop the lock so one process can run several sweeps in sequence (the test suite)."""
+    fd = _RUN_LOCK_FDS.pop(str(_run_lock_path()), None)
+    if fd is not None:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+
+
+def acquire_run_lock() -> tuple[bool, str]:
+    """Take an exclusive, non-blocking lock on the mutation tree. (acquired, holder).
+
+    RE-ENTRANT WITHIN A PROCESS. flock is per open-file-description, so a second `open` of
+    the same path from the SAME process conflicts with the first -- which broke 28 sweep
+    tests on first attempt, because each test called run_sweep in one pytest process and
+    every call after the first was refused by its own predecessor.
+
+    WHY THIS EXISTS (2026-09-06). Nothing stopped two mutation runs from rewriting the same
+    tools/*.py at once, and it happened three times in one evening: a second Claude Code
+    session ran mutation_check while a sweep was live, which produced a spurious
+    `baseline_red` on an unrelated tool, and twice made the test suite refuse to run for
+    reasons that looked like corruption. Two runs also restore from each other's backups,
+    which can leave a file holding another mutant's source.
+
+    flock rather than a pidfile ON PURPOSE. The OS releases an flock when the holding
+    process dies, including a SIGKILL or a power loss. A pidfile would have survived the
+    2026-09-05 crash and blocked every subsequent sweep until someone deleted it by hand --
+    trading a concurrency bug for a stale-lock bug that is worse, because it fails closed on
+    a machine nobody has looked at yet.
+    """
+    if os.environ.get(SWEEP_ENV):
+        return True, ""                     # spawned BY a sweep that already holds it
+    lock_path = _run_lock_path()
+    if str(lock_path) in _RUN_LOCK_FDS:
+        return True, ""                     # this process already holds it
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o644)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        try:
+            os.lseek(fd, 0, os.SEEK_SET)
+            holder = os.read(fd, 128).decode("utf-8", "replace").strip() or "unknown"
+        except OSError:
+            holder = "unknown"
+        os.close(fd)
+        return False, holder
+    os.ftruncate(fd, 0)
+    os.write(fd, f"pid={os.getpid()} since={time.strftime('%Y-%m-%dT%H:%M:%S')}".encode())
+    _RUN_LOCK_FDS[str(lock_path)] = fd
+    return True, ""
+
+
 def _kill_process_group(proc: subprocess.Popen) -> None:
     """SIGKILL the child's entire process group, falling back to the child alone."""
     try:
@@ -351,8 +429,8 @@ def _kill_process_group(proc: subprocess.Popen) -> None:
             pass
 
 
-def _run_reaping_descendants(cmd: list[str], env: dict[str, str],
-                             timeout: int) -> subprocess.CompletedProcess:
+def _run_reaping_descendants(cmd: list[str], env: dict[str, str], timeout: int,
+                             cwd: str | Path | None = None) -> subprocess.CompletedProcess:
     """subprocess.run, except a timeout kills the whole PROCESS GROUP.
 
     WHY THIS EXISTS (2026-09-06). `subprocess.run(timeout=...)` SIGKILLs only the DIRECT
@@ -374,7 +452,11 @@ def _run_reaping_descendants(cmd: list[str], env: dict[str, str],
     `start_new_session=True` puts the child in its own process group, so `killpg` reaches
     every descendant it spawned rather than just the one process we can see.
     """
-    proc = subprocess.Popen(cmd, cwd=str(REPO_ROOT), stdout=subprocess.PIPE,
+    # cwd is a PARAMETER, not this module's REPO_ROOT: mutation_sweep calls this with its
+    # own root, and its tests drive it against a throwaway fixture repo. Defaulting to
+    # REPO_ROOT here silently ran the sweep's engine in the REAL tree during those tests,
+    # so the stub engine recorded nothing and 18 tests failed on an empty call list.
+    proc = subprocess.Popen(cmd, cwd=str(cwd or REPO_ROOT), stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE, text=True, env=env,
                             start_new_session=True)
     try:
@@ -670,6 +752,20 @@ def main() -> int:
                                      "happened on 2026-08-19 and corrupted two "
                                      "unrelated files. Test this tool with "
                                      "tests/scripts/test_mutation_check.py instead."}))
+        return 1
+
+    # Refuse to start while another run owns the tree. Before prune_orphans and
+    # recover_if_stranded deliberately: both TOUCH the shared backup store, and doing that
+    # under a live run from another process is how a file ends up holding another mutant's
+    # source. The lock lives in the backup dir, which is outside the repo, so it can never
+    # be committed and never appears in `git status` as mystery noise.
+    acquired, holder = acquire_run_lock()
+    if not acquired:
+        print(json.dumps({
+            "status": "error", "code": "run_in_flight",
+            "message": f"another mutation run owns the tree ({holder}); refusing to start. "
+                       f"Two runs rewrite the same tools/*.py and restore from each other's "
+                       f"backups. Wait for it, or check `ps aux | grep mutation_`."}))
         return 1
 
     # Unrestorable leftovers from trees that no longer exist. The store is shared and

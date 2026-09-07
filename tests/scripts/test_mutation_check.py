@@ -915,3 +915,100 @@ def test_plain_subprocess_run_would_leak_it(tmp_path):
             os.kill(gc_pid, signal.SIGKILL)
         except ProcessLookupError:
             pass
+
+
+# ---------------------------------------------------------------------------
+# Property 6: two mutation runs must never own the tree at once.
+#
+# 2026-09-06: no lock existed. A second Claude Code session ran mutation_check
+# against a live sweep three times in one evening -- one spurious baseline_red on
+# an unrelated tool, and two suite refusals that read like corruption.
+# ---------------------------------------------------------------------------
+
+_ACQUIRE_SRC = """
+import sys; sys.path.insert(0, {tools!r})
+import mutation_check as mc
+ok, holder = mc.acquire_run_lock()
+print("OK" if ok else "REFUSED", holder, flush=True)
+"""
+
+
+def _acquire_in_subprocess(tmp_dir, extra_env=None, hold_seconds=0):
+    """Spawn a process that takes the run lock.
+
+    Isolation is by ENV, not by argument: the lock path is derived from REPO_ROOT and
+    lives under backup_dir(), so pointing both at tmp_dir gives each test its own lock
+    and keeps the real one untouched.
+    """
+    src = _ACQUIRE_SRC.format(tools=str(REPO_ROOT / "tools"))
+    if hold_seconds:
+        src += f"\nimport time; time.sleep({hold_seconds})\n"
+    env = {**os.environ}
+    env.pop(mc.SWEEP_ENV, None)
+    env["MUTATION_REPO_ROOT"] = str(tmp_dir)
+    env["MUTATION_BACKUP_DIR"] = str(tmp_dir)
+    env.update(extra_env or {})
+    return subprocess.Popen([sys.executable, "-c", src], stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE, text=True, env=env,
+                            cwd=str(REPO_ROOT))
+
+
+def test_a_second_run_is_refused_while_the_first_holds_the_lock(tmp_path):
+    holder = _acquire_in_subprocess(tmp_path, hold_seconds=20)
+    try:
+        # wait until the holder has actually taken it
+        deadline = time.time() + 10
+        while time.time() < deadline:
+            line = holder.stdout.readline()
+            if line.startswith("OK"):
+                break
+        else:
+            raise AssertionError("holder never acquired the lock")
+        second = _acquire_in_subprocess(tmp_path)
+        out, _ = second.communicate(timeout=20)
+        assert out.startswith("REFUSED"), f"second run was NOT refused: {out!r}"
+        assert "pid=" in out, "refusal must name the holder so it can be found"
+    finally:
+        holder.kill()
+        holder.wait(timeout=10)
+
+
+def test_a_sweep_child_passes_through_the_lock(tmp_path):
+    """The sweep holds the lock and spawns mutation_check per tool. If those children
+    queued for it the sweep would deadlock against itself and measure nothing."""
+    holder = _acquire_in_subprocess(tmp_path, hold_seconds=20)
+    try:
+        deadline = time.time() + 10
+        while time.time() < deadline:
+            if holder.stdout.readline().startswith("OK"):
+                break
+        child = _acquire_in_subprocess(tmp_path, extra_env={mc.SWEEP_ENV: "1"})
+        out, _ = child.communicate(timeout=20)
+        assert out.startswith("OK"), f"sweep child was blocked by its parent's lock: {out!r}"
+    finally:
+        holder.kill()
+        holder.wait(timeout=10)
+
+
+def test_the_lock_dies_with_its_holder(tmp_path):
+    """flock, not a pidfile. THE reason for the choice.
+
+    A pidfile would have survived the 2026-09-05 power-cycle and blocked every later
+    sweep until someone deleted it by hand -- trading a concurrency bug for a stale-lock
+    bug that fails closed on a machine nobody has looked at yet.
+    """
+    holder = _acquire_in_subprocess(tmp_path, hold_seconds=60)
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        if holder.stdout.readline().startswith("OK"):
+            break
+    else:
+        raise AssertionError("holder never acquired the lock")
+
+    os.kill(holder.pid, signal.SIGKILL)     # no cleanup path runs
+    holder.wait(timeout=10)
+
+    after = _acquire_in_subprocess(tmp_path)
+    out, _ = after.communicate(timeout=20)
+    assert out.startswith("OK"), (
+        f"lock survived SIGKILL of its holder -- a crash now wedges every future run: {out!r}")
