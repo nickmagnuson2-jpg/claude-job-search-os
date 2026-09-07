@@ -631,6 +631,32 @@ def main():
         paths = rest or [ln.strip() for ln in sys.stdin.read().splitlines() if ln.strip()]
         sys.exit(scan_paths(paths))
 
+    # AN UNRECOGNISED ARGUMENT IS AN ERROR, NOT A FALL-THROUGH.
+    #
+    # Without this, anything that is not exactly "--scan" dropped into the hook path
+    # below and blocked on json.load(sys.stdin). Invoked from a shell with no stdin --
+    # a backgrounded task, a launchd job, a `&` -- that read never returns.
+    #
+    # Measured 2026-09-06: `check_public_pii.py --paths <files>` (the flag is --scan;
+    # --paths does not exist) sat for 3 hours 53 minutes at 0.00% CPU, holding nothing,
+    # producing nothing. The background task it belonged to reported its earlier steps
+    # and then simply stopped, so the PII sweep it was meant to perform silently never
+    # ran and nothing said so.
+    #
+    # A hook that hangs on a typo is worse than one that rejects it: the caller gets no
+    # exit code, no message, and no reason to look. sibling guard
+    # check_scanner_examined_something.py catches this shape for hook-only scripts that
+    # declare no flags at all; this one HAS a flag, so it fell through the gap between
+    # them.
+    if argv:
+        print(f"unknown argument {argv[0]!r}. Sweep mode is:\n"
+              f"  python3 tools/check_public_pii.py --scan <path>...\n"
+              f"  python3 tools/check_public_pii.py --scan --stdin-paths  "
+              f"(paths on stdin)\n"
+              f"With no arguments this script is a PreToolUse hook and reads a JSON "
+              f"payload on stdin.", file=sys.stderr)
+        sys.exit(2)
+
     try:
         data = json.load(sys.stdin)
     except Exception:

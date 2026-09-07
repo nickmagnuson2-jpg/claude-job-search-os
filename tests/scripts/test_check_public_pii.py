@@ -665,3 +665,51 @@ def test_mask_closes_quotes_so_a_later_heredoc_is_still_detected():
     targets = extract_write_targets(cmd)
     assert "output/e.md" in targets
     assert "phantom2.md" not in targets
+
+
+# --- an unrecognised argument must ERROR, never fall into the hook path ----------
+# Origin 2026-09-06: `check_public_pii.py --paths <files>` (the flag is --scan) fell
+# through to json.load(sys.stdin) and, with no stdin, blocked for 3 hours 53 minutes at
+# 0.00% CPU. The background task holding it reported its earlier steps and then simply
+# stopped, so the PII sweep silently never ran and nothing said so. A hook that hangs on
+# a typo is worse than one that rejects it: no exit code, no message, no reason to look.
+
+def _run_argv(*args, stdin: str = ""):
+    """Deliberately NOT named _run: this file already has one with a different
+    signature, and shadowing it broke three pre-existing tests when these were first
+    appended. SCRIPT is the module-level path the rest of the file already uses."""
+    return subprocess.run(
+        [sys.executable, str(SCRIPT), *args],
+        input=stdin, capture_output=True, text=True, timeout=20,
+        env={**os.environ, "PYTHONIOENCODING": "utf-8"})
+
+
+@pytest.mark.parametrize("bad", ["--paths", "--files", "-s", "scan", "--Scan"])
+def test_an_unknown_argument_exits_2_instead_of_blocking(bad):
+    """timeout=20 is the assertion that matters: before the guard this call never
+    returned at all, and the test would fail by timing out rather than by asserting."""
+    proc = _run_argv(bad, "tools/finding_write.py")
+    assert proc.returncode == 2
+    assert "unknown argument" in proc.stderr
+    assert "--scan" in proc.stderr
+
+
+def test_the_usage_message_names_BOTH_real_modes(bad=None):
+    """A usage line that only mentions the sweep leaves the reader guessing why the
+    same script also works with no arguments at all."""
+    err = _run_argv("--nope").stderr
+    assert "--scan --stdin-paths" in err
+    assert "PreToolUse hook" in err
+
+
+def test_no_arguments_still_reads_the_hook_payload():
+    """The guard must not break the path that actually matters: 34 wired invocations
+    a session pass zero arguments and a JSON payload on stdin."""
+    proc = _run_argv(stdin='{"tool_name":"Write","tool_input":'
+                      '{"file_path":"tools/x.py","content":"nothing sensitive"}}')
+    assert proc.returncode == 0
+
+
+def test_scan_mode_is_untouched():
+    proc = _run_argv("--scan", "tools/finding_write.py")
+    assert proc.returncode == 0
