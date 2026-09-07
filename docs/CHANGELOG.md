@@ -3,6 +3,82 @@
 All notable changes to this job search system are recorded here.
 Format: newest entries at the top.
 
+## 2026-09-07: five tested gates that guarded nothing, and a suite that could not see itself
+
+The wiring backlog closed, and the process of closing it produced a sharper finding than the
+wiring did.
+
+**Five `tools/check_*.py` were built, tested, and wired to nothing (`6bde792`).** Each declared
+itself a PreToolUse hook in its own docstring and carried a passing suite. A gate wired to nothing
+is worse than an absent one, because the rule it enforces reads as promoted while nothing runs.
+`check_zuora_principal_title` and `check_workflow_scriptpath` are now wired;
+`check_plan_partner_critique` is declared CLI-only in `tools/hook-unwired-allow.json`, because it
+cannot exit 2 and duplicates coverage `cross_model_gate.py:60-62` already enforces at push. Ground
+truth now: 41 gates on disk, 33 wired, 8 unwired and all 8 declared with written reasons.
+
+**Restraint was measured by replaying real history, not by guessing.** 12,990 historical tool
+calls extracted from 101 transcripts, fed through each gate as hook payloads.
+`check_zuora_principal_title` would have blocked **1 of 12,990** (0.008%), a true positive -- a
+stale title in a prep doc. `check_workflow_scriptpath` would have blocked **21 of 37** Workflow
+calls, every one a true positive: 20 launches by `name` (which silently runs a cached snapshot
+rather than the file on disk) plus one `scriptPath` into a snapshot directory. A high rate on a
+tiny denominator, correct every time.
+
+**And that measurement was the wrong one to ship on.** Wiring a blocking gate needs two
+independent things: that it does not fire on legitimate work, and that its own verdict logic is
+not decorative. Both gates went in on the first alone. The precondition requiring the second was
+written in a comment inside `tests/scripts/test_no_silent_failures.py` and went unread until after
+the action it governed. Mutation then came back 47/0 and 54/1, so nothing broke and the sequence
+was still wrong. **A precondition living in a code comment is not enforcement** -- the same
+conversion law this project applies to rules, now applied to preconditions and written into
+`CLAUDE.md` and `tools/HOOK_AUTHORING.md`.
+
+**The 2026-08-25 survivor counts those gates carried were artifacts.** "56 survivors across five"
+predated `8efb8d3`. Remeasured: `check_workflow_scriptpath` 47/0, `check_zuora_principal_title`
+54/1, `check_pipeline_exit_status` 44/0, `check_scanner_examined_something` 61/0 with 4
+allowlisted, `check_banned_phrase` 74/5. The scanner result answers the original worry directly --
+18 survivors with 9 inside `_verdict` became 4 with one, and that one is a redundant fast-path the
+loop below it already enforces.
+
+**The absence-assertion rule got a surface that fires before the claim (`9dc0d22`).** You cannot
+hook an assertion; there is no gate on assistant text. But both recorded instances of the failure
+happened while answering the same shape of question -- a status or readiness query -- and that
+arrives as user input, which IS hookable. `check_status_query_verification.py` is the repo's first
+`UserPromptSubmit` hook, built from a spec that had sat unbuilt since 2026-07-31. It always exits
+0: on that event stdout is the injection channel, so exit 0 delivers, the opposite of PreToolUse
+where an exit-0 warning reaches nobody.
+
+**Its first suite was 49 green tests and 46% decorative.** Mutation measured **12 survivors of
+26**. Seven were real gaps, closed with tests rather than allowlist entries. The sharpest is a
+failure mode not previously named here: the long-prompt test used prose that matched no trigger,
+so the real function and a mutant with the length ceiling REMOVED both returned False, for
+different reasons. **The test was structurally incapable of observing the guard it targeted**, and
+no assertion could fix it -- only a different input. A second instance surfaced the same night in
+`check_banned_phrase`, where a clean-path guard is unreachable with the live fixture because
+`scope_covers()` returns True for every "all"-scoped row (`4afccbb`). Captured as
+`feedback_a_test_whose_input_fails_twice_cannot_see_its_target`. Distinct from a weak assertion
+(`assert not x` where the mutant returns `None`), which IS fixed by tightening to `is False` --
+the two look identical and take opposite fixes.
+
+**Three gates were measurable only by accident of what else happened to be green.**
+`mutation_check.map_tests` selects any test that MENTIONS a module, so one red test returns
+`baseline_red` for tools that do not import it. `check_banned_phrase` was unmeasurable until an
+unrelated live-data test in `test_mutation_report.py` -- mapped to it by a single fixture line
+using its path as sample data -- went green. `check_public_pii` was in the same state.
+`inbox_lock.py` still is. Parked at Medium with three options and a REOPEN gate; note the naive
+fix is explicitly wrong, since `code_text()` was made generous on purpose after an earlier pass
+selected 15 files instead of 6.
+
+**Numbers not to cite.** The corpus-wide "34% of decisions unprotected" in `MEMORY.md` and the
+29.2% recomputed over verdict-bearing rows come from a baseline in churn. Neither is safe until a
+fresh sweep lands.
+
+**Also:** the `xfail(strict=True)` ratchet on the unwired-gate assertion is removed, so it is a
+live guard -- write a new gate, leave it unwired without a reason, and the suite fails. Three
+sessions worked this repo concurrently; the coordination that worked was explicit exchanges of
+which files each held, not tooling. Attribution failed three times between agents because `%an`
+reads identically on every commit; the `Claude-Session` trailer is the field that varies.
+
 ## 2026-09-06: three measurements that reported success while losing information
 
 A crash post-mortem that turned into four fixes, all of the same family: something reporting a

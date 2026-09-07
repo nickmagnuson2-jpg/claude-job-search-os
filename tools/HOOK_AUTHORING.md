@@ -83,7 +83,29 @@ Per `memory/feedback_guard_must_hard_abort_on_empty_input.md`.
 - [ ] **Negative lookahead** for adjacent word chars / `.` / `-` so prefixed names (`python3`, `python-dateutil`, `python.md`) stay clean.
 - [ ] **Exclude backtick as a boundary** — `` `token` `` in prose/markdown is inline code, not command substitution; `$(...)` is already covered by `(`.
 - [ ] **Fail open** on bad JSON / empty command (exit 0).
-- [ ] **BLOCK (exit 2) only for unambiguous, single-correction violations** (per `feedback_warn_vs_block_hook_design.md`). PreToolUse WARN-via-exit-0+stderr is NOT surfaced by Claude Code — a true "warn" is invisible, so a real warning must be exit 2 with a corrective message, reserved for cases that always fail anyway.
+- [ ] **Wiring a gate needs TWO measurements, not one. Restraint AND mutation.** Restraint is
+      "does it fire on legitimate work", measured by replaying real history through it (extract
+      historical tool calls from `~/.claude/projects/<project>/*.jsonl`, feed each as a hook
+      payload, count exit-2s). Mutation is "is its own verdict logic decorative". **They fail
+      independently and a rigorous measurement of one is not evidence for the other.** On
+      2026-09-06 two gates were wired on a 12,990-call restraint replay alone (1 block and
+      21-of-37, all true positives) while the precondition requiring the mutation half sat in a
+      comment in `tests/scripts/test_no_silent_failures.py` and went unread until afterwards.
+      Mutation came back clean, so nothing broke and the sequence was still wrong. Say the
+      sentence before wiring: *this measures X, the decision needs X and Y.*
+- [ ] **A test can be structurally incapable of seeing the guard it targets. Check the input, not
+      the assertion.** If the chosen input would produce the expected result ANYWAY, for a reason
+      unrelated to the guard, the real code and the mutant genuinely agree and no assertion is
+      strong enough. Two live instances, both 2026-09-06/07: a length-ceiling test whose long
+      input also matched no pattern, so both returned False for different reasons; and a
+      clean-path test in `check_banned_phrase` that was unreachable with the live table fixture,
+      because `scope_covers()` returns True for every "all"-scoped row so the row set is never
+      empty. The first needs a different input, the second a different FIXTURE. Distinguish this
+      from a weak assertion (`assert not x` where the mutant returns `None`), which IS fixed by
+      tightening to `is False` — the two look identical and take opposite fixes. Mechanical test,
+      cheaper than reasoning: delete the guard, run the test, confirm it dies. Per
+      `feedback_a_test_whose_input_fails_twice_cannot_see_its_target`.
+- [ ] **BLOCK (exit 2) only for unambiguous, single-correction violations** (per `feedback_warn_vs_block_hook_design.md`). PreToolUse WARN-via-exit-0+stderr is NOT surfaced by Claude Code — a true "warn" is invisible, so a real warning must be exit 2 with a corrective message, reserved for cases that always fail anyway. **The exception, and it is a real one: on `UserPromptSubmit`, stdout IS the injection channel, so exit 0 DELIVERS.** That is the correct home for a reminder that must not block — the surface did not exist in this repo until `check_status_query_verification.py` (2026-09-07), and it is now the fourth option alongside Stop, pre-commit and a skill step. Do not generalise it backwards: on PreToolUse, exit 0 plus stderr still reaches nobody.
 - [ ] **Distinguishable block message** — make the BLOCKED line specific enough that a transcript scan can tell a true catch from a false-positive.
 - [ ] **Log false-positives manually — this is the ONLY telemetry path for them.** Auto-capture cannot see or classify a hook block: a block is intent-ambiguous (a correct catch vs a wrong block look identical, and only the agent in-context knows which). The PostToolUse auto-logger is blind to PreToolUse blocks entirely; the transcript-scan backfill miscounts a false-positive as another occurrence of the thing being blocked. So if a hook blocks work you believe is legitimate, log it *at that moment*: `PYTHONIOENCODING=utf-8 python3 tools/friction_log.py append <hook>.py "FP: <what got wrongly blocked>"`. A distinct nature keeps it separate from the true-positive row. Origin: 2026-06-02 #4 investigation. **PARKED — auto-logger PreToolUse-block blindness. REOPEN gate: if a buggy hook is discovered late because its false-positives were invisible/miscounted in the ledger, build a stderr FP-logging hint for BLOCK-tier hooks.**
 - [ ] **Write the test file** with BOTH block cases AND clean cases — including token-in-quoted-pattern and token-in-heredoc.

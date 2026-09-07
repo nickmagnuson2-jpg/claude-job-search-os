@@ -1,7 +1,15 @@
-# HOOK SPEC — status-query verification reminder (NOT BUILT)
+# HOOK SPEC — status-query verification reminder (BUILT 2026-09-07)
 
-Status: **specified, not implemented.** Captured 2026-07-31 so the build can happen cold, without re-deriving the reasoning.
-Estimated effort: **~45 minutes.**
+Status: **BUILT AND WIRED.** `tools/check_status_query_verification.py`, wired as the repo's first
+`UserPromptSubmit` hook in `.claude/settings.json`, committed in `9dc0d22`. Tests:
+`tests/scripts/test_check_status_query_verification.py`, 62 passing. Mutation: 22 killed, 0
+survived, 0 isolation failures, 2 allowlist entries for CLI plumbing.
+
+**Kept, not archived.** The reasoning below is why the hook exists and why it is shaped this way,
+and none of it is recoverable from the code. Read it before changing the trigger patterns or the
+exit behaviour. Estimated effort was ~45 minutes; actual was longer, entirely because of the
+mutation pass described under "What the build changed" at the bottom.
+
 Companion: `tools/HOOK_AUTHORING.md` (scaffold + testing conventions — follow it).
 
 ---
@@ -106,3 +114,59 @@ Also review for pattern/scaffold: `tools/check_edit_safety.py`, `tools/check_bar
 - `feedback_dont_call_work_unstarted_for_wrong_form.md` — the second-order failure this prevents
 - `feedback_bash_confirm_must_chain_to_operation.md` — same-session sibling failure
 - `feedback_warn_vs_block_hook_design.md` — why this is WARN-tier
+
+
+---
+
+## What the build changed (2026-09-07)
+
+Three things the spec did not anticipate, recorded so the next build of this shape starts ahead.
+
+**1. Section 4's trigger list needed anchoring, not just transcription.** The patterns as written
+are keyword-shaped ("anything missing", "is X done"). Implemented literally they fire on ordinary
+work: "missing" matches *the file is missing a header*, "ready" matches *rename the ready flag*.
+Every pattern is now anchored to a question or imperative construction, and a `_MAX_PROMPT_CHARS`
+ceiling drops long work requests that merely contain a trigger phrase. Section 4's own instruction
+("precision over recall, start narrow") was right; the list underneath it was not narrow yet.
+
+**2. Curly apostrophes are not an edge case here.** A large share of this user's prompts arrive
+via dictation, which emits U+2019. Matching only U+0027 would have made the hook miss its primary
+input channel silently. `_APOSTROPHES` normalises before matching.
+
+**3. The payload key was the one thing unverifiable offline**, so `extract_prompt()` accepts
+several plausible names rather than one. A hook reading the wrong key is indistinguishable from a
+hook that never matches, which is the false-negative shape this repo has shipped before.
+
+## What the mutation pass found, and why section 7's test plan was not enough
+
+Section 7 asked for clean cases, trigger cases, a live smoke test, and "confirm exit 0 on every
+path." All of that was done and produced **49 green tests**. Mutation then measured **12 survivors
+of 26** — 46% of the module's decisions could be broken with the whole suite passing.
+
+Seven were real gaps, now closed with tests. The sharpest is worth stating because it is not in
+any checklist:
+
+> The long-prompt test used prose that matched no trigger. So the real function and a mutant with
+> the length ceiling REMOVED both returned False — one because of the ceiling, one because nothing
+> matched. **The test was structurally incapable of observing the guard it targeted**, and no
+> assertion could fix it. The guard only has observable behaviour on a long input that DOES
+> contain a trigger.
+
+Captured as `feedback_a_test_whose_input_fails_twice_cannot_see_its_target`. A second instance
+turned up the same night in `check_banned_phrase`, where a clean-path guard was unreachable with
+the live fixture, closed in `4afccbb`.
+
+Also killed: an assertion using `not x` where the mutant returns `None`. `None` is falsy, so
+truthiness could not see the difference. `is False` kills it. That one IS a weak assertion and IS
+fixed by tightening — the distinction from the case above determines which fix applies.
+
+**For section 7, if this spec is ever reused:** "confirm exit 0 on every path" is unfalsifiable
+for a hook that exits 0 by design. The testable contract is what reaches stdout, and the guards
+need a mutation pass, not a coverage count.
+
+## Section 9 items: still out of scope, one now cheaper
+
+The Stop-hook absence-claim detector remains deliberately unbuilt and still gated on evidence that
+this hook is insufficient. Note that the fire count it was meant to produce is now partly
+obtainable a cheaper way: this hook's injections are visible in transcripts, so measuring how
+often the trigger fires is a transcript scan rather than a build.
