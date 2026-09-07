@@ -229,14 +229,16 @@ def test_the_live_hook_stack_is_clean_or_declared():
     assert r["checked"] >= 20, "the audit should be seeing the whole wired stack"
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "KNOWN OPEN DEFECT, measured 2026-08-27: six tools/check_*.py declare themselves hooks "
-    "on their docstring summary line, carry passing suites, and are wired in NO settings "
-    "file -- check_banned_phrase, check_pipeline_exit_status, check_plan_partner_critique, "
-    "check_scanner_examined_something, check_workflow_scriptpath, check_zuora_principal_title. "
-    "strict=True makes this a RATCHET: once they are wired or declared CLI-only with a written "
-    "reason, this XPASSes and the suite fails until the marker is deleted, so the defect cannot "
-    "be silently re-normalised."))
+# RATCHET CLOSED 2026-09-06. The xfail(strict=True) marker that stood here recorded six
+# unwired gates measured 2026-08-27. All six are now resolved: check_banned_phrase,
+# check_pipeline_exit_status and check_scanner_examined_something were wired before this
+# session; check_zuora_principal_title and check_workflow_scriptpath were wired on
+# 2026-09-06 after a restraint replay over 12,990 real historical tool calls (1 block and
+# 21-of-37 respectively, all true positives); check_plan_partner_critique was declared
+# CLI-only in tools/hook-unwired-allow.json because it cannot exit 2 and duplicates
+# cross_model_gate.py's existing plan-document coverage. The assertion below is now a live
+# guard rather than a known-failing one -- it fails if a new gate is written and left
+# unwired without a written reason.
 def test_the_live_stack_has_no_undeclared_unwired_gates():
     r = hw.audit(hw.DEFAULT_SETTINGS, REPO_ROOT / "tools", hw.load_allow(hw.DEFAULT_ALLOW),
                  extra_settings=hw.DEFAULT_EXTRA_SETTINGS,

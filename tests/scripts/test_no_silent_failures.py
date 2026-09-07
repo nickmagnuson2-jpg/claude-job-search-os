@@ -51,19 +51,49 @@ NON_HOOK_CHECKERS = {
     # checker this file exists to prevent - and would be a fine irony, given the
     # detector was built to catch things that look built and do nothing.
     "check_dark_inputs.py",
-    # BUILT 2026-08-25, NOT YET WIRED, and deliberately so. All five pass their tests
-    # (169 total) and the two I hand-verified block their origin inputs. But mutation
-    # leaves 56 survivors across them -- and they are not CLI plumbing: 9 of the 18 in
-    # check_scanner_examined_something sit inside _verdict, the function that decides
-    # whether to block. A BLOCKING hook that is decorative at 9 points in its own verdict
-    # logic is worse than no hook, because everything downstream assumes it fired.
-    # Per the repo rule: a green test is not evidence, mutation survival is. Wire each one
-    # only after its survivors are killed or allowlisted with written reasons.
-    "check_pipeline_exit_status.py",        # 40 tests, 8 survivors
-    "check_scanner_examined_something.py",  # 35 tests, 18 survivors (9 in _verdict)
-    "check_workflow_scriptpath.py",         # 17 tests, 8 survivors
-    "check_banned_phrase.py",               # 34 tests, 9 survivors
-    "check_zuora_principal_title.py",       # 43 tests, 13 survivors
+    # ALL FIVE OF THE 2026-08-25 "BUILT, NOT YET WIRED" ENTRIES ARE NOW WIRED and have
+    # been removed from this set, which is why nothing is listed here any more. Keeping a
+    # wired tool in NON_HOOK_CHECKERS is invisible to the test below -- it only flags
+    # UNWIRED tools missing from the set -- so the entries would have rotted silently.
+    #
+    # The precondition they carried was real and is worth restating, because it is the
+    # thing that nearly went wrong: "a green test is not evidence, mutation survival is.
+    # Wire each one only after its survivors are killed or allowlisted with written
+    # reasons." On 2026-09-06 check_zuora_principal_title and check_workflow_scriptpath
+    # were wired on a restraint measurement alone (12,990 replayed historical tool calls;
+    # 1 block and 21-of-37 respectively, all true positives) BEFORE anyone read this
+    # comment. The mutation half was then run and came back clean --
+    # check_workflow_scriptpath killed 47 / survived 0, check_zuora_principal_title killed
+    # 54 / survived 1, that one survivor an equivalent mutant now allowlisted with a
+    # differential-test proof in tools/mutation-allow.json. So the outcome was fine and
+    # the sequence was not.
+    #
+    # The 2026-08-25 counts above (56 survivors across the five) are ARTIFACT NUMBERS.
+    # They predate 8efb8d3, which fixed a corruption ratchet that scored mutants KILLED
+    # against the very file being mutated. check_workflow_scriptpath went from a recorded
+    # 8 survivors to a measured 0 on the same code. Do not cite the old figures.
+    #
+    # The other three were remeasured on 2026-09-06 too, so all five now have a
+    # post-8efb8d3 number. Two are clean and one cannot be measured:
+    #   check_pipeline_exit_status        killed 44, survived 0, allowlisted 0 (was "8")
+    #   check_scanner_examined_something  killed 61, survived 0, allowlisted 4 (was "18,
+    #     9 in _verdict"). Exactly ONE of the four now sits in _verdict, and it is the
+    #     redundant `if not real_paths: return None` fast-path -- the loop it guards
+    #     already skips every match when real_paths is empty. All four were proven
+    #     equivalent by differential test over 11 commands including a path appearing only
+    #     inside a quoted span and only inside a heredoc body; reasons are in
+    #     tools/mutation-allow.json. The original worry -- a blocking hook decorative
+    #     inside its own verdict logic -- does not hold on the current code.
+    #   check_banned_phrase               NOT MEASURABLE, and not its own fault. Its own
+    #     suite is green (71 passed). mutation_check reports baseline_red because
+    #     map_tests over-selects: it maps tests/scripts/test_mutation_report.py on the
+    #     strength of ONE line, a fixture at L642 that uses "tools/check_banned_phrase.py"
+    #     as sample data. That file has one failing test,
+    #     test_the_real_tool_runs_against_the_live_sweep_state, which asserts the live
+    #     sweep state is self-consistent and is red during the current baseline churn
+    #     (it wanted "175 of" and got "111 of 123"). So an unrelated live-data test blocks
+    #     the measurement of a hook it merely mentions. This is the map_tests
+    #     over-selection defect MEMORY.md already records. Re-run once the sweep settles.
     # RETIRED 2026-08-25, unwired from settings.json. Its trigger could not be made to
     # work: the original estimator summed every prose duration ("saves ~20 hrs/week",
     # "first 30 days", "sanction 5 days ago") and fired on 18 of 37 in-scope plan docs
