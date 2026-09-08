@@ -557,9 +557,22 @@ def check(repo_root: Path, changes: list[tuple[str, int, int]],
 
     covered: dict[str, set[str]] = {}
     stale = unusable = failed = 0
+
+    def _relevant(row) -> bool:
+        """Does this row say anything about a path this push actually needs covered?
+
+        The three counters below feed the block message, and until 2026-09-07 they
+        incremented for EVERY discarded row in the ledger. A push needing two files
+        reported "32 matching record(s) are OLDER than the work" when 25 of the 32 were
+        about unrelated artifacts. `matching` was a lie, the number read as evidence of
+        a different defect, and it sent a P0 escalation at the wrong thing. A wrong
+        diagnostic is worse than none: it gets believed and acted on.
+        """
+        return bool(required & set(row.get("paths") or []))
+
     for row in rows:
         if not row_is_usable(row):
-            failed += 1
+            failed += _relevant(row)
             continue
         recorded = _parse_ts(row.get("recorded"))
         if recorded is None:
@@ -568,10 +581,10 @@ def check(repo_root: Path, changes: list[tuple[str, int, int]],
             # stamp skipped the staleness branch and fell straight through to "clear".
             # The test named for this asserted isinstance(blocked, bool), which passes
             # either way. Found by cross-model review 2026-09-03 (F7).
-            unusable += 1
+            unusable += _relevant(row)
             continue
         if recorded < since:
-            stale += 1
+            stale += _relevant(row)
             continue
         for pth in row.get("paths") or []:
             covered.setdefault(pth, set()).add(row_model(row))

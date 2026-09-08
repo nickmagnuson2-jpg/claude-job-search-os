@@ -1173,3 +1173,40 @@ def test_tier_3_now_demands_two_models():
     assert len(g.WIRED_MODELS) >= 2
     assert g.models_required(3) == 2
     assert g.models_required(2) == 2
+
+
+# --- diagnostics must count only RELEVANT rows ---------------------------------
+#
+# 2026-09-07. The block message said "32 matching record(s) are OLDER than the work".
+# 25 of those 32 were about entirely unrelated files: the counter incremented for every
+# old row in the ledger. "matching" was false, the number sounded like evidence, and it
+# caused a P0 escalation against the wrong defect. A diagnostic that misleads is worse
+# than no diagnostic, because it gets believed.
+
+def test_stale_counts_only_rows_touching_a_required_path(tmp_path):
+    later = time.time() + 60
+    _row(tmp_path, recorded="2026-09-01T10:00:00+00:00",
+         paths=["tools/career_scanner/scanner.py"])          # relevant, stale
+    for i in range(5):
+        _row(tmp_path, recorded="2026-09-01T10:00:00+00:00",
+             paths=[f"output/analysis/unrelated-{i}.md"])     # irrelevant, stale
+    v = g.check(tmp_path, [("tools/career_scanner/scanner.py", 200, 40)], since=later)
+    assert v.blocked is True
+    assert "1 matching record" in v.message, v.message
+    assert "6 matching" not in v.message
+
+
+def test_unreadable_timestamps_count_only_when_relevant(tmp_path):
+    _row(tmp_path, recorded="not-a-date", paths=["tools/career_scanner/scanner.py"])
+    for i in range(4):
+        _row(tmp_path, recorded="not-a-date", paths=[f"docs/other-{i}.md"])
+    v = g.check(tmp_path, [("tools/career_scanner/scanner.py", 200, 40)], since=0)
+    assert "1 record(s) have an unreadable timestamp" in v.message, v.message
+
+
+def test_failed_runs_count_only_when_relevant(tmp_path):
+    _row(tmp_path, verified=False, paths=["tools/career_scanner/scanner.py"])
+    for i in range(3):
+        _row(tmp_path, verified=False, paths=[f"framework/x-{i}.md"])
+    v = g.check(tmp_path, [("tools/career_scanner/scanner.py", 200, 40)], since=0)
+    assert "1 record(s) came from a run that did not complete" in v.message, v.message
