@@ -80,3 +80,53 @@ def test_collect_main_skips_unmonitored_and_non_completed(tmp_path, monkeypatch)
     ac.main()
     # failing preset produced no inbox file (no fresh candidates written)
     assert not inbox_file.exists()
+
+
+def test_collect_main_uses_per_preset_weight_override(tmp_path, monkeypatch):
+    """The collector must score with the PRESET's weights, not the bare global block.
+
+    Regression, 2026-09-08. main() read data["scoring_weights"] once before the preset
+    loop, which silently discarded a preset's own scoring_weights. Lane B sets
+    stage: 0.0 there because the 2026-08-06 decision retired funding stage as a Lane B
+    criterion, so the weekly collector was scoring Lane B on an axis that decision had
+    removed while the on-demand CLI was not. The two producers disagreed for the same
+    preset.
+    """
+    import tools.agent_collect as ac
+
+    presets = tmp_path / "presets.yaml"
+    presets.write_text(
+        "scoring_weights: {stage: 0.5, sector: 0.3, keyword: 0.2}\n"
+        "presets:\n"
+        "  lane-x:\n"
+        "    entity_type: company\n"
+        "    query: q\n"
+        "    scoring_weights: {stage: 0.0, sector: 0.55, keyword: 0.45}\n"
+        "    monitor: {cadence: weekly}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(ac, "SEEN_PATH", tmp_path / ".agent_seen.json")
+    monkeypatch.setattr(ac, "INBOX", tmp_path / "inbox.md")
+    monkeypatch.setattr(ac, "load_dotenv", lambda: None)
+    monkeypatch.setattr(ac, "make_client", lambda: object())
+    monkeypatch.setattr(ac, "load_known_names", lambda paths: set())
+    monkeypatch.setattr(ac, "run_agent", lambda *a, **k: {
+        "status": "completed",
+        "structured": {"companies": [{"name": "Acme", "hq": "San Francisco",
+                                      "funding_stage": "Series A", "description": "d"}]},
+        "costDollars": {"total": 0.02}})
+
+    captured = {}
+
+    def _capture(cands, weights, keywords):
+        captured["weights"] = weights
+        return [{**c, "score": 7} for c in cands]
+
+    monkeypatch.setattr(ac, "score_company_candidates", _capture)
+    monkeypatch.setattr("sys.argv", ["agent_collect.py", "--today", "2026-09-08",
+                                     "--presets-file", str(presets)])
+    ac.main()
+
+    assert captured["weights"] == {"stage": 0.0, "sector": 0.55, "keyword": 0.45}, (
+        "collector scored with %r; the preset override must win over the global block"
+        % (captured.get("weights"),))

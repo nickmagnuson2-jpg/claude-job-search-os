@@ -41,13 +41,21 @@ PYTHONIOENCODING=utf-8 python3 tools/agent_discover.py --preset lane-a \
   --exclude-names-from data/scan-targets.yaml data/job-pipeline.md
 ```
 
-For a freeform run (fold geo/stage constraints into the query itself):
+For a freeform run (fold the constraints into the query itself):
 
 ```bash
 PYTHONIOENCODING=utf-8 python3 tools/agent_discover.py \
-  --query "AI for restaurants, Bay Area HQ, Series A-C" --entity company \
+  --query "AI-native companies serving restaurants, Bay Area HQ, any funding stage" \
+  --entity company \
   --exclude-names-from data/scan-targets.yaml data/job-pipeline.md
 ```
+
+**Do not stage-gate a Main Street query.** The example above used to read
+`"AI for restaurants, Bay Area HQ, Series A-C"`. Lane B retired funding stage as a
+criterion on 2026-08-06 and re-anchored the gate on **customer type** on 2026-08-10, so
+a stage band in a Main Street query re-introduces the exact filter that decision removed
+and excludes category leaders. Stage remains a legitimate **Lane A** constraint
+(Series B/C/D) and only there.
 
 Discovery runs on the **Exa Agent API** (`tools/agent_discover.py`, engine
 `agent_core.py`). It prints JSON: `candidate_count`, `cost`, per-field
