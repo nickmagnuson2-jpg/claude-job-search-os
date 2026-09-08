@@ -141,7 +141,23 @@ def gather_env_facts(repo_root: Path) -> str:
 # reflections, dossiers, the memory corpus. Listed explicitly, in the same spirit as
 # cross_model_gate.ENFORCEMENT_ASSETS: a derived list would be cleverer and would fail
 # open the first time the derivation missed something.
-PRIVATE_TREES = ("data", "memory", "coaching", "output")
+PRIVATE_TREES = ("data", "memory", "coaching", "output",
+                 # .git holds every version ever committed, and data/ was committed 9
+                 # times and memory/ 7 before they were gitignored. Those objects are
+                 # unreachable from origin (checked: 0 private commits on every origin
+                 # ref, and the feat/* branches were never pushed) but they ARE in the
+                 # local object store, and a jailed model proved it: `git show --stat`
+                 # on one such commit exited 0 and listed two private paths. Denying the
+                 # working tree while leaving its history readable is not a boundary.
+                 # Found by cross-model review (F1) against the jail committed hours
+                 # earlier the same day.
+                 #
+                 # Cost: the model can no longer run git itself. That matches how this
+                 # tool already works -- gather_diff and gather_env_facts run the real
+                 # commands in OUR shell and paste the answers in as established facts,
+                 # precisely because a sandboxed model's own probing cannot be trusted.
+                 # Git facts belong in the payload, not in the jail.
+                 ".git")
 
 # ...but the review itself lives under output/, so it is carved back out. Dossiers sit in
 # output/<slug>/ and stay denied; reports and specs sit here and must stay readable or

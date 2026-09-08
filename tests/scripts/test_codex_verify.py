@@ -713,6 +713,8 @@ def _fake_repo(tmp_path):
     (tmp_path / "output" / "analysis" / "prior.md").write_text("prior\n", encoding="utf-8")
     (tmp_path / "output" / "acme").mkdir()
     (tmp_path / "output" / "acme" / "dossier.md").write_text("PRIVATE\n", encoding="utf-8")
+    (tmp_path / ".git").mkdir()
+    (tmp_path / ".git" / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
     return tmp_path
 
 
@@ -721,6 +723,7 @@ def _fake_repo(tmp_path):
     ("data/secret.md", False),
     ("memory/note.md", False),
     ("output/acme/dossier.md", False),      # dossiers are private
+    (".git/HEAD", False),                   # git objects carry the deleted history
     ("tools/code.py", True),                # code under review must stay readable
     ("output/analysis/prior.md", True),     # --prior reports must stay readable
 ])
