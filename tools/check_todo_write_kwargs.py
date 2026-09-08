@@ -59,6 +59,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from hook_command_lint import strip_literals  # noqa: E402
+from hook_runtime import read_payload  # noqa: E402
 
 # Require an actual `python … todo_write.py … --flag` invocation (not a bare
 # substring). `python` anchor + kwarg allowlist; applied AFTER literal-stripping.
@@ -124,10 +125,10 @@ USAGE_REMINDER = (
 
 
 def main() -> None:
-    try:
-        data = json.load(sys.stdin)
-    except (json.JSONDecodeError, ValueError):
+    p = read_payload()
+    if not p.ok:
         sys.exit(0)
+    data = p.data
 
     tool_input = data.get("tool_input", {}) or {}
     command = tool_input.get("command", "")

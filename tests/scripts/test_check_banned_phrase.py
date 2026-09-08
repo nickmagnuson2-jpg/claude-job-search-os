@@ -11,6 +11,7 @@ reading on 2026-05-25 when he banned the phrase.
 """
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -457,8 +458,16 @@ def _run_with_table(tmp_path, table_text):
     payload = json.dumps({"tool_name": "Write",
                           "tool_input": {"file_path": MANNERED_PATH,
                                          "content": "ordinary sentence\n"}})
+    # The copy lives outside tools/, so its sibling-directory `sys.path.insert` finds
+    # nothing and the shared `hook_runtime` import fails with exit 1 -- which this
+    # helper would report as "the table was rejected", a false pass on 12 tests. The
+    # injection seam being tested is TABLE_PATH (still resolved next to the script, in
+    # tmp_path); the module search path is not part of it. PYTHONPATH keeps the seam
+    # intact and generalises to any future shared module. Found 2026-09-07 when
+    # hook_runtime was adopted.
+    env = {**os.environ, "PYTHONPATH": str(SCRIPT.parent)}
     r = subprocess.run([sys.executable, str(script)],
-                       input=payload, capture_output=True, text=True)
+                       input=payload, capture_output=True, text=True, env=env)
     return r.returncode, r.stderr
 
 
@@ -508,7 +517,8 @@ def test_a_valid_injected_table_is_actually_used(tmp_path):
                           "tool_input": {"file_path": MANNERED_PATH,
                                          "content": "contains zzz-unlikely-token here\n"}})
     r = subprocess.run([sys.executable, str(script)],
-                       input=payload, capture_output=True, text=True)
+                       input=payload, capture_output=True, text=True,
+                       env={**os.environ, "PYTHONPATH": str(SCRIPT.parent)})
     assert r.returncode == 2, "the injected table's own row did not fire"
     assert "replacement text" in r.stderr
 

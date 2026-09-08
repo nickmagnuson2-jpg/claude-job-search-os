@@ -40,13 +40,13 @@ Exit codes:
 Origin: 2026-06-02 friction-log dedup fix surfaced the hidden mandatory-patch
 promotion. See memory/MEMORY.md [[project_macos_python3]].
 """
-import json
 import os
 import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from hook_command_lint import strip_literals  # noqa: E402
+from hook_runtime import read_payload  # noqa: E402
 
 # Command boundary = start, newline, or a separator (`|`, `;`, `&`, `(`). Backtick
 # is deliberately EXCLUDED: `` `python` `` in a commit message or doc is inline code,
@@ -65,13 +65,11 @@ BARE_PYTHON = re.compile(r"(?:^|[\n;&|(])\s*(?:\w+=\S+\s+)*python(?![\w.\-])")
 
 
 def main() -> None:
-    try:
-        data = json.load(sys.stdin)
-    except (json.JSONDecodeError, ValueError):
+    p = read_payload()
+    if not p.ok:
         sys.exit(0)
 
-    tool_input = data.get("tool_input", {}) or {}
-    command = tool_input.get("command", "")
+    command = p.command
     if not command:
         sys.exit(0)
 

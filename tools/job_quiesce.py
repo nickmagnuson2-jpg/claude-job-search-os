@@ -62,7 +62,8 @@ LAUNCH_AGENTS = Path.home() / "Library" / "LaunchAgents"
 
 # Default marker location: beside the sweep's own state, so a human looking at why the
 # baseline stopped finds the outstanding debt in the same directory.
-DEFAULT_MARKER = Path("output/analysis/082626-mutation-baseline/.quiesced-jobs.json")
+import mutation_state  # noqa: E402
+DEFAULT_MARKER = mutation_state.quiesce_marker_path()
 
 
 def _domain() -> str:

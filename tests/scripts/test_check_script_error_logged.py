@@ -449,6 +449,16 @@ def sandbox_hook(tmp_path):
     (tmp_path / "repo" / "memory").mkdir()
     dest = tools / HOOK.name
     shutil.copyfile(HOOK, dest)
+    # The copy relocates the paths the hook computes, which is the point -- but it also
+    # relocates its sibling-module lookup. Every hook takes its payload from
+    # tools/hook_runtime.py via a `sys.path.insert(0, dirname(__file__))`, so a copy that
+    # travels without it dies on ImportError and every assertion below reads as "the hook
+    # chose not to log" rather than "the hook could not start". Copy the shared modules
+    # alongside; they are pure and carry no state. (2026-09-08, hook_runtime adoption.)
+    for shared in ("hook_runtime.py", "hook_command_lint.py"):
+        src = HOOK.parent / shared
+        if src.exists():
+            shutil.copyfile(src, tools / shared)
     return dest
 
 

@@ -7,11 +7,23 @@
   PLISTS array so a routine `install.sh` never resurrects it. As of 2026-09-01 it drives
   the FROM-SCRATCH re-sweep of all 108 auditable tools (10,811 mutants) that the
   2026-08-31 PYTHONDONTWRITEBYTECODE fix made necessary - every pre-fix number may be a
-  false kill. Unload it once the sweep reports SWEEP COMPLETE:
+  false kill.
+
+  RE-ARMED 2026-09-08 for a FULL-CORPUS run: targets rebuilt to 138 selected / 134 auditable
+  / 12,918 mutants / 0 engine errors. Wired hooks ARE measured here and that is deliberate:
+  mutation_sweep skips them only when CLAUDECODE is set, which launchd does not set, so an
+  unattended run covers all 134 including the 34 guards. A run started from inside a Claude
+  session skips those 34 instead, because mutating a live guard makes that session's own tool
+  calls answer to the mutant (measured 2026-09-07).
+
+  ~12,918 mutants at the 2026-08 rate is well past one night. That is fine and expected: the
+  sweep resumes by tool name against baseline.jsonl, so it picks up where it stopped. Unload it once the sweep reports SWEEP COMPLETE:
       launchctl unload ~/Library/LaunchAgents/com.nickmagnuson.jobsearch.mutation-sweep.plist
       rm ~/Library/LaunchAgents/com.nickmagnuson.jobsearch.mutation-sweep.plist
 
-  18:00, NOT 16:00 (moved 2026-09-01). While this runs, one tools/*.py is mutated on disk
+  18:00, NOT 16:00 (moved 2026-09-01). CORRECTED 2026-09-08: this comment said 18:00 while
+  StartCalendarInterval below said 22. Nick asked for 6pm and the file now matches the prose.
+  If you change the hour, change BOTH. While this runs, one tools/*.py is mutated on disk
   at any instant and the tree is unsafe for ordinary work - tests/conftest.py refuses to
   run, and skills that shell out to tools/*.py would execute a mutant against real data.
   A 16:00 start put that inside a working afternoon. 18:00 is after the workday, and the
@@ -42,7 +54,7 @@
     </array>
     <key>StartCalendarInterval</key>
     <dict>
-        <key>Hour</key><integer>22</integer>
+        <key>Hour</key><integer>18</integer>
         <key>Minute</key><integer>0</integer>
     </dict>
     <key>StandardOutPath</key>

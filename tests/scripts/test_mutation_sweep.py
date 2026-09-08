@@ -323,7 +323,12 @@ def test_the_self_excluded_row_still_reports_its_hook_wiring(repo, monkeypatch):
     (repo / "tests" / "scripts" / "test_mutation_sweep.py").write_text(
         "def test_a():\n    assert 1 == 1\n", encoding="utf-8")
     (repo / ".claude").mkdir()
-    (repo / ".claude" / "settings.json").write_text("mutation_sweep.py", encoding="utf-8")
+    # Real settings shape, not a bare substring. The wiring flag is now derived by parsing
+    # the settings file (union of project/local/global) instead of grepping its text, so a
+    # bare mention no longer counts as wiring -- which was a false-positive source.
+    (repo / ".claude" / "settings.json").write_text(
+        json.dumps({"hooks": {"PreToolUse": [
+            {"hooks": [{"command": "tools/mutation_sweep.py"}]}]}}), encoding="utf-8")
     mod = load(repo, monkeypatch)
     rows = {r["tool"]: r for r in mod.build_targets()}
     assert rows["tools/mutation_sweep.py"]["h"] is True
@@ -334,7 +339,8 @@ def test_hooked_flag_tracks_the_settings_file(repo, monkeypatch):
     add_tool(repo, "loose_tool", mutants=1)
     (repo / ".claude").mkdir()
     (repo / ".claude" / "settings.json").write_text(
-        json.dumps({"hooks": {"PreToolUse": [{"command": "tools/wired_tool.py"}]}}),
+        json.dumps({"hooks": {"PreToolUse": [
+            {"hooks": [{"command": "tools/wired_tool.py"}]}]}}),
         encoding="utf-8")
     mod = load(repo, monkeypatch)
     flags = {r["tool"]: r["h"] for r in mod.build_targets()}
@@ -624,7 +630,7 @@ def test_the_start_line_reports_how_much_is_left_and_how_much_resumed(repo, monk
     mod = load(repo, monkeypatch)
     mod.run_sweep(state)
     out = capsys.readouterr().out
-    assert "1 tools to measure (1 already banked)" in out
+    assert "1 tools to measure (1 already banked, 0 wired and skipped)" in out
 
 
 def test_each_tool_reports_its_verdict_as_it_lands(repo, monkeypatch, capsys):

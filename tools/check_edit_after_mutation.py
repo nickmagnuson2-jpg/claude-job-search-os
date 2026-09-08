@@ -38,6 +38,9 @@ from __future__ import annotations
 import json
 import os
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from hook_runtime import read_payload  # noqa: E402
 import tempfile
 import time
 from pathlib import Path
@@ -218,10 +221,10 @@ def _mode_from_argv() -> str:
 
 def main() -> None:
     mode = _mode_from_argv()
-    try:
-        data = json.load(sys.stdin)
-    except Exception:
-        sys.exit(0)  # fail-open
+    p = read_payload()
+    if not p.ok:
+        sys.exit(0)
+    data = p.data  # fail-open
 
     tool_name = data.get("tool_name", "")
     tool_input = data.get("tool_input", {}) or {}

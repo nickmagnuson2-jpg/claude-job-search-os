@@ -293,15 +293,17 @@ def test_unparseable_stdin_fails_open_and_says_nothing(raw):
 
 @pytest.mark.parametrize("raw", ["null", "[]", '"a string"', "7"],
                          ids=["null", "list", "string", "number"])
-def test_valid_json_that_is_not_an_object_crashes_with_a_traceback(raw):
-    """DOCUMENTS A REAL BUG. The try/except only wraps json.load, so a payload that parses
-    to a non-dict reaches `data.get(...)` and raises AttributeError. Exit 1 is an
-    infrastructure error, so the tool call still proceeds -- it fails open by accident
-    rather than by design, and leaves a traceback on stderr that reads like a real finding.
-    Pinned so a fix has to come here."""
+def test_valid_json_that_is_not_an_object_fails_open_silently(raw):
+    """FIXED 2026-09-08; this test previously pinned the bug and said a fix had to land here.
+
+    The old intake wrapped only `json.load`, so a payload parsing to a non-dict reached
+    `data.get(...)` and raised AttributeError: exit 1, a traceback on stderr reading like a
+    real finding, and fail-open by accident rather than by design. `hook_runtime.read_payload`
+    now rejects a non-object top level, so the hook exits 0 silently -- fail-open on purpose."""
     r = run("", raw=raw)
-    assert r.returncode == 1
-    assert "AttributeError" in r.stderr
+    assert r.returncode == 0, "a non-object payload must fail open, not crash"
+    assert "AttributeError" not in r.stderr
+    assert "Traceback" not in r.stderr
     assert WARN_MARKER not in r.stderr
 
 

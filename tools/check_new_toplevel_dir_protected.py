@@ -16,6 +16,9 @@ import re
 import subprocess
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from hook_runtime import read_payload  # noqa: E402
+
 BACKUP = "tools/backup-data.sh"
 
 # Dirs that exist for the harness, not for Nick's data. Never Nick-authored content.
@@ -60,10 +63,10 @@ def is_gitignored(root, rel):
 
 
 def main():
-    try:
-        payload = json.load(sys.stdin)
-    except Exception:
-        return 0  # fail open on bad JSON
+    p = read_payload()
+    if not p.ok:
+        return 0
+    payload = p.data  # fail open on bad JSON
 
     ti = payload.get("tool_input") or {}
     fp = ti.get("file_path") or ti.get("path") or ""

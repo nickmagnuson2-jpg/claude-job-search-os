@@ -12,6 +12,10 @@ Triggered by .claude/settings.json PreToolUse hook on Write|Edit|MultiEdit.
 """
 import json
 import sys
+
+import os
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from hook_runtime import read_payload  # noqa: E402
 from pathlib import Path
 
 LIVING_LOGS = {
@@ -23,10 +27,10 @@ LIVING_LOGS = {
 
 
 def main():
-    try:
-        data = json.load(sys.stdin)
-    except Exception:
+    p = read_payload()
+    if not p.ok:
         return
+    data = p.data
 
     tool_name = data.get("tool_name", "")
     if tool_name not in ("Write", "Edit", "MultiEdit"):

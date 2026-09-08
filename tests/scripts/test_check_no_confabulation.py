@@ -291,15 +291,15 @@ def test_empty_stdin_fails_open():
     assert run("", raw="").returncode == ALLOW
 
 
-def test_KNOWN_DEFECT_non_object_json_tracebacks_instead_of_failing_open():
-    """The `except Exception` guards json.load() only; `data.get(...)` then runs on whatever
-    was parsed. Valid-but-non-object JSON (a list, a bare string, `null`) raises
-    AttributeError and the hook exits 1. It does not BLOCK, so the write still proceeds --
-    but every such call prints a traceback into the session. Pinned, not endorsed."""
+def test_non_object_json_fails_open_silently():
+    """FIXED 2026-09-08. This carried the instruction "defect fixed -- change this to assert
+    ALLOW", and the defect is now fixed: `hook_runtime.read_payload` rejects a non-object
+    top level, so valid-but-non-object JSON exits 0 with no traceback instead of exiting 1
+    with an AttributeError printed into the session."""
     r = run("", raw="[1, 2, 3]")
-    assert r.returncode == 1, "defect fixed -- change this to assert ALLOW"
+    assert r.returncode == 0, "a non-object payload must fail open"
     assert r.returncode != BLOCK, "a malformed payload must never block real work"
-    assert "AttributeError" in r.stderr
+    assert "AttributeError" not in r.stderr
 
 
 @pytest.mark.parametrize("payload", [

@@ -44,6 +44,7 @@ import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from hook_runtime import read_payload  # noqa: E402
 
 import check_prep_doc  # noqa: E402  (parse_stamps + the frozen stamp regex)
 import prep_doc_parse  # noqa: E402  (parse_proofs_text + the frozen proof regex)
@@ -125,10 +126,10 @@ def check_content(text: str) -> list[str]:
 
 
 def main() -> int:
-    try:
-        data = json.load(sys.stdin)
-    except Exception:
-        return 0  # fail open
+    p = read_payload()
+    if not p.ok:
+        return 0
+    data = p.data  # fail open
 
     tool_input = data.get("tool_input") or {}
     if not _is_prep_doc(tool_input.get("file_path", "")):

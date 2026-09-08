@@ -67,6 +67,9 @@ import json
 import os
 import re
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from hook_runtime import read_payload  # noqa: E402
 import time
 from pathlib import Path
 
@@ -314,10 +317,10 @@ def main() -> int:
     if os.environ.get(OVERRIDE_ENV) == "1":
         return 0
 
-    try:
-        payload = json.load(sys.stdin)
-    except (json.JSONDecodeError, ValueError):
+    p = read_payload()
+    if not p.ok:
         return 0
+    payload = p.data
 
     if payload.get("stop_hook_active"):
         return 0

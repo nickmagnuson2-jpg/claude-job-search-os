@@ -9,7 +9,11 @@ Triggered by .claude/settings.json PostToolUse hook on every Edit call.
 Never exits non-zero — never blocks workflow.
 """
 import json
+import os
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from hook_runtime import read_payload  # noqa: E402
 from pathlib import Path
 
 # Files that must always use Write, never Edit
@@ -22,8 +26,11 @@ LONG_LINE_THRESHOLD = 500
 
 
 def main():
+    p = read_payload()
+    if not p.ok:
+        return
     try:
-        data = json.load(sys.stdin)
+        data = p.data
         tool_input = data.get("tool_input", {})
         file_path = tool_input.get("file_path", "")
 

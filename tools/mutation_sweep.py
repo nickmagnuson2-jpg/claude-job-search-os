@@ -70,7 +70,8 @@ import job_quiesce  # noqa: E402
 
 REPO_ROOT = Path(os.environ.get("MUTATION_REPO_ROOT",
                                 Path(__file__).resolve().parents[1])).resolve()
-DEFAULT_STATE = REPO_ROOT / "output" / "analysis" / "082626-mutation-baseline"
+import mutation_state  # noqa: E402
+DEFAULT_STATE = mutation_state.state_dir()
 # pipe_write.py needs 68 minutes and was lost at the old 45-minute cap, taking the rest
 # of the run's isolation results with it.
 #
@@ -168,8 +169,14 @@ def build_targets() -> list[dict]:
     # corpus forever -- and it had removed check_public_pii.py, the always-on hook that
     # keeps real names out of this PUBLIC repo, along with 8 others. Doing the right thing
     # must not delete the measurement. (2026-08-26)
-    settings = (REPO_ROOT / ".claude" / "settings.json")
-    wired = settings.read_text(encoding="utf-8") if settings.exists() else ""
+    # ONE definition of "is this wired", shared with the run-time skip below. This used to
+    # be a substring test over `.claude/settings.json` alone, which is wrong twice: it misses
+    # anything wired in settings.local.json or the global file, and it matches a bare mention
+    # anywhere in the text. The cached `h` it produced read False for check_banned_phrase.py,
+    # which has been wired for months. Consolidated 2026-09-08 -- having added
+    # currently_wired() below and left this one in place would have been two answers to one
+    # question in a single file.
+    wired = currently_wired(REPO_ROOT)
 
     def has_own_suite(tool: pathlib.Path) -> bool:
         """Is there a test file NAMED for this tool, or only ones that mention it?
@@ -305,12 +312,44 @@ def _report_quiesce(action: str, res: dict) -> None:
               f"`bash tools/launchd/install.sh install`", flush=True)
 
 
-def run_sweep(state_dir: Path) -> int:
+def run_sweep(state_dir: Path, only: list[str] | None = None) -> int:
     targets_file, out = state_dir / "targets.json", state_dir / "baseline.jsonl"
     if not targets_file.exists():
         print(f"no target list at {targets_file}; run with --targets first", file=sys.stderr)
         return 1
     targets = json.loads(targets_file.read_text(encoding="utf-8"))
+
+    # AN EMPTY TARGET LIST IS A BROKEN GENERATION, NOT A FINISHED SWEEP (codex F2,
+    # 2026-09-08). `exists()` was the only check, so a `[]` parsed fine, produced an empty
+    # todo, printed SWEEP COMPLETE and returned 0 -- a clean bill of health over zero
+    # measurements, which is the exact shape feedback_guard_must_hard_abort_on_empty_input
+    # exists to forbid. targets.json is machine-generated, so an empty one means --targets
+    # already failed and the sweep must not paper over it.
+    # --only: measure a NAMED SUBSET. This exists because its absence is what produced a
+    # hand-written shell runner on 2026-09-07 -- the legitimate need was "re-measure these
+    # 13", the tool could only do all-or-resume, so someone wrote a loop around
+    # mutation_check by hand. That loop had no resume, did not quiesce launchd, mis-captured
+    # every exit status, and wrote its results to a scratchpad instead of baseline.jsonl.
+    # A gate that forbids bespoke runners without this flag would be a guard over a poisoned
+    # source: it would block the need instead of serving it.
+    if only:
+        wanted = {t if t.startswith("tools/") else f"tools/{t}"
+                  for t in (n if n.endswith(".py") else f"{n}.py" for n in only)}
+        known = {t["tool"] for t in targets}
+        missing = sorted(wanted - known)
+        if missing:
+            print(f"--only names {len(missing)} tool(s) that are not in the target list: "
+                  f"{', '.join(missing)}. Rebuild with --targets, or check the spelling; "
+                  f"silently measuring a smaller set than you asked for is how a partial "
+                  f"run gets read as a full one.", file=sys.stderr)
+            return 1
+        targets = [t for t in targets if t["tool"] in wanted]
+
+    if not targets:
+        print(f"target list at {targets_file} is EMPTY. A sweep over zero tools is not a "
+              f"clean run, it is a broken target generation. Rebuild with --targets and "
+              f"read its output before sweeping.", file=sys.stderr)
+        return 1
 
     # LOCK BEFORE TOUCHING ANYTHING, and before the jobs come down. A second sweep that
     # quiesced launchd and then bailed on the lock would restore jobs the FIRST sweep still
@@ -349,7 +388,7 @@ def run_sweep(state_dir: Path) -> int:
         signal.signal(sig, _on_signal)
     _report_quiesce("quiesce", job_quiesce.quiesce(REPO_ROOT, marker))
     try:
-        return _run_sweep_inner(targets, out)
+        return _run_sweep_inner(targets, out, only_mode=bool(only))
     finally:
         put_jobs_back()
         # Release explicitly rather than leaning on process exit: the test suite calls
@@ -359,7 +398,50 @@ def run_sweep(state_dir: Path) -> int:
         mutation_check.release_run_lock()
 
 
-def _run_sweep_inner(targets, out: Path) -> int:
+def currently_wired(root: pathlib.Path | None = None) -> set[str]:
+    """Tool basenames wired as hooks RIGHT NOW, from the union of all settings files.
+
+    NOT the `h` flag in targets.json. That flag is a cache written when the target list was
+    last built, and it goes stale: on 2026-09-08 it read False for check_banned_phrase.py,
+    which has been wired for months. A safety decision -- "is mutating this file going to
+    change the guard judging the session's own tool calls" -- must be answered against the
+    live configuration, never a cached boolean.
+
+    Uses check_hook_warn_tier.wired_hooks so there is ONE definition of the registry, and it
+    is the union of `.claude/settings.json`, `.claude/settings.local.json` and the global
+    `~/.claude/settings.json`. The previous substring test over a single file also missed
+    anything wired in the other two.
+    """
+    import json as _json
+    try:
+        import check_hook_warn_tier as hwt
+    except Exception:
+        return set()
+    # Read the settings of the tree being SCANNED, not always the real repo's. The test
+    # harness relocates this module to a throwaway repo, and a hardcoded real-repo path made
+    # `build_targets` report that tree's wiring instead of the fixture's -- a flag that is
+    # wrong in exactly the situation it is being tested for. Defaults to REPO_ROOT, which is
+    # what production uses.
+    base = pathlib.Path(root) if root is not None else REPO_ROOT
+    candidates = [base / ".claude" / "settings.json",
+                  base / ".claude" / "settings.local.json",
+                  pathlib.Path(hwt.DEFAULT_EXTRA_SETTINGS[-1])]  # the global file
+    try:
+        wired: dict = {}
+        for sp in candidates:
+            if not sp.is_file():
+                continue
+            for tool, events in hwt.wired_hooks(
+                    _json.loads(sp.read_text(encoding="utf-8"))).items():
+                wired.setdefault(tool, set()).update(events)
+        return set(wired)
+    except Exception:
+        # A registry we cannot read is not an empty registry. Signalled to the caller,
+        # which refuses to sweep rather than assuming nothing is wired.
+        raise
+
+
+def _run_sweep_inner(targets, out: Path, only_mode: bool = False) -> int:
 
     banked = []
     if out.exists():
@@ -375,9 +457,86 @@ def _run_sweep_inner(targets, out: Path) -> int:
         print(f"{time.strftime('%H:%M:%S')}  retrying {len(retrying)} previously-errored "
               f"tool(s): {', '.join(retrying)}", flush=True)
 
-    todo = [t for t in targets if t["mutants"] > 0 and t["tool"] not in done]
+    # WIRED HOOKS ARE NEVER SWEPT (codex F3, 2026-09-08). The `h` flag was recorded at
+    # target-construction time and then used only as a SORT KEY, so a wired PreToolUse guard
+    # was mutated like anything else. mutation_check rewrites its target in place, so for the
+    # length of that tool's run the live guard IS the mutant: every Bash/Write/Edit the user
+    # or an agent issues is judged by it. Measured 2026-09-07 -- a mutant of
+    # check_bare_python.py blocked a command containing no `python` token at all, with the
+    # hook's real message, and cost several minutes to diagnose as anything but a regression.
+    # The silent direction is worse: a mutant that never blocks leaves the gate down and
+    # nothing records it.
+    #
+    # These are not unmeasurable. Run mutation_check.py on one directly when no session is
+    # issuing tool calls. That is a deliberate, attended act; a sweep is not.
+    # ONE candidate set, then split. Computing `wired` and `todo` from separate filters let
+    # an already-banked wired tool fall out of both, so `--only <a wired hook>` printed
+    # "0 tools to measure" with no mention of why. Found by smoke test, 2026-09-08.
+    # Read the LIVE registry, and refuse to sweep if it cannot be read: an unreadable
+    # settings file must not silently become "nothing is wired", which would hand every
+    # guard to the mutator.
+    try:
+        wired_now = currently_wired()
+    except Exception as exc:
+        print(f"cannot determine which hooks are wired ({exc}); refusing to sweep rather "
+              f"than assume none are. Fix the settings file and retry.", file=sys.stderr)
+        return 1
+    # Refuse on an EMPTY registry only when a settings file actually exists. An absent
+    # settings file means a tree that wires nothing -- which is the normal state of the
+    # throwaway repos the tests build, and there are no live guards there to protect. A
+    # settings file that exists and yields nothing is the dangerous case: it means the
+    # registry could not be read, and proceeding would hand every guard to the mutator.
+    # (My first version refused on both and broke 22 sweep tests, 2026-09-08.)
+    settings_exists = (REPO_ROOT / ".claude" / "settings.json").is_file()
+    if settings_exists and not wired_now:
+        print("a settings file exists but the wired-hook registry came back EMPTY, so it "
+              "could not be read; refusing to sweep rather than mutate live guards.",
+              file=sys.stderr)
+        return 1
+
+    candidates = [t for t in targets
+                  if t["mutants"] > 0 and (only_mode or t["tool"] not in done)]
+    def _is_wired(t) -> bool:
+        """ONE predicate, used for both lists. Two predicates is how the same tool landed in
+        `wired` and `todo` at once (smoke test, 2026-09-08): the skip list read the live
+        registry while the todo list still read the stale cached flag. `or t.get("h")` keeps
+        a cached True as a belt-and-braces, since a stale True is safe and a stale False is
+        not."""
+        return pathlib.Path(t["tool"]).name in wired_now or bool(t.get("h"))
+
+    # SKIP WIRED HOOKS ONLY WHILE A CLAUDE CODE SESSION IS LIVE.
+    #
+    # The hazard is concurrency, not wired-ness. mutation_check rewrites its target in
+    # place, so for the length of that tool's run the live guard IS the mutant: a mutant of
+    # check_bare_python.py blocked a command containing no `python` token (2026-09-07), and
+    # the silent direction is worse -- a mutant that never blocks leaves the gate down with
+    # nothing recording it. An UNATTENDED run has no session issuing tool calls, so there is
+    # no exposure and no reason to exclude anything.
+    #
+    # A blanket skip would permanently hole the baseline at 34 of 123 tools -- and those 34
+    # are the guards, the tools whose survival rate matters most. `CLAUDECODE` is set in
+    # every Claude Code tool call and absent under launchd, so the sweep can tell which
+    # situation it is in rather than relying on an operator flag nobody remembers.
+    #
+    # Residual risk, stated rather than papered over: a sweep launched by hand from a plain
+    # terminal sees no marker and will measure wired hooks; opening a Claude session
+    # mid-sweep then reopens the window. Narrower than the blanket skip, and documented.
+    session_live = bool(os.environ.get("CLAUDECODE"))
+    wired = [t for t in candidates if _is_wired(t)] if session_live else []
+    if wired:
+        print(f"{time.strftime('%H:%M:%S')}  SKIPPING {len(wired)} WIRED hook(s) because a "
+              f"Claude Code session is live (CLAUDECODE set) -- mutating a live guard makes "
+              f"this session's own tool calls answer to the mutant: "
+              f"{', '.join(sorted(t['tool'] for t in wired))}", flush=True)
+
+    # An explicit --only is a RE-MEASURE request, so it overrides the resume skip: the
+    # caller has said which tools they want, and answering "already banked" would silently
+    # do nothing. That is exactly the case last night: all 13 were banked with stale
+    # artifact numbers, and re-running them was the entire point.
+    skip = {id(t) for t in wired}
+    todo = [t for t in candidates if id(t) not in skip]
     print(f"{time.strftime('%H:%M:%S')}  {len(todo)} tools to measure "
-          f"({len(done)} already banked)", flush=True)
+          f"({len(done)} already banked, {len(wired)} wired and skipped)", flush=True)
 
     # Full environment, not a stripped one: unattended, a missing env var would turn into a
     # red baseline and get recorded as a finding. PYTHONIOENCODING is mandatory -- every
@@ -484,8 +643,12 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--state-dir", type=Path, default=DEFAULT_STATE,
-                    help="where targets.json and baseline.jsonl live (default: gitignored "
-                         "output/analysis/082626-mutation-baseline)")
+                    help="where targets.json and baseline.jsonl live (default: the gitignored "
+                         "store named by tools/mutation_state.py)")
+    ap.add_argument("--only", nargs="+", metavar="TOOL",
+                    help="measure only these tools (bare name, or tools/NAME.py). Overrides "
+                         "the resume skip, so an already-banked tool IS re-measured. Use "
+                         "this instead of writing a loop around mutation_check.py.")
     ap.add_argument("--targets", action="store_true",
                     help="rebuild the target list and exit, running no mutations")
     args = ap.parse_args(argv)
@@ -509,7 +672,7 @@ def main(argv: list[str] | None = None) -> int:
         # A target list built over tools the engine could not read is not a target
         # list. Fail here rather than measuring a silently smaller corpus.
         return 1 if broken else 0
-    return run_sweep(args.state_dir)
+    return run_sweep(args.state_dir, only=args.only)
 
 
 if __name__ == "__main__":

@@ -43,8 +43,12 @@ than the corruption it looks for, and this one runs on every Bash/Write/Edit cal
 Measured cost on the live data files: ~1.2 ms per pass.
 """
 import json
+import os
 import re
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from hook_runtime import read_payload  # noqa: E402
 from collections import Counter
 from pathlib import Path
 
@@ -159,11 +163,10 @@ def main() -> None:
             sys.exit(0)
 
         # Hook mode: read the PostToolUse payload, validate, report via exit 2.
-        raw = sys.stdin.read()
-        if not raw.strip():
+        p = read_payload()
+        if not p.ok:
             sys.exit(0)
-        payload = json.loads(raw)
-        root = Path(payload.get("cwd") or Path.cwd())
+        root = Path(p.cwd or Path.cwd())
 
         results = scan_files(root)
         if results:

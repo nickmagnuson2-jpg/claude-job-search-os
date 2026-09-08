@@ -62,6 +62,9 @@ import os
 import re
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from hook_runtime import read_payload  # noqa: E402
+
 # `<anything>/workflows/scripts/<file>` is the persisted per-run snapshot location.
 # Pointing scriptPath there re-runs the cached copy under a compliant-looking key.
 SNAPSHOT_DIR = re.compile(r"(?:^|/)workflows/scripts/")
@@ -100,10 +103,10 @@ def _block(message: str) -> None:
 
 
 def main() -> None:
-    try:
-        data = json.load(sys.stdin)
-    except (json.JSONDecodeError, ValueError):
+    p = read_payload()
+    if not p.ok:
         sys.exit(0)
+    data = p.data
     if not isinstance(data, dict):
         sys.exit(0)
 

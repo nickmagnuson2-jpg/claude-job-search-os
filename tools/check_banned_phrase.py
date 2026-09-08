@@ -88,10 +88,13 @@ Origin: 2026-05-25 ~9:30am pre-case. Nick, reading his own prep docs, found the
 phrase ~35 times across active files. 2nd fire 2026-08-20. Generalized to a table
 and wired 2026-09-03.
 """
-import json
+import os
 import re
 import sys
 from pathlib import Path
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from hook_runtime import read_payload  # noqa: E402
 
 class TableError(Exception):
     """The denylist could not be loaded. Always a BLOCK, never a pass."""
@@ -278,17 +281,12 @@ def violations(path: str, content: str,
 
 
 def main() -> None:
-    try:
-        data = json.load(sys.stdin)
-    except (json.JSONDecodeError, ValueError):
-        sys.exit(0)
-    if not isinstance(data, dict):
+    p = read_payload()
+    if not p.ok:
         sys.exit(0)
 
-    tool_name = data.get("tool_name", "") or ""
-    tool_input = data.get("tool_input", {}) or {}
-    if not isinstance(tool_input, dict):
-        sys.exit(0)
+    tool_name = p.tool_name
+    tool_input = p.tool_input
 
     path = tool_input.get("file_path", "") or tool_input.get("notebook_path", "") or ""
     content = new_content(tool_name, tool_input)

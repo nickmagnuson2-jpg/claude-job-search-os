@@ -41,6 +41,9 @@ import json
 import os
 import subprocess
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from hook_runtime import read_payload  # noqa: E402
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -108,13 +111,12 @@ def _save_cursor(state: dict) -> None:
 
 
 def main() -> int:
-    raw = sys.stdin.read()
-    try:
-        data = json.loads(raw) if raw else {}
-    except (json.JSONDecodeError, ValueError):
-        data = {}
-    if data.get("stop_hook_active") is True:
+    p = read_payload()
+    # Fail open on an unreadable payload, exactly as the hand-rolled version did: it
+    # defaulted `data` to {} and fell through to the work below.
+    if p.ok and p.stop_hook_active:
         return 0
+    data = p.data
 
     try:
         if not (REPO_ROOT / CHANGELOG_REL).exists():

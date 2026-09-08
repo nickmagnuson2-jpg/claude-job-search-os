@@ -25,42 +25,26 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_STATE = REPO_ROOT / "output" / "analysis" / "082626-mutation-baseline"
+import mutation_state  # noqa: E402
+DEFAULT_STATE = mutation_state.state_dir()
 TREND_NAME = "survival-trend.jsonl"
 
 
-def summarise(rows: list[dict]) -> dict:
-    """Corpus-level counts from one baseline's rows.
-
-    Only rows with an integer `survived` count. A tool that errored has NO verdict, and
-    folding it in as a zero would report an unmeasured tool as a protected one -- the exact
-    misreading this whole exercise is trying to stop.
-    """
-    scored = [r for r in rows if isinstance(r.get("survived"), int)
-              and isinstance(r.get("mutants"), int) and r["mutants"] > 0]
-    mutants = sum(r["mutants"] for r in scored)
-    survived = sum(r["survived"] for r in scored)
-    return {
-        "tools_total": len(rows),
-        "tools_scored": len(scored),
-        "tools_no_verdict": len(rows) - len(scored),
-        "tools_clean": sum(1 for r in scored if r["survived"] == 0),
-        "mutants": mutants,
-        "survived": survived,
-        "survival_pct": round(100 * survived / mutants, 2) if mutants else None,
-        "own_suite": sum(1 for r in rows if r.get("own") is True),
-        "own_suite_unknown": sum(1 for r in rows if r.get("own") is None),
-    }
-
-
-def read_rows(path: Path) -> list[dict]:
-    return [json.loads(l) for l in path.read_text(encoding="utf-8").splitlines() if l.strip()]
-
-
+# summarise / read_rows / latest_per_tool now live in mutation_state, because
+# mutation_report.py had its own inline copy of the same domain rule and the two had
+# already diverged. Re-exported here so this module's public surface is unchanged.
 def load_trend(path: Path) -> list[dict]:
+    """The recorded series. Trend-specific: the store module owns the BASELINE, this owns
+    the trend file. Deleted by accident when the duplicated aggregation was lifted out, and
+    restored from git rather than retyped."""
     if not path.exists():
         return []
     return [json.loads(l) for l in path.read_text(encoding="utf-8").splitlines() if l.strip()]
+
+
+summarise = mutation_state.summarise
+read_rows = mutation_state.read_rows
+latest_per_tool = mutation_state.latest_per_tool
 
 
 def cmd_record(state_dir: Path, note: str) -> int:
@@ -77,7 +61,13 @@ def cmd_record(state_dir: Path, note: str) -> int:
                           "baseline_mtime": stamp}))
         return 0
     entry = {"recorded": dt.date.today().isoformat(), "baseline_mtime": stamp}
-    entry |= summarise(read_rows(baseline))
+    rows = read_rows(baseline)
+    deduped = latest_per_tool(rows)
+    entry |= summarise(deduped)
+    # Recorded so a future reader can see the append-only file was collapsed, and by how
+    # much. A silent dedupe would make the 175-vs-123 discrepancy invisible again.
+    entry["baseline_rows"] = len(rows)
+    entry["baseline_tools"] = len(deduped)
     if note:
         entry["note"] = note
     with trend_path.open("a", encoding="utf-8") as f:

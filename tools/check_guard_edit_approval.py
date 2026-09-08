@@ -52,10 +52,12 @@ FALSE-POSITIVE SURFACE (content hook => PATH SCOPE, per tools/HOOK_AUTHORING.md)
 Override (only after explicit approval in this session):
   GUARD_EDIT_APPROVED=1
 """
-import json
 import os
 import re
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from hook_runtime import read_payload  # noqa: E402
 
 # Guard infrastructure. Repo-relative, matched against the tail of the path so an
 # absolute path from the tool payload still resolves.
@@ -112,19 +114,17 @@ def is_guarded(path: str) -> bool:
 
 def main() -> None:
     # Fail open on anything malformed: a guard that crashes blocks all work.
-    try:
-        data = json.load(sys.stdin)
-    except (json.JSONDecodeError, ValueError):
+    p = read_payload()
+    if not p.ok:
         sys.exit(0)
 
     if os.environ.get(OVERRIDE_ENV):
         sys.exit(0)
 
-    if data.get("tool_name") not in ("Write", "Edit", "MultiEdit"):
+    if p.tool_name not in ("Write", "Edit", "MultiEdit"):
         sys.exit(0)
 
-    tool_input = data.get("tool_input", {}) or {}
-    path = tool_input.get("file_path", "") or ""
+    path = p.file_path
 
     if not is_guarded(path):
         sys.exit(0)

@@ -31,6 +31,9 @@ import json
 import os
 import re
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from hook_runtime import read_payload  # noqa: E402
 from pathlib import Path
 
 IN_SCOPE_PATTERNS = [
@@ -87,10 +90,10 @@ THRESHOLD_HOURS = 10
 
 
 def extract_target() -> tuple[str, str] | None:
-    try:
-        data = json.load(sys.stdin)
-    except Exception:
+    p = read_payload()
+    if not p.ok:
         return None
+    data = p.data
     tool_input = data.get("tool_input", {}) or {}
     file_path = tool_input.get("file_path", "") or ""
     content = tool_input.get("content") or tool_input.get("new_string") or ""

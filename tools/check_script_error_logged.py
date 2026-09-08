@@ -28,6 +28,9 @@ import os
 import re
 import subprocess
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from hook_runtime import read_payload  # noqa: E402
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -178,10 +181,10 @@ def is_recent_duplicate(surface: str, nature: str) -> bool:
 
 
 def main() -> int:
-    try:
-        data = json.load(sys.stdin)
-    except Exception:
+    p = read_payload()
+    if not p.ok:
         return 0
+    data = p.data
 
     tool_name = (data.get("tool_name") or "").strip()
     if tool_name != "Bash":

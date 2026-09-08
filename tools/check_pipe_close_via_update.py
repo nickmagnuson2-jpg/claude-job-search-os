@@ -55,6 +55,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from hook_command_lint import _strip_heredoc_bodies  # noqa: E402
+from hook_runtime import read_payload  # noqa: E402
 from stage_vocab import is_terminal_stage  # noqa: E402
 
 _SEPARATORS = {"|", "||", "&&", ";", "&", "\n"}
@@ -116,10 +117,10 @@ def find_violation(command: str) -> str | None:
 
 
 def main() -> None:
-    try:
-        data = json.load(sys.stdin)
-    except (json.JSONDecodeError, ValueError):
-        sys.exit(0)  # fail open
+    p = read_payload()
+    if not p.ok:
+        sys.exit(0)
+    data = p.data  # fail open
 
     command = (data.get("tool_input", {}) or {}).get("command", "")
     if not command:

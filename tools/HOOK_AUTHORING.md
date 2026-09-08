@@ -1,9 +1,47 @@
 # Authoring a `check_*.py` Bash/Write hook
 
-Scaffold every new PreToolUse hook from this. It bakes in the blind-spot class
+**IMPORT the payload intake. Do NOT copy it.** Every hook starts the same way:
+
+```python
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from hook_runtime import read_payload  # noqa: E402
+
+def main() -> None:
+    p = read_payload()
+    if not p.ok:
+        sys.exit(0)          # YOUR policy: 33 of 33 hooks fail open; say so explicitly
+    command = p.command      # or p.file_path / p.content / p.tool_name / p.tool_input
+```
+
+`tools/hook_runtime.py` owns the bounded read, the parse, and the field extraction --
+mechanism every consumer wants the same answer to. Your hook owns what counts as a
+violation and what to do with an unreadable payload -- policy, which differs per hook
+and stays here.
+
+**Why this is not a style preference.** Measured 2026-09-07: 33 of 41 hooks had their own
+copy of this intake, in 13 variants that were one design implemented 13 times with
+different subsets of the necessary features -- 32 of 33 with no bounded read (one had
+already caused a live 300-second hang), 30 of 33 with no recursion guard. The variation
+carried bugs, not meaning. An import cannot drift from its source; "keep 33 copies in
+sync" is prose, and CLAUDE.md's enforcement-tier rule says prose converts at zero.
+
+**Reading a field off a payload whose `.ok` is False RAISES.** That is deliberate: it makes
+your `if not p.ok` line change behaviour instead of being decorative, so a mutation pass can tell
+whether you actually handled the case. Do not work around it by reading `.data` directly.
+
+**If your test copies the hook to a tmp dir** (the table-injection pattern in
+`test_check_banned_phrase.py`), pass `env={**os.environ, "PYTHONPATH": str(SCRIPT.parent)}`
+to the subprocess, or the sibling-directory import cannot resolve and every case in that
+test fails for a reason unrelated to what it is testing.
+
+---
+
+The rest of this document is about the FP surfaces and the checklist. It bakes in the blind-spot class
 that bit `check_bare_python.py` twice on 2026-06-02 (command-position-not-substring
-family — see `memory/feedback_command_hook_match_position_not_substring.md`). Copy
-the snippets, fill the TODOs, and do NOT skip the smoke step.
+family — see `memory/feedback_command_hook_match_position_not_substring.md`). Adapt the
+MATCHER snippets below — those are policy and are meant to be written per hook — fill the
+TODOs, and do NOT skip the smoke step. Nothing above the line is copyable: the intake is
+imported, and the literal-stripping lives in `hook_command_lint.strip_literals`.
 
 ## The failure class this prevents
 
@@ -82,7 +120,12 @@ Per `memory/feedback_guard_must_hard_abort_on_empty_input.md`.
 - [ ] **Strip quoted literals before matching** so a boundary char inside a string isn't read as shell syntax.
 - [ ] **Negative lookahead** for adjacent word chars / `.` / `-` so prefixed names (`python3`, `python-dateutil`, `python.md`) stay clean.
 - [ ] **Exclude backtick as a boundary** — `` `token` `` in prose/markdown is inline code, not command substitution; `$(...)` is already covered by `(`.
-- [ ] **Fail open** on bad JSON / empty command (exit 0).
+- [ ] **Take the payload from `hook_runtime.read_payload()`** -- never a private
+      `json.load(sys.stdin)`. See the top of this file. A hand-rolled intake is how 32 of 33
+      hooks ended up without a bounded read.
+- [ ] **Fail open** on bad JSON / empty command (exit 0) -- and write the `if not p.ok`
+      branch explicitly, because that is policy and only you know whether your hook wants
+      fail-open or fail-conservative (`check_draft_voice.py` wants the latter).
 - [ ] **Wiring a gate needs TWO measurements, not one. Restraint AND mutation.** Restraint is
       "does it fire on legitimate work", measured by replaying real history through it (extract
       historical tool calls from `~/.claude/projects/<project>/*.jsonl`, feed each as a hook

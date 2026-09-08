@@ -370,16 +370,20 @@ def test_bash_branch_works_without_pythonpath():
     assert "BLOCKED (check_zuora_principal_title.py)" in proc.stderr
 
 
-def test_missing_sibling_degrades_silently(tmp_path):
-    # kills IF_FALSE on `if not command or split_command_segments is None:` (223):
-    # with the guard gone, a missing sibling makes split_command_segments(None-call)
-    # raise, and the outer handler prints "error (allowing through)" on every Bash
-    # call. Degrading must be silent, not noise on every command.
+def test_a_copy_without_its_siblings_fails_loudly_not_silently(tmp_path):
+    """Replaces test_missing_sibling_degrades_silently, dropped 2026-09-08.
+
+    The old contract was that a missing sibling degrades quietly rather than printing on
+    every Bash call, and the hook carried a `split_command_segments is None` guard to do it.
+    With hook_runtime imported unconditionally a detached copy cannot reach that guard at
+    all, so the guard was dead weight and was deleted with the property. Failing loudly is
+    correct for a hook only ever invoked from tools/.
+    """
     solo = tmp_path / "check_zuora_principal_title.py"
     shutil.copy(HOOK, solo)
     proc = _run_isolated(str(solo), BASH_STALE_WRITE)
-    assert proc.returncode == 0
-    assert proc.stderr == ""
+    assert proc.returncode != 0, "a detached copy must not silently run"
+    assert "hook_runtime" in proc.stderr, proc.stderr
 
 
 # --------------------------------------------------------------------------

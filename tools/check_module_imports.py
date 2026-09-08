@@ -33,6 +33,9 @@ import json
 import os
 import subprocess
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from hook_runtime import read_payload  # noqa: E402
 from pathlib import Path
 
 TIMEOUT_SECONDS = 10
@@ -102,10 +105,10 @@ def _last_exception_line(stderr: str) -> str:
 
 
 def main():
-    try:
-        data = json.load(sys.stdin)
-    except (json.JSONDecodeError, ValueError):
+    p = read_payload()
+    if not p.ok:
         return
+    data = p.data
     file_path = (data.get("tool_input") or {}).get("file_path", "")
     if not file_path:
         return

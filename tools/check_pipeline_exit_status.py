@@ -68,7 +68,6 @@ Exit codes:
 Origin: memory/feedback_pipeline_masks_the_exit_status_you_are_testing.md
 (2026-08-13 fire 1, 2026-08-14 fire 2 + "rule sharpened" supplement).
 """
-import json
 import os
 import re
 import sys
@@ -79,6 +78,7 @@ import sys
 # tools/ next to hook_command_lint.py; PYTHONPATH covers the staging layout.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from hook_command_lint import strip_literals  # noqa: E402
+from hook_runtime import read_payload  # noqa: E402
 
 # Final-stage commands whose exit status is a constant 0 in a pipeline — it can
 # never carry the predicate under test. Informative-status commands (grep, awk,
@@ -153,13 +153,11 @@ def find_violation(command: str) -> tuple[str, str] | None:
 
 
 def main() -> None:
-    try:
-        data = json.load(sys.stdin)
-    except (json.JSONDecodeError, ValueError):
+    p = read_payload()
+    if not p.ok:
         sys.exit(0)
 
-    tool_input = data.get("tool_input", {}) or {}
-    command = tool_input.get("command", "")
+    command = p.command
     if not command:
         sys.exit(0)
 

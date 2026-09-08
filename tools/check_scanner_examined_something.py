@@ -75,26 +75,8 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-try:
-    from hook_command_lint import strip_literals  # noqa: E402
-except ImportError:  # pragma: no cover - standalone/staging only
-    # Fallback used ONLY when this file is run outside tools/ (staging, ad-hoc
-    # copies). In the installed location tools/hook_command_lint.py is the single
-    # source of truth and always wins the import above; do not extend this copy.
-    _HEREDOC_FB = re.compile(
-        r"(<<-?[ \t]*)(['\"]?)([A-Za-z_]\w*)\2([^\n]*\n)(.*?)(\n[ \t]*\3\b)",
-        re.DOTALL,
-    )
-
-    def strip_literals(command: str) -> str:  # type: ignore[misc]
-        command = _HEREDOC_FB.sub(
-            lambda m: m.group(1) + m.group(2) + m.group(3) + m.group(2)
-            + m.group(4) + " " + m.group(6),
-            command,
-        )
-        command = re.sub(r"'[^']*'", " ", command)
-        command = re.sub(r'"[^"$`]*"', " ", command)
-        return command
+from hook_runtime import read_payload  # noqa: E402
+from hook_command_lint import strip_literals  # noqa: E402
 
 
 # Command boundary = start | newline | separator. `||` and `&&` are matched before
@@ -205,10 +187,10 @@ def _verdict(command: str, cwd: str):
 
 
 def main() -> None:
-    try:
-        data = json.load(sys.stdin)
-    except (json.JSONDecodeError, ValueError):
+    p = read_payload()
+    if not p.ok:
         sys.exit(0)
+    data = p.data
 
     tool_input = data.get("tool_input", {}) or {}
     command = tool_input.get("command", "") or ""

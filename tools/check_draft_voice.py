@@ -54,6 +54,7 @@ from pathlib import Path
 # family's repeat fires). See tools/HOOK_AUTHORING.md.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from hook_command_lint import strip_literals  # noqa: E402
+from hook_runtime import read_payload  # noqa: E402
 
 # open_draft.py is always run as a script argument to a python interpreter
 # (PYTHONIOENCODING=utf-8 python3 tools/open_draft.py). Match THAT shape, not a
@@ -67,10 +68,10 @@ OPEN_DRAFT_INVOKE = re.compile(r"\bpython[0-9.]*\b[^|;&\n]*\bopen_draft\.py\b")
 def read_hook_command() -> "str | None":
     """Read hook stdin (Claude Code PreToolUse JSON) once and return the Bash
     command, or None if stdin is unreadable (caller should fail conservative)."""
-    try:
-        data = json.load(sys.stdin)
-    except (json.JSONDecodeError, ValueError):
+    p = read_payload()
+    if not p.ok:
         return None
+    data = p.data
     tool_input = data.get("tool_input", {}) or {}
     return tool_input.get("command", "") or ""
 

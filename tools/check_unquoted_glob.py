@@ -29,13 +29,13 @@ Exit codes:
 
 Origin: 2026-07-08 friction-log audit.
 """
-import json
 import os
 import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from hook_command_lint import strip_literals  # noqa: E402
+from hook_runtime import read_payload  # noqa: E402
 
 # --include=/--exclude= NOT immediately followed by a quote char, with a bare
 # glob character (*, ?) somewhere before the next whitespace. Run on
@@ -47,13 +47,11 @@ UNQUOTED_GLOB = re.compile(r"--(?:include|exclude)=(?!['\"])\S*[*?]")
 
 
 def main() -> None:
-    try:
-        data = json.load(sys.stdin)
-    except (json.JSONDecodeError, ValueError):
+    p = read_payload()
+    if not p.ok:
         sys.exit(0)
 
-    tool_input = data.get("tool_input", {}) or {}
-    command = tool_input.get("command", "")
+    command = p.command
     if not command:
         sys.exit(0)
 

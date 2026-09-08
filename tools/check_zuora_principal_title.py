@@ -103,11 +103,13 @@ import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-try:
-    from check_public_pii import extract_write_targets, split_command_segments
-except Exception:  # pragma: no cover - sibling missing: degrade, never crash
-    extract_write_targets = None
-    split_command_segments = None
+from hook_runtime import read_payload  # noqa: E402
+# Hard import. The "degrade silently if a sibling is missing" fallback was removed on
+# 2026-09-08 with the standalone-copy property: every hook now imports hook_runtime, so a
+# copy that travels without its siblings cannot start at all and there is nothing left for
+# a per-sibling guard to rescue. Hooks are invoked as $CLAUDE_PROJECT_DIR/tools/check_*.py
+# and live beside their dependencies.
+from check_public_pii import extract_write_targets, split_command_segments  # noqa: E402
 
 CANONICAL = "Chief Product and Technology Officer"
 
@@ -198,10 +200,10 @@ def judge(content: str, path: str) -> None:
 
 
 def main() -> None:
-    try:
-        data = json.load(sys.stdin)
-    except Exception:
+    p = read_payload()
+    if not p.ok:
         return
+    data = p.data
 
     tool_name = data.get("tool_name", "")
     tool_input = data.get("tool_input", {}) or {}
@@ -220,7 +222,7 @@ def main() -> None:
         judge(tool_input.get("new_source", ""), tool_input.get("notebook_path", ""))
     elif tool_name == "Bash":
         command = tool_input.get("command", "")
-        if not command or split_command_segments is None:
+        if not command:
             return
         for segment in split_command_segments(command):
             targets = extract_write_targets(segment)

@@ -33,7 +33,8 @@ BYTECODE_FIX_UTC = _dt.datetime(2026, 8, 31, tzinfo=_dt.timezone.utc).timestamp(
 
 REPO_ROOT = Path(os.environ.get("MUTATION_REPO_ROOT",
                                 Path(__file__).resolve().parents[1])).resolve()
-DEFAULT_STATE = REPO_ROOT / "output" / "analysis" / "082626-mutation-baseline"
+import mutation_state  # noqa: E402
+DEFAULT_STATE = mutation_state.state_dir()
 
 
 def measured_rows(rows: list[dict]) -> list[dict]:
@@ -56,8 +57,12 @@ def measured_rows(rows: list[dict]) -> list[dict]:
 def build(state_dir: Path) -> str:
     targets = {r["tool"]: r for r in
                json.loads((state_dir / "targets.json").read_text(encoding="utf-8"))}
-    rows = [json.loads(l) for l in
-            (state_dir / "baseline.jsonl").read_text(encoding="utf-8").splitlines() if l.strip()]
+    # DEDUPED to the latest row per tool, via the shared reader. This report used to parse
+    # the file inline and count every line, so a tool measured twice was counted twice --
+    # and after latest_per_tool landed in the trend recorder on 2026-09-08 the two tools
+    # would have printed different corpus survival rates from the same file.
+    rows = mutation_state.latest_per_tool(
+        mutation_state.read_rows(state_dir / "baseline.jsonl"))
 
     auditable = {t: r for t, r in targets.items() if r["mutants"] > 0}
     measured = {r["tool"] for r in rows}

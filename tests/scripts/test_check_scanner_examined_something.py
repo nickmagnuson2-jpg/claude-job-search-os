@@ -358,22 +358,23 @@ def test_import_does_not_run_main_and_binds_the_shared_strip_literals(tmp_path):
         "AssertionError: the in-file fallback strip_literals is bound, not the shared one"
 
 
-def test_staged_copy_without_the_shared_helper_still_strips_and_blocks(tmp_path, repo):
-    """kills the fallback strip_literals RETURN_NONE. Copied outside tools/, the
-    shared import fails and the in-file fallback is the live implementation: it must
-    return a real string (a None makes _verdict raise and the hook fail open on a
-    provably vacuous call) and it must still blank quoted spans."""
-    staged = tmp_path / "staged"
-    staged.mkdir()
-    copy = staged / SCRIPT.name
-    copy.write_text(SCRIPT.read_text(encoding="utf-8"), encoding="utf-8")
-    assert not (staged / "hook_command_lint.py").exists()
+def test_a_copy_outside_tools_cannot_start_at_all(tmp_path):
+    """The standalone-copy property was DROPPED on 2026-09-08; this pins what replaced it.
 
-    vacuous = _proc("python3 tools/dual.py a.md", cwd=str(repo), script=copy,
-                    run_in=staged)
-    assert vacuous.returncode == 2, vacuous.stderr
-    assert "BLOCKED" in vacuous.stderr, "AssertionError: fallback path did not block"
+    This file used to carry an in-file `strip_literals` fallback so a copy staged outside
+    tools/ still worked, and the old test asserted exactly that. Once every hook took its
+    payload from tools/hook_runtime.py, keeping the property would have cost a private
+    fallback INTAKE in 41 files -- reinstating the duplication the shared module had just
+    removed. So the property went and the 22-line fallback went with it.
 
-    quoted = _proc('echo "python3 tools/dual.py a.md"', cwd=str(repo), script=copy,
-                   run_in=staged)
-    assert quoted.returncode == 0, quoted.stderr
+    The honest contract now: a hook lives beside its siblings, and a detached copy fails
+    loudly rather than silently running a second, subtly different implementation. Asserted
+    rather than merely deleted, because "it no longer runs detached" is a real behaviour
+    someone could reintroduce a fallback to "fix".
+    """
+    staged = tmp_path / SCRIPT.name
+    staged.write_text(SCRIPT.read_text(encoding="utf-8"), encoding="utf-8")
+    r = subprocess.run([sys.executable, str(staged)], input="{}",
+                       capture_output=True, text=True)
+    assert r.returncode != 0, "a detached copy must not silently run"
+    assert "hook_runtime" in r.stderr, r.stderr

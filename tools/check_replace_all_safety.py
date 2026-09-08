@@ -36,6 +36,9 @@ Override: REPLACE_ALL_OVERRIDE=1 bypasses (for confirmed-intentional cases).
 import json
 import os
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from hook_runtime import read_payload  # noqa: E402
 from pathlib import Path
 
 # Tokens longer than this are rarely embedded-by-accident and usually intentional;
@@ -106,10 +109,10 @@ def main():
     if os.environ.get("REPLACE_ALL_OVERRIDE") == "1":
         sys.exit(0)
 
-    try:
-        data = json.load(sys.stdin)
-    except Exception:
-        sys.exit(0)  # fail-open on bad/empty stdin
+    p = read_payload()
+    if not p.ok:
+        sys.exit(0)
+    data = p.data  # fail-open on bad/empty stdin
 
     file_path, edits = collect_edits(data)
     if not file_path:

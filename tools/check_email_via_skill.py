@@ -41,10 +41,12 @@ Exit codes:
   0 — JSON parse error or any other infrastructure issue (fail-open, never
        block on hook-internal problems)
 """
-import json
 import os
 import re
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from hook_runtime import read_payload  # noqa: E402
 
 ALLOWLIST_PATTERNS = [
     re.compile(r"/tools/\.pending-draft\.txt$"),
@@ -82,14 +84,12 @@ def main() -> None:
     if os.environ.get("EMAIL_VIA_SKILL_OVERRIDE") == "1":
         sys.exit(0)
 
-    try:
-        data = json.load(sys.stdin)
-    except (json.JSONDecodeError, ValueError):
+    p = read_payload()
+    if not p.ok:
         sys.exit(0)
 
-    tool_input = data.get("tool_input", {}) or {}
-    file_path = tool_input.get("file_path", "")
-    content = tool_input.get("content") or tool_input.get("new_string") or ""
+    file_path = p.file_path
+    content = p.content
 
     if not file_path or not content:
         sys.exit(0)

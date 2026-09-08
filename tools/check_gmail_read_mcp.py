@@ -36,6 +36,9 @@ import json
 import os
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from hook_runtime import read_payload  # noqa: E402
+
 # Gmail MCP tools that READ content — the script (gmail_fetch.py --search)
 # fully replaces these. Full connector-qualified names.
 GATED_READ_TOOLS = {
@@ -48,10 +51,10 @@ GATED_READ_TOOLS = {
 def read_tool_name() -> "str | None":
     """Read the PreToolUse JSON from stdin and return tool_name, or None if
     stdin is unreadable (caller fails open)."""
-    try:
-        data = json.load(sys.stdin)
-    except (json.JSONDecodeError, ValueError):
+    p = read_payload()
+    if not p.ok:
         return None
+    data = p.data
     return data.get("tool_name")
 
 

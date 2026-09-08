@@ -37,9 +37,12 @@ Exit codes:
 Origin: 2026-07-08 friction-log audit. See memory/MEMORY.md
 [[feedback_glob_resolve_screenshot_path_never_hand_type]].
 """
-import json
+import os
 import re
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from hook_runtime import read_payload  # noqa: E402
 
 # "Screenshot 2026-06-15 at 1.28.08 PM.png" — matches only when the character
 # immediately before AM/PM is a regular space (U+0020). The real filename uses
@@ -75,13 +78,11 @@ def is_doc_context(segment: str) -> bool:
 
 
 def main() -> None:
-    try:
-        data = json.load(sys.stdin)
-    except (json.JSONDecodeError, ValueError):
+    p = read_payload()
+    if not p.ok:
         sys.exit(0)
 
-    tool_input = data.get("tool_input", {}) or {}
-    command = tool_input.get("command", "")
+    command = p.command
     if not command:
         sys.exit(0)
 
