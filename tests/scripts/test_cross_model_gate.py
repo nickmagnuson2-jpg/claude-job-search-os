@@ -1068,3 +1068,65 @@ def test_classification_does_not_depend_on_rule_order(monkeypatch):
     tier, triggers, _reason = g.classify(["tools/inbox_census.py", "CLAUDE.md"])
     assert tier == 3
     assert triggers == ["CLAUDE.md"]
+
+
+# --- every path at the winning tier must be covered, not just the first ---------
+#
+# Codex F1 (P0) on commit 1e36d9c, 2026-09-07. The consolidation used a strict
+# `rule.tier > best.tier`, so only the FIRST rule reaching the maximum tier supplied
+# triggers. `check()` turns triggers into the required coverage set, so peer paths at
+# the same tier rode through unverified.
+#
+# This is the SAME defect the consolidation was written to fix, moved one step: the
+# commit message claimed CLAUDE.md was no longer exempt, and it was exempt again as
+# soon as it was pushed alongside the gate, because both are tier 3 under different
+# rules. Winner-take-all is the wrong operation for a coverage set.
+
+def test_two_rules_at_the_same_tier_both_contribute_triggers():
+    """framework/ and a governed doc are both tier 2, under different rules. A
+    verification covering one must not license the other."""
+    v = g.qualifies([("framework/rules.md", 1, 0),
+                     ("output/analysis/x-handoff.md", 1, 0)])
+    assert v.tier == 2
+    assert set(v.triggers) == {"framework/rules.md", "output/analysis/x-handoff.md"}
+
+
+def test_the_gate_and_CLAUDE_md_are_both_required_when_pushed_together():
+    """Both tier 3, different rules. This is the exact case the previous commit
+    claimed to fix and did not."""
+    v = g.qualifies([("tools/cross_model_gate.py", 1, 1), ("CLAUDE.md", 3, 1)])
+    assert v.tier == 3
+    assert set(v.triggers) == {"tools/cross_model_gate.py", "CLAUDE.md"}
+
+
+def test_lower_tier_paths_stay_out_of_the_required_set():
+    """The union is over the WINNING tier only. Widening it to every matched path
+    would demand coverage of every file in the push, which is how a gate becomes a
+    reflex waiver."""
+    v = g.qualifies([("CLAUDE.md", 3, 1),
+                     ("output/analysis/x-handoff.md", 1, 0),
+                     ("tools/inbox_census.py", 2, 0)])
+    assert v.tier == 3
+    assert set(v.triggers) == {"CLAUDE.md"}
+
+
+def test_same_tier_aggregation_does_not_depend_on_rule_order(monkeypatch):
+    """The earlier order test used a tier-1/tier-3 pair, so it only proved the numeric
+    maximum was picked. It could not see the same-tier loss."""
+    paths = ["framework/rules.md", "output/analysis/x-handoff.md"]
+    forward = g.classify(paths)
+    monkeypatch.setattr(g, "BLAST_RULES", list(reversed(g.BLAST_RULES)))
+    reversed_result = g.classify(paths)
+    assert forward[0] == reversed_result[0]
+    assert set(forward[1]) == set(reversed_result[1])
+
+
+def test_the_reason_names_only_rules_that_actually_matched():
+    """Two mutation survivors lived here. Both tier-3 rules are scanned when the tier
+    is 3, but only the one with hits may contribute wording -- otherwise a push that
+    touches the gate alone reports that it also changes a governing document, which is
+    a false statement in the block message a human is about to act on."""
+    _tier, _triggers, reason = g.classify(["tools/cross_model_gate.py"])
+    assert "enforcement machinery" in reason
+    assert "governing document" not in reason
+    assert ";" not in reason, f"a rule with no hits contributed wording: {reason!r}"

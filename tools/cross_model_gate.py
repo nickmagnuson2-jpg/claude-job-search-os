@@ -131,9 +131,10 @@ class Rule:
     reason: str
 
 
-# Ordered for readability only. classify() takes the HIGHEST matching tier, never the
-# first match, which is what makes the ordering non-load-bearing and one less thing to
-# get wrong when a rule is added.
+# Ordered for readability only. classify() takes the highest matching tier and then
+# UNIONS every rule at that tier, so neither the tier nor the required-coverage set
+# depends on where a rule sits in this list. That is one less thing to get wrong when
+# a rule is added, and it is pinned by two order-independence tests.
 BLAST_RULES: list[Rule] = [
     # T3 -- the machinery that does the enforcing, including this file. Same predicate
     # qualifies() reads, so classification and qualification cannot disagree.
@@ -168,16 +169,36 @@ BLAST_RULES: list[Rule] = [
 
 
 def classify(paths) -> tuple[int, list[str], str]:
-    """The highest-tier rule these paths match: its tier, the paths that matched it,
-    and its reason. ONE pass, ONE answer -- tier and explanation cannot disagree
-    because they come from the same Rule."""
-    best: Rule | None = None
+    """The winning tier, EVERY path that reaches it, and why.
+
+    The triggers are the required-coverage set that check() enforces, so this is a
+    UNION over all rules at the winning tier, not a winner-take-all pick. A strict
+    `rule.tier > best.tier` shipped in 1e36d9c and kept only the first rule to reach
+    the maximum, which silently exempted its peers: tools/cross_model_gate.py plus
+    CLAUDE.md are both tier 3 under different rules, and only the gate was required --
+    the very exemption that commit claimed to close. Found by cross-model review (F1,
+    P0) the same day. Winner-take-all is the wrong operation for a coverage set.
+
+    Only the WINNING tier is unioned. Including every matched path would demand
+    coverage of everything in the push, which is how a gate becomes a reflex waiver.
+    """
+    tiers = [rule.tier for rule in BLAST_RULES
+             if any(rule.matches(p) for p in paths)]
+    if not tiers:
+        return 0, [], ""
+    top = max(tiers)
+
     triggers: list[str] = []
+    reasons: list[str] = []
     for rule in BLAST_RULES:
-        hits = [p for p in paths if rule.matches(p)]
-        if hits and (best is None or rule.tier > best.tier):
-            best, triggers = rule, hits
-    return (best.tier, triggers, best.reason) if best else (0, [], "")
+        if rule.tier != top:
+            continue
+        hits = [p for p in paths if rule.matches(p) and p not in triggers]
+        if not hits:
+            continue
+        triggers.extend(hits)
+        reasons.append(rule.reason)
+    return top, triggers, "; ".join(reasons)
 
 
 def blast_tier(paths) -> tuple[int, list[str]]:
