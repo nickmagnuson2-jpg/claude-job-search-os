@@ -46,6 +46,7 @@ import subprocess
 import tempfile
 import time
 import sys
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -147,12 +148,59 @@ PRIVATE_TREES = ("data", "memory", "coaching", "output")
 # --prior and every spec review breaks.
 REVIEW_TREE = "output/analysis"
 
-# codex's OWN sandbox is disabled inside the jail. Nesting the two made codex stop
+# Each model's OWN sandbox is disabled inside the jail. Nesting the two made codex stop
 # attempting reads at all (715 tokens, no shell trace, answers invented), and its inner
 # sandbox was measured to do nothing against reads anyway. The jail is strictly more
-# restrictive than what it replaces.
-MODEL_ARGV = ["codex", "exec", "--dangerously-bypass-approvals-and-sandbox",
-              "--skip-git-repo-check", "-"]
+# restrictive than what it replaces. Verified for BOTH models: PRIVATE DENIED, CODE 644.
+
+
+@dataclass(frozen=True)
+class Model:
+    """A verifier. Models are DATA: adding one is an entry here, not a code change.
+
+    `family` is the load-bearing field, not `argv`. The gate counts INDEPENDENT
+    perspectives, and until 2026-09-07 it counted model LABELS -- so two rows spelled
+    "codex" and "gpt5" would have satisfied a two-model tier while both came from
+    OpenAI. Counting labels measures spelling.
+
+    Admission rule: a family must differ from the INCUMBENT verifier and from the
+    AUTHOR of the work. The author here is Claude, so `anthropic` is inadmissible --
+    using Claude to verify Claude is the anchoring failure this gate exists to defeat,
+    dressed as a second opinion. Remaining admissible families on the Cursor
+    subscription: google (gemini), moonshot (kimi), zhipu (glm).
+
+    Check the `NO ZDR` tag in `cursor-agent --list-models` before adding one; retention
+    differs by model. It applies to the Claude Fable models, not to grok.
+    """
+    argv: list[str]
+    prompt_via: str      # "stdin" | "argv"
+    report_via: str      # "file" | "stdout"
+    family: str
+
+
+MODELS: dict[str, Model] = {
+    "codex": Model(
+        argv=["codex", "exec", "--dangerously-bypass-approvals-and-sandbox",
+              "--skip-git-repo-check", "-"],
+        prompt_via="stdin", report_via="file", family="openai"),
+    # Read-only by construction: --mode ask cannot write, so it reports on stdout and
+    # WE write the file. Strictly safer than the incumbent, and it needs no write
+    # carve-out at all.
+    "grok": Model(
+        argv=["cursor-agent", "-p", "--trust", "--mode", "ask",
+              "--sandbox", "disabled", "--model", "cursor-grok-4.6-xhigh"],
+        prompt_via="argv", report_via="stdout", family="xai"),
+}
+
+DEFAULT_MODEL_NAME = "codex"
+
+# Appended for report_via="stdout" models: they have no write access, so the
+# file-writing instruction in REPORT_RULES would be an order they cannot follow.
+STDOUT_REPORT_RULES = """\
+=== OUTPUT OVERRIDE (READ-ONLY RUN) ===
+You have NO write access. Ignore any instruction above telling you to write your report
+to a file. PRINT the full report to stdout, ending with the same
+"## FINDINGS (machine-readable)" JSON array block."""
 
 
 def sandbox_policy(repo_root, extra_writable=()) -> str:
@@ -175,14 +223,14 @@ def sandbox_policy(repo_root, extra_writable=()) -> str:
     return "\n".join(lines) + "\n"
 
 
-def jailed_argv(repo_root, policy_path) -> list[str]:
+def jailed_argv(repo_root, policy_path, model=DEFAULT_MODEL_NAME) -> list[str]:
     """The model command, wrapped. FAILS CLOSED if the jail is unavailable: a verifier
     that silently loses its boundary is the false-zero defect wearing a new hat."""
     if not shutil.which("sandbox-exec"):
         raise RuntimeError(
             "sandbox-exec not found, so the model cannot be jailed and would have read "
             "access to the private trees. Refusing to run.")
-    return ["sandbox-exec", "-f", str(policy_path), *MODEL_ARGV]
+    return ["sandbox-exec", "-f", str(policy_path), *MODELS[model].argv]
 
 
 # A diff larger than this buries the signal it exists to surface. Truncation is LOUD:
@@ -405,10 +453,13 @@ def parse_findings(report: Path) -> list[dict]:
 def run(repo_root: Path, target: str, paths: list[str], question: str,
         report: Path, prior: str | None, print_only: bool,
         mode: str = "verify", claims: list[str] | None = None,
-        known_errors: str = "") -> dict:
+        known_errors: str = "", model: str = DEFAULT_MODEL_NAME) -> dict:
+    spec = MODELS[model]
     prompt = build_prompt(repo_root, target, question, report, prior,
                           mode=mode, paths=paths, claims=claims,
                           known_errors=known_errors)
+    if spec.report_via == "stdout":
+        prompt = f"{prompt}\n\n{STDOUT_REPORT_RULES}"
     if print_only:
         print(prompt)
         return {"status": "printed", "report": str(report)}
@@ -423,12 +474,21 @@ def run(repo_root: Path, target: str, paths: list[str], question: str,
     policy_file = Path(tempfile.mkstemp(suffix=".sb", prefix="codex-jail-")[1])
     policy_file.write_text(sandbox_policy(repo_root, extra_writable=[report.parent]),
                            encoding="utf-8")
+    argv = jailed_argv(repo_root, policy_file, model)
     try:
-        proc = subprocess.run(
-            jailed_argv(repo_root, policy_file),
-            input=prompt, capture_output=True, text=True, cwd=str(repo_root))
+        if spec.prompt_via == "argv":
+            proc = subprocess.run(argv + [prompt], capture_output=True, text=True,
+                                  cwd=str(repo_root))
+        else:
+            proc = subprocess.run(argv, input=prompt, capture_output=True, text=True,
+                                  cwd=str(repo_root))
     finally:
         policy_file.unlink(missing_ok=True)
+
+    # A read-only model cannot write its own report, so we write what it printed. The
+    # freshness check downstream is unaffected: the file provably came from THIS run.
+    if spec.report_via == "stdout" and proc.stdout.strip():
+        report.write_text(proc.stdout, encoding="utf-8")
 
     # A row is written for EVERY run, including a failed one: the row is the audit
     # trail. But a failed run verified nothing, so it is marked and the gate refuses to
@@ -448,7 +508,11 @@ def run(repo_root: Path, target: str, paths: list[str], question: str,
         "waived": False,
         # WHICH model produced this. The gate counts DISTINCT models per path, so an
         # unstamped row would be indistinguishable from a second opinion.
-        "model": "codex",
+        "model": model,
+        # The gate counts INDEPENDENT perspectives. Recorded here rather than looked up
+        # there so the gate never has to import this table -- that import would be
+        # circular, since this module already imports the gate.
+        "family": spec.family,
         "rc": proc.returncode,
         "report_written": report.is_file(),
         "report_fresh": report_fresh,
@@ -473,6 +537,8 @@ def main(argv=None) -> int:
     ap.add_argument("--prior", default=None, help="a previous Codex report to check against")
     ap.add_argument("--report", default=None, help="where Codex writes (default: dated)")
     ap.add_argument("--repo-root", default=str(REPO_ROOT))
+    ap.add_argument("--model", default=DEFAULT_MODEL_NAME, choices=sorted(MODELS),
+                    help="which verifier to dispatch")
     ap.add_argument("--print-only", action="store_true",
                     help="emit the assembled prompt and exit without calling Codex")
     ap.add_argument("--mode", choices=("verify", "diverge"), default="verify",
@@ -494,11 +560,11 @@ def main(argv=None) -> int:
         slug = "".join(c if c.isalnum() else "-" for c in args.target.lower())[:40]
         slug = "-".join(p for p in slug.split("-") if p)
         report = (root / "output" / "analysis" /
-                  f"{datetime.now().strftime('%m%d%y')}-codex-{slug}.md")
+                  f"{datetime.now().strftime('%m%d%y')}-{args.model}-{slug}.md")
 
     out = run(root, args.target, args.paths, args.question, report,
               args.prior, args.print_only, mode=args.mode, claims=args.claims,
-              known_errors=args.known_errors)
+              known_errors=args.known_errors, model=args.model)
     print(json.dumps(out, indent=2))
     return 0 if out.get("status") in ("ok", "printed") else 1
 

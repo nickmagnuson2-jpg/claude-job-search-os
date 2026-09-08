@@ -845,3 +845,100 @@ def test_run_writes_a_real_policy_and_removes_it_afterwards(tmp_path, monkeypatc
     assert "(version 1)" in seen["text"], "an empty profile is not a jail"
     assert 'deny file-read*' in seen["text"]
     assert not seen["path"].exists(), "the policy file leaked"
+
+
+# --- models are data ----------------------------------------------------------
+#
+# Until 2026-09-07 the codex argv was hardcoded at a single subprocess.run call and
+# WIRED_MODELS was the one-tuple ("codex",), so models_required() silently halved every
+# tier-2 and tier-3 requirement: the highest blast-radius changes were reviewed at half
+# their specified rigour and had been since the gate was built.
+
+def test_every_model_declares_a_family():
+    """Cross-model review F2 (P0): the table had no family metadata while the gate
+    counted model LABELS, so two aliases of one provider would have counted as two
+    independent perspectives -- the anchoring failure the gate exists to defeat."""
+    assert cv.MODELS
+    for name, m in cv.MODELS.items():
+        assert m.family.strip(), f"{name} declares no family"
+
+
+def test_the_wired_models_span_more_than_one_family():
+    """A second model that shares a family with the first is a second invoice, not a
+    second perspective."""
+    families = {m.family for m in cv.MODELS.values()}
+    assert len(families) == len(cv.MODELS), f"family collision: {families}"
+
+
+def test_no_model_shares_the_authors_family():
+    """The author of the work under review is Claude. Using Claude to verify Claude is
+    the anchoring failure wearing a second opinion's coat."""
+    assert not any(m.family == "anthropic" for m in cv.MODELS.values())
+
+
+@pytest.mark.parametrize("name", ["codex", "grok"])
+def test_jailed_argv_dispatches_the_named_model(tmp_path, name):
+    argv = cv.jailed_argv(tmp_path, tmp_path / "p.sb", name)
+    assert argv[0] == "sandbox-exec"
+    assert cv.MODELS[name].argv[0] in argv
+
+
+def test_an_unknown_model_is_refused(tmp_path):
+    with pytest.raises(KeyError):
+        cv.jailed_argv(tmp_path, tmp_path / "p.sb", "gpt-fictional")
+
+
+@pytest.mark.parametrize("model,prompt_in_argv,report_from_stdout", [
+    ("codex", False, False),   # prompt on stdin; codex writes its own report file
+    ("grok", True, True),      # prompt as argv; read-only, so WE write what it printed
+])
+def test_each_model_uses_its_own_transports(tmp_path, monkeypatch, model,
+                                            prompt_in_argv, report_from_stdout):
+    """Eight mutants survived on these two branches because no test ran a second model
+    through run(). The transports are the only measured per-model variation, so they
+    are the part that must not silently collapse into one."""
+    repo = _fake_repo(tmp_path)
+    report = repo / "output" / "analysis" / "r.md"
+    block = "MODEL-STDOUT\n## FINDINGS (machine-readable)\n[]\n"
+    seen = {}
+    real_run = cv.subprocess.run
+
+    def fake_run(argv, **kw):
+        if isinstance(argv, list) and argv and argv[0] == "sandbox-exec":
+            seen["argv_has_prompt"] = any("WHAT TO VERIFY" in a for a in argv)
+            seen["used_stdin"] = "input" in kw and bool(kw.get("input"))
+            sent = kw.get("input") or "\n".join(a for a in argv if isinstance(a, str))
+            seen["prompt"] = sent
+            if not report_from_stdout:          # emulate a model that writes its own file
+                report.write_text("FILE-WRITTEN\n## FINDINGS (machine-readable)\n[]\n",
+                                  encoding="utf-8")
+
+            class _P:
+                returncode, stderr = 0, ""
+                stdout = block
+            return _P()
+        return real_run(argv, **kw)
+
+    monkeypatch.setattr(cv.subprocess, "run", fake_run)
+    cv.run(repo, "t", [], "", report, None, False, model=model)
+
+    assert seen["argv_has_prompt"] is prompt_in_argv
+    assert seen["used_stdin"] is not prompt_in_argv
+    body = report.read_text(encoding="utf-8")
+    assert ("MODEL-STDOUT" in body) is report_from_stdout, (
+        "a stdout model's report must come from what it printed; a file model's must "
+        "not be overwritten by its chat output")
+    # The read-only override must reach ONLY the model that cannot write. Sending it to
+    # codex would tell a model with a report file to print instead; withholding it from
+    # grok leaves it under an instruction it cannot obey.
+    assert ("OUTPUT OVERRIDE" in seen["prompt"]) is report_from_stdout
+
+
+def test_a_stdout_model_is_told_it_cannot_write(tmp_path):
+    """REPORT_RULES orders the model to write a file. A read-only model cannot, so the
+    prompt would contain an instruction it must disobey -- and grok flagged exactly that
+    contradiction when reviewing the spec that proposed this."""
+    p = cv.build_prompt(tmp_path, "t", "", tmp_path / "r.md", None, paths=[])
+    assert "OUTPUT OVERRIDE" not in p
+    assert cv.MODELS["grok"].report_via == "stdout"
+    assert "PRINT the full report to stdout" in cv.STDOUT_REPORT_RULES

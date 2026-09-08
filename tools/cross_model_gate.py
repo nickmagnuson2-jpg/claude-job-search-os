@@ -225,7 +225,7 @@ TIER_MODELS = {0: 0, 1: 1, 2: 2, 3: 2}
 # as the thing to avoid when he agreed to build this. So the requirement is
 # min(what the tier wants, what exists). The tier is still COMPUTED and RECORDED at full
 # strength, so the shortfall is visible rather than silently absent.
-WIRED_MODELS: tuple[str, ...] = ("codex",)
+WIRED_MODELS: tuple[str, ...] = ("codex", "grok")
 
 DEFAULT_MODEL = "codex"
 
@@ -236,10 +236,22 @@ def models_required(tier: int) -> int:
 
 
 def row_model(row: dict) -> str:
-    """Which model produced this row. Rows predating the field are the only one there
-    was, so naming it keeps the distinct-model count honest rather than optimistic."""
-    m = row.get("model")
-    return str(m).strip() if isinstance(m, str) and m.strip() else DEFAULT_MODEL
+    """Which INDEPENDENT PERSPECTIVE produced this row -- its model FAMILY.
+
+    Counting the `model` label was a P0 found by cross-model review 2026-09-07: two rows
+    spelled "codex" and "gpt5" would have satisfied a two-model tier while both came
+    from OpenAI. A label measures spelling; a family measures independence, which is the
+    whole product. A second CLI routing to the same provider is a second invoice.
+
+    Falls back to the model name, then to DEFAULT_MODEL, so the 31 rows predating the
+    field keep counting as the one perspective they were rather than becoming
+    uncountable and blocking every push they used to clear.
+    """
+    for key in ("family", "model"):
+        v = row.get(key)
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+    return DEFAULT_MODEL
 
 
 @dataclass

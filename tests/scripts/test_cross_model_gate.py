@@ -456,11 +456,18 @@ def test_coverage_accumulates_across_rows(tmp_path):
 
 def test_only_the_TRIGGERING_paths_need_coverage(tmp_path):
     """A push that qualifies because of a hook must not also demand a review of the
-    unrelated README that rode along."""
-    _row(tmp_path, paths=["tools/check_thing.py"])
+    unrelated README that rode along.
+
+    Two rows, two FAMILIES: this is a tier-3 path and tier 3 has demanded two
+    independent models since grok was wired 2026-09-07. The assertion under test is
+    which PATHS need coverage, so the model count is satisfied deliberately rather than
+    left to make the test fail for an unrelated reason."""
+    _row(tmp_path, model="codex", family="openai", paths=["tools/check_thing.py"])
+    _row(tmp_path, model="grok", family="xai", paths=["tools/check_thing.py"])
     v = g.check(tmp_path, [("tools/check_thing.py", 3, 1), ("README.md", 40, 2)],
                 since=0)
     assert v.blocked is False
+    assert "README.md" not in (v.message or "")
 
 
 def test_a_sibling_repos_review_cannot_clear_a_code_push_here(tmp_path):
@@ -1130,3 +1137,39 @@ def test_the_reason_names_only_rules_that_actually_matched():
     assert "enforcement machinery" in reason
     assert "governing document" not in reason
     assert ";" not in reason, f"a rule with no hits contributed wording: {reason!r}"
+
+
+# --- independence is counted by FAMILY, not by label --------------------------
+#
+# Cross-model review F2 (P0), 2026-09-07: the gate counted distinct `model` strings, so
+# two rows labelled "codex" and "gpt5" would have satisfied a tier-3 two-model
+# requirement while both came from OpenAI. Counting labels measures spelling, not
+# independence.
+
+def test_two_rows_from_the_same_family_count_as_one_perspective(tmp_path):
+    _row(tmp_path, model="codex", family="openai", paths=["CLAUDE.md"])
+    _row(tmp_path, model="gpt5", family="openai", paths=["CLAUDE.md"])
+    v = g.check(tmp_path, [("CLAUDE.md", 3, 1)], since=0)
+    assert v.blocked is True, "two OpenAI rows are one perspective, not two"
+
+
+def test_two_rows_from_different_families_satisfy_a_tier_3_path(tmp_path):
+    _row(tmp_path, model="codex", family="openai", paths=["CLAUDE.md"])
+    _row(tmp_path, model="grok", family="xai", paths=["CLAUDE.md"])
+    v = g.check(tmp_path, [("CLAUDE.md", 3, 1)], since=0)
+    assert v.blocked is False
+
+
+def test_a_legacy_row_without_family_falls_back_to_its_model_name(tmp_path):
+    """31 rows predate the field. They must keep counting as the one perspective they
+    were, not become uncountable."""
+    _row(tmp_path, model="codex", paths=["tools/career_scanner/scanner.py"])
+    v = g.check(tmp_path, [("tools/career_scanner/scanner.py", 200, 40)], since=0)
+    assert v.blocked is False
+
+
+def test_tier_3_now_demands_two_models():
+    """The whole point of wiring the second one."""
+    assert len(g.WIRED_MODELS) >= 2
+    assert g.models_required(3) == 2
+    assert g.models_required(2) == 2
