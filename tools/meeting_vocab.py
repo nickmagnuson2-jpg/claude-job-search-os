@@ -436,12 +436,86 @@ def _named_speaker_turns(text: str, owner_ids: tuple) -> tuple[list[str], list[s
     return owner, other
 
 
+# An ANONYMOUS diarization turn: `Speaker A:` / `Speaker B:`. Granola emits this for
+# IN-PERSON meetings, where both voices reach one microphone and assemblyai separates them
+# without names. Distinct from the `Speaker:` channel label above, which means system audio.
+_ANON_TURN_RE = re.compile(
+    r"(?:(?<=^)|(?<=\s))(Speaker [A-Z])\s*:\s*",
+    re.MULTILINE,
+)
+
+# An explicit statement of WHICH anonymous label is the owner, e.g. `Speaker A = Nick` or
+# `Speaker A appears to be Nick`. granola_save.py already writes one into the
+# `> **Speaker labels:**` header of every file it persists.
+#
+# The connector is REQUIRED and deliberately excludes `:`. Without that, the first
+# capitalised word of any turn body would read as a declaration -- `Speaker A: Nick and I
+# talked` would silently map A to the owner. The owner-identifier check below is the second
+# guard on the same failure.
+_ANON_OWNER_DECL_RE = re.compile(
+    r"Speaker ([A-Z])\s*(?:=|\bis\b|\bappears to be\b)\s*\*{0,2}([A-Za-z][A-Za-z.'-]{0,20})",
+)
+
+
+def _anon_speaker_turns(text: str, owner_ids: tuple) -> tuple[list[str], list[str]] | None:
+    """Split a transcript labelled `Speaker A:` / `Speaker B:` using a declared mapping.
+
+    Returns None unless the text states which label is the owner. The labels carry no
+    identity of their own, so there is nothing to infer from: `Speaker A` is NOT reliably
+    Nick, and ordering is not stable across meetings. Positional guessing would attribute a
+    whole conversation to the wrong person while looking perfectly well-formed, which is
+    worse than the dropout it would be fixing.
+
+    Conservative in the same shape as _named_speaker_turns: exactly two labels above the
+    frequency floor, and exactly one of them declared as the owner. Three speakers, no
+    declaration, or a declaration naming only other people all return None.
+
+    WHY (2026-09-08): three in-person Sunset Soul sessions (2026-08-06, 08-19, 09-08),
+    roughly 1,100 turns, parsed to zero and dropped out of every per-speaker analysis. The
+    format is documented in the granola-pull skill and was never decoded here.
+    """
+    counts: dict[str, int] = {}
+    for m in _ANON_TURN_RE.finditer(text):
+        counts[m.group(1)] = counts.get(m.group(1), 0) + 1
+    labels = {n for n, c in counts.items() if c >= _MIN_NAMED_TURNS}
+    if len(labels) != 2:
+        return None
+
+    owner_tokens = set(owner_ids) | {i.split()[0] for i in owner_ids if i}
+    # Trailing sentence punctuation is stripped before matching: a declaration written
+    # `Speaker B = Nick.` captured the period and silently failed to resolve, which kept a
+    # real 604-turn transcript out of the analysis it was declared for (2026-09-08).
+    declared = {f"Speaker {m.group(1)}" for m in _ANON_OWNER_DECL_RE.finditer(text)
+                if f"Speaker {m.group(1)}" in labels
+                and m.group(2).rstrip(".,;:'-").lower() in owner_tokens}
+    if len(declared) != 1:
+        return None
+    owner_label = declared.pop()
+
+    parts = _ANON_TURN_RE.split(text)
+    if len(parts) < 3:
+        return None
+    owner: list[str] = []
+    other: list[str] = []
+    for i in range(1, len(parts) - 1, 2):
+        label, body = parts[i], parts[i + 1].strip()
+        if label not in labels or not body:
+            continue
+        (owner if label == owner_label else other).append(body)
+    if not owner and not other:
+        return None
+    return owner, other
+
+
 def split_transcript_turns(text: str) -> tuple[list[str], list[str]]:
     """Split persisted transcript text into (owner_turns, counterpart_turns).
 
     Handles every label format known to appear on disk:
       * `Me:` / `Them:`                  -- canonical
       * `Microphone:` / `Speaker:`       -- Granola desktop export
+      * `Speaker A:` / `Speaker B:`      -- assemblyai diarization on in-person meetings,
+                                            split only when the text declares which label
+                                            is the owner
       * `{'source': 'microphone'}:`      -- the 2026-08 REST corruption (repaired in the
                                             corpus, still handled so a stale file cannot
                                             silently score zero)
@@ -458,7 +532,12 @@ def split_transcript_turns(text: str) -> tuple[list[str], list[str]]:
         # `**Nick:** / **Taylor:**` is perfectly attributable, and treating it as unparseable
         # is what kept a real behavioural screen out of every per-speaker analysis.
         named = _named_speaker_turns(text, NICK_IDENTIFIERS)
-        return named if named else ([], [])
+        if named:
+            return named
+        # Anonymous diarization (`Speaker A:` / `Speaker B:`), which needs a declared
+        # owner mapping and declines without one.
+        anon = _anon_speaker_turns(text, NICK_IDENTIFIERS)
+        return anon if anon else ([], [])
     owner: list[str] = []
     other: list[str] = []
     # parts = [pre, label, body, label, body, ...]
