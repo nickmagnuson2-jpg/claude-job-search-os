@@ -229,6 +229,11 @@ WIRED_MODELS: tuple[str, ...] = ("codex", "grok")
 
 DEFAULT_MODEL = "codex"
 
+# Labels used before the `family` field existed, mapped into the family namespace.
+# Duplicated deliberately rather than imported from codex_verify.MODELS: that import
+# would be circular, since codex_verify imports this module. A parity test pins them.
+LEGACY_MODEL_FAMILIES = {"codex": "openai", "grok": "xai"}
+
 
 def models_required(tier: int) -> int:
     """What the gate will actually demand: the tier's appetite, bounded by reality."""
@@ -247,11 +252,17 @@ def row_model(row: dict) -> str:
     field keep counting as the one perspective they were rather than becoming
     uncountable and blocking every push they used to clear.
     """
-    for key in ("family", "model"):
-        v = row.get(key)
-        if isinstance(v, str) and v.strip():
-            return v.strip()
-    return DEFAULT_MODEL
+    fam = row.get("family")
+    if isinstance(fam, str) and fam.strip():
+        return fam.strip()
+    label = row.get("model")
+    label = label.strip() if isinstance(label, str) and label.strip() else DEFAULT_MODEL
+    # Map the label INTO the family namespace. Returning it raw was a P0 (grok, F1,
+    # 2026-09-07): a legacy row {model: codex} returned "codex" while a current row
+    # {family: openai} returned "openai", so one provider counted twice and cleared a
+    # tier-3 push. Two namespaces in one set is the same label-counting defect the
+    # family field was added to remove.
+    return LEGACY_MODEL_FAMILIES.get(label, label)
 
 
 @dataclass

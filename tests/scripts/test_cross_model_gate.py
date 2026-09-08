@@ -715,10 +715,30 @@ def test_two_rows_from_DIFFERENT_models_clear_a_tier_3_path(tmp_path, monkeypatc
 
 def test_an_unstamped_row_is_attributed_to_the_only_model_there_was():
     """Every row before 2026-09-06 came from codex. Counting them as 'unknown' would
-    let two legacy rows read as two independent models."""
-    assert g.row_model({}) == "codex"
-    assert g.row_model({"model": "  "}) == "codex"
+    let two legacy rows read as two independent models.
+
+    Now expressed as a FAMILY: identities live in one namespace, so an unstamped row
+    must resolve to openai rather than to the raw label "codex". Mixing the two
+    namespaces let one provider clear a two-model tier (grok F1, 2026-09-07)."""
+    assert g.row_model({}) == "openai"
+    assert g.row_model({"model": "  "}) == "openai"
+    assert g.row_model({"model": "codex"}) == "openai"
+    # An unknown label has no known family; it stays itself rather than silently
+    # joining someone else's bucket.
     assert g.row_model({"model": "gemini"}) == "gemini"
+
+
+def test_the_legacy_family_map_agrees_with_the_model_table():
+    """SINGLE SOURCE OF TRUTH, enforced rather than asserted in a comment. The mapping
+    is duplicated here because importing codex_verify would be circular, and this repo
+    has a rule that duplicated domain logic gets a parity test."""
+    import sys as _sys
+    _sys.path.insert(0, str(REPO_ROOT))
+    from tools import codex_verify as cvv
+    for label, family in g.LEGACY_MODEL_FAMILIES.items():
+        assert label in cvv.MODELS, f"{label} is not a wired model"
+        assert cvv.MODELS[label].family == family, (
+            f"{label}: gate says {family}, table says {cvv.MODELS[label].family}")
 
 
 def test_the_block_message_says_the_second_model_is_missing(tmp_path, monkeypatch):
@@ -1210,3 +1230,24 @@ def test_failed_runs_count_only_when_relevant(tmp_path):
         _row(tmp_path, verified=False, paths=[f"framework/x-{i}.md"])
     v = g.check(tmp_path, [("tools/career_scanner/scanner.py", 200, 40)], since=0)
     assert "1 record(s) came from a run that did not complete" in v.message, v.message
+
+
+def test_a_legacy_label_and_its_family_are_ONE_perspective(tmp_path):
+    """Grok F1 (P0), 2026-09-07, against the family fix committed hours earlier.
+
+    row_model returned the `family` when present and the raw `model` label otherwise,
+    so a legacy row {model: codex} yielded "codex" while a new row {family: openai}
+    yielded "openai". Two different strings, one provider, and the set-of-identities
+    count read them as two independent perspectives -- clearing a tier-3 push with a
+    single vendor. The fix for label-counting reintroduced label-counting through a
+    namespace collision.
+    """
+    _row(tmp_path, model="codex", paths=["CLAUDE.md"])                    # legacy
+    _row(tmp_path, model="codex", family="openai", paths=["CLAUDE.md"])   # current
+    v = g.check(tmp_path, [("CLAUDE.md", 3, 1)], since=0)
+    assert v.blocked is True, "one provider must not satisfy a two-model tier"
+
+
+def test_known_legacy_labels_resolve_to_their_family():
+    assert g.row_model({"model": "codex"}) == g.row_model({"family": "openai"})
+    assert g.row_model({"model": "grok"}) == g.row_model({"family": "xai"})

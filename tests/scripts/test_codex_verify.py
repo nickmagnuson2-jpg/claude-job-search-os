@@ -945,3 +945,93 @@ def test_a_stdout_model_is_told_it_cannot_write(tmp_path):
     assert "OUTPUT OVERRIDE" not in p
     assert cv.MODELS["grok"].report_via == "stdout"
     assert "PRINT the full report to stdout" in cv.STDOUT_REPORT_RULES
+
+
+# --- the jail must cover what is private, not what is convenient ---------------
+#
+# Grok F2 (P0), 2026-09-07, against the jail committed hours earlier. The deny list was
+# a hand-written tuple of four repo-relative trees, so it missed two whole categories:
+#
+#   1. the LIVE memory corpus, which lives OUTSIDE the repo entirely at
+#      ~/.claude/projects/<slug>/memory/ -- 19187 bytes read inside the jail
+#   2. gitignored files sitting inside otherwise-allowed trees, most sharply
+#      tools/.pii-denylist.txt, a file whose entire purpose is holding real PII
+#      tokens -- 6979 bytes read inside the jail
+#
+# The repo already has a definition of private and it is not a hand-written list:
+# CLAUDE.md says a public artifact is any file git does not ignore. So the deny list is
+# DERIVED from git, with the static trees kept as a floor for when derivation fails.
+
+@darwin_only
+def test_the_jail_denies_gitignored_files_inside_allowed_trees():
+    """tools/ is readable because the code under review lives there. That must not make
+    a gitignored secret inside it readable."""
+    repo = Path(REPO_ROOT)
+    denylist = repo / "tools" / ".pii-denylist.txt"
+    if not denylist.is_file():
+        pytest.skip("no denylist on this machine")
+    import tempfile as _tf
+    with _tf.NamedTemporaryFile("w", suffix=".sb", delete=False) as fh:
+        fh.write(cv.sandbox_policy(repo))
+        pol = fh.name
+    proc = subprocess.run(["sandbox-exec", "-f", pol, "/bin/cat", str(denylist)],
+                          capture_output=True, text=True)
+    Path(pol).unlink(missing_ok=True)
+    assert proc.returncode != 0, "the PII denylist was READABLE inside the jail"
+
+
+@darwin_only
+def test_the_jail_denies_the_out_of_repo_memory_tier():
+    """The live corpus is not under the repo at all, so a repo-relative deny list can
+    never reach it."""
+    live = Path.home() / ".claude" / "projects"
+    if not live.is_dir():
+        pytest.skip("no live tier on this machine")
+    import tempfile as _tf
+    with _tf.NamedTemporaryFile("w", suffix=".sb", delete=False) as fh:
+        fh.write(cv.sandbox_policy(Path(REPO_ROOT)))
+        pol = fh.name
+    probe = next((p for p in live.rglob("MEMORY.md")), None)
+    proc = subprocess.run(["sandbox-exec", "-f", pol, "/bin/cat", str(probe or live)],
+                          capture_output=True, text=True)
+    Path(pol).unlink(missing_ok=True)
+    assert proc.returncode != 0, "the live memory corpus was READABLE inside the jail"
+
+
+def test_the_static_trees_remain_a_floor_when_git_cannot_enumerate(tmp_path):
+    """_fake_repo is not a git repo, so derivation yields nothing. The hand-written
+    trees must still be denied: a derivation failure has to degrade to the floor, never
+    to an empty deny list."""
+    repo = _fake_repo(tmp_path)
+    pol = cv.sandbox_policy(repo)
+    for tree in ("data", "memory", "coaching", "output"):
+        assert f'{repo}/{tree}"' in pol, f"{tree} missing from the floor"
+
+
+def test_a_failed_git_enumeration_yields_the_floor_not_its_output(tmp_path, monkeypatch):
+    """A non-zero git exit means the ignore list is UNKNOWN. Parsing whatever landed on
+    stdout anyway would turn a broken enumeration into a confident, wrong deny list.
+
+    Pinned with output on a failing call, because the natural case (a non-git dir)
+    produces empty stdout and cannot tell the two behaviours apart -- which is exactly
+    why a mutant deleting the returncode check survived.
+    """
+    class _P:
+        returncode, stdout, stderr = 128, "not/a/real/path\nalso/bogus\n", "fatal: ..."
+    monkeypatch.setattr(cv.subprocess, "run", lambda *a, **k: _P())
+    assert cv.ignored_entries(tmp_path) == []
+    pol = cv.sandbox_policy(tmp_path)
+    assert "not/a/real/path" not in pol
+    assert f'{tmp_path}/data"' in pol, "the floor must survive a failed enumeration"
+
+
+def test_an_unraisable_git_call_yields_a_LIST_not_None(tmp_path, monkeypatch):
+    """sandbox_policy iterates the result. Returning None instead of [] turns a git
+    failure into a TypeError mid-policy-build, which fails the run for a reason nobody
+    would connect to git."""
+    def _boom(*a, **k):
+        raise OSError("git not found")
+    monkeypatch.setattr(cv.subprocess, "run", _boom)
+    assert cv.ignored_entries(tmp_path) == []
+    assert isinstance(cv.ignored_entries(tmp_path), list)
+    cv.sandbox_policy(tmp_path)   # must not raise

@@ -219,15 +219,48 @@ to a file. PRINT the full report to stdout, ending with the same
 "## FINDINGS (machine-readable)" JSON array block."""
 
 
+def ignored_entries(repo_root) -> list[str]:
+    """Everything git ignores, which is this repo's own definition of private.
+
+    CLAUDE.md: "a public artifact is any file git does not ignore." The inverse is the
+    deny list, and deriving it beats maintaining one by hand -- the hand-written tuple
+    missed tools/.pii-denylist.txt, a file that exists to hold real PII tokens and sat
+    inside tools/ because the code under review lives there (grok F2, P0, 2026-09-07).
+
+    Returns [] when enumeration fails. The caller keeps PRIVATE_TREES as a floor, so a
+    failure degrades to the known trees rather than to an empty deny list.
+    """
+    try:
+        proc = subprocess.run(
+            ["git", "ls-files", "--others", "--ignored", "--exclude-standard",
+             "--directory"],
+            capture_output=True, text=True, cwd=str(repo_root), timeout=60)
+    except (subprocess.SubprocessError, OSError):
+        return []
+    if proc.returncode != 0:
+        return []
+    return [ln.strip().rstrip("/") for ln in proc.stdout.splitlines() if ln.strip()]
+
+
 def sandbox_policy(repo_root, extra_writable=()) -> str:
-    """A seatbelt profile denying the private trees and repo writes.
+    """A seatbelt profile denying everything private and all repo writes.
 
     Later rules override earlier ones, so the output/analysis carve-outs must follow
     the broad denies.
     """
     root = str(Path(repo_root).resolve())
     lines = ["(version 1)", "(allow default)"]
+    # FLOOR: the known private trees, always denied even if derivation fails.
     lines += [f'(deny file-read* (subpath "{root}/{t}"))' for t in PRIVATE_TREES]
+    # DERIVED: everything else git ignores, including gitignored files sitting inside
+    # trees that are otherwise readable because the code under review lives there.
+    for rel in ignored_entries(repo_root):
+        lines.append(f'(deny file-read* (subpath "{root}/{rel}"))')
+    # OUT OF REPO: the LIVE memory corpus is not under the repo at all -- it lives at
+    # ~/.claude/projects/<slug>/memory/ (CLAUDE.md, "THREE PHYSICAL ROOTS"). A
+    # repo-relative deny list can never reach it, and 19187 bytes of it were read
+    # inside the jail before this line existed.
+    lines.append(f'(deny file-read* (subpath "{Path.home()}/.claude"))')
     lines.append(f'(deny file-write* (subpath "{root}"))')
     lines.append(f'(allow file-read* (subpath "{root}/{REVIEW_TREE}"))')
     lines.append(f'(allow file-write* (subpath "{root}/{REVIEW_TREE}"))')
