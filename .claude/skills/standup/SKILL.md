@@ -23,6 +23,7 @@ PYTHONIOENCODING=utf-8 python3 tools/todos_summary.py --target-date $(date +%Y-%
 PYTHONIOENCODING=utf-8 python3 tools/check_automation_health.py --repo-root .
 PYTHONIOENCODING=utf-8 python3 tools/attention.py --repo-root . --json
 PYTHONIOENCODING=utf-8 python3 tools/conversations_metric.py --repo-root . --target-date $(date +%Y-%m-%d)
+PYTHONIOENCODING=utf-8 python3 tools/source_check.py due --repo-root . --target-date $(date +%Y-%m-%d) --json
 ```
 Parse JSON output from each script. If a script returns empty results (missing data file), continue — never fail.
 
@@ -570,6 +571,32 @@ whole section including its heading -- an empty section is a daily reminder that
 
 [If nothing due:]
 > No follow-ups overdue.
+
+---
+
+### Job-Lead Sources
+
+From `source_check.py due`. These are the recurring lead sources; Nick checks them by hand
+and the point of surfacing them here is that marking one checked is a SINGLE action.
+
+[For each source where `is_due` is true:]
+- **[label]** — due [due][, N days overdue]. Checked it? → `tools/source_check.py mark <id> --none`
+  (or `--found "<what turned up>"`).
+
+[For each source where `retired` is true, surface it LOUDLY — this is a dropped lead source,
+not a late one:]
+> ⚠️ **[label] has no live todo row.** The recurring check was closed without being recreated,
+> so this lead source is silently retired. Recreate it before anything else in this section.
+
+[If nothing is due and nothing is retired:]
+> Lead sources current.
+
+**Never mark a check on Nick's behalf.** He is the one who looked at the board; `mark` records
+an observation only he can make. Surface the command, let him run it or tell you to.
+
+**Never close the recurring todo by hand** (`todo_write.py done`) — that is the exact move that
+retires a source. `source_check.py mark` closes and recreates as one operation and verifies the
+recreate landed.
 
 ---
 
