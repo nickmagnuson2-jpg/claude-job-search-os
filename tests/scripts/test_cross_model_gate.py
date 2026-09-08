@@ -943,3 +943,128 @@ def test_the_row_is_on_disk_and_readable_after_append_row_returns(tmp_path):
     rows, corrupt = g.read_ledger_with_health(tmp_path)
     assert corrupt == 0
     assert [r["target"] for r in rows] == ["visible"]
+
+
+# --- the gate must not exempt itself ------------------------------------------
+#
+# Found 2026-09-07 by cross-model review (F1, P0) after Nick said a change here "has a
+# high blast radius" and the code disagreed. It did: tiering keyed on FILENAME PREFIX,
+# so tools/prepush_pii_guard.py was tier 3 and tools/cross_model_gate.py -- the file
+# that DECIDES what needs review -- was tier 1. Protection depended on what a file
+# happened to be called.
+
+ENFORCEMENT_PATHS = [
+    "tools/cross_model_gate.py",
+    "tools/codex_verify.py",
+    "tools/hooks/pre-push",
+    "tools/hooks/install.sh",
+]
+
+
+@pytest.mark.parametrize("path", ENFORCEMENT_PATHS)
+def test_the_enforcement_machinery_is_tier_3(path):
+    """The gate, the wrapper that feeds it, and the hook that runs it. A wrong call in
+    any of these silently governs every future push, which is the tier-3 definition."""
+    assert g.blast_tier([path])[0] == 3
+
+
+def test_a_small_change_to_the_gate_qualifies():
+    """The exact shape that returned qualified=False before this fix: an ordinary
+    maintenance edit to the gate plus its test, both under every size threshold."""
+    v = g.qualifies([("tools/cross_model_gate.py", 60, 0),
+                     ("tests/scripts/test_cross_model_gate.py", 40, 0)])
+    assert v.qualified is True
+    assert v.tier == 3
+
+
+@pytest.mark.parametrize("path", ENFORCEMENT_PATHS + [
+    "tools/check_public_pii.py", "tools/prepush_pii_guard.py",
+])
+def test_blast_classification_and_the_qualifying_branch_agree(path):
+    """SINGLE SOURCE OF TRUTH. Before this fix two patterns described 'is this
+    enforcement machinery' and disagreed: HOOK_RE was unanchored
+    `tools/(check_|prepush_|.*_guard)` while the tier-3 rule was
+    `^tools/(check_|prepush_)|_guard\\.py$`. Two definitions of one concept drift, and
+    then the concept has two meanings. Both consumers must now read one predicate."""
+    assert g.is_enforcement_asset(path) is True
+    assert g.blast_tier([path])[0] == 3
+    assert g.qualifies([(path, 1, 1)]).qualified is True
+
+
+@pytest.mark.parametrize("path", [
+    "tools/todo_write.py", "docs/usage.md", "tests/scripts/test_inbox_census.py",
+])
+def test_ordinary_files_are_not_enforcement_assets(path):
+    """The predicate must not widen into 'everything under tools/'. A gate that fires
+    on every push makes the waiver a reflex keystroke, which is the theatre Nick named
+    as the thing to avoid."""
+    assert g.is_enforcement_asset(path) is False
+
+
+# --- one table: tier and reason come from the same rule ------------------------
+#
+# Consolidation, 2026-09-07. Before this, the tier came from BLAST_RULES and the reason
+# came from a separate ladder of `if` branches in qualifies() that re-tested the same
+# paths. Two mechanisms over one concept, which is the HOOK_RE defect one level up.
+#
+# It was not merely untidy. The `docs` branch fired BEFORE the tier check and set
+# `triggers` to the governed docs, so a push carrying CLAUDE.md AND a handoff reported
+# tier 3 while requiring coverage of the handoff only. The Hard Rule file was exempt.
+
+def test_every_rule_carries_a_reason():
+    """SINGLE SOURCE OF TRUTH. A rule that sets a tier without saying why forces the
+    explanation back into a branch somewhere else, which is how the two drifted."""
+    for rule in g.BLAST_RULES:
+        assert rule.reason.strip(), f"tier-{rule.tier} rule has no reason"
+
+
+def test_classify_returns_tier_triggers_and_reason_from_the_same_rule():
+    tier, triggers, reason = g.classify(["tools/cross_model_gate.py"])
+    assert tier == 3
+    assert triggers == ["tools/cross_model_gate.py"]
+    assert "enforcement machinery" in reason
+
+
+def test_a_tier_1_path_also_gets_a_reason():
+    """The old branch ladder had no tier-1 arm, so a tier-1 path had a tier and no
+    explanation. In the table shape every rule carries both by construction."""
+    tier, _triggers, reason = g.classify(["tools/inbox_census.py"])
+    assert tier == 1
+    assert reason.strip()
+
+
+def test_the_highest_tier_rule_sets_the_triggers_not_the_first_branch():
+    """THE BUG THIS FIXES. CLAUDE.md is tier 3 and a handoff is tier 2. Coverage must
+    be required for the tier-3 path; before consolidation it was required for the
+    handoff instead, leaving the Hard Rule file unverified on the same push."""
+    v = g.qualifies([("CLAUDE.md", 3, 1),
+                     ("output/analysis/090726-handoff.md", 10, 0)])
+    assert v.tier == 3
+    assert "CLAUDE.md" in v.triggers
+    assert "output/analysis/090726-handoff.md" not in v.triggers
+
+
+def test_the_verdict_reason_is_the_classified_reason(): 
+    """No second mechanism. What qualifies the push and what explains it are the same
+    lookup, so they cannot disagree about why."""
+    paths = ["tools/check_public_pii.py"]
+    _tier, _triggers, reason = g.classify(paths)
+    v = g.qualifies([(paths[0], 1, 1)])
+    assert v.reason.startswith(reason)
+
+
+def test_classification_does_not_depend_on_rule_order(monkeypatch):
+    """classify() takes the HIGHEST matching tier, not the first rule that hits.
+
+    Added because a hand-mutant that swapped highest-tier for first-match survived the
+    whole suite: BLAST_RULES is written highest-tier-first, so the two implementations
+    agree on every naturally-ordered case and no test could tell them apart. The code
+    comment asserted the ordering was non-load-bearing and nothing checked it.
+
+    Reversing the table puts the tier-1 rule first. First-match then returns tier 1 for
+    a push containing CLAUDE.md, which would demand ONE model for a Hard Rule edit.
+    """
+    monkeypatch.setattr(g, "BLAST_RULES", list(reversed(g.BLAST_RULES)))
+    tier, triggers, _reason = g.classify(["tools/inbox_census.py", "CLAUDE.md"])
+    assert tier == 3
+    assert triggers == ["CLAUDE.md"]

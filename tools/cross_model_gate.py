@@ -39,6 +39,7 @@ import json
 import os
 import re
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -66,7 +67,37 @@ GOVERNED_DOC_RE = re.compile(
 
 # Size is the wrong measure for a guard: a one-line edit to a hook that BLOCKs can turn
 # it into a no-op, and a no-op guard is worse than no guard because it reports success.
-HOOK_RE = re.compile(r"tools/(check_|prepush_|.*_guard)")
+HOOK_RE = re.compile(r"^tools/(check_|prepush_)|_guard\.py$")
+
+# The enforcement machinery ITSELF, named explicitly because matching on filename
+# prefixes cannot reach it. Until 2026-09-07 tiering keyed on the `check_` and
+# `prepush_` prefixes, so tools/prepush_pii_guard.py scored tier 3 while
+# tools/cross_model_gate.py -- the file that DECIDES what needs review -- sat at tier 1,
+# and an ordinary 60-line edit to it did not qualify for the gate at all. The gate
+# exempted its own decision engine, and whether a file was protected depended on what it
+# happened to be called. Found by cross-model review (F1, P0) after Nick said a change
+# here had a high blast radius and the code disagreed with him. It was wrong.
+#
+# LISTED, not matched. These four share nothing in their names, and a regex contorted to
+# cover them would be the same accident lying in wait for the fifth.
+ENFORCEMENT_ASSETS: frozenset[str] = frozenset({
+    "tools/cross_model_gate.py",   # decides what needs verifying
+    "tools/codex_verify.py",       # produces the rows this gate reads
+    "tools/hooks/pre-push",        # the tracked hook that invokes both
+    "tools/hooks/install.sh",      # installs it; a broken install means NO gate at all
+})
+
+
+def is_enforcement_asset(path: str) -> bool:
+    r"""Is this file part of the machinery that does the enforcing? ONE definition.
+
+    Two used to exist and they disagreed: HOOK_RE was unanchored
+    (`tools/(check_|prepush_|.*_guard)`) while the tier-3 rule was anchored
+    (`^tools/(check_|prepush_)|_guard\.py$`), and each was read by a different consumer.
+    Duplicated domain logic inside a guard is how one rule acquires two meanings, which
+    is the pattern this repo already has a rule against.
+    """
+    return path in ENFORCEMENT_ASSETS or bool(HOOK_RE.search(path))
 
 CODE_RE = re.compile(r"^(tools/|\.claude/skills/).*\.(py|sh)$")
 
@@ -81,31 +112,83 @@ CODE_RE = re.compile(r"^(tools/|\.claude/skills/).*\.(py|sh)$")
 # It is tierable as a GATE rather than a judgement call for one reason -- it is almost
 # entirely a function of the destination path, which is mechanically computable. That
 # is what makes this a check a gate reads instead of prose asking for care.
-BLAST_RULES: list[tuple[int, re.Pattern]] = [
+# Entries are (tier, matcher) where matcher is any str -> bool. A CALLABLE rather than
+# a bare pattern so the enforcement-asset predicate can be a rule here directly, instead
+# of being transcribed into a regex that then drifts from the one qualifies() reads.
+@dataclass(frozen=True)
+class Rule:
+    """One classification rule: a tier, what it matches, and WHY, together.
+
+    The reason lives here rather than in a branch of qualifies() because tier and
+    explanation are two answers to one question. When they were computed by separate
+    mechanisms over the same paths they drifted, and the drift was not cosmetic: the
+    `docs` branch fired ahead of the tier check and overwrote `triggers`, so a push
+    carrying CLAUDE.md and a handoff required coverage of the handoff ONLY. The Hard
+    Rule file rode along unverified. Consolidated 2026-09-07.
+    """
+    tier: int
+    matches: Callable[[str], bool]
+    reason: str
+
+
+# Ordered for readability only. classify() takes the HIGHEST matching tier, never the
+# first match, which is what makes the ordering non-load-bearing and one less thing to
+# get wrong when a rule is added.
+BLAST_RULES: list[Rule] = [
+    # T3 -- the machinery that does the enforcing, including this file. Same predicate
+    # qualifies() reads, so classification and qualification cannot disagree.
+    Rule(3, is_enforcement_asset,
+         "changes enforcement machinery (a wired hook, a guard, or the gate itself)"),
     # T3 -- reaches a person outside the repo, or Nick's mouth in a live room, or
     # silently governs every future session. Wrong here is expensive and invisible.
-    (3, re.compile(
+    Rule(3, re.compile(
         r"(^|/)CLAUDE\.md$"
         r"|(^|/)MEMORY\.md$"
         r"|^\.claude/settings(\.local)?\.json$"
-        r"|^tools/(check_|prepush_)|_guard\.py$"
         r"|^tools/\.pending-draft"
         r"|cover-letter|/cv-|resume"
-        r"|prep|cheat-?sheet")),
+        r"|prep|cheat-?sheet").search,
+         "changes a governing document or an outward-facing artifact"),
     # T2 -- governs future runs, or mutates the owner's real data. A wrong call here
     # propagates through everything the skill or the writer touches next.
-    (2, re.compile(
+    Rule(2, re.compile(
         r"^\.claude/skills/"
         r"|^framework/"
         r"|^tools/(pipe|todo|networking|person|act)_write\.py$"
-        r"|^tools/(finding_write|.*_ledger)\.py$")),
+        r"|^tools/(finding_write|.*_ledger)\.py$").search,
+         "changes a skill, a framework doc, or a data writer"),
     # T2 -- a governed document seeds the next session, the build, or the record
-    # everything later cites. Same pattern the qualifying branch uses, so the two
-    # cannot drift into disagreeing about what "governed" means.
-    (2, GOVERNED_DOC_RE),
+    # everything later cites.
+    Rule(2, GOVERNED_DOC_RE.search,
+         "changes a governed document"),
     # T1 -- reversible, local, and it fails where someone can see it.
-    (1, re.compile(r"^(tools/|tests/)")),
+    Rule(1, re.compile(r"^(tools/|tests/)").search,
+         "changes local code"),
 ]
+
+
+def classify(paths) -> tuple[int, list[str], str]:
+    """The highest-tier rule these paths match: its tier, the paths that matched it,
+    and its reason. ONE pass, ONE answer -- tier and explanation cannot disagree
+    because they come from the same Rule."""
+    best: Rule | None = None
+    triggers: list[str] = []
+    for rule in BLAST_RULES:
+        hits = [p for p in paths if rule.matches(p)]
+        if hits and (best is None or rule.tier > best.tier):
+            best, triggers = rule, hits
+    return (best.tier, triggers, best.reason) if best else (0, [], "")
+
+
+def blast_tier(paths) -> tuple[int, list[str]]:
+    """Highest blast-radius tier among these paths, and the paths that set it.
+
+    Kept as the two-value view over classify() for callers that do not need the
+    reason. A wrapper, not a second implementation.
+    """
+    tier, triggers, _reason = classify(paths)
+    return tier, triggers
+
 
 # How many INDEPENDENT models a tier wants. Independence is the whole product: a second
 # pass by the same model reproduces the same blind spots, so two rows from `codex` are
@@ -124,16 +207,6 @@ TIER_MODELS = {0: 0, 1: 1, 2: 2, 3: 2}
 WIRED_MODELS: tuple[str, ...] = ("codex",)
 
 DEFAULT_MODEL = "codex"
-
-
-def blast_tier(paths) -> tuple[int, list[str]]:
-    """Highest blast-radius tier among these paths, and the paths that set it."""
-    best, triggers = 0, []
-    for tier, pattern in BLAST_RULES:
-        hits = [p for p in paths if pattern.search(p)]
-        if hits and tier > best:
-            best, triggers = tier, hits
-    return best, triggers
 
 
 def models_required(tier: int) -> int:
@@ -180,7 +253,7 @@ def qualifies(changes: list[tuple[str, int, int]]) -> Verdict:
     specific failure Nick named when he agreed to build it.
     """
     paths = [p for p, _a, _r in changes]
-    tier, tier_paths = blast_tier(paths)
+    tier, tier_paths, tier_reason = classify(paths)
 
     def _v(reason: str, triggers: list) -> Verdict:
         """Every qualifying branch carries the blast tier, not just the size reason.
@@ -190,21 +263,15 @@ def qualifies(changes: list[tuple[str, int, int]]) -> Verdict:
         return Verdict(True, reason, triggers=triggers, tier=t,
                        need_models=models_required(t))
 
-    hooks = [p for p, _a, _r in changes if HOOK_RE.match(p)]
-    if hooks:
-        return _v(f"changes a wired hook or guard: {', '.join(hooks[:3])}", hooks)
-
-    docs = [p for p, _a, _r in changes if GOVERNED_DOC_RE.search(p)]
-    if docs:
-        return _v(f"changes a governed document: {', '.join(docs[:3])}", docs)
-
-    # AFTER hooks and governed docs on purpose: those name WHY in terms a reader acts
-    # on ("changes a wired hook"), and both are already tier 3, so _v() gives them the
-    # right tier anyway. This branch catches the tier-2+ paths that no earlier rule
-    # describes -- CLAUDE.md, a skill, a data writer.
+    # ONE branch, because the reason now travels with the tier. There used to be three
+    # here -- hooks, governed docs, then tier -- each re-testing the same paths to
+    # produce its own wording. Two of them were subsets of the third, and their only
+    # remaining job was the message. Worse, the `docs` arm ran FIRST and set `triggers`
+    # to the governed docs, so a push carrying CLAUDE.md plus a handoff demanded
+    # coverage of the handoff alone. Taking the highest-tier rule fixes that: the paths
+    # that set the tier are the paths that must be covered.
     if tier >= 2:
-        return _v(f"touches tier-{tier} blast radius: {', '.join(tier_paths[:3])}",
-                  tier_paths)
+        return _v(f"{tier_reason}: {', '.join(tier_paths[:3])}", tier_paths)
 
     code = [(p, a, r) for p, a, r in changes if CODE_RE.match(p)]
     touched = sum(a + r for _p, a, r in code)
