@@ -41,7 +41,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import subprocess
+import tempfile
 import time
 import sys
 from datetime import datetime, timezone
@@ -117,6 +119,70 @@ def gather_env_facts(repo_root: Path) -> str:
             out = f"<probe failed: {exc}>"
         lines.append(f"  {label}: {out or '<empty>'}")
     return "\n".join(lines)
+
+
+# --- THE JAIL ---------------------------------------------------------------
+# An external model gets NO read access to the private trees. Not a request in the
+# prompt: a kernel-level boundary.
+#
+# WHY THIS EXISTS, measured 2026-09-07 rather than assumed. codex, launched with
+# `--sandbox read-only` and cwd set to an EMPTY temp directory, read data/profile.md and
+# reported its exact line count (84). Grok did the same and volunteered it in its own
+# report, having opened data/profile.md and data/goals.md. Neither CLI has a read-scoping
+# option -- `--add-dir` governs WRITABLE directories and `-C` sets the working root
+# without bounding reads -- so scoping the workspace, the fix originally proposed, does
+# not work. The boundary has to come from the OS.
+#
+# Verified end to end before wiring: PRIVATE DENIED, CODE 644, WRITE DENIED, 4323 tokens
+# (so the model genuinely attempted all three).
+
+# Gitignored trees holding the owner's real content: contacts, pipeline targets,
+# reflections, dossiers, the memory corpus. Listed explicitly, in the same spirit as
+# cross_model_gate.ENFORCEMENT_ASSETS: a derived list would be cleverer and would fail
+# open the first time the derivation missed something.
+PRIVATE_TREES = ("data", "memory", "coaching", "output")
+
+# ...but the review itself lives under output/, so it is carved back out. Dossiers sit in
+# output/<slug>/ and stay denied; reports and specs sit here and must stay readable or
+# --prior and every spec review breaks.
+REVIEW_TREE = "output/analysis"
+
+# codex's OWN sandbox is disabled inside the jail. Nesting the two made codex stop
+# attempting reads at all (715 tokens, no shell trace, answers invented), and its inner
+# sandbox was measured to do nothing against reads anyway. The jail is strictly more
+# restrictive than what it replaces.
+MODEL_ARGV = ["codex", "exec", "--dangerously-bypass-approvals-and-sandbox",
+              "--skip-git-repo-check", "-"]
+
+
+def sandbox_policy(repo_root, extra_writable=()) -> str:
+    """A seatbelt profile denying the private trees and repo writes.
+
+    Later rules override earlier ones, so the output/analysis carve-outs must follow
+    the broad denies.
+    """
+    root = str(Path(repo_root).resolve())
+    lines = ["(version 1)", "(allow default)"]
+    lines += [f'(deny file-read* (subpath "{root}/{t}"))' for t in PRIVATE_TREES]
+    lines.append(f'(deny file-write* (subpath "{root}"))')
+    lines.append(f'(allow file-read* (subpath "{root}/{REVIEW_TREE}"))')
+    lines.append(f'(allow file-write* (subpath "{root}/{REVIEW_TREE}"))')
+    # An explicit --report outside output/analysis would otherwise be denied and the run
+    # would fail with nothing written. Reads are NOT widened here: a report destination
+    # is somewhere to write, never a reason to open the private trees.
+    for extra in extra_writable:
+        lines.append(f'(allow file-write* (subpath "{Path(extra).resolve()}"))')
+    return "\n".join(lines) + "\n"
+
+
+def jailed_argv(repo_root, policy_path) -> list[str]:
+    """The model command, wrapped. FAILS CLOSED if the jail is unavailable: a verifier
+    that silently loses its boundary is the false-zero defect wearing a new hat."""
+    if not shutil.which("sandbox-exec"):
+        raise RuntimeError(
+            "sandbox-exec not found, so the model cannot be jailed and would have read "
+            "access to the private trees. Refusing to run.")
+    return ["sandbox-exec", "-f", str(policy_path), *MODEL_ARGV]
 
 
 # A diff larger than this buries the signal it exists to surface. Truncation is LOUD:
@@ -352,9 +418,17 @@ def run(repo_root: Path, target: str, paths: list[str], question: str,
     # for this one's output. Without it, a crashed run re-reads the stale file, records
     # its findings as fresh, and writes a row that licenses the push.
     started = time.time()
-    proc = subprocess.run(
-        ["codex", "exec", "--sandbox", "workspace-write", "--skip-git-repo-check", "-"],
-        input=prompt, capture_output=True, text=True, cwd=str(repo_root))
+    # The model runs inside an OS-level jail. See THE JAIL above: read-only was measured
+    # to give full read access to the private trees, so the boundary is seatbelt's.
+    policy_file = Path(tempfile.mkstemp(suffix=".sb", prefix="codex-jail-")[1])
+    policy_file.write_text(sandbox_policy(repo_root, extra_writable=[report.parent]),
+                           encoding="utf-8")
+    try:
+        proc = subprocess.run(
+            jailed_argv(repo_root, policy_file),
+            input=prompt, capture_output=True, text=True, cwd=str(repo_root))
+    finally:
+        policy_file.unlink(missing_ok=True)
 
     # A row is written for EVERY run, including a failed one: the row is the audit
     # trail. But a failed run verified nothing, so it is marked and the gate refuses to

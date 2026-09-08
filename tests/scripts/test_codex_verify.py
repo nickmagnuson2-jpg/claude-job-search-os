@@ -14,6 +14,7 @@ Two failure modes have already cost real work and are pinned here.
    back to being something a human has to remember, which is where it failed before.
 """
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -681,3 +682,166 @@ def test_a_marker_with_no_array_yields_nothing_even_if_the_text_ends_in_json(tmp
     body = "## FINDINGS (machine-readable)\nno array here, count 5"
     assert cv.parse_findings(_report(tmp_path, body)) == []
     assert cv.has_findings_block(_report(tmp_path, body)) is False
+
+
+# --- the model runs inside an OS-level jail ------------------------------------
+#
+# 2026-09-07. Demonstrated, not theorised: codex with --sandbox read-only and cwd set to
+# an EMPTY temp dir read data/profile.md and reported its exact line count (84). Grok did
+# the same and said so in its own report. Neither CLI has a read-scoping option:
+# --add-dir controls WRITABLE dirs and -C sets the working root without bounding reads.
+#
+# So the boundary has to come from the OS. sandbox-exec denies the private trees at the
+# kernel level while leaving the code under review readable, which was verified end to
+# end before this was wired: PRIVATE DENIED, CODE 644, WRITE DENIED.
+
+import shutil as _shutil
+
+darwin_only = pytest.mark.skipif(
+    sys.platform != "darwin" or not _shutil.which("sandbox-exec"),
+    reason="sandbox-exec is a macOS facility")
+
+
+def _fake_repo(tmp_path):
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "secret.md").write_text("PRIVATE\n", encoding="utf-8")
+    (tmp_path / "memory").mkdir()
+    (tmp_path / "memory" / "note.md").write_text("PRIVATE\n", encoding="utf-8")
+    (tmp_path / "tools").mkdir()
+    (tmp_path / "tools" / "code.py").write_text("# public\n", encoding="utf-8")
+    (tmp_path / "output" / "analysis").mkdir(parents=True)
+    (tmp_path / "output" / "analysis" / "prior.md").write_text("prior\n", encoding="utf-8")
+    (tmp_path / "output" / "acme").mkdir()
+    (tmp_path / "output" / "acme" / "dossier.md").write_text("PRIVATE\n", encoding="utf-8")
+    return tmp_path
+
+
+@darwin_only
+@pytest.mark.parametrize("rel,readable", [
+    ("data/secret.md", False),
+    ("memory/note.md", False),
+    ("output/acme/dossier.md", False),      # dossiers are private
+    ("tools/code.py", True),                # code under review must stay readable
+    ("output/analysis/prior.md", True),     # --prior reports must stay readable
+])
+def test_the_jail_denies_private_trees_and_allows_the_work(tmp_path, rel, readable):
+    """The whole point: block the private trees WITHOUT blocking the review."""
+    repo = _fake_repo(tmp_path)
+    policy = tmp_path / "p.sb"
+    policy.write_text(cv.sandbox_policy(repo), encoding="utf-8")
+    proc = subprocess.run(
+        ["sandbox-exec", "-f", str(policy), "/bin/cat", str(repo / rel)],
+        capture_output=True, text=True)
+    if readable:
+        assert proc.returncode == 0, f"{rel} should be readable: {proc.stderr}"
+    else:
+        assert proc.returncode != 0, f"{rel} WAS READABLE -- the jail leaks"
+        assert "not permitted" in proc.stderr.lower()
+
+
+@darwin_only
+def test_the_jail_denies_writes_into_the_repo(tmp_path):
+    """codex's own sandbox is disabled inside the jail, so writes are governed here."""
+    repo = _fake_repo(tmp_path)
+    policy = tmp_path / "p.sb"
+    policy.write_text(cv.sandbox_policy(repo), encoding="utf-8")
+    proc = subprocess.run(
+        ["sandbox-exec", "-f", str(policy), "/usr/bin/touch", str(repo / "tools" / "X")],
+        capture_output=True, text=True)
+    assert proc.returncode != 0
+    assert not (repo / "tools" / "X").exists()
+
+
+def test_the_dispatch_argv_is_wrapped_in_the_jail(tmp_path):
+    argv = cv.jailed_argv(tmp_path, tmp_path / "p.sb")
+    assert argv[0] == "sandbox-exec"
+    assert argv[1] == "-f"
+    assert "codex" in argv
+    assert "--dangerously-bypass-approvals-and-sandbox" in argv, (
+        "codex's inner sandbox must be OFF inside the jail: nesting it made codex stop "
+        "attempting reads entirely (715 tokens, no shell trace)")
+
+
+def test_a_missing_sandbox_binary_fails_closed(tmp_path, monkeypatch):
+    """A verifier that silently loses its jail is the false-zero defect wearing a hat."""
+    monkeypatch.setattr(cv.shutil, "which", lambda _n: None)
+    with pytest.raises(RuntimeError, match="sandbox-exec"):
+        cv.jailed_argv(tmp_path, tmp_path / "p.sb")
+
+
+@darwin_only
+def test_an_explicit_report_destination_is_writable_but_not_readable(tmp_path):
+    """--report outside output/analysis must still work, without widening READS. A
+    place to write is not a reason to open the private trees."""
+    repo = _fake_repo(tmp_path)
+    elsewhere = tmp_path / "reports"
+    elsewhere.mkdir()
+    policy = tmp_path / "p.sb"
+    policy.write_text(cv.sandbox_policy(repo, extra_writable=[elsewhere]),
+                      encoding="utf-8")
+    wrote = subprocess.run(
+        ["sandbox-exec", "-f", str(policy), "/usr/bin/touch", str(elsewhere / "r.md")],
+        capture_output=True, text=True)
+    assert wrote.returncode == 0, wrote.stderr
+    still_denied = subprocess.run(
+        ["sandbox-exec", "-f", str(policy), "/bin/cat", str(repo / "data" / "secret.md")],
+        capture_output=True, text=True)
+    assert still_denied.returncode != 0, "widening writes must not widen reads"
+
+
+@darwin_only
+def test_the_review_tree_stays_writable(tmp_path):
+    """The default report lands in output/analysis. Dropping that allow makes every
+    run fail with nothing written, and a mutation doing exactly that survived."""
+    repo = _fake_repo(tmp_path)
+    policy = tmp_path / "p.sb"
+    policy.write_text(cv.sandbox_policy(repo), encoding="utf-8")
+    proc = subprocess.run(
+        ["sandbox-exec", "-f", str(policy), "/usr/bin/touch",
+         str(repo / "output" / "analysis" / "report.md")],
+        capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stderr
+
+
+@darwin_only
+def test_an_empty_policy_is_rejected_rather_than_ignored(tmp_path):
+    """Documents WHY a dropped write_text is survivable rather than catastrophic:
+    seatbelt refuses a profile with no version line instead of allowing everything.
+    Recorded because 'the guard silently became a no-op' is the failure this repo has
+    shipped twice, and here it provably does not."""
+    empty = tmp_path / "empty.sb"
+    empty.write_text("", encoding="utf-8")
+    proc = subprocess.run(["sandbox-exec", "-f", str(empty), "/bin/cat",
+                           str(_fake_repo(tmp_path) / "tools" / "code.py")],
+                          capture_output=True, text=True)
+    assert proc.returncode != 0
+    assert "version" in proc.stderr.lower()
+
+
+def test_run_writes_a_real_policy_and_removes_it_afterwards(tmp_path, monkeypatch):
+    """Kills two survivors at once: dropping the write_text (leaving an EMPTY profile)
+    and dropping the unlink (leaking a policy file per run)."""
+    repo = _fake_repo(tmp_path)
+    report = repo / "output" / "analysis" / "r.md"
+    seen = {}
+    real_run = cv.subprocess.run
+
+    def fake_run(argv, **kw):
+        if isinstance(argv, list) and argv and argv[0] == "sandbox-exec":
+            policy = Path(argv[2])
+            seen["path"] = policy
+            seen["text"] = policy.read_text(encoding="utf-8")
+            report.write_text("r\n## FINDINGS (machine-readable)\n[]\n", encoding="utf-8")
+
+            class _P:
+                returncode, stdout, stderr = 0, "", ""
+            return _P()
+        return real_run(argv, **kw)
+
+    monkeypatch.setattr(cv.subprocess, "run", fake_run)
+    cv.run(repo, "t", [], "", report, None, False)
+
+    assert seen, "run() never dispatched through sandbox-exec"
+    assert "(version 1)" in seen["text"], "an empty profile is not a jail"
+    assert 'deny file-read*' in seen["text"]
+    assert not seen["path"].exists(), "the policy file leaked"
