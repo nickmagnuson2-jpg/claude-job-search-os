@@ -623,3 +623,61 @@ def test_a_balanced_array_after_prose_still_parses(tmp_path):
                  encoding="utf-8")
     assert cv.has_findings_block(p) is True
     assert [f["id"] for f in cv.parse_findings(p)] == ["F1"]
+
+
+# --- the findings block must survive brackets inside strings -------------------
+#
+# Codex F6 on spec v3, 2026-09-07, verified before fixing. The scanner counted "[" and
+# "]" without knowing about JSON string context, so an UNBALANCED bracket inside any
+# string ended the array early, json.loads failed on the truncated slice, and the whole
+# block was lost. A balanced pair such as list[0] survived, which is why this never
+# fired in practice.
+#
+# Consequence is loss, not a false pass: has_findings_block then returns False and the
+# row records verified=False, so the gate still fails closed. But the findings ARE the
+# product of the run, and they vanished silently.
+
+@pytest.mark.parametrize("summary", [
+    "the trailing ] is unmatched",
+    "the leading [ is unmatched",
+    "a balanced list[0] index",
+    'escaped " quote then ] bracket',
+])
+def test_findings_survive_brackets_inside_strings(tmp_path, summary):
+    body = ('## FINDINGS (machine-readable)\n[{"id":"F1","summary":%s}]\n'
+            % json.dumps(summary))
+    got = cv.parse_findings(_report(tmp_path, body))
+    assert [f["summary"] for f in got] == [summary]
+
+
+def test_findings_survive_a_json_fence(tmp_path):
+    """Both wired models emit the array inside a ```json fence."""
+    body = ('## FINDINGS (machine-readable)\n\n```json\n'
+            '[{"id":"F1","summary":"fenced ] bracket"}]\n```\n')
+    assert len(cv.parse_findings(_report(tmp_path, body))) == 1
+
+
+# A prose bracket ahead of the array still defeats the parse. That was considered and
+# REJECTED as a fix: scanning later brackets makes an unclosed outer array succeed via
+# its inner one, which is the exact fail-open the unclosed-array guard prevents.
+
+
+def test_a_genuinely_malformed_array_still_yields_nothing(tmp_path):
+    """Fail-closed must survive the fix: this is the guard whose loss would be a
+    fail-open inside the fix for a fail-open."""
+    body = '## FINDINGS (machine-readable)\n[not, valid, json'
+    assert cv.parse_findings(_report(tmp_path, body)) == []
+    assert cv.has_findings_block(_report(tmp_path, body)) is False
+
+
+def test_a_marker_with_no_array_yields_nothing_even_if_the_text_ends_in_json(tmp_path):
+    """The `at < 0` early return is load-bearing, not defensive decoration.
+
+    Without it, raw_decode is called with index -1, which reads the LAST CHARACTER of
+    the tail. A trailing digit is a valid JSON document, so the parser would return the
+    integer 5 as if it were the findings array. A mutation forcing that branch false
+    survived the suite until this test existed.
+    """
+    body = "## FINDINGS (machine-readable)\nno array here, count 5"
+    assert cv.parse_findings(_report(tmp_path, body)) == []
+    assert cv.has_findings_block(_report(tmp_path, body)) is False

@@ -273,22 +273,34 @@ def _findings_array(text: str) -> list | None:
     if FINDINGS_MARKER not in text:
         return None
     tail = text.split(FINDINGS_MARKER, 1)[1]
-    start = tail.find("[")
-    if start < 0:
+    # json.raw_decode instead of counting brackets by hand. The hand-rolled scanner
+    # had no idea what a JSON string was, so an UNBALANCED bracket inside any string
+    # ("the trailing ] is unmatched") closed the array early, json.loads failed on the
+    # truncated slice, and the whole block was lost -- silently, because the run then
+    # recorded verified=False and looked like a failed review rather than a lost one.
+    # A balanced pair such as list[0] survived, which is why it never fired in practice.
+    # Found by cross-model review of spec v3 (F6, 2026-09-07).
+    #
+    # DELIBERATELY the first "[" only, not a scan of every candidate. Trying later
+    # brackets would let "[[{...}]" -- an unclosed outer array -- succeed by parsing the
+    # INNER one, which is the fail-open that
+    # test_an_unclosed_or_absent_array_is_not_a_verified_report exists to prevent. A
+    # bracket in prose ahead of the array therefore still defeats the parse; that is a
+    # narrower and rarer failure than silently accepting a malformed block, and both
+    # models emit the array immediately after the marker.
+    at = tail.find("[")
+    if at < 0:
         return None
-    depth = 0
-    for i, ch in enumerate(tail[start:], start):
-        if ch == "[":
-            depth += 1
-        elif ch == "]":
-            depth -= 1
-            if depth == 0:
-                try:
-                    items = json.loads(tail[start:i + 1])
-                except json.JSONDecodeError:
-                    return None
-                return items if isinstance(items, list) else None
-    return None            # brackets never balanced
+    try:
+        # Starting AT the "[", raw_decode returns a list or raises -- so there is no
+        # isinstance(list) check here. The old scanner carried one; with raw_decode it
+        # is unreachable, and a mutation that deleted it survived the whole suite.
+        # Removed rather than allowlisted: an unreachable guard reads as protection
+        # that is not there.
+        items, _end = json.JSONDecoder().raw_decode(tail, at)
+    except ValueError:
+        return None
+    return items
 
 
 def parse_findings(report: Path) -> list[dict]:
