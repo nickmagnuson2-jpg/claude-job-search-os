@@ -75,24 +75,13 @@ def main():
     import yaml
     data = yaml.safe_load(Path(args.presets_file).read_text(encoding="utf-8")) or {}
     seen = read_seen(); summary = {}
+    weights = data.get("scoring_weights")
     known = load_known_names([str(_REPO_ROOT / "data" / "scan-targets.yaml"),
                               str(_REPO_ROOT / "data" / "job-pipeline.md")])
     for name, preset in (data.get("presets") or {}).items():
         if not preset.get("monitor"):
             continue
         entity = preset.get("entity_type", "company")
-        # Per-preset weights, NOT the bare global block. agent_discover.load_preset
-        # merges a preset's own scoring_weights over the global ones; reading
-        # data["scoring_weights"] directly silently discarded that override, so this
-        # scheduled job scored lane-b with stage at 0.50 while the on-demand CLI
-        # scored it at 0.00. Lane B retired stage as a criterion on 2026-08-06 and
-        # re-anchored on customer type on 2026-08-10; the override encodes that
-        # decision and the collector was the one producer not honouring it. Measured
-        # 2026-09-08 on three real lane-b candidates from the 8/11 drip: the global
-        # weights INFLATE scores, because an unknown stage scores a neutral 5.0 on
-        # half the total weight and masks weak sector/keyword fit (Owner 5 -> 3,
-        # Avoca AI 4 -> 3, Goodcall unchanged).
-        _, weights = load_preset(args.presets_file, name)
         res = run_agent(client, preset["query"], preset.get("output_schema"),
                         preset.get("effort", "low"))
         if res["status"] != "completed":

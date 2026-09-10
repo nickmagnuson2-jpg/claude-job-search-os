@@ -30,6 +30,7 @@ Usage:
   PYTHONIOENCODING=utf-8 python3 tools/inbox_decision_log.py status --repo-root .
 """
 import argparse
+import hashlib
 import json
 import sys
 from datetime import datetime
@@ -37,6 +38,7 @@ from pathlib import Path
 
 BLOCKS_REL = "output/career-scan/inbox-blocks.jsonl"
 LOG_REL = "output/career-scan/inbox-drain-decisions.jsonl"
+APPROVALS_REL = "output/career-scan/inbox-drain-approvals.jsonl"
 
 DESTINATIONS = {
     "pipeline-row", "networking-interaction", "person-dossier", "job-todo",
@@ -76,6 +78,31 @@ def load_blocks(root: Path) -> dict:
     return blocks
 
 
+def rule_id(bulk_rule: str) -> str:
+    """Stable short id for a bulk rule, derived from its own text.
+
+    Keyed on the rule TEXT rather than an assigned number so an approval cannot
+    silently transfer to a different rule if the rules are ever reordered or
+    re-emitted. Change the wording and the id changes, which is the correct
+    behaviour: an approval applies to the rule Nick actually read.
+    """
+    return hashlib.sha1(bulk_rule.encode("utf-8")).hexdigest()[:8]
+
+
+def load_approvals(root: Path) -> dict:
+    """Latest approval per rule_id. Append-only file, last row wins."""
+    path = root / APPROVALS_REL
+    if not path.is_file():
+        return {}
+    out = {}
+    with path.open(encoding="utf-8") as fh:
+        for line in fh:
+            if line.strip():
+                row = json.loads(line)
+                out[row["rule_id"]] = row
+    return out
+
+
 def load_log(root: Path) -> list[dict]:
     path = root / LOG_REL
     if not path.is_file():
@@ -84,7 +111,8 @@ def load_log(root: Path) -> list[dict]:
         return [json.loads(line) for line in fh if line.strip()]
 
 
-def validate(row: dict, blocks: dict, seen: set, corpus_sha: str) -> None:
+def validate(row: dict, blocks: dict, seen: set, corpus_sha: str,
+             supersede: bool = False) -> None:
     missing = [k for k in REQUIRED if k not in row]
     if missing:
         fail(f"row missing required fields: {missing}", "schema_missing_fields",
@@ -92,9 +120,12 @@ def validate(row: dict, blocks: dict, seen: set, corpus_sha: str) -> None:
     bid = row["block_id"]
     if bid not in blocks:
         fail(f"unknown block_id: {bid}", "unknown_block")
-    if bid in seen:
+    if bid in seen and not supersede:
         fail(f"block already logged: {bid}. The log is append-only, one decision "
-             f"per block.", "duplicate_block")
+             f"per block. Pass --supersede to record a REVISED decision: the "
+             f"original row stays in the file and the later row wins, so the "
+             f"correction is auditable instead of destroying the thing the log "
+             f"exists to preserve.", "duplicate_block")
     if row["corpus_sha256"] != corpus_sha:
         fail(f"corpus sha mismatch for {bid}: row {row['corpus_sha256'][:12]} vs "
              f"extractor {corpus_sha[:12]}", "sha_mismatch")
@@ -115,13 +146,23 @@ def validate(row: dict, blocks: dict, seen: set, corpus_sha: str) -> None:
              "individual_with_rule")
     if not str(row["reason"]).strip():
         fail(f"{bid}: empty reason.", "empty_reason")
-    if row["destination"] not in ("archive", "delete") and not row["writer_invocation"]:
-        fail(f"{bid}: destination {row['destination']} needs a writer_invocation — "
-             f"a logged decision that cannot be replayed is a note.",
-             "missing_invocation")
+    if row["destination"] not in ("archive", "delete"):
+        inv = row["writer_invocation"]
+        if not inv:
+            fail(f"{bid}: destination {row['destination']} needs a writer_invocation "
+                 f"— a logged decision that cannot be replayed is a note.",
+                 "missing_invocation")
+        # A NON-EMPTY invocation is not the same as an EXECUTABLE one. A rule
+        # shipped 2026-09-08 carrying `--company "<each row in <file>>"` passed the
+        # emptiness check on 13 rows and would have created 13 targets literally
+        # named "<each row in ...>" had it been approved. Placeholder brackets are
+        # the signature; refuse them.
+        if "<" in inv and ">" in inv:
+            fail(f"{bid}: writer_invocation contains a placeholder and would not "
+                 f"execute as written: {inv[:120]}", "placeholder_invocation")
 
 
-def cmd_append(root: Path, rows_file: Path) -> None:
+def cmd_append(root: Path, rows_file: Path, supersede: bool = False) -> None:
     blocks = load_blocks(root)
     corpus_sha = next(iter(blocks.values()))["corpus_sha256"]
     existing = load_log(root)
@@ -134,7 +175,7 @@ def cmd_append(root: Path, rows_file: Path) -> None:
     stamp = datetime.now().isoformat(timespec="seconds")
     for row in rows:
         row.setdefault("decided_at", stamp)
-        validate(row, blocks, seen, corpus_sha)
+        validate(row, blocks, seen, corpus_sha, supersede=supersede)
         seen.add(row["block_id"])
 
     log_path = root / LOG_REL
@@ -148,9 +189,75 @@ def cmd_append(root: Path, rows_file: Path) -> None:
                       "of_blocks": len(blocks)}, ensure_ascii=False))
 
 
+def cohort_id(destination: str, confidence: str) -> str:
+    """Approval unit for INDIVIDUAL rows, which have no rule to approve.
+
+    An individual decision needed a human read, so there is no rule text to
+    approve. The workable unit is (destination, confidence): "every high-
+    confidence delete" is one decision covering many rows, and the confidence
+    split is exactly what separates a routine call from a judgment call.
+    """
+    return f"ind:{destination}:{confidence}"
+
+
+def cmd_approve(root: Path, rule_ids: list[str], approver: str, note: str) -> None:
+    """Record Nick's approval of one or more bulk rules.
+
+    Approvals are a SEPARATE append-only stream. The decision log is never
+    rewritten - a row says what was proposed and when, and rewriting it in place
+    would destroy the very thing the log exists to preserve. Joining the two at
+    read time is what makes the agreement rate computable later.
+    """
+    log = current_log(root)
+    if not log:
+        fail("no decisions logged yet", "empty_log")
+    by_rule = {}
+    for r in log:
+        if r["mode"] == "bulk":
+            by_rule.setdefault(rule_id(r["bulk_rule"]), []).append(r["block_id"])
+        else:
+            by_rule.setdefault(cohort_id(r["destination"], r["confidence"]),
+                               []).append(r["block_id"])
+
+    unknown = [r for r in rule_ids if r not in by_rule]
+    if unknown:
+        fail(f"unknown rule id(s): {unknown}", "unknown_rule",
+             known=sorted(by_rule))
+
+    stamp = datetime.now().isoformat(timespec="seconds")
+    path = root / APPROVALS_REL
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as fh:
+        for rid in rule_ids:
+            fh.write(json.dumps({
+                "rule_id": rid,
+                "approved_at": stamp,
+                "approved_by": approver,
+                "blocks": len(by_rule[rid]),
+                "block_ids": by_rule[rid],
+                "note": note,
+                "executed": False,
+            }, ensure_ascii=False) + "\n")
+
+    print(json.dumps({"status": "ok", "approved": rule_ids,
+                      "blocks_covered": sum(len(by_rule[r]) for r in rule_ids)},
+                     ensure_ascii=False))
+
+
+def current_log(root: Path) -> list[dict]:
+    """The log with supersessions applied: last row per block_id wins.
+
+    History stays in the file; this is the read-time view of it.
+    """
+    latest = {}
+    for r in load_log(root):
+        latest[r["block_id"]] = r
+    return list(latest.values())
+
+
 def cmd_status(root: Path) -> None:
     blocks = load_blocks(root)
-    log = load_log(root)
+    log = current_log(root)
     logged = {r["block_id"] for r in log}
     missing = [b for b in blocks if b not in logged]
 
@@ -163,6 +270,36 @@ def cmd_status(root: Path) -> None:
     bulk = sum(1 for r in log if r["mode"] == "bulk")
     ind = sum(1 for r in log if r["mode"] == "individual")
     residual = [r["block_id"] for r in log if r["residual_flag"]]
+
+    approvals = load_approvals(root)
+    rules, cohorts = {}, {}
+    for r in log:
+        if r["mode"] == "bulk":
+            rid = rule_id(r["bulk_rule"])
+            e = rules.setdefault(rid, {"rule_id": rid, "blocks": 0,
+                                       "destination": r["destination"],
+                                       "producer": r["producer"],
+                                       "confidence": r["confidence"]})
+            e["blocks"] += 1
+        else:
+            cid = cohort_id(r["destination"], r["confidence"])
+            e = cohorts.setdefault(cid, {"rule_id": cid, "blocks": 0,
+                                         "destination": r["destination"],
+                                         "producer": "individual",
+                                         "confidence": r["confidence"]})
+            e["blocks"] += 1
+    for c in cohorts.values():
+        a = approvals.get(c["rule_id"])
+        c["approved"] = bool(a)
+        c["approved_by"] = a["approved_by"] if a else None
+        c["executed"] = a.get("executed", False) if a else False
+    for rid, e in rules.items():
+        a = approvals.get(rid)
+        e["approved"] = bool(a)
+        e["approved_by"] = a["approved_by"] if a else None
+        e["executed"] = a.get("executed", False) if a else False
+    approved_blocks = (sum(e["blocks"] for e in rules.values() if e["approved"])
+                       + sum(e["blocks"] for e in cohorts.values() if e["approved"]))
 
     print(json.dumps({
         "status": "ok",
@@ -179,14 +316,25 @@ def cmd_status(root: Path) -> None:
         "by_decided_by": hist("decided_by"),
         "residual_count": len(residual),
         "residual_ids": residual,
+        "bulk_rules": sorted(rules.values(), key=lambda e: -e["blocks"]),
+        "individual_cohorts": sorted(cohorts.values(), key=lambda e: -e["blocks"]),
+        "blocks_under_approved_rules": approved_blocks,
+        "blocks_awaiting_a_decision": len(log) - approved_blocks,
+        "executed_any": any(e["executed"] for e in rules.values()),
     }, ensure_ascii=False, indent=2))
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="Inbox drain decision log.")
-    ap.add_argument("command", choices=["append", "status"])
+    ap.add_argument("command", choices=["append", "status", "approve"])
     ap.add_argument("--repo-root", default=None)
     ap.add_argument("--rows-file", default=None)
+    ap.add_argument("--rule", action="append", default=[],
+                    help="bulk rule id to approve; repeatable")
+    ap.add_argument("--approver", default="nick")
+    ap.add_argument("--note", default="")
+    ap.add_argument("--supersede", action="store_true",
+                    help="record a revised decision for a block already logged")
     args = ap.parse_args()
 
     root = Path(args.repo_root) if args.repo_root else Path.cwd()
@@ -196,7 +344,11 @@ def main() -> None:
         rows_file = Path(args.rows_file)
         if not rows_file.is_file():
             fail(f"rows file not found: {rows_file}", "rows_file_missing")
-        cmd_append(root, rows_file)
+        cmd_append(root, rows_file, supersede=args.supersede)
+    elif args.command == "approve":
+        if not args.rule:
+            fail("approve needs at least one --rule", "missing_arg")
+        cmd_approve(root, args.rule, args.approver, args.note)
     else:
         cmd_status(root)
 
