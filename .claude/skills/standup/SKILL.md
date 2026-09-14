@@ -205,36 +205,94 @@ If yesterday's entry exists, skip silently.
 
 ### Step 1c: Overnight run (read last night, arm tonight)
 
-The nightly mutation sweep is DETERMINISTIC measurement; the fixing is agent work. This step
-closes the loop between them: read what last night measured, then arm tonight's run. Doing
-both here is what makes the loop self-perpetuating — a morning that only reads leaves the
-sweep to no-op, because it resumes by skipping tools already banked.
+**GATE FIRST — this entire step is conditional, and the default is silence.** Render nothing,
+not even the heading, unless BOTH conditions below hold. A daily report on a job that is not
+running is the same defect as a daily "0 new roles" line: it trains the reader to skip the
+section, which is how the career-scan drain stayed invisible for three weeks.
 
 ```bash
-PYTHONIOENCODING=utf-8 python3 tools/mutation_trend.py record --note "overnight <date>"
+launchctl print gui/$(id -u)/com.nickmagnuson.jobsearch.mutation-sweep > /dev/null 2>&1
+echo "sweep_armed=$?"   # 0 = loaded; non-zero = not scheduled
+```
+
+**`sweep_armed` non-zero means SKIP STEP 1c ENTIRELY.** The sweep is a TEMPORARY job,
+deliberately absent from `tools/launchd/install.sh`'s `PLISTS` array, and it is unloaded once a
+campaign finishes. Not-armed is the normal resting state, not a fault. Do not warn about it, do
+not offer to arm it, do not run `mutation_trend`. Say nothing.
+
+If armed:
+
+```bash
+PYTHONIOENCODING=utf-8 python3 tools/mutation_trend.py record --note "overnight $(date +%Y-%m-%d)"
 PYTHONIOENCODING=utf-8 python3 tools/mutation_trend.py show
 PYTHONIOENCODING=utf-8 python3 tools/mutation_report.py
 ```
 
-**Read `record`'s status.** `skipped` means the baseline has not changed since the last
-recorded point — the sweep did not run, or ran and banked nothing. That is a finding, not a
-no-op: say so in the brief rather than reporting the old number as if it were fresh.
+**`record` returning `skipped` is NOT the only "nothing happened" case, and it is the weaker
+one.** `skipped` fires only when `baseline.jsonl`'s mtime is unchanged. A sweep that runs every
+night and measures nothing still APPENDS rows, so the mtime moves and `skipped` never fires —
+the brief then reports a stale survival number as if it were fresh, every single morning, which
+is the exact failure this step was built to prevent.
 
-**Arming tonight** (only when the sweep completed — `mutation_report` shows full coverage):
+**So compare the numbers, not the timestamp.** Read the last two rows of the trend file
+(`tools/mutation_state.py` owns the path — never hardcode it, the store was renamed on
+2026-09-08 and three hardcoded copies in this file broke silently):
 
 ```bash
-cd output/analysis/082626-mutation-baseline
-cp baseline.jsonl baseline.pre-$(date +%m%d%y).jsonl     # snapshot, never overwrite
-cd - && PYTHONIOENCODING=utf-8 python3 tools/mutation_sweep.py --targets
-: > output/analysis/082626-mutation-baseline/baseline.jsonl
+PYTHONIOENCODING=utf-8 python3 -c "
+import json, sys, collections; sys.path.insert(0,'.')
+from tools import mutation_state as m
+rows=[json.loads(l) for l in open(m.trend_path()) if l.strip()]
+a,b=(rows[-2],rows[-1]) if len(rows)>1 else (None,rows[-1])
+moved = a is None or (a['survived'],a['tools_scored'])!=(b['survived'],b['tools_scored'])
+print('measurement_advanced=',moved)
+base=[json.loads(l) for l in open(m.baseline_path()) if l.strip()]
+errs=collections.Counter(r['tool'] for r in base if r.get('status')=='error')
+stuck={t:c for t,c in errs.items() if c>=3}
+print('stuck_tools=',len(stuck),'max_retries=',max(stuck.values()) if stuck else 0)
+print('stuck=',sorted(stuck.items(), key=lambda kv:-kv[1])[:8])
+"
 ```
 
-`--targets` is not optional on a rebuild: it is what re-derives the tool list (a tool only
-enters the sweep once it has a collected suite, so ported tests ADD targets — 110 → 125 on
-2026-09-02) and what populates the `own` field.
+**`measurement_advanced=False` is the headline finding**, not a footnote: the sweep ran and
+banked nothing. Report it as a broken night, never as a coverage number.
 
-**Do NOT arm while a sweep is in flight** (`pgrep -f mutation_check`). Clearing the results
-file under a running sweep loses the night.
+**`stuck_tools` is the futile-retry detector and it outranks the coverage percentage.** A tool
+with 3+ error rows is being re-attempted every night and failing the same way, burning the whole
+run. Six nights of this went unreported because nothing looked at it. When `stuck_tools > 0`,
+that is the Overnight Run section — surface the tools and the retry count, and say plainly that
+the sweep is not making progress. Diagnose before arming anything.
+
+**A `baseline_red` verdict has two causes that need different fixes, and conflating them wastes
+a night.** Check `elapsed` on the error row: a sub-second failure is a genuinely red or
+uncollectable mapped test set, while an elapsed at or near `DEFAULT_TIMEOUT` (300s) is a TIMEOUT
+being mis-reported as a red suite. Per [[feedback_baseline_red_can_be_a_timeout_not_a_failing_suite]].
+**Verify a fix against a tool that is actually stuck** — checking a tool that was never in the
+stuck set proves nothing about the set.
+
+**Arming tonight** (only when the sweep completed AND `mutation_report` shows full coverage AND
+`stuck_tools` is 0):
+
+```bash
+PYTHONIOENCODING=utf-8 python3 -c "
+import shutil, sys, time; sys.path.insert(0,'.')
+from tools import mutation_state as m
+src=m.baseline_path(); dst=src.with_name(f'baseline.pre-{time.strftime(\"%m%d%y\")}.jsonl')
+shutil.copy2(src,dst); print('snapshot:',dst)"
+PYTHONIOENCODING=utf-8 python3 tools/mutation_sweep.py --targets
+```
+
+`--targets` is not optional on a rebuild: it re-derives the tool list (a tool only enters the
+sweep once it has a collected suite, so ported tests ADD targets — 110 to 125 on 2026-09-02) and
+populates the `own` field.
+
+**Do NOT truncate `baseline.jsonl`.** This step used to end with `: > .../baseline.jsonl` and
+that line is removed deliberately (2026-09-13, Nick's call). The sweep resumes by tool name
+against whatever the file holds, so clearing it buys nothing and is the only operation in the
+system that can destroy banked measurement. The snapshot above is belt-and-braces, not a licence
+to clear.
+
+**Do NOT arm while a sweep is in flight** (`pgrep -f mutation_check`).
 
 ### Step 1b: Read Manifest (mandatory before synthesis)
 
@@ -537,18 +595,32 @@ whole section including its heading -- an empty section is a daily reminder that
 
 ### Overnight Run
 
-[If the sweep completed and the trend advanced:]
+[OMIT THIS ENTIRE SECTION, heading included, when `sweep_armed` is non-zero. Not-armed is the
+normal resting state of a temporary job — it is not a finding and gets no line.]
+
+[If `stuck_tools > 0` — this outranks every other line in the section, and it is the one that
+should interrupt the day:]
+> ⚠️ **The sweep is stuck, not progressing.** [N] tool(s) have failed `baseline_red` on
+> [M] consecutive nights: [tool] ([c]x), [tool] ([c]x). Each night re-attempts them and appends
+> another error row. Coverage numbers below are unchanged and will stay unchanged until this is
+> fixed. Check `elapsed` per row first: sub-second = genuinely red mapped tests, ~300s = a
+> TIMEOUT mis-reported as red. Do not arm tonight.
+
+[If `measurement_advanced` is False:]
+> ⚠️ **The sweep ran and banked nothing** — `survived` and `tools_scored` are identical to
+> [last date] despite a new baseline mtime. Do not report the coverage number as fresh.
+
+[If `measurement_advanced` is True:]
 > **Guard coverage: [pct]% of decisions unprotected** ([delta] since [last date]).
 > [N] tools measured, [K] fully clean, [M] with no verdict.
 
-[If any tool's survivor count ROSE — this is the only line here that should interrupt the day:]
+[If any tool's survivor count ROSE:]
 > ⚠️ **Survivors rose in [N] tool(s):** [tool] [old]→[new]. A rise means a behaviour lost its
 > test, not that the tool got worse. Check before anything else.
 
-[If `mutation_trend record` returned `skipped`:]
-> ⚠️ **The sweep did not run last night** — the baseline is unchanged since [date]. Check
-> `launchctl print gui/$(id -u)/com.nickmagnuson.jobsearch.mutation-sweep | grep "last exit"`;
-> exit 78 means a log-file provenance problem, not a code problem.
+[If the job is armed but `launchctl` reports a non-zero last exit:]
+> ⚠️ **`mutation-sweep` last exited [N].** Exit 78 is a log-file provenance problem, not a code
+> problem. Exit 1 usually means unmeasured tools remained, which the stuck-tools line covers.
 
 [Open decisions, from the two gate allowlists — this is the queue Nick answers:]
 > **Needs your call:** [N] wired hook(s) with no suite (`KNOWN_MISSING`), [M] orphaned test
