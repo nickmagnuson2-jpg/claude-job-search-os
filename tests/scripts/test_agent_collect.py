@@ -125,3 +125,31 @@ def test_company_line_treats_a_missing_geo_flag_as_unverified():
     assert "unverified" in block.lower(), (
         "absent geo_flag must default to unverified, not to verified -- defaulting a "
         "missing check to 'passed' is the same fail-open this whole change removes")
+
+
+def test_a_known_non_sf_bay_location_is_not_labelled_unverified():
+    """geo_flag is a generic REVIEW flag, not an unknown-location flag.
+
+    Found by cross-model review 2026-09-14 (F2). geo_gate sets flag=True for Oakland
+    and San Mateo as well as for unknown, so labelling every flagged company
+    "[location unverified]" tells the reader a verified Oakland HQ is unverified. The
+    renderer must key off the BAND, not the flag.
+    """
+    block = render_inbox_block(
+        {"entity": "company", "preset": "lane-b"},
+        [{"name": "Acme AI", "description": "AI for trades", "score": 4,
+          "geo_flag": True, "geo_band": "bay"}],
+        "2026-09-14")
+    low = block.lower()
+    assert "unverified" not in low, (
+        f"a KNOWN Bay-Area location must not be reported as unverified. Got: {block!r}")
+    assert "bay" in low, "the band the reader needs is which geography, not that a flag fired"
+
+
+def test_unknown_band_still_says_unverified():
+    block = render_inbox_block(
+        {"entity": "company", "preset": "lane-b"},
+        [{"name": "Acme AI", "description": "AI for trades", "score": 3,
+          "geo_flag": True, "geo_band": "unknown"}],
+        "2026-09-14")
+    assert "unverified" in block.lower()

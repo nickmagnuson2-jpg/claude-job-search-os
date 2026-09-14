@@ -48,7 +48,20 @@ def render_inbox_block(record, candidates, today):
             # flagged and then made invisible at the only surface a human reads.
             # Absent key defaults to unverified -- a candidate that never went through
             # the scorer has not been geo-checked either. Origin 2026-09-14.
-            mark = "" if c.get("geo_flag") is False else " [location unverified]"
+            # Key off the BAND, not the flag. geo_flag is a generic "review me" and is
+            # True for a KNOWN Oakland or San Mateo HQ as well as for an unknown one, so
+            # labelling every flagged company "unverified" reports a verified East Bay
+            # address as unverified. Found by cross-model review 2026-09-14 (F2), forty
+            # minutes after the flag-surfacing change that introduced it.
+            _LABELS = {"sf": "", "bay": " [Bay, not SF]", "peninsula": " [Peninsula]",
+                       "unknown": " [location unverified]", "excluded": " [out of geo]"}
+            band = c.get("geo_band")
+            if band in _LABELS:
+                mark = _LABELS[band]
+            else:
+                # No band recorded: an older producer, or a candidate that never went
+                # through the scorer. Either way its geography is unconfirmed.
+                mark = "" if c.get("geo_flag") is False else " [location unverified]"
             lines.append(f"- **{c.get('name')}** - {(c.get('description') or '')[:120]} "
                          f"(score {c.get('score','-')}){mark}")
         else:

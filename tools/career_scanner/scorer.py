@@ -262,6 +262,15 @@ def score_role(role: dict, context: dict) -> int:
     Returns:
         Integer fit score 1-10
     """
+    # The standardized schema field is `description_plain`. A caller assembling a role
+    # by hand (a skill pasting ad text, a fixture) naturally reaches for `description`,
+    # and silently scoring an empty description is how the keyword dimension went dark
+    # in the first parity fixtures. Alias here, in the library, so every caller gets the
+    # same answer -- putting it in the CLI would make the CLI a second implementation.
+    # Found by cross-model review 2026-09-14 (F4).
+    if not role.get("description_plain") and role.get("description"):
+        role = {**role, "description_plain": role["description"]}
+
     d1 = _score_title_match(role, context)
     d2 = _score_seniority_match(role, context)
     d3 = _score_industry_match(role, context)

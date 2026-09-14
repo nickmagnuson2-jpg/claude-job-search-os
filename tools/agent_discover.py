@@ -72,7 +72,7 @@ def score_company_candidates(candidates, weights=None, keywords=None):
     for c in candidates:
         sc = score_company(c, ctx, weights=weights, keywords=keywords or [])
         c.update({"score": sc["score"], "excluded": sc["excluded"],
-                  "geo_flag": sc["geo_flag"]})
+                  "geo_flag": sc["geo_flag"], "geo_band": sc.get("geo_band")})
     kept = [c for c in candidates if not c["excluded"]]
     kept.sort(key=lambda c: c["score"], reverse=True)
     return kept

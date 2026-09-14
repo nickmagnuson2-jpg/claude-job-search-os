@@ -60,14 +60,18 @@ def geo_gate(location: str) -> dict:
         # The penalty sits between the Bay (0.2) and Peninsula (0.6) bands: most
         # unknowns in practice are not SF (12 of 44 screened failed geography outright).
         return {"pass": True, "penalty": _UNKNOWN_LOCATION_PENALTY, "flag": True,
-                "excluded": False}
+                "excluded": False, "band": "unknown"}
     if any(t in loc for t in _PENINSULA_SOUTHBAY):
-        return {"pass": True, "penalty": 0.6, "flag": True, "excluded": False}
+        return {"pass": True, "penalty": 0.6, "flag": True, "excluded": False,
+                "band": "peninsula"}
     if "san francisco" in loc:
-        return {"pass": True, "penalty": 0.0, "flag": False, "excluded": False}
+        return {"pass": True, "penalty": 0.0, "flag": False, "excluded": False,
+                "band": "sf"}
     if any(t in loc for t in _BAY_TERMS):
-        return {"pass": True, "penalty": 0.2, "flag": True, "excluded": False}
-    return {"pass": False, "penalty": 1.0, "flag": True, "excluded": True}
+        return {"pass": True, "penalty": 0.2, "flag": True, "excluded": False,
+                "band": "bay"}
+    return {"pass": False, "penalty": 1.0, "flag": True, "excluded": True,
+            "band": "excluded"}
 
 
 # Funding stage ladder. Target band is Series B/C/D; center = Series C (4).
@@ -179,7 +183,7 @@ def score_company(candidate: dict, context: dict,
     gate = geo_gate(candidate.get("location") or "")
     if gate["excluded"]:
         return {"score": 1, "breakdown": {"geo": "excluded"},
-                "geo_flag": True, "excluded": True}
+                "geo_flag": True, "geo_band": gate["band"], "excluded": True}
 
     desc = " ".join(filter(None, [
         candidate.get("description", ""),
@@ -210,5 +214,6 @@ def score_company(candidate: dict, context: dict,
             "fit_overlay": fit_overlay,
         },
         "geo_flag": gate["flag"],
+        "geo_band": gate["band"],
         "excluded": False,
     }

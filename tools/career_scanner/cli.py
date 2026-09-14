@@ -36,6 +36,13 @@ def main():
         default=None,
         help="Repository root path (default: auto-detect from script location)",
     )
+    p.add_argument(
+        "--score-roles",
+        action="store_true",
+        help=("Read a JSON array of role dicts on stdin and print their scores. "
+              "Exists so /scan-jobs reaches the SAME scorer scanner.py uses instead "
+              "of re-deriving fit from a prose rubric. Thin wrapper by design."),
+    )
     args = p.parse_args()
 
     # Resolve repo root: explicit arg, or two levels up from this script
@@ -43,6 +50,36 @@ def main():
         repo_root = Path(args.repo_root).resolve()
     else:
         repo_root = Path(__file__).resolve().parent.parent.parent
+
+    if args.score_roles:
+        # Refuse unreadable input rather than emitting a confident number. A scorer
+        # that falls through on junk is worse than one that is absent, because the
+        # caller cannot tell a real 3 from a parse failure.
+        raw = sys.stdin.read()
+        try:
+            roles = json.loads(raw)
+        except json.JSONDecodeError as e:
+            print(json.dumps({"status": "error", "code": "bad_json",
+                              "message": f"stdin is not valid JSON: {e}"}))
+            return 2
+        if not isinstance(roles, list):
+            print(json.dumps({"status": "error", "code": "not_a_list",
+                              "message": "expected a JSON array of role objects"}))
+            return 2
+
+        bad = [i for i, r in enumerate(roles) if not isinstance(r, dict)]
+        if bad:
+            print(json.dumps({"status": "error", "code": "non_object_element",
+                              "message": f"elements at {bad[:10]} are not JSON objects",
+                              "count": len(bad)}))
+            return 2
+
+        from tools.career_scanner.scorer import load_scoring_context, score_role
+        ctx = load_scoring_context(repo_root)
+        out = [{"title": r.get("title", ""), "company": r.get("company", ""),
+                "score": score_role(r, ctx)} for r in roles]
+        print(json.dumps({"status": "ok", "n": len(out), "roles": out}))
+        return 0
 
     from tools.career_scanner.scanner import scan_all_targets
 
@@ -63,4 +100,6 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    # sys.exit(main()), not a bare main(): --score-roles returns 2 on unreadable stdin,
+    # and a discarded return value would surface that refusal as exit 0.
+    sys.exit(main())

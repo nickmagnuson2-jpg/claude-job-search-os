@@ -236,3 +236,12 @@ def test_unknown_location_scores_below_verified_sf_end_to_end():
         f"unknown-location company scored {unk['score']}, verified-SF scored {sf['score']} "
         "-- they must not tie, or the sort order treats unverified as local")
     assert unk["geo_flag"] is True
+
+
+def test_geo_gate_reports_which_band_not_just_that_a_flag_fired():
+    """Found by cross-model review 2026-09-14 (F2): flag=True is overloaded."""
+    assert geo_gate("San Francisco, CA")["band"] == "sf"
+    assert geo_gate("Oakland, CA")["band"] == "bay"
+    assert geo_gate("San Mateo, CA")["band"] == "peninsula"
+    assert geo_gate("")["band"] == "unknown"
+    assert geo_gate("Austin, TX")["band"] == "excluded"
