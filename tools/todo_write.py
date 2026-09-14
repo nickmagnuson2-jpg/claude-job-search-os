@@ -75,6 +75,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 # every descriptive close ("Closed - they passed", "Declined", "Considered - passed").
 from stage_vocab import is_terminal_stage  # noqa: E402
 
+# Shared ordinary-English-vs-brand-token classifier (single source of truth). The same
+# problem this module hit in `sync` -- a company whose name is an everyday word matching
+# ordinary prose -- was already solved for the PII denylist, so the classifier is imported
+# rather than reimplemented here (CLAUDE.md: consolidate duplicated domain logic).
+from gen_pii_denylist import is_distinctive_single, load_dictionary  # noqa: E402
+
 TODOS_FILE = "data/job-todos.md"
 PIPELINE_FILE = "data/job-pipeline.md"
 COMPLETED_HEADER = "| Task | Priority | Completed | Notes |"
@@ -884,6 +890,64 @@ def cmd_clear(todos_path: Path) -> None:
            done=done_count, withdrawn=withdrawn_count, archived=done_count + withdrawn_count)
 
 
+# ---------------------------------------------------------------------------
+# Company-match evidence (used by `sync`)
+# ---------------------------------------------------------------------------
+# A company name appearing SOMEWHERE in a todo's task text is weak evidence that the
+# todo is about that opportunity. Measured 2026-09-14 on the owner's live files: 27
+# candidates, roughly 6 genuine. Two independent mechanisms produced the rest, so the
+# fix is two independent tests and a match must clear both.
+
+# Clause separators that end a todo's SUBJECT and begin its body. A todo is written
+# "<what to do> — <why / context / origin / REOPEN gate>", and the company citations
+# that are NOT opportunity threads live in that second half: parentheticals, origin
+# notes, REOPEN gates, "reuse the X format" pointers.
+#
+# The sentence split deliberately requires whitespace after the period so a filename
+# ("check_public_pii.py write-target") is not read as a sentence boundary.
+_SUBJECT_SPLIT = re.compile(r"\s+[\u2014\u2013]\s+|\s+--?\s+|:\s+|\.\s+(?=[A-Z(])")
+
+# A leading all-caps status marker ("PARKED", "SYSTEM-BUILD") is a prefix, not a subject:
+# treating it as the subject would make every parked todo unmatchable, which hides real
+# ones instead of just the false ones.
+_STATUS_MARKER = re.compile(r"[A-Z][A-Z0-9/ -]{1,19}")
+
+
+def todo_subject(task: str) -> str:
+    """The first clause of a todo's task text, skipping any leading status marker.
+
+    'PARKED - build X: rationale' -> 'build X'
+    'Apply to Acme' -> 'Apply to Acme'
+    """
+    for seg in _SUBJECT_SPLIT.split(task):
+        seg = seg.strip()
+        if not seg or _STATUS_MARKER.fullmatch(seg):
+            continue
+        return seg
+    return ""
+
+
+def is_distinctive_company(name: str, dictionary: set[str]) -> bool:
+    """Is `name` distinctive enough that finding it in prose means something?
+
+    Multi-token names are distinctive as a PHRASE even when every component is an
+    ordinary word ('Anchor Point'), matching the tier split in gen_pii_denylist. A
+    single token has to clear the shared classifier: ordinary English words, and
+    anything under four characters, are not evidence of anything.
+
+    The cost is a real false negative: a genuinely terminal company whose name is an
+    everyday word will never be surfaced by `sync`. That direction is the cheap one --
+    `sync` is a preview whose candidates a human triages, so a missed candidate costs
+    one manual withdrawal while a false candidate costs a live todo.
+    """
+    tokens = [t for t in re.split(r"[^A-Za-z0-9.]+", name) if t]
+    if not tokens:
+        return False
+    if len(tokens) > 1:
+        return True
+    return is_distinctive_single(tokens[0], dictionary)
+
+
 def cmd_sync(todos_path: Path, pipeline_path: Path, apply: bool = False) -> None:
     """Report (default) or withdraw (--apply) Active todos for terminal companies.
 
@@ -902,6 +966,18 @@ def cmd_sync(todos_path: Path, pipeline_path: Path, apply: bool = False) -> None
     Deciding which is which is judgment, so it belongs to the caller (a skill pass or
     the owner), not to a regex here. This command's job is to find candidates and report
     them honestly. `--apply` writes; bare `sync` never touches the file.
+
+    A candidate needs two pieces of evidence, added 2026-09-14 after the same
+    measurement on the live files returned 27 candidates of which ~6 were genuine:
+
+      1. The company name must be DISTINCTIVE (is_distinctive_company). A single-token
+         name that is an ordinary English word, or shorter than four characters, matched
+         prose rather than a company. Names that fail this are reported in
+         `skipped_companies`, so the exclusion is visible rather than silent.
+      2. The name must appear in the todo's SUBJECT (todo_subject), not anywhere in the
+         task text. Infra, learning and reflection todos cite companies in their body
+         clause -- origin notes, REOPEN gates, parentheticals -- and those citations are
+         not opportunity threads.
     """
     today_str = date.today().strftime("%Y-%m-%d")
 
@@ -957,6 +1033,23 @@ def cmd_sync(todos_path: Path, pipeline_path: Path, apply: bool = False) -> None
         out_ok("sync", "No terminal-stage companies in the pipeline", withdrawn=0)
         return
 
+    # Drop company names too weak to be evidence (see is_distinctive_company). Reported,
+    # not silently dropped: an unexplained absence reads as a broken command.
+    dictionary = load_dictionary()
+    skipped: list[str] = []
+    distinctive: list[tuple[str, str]] = []
+    for company, stage in terminal:
+        if is_distinctive_company(company, dictionary):
+            distinctive.append((company, stage))
+        else:
+            skipped.append(company)
+    terminal = distinctive
+
+    if not terminal:
+        out_ok("sync", "No terminal-stage companies with a distinctive name",
+               withdrawn=0, candidates=[], skipped_companies=skipped)
+        return
+
     content, lines = load_todos(todos_path)
 
     act_start, act_end = find_section(lines, "## Active")
@@ -973,10 +1066,11 @@ def cmd_sync(todos_path: Path, pipeline_path: Path, apply: bool = False) -> None
         # Skip rows already marked terminal
         if len(cols) >= 4 and cols[3] in ("Done", "Withdrawn"):
             continue
-        # Match the TASK column only, on a word boundary. Matching the joined row
-        # meant a todo that merely name-dropped the company in its Notes ("reuse
-        # the Acme case format") was withdrawn along with it.
-        task_text = cols[0]
+        # Match the SUBJECT of the TASK column only, on a word boundary. Matching the
+        # joined row meant a todo that merely name-dropped the company in its Notes
+        # ("reuse the Acme case format") was withdrawn along with it; matching the whole
+        # task column meant the same thing for a company cited in the body clause.
+        task_text = todo_subject(cols[0])
         for company, stage in terminal:
             if re.search(rf"\b{re.escape(company)}\b", task_text, re.IGNORECASE):
                 to_withdraw.append((i, cols, company, stage))
@@ -984,7 +1078,7 @@ def cmd_sync(todos_path: Path, pipeline_path: Path, apply: bool = False) -> None
 
     if not to_withdraw:
         out_ok("sync", "No active todos matched terminal pipeline companies",
-               withdrawn=0, candidates=[])
+               withdrawn=0, candidates=[], skipped_companies=skipped)
         return
 
     candidates = [
@@ -999,6 +1093,7 @@ def cmd_sync(todos_path: Path, pipeline_path: Path, apply: bool = False) -> None
             f"{len(candidates)} candidate(s) found — NOTHING WRITTEN. "
             f"Review, then re-run with --apply to withdraw.",
             withdrawn=0, candidates=candidates, applied=False,
+            skipped_companies=skipped,
         )
         return
 

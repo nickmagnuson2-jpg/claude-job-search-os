@@ -68,12 +68,16 @@ def _setup(tmp_path, pipeline=PIPELINE, todos=TODOS):
     return todos_path
 
 
-def _sync(tmp_path, apply=True):
+def _sync(tmp_path, apply=True, pipeline=None, todos=None):
     """Run sync. Defaults to apply=True here because most tests assert on the write.
 
     The COMMAND defaults the other way (preview) on purpose — see cmd_sync's docstring
     and test_bare_sync_writes_nothing below.
     """
+    if pipeline is not None or todos is not None:
+        _setup(tmp_path,
+               pipeline=PIPELINE if pipeline is None else pipeline,
+               todos=TODOS if todos is None else todos)
     cmd = [sys.executable, str(TOOLS_DIR / "todo_write.py"), "sync",
            "--repo-root", str(tmp_path)]
     if apply:
@@ -145,6 +149,10 @@ def test_incident_blast_radius_is_exactly_one_row(tmp_path):
 # companies were permanently blocked from syncing even once archived.
 # ---------------------------------------------------------------------------
 
+# Placeholder company names here must be DISTINCTIVE (not ordinary English words):
+# `sync` deliberately refuses to match on a single-token name that is a dictionary word,
+# so a fixture named after an everyday noun would exercise the distinctiveness filter
+# instead of the freeform-stage parsing these tests are about.
 FREEFORM_PIPELINE = """\
 # Job Pipeline
 
@@ -153,7 +161,7 @@ FREEFORM_PIPELINE = """\
 | Company | Role | Stage | Date Updated | Next Action | CV Used | Notes | URL |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | Initech | Deployment Strategist | Closed - they passed | 2025-03-01 | — | - | - | - |
-| Umbrella | BizOps | Considered - passed (self, 7/7) | 2025-03-02 | — | - | - | - |
+| Vandelay | BizOps | Considered - passed (self, 7/7) | 2025-03-02 | — | - | - | - |
 | Hooli | Ops Manager | Onsite loop scheduled (founder screen PASSED) | 2025-03-03 | Prep | - | - | - |
 
 ## Archived
@@ -171,7 +179,7 @@ FREEFORM_TODOS = """\
 | Task | Priority | Due | Status | Notes |
 | --- | --- | --- | --- | --- |
 | Apply to Initech Deployment Strategist | High | — | Pending | — |
-| Research Umbrella BizOps team | Med | — | Pending | — |
+| Research Vandelay BizOps team | Med | — | Pending | — |
 | Prep Hooli onsite | High | — | Pending | — |
 | Research Soylent leadership | Med | — | Pending | — |
 
@@ -194,7 +202,7 @@ def test_considered_passed_prefix_is_terminal(tmp_path):
     """'Considered - passed (self, ...)' is a self-pass, i.e. the opportunity is over."""
     p = _setup(tmp_path, pipeline=FREEFORM_PIPELINE, todos=FREEFORM_TODOS)
     _sync(tmp_path)
-    assert "Research Umbrella BizOps team" not in _active(p)
+    assert "Research Vandelay BizOps team" not in _active(p)
 
 
 def test_freeform_terminal_stage_in_archived_is_terminal(tmp_path):
@@ -281,3 +289,142 @@ def test_terminal_in_archived_but_live_in_active_still_wins(tmp_path):
     p = _setup(tmp_path, pipeline=pipeline, todos=FREEFORM_TODOS)
     _sync(tmp_path)
     assert "Prep Hooli onsite" in _active(p)
+
+
+# ---------------------------------------------------------------------------
+# Weak-evidence matching (2026-09-14)
+# ---------------------------------------------------------------------------
+# Defect 3, measured on the owner's live files: 27 candidates, ~6 genuine. Two
+# distinct mechanisms produced the other 21, and they fail independently:
+#
+#   3a. A single-token company name that is an ordinary English word (or too short
+#       to be a brand token at all) matched every todo that used the word. A todo
+#       about patching a script matched a company whose name is that verb; a
+#       spreadsheet cell reference matched a two-character company name.
+#   3b. The company was named anywhere in the TASK column, including deep in a
+#       parenthetical or a REOPEN-gate clause, so infra/learning/reflection todos
+#       that merely cite a company were treated as opportunity todos.
+#
+# The fixtures below use generic placeholders. "Anchor" is the ordinary-English
+# shape, "Q3" the too-short shape, "Globex"/"Initech" the distinctive controls
+# that must keep matching.
+
+WEAK_PIPELINE = """\
+# Job Pipeline
+
+## Active Pipeline
+
+| Company | Role | Stage | Date Updated | Next Action | CV Used | Notes | URL |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+
+## Archived
+
+| Company | Role | Stage | Date Updated | Next Action | CV Used | Notes | URL |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Anchor | Ops Lead | Withdrawn | 2025-01-10 | - | - | - | - |
+| Q3 | Analyst | Withdrawn | 2025-01-10 | - | - | - | - |
+| Globex | Chief of Staff | Rejected | 2025-02-01 | - | - | - | - |
+"""
+
+WEAK_TODOS = """\
+# Job Search To-Dos
+
+## Active
+
+| Task | Priority | Due | Status | Notes |
+| --- | --- | --- | --- | --- |
+| Anchor the voice examples in the style guide | High | — | Pending | — |
+| Follow up: Casey Doe — He may hit the Q3 column-position check | Med | — | Pending | — |
+| Build out the inbound profile preferences — Globex inbound is proof the source works | High | — | Pending | — |
+| PARKED — build the extract pipeline as a skill. Working example and full prompt anatomy live in the Globex retro | Low | — | Pending | — |
+| Reach the ops lead via the alumni path re Globex Business Operations — warmer than the cold queue | Med | — | Pending | — |
+
+## Completed
+
+| Task | Priority | Completed | Notes |
+| --- | --- | --- | --- |
+| Old task | Low | 2025-01-05 | Completed 2025-01-05 |
+"""
+
+
+def _tasks(res):
+    return [c["task"] for c in res.get("candidates", [])]
+
+
+def test_ordinary_english_company_name_does_not_match_a_verb_in_the_task(tmp_path):
+    """3a: a company named after an everyday word must not match ordinary prose."""
+    res = _sync(tmp_path, pipeline=WEAK_PIPELINE, todos=WEAK_TODOS, apply=False)
+    assert "Anchor the voice examples in the style guide" not in _tasks(res)
+
+
+def test_company_name_too_short_to_be_a_brand_token_does_not_match(tmp_path):
+    """3a: a two-character company name matched a spreadsheet cell reference."""
+    res = _sync(tmp_path, pipeline=WEAK_PIPELINE, todos=WEAK_TODOS, apply=False)
+    assert not any("column-position check" in t for t in _tasks(res))
+
+
+def test_company_named_only_in_the_body_does_not_match(tmp_path):
+    """3b: the todo's subject is the inbound profile, not the company it cites."""
+    res = _sync(tmp_path, pipeline=WEAK_PIPELINE, todos=WEAK_TODOS, apply=False)
+    assert not any(t.startswith("Build out the inbound profile") for t in _tasks(res))
+
+
+def test_parked_marker_does_not_promote_the_body_into_the_subject(tmp_path):
+    """3b: a leading PARKED/status marker is a prefix, not the subject. The subject is
+    the clause after it, and a company cited further down the body still does not count."""
+    res = _sync(tmp_path, pipeline=WEAK_PIPELINE, todos=WEAK_TODOS, apply=False)
+    assert not any(t.startswith("PARKED") for t in _tasks(res))
+
+
+def test_company_in_the_subject_clause_still_matches(tmp_path):
+    """Control for 3b: a genuine opportunity todo names the company in its subject,
+    before the em-dash body, and must still be caught."""
+    res = _sync(tmp_path, pipeline=WEAK_PIPELINE, todos=WEAK_TODOS, apply=False)
+    assert any(t.startswith("Reach the ops lead") for t in _tasks(res))
+
+
+def test_weak_evidence_blast_radius_is_exactly_one_row(tmp_path):
+    """Five candidate todos on the weak-evidence fixture, exactly one genuine."""
+    res = _sync(tmp_path, pipeline=WEAK_PIPELINE, todos=WEAK_TODOS, apply=False)
+    assert len(res["candidates"]) == 1, _tasks(res)
+
+
+def test_preview_names_the_companies_it_refused_to_match_on(tmp_path):
+    """Silently dropping a company is how a user concludes sync is broken. The
+    non-distinctive names are reported, so the exclusion is visible."""
+    res = _sync(tmp_path, pipeline=WEAK_PIPELINE, todos=WEAK_TODOS, apply=False)
+    assert sorted(res["skipped_companies"]) == ["Anchor", "Q3"]
+
+
+def test_distinctive_multi_token_company_still_matches(tmp_path):
+    """A multi-token name is distinctive as a phrase even when every component is an
+    ordinary word — it must not be filtered out with the single-token ones."""
+    pipeline = WEAK_PIPELINE.replace(
+        "| Globex | Chief of Staff | Rejected",
+        "| Anchor Point | Chief of Staff | Rejected | 2025-02-01 | - | - | - | - |\n"
+        "| Globex | Chief of Staff | Rejected")
+    todos = WEAK_TODOS.replace(
+        "| Anchor the voice examples in the style guide | High | — | Pending | — |",
+        "| Apply to Anchor Point | High | — | Pending | — |")
+    res = _sync(tmp_path, pipeline=pipeline, todos=todos, apply=False)
+    assert "Apply to Anchor Point" in _tasks(res)
+
+
+def test_status_marker_prefix_is_skipped_so_the_real_subject_still_matches(tmp_path):
+    """The marker-skip has to work in BOTH directions: dropping a leading 'PARKED' must
+    not make every parked todo permanently unmatchable, or the filter hides real ones."""
+    todos = WEAK_TODOS.replace(
+        "| Anchor the voice examples in the style guide | High | — | Pending | — |",
+        "| PARKED — Globex outreach follow-through: rebuild the sequence | Low | — | Pending | — |")
+    res = _sync(tmp_path, pipeline=WEAK_PIPELINE, todos=todos, apply=False)
+    assert any(t.startswith("PARKED — Globex") for t in _tasks(res)), _tasks(res)
+
+
+def test_company_name_with_no_word_characters_is_skipped_not_crashed(tmp_path):
+    """A punctuation-only company cell must be refused, not indexed into."""
+    pipeline = WEAK_PIPELINE.replace(
+        "| Anchor | Ops Lead | Withdrawn | 2025-01-10 | - | - | - | - |",
+        "| *** | Ops Lead | Withdrawn | 2025-01-10 | - | - | - | - |")
+    res = _sync(tmp_path, pipeline=pipeline, todos=WEAK_TODOS, apply=False)
+    assert res["status"] == "ok"
+    assert "***" in res["skipped_companies"]
