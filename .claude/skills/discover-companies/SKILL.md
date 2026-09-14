@@ -61,7 +61,28 @@ this account and is deprecating in favor of Agent.)
 
 ### Step 3: Annotate (judgment layer)
 
-For each candidate, add a one-line fit read the deterministic score cannot capture:
+**FIRST, reconcile against the pipeline (MANDATORY, before any annotation).** The discovery
+tool reasons from the public web and cannot see `data/job-pipeline.md`, so a company already
+closed arrives looking exactly like a fresh lead:
+
+```bash
+PYTHONIOENCODING=utf-8 python3 tools/pipeline_reconcile.py --repo-root . --format markdown \
+  "Candidate One" "Candidate Two"
+```
+
+Pass every candidate. Exit 1 means at least one is already tracked; **exit 2 means the pipeline
+could not be read and the result is not an all-clear.** Carry the verdict into the inbox block so
+the reviewer sees it:
+
+- **`Previously closed`** — annotate with the stage and date. **Never silently drop it.** A closed
+  loop is information the reviewer may still want, and a company that simply vanishes from the
+  proposal leaves nothing for anyone to notice.
+- **`Mixed history`** — has both closed and live rows. **Never exclude.**
+- **`Similar names`** — resolved by nobody. Check by hand before writing anything about it.
+
+Origin: `feedback_diff_agent_recommendations_against_closed_rows`.
+
+Then, for each candidate, add a one-line fit read the deterministic score cannot capture:
 - Which lane it fits (A enterprise / B SMB-trades) and why.
 - Mission/energy alignment against `data/goals.md` and `data/professional-identity.md`.
 - The SF-the-city nuance: a `geo_flag: true` means the HQ is Bay-Area-but-not-SF

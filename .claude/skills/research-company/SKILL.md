@@ -419,6 +419,27 @@ After the manifest, synthesize the agent findings:
 2. **Resolve contradictions** — if agents report contradictory information (e.g., different founding years, different headcount numbers, conflicting competitor lists), **show both values with their sources and mark as `[Needs verification]`**. Do not silently pick one. Prefer higher-tier sources when choosing which to feature prominently, but always disclose the discrepancy.
 3. **Cross-link** — connect findings across agents (e.g., a product mentioned by Agent 1 that's in the news from Agent 4, a leader from Agent 3 who led a funding round from Agent 2, or a competitor from Agent 5 that recently appeared in Agent 4's news).
 4. **Enrich the shortlist** — use findings from Agents 1-4 to enhance Agent 5's similar-companies shortlist. For example, if Agent 2 found a specific investor, note which shortlisted companies share that investor. If Agent 3 found alumni connections, flag shortlisted companies with similar alumni overlap potential.
+
+4b. **Reconcile the shortlist against the pipeline (MANDATORY — do not skip, do not eyeball).**
+
+   Agent 5 reasons from the public web and cannot see `data/job-pipeline.md`. A company Nick already closed looks identical to a fresh lead and the rationale is confident either way. Run:
+
+   ```bash
+   PYTHONIOENCODING=utf-8 python3 tools/pipeline_reconcile.py --repo-root . --format markdown \
+     "Company One" "Company Two" "Company Three"
+   ```
+
+   Pass **every** name on the shortlist, including the ones you are sure about. Exit 1 means at least one is already in the pipeline; exit 2 means the pipeline could not be read and the result is **not** an all-clear.
+
+   **Paste the returned block into the dossier**, under the Similar Companies section. It must land in the artifact, not only in chat: both recorded failures were relayed in chat and the dossier is what a later session reads.
+
+   Then act on it:
+   - **`Previously closed — reconsider?`** — keep the company visible, annotate it with the stage and date. **Never silently drop it.** A closed loop is information Nick may still want; a missing row reads as an oversight.
+   - **`Currently pursuing`** — say so; the value is different from a fresh lead.
+   - **`Mixed history`** — has both closed and live rows. **Never exclude.**
+   - **`Similar names`** — resolved by nobody. Check by hand before writing anything about that company.
+
+   Origin: `feedback_diff_agent_recommendations_against_closed_rows`, 2 fires. The first was caught only because the company sat in always-loaded Critical Context; on the second, two companies that did not reached Nick ranked #1 and #3.
 5. **Contradiction audit** — Before writing the final dossier, scan all agent outputs for numerical claims (funding amounts, headcount, revenue, market size, growth rates). If the same metric appears in multiple agent outputs with different values, treat this as a contradiction and apply the contradiction protocol — report both values with sources and mark `[Needs verification]` — even if individual agents didn't flag it.
 5b. **Web cross-check (mandatory)** — Diff Agent 6 (Web) findings against Agents 1-4 (Exa). Produce a short `### Web Cross-Check` block placed just before the Evidence Summary Table, containing exactly: (a) **New** — material facts/sources Web surfaced that no Exa agent found; (b) **Contradictions** — any fact where Web and an Exa agent disagree (apply the `[Needs verification]` protocol); (c) **Freshness delta** — whether Web's newest source is more or less recent than the Exa agents'; (d) **Blocked URLs** — any Web 403/429/JS-only URLs Agent 6 reported (these mark Exa's structural advantage); (e) **Verdict** — one line: did Web materially change the dossier this run (yes/no + the single biggest delta), or was it redundant. This block is the standing record for whether web is earning its place in the ensemble — keep it even when "redundant this run." Pattern inverted 2026-05-19 from prior Exa-cross-check; rationale in `output/halcyon/051926-ai-native-case-AB-verdict.md`.
 6. **Write BLUFs** — For each major section of the dossier, draft a single bold opening sentence summarizing the key takeaway for the candidate. The BLUF answers: "If the reader only reads this one sentence, what must they know?" Keep BLUFs factual and specific — never generic filler like "The company has an interesting business model."
