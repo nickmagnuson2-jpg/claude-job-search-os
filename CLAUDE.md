@@ -144,6 +144,7 @@ The judgment layer for an active relationship, distinct from the flat roster. Sh
 
 - **`data/networking.md`** = the roster + raw interaction log. Every contact, full message content, append-only, transactional. Mutated via `networking_write.py`.
 - **`data/people/<slug>.md`** = the synthesized dossier for the ~active relationships only: Where This Stands, Pressure Points, Commitments (what they committed to), What I Owe, Touchpoints (pointers, not pastes), Next Move. NOT a duplicate of the interaction log; it is the "where does this relationship stand and what's my play."
+- **`data/when-i-land.md`** = contact once an offer is signed, with news not an ask. Append-only.
 
 slug = person name lowercased, accents folded, spaces→hyphens (matches the `output/<slug>` convention, e.g. `first-last`). Created on demand via `/networking promote` (or `person_write.py create`), never auto-created for every contact: anti-sprawl by recruitment. The structured sections (Commitments / What I Owe / Touchpoints) are atomic dated appends via `person_write.py add-entry`; the freeform sections are edited via re-read + Write. Read-consumers: `/networking`, `/follow-up`, `/cold-outreach`, `/draft-email`, `/prep-interview` load `data/people/<slug>.md` when present. Template: `framework/templates/person.md`. Exemplar: `data/people/<slug>.md`. Origin: comparison against an external personal-OS system, E2 (built 2026-06-01).
 
@@ -209,20 +210,20 @@ Never use a CV bullet as an interview answer or a spoken story as a CV bullet.
 
 **Refresh:** Fresh dossier (<14 days) — offer "view existing" or "refresh." On refresh, include `## What Changed`. Flow: `/research-industry` → `/research-company` → `/cold-outreach` or `/follow-up`.
 
-## Resume Generation & Interview Training
+## Frameworks, Resume Standards & Interview Workflow
 
-- Resume standards (tailoring, 16-point checklist, cheat sheet) → `framework/application-workflow.md`. Used by `/generate-cv`, `/apply`, `/cover-letter`.
-- Interview workflow, coaching rules, progress logging → `framework/interview-workflow.md`.
-- Six answering strategies in `framework/answering-strategies/` (blank-mind, gap reframing, pressure defense, question-back, anti-patterns, direct answer structure).
-- Voice simulation: `/voice-export` (generate prompt) → practice in Claude App → `/debrief` (analyze).
-
-## Problem Solving & Communication Craft
-
-Two foundational frameworks from Nick's McKinsey training. Sealed raw materials in `data/project-background/mckinsey/`; the extracted concepts in framework docs are public knowledge.
-
-- **Problem solving** → `framework/problem-solving-mckinsey.md`. The 7-step method (Define → Structure → Prioritize → Plan → Conduct → Synthesize → Recommend), Problem Statement Worksheet, MECE issue trees, hypothesis-driven workplans, pyramid synthesis tests. Used by `/prep-interview`, `/debrief`, `/research-company`, `/research-industry`, and any synthesis work where structure matters.
-- **SMB decision analysis** → `framework/smb-decision-analysis.md`. The method for irreversible small-business calls (takeover, lease, capital): fact base → structured problem → multi-lens → assumptions register → adversarial verdicts → gates → per-audience artifact. Its three survival disciplines (canonical spine, superseded banners that state *what survives*, blind-run reconciliation) apply to any analysis that outlives its own premises.
-- **Slide / communication craft** → `framework/slide-craft-mckinsey.md`. Ledes (insight vs. process), 30-second test, page anatomy (4 corners), 11-point quality checklist, 8 common feedback patterns, "kill empty verbiage" rules. Used when producing prep PDFs, dossiers, cover letters, and any artifact where the audience scans first.
+> **Moved 2026-09-14 → [`docs/framework-index.md`](docs/framework-index.md)** (verbatim, by
+> `/trim-context-file`; both sections measured rule density 0.00).
+>
+> **Read it before:** applying the McKinsey 7-step method or building an issue tree · running an
+> irreversible SMB decision (takeover, lease, capital) · producing any artifact an audience will
+> scan first (prep PDF, dossier, cover letter) · tailoring a CV or running the 16-point checklist ·
+> prepping or debriefing an interview.
+>
+> **It covers:** `framework/problem-solving-mckinsey.md`, `framework/smb-decision-analysis.md`,
+> `framework/slide-craft-mckinsey.md`, `framework/application-workflow.md`,
+> `framework/interview-workflow.md`, and `framework/answering-strategies/` — what the method
+> inside each one actually is, not just that it exists.
 
 ## Tools & Environment
 

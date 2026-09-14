@@ -3,6 +3,72 @@
 All notable changes to this job search system are recorded here.
 Format: newest entries at the top.
 
+## 2026-09-14: CLAUDE.md trimmed to 1.1KB of headroom, and a reconciler so agent shortlists stop recommending closed companies
+
+**`CLAUDE.md` was 26 bytes from its 40,960-byte always-loaded budget.** A documentation pass earlier
+the same day had pushed it to 40,934, and the next addition of any substance would have breached it.
+`/trim-context-file` moved the two sections that measured a **rule density of 0.00** out to
+`docs/framework-index.md`: *Problem Solving & Communication Craft* (1,426 B) and *Resume Generation &
+Interview Training* (567 B). Both are descriptions of what lives inside `framework/*.md`, consulted
+when you need the method rather than the name, so neither belonged in the tier that must never
+depend on recall.
+
+Verified rather than asserted: the Step 0 gate reproduced all 40,934 source bytes across 13 blocks
+before anything moved; both moved sections were re-checked against their manifest sha256 and are
+byte-identical in the destination; byte accounting balances exactly (40,934 - 1,993 moved + 880
+pointer = 39,821); and rule conservation was checked against the **union** of the trimmed source and
+the destination, not the source alone -- all 68 baseline normative lines survive, and the 3 that left
+`CLAUDE.md` are precisely the ones relocated. 239 tests pass.
+
+**Net: 40,934 -> 39,821 bytes. Headroom 26 -> 1,139.** Four other sections were proposed and
+declined, deliberately: *Data Files* is the skill's own example of a lookup table that encodes a rule
+("Edit silently fails on rows >500 chars"), *Memory Hygiene* argues in its own text for residency
+because archiving happens in any hygiene pass, and *Repository Structure* carries the THREE PHYSICAL
+ROOTS warning that backs a Hard Rule about absence assertions.
+
+**Separately: `tools/pipeline_reconcile.py`, built because a research agent recommended two
+already-rejected companies.** An agent producing a target shortlist reasons from the public web and
+cannot see `data/job-pipeline.md`, so a closed company looks identical to a fresh lead. It happened
+twice: on 2026-09-08 the miss was caught only because the company sat in always-loaded Critical
+Context, and on 2026-09-14 two companies that did **not** sit there were ranked #1 and #3 and reached
+Nick in a written summary. The tool takes a company list and reports which are already tracked and on
+which rows (`active_pipeline` / `terminal_history_only` / `mixed_history` / `ambiguous_name` /
+`not_found`), wired as a mandatory step into `/research-company` 4b and `/discover-companies` 3.
+
+Three design decisions worth recording, each forced by evidence rather than taste:
+
+- **It reports, it never suppresses.** A closed company stays visible under "previously closed --
+  reconsider?". Suppression would trade this defect for a worse one: a company worth re-approaching
+  would vanish with nothing for anyone to notice.
+- **Only normalized-exact resolves automatically.** `normalize_name` already folds `Acme Co.` onto
+  `Acme Co`, so the containment tier in the original plan bought nothing for the case that motivated
+  it, while matching three genuinely distinct company pairs in live data. Containment and similarity
+  now route to an `ambiguous` bucket for a human.
+- **It does not reuse `career_scanner/dedup.py`**, despite the memory rule's own reopen_gate saying
+  to. That module's `load_pipeline_entries` returns only `active_entries` -- the exact complement of
+  the terminal rows this needs -- so reusing it would have returned zero matches and looked clean.
+
+Mutation testing found what the green suite could not: **30 survivors of 109 on the first run**, with
+34 tests passing throughout. Two failure-mode tests asserted only the exception *type*, so both
+input guards could be deleted while a different branch raised the same exception; the ambiguous
+rendering block had zero coverage; and two guards plus a `_candidates` self-match check were dead
+code and were deleted rather than tested. Final: 86 killed, 0 unallowlisted survivors, 11 allowlisted
+with written reasons, 0 isolation failures.
+
+**`check_guard_edit_approval.py` blocked the original filename and was right.** `tools/check_*.py` is
+this repo's PreToolUse hook namespace; a non-hook library there would have needed a
+`NON_HOOK_CHECKERS` entry to explain a naming mistake. No override was requested -- the file was
+renamed to `pipeline_reconcile.py`.
+
+**Also corrected: an always-loaded claim in MEMORY.md that was false.** The 2026-09-07 caveat said
+the hook registry is the UNION of three settings layers and that the global `~/.claude/settings.json`
+"really does wire at least one (`check_public_pii.py`)." Measured by parsing each layer's `hooks`
+block: the global file holds 22 hook commands, every one a `.js` or `.sh` under `~/.claude/hooks/`,
+and **zero** referencing any `tools/check_*.py`. The two grep hits live under the `autoMode` key as
+prose. The registry is the project `.claude/settings.json` alone. The caveat was written from a grep
+count that could not tell a hook from a sentence -- the same error it existed to prevent. Counts
+refreshed 41/33/8 -> 41/32/9, all 9 unwired declared, zero stale entries.
+
 ## 2026-09-07: five tested gates that guarded nothing, and a suite that could not see itself
 
 The wiring backlog closed, and the process of closing it produced a sharper finding than the

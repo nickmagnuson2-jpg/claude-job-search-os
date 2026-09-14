@@ -40,6 +40,7 @@ Look-it-up material. Precise, scannable, not meant to be read front to back.
 | [usage.md](usage.md) | Every skill with argument syntax, worked examples, the PDF pipeline, hook override flags |
 | [tools-reference.md](tools-reference.md) | Tool tables: atomic write scripts, launchd background jobs, private local config, multi-agent workflow templates. Read before invoking any `tools/*.py` script (argument order, flag placement, `--repo-root` position). Moved out of CLAUDE.md 2026-08-13. |
 | [data-file-conventions.md](data-file-conventions.md) | The decisions/accomplishments append-only logs and their boundaries; the four kinds of personal exploration and which take a `YYYY-MM-DD-` prefix; the therapy two-tier and reflections two-voice patterns. Moved out of CLAUDE.md 2026-08-14. |
+| [framework-index.md](framework-index.md) | What the method inside each framework doc actually is, not just that it exists: the McKinsey 7-step method and MECE issue trees, SMB decision analysis for irreversible calls, slide craft (ledes, 30-second test, page anatomy), resume standards and the 16-point checklist, interview workflow, and the six answering strategies. Read before applying one of those methods, tailoring a CV, or prepping an interview. Moved out of CLAUDE.md 2026-09-14; both sections measured rule density 0.00. |
 | [faq.md](faq.md) | Quick answers: setup, privacy, day-to-day, voice, forking, troubleshooting |
 
 ## Explanation (understanding)
