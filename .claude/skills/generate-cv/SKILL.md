@@ -17,7 +17,7 @@ Generate a fully tailored CV and companion interview cheat sheet for a specific 
   - **`[context]`** (optional) — additional instructions, e.g. `"emphasize McKinsey"`, `"US resume format"`, `"focus on operations experience"`
 
 Examples:
-- `/generate-cv https://jobs.impossible.com/cos-role` — fetch and tailor to that posting
+- `/generate-cv https://jobs.northwind.example.com/cos-role` — fetch and tailor to that posting
 - `/generate-cv "Chief of Staff, Northwind..." "emphasize food/FMCG experience"` — pasted JD with context
 - `/generate-cv https://example.com/job "US format, keep to 1 page"`
 
@@ -129,10 +129,62 @@ Apply all **Tailoring Rules** and **CV Quality Standards** from `framework/appli
 - **Experience entries** — start from the Step 5 stubs verbatim. Tailor bullet PHRASING for JD relevance (emphasize keywords, lead with most-relevant impact). Do NOT invent quantified claims not present in the stubs or in `data/projects/<slug>.md`. Lesson #54: prior-CV numbers are hypotheses, source files are tests.
 - **Experience ordering** — strict reverse-chronological (most recent first). Do NOT reorder by relevance — non-chronological CVs are flagged by ATS systems and confuse recruiters. Tailor through bullet selection and emphasis, not ordering.
 - **Skills section** — **concrete tools + craft ONLY.** Per lesson #31/#53 + `feedback_cv_one_page_default_no_skills_fluff` + Nick 2026-06-22: every item must be substantively evidenced by a bullet; hedge words (`-adjacent`, `partnership` without a verb, `exposure`, `familiarity`) forbidden. **DO NOT emit Title-Case competency buzzwords or JD-mirroring compound phrases** ("Implementation & Deployment", "Customer Onboarding", "Change Management", "Cross-Functional Program Management", "Stakeholder Management", "Operating Cadence & Playbook Design", "Executive Communication") — those are already shown in the bullets and read as keyword bait. Nick's preferred framing (2026-06-22): group as the real things he does — **building with AI** (Claude Code, Claude/OpenAI APIs, Next.js, Postgres, AI agent workflows), **data analysis and financial modeling** (SQL, R, Tableau, Looker, Excel), **executive decks** (PowerPoint). Build the line from `data/skills.md` + evidenced experience, sentence case, strongest/most-differentiated first. **Building entry lives in ADDITIONAL INFORMATION and NEVER in EXPERIENCE (Nick, 2026-08-25).** A deep review will periodically argue for promoting the AI products into EXPERIENCE as a dated entry, usually on the grounds that they are the only evidence of hands-on building or of shipping a fix fast. The argument is reasonable and the answer is still no: these are the Building piece. Do not propose it again, and do not act on a reviewer that does. **Building entry:** label it `Building` (NOT "Side project") and name Nick's AI products (Portrait Crossword at portraitcrossword.com; the job-search OS) by what they ARE + capability, never by listing internal primitives (hooks, scripts) — see `feedback_dev_jargon_to_ceo_context`.
+- **Summary must pass the McKinsey lede test (added 2026-09-14).** Apply `framework/slide-craft-mckinsey.md`
+  to the SUMMARY specifically. (a) **Insight lede, not process lede** - the first sentence is a claim the
+  reader could disagree with, not a category label or a chronology. (b) **No phase-counting** - "Consultant,
+  then operator, now building" enumerates rather than summarizes, which that framework names directly
+  ("Counting the sub-bullets is not a summary"). (c) **No empty adjectives or hedge-quantifiers** - "large"
+  organization, "mostly" a change problem. (d) **No want-statements** - "that is the part I want to own" is
+  a wish, not a claim; the wanting is implied by applying. Nick's word for the failure mode: "it feels fluffy."
+- **Rank, do not negate (added 2026-09-14, Nick's own edit).** An absolute contrast asserts the other side out
+  of existence and invites an instant rebuttal. "The constraint is behavioral, not technical" tells an
+  engineering audience their technical problem does not exist. **"The HARDER constraint is behavioral, not
+  technical"** concedes both and ranks them. Prefer the comparative in any X-not-Y construction.
+- **Never downgrade a source verb (added 2026-09-14).** If `data/projects/*.md` says "Defined", write
+  "Defined". A weaker verb is justified ONLY by a dated correction comment that demands it (e.g. "Supported"
+  for the GenAI workshop per `mckinsey.md`, "Facilitated" not "stood up" per lesson #17). Silent conservatism
+  reads as hedging and Nick will catch it: "Advised is not a strong word."
+- **"Production" requires external users (added 2026-09-14, Nick's call).** Portrait Crossword is production
+  (live, real users, a user-reported bug). The job-search OS is a personal system in daily use and is NOT.
+  Do not write "two production AI applications". Write "two AI applications".
+- **Lane A enterprise-deployment targets get the GenAI workshop bullet (added 2026-09-14, Nick's standing
+  instruction).** For any company whose customers are large enterprises adopting AI, include the McKinsey
+  GenAI-workshop bullet from `mckinsey.md` "Other Studies". It is the closest thing in the corpus to coaching
+  an enterprise executive team on AI adoption. Verb is **"Supported"** per the 2026-07-20 correction (the EM
+  led it); never "developed" or "facilitated".
+- **One engagement, one bullet (added 2026-09-14).** Do not split a single client engagement across two
+  bullets to fit more detail. Merge and cut. A reader scanning bullets reads them as separate achievements.
 - **ATS keyword coverage** — verify all 10 extracted keywords appear at least once in the CV text. If a keyword is missing, find a natural place to include it.
 - **Achievements over responsibilities** — lead bullets with quantified outcomes where possible (sourced from stubs, not invented).
 - **No content from `data/project-background/`** — enforce absolutely.
 - **No em dashes** (per CLAUDE.md hard rule) — but the EN DASH (`–`) is used in date ranges per the reference YAML.
+
+### Step 5b: NEVER TEMPLATE OFF A PRIOR CV (added 2026-09-14, the highest-yield rule in this file)
+
+**Generate every bullet from the Step 5 stubs and `data/projects/*.md`. A previous CV is a reference for
+SHAPE ONLY (section order, roughly how many bullets, how long a line runs). Never copy its bullet text.**
+
+Why this outranks the individual content rules below: on 2026-09-14 a CV was built by copying the most
+recent prior CV and editing it. Four separate defects rode across intact, and **every single one had a
+rule already written that would have caught it**:
+
+| Defect that propagated | The rule it violated, which already existed |
+|---|---|
+| Top-level `BUILDING:` section | This file, Skills section: "Building entry lives in ADDITIONAL INFORMATION and NEVER in EXPERIENCE (Nick, 2026-08-25)" |
+| "drove the move to an outcome-based roadmap" | `zuora.md:28`: source verb is "worked with stakeholders"; the pinned comment bans upgrading it into roadmap ownership |
+| "making sponsor-level metrics legible to an org built to ship features" | `zuora.md:60`: "The Key Achievements above are what goes on paper" - that clause is Learnings material describing an UNRESOLVED struggle |
+| "Advised the AI-in-the-development-lifecycle strategy" | `zuora.md:40`: source verb is "Defined". "Advised" was a silent downgrade with no correction behind it |
+
+**The diagnosis that matters:** no rule was missing. The copy path bypassed all four at once, because a
+carried-over sentence never gets checked against the source the way a freshly-written one does. Two of the
+four had ALSO shipped in the prior CV, to a live application, two weeks earlier - so copying propagated
+defects forward rather than merely repeating them.
+
+**Falsifiable check on this rule:** two other CVs generated in the same period put Building in ADDITIONAL
+INFORMATION correctly. Only the one that was copied got it wrong.
+
+**Operationally:** open `data/projects/<slug>.md` for every bullet you write, every time. If you catch
+yourself pasting a sentence from `output/<other-company>/*.content.yaml`, stop and rewrite it from source.
 
 ### Step 6a-corrections: Reconcile against source corrections (mandatory, BEFORE first render)
 
@@ -240,11 +292,48 @@ Pass two arguments to `/review-cv-deep`: the CV filename (just the filename — 
 
 Wait for the deep review to complete before proceeding to Step 11. Capture the key verdicts (Recruiter phone-screen decision, Hiring Manager interview decision, Competitor shortlist rank, top 3 CRITICAL/IMPORTANT findings) for the Step 11 summary display.
 
-**Apply the high-confidence quality fixes before presenting — do NOT hand the user a report of cleanup they have to ask for.** After the deep review returns, auto-apply (and re-render + re-verify per Step 9b-verify) the objective, low-risk findings the panel converges on: cut vague/source-unbacked filler bullets, fix skills format/filler, remove a location line from the summary, fix any unevidenced skill or label, resolve layout/one-page defects. Then re-run Step 9b-verify. Leave for the user ONLY the judgment/voice calls (summary phrasing they must stand behind, which optional achievements to include, claim-level decisions). Surface those as a short menu, not as a list of mechanical edits. Origin: 2026-06-11 recruiter-channel CV — the deep review flagged filler bullets, the skills grouping, and the summary location line, but they were left for the user to catch, driving ~6 extra rounds.
+**Apply the high-confidence quality fixes before presenting — do NOT hand the user a report of cleanup they have to ask for.** After the deep review returns, auto-apply (and re-render + re-verify per Step 9b-verify) the objective, low-risk findings the panel converges on: cut vague/source-unbacked filler bullets, fix skills format/filler, remove a location line from the summary, fix any unevidenced skill or label, resolve layout/one-page defects. Then re-run Step 9b-verify. Leave for the user ONLY the judgment/voice calls (summary phrasing they must stand behind, which optional achievements to include, claim-level decisions). **Surface those in the DECISIONS FOR YOU block, which is the REQUIRED first block of Step 11 and has a mandatory format — see Step 11.** "A short menu" was the prior wording and it produced nothing for three months, because an instruction with no shape does not convert into an artifact. Origin: 2026-06-11 recruiter-channel CV — the deep review flagged filler bullets, the skills grouping, and the summary location line, but they were left for the user to catch, driving ~6 extra rounds.
 
 **Opt-out:** if the user explicitly passes `--no-deep-review` in `[context]`, skip this step and note "Deep review skipped per --no-deep-review flag" in the Step 11 summary. This exists for fast-iteration cases (drafting variants); the default is always-on.
 
 ### Step 11: Display Summary
+
+**The DECISIONS FOR YOU block comes FIRST, before the file paths. This is required, not optional.**
+
+**Why it leads:** Nick's read of a finished CV catches a class no reviewer catches. On 2026-09-14 the
+six-perspective deep review caught two source-fidelity violations and flagged ZERO of the six things
+Nick caught himself: a fluffy summary, a downgraded verb, an overclaimed "production", a misplaced
+Building section, a missing Lane-A bullet, and an absolute claim that should have been comparative.
+Those are voice, emphasis, and claim-level calls. No agent makes them.
+
+**But handing him a finished PDF makes that pass expensive** — he has to FIND the decisions before he
+can make them, and expensive is what gets skipped on a tired day. In his words: "my human QC is an
+important step but sometimes I get lazy." The fix is not more discipline from him. It is presenting
+the decisions instead of the artifact.
+
+```markdown
+## Decisions for you — [N] calls before this ships
+
+1. **[What the CV currently does]** — [the one-line reason it is a judgment call, not a mechanical fix]
+   → Alternative: [the specific other option, written out]
+   → *Keep / switch?*
+
+2. **[...]**
+   → Alternative: [...]
+   → *Keep / switch?*
+```
+
+**Rules for this block:**
+- **3 to 6 items. Never zero.** An empty block means you did not look; every tailored CV contains
+  claim-level and emphasis choices someone has to own.
+- **Pre-name the alternative.** Nick picks, he does not generate. "Consider revisiting the summary" is
+  not a decision, it is homework.
+- **Only judgment calls.** Mechanical fixes are already applied per Step 10b. If it has one right
+  answer, it does not belong here.
+- **Always include, when present:** any verb where you chose more conservative wording than the source
+  file permits; any claim whose scope is arguable ("production", scale figures, attributed outcomes);
+  what the summary leads with; and which proof carries the argument for this specific role.
+- Then, and only then, print the file paths and the rest of the summary below.
 
 ```markdown
 ## CV Generated — [Role Title] at [Company]

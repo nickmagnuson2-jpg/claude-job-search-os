@@ -60,6 +60,61 @@ Read the evaluated ads cache:
 
 ### Step 3: Navigate the Portal
 
+#### Step 3a: If the board is ATS-hosted, use the ATS API — do NOT fetch the page
+
+**Check this FIRST, before any WebFetch or Exa call.** Most company job boards are
+hosted by an ATS that renders listings in JavaScript. A fetch of the rendered page
+returns a title-only shell or a partial list, and **that result is indistinguishable
+from a genuinely empty board** — which is how a scan records "no roles at X" when the
+board actually has fifty.
+
+**This repo already has parsers for the three major ATSes.** Do not write new fetch
+logic and do not reach for WebFetch on these hosts — import or shell out to:
+
+| Host in the URL | Parser | Endpoint it uses |
+|---|---|---|
+| `jobs.ashbyhq.com/<slug>` | `tools/career_scanner/ashby.py` → `fetch_ashby(slug)` | `api.ashbyhq.com/posting-api/job-board/<slug>` |
+| `boards.greenhouse.io` / `job-boards.greenhouse.io/<slug>` | `tools/career_scanner/greenhouse.py` → `fetch_greenhouse(slug)` | `boards-api.greenhouse.io/v1/boards/<slug>/jobs?content=true` |
+| `jobs.lever.co/<slug>` | `tools/career_scanner/lever.py` → `fetch_lever(slug)` | `api.lever.co/v0/postings/<slug>?mode=json` |
+
+These return full JSON: title, department, location, complete description, and comp
+band where posted. That is strictly more than a page fetch can give you, and it
+removes the separate detail-fetch in Step 4b for these listings.
+
+Add `?includeCompensation=true` to the Ashby endpoint when calling it directly by
+curl — the comp band is otherwise omitted.
+
+**The slug is not always the company name.** When a direct slug guess 404s or returns
+`[]`, the board is often embedded as an iframe on the company's own careers page.
+Recover the real slug rather than concluding the board is empty:
+
+1. Open the company's careers/jobs page in Chrome (`mcp__claude-in-chrome__navigate`).
+2. Read the iframe sources:
+   `[...document.querySelectorAll('iframe')].map(f=>f.src)`
+3. The ATS slug is in that URL.
+
+Worked shape (a real case, company generalised): `example.com/careers` is a culture
+page carrying no listings at all, and the obvious slug guess (`.../example`) 404s. The
+real board is `jobs.ashbyhq.com/examplelabs` — a different slug — embedded as an iframe
+on `example.com/jobs`, with dozens of roles behind it. Two fetch-based passes had recorded that
+company as "inconclusive, JS-rendered." Note the two separate traps: the careers page is
+not the board, and the slug is not the company name.
+
+**A slug that returns `[]` is NOT evidence of an empty board.** Per `data/scan-targets.yaml`'s
+own warning: a wrong slug returns `[]` and looks exactly like an empty board. Say
+"could not enumerate the board" — never "no roles found" — until a parser has
+returned rows.
+
+> **Origin, 2026-09-14.** A target company's careers check was run three times across
+> three weeks and each time recorded as "a handful of roles, all engineering; the
+> non-engineering filter categories are empty." The ATS API returned an order of magnitude
+> more, including several in-lane seats. The board was never empty; it was never being read.
+> The parsers above already existed in this repo the whole time and were not used.
+> Two failure modes compounded: reaching for a generic fetch tool before checking for
+> existing infrastructure, and recording an unreadable result as a negative finding.
+
+#### Step 3b: Everything else
+
 **If a full search URL was provided:** Fetch it directly.
 
 **If only a portal domain was provided:**
@@ -100,7 +155,9 @@ If there are zero new ads, report that and stop — do not re-evaluate cached ad
 
 ### Step 4b: Fetch Detail Pages
 
-For each new (non-cached) ad, fetch its detail page to read the **actual listing text**. Do NOT assess fit based only on the search result tags — the detail page contains the real requirements, which often differ from the tag summary.
+**Skip this step for any listing already retrieved via Step 3a** — the ATS parsers return the complete description, so there is nothing further to fetch and a second call would only re-render the same content worse.
+
+For every other new (non-cached) ad, fetch its detail page to read the **actual listing text**. Do NOT assess fit based only on the search result tags — the detail page contains the real requirements, which often differ from the tag summary.
 
 **Fetch all detail pages in parallel** (they are independent). Use this WebFetch prompt:
 ```
