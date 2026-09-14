@@ -80,3 +80,48 @@ def test_collect_main_skips_unmonitored_and_non_completed(tmp_path, monkeypatch)
     ac.main()
     # failing preset produced no inbox file (no fresh candidates written)
     assert not inbox_file.exists()
+
+
+# --- the geo flag must reach the human -------------------------------------------
+#
+# WHY THIS EXISTS (2026-09-14). score_company returns geo_flag, agent_discover copies
+# it onto every candidate, and render_inbox_block dropped it: the company line rendered
+# "name - description (score N)" and nothing else. So an unverified location was
+# computed, flagged, and then made invisible at the only surface a human reads. A
+# 45-company triage was run off those lines; 12 failed geography and several had HQ
+# conflicts between two of their own primary sources. Note the PERSON branch has always
+# rendered location and the COMPANY branch never did.
+
+def test_company_line_surfaces_an_unverified_location():
+    block = render_inbox_block(
+        {"entity": "company", "preset": "lane-b"},
+        [{"name": "Acme AI", "description": "AI for trades", "score": 3, "geo_flag": True}],
+        "2026-09-14")
+    assert "Acme AI" in block
+    assert "score 3" in block
+    low = block.lower()
+    assert ("unverified" in low or "location?" in low or "geo?" in low), (
+        "an unverified-location company must be visibly marked on its own inbox line -- "
+        "the flag is already computed and carried onto the candidate, and dropping it at "
+        f"render is what made the score unreadable. Got: {block!r}")
+
+
+def test_company_line_is_unmarked_when_the_location_is_verified():
+    block = render_inbox_block(
+        {"entity": "company", "preset": "lane-b"},
+        [{"name": "Acme AI", "description": "AI for trades", "score": 5, "geo_flag": False}],
+        "2026-09-14")
+    low = block.lower()
+    assert "unverified" not in low, (
+        "a verified-location company must carry no marker, or the marker means nothing")
+
+
+def test_company_line_treats_a_missing_geo_flag_as_unverified():
+    """A candidate that never went through the scorer has not been geo-checked either."""
+    block = render_inbox_block(
+        {"entity": "company", "preset": "lane-b"},
+        [{"name": "Acme AI", "description": "AI for trades", "score": 4}],
+        "2026-09-14")
+    assert "unverified" in block.lower(), (
+        "absent geo_flag must default to unverified, not to verified -- defaulting a "
+        "missing check to 'passed' is the same fail-open this whole change removes")

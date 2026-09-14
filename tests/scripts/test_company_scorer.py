@@ -190,3 +190,49 @@ def test_score_company_offlane_domain_scores_below_clean():
     offlane = {"location": "San Francisco, CA", "description": "AI-powered cpq deal desk pricing", "stage_text": "Series B"}
     clean = {"location": "San Francisco, CA", "description": "AI-native enterprise deployment platform", "stage_text": "Series B"}
     assert score_company(offlane, ctx)["score"] < score_company(clean, ctx)["score"]
+
+
+# --- unknown location must not score as San Francisco ---------------------------
+#
+# WHY THIS EXISTS (2026-09-14). geo_gate returned {"penalty": 0.0, "excluded": False}
+# for an empty location, which is byte-identical to the San Francisco branch. A
+# company with no location data therefore scored exactly as if it were verified SF.
+# Measured on the real fit-spec with a real home-services description: New York
+# scored 1 (excluded), Fremont 1, Atlanta 1, San Francisco 5 -- and empty string and
+# None both scored 5. That is how a New York company reached score 5 and led a
+# 45-company triage. The gate was never wrong when it had data; it failed open when
+# it did not, which is the same shape as a guard that cannot read its input and
+# waves it through.
+
+def test_unknown_location_is_penalized_and_flagged_not_treated_as_sf():
+    sf = geo_gate("San Francisco, CA")
+    unknown = geo_gate("")
+
+    assert unknown["flag"] is True, "unknown location must be flagged for review"
+    assert unknown["excluded"] is False, (
+        "unknown location must NOT be excluded -- enrichment misses locations for real "
+        "SF companies, and excluding trades a fail-open for a silent fail-closed")
+    assert unknown["penalty"] > sf["penalty"], (
+        "an unverified location must cost something relative to a VERIFIED San Francisco "
+        f"one, or a company with no data outranks nothing and sorts as if it were local; "
+        f"got unknown={unknown['penalty']} vs sf={sf['penalty']}")
+
+
+def test_unknown_and_none_location_agree():
+    """A missing key and an empty string are the same state and must score the same."""
+    assert geo_gate("") == geo_gate(None or "")
+
+
+def test_unknown_location_scores_below_verified_sf_end_to_end():
+    """The penalty must actually reach the score, not just the gate dict."""
+    desc = ("AI-native operating platform for home-service and trades businesses, "
+            "automating lead response, scheduling, quoting, and dispatch.")
+    ctx = {"target_industries": ["home services"], "fit_spec": {}}
+    sf = score_company({"name": "X", "description": desc, "location": "San Francisco, CA",
+                        "stage_text": "Series B"}, ctx, keywords=["home services"])
+    unk = score_company({"name": "X", "description": desc, "location": "",
+                         "stage_text": "Series B"}, ctx, keywords=["home services"])
+    assert unk["score"] < sf["score"], (
+        f"unknown-location company scored {unk['score']}, verified-SF scored {sf['score']} "
+        "-- they must not tie, or the sort order treats unverified as local")
+    assert unk["geo_flag"] is True

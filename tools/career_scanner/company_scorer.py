@@ -15,6 +15,11 @@ from difflib import SequenceMatcher
 
 DEFAULT_WEIGHTS = {"stage": 0.50, "sector": 0.30, "keyword": 0.20}
 
+# Cost of an UNVERIFIED location, as a fraction of the raw score. Sits between the
+# Bay-not-SF band (0.2) and the Peninsula band (0.6). Named rather than inlined so the
+# geo bands read as one ladder: SF 0.0 < Bay 0.2 < UNKNOWN 0.5 < Peninsula 0.6 < out 1.0.
+_UNKNOWN_LOCATION_PENALTY = 0.5
+
 # Peninsula / South Bay commute towns (checked BEFORE the "san francisco"
 # substring so "South San Francisco" is correctly treated as Peninsula).
 _PENINSULA_SOUTHBAY = [
@@ -46,8 +51,16 @@ def geo_gate(location: str) -> dict:
     """
     loc = (location or "").strip().lower()
     if not loc:
-        # Unknown location: don't exclude, but flag for human review.
-        return {"pass": True, "penalty": 0.0, "flag": True, "excluded": False}
+        # Unknown location: don't exclude, but do NOT score it as San Francisco.
+        # Until 2026-09-14 this returned penalty 0.0, byte-identical to the SF branch,
+        # so a company with no location data sorted as if it were verified local. That
+        # is how a New York company reached score 5 and led a 45-company triage. It is
+        # not excluded, because enrichment genuinely misses the location of real SF
+        # companies and excluding would trade a fail-open for a silent fail-closed.
+        # The penalty sits between the Bay (0.2) and Peninsula (0.6) bands: most
+        # unknowns in practice are not SF (12 of 44 screened failed geography outright).
+        return {"pass": True, "penalty": _UNKNOWN_LOCATION_PENALTY, "flag": True,
+                "excluded": False}
     if any(t in loc for t in _PENINSULA_SOUTHBAY):
         return {"pass": True, "penalty": 0.6, "flag": True, "excluded": False}
     if "san francisco" in loc:

@@ -42,8 +42,15 @@ def render_inbox_block(record, candidates, today):
              "<!-- review-gated: accept via /act or /networking -->"]
     for c in candidates:
         if entity == "company":
+            # geo_flag is computed by company_scorer.geo_gate and carried onto the
+            # candidate by agent_discover. It used to stop here: the company line
+            # rendered name/description/score only, so an unverified location was
+            # flagged and then made invisible at the only surface a human reads.
+            # Absent key defaults to unverified -- a candidate that never went through
+            # the scorer has not been geo-checked either. Origin 2026-09-14.
+            mark = "" if c.get("geo_flag") is False else " [location unverified]"
             lines.append(f"- **{c.get('name')}** - {(c.get('description') or '')[:120]} "
-                         f"(score {c.get('score','-')})")
+                         f"(score {c.get('score','-')}){mark}")
         else:
             lines.append(f"- **{c.get('name')}** - {c.get('role','')} @ "
                          f"{c.get('company','')} · {c.get('location','')}")
