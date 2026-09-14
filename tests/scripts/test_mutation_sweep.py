@@ -1179,3 +1179,71 @@ def test_resume_does_not_launder_a_banked_error_into_success(tmp_path, monkeypat
     done = ms.completed_tools(banked)
     assert done == {"tools/a.py"}, (
         f"errored/unaudited tools were counted as complete: {sorted(done)}")
+
+
+# --- unmeasured accounting --------------------------------------------------
+#
+# baseline.jsonl is APPEND-ONLY. The sweep's end-of-run "N UNMEASURED TOOL(S)" line
+# re-read it raw and counted one entry per ROW, so a tool with six historical rows was
+# reported six times and a tool that errored once and was fixed afterwards still counted
+# forever. Observed live 2026-09-14: "129 UNMEASURED TOOL(S)" listing artifact_vocab.py
+# six times and check_automation_health.py seven times.
+#
+# tools/mutation_state.latest_per_tool() is the repo's ONE answer to "which row speaks for
+# this tool" and already carried this warning in its docstring. It was added to the trend
+# recorder and to mutation_report on 2026-09-08 and missed here, making this the third copy
+# of one domain rule -- what feedback_consolidate_duplicated_domain_logic forbids.
+
+def test_a_tool_fixed_after_an_earlier_error_is_not_still_unmeasured(repo, monkeypatch):
+    """LAST row wins. An old error superseded by a later ok row is measured, not pending."""
+    mod = load(repo, monkeypatch)
+    rows = [
+        {"tool": "tools/a.py", "status": "error"},
+        {"tool": "tools/a.py", "status": "ok", "survived": 0},
+    ]
+    assert mod.unmeasured_tools(rows) == [], \
+        "a later ok row must supersede the earlier error; counting both reports a fixed tool as broken"
+
+
+def test_each_unmeasured_tool_is_reported_once_not_once_per_banked_row(repo, monkeypatch):
+    """The count is of distinct TOOLS. Six historical rows for one tool is one tool."""
+    mod = load(repo, monkeypatch)
+    rows = [{"tool": "tools/b.py", "status": "error"} for _ in range(6)]
+    rows.append({"tool": "tools/c.py", "status": "UNAUDITED_ERROR"})
+    assert mod.unmeasured_tools(rows) == ["tools/b.py", "tools/c.py"], \
+        "per-row counting inflates the total and repeats names in the log line"
+
+
+def test_a_tool_that_regressed_after_a_clean_run_is_unmeasured_again(repo, monkeypatch):
+    """Last-wins cuts both ways. A fresh error after an old ok row must still be reported,
+    or the fix for the inflated count would silently hide real new failures."""
+    mod = load(repo, monkeypatch)
+    rows = [
+        {"tool": "tools/d.py", "status": "ok", "survived": 0},
+        {"tool": "tools/d.py", "status": "error"},
+    ]
+    assert mod.unmeasured_tools(rows) == ["tools/d.py"], \
+        "the newest row decides; a regression must not be masked by an older clean run"
+
+
+def test_genuine_survivors_are_not_unmeasured(repo, monkeypatch):
+    """mutation_check exits 2 for real survivors -- that is the tool working, and
+    is_engine_failure already draws this line. Guard it at the dedupe boundary too."""
+    mod = load(repo, monkeypatch)
+    rows = [{"tool": "tools/e.py", "status": "survivors", "survived": 12}]
+    assert mod.unmeasured_tools(rows) == [], \
+        "survivors are a measurement, not a missing one"
+
+
+def test_unmeasured_tools_are_sorted_not_in_bank_order(repo, monkeypatch):
+    """The log line is read by a human scanning for a name. Bank order is arrival order,
+    which is arbitrary. Caught by mutation M5 on 2026-09-14: replacing sorted() with list()
+    survived, because every other case in this block happened to be alphabetical already."""
+    mod = load(repo, monkeypatch)
+    rows = [
+        {"tool": "tools/zeta.py", "status": "error"},
+        {"tool": "tools/alpha.py", "status": "UNAUDITED_ERROR"},
+        {"tool": "tools/mid.py", "status": "error"},
+    ]
+    assert mod.unmeasured_tools(rows) == ["tools/alpha.py", "tools/mid.py", "tools/zeta.py"], \
+        "output must be sorted; bank order is arrival order and tells the reader nothing"

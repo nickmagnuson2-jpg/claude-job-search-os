@@ -150,6 +150,34 @@ def is_engine_failure(rec: dict) -> bool:
     return status == "error"
 
 
+def unmeasured_tools(rows: list[dict]) -> list[str]:
+    """Distinct tools whose LATEST banked row is an engine failure. Sorted, no repeats.
+
+    baseline.jsonl is APPEND-ONLY, so a raw pass over it counts one entry per ROW. That
+    is wrong twice: a tool with six historical rows is reported six times, and a tool
+    that errored once and was fixed afterwards counts forever, because nothing removes
+    the old row. Observed live 2026-09-14 -- "129 UNMEASURED TOOL(S)" listing
+    artifact_vocab.py six times and check_automation_health.py seven times.
+
+    mutation_state.latest_per_tool() is this repo's single answer to "which row speaks
+    for this tool", and its own docstring already warned about this double-count. It was
+    added to the trend recorder and to mutation_report on 2026-09-08 and missed here,
+    which made this the third copy of one domain rule -- the pattern
+    feedback_consolidate_duplicated_domain_logic_and_verify_on_real_data forbids.
+
+    Last-wins cuts both ways on purpose: a fresh error after an old clean run IS still
+    unmeasured. Deduping must not become a way to hide a regression behind history.
+
+    Deliberately NOT defensive here, and do not re-add either guard: latest_per_tool
+    returns one row per tool and keeps only rows that HAVE a tool key, so a set() around
+    this and an `r.get("tool") and` filter are both dead code. Measured 2026-09-14 -- each
+    survived mutation, which is the definition of a line no test can defend. Leaving them
+    in would mean two permanently unkillable mutants sitting in this function forever.
+    """
+    return sorted(r["tool"] for r in mutation_state.latest_per_tool(rows)
+                  if is_engine_failure(r))
+
+
 def completed_tools(rows: list[dict]) -> set:
     """Tool names that are genuinely DONE, for resume.
 
@@ -630,10 +658,10 @@ def _run_sweep_inner(targets, out: Path, only_mode: bool = False) -> int:
         for line in out.read_text(encoding="utf-8").splitlines():
             if line.strip():
                 final.append(json.loads(line))
-    unaudited = [r["tool"] for r in final if is_engine_failure(r)]
+    unaudited = unmeasured_tools(final)
     if unaudited:
         print(f"{time.strftime('%H:%M:%S')}  SWEEP COMPLETE WITH {len(unaudited)} "
-              f"UNMEASURED TOOL(S): {', '.join(sorted(unaudited))}", flush=True)
+              f"UNMEASURED TOOL(S): {', '.join(unaudited)}", flush=True)
         return 1
     print(f"{time.strftime('%H:%M:%S')}  SWEEP COMPLETE", flush=True)
     return 0
