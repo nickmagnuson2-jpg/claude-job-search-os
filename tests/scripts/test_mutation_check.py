@@ -1058,3 +1058,33 @@ def test_run_tests_details_is_optional_and_default_contract_is_unchanged(monkeyp
     assert isinstance(result, tuple) and len(result) == 2, (
         f"run_tests must still return exactly (passed, kind) when no details dict is "
         f"passed -- changing the arity would break every existing caller; got {result!r}")
+
+
+def test_a_timeout_is_flagged_as_a_timeout_and_not_as_a_failing_suite(monkeypatch, tmp_path):
+    """The timeout branch must set details['timed_out'] True.
+
+    This is the whole point of the 2026-09-14 change and it was NOT pinned when the change
+    shipped: flipping `timed_out=True` to `timed_out=False` in run_tests left all 56 tests
+    green. main() reads exactly this flag to choose `baseline_timeout` over `baseline_red`,
+    so a mutant here silently collapses the two verdicts back together and the operator is
+    told to fix failing tests that are not failing. Measured on inbox_lock, whose 20 mapped
+    files take ~340s against DEFAULT_TIMEOUT = 300.
+    """
+    def _boom(*a, **k):
+        raise subprocess.TimeoutExpired(cmd=["pytest"], timeout=5)
+
+    monkeypatch.setattr(mc, "_run_reaping_descendants", _boom)
+    details = {}
+    passed, kind = mc.run_tests([tmp_path / "test_x.py"], timeout=5, details=details)
+
+    assert passed is False
+    assert kind == "timeout", f"kill_kind must be 'timeout', got {kind!r}"
+    assert details["timed_out"] is True, (
+        "details['timed_out'] must be True when the run exceeded its budget -- main() "
+        "branches on this to emit baseline_timeout instead of baseline_red, and those "
+        f"demand different fixes; got {details.get('timed_out')!r}")
+    assert details["failed"] == [], (
+        "a timeout produces no pytest output, so there are no failing node ids to report; "
+        f"got {details.get('failed')!r}")
+    assert "TIMEOUT" in details["output"] or "timeout" in details["output"], (
+        "the output must say plainly that this was a timeout rather than a red suite")
