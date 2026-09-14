@@ -209,13 +209,19 @@ def test_an_oversized_payload_fails_closed_as_unparseable_rather_than_half_parse
         sys.path.insert(0, {os.path.join(REPO_ROOT, "tools")!r})
         from hook_runtime import read_payload
         p = read_payload(deadline_s=5.0, max_bytes=4096)
-        print(json.dumps({{"ok": p.ok, "error": p.error}}))
+        print(json.dumps({{"ok": p.ok, "error": p.error, "truncated": p.truncated}}))
     """)
     r = subprocess.run([sys.executable, "-c", script], input=payload,
                        capture_output=True, text=True, timeout=30)
     got = json.loads(r.stdout)
     assert got["ok"] is False
-    assert "malformed" in got["error"]
+    # AMENDED 2026-09-14 (cross-model finding F1). This previously asserted the error
+    # said "malformed", i.e. that a truncated payload was indistinguishable from
+    # garbage input. That conflation WAS the defect: every consumer treats malformed
+    # as fail-open, so an oversized payload walked through BLOCK-tier guards unread.
+    # The contract now separates the two, and this test asserts the separation.
+    assert got["truncated"] is True, "an oversized payload must be reported as truncated"
+    assert "TRUNCATED" in got["error"]
 
 
 def test_there_is_no_unbounded_fallback_when_stdin_cannot_be_polled(monkeypatch):
@@ -434,3 +440,56 @@ def test_a_good_payload_is_unaffected_by_the_gate():
                                   "tool_input": {"command": "ls"}, "cwd": "/r"})
     assert (p.tool_name, p.command, p.cwd) == ("Bash", "ls", "/r")
     assert p.stop_hook_active is False
+
+
+# --- F1 regression: truncation must be distinguishable from malformed input -------
+# Origin: 2026-09-14 cross-model verification. Before the payload-intake extraction,
+# 32 of 33 hooks used an unbounded json.load(sys.stdin). The shared reader added a
+# 1 MiB cap; a truncated payload then failed to parse, every consumer read that as
+# ordinary malformed input, and allowed it. A large file write could therefore walk
+# straight through the public-repo PII gate without being read.
+
+def test_truncated_payload_is_flagged_not_merely_unparseable(tmp_path, monkeypatch):
+    """A payload cut off at the volume ceiling reports truncated=True.
+
+    Without the flag this is indistinguishable from garbage input, and the whole
+    enforcement layer fails open on it.
+    """
+    import hook_runtime
+    # Stay under the OS pipe buffer (~64 KiB) or os.write blocks forever with no
+    # reader draining it. 8 KiB of payload against a 1 KiB ceiling truncates just
+    # as well as a megabyte would, and the test terminates.
+    big = ('{"tool_name":"Write","tool_input":{"content":"'
+           + "x" * 8192 + '"}}')
+    r, w = os.pipe()
+    os.write(w, big.encode())
+    os.close(w)
+    monkeypatch.setattr(sys, "stdin", os.fdopen(r, "r"))
+    p = hook_runtime.read_payload(max_bytes=1024)
+    assert p.truncated is True, "truncation must be reported, not silently swallowed"
+    assert p.ok is False
+    assert "TRUNCATED" in (p.error or ""), "the error must name truncation specifically"
+
+
+def test_clean_small_payload_is_not_flagged_truncated(tmp_path, monkeypatch):
+    """The flag must not fire on an ordinary payload, or it means nothing."""
+    import hook_runtime
+    r, w = os.pipe()
+    os.write(w, b'{"tool_name":"Write","tool_input":{"file_path":"a.md"}}')
+    os.close(w)
+    monkeypatch.setattr(sys, "stdin", os.fdopen(r, "r"))
+    p = hook_runtime.read_payload()
+    assert p.ok is True
+    assert p.truncated is False
+
+
+def test_malformed_but_complete_payload_is_not_flagged_truncated(monkeypatch):
+    """Genuine garbage stays fail-open; only truncation escalates."""
+    import hook_runtime
+    r, w = os.pipe()
+    os.write(w, b'{not json at all')
+    os.close(w)
+    monkeypatch.setattr(sys, "stdin", os.fdopen(r, "r"))
+    p = hook_runtime.read_payload()
+    assert p.ok is False
+    assert p.truncated is False, "a complete-but-garbage payload is NOT truncation"

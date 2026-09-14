@@ -86,6 +86,23 @@ class Payload:
     data: dict[str, Any] = field(default_factory=dict)
     raw: str = ""
     error: str | None = None
+    truncated: bool = False
+    """True when stdin hit the volume ceiling or the deadline, so the payload was cut
+    off mid-stream rather than arriving malformed.
+
+    THIS IS NOT THE SAME CONDITION AS `ok == False` AND MUST NOT BE COLLAPSED INTO IT.
+    Malformed JSON means the producer sent garbage, and failing open is defensible.
+    Truncation means the guard COULD NOT SEE the content it exists to inspect, and for
+    a BLOCK-tier guard failing open there is a silent bypass: write a payload above the
+    ceiling and the check passes without ever reading it.
+
+    Origin: 2026-09-14 cross-model verification (F1). Before the payload-intake
+    extraction, 32 of 33 hooks used an unbounded `json.load(sys.stdin)`. The shared
+    reader introduced a 1 MiB cap, and a truncated payload failed to parse, which every
+    consumer treated as ordinary malformed input and allowed. A large file write could
+    therefore bypass the public-repo PII gate. Consumers that BLOCK must branch on this
+    flag; see `check_public_pii.py` for the reference handling.
+    """
 
     def _require_ok(self) -> None:
         """Reading a field off an unreadable payload is a bug in the CALLER.
@@ -166,30 +183,34 @@ class Payload:
         return self.data.get("cwd") or ""
 
 
-def read_stdin_bounded(deadline_s: float = STDIN_DEADLINE_S,
-                       max_bytes: int = MAX_STDIN_BYTES) -> str:
+def read_stdin_bounded_ex(deadline_s: float = STDIN_DEADLINE_S,
+                          max_bytes: int = MAX_STDIN_BYTES) -> tuple[str, bool]:
     """Read stdin until EOF, the deadline, or the volume ceiling -- whichever is first.
 
-    Never raises. Returns what was collected; see F1/F3/F4 in the module docstring for
-    why each bound is here and why none of them may be relaxed into a plain read.
+    Never raises. Returns (text, truncated). `truncated` is True when a bound stopped
+    the read before EOF, which the caller MUST be able to distinguish from a clean read:
+    see the `Payload.truncated` docstring for the silent-bypass this prevents.
     """
     try:
         fd = sys.stdin.fileno()
     except Exception:
-        return ""  # F4: no unbounded fallback.
+        return "", False  # F4: no unbounded fallback.
 
     chunks: list[bytes] = []
     total = 0
+    truncated = False
     end = time.monotonic() + deadline_s
     while True:
         remaining = end - time.monotonic()
         if remaining <= 0:
+            truncated = True  # deadline, not EOF
             break
         try:
             ready, _, _ = select.select([fd], [], [], remaining)
         except (OSError, ValueError):
             break  # F4 again: return what we have, do not discard it.
         if not ready:
+            truncated = True  # deadline, not EOF
             break
         # F3: the ceiling is enforced AT THE REQUEST. The `total >= max_bytes` break
         # below makes `want` unreachable at 0 for any positive max_bytes, so there is
@@ -206,8 +227,22 @@ def read_stdin_bounded(deadline_s: float = STDIN_DEADLINE_S,
         chunks.append(chunk)
         total += len(chunk)
         if total >= max_bytes:
+            truncated = True  # volume ceiling, not EOF
             break
-    return b"".join(chunks).decode("utf-8", "replace")
+    return b"".join(chunks).decode("utf-8", "replace"), truncated
+
+
+def read_stdin_bounded(deadline_s: float = STDIN_DEADLINE_S,
+                       max_bytes: int = MAX_STDIN_BYTES) -> str:
+    """The original str-returning contract, unchanged, kept for existing callers.
+
+    New code that needs to know whether a bound cut the read short calls
+    `read_stdin_bounded_ex()` and gets (text, truncated). This wrapper exists because
+    changing a published return type in place is how callers break silently, which is
+    a documented failure mode in this repo.
+    """
+    text, _ = read_stdin_bounded_ex(deadline_s=deadline_s, max_bytes=max_bytes)
+    return text
 
 
 def read_payload(deadline_s: float = STDIN_DEADLINE_S,
@@ -222,14 +257,17 @@ def read_payload(deadline_s: float = STDIN_DEADLINE_S,
         if p.stop_hook_active:
             sys.exit(0)          # Stop hooks only
     """
-    raw = read_stdin_bounded(deadline_s=deadline_s, max_bytes=max_bytes)
+    raw, truncated = read_stdin_bounded_ex(deadline_s=deadline_s, max_bytes=max_bytes)
     if not raw.strip():
-        return Payload(ok=False, raw=raw, error="empty stdin")
+        return Payload(ok=False, raw=raw, error="empty stdin", truncated=truncated)
     try:
         data = json.loads(raw)
     except (json.JSONDecodeError, ValueError) as exc:
+        if truncated:
+            return Payload(ok=False, raw=raw, truncated=True,
+                           error=f"payload TRUNCATED at a read bound, then unparseable: {exc}")
         return Payload(ok=False, raw=raw, error=f"malformed JSON: {exc}")
     if not isinstance(data, dict):
-        return Payload(ok=False, raw=raw,
+        return Payload(ok=False, raw=raw, truncated=truncated,
                        error=f"payload is {type(data).__name__}, not an object")
-    return Payload(ok=True, data=data, raw=raw)
+    return Payload(ok=True, data=data, raw=raw, truncated=truncated)

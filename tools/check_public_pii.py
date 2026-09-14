@@ -661,6 +661,20 @@ def main():
         sys.exit(2)
 
     p = read_payload()
+    if p.truncated:
+        # FAIL CLOSED. Truncation means this guard could not see the content it exists
+        # to inspect, which is NOT the same as the producer sending garbage. Failing
+        # open here is a silent bypass of the public-repo PII gate: write a payload
+        # above the read ceiling and the check passes without reading a byte of it.
+        # A large file write is an ordinary event, not an exotic one.
+        # Origin: 2026-09-14 cross-model verification F1.
+        sys.stderr.write(
+            "BLOCKED: the hook payload was truncated at a stdin read bound, so the "
+            "public-repo PII gate could not inspect this write.\n"
+            "This fails CLOSED by design. Re-run the write, or scan the file directly:\n"
+            "  PYTHONIOENCODING=utf-8 python3 tools/check_public_pii.py --scan <path>\n"
+        )
+        sys.exit(2)
     if not p.ok:
         return
     data = p.data
