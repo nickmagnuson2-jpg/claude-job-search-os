@@ -82,6 +82,11 @@ from conftest_guard import (  # noqa: E402
 )
 DEFAULT_TIMEOUT = 300
 
+# Pytest's own short-summary lines: `FAILED path::test_name - reason` / `ERROR path`.
+# Used to name the failing test in a baseline_red verdict, because a verdict without
+# evidence cost seven nights of unreadable sweep logs (2026-09-14).
+_FAILED_RE = re.compile(r"^(?:FAILED|ERROR)\s+(\S+)", re.M)
+
 
 # ---------------------------------------------------------------------------
 # Mutation operators
@@ -511,7 +516,8 @@ def _run_reaping_descendants(cmd: list[str], env: dict[str, str], timeout: int,
 
 
 def run_tests(test_files: list[Path], timeout: int,
-              target: Path | None = None) -> tuple[bool, str]:
+              target: Path | None = None,
+              details: dict | None = None) -> tuple[bool, str]:
     """(passed, kill_kind).
 
     kill_kind classifies HOW the suite noticed a mutation, which is the difference
@@ -565,10 +571,20 @@ def run_tests(test_files: list[Path], timeout: int,
     try:
         r = _run_reaping_descendants(cmd, env, timeout)
     except subprocess.TimeoutExpired:
+        if details is not None:
+            details.update(timed_out=True, timeout=timeout, failed=[],
+                           output=f"run exceeded the {timeout}s timeout; no pytest "
+                                  f"output was produced. This is a TIMEOUT, not a red "
+                                  f"suite -- the distinction changes the fix.")
         return False, "timeout"
     if r.returncode == 0:
         return True, ""
     out = r.stdout + r.stderr
+    if details is not None:
+        # Node ids first: the single most useful line is WHICH test died.
+        details.update(timed_out=False, returncode=r.returncode,
+                       failed=_FAILED_RE.findall(out)[:20],
+                       output=out[-4000:])
     kinds = set(_SUMMARY_RE.findall(out)) | set(_TB_RE.findall(out))
     if not kinds:
         # Unparseable, NOT "no assertion". Reporting an unknown as a weak kill would
@@ -851,10 +867,18 @@ def main() -> int:
         return 0
 
     # Baseline: the suite must be green BEFORE mutating, or every result is meaningless.
-    baseline_pass, _ = run_tests(test_files, args.timeout)
+    baseline_details: dict = {}
+    baseline_pass, _ = run_tests(test_files, args.timeout, details=baseline_details)
     if not baseline_pass:
-        print(json.dumps({"status": "error", "code": "baseline_red",
-                          "message": "mapped tests fail on unmutated source; fix that first",
+        timed_out = baseline_details.get("timed_out")
+        print(json.dumps({"status": "error",
+                          "code": "baseline_timeout" if timed_out else "baseline_red",
+                          "message": (f"mapped tests exceeded the {args.timeout}s timeout on "
+                                      f"unmutated source; this is NOT a failing suite")
+                                     if timed_out else
+                                     "mapped tests fail on unmutated source; fix that first",
+                          "failed_tests": baseline_details.get("failed", []),
+                          "output_tail": baseline_details.get("output", ""),
                           "tests": [str(t) for t in test_files]}))
         return 1
 

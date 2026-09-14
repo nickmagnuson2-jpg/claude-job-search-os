@@ -247,10 +247,15 @@ a,b=(rows[-2],rows[-1]) if len(rows)>1 else (None,rows[-1])
 moved = a is None or (a['survived'],a['tools_scored'])!=(b['survived'],b['tools_scored'])
 print('measurement_advanced=',moved)
 base=[json.loads(l) for l in open(m.baseline_path()) if l.strip()]
-errs=collections.Counter(r['tool'] for r in base if r.get('status')=='error')
-stuck={t:c for t,c in errs.items() if c>=3}
+latest={}
+for r in base: latest[r['tool']]=r          # last row wins == current state
+hist=collections.Counter(r['tool'] for r in base if r.get('status')=='error')
+stuck={t:hist[t] for t,r in latest.items() if r.get('status')=='error'}
 print('stuck_tools=',len(stuck),'max_retries=',max(stuck.values()) if stuck else 0)
-print('stuck=',sorted(stuck.items(), key=lambda kv:-kv[1])[:8])
+for t,c in sorted(stuck.items(), key=lambda kv:-kv[1]):
+    e=latest[t].get('elapsed')
+    kind='TIMEOUT' if e and e>=290 else 'fast-fail'
+    print(f'  {t}  nights={c}  elapsed={e}  {kind}')
 "
 ```
 

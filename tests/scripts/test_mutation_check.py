@@ -1012,3 +1012,49 @@ def test_the_lock_dies_with_its_holder(tmp_path):
     out, _ = after.communicate(timeout=20)
     assert out.startswith("OK"), (
         f"lock survived SIGKILL of its holder -- a crash now wedges every future run: {out!r}")
+
+
+# --- baseline_red must carry its evidence ------------------------------------
+#
+# WHY THIS EXISTS (2026-09-14). A sweep reported `baseline_red` on the same tools for
+# seven consecutive nights. The verdict was correct every time and completely
+# unactionable: the JSON said only "mapped tests fail on unmutated source", naming neither
+# the failing test nor the reason. Six nights of logs could not be read, and the actual
+# cause (launchd PATH resolving `python3` to system 3.9) was found only by reproducing the
+# run by hand under a synthesised launchd environment. A check that reports THAT without
+# WHY costs more than it saves.
+
+def test_run_tests_fills_a_details_dict_with_the_failing_test_and_output(monkeypatch, tmp_path):
+    """run_tests must expose pytest's output to a caller that asks for it."""
+    out = ("FAILED tests/scripts/test_thing.py::test_a_representative_hook_runs_end_to_end\n"
+           "E   TypeError: unsupported operand type(s) for |\n"
+           "1 failed, 350 passed\n")
+
+    class _Result:
+        returncode, stdout, stderr = 1, out, ""
+
+    # Patch the seam run_tests actually uses. It moved to subprocess.Popen on 2026-09-06
+    # via _run_reaping_descendants, so patching subprocess.run silently does nothing and
+    # the test would exercise a real pytest run against a non-existent file instead.
+    monkeypatch.setattr(mc, "_run_reaping_descendants", lambda *a, **k: _Result())
+    details = {}
+    passed, kind = mc.run_tests([tmp_path / "test_x.py"], timeout=5, details=details)
+    assert passed is False
+    assert "test_a_representative_hook_runs_end_to_end" in " ".join(details["failed"]), (
+        "the failing test node id must be extracted into details['failed'] -- naming the "
+        f"test is the whole point of the change; got {details.get('failed')!r}")
+    assert "TypeError" in details["output"], (
+        "details['output'] must carry pytest's own text so the reason is readable without "
+        "reproducing the run by hand")
+
+
+def test_run_tests_details_is_optional_and_default_contract_is_unchanged(monkeypatch, tmp_path):
+    """Existing callers pass no `details` and must keep getting a plain 2-tuple."""
+    class _Result:
+        returncode, stdout, stderr = 1, "1 failed\nE   AssertionError: x\n", ""
+
+    monkeypatch.setattr(mc, "_run_reaping_descendants", lambda *a, **k: _Result())
+    result = mc.run_tests([tmp_path / "test_x.py"], timeout=5)
+    assert isinstance(result, tuple) and len(result) == 2, (
+        f"run_tests must still return exactly (passed, kind) when no details dict is "
+        f"passed -- changing the arity would break every existing caller; got {result!r}")
