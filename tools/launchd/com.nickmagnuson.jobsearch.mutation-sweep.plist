@@ -21,16 +21,27 @@
       launchctl unload ~/Library/LaunchAgents/com.nickmagnuson.jobsearch.mutation-sweep.plist
       rm ~/Library/LaunchAgents/com.nickmagnuson.jobsearch.mutation-sweep.plist
 
-  18:00, NOT 16:00 (moved 2026-09-01). CORRECTED 2026-09-08: this comment said 18:00 while
-  StartCalendarInterval below said 22. Nick asked for 6pm and the file now matches the prose.
-  If you change the hour, change BOTH. While this runs, one tools/*.py is mutated on disk
-  at any instant and the tree is unsafe for ordinary work - tests/conftest.py refuses to
-  run, and skills that shell out to tools/*.py would execute a mutant against real data.
-  A 16:00 start put that inside a working afternoon. 18:00 is after the workday, and the
-  run is long enough (~10h at the 2026-08 rate) that it wants the whole night anyway.
+  22:00, Nick's instruction 2026-09-13. HOUR HISTORY, so nobody "restores" a stale value:
+  16:00 originally, 18:00 on 2026-09-01, 22:00 now. A 2026-09-08 correction found the prose
+  and StartCalendarInterval disagreeing (prose 18:00, key 22) and settled both on 18. This
+  change moves both to 22 deliberately. THE HOUR LIVES IN TWO PLACES IN THIS FILE, here and
+  in StartCalendarInterval below. If you change one, change the other.
+
+  WHY LATE. While this runs, one tools/*.py is mutated on disk at any instant and the tree is
+  unsafe for ordinary work: tests/conftest.py refuses to run, and skills that shell out to
+  tools/*.py would execute a mutant against real data. A 16:00 start put that inside a working
+  afternoon. 22:00 is clear of the whole day.
+
+  KNOWN TRADE AT 22:00, accepted. The run is long (~10h at the 2026-08 rate) and it quiesces 9
+  launchd jobs for its duration, gmail-fetch and gmail-fetch-personal among them. From 18:00 it
+  finished around 04:41 and the jobs were back before morning. From 22:00 a full run can still
+  be going at 08:00, so /standup may report a stale Gmail fetch and see quiesced jobs. That is
+  the sweep working, not a fault. The sweep restores every job on exit, including on SIGTERM.
+  Check tools/launchd/logs/mutation-sweep.log for "restored 9 launchd job(s)" before treating a
+  stalled fetch as broken.
 
   IT RECURS UNTIL UNLOADED, AND THAT IS SAFE. mutation_sweep resumes by tool name against
-  baseline.jsonl, so a second 18:00 fire finds 0 unbanked tools and exits in seconds. The
+  baseline.jsonl, so a second 22:00 fire finds 0 unbanked tools and exits in seconds. The
   cost of forgetting is noise in the log, not a re-run.
 
   CAFFEINATE. The run is ~7 hours. Without -is the Mac idle-sleeps partway and the sweep
@@ -41,6 +52,32 @@
   Code Bash call - files created that way inherit a com.apple.provenance xattr that launchd
   cannot open, and the job dies at EX_CONFIG (78) before the script runs, logging nothing.
   Rotation must DELETE and let launchd recreate. See reference_launchd_ex_config_provenance_xattr.
+  PATH IS SET INSIDE THE COMMAND, NOT IN EnvironmentVariables (2026-09-13). launchd's PATH
+  puts /opt/homebrew/bin LAST, so a bare `python3` resolved to /usr/bin/python3, macOS system
+  Python 3.9.6, while tools/*.py require 3.10+ (CLAUDE.md). The sweep itself names the
+  interpreter absolutely and was fine; the damage was one level down. Its mapped test
+  tests/scripts/test_no_silent_failures.py::test_a_representative_hook_runs_end_to_end executes a
+  wired hook verbatim as `PYTHONIOENCODING=utf-8 python3 "$CLAUDE_PROJECT_DIR/tools/check_public_pii.py"`,
+  which died on 3.9 at check_public_pii.py:395 (`Path | None`, PEP 604, needs 3.10+) with
+  "TypeError: unsupported operand type(s) for |". The baseline runs with -x, so that one failure
+  aborted it and mutation_check reported `baseline_red`, whose message says "mapped tests fail on
+  unmutated source" and names neither the test nor the interpreter. 19 of the 20 tools stuck that
+  way map that test file. Six nights, 124 duplicate error rows, zero measurement banked.
+
+  EnvironmentVariables would NOT fix it: ProgramArguments runs `bash -lc`, the login shell sources a
+  profile that rebuilds PATH via path_helper, and that overwrites anything launchd injected. Setting
+  it inside the command runs after the profile, so it wins.
+
+  NOTE FOR EDITORS: this is an XML comment, so the two hyphen sequence is ILLEGAL anywhere inside
+  it. `plutil -lint` and `launchctl load` both ACCEPT a plist containing one; python's plistlib
+  rejects it, and plistlib is what tests/scripts/test_no_silent_failures.py uses. Verify any edit
+  here with plistlib, not plutil.
+
+  THIS IS THE NARROW FIX. The source defect is that hooks are wired with a bare `python3` in
+  .claude/settings.json, so 54 of 141 tools crash under any system python first PATH, including
+  check_public_pii.py and prepush_pii_guard.py, both PII gates, which fail OPEN because a crash
+  exits 1 and only exit 2 blocks. Full context and fix options:
+  output/analysis/091326-mutation-sweep-path-root-cause.md
 -->
 <plist version="1.0">
 <dict>
@@ -50,11 +87,11 @@
     <array>
         <string>/bin/bash</string>
         <string>-lc</string>
-        <string>cd "$HOME/Documents/Obsidian/30-projects/job-search" &amp;&amp; PYTHONIOENCODING=utf-8 /usr/bin/caffeinate -is /opt/homebrew/bin/python3 tools/mutation_sweep.py</string>
+        <string>export PATH="/opt/homebrew/bin:$PATH" &amp;&amp; cd "$HOME/Documents/Obsidian/30-projects/job-search" &amp;&amp; PYTHONIOENCODING=utf-8 /usr/bin/caffeinate -is /opt/homebrew/bin/python3 tools/mutation_sweep.py</string>
     </array>
     <key>StartCalendarInterval</key>
     <dict>
-        <key>Hour</key><integer>18</integer>
+        <key>Hour</key><integer>22</integer>
         <key>Minute</key><integer>0</integer>
     </dict>
     <key>StandardOutPath</key>
