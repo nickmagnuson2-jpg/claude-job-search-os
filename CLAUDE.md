@@ -118,7 +118,7 @@ data/              Owner data (profile.md, goals.md, professional-identity.md gi
 .claude/skills/    38 slash-command skill definitions
 memory/            ⚠️ THREE PHYSICAL ROOTS, not one. Resolve before asserting any file is absent.
   ├─ ~/.claude/projects/-Users-mag-Documents-Obsidian-30-projects-job-search/memory/
-  │                    THE LIVE TIER (642 files). MEMORY.md (auto-loaded router + Critical
+  │                    THE LIVE TIER (910 files, measured 2026-09-15). MEMORY.md (router + Critical
   │                    Context), index-<topic>.md shards (11), all feedback_/reference_/
   │                    project_/user_ files, archive-*.md. Does NOT hold lessons.md.
   ├─ <repo>/memory/    Every relative `memory/...` path in CLAUDE.md and skills resolves HERE.
