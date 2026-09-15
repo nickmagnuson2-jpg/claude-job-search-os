@@ -257,6 +257,46 @@ def parse_networking_companies(content: str) -> set[str]:
     return out
 
 
+def parse_inbox_companies(content: str) -> set[str]:
+    """Company names from `data/inbox.md` agent-drip COMPANY blocks.
+
+    ADDED 2026-09-14, after two real companies reached public test fixtures and neither
+    was on ANY tier of this list -- not block, not ambiguous, not retired. Both had been
+    surfaced by the discovery drip and existed only in `data/inbox.md`, which was not a
+    source here, so the always-on hook was not failing to catch them: it was never
+    looking. `/audit-pii`'s semantic pass caught them at staging, by hand.
+
+    The inbox is the LARGEST uncovered surface in the system by count -- the drip has
+    written ~130 distinct company names into it -- and it is upstream of the pipeline by
+    construction: a company appears here first, and only enters `job-pipeline.md` if Nick
+    promotes it. Harvesting only the pipeline therefore covered companies precisely from
+    the moment Nick got interested, and left every researched-but-not-promoted one
+    uncovered, which is the population most likely to end up in a test fixture as a
+    "realistic example".
+
+    Scoped to blocks whose header ends `(company)`. The sibling `(person)` blocks are
+    deliberately NOT harvested here: per the module's design rules a person contributes a
+    full "First Last" phrase or nothing, and drip person-entries are unreviewed scrapes
+    that have carried wrong data before (a 2026-08-17 drip stamped one company's HQ onto
+    people who were eight time zones away). Routing unreviewed names into a BLOCK list
+    would turn a scraping error into a false positive on every future write.
+    """
+    companies: set[str] = set()
+    in_company_block = False
+    for line in content.splitlines():
+        if line.startswith("## "):
+            in_company_block = "(company)" in line.lower()
+            continue
+        if not in_company_block:
+            continue
+        m = re.match(r"\s*-\s+\*\*(.+?)\*\*", line)
+        if m:
+            name = m.group(1).strip()
+            if name:
+                companies.add(name)
+    return companies
+
+
 def parse_pipeline_companies(content: str) -> set[str]:
     """Company names from the pipeline table (col 0)."""
     companies: set[str] = set()
@@ -633,6 +673,12 @@ def main():
     names = parse_networking_names(networking)
     companies = parse_pipeline_companies(pipeline)
     companies |= parse_scan_target_companies(root / "data" / "scan-targets.yaml")
+    # data/inbox.md is upstream of all three sources above: the drip writes a company here
+    # first, and it reaches the pipeline or scan-targets only if Nick promotes it. Without
+    # this line every researched-but-unpromoted company was uncovered on every tier.
+    # `read_file` returns "" for a missing inbox, so this degrades to a no-op rather than
+    # failing the whole regeneration.
+    companies |= parse_inbox_companies(read_file(root / "data" / "inbox.md"))
     dictionary = load_dictionary()
     tokens = build_denylist(names, companies, dictionary)
     ambiguous = build_ambiguous_list(companies, dictionary)
