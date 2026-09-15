@@ -29,7 +29,7 @@ p { margin: 6pt 0; }
 table { border-collapse: collapse; width: 100%; margin: 8pt 0; font-size: 9.5pt; }
 th, td { border: 1px solid #999; padding: 4px 6px; text-align: left; vertical-align: top; }
 th { background: #eee; }
-code { font-family: Menlo, Monaco, monospace; background: #f0f0f0; padding: 1px 3px; border-radius: 2px; font-size: 9.5pt; }
+code { font-family: Menlo, monospace; background: #f0f0f0; padding: 1px 3px; border-radius: 2px; font-size: 9.5pt; }
 pre { background: #f6f6f6; padding: 8pt; border-radius: 3px; overflow-x: auto; }
 blockquote { border-left: 3px solid #888; margin: 6pt 0; padding-left: 10pt; color: #333; }
 ul, ol { margin: 4pt 0 4pt 18pt; }

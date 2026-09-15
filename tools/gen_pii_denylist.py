@@ -156,6 +156,17 @@ FICTIONAL_SURNAMES = {n.split()[-1] for n in FICTIONAL_CAST if " " in n}
 STOPWORDS = {
     "the", "a", "an", "of", "and", "co", "inc", "ai", "labs", "health",
     "care", "agents", "robotics", "ventures", "capital", "partners", "group",
+    # MODERN TECHNICAL VOCABULARY, added 2026-09-15. `/usr/share/dict/words` is the classic
+    # Unix word list and predates most computing terms -- measured against its 234,456
+    # entries, neither "byte" nor "bytes" is present. The dictionary is the PRIMARY filter
+    # keeping ordinary words off the BLOCK tier, so it has a blind spot exactly where this
+    # repo's own prose lives, and a one-token component of a two-token company name slips
+    # through it onto BLOCK. Live case 2026-09-15: a pre-push scan blocked on FOUR files
+    # that merely discuss byte counts, in ordinary sentences and a JSON key. The parent
+    # two-token company name stays on BLOCK and is unaffected; only the generic component
+    # is excluded. This set exists for precisely this -- "generic terms a dictionary might
+    # miss". Add only tokens MEASURED absent from the dictionary, never assumed.
+    "byte", "bytes",
 }
 # REMOVED 2026-08-19: one entry here was a REAL pipeline company (present in both
 # job-pipeline.md and networking.md). Suppressing it kept it out of BOTH the block
