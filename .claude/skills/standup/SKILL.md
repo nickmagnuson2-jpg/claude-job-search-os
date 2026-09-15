@@ -24,8 +24,36 @@ PYTHONIOENCODING=utf-8 python3 tools/check_automation_health.py --repo-root .
 PYTHONIOENCODING=utf-8 python3 tools/attention.py --repo-root . --json
 PYTHONIOENCODING=utf-8 python3 tools/conversations_metric.py --repo-root . --target-date $(date +%Y-%m-%d)
 PYTHONIOENCODING=utf-8 python3 tools/source_check.py due --repo-root . --target-date $(date +%Y-%m-%d) --json
+PYTHONIOENCODING=utf-8 python3 tools/workstream_state.py --render --json
 ```
 Parse JSON output from each script. If a script returns empty results (missing data file), continue — never fail.
+
+**On `workstream_state.py` — the registry, and the one rule that makes it honest.**
+
+It runs each workstream's declared probe and rewrites that file's `STATE-BLOCK`. Read
+`summary.surfacing`, `summary.names`, and each row's `state` / `value` / `previous`.
+
+**After the brief has actually been rendered to Nick — and only then — advance the ack:**
+
+```bash
+PYTHONIOENCODING=utf-8 python3 - <<'PY'
+import json, subprocess, sys
+from pathlib import Path
+sys.path.insert(0, "tools")
+import workstream_state as ws
+rows = ws.scan_registry()
+vals = {r["name"]: r["value"] for r in rows if r.get("surfaces") and "value" in r}
+if vals:
+    ws.acknowledge(ws.REGISTRY / ws.OBSERVATIONS, vals)
+    print(f"acked {len(vals)}: {sorted(vals)}")
+PY
+```
+
+**Never acknowledge before rendering.** The ack is what makes "changed" mean *changed since
+Nick last saw it*. If the brief is interrupted between the probe run and the display, an
+un-advanced ack re-surfaces the change next morning — the failure direction is "shown twice",
+never "silently dropped". Advancing it inside the runner would invert that and rebuild the
+career-scanner defect: state moving forward whether or not a human ever saw it.
 
 **OUTCOME METRIC (from `conversations_metric.py`) — surface THIRD, and it is the headline number of the brief.**
 
@@ -531,6 +559,13 @@ Output the brief in this exact format:
 📥 **Queues:** inbox [N / N] · todos [N] overdue (oldest [N]d) · promotion [N] ([N] partial) · pipeline [N] stale — **total [N]**
 [If complete=false: ⚠️ [N] of 4 queues unreadable: [names]]
 [If total_open=null: **Queues: UNREADABLE** — say this, never omit the line]
+
+🧭 **Workstreams:** [N] moved — [name (was X, now Y)], … [· ⚠️ [N] probe error: [names]]
+[**SELF-CLEARING: omit this line entirely when `summary.surfacing` is 0.** Nothing moved is not news.]
+[⚠️ **A probe `error` is NEVER silent and never reads as zero** — if any row is `error`, the line
+ appears even when nothing else moved, and names the workstream. A broken probe otherwise looks
+ exactly like a workstream that is fine, which is the defect the runner's contract exists to prevent.]
+[`typed` rows (no probe) do not surface here; they are not evidence of quiet, only of no probe.]
 
 🎯 **Conversations & interviews had:** 7d **[N]** · 30d **[N]** · 90d **[N]**   (outreach sent: 7d [N] · 30d [N] · 90d [N])
 [If complete=false: ⚠️ metric incomplete — unreadable: [sources]]

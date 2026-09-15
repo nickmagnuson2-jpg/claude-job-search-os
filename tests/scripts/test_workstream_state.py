@@ -351,3 +351,76 @@ def test_scan_registry_accepts_explicit_observations(tmp_path):
     write_ws(tmp_path, "x", probe=probe_emitting(tmp_path, '{"value": 7}'))
     rows = ws.scan_registry(tmp_path, repo_root=tmp_path, observations={"x": {"value": 7}})
     assert rows[0]["state"] == "unchanged"
+
+
+# ---------- the object PROBE form (added when the contract met the real tools) ----------
+# The first contract demanded a `value` field and exit 0. scoring_probe.py exits 1 when it
+# finds violations -- its normal state -- and check_hook_warn_tier.py prints a line, not JSON.
+# `field`, `ok_exit` and `text` are policy and belong in the workstream file.
+
+def _obj_ws(tmp_path, name, argv, **policy):
+    spec = {"argv": argv, **policy}
+    p = tmp_path / f"{name}.md"
+    p.write_text(f"# {name}\n\n| **Status** | ACTIVE |\n\n<!-- PROBE: {json.dumps(spec)} -->\n",
+                 encoding="utf-8")
+    return p
+
+
+def test_object_form_lifts_a_named_field(tmp_path):
+    argv = probe_emitting(tmp_path, '{"violations": 6, "status": "ok"}')
+    p = _obj_ws(tmp_path, "f", argv, field="violations")
+    assert ws.evaluate(p, repo_root=tmp_path)["value"] == 6
+
+
+def test_object_form_lifts_a_dotted_path(tmp_path):
+    argv = probe_emitting(tmp_path, '{"summary": {"open": 7}}')
+    p = _obj_ws(tmp_path, "d", argv, field="summary.open")
+    assert ws.evaluate(p, repo_root=tmp_path)["value"] == 7
+
+
+def test_missing_dotted_path_is_error_naming_the_field(tmp_path):
+    argv = probe_emitting(tmp_path, '{"summary": {}}')
+    p = _obj_ws(tmp_path, "m", argv, field="summary.open")
+    r = ws.evaluate(p, repo_root=tmp_path)
+    assert r["state"] == "error" and "summary.open" in r["error"]
+
+
+def test_ok_exit_lets_a_findings_exit_code_count_as_success(tmp_path):
+    """scoring_probe.py exits 1 when it finds violations. That is not a failure."""
+    argv = probe_emitting(tmp_path, '{"violations": 6}', code=1)
+    p = _obj_ws(tmp_path, "ok1", argv, field="violations", ok_exit=[0, 1])
+    r = ws.evaluate(p, repo_root=tmp_path)
+    assert r["state"] in ("changed", "unchanged") and r["value"] == 6
+
+
+def test_exit_outside_ok_exit_is_still_error(tmp_path):
+    argv = probe_emitting(tmp_path, '{"violations": 6}', code=2)
+    p = _obj_ws(tmp_path, "ok2", argv, field="violations", ok_exit=[0, 1])
+    r = ws.evaluate(p, repo_root=tmp_path)
+    assert r["state"] == "error" and "ok_exit=[0, 1]" in r["error"]
+
+
+def test_text_mode_takes_the_first_line(tmp_path):
+    argv = probe_emitting(tmp_path, "wired 34 | checked 34\nsecond line\n")
+    p = _obj_ws(tmp_path, "t", argv, text=True)
+    assert ws.evaluate(p, repo_root=tmp_path)["value"] == "wired 34 | checked 34"
+
+
+def test_text_mode_with_no_output_is_error(tmp_path):
+    argv = probe_emitting(tmp_path, "")
+    p = _obj_ws(tmp_path, "te", argv, text=True)
+    assert ws.evaluate(p, repo_root=tmp_path)["state"] == "error"
+
+
+def test_malformed_ok_exit_degrades_to_typed(tmp_path):
+    argv = probe_emitting(tmp_path, '{"value": 1}')
+    p = _obj_ws(tmp_path, "bad", argv, ok_exit="nope")
+    assert ws.evaluate(p, repo_root=tmp_path)["state"] == "typed"
+
+
+def test_dotted_path_through_a_non_dict_is_error(tmp_path):
+    """_lift must stop when a path segment lands on a scalar, not raise TypeError."""
+    argv = probe_emitting(tmp_path, '{"summary": 5}')
+    p = _obj_ws(tmp_path, "scalar", argv, field="summary.open")
+    r = ws.evaluate(p, repo_root=tmp_path)
+    assert r["state"] == "error" and "summary.open" in r["error"]
