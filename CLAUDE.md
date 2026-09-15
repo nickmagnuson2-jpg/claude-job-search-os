@@ -136,6 +136,8 @@ output/            Generated outputs — company-first hierarchy
 
 **Company-first hierarchy.** Every named entity gets `output/<slug>/` (slug = lowercase-hyphens). Dossier matches folder name (`output/<slug>/<slug>.md`, no date). All other files date-prefixed `MMDDYY-[descriptor].md`. Flat `output/MMDDYY-*.md` only for entity-less one-offs.
 
+**Do not write a session handoff. Cross-session state goes to `data/workstreams/`.** 22 accumulated in `output/analysis/` + flat `output/`, each with an invented format and no disposition, so no reader could tell which was authoritative; one landed the day the registry replacing them shipped. **A workstream needs a decision open across sessions AND state a future session would re-derive** — only one, and it is a todo (`tools/todo_write.py`); derivable numbers go in a `PROBE`, never typed. `tools/check_handoff_producer.py` (PreToolUse) BLOCKS **creating** a `.md` named `handoff`/`kickoff`/`next-session` there; editing an existing one is fine, since a self-asserted banner would enforce annotation, not redirection (cross-model F1, 2026-09-15). `output/<slug>/` prep docs are exempt. The 22 carry a `<!-- DISPOSITION: {...} -->` banner enumerated by `tests/scripts/test_handoff_disposition.py`; **`live`/`reference` ones remain authoritative** — read the banner before trusting or retiring one.
+
 `data/company-notes/<slug>.md` and `data/industry-notes/<slug>.md` hold free-form personal context. Append `## YYYY-MM-DD | [context]` entries. Generative skills read these automatically.
 
 ### Per-Person Relationship Dossiers (`data/people/<slug>.md`)
