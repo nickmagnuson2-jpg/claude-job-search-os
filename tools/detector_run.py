@@ -133,7 +133,12 @@ def validate(detectors: list[dict]) -> tuple[list[dict], list[dict]]:
         except re.error as exc:
             refused.append({**d, "why": f"regex does not compile: {exc}"})
             continue
-        r = dp.probe(f"`{d['regex']}`", d["control"])
+        # Probe the regex DIRECTLY. It used to be wrapped as f"`{regex}`" so that
+        # dp.probe could re-extract it as a markdown code span -- a round-trip through a
+        # carrier format for a value we already hold exactly. Any regex containing a
+        # backtick came back as `` , an empty span, and was refused `no_pattern_found`
+        # despite matching its own control; one refusal fails this whole job. 2026-09-15.
+        r = dp.probe_patterns([d["regex"]], d["control"])
         if r["fired"]:
             proven.append(d)
         else:

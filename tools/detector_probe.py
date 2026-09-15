@@ -71,9 +71,22 @@ def extract_patterns(prose: str) -> list[str]:
     return sorted(out, key=len, reverse=True)
 
 
-def probe(prose: str, control: str) -> dict:
-    """Does any extracted pattern fire on the control line, raw or whitespace-normalized?"""
-    patterns = extract_patterns(prose)
+def probe_patterns(patterns: list[str], control: str) -> dict:
+    """Does any of these patterns fire on the control, raw or whitespace-normalized?
+
+    THE MATCHING HALF, separated from the EXTRACTION half on 2026-09-15. A caller that
+    already holds the exact pattern -- `detector_run.validate()` does, it reads
+    `detector_signature` straight out of the frontmatter -- must not round-trip it through
+    markdown code-span extraction to get here. That round-trip silently destroyed any
+    pattern containing a backtick: wrapping it as f"`{regex}`" produced a leading ``, which
+    `_CODE_SPAN` reads as an empty span, so `extract_patterns` returned [] and the detector
+    was refused `no_pattern_found` while its regex matched its control perfectly.
+
+    One refusal fails the whole nightly job (`detector_run.py` exits 2 when anything is
+    refused), so a single backtick in one signature took the detector scan down every night
+    from 2026-09-07 with a zero-byte `.err` file. Extraction is for PROSE; matching is for
+    PATTERNS; conflating them made the format of the carrier change the verdict.
+    """
     if not patterns:
         return {"status": "no_pattern_found", "fired": False, "patterns_tried": 0,
                 "matched_pattern": None, "needed_normalization": False}
@@ -91,6 +104,15 @@ def probe(prose: str, control: str) -> dict:
             continue
     return {"status": "did_not_fire", "fired": False, "patterns_tried": len(patterns),
             "matched_pattern": None, "needed_normalization": False}
+
+
+def probe(prose: str, control: str) -> dict:
+    """Does any pattern EXTRACTED FROM PROSE fire on the control line?
+
+    For prose written by an agent, where the pattern must be found before it can be tested.
+    A caller holding the pattern already should call `probe_patterns` directly.
+    """
+    return probe_patterns(extract_patterns(prose), control)
 
 
 def probe_records(records: list[dict]) -> dict:

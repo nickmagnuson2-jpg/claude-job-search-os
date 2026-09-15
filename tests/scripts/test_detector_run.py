@@ -589,3 +589,41 @@ def test_an_oversized_raw_record_is_not_scanned_at_all(tmp_path):
     rule(tmp_path, "feedback_a.md", sig=r"\bNEEDLE\b", control="NEEDLE here")
     report = dr.scan(tmp_path, [p])
     assert report["fires"] == [] and report["lines_scanned"] == 0
+
+
+# --- a backtick in the signature must not refuse the detector (2026-09-15) -----------
+#
+# validate() used to hand dp.probe the regex wrapped as f"`{regex}`" so it could be
+# re-extracted as a markdown code span. A regex containing a backtick then arrived as ``,
+# an empty span, and was refused `no_pattern_found` while matching its own control
+# perfectly. Because ONE refusal makes the whole run not-ok and exit 2, a single backtick
+# in a single signature took the nightly detector-scan job down from 2026-09-07 onward,
+# silently -- stdout carried the failure and the .err file stayed zero bytes.
+
+def test_a_signature_containing_a_backtick_is_PROVEN_not_refused(tmp_path):
+    """THE REGRESSION. Fails against the f"`{regex}`" round-trip."""
+    rule(tmp_path, "feedback_r.md",
+         sig=r"`partial`(?=.*\b(?:tier|surfaces?)\b)(?=.*\b(?:fires?|occurrences)\b)",
+         control="`partial` vs untouched: choosing a tier. Two sit at 5 fires.")
+    proven, refused = dr.validate(dr.load_detectors(tmp_path))
+    assert refused == [], f"refused a detector whose regex matches its control: {refused}"
+    assert len(proven) == 1
+
+
+def test_a_backticked_signature_does_not_make_the_whole_run_exit_2(tmp_path):
+    """The blast radius, pinned separately: it is not that one detector is lost, it is
+    that the entire nightly job reports failure and every other detector's fires with it."""
+    rule(tmp_path, "feedback_r.md", sig=r"`partial`(?=.*\btier\b)",
+         control="`partial` and a tier")
+    assert dr.scan(tmp_path, [])["ok"] is True
+
+
+def test_a_genuinely_non_matching_signature_is_STILL_refused(tmp_path):
+    """The fix must not become a blanket pass: a regex that cannot fire on its own control
+    is still refused. Without this, 'stop refusing things' would also satisfy the test
+    above, and the guard would be gone rather than fixed."""
+    rule(tmp_path, "feedback_r.md", sig=r"`partial`(?=.*\bnever_present\b)",
+         control="`partial` and a tier")
+    proven, refused = dr.validate(dr.load_detectors(tmp_path))
+    assert proven == []
+    assert len(refused) == 1 and "does not fire on its own control" in refused[0]["why"]

@@ -203,3 +203,56 @@ def test_a_clean_run_prints_no_UNPROVEN_lines(tmp_path, capsys):
                  encoding="utf-8")
     dp.main(["--records", str(p)])
     assert "UNPROVEN" not in capsys.readouterr().out
+
+
+# --- probe_patterns: the matching half, separated from extraction 2026-09-15 ---------
+#
+# A caller holding the exact pattern must not round-trip it through code-span extraction.
+# Doing so silently destroyed any pattern containing a backtick and took the nightly
+# detector-scan job down from 2026-09-07 with a zero-byte .err file.
+
+def test_probe_patterns_fires_on_a_pattern_containing_a_backtick():
+    """THE REGRESSION. Against the unfixed code this pattern reached probe() wrapped as
+    f"`{pattern}`", producing a leading `` that _CODE_SPAN read as an empty span, so
+    extraction returned [] and the verdict was no_pattern_found."""
+    pattern = r"`partial`(?=.*\b(?:tier|surfaces?)\b)(?=.*\b(?:fires?|occurrences)\b)"
+    control = ("`partial` and untouched are different work: choosing a tier. "
+               "Two sit at 5 fires.")
+    r = dp.probe_patterns([pattern], control)
+    assert r["fired"] is True
+    assert r["status"] == "fired"
+    assert r["matched_pattern"] == pattern
+
+
+def test_wrapping_a_backticked_pattern_for_extraction_loses_it():
+    """Pins the CAUSE, not just the symptom, so the round-trip cannot quietly return."""
+    pattern = r"`partial`(?=.*\btier\b)"
+    assert dp.extract_patterns(f"`{pattern}`") == []
+    assert dp.probe(f"`{pattern}`", "`partial` and a tier")["status"] == "no_pattern_found"
+    # ...while the same pattern, handed over directly, fires.
+    assert dp.probe_patterns([pattern], "`partial` and a tier")["fired"] is True
+
+
+def test_probe_patterns_reports_no_pattern_found_on_an_empty_list():
+    r = dp.probe_patterns([], "anything")
+    assert r["status"] == "no_pattern_found" and r["patterns_tried"] == 0
+
+
+def test_probe_patterns_reports_did_not_fire_when_the_pattern_misses():
+    r = dp.probe_patterns([r"\bnope\b"], "nothing here")
+    assert r["status"] == "did_not_fire" and r["fired"] is False and r["patterns_tried"] == 1
+
+
+def test_probe_patterns_falls_back_to_the_normalized_control():
+    r = dp.probe_patterns([r"a\sb"], "a\n   b")
+    assert r["fired"] is True and r["needed_normalization"] is True
+
+
+def test_probe_patterns_skips_an_uncompilable_pattern_and_tries_the_next():
+    r = dp.probe_patterns(["(?i)unclosed(", r"\berror\b"], "an error")
+    assert r["fired"] is True and r["matched_pattern"] == r"\berror\b"
+
+
+def test_probe_still_extracts_from_prose():
+    """probe() keeps its prose contract -- probe_patterns did not replace it."""
+    assert dp.probe(r"the detector is `\berror\b` here", "an error")["fired"] is True
