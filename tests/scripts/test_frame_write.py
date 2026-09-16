@@ -124,6 +124,87 @@ def test_patch_payload_cannot_smuggle_a_derived_field(tmp_path, ):
     assert "checks_fired" in res["message"]
 
 
+# ------------------------------------------------------- patch merge semantics
+
+def test_patch_merges_a_keyed_map_instead_of_replacing_it(tmp_path):
+    """THE 2026-09-16 DATA LOSS, reproduced.
+
+    `patch` advertised "deep-merge" and performed a top-level replace for its whole
+    life. A payload supplying 9 facts destroyed the 11 it did not mention. It surfaced
+    only because the gate noticed elements citing facts that no longer existed; an
+    uncited fact would have vanished in silence.
+    """
+    f = frame(tmp_path)
+    before = yaml.safe_load(Path(f).read_text())["facts"]
+    assert "f1" in before
+
+    payload = tmp_path / "p.json"
+    payload.write_text(json.dumps({"facts": {"f2": {
+        "text": "a second fact", "tier": "A", "first_seen": 2}}}))
+    code, _ = run("patch", "--frame", f, "--expect-version", 1, "--json", payload)
+    assert code == 0
+
+    facts = yaml.safe_load(Path(f).read_text())["facts"]
+    assert set(facts) == {"f1", "f2"}, f"pre-existing fact destroyed: {sorted(facts)}"
+    assert facts["f1"]["text"] == "throughput is 100/day"
+
+
+def test_patch_updates_an_existing_key_in_place(tmp_path):
+    f = frame(tmp_path)
+    payload = tmp_path / "p.json"
+    payload.write_text(json.dumps({"facts": {"f1": {"text": "throughput is 120/day"}}}))
+    code, _ = run("patch", "--frame", f, "--expect-version", 1, "--json", payload)
+    assert code == 0
+    f1 = yaml.safe_load(Path(f).read_text())["facts"]["f1"]
+    assert f1["text"] == "throughput is 120/day"
+    # The sibling keys of the updated fact survive; a merge that flattened the inner
+    # map would silently drop provenance while looking like a successful edit.
+    assert f1["tier"] == "A" and f1["first_seen"] == 1
+
+
+def test_patch_REPLACES_a_list_because_merging_one_has_no_correct_answer(tmp_path):
+    f = frame(tmp_path)
+    payload = tmp_path / "p.json"
+    payload.write_text(json.dumps({"exclusions": [
+        {"element": "cost", "reason": "not asked"}]}))
+    code, _ = run("patch", "--frame", f, "--expect-version", 1, "--json", payload)
+    assert code == 0
+    ex = yaml.safe_load(Path(f).read_text())["exclusions"]
+    assert len(ex) == 1 and ex[0]["element"] == "cost"
+
+
+def test_patch_can_still_delete_a_key_with_null(tmp_path):
+    """Merge semantics would otherwise make retiring a fact impossible, pushing the
+    operator back to hand-editing the YAML, which is what this module exists to stop."""
+    f = frame(tmp_path)
+    payload = tmp_path / "p.json"
+    payload.write_text(json.dumps({"facts": {"f2": {"text": "temp", "tier": "C",
+                                                    "first_seen": 2}}}))
+    run("patch", "--frame", f, "--expect-version", 1, "--json", payload)
+    assert "f2" in yaml.safe_load(Path(f).read_text())["facts"]
+
+    payload.write_text(json.dumps({"facts": {"f2": None}}))
+    code, _ = run("patch", "--frame", f, "--expect-version", 2, "--json", payload)
+    assert code == 0
+    facts = yaml.safe_load(Path(f).read_text())["facts"]
+    assert "f2" not in facts and "f1" in facts
+
+
+def test_set_still_REPLACES_because_that_is_what_set_means(tmp_path):
+    """`set` and `patch` must not converge. A caller reaching for `set` is asserting a
+    value, not contributing to one."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("fw", SCRIPT)
+    fw = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(fw)
+    d = {"facts": {"f1": {"text": "a"}}}
+    fw.set_dotted(d, "facts", {"f2": {"text": "b"}})          # default: replace
+    assert set(d["facts"]) == {"f2"}
+    d = {"facts": {"f1": {"text": "a"}}}
+    fw.set_dotted(d, "facts", {"f2": {"text": "b"}}, merge=True)
+    assert set(d["facts"]) == {"f1", "f2"}
+
+
 # ------------------------------------------------------------- validation gate
 
 def test_unparseable_frame_is_refused_not_written(tmp_path):

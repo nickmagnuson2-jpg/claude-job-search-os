@@ -184,8 +184,11 @@ def coerce(v: str):
     return v
 
 
-def set_dotted(d: dict, key: str, value):
+def set_dotted(d: dict, key: str, value, merge: bool = False):
     """`d1.problem_statement=x` sets the nested key, matching the schema's notation.
+
+    `merge=True` (the `patch` path) deep-merges maps instead of replacing them; see
+    deep_merge. `set` keeps replace semantics, which is what "set a field" means.
 
     The schema declares field names in dotted form, and a transcriber once wrote them
     as FLAT top-level keys -- ten of them -- which passed structural validation while
@@ -200,7 +203,44 @@ def set_dotted(d: dict, key: str, value):
             nxt = {}
             cur[p] = nxt
         cur = nxt
-    cur[parts[-1]] = value
+    last = parts[-1]
+    if merge:
+        cur[last] = deep_merge(cur.get(last), value)
+    else:
+        cur[last] = value
+
+
+def deep_merge(old, new):
+    """Recursively merge `new` over `old` for MAPS. Lists and scalars replace.
+
+    WHY THIS EXISTS (2026-09-16). `patch` advertised itself as "deep-merge a JSON
+    payload" and performed a top-level REPLACE for its entire life. A patch supplying
+    `facts` with 9 entries silently destroyed the 11 it did not mention. It was caught
+    only because the frame gate's F8a noticed elements citing facts that no longer
+    existed -- had the dropped facts been uncited, the loss would have been invisible,
+    and the frame is the artifact everything downstream trusts.
+
+    Maps merge because they are keyed registries (`facts`, `unknowns`, `inputs`): a
+    caller supplying one fact means "add or update this fact", never "these are now the
+    only facts". Lists replace because a merge over an ordered list has no correct
+    answer -- there is no key to match on -- and the `append` subcommand already exists
+    for the ledgers that need accumulation.
+
+    `None` DELETES, so removal stays possible under merge semantics. Without it a
+    merge-only patch path could never retire a fact, and the operator would be pushed
+    back to hand-editing the YAML, which is the thing this module exists to prevent.
+    """
+    if new is None:
+        return None
+    if isinstance(old, dict) and isinstance(new, dict):
+        merged = dict(old)
+        for k, v in new.items():
+            if v is None:
+                merged.pop(k, None)
+            else:
+                merged[k] = deep_merge(merged.get(k), v)
+        return merged
+    return new
 
 
 def run_checker(candidate: Path) -> tuple:
@@ -759,7 +799,7 @@ def main(argv=None):
         if bad:
             die(f"payload sets DERIVED field(s): {', '.join(bad)}")
         for k, v in payload.items():
-            set_dotted(new, k, v)
+            set_dotted(new, k, v, merge=True)
 
     elif a.cmd == "lock":
         a.segment = "LOCK"

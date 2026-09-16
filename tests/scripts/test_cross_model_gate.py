@@ -713,6 +713,44 @@ def test_two_rows_from_DIFFERENT_models_clear_a_tier_3_path(tmp_path, monkeypatc
     assert g.check(tmp_path, [("CLAUDE.md", 3, 1)], since=0).blocked is False
 
 
+def test_a_same_family_row_ALONE_does_not_cover_a_path(tmp_path, monkeypatch):
+    """Fable was wired 2026-09-16 because it found what the cross-family models missed.
+    The protection that came off (`no Anthropic verifier exists`) moved here: a verifier
+    from the family that WROTE the code is additive, never sufficient, so one Fable row
+    must not clear even a tier-1 path."""
+    monkeypatch.setattr(g, "WIRED_MODELS", ("codex", "grok", "fable"))
+    _row(tmp_path, paths=["tools/thing.py"], model="fable")
+    v = g.check(tmp_path, [("tools/thing.py", 400, 10)], since=0)
+    assert v.blocked is True, "a same-family verifier cleared a push on its own"
+
+
+def test_a_same_family_row_RAISES_the_count_alongside_an_outside_one(tmp_path, monkeypatch):
+    """Additive is the other half of the rule. Fable must still be able to satisfy the
+    SECOND slot of a two-model tier, or wiring it bought nothing."""
+    monkeypatch.setattr(g, "WIRED_MODELS", ("codex", "grok", "fable"))
+    _row(tmp_path, paths=["CLAUDE.md"], model="codex")
+    _row(tmp_path, paths=["CLAUDE.md"], model="fable")
+    assert g.check(tmp_path, [("CLAUDE.md", 3, 1)], since=0).blocked is False
+
+
+def test_a_label_only_fable_row_resolves_to_the_author_family(tmp_path, monkeypatch):
+    """The hole this closes: a row carrying `model: fable` and no `family` field would
+    resolve to the literal "fable", read as a family OUTSIDE the author's, and clear a
+    push on its own -- defeating the rule at the one place it matters. Live rows written
+    by codex_verify carry `family`; a hand-written or third-party row may not."""
+    assert g.row_model({"model": "fable"}) == "anthropic"
+    monkeypatch.setattr(g, "WIRED_MODELS", ("codex", "grok", "fable"))
+    _row(tmp_path, paths=["tools/thing.py"], model="fable")   # no family field
+    assert g.check(tmp_path, [("tools/thing.py", 400, 10)], since=0).blocked is True
+
+
+def test_every_wired_model_has_a_label_fallback_family(monkeypatch):
+    """Any wired model missing from the map inherits the same hole. Asserted over the
+    wired set so adding a fourth model cannot reintroduce it silently."""
+    missing = [m for m in g.WIRED_MODELS if m not in g.LEGACY_MODEL_FAMILIES]
+    assert not missing, f"no label->family fallback for {missing}"
+
+
 def test_an_unstamped_row_is_attributed_to_the_only_model_there_was():
     """Every row before 2026-09-06 came from codex. Counting them as 'unknown' would
     let two legacy rows read as two independent models.

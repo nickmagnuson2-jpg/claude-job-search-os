@@ -36,6 +36,10 @@ tools/.agent_seen.json
 # Cross-model verification ledger. Gitignored like the other tools/ state files:
 # it quotes findings that can reference real pipeline content, and this repo is public.
 tools/.cross-model-ledger.jsonl
+# ...and any backup of it. A `.bak-MMDDYY` suffix escaped the exact-name pattern
+# above and left a file holding real target-company names untracked but NOT ignored,
+# one `git add -A` from a public push. Same shape as the 2026-08-18 settings.json.bak.
+tools/.cross-model-ledger.jsonl*
 tools/.role-queue.json
 tools/.career_seen.json
 tools/.session-mutations.json
@@ -164,3 +168,5 @@ frames/
 
 # pytest-cov artifact
 .coverage
+# Names private trees; the mechanism is public, the list is not.
+tools/.sealed-paths.conf

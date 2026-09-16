@@ -722,7 +722,11 @@ def _fake_repo(tmp_path):
 @pytest.mark.parametrize("rel,readable", [
     ("data/secret.md", False),
     ("memory/note.md", False),
-    ("output/acme/dossier.md", False),      # dossiers are private
+    # CHANGED 2026-09-16: output/ is now READABLE. It holds the deliverables a
+    # cross-model run is dispatched to review, and denying it produced reports written
+    # without opening a single file under review. The sealed material moved to
+    # sealed_subpaths(), which is narrower and is applied last.
+    ("output/acme/dossier.md", True),
     (".git/HEAD", False),                   # git objects carry the deleted history
     ("tools/code.py", True),                # code under review must stay readable
     ("output/analysis/prior.md", True),     # --prior reports must stay readable
@@ -759,7 +763,9 @@ def test_the_dispatch_argv_is_wrapped_in_the_jail(tmp_path):
     argv = cv.jailed_argv(tmp_path, tmp_path / "p.sb")
     assert argv[0] == "sandbox-exec"
     assert argv[1] == "-f"
-    assert "codex" in argv
+    # Absolute since 2026-09-16; the property is that the codex binary is what gets
+    # wrapped, not that the string "codex" appears.
+    assert any(Path(a).name == "codex" for a in argv)
     assert "--dangerously-bypass-approvals-and-sandbox" in argv, (
         "codex's inner sandbox must be OFF inside the jail: nesting it made codex stop "
         "attempting reads entirely (715 tokens, no shell trace)")
@@ -873,17 +879,88 @@ def test_the_wired_models_span_more_than_one_family():
     assert len(families) == len(cv.MODELS), f"family collision: {families}"
 
 
-def test_no_model_shares_the_authors_family():
-    """The author of the work under review is Claude. Using Claude to verify Claude is
-    the anchoring failure wearing a second opinion's coat."""
-    assert not any(m.family == "anthropic" for m in cv.MODELS.values())
+def test_a_same_family_verifier_is_additive_never_sufficient():
+    """SUPERSEDES test_no_model_shares_the_authors_family (2026-09-16).
+
+    The old rule refused any Anthropic verifier outright, on the reasoning that Claude
+    verifying Claude is anchoring in a second opinion's coat. It was replaced on
+    evidence: a Fable pass found the single most valuable defect on a real deliverable
+    that neither cross-family model reached. The protection did not go away, it moved
+    into the gate -- a same-family model may RAISE the count and may never BE the count.
+
+    So the invariant is no longer "no Anthropic model exists". It is "the wired set
+    still contains a model outside the author's family", which is what makes the gate's
+    AUTHOR_FAMILY rule satisfiable at all.
+    """
+    families = {m.family for m in cv.MODELS.values()}
+    assert families - {gate.AUTHOR_FAMILY}, (
+        "every wired model shares the author's family; no push could ever be covered")
+
+
+def test_every_wired_gate_model_exists_in_codex_verify():
+    """The gate's WIRED_MODELS activates tier requirements. A name there with no Model
+    behind it would demand a verification nobody can run."""
+    assert set(gate.WIRED_MODELS) <= set(cv.MODELS), (
+        f"gate wires {set(gate.WIRED_MODELS) - set(cv.MODELS)} with no dispatchable model")
 
 
 @pytest.mark.parametrize("name", ["codex", "grok"])
 def test_jailed_argv_dispatches_the_named_model(tmp_path, name):
     argv = cv.jailed_argv(tmp_path, tmp_path / "p.sb", name)
     assert argv[0] == "sandbox-exec"
-    assert cv.MODELS[name].argv[0] in argv
+    # The binary is resolved to an ABSOLUTE path (2026-09-16), so membership of the
+    # bare name no longer holds. The property under test is unchanged: the argv that
+    # goes to the jail is the one this model declared, and the binary it names is the
+    # one whose basename the model declared.
+    bare = cv.MODELS[name].argv[0]
+    resolved = [a for a in argv if Path(a).name == bare]
+    assert len(resolved) == 1, f"expected exactly one {bare} binary in {argv}"
+    assert Path(resolved[0]).is_absolute()
+    assert argv[argv.index(resolved[0]) + 1:] == list(cv.MODELS[name].argv[1:])
+
+
+def test_a_missing_binary_raises_instead_of_being_dispatched(monkeypatch):
+    """A verifier that is not installed must not look like a verifier that agreed.
+
+    Before 2026-09-16 the argv carried the bare name, so an absent binary produced a
+    generic non-zero rc from the jail wrapper. grok lives in ~/.local/bin, which is on
+    Nick's interactive PATH and NOT on the PATH this harness runs with, so every grok
+    dispatch from a Claude Code session failed this way and the failure was
+    indistinguishable from an ordinary bad run.
+    """
+    monkeypatch.setattr(cv.shutil, "which", lambda n: None)
+    monkeypatch.setattr(cv, "EXTRA_BIN_DIRS", ())
+    with pytest.raises(RuntimeError) as e:
+        cv.resolve_binary("cursor-agent")
+    assert "cursor-agent" in str(e.value)
+    assert "clean review" in str(e.value)
+
+
+def test_a_binary_off_PATH_is_found_in_the_extra_dirs(tmp_path, monkeypatch):
+    fake = tmp_path / "cursor-agent"
+    fake.write_text("#!/bin/sh\n", encoding="utf-8")
+    fake.chmod(0o755)
+    monkeypatch.setattr(cv.shutil, "which", lambda n: None)
+    monkeypatch.setattr(cv, "EXTRA_BIN_DIRS", (tmp_path,))
+    assert cv.resolve_binary("cursor-agent") == str(fake)
+
+
+def test_a_non_executable_file_in_an_extra_dir_is_not_accepted(tmp_path, monkeypatch):
+    """Presence is not runnability. A 0644 file with the right name would otherwise be
+    dispatched and fail at exec time, which is the silent shape again."""
+    fake = tmp_path / "cursor-agent"
+    fake.write_text("#!/bin/sh\n", encoding="utf-8")
+    fake.chmod(0o644)
+    monkeypatch.setattr(cv.shutil, "which", lambda n: None)
+    monkeypatch.setattr(cv, "EXTRA_BIN_DIRS", (tmp_path,))
+    with pytest.raises(RuntimeError):
+        cv.resolve_binary("cursor-agent")
+
+
+def test_PATH_wins_over_the_extra_dirs(tmp_path, monkeypatch):
+    monkeypatch.setattr(cv.shutil, "which", lambda n: "/usr/bin/" + n)
+    monkeypatch.setattr(cv, "EXTRA_BIN_DIRS", (tmp_path,))
+    assert cv.resolve_binary("codex") == "/usr/bin/codex"
 
 
 def test_an_unknown_model_is_refused(tmp_path):
@@ -935,6 +1012,106 @@ def test_each_model_uses_its_own_transports(tmp_path, monkeypatch, model,
     # codex would tell a model with a report file to print instead; withholding it from
     # grok leaves it under an instruction it cannot obey.
     assert ("OUTPUT OVERRIDE" in seen["prompt"]) is report_from_stdout
+
+
+def test_output_is_readable_so_the_verifier_can_see_the_work(tmp_path):
+    """2026-09-16: `output` was in PRIVATE_TREES, so a cross-model run could not open a
+    single file of the deliverable it was reviewing, and still recorded verified=True."""
+    pol = cv.sandbox_policy(tmp_path)
+    root = str(tmp_path.resolve())
+    assert f'(deny file-read* (subpath "{root}/output"))' not in pol
+    for t in ("data", "memory", "coaching"):
+        assert f'(deny file-read* (subpath "{root}/{t}"))' in pol, (
+            f"{t} must stay denied; widening output is not a reason to widen the rest")
+
+
+def test_gitignored_sweep_does_not_re_deny_output(tmp_path, monkeypatch):
+    """The derived sweep would silently undo the PRIVATE_TREES change, because output is
+    gitignored by design. Without the exemption the widening is a no-op."""
+    monkeypatch.setattr(cv, "ignored_entries",
+                        lambda _r: ["output", "output/acme", "data", "secrets.txt"])
+    pol = cv.sandbox_policy(tmp_path)
+    root = str(tmp_path.resolve())
+    assert f'(deny file-read* (subpath "{root}/output"))' not in pol
+    assert f'(deny file-read* (subpath "{root}/output/acme"))' not in pol
+    assert f'(deny file-read* (subpath "{root}/secrets.txt"))' in pol
+
+
+def test_configured_private_trees_are_sealed_by_name(tmp_path, monkeypatch):
+    """A private tree in a PEER repo was reachable inside the jail: no repo-relative deny
+    reached it and `(allow default)` left it readable. Sealed explicitly from a config,
+    not merely covered by the peer-repo deny, so a later decision to open a peer repo
+    cannot expose it. THE LIST IS GITIGNORED because this test file is public, and naming
+    a sealed directory in a public repo discloses what sealing it was meant to protect."""
+    repo = tmp_path / "job-search"
+    (repo / "output").mkdir(parents=True)
+    secret = tmp_path / "elsewhere" / "private-tree"
+    secret.mkdir(parents=True)
+    conf = tmp_path / "sealed.conf"
+    conf.write_text(f"# a comment\n\n{secret}\n", encoding="utf-8")
+    monkeypatch.setattr(cv, "SEALED_CONF", conf)
+    assert f'(deny file-read* (subpath "{secret}"))' in cv.sandbox_policy(repo)
+
+
+def test_a_missing_sealed_conf_is_a_valid_state(tmp_path, monkeypatch):
+    """No config is a normal resting state, not an error. The peer-repo deny stands alone."""
+    repo = tmp_path / "job-search"
+    (repo / "output").mkdir(parents=True)
+    (tmp_path / "peer").mkdir()
+    monkeypatch.setattr(cv, "SEALED_CONF", tmp_path / "does-not-exist.conf")
+    pol = cv.sandbox_policy(repo)
+    assert f'(deny file-read* (subpath "{tmp_path / "peer"}"))' in pol
+
+
+def test_peer_repos_are_sealed_and_this_repo_is_not(tmp_path):
+    repo = tmp_path / "job-search"
+    (repo / "output").mkdir(parents=True)
+    for peer in ("peer-one", "peer-two", "peer-three"):
+        (tmp_path / peer).mkdir()
+    pol = cv.sandbox_policy(repo)
+    for peer in ("peer-one", "peer-two", "peer-three"):
+        assert f'(deny file-read* (subpath "{tmp_path / peer}"))' in pol
+    assert f'(deny file-read* (subpath "{repo.resolve()}"))' not in pol
+
+
+def test_the_seal_is_the_last_word(tmp_path):
+    """Seatbelt applies the LAST matching rule. A seal emitted before a carve-out is not
+    a seal. This asserts ordering, which is the only thing that makes the rule binding."""
+    repo = tmp_path / "job-search"
+    (repo / "output").mkdir(parents=True)
+    (tmp_path / "peer").mkdir()
+    lines = cv.sandbox_policy(repo, extra_writable=[repo / "output"]).splitlines()
+    last_allow = max(i for i, ln in enumerate(lines) if ln.startswith("(allow"))
+    seal_at = lines.index(f'(deny file-read* (subpath "{tmp_path / "peer"}"))')
+    assert seal_at > last_allow, "a seal before an allow can be overridden by it"
+
+
+@pytest.mark.skipif(not _shutil.which("sandbox-exec"), reason="macOS seatbelt only")
+def test_the_seal_actually_blocks_a_real_read(tmp_path):
+    """Profile text is a claim. This runs the real jail and confirms the read fails,
+    and that a file in output/ succeeds, which is the pair that matters."""
+    repo = tmp_path / "job-search"
+    (repo / "output" / "brief").mkdir(parents=True)
+    (repo / "output" / "brief" / "ok.md").write_text("VISIBLE\n", encoding="utf-8")
+    private = tmp_path / "peer-repo" / "private"
+    private.mkdir(parents=True)
+    (private / "note.md").write_text("SEALEDTOKEN\n", encoding="utf-8")
+
+    policy = tmp_path / "p.sb"
+    policy.write_text(cv.sandbox_policy(repo), encoding="utf-8")
+
+    sealed_read = subprocess.run(
+        ["sandbox-exec", "-f", str(policy), "/bin/cat", str(private / "note.md")],
+        capture_output=True, text=True)
+    assert sealed_read.returncode != 0, "a sealed private tree was readable inside the jail"
+    assert "SEALEDTOKEN" not in sealed_read.stdout
+
+    allowed_read = subprocess.run(
+        ["sandbox-exec", "-f", str(policy), "/bin/cat",
+         str(repo / "output" / "brief" / "ok.md")],
+        capture_output=True, text=True)
+    assert allowed_read.returncode == 0, allowed_read.stderr
+    assert "VISIBLE" in allowed_read.stdout
 
 
 def test_a_stdout_model_is_told_it_cannot_write(tmp_path):
@@ -1004,8 +1181,11 @@ def test_the_static_trees_remain_a_floor_when_git_cannot_enumerate(tmp_path):
     to an empty deny list."""
     repo = _fake_repo(tmp_path)
     pol = cv.sandbox_policy(repo)
-    for tree in ("data", "memory", "coaching", "output"):
+    for tree in ("data", "memory", "coaching"):
         assert f'{repo}/{tree}"' in pol, f"{tree} missing from the floor"
+    # `output` left the floor deliberately on 2026-09-16 so the verifier can read the
+    # work under review. Asserted as an ABSENCE so a silent re-add fails here.
+    assert f'(deny file-read* (subpath "{repo}/output"))' not in pol
 
 
 def test_a_failed_git_enumeration_yields_the_floor_not_its_output(tmp_path, monkeypatch):

@@ -225,14 +225,34 @@ TIER_MODELS = {0: 0, 1: 1, 2: 2, 3: 2}
 # as the thing to avoid when he agreed to build this. So the requirement is
 # min(what the tier wants, what exists). The tier is still COMPUTED and RECORDED at full
 # strength, so the shortfall is visible rather than silently absent.
-WIRED_MODELS: tuple[str, ...] = ("codex", "grok")
+WIRED_MODELS: tuple[str, ...] = ("codex", "grok", "fable")
 
 DEFAULT_MODEL = "codex"
 
-# Labels used before the `family` field existed, mapped into the family namespace.
+# The family that WROTE the work under review. A verifier from this family is additive,
+# never sufficient: same training, correlated blind spots, and its agreement is the
+# cheapest thing it can produce.
+#
+# WHY IT IS WIRED AT ALL (2026-09-16). codex_verify previously REFUSED any Anthropic
+# model outright. On a live client deliverable, a Fable pass found the single most valuable
+# defect of the day -- that 97% of the rows counted as bookings were logged as transfers,
+# which no other pass reached -- after codex and grok had each returned findings from
+# their own targets. Refusing it outright cost more than it protected. So the rule moved
+# from "never" to "never ALONE": a path is covered only when the models that looked at it
+# include at least one OUTSIDE this family. Fable can raise the count; it cannot be the
+# count.
+AUTHOR_FAMILY = "anthropic"
+
+# Label -> family, for any row that lacks the `family` field. Named for the legacy rows
+# it was built for, but it must cover EVERY wired model, not only the old ones: a row
+# carrying `model: fable` and no family would otherwise resolve to the literal "fable",
+# read as a family outside the author's, and clear a push by itself -- the exact hole the
+# AUTHOR_FAMILY rule exists to close. Added fable 2026-09-16 for that reason, not because
+# any fable row predates the field.
+#
 # Duplicated deliberately rather than imported from codex_verify.MODELS: that import
 # would be circular, since codex_verify imports this module. A parity test pins them.
-LEGACY_MODEL_FAMILIES = {"codex": "openai", "grok": "xai"}
+LEGACY_MODEL_FAMILIES = {"codex": "openai", "grok": "xai", "fable": "anthropic"}
 
 
 def models_required(tier: int) -> int:
@@ -604,7 +624,21 @@ def check(repo_root: Path, changes: list[tuple[str, int, int]],
     # from the same model are one perspective recorded twice, which is the anchoring
     # failure this gate exists to defeat, so they count once.
     need = max(1, v.need_models)
-    missing = sorted(p for p in required if len(covered.get(p, ())) < need)
+
+    def path_is_covered(pth: str) -> bool:
+        """Enough distinct families, AND at least one from outside the author's.
+
+        The second condition is what keeps a same-family verifier additive. Without it,
+        wiring Fable would let two Anthropic rows -- or one, at tier 1 -- clear a push
+        with nothing outside the family that wrote the code having looked at it, which
+        is the anchoring failure this gate exists to defeat, not a relaxation of it.
+        """
+        fams = covered.get(pth, set())
+        if len(fams) < need:
+            return False
+        return bool(fams - {AUTHOR_FAMILY})
+
+    missing = sorted(p for p in required if not path_is_covered(p))
     if not missing:
         v.blocked = False
         v.message = (f"cleared: all {len(required)} tier-{v.tier} path(s) covered by "

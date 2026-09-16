@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import tempfile
@@ -141,7 +142,16 @@ def gather_env_facts(repo_root: Path) -> str:
 # reflections, dossiers, the memory corpus. Listed explicitly, in the same spirit as
 # cross_model_gate.ENFORCEMENT_ASSETS: a derived list would be cleverer and would fail
 # open the first time the derivation missed something.
-PRIVATE_TREES = ("data", "memory", "coaching", "output",
+PRIVATE_TREES = ("data", "memory", "coaching",
+                 # `output` was REMOVED from this tuple on 2026-09-16, deliberately.
+                 # It held every client-facing deliverable, so a cross-model run could
+                 # not read the work it was dispatched to review: grok returned a full
+                 # report on a live client deliverable having opened none of the files,
+                 # and the wrapper still recorded verified=True. A verifier that cannot
+                 # see the artifact is worse than no verifier, because its agreement
+                 # gets counted. The sealed material that used to be protected by the
+                 # blanket `output` deny is now protected by SEALED_SUBPATHS below,
+                 # which is narrower and is applied LAST so nothing can re-open it.
                  # .git holds every version ever committed, and data/ was committed 9
                  # times and memory/ 7 before they were gitignored. Those objects are
                  # unreachable from origin (checked: 0 private commits on every origin
@@ -206,6 +216,16 @@ MODELS: dict[str, Model] = {
         argv=["cursor-agent", "-p", "--trust", "--mode", "ask",
               "--sandbox", "disabled", "--model", "cursor-grok-4.6-xhigh"],
         prompt_via="argv", report_via="stdout", family="xai"),
+    # ADDITIVE, NEVER SUFFICIENT. Same family as the author, so cross_model_gate's
+    # AUTHOR_FAMILY rule requires at least one non-Anthropic model alongside it before a
+    # path counts as covered. Wired 2026-09-16 on evidence rather than principle: a Fable
+    # pass on a live client deliverable found that 97% of the rows counted as bookings
+    # were logged as transfers -- the finding that reshaped the deliverable -- which
+    # neither codex nor grok reached from their own targets. Read-only like grok: --print
+    # cannot write, so it reports on stdout and we write the file.
+    "fable": Model(
+        argv=["claude", "-p", "--model", "claude-fable-5-1"],
+        prompt_via="stdin", report_via="stdout", family="anthropic"),
 }
 
 DEFAULT_MODEL_NAME = "codex"
@@ -242,11 +262,49 @@ def ignored_entries(repo_root) -> list[str]:
     return [ln.strip().rstrip("/") for ln in proc.stdout.splitlines() if ln.strip()]
 
 
+# Extra absolute paths to seal, one per line, `~` expanded, blank lines and `#` ignored.
+# GITIGNORED BY DESIGN, same as tools/.gmail-labels.conf and tools/.pii-denylist.txt: this
+# file is PUBLIC, so the mechanism lives here and the specifics do not. Naming a sealed
+# directory in a public repo discloses exactly what sealing it was meant to protect.
+SEALED_CONF = Path(__file__).resolve().parent / ".sealed-paths.conf"
+
+
+def sealed_subpaths(repo_root) -> list[str]:
+    """Absolute paths that are NEVER readable, appended LAST so no rule can re-open them.
+
+    Two sources, both discovered 2026-09-16 while widening `output` for review:
+
+    1. PEER REPOS. Everything beside this repo under the projects root. `sandbox_policy`
+       denied this repo's trees and ~/.claude and opened with `(allow default)`, so every
+       sibling repo was readable inside the jail the whole time. None of it is ever
+       material for reviewing this repo's work.
+    2. ANYTHING LISTED IN SEALED_CONF. Private trees whose paths should not appear in a
+       public file. Absent or empty is fine; the peer-repo deny already covers a sibling.
+
+    Derived from repo_root rather than hardcoded so this file carries no absolute path, and
+    so a peer repo added tomorrow is covered without an edit.
+    """
+    root = Path(repo_root).resolve()
+    projects = root.parent
+    sealed: list[str] = []
+    try:
+        for line in SEALED_CONF.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line and not line.startswith("#"):
+                sealed.append(str(Path(line).expanduser()))
+    except OSError:
+        pass                      # no conf is a valid state, not an error
+    for sibling in sorted(p for p in projects.iterdir() if p.is_dir()):
+        if sibling.resolve() != root:
+            sealed.append(str(sibling))
+    return sealed
+
+
 def sandbox_policy(repo_root, extra_writable=()) -> str:
     """A seatbelt profile denying everything private and all repo writes.
 
     Later rules override earlier ones, so the output/analysis carve-outs must follow
-    the broad denies.
+    the broad denies -- and SEALED_SUBPATHS must follow everything.
     """
     root = str(Path(repo_root).resolve())
     lines = ["(version 1)", "(allow default)"]
@@ -254,7 +312,12 @@ def sandbox_policy(repo_root, extra_writable=()) -> str:
     lines += [f'(deny file-read* (subpath "{root}/{t}"))' for t in PRIVATE_TREES]
     # DERIVED: everything else git ignores, including gitignored files sitting inside
     # trees that are otherwise readable because the code under review lives there.
+    # `output/` is EXEMPT from this sweep: it is gitignored by design (public repo) and
+    # is also where the work under review lives, so denying it here would silently undo
+    # its removal from PRIVATE_TREES above.
     for rel in ignored_entries(repo_root):
+        if rel == "output" or rel.startswith("output/"):
+            continue
         lines.append(f'(deny file-read* (subpath "{root}/{rel}"))')
     # OUT OF REPO: the LIVE memory corpus is not under the repo at all -- it lives at
     # ~/.claude/projects/<slug>/memory/ (CLAUDE.md, "THREE PHYSICAL ROOTS"). A
@@ -269,7 +332,41 @@ def sandbox_policy(repo_root, extra_writable=()) -> str:
     # is somewhere to write, never a reason to open the private trees.
     for extra in extra_writable:
         lines.append(f'(allow file-write* (subpath "{Path(extra).resolve()}"))')
+    # SEALED, LAST. Seatbelt applies the last matching rule, so these deny-reads come
+    # after every allow above and cannot be re-opened by a carve-out added later in
+    # this function. The configured private trees come first.
+    lines += [f'(deny file-read* (subpath "{p}"))' for p in sealed_subpaths(repo_root)]
     return "\n".join(lines) + "\n"
+
+
+# Directories searched for a model binary when it is not already on PATH. Claude Code's
+# Bash tool does not inherit the login shell's full PATH, so a binary the operator can
+# run interactively is invisible here. cursor-agent installs to ~/.local/bin, which is
+# on Nick's interactive PATH and not on this one -- the grok dispatch therefore died
+# with "command not found" while codex worked, and the failure read as a normal non-zero
+# run rather than as a missing dependency. 2026-09-16.
+EXTRA_BIN_DIRS = (Path.home() / ".local" / "bin", Path.home() / "bin")
+
+
+def resolve_binary(name: str) -> str:
+    """Absolute path to a model binary. RAISES rather than returning the bare name.
+
+    Returning `name` on a miss is what made this fail silently: subprocess then reports
+    a generic FileNotFoundError or a non-zero rc from the jail wrapper, and neither says
+    "the verifier you asked for is not installed here". The whole point of a second
+    model is that its absence must not look like its agreement.
+    """
+    found = shutil.which(name)
+    if found:
+        return found
+    for d in EXTRA_BIN_DIRS:
+        cand = d / name
+        if cand.is_file() and os.access(cand, os.X_OK):
+            return str(cand)
+    raise RuntimeError(
+        f"{name!r} not found on PATH or in {[str(d) for d in EXTRA_BIN_DIRS]}. "
+        f"The verifier cannot run, and a missing verifier must never be reported as a "
+        f"clean review. Install it, or pass --model with one that is present.")
 
 
 def jailed_argv(repo_root, policy_path, model=DEFAULT_MODEL_NAME) -> list[str]:
@@ -279,7 +376,9 @@ def jailed_argv(repo_root, policy_path, model=DEFAULT_MODEL_NAME) -> list[str]:
         raise RuntimeError(
             "sandbox-exec not found, so the model cannot be jailed and would have read "
             "access to the private trees. Refusing to run.")
-    return ["sandbox-exec", "-f", str(policy_path), *MODELS[model].argv]
+    argv = list(MODELS[model].argv)
+    argv[0] = resolve_binary(argv[0])
+    return ["sandbox-exec", "-f", str(policy_path), *argv]
 
 
 # A diff larger than this buries the signal it exists to surface. Truncation is LOUD:
