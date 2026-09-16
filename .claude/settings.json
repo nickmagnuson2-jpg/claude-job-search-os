@@ -95,6 +95,10 @@
           {
             "type": "command",
             "command": "PYTHONIOENCODING=utf-8 python3 $CLAUDE_PROJECT_DIR/tools/check_pipeline_exit_status.py"
+          },
+          {
+            "type": "command",
+            "command": "PYTHONIOENCODING=utf-8 python3 $CLAUDE_PROJECT_DIR/tools/check_heredoc_quoting.py"
           }
         ]
       },
