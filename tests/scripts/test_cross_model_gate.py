@@ -724,11 +724,28 @@ def test_a_same_family_row_ALONE_does_not_cover_a_path(tmp_path, monkeypatch):
     assert v.blocked is True, "a same-family verifier cleared a push on its own"
 
 
-def test_a_same_family_row_RAISES_the_count_alongside_an_outside_one(tmp_path, monkeypatch):
-    """Additive is the other half of the rule. Fable must still be able to satisfy the
-    SECOND slot of a two-model tier, or wiring it bought nothing."""
+def test_a_same_family_row_CANNOT_fill_a_slot_a_tier_demands(tmp_path, monkeypatch):
+    """CORRECTED 2026-09-16 by cross-model review (F2, P0). This test previously asserted
+    the OPPOSITE and was wrong: it let a same-family verifier occupy the second of the two
+    slots a tier-2 push demands, so {openai, anthropic} cleared a bar that used to require
+    {openai, xai}. "Additive, never sufficient" is true at tier 1 and FALSE at tier 2 if
+    the author's own family counts toward the requirement.
+
+    So the tier's appetite must be met by OUTSIDE families alone. A same-family verifier
+    earns its keep through the findings it produces, not by clearing a push."""
     monkeypatch.setattr(g, "WIRED_MODELS", ("codex", "grok", "fable"))
     _row(tmp_path, paths=["CLAUDE.md"], model="codex")
+    _row(tmp_path, paths=["CLAUDE.md"], model="fable")
+    assert g.check(tmp_path, [("CLAUDE.md", 3, 1)], since=0).blocked is True
+
+
+def test_two_OUTSIDE_families_still_clear_a_tier_3_path(tmp_path, monkeypatch):
+    """The fix must not make the gate unsatisfiable: two genuinely independent families
+    clear it, with or without a same-family row alongside."""
+    monkeypatch.setattr(g, "WIRED_MODELS", ("codex", "grok", "fable"))
+    _row(tmp_path, paths=["CLAUDE.md"], model="codex")
+    _row(tmp_path, paths=["CLAUDE.md"], model="grok")
+    assert g.check(tmp_path, [("CLAUDE.md", 3, 1)], since=0).blocked is False
     _row(tmp_path, paths=["CLAUDE.md"], model="fable")
     assert g.check(tmp_path, [("CLAUDE.md", 3, 1)], since=0).blocked is False
 

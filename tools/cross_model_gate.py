@@ -634,9 +634,16 @@ def check(repo_root: Path, changes: list[tuple[str, int, int]],
         is the anchoring failure this gate exists to defeat, not a relaxation of it.
         """
         fams = covered.get(pth, set())
-        if len(fams) < need:
-            return False
-        return bool(fams - {AUTHOR_FAMILY})
+        # The tier's appetite must be met by families OUTSIDE the author's. Counting the
+        # author's own family toward it lets a same-family verifier OCCUPY one of the two
+        # slots a tier-2 push demands, so {openai, anthropic} would clear a bar that used
+        # to require {openai, xai}. That is a weakening dressed as an addition, and it is
+        # exactly what "additive, never sufficient" was supposed to prevent -- the first
+        # version of this check tested `fams - {AUTHOR_FAMILY}` for non-emptiness, which
+        # is true at tier 1 and false at tier 2. Found by cross-model review (F2, P0,
+        # 2026-09-16) on the same commit that wired the same-family model.
+        outside = fams - {AUTHOR_FAMILY}
+        return len(outside) >= need
 
     missing = sorted(p for p in required if not path_is_covered(p))
     if not missing:
