@@ -19,7 +19,8 @@ executable that produces the thing.
 ## How to use it
 
 Every page passes A through D. E is the deck-level gate and runs once, last. **F is artifact-agnostic
-and runs against `frame.yaml`, not against the pages** — it applies unchanged to a deck, a whiteboard,
+and runs mostly against `frame.yaml` rather than the pages** (F.2 is the exception, see its
+note) — it applies unchanged to a deck, a whiteboard,
 a memo, or a spoken answer.
 
 **Nothing ships until E1 and F both pass.**
@@ -39,6 +40,8 @@ a memo, or a spoken answer.
 | A7 | **Footnotes** clarify details, bottom left |
 | A8 | **Every page has a source.** Including the ones that feel like they do not need one |
 | A9 | **Consistent font sizing in the page body.** See the note below |
+| A10 | **Every number carries an inline provenance tier from the moment it is written.** Counted / modelled / supplied, or Confirmed / Assumption / Hypothesis / Unknown. A8 sources the PAGE; A10 tiers the NUMBER |
+| A11 | **An assumption that drives a decision may not sit in a footnote or in small grey type**, and it states which decision flips if it is wrong |
 
 ### The A9 rule, stated correctly
 
@@ -96,6 +99,23 @@ none get bulk-replaced.**
 | C10 | **No more than 3 to 4 colors** |
 | C11 | **Do not use dashed elements.** They are hard to distinguish and interpret. See the note below |
 | C12 | **All pages are essentially tables.** A table organizes logically, forces MECE decomposition, and creates clear top-to-bottom, left-to-right flow |
+| C13 | **Every printed ratio recomputes from the printed values.** A reader with a calculator reaches the figure on the page, or the figure does not go on the page. See the note below |
+| C14 | **A breakdown conserves, and "other" is never its largest row.** If it is, you do not have a breakdown; reach for the client's own taxonomy before adding rows |
+| C15 | **Comparison symmetry.** A treatment applied to one side of a comparison (a range, a bracket, a sizing, a concession) is applied to the other, or you say on the page why it cannot be |
+
+### The C13 rule, and the two ways it fails
+
+**Both observed on one artifact, 2026-09-17.**
+
+*Rounding a derived figure.* "$65,979 per customer per month" against a $461,856 headline: 7 x
+65,979 = 461,853, a $3 gap, because 461,856 / 7 = 65,979.43 and neither the dollar nor the
+booking count divides evenly. The fix is not more decimals, it is not printing a derived figure
+that invites the multiplication.
+
+*Subtracting ratios.* "32.4% against 1.6%, a 20.8x gap... the other 19x" fails twice over: 32.4
+/ 1.6 = 20.25 from the printed values, not 20.8, and 20.8 minus 1.7 is not a meaningful
+operation on two ratios. The ratio of ratios is 12.2x. **When a ratio is hard to print honestly,
+print the four underlying rates and let the reader see the gap.**
 
 ### The C11 rule, and how to keep a visual grammar anyway
 
@@ -138,6 +158,59 @@ Each is feedback you are guaranteed to get, so the fix goes in up front.
 | E4 | **Four corners updated and consistent** across every page |
 | E5 | **Optimal spacing.** Do not overcrowd, and do not leave too much empty space. **Fill by densifying, never by distributing** |
 | E6 | **Fit and align content within page borders**, rows and columns aligned consistently |
+| E7 | **The read-surface audit.** A reader with the artifact and nothing else, no frame, no reasoning, no talk track. Separate instrument from E1 and it fails on different things. See below |
+| E8 | **The cut pass runs the two tests, and names what is protected BEFORE it starts** |
+| E9 | **Re-render and look after any edit that ADDS text.** Fixed-height pages overprint silently. Verification is rasterize-and-look, never a numeric diff |
+| E10 | **End-of-cycle sweeps on the RENDERED text:** banned tokens, cross-page consistency on every duration and absolute, and a restatement count for each claim |
+
+### E7, the read-surface audit — and why E1 cannot do its job
+
+**E1 reads the LEDES in order. E7 reads the WHOLE PAGE cold.** They catch different defects and
+neither substitutes for the other.
+
+A deck can route around its own defect in delivery while the page keeps doing the damage. At
+the 2026-08 engagement the talk tracks were already instructed to stay silent on a row, so no talk-track pass
+ever quoted the sentence that was causing the harm: *"the delivery was already routing around
+the problem while the page kept doing the damage, which is why this was a read-surface defect,
+invisible to every talk-track pass"* (`output/<engagement>/080426-deck-v3-DECISIONS.md:988`).
+
+**For a SENT artifact this is the primary gate, not a supplementary one**, because there is no
+delivery to route around anything.
+
+**Scope the instrument to the claim, corrected 2026-09-17.** A test that shows a reader only the
+HEADLINES answers "does this pair stand as an argument." It cannot answer "does the page carry
+its proof," because it never saw a page. Quoting headline-only readers as evidence about the
+page is a conclusion stated wider than the scope that produced it. Run both, and say which ran.
+
+### E8, the cut pass
+
+**Two tests, and the second is the one that cuts** (`output/<engagement>/080426-deck-v3-PLANNING-SESSION-PROMPT.md:26-38`):
+
+1. **Defensibility.** Is it true, sourced, and ours?
+2. **Function.** Why is it here, and how does it progress the argument?
+
+> "Test 2 is stricter and is the operative cut criterion. An element can be true, well sourced,
+> defensible and genuinely mine, and still do no work on the page. Test 1 keeps it. Only test 2
+> kills it." **Do not let "it's true" or "it's good context" count as an answer.**
+
+**Name what is protected before the pass begins**, not during it. Everything not named is
+genuinely on the table.
+
+**Ranking the survivors by impact on the headline number inverts the result.** Measured
+2026-09-17: the block that moved the number most was the one three independent readers cut as
+irreproducible, while the blocks that moved it by zero were the ones answering the reader's
+strongest objections. **Rank by which objection a block closes, and whether a cold reader
+actually raised it** — which is what E7 produces.
+
+### E10, and the defect it exists to catch
+
+**A fix creates new surface, and the check usually points at the old surface.** Observed
+2026-09-17: a breakdown whose "other" row was 40% of the total was fixed by regrouping, and the
+same edit introduced a new column that named 555 of 622. Fixed and reintroduced, same table,
+same session, same defect class.
+
+**So the check runs on what the edit just CREATED, not on what it was sent to repair.** Did this
+edit make a list, a column, a breakdown, a ratio? Does it conserve, or is it labelled partial?
 
 ---
 
@@ -148,7 +221,13 @@ independent instruments in the 2026-08-05 engagement (review lanes, the planning
 Stage 0 triage, a 13-panel, and Sections A-E of this rubric) were all built to catch **untrue** things
 and were structurally unable to catch **unanswerable** ones. F is that missing audit.
 
-**F runs against `frame.yaml`, not against the pages**, and it is artifact-agnostic. Where a rule says
+**F.1 and F.3 run against `frame.yaml`, not against the pages.** F.2 is the exception and always
+was: **F6 reads the ARTIFACT** (that is the point of it, and after the 2026-09-17 correction its
+detector is a blind agent holding the artifact only) and **F7 reads the artifact against the
+rehearsal transcript.** The blanket "F never touches the pages" contract was written before F6 and
+F7 had named instruments, and a caller following it literally could not run either. Corrected
+2026-09-17. F is still artifact-agnostic in the sense that matters: it applies unchanged to a deck,
+a whiteboard, a memo or a spoken answer. Where a rule says
 "surface," read: the page, the board, or the sentence that names the element.
 
 ### F.1 Derivation — is the frame sound?
@@ -164,12 +243,59 @@ and were structurally unable to catch **unanswerable** ones. F is that missing a
 **F3 and F4 run on element names and one-line definitions only, never on the artifact.** An agent
 holding the artifact rationalises overlap as emphasis.
 
+**Where to aim F3 and F4: probe the BOUNDARIES between adjacent elements, not the elements.**
+Recovered 2026-09-17 from `coaching/progress/2026-08-04-<engagement>-whiteboard.md:61`.
+The observed failure is never a forgotten item; it is two adjacent concepts fusing into one. An
+agent asked "is element 3 sound" finds nothing. An agent asked "state the line between element
+3 and element 4 in one sentence" finds the fusion.
+
+### The operating tests, restored 2026-09-17
+
+**These were in `output/analysis/081326-deck-rubric-section-F-DRAFT.md` and did not survive
+promotion.** The pattern of the loss is the finding: the promotion kept every rule a SCRIPT can
+check and dropped nearly every test a HUMAN runs, which made the rubric scoreable and stopped
+it being operable. A presence-only check is not a valid exit under this project's own promotion
+rule, and F1, F2 and F5 had been reduced to exactly that.
+
+| Rule | The test you actually run |
+|---|---|
+| **F1** | For every noun on the surface, **state the level below it in one sentence.** |
+| **F2** | Write *"Because [fact], the decision turns on X."* **If that sentence cannot be written, the element does not go on the surface.** |
+| **F5** | **The deletion test.** A criterion whose deletion changes nothing is decoration; a criterion whose deletion flips the answer is the one you will be interrogated on first. Run it on every element in the set. |
+
+**F5's deletion test is the one to restore first.** The `closure` and `exclusions` fields make
+F5 checkable by script; the deletion test is what makes it decidable by a person, and it is the
+only instrument here that finds decoration rather than error.
+
 ### F.2 Reachability — can it be defended where it will be attacked?
 
 | # | Rule | Enforced by |
 |---|---|---|
-| **F6** | **The answer to the most likely probe sits on the surface carrying the claim it defends**, never downstream. Every placement names the delivery model it assumes and answers: *what happens to this if I lose the floor here?* | Nick |
-| **F7** | **Spoken vocabulary matches printed vocabulary for every metric.** Read the frame aloud against the artifact | Nick, assisted by a token diff against the rehearsal transcript |
+| **F6** | **The answer to the most likely probe sits on the surface carrying the claim it defends**, never downstream. Every placement names the delivery model it assumes and answers: *what happens to this if I lose the floor here?* | **blind agent given the ARTIFACT ONLY**, asked what it cannot answer from the page; Nick disposes what it returns |
+| **F7** | **Spoken vocabulary matches printed vocabulary for every metric.** Read the frame aloud against the artifact | **token diff against the rehearsal transcript is the instrument**; Nick disposes the diff |
+
+### Why F6 and F7 are not Nick's to run, corrected 2026-09-17
+
+**These two were assigned to "Nick" and that contradicted this section's own premise.** F exists
+because five instruments could catch *untrue* things and none could catch *unanswerable* ones.
+The the 2026-08 engagement outcome debrief states the mechanism that makes F necessary:
+
+> "A frame defect is not introspectable, because the frame feels coherent from the inside...
+> the instrument for the second kind has to be external and mechanical."
+> — `coaching/progress/2026-08-13-<engagement>-outcome.md:72-79`
+
+Assigning F6 and F7 to introspection, on exactly the failure class introspection provably
+cannot reach, is the defect this section was built to prevent, reproduced inside it.
+
+**The human element does not leave; it moves to the right place.** The agent produces the
+finding, Nick disposes it. That is the same split as every other row: the enforcer surfaces,
+the human decides. What changed is that Nick is no longer the *detector* for a defect he
+cannot see from inside.
+
+**Demonstrated 2026-09-17 on a 2026-09 client take-home.** Four blind reads, artifact only, no
+frame. A self-run of the same headline test had PASSED and the blind run FAILED, on the same
+pair of sentences, the same day. The self-read supplied the missing bridge from memory, which
+is what a frame defect looks like from the inside.
 | **F8** | **Every element traces back to the locked problem statement.** If the problem statement assigned a metric a role (guardrail, target, constraint), no element may reassign it | checker (every `because` fact appears in the D1 fact base) + blind agent |
 
 ### F.3 Discipline — what the process must record
@@ -188,8 +314,9 @@ ledes test.
 
 **Blocking condition, so the gate can demonstrably fail:** the 2026-08-05 deck fails **nine of twelve**
 (F1, F2, F3, F4, F5, F6, F7, F8, F9). The deterministic subset of those nine is **six** (F1, F2, F3,
-F5, F8, F9), and that six is the acceptance test for `check_frame_integrity.py`. F4 is the blind-agent
-test; F6 and F7 are human.
+F5, F8, F9), and that six is the acceptance test for `check_frame_integrity.py`. F4 and **F6** are
+blind-agent tests; **F7** is the token diff. **No rule in F is detected by unaided introspection**,
+per the correction above: the human disposes what the instrument returns.
 
 ---
 
@@ -216,6 +343,23 @@ the first few words (B7), a number into every lede that can carry one (B1), axis
 **Last, gated.** F in full, then E1. Nothing ships until both pass.
 
 ---
+
+## How this file reaches a build session
+
+**The link was one-way until 2026-09-17 and the gate never fired.** This file named
+`mckinsey-slides` as its execution layer from the day it was promoted; nothing pointed back.
+Measured that day: zero matches for "deck-rubric" across `CLAUDE.md`, `docs/`, the project's
+`.claude/skills/`, and the global skill itself. A deck built minutes after loading the skill
+violated C11 three times and shipped no C7 takeaway box.
+
+**The return link now lives in the global skill as STEP 0**, written generically: any project
+carrying a `framework/deck-rubric.md` gets it read before the build, and it outranks the skill
+wherever they differ. That is mechanism, not policy, so it works for the next project too.
+
+**Still open, and it is the stronger tier:** A through E have no checker. Section F has
+`tools/check_frame_integrity.py`; A-E are prose that nothing verifies, which is exactly how the
+C11 and C7 violations reached a rendered artifact. The Run order section below already names the
+mechanizable subset. `tools/check_deck_craft.py` is the missing sibling.
 
 ## Companion files
 
