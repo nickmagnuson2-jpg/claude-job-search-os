@@ -145,6 +145,7 @@ Promotion trigger for the script split (per the skill-rebuild methodology): invo
 
 ## Routing notes
 
+- **A recorded livestream, long talk, or any recording over about 45 minutes goes to `/analyze-stream`, not here.** That skill owns acquisition, Whisper transcription, chunked extraction, and verification.
 - This is a single-source deep-read, NOT multi-source research. For "what is the landscape on X across many sources," use `/deep-research`. For a company/industry, use `/research-company` / `/research-industry`.
 - The applicability pass is judgment, not a script - it is the whole point. Do not mechanize it away.
 - Default bias for Nick's context: most external agent/LLM-tooling artifacts are a useful *principle* wrapped in a *technique built for a scale he does not have*. Lead with that distinction.
