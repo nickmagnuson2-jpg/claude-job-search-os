@@ -717,8 +717,20 @@ def main(argv=None):
 
     p_app = sub.add_parser("append", help="append to a ledger list")
     mut(p_app)
+    # `elements` and `exclusions` were added 2026-09-16. The append HANDLER was already
+    # generic -- this allowlist was the only thing blocking them, and they are exactly the
+    # lists that grow during a build. Without them, adding one element meant a `patch` that
+    # REPLACES the whole list, so the caller had to reproduce every existing entry by hand:
+    # a transcription surface on the two lists carrying the deliverable's content.
+    # These two are NOT gated any harder than `patch` gates them, and that is deliberate
+    # rather than an oversight: only STRUCTURAL errors refuse a write, while element
+    # quality (F1a measure, F1b surface, F2a tracing) is reported, not refused, so a frame
+    # can legitimately hold a half-authored element mid-build. A malformed element
+    # therefore lands, and the write returns `clean: false` with those checks FAIL. Read
+    # the return value; a zero exit code here does not mean the element is sound.
     p_app.add_argument("--list", required=True,
-                       choices=["proposals", "declines", "overrides", "compression_ledger"])
+                       choices=["proposals", "declines", "overrides", "compression_ledger",
+                                "elements", "exclusions"])
     p_app.add_argument("--json", required=True)
 
     p_init = sub.add_parser("init", help="create version 1; refuses if the frame exists")

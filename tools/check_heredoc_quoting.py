@@ -46,9 +46,12 @@ with $M interpolation as the reason the delimiter had been left bare.
 """
 from __future__ import annotations
 
-import json
+import os
 import re
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from hook_runtime import read_payload  # noqa: E402
 
 BT = chr(96)
 
@@ -80,11 +83,14 @@ def offenders(command: str) -> list[str]:
 
 
 def main() -> int:
-    try:
-        payload = json.load(sys.stdin)
-        command = payload.get("tool_input", {}).get("command", "") or ""
-    except Exception:
+    # read_payload, NOT json.load(sys.stdin). A bare read blocks forever on a retained
+    # pipe, and this hook is wired into EVERY Bash call, so a hang here stops all work --
+    # strictly worse than the corruption it exists to prevent. hook_runtime bounds both
+    # the deadline and the byte count. Found by cross-model review (grok F2, 2026-09-16).
+    p = read_payload()
+    if not p.ok:
         return 0                      # fail-open: a bad parse must never block work
+    command = (p.data.get("tool_input", {}) or {}).get("command", "") or ""
     if not command:
         return 0
 

@@ -656,6 +656,69 @@ def test_two_declines_are_allowed(tmp_path):
     assert code == 0
 
 
+# ------------------------------------------- appending to the content lists
+
+def test_append_adds_an_element_without_disturbing_the_existing_ones(tmp_path):
+    """`elements` and `exclusions` are appendable (added 2026-09-16).
+
+    Before this, adding one element meant a `patch`, which REPLACES a list wholesale, so
+    the caller had to reproduce every existing entry by hand. That is a transcription
+    surface on the two lists that carry the deliverable's actual content, and a dropped
+    entry there is a silent content loss, not a parse error.
+    """
+    f = frame(tmp_path)
+    p = tmp_path / "e.json"
+    p.write_text(json.dumps({"id": "e2", "name": "reach", "name_surface": "p6",
+                             "measure": "addressable volume", "measure_surface": "p6",
+                             "because": ["f1"], "inputs": ["i_vol"], "protected": True,
+                             "first_seen": 2}))
+    code, res = run("append", "--frame", f, "--expect-version", 1, "--list", "elements",
+                    "--json", p)
+    assert code == 0, res
+    d = yaml.safe_load(f.read_text())
+    assert [e["id"] for e in d["elements"]] == ["e1", "e2"]
+    # the pre-existing element must survive intact, field for field
+    assert d["elements"][0] == MINIMAL["elements"][0]
+
+
+def test_append_adds_an_exclusion_without_disturbing_the_existing_ones(tmp_path):
+    f = frame(tmp_path)
+    p = tmp_path / "x.json"
+    p.write_text(json.dumps({"element": "volume comparison",
+                             "reason": "different months, and a tagging asymmetry"}))
+    code, res = run("append", "--frame", f, "--expect-version", 1, "--list", "exclusions",
+                    "--json", p)
+    assert code == 0, res
+    d = yaml.safe_load(f.read_text())
+    assert len(d["exclusions"]) == 2
+    assert d["exclusions"][0] == MINIMAL["exclusions"][0]
+    assert d["exclusions"][1]["element"] == "volume comparison"
+
+
+def test_appending_a_malformed_element_lands_but_reports_unclean(tmp_path):
+    """A half-authored element is WRITTEN, not refused, and the caller is told.
+
+    This documents a real asymmetry that was almost mis-stated when `elements` was made
+    appendable: only STRUCTURAL errors refuse a write. Element quality -- F1a (carries a
+    measure), F1b (measure on the naming surface), F2a (traces to real facts) -- is
+    REPORTED, because a frame legitimately holds an incomplete element mid-build.
+
+    So a zero exit code is not evidence the element is sound. `clean` is. If this test
+    ever starts failing because the write is refused, that is a deliberate tightening and
+    the comment in frame_write.py's append parser must move with it.
+    """
+    f = frame(tmp_path)
+    p = tmp_path / "bad.json"
+    p.write_text(json.dumps({"id": "e2"}))          # missing every required field
+    code, res = run("append", "--frame", f, "--expect-version", 1, "--list", "elements",
+                    "--json", p)
+    assert code == 0, res
+    assert res["clean"] is False, "a malformed element must not be reported as clean"
+    states = yaml.safe_load(f.read_text())["check_log"][-1]["states"]
+    assert states["F1a"] == "FAIL", "the missing measure must be recorded, not swallowed"
+    assert states["F2a"] == "FAIL", "the missing citation must be recorded, not swallowed"
+
+
 # ------------------------------------------------------------- answers-add
 
 def test_answers_add_derives_at_version_from_the_frame(tmp_path):
