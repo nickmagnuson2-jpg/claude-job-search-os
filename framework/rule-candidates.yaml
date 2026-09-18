@@ -404,4 +404,513 @@ candidates:
 #   surfaced: 2026-10-01
 #   disposition: null       # keep | cut | rewrite
 
+
+# ==========================================================================
+# MIGRATED 2026-09-17 from output/analysis/091726-deck-rubric-gap-register.md.
+#
+# The register captured 43 gaps found by three blind readers diffing a prior
+# engagement's deck corpus against deck-rubric.md. TWELVE were promoted into
+# deck-rubric.md the same day (tier-1 items 1-8, tier-2 items 11, 12, 15, and
+# tier-3 item 23); verified by grep against the rubric, method recorded in the
+# register's disposition banner. The THIRTY-ONE below are what remain.
+#
+# THEY ARE HERE RATHER THAN IN THE REGISTER BECAUSE THE REGISTER HAS NO GATE.
+# This file does: a candidate promotes on occurrences >= 2, or on one occurrence
+# plus a BLIND agent failing to construct a counter-case. Sitting in output/
+# with no gate is how 43 items stay "captured" indefinitely.
+#
+# Every row below is occurrences: 1 and falsification.attempted: no. That is the
+# honest state -- they were observed once, in one corpus, by readers who were
+# looking for them. None has earned promotion yet and none should be promoted
+# without running its own gate.
+# ==========================================================================
+
+  - id: C007
+    rule: >
+      The frame locks N days before delivery. After the lock only the ARTIFACT
+      changes. deck-rubric.md uses `locked:` as a checker input in F8 and F9 and
+      never requires the lock to happen or fixes when.
+    source: post_hoc
+    source_detail: >
+      Gap register 2026-09-17, tier 2 item 9. Overlaps C001, which states the same
+      rule from the analysis-method side; the deck-rubric half is the missing
+      SCHEDULING requirement, not the rule itself.
+    why_it_matters: >
+      A field a gate reads but never demands is enforcement theatre. Measured on the
+      2026-09 take-home: `frame.locked` is read by no script in tools/ or the
+      engagement's own scripts/, so it buys a rollback point and prevents nothing.
+    occurrences: 1
+    first_seen: 2026-09-17
+    last_seen: 2026-09-17
+    target_tier: deck-rubric
+    open_question: >
+      Does this belong in F.3 as a rule, or is it C001's job and this row should be
+      merged into it rather than promoted separately?
+    falsification:
+      attempted: no
+      by: null
+      counter_case: null
+      survived: null
+    promoted: no
+    rejected: no
+
+  - id: C008
+    rule: >
+      A number that matters may not have its verification scheduled AFTER the
+      decision it supports. Name the number, the verification, and the date each
+      lands; if verification lands later, the number is a hypothesis on the page.
+    source: post_hoc
+    source_detail: "Gap register 2026-09-17, tier 2 item 10. Four independent panelists converged."
+    why_it_matters: >
+      Structurally invisible to Sections A through F as written. Every existing rule
+      asks whether a number is TRUE; none asks whether it is true YET.
+    occurrences: 1
+    first_seen: 2026-09-17
+    last_seen: 2026-09-17
+    target_tier: deck-rubric
+    falsification:
+      attempted: no
+      by: null
+      counter_case: null
+      survived: null
+    promoted: no
+    rejected: no
+
+  - id: C009
+    rule: >
+      Body carries the argument, appendix carries the proof. The appendix is jumped
+      to when challenged and never presented unasked, carries a jump map, and an
+      exposed line is worse there, not better.
+    source: post_hoc
+    source_detail: "Gap register 2026-09-17, tier 2 item 13. The rubric has no appendix rule at all."
+    why_it_matters: >
+      An unruled surface is where cut material goes to survive. Without a rule the
+      appendix becomes the place defensibility failures are parked rather than fixed.
+    occurrences: 1
+    first_seen: 2026-09-17
+    last_seen: 2026-09-17
+    target_tier: deck-rubric
+    falsification:
+      attempted: no
+      by: null
+      counter_case: null
+      survived: null
+    promoted: no
+    rejected: no
+
+  - id: C010
+    rule: >
+      COVERAGE: were the standard moves for this problem type ever generated? F5
+      tests closure of the CHOSEN set; nothing tests whether the right candidate set
+      existed to choose from.
+    source: post_hoc
+    source_detail: >
+      Gap register 2026-09-17, tier 2 item 14. It is the Section F draft's own
+      unresolved Open Question 4, which suggests this is a Section G rather than part
+      of F.
+    why_it_matters: >
+      The strongest failure mode a closure test cannot see. A set can be closed,
+      defended, and drawn entirely from the wrong family of moves.
+    occurrences: 1
+    first_seen: 2026-09-17
+    last_seen: 2026-09-17
+    target_tier: deck-rubric
+    open_question: "New Section G, or an F.1 rule? The draft argues G."
+    falsification:
+      attempted: no
+      by: null
+      counter_case: null
+      survived: null
+    promoted: no
+    rejected: no
+
+  - id: C011
+    rule: >
+      Restore the origin table: each rule records the founding incident that produced
+      it. Without it the rubric's own "a rule with zero fires becomes a demotion
+      candidate" cannot run, because nothing records a rule's first fire.
+    source: post_hoc
+    source_detail: >
+      Gap register 2026-09-17, tier 2 item 16. The origin table was dropped wholesale
+      in the 2026-08-13 promotion.
+    why_it_matters: >
+      This is F5's deletion test turned on the rubric itself, and it is currently
+      undecidable for all twelve F rules.
+    occurrences: 1
+    first_seen: 2026-09-17
+    last_seen: 2026-09-17
+    target_tier: deck-rubric
+    falsification:
+      attempted: no
+      by: null
+      counter_case: null
+      survived: null
+    promoted: no
+    rejected: no
+
+  # ---- tier 3, register items 17-43 minus item 23 (promoted) ----
+  # Captured at lower resolution than the tier-2 rows above, matching the register's
+  # own treatment of them. Each carries its register item number so the full
+  # statement is recoverable.
+
+  - id: C012
+    rule: "Render check at the DELIVERY aspect ratio, not the authoring one."
+    source: post_hoc
+    source_detail: "Gap register 2026-09-17, tier 3 item 17. Two AV failures cost a live opening."
+    occurrences: 1
+    first_seen: 2026-09-17
+    last_seen: 2026-09-17
+    target_tier: deck-rubric
+    falsification: {attempted: no, by: null, counter_case: null, survived: null}
+    promoted: no
+    rejected: no
+
+  - id: C013
+    rule: >
+      Non-linear deliverability: the deck can be entered at any page and navigated on
+      demand.
+    source: post_hoc
+    source_detail: "Gap register 2026-09-17, tier 3 item 18."
+    occurrences: 1
+    first_seen: 2026-09-17
+    last_seen: 2026-09-17
+    target_tier: deck-rubric
+    falsification: {attempted: no, by: null, counter_case: null, survived: null}
+    promoted: no
+    rejected: no
+
+  - id: C014
+    rule: "A predicted-probe to page index: for each likely probe, the page that answers it."
+    source: post_hoc
+    source_detail: "Gap register 2026-09-17, tier 3 item 19. Companion to F6."
+    occurrences: 1
+    first_seen: 2026-09-17
+    last_seen: 2026-09-17
+    target_tier: deck-rubric
+    falsification: {attempted: no, by: null, counter_case: null, survived: null}
+    promoted: no
+    rejected: no
+
+  - id: C015
+    rule: >
+      The never-say list as a standing artifact, written before delivery and checked
+      after.
+    source: post_hoc
+    source_detail: >
+      Gap register 2026-09-17, tier 3 item 20. Ran to 18 items on a prior engagement
+      and converted perfectly, which is the enumerated-list result the project's
+      conversion law already predicts.
+    occurrences: 1
+    first_seen: 2026-09-17
+    last_seen: 2026-09-17
+    target_tier: deck-rubric
+    falsification: {attempted: no, by: null, counter_case: null, survived: null}
+    promoted: no
+    rejected: no
+
+  - id: C016
+    rule: "Spine compressibility: the argument reduces to roughly 5 named moves, not N items."
+    source: post_hoc
+    source_detail: "Gap register 2026-09-17, tier 3 item 21."
+    occurrences: 1
+    first_seen: 2026-09-17
+    last_seen: 2026-09-17
+    target_tier: deck-rubric
+    falsification: {attempted: no, by: null, counter_case: null, survived: null}
+    promoted: no
+    rejected: no
+
+  - id: C017
+    rule: "A countability checksum for any visual: the reader can count what the picture claims."
+    source: post_hoc
+    source_detail: "Gap register 2026-09-17, tier 3 item 22."
+    occurrences: 1
+    first_seen: 2026-09-17
+    last_seen: 2026-09-17
+    target_tier: deck-rubric
+    falsification: {attempted: no, by: null, counter_case: null, survived: null}
+    promoted: no
+    rejected: no
+
+  - id: C018
+    rule: "D16 print/speak allocation: what the page prints versus what the speaker says."
+    source: post_hoc
+    source_detail: "Gap register 2026-09-17, tier 3 item 24."
+    occurrences: 1
+    first_seen: 2026-09-17
+    last_seen: 2026-09-17
+    target_tier: deck-rubric
+    falsification: {attempted: no, by: null, counter_case: null, survived: null}
+    promoted: no
+    rejected: no
+
+  - id: C019
+    rule: >
+      Deliverability as a pass/fail gate, with a narration budget, a midpoint
+      checkpoint, and a pre-ranked compression order decided before the room.
+    source: post_hoc
+    source_detail: "Gap register 2026-09-17, tier 3 item 25."
+    occurrences: 1
+    first_seen: 2026-09-17
+    last_seen: 2026-09-17
+    target_tier: deck-rubric
+    falsification: {attempted: no, by: null, counter_case: null, survived: null}
+    promoted: no
+    rejected: no
+
+  - id: C020
+    rule: >
+      Strip speech-act scaffolding: "we are claiming that X" becomes X.
+    source: post_hoc
+    source_detail: "Gap register 2026-09-17, tier 3 item 26. Adjacent to B10."
+    occurrences: 1
+    first_seen: 2026-09-17
+    last_seen: 2026-09-17
+    target_tier: deck-rubric
+    falsification: {attempted: no, by: null, counter_case: null, survived: null}
+    promoted: no
+    rejected: no
+
+  - id: C021
+    rule: "A named threshold must carry its number on the surface that names it."
+    source: post_hoc
+    source_detail: "Gap register 2026-09-17, tier 3 item 27. Adjacent to B1 and F1."
+    occurrences: 1
+    first_seen: 2026-09-17
+    last_seen: 2026-09-17
+    target_tier: deck-rubric
+    falsification: {attempted: no, by: null, counter_case: null, survived: null}
+    promoted: no
+    rejected: no
+
+  - id: C022
+    rule: "A deck states a DECISION objective, not an information one."
+    source: post_hoc
+    source_detail: "Gap register 2026-09-17, tier 3 item 28."
+    occurrences: 1
+    first_seen: 2026-09-17
+    last_seen: 2026-09-17
+    target_tier: deck-rubric
+    falsification: {attempted: no, by: null, counter_case: null, survived: null}
+    promoted: no
+    rejected: no
+
+  - id: C023
+    rule: >
+      A judgment call arrives as options with tradeoffs, never as a pre-made
+      recommendation.
+    source: post_hoc
+    source_detail: "Gap register 2026-09-17, tier 3 item 29."
+    occurrences: 1
+    first_seen: 2026-09-17
+    last_seen: 2026-09-17
+    target_tier: deck-rubric
+    open_question: >
+      Sits in tension with E3 (recommendation first). The distinction is presumably
+      recommendation-first on ANALYSIS versus options-first on JUDGMENT, and that
+      boundary needs stating before promotion.
+    falsification: {attempted: no, by: null, counter_case: null, survived: null}
+    promoted: no
+    rejected: no
+
+  - id: C024
+    rule: "Any control the deck installs carries a standing owner and a cadence."
+    source: post_hoc
+    source_detail: "Gap register 2026-09-17, tier 3 item 30."
+    occurrences: 1
+    first_seen: 2026-09-17
+    last_seen: 2026-09-17
+    target_tier: deck-rubric
+    falsification: {attempted: no, by: null, counter_case: null, survived: null}
+    promoted: no
+    rejected: no
+
+  - id: C025
+    rule: >
+      In a no-pre-read room, close a gap with a BACKWARD reference to a page already
+      shown, never a forward one.
+    source: post_hoc
+    source_detail: "Gap register 2026-09-17, tier 3 item 31."
+    occurrences: 1
+    first_seen: 2026-09-17
+    last_seen: 2026-09-17
+    target_tier: deck-rubric
+    falsification: {attempted: no, by: null, counter_case: null, survived: null}
+    promoted: no
+    rejected: no
+
+  - id: C026
+    rule: "Deliberate duplication of the ask, stated at two sizes."
+    source: post_hoc
+    source_detail: >
+      Gap register 2026-09-17, tier 3 item 32. Note the tension with item 7, the
+      restatement audit, which is now E10: this rule licenses one specific repetition
+      that E10 would otherwise count as a defect.
+    occurrences: 1
+    first_seen: 2026-09-17
+    last_seen: 2026-09-17
+    target_tier: deck-rubric
+    falsification: {attempted: no, by: null, counter_case: null, survived: null}
+    promoted: no
+    rejected: no
+
+  - id: C027
+    rule: "Every assumption carries a fallback path and a named falsifying test."
+    source: post_hoc
+    source_detail: "Gap register 2026-09-17, tier 3 item 33. Extends A11 and F10."
+    occurrences: 1
+    first_seen: 2026-09-17
+    last_seen: 2026-09-17
+    target_tier: deck-rubric
+    falsification: {attempted: no, by: null, counter_case: null, survived: null}
+    promoted: no
+    rejected: no
+
+  - id: C028
+    rule: "A plan carries a success-VERDICT date, not only a stop date."
+    source: post_hoc
+    source_detail: "Gap register 2026-09-17, tier 3 item 34."
+    occurrences: 1
+    first_seen: 2026-09-17
+    last_seen: 2026-09-17
+    target_tier: deck-rubric
+    falsification: {attempted: no, by: null, counter_case: null, survived: null}
+    promoted: no
+    rejected: no
+
+  - id: C029
+    rule: >
+      When a page regains space after cuts, add a commitment stated nowhere else,
+      never a restatement.
+    source: post_hoc
+    source_detail: "Gap register 2026-09-17, tier 3 item 35. Companion to E5 and E8."
+    occurrences: 1
+    first_seen: 2026-09-17
+    last_seen: 2026-09-17
+    target_tier: deck-rubric
+    falsification: {attempted: no, by: null, counter_case: null, survived: null}
+    promoted: no
+    rejected: no
+
+  - id: C030
+    rule: >
+      An edit to any line quoted verbatim in a talk track requires an explicit sync,
+      with the citation recorded.
+    source: post_hoc
+    source_detail: "Gap register 2026-09-17, tier 3 item 36. This is the mechanism behind F7 defects."
+    occurrences: 1
+    first_seen: 2026-09-17
+    last_seen: 2026-09-17
+    target_tier: deck-rubric
+    falsification: {attempted: no, by: null, counter_case: null, survived: null}
+    promoted: no
+    rejected: no
+
+  - id: C031
+    rule: "Density is scored against SPEAKING time, not reading time."
+    source: post_hoc
+    source_detail: "Gap register 2026-09-17, tier 3 item 37."
+    occurrences: 1
+    first_seen: 2026-09-17
+    last_seen: 2026-09-17
+    target_tier: deck-rubric
+    open_question: >
+      Does not apply to a SENT artifact, where there is no speaking time. Promotion
+      must scope it to presented decks or it is wrong for half the cases.
+    falsification: {attempted: no, by: null, counter_case: null, survived: null}
+    promoted: no
+    rejected: no
+
+  - id: C032
+    rule: "Facilitation and alignment moments are built into the deck, not improvised."
+    source: post_hoc
+    source_detail: "Gap register 2026-09-17, tier 3 item 38."
+    occurrences: 1
+    first_seen: 2026-09-17
+    last_seen: 2026-09-17
+    target_tier: deck-rubric
+    falsification: {attempted: no, by: null, counter_case: null, survived: null}
+    promoted: no
+    rejected: no
+
+  - id: C033
+    rule: >
+      A licensed typeface gets a named substitute in a self-contained stack, never a
+      CDN load.
+    source: post_hoc
+    source_detail: >
+      Gap register 2026-09-17, tier 3 item 39. Live example the same day: the 2026-09
+      take-home deck loads Source Sans 3 from fonts.googleapis.com, so it renders
+      differently on a machine with no network.
+    occurrences: 1
+    first_seen: 2026-09-17
+    last_seen: 2026-09-17
+    target_tier: deck-rubric
+    falsification: {attempted: no, by: null, counter_case: null, survived: null}
+    promoted: no
+    rejected: no
+
+  - id: C034
+    rule: "Client logo clearspace and manipulation prohibitions are stated and respected."
+    source: post_hoc
+    source_detail: "Gap register 2026-09-17, tier 3 item 40."
+    occurrences: 1
+    first_seen: 2026-09-17
+    last_seen: 2026-09-17
+    target_tier: deck-rubric
+    falsification: {attempted: no, by: null, counter_case: null, survived: null}
+    promoted: no
+    rejected: no
+
+  - id: C035
+    rule: >
+      Palette tokens are cross-checked against a second independent artifact before
+      use, and contrast is computed rather than eyeballed.
+    source: post_hoc
+    source_detail: >
+      Gap register 2026-09-17, tier 3 item 41. Independently re-derived the same day
+      on the 2026-09 take-home, where sampling a brand palette from live assets
+      surfaced that white numerals on the accent fill sit at 1.92:1 and are
+      illegible. The rule earned a second sighting; whether that counts as
+      occurrences 2 is a judgment for the gate, not something to self-award.
+    occurrences: 1
+    first_seen: 2026-09-17
+    last_seen: 2026-09-17
+    target_tier: deck-rubric
+    falsification: {attempted: no, by: null, counter_case: null, survived: null}
+    promoted: no
+    rejected: no
+
+  - id: C036
+    rule: >
+      Precedence: where a session's decisions conflict with an earlier artifact, the
+      session wins.
+    source: post_hoc
+    source_detail: "Gap register 2026-09-17, tier 3 item 42."
+    occurrences: 1
+    first_seen: 2026-09-17
+    last_seen: 2026-09-17
+    target_tier: deck-rubric
+    falsification: {attempted: no, by: null, counter_case: null, survived: null}
+    promoted: no
+    rejected: no
+
+  - id: C037
+    rule: >
+      The reception panel as the named enforcement surface for F's "blind agent"
+      column, which F assumes everywhere and specifies nowhere.
+    source: post_hoc
+    source_detail: "Gap register 2026-09-17, tier 3 item 43."
+    why_it_matters: >
+      F1, F2, F4, F5 and F6 all delegate to "a blind agent" as their enforcer. No
+      file says what that agent is, how it is briefed, or what it is shown. An
+      enforcer that is never specified is not built.
+    occurrences: 1
+    first_seen: 2026-09-17
+    last_seen: 2026-09-17
+    target_tier: deck-rubric
+    falsification: {attempted: no, by: null, counter_case: null, survived: null}
+    promoted: no
+    rejected: no
+
 demotion_candidates: []

@@ -51,6 +51,27 @@ NON_HOOK_CHECKERS = {
     # checker this file exists to prevent - and would be a fine irony, given the
     # detector was built to catch things that look built and do nothing.
     "check_dark_inputs.py",
+    # check_deck_craft.py is a CLI GATE, not a PreToolUse hook, and the distinction is
+    # the point rather than a deferral. It scores a RENDERED DECK against Sections A-C
+    # of framework/deck-rubric.md. There is no tool call to intercept: the artifact it
+    # judges does not exist until a render step has run, and the Write that produces the
+    # HTML is not the moment the page acquires a missing takeaway box or a dashed
+    # stroke. Wiring it to Write|Edit would fire it on a half-written file and block on
+    # defects that the next edit was about to fix.
+    #
+    # NOT WIRED FOR A SECOND REASON, which is the project's own standard rather than a
+    # property of this script: wiring a gate takes TWO measurements, restraint (replay
+    # real history and count false positives) and mutation survival. The mutation half
+    # is done -- 245 killed, 0 survived, 11 equivalents allowlisted with differential
+    # proofs, 2026-09-17. The restraint half is NOT, because the corpus it would need is
+    # rendered decks over time and only a handful exist. Claiming precision from the one
+    # deck it was built against would be the scope error the rubric's own E7 note warns
+    # about.
+    #
+    # It is not unwatched: it runs from the deck build step and its 99 tests execute
+    # every suite pass. The condition for wiring it is a measured false-positive rate
+    # over a real corpus of decks, never another hand-picked example.
+    "check_deck_craft.py",
     # UNWIRED ON PURPOSE, 2026-09-07. Built, bounded and tested (93 tests, mutation
     # clean), but its TRIGGER PRECISION is unestablished: two adversarial reviews found
     # it failing at P0 in BOTH directions, staying quiet on real status questions and

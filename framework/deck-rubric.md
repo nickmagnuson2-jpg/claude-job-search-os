@@ -356,10 +356,28 @@ violated C11 three times and shipped no C7 takeaway box.
 carrying a `framework/deck-rubric.md` gets it read before the build, and it outranks the skill
 wherever they differ. That is mechanism, not policy, so it works for the next project too.
 
-**Still open, and it is the stronger tier:** A through E have no checker. Section F has
-`tools/check_frame_integrity.py`; A-E are prose that nothing verifies, which is exactly how the
-C11 and C7 violations reached a rendered artifact. The Run order section below already names the
-mechanizable subset. `tools/check_deck_craft.py` is the missing sibling.
+**The A-E checker now exists, and it covers nine rules, not A-E.** `tools/check_deck_craft.py`
+was built 2026-09-17 as the sibling of `check_frame_integrity.py`: **A2, A4, A8, B4, B5, B7, C2,
+C7, C11**, three-state PASS / FAIL / CANNOT_RUN, exit 0 or 2.
+
+    PYTHONIOENCODING=utf-8 python3 tools/check_deck_craft.py <deck.html> --convention-report
+
+**What it deliberately does NOT check, so nobody reads a green run as a clean deck.** A10, C13,
+C14 and the B1/B8 word-quality rules need semantics the script does not have, and a weak detector
+on a good rule trains the gate to be ignored. E1, E7 and E8 describe a PROCESS rather than a
+property of a rendered artifact, so no artifact checker can see them. The selection criterion is
+**exclude a rule when nothing has yet tested it, not when it is new** — a freshness filter would
+have dropped A10 and E8, both taught in August and merely typed in September.
+
+**It is a CLI gate and is not wired as a hook**, because wiring takes two measurements and only
+one is done: mutation survival is clean (245 killed, 0 survived, 11 equivalents allowlisted with
+differential proofs), while the restraint measurement needs a corpus of rendered decks that does
+not exist yet. Declared in `NON_HOOK_CHECKERS` with that reasoning.
+
+**It found real defects on its first live run** against the deck built the same day: three C2
+failures and two B7 over-long bold runs, none of which the hand pass had caught. It also produced
+one false positive, since fixed: an `<h3>` heading a prose column was read as an untitled chart,
+because the heuristic scoped "chart title" to the page rather than to the heading's own container.
 
 ## Companion files
 
