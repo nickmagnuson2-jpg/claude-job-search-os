@@ -207,6 +207,16 @@ PATTERNS = [
         '"not as X, but as Y" — performs the contrast instead of stating substance (voice-reference.md, 5/21)',
         "drop the contrast and name the built artifact (content-rules B7)",
     ),
+    (
+        re.compile(r"\bstuck\s+with\s+me\b", re.IGNORECASE),
+        'resonance frame — "the part that stuck with me", "a few things stuck with me", "has stuck with me since" all announce that something landed instead of stating it (content-rules F1; 3rd variant caught 2026-09-17 in a post-call follow-up draft)',
+        "state the thing itself: name the mechanism or the fact, with no announcement clause",
+    ),
+    (
+        re.compile(r"\b(?:keep|kept)\s+coming\s+back\s+to\b", re.IGNORECASE),
+        'resonance frame sibling — "the one I keep coming back to" is the same announcement clause as "stuck with me" (content-rules F1)',
+        "state the thing itself; cut the announcement",
+    ),
 ]
 
 # Body-only checks (count-based). Run after isolating the BODY section.

@@ -86,3 +86,44 @@ def test_x_rather_than_y_is_allowed():
     # The corpus-validated replacement must NOT match not-as-X-but-as-Y.
     assert not fires("building with AI tools rather than reading about it",
                      "performs the contrast")
+
+
+# --- resonance-frame family (added 2026-09-17, 3rd variant) ----------------
+#
+# Origin: a /follow-up draft to an interviewer opened its callback with
+# "the part that stuck with me is that...". content-rules F1 already banned the
+# abstraction-preamble family and content-rules.yaml carried the literal
+# "has stuck with me since", but no pattern matched this variant, so nothing
+# fired and the draft reached the user, who caught it. These tests pin the
+# variant and its sibling.
+
+@pytest.mark.parametrize("text", [
+    "the part that stuck with me is that the models default to service-rep behavior",
+    "The thing that stuck with me was the harness.",
+    "A few things stuck with me, but the one I keep coming back to is pricing",
+    "that has stuck with me since our call",
+    "What stuck with me: they refuse to ship what they know converts worse.",
+])
+def test_resonance_frame_fires(text):
+    assert fires(text, "resonance frame"), f"should block: {text!r}"
+
+
+@pytest.mark.parametrize("text", [
+    "the one I keep coming back to is the December handover",
+    "I kept coming back to the transfer timing question",
+])
+def test_resonance_frame_sibling_fires(text):
+    assert fires(text, "resonance frame sibling"), f"should block: {text!r}"
+
+
+@pytest.mark.parametrize("text", [
+    # The corrected sentence that shipped -- states the mechanism, no announcement.
+    "If the base models default to service-rep behavior, most of what makes a call convert has to live in the harness.",
+    # Legitimate uses of the component words must not trip the pattern.
+    "The agent stuck to the script even after the caller objected.",
+    "I will come back to you with the doc tomorrow morning.",
+    "The call got stuck in a loop and never reached a next step.",
+])
+def test_resonance_frame_no_false_positive(text):
+    hits = [d for d in matched(text) if "resonance frame" in d]
+    assert hits == [], f"should be clean: {text!r} -> {hits}"
