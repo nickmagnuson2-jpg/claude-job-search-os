@@ -1215,3 +1215,156 @@ def test_an_unraisable_git_call_yields_a_LIST_not_None(tmp_path, monkeypatch):
     assert cv.ignored_entries(tmp_path) == []
     assert isinstance(cv.ignored_entries(tmp_path), list)
     cv.sandbox_policy(tmp_path)   # must not raise
+
+
+# --- images -------------------------------------------------------------------
+# Added 2026-09-18. Until that day no verifier had ever SEEN a rendered page: the
+# wrapper simply never passed an image, and the gap was recorded in the project's own
+# notes as "Codex cannot see images", which is FALSE -- `codex exec` has taken
+# `-i/--image <FILE>...` the whole time. A capability the wrapper does not use and a
+# capability the model lacks are indistinguishable from the caller's side, and that is
+# the defect these tests pin. The cost of the gap was measured: four rounds of blind
+# cross-model review declared a deck's copy settled and the first look at the render
+# found five defects none of them could see.
+
+def test_codex_receives_images_as_repeated_flags():
+    out = cv.image_argv("codex", [Path("/tmp/a.png"), Path("/tmp/b.png")])
+    assert out == ["-i", "/tmp/a.png", "-i", "/tmp/b.png"]
+
+
+def test_the_stdin_marker_stays_last_when_images_are_spliced_in(tmp_path):
+    """`-` is codex's read-prompt-from-stdin marker and MUST remain the final argv
+    entry. Appending the image flags instead of splicing them ahead of it would make
+    the image path the prompt argument, and the run would read a PNG as its brief."""
+    policy = tmp_path / "p.sb"
+    policy.write_text("(version 1)\n")
+    argv = cv.jailed_argv(REPO_ROOT, policy, "codex", images=[Path("/tmp/a.png")])
+    assert argv[-1] == "-"
+    assert argv[-3:-1] == ["-i", "/tmp/a.png"]
+
+
+def test_a_model_that_cannot_see_images_refuses_rather_than_dropping_them():
+    """THE WHOLE POINT. A verifier silently reviewing a page it cannot see returns a
+    confident report about the source and presents it as a review of the render."""
+    with pytest.raises(SystemExit) as exc:
+        cv.image_argv("grok", [Path("/tmp/a.png")])
+    msg = str(exc.value)
+    assert "cannot receive an image" in msg
+    assert "codex" in msg, "the refusal must name a model that CAN take one"
+
+
+def test_a_blind_model_is_unaffected_when_no_images_are_passed():
+    assert cv.image_argv("grok", []) == []
+
+
+def test_a_path_model_gets_the_files_named_in_its_prompt_instead():
+    block = cv.image_prompt_block("fable", [Path("/tmp/a.png"), Path("/tmp/b.png")])
+    assert "/tmp/a.png" in block and "/tmp/b.png" in block
+    assert "RENDERED PAGES" in block
+    # It must be told to SAY SO rather than quietly review the source instead.
+    assert "cannot open" in block.lower()
+    # A flag model gets no such block: it would be instructing codex to open a file it
+    # was already handed, inside a jail where that read may be denied.
+    assert cv.image_prompt_block("codex", [Path("/tmp/a.png")]) == ""
+
+
+def test_every_model_declares_how_it_takes_an_image():
+    """Default is 'none': a model added tomorrow is assumed blind until someone reads
+    its help output. An unset field that defaulted to 'flag' would invent a flag."""
+    for name, spec in cv.MODELS.items():
+        assert spec.image_via in ("flag", "path", "none"), name
+
+
+def test_the_ledger_records_what_the_verifier_could_see(tmp_path, monkeypatch):
+    """A text-only pass and a pass that looked at the page are not the same evidence.
+    A ledger row that cannot tell them apart lets the first clear a gate needing the
+    second, which is the cross_model_gate false-zero defect in a new costume."""
+    rows = []
+    monkeypatch.setattr(gate, "append_row", lambda root, row: rows.append(row))
+    monkeypatch.setattr(cv.gate, "append_row", lambda root, row: rows.append(row))
+    img = tmp_path / "shot.png"
+    img.write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    class _Done:
+        returncode, stdout, stderr = 0, "", ""
+
+    monkeypatch.setattr(cv.subprocess, "run", lambda *a, **k: _Done())
+    monkeypatch.setattr(cv, "jailed_argv", lambda *a, **k: ["true"])
+    cv.run(REPO_ROOT, "t", [], "", tmp_path / "r.md", None, False,
+           model="codex", images=[img])
+    assert rows and rows[0]["images"] == [str(img)]
+
+
+def test_a_missing_image_fails_before_the_model_is_dispatched(tmp_path):
+    with pytest.raises(SystemExit) as exc:
+        cv.run(REPO_ROOT, "t", [], "", tmp_path / "r.md", None, False,
+               model="codex", images=[tmp_path / "nope.png"])
+    assert "does not exist" in str(exc.value)
+
+
+# --- image mutants that survived the first pass, 2026-09-18 -------------------
+# mutation_check reported six survivors and four were in the code above: the tests
+# exercised image_prompt_block for a "path" model but never image_argv for one, and
+# never the fail-fast validation call inside run(). Both gaps let a mutant that would
+# break every fable image run, or silently dispatch a blind model with images, pass a
+# green suite. Written from the survivor list rather than from imagination.
+
+def test_a_path_model_returns_no_flags_rather_than_refusing():
+    """fable takes its images by PATH. If this branch raised instead of returning an
+    empty list, every fable run carrying a render would die at dispatch."""
+    assert cv.image_argv("fable", [Path("/tmp/a.png")]) == []
+
+
+def test_run_refuses_a_blind_model_before_dispatching_it(tmp_path, monkeypatch):
+    """The validation call inside run() is what makes the refusal load-bearing. Without
+    it the SystemExit only fires from jailed_argv, after the report path and the jail
+    policy are already set up, and a caller catching broadly would proceed."""
+    img = tmp_path / "shot.png"
+    img.write_bytes(b"\x89PNG\r\n\x1a\n")
+    called = []
+    monkeypatch.setattr(cv, "jailed_argv", lambda *a, **k: called.append(1) or ["true"])
+    with pytest.raises(SystemExit) as exc:
+        cv.run(REPO_ROOT, "t", [], "", tmp_path / "r.md", None, False,
+               model="grok", images=[img])
+    assert "cannot receive an image" in str(exc.value)
+    assert not called, "it must refuse BEFORE the jail is built"
+
+
+def test_no_images_leaves_the_command_line_exactly_as_it_was(tmp_path):
+    """Guards the splice against changing a run that passes no image at all."""
+    policy = tmp_path / "p.sb"
+    policy.write_text("(version 1)\n")
+    assert (cv.jailed_argv(REPO_ROOT, policy, "codex", images=[])
+            == cv.jailed_argv(REPO_ROOT, policy, "codex"))
+    assert (cv.jailed_argv(REPO_ROOT, policy, "grok", images=[])
+            == cv.jailed_argv(REPO_ROOT, policy, "grok"))
+
+
+# --- two survivors that predate the image work, both in the jail ---------------
+# Neither was mine and both sit in the boundary that keeps an external model out of
+# the private trees, which is the wrong place to carry an untested line. Closed in the
+# same pass rather than left in the report for someone to rediscover.
+
+def test_a_comment_in_the_sealed_paths_conf_is_not_treated_as_a_path(tmp_path,
+                                                                     monkeypatch):
+    """Forcing the comment skip the other way turns '# private trees' into a sealed
+    subpath, which is harmless, and turns a commented-OUT path into an active deny,
+    which quietly changes the boundary without anyone editing the boundary."""
+    conf = tmp_path / ".sealed-paths.conf"
+    conf.write_text("# a comment\n\n/tmp/really-sealed\n", encoding="utf-8")
+    monkeypatch.setattr(cv, "SEALED_CONF", conf)
+    sealed = cv.sealed_subpaths(REPO_ROOT)
+    assert "/tmp/really-sealed" in sealed
+    assert not any(p.lstrip().startswith("#") for p in sealed)
+    assert "" not in sealed
+
+
+def test_the_policy_opens_the_review_tree_for_reading():
+    """The model writes its report into output/analysis and must be able to read what
+    is already there (a --prior report, its own earlier pass). Dropping this allow
+    leaves the run failing with an empty report and no explanation."""
+    policy = cv.sandbox_policy(REPO_ROOT)
+    assert f'(allow file-read* (subpath "{REPO_ROOT}/{cv.REVIEW_TREE}"))' in policy
+    # and the deny that it has to override must still come first
+    assert policy.index(f'(deny file-write* (subpath "{REPO_ROOT}"))') < policy.index(
+        f'(allow file-write* (subpath "{REPO_ROOT}/{cv.REVIEW_TREE}"))')

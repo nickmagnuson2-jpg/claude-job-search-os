@@ -202,20 +202,33 @@ class Model:
     prompt_via: str      # "stdin" | "argv"
     report_via: str      # "file" | "stdout"
     family: str
+    # HOW THIS MODEL RECEIVES AN IMAGE, and the reason this field exists at all.
+    #   "flag"   -- the CLI takes the file directly (codex: `-i/--image <FILE>...`)
+    #   "path"   -- no flag, but the model has a file-reading tool and will open a path
+    #               named in the prompt (claude -p)
+    #   "none"   -- the CLI cannot accept one at all (cursor-agent has no image option)
+    # A run that passes images to a "none" model FAILS rather than dropping them, because
+    # a verifier silently reviewing a page it cannot see returns a confident report about
+    # copy while every layout defect is invisible to it -- which is the exact failure the
+    # rendered-page review exists to catch. Default is "none": a model added tomorrow is
+    # assumed blind until someone checks its help output.
+    image_via: str = "none"
 
 
 MODELS: dict[str, Model] = {
     "codex": Model(
         argv=["codex", "exec", "--dangerously-bypass-approvals-and-sandbox",
               "--skip-git-repo-check", "-"],
-        prompt_via="stdin", report_via="file", family="openai"),
+        prompt_via="stdin", report_via="file", family="openai", image_via="flag"),
     # Read-only by construction: --mode ask cannot write, so it reports on stdout and
     # WE write the file. Strictly safer than the incumbent, and it needs no write
     # carve-out at all.
     "grok": Model(
         argv=["cursor-agent", "-p", "--trust", "--mode", "ask",
               "--sandbox", "disabled", "--model", "cursor-grok-4.6-xhigh"],
-        prompt_via="argv", report_via="stdout", family="xai"),
+        # cursor-agent --help lists no image or attachment option (checked 2026-09-18),
+    # so grok reviews text only and a run that needs the rendered page must not use it.
+    prompt_via="argv", report_via="stdout", family="xai", image_via="none"),
     # ADDITIVE, NEVER SUFFICIENT. Same family as the author, so cross_model_gate's
     # AUTHOR_FAMILY rule requires at least one non-Anthropic model alongside it before a
     # path counts as covered. Wired 2026-09-16 on evidence rather than principle: a Fable
@@ -225,7 +238,7 @@ MODELS: dict[str, Model] = {
     # cannot write, so it reports on stdout and we write the file.
     "fable": Model(
         argv=["claude", "-p", "--model", "claude-fable-5-1"],
-        prompt_via="stdin", report_via="stdout", family="anthropic"),
+        prompt_via="stdin", report_via="stdout", family="anthropic", image_via="path"),
 }
 
 DEFAULT_MODEL_NAME = "codex"
@@ -369,7 +382,49 @@ def resolve_binary(name: str) -> str:
         f"clean review. Install it, or pass --model with one that is present.")
 
 
-def jailed_argv(repo_root, policy_path, model=DEFAULT_MODEL_NAME) -> list[str]:
+def image_argv(model: str, images: list[Path]) -> list[str]:
+    """The CLI arguments that attach `images`, or a hard failure if this model cannot.
+
+    Built 2026-09-18. Before it, no verifier had ever SEEN a rendered page: the wrapper
+    simply never passed an image, and the gap was recorded as "Codex cannot see images",
+    which is false -- `codex exec` has taken `-i/--image <FILE>...` the whole time. A
+    capability the wrapper does not use is not a capability the model lacks, and the two
+    were indistinguishable from here until someone read the help output.
+    """
+    if not images:
+        return []
+    via = MODELS[model].image_via
+    if via == "flag":
+        out: list[str] = []
+        for img in images:
+            out += ["-i", str(img)]
+        return out
+    if via == "path":
+        return []                 # named in the prompt instead; see image_prompt_block
+    raise SystemExit(
+        f"--image was given but model {model!r} cannot receive an image (image_via="
+        f"{via!r}). Dispatch a model that can ({', '.join(sorted(m for m, s in MODELS.items() if s.image_via != 'none'))}), "
+        "or drop the images. Running it blind would return a confident review of a page "
+        "it never saw.")
+
+
+def image_prompt_block(model: str, images: list[Path]) -> str:
+    """For a model that reads images by PATH rather than by flag, the instruction to."""
+    if not images or MODELS[model].image_via != "path":
+        return ""
+    listed = "\n".join(f"  {img}" for img in images)
+    return ("\n\n=== RENDERED PAGES ===\n"
+            "The artifact under review is a RENDERED PAGE. Open each file below with your "
+            "file-reading tool and LOOK at it before writing anything. Layout defects -- "
+            "overlap, clipping, a label colliding with an axis, a box running past the "
+            "page edge -- are invisible in the source and obvious in the render, and four "
+            "were shipped that way on 2026-09-17. If you cannot open a file, SAY SO in "
+            "your report rather than reviewing the source alone and presenting it as a "
+            "review of the page.\n" + listed)
+
+
+def jailed_argv(repo_root, policy_path, model=DEFAULT_MODEL_NAME,
+                images: list[Path] | None = None) -> list[str]:
     """The model command, wrapped. FAILS CLOSED if the jail is unavailable: a verifier
     that silently loses its boundary is the false-zero defect wearing a new hat."""
     if not shutil.which("sandbox-exec"):
@@ -378,6 +433,11 @@ def jailed_argv(repo_root, policy_path, model=DEFAULT_MODEL_NAME) -> list[str]:
             "access to the private trees. Refusing to run.")
     argv = list(MODELS[model].argv)
     argv[0] = resolve_binary(argv[0])
+    # IMAGE FLAGS GO BEFORE THE TRAILING "-". That dash is codex's read-prompt-from-stdin
+    # marker and it must stay last, so the flags are spliced in ahead of it rather than
+    # appended; appending would make the image path the prompt argument.
+    extra = image_argv(model, list(images or []))
+    argv = (argv[:-1] + extra + argv[-1:]) if argv[-1] == "-" else (argv + extra)
     return ["sandbox-exec", "-f", str(policy_path), *argv]
 
 
@@ -601,11 +661,19 @@ def parse_findings(report: Path) -> list[dict]:
 def run(repo_root: Path, target: str, paths: list[str], question: str,
         report: Path, prior: str | None, print_only: bool,
         mode: str = "verify", claims: list[str] | None = None,
-        known_errors: str = "", model: str = DEFAULT_MODEL_NAME) -> dict:
+        known_errors: str = "", model: str = DEFAULT_MODEL_NAME,
+        images: list[Path] | None = None) -> dict:
     spec = MODELS[model]
+    images = list(images or [])
+    for img in images:
+        if not img.is_file():
+            raise SystemExit(f"--image {img} does not exist")
+    # FAILS HERE, BEFORE THE RUN, if this model cannot take an image at all.
+    image_argv(model, images)
     prompt = build_prompt(repo_root, target, question, report, prior,
                           mode=mode, paths=paths, claims=claims,
                           known_errors=known_errors)
+    prompt = f"{prompt}{image_prompt_block(model, images)}"
     if spec.report_via == "stdout":
         prompt = f"{prompt}\n\n{STDOUT_REPORT_RULES}"
     if print_only:
@@ -622,7 +690,7 @@ def run(repo_root: Path, target: str, paths: list[str], question: str,
     policy_file = Path(tempfile.mkstemp(suffix=".sb", prefix="codex-jail-")[1])
     policy_file.write_text(sandbox_policy(repo_root, extra_writable=[report.parent]),
                            encoding="utf-8")
-    argv = jailed_argv(repo_root, policy_file, model)
+    argv = jailed_argv(repo_root, policy_file, model, images=images)
     try:
         if spec.prompt_via == "argv":
             proc = subprocess.run(argv + [prompt], capture_output=True, text=True,
@@ -661,6 +729,10 @@ def run(repo_root: Path, target: str, paths: list[str], question: str,
         # there so the gate never has to import this table -- that import would be
         # circular, since this module already imports the gate.
         "family": spec.family,
+        # WHAT THE VERIFIER COULD SEE. A text-only pass and a pass that looked at the
+        # rendered page are not the same evidence, and a ledger that cannot tell them
+        # apart lets the first one clear a gate that needed the second.
+        "images": [str(i) for i in images],
         "rc": proc.returncode,
         "report_written": report.is_file(),
         "report_fresh": report_fresh,
@@ -696,6 +768,12 @@ def main(argv=None) -> int:
     ap.add_argument("--claim", action="append", dest="claims", default=[],
                     metavar="CLAIM",
                     help="a claim to check; repeatable. Numbered in the prompt")
+    ap.add_argument("--image", action="append", dest="images", default=[],
+                    metavar="PNG",
+                    help="a rendered page to attach; repeatable. Required whenever the "
+                         "work under review is something a reader LOOKS at: a text-only "
+                         "review of a rendered page is a review of the source, not the "
+                         "page. Fails loudly on a model that cannot accept one")
     ap.add_argument("--known-errors", default="",
                     help="mistakes already made on this work, so it can say which "
                          "conclusions rest on contaminated evidence")
@@ -712,7 +790,8 @@ def main(argv=None) -> int:
 
     out = run(root, args.target, args.paths, args.question, report,
               args.prior, args.print_only, mode=args.mode, claims=args.claims,
-              known_errors=args.known_errors, model=args.model)
+              known_errors=args.known_errors, model=args.model,
+              images=[Path(i).resolve() for i in args.images])
     print(json.dumps(out, indent=2))
     return 0 if out.get("status") in ("ok", "printed") else 1
 
