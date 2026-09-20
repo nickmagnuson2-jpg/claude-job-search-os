@@ -991,7 +991,7 @@ def check_g9(pages) -> Result:
 
 
 def certification(total: int, fails: int, cannot: int, executed: int,
-                  under_floor: bool) -> str:
+                  under_floor: bool, filtered: bool = False) -> str:
     """The one sentence a human may quote about a run, with every count in it.
 
     Nick, 2026-09-19, after two of my summaries restated a tool's result in stronger
@@ -1002,8 +1002,15 @@ def certification(total: int, fails: int, cannot: int, executed: int,
     gate emits the sentence itself and the rule is to quote this line rather than
     summarise it.
     """
-    verdict = ("NOT CLEAN" if (fails or under_floor)
-               else ("CLEAN but NOT FULLY COVERED" if cannot else "CLEAN and FULLY COVERED"))
+    if fails or under_floor:
+        verdict = "NOT CLEAN"
+    elif filtered:
+        # Never "fully covered" on a subset, whatever the subset reported.
+        verdict = "PARTIAL RUN, coverage not established"
+    elif cannot:
+        verdict = "CLEAN but NOT FULLY COVERED"
+    else:
+        verdict = "CLEAN and FULLY COVERED"
     return ("CERTIFICATION: " + verdict + " -- " + str(total - fails - cannot)
             + " pass, " + str(fails) + " fail, " + str(cannot) + " cannot run, "
             + str(executed) + " of " + str(total) + " rules actually executed.")
@@ -1066,6 +1073,11 @@ def main(argv=None):
     # deck where every rule reported CANNOT_RUN certified clean. Mirrors
     # check_deck_craft's MIN_EXECUTED for the same reason and with the same vocabulary.
     under_floor = executed < MIN_EXECUTED if not args.only else executed < 1
+    # A FILTERED RUN IS NEVER "FULLY COVERED". --only G1 executes one rule of nine, and
+    # certification() computed over the filtered list called that CLEAN and FULLY COVERED
+    # -- a caller could select one rule and quote a sentence claiming the whole deck was
+    # measured. Raised independently by Fable and Codex. The filtered count is reported
+    # against the FULL rule set so the denominator is visible in the sentence itself.
     payload = {
         "deck": str(path),
         "pages": len(pages),
@@ -1077,7 +1089,7 @@ def main(argv=None):
         "under_coverage_floor": under_floor,
         "fully_covered": not fails and not cannot,
         "certification": certification(len(results), len(fails), len(cannot), executed,
-                                       under_floor),
+                                       under_floor, filtered=bool(args.only)),
     }
     if args.json:
         print(json.dumps(payload, indent=2))

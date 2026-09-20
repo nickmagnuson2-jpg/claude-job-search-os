@@ -1408,3 +1408,19 @@ def test_g8_reports_colliding_text_blocks():
     r = g.check_g8([page([a, b])])
     assert r.state == FAIL
     assert "OVERLAP" in r.offenders[0]
+
+
+def test_a_filtered_run_never_claims_full_coverage():
+    """--only G1 executes one rule of nine. Calling that "CLEAN and FULLY COVERED" lets a
+    caller select one rule and quote a sentence about the whole deck. Raised independently
+    by two reviewers."""
+    s = g.certification(total=1, fails=0, cannot=0, executed=1, under_floor=False,
+                        filtered=True)
+    assert "FULLY COVERED" not in s
+    assert "PARTIAL RUN" in s
+
+
+def test_an_unfiltered_clean_run_still_says_fully_covered():
+    s = g.certification(total=9, fails=0, cannot=0, executed=9, under_floor=False,
+                        filtered=False)
+    assert "CLEAN and FULLY COVERED" in s
