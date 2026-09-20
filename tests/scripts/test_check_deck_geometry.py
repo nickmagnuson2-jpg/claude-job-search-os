@@ -1424,3 +1424,19 @@ def test_an_unfiltered_clean_run_still_says_fully_covered():
     s = g.certification(total=9, fails=0, cannot=0, executed=9, under_floor=False,
                         filtered=False)
     assert "CLEAN and FULLY COVERED" in s
+
+
+def test_a_filtered_run_reports_not_fully_covered_in_the_JSON_too(tmp_path, monkeypatch,
+                                                                  capsys):
+    """The first fix changed the printed sentence and left fully_covered True, so a machine
+    consumer still read full coverage off a one-rule run."""
+    import json as _json
+    monkeypatch.setattr(g, "find_chrome", lambda *a, **k: "/bin/true")
+    monkeypatch.setattr(g, "measure", lambda *a, **k: [fully_covered_page()])
+    deck = tmp_path / "d.html"
+    deck.write_text("<div class='slide'></div>", encoding="utf-8")
+    g.main([str(deck), "--only", "G1", "--json"])
+    payload = _json.loads(capsys.readouterr().out)
+    assert payload["fully_covered"] is False
+    assert payload["filtered"] is True
+    assert payload["rules_available"] == 9

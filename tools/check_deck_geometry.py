@@ -1087,7 +1087,14 @@ def main(argv=None):
                    "executed": executed},
         "clean": not fails and not under_floor,
         "under_coverage_floor": under_floor,
-        "fully_covered": not fails and not cannot,
+        # FILTERED RUNS ARE NEVER fully_covered, AND THE JSON MUST SAY SO TOO. The first
+        # fix changed only the printed sentence and left this field True, so a machine
+        # consumer still read full coverage off a one-rule run. Fixing the prose and
+        # leaving the payload lying is the same defect one layer down, and Codex caught
+        # it in the pre-push round.
+        "filtered": bool(args.only),
+        "rules_available": len(run_checks(pages)) if args.only else len(results),
+        "fully_covered": (not fails and not cannot and not args.only),
         "certification": certification(len(results), len(fails), len(cannot), executed,
                                        under_floor, filtered=bool(args.only)),
     }
