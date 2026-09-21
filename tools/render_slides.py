@@ -87,10 +87,36 @@ def render(deck: pathlib.Path, out_dir: pathlib.Path, stem: str,
     return written
 
 
-if __name__ == "__main__":
-    ap = argparse.ArgumentParser()
+def main(argv: list[str] | None = None) -> int:
+    """Extracted from the __main__ block on promotion.
+
+    Inline argparse under `if __name__` gives a tool no testable entry point: the CLI
+    contract can only be exercised by spawning a subprocess, so in practice it is not
+    exercised at all. The dispatch line below stays untestable by construction; every
+    decision it makes now lives here.
+    """
+    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("deck")
     ap.add_argument("--out", default="slides")
     ap.add_argument("--stem", default="render")
-    a = ap.parse_args()
-    render(pathlib.Path(a.deck).resolve(), pathlib.Path(a.out), a.stem)
+    ap.add_argument("--chrome", default=None,
+                    help="explicit browser path; checked, never trusted")
+    a = ap.parse_args(argv)
+
+    deck = pathlib.Path(a.deck)
+    if not deck.exists():
+        print("cannot read " + str(deck), file=sys.stderr)
+        return 4
+    try:
+        render(deck.resolve(), pathlib.Path(a.out), a.stem, chrome=a.chrome)
+    except ChromeNotFound as exc:
+        print(str(exc), file=sys.stderr)
+        return 4
+    except RuntimeError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
