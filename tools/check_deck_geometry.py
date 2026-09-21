@@ -107,13 +107,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from check_deck_craft import CANNOT_RUN, FAIL, PASS, Result  # noqa: E402
 
-CHROME_CANDIDATES = (
-    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-    "/Applications/Chromium.app/Contents/MacOS/Chromium",
-    "google-chrome",
-    "chromium",
-)
-
 # 8px, not 0. Slide 1 sat at exactly 0 on 2026-09-19: not overlapping, and one word of copy
 # anywhere on the page from overlapping. A gate that passes 0 has no useful failing mode.
 MIN_CLEARANCE = 8
@@ -439,13 +432,11 @@ if (document.fonts && document.fonts.ready) {
 """
 
 
-def find_chrome(explicit=None):
-    if explicit:
-        return explicit if (Path(explicit).exists() or shutil.which(explicit)) else None
-    for c in CHROME_CANDIDATES:
-        if Path(c).exists() or shutil.which(c):
-            return c
-    return None
+# find_chrome and CHROME_CANDIDATES moved to tools/chrome_runner.py on 2026-09-21.
+# They were byte-identical to deck_to_pdf.py's copy, and a third caller hardcoded a
+# path with no fallback. Re-exported here so existing callers and tests that reference
+# `cdg.find_chrome` keep working against ONE implementation.
+from chrome_runner import CHROME_CANDIDATES, find_chrome  # noqa: E402,F401
 
 
 def measure(deck: Path, chrome: str, timeout: int = 90) -> list:

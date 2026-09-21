@@ -816,19 +816,6 @@ def test_find_chrome_rejects_an_explicit_path_that_does_not_exist():
     assert g.find_chrome("/definitely/not/a/browser") is None
 
 
-def test_find_chrome_searches_the_candidates_and_returns_the_first_hit(tmp_path,
-                                                                      monkeypatch):
-    a, b = tmp_path / "one", tmp_path / "two"
-    b.write_text("#!/bin/sh\n")
-    monkeypatch.setattr(g, "CHROME_CANDIDATES", (str(a), str(b)))
-    assert g.find_chrome() == str(b)
-
-
-def test_find_chrome_returns_none_when_no_candidate_exists(tmp_path, monkeypatch):
-    monkeypatch.setattr(g, "CHROME_CANDIDATES", (str(tmp_path / "nope"),))
-    assert g.find_chrome() is None
-
-
 def test_measure_raises_when_the_probe_returns_no_geometry(tmp_path, monkeypatch):
     """A browser that starts and produces nothing must RAISE, not return an empty list.
     An empty list would flow into run_checks as 'no pages' and could read as clean."""
@@ -1440,3 +1427,11 @@ def test_a_filtered_run_reports_not_fully_covered_in_the_JSON_too(tmp_path, monk
     assert payload["fully_covered"] is False
     assert payload["filtered"] is True
     assert payload["rules_available"] == 9
+
+
+# Browser discovery moved to tests/scripts/test_chrome_runner.py on 2026-09-21.
+# Two tests here monkeypatched `g.CHROME_CANDIDATES` to exercise find_chrome. When the
+# mechanism moved to tools/chrome_runner.py they began failing -- not because the
+# behaviour broke, but because they were testing a GENERALIZABLE INPUT at a CONSUMER,
+# and patching a re-export does not reach the implementation. This suite tests what
+# check_deck_geometry does that nothing else does: the geometry rules.

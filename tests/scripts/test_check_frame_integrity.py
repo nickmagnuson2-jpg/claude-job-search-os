@@ -698,6 +698,12 @@ def test_F13_is_registered_in_the_schema_validation_block():
 # them returned PASS -- "all N dispositioned" -- having compared them to nothing.
 
 
+# F14 verifies that a promote/superseded TARGET actually exists, so fixtures must name a
+# real file. Using a fake path made four tests fail the moment that check landed -- which
+# was the check working, not the tests breaking.
+REAL_TARGET = "tools/chrome_runner.py"
+
+
 def _f14(frame, frame_path=None):
     return cfi.check_F14(frame, frame_path)
 
@@ -747,7 +753,7 @@ def test_F14_explicit_empty_map_against_empty_tree_passes():
 
 def test_F14_wellformed_declarations_without_a_path_are_CANNOT_RUN_not_pass():
     """THE HOLE THIS TEST EXISTS FOR. Coverage unchecked must never read as covered."""
-    frame = {"scripts": {"a.py": {"disposition": "promote", "target": "tools/a.py"}}}
+    frame = {"scripts": {"a.py": {"disposition": "promote", "target": REAL_TARGET}}}
     r = _f14(frame)
     assert r.state == cfi.CANNOT_RUN
     assert "COVERAGE was never checked" in r.detail
@@ -797,8 +803,8 @@ def test_F14_fully_dispositioned_tree_passes():
     with tempfile.TemporaryDirectory() as td:
         fp = _tree(Path(td), "a.py", "b.py")
         r = _f14({"scripts": {
-            "a.py": {"disposition": "promote", "target": "tools/a.py"},
-            "b.py": {"disposition": "superseded", "target": "tools/a.py"},
+            "a.py": {"disposition": "promote", "target": REAL_TARGET},
+            "b.py": {"disposition": "superseded", "target": REAL_TARGET},
         }}, fp)
     assert r.state == cfi.PASS
     assert "2 script(s) on disk dispositioned" in r.detail
@@ -810,8 +816,8 @@ def test_F14_stale_declaration_is_noted_but_not_fatal():
     with tempfile.TemporaryDirectory() as td:
         fp = _tree(Path(td), "a.py")
         r = _f14({"scripts": {
-            "a.py": {"disposition": "promote", "target": "tools/a.py"},
-            "deleted.py": {"disposition": "promote", "target": "tools/x.py"},
+            "a.py": {"disposition": "promote", "target": REAL_TARGET},
+            "deleted.py": {"disposition": "promote", "target": REAL_TARGET},
         }}, fp)
     assert r.state == cfi.PASS
     assert "deleted.py" in r.detail and "absent on disk" in r.detail
@@ -911,7 +917,55 @@ def test_F14_clean_tree_carries_no_stale_note():
     import tempfile
     with tempfile.TemporaryDirectory() as td:
         fp = _tree(Path(td), "a.py")
-        r = _f14({"scripts": {"a.py": {"disposition": "promote", "target": "tools/a.py"}}}, fp)
+        r = _f14({"scripts": {"a.py": {"disposition": "promote", "target": REAL_TARGET}}}, fp)
     assert r.state == cfi.PASS
     assert "absent on disk" not in r.detail
     assert "NOTE" not in r.detail
+
+
+def test_F14_promote_target_that_does_not_exist_fails():
+    """A disposition is a DECISION; a target that was never created is an unfinished one.
+
+    Without this, `target: tools/foo.py` is a note-to-self: the frame records that a
+    script should be promoted and nothing ever checks that it was. Six such entries sat
+    in a real frame reading PASS.
+    """
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        fp = _tree(Path(td), "a.py")
+        r = _f14({"scripts": {"a.py": {"disposition": "promote",
+                                       "target": "tools/does_not_exist_anywhere.py"}}}, fp)
+    assert r.state == cfi.FAIL
+    assert "never carried out" in " ".join(r.offenders)
+
+
+def test_F14_superseded_target_must_exist_too():
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        fp = _tree(Path(td), "a.py")
+        r = _f14({"scripts": {"a.py": {"disposition": "superseded",
+                                       "target": "tools/nope_not_here.py"}}}, fp)
+    assert r.state == cfi.FAIL
+
+
+def test_F14_bare_filename_target_is_not_treated_as_a_repo_path():
+    """`target: build_workbook.py` names a SIBLING script, not a repo-root path.
+
+    Treating it as a repo path would fail every 'superseded by another script in this
+    same directory' disposition, which is the common case.
+    """
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        fp = _tree(Path(td), "a.py")
+        r = _f14({"scripts": {"a.py": {"disposition": "superseded",
+                                       "target": "build_workbook.py"}}}, fp)
+    assert r.state == cfi.PASS
+
+
+def test_F14_engagement_only_needs_no_target():
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        fp = _tree(Path(td), "a.py")
+        r = _f14({"scripts": {"a.py": {"disposition": "engagement_only",
+                                       "reason": "policy, not mechanism"}}}, fp)
+    assert r.state == cfi.PASS

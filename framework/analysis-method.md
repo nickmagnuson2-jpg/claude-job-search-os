@@ -262,3 +262,60 @@ Cheap during the run, impossible to reconstruct afterward. Non-negotiable.
 - `framework/slide-craft-mckinsey.md` · `framework/problem-solving-mckinsey.md` ·
   `framework/smb-decision-analysis.md` · `framework/adversarial-analysis-pipeline.md` (an optional
   fork, invoked when stakes justify it, never the default path)
+
+---
+
+## Closing an engagement: the code drain
+
+Every engagement produces scripts. Nothing used to look at them, so one closed with 34 in its
+`scripts/` directory of which **four were already probes the method was separately planning to
+build from scratch**. They had sat there a week. The cost is not the rewrite; it is that a
+rewrite is WORSE, because the original carries the defect that produced it, written down at the
+moment it was understood.
+
+**The gate, so this is not a habit anyone has to remember.** `frame.yaml` carries a `scripts`
+block and F14 in `tools/check_frame_integrity.py` refuses a close while any script beside the
+frame lacks a disposition. Three values:
+
+| | Means | Requires |
+|---|---|---|
+| `promote` | MECHANISM: every consumer would want the same answer | `target`, the `tools/` module it becomes |
+| `engagement_only` | POLICY: it encodes this client's data, questions or page | `reason` |
+| `superseded` | replaced by something else | `target`, what replaced it |
+
+**F14 also verifies that a `promote` target EXISTS.** Without that, `target: tools/foo.py` is a
+note-to-self: the decision is recorded and nothing checks it was carried out. Six such entries
+sat in a real frame reading PASS.
+
+### Promoting one, in order
+
+1. **Search `tools/` for the mechanism FIRST.** This is the step that pays. Two deck tools were
+   queued for promotion and both carried Chrome discovery; a third copy already lived in
+   `check_deck_geometry.py`, byte-identical, and one of the two HARDCODED a browser path with no
+   fallback. Promoting them as written would have shipped a second and third driver. Extract the
+   shared part first: `tools/chrome_runner.py` now holds it and `check_deck_geometry` got
+   **shorter**. A promotion that only adds files has probably skipped this step.
+2. **Split mechanism from policy, and only the mechanism moves.** Locating and invoking a browser
+   is identical for every caller. What gets injected into the page and what gets extracted
+   afterwards differ completely and stay with the caller. `slide_check.py` had already performed
+   this split inside the engagement: it holds "check a printed value against a recomputation"
+   while the per-slide modules hold *which* values a slide prints.
+3. **Re-resolve the paths.** An engagement script resolves relative paths against its own
+   directory, because it lived beside the data. In `tools/` that silently doubles the path.
+4. **Move the TESTS to where the mechanism now lives.** Two tests for browser discovery lived in
+   the deck-geometry suite and began failing on promotion -- not because behaviour broke, but
+   because they tested a generalizable INPUT at a CONSUMER, and patching a re-export does not
+   reach the implementation. Test the mechanism once where it lives; each consumer tests only
+   what it alone does.
+5. **Verify on the real artifact, not a fixture.** `tools/deck_to_pdf.py` was run against the
+   engagement's actual deck and produced 393,163 bytes across 2 pages, matching the sent
+   deliverable exactly. That is the measurement; a green unit test is not.
+6. **Mutation, then record the landing.** `mutation_check.py --isolation`, zero survivors or a
+   written reason per survivor. Then the frame's `target` points at a file that exists, and F14
+   goes green on its own.
+
+**What does NOT travel.** A definition module (`junk_def.py`, `day_parts.py`) whose docstring says
+"import it, do not re-declare it" is a real pattern and a local value: the PATTERN belongs to
+`framework/glossary.md`, the five literal values belong to the client. A restraint harness stays
+local on purpose -- the engagement IS the labelled dataset its probe is measured against, and
+promoting it would separate the measurement from its ground truth.

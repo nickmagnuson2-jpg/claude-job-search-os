@@ -714,6 +714,26 @@ def check_F14(frame, frame_path=None):
             problems.append(f"{len(undispositioned)} script(s) present but undispositioned: "
                             + ", ".join(undispositioned))
 
+    # A `promote` or `superseded` target that does not exist is an UNFINISHED promotion.
+    # Without this, "target: tools/foo.py" is a note-to-self: the disposition records a
+    # decision and nothing ever checks that the decision was carried out. Same shape as
+    # every other defect this file guards -- a well-formed declaration compared to nothing.
+    # Relative targets resolve from the repo root (this file's parent's parent).
+    repo_root = Path(__file__).resolve().parents[1]
+    for name, spec in declared.items():
+        if not isinstance(spec, dict):
+            continue
+        disp = str(spec.get("disposition", "")).strip().lower()
+        target = str(spec.get("target", "")).strip()
+        if disp not in ("promote", "superseded") or not target:
+            continue
+        if "/" not in target:
+            continue  # a bare filename names a sibling script, not a repo path
+        if not (repo_root / target).exists():
+            problems.append(
+                f"{name}: disposition {disp!r} names target {target!r}, which does not "
+                "exist. The decision was recorded and never carried out")
+
     if problems:
         return Result("F14", FAIL,
                       f"{len(problems)} script disposition problem(s)", problems)
