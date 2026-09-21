@@ -147,6 +147,10 @@ TYPE_TOL = 0.01
 
 # SVG viewBox slack, in user units. Above this the drawing does not fill its own box.
 SVG_SLACK_TOL = 1.0
+# The other side of the same measurement. Below -SVG_CLIP_TOL, drawing is outside the viewBox
+# and the reader loses it. Above it and below SVG_SLACK_TOL is a stroke on the boundary, which
+# is ink and must not fail. See check_g6 for how the two numbers were measured apart.
+SVG_CLIP_TOL = 2.0
 
 # Elements too small to carry a readable type size: a swatch, a rule, a spacer.
 MIN_TEXT_CHARS = 1
@@ -708,8 +712,27 @@ def check_g5(pages) -> Result:
 
 
 def check_g6(pages) -> Result:
-    """No SVG carries whitespace inside its own viewBox."""
-    offenders = []
+    """An SVG's viewBox carries no whitespace, AND no drawing outside it.
+
+    SLACK IS TWO-SIDED AND THIS RULE TESTED ONE SIDE. `svgSlack` returns
+    `(viewBox edge) - (ink edge)` per side: POSITIVE is empty space inside the box, NEGATIVE
+    is drawing that falls outside it and is therefore clipped. The test was
+    `if slack[side] > SVG_SLACK_TOL`, so every negative value passed in silence.
+
+    On 2026-09-21 this rule certified a shipped deck "CLEAN and FULLY COVERED -- 9 pass,
+    0 fail" while a chart's right slack sat at -8.43: a label reading "billin", because the
+    final "g" of "billing" was outside the box. The number that proves it was computed here,
+    on that run, and compared in one direction. Nick found it by looking at the page.
+
+    A SMALL NEGATIVE IS NOT A CLIP, which is why this is a band and not an abs(). A stroke
+    painted on the boundary puts half its width outside the box: 0.5 to 1.2 user units on
+    these charts. A clipped glyph is far larger -- about 5 units for one character at the
+    11px label size, and the case that forced this measured 8.43. SVG_CLIP_TOL sits between
+    the two. The earlier reasoning, that negative slack "is ink, not whitespace, and trimming
+    to it would clip the drawing", was right about strokes and wrong to generalise from
+    strokes to every negative value.
+    """
+    empty, clipped = [], []
     checked = 0
     for p in pages:
         for n in p["nodes"]:
@@ -719,20 +742,30 @@ def check_g6(pages) -> Result:
             checked += 1
             for side in ("left", "top", "right", "bottom"):
                 if slack[side] > SVG_SLACK_TOL:
-                    offenders.append("page " + str(p["page"]) + ": "
-                                     + str(round(slack[side], 2))
-                                     + " user units of empty " + side + " inside the "
-                                     "viewBox, so the box edge is not the visible edge -- "
-                                     + n["label"])
+                    empty.append("page " + str(p["page"]) + ": "
+                                 + str(round(slack[side], 2))
+                                 + " user units of empty " + side + " inside the "
+                                 "viewBox, so the box edge is not the visible edge -- "
+                                 + n["label"])
+                elif slack[side] < -SVG_CLIP_TOL:
+                    clipped.append("page " + str(p["page"]) + ": "
+                                   + str(round(-slack[side], 2))
+                                   + " user units of drawing fall outside the " + side
+                                   + " edge of the viewBox and are CLIPPED -- "
+                                   + n["label"])
     if not checked:
         return Result("G6", CANNOT_RUN,
                       "no SVG with a viewBox and a measurable bounding box was found")
-    if offenders:
+    if empty or clipped:
+        # Clipped content leads: a lost glyph is a defect in the artifact, while slack is a
+        # defect in its alignment.
         return Result("G6", FAIL,
-                      str(len(offenders)) + " side(s) of " + str(checked) + " SVG(s) carry "
-                      "whitespace baked into the viewBox", offenders[:MAX_OFFENDERS])
+                      str(len(clipped)) + " side(s) with drawing CLIPPED outside the viewBox "
+                      "and " + str(len(empty)) + " with whitespace baked into it, across "
+                      + str(checked) + " SVG(s)", (clipped + empty)[:MAX_OFFENDERS])
     return Result("G6", PASS,
-                  "all " + str(checked) + " SVG(s) have a viewBox that hugs the drawing")
+                  "all " + str(checked) + " SVG(s) have a viewBox that hugs the drawing, "
+                  "with nothing clipped outside it")
 
 
 def check_g7(pages) -> Result:

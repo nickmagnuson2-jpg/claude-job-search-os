@@ -3,7 +3,7 @@ name: prep-interview
 description: One-command interview prep package — question mapping, company context digest, and tactics/logistics — saved as a single output document
 argument-hint: <company> [role] [context]
 user-invocable: true
-allowed-tools: Read(*), Glob(data/*), Glob(output/**), Write(output/**), Write(data/job-todos.md), Bash(python3 tools/pipe_write.py:*), Task, mcp__exa__web_search_exa, mcp__exa__web_fetch_exa, WebSearch, WebFetch
+allowed-tools: Read(*), Glob(data/*), Glob(output/**), Glob(coaching/**), Write(output/**), Write(data/job-todos.md), Bash(python3 tools/pipe_write.py:*), Task, mcp__exa__web_search_exa, mcp__exa__web_fetch_exa, WebSearch, WebFetch
 ---
 
 # Prep Interview — One-Command Interview Prep Package
@@ -68,7 +68,7 @@ Read the following in parallel — skip any that don't exist:
 2b. Interviewer dossier — `data/people/<slug>.md` (if the interviewer is known; slug = interviewer name lowercased, accents folded, spaces→hyphens) — synthesized relationship context (what they care about, pressure points, prior touchpoints, what Nick owes them). Feeds the audience-fluency read (Step 1b C1) and the Agent 3 Live-Need Bridge block. Example: `data/people/jane-doe.md`.
 3. `data/profile.md`
 4. `data/professional-identity.md`
-5. `coaching/coached-answers.md`
+5. **`coaching/coached-answers/`** — the directory, ALL of it. Glob `coaching/coached-answers/*.md` and read every match, plus `_backlog.md` to see what is NOT coached yet. These are the validated SPOKEN answers and they outrank `data/projects/*.md` for anything said out loud: they carry the reconciled numbers, the framing that survived a live rep, and a delivery note naming what already went wrong. **Read them BEFORE writing any proof into the doc, and carry a matched answer's delivery note into the prep verbatim.** The legacy single file `coaching/coached-answers.md` was merged into this directory on 2026-09-21 and no longer exists. Origin: 2026-09-21, a prep shipped a proof framed from the project file while a validated coached version said the opposite, per `memory/feedback_coached_answers_has_two_surfaces.md`.
 6. `coaching/anti-pattern-tracker.md`
 7. `coaching/pressure-points.md`
 8. `framework/answering-strategies/anti-patterns.md`
@@ -148,7 +148,7 @@ For a hiring manager: focus on behavioral STAR questions, strategic thinking, sp
 For a panel: mix of above plus role-specific technical/functional questions.
 Tailor to [Company]'s stage/industry/culture signals from the context.
 
-Step 2: For each question, check coached-answers.md and project experience for a good answer.
+Step 2: For each question, check EVERY file in coaching/coached-answers/ and the project experience for a good answer. The coached directory outranks the project files for anything spoken.
 - If a strong coached answer exists: note the answer framework and key points to hit.
 - If a partial match exists (related but not exact): note what to adapt.
 - If no coached answer exists: flag as GAP.
@@ -171,7 +171,7 @@ Output format:
 - [Key point 1 — cite specific project if relevant]
 - [Key point 2]
 - [Key point 3]
-**Coached answer reference:** [Section in coached-answers.md, or "CONSTRUCT FROM: [project]"]
+**Coached answer reference:** [file in coaching/coached-answers/ and its section, or "CONSTRUCT FROM: [project]"]
 **Anti-patterns to avoid:** [1-2 relevant warnings]
 
 ### Q2. [Question]

@@ -151,7 +151,7 @@ Auto-generated action items when entering each stage:
 
 ### → Phone Screen
 - Review `framework/answering-strategies/anti-patterns.md` (60-second checklist)
-- Prep your recruiter pitch using `coaching/coached-answers.md`
+- Prep your recruiter pitch using `coaching/coached-answers/recruiter-pitch.md`
 - Review relevant coached answers for this role type
 - Run `/voice-export` to practice if time allows
 

@@ -386,6 +386,6 @@ the decisions instead of the artifact.
 - **URL fetch fails**: Ask user to paste the JD text directly. Do not attempt to reconstruct the JD from partial content.
 - **Too few projects**: If fewer than 3 relevant projects exist, use all available. Note in summary: "Only N projects available — consider adding more to `data/projects/`."
 - **Missing profile.md**: Proceed without personal details. Omit compensation/availability from cheat sheet. Flag in summary.
-- **Missing coached-answers.md**: Skip that section of cheat sheet silently.
+- **Missing `coaching/coached-answers/`**: Skip that section of cheat sheet silently. Read the whole directory when present, not a single file.
 - **Keywords not coverable**: If a keyword can't be added naturally to the CV (e.g. a technology the candidate genuinely doesn't have), flag it in the ATS coverage table as `⚠️ Gap — omit` and note it in the summary as a genuine skill gap.
 - **Multiple roles at same company in pipeline**: Update the most recently active matching entry.

@@ -347,10 +347,44 @@ def test_g6_fails_on_slack_on_any_side(side):
     assert side in r.offenders[0]
 
 
-def test_g6_allows_ink_that_overshoots_the_viewbox():
-    """A stroke drawn on the boundary reads as negative slack. That is ink, not
-    whitespace, and trimming to it would clip the drawing."""
-    assert g.check_g6([page([node(svg_slack=slack(top=-2, bottom=-1))])]).state == PASS
+def test_g6_allows_a_stroke_painted_on_the_viewbox_boundary():
+    """Half a stroke outside the box reads as small negative slack. That is ink on the
+    edge, not content lost, and failing on it would make the rule unusable.
+
+    This test used to be `test_g6_allows_ink_that_overshoots_the_viewbox` and asserted
+    that ALL negative slack passes. The reasoning was right about strokes and generalised
+    from strokes to every negative value, which is how a deck shipped with a clipped word
+    and this rule reported PASS. -2 was inside the old tolerance-free pass and is now
+    outside SVG_CLIP_TOL, so the values here are the stroke-sized ones they should always
+    have been."""
+    assert g.check_g6([page([node(svg_slack=slack(top=-1.2, bottom=-0.6))])]).state == PASS
+
+
+@pytest.mark.parametrize("side", ["left", "top", "right", "bottom"])
+def test_g6_fails_when_drawing_is_clipped_outside_any_side(side):
+    """The shipped case: a sankey 8.43 user units wider than its own viewBox, so the last
+    label read "billin". G6 computed that number and compared it in one direction."""
+    r = g.check_g6([page([node(svg_slack=slack(**{side: -8.43}))])])
+    assert r.state == FAIL
+    assert side in r.offenders[0]
+    assert "CLIPPED" in r.offenders[0]
+    assert "8.43" in r.offenders[0]
+
+
+def test_g6_reports_clipping_and_slack_together_and_leads_with_the_clip():
+    """A lost glyph is a defect in the artifact; slack is a defect in its alignment."""
+    r = g.check_g6([page([node(svg_slack=slack(left=20, right=-9))])])
+    assert r.state == FAIL
+    assert "CLIPPED" in r.offenders[0]
+    assert any("empty" in o for o in r.offenders)
+
+
+def test_g6_passing_message_states_both_halves():
+    """A PASS that only says the viewBox hugs the drawing is the message that was true
+    while a word was clipped off the page."""
+    r = g.check_g6([page([node(svg_slack=slack())])])
+    assert r.state == PASS
+    assert "clipped" in r.detail
 
 
 def test_g6_cannot_run_without_a_measurable_svg():

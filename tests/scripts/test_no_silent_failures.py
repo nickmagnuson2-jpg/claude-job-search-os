@@ -72,6 +72,24 @@ NON_HOOK_CHECKERS = {
     # every suite pass. The condition for wiring it is a measured false-positive rate
     # over a real corpus of decks, never another hand-picked example.
     "check_deck_craft.py",
+    # check_deck_geometry.py is the SIBLING CLI GATE to check_deck_craft.py and is
+    # exempt for the same structural reason, one step further out. craft parses the
+    # deck's HTML; geometry measures the RENDER, because the markup does not contain
+    # the answer to "does this element fit" or "is this edge aligned". Its own docstring
+    # records the three failures that paid for it, including a 2026-09-17 rewrite that
+    # consumed a closing </div> so page 2 nested inside page 1 and rendered BLANK while
+    # check_deck_craft passed nine rules against it.
+    #
+    # There is therefore no tool call to intercept: the artifact it judges does not
+    # exist until a render step has produced a PNG, which is strictly later than the
+    # Write that produced the HTML. Wiring it to Write|Edit would fire it on a file that
+    # has not been rendered and cannot be measured.
+    #
+    # Same second reason as its sibling: wiring takes restraint AND mutation survival,
+    # and the restraint half needs a corpus of rendered decks over time, which does not
+    # exist yet. It is not unwatched -- it runs from the deck build step and its tests
+    # execute every suite pass. Exempted 2026-09-20.
+    "check_deck_geometry.py",
     # UNWIRED ON PURPOSE, 2026-09-07. Built, bounded and tested (93 tests, mutation
     # clean), but its TRIGGER PRECISION is unestablished: two adversarial reviews found
     # it failing at P0 in BOTH directions, staying quiet on real status questions and

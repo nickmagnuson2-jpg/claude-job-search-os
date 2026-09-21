@@ -68,13 +68,37 @@ def measure(svg_text: str, chrome: str) -> dict:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
-def main() -> int:
+# A stroke painted on the viewBox boundary puts half its width outside the box: 0.5 to 1.2
+# user units on these charts, and trimming to it would clip the drawing. A clipped GLYPH is
+# much bigger -- roughly 5 units for one character at the 11px label size, and the case that
+# forced this check measured 8.43. The tolerance sits between the two, so a boundary stroke
+# stays quiet and a missing letter does not.
+H_CLIP_TOL = 2.0
+
+
+def horizontal_clip(bb, x0: float, w0: float) -> list[tuple[str, float]]:
+    """Sides where the drawing falls outside the viewBox, with how far, in user units.
+
+    Empty when nothing is clipped. This reads the x and width that `measure` already
+    returned; it changes nothing, because x and width carry the scale-1 construction.
+    """
+    out = []
+    for side, over in (("left", x0 - bb["x"]), ("right", (bb["x"] + bb["w"]) - (x0 + w0))):
+        if over > H_CLIP_TOL:
+            out.append((side, over))
+    return out
+
+
+def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--svg", required=True)
     ap.add_argument("--max-passes", type=int, default=4)
     ap.add_argument("--chrome", default=None,
                     help="explicit browser path; checked, never trusted")
-    args = ap.parse_args()
+    # argv is a PARAMETER so the exit codes can be asserted in-process. Reading sys.argv
+    # directly meant every CLI decision here could only be tested by spawning a subprocess
+    # with a real browser, which is why none of them were tested at all.
+    args = ap.parse_args(argv)
 
     # Relative paths resolve from the CALLER'S cwd. The engagement-local original
     # resolved them against its own parent directory, which was correct beside the
@@ -99,13 +123,33 @@ def main() -> int:
             return 1
         x0, y0, w0, h0 = (float(v) for v in vb.group(1).split())
         bb = measure(text, chrome)
+
+        # THE HORIZONTAL MEASUREMENT IS FREE AND WAS BEING DISCARDED. getBBox() returns x and
+        # width in the same call as y and height. This tool does not TOUCH x or width -- the
+        # scale-1 construction depends on them -- but not touching them is not a reason to
+        # throw away what they say. On 2026-09-21 a shipped deck's sankey measured 588.37
+        # units of ink inside a 579.94-unit viewBox: the last label read "billin" because the
+        # "g" of "billing" was outside the box. This function measured 588.37 that day and
+        # dropped it, and the deck gate's G6 computed the same overshoot and tested only the
+        # other direction. Two instruments, one number, neither looked.
+        clipped = horizontal_clip(bb, x0, w0)
+        for side, over in clipped:
+            print("CLIPPED: %.2f user units of drawing fall outside the %s edge of the "
+                  "viewBox. Widen the viewBox or shorten the content; this tool will not do "
+                  "it for you, because x and width carry the scale-1 construction."
+                  % (over, side))
+
         dy, dh = bb["y"] - y0, (y0 + h0) - (bb["y"] + bb["h"])
         if abs(dy) <= 0.5 and abs(dh) <= 0.5:
             print("converged after %d pass(es): top slack %.2f, bottom slack %.2f"
                   % (i, dy, dh))
             print("  viewBox %.2f %.2f %.2f %.2f   (x and width untouched: the scale-1 "
                   "construction depends on them)" % (x0, y0, w0, h0))
-            return 0
+            # A CONVERGED VERTICAL FIT IS NOT A CLEAN CHART. Exiting 0 with content hanging
+            # outside the box is how the sankey shipped clipped: the caller read "converged"
+            # as done. Vertical convergence and horizontal containment are separate claims
+            # and get separate exit codes.
+            return 3 if clipped else 0
         new = 'viewBox="%g %.2f %g %.2f"' % (x0, bb["y"], w0, bb["h"])
         path.write_text(re.sub(r'viewBox="[-\d. ]+"', new, text, count=1), encoding="utf-8")
         print("pass %d: tightened y by %.2f, height by %.2f" % (i, dy, dh))
