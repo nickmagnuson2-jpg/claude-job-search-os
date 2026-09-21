@@ -618,7 +618,124 @@ def load_yaml(path: Path):
         return yaml.safe_load(fh)
 
 
-def run_checks(frame, prior=None):
+VALID_DISPOSITIONS = {"promote", "engagement_only", "superseded"}
+# promote and superseded both name WHAT the script became; engagement_only must say WHY
+# it is policy rather than mechanism. A disposition with no required field is a label.
+REQUIRES = {"promote": "target", "superseded": "target", "engagement_only": "reason"}
+
+
+def check_F14(frame, frame_path=None):
+    """Every script the engagement produced carries a disposition.
+
+    THE CODE DRAIN. The self-learning loop drains rules and friction; nothing drains code.
+    One engagement closed with 34 scripts beside its frame, four of which were already the
+    probes the method was separately planning to build from scratch.
+
+    TWO INDEPENDENT QUESTIONS, AND COLLAPSING THEM IS THE DEFECT THIS FILE EXISTS FOR:
+
+      1. are the declarations WELL-FORMED?  -- answerable from the frame alone
+      2. do they COVER what is on disk?     -- needs the directory, which needs frame_path
+
+    A first draft answered (1) and returned PASS, reporting "all N dispositioned" while
+    having compared them to nothing. Well-formed declarations whose coverage could not be
+    checked are CANNOT_RUN, never PASS. Likewise an absent `scripts` block with no
+    directory to enumerate: "produced none" and "never recorded" are indistinguishable
+    from there. An EXPLICIT empty map, verified against an empty or absent tree, is a real
+    answer and passes.
+    """
+    declared = frame.get("scripts")
+    has_block = isinstance(declared, dict)
+
+    enumerated, found, why_not = False, [], ""
+    if frame_path is not None:
+        parent = Path(frame_path).parent
+        d = parent / "scripts"
+        try:
+            if d.is_dir():
+                # EVERY file, not *.py. The check promises "every script the engagement
+                # produced"; globbing *.py silently pre-filters the population to
+                # top-level Python and then reports the remainder as absent. A .sh, an
+                # .ipynb, an extensionless executable and anything in a subdirectory were
+                # all invisible, so `scripts: {}` read PASS with a shell script sitting
+                # beside the frame. What counts as a script is POLICY and belongs in the
+                # disposition, not in a glob here.
+                enumerated = True
+                found = sorted(
+                    str(f.relative_to(d)) for f in d.rglob("*")
+                    if f.is_file()
+                    and "__pycache__" not in f.parts
+                    and not f.name.startswith(".")
+                    and f.name != "__init__.py"
+                )
+            elif d.exists():
+                why_not = f"{d} exists and is not a directory"
+            elif not parent.is_dir():
+                # The frame's own location is not readable, so an absent scripts/ proves
+                # nothing. A mistyped path must not read as a verified empty tree.
+                why_not = f"the frame's directory {parent} does not exist"
+            else:
+                # Parent readable and no scripts/ in it: a genuine, verified absence.
+                enumerated = True
+        except OSError as exc:
+            why_not = f"{d} could not be read: {type(exc).__name__}: {exc}"
+
+    if not has_block:
+        if found:
+            return Result("F14", FAIL,
+                          f"{len(found)} script(s) beside the frame and no `scripts` block",
+                          found)
+        if not enumerated:
+            reason = why_not or "no frame path to enumerate against"
+            return Result("F14", CANNOT_RUN,
+                          f"no `scripts` block and the tree could not be enumerated "
+                          f"({reason}); 'produced none' and 'never recorded' cannot be "
+                          "told apart")
+        return Result("F14", CANNOT_RUN,
+                      "no `scripts` block. The tree beside the frame is empty, but silence "
+                      "is not a declaration -- write `scripts: {}` to state it")
+
+    problems = []
+    for name, spec in declared.items():
+        if not isinstance(spec, dict):
+            problems.append(f"{name}: disposition entry is not a mapping")
+            continue
+        disp = str(spec.get("disposition", "")).strip().lower()
+        if disp not in VALID_DISPOSITIONS:
+            problems.append(f"{name}: disposition {disp!r} not one of "
+                            f"{sorted(VALID_DISPOSITIONS)}")
+            continue
+        need = REQUIRES[disp]
+        if not str(spec.get(need, "")).strip():
+            problems.append(f"{name}: disposition {disp!r} requires a non-empty {need!r}")
+
+    if enumerated:
+        undispositioned = [f for f in found if f not in declared]
+        if undispositioned:
+            problems.append(f"{len(undispositioned)} script(s) present but undispositioned: "
+                            + ", ".join(undispositioned))
+
+    if problems:
+        return Result("F14", FAIL,
+                      f"{len(problems)} script disposition problem(s)", problems)
+
+    if not enumerated:
+        reason = why_not or "no frame path was supplied"
+        return Result("F14", CANNOT_RUN,
+                      f"{len(declared)} declaration(s) are well-formed, but COVERAGE was "
+                      f"never checked against the tree ({reason})")
+
+    # Declared but absent on disk: the registry has drifted. Never silent -- a stale entry
+    # is how a count quietly shrinks while reading clean.
+    stale = [n for n in declared if n not in found]
+    detail = (f"all {len(found)} script(s) on disk dispositioned"
+              if declared else
+              "`scripts` explicitly empty and the tree agrees: this engagement produced none")
+    if stale:
+        detail += f" -- NOTE {len(stale)} declared but absent on disk: {', '.join(sorted(stale))}"
+    return Result("F14", PASS, detail)
+
+
+def run_checks(frame, prior=None, frame_path=None):
     return [
         check_F1a(frame),
         check_F1b(frame),
@@ -632,6 +749,7 @@ def run_checks(frame, prior=None):
         check_F10struct(frame),
         check_F12(frame),
         check_F13(frame),
+        check_F14(frame, frame_path),
     ]
 
 
@@ -698,7 +816,7 @@ def main(argv=None):
     # --- structural gate: a malformed field must never degrade into CANNOT_RUN ---
     structural = validate_structure(frame, schema)
 
-    results = run_checks(frame, prior)
+    results = run_checks(frame, prior, frame_path=frame_path)
     fails = [r for r in results if r.state == FAIL]
     cannot = [r for r in results if r.state == CANNOT_RUN]
     passes = [r for r in results if r.state == PASS]

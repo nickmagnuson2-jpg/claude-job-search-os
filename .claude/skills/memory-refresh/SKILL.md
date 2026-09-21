@@ -30,7 +30,7 @@ python3 tools/scan_promotion_candidates.py --memory-dir "$HOME/.claude/projects/
 
 ### Step 2: Present findings
 
-Summarize the JSON output conversationally — group by promotion vs. demotion, cite `occurrences`/`reopen_gate` for promotion candidates and `last_cited`/`age_days` for demotion candidates. If both lists are empty, say so plainly and stop — don't manufacture work.
+Summarize the JSON output conversationally — group by promotion vs. demotion, cite `occurrences`/`reopen_gate` for promotion candidates and `last_cited`/`age_days` for demotion candidates. **Then read `family_candidates` and `families_all`.** A defect family sums `occurrences` across its declared members, so a shape written down thirty times at one fire each crosses the family threshold while no individual file ever reaches the per-file bar of 2 — it will NOT be in `promotion_candidates`. Report any crossing family, and any row whose `fully_covered` is false (its `gaps` name members that are absent, uncountable, duplicated or unreadable, each of which silently shrinks or inflates the count). Stop only when all THREE are empty — the two per-file lists and the family rows — and say which were checked. Don't manufacture work.
 
 ### Step 3: Offer to act
 

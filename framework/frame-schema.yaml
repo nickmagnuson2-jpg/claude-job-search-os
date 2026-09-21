@@ -217,6 +217,36 @@ fields:
       disposition. Afterward you can only see what you handled, never what you failed
       to notice. Backfill-impossible.
 
+  # ---- SCRIPT DISPOSITIONS. The code drain. ----
+  scripts:
+    type: map[filename -> {disposition, reason, target}]
+    required: false
+    class: per_engagement
+    checks: [F14]
+    note: >
+      ADDED v1.2 (2026-09-21). Every script the engagement produced, dispositioned before
+      the close. `disposition` is promote | engagement_only | superseded.
+        promote         -> it is MECHANISM; `target` names the tools/ module it becomes.
+        engagement_only -> it is POLICY, correctly local; `reason` says why.
+        superseded      -> `target` names what replaced it.
+      WHY IT EXISTS: the self-learning loop drains RULES and FRICTION and nothing else.
+      Verified 2026-09-21: five scanners (scan_promotion_candidates, scan_transcript_failures,
+      friction_log, friction_surface, learning_ledger) all read prose records; none reads
+      code. One engagement closed with 34 scripts in its scripts/ directory, FOUR of which
+      were already the probes the method was separately planning to build from scratch.
+      Nobody knew, because nothing looked.
+      An explicit empty map means "this engagement produced no scripts" and is a real
+      answer. Its ABSENCE is not.
+  scripts_undispositioned:
+    type: list[string]
+    required: false
+    class: derived
+    note: >
+      Recorded at lock time: scripts present beside the frame that never received a
+      disposition. Backfill-impossible for the same reason as `unknowns_undispositioned` --
+      a month later you can see which scripts you promoted, never which you failed to
+      notice.
+
   # ---- INPUTS REGISTRY. Declared once, referenced by id. ----
   inputs:
     type: map[id -> {name, aka}]
@@ -406,6 +436,7 @@ validation:
   F10struct: "every unknown has a disposition, and its disposition's required sub-fields are present"
   F12: "`recommendation.confidence` and `recommendation.next_action` are both present"
   F13: "on a `locked: true` frame, `proposals` and `prediction.will_be_probed` are both non-empty (CANNOT_RUN while unlocked)"
+  F14: "every script beside the frame carries a disposition (promote | engagement_only | superseded), and promote/superseded name a `target` while engagement_only gives a `reason`. CANNOT_RUN when coverage cannot be checked against the tree."
   schema: "refuse any frame whose `schema_version` is unknown to this checker"
 
 # What the deterministic layer CANNOT do. Stated so it is never mistaken for coverage.

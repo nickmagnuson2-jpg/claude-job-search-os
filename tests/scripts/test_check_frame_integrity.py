@@ -578,7 +578,12 @@ def test_acceptance_measured_result_is_pinned():
     # F2b, whose inputs are unknowable after the fact, this one is knowably absent.
     # A reconstruction cannot manufacture either, and it should not be able to.
     expected_fail = {"F1a", "F2a", "F3", "F5", "F10struct", "F12", "F13"}
-    expected_cannot = {"F1b", "F2b", "F8b", "F9"}
+    # F14 added 2026-09-21 (the code drain). CANNOT_RUN here for a reason that is itself
+    # the point of the check: `states()` calls run_checks WITHOUT a frame path, so the
+    # scripts/ tree cannot be enumerated, so COVERAGE was never compared to anything.
+    # A well-formed-looking PASS in that situation would be a check reporting clean while
+    # measuring nothing -- exactly what this module's three-state design refuses.
+    expected_cannot = {"F1b", "F2b", "F8b", "F9", "F14"}
     expected_pass = {"F8a"}
 
     got_fail = {k for k, v in st.items() if v == cfi.FAIL}
@@ -681,3 +686,198 @@ def test_F13_is_registered_in_the_schema_validation_block():
     The schema is the contract; this pins them together."""
     schema = yaml.safe_load(SCHEMA.read_text(encoding="utf-8"))
     assert "F13" in schema["validation"]
+
+
+# ---------------------------------------------------------------- F14, the code drain
+# Added 2026-09-21. The self-learning loop drains rules and friction and nothing else;
+# one engagement closed with 34 scripts beside its frame, four of which were already
+# probes the method was separately planning to build from scratch.
+#
+# F14 answers TWO questions that a first draft collapsed into one: are the declarations
+# WELL-FORMED (frame alone), and do they COVER the tree (needs a frame path). Collapsing
+# them returned PASS -- "all N dispositioned" -- having compared them to nothing.
+
+
+def _f14(frame, frame_path=None):
+    return cfi.check_F14(frame, frame_path)
+
+
+def _tree(tmp_path, *names):
+    d = tmp_path / "scripts"
+    d.mkdir()
+    for n in names:
+        (d / n).write_text("# x\n", encoding="utf-8")
+    return tmp_path / "frame.yaml"
+
+
+def test_F14_no_block_and_no_path_cannot_run():
+    """'produced none' and 'never recorded' are indistinguishable without a tree."""
+    r = _f14({})
+    assert r.state == cfi.CANNOT_RUN
+    assert "cannot be told apart" in r.detail
+
+
+def test_F14_scripts_present_with_no_block_fails():
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        fp = _tree(Path(td), "a.py", "b.py")
+        r = _f14({}, fp)
+    assert r.state == cfi.FAIL
+    assert "no `scripts` block" in r.detail
+
+
+def test_F14_empty_tree_with_no_block_is_cannot_run_not_pass():
+    """Silence is not a declaration. An empty tree does not certify 'produced none'."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        fp = _tree(Path(td))
+        r = _f14({}, fp)
+    assert r.state == cfi.CANNOT_RUN
+    assert "silence is not a declaration" in r.detail.lower()
+
+
+def test_F14_explicit_empty_map_against_empty_tree_passes():
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        fp = _tree(Path(td))
+        r = _f14({"scripts": {}}, fp)
+    assert r.state == cfi.PASS
+    assert "produced none" in r.detail
+
+
+def test_F14_wellformed_declarations_without_a_path_are_CANNOT_RUN_not_pass():
+    """THE HOLE THIS TEST EXISTS FOR. Coverage unchecked must never read as covered."""
+    frame = {"scripts": {"a.py": {"disposition": "promote", "target": "tools/a.py"}}}
+    r = _f14(frame)
+    assert r.state == cfi.CANNOT_RUN
+    assert "COVERAGE was never checked" in r.detail
+
+
+def test_F14_undispositioned_script_fails():
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        fp = _tree(Path(td), "a.py", "orphan.py")
+        r = _f14({"scripts": {"a.py": {"disposition": "engagement_only",
+                                       "reason": "policy, not mechanism"}}}, fp)
+    assert r.state == cfi.FAIL
+    # The specifics live in `offenders`; `detail` is the count. A FAIL that does not NAME
+    # the offending file forces a human to go find it, which is how a gate gets ignored.
+    blob = " ".join(r.offenders)
+    assert "orphan.py" in blob
+    assert "undispositioned" in blob
+
+
+def test_F14_unknown_disposition_value_fails():
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        fp = _tree(Path(td), "a.py")
+        r = _f14({"scripts": {"a.py": {"disposition": "maybe_later"}}}, fp)
+    assert r.state == cfi.FAIL
+
+
+def test_F14_promote_without_a_target_fails():
+    """A disposition with no required field is a label, not a decision."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        fp = _tree(Path(td), "a.py")
+        r = _f14({"scripts": {"a.py": {"disposition": "promote"}}}, fp)
+    assert r.state == cfi.FAIL
+
+
+def test_F14_engagement_only_without_a_reason_fails():
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        fp = _tree(Path(td), "a.py")
+        r = _f14({"scripts": {"a.py": {"disposition": "engagement_only"}}}, fp)
+    assert r.state == cfi.FAIL
+
+
+def test_F14_fully_dispositioned_tree_passes():
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        fp = _tree(Path(td), "a.py", "b.py")
+        r = _f14({"scripts": {
+            "a.py": {"disposition": "promote", "target": "tools/a.py"},
+            "b.py": {"disposition": "superseded", "target": "tools/a.py"},
+        }}, fp)
+    assert r.state == cfi.PASS
+    assert "2 script(s) on disk dispositioned" in r.detail
+
+
+def test_F14_stale_declaration_is_noted_but_not_fatal():
+    """Declared, absent on disk: the registry drifted. Never silent."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        fp = _tree(Path(td), "a.py")
+        r = _f14({"scripts": {
+            "a.py": {"disposition": "promote", "target": "tools/a.py"},
+            "deleted.py": {"disposition": "promote", "target": "tools/x.py"},
+        }}, fp)
+    assert r.state == cfi.PASS
+    assert "deleted.py" in r.detail and "absent on disk" in r.detail
+
+
+def test_F14_non_mapping_entry_fails():
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        fp = _tree(Path(td), "a.py")
+        r = _f14({"scripts": {"a.py": "promote"}}, fp)
+    assert r.state == cfi.FAIL
+
+
+# --- F14 regressions from adversarial review, 2026-09-21 -----------------------------
+
+
+def test_F14_sees_non_python_scripts():
+    """`d.glob("*.py")` silently pre-filtered the population to top-level Python, so a
+    shell script beside the frame read as 'the tree agrees: produced none'."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        d = Path(td) / "scripts"
+        d.mkdir()
+        (d / "run.sh").write_text("#!/bin/sh\n", encoding="utf-8")
+        r = _f14({"scripts": {}}, Path(td) / "frame.yaml")
+    assert r.state == cfi.FAIL
+    assert "run.sh" in " ".join(r.offenders)
+
+
+def test_F14_sees_scripts_in_subdirectories():
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        d = Path(td) / "scripts" / "nested"
+        d.mkdir(parents=True)
+        (d / "deep.py").write_text("x = 1\n", encoding="utf-8")
+        r = _f14({"scripts": {}}, Path(td) / "frame.yaml")
+    assert r.state == cfi.FAIL
+    assert "nested/deep.py" in " ".join(r.offenders)
+
+
+def test_F14_ignores_pycache_and_dotfiles():
+    """Junk must not be dispositionable, or the check trains people to ignore it."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        d = Path(td) / "scripts"
+        (d / "__pycache__").mkdir(parents=True)
+        (d / "__pycache__" / "x.pyc").write_text("", encoding="utf-8")
+        (d / ".DS_Store").write_text("", encoding="utf-8")
+        r = _f14({"scripts": {}}, Path(td) / "frame.yaml")
+    assert r.state == cfi.PASS
+
+
+def test_F14_absent_frame_directory_is_cannot_run_not_verified_empty():
+    """`enumerated = True` was set unconditionally when scripts/ was not a directory, so
+    a mistyped path read as a verified empty tree."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        r = _f14({"scripts": {}}, Path(td) / "no_such_dir" / "frame.yaml")
+    assert r.state == cfi.CANNOT_RUN
+    assert "does not exist" in r.detail
+
+
+def test_F14_scripts_path_that_is_a_file_is_cannot_run():
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        (Path(td) / "scripts").write_text("not a directory\n", encoding="utf-8")
+        r = _f14({"scripts": {}}, Path(td) / "frame.yaml")
+    assert r.state == cfi.CANNOT_RUN
+    assert "not a directory" in r.detail

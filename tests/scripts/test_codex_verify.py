@@ -1368,3 +1368,73 @@ def test_the_policy_opens_the_review_tree_for_reading():
     # and the deny that it has to override must still come first
     assert policy.index(f'(deny file-write* (subpath "{REPO_ROOT}"))') < policy.index(
         f'(allow file-write* (subpath "{REPO_ROOT}/{cv.REVIEW_TREE}"))')
+
+
+# ---------------------------------------------------------------- mutation guard
+# Added 2026-09-21. A backgrounded mutation_check run was rewriting a target in place
+# while two external verifiers were dispatched at that same file: git diff showed 138
+# insertions / 223 deletions and the shebang was gone. Both were reading a MUTANT.
+#
+# This is strictly worse than the pytest case conftest.py already guards. A poisoned test
+# run goes red and gets investigated; a poisoned REVIEW lands in
+# tools/.cross-model-ledger.jsonl as a verification of record, and the pre-push gate then
+# treats the range as covered.
+
+
+def test_clean_tree_does_not_refuse(tmp_path):
+    import codex_verify as cv
+
+    assert cv.refuse_under_active_mutation(tmp_path, ["tools/x.py"]) == ""
+
+
+def test_stranded_backup_refuses_and_says_why(monkeypatch, tmp_path):
+    import codex_verify as cv
+
+    fake = tmp_path / "some_target.py.mutation_backup"
+    monkeypatch.setattr(cv, "refuse_under_active_mutation",
+                        cv.refuse_under_active_mutation)  # keep the real one
+
+    import conftest_guard
+    monkeypatch.setattr(conftest_guard, "stranded_backups", lambda root: [fake])
+    msg = cv.refuse_under_active_mutation(tmp_path, ["tools/x.py"])
+    assert msg, "a stranded backup must refuse"
+    assert "REFUSING TO DISPATCH" in msg
+    assert "MUTANT" in msg
+    assert "tools/x.py" in msg, "the refusal must name the paths it was about to cover"
+    assert "Do NOT delete the backup" in msg
+
+
+def test_refusal_names_the_backup_file():
+    import codex_verify as cv
+    import conftest_guard
+    from pathlib import Path as _P
+
+    orig = conftest_guard.stranded_backups
+    try:
+        conftest_guard.stranded_backups = lambda root: [_P("/tmp/evidence.mutation_backup")]
+        msg = cv.refuse_under_active_mutation(_P("/tmp"), [])
+    finally:
+        conftest_guard.stranded_backups = orig
+    assert "evidence.mutation_backup" in msg
+    assert "(none named)" in msg, "no paths given must be stated, not blank"
+
+
+def test_missing_detector_does_not_invent_a_second_one(monkeypatch, tmp_path):
+    """If conftest_guard cannot be imported, return "" rather than rebuilding the check.
+
+    Two detectors for one condition drift, and the day they disagree the disagreement
+    reads as corroboration.
+    """
+    import builtins
+
+    import codex_verify as cv
+
+    real_import = builtins.__import__
+
+    def boom(name, *a, **k):
+        if name == "conftest_guard":
+            raise ImportError("simulated")
+        return real_import(name, *a, **k)
+
+    monkeypatch.setattr(builtins, "__import__", boom)
+    assert cv.refuse_under_active_mutation(tmp_path, ["tools/x.py"]) == ""

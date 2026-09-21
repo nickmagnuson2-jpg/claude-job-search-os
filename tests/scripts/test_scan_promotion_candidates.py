@@ -548,3 +548,377 @@ def test_cron_mode_still_emits_the_full_json_report(tmp_path):
     for key in ("promotion_candidates", "demotion_candidates", "schema_coverage",
                 "never_cited_count", "terminal_rules", "oversized_context_files"):
         assert key in out, key
+
+
+# =====================================================================================
+# RULE FAMILIES (added 2026-09-21)
+#
+# A defect shape written down 32 times under 32 names has 32 counters reading 1 or 2 and
+# crosses no threshold, so every new instance reports as a first-timer. Summing by family
+# is what makes it visible. These tests exist because every failure mode of that summation
+# is silent in the same direction as the two regressions pinned at the top of this file:
+# a member that stops being counted does not error, the total just quietly shrinks.
+# =====================================================================================
+
+
+def _fm(occ=None, promoted="no", terminal=None):
+    fm = {"promoted": promoted}
+    if occ is not None:
+        fm["occurrences"] = occ
+    if terminal is not None:
+        fm["terminal"] = terminal
+    return fm
+
+
+def test_missing_registry_is_skipped_LOUDLY_not_silently():
+    """No aggregation is fine. Being unable to tell that from 'no families' is not."""
+    fams, reason = spc.load_rule_families(Path("/definitely/not/here.yaml"))
+    assert fams == []
+    assert reason, "a skipped registry must report WHY, or a silent skip reads as no families"
+    assert "does not exist" in reason
+
+
+def test_malformed_registry_reports_the_parse_failure(tmp_path):
+    p = tmp_path / "rule-families.yaml"
+    p.write_text("families: [unclosed\n", encoding="utf-8")
+    fams, reason = spc.load_rule_families(p)
+    assert fams == []
+    assert "failed to parse" in reason
+
+
+def test_registry_without_a_families_list_is_reported(tmp_path):
+    p = tmp_path / "rule-families.yaml"
+    p.write_text("schema_version: 1\n", encoding="utf-8")
+    fams, reason = spc.load_rule_families(p)
+    assert fams == []
+    assert "no `families:` list" in reason
+
+
+def test_real_registry_loads_and_declares_members():
+    """The shipped file must actually parse -- a registry nobody can read counts nothing."""
+    fams, reason = spc.load_rule_families(REPO_ROOT / "framework" / "rule-families.yaml")
+    assert reason == ""
+    assert fams, "framework/rule-families.yaml declares no families"
+    for f in fams:
+        assert f.get("canonical"), "every family needs a canonical name"
+        assert f.get("members"), f"family {f.get('canonical')!r} declares zero members"
+
+
+def test_family_sums_unpromoted_occurrences_across_members():
+    fams = [{"canonical": "shape", "members": ["a", "b", "c"]}]
+    by_stem = {"a": _fm(2), "b": _fm(3), "c": _fm(4)}
+    row = spc.family_candidates(fams, by_stem, threshold=5)[0]
+    assert row["occurrences_total"] == 9
+    assert row["occurrences_unpromoted"] == 9
+    assert row["crosses_threshold"] is True
+
+
+def test_promoted_members_count_toward_total_but_not_the_signal():
+    """A landed rule is history, not backlog. Counting it would inflate the signal."""
+    fams = [{"canonical": "shape", "members": ["a", "b"]}]
+    by_stem = {"a": _fm(4, promoted="yes -- hook tier"), "b": _fm(3)}
+    row = spc.family_candidates(fams, by_stem, threshold=5)[0]
+    assert row["occurrences_total"] == 7
+    assert row["occurrences_unpromoted"] == 3
+    assert row["promoted_members"] == 1
+    assert row["crosses_threshold"] is False
+
+
+def test_partial_promotion_still_counts_as_unpromoted():
+    """Mirrors the 2026-08-13 regression: `partial` is half-landed, not done."""
+    fams = [{"canonical": "shape", "members": ["a"]}]
+    row = spc.family_candidates(fams, {"a": _fm(6, promoted="partial -- only sweeps")},
+                                threshold=5)[0]
+    assert row["occurrences_unpromoted"] == 6
+    assert row["promoted_members"] == 0
+
+
+def test_annotated_no_still_counts_as_unpromoted():
+    """Mirrors the 2026-08-25 regression: writing down WHY must not hide the rule."""
+    fams = [{"canonical": "shape", "members": ["a"]}]
+    row = spc.family_candidates(fams, {"a": _fm(6, promoted="no -- CORRECTED, refuted")},
+                                threshold=5)[0]
+    assert row["occurrences_unpromoted"] == 6
+
+
+def test_terminal_members_are_excluded_from_the_signal():
+    fams = [{"canonical": "shape", "members": ["a", "b"]}]
+    by_stem = {"a": _fm(9, terminal="true"), "b": _fm(1)}
+    row = spc.family_candidates(fams, by_stem, threshold=5)[0]
+    assert row["terminal_members"] == 1
+    assert row["occurrences_unpromoted"] == 1
+    assert row["crosses_threshold"] is False
+
+
+def test_stale_member_is_reported_not_silently_dropped():
+    """A renamed or deleted rule shrinks a family's count. That must be visible."""
+    fams = [{"canonical": "shape", "members": ["a", "gone"]}]
+    row = spc.family_candidates(fams, {"a": _fm(2)}, threshold=5)[0]
+    assert row["stale_members"] == ["gone"]
+    assert row["occurrences_unpromoted"] == 2
+
+
+def test_invisible_member_is_reported_separately_from_stale():
+    """Present on disk but carrying no `occurrences` key: uncountable, and not the same
+    defect as a missing file. Collapsing the two would hide a schema gap."""
+    fams = [{"canonical": "shape", "members": ["a", "nokey"]}]
+    by_stem = {"a": _fm(2), "nokey": _fm(None)}
+    row = spc.family_candidates(fams, by_stem, threshold=5)[0]
+    assert row["invisible_members"] == ["nokey"]
+    assert row["stale_members"] == []
+
+
+def test_threshold_is_inclusive():
+    fams = [{"canonical": "shape", "members": ["a"]}]
+    assert spc.family_candidates(fams, {"a": _fm(5)}, threshold=5)[0]["crosses_threshold"] is True
+    assert spc.family_candidates(fams, {"a": _fm(4)}, threshold=5)[0]["crosses_threshold"] is False
+
+
+def test_family_with_zero_members_is_an_error_not_a_clean_zero():
+    row = spc.family_candidates([{"canonical": "shape", "members": []}], {}, threshold=5)[0]
+    assert "error" in row
+    assert "ZERO members" in row["error"]
+    assert "crosses_threshold" not in row
+
+
+def test_family_with_no_canonical_name_is_an_error():
+    row = spc.family_candidates([{"members": ["a"]}], {"a": _fm(9)}, threshold=5)[0]
+    assert "error" in row and "canonical" in row["error"]
+
+
+def test_non_mapping_family_entry_is_an_error():
+    row = spc.family_candidates(["just a string"], {}, threshold=5)[0]
+    assert "error" in row and "not a mapping" in row["error"]
+
+
+def test_unparseable_occurrences_are_surfaced_not_silently_zeroed():
+    """REWRITTEN 2026-09-21 after adversarial review.
+
+    The previous version asserted only that the total was 3, which was true whether the
+    bad value was routed to a visible bucket OR silently folded in as zero -- so the test
+    could not fail and entrenched the defect it was named for. An unreadable count is an
+    UNKNOWN count; folding it in as zero reports a measurement nobody made, and it cannot
+    be told apart from a genuine first fire.
+    """
+    fams = [{"canonical": "shape", "members": ["a", "b"]}]
+    by_stem = {"a": _fm("many"), "b": _fm(3)}
+    row = spc.family_candidates(fams, by_stem, threshold=5)[0]
+    assert row["occurrences_unpromoted"] == 3
+    assert row["unparseable_members"], "a bad value must be visible, not absorbed"
+    assert "many" in row["unparseable_members"][0]
+    assert "a" not in row["invisible_members"], "unreadable is not the same defect as uncountable"
+
+
+# --- second mutation round, 2026-09-21 ------------------------------------------------
+# 4 survivors in the family code, 3 of them the same defect in my own tests: asserting on
+# rows[0] while a dropped `continue` appends a SECOND row that rows[0] never sees. The
+# error row stayed correct, so the assertion passed, and the fall-through was invisible.
+
+
+def test_no_canonical_emits_exactly_one_row():
+    rows = spc.family_candidates([{"members": ["a"]}], {"a": _fm(9)}, threshold=5)
+    assert len(rows) == 1, "an error row must not also fall through into a counted row"
+    assert "error" in rows[0]
+
+
+def test_zero_members_emits_exactly_one_row():
+    rows = spc.family_candidates([{"canonical": "shape", "members": []}], {}, threshold=5)
+    assert len(rows) == 1
+    assert "error" in rows[0]
+
+
+def test_invisible_member_is_excluded_from_counting_entirely():
+    """Not merely counted as zero.
+
+    A member with no `occurrences` key must be skipped, not folded in as a 0-fire member:
+    folding it in would let it contribute to promoted_members and misreport how much of
+    the family has landed. Detected by giving the invisible member `promoted: yes` -- if
+    it is counted at all, promoted_members becomes 1.
+    """
+    fams = [{"canonical": "shape", "members": ["a", "nokey"]}]
+    by_stem = {"a": _fm(6), "nokey": _fm(None, promoted="yes -- hook tier")}
+    row = spc.family_candidates(fams, by_stem, threshold=5)[0]
+    assert row["invisible_members"] == ["nokey"]
+    assert row["promoted_members"] == 0, "an uncountable member must not be counted as landed"
+    assert row["occurrences_total"] == 6
+
+
+def test_missing_pyyaml_is_reported_not_silently_empty(monkeypatch, tmp_path):
+    """Without PyYAML there is no aggregation, and the caller must be able to tell."""
+    import sys as _sys
+
+    p = tmp_path / "rule-families.yaml"
+    p.write_text("families: []\n", encoding="utf-8")
+    monkeypatch.setitem(_sys.modules, "yaml", None)
+    fams, reason = spc.load_rule_families(p)
+    assert fams == []
+    assert "PyYAML unavailable" in reason
+
+
+
+# =====================================================================================
+# REGRESSION: adversarial cross-model review, 2026-09-21.
+# Each of these reproduces a defect a second model found in code I had already tested,
+# mutation-tested and declared covered. They exist to fail if the fix is reverted.
+# =====================================================================================
+
+
+def test_negative_occurrences_cannot_cancel_a_real_count():
+    """A negative value drove a family UNDER its threshold. There is no minus-one fire."""
+    fams = [{"canonical": "shape", "members": ["a", "b"]}]
+    by_stem = {"a": _fm(10), "b": _fm(-10)}
+    row = spc.family_candidates(fams, by_stem, threshold=5)[0]
+    assert row["occurrences_unpromoted"] == 10, "a negative must not cancel a real count"
+    assert row["crosses_threshold"] is True
+    assert any("negative" in u for u in row["unparseable_members"])
+
+
+def test_duplicate_members_cannot_fabricate_a_crossing():
+    """members: [a, a] with a at 3 reported 6 and crossed a threshold of 5."""
+    fams = [{"canonical": "shape", "members": ["a", "a"]}]
+    row = spc.family_candidates(fams, {"a": _fm(3)}, threshold=5)[0]
+    assert row["occurrences_total"] == 3, "a member declared twice is still one member"
+    assert row["crosses_threshold"] is False
+    assert row["duplicate_members"] == ["a"], "the duplicate must be surfaced, not absorbed"
+    assert row["members"] == 1 and row["declared_members"] == 2
+
+
+def test_crossing_family_reaches_the_cron_backlog(tmp_path):
+    """THE P0, and the test must READ THE BACKLOG, not just check an exit code.
+
+    The aggregation was computed into the JSON report while cron mode built the backlog
+    and the todo trigger from the per-file lists only: a family could cross its threshold
+    and nothing headless would ever say so. The measured dimension existed and the action
+    surface behaved as though only the old one did.
+
+    A first version of this test ran with --dry-run and asserted rc == 0, which passes
+    whether or not the family ever reaches the file. Same defect, in the test for it.
+    """
+    mem = tmp_path / "memory"
+    mem.mkdir()
+    for name in ("feedback_alpha", "feedback_beta"):
+        (mem / f"{name}.md").write_text(
+            "---\n"
+            f"name: {name}\n"
+            "description: d\n"
+            "metadata:\n"
+            "  node_type: memory\n"
+            "  type: feedback\n"
+            "  occurrences: 4\n"
+            '  promoted: "no"\n'
+            "  last_cited: 2026-09-21\n"
+            "---\n\nbody\n", encoding="utf-8")
+    fam = tmp_path / "rule-families.yaml"
+    fam.write_text(
+        "schema_version: 1\n"
+        "families:\n"
+        "  - canonical: demo-family\n"
+        "    members: [feedback_alpha, feedback_beta]\n", encoding="utf-8")
+
+    try:
+        spc.main(["--memory-dir", str(mem), "--repo-root", str(tmp_path),
+                  "--families", str(fam), "--mode", "cron", "--family-threshold", "5"])
+    except SystemExit as e:
+        assert e.code == 0
+
+    backlog = (mem / "promotion-backlog.md").read_text(encoding="utf-8")
+    assert "Rule families" in backlog, "the backlog has no family section at all"
+    assert "demo-family" in backlog, "a CROSSING family never reached the backlog"
+    assert "8 unpromoted fires" in backlog, "the backlog must carry the summed count"
+    # Neither member crosses on its own (4 each, threshold 2 for files) -- the point is
+    # that the FAMILY total is what surfaces, and it is attributed to the family name.
+    assert "across 2 members" in backlog
+
+
+def test_registry_defects_reach_the_backlog_even_with_no_crossing(tmp_path):
+    """A stale or duplicated member silently shrinks or inflates a count. If it only
+    appears in JSON, the registry rots unobserved."""
+    mem = tmp_path / "memory"
+    mem.mkdir()
+    (mem / "feedback_alpha.md").write_text(
+        "---\nname: feedback_alpha\ndescription: d\nmetadata:\n  node_type: memory\n"
+        "  type: feedback\n  occurrences: 1\n  promoted: \"no\"\n"
+        "  last_cited: 2026-09-21\n---\n\nbody\n", encoding="utf-8")
+    fam = tmp_path / "rule-families.yaml"
+    fam.write_text("schema_version: 1\nfamilies:\n  - canonical: demo-family\n"
+                   "    members: [feedback_alpha, feedback_gone]\n", encoding="utf-8")
+    try:
+        spc.main(["--memory-dir", str(mem), "--repo-root", str(tmp_path),
+                  "--families", str(fam), "--mode", "cron", "--family-threshold", "99"])
+    except SystemExit as e:
+        assert e.code == 0
+    backlog = (mem / "promotion-backlog.md").read_text(encoding="utf-8")
+    assert "Registry defects" in backlog
+    assert "feedback_gone" in backlog
+    assert "named but absent on disk" in backlog
+
+
+def test_skipped_registry_says_so_in_the_backlog(tmp_path):
+    """No aggregation is acceptable. A backlog that cannot say so is not."""
+    mem = tmp_path / "memory"
+    mem.mkdir()
+    (mem / "feedback_alpha.md").write_text(
+        "---\nname: feedback_alpha\ndescription: d\nmetadata:\n  node_type: memory\n"
+        "  type: feedback\n  occurrences: 3\n  promoted: \"no\"\n"
+        "  last_cited: 2026-09-21\n---\n\nbody\n", encoding="utf-8")
+    try:
+        spc.main(["--memory-dir", str(mem), "--repo-root", str(tmp_path),
+                  "--families", str(tmp_path / "does-not-exist.yaml"),
+                  "--mode", "cron"])
+    except SystemExit as e:
+        assert e.code == 0
+    backlog = (mem / "promotion-backlog.md").read_text(encoding="utf-8")
+    assert "NO FAMILY AGGREGATION RAN" in backlog
+
+
+# --- consumer-side coverage, from the second adversarial round ------------------------
+# Both verifiers converged: the functions now tell the truth in three states and every
+# CONSUMER collapsed it back to two. The fix is ONE derived field, so no consumer
+# enumerates gap buckets and misses the next one added.
+
+
+def test_gaps_is_derived_from_every_bucket():
+    fams = [{"canonical": "s", "members": ["gone", "nokey", "bad", "dup", "dup"]}]
+    by_stem = {"nokey": _fm(None), "bad": _fm("many"), "dup": _fm(1)}
+    row = spc.family_candidates(fams, by_stem, threshold=5)[0]
+    assert row["fully_covered"] is False
+    blob = " ".join(row["gaps"])
+    for expected in ("gone", "nokey", "bad", "dup"):
+        assert expected in blob, f"{expected} missing from the single gaps field"
+
+
+def test_a_clean_family_is_fully_covered():
+    row = spc.family_candidates([{"canonical": "s", "members": ["a"]}], {"a": _fm(9)},
+                                threshold=5)[0]
+    assert row["fully_covered"] is True
+    assert row["gaps"] == []
+
+
+def test_error_rows_carry_the_coverage_field_too():
+    """A consumer reading one field must not crash or read False-y on an error row."""
+    for fam in ([{"members": ["a"]}], [{"canonical": "s", "members": []}], ["not a dict"]):
+        row = spc.family_candidates(fam, {}, threshold=5)[0]
+        assert row["fully_covered"] is False
+        assert row["gaps"]
+
+
+def test_invisible_only_family_reaches_the_backlog(tmp_path):
+    """THE CONSUMER BUG. The cron predicate read four of five buckets, so a family whose
+    only defect was uncountable members printed '_none crossing_' and made no todo."""
+    mem = tmp_path / "memory"
+    mem.mkdir()
+    (mem / "reference_nokey.md").write_text(
+        "---\nname: reference_nokey\ndescription: d\nmetadata:\n"
+        "  node_type: memory\n  type: reference\n---\n\nbody\n", encoding="utf-8")
+    fam = tmp_path / "f.yaml"
+    fam.write_text("schema_version: 1\nfamilies:\n  - canonical: uncountable-only\n"
+                   "    members: [reference_nokey]\n", encoding="utf-8")
+    try:
+        spc.main(["--memory-dir", str(mem), "--repo-root", str(tmp_path),
+                  "--families", str(fam), "--mode", "cron"])
+    except SystemExit as e:
+        assert e.code == 0
+    backlog = (mem / "promotion-backlog.md").read_text(encoding="utf-8")
+    assert "Registry defects" in backlog
+    assert "uncountable-only" in backlog
+    assert "reference_nokey" in backlog

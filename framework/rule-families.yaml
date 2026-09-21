@@ -1,0 +1,93 @@
+# rule-families.yaml
+#
+# DEFECT FAMILIES IN THE MEMORY CORPUS, and the rule files that instantiate them.
+#
+# WHY THIS FILE EXISTS. tools/scan_promotion_candidates.py reads `occurrences` PER FILE.
+# A defect shape written down thirty times under thirty names has thirty counters reading
+# 1 or 2, crosses no threshold, and every new instance reports as a first-timer. The
+# corpus grows and the promotion gate never fires. One counter reading the SUM trips
+# immediately -- and would have tripped months ago.
+#
+# WHY IT IS YAML AND NOT A TABLE IN framework/glossary.md. Membership must be declared by
+# STABLE IDENTIFIERS supplied by the author, never inferred by matching prose. A counter
+# that decides identity by comparing free text cannot count: the same root cause is
+# described differently every time it fires, because the describer is writing about the
+# symptom in front of them. See memory/feedback_a_counter_keyed_on_free_text_cannot_count.
+# The filename IS the stable identifier, so `members` lists filenames and nothing is
+# guessed. glossary.md carries the human-readable meaning and points here.
+#
+# SHAPE BORROWED, NOT INVENTED. `canonical` + `aka` + `members` is the shape
+# framework/frame-schema.yaml already uses for `inputs: map[id -> {name, aka}]`, whose own
+# note reads: "`aka` lists synonyms so that two names for the same underlying quantity
+# collide by construction." Same mechanism, different domain.
+#
+# ADDING A FAMILY. Only when a defect shape has been written down repeatedly under
+# different names AND you have counted the members. A family of one is a rule.
+
+schema_version: 1
+
+families:
+  - canonical: green-on-one-side-measuring-nothing
+    aka:
+      - "false pass"
+      - "vacuous check"
+      - "green while measuring nothing"
+      - "artifacts of rigor without the rigor"
+      - "the check ran and scanned nothing"
+    means: >
+      A check reports PASS on the dimension it measured while a second dimension went
+      unmeasured, and the PASS is read as global health. The three recurring sub-shapes:
+      an empty or silently-filtered POPULATION so the rule runs fine over nothing; a
+      check that CANNOT RUN being collapsed into PASS; and a harness verifying an
+      artifact that is not the one shipping.
+    instrument: >
+      tools/check_frame_integrity.py already implements the general answer --
+      PASS / FAIL / CANNOT_RUN plus a separate `fully_covered`, so a check that could not
+      execute is never counted as a pass. It is one of the 11 guards wired into nothing
+      (verified 2026-09-21 by `comm` over tools/check_*.py against .claude/settings.json:
+      45 present, 34 wired). tools/population_probe.py adopts the same three-state.
+    provenance: >
+      Counted 2026-09-20, recounted 2026-09-21. Query, stated so the number can be
+      re-derived and challenged: body regex
+      `measuring nothing|cannot_run|fully_covered|vacuous|green while|false pass` over the
+      live memory tier, plus a filename glob for
+      `false_pass|vacuous|green|routing_around_a_guard|silently_empty`, deduped to rule
+      files. FILENAME AND BODY MATCHING ONLY, so this is a LOWER BOUND -- a member that
+      uses none of that vocabulary is invisible to it.
+      The count moved 28 -> 30 between the two days because TWO OF THE NEW MEMBERS WERE
+      WRITTEN ON THE SECOND DAY, by the session doing the counting, and they discuss the
+      family's own vocabulary. The measurement was changed by the act of measuring. Noted
+      here rather than quietly adopting the larger number.
+    members:
+      - feedback_a_gate_that_checks_numbers_does_not_check_claims
+      - feedback_a_green_gate_can_certify_a_worse_artifact
+      - feedback_a_named_family_is_countable_a_named_instance_is_not
+      - feedback_a_negative_result_from_an_unvalidated_instrument_is_not_evidence
+      - feedback_a_test_whose_input_fails_twice_cannot_see_its_target
+      - feedback_a_vacuity_floor_calibrated_to_current_debt_expires
+      - feedback_a_verification_harness_can_false_pass_silently
+      - feedback_capture_the_governing_instructions_before_any_analysis
+      - feedback_classifier_format_contract_brittle
+      - feedback_communicate_closes_stdin_so_retained_pipe_tests_are_vacuous
+      - feedback_correlation_admissibility_precedes_magnitude
+      - feedback_dont_import_eval_harness_into_data_quality_problem
+      - feedback_fixing_the_prose_and_leaving_the_payload_lying
+      - feedback_gate_expensive_workflows_with_explicit_greenlight
+      - feedback_green_that_depends_on_staging_state
+      - feedback_guard_must_hard_abort_on_empty_input
+      - feedback_guard_tests_must_cover_shipped_surface
+      - feedback_quote_the_filter_verbatim_when_briefing_subagents
+      - feedback_quote_the_tools_verdict_never_paraphrase_it
+      - feedback_routing_around_a_guard_disables_it_silently
+      - feedback_sampled_check_needs_a_conservation_anchor
+      - feedback_simplify_dont_patch_a_thrice_failed_frame
+      - feedback_test_fixtures_must_be_asymmetric_across_the_boundary
+      - feedback_the_self_learning_loop_has_no_drain_for_code
+      - feedback_two_artifacts_that_each_verify_themselves_cannot_catch_shared_drift
+      - feedback_verify_parser_against_live_schema
+      - feedback_verify_the_mutant_is_the_mutation_you_intended
+      - feedback_wrapper_must_enumerate_what_counts_as_a_judgment
+      - feedback_wrong_cli_interface_returns_a_false_pass
+      - reference_launchd_install_plists_array_drifts_from_plist_dir
+      - reference_macos_find_newermt_relative_silently_empty
+      - reference_zsh_no_word_split_false_pass_loops

@@ -748,6 +748,46 @@ def run(repo_root: Path, target: str, paths: list[str], question: str,
             "stderr_tail": proc.stderr[-500:] if proc.returncode else ""}
 
 
+def refuse_under_active_mutation(repo_root: Path, paths: list[str]) -> str:
+    """Return a refusal message when the source under review is mid-mutation, else "".
+
+    WHY THIS EXISTS (2026-09-21). tools/mutation_check.py rewrites its target IN PLACE via
+    an AST round-trip. A mutation run was backgrounded and two external verifiers were then
+    dispatched at the same file; `git diff` showed 138 insertions / 223 deletions and the
+    shebang was gone, so both models were reading a MUTANT. Their review would have come
+    back in exactly the register of a real one, citing line numbers that existed, about code
+    nobody wrote and nobody would ship.
+
+    tests/conftest.py already refuses to run pytest in this state. Nothing protected the
+    cross-model path, which is strictly worse: a poisoned test run goes red and gets
+    investigated, while a poisoned REVIEW goes into the ledger as a verification of record
+    and the pre-push gate then treats the range as covered.
+
+    The detector is imported, not rebuilt -- tools/conftest_guard.stranded_backups is the
+    same function the pytest guard uses, so the two cannot drift.
+    """
+    try:
+        from conftest_guard import stranded_backups
+    except ImportError:
+        return ""  # detector unavailable; do not invent a second one
+    stranded = stranded_backups(repo_root)
+    if not stranded:
+        return ""
+    names = "\n".join(f"    {p}" for p in stranded)
+    targets = ", ".join(paths) if paths else "(none named)"
+    return (
+        "REFUSING TO DISPATCH: a mutation run owns the source tree.\n\n"
+        f"Backup file(s) present:\n{names}\n\n"
+        "The files under review are rewritten in place while mutation_check runs, so a\n"
+        "verifier dispatched now reviews a MUTANT and reports on code nobody wrote. The\n"
+        "result would be indistinguishable from a real verification and would land in\n"
+        "tools/.cross-model-ledger.jsonl as one.\n\n"
+        f"Paths this run covers: {targets}\n\n"
+        "Wait for the run to finish (`ps aux | grep \"[m]utation_check\"`), then re-dispatch.\n"
+        "Do NOT delete the backup: while a run is in flight it is the only unmutated copy."
+    )
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--target", required=True, help="what Codex should verify")
@@ -778,6 +818,13 @@ def main(argv=None) -> int:
                     help="mistakes already made on this work, so it can say which "
                          "conclusions rest on contaminated evidence")
     args = ap.parse_args(argv)
+
+    # Before anything else: a verifier pointed at a mutated tree reviews fiction.
+    if not args.print_only:
+        refusal = refuse_under_active_mutation(Path(args.repo_root).resolve(), args.paths)
+        if refusal:
+            print(refusal, file=sys.stderr)
+            return 3
 
     root = Path(args.repo_root)
     if args.report:

@@ -264,6 +264,157 @@ def oversized_context_files(memory_dir: Path, repo_root: Path) -> list[dict]:
     return sorted(out, key=lambda d: -d["over_by"])
 
 
+# ---------------------------------------------------------------- rule families
+#
+# A defect shape written down thirty times under thirty names has thirty counters reading
+# 1 or 2 and crosses no threshold, so every new instance reports as a first-timer. Summing
+# by FAMILY is what makes it visible. Membership is declared by filename in
+# framework/rule-families.yaml -- a stable identifier chosen by the author, never inferred
+# by matching prose, per feedback_a_counter_keyed_on_free_text_cannot_count.
+
+FAMILY_THRESHOLD_DEFAULT = 5
+
+# Every way a family's count can be wrong, each with the phrasing a reader acts on.
+# ONE list, read by the producer to build `gaps`. Consumers read `gaps`/`fully_covered`
+# and never enumerate buckets -- that enumeration is how the cron predicate came to read
+# four of the five and drop uncountable-only families off the backlog entirely.
+GAP_BUCKETS = (
+    ("stale_members", "named but absent on disk"),
+    ("invisible_members", "no `occurrences:` key, uncountable"),
+    ("unparseable_members", "unreadable occurrence count"),
+    ("duplicate_members", "declared more than once"),
+)
+
+
+def load_rule_families(path: Path) -> tuple[list, str]:
+    """Return (families, skip_reason). A missing file is skipped LOUDLY, never silently.
+
+    Graceful degradation means working without optional data, not pretending it was read.
+    A caller that cannot tell "no families declared" from "the registry failed to load"
+    has the same defect this whole module is being extended to catch.
+    """
+    if not path.exists():
+        return [], f"{path} does not exist; no family aggregation performed"
+    try:
+        import yaml
+    except ImportError:
+        return [], "PyYAML unavailable; family aggregation skipped"
+    try:
+        doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except Exception as exc:  # noqa: BLE001
+        return [], f"{path} failed to parse: {type(exc).__name__}: {exc}"
+    fams = doc.get("families")
+    if not isinstance(fams, list):
+        return [], f"{path} has no `families:` list"
+    return fams, ""
+
+
+def family_candidates(families: list, fm_by_stem: dict, threshold: int) -> list:
+    """Sum occurrences per declared family and surface the ones that cross `threshold`.
+
+    Every family is reported, not just the crossing ones: a family's STALE members (named
+    here, absent on disk) and INVISIBLE members (present, but carrying no `occurrences`
+    key, so the per-file signal cannot see them either) are registry defects that must not
+    wait for a threshold to be surfaced.
+    """
+    rows = []
+    for fam in families:
+        if not isinstance(fam, dict):
+            rows.append({"canonical": None, "fully_covered": False,
+                         "gaps": ["entry is not a mapping"],
+                         "error": "family entry is not a mapping"})
+            continue
+        canonical = fam.get("canonical")
+        members = fam.get("members") or []
+        if not canonical:
+            rows.append({"canonical": None, "fully_covered": False, "gaps": ["no canonical name"],
+                         "error": "family declares no `canonical` name"})
+            continue
+        if not members:
+            rows.append({"canonical": canonical, "fully_covered": False,
+                         "gaps": ["zero members declared"],
+                         "error": "family declares ZERO members; a family of none counts nothing"})
+            continue
+
+        # A member declared twice was summed twice, which can FABRICATE a crossing: two
+        # entries for one file at 3 fires reported 6. Dedupe, and surface the duplicates
+        # rather than quietly collapsing them -- a registry that repeats itself is an
+        # authoring defect worth seeing.
+        seen, unique, duplicates = set(), [], []
+        for m in members:
+            key = str(m)
+            (duplicates if key in seen else unique).append(key)
+            seen.add(key)
+
+        stale, invisible, unparseable = [], [], []
+        total = unpromoted_total = 0
+        promoted_members = terminal_members = 0
+        for m in unique:
+            fm = fm_by_stem.get(m)
+            if fm is None:
+                stale.append(m)
+                continue
+            if "occurrences" not in fm:
+                invisible.append(m)
+                continue
+            raw = fm.get("occurrences", 0)
+            try:
+                occ = int(raw)
+            except (TypeError, ValueError):
+                # Silently becoming 0 is the defect: an unreadable count is an UNKNOWN
+                # count, and folding it in as zero reports a measurement that was never
+                # made. It also cannot be distinguished from a genuine first fire.
+                unparseable.append(f"{m}: occurrences={raw!r} is not an integer")
+                continue
+            if occ < 0:
+                # A negative count can cancel a real one and drive a family under its
+                # threshold. There is no such thing as minus-one fire.
+                unparseable.append(f"{m}: occurrences={occ} is negative")
+                continue
+            total += occ
+            if is_terminal(fm):
+                terminal_members += 1
+            elif is_promoted(fm):
+                promoted_members += 1
+            else:
+                unpromoted_total += occ
+
+        rows.append({
+            "canonical": canonical,
+            "members": len(unique),
+            "declared_members": len(members),
+            # Declared more than once. Summed once; reported so the registry gets fixed.
+            "duplicate_members": duplicates,
+            # Present, but whose occurrences value could not be read as a count. NOT
+            # folded in as zero: an unreadable count is unknown, not absent.
+            "unparseable_members": unparseable,
+            "occurrences_total": total,
+            "occurrences_unpromoted": unpromoted_total,
+            "promoted_members": promoted_members,
+            "terminal_members": terminal_members,
+            # Named here, absent on disk. A renamed or deleted rule silently shrinks a
+            # family's count, which is the failure this registry exists to prevent.
+            "stale_members": stale,
+            # Present, but with no `occurrences:` key, so neither the per-file signal nor
+            # this one can see them. They are members that cannot be counted.
+            "invisible_members": invisible,
+            "crosses_threshold": unpromoted_total >= threshold,
+        })
+        # ONE coverage field, derived from EVERY gap bucket here, so no consumer ever
+        # enumerates them. The cron predicate read four of the five and an
+        # invisible-only family printed "none crossing" and created no todo -- the
+        # dimension was measured and the action surface behaved as if it were not.
+        # A predicate that enumerates is a predicate that misses the next bucket added.
+        row = rows[-1]
+        row["gaps"] = sorted(
+            f"{label}: {v}"
+            for k, label in GAP_BUCKETS
+            for v in row.get(k, [])
+        )
+        row["fully_covered"] = not row["gaps"]
+    return rows
+
+
 def main(argv: list[str]) -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
     ap.add_argument("--memory-dir", required=True, help="path to the auto-memory directory")
@@ -271,6 +422,10 @@ def main(argv: list[str]) -> None:
     ap.add_argument("--mode", choices=["cron", "interactive"], default="interactive")
     ap.add_argument("--stale-days", type=int, default=60)
     ap.add_argument("--dry-run", action="store_true", help="cron mode: compute but don't write backlog/todo")
+    ap.add_argument("--families", default=None,
+                    help="path to framework/rule-families.yaml (default: <repo-root>/framework/rule-families.yaml)")
+    ap.add_argument("--family-threshold", type=int, default=FAMILY_THRESHOLD_DEFAULT,
+                    help="summed UNPROMOTED occurrences at which a family surfaces (default %(default)s)")
     args = ap.parse_args(argv)
 
     memory_dir = Path(args.memory_dir).resolve()
@@ -340,6 +495,11 @@ def main(argv: list[str]) -> None:
             except ValueError:
                 pass  # malformed date, skip rather than guess
 
+    families_path = Path(args.families) if args.families else repo_root / "framework" / "rule-families.yaml"
+    families, families_skipped = load_rule_families(families_path)
+    fm_by_stem = {path.stem: fm for path, fm in iter_candidate_files(memory_dir)}
+    fam_rows = family_candidates(families, fm_by_stem, args.family_threshold)
+
     coverage = schema_coverage(memory_dir)
     oversized = oversized_context_files(memory_dir, repo_root)
 
@@ -371,6 +531,13 @@ def main(argv: list[str]) -> None:
         # acting -- this surfaces, the merged hygiene skill decides.
         "oversized_context_files": oversized,
         "oversized_count": len(oversized),
+        # Families sum occurrences across members so a shape written down under many
+        # names can trip the gate its individual files never will.
+        "family_candidates": [r for r in fam_rows if r.get("crosses_threshold")],
+        "families_all": fam_rows,
+        "family_threshold": args.family_threshold,
+        # Empty string when the registry loaded. Non-empty means NO aggregation ran --
+        "families_skipped": families_skipped,
     }
 
     if args.mode == "interactive":
@@ -401,6 +568,33 @@ def main(argv: list[str]) -> None:
             lines.append(f"- `{c['file']}` (last cited {c['last_cited']}, {c['age_days']}d ago)")
     else:
         lines.append("_none_")
+    # F1, found by adversarial review 2026-09-21: family aggregation was computed and
+    # placed in the JSON report, while cron mode built the backlog and the todo trigger
+    # from the two per-FILE lists only. A family could cross its threshold and nothing
+    # headless would ever say so -- the new dimension was measured and the action surface
+    # still behaved as though only the old one existed. That is the defect class this
+    # whole feature exists to catch, in the feature itself.
+    crossing = [r for r in fam_rows if r.get("crosses_threshold")]
+    # Reads ONE field. Adding a sixth gap bucket to the producer surfaces here for free.
+    registry_defects = [r for r in fam_rows if not r.get("fully_covered", False)]
+    lines += ["", f"## Rule families (summed unpromoted occurrences >= {args.family_threshold})", ""]
+    if families_skipped:
+        lines.append(f"_NO FAMILY AGGREGATION RAN: {families_skipped}_")
+    elif crossing:
+        for r in crossing:
+            lines.append(
+                f"- `{r['canonical']}` -- **{r['occurrences_unpromoted']} unpromoted fires** "
+                f"across {r['members']} members ({r['promoted_members']} already promoted)")
+    else:
+        lines.append("_none crossing_")
+    if registry_defects:
+        lines += ["", "**Registry defects** (these silently shrink or inflate a family's count):", ""]
+        for r in registry_defects:
+            bits = []
+            if r.get("error"):
+                bits.append(r["error"])
+            bits.extend(r.get("gaps") or [])
+            lines.append(f"- `{r.get('canonical')}` -- " + "; ".join(bits))
     lines += [
         "",
         "## Signal health",
@@ -417,13 +611,20 @@ def main(argv: list[str]) -> None:
     if not args.dry_run:
         backlog_path.write_text("\n".join(lines), encoding="utf-8")
 
-    new_total = len(promotion_candidates) + len(demotion_candidates)
+    # Crossing families and registry defects are ACTIONABLE and must reach the todo,
+    # or the aggregation is a number in a file nobody opens.
+    new_total = (len(promotion_candidates) + len(demotion_candidates)
+                 + len(crossing) + len(registry_defects))
     if new_total and not args.dry_run:
         todo_script = repo_root / "tools" / "todo_write.py"
         if todo_script.exists():
             subprocess.run(
                 ["python3", str(todo_script), "--repo-root", str(repo_root), "add",
-                 f"Memory refresh: {len(promotion_candidates)} promotion + {len(demotion_candidates)} demotion candidates -- run /memory-refresh",
+                 (f"Memory refresh: {len(promotion_candidates)} promotion + "
+                  f"{len(demotion_candidates)} demotion candidates"
+                  + (f" + {len(crossing)} rule FAMILY crossing its threshold" if crossing else "")
+                  + (f" + {len(registry_defects)} family registry defect(s)" if registry_defects else "")
+                  + " -- run /memory-refresh"),
                  "Low"],
                 capture_output=True, text=True,
             )
