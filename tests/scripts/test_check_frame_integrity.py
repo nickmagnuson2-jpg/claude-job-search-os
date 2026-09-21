@@ -881,3 +881,37 @@ def test_F14_scripts_path_that_is_a_file_is_cannot_run():
         r = _f14({"scripts": {}}, Path(td) / "frame.yaml")
     assert r.state == cfi.CANNOT_RUN
     assert "not a directory" in r.detail
+
+
+def test_F14_parent_exists_with_no_scripts_dir_is_a_verified_absence():
+    """The branch every other test skipped.
+
+    `_tree()` always mkdir's scripts/, so the "readable parent, genuinely no scripts
+    directory" path was never exercised and a mutant flipping it survived. That case is
+    the ONLY absence this check may treat as verified: the parent is readable, so the
+    absence was observed rather than assumed.
+    """
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        frame_path = Path(td) / "frame.yaml"       # note: NO scripts/ created
+        assert not (Path(td) / "scripts").exists()
+        r = _f14({"scripts": {}}, frame_path)
+    assert r.state == cfi.PASS
+    assert "produced none" in r.detail
+
+
+def test_F14_clean_tree_carries_no_stale_note():
+    """Nothing declared-but-absent must produce NO note at all.
+
+    A mutant forcing the stale branch on appended 'NOTE 0 declared but absent on disk:'
+    to a clean PASS and every existing assertion still held, because they all checked for
+    the presence of the good text and never for the absence of noise. A verdict that
+    reports a defect count of zero as a defect trains the reader to skim.
+    """
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        fp = _tree(Path(td), "a.py")
+        r = _f14({"scripts": {"a.py": {"disposition": "promote", "target": "tools/a.py"}}}, fp)
+    assert r.state == cfi.PASS
+    assert "absent on disk" not in r.detail
+    assert "NOTE" not in r.detail
