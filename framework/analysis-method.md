@@ -313,9 +313,93 @@ sat in a real frame reading PASS.
 6. **Mutation, then record the landing.** `mutation_check.py --isolation`, zero survivors or a
    written reason per survivor. Then the frame's `target` points at a file that exists, and F14
    goes green on its own.
+7. **RETIRE THE ORIGINAL, and this step is the one that was missing.** A promotion is not done
+   when the target exists; it is done when the engagement no longer carries its own copy. Either
+   delete the original or reduce it to a thin caller that imports the promoted module and holds
+   only policy. **F14 verifies that a `promote` target EXISTS and never that the SOURCE was
+   retired**, so a promotion that leaves a full duplicate in place reads GREEN.
+
+   Measured on 2026-09-21, from the 2026-09-20 promotion pass: `deck_to_pdf.py`,
+   `render_slides.py` and `fit_chart_viewbox.py` were all still full duplicates in the
+   engagement's `scripts/`, none of them referencing `tools/` at all. The cost was not tidiness.
+   `tools/fit_chart_viewbox.py` gained a horizontal-clip check that the stale copy does not
+   have, and a generator docstring still pointed at the stale copy -- so the next rebuild would
+   have used the version that cannot see a clipped label. Found by a second model, not by the
+   gate.
+
+   **The general shape, because it is the same defect the method keeps finding:** a check that
+   verifies one end of a two-ended relation passes while the other end rots. Prefer a check that
+   reads both.
 
 **What does NOT travel.** A definition module (`junk_def.py`, `day_parts.py`) whose docstring says
 "import it, do not re-declare it" is a real pattern and a local value: the PATTERN belongs to
 `framework/glossary.md`, the five literal values belong to the client. A restraint harness stays
 local on purpose -- the engagement IS the labelled dataset its probe is measured against, and
 promoting it would separate the measurement from its ground truth.
+
+## Mutating the generator to find the assertion nobody wrote
+
+A check suite cannot reveal an assertion that was never written. It looks thorough, every line
+of it is correct, and the gap is the line that is absent. Reading the suite does not find it,
+because there is nothing there to read.
+
+**The move: break the GENERATOR on purpose, regenerate, and run the suite.** If the suite stays
+green, that survivor IS the missing assertion, stated as a number rather than as something a
+person had to notice. This is mutation testing with the artifact generator as the subject and
+the artifact's own checks as the tests; nothing about the technique was ever specific to unit
+tests, we had only ever pointed it at `tools/`.
+
+Run end to end on 2026-09-21, on a shipped deck whose chart printed no label for one band:
+
+| step | result |
+|---|---|
+| baseline, correct generator | 65 checks, green |
+| reinstate the defect in the generator | **65 checks, still green** -- survivor |
+| write the missing assertion | mutant **dies** |
+| restore the generator | 72 checks green, chart byte-identical |
+
+Both halves or it proves nothing: the mutant must die AND the restored generator must still
+pass. A check that only ever fails is not evidence.
+
+**Limits, stated so the move is not oversold.** It reaches only what a generator produces --
+hand-authored markup has no generator and stays invisible. Each cycle costs a regenerate plus a
+suite run, so it is a pre-send gate, never an on-edit one. And the operators differ from the
+code ones: artifact defects are OMISSIONS (drop a label, drop a legend entry, truncate a
+string), not inverted conditionals.
+
+**Cadence is change-triggered, not pass-triggered.** "After every editing pass" is a habit and
+habits convert at zero. What changes the answer is a change to the generator or to its check
+suite; editing copy does not alter coverage. Hash both, make a fresh run a precondition of
+sending, and let it skip when neither moved.
+
+## Three defects that look identical when the run is green
+
+They are separated by one question -- **is there a second copy, a missing row, or a missing
+assertion?** -- and each mechanism is inert against the other two. All three fired on the same
+artifact on 2026-09-21.
+
+| defect | example | mechanism |
+|---|---|---|
+| **derivable but typed** | `closure` said "Five elements" while seven were declared | delete the copy; compute it at read time |
+| **added but undeclared** | a claim reached a sent page and no element declared that surface | a gate: the record is a PRECONDITION of the artifact, not a companion |
+| **never asserted** | a chart band printed no label and every check was green | mutate the generator, above |
+
+A single source of truth fixes the first and cannot touch the second, because there is no copy
+to propagate -- there is an absent row. Do not merge these into one heading: a rule that feels
+complete quietly licenses two of the three to keep happening.
+
+## Where a method learning goes, and it is not a matter of taste
+
+This document and `data/workstreams/analysis-method.md` are different KINDS, and for a week
+nothing said which got what, so both accumulated both and the workstream drifted.
+
+| kind | goes to |
+|---|---|
+| a distilled, timeless RULE | **here.** This is what the next engagement reads BEFORE starting |
+| the EVIDENCE that produced it | the engagement that produced it (`output/<slug>/`) |
+| an OPEN DECISION about the method | `data/workstreams/analysis-method.md` |
+| a number derivable from the engagements | **nowhere.** `tools/engagement_runs.py` computes it |
+
+The memory corpus is where a rule goes to be FOUND, by grep. This document is where it goes to
+be USED. Landing a method learning only in memory leaves the method unaware of it -- which is
+exactly what happened on 2026-09-21 until Nick asked where the updates had been going.
