@@ -208,7 +208,21 @@ than sailing through it. Carry all three pillars (Step 7's pillar table enumerat
 Follow channel constraints from `framework/outreach-guide.md`:
 
 **Email (default):**
-- 75–125 words
+- **200-300 words for a COLD first contact.** This is the measured corpus range, not a style
+  preference: `framework/voice-reference.md` §1 states *"Cold outreach 200-300 words; follow-up
+  nudges and short replies 50-150,"* and **both exemplars this step tells you to generate FROM
+  (Exemplars 1 and 2) run about 200 words.** A shorter target contradicts the exemplars the same
+  step mandates.
+  - **75-125 is the FOLLOW-UP / reply register**, not the cold one. Do not apply it here, and do not
+    split the difference between the two - the midpoint satisfies neither and produces the
+    compressed register that reads wrong.
+  - **Symptom to watch for:** when a cold draft runs short, the compression shows up as sentence
+    fragments, stylish constructions, missing voice signatures (`I'd love to`, `drawn to`,
+    `Would you be up for a quick 15-minute chat?`) and a dropped mission beat. Length is rarely the
+    defect itself; it is the constraint that produces the defects.
+  - Corrected 2026-09-21 after a 155-word draft (a deliberate split between the two figures) was
+    rejected on tone; the regeneration from exemplars sent at 286 words unedited, verified against
+    Gmail. Origin: `memory/feedback_cold_email_length_rule_conflicts_with_corpus.md`.
 - 2–4 word subject line (<40 chars)
 - 3–5 short paragraphs
 - Structure:
@@ -351,7 +365,7 @@ Show the draft with metadata:
 [Any ✗ needs a one-line reason here.]
 
 **Metrics:**
-- Word count: [N] (target: 75–125)
+- Word count: [N] (target: **200-300 for cold**; 75-125 is the follow-up register - see Step 6)
 - Character count: [N] (LinkedIn only — target: <300 for connect)
 - Suggested send time: [day/time in recipient timezone if known]
 - Tone calibration: voice-reference exemplar — [cold outreach / Tuck alum / mission-aware / 3-bullet pitch] (cold = first contact, no prior body for this recipient)
