@@ -94,6 +94,40 @@ fields:
   locked_at: {type: timestamp, required: false, class: derived}
   engagement: {type: string, required: true, class: derived}
 
+  delivery:
+    type: "{version, at, basis, retrospective}"
+    required: false
+    class: derived
+    checks: [F16]
+    note: >
+      WHICH VERSION WENT IN THE ROOM, recorded as a FACT ABOUT THE RUN rather than as a
+      ritual performed before it.
+
+      ADDED 2026-09-21, because `locked: true` provably cannot do this job after the
+      fact. The lock path in frame_write is a PRE-SEND action: it locks the CURRENT
+      version and demands `--will-be-probed`, and this schema is explicit that a
+      prediction is "contaminated the instant feedback arrives, so it cannot be added
+      later". An engagement whose artifact already shipped without a lock therefore has
+      no honest way to claim one -- which is exactly what happened: 53 versions, a deck
+      delivered on 2026-09-20, and `locked: false` throughout. The absence was not
+      negligence; the mechanism had no retrospective form.
+
+      `retrospective: true` says the record was written AFTER delivery, and then `basis`
+      is MANDATORY -- how the version was determined (a log line, a confirmation, a file
+      timestamp). Without it the number is a guess wearing the authority of a field, and
+      a future session cannot tell a reconstructed version from a witnessed one.
+
+      WHAT IT UNLOCKS, and this is the point. A fact whose `first_seen` is greater than
+      `delivery.version` is DEMONSTRABLY POST-DELIVERY. That is the whole difference
+      between backfilling a frame and authoring the next version of it, and without this
+      marker the two are indistinguishable -- which is what made "should we add the facts
+      the deck printed but the frame never recorded" an unanswerable question rather than
+      a judgment call.
+
+      IT IS NOT A LOCK AND DOES NOT SATISFY F13. The run record stays open, and a frame
+      delivered without a stamped prediction has permanently lost that prediction. F13
+      reports that rather than letting it read as pending forever.
+
   # ---- RUN STATE (added v2). Derived, never authored by the operator. ----
   segment_completed:
     type: enum
@@ -455,6 +489,7 @@ validation:
   F12: "`recommendation.confidence` and `recommendation.next_action` are both present"
   F13: "on a `locked: true` frame, `proposals` and `prediction.will_be_probed` are both non-empty (CANNOT_RUN while unlocked)"
   F14: "every script beside the frame carries a disposition (promote | engagement_only | superseded), and promote/superseded name a `target` while engagement_only gives a `reason`. CANNOT_RUN when coverage cannot be checked against the tree."
+  F16: "if `delivery` is present it names a version at or below the current one, and `retrospective: true` requires a non-empty `basis` saying how that version was determined. A delivery is a fact about the run, not a lock: it never satisfies F13."
   F15: "every distinctive number a declared surface PRINTS is carried by a fact that some element declaring that surface cites. The reverse of F2a. Requires the rendered artifact (--deck); CANNOT_RUN without it, and CANNOT_RUN when no declared surface matches a page the deck renders."
   schema: "refuse any frame whose `schema_version` is unknown to this checker"
 

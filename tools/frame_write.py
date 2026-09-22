@@ -715,6 +715,21 @@ def main(argv=None):
                         help="what you expect the room to question. F13 requires it at lock")
     p_lock.add_argument("--today", required=True, help="YYYY-MM-DD (no clock in scripts here)")
 
+    p_del = sub.add_parser(
+        "record-delivery",
+        help="record WHICH version went in the room. Not a lock: no prediction is claimed")
+    mut(p_del)
+    p_del.add_argument("--delivered-version", type=int, required=True,
+                       help="the frame version that was current when the artifact went out")
+    p_del.add_argument("--at", required=True, help="YYYY-MM-DD the artifact went out")
+    p_del.add_argument("--basis", default="",
+                       help="how that version was determined (a log line, a confirmation, "
+                            "a file timestamp). MANDATORY with --retrospective")
+    p_del.add_argument("--retrospective", action="store_true",
+                       help="the record is being written AFTER delivery. Then --basis is "
+                            "required: a reconstructed version with no stated basis is a "
+                            "guess wearing the authority of a field")
+
     p_app = sub.add_parser("append", help="append to a ledger list")
     mut(p_app)
     # `elements` and `exclusions` were added 2026-09-16. The append HANDLER was already
@@ -822,6 +837,27 @@ def main(argv=None):
         pred["will_be_probed"] = a.will_be_probed
         new["prediction"] = pred
         new["segment_completed"] = "LOCK"
+
+    elif a.cmd == "record-delivery":
+        # NOT a lock. `locked: true` is a PRE-SEND act that carries a prediction, and a
+        # prediction is contaminated the instant feedback arrives -- so an engagement
+        # whose artifact already shipped cannot honestly claim one. This records the fact
+        # instead, which is what F9 needs a baseline for and what separates
+        # post-delivery authoring from backfill.
+        if a.retrospective and not a.basis.strip():
+            die("--retrospective requires --basis: how the delivered version was "
+                "determined. Without it the number is a guess with the authority of "
+                "a field, and a later session cannot tell it from a witnessed one")
+        if a.delivered_version > current.get("version", 0):
+            die(f"--delivered-version {a.delivered_version} is ahead of the current "
+                f"version {current.get('version')}; a version that does not exist yet "
+                "cannot have shipped")
+        delivery = {"version": a.delivered_version, "at": a.at}
+        if a.basis.strip():
+            delivery["basis"] = a.basis.strip()
+        if a.retrospective:
+            delivery["retrospective"] = True
+        new["delivery"] = delivery
 
     elif a.cmd == "append":
         raw = sys.stdin.read() if a.json == "-" else Path(a.json).read_text(encoding="utf-8")

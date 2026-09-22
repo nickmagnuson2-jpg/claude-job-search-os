@@ -588,7 +588,10 @@ def test_acceptance_measured_result_is_pinned():
     # read from the frame alone. The frame's own declarations are the thing F15 tests, so
     # they cannot stand in for the artifact, and a PASS here would be a rule reporting
     # clean while measuring nothing.
-    expected_cannot = {"F1b", "F2b", "F8b", "F9", "F14", "F15"}
+    # F16 added 2026-09-21 (the retrospective delivery marker). CANNOT_RUN on the
+    # reconstruction because it records no delivery -- and "this frame's artifact has not
+    # been recorded as gone out" is exactly the state, not a pass.
+    expected_cannot = {"F1b", "F2b", "F8b", "F9", "F14", "F15", "F16"}
     expected_pass = {"F8a"}
 
     got_fail = {k for k, v in st.items() if v == cfi.FAIL}
@@ -1508,3 +1511,122 @@ def test_enums_compare_as_strings_so_a_yaml_bool_is_caught():
     than pass it through some accidental equality."""
     schema = {"fields": {"flag": {"type": "enum", "values": ["no", "yes"]}}}
     assert cfi.validate_enums({"flag": False}, schema) != []
+
+
+# ---------------------------------------------------------------- F16: delivery
+# `locked: true` cannot be claimed after the fact -- the lock path demands a prediction,
+# and a prediction is contaminated the instant feedback arrives. A frame whose artifact
+# already shipped needs a way to say WHICH version went out without claiming a ritual it
+# never performed.
+
+def test_F16_absent_delivery_is_cannot_run_not_pass():
+    r = cfi.check_F16(clean_frame())
+    assert r.state == cfi.CANNOT_RUN
+    assert "either way" in r.detail
+
+
+def test_F16_records_a_delivery():
+    f = clean_frame()
+    f["delivery"] = {"version": 2, "at": "2026-09-20"}
+    r = cfi.check_F16(f)
+    assert r.state == cfi.PASS and "v2" in r.detail
+
+
+def test_F16_retrospective_requires_a_basis():
+    """A version reconstructed after the fact, with no stated basis, is a guess wearing
+    the authority of a field. Same shape as status_reason being mandatory for abandoned."""
+    f = clean_frame()
+    f["delivery"] = {"version": 2, "at": "2026-09-20", "retrospective": True}
+    r = cfi.check_F16(f)
+    assert r.state == cfi.FAIL and any("basis" in o for o in r.offenders)
+    f["delivery"]["basis"] = "confirmed in the 09-20 log"
+    assert cfi.check_F16(f).state == cfi.PASS
+
+
+def test_F16_a_non_retrospective_delivery_needs_no_basis():
+    f = clean_frame()
+    f["delivery"] = {"version": 2, "at": "2026-09-20", "retrospective": False}
+    assert cfi.check_F16(f).state == cfi.PASS
+
+
+def test_F16_says_which_kind_of_record_it_is():
+    """A reader must be able to tell a witnessed delivery from a reconstructed one."""
+    f = clean_frame()
+    f["delivery"] = {"version": 2, "at": "2026-09-20"}
+    assert "recorded at the time" in cfi.check_F16(f).detail
+    f["delivery"]["retrospective"] = True
+    f["delivery"]["basis"] = "log"
+    assert "retrospective" in cfi.check_F16(f).detail
+
+
+def test_F16_rejects_a_version_ahead_of_the_current_one():
+    f = clean_frame()                      # version 2
+    f["delivery"] = {"version": 9, "at": "2026-09-20"}
+    r = cfi.check_F16(f)
+    assert r.state == cfi.FAIL and any("ahead" in o for o in r.offenders)
+
+
+def test_F16_requires_a_version_and_a_date():
+    f = clean_frame()
+    f["delivery"] = {}
+    r = cfi.check_F16(f)
+    assert r.state == cfi.FAIL and len(r.offenders) == 2
+
+
+def test_F16_rejects_a_non_int_version():
+    f = clean_frame()
+    f["delivery"] = {"version": "44", "at": "2026-09-20"}
+    assert cfi.check_F16(f).state == cfi.FAIL
+
+
+def test_F16_rejects_a_bool_version():
+    """True is an int in Python. A bool here is a mis-keyed field, not version 1."""
+    f = clean_frame()
+    f["delivery"] = {"version": True, "at": "2026-09-20"}
+    assert cfi.check_F16(f).state == cfi.FAIL
+
+
+def test_F16_rejects_a_non_mapping_delivery():
+    f = clean_frame()
+    f["delivery"] = "2026-09-20"
+    assert cfi.check_F16(f).state == cfi.FAIL
+
+
+# --- F13 after a delivery ------------------------------------------------------------
+
+def test_F13_reports_a_permanently_lost_prediction_after_delivery():
+    """An unlocked frame that ALREADY DELIVERED is not 'still open'. Reporting it that
+    way is how an engagement reads as pending forever. The prediction is permanently
+    gone and that must be said once, not deferred by a CANNOT_RUN every run."""
+    f = clean_frame()
+    f["locked"] = False
+    f["prediction"] = None
+    f["delivery"] = {"version": 2, "at": "2026-09-20", "retrospective": True,
+                     "basis": "log"}
+    r = cfi.check_F13(f)
+    assert r.state == cfi.FAIL
+    assert any("permanently lost" in o for o in r.offenders)
+    assert any("do NOT author one now" in o for o in r.offenders)
+
+
+def test_F13_delivery_with_a_real_prediction_is_not_a_failure():
+    """A frame that stamped its prediction BEFORE delivering has lost nothing."""
+    f = clean_frame()
+    f["locked"] = False
+    f["delivery"] = {"version": 2, "at": "2026-09-20"}
+    r = cfi.check_F13(f)              # clean_frame carries a real prediction
+    assert r.state == cfi.CANNOT_RUN
+
+
+def test_F13_without_a_delivery_is_still_open():
+    f = clean_frame()
+    f["locked"] = False
+    f["prediction"] = None
+    r = cfi.check_F13(f)
+    assert r.state == cfi.CANNOT_RUN and "still open" in r.detail
+
+
+def test_F13_a_locked_frame_is_unaffected_by_delivery():
+    f = clean_frame()                 # locked: True, full run record
+    f["delivery"] = {"version": 2, "at": "2026-09-20"}
+    assert cfi.check_F13(f).state == cfi.PASS

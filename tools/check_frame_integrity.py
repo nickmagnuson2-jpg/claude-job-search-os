@@ -285,6 +285,34 @@ def validate_enums(frame, schema):
     return errors
 
 
+def validate_fact_stamps(frame):
+    """Every fact carries `first_seen`.
+
+    WHY STRUCTURAL. `first_seen` is what makes F2 mechanically checkable and it is
+    BACKFILL-IMPOSSIBLE in the general case -- it can only be recovered here because
+    this engagement happened to keep 55 numbered snapshots, which is not a guarantee
+    the schema makes. A fact written without it silently removes itself from F2b's
+    reach, and from any comparison against a recorded `delivery.version`, which is the
+    only thing separating post-delivery authoring from backfill.
+
+    MEASURED 2026-09-21: 15 of 61 facts on a live frame carried no stamp, all of them
+    among the most recent, so "which facts existed when the artifact shipped" could only
+    be inferred from absence rather than asserted. Recovered from the snapshots and
+    stamped; this stops the next one.
+    """
+    facts = _facts(frame)
+    if not facts:
+        return []
+    bad = [k for k, v in facts.items()
+           if isinstance(v, dict) and v.get("first_seen") is None]
+    if not bad:
+        return []
+    shown = ", ".join(sorted(bad)[:8]) + (f" (+{len(bad) - 8} more)" if len(bad) > 8 else "")
+    return [f"{len(bad)} fact(s) carry no `first_seen`: {shown}. Without it a fact is "
+            "outside F2b's reach and cannot be placed before or after a recorded "
+            "delivery, which is the difference between authoring and backfilling"]
+
+
 def validate_structure(frame, schema):
     """Type-check every PRESENT field against the schema's declared shape.
 
@@ -296,6 +324,7 @@ def validate_structure(frame, schema):
     errors = list(detect_flat_dotted_keys(frame, schema))
     errors += validate_surface_identifiers(frame, schema)
     errors += validate_enums(frame, schema)
+    errors += validate_fact_stamps(frame)
     fields = (schema or {}).get("fields")
     if not isinstance(fields, dict):
         return errors + ["schema has no `fields:` block to validate against"]
@@ -672,8 +701,29 @@ def check_F13(frame):
     required field is present. A frame that lost both ledgers came back clean.
     """
     if frame.get("locked") is not True:
+        # A frame that already DELIVERED is not "still open", and reporting it that way
+        # is how an engagement reads as pending forever. The artifact went in the room;
+        # the pre-room prediction was never stamped and now cannot be, because it is
+        # contaminated the instant feedback arrives. That is a permanent, knowable loss
+        # and it must be stated once rather than deferred by a CANNOT_RUN each run.
+        delivery = frame.get("delivery")
+        if isinstance(delivery, dict) and delivery.get("version") is not None:
+            pred = frame.get("prediction")
+            probed = pred.get("will_be_probed") if isinstance(pred, dict) else None
+            if isinstance(probed, str):
+                probed = probed.strip()
+            if not probed:
+                return Result("F13", FAIL,
+                              f"delivered at v{delivery.get('version')} with no "
+                              "pre-room prediction, and one can no longer be made",
+                              ["`prediction.will_be_probed` was never stamped before "
+                               "delivery. It is contaminated the instant feedback "
+                               "arrives, so this run has permanently lost it. Recording "
+                               "the loss is the honest end state -- do NOT author one "
+                               "now to clear this"])
         return Result("F13", CANNOT_RUN,
-                      "frame is not `locked: true`; the run record is still open")
+                      "frame is not `locked: true` and no delivery is recorded; the "
+                      "run record is still open")
 
     missing = []
     if not frame.get("proposals"):
@@ -695,6 +745,55 @@ def check_F13(frame):
                       "locked frame is missing backfill-impossible run record", missing)
     return Result("F13", PASS,
                   "rejection record and pre-room prediction both present at lock")
+
+
+def check_F16(frame):
+    """`delivery` names a real, already-written version, and a retrospective record says
+    how that version was determined.
+
+    WHY A BASIS IS MANDATORY. The version number is the whole value of this field, and
+    after the fact it is RECONSTRUCTED rather than witnessed -- from a log line, a
+    confirmation, a file timestamp. A reconstructed number with no stated basis is a
+    guess wearing the authority of a field, and the next session cannot tell the two
+    apart. Same shape as `status_reason` being mandatory for `abandoned`.
+    """
+    delivery = frame.get("delivery")
+    if delivery is None:
+        return Result("F16", CANNOT_RUN,
+                      "no `delivery` recorded; whether this frame's artifact has gone "
+                      "out is not stated either way")
+    if not isinstance(delivery, dict):
+        return Result("F16", FAIL, "`delivery` is not a mapping",
+                      [f"got {type(delivery).__name__}"])
+
+    problems = []
+    dv = delivery.get("version")
+    cur = frame.get("version")
+    if dv is None:
+        problems.append("`delivery.version` is missing -- the field's whole value is "
+                        "naming WHICH version went out")
+    elif not isinstance(dv, int) or isinstance(dv, bool):
+        problems.append(f"`delivery.version` must be an int, got {dv!r}")
+    elif isinstance(cur, int) and dv > cur:
+        problems.append(f"`delivery.version` is {dv}, ahead of the current version "
+                        f"{cur}; a version that does not exist yet cannot have shipped")
+
+    if not str(delivery.get("at") or "").strip():
+        problems.append("`delivery.at` is empty -- when it went out")
+
+    if delivery.get("retrospective") is True:
+        if not str(delivery.get("basis") or "").strip():
+            problems.append(
+                "`delivery.retrospective` is true but `basis` is empty. A version "
+                "reconstructed after the fact must say HOW it was determined, or the "
+                "number is a guess with the authority of a field")
+
+    if problems:
+        return Result("F16", FAIL, f"{len(problems)} delivery record problem(s)",
+                      problems)
+    kind = "retrospective" if delivery.get("retrospective") is True else "recorded at the time"
+    return Result("F16", PASS,
+                  f"delivered at v{dv} on {delivery.get('at')} ({kind})")
 
 
 # --------------------------------------------------------------------------
@@ -1021,6 +1120,7 @@ def run_checks(frame, prior=None, frame_path=None, deck_path=None):
         check_F13(frame),
         check_F14(frame, frame_path),
         check_F15(frame, deck_path),
+        check_F16(frame),
     ]
 
 
