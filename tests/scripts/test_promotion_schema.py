@@ -443,3 +443,50 @@ def test_gate_pattern_recognises_everything_the_old_one_did():
                  "2 fires", "3 dated occurrences", "reopen on the 2nd"):
         if old.search(gate):
             assert ps.gate_names_a_number(gate) is True, f"regressed: {gate!r}"
+
+
+# --- YAML block scalars in frontmatter (2026-09-21) ---------------------------------
+
+def test_block_scalar_value_is_read_not_the_marker():
+    """`reopen_gate: >-` puts the value on the FOLLOWING lines. The flat scrape stored
+    the marker ">-" as the value, so one corpus file whose gate reads "4th fire, OR any
+    fix shipped with a test that was never run against the reverted code" was reported as
+    naming no number for as long as the check existed. A parser that returns a marker
+    instead of a value invents a defect."""
+    text = (
+        "---\n"
+        "name: x\n"
+        "metadata:\n"
+        "  reopen_gate: >-\n"
+        "    4th fire, OR any fix shipped with a test that was never run\n"
+        "    against the reverted code.\n"
+        "  last_cited: 2026-08-25\n"
+        "---\n\nbody\n")
+    fm = ps.parse_frontmatter(text)
+    assert fm["reopen_gate"].startswith("4th fire")
+    assert "against the reverted code" in fm["reopen_gate"]
+    assert ps.gate_names_a_number(fm["reopen_gate"]) is True
+    # the key AFTER the block must still parse -- the folded lines must not swallow it
+    assert fm["last_cited"] == "2026-08-25"
+
+
+def test_literal_block_scalar_is_also_read():
+    text = ("---\nname: x\nmetadata:\n  reopen_gate: |\n    3rd fire\n"
+            "  promoted: no\n---\n\nbody\n")
+    fm = ps.parse_frontmatter(text)
+    assert "3rd fire" in fm["reopen_gate"]
+    assert fm["promoted"] == "no"
+
+
+def test_a_plain_value_is_unaffected_by_block_scalar_support():
+    text = "---\nname: x\nmetadata:\n  reopen_gate: 3rd fire\n  promoted: no\n---\n\nb\n"
+    fm = ps.parse_frontmatter(text)
+    assert fm["reopen_gate"] == "3rd fire" and fm["promoted"] == "no"
+
+
+def test_a_value_that_merely_starts_with_gt_is_not_a_block_marker():
+    """'>= 3 fires' is a value, not a folding marker. Only a BARE marker folds."""
+    text = "---\nname: x\nmetadata:\n  reopen_gate: '>= 3 fires'\n  promoted: no\n---\n\nb\n"
+    fm = ps.parse_frontmatter(text)
+    assert fm["reopen_gate"] == ">= 3 fires"
+    assert fm["promoted"] == "no"

@@ -122,13 +122,37 @@ def parse_frontmatter(text: str) -> dict:
     if end == -1:
         return {}
     out: dict[str, str] = {}
-    for line in text[3:end].splitlines():
+    lines = text[3:end].splitlines()
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        i += 1
         if not line.strip() or line.lstrip().startswith("#"):
             continue
         m = re.match(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(.*)$", line)
         if not m:
             continue
         key, val = m.group(1), m.group(2).strip()
+
+        # YAML BLOCK SCALARS. `reopen_gate: >-` puts the value on the FOLLOWING lines,
+        # and the flat scrape used to store the marker ">-" as the value. Measured
+        # 2026-09-21: one file in the corpus writes its gate this way, and its gate is
+        # word-perfect ("4th fire, OR any fix shipped with a test that was never run
+        # against the reverted code") -- reported as naming no number for as long as the
+        # check has existed. A parser that silently returns a marker instead of a value
+        # makes every downstream check wrong about that file, in the direction of
+        # inventing a defect.
+        if re.fullmatch(r"[>|][-+]?", val):
+            indent = len(line) - len(line.lstrip())
+            parts = []
+            while i < len(lines):
+                nxt = lines[i]
+                if nxt.strip() and (len(nxt) - len(nxt.lstrip())) <= indent:
+                    break
+                parts.append(nxt.strip())
+                i += 1
+            val = " ".join(x for x in parts if x)
+
         if val[:1] in ("'", '"') and val[-1:] == val[:1] and len(val) >= 2:
             val = val[1:-1]
         out[key] = val
