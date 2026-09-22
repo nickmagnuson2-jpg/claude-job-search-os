@@ -303,8 +303,21 @@ def validate_fact_stamps(frame):
     facts = _facts(frame)
     if not facts:
         return []
-    bad = [k for k, v in facts.items()
-           if isinstance(v, dict) and v.get("first_seen") is None]
+    # A non-mapping fact was SKIPPED, so the malformed case sailed through the guard
+    # entirely; and any non-null value counted as a stamp, so `first_seen: "soon"`
+    # passed while being unusable by F2b and by the delivery comparison. Cross-model
+    # review 2026-09-22 (F3). A bool is not an int here: `True` is 1 in Python and a
+    # mis-keyed flag must not read as version 1.
+    bad = []
+    for k, v in facts.items():
+        if not isinstance(v, dict):
+            bad.append(f"{k} (not a mapping)")
+            continue
+        fs = v.get("first_seen")
+        if fs is None:
+            bad.append(k)
+        elif not isinstance(fs, int) or isinstance(fs, bool):
+            bad.append(f"{k} (first_seen is {fs!r}, not an int)")
     if not bad:
         return []
     shown = ", ".join(sorted(bad)[:8]) + (f" (+{len(bad) - 8} more)" if len(bad) > 8 else "")
@@ -774,7 +787,11 @@ def check_F16(frame):
                         "naming WHICH version went out")
     elif not isinstance(dv, int) or isinstance(dv, bool):
         problems.append(f"`delivery.version` must be an int, got {dv!r}")
-    elif isinstance(cur, int) and dv > cur:
+    elif not isinstance(cur, int) or isinstance(cur, bool):
+        problems.append("the frame carries no integer `version`, so `delivery.version` "
+                        f"{dv} cannot be checked against it; an unbounded delivery "
+                        "version is not a verified one")
+    elif dv > cur:
         problems.append(f"`delivery.version` is {dv}, ahead of the current version "
                         f"{cur}; a version that does not exist yet cannot have shipped")
 
@@ -914,9 +931,12 @@ def check_F14(frame, frame_path=None):
         target = str(spec.get("target", "")).strip()
         if disp not in ("promote", "superseded") or not target:
             continue
-        if "/" not in target:
-            continue  # a bare filename names a sibling script, not a repo path
-        if not (repo_root / target).exists():
+        # A bare filename names a SIBLING script, so the repo-path existence test does
+        # not apply to it -- but `continue` here also skipped the retirement check
+        # below, so a promote whose target was a bare filename was exempt from both.
+        # Cross-model review 2026-09-22 (F4).
+        target_is_repo_path = "/" in target
+        if target_is_repo_path and not (repo_root / target).exists():
             problems.append(
                 f"{name}: disposition {disp!r} names target {target!r}, which does not "
                 "exist. The decision was recorded and never carried out")
@@ -929,7 +949,8 @@ def check_F14(frame, frame_path=None):
         # Only fires once the target EXISTS: between promoting and retiring there is a
         # legitimate window, and the target's absence is already reported above, so this
         # cannot double-report the same unfinished promotion.
-        elif disp == "promote" and enumerated and name in found:
+        if disp == "promote" and enumerated and name in found and (
+                not target_is_repo_path or (repo_root / target).exists()):
             problems.append(
                 f"{name}: promoted to {target!r}, which exists, but the original is still "
                 "on disk beside the frame. Retire it -- two copies of one mechanism drift, "
@@ -998,7 +1019,7 @@ def _norm_number(tok: str) -> str:
 
     Precision and grouping are formatting. Value identity is what a claim is made of.
     """
-    raw = tok.rstrip("%").replace(",", "")
+    raw = tok.rstrip("%").replace(",", "").lstrip("+")
     try:
         val = float(raw)
     except ValueError:
@@ -1016,11 +1037,15 @@ def _claim_numbers(text: str) -> set:
     them in, the naive rule fired 89 times on a two-page deck.
     """
     out = set()
-    for m in re.findall(r"\d+(?:\.\d+)?%", text):
+    # The SIGN is part of the value: -5% and 5% are different claims, and dropping the
+    # minus made them the same token. The DECIMAL TAIL is too -- `\d{1,3}(?:,\d{3})+`
+    # matches "1,234" out of "1,234.56" and truncates it, so 1,234.56 and 1,234.99
+    # collapsed onto one another. Both were found by cross-model review 2026-09-22 (F2).
+    for m in re.findall(r"[-+]?\d+(?:\.\d+)?%", text):
         out.add(_norm_number(m))
-    for m in re.findall(r"\d{1,3}(?:,\d{3})+", text):
+    for m in re.findall(r"[-+]?\d{1,3}(?:,\d{3})+(?:\.\d+)?", text):
         out.add(_norm_number(m))
-    for m in re.findall(r"(?<![\d.,%-])\d{4,}(?![\d,]*%)(?![-\w])", text):
+    for m in re.findall(r"(?<![\d.,%+-])[-+]?\d{4,}(?:\.\d+)?(?![\d,]*%)(?![-\w])", text):
         out.add(_norm_number(m))
     return out
 
@@ -1085,8 +1110,22 @@ def check_F15(frame, deck_path=None):
                       f"{', '.join(sorted(cited_on)) or 'nothing'}); the surface "
                       "vocabulary does not line up with the artifact")
 
+    # A surface whose rendered text yields NO recognized number was reported as
+    # "all 0 number(s) ... are carried", a green verdict on a page this rule measured
+    # nothing about. That is the vacuous pass the three-state design exists to refuse,
+    # and it is the same shape as F2a's empty-`because` case. Cross-model review
+    # 2026-09-22 (F1). A surface can legitimately print no figures -- so it is reported
+    # as UNMEASURED, and if NO covered surface yields a number the rule CANNOT_RUN.
+    measurable = [sf for sf in covered if printed[sf]]
+    unmeasured = sorted(sf for sf in covered if not printed[sf])
+    if not measurable:
+        return Result("F15", CANNOT_RUN,
+                      f"no recognized number on any declared surface "
+                      f"({', '.join(sorted(covered))}); the rule matched a page and "
+                      "measured nothing on it, which is not a pass")
+
     bad, n_printed = [], 0
-    for surface in sorted(covered):
+    for surface in sorted(measurable):
         carried = set()
         for fid in cited_on.get(surface, set()):
             f = facts.get(fid)
@@ -1097,7 +1136,9 @@ def check_F15(frame, deck_path=None):
             bad.append(f"{surface} prints {n} -- carried by no fact any element "
                        f"declaring {surface} cites")
 
-    checked = f"{n_printed} number(s) across {', '.join(sorted(covered))}"
+    checked = f"{n_printed} number(s) across {', '.join(sorted(measurable))}"
+    if unmeasured:
+        checked += f" -- NOTE no recognized number on {', '.join(unmeasured)}"
     if bad:
         return Result("F15", FAIL,
                       f"{len(bad)} of {checked} are printed but undeclared", bad)

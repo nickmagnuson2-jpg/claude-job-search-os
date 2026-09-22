@@ -1630,3 +1630,143 @@ def test_F13_a_locked_frame_is_unaffected_by_delivery():
     f = clean_frame()                 # locked: True, full run record
     f["delivery"] = {"version": 2, "at": "2026-09-20"}
     assert cfi.check_F13(f).state == cfi.PASS
+
+
+# --- cross-model review 2026-09-22: four P0s and a P1 in this session's own gates ----
+
+def test_F15_does_not_pass_when_it_recognized_no_number(tmp_path):
+    """F1 (P0). It printed 'all 0 number(s) ... are carried' -- a green verdict on a page
+    it measured nothing about, which is the vacuous pass the three-state design refuses.
+    This falsified a claim I had made explicitly: that F15 could not pass vacuously."""
+    deck = _deck(tmp_path, "<html><body><div class='slide'><h1>All prose here</h1>"
+                           "</div></body></html>")
+    r = cfi.check_F15(_f15_frame(["fA"]), deck)
+    assert r.state == cfi.CANNOT_RUN
+    assert "measured nothing" in r.detail
+
+
+def test_F15_notes_an_unmeasured_surface_but_still_checks_the_others(tmp_path):
+    """A page may legitimately print no figures. That must not silence the page that does."""
+    deck = _deck(tmp_path, "<html><body>"
+                           "<div class='slide'><h1>prose only</h1></div>"
+                           "<div class='slide'><p>shipped 9,999 units</p></div>"
+                           "</body></html>")
+    frame = _f15_frame(["fA"], surface="slide-1")
+    frame["elements"].append({"id": "e2", "name": "n2", "measure": "m2",
+                              "name_surface": "slide-2", "measure_surface": "slide-2",
+                              "because": ["fA"]})
+    r = cfi.check_F15(frame, deck)
+    assert r.state == cfi.FAIL                       # slide-2 prints 9999, uncarried
+    assert any("9999" in o for o in r.offenders)
+
+
+def test_claim_numbers_keeps_the_sign():
+    """F2 (P0). -5% and +5% are different claims; the regex dropped the sign."""
+    assert cfi._claim_numbers("down -5.0%") != cfi._claim_numbers("up 5.0%")
+    assert "-5%" in cfi._claim_numbers("down -5.0%")
+
+
+def test_claim_numbers_does_not_truncate_a_grouped_decimal():
+    """F2 (P0). `\\d{1,3}(?:,\\d{3})+` matched "1,234" out of "1,234.56" and threw the
+    tail away, collapsing two different printed quantities onto one token."""
+    a = cfi._claim_numbers("1,234.56")
+    b = cfi._claim_numbers("1,234.99")
+    assert a != b and "1234.56" in a and "1234.99" in b
+
+
+def test_fact_stamps_reject_a_non_mapping_fact():
+    """F3 (P0). A malformed fact was SKIPPED, so it bypassed the write guard entirely."""
+    assert cfi.validate_fact_stamps({"facts": {"fA": "a string"}})
+
+
+def test_fact_stamps_reject_a_non_integer_stamp():
+    """F3 (P0). Any non-null value counted as a stamp, so `first_seen: "soon"` passed
+    while being unusable by F2b and by the delivery comparison."""
+    assert cfi.validate_fact_stamps({"facts": {"fA": {"first_seen": "soon"}}})
+    assert cfi.validate_fact_stamps({"facts": {"fA": {"first_seen": 1.5}}})
+
+
+def test_fact_stamps_reject_a_bool_stamp():
+    """True is an int in Python. A mis-keyed flag must not read as version 1."""
+    assert cfi.validate_fact_stamps({"facts": {"fA": {"first_seen": True}}})
+    assert cfi.validate_fact_stamps({"facts": {"fA": {"first_seen": 3}}}) == []
+
+
+def test_F14_bare_sibling_target_still_requires_retirement():
+    """F4 (P0). `continue` on a bare filename skipped the repo-path existence test AND
+    the retirement check below it, so a promote naming a sibling was exempt from both."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        fp = _tree(Path(td), "a.py")
+        r = _f14({"scripts": {"a.py": {"disposition": "promote",
+                                       "target": "sibling.py"}}}, fp)
+    assert r.state == cfi.FAIL
+    assert any("still" in o and "on disk" in o for o in r.offenders)
+
+
+def test_F14_bare_sibling_target_is_clean_once_retired():
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        fp = _tree(Path(td))
+        r = _f14({"scripts": {"a.py": {"disposition": "promote",
+                                       "target": "sibling.py"}}}, fp)
+    assert r.state == cfi.PASS
+
+
+def test_F16_cannot_verify_a_delivery_version_without_a_frame_version():
+    """F5 (P1). The ahead-of-current comparison was skipped when `version` was absent,
+    so an arbitrary delivery version PASSED unchecked."""
+    r = cfi.check_F16({"schema_version": 3, "delivery": {"version": 9999, "at": "2026-09-20"}})
+    assert r.state == cfi.FAIL
+    assert any("cannot be checked" in o for o in r.offenders)
+
+
+def test_fact_stamps_report_a_plainly_missing_stamp():
+    """The None branch itself. Every other stamp test feeds a WRONG type; without this
+    the ordinary missing-stamp case -- the one the rule was built for -- is untested."""
+    errs = cfi.validate_fact_stamps({"facts": {"fA": {"text": "x"}}})
+    assert errs and "fA" in errs[0]
+
+
+def test_fact_stamps_on_a_frame_with_no_facts_is_not_an_error():
+    """A frame is legitimately factless early in its life; that is F2a's business."""
+    assert cfi.validate_fact_stamps({"facts": {}}) == []
+    assert cfi.validate_fact_stamps({}) == []
+
+
+def test_fact_stamps_truncate_a_long_offender_list_with_a_count():
+    """The cap must cap AND say how many it hid, or a 60-fact frame prints a wall."""
+    facts = {f"f{i}": {"text": "x"} for i in range(12)}
+    errs = cfi.validate_fact_stamps({"facts": facts})
+    assert "+4 more" in errs[0]
+    few = cfi.validate_fact_stamps({"facts": {f"f{i}": {"text": "x"} for i in range(3)}})
+    assert "more" not in few[0]
+
+
+def test_F15_note_appears_only_when_a_surface_was_unmeasured(tmp_path):
+    """Both directions of the NOTE. Forced on, a clean two-page run grows a spurious
+    'no recognized number on' clause; forced off, the unmeasured page vanishes silently
+    and the reader cannot tell partial coverage from full."""
+    deck = _deck(tmp_path, "<html><body>"
+                           "<div class='slide'><h1>prose only</h1></div>"
+                           "<div class='slide'><p>shipped 3,142 units</p></div>"
+                           "</body></html>")
+    frame = _f15_frame(["fA"], surface="slide-2")
+    frame["elements"].append({"id": "e2", "name": "n2", "measure": "m2",
+                              "name_surface": "slide-1", "measure_surface": "slide-1",
+                              "because": ["fA"]})
+    r = cfi.check_F15(frame, deck)
+    assert r.state == cfi.PASS, r.offenders
+    assert "no recognized number on slide-1" in r.detail
+
+    # and with every covered surface measurable, no NOTE at all
+    r2 = cfi.check_F15(_f15_frame(["fA", "fB"]), _deck(tmp_path))
+    assert r2.state == cfi.PASS and "no recognized number" not in r2.detail
+
+
+def test_F16_missing_delivery_version_is_reported_not_skipped():
+    """The `dv is None` branch. Without it a delivery block with only a date reads as a
+    recorded delivery, which is the field's whole value missing."""
+    r = cfi.check_F16({"schema_version": 3, "version": 2, "delivery": {"at": "2026-09-20"}})
+    assert r.state == cfi.FAIL
+    assert any("version" in o for o in r.offenders)
