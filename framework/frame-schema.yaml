@@ -437,6 +437,7 @@ validation:
   F12: "`recommendation.confidence` and `recommendation.next_action` are both present"
   F13: "on a `locked: true` frame, `proposals` and `prediction.will_be_probed` are both non-empty (CANNOT_RUN while unlocked)"
   F14: "every script beside the frame carries a disposition (promote | engagement_only | superseded), and promote/superseded name a `target` while engagement_only gives a `reason`. CANNOT_RUN when coverage cannot be checked against the tree."
+  F15: "every distinctive number a declared surface PRINTS is carried by a fact that some element declaring that surface cites. The reverse of F2a. Requires the rendered artifact (--deck); CANNOT_RUN without it, and CANNOT_RUN when no declared surface matches a page the deck renders."
   schema: "refuse any frame whose `schema_version` is unknown to this checker"
 
 # What the deterministic layer CANNOT do. Stated so it is never mistaken for coverage.
@@ -450,6 +451,39 @@ limits:
     at lock. EVERY OTHER `required: true` IN THIS FILE IS STILL UNENFORCED -- treat it
     as intent, never as a guarantee, and check the `checks:` key before believing a
     field is protected.
+  F15_numbers_only: >
+    F15 sees NUMBERS, not claims. A claim printed as prose with no figure in it is
+    invisible to it, and so is a chart segment carrying no label. It is a floor on
+    surface accountability, never a ceiling, and the blind agent remains load-bearing
+    for everything it cannot see.
+
+    THE UNIT IS THE PRINTED NUMBER, NOT THE FACT, and that was measured rather than
+    reasoned. Replaying both candidates across all 53 historical versions of the
+    2026-09-21 engagement frame against the deck that actually shipped:
+      fact-anchored   ("is this fact cited on this surface?")   47 fires at v52, 1 real
+      number-anchored ("is this printed number carried here?")  29 fires at v52
+    The fact-anchored form fires for every fact that merely MENTIONS a number the page
+    prints, and nine facts in that frame mention the same population count. A number
+    identifies a QUANTITY, not a fact. Precision 2.1% is not a tuning problem.
+
+    KNOWN FALSE POSITIVES, stated so the rate is never mistaken for zero. Chart AXIS
+    TICKS are printed numbers that are not claims and sit in the same <svg> as real
+    chart values, so no structural rule separates them: 2 of 34 printed numbers (5.9%)
+    on the measured deck. Provenance lines ARE separable and are excluded by class.
+    Rounded restatements are missed BY CHOICE -- a fact stating a rate to two decimals
+    and a page printing it rounded do not match, because a tolerance band wide enough to
+    join them also collides two neighbouring whole percentages that were different
+    claims on that same deck.
+
+    MEASURED RECALL on the defect it was built for: the 46% figure reads unaccounted on
+    versions 1 through 52 and flips to accounted at v53, the version that added the
+    citing element. It catches the real defect and self-clears on the repair.
+
+    NO schema_version BUMP. F15 adds no FIELD; it reads `elements[].name_surface` and
+    `facts` as they already stand, so every v3 frame remains valid and
+    `supports_frames_at` is untouched. That a v3 frame may now FAIL a rule it used to
+    have no opinion on is the normal condition of this block -- the acceptance frame
+    below fails seven.
   F2_vocabulary: >
     The deterministic F2 catches a MISSING citation. It cannot catch a citation to a fact
     that is itself provenance rather than derivation. In the 2026-08-05 reconstruction the

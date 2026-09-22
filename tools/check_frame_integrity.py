@@ -38,6 +38,8 @@ import re
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
 try:
     import yaml
 except ImportError:  # pragma: no cover
@@ -755,7 +757,144 @@ def check_F14(frame, frame_path=None):
     return Result("F14", PASS, detail)
 
 
-def run_checks(frame, prior=None, frame_path=None):
+# --- F15: the reverse of F2a -------------------------------------------------------
+#
+# F2a asks whether every ELEMENT traces to a real fact. Nothing asked the reverse:
+# whether every CLAIM PRINTED ON A SURFACE is carried by an element declaring that
+# surface. The gap shipped. On 2026-09-21 a deck went to a client with a
+# concurrency figure printed on slide 1 while the only element citing that fact
+# declared `measure_surface: workbook`, and every gate stayed green, because F1b only
+# checks that a measure sits on the surface that NAMES it -- never that a surface
+# names only what some element accounts for.
+#
+# THE UNIT IS THE PRINTED NUMBER, NOT THE FACT. Measured 2026-09-21 by replaying both
+# candidates across all 53 historical versions of one engagement's frame against the deck
+# that actually shipped:
+#   fact-anchored   ("is this fact cited on this surface?")   47 fires at v52, 1 real -> 2.1%
+#   number-anchored ("is this printed number carried here?")  29 fires at v52
+# The fact-anchored form fires for every fact that merely MENTIONS a number the page
+# prints, and nine facts in that frame mention one population count because nine facts
+# discuss that same population.
+# A number identifies a QUANTITY, not a fact.
+#
+# RECALL, measured the same way: that figure on slide-1 reads unaccounted on v1 to v52
+# and flips to accounted at v53, the version that added the citing element. The rule
+# catches the real defect and self-clears when the frame is repaired.
+#
+# KNOWN FALSE POSITIVES, stated because an instrument that cannot state its own
+# false-positive rate is not an instrument. Chart AXIS TICKS are printed numbers that
+# are not claims, and they sit in the same <svg> as real chart values, so no structural
+# rule separates them -- on the measured deck that is 2 of 36 printed numbers (5.6%).
+# Provenance lines ARE separable and are excluded by class. Rounded restatements are
+# missed: a fact stating a rate to two decimals and a page printing it rounded do not
+# match, by choice, because a tolerance band wide enough to join them also collides two
+# neighbouring whole percentages that were different claims on the measured deck.
+
+SURFACE_NUMBER_MIN_VERSION = 3
+PROVENANCE_CLASSES = ("src", "source", "footnote")
+
+
+def _norm_number(tok: str) -> str:
+    """12.0% and 12% are the same claim; 1,234 and 1234 are the same number.
+
+    Precision and grouping are formatting. Value identity is what a claim is made of.
+    """
+    raw = tok.rstrip("%").replace(",", "")
+    try:
+        val = float(raw)
+    except ValueError:
+        return tok
+    body = f"{val:.0f}" if val == int(val) else f"{val:g}"
+    return body + "%" if tok.endswith("%") else body
+
+
+def _claim_numbers(text: str) -> set:
+    """The numeric tokens in `text` distinctive enough to identify a claim.
+
+    Percentages at any precision, comma-grouped magnitudes, and bare integers of four
+    digits or more. Bare small integers are deliberately excluded: they are step
+    numbers, window sizes and page furniture, and they collide by construction. With
+    them in, the naive rule fired 89 times on a two-page deck.
+    """
+    out = set()
+    for m in re.findall(r"\d+(?:\.\d+)?%", text):
+        out.add(_norm_number(m))
+    for m in re.findall(r"\d{1,3}(?:,\d{3})+", text):
+        out.add(_norm_number(m))
+    for m in re.findall(r"(?<![\d.,%-])\d{4,}(?![\d,]*%)(?![-\w])", text):
+        out.add(_norm_number(m))
+    return out
+
+
+def check_F15(frame, deck_path=None):
+    """Every distinctive number a surface prints is carried by a fact some element
+    declaring that surface cites."""
+    if not deck_path:
+        return Result("F15", CANNOT_RUN,
+                      "no --deck supplied; what a surface PRINTS cannot be read from "
+                      "the frame alone, and the frame's own declarations are the thing "
+                      "under test, so they cannot stand in for the artifact")
+
+    ver = frame.get("schema_version")
+    if isinstance(ver, int) and ver < SURFACE_NUMBER_MIN_VERSION:
+        return Result("F15", CANNOT_RUN,
+                      f"frame is at schema v{ver}, where surfaces are free prose and "
+                      "cannot be matched to a rendered page")
+
+    try:
+        from slide_check import deck_pages
+    except Exception as exc:  # pragma: no cover - checkout without the deck reader
+        return Result("F15", CANNOT_RUN,
+                      f"deck reader unavailable ({exc}); the page cannot be read")
+
+    try:
+        pages = deck_pages(Path(deck_path), exclude_classes=PROVENANCE_CLASSES)
+    except Exception as exc:
+        return Result("F15", CANNOT_RUN, f"cannot read deck {deck_path}: {exc}")
+    if not pages:
+        return Result("F15", CANNOT_RUN, f"{deck_path} renders no pages")
+
+    els, facts = _elements(frame), _facts(frame)
+    if not els:
+        return Result("F15", CANNOT_RUN, "no `elements` in frame")
+    if not facts:
+        return Result("F15", CANNOT_RUN, "no `facts` block")
+
+    cited_on = {}
+    for e in els:
+        if isinstance(e, dict) and e.get("name_surface"):
+            cited_on.setdefault(str(e["name_surface"]).strip(), set()).update(
+                e.get("because") or [])
+
+    printed = {f"slide-{i + 1}": _claim_numbers(t) for i, t in enumerate(pages)}
+    covered = [s for s in printed if s in cited_on]
+    if not covered:
+        return Result("F15", CANNOT_RUN,
+                      f"the deck renders {', '.join(sorted(printed))} and no element "
+                      f"declares any of them (declared: "
+                      f"{', '.join(sorted(cited_on)) or 'nothing'}); the surface "
+                      "vocabulary does not line up with the artifact")
+
+    bad, n_printed = [], 0
+    for surface in sorted(covered):
+        carried = set()
+        for fid in cited_on.get(surface, set()):
+            f = facts.get(fid)
+            if isinstance(f, dict):
+                carried |= _claim_numbers(str(f.get("text", "")))
+        n_printed += len(printed[surface])
+        for n in sorted(printed[surface] - carried):
+            bad.append(f"{surface} prints {n} -- carried by no fact any element "
+                       f"declaring {surface} cites")
+
+    checked = f"{n_printed} number(s) across {', '.join(sorted(covered))}"
+    if bad:
+        return Result("F15", FAIL,
+                      f"{len(bad)} of {checked} are printed but undeclared", bad)
+    return Result("F15", PASS, f"all {checked} are carried by a declared element")
+
+
+def run_checks(frame, prior=None, frame_path=None, deck_path=None):
     return [
         check_F1a(frame),
         check_F1b(frame),
@@ -770,6 +909,7 @@ def run_checks(frame, prior=None, frame_path=None):
         check_F12(frame),
         check_F13(frame),
         check_F14(frame, frame_path),
+        check_F15(frame, deck_path),
     ]
 
 
@@ -780,6 +920,10 @@ def main(argv=None):
     ap.add_argument("--schema", default=DEFAULT_SCHEMA)
     ap.add_argument("--prior", default=None,
                     help="a prior locked frame.yaml; enables F9")
+    ap.add_argument("--deck", default=None,
+                    help="the rendered deck this frame's surfaces refer to; enables "
+                         "F15, which reads what each page actually prints. Without it "
+                         "F15 reports CANNOT_RUN rather than passing vacuously")
     ap.add_argument("--json", action="store_true", help="JSON only")
     args = ap.parse_args(argv)
 
@@ -836,7 +980,8 @@ def main(argv=None):
     # --- structural gate: a malformed field must never degrade into CANNOT_RUN ---
     structural = validate_structure(frame, schema)
 
-    results = run_checks(frame, prior, frame_path=frame_path)
+    results = run_checks(frame, prior, frame_path=frame_path,
+                         deck_path=args.deck)
     fails = [r for r in results if r.state == FAIL]
     cannot = [r for r in results if r.state == CANNOT_RUN]
     passes = [r for r in results if r.state == PASS]

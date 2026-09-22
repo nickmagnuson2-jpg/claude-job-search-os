@@ -45,13 +45,53 @@ from pathlib import Path
 from check_deck_craft import parse_deck
 
 
-def deck_text(path: Path | str) -> str:
-    """Every string the rendered deck prints, whitespace-collapsed.
+def deck_pages(path: Path | str,
+               exclude_classes: tuple[str, ...] = ()) -> list[str]:
+    """The rendered text of each page, IN ORDER, whitespace-collapsed.
+
+    The page boundary is the unit the parser already produces and `deck_text` used to
+    throw away. Keeping it is what lets a check say WHICH page printed a value, rather
+    than only that the deck did somewhere.
+
+    `exclude_classes` drops subtrees by CSS class. It defaults to empty because binding
+    a label must see everything the page prints, the source line included. A caller
+    asking "which CLAIMS does this page make" wants the provenance line gone, and that
+    is a different question, so it is a parameter rather than a changed default.
 
     Entities are decoded by the parser, not by a table maintained here.
     """
     slides, _ = parse_deck(Path(path).read_text(encoding="utf-8"))
-    return re.sub(r"\s+", " ", " ".join(s.all_text() for s in slides))
+    if not exclude_classes:
+        return [re.sub(r"\s+", " ", s.all_text()) for s in slides]
+
+    drop = set(exclude_classes)
+
+    def keep(node) -> str:
+        cls = (node.attrs or {}).get("class", "")
+        if drop & set(cls.split()):
+            return ""
+        parts = [node.text or ""]
+        parts += [keep(c) for c in node.children]
+        return " ".join(p for p in parts if p)
+
+    return [re.sub(r"\s+", " ", keep(s)) for s in slides]
+
+
+def deck_text(path: Path | str, page: int | None = None) -> str:
+    """Every string the deck prints, whitespace-collapsed.
+
+    `page` is 1-BASED and selects a single page; omitted, every page is joined, which
+    is the historical behaviour and the reason a slide-1 check could satisfy itself
+    against a token that only slide 2 printed. Callers that know their page should
+    pass it -- `SlideCheck.bind_deck` now does.
+    """
+    pages = deck_pages(path)
+    if page is None:
+        return " ".join(pages)
+    if not 1 <= page <= len(pages):
+        raise IndexError(
+            f"page {page} requested from {path}, which renders {len(pages)} page(s)")
+    return pages[page - 1]
 
 
 class SlideCheck:
@@ -70,12 +110,37 @@ class SlideCheck:
         self._n = 0
         self._deck_text: str | None = None
         self._deck_path: str | None = None
+        self._deck_page: int | None = None
         self._bound = 0
         self._unbound: list[str] = []
 
-    def bind_deck(self, path: Path) -> None:
-        """Attach the deck whose printed values these checks claim to assert."""
-        self._deck_text = deck_text(path)
+    def bind_deck(self, path: Path, page: int | None = None) -> None:
+        """Attach the PAGE whose printed values these checks claim to assert.
+
+        THE PAGE IS THE POINT. Binding used to run against the whole deck joined into one
+        string, so a slide-1 label asserting a rate bound successfully against a token
+        only slide 2 printed -- measured on a shipped deck, where slide 1 stated that
+        rate in words and never as the figure the label named. The check was green and
+        the claim was on the wrong page. Cross-model review, 2026-09-19, F3.
+
+        `page` is 1-based. Left None it is read out of the slide name ("slide 1" -> 1),
+        and only if the name carries no number does binding fall back to the whole deck --
+        recorded in `coverage_note()` as a weaker bind, never silently.
+        """
+        if page is None:
+            m = re.search(r"\d+", self.slide)
+            page = int(m.group(0)) if m else None
+        self._deck_page = page
+        try:
+            self._deck_text = deck_text(path, page=page)
+        except IndexError:
+            # A named page the deck does not render is a defect in the caller, not a
+            # reason to bind against everything and call it covered.
+            self._deck_text = None
+            self.failures.append(
+                f"{self.slide}: bind_deck asked for page {page} of {path}, which does "
+                f"not render that many pages; nothing was bound")
+            return
         self._deck_path = str(path)
 
     _PRINTED = re.compile(r"(?:slide|source line|left column|takeaway):\s*([^)]+?)\s*\)")
@@ -160,7 +225,10 @@ class SlideCheck:
         if self._deck_text is None:
             return ("NOT BOUND TO A DECK: every value here was compared against a literal "
                     "in this file, and nothing read the page. Call bind_deck().")
-        return (f"{self._bound} assertion(s) bound to {self._deck_path}; "
+        where = (f"page {self._deck_page} of {self._deck_path}" if self._deck_page
+                 else f"{self._deck_path} (WHOLE DECK -- the slide name carries no page "
+                      f"number, so a value printed on any page satisfies these binds)")
+        return (f"{self._bound} assertion(s) bound to {where}; "
                 f"{len(self._unbound)} carried no 'slide:' token and were not bound")
 
     def report(self) -> int:

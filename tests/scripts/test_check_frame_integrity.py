@@ -583,7 +583,12 @@ def test_acceptance_measured_result_is_pinned():
     # scripts/ tree cannot be enumerated, so COVERAGE was never compared to anything.
     # A well-formed-looking PASS in that situation would be a check reporting clean while
     # measuring nothing -- exactly what this module's three-state design refuses.
-    expected_cannot = {"F1b", "F2b", "F8b", "F9", "F14"}
+    # F15 added 2026-09-21 (the reverse of F2a). CANNOT_RUN here for the same reason F14
+    # is: `states()` calls run_checks WITHOUT a deck, and what a surface PRINTS cannot be
+    # read from the frame alone. The frame's own declarations are the thing F15 tests, so
+    # they cannot stand in for the artifact, and a PASS here would be a rule reporting
+    # clean while measuring nothing.
+    expected_cannot = {"F1b", "F2b", "F8b", "F9", "F14", "F15"}
     expected_pass = {"F8a"}
 
     got_fail = {k for k, v in st.items() if v == cfi.FAIL}
@@ -969,3 +974,241 @@ def test_F14_engagement_only_needs_no_target():
         r = _f14({"scripts": {"a.py": {"disposition": "engagement_only",
                                        "reason": "policy, not mechanism"}}}, fp)
     assert r.state == cfi.PASS
+
+
+# ---------------------------------------------------------------- F15
+#
+# The reverse of F2a: every number a surface PRINTS must be carried by an element
+# declaring that surface. Fixtures are synthetic and generic by design (public repo).
+
+F15_DECK = """<html><body>
+<div class="slide"><h1>Widgets shipped 3,142 units</h1>
+<p>and 28% of them arrived late</p>
+<p class="src">Source: 010125-input.xlsx</p></div>
+<div class="slide"><h1>The rate was 88.8%</h1></div>
+</body></html>"""
+
+
+def _deck(tmp_path, body=F15_DECK):
+    p = tmp_path / "deck.html"
+    p.write_text(body, encoding="utf-8")
+    return p
+
+
+def _f15_frame(because, surface="slide-1", facts=None):
+    return {
+        "schema_version": 3,
+        "facts": facts if facts is not None else {
+            "fA": {"text": "Widgets shipped 3,142 units", "tier": "A", "source": "x"},
+            "fB": {"text": "28.0% arrived late", "tier": "A", "source": "x"},
+        },
+        "elements": [{"id": "e1", "name": "n", "measure": "m",
+                      "name_surface": surface, "measure_surface": surface,
+                      "because": because}],
+    }
+
+
+def test_F15_without_a_deck_is_cannot_run_not_pass(tmp_path):
+    """The frame's own declarations are the thing under test. They cannot stand in for
+    the artifact, so a missing deck is an untested rule, never a clean one."""
+    r = cfi.check_F15(_f15_frame(["fA", "fB"]), None)
+    assert r.state == cfi.CANNOT_RUN
+
+
+def test_F15_passes_when_every_printed_number_is_carried(tmp_path):
+    r = cfi.check_F15(_f15_frame(["fA", "fB"]), _deck(tmp_path))
+    assert r.state == cfi.PASS, r.detail
+
+
+def test_F15_catches_the_incident_shape(tmp_path):
+    """THE REGRESSION. A number printed on slide 1 whose only citing element declares a
+    different surface. This is the 2026-09-21 defect: the concurrency figure was on the
+    page and the element carrying it declared `workbook`, and every gate stayed green."""
+    frame = _f15_frame(["fA"])  # fB (the 28%) is no longer cited on slide-1
+    frame["elements"].append({"id": "e2", "name": "n2", "measure": "m2",
+                              "name_surface": "workbook",
+                              "measure_surface": "workbook", "because": ["fB"]})
+    r = cfi.check_F15(frame, _deck(tmp_path))
+    assert r.state == cfi.FAIL
+    assert any("28%" in o for o in r.offenders)
+
+
+def test_F15_normalizes_precision_so_46_0_carries_46(tmp_path):
+    """The fact says 28.0% and the page prints 28%. Exact string matching misses the
+    one case this rule was built for -- measured on the real deck."""
+    frame = _f15_frame(["fA", "fB"])
+    frame["facts"]["fB"]["text"] = "28.0% arrived late"
+    assert cfi.check_F15(frame, _deck(tmp_path)).state == cfi.PASS
+    frame["facts"]["fB"]["text"] = "28% arrived late"
+    assert cfi.check_F15(frame, _deck(tmp_path)).state == cfi.PASS
+
+
+def test_F15_normalizes_comma_grouping(tmp_path):
+    frame = _f15_frame(["fA", "fB"])
+    frame["facts"]["fA"]["text"] = "Widgets shipped 3142 units"
+    assert cfi.check_F15(frame, _deck(tmp_path)).state == cfi.PASS
+
+
+def test_F15_does_not_merge_distinct_values(tmp_path):
+    """No rounding tolerance. 28% and 29% are different claims."""
+    frame = _f15_frame(["fA", "fB"])
+    frame["facts"]["fB"]["text"] = "29% arrived late"
+    r = cfi.check_F15(frame, _deck(tmp_path))
+    assert r.state == cfi.FAIL and any("28%" in o for o in r.offenders)
+
+
+def test_F15_excludes_the_provenance_line(tmp_path):
+    """A source citation is provenance, not a claim. Counting it would make every deck
+    fail on its own filename date stamp -- measured on the real deck, where 091426 was
+    reported as an undeclared number until the class was excluded."""
+    r = cfi.check_F15(_f15_frame(["fA", "fB"]), _deck(tmp_path))
+    assert r.state == cfi.PASS
+    assert not any("010125" in o for o in r.offenders)
+
+
+def test_F15_ignores_bare_small_integers(tmp_path):
+    """Step numbers and page furniture collide by construction. Including them fired 89
+    times on a two-page deck."""
+    deck = _deck(tmp_path, """<html><body><div class="slide">
+    <p>Step 1 then step 2, and 3,142 units</p></div></body></html>""")
+    frame = _f15_frame(["fA"])
+    assert cfi.check_F15(frame, deck).state == cfi.PASS
+
+
+def test_F15_only_checks_surfaces_the_frame_declares(tmp_path):
+    """slide-2 prints 88.8% and no element declares slide-2. That is F15 staying silent
+    on a surface outside its remit, not a pass on it."""
+    r = cfi.check_F15(_f15_frame(["fA", "fB"]), _deck(tmp_path))
+    assert r.state == cfi.PASS
+    assert "slide-2" not in r.detail
+
+
+def test_F15_cannot_run_when_no_declared_surface_matches_the_deck(tmp_path):
+    """A frame whose surfaces are all `workbook` cannot be tested against a deck. That
+    is an untested rule, not a clean one."""
+    r = cfi.check_F15(_f15_frame(["fA", "fB"], surface="workbook"), _deck(tmp_path))
+    assert r.state == cfi.CANNOT_RUN
+
+
+def test_F15_cannot_run_below_schema_v3(tmp_path):
+    frame = _f15_frame(["fA", "fB"])
+    frame["schema_version"] = 2
+    assert cfi.check_F15(frame, _deck(tmp_path)).state == cfi.CANNOT_RUN
+
+
+def test_F15_unreadable_deck_is_cannot_run_not_pass(tmp_path):
+    r = cfi.check_F15(_f15_frame(["fA", "fB"]), tmp_path / "nope.html")
+    assert r.state == cfi.CANNOT_RUN
+
+
+def test_F15_element_citing_nothing_does_not_carry_the_page(tmp_path):
+    r = cfi.check_F15(_f15_frame([]), _deck(tmp_path))
+    assert r.state == cfi.FAIL
+
+
+def test_F15_runs_through_the_cli_with_a_deck(tmp_path):
+    """The rule has to be reachable from the command line, or it is decoration."""
+    frame = _f15_frame(["fA"])
+    frame["elements"].append({"id": "e2", "name": "n2", "measure": "m2",
+                              "name_surface": "workbook",
+                              "measure_surface": "workbook", "because": ["fB"]})
+    fp = tmp_path / "frame.yaml"
+    fp.write_text(yaml.safe_dump(frame), encoding="utf-8")
+    out = subprocess.run(
+        [sys.executable, str(SCRIPT), str(fp), "--schema", str(SCHEMA),
+         "--deck", str(_deck(tmp_path)), "--json"],
+        capture_output=True, text=True)
+    payload = json.loads(out.stdout)
+    states = {r["rule"]: r["state"] for r in payload["checks"]}
+    assert states["F15"] == "FAIL"
+
+
+# --- F15 mutation-driven coverage ---------------------------------------------------
+# Each test below exists because a mutant survived at that exact line. They are not
+# decoration: revert the line they name and one of these dies.
+
+def test_F15_norm_number_leaves_a_non_numeric_token_alone():
+    """`return tok` on a token float() cannot parse. Without this the normalizer is
+    only ever exercised on input it can parse, so its failure branch is untested."""
+    assert cfi._norm_number("n/a") == "n/a"
+    assert cfi._norm_number("%") == "%"
+
+
+def test_F15_norm_number_keeps_a_real_decimal(tmp_path):
+    """13.7% must not become 14%. The integer branch and the general branch produce the
+    same string for 46.0, so only a genuine decimal distinguishes them."""
+    assert cfi._norm_number("13.7%") == "13.7%"
+    assert cfi._norm_number("28.0%") == "28%"
+
+
+def test_F15_decimal_percentages_are_matched_not_rounded(tmp_path):
+    deck = _deck(tmp_path, """<html><body><div class="slide">
+    <p>the rate was 13.7%</p></div></body></html>""")
+    frame = _f15_frame([], facts={"fA": {"text": "the rate was 13.7%"}})
+    frame["elements"][0]["because"] = ["fA"]
+    assert cfi.check_F15(frame, deck).state == cfi.PASS
+    frame["facts"]["fA"]["text"] = "the rate was 14%"
+    assert cfi.check_F15(frame, deck).state == cfi.FAIL
+
+
+def test_F15_comma_grouped_numbers_are_read_off_the_page(tmp_path):
+    """The comma-grouped pass is the only one that sees "3,142": the bare-integer regex
+    refuses a token preceded by a comma, so dropping it makes the page look emptier and
+    every finding on it silently disappear."""
+    deck = _deck(tmp_path, """<html><body><div class="slide">
+    <p>shipped 3,142 units</p></div></body></html>""")
+    frame = _f15_frame([], facts={"fA": {"text": "unrelated"}})
+    frame["elements"][0]["because"] = ["fA"]
+    r = cfi.check_F15(frame, deck)
+    assert r.state == cfi.FAIL
+    assert any("3142" in o for o in r.offenders)
+
+
+def test_F15_says_which_input_was_missing_when_no_deck_is_given():
+    """A CANNOT_RUN that does not name what it needs is unactionable, and asserting only
+    the state lets the branch be deleted while the state is reached another way."""
+    r = cfi.check_F15(_f15_frame(["fA", "fB"]), None)
+    assert r.state == cfi.CANNOT_RUN
+    assert "--deck" in r.detail
+
+
+def test_F15_deck_with_no_pages_is_cannot_run_not_pass(tmp_path):
+    deck = _deck(tmp_path, "<html><body><p>no slides here</p></body></html>")
+    r = cfi.check_F15(_f15_frame(["fA", "fB"]), deck)
+    assert r.state == cfi.CANNOT_RUN
+    assert "no pages" in r.detail
+
+
+def test_F15_frame_with_no_elements_is_cannot_run_not_pass(tmp_path):
+    frame = _f15_frame(["fA"])
+    frame["elements"] = []
+    r = cfi.check_F15(frame, _deck(tmp_path))
+    assert r.state == cfi.CANNOT_RUN
+    assert "elements" in r.detail
+
+
+def test_F15_frame_with_no_facts_is_cannot_run_not_pass(tmp_path):
+    frame = _f15_frame(["fA"])
+    frame["facts"] = {}
+    r = cfi.check_F15(frame, _deck(tmp_path))
+    assert r.state == cfi.CANNOT_RUN
+    assert "facts" in r.detail
+
+
+def test_F15_tolerates_an_element_with_no_surface(tmp_path):
+    """An element that declares no surface carries nothing for any page. Reading its
+    absent surface as a key would crash the gate on a partly-authored frame."""
+    frame = _f15_frame(["fA", "fB"])
+    frame["elements"].append({"id": "e2", "name": "n2", "measure": "m2",
+                              "because": ["fA"]})
+    assert cfi.check_F15(frame, _deck(tmp_path)).state == cfi.PASS
+
+
+def test_F15_tolerates_a_malformed_fact(tmp_path):
+    """A fact that is a bare string rather than a mapping must not crash the rule; it
+    simply carries nothing, and the numbers it would have carried are reported."""
+    frame = _f15_frame(["fA", "fB"])
+    frame["facts"]["fB"] = "28.0% arrived late"   # a string, not a mapping
+    r = cfi.check_F15(frame, _deck(tmp_path))
+    assert r.state == cfi.FAIL
+    assert any("28%" in o for o in r.offenders)

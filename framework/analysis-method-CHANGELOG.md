@@ -1,5 +1,57 @@
 # Analysis Method — Changelog
 
+## 2026-09-21 — F15: the frame now has to account for what the page prints
+
+**What was missing.** F2a checks that every ELEMENT traces to a real fact. Nothing checked the
+reverse: that every CLAIM PRINTED ON A SURFACE is carried by an element declaring that surface.
+The gap shipped. A deck went to a client with the 46% concurrency figure printed on slide 1
+while the only element citing that fact declared `measure_surface: workbook`, and every gate
+stayed green — F1b only asks whether a measure sits on the surface that NAMES it, never whether
+a surface names only what some element accounts for.
+
+**The unit was decided by measurement, not by argument.** Two candidate rules were replayed
+across all 53 historical versions of the engagement frame against the deck that actually shipped:
+
+| candidate | fires at v52 | real | precision |
+|---|---|---|---|
+| fact-anchored — "is this fact cited on this surface?" | 47 | 1 | 2.1% |
+| number-anchored — "is this printed number carried here?" | 29 | 1 | shipped |
+
+The fact-anchored form fires for every fact that merely MENTIONS a number the page prints, and
+nine facts in this frame mention the same population count. **A number identifies a QUANTITY,
+not a fact.** 2.1% is not a tuning problem, and no amount of threshold work rescues it.
+
+**Recall, measured the same way.** The 46% figure reads unaccounted on v1 through v52 and flips
+to accounted at v53, the version that added the citing element. The rule catches the real defect
+and self-clears when the frame is repaired — both directions, against real history rather than a
+fixture.
+
+**False-positive rate, stated rather than implied.** Chart AXIS TICKS are printed numbers that
+are not claims, and they sit in the same `<svg>` as real chart values, so no structural rule
+separates them: 2 of 34 (5.9%) on the measured deck. Provenance lines ARE separable and are
+excluded by class. Rounded restatements are missed by choice — a tolerance band wide enough to
+join a two-decimal rate to its rounded form also collides two neighbouring whole
+percentages that were different claims on that same deck.
+An instrument that cannot state its own false-positive rate is not an instrument.
+
+**No `schema_version` bump.** F15 adds no field; it reads `elements[].name_surface` and `facts`
+as they already stand, so every v3 frame stays valid and `supports_frames_at` is untouched.
+
+**Enforcement tier: a check a gate reads.** `tools/check_frame_integrity.py` gained `check_F15`
+and a `--deck` argument. Without `--deck` it reports CANNOT_RUN rather than passing vacuously,
+because the frame's own declarations are the thing under test and cannot stand in for the
+artifact. Mutation-measured: of 11 mutants that survived in the new code on first measurement,
+10 were killed by new tests and 1 was allowlisted with a written reason; the file's total
+survivor count fell from 128 to 126 against its pre-change baseline.
+
+**Also landed the same day.** `deck_pages()` in `tools/slide_check.py` keeps the page boundary
+that `deck_text()` used to discard, and `bind_deck` now binds to its own page. Before this a
+slide-1 label bound successfully against a token only slide 2 printed — measured on a shipped
+deck, where slide 1 stated the rate in words and never as the figure the label named.
+Cross-model review 2026-09-19, F3.
+
+---
+
 ## 2026-08-31 — the frame location became canonical and enforced
 
 **Decision (Nick):** `output/<slug>/frame.yaml` is the canonical location for frame state.

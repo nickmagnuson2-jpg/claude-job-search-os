@@ -19,7 +19,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
 
-from slide_check import SlideCheck, deck_text  # noqa: E402
+from slide_check import SlideCheck, deck_pages, deck_text  # noqa: E402
 
 
 DECK = """<html><head><style>.slide{color:#000}</style></head><body>
@@ -286,3 +286,103 @@ def test_a_failing_report_speaks_even_when_quiet(capsys):
     sc.check("a", 1, 2)
     assert sc.report() == 1
     assert "DO NOT MATCH" in capsys.readouterr().out
+
+
+# --- page binding (117.F2 / cross-model 2026-09-19 F3) -------------------------------
+
+TWO_PAGE_DECK = """<html><body>
+<div class="slide"><h1>Acme ships 8 of every 10 ordered widgets</h1>
+<p>3,142 answered</p></div>
+<div class="slide"><h1>Prior vendor shipped 88.8%</h1>
+<p>against 13.7%</p></div>
+</body></html>"""
+
+
+@pytest.fixture
+def two_pages(tmp_path):
+    p = tmp_path / "two.html"
+    p.write_text(TWO_PAGE_DECK, encoding="utf-8")
+    return p
+
+
+def test_deck_pages_keeps_the_page_boundary(two_pages):
+    pages = deck_pages(two_pages)
+    assert len(pages) == 2
+    assert "3,142" in pages[0] and "3,142" not in pages[1]
+    assert "88.8%" in pages[1] and "88.8%" not in pages[0]
+
+
+def test_deck_text_page_selects_one_page(two_pages):
+    assert "88.8%" not in deck_text(two_pages, page=1)
+    assert "88.8%" in deck_text(two_pages, page=2)
+
+
+def test_deck_text_without_page_still_joins_every_page(two_pages):
+    """The historical behaviour is kept and is exactly what the next test catches."""
+    t = deck_text(two_pages)
+    assert "3,142" in t and "88.8%" in t
+
+
+def test_a_slide_1_label_cannot_bind_against_a_slide_2_token(two_pages):
+    """THE REGRESSION. A shipped deck stated a rate in words on slide 1 and as a figure only
+    on slide 2. Binding against the joined deck bound that label green and the claim was
+    on the wrong page. Revert bind_deck to the whole deck and this test must fail."""
+    sc = SlideCheck("slide 1", quiet=True)
+    sc.bind_deck(two_pages)
+    sc.check("prior service rate (slide: 88.8%)", 70.9, 70.9)
+    assert sc.failures, "a slide-1 label bound against a token only slide 2 prints"
+    assert "88.8%" in sc.failures[0]
+
+
+def test_a_slide_2_label_binds_against_its_own_page(two_pages):
+    sc = SlideCheck("slide 2", quiet=True)
+    sc.bind_deck(two_pages)
+    sc.check("prior service rate (slide: 88.8%)", 70.9, 70.9)
+    assert sc.failures == []
+
+
+def test_an_explicit_page_overrides_the_slide_name(two_pages):
+    sc = SlideCheck("coverage", quiet=True)
+    sc.bind_deck(two_pages, page=2)
+    sc.check("rate (slide: 88.8%)", 70.9, 70.9)
+    assert sc.failures == []
+
+
+def test_a_nameless_slide_falls_back_to_the_whole_deck_and_says_so(two_pages):
+    """Falling back is allowed. Falling back SILENTLY is what made the defect invisible."""
+    sc = SlideCheck("coverage", quiet=True)
+    sc.bind_deck(two_pages)
+    sc.check("rate (slide: 88.8%)", 70.9, 70.9)
+    assert sc.failures == []
+    assert "WHOLE DECK" in sc.coverage_note()
+
+
+def test_binding_a_page_the_deck_does_not_render_fails_loudly(two_pages):
+    """Asking for page 9 of a 2-page deck must not quietly bind against everything."""
+    sc = SlideCheck("slide 9", quiet=True)
+    sc.bind_deck(two_pages)
+    assert sc.failures and "does not render" in sc.failures[0]
+    assert "NOT BOUND TO A DECK" in sc.coverage_note()
+
+
+def test_page_zero_does_not_silently_return_the_last_page(two_pages):
+    """pages[0-1] is pages[-1] in Python -- a 0 would bind slide "0" against the LAST
+    page and report it bound. Surfaced by a surviving IF_FALSE mutant on the bounds
+    guard: page 9 raises IndexError from the list itself, so page 9 alone never tested
+    the guard, and only a 0 does."""
+    with pytest.raises(IndexError):
+        deck_text(two_pages, page=0)
+    with pytest.raises(IndexError):
+        deck_text(two_pages, page=-1)
+
+
+def test_an_explicit_page_beats_a_contradicting_slide_name(two_pages):
+    """The name says 1 and the caller says 2. If the explicit argument is ignored the
+    label binds against page 1, where 88.8% is not printed. The earlier override test
+    used a nameless slide, so it passed either way -- surfaced by a surviving IF_TRUE
+    mutant on `if page is None`."""
+    sc = SlideCheck("slide 1", quiet=True)
+    sc.bind_deck(two_pages, page=2)
+    sc.check("rate (slide: 88.8%)", 70.9, 70.9)
+    assert sc.failures == []
+    assert "page 2" in sc.coverage_note()
