@@ -543,7 +543,7 @@ limits:
     join them also collides two neighbouring whole percentages that were different
     claims on that same deck.
 
-    MEASURED RECALL on the defect it was built for: the 46% figure reads unaccounted on
+    MEASURED RECALL on the defect it was built for: that figure reads unaccounted on
     versions 1 through 52 and flips to accounted at v53, the version that added the
     citing element. It catches the real defect and self-clears on the repair.
 

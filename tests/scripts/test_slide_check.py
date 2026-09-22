@@ -329,7 +329,7 @@ def test_a_slide_1_label_cannot_bind_against_a_slide_2_token(two_pages):
     on the wrong page. Revert bind_deck to the whole deck and this test must fail."""
     sc = SlideCheck("slide 1", quiet=True)
     sc.bind_deck(two_pages)
-    sc.check("prior service rate (slide: 88.8%)", 70.9, 70.9)
+    sc.check("prior service rate (slide: 88.8%)", 88.8, 88.8)
     assert sc.failures, "a slide-1 label bound against a token only slide 2 prints"
     assert "88.8%" in sc.failures[0]
 
@@ -337,14 +337,14 @@ def test_a_slide_1_label_cannot_bind_against_a_slide_2_token(two_pages):
 def test_a_slide_2_label_binds_against_its_own_page(two_pages):
     sc = SlideCheck("slide 2", quiet=True)
     sc.bind_deck(two_pages)
-    sc.check("prior service rate (slide: 88.8%)", 70.9, 70.9)
+    sc.check("prior service rate (slide: 88.8%)", 88.8, 88.8)
     assert sc.failures == []
 
 
 def test_an_explicit_page_overrides_the_slide_name(two_pages):
     sc = SlideCheck("coverage", quiet=True)
     sc.bind_deck(two_pages, page=2)
-    sc.check("rate (slide: 88.8%)", 70.9, 70.9)
+    sc.check("rate (slide: 88.8%)", 88.8, 88.8)
     assert sc.failures == []
 
 
@@ -352,7 +352,7 @@ def test_a_nameless_slide_falls_back_to_the_whole_deck_and_says_so(two_pages):
     """Falling back is allowed. Falling back SILENTLY is what made the defect invisible."""
     sc = SlideCheck("coverage", quiet=True)
     sc.bind_deck(two_pages)
-    sc.check("rate (slide: 88.8%)", 70.9, 70.9)
+    sc.check("rate (slide: 88.8%)", 88.8, 88.8)
     assert sc.failures == []
     assert "WHOLE DECK" in sc.coverage_note()
 
@@ -383,6 +383,6 @@ def test_an_explicit_page_beats_a_contradicting_slide_name(two_pages):
     mutant on `if page is None`."""
     sc = SlideCheck("slide 1", quiet=True)
     sc.bind_deck(two_pages, page=2)
-    sc.check("rate (slide: 88.8%)", 70.9, 70.9)
+    sc.check("rate (slide: 88.8%)", 88.8, 88.8)
     assert sc.failures == []
     assert "page 2" in sc.coverage_note()

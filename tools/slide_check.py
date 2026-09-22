@@ -22,7 +22,7 @@ the rendered page text, so the chain runs: computed value == literal == the toke
 WHAT IT STILL DOES NOT SEE, stated because the last version of this docstring overclaimed and
 a doc became the reason nobody built the gate. Binding is driven by the LABEL: a value the
 page prints but no check mentions is invisible here, and so is a chart segment that prints no
-label at all. On 2026-09-21 a chart shipped with its 10.7% band unlabelled while this harness
+label at all. On 2026-09-21 a chart shipped with one band unlabelled while this harness
 reported every check green, because the suite asserted the SHARE and the segment's WIDTH and
 nothing asserted that a label existed. `coverage_note()` reports how much of a run was bound;
 read it, and do not read a green run as "the page is right".

@@ -57,7 +57,7 @@ FAIL = "FAIL"
 CANNOT_RUN = "CANNOT_RUN"
 
 # Defaults chosen from measured history, not taste. See tools/tests or the engagement
-# validation harness: the three known real asymmetries sat at 60.0pp, 26.8pp and 18.2pp,
+# validation harness: the three known real asymmetries were all above 18pp,
 # and the intended non-finding sat well under 5pp. A threshold above ~18pp would have
 # missed a defect that actually shipped.
 DEFAULT_THRESHOLD_PP = 5.0

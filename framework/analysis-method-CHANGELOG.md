@@ -4,7 +4,7 @@
 
 **What was missing.** F2a checks that every ELEMENT traces to a real fact. Nothing checked the
 reverse: that every CLAIM PRINTED ON A SURFACE is carried by an element declaring that surface.
-The gap shipped. A deck went to a client with the 46% concurrency figure printed on slide 1
+The gap shipped. A deck went to a client with a concurrency figure printed on slide 1
 while the only element citing that fact declared `measure_surface: workbook`, and every gate
 stayed green — F1b only asks whether a measure sits on the surface that NAMES it, never whether
 a surface names only what some element accounts for.
@@ -21,7 +21,7 @@ The fact-anchored form fires for every fact that merely MENTIONS a number the pa
 nine facts in this frame mention the same population count. **A number identifies a QUANTITY,
 not a fact.** 2.1% is not a tuning problem, and no amount of threshold work rescues it.
 
-**Recall, measured the same way.** The 46% figure reads unaccounted on v1 through v52 and flips
+**Recall, measured the same way.** That figure reads unaccounted on v1 through v52 and flips
 to accounted at v53, the version that added the citing element. The rule catches the real defect
 and self-clears when the frame is repaired — both directions, against real history rather than a
 fixture.
@@ -194,7 +194,7 @@ shape, caught only because the saboteur pass was actually run rather than assume
 
 **THE FINDING, which is about the frame and not the tool.** The deterministic F3 finds `i_csat`
 load-bearing in e1 and e3 by set intersection. **The blind agent could not find it, and the reason
-is in the frame:** e1's measure states "CSAT held at or above 3.7"; **e3's measure never mentions
+is in the frame:** e1's measure states "CSAT held at or above the floor"; **e3's measure never mentions
 CSAT at all, though e3 declares `i_csat` as an input.** Verified directly against the frame file.
 So either e3 genuinely uses CSAT and its measure under-discloses, or `i_csat` does not belong on
 e3 and the declaration is wrong. **Unreconciled: it needs the operator, because only he knows what

@@ -2,7 +2,7 @@
 """How many times has the analysis method actually been run, and how far did each run get?
 
 WHY THIS IS A TOOL AND NOT A SENTENCE IN A FILE. `data/workstreams/analysis-method.md` said
-"the method's only real engagement run is Nanonets, frame.yaml v1-v4, still in_progress". That
+"the method's only real engagement run is <engagement-slug>, frame.yaml v1-v4, still in_progress". That
 was true on 2026-09-14 and false a week later: a second engagement had reached v53 and closed
 with its integrity gate green. Nobody wrote the wrong thing -- the sentence simply stopped
 being true while nobody was looking at it, which is what every typed derivable eventually does.
