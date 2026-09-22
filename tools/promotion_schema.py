@@ -83,9 +83,25 @@ DEFAULT_GRANDFATHER = REPO_ROOT / "tools" / "promotion-schema-grandfather.json"
 
 # A gate that names no number cannot trip on a count; it waits for a human to notice.
 # 38 of the 69 live candidates read like this on 2026-08-25.
+# A gate "names a number" in any of the three shapes people actually write, and the
+# ordinal branch is GENERATED rather than enumerated.
+#
+# MEASURED 2026-09-21, and the old pattern was wrong in three ways at once. It listed
+# `2nd|3rd|4th|5th|6th` literally, so "7th fire" and "32nd fire" were rejected -- and the
+# corpus holds a rule at 31 occurrences. It required the number BEFORE the noun, so
+# "TRIPPED by fire 6" was rejected. And `(?:fire|occurrence)\b` could not match the
+# plural, so "reopen at 3 fires" and "2 more fires" were both rejected. Every one of
+# those is a well-formed gate, and the check was reporting them as unset.
+#
+# That matters more than a missed match: the fix for an I4 violation is to EDIT the rule
+# file, so a detector that rejects good gates makes the corpus worse when it is obeyed.
 _NUMBER_IN_GATE = re.compile(
-    r"\b(\d+\s*(?:more\s+)?(?:dated\s+)?(?:fire|occurrence)"
-    r"|2nd|3rd|4th|5th|6th|second|third|fourth|fifth)\b",
+    r"\b(?:"
+    r"\d+\s*(?:st|nd|rd|th)"                                        # 2nd time, 3rd, 32nd fire
+    r"|\d+\s*(?:more\s+)?(?:dated\s+)?(?:fire|occurrence|instance|catch|time)s?"
+    r"|(?:fire|occurrence|instance)s?\s*#?\s*\d+"                   # fire 6, occurrence 2
+    r"|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth"
+    r")\b",
     re.IGNORECASE,
 )
 

@@ -393,3 +393,53 @@ def test_promoted_token_returns_empty_when_there_is_no_leading_word():
     assert ps.promoted_token("123 -- numeric") == ""
     assert ps.promoted_token("   ") == ""
     assert ps.promoted_token(None) == ""
+
+
+# --- gate_names_a_number: the shapes people actually write (2026-09-21) --------------
+# The original pattern was wrong in three ways at once and every one of them REJECTED a
+# well-formed gate. That matters more than a missed match: the fix for an I4 violation is
+# to edit the rule file, so a detector that rejects good gates makes the corpus worse when
+# it is obeyed.
+
+@pytest.mark.parametrize("gate", [
+    "2nd time a correction is written into a data file",   # the corpus's own convention
+    "3rd fire",
+    "7th fire",                    # the literal list stopped at 6th
+    "32nd fire",                   # a rule in this corpus sits at 31 occurrences
+    "10th instance",
+    "reopen at 3 fires",           # plural: (?:fire)\b could not match "fires"
+    "2 more fires",
+    "TRIPPED 2026-08-14 by fire 6",   # number AFTER the noun
+    "GATE MET 2026-08-14: 2 fires in one session",
+    "the third fire",
+    "2nd catch",
+    "3rd instance found OUTSIDE the scorer subsystem",
+])
+def test_gate_number_recognised(gate):
+    assert ps.gate_names_a_number(gate) is True, gate
+
+
+@pytest.mark.parametrize("gate", [
+    "reopen on the next dated fire",      # the schema's own named anti-pattern
+    "No structural gate set",
+    "reopen when it happens again",
+    "reopen if this recurs",
+    "",
+])
+def test_gate_without_a_number_is_rejected(gate):
+    assert ps.gate_names_a_number(gate) is False, gate
+
+
+def test_gate_pattern_recognises_everything_the_old_one_did():
+    """DIFFERENTIAL. A first attempt at this pattern dropped the standalone-ordinal
+    branch, which the corpus uses constantly ('2nd time X happens'), and silently
+    regressed 90+ files from passing to violating. Widening a matcher is not automatically
+    safe: check the old shapes still match before trusting the new ones."""
+    import re
+    old = re.compile(
+        r"\b(\d+\s*(?:more\s+)?(?:dated\s+)?(?:fire|occurrence)"
+        r"|2nd|3rd|4th|5th|6th|second|third|fourth|fifth)\b", re.IGNORECASE)
+    for gate in ("2nd time", "3rd", "4th", "5th", "6th", "second", "fifth",
+                 "2 fires", "3 dated occurrences", "reopen on the 2nd"):
+        if old.search(gate):
+            assert ps.gate_names_a_number(gate) is True, f"regressed: {gate!r}"
