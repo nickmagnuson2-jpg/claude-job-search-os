@@ -765,7 +765,8 @@ def check_g6(pages) -> Result:
                       + str(checked) + " SVG(s)", (clipped + empty)[:MAX_OFFENDERS])
     return Result("G6", PASS,
                   "all " + str(checked) + " SVG(s) have a viewBox that hugs the drawing, "
-                  "with nothing clipped outside it")
+                  "with nothing clipped more than " + str(SVG_CLIP_TOL) + " units outside "
+                  "it (the measurement tolerance, not zero)")
 
 
 def check_g7(pages) -> Result:
