@@ -197,6 +197,22 @@ def validate_surface_identifiers(frame, schema):
                 errors.append(
                     f"{_label(e, i)}.{field} must be an identifier matching "
                     f"{pattern} (e.g. p5, slide-8, step-1), got prose: {shown!r}")
+        # also_printed_on is a LIST of the same kind of token. Left unvalidated it is
+        # the obvious way prose creeps back into a surface field, and F15 silently
+        # stops matching -- which reads as the page being clean.
+        extra = e.get("also_printed_on")
+        if extra is None:
+            continue
+        if not isinstance(extra, list):
+            errors.append(f"{_label(e, i)}.also_printed_on must be a list of "
+                          f"identifiers, got {type(extra).__name__}")
+            continue
+        for val in extra:
+            if not isinstance(val, str) or not rx.match(val):
+                shown = str(val)[:60] + ("..." if len(str(val)) > 60 else "")
+                errors.append(
+                    f"{_label(e, i)}.also_printed_on entry must be an identifier "
+                    f"matching {pattern}, got: {shown!r}")
     return errors
 
 
@@ -735,6 +751,20 @@ def check_F14(frame, frame_path=None):
             problems.append(
                 f"{name}: disposition {disp!r} names target {target!r}, which does not "
                 "exist. The decision was recorded and never carried out")
+        # STEP 7, RETIRE THE ORIGINAL. F14 checked that the promotion TARGET exists and
+        # never that the SOURCE went away, so a promoted script could sit beside the frame
+        # as a full duplicate indefinitely -- three did, and one of them had drifted behind
+        # its promoted twin by a whole check, while the gate read clean. "Keep these two
+        # copies in sync" is prose; an absent original cannot drift.
+        #
+        # Only fires once the target EXISTS: between promoting and retiring there is a
+        # legitimate window, and the target's absence is already reported above, so this
+        # cannot double-report the same unfinished promotion.
+        elif disp == "promote" and enumerated and name in found:
+            problems.append(
+                f"{name}: promoted to {target!r}, which exists, but the original is still "
+                "on disk beside the frame. Retire it -- two copies of one mechanism drift, "
+                "and the engagement-local copy is the one nothing tests")
 
     if problems:
         return Result("F14", FAIL,
@@ -860,11 +890,22 @@ def check_F15(frame, deck_path=None):
     if not facts:
         return Result("F15", CANNOT_RUN, "no `facts` block")
 
+    # An element accounts for its facts on the surface where it is MADE, plus any
+    # surface it declares its evidence also reaches. F1b deliberately does not read
+    # also_printed_on: co-location of name and measure still means one surface, and
+    # widening it here would let an element claim its measure sits where it does not.
     cited_on = {}
     for e in els:
-        if isinstance(e, dict) and e.get("name_surface"):
-            cited_on.setdefault(str(e["name_surface"]).strip(), set()).update(
-                e.get("because") or [])
+        if not isinstance(e, dict):
+            continue
+        surfaces = []
+        if e.get("name_surface"):
+            surfaces.append(str(e["name_surface"]).strip())
+        extra = e.get("also_printed_on")
+        if isinstance(extra, list):
+            surfaces += [str(x).strip() for x in extra if str(x).strip()]
+        for surface in surfaces:
+            cited_on.setdefault(surface, set()).update(e.get("because") or [])
 
     printed = {f"slide-{i + 1}": _claim_numbers(t) for i, t in enumerate(pages)}
     covered = [s for s in printed if s in cited_on]

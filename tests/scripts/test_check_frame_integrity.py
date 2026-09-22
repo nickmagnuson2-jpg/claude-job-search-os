@@ -804,12 +804,15 @@ def test_F14_engagement_only_without_a_reason_fails():
 
 
 def test_F14_fully_dispositioned_tree_passes():
+    """A promoted script is RETIRED, so it is declared and absent; `superseded` and
+    `engagement_only` legitimately stay on disk. Before the 2026-09-21 amendment this
+    fixture kept a promoted source in the tree and still passed."""
     import tempfile
     with tempfile.TemporaryDirectory() as td:
-        fp = _tree(Path(td), "a.py", "b.py")
+        fp = _tree(Path(td), "b.py", "c.py")
         r = _f14({"scripts": {
-            "a.py": {"disposition": "promote", "target": REAL_TARGET},
             "b.py": {"disposition": "superseded", "target": REAL_TARGET},
+            "c.py": {"disposition": "engagement_only", "reason": "policy, not mechanism"},
         }}, fp)
     assert r.state == cfi.PASS
     assert "2 script(s) on disk dispositioned" in r.detail
@@ -821,7 +824,7 @@ def test_F14_stale_declaration_is_noted_but_not_fatal():
     with tempfile.TemporaryDirectory() as td:
         fp = _tree(Path(td), "a.py")
         r = _f14({"scripts": {
-            "a.py": {"disposition": "promote", "target": REAL_TARGET},
+            "a.py": {"disposition": "engagement_only", "reason": "policy"},
             "deleted.py": {"disposition": "promote", "target": REAL_TARGET},
         }}, fp)
     assert r.state == cfi.PASS
@@ -922,7 +925,8 @@ def test_F14_clean_tree_carries_no_stale_note():
     import tempfile
     with tempfile.TemporaryDirectory() as td:
         fp = _tree(Path(td), "a.py")
-        r = _f14({"scripts": {"a.py": {"disposition": "promote", "target": REAL_TARGET}}}, fp)
+        r = _f14({"scripts": {"a.py": {"disposition": "engagement_only",
+                                       "reason": "policy"}}}, fp)
     assert r.state == cfi.PASS
     assert "absent on disk" not in r.detail
     assert "NOTE" not in r.detail
@@ -1212,3 +1216,163 @@ def test_F15_tolerates_a_malformed_fact(tmp_path):
     r = cfi.check_F15(frame, _deck(tmp_path))
     assert r.state == cfi.FAIL
     assert any("28%" in o for o in r.offenders)
+
+
+# --- F14 step 7: RETIRE THE ORIGINAL (2026-09-21 amendment) --------------------------
+
+def test_F14_promoted_source_still_on_disk_fails():
+    """THE AMENDMENT. F14 checked that the promotion TARGET exists and never that the
+    SOURCE went away, so a promoted script could sit beside the frame as a full duplicate
+    indefinitely. Three did on the frame this was built against, and one had drifted a
+    whole check behind its promoted twin while the gate read clean."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        fp = _tree(Path(td), "a.py")
+        r = _f14({"scripts": {"a.py": {"disposition": "promote",
+                                       "target": REAL_TARGET}}}, fp)
+    assert r.state == cfi.FAIL
+    assert any("still" in o and "on disk" in o for o in r.offenders)
+
+
+def test_F14_promoted_and_retired_passes():
+    """The other half: once the original is gone, the same declaration is clean."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        fp = _tree(Path(td))          # empty tree
+        r = _f14({"scripts": {"a.py": {"disposition": "promote",
+                                       "target": REAL_TARGET}}}, fp)
+    assert r.state == cfi.PASS
+
+
+def test_F14_unfinished_promotion_is_not_double_reported():
+    """While the target does not yet exist the promotion is simply unfinished, and that
+    is already reported. Firing 'retire the original' as well would demand deleting the
+    only copy of a script whose replacement does not exist."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        fp = _tree(Path(td), "a.py")
+        r = _f14({"scripts": {"a.py": {"disposition": "promote",
+                                       "target": "tools/does_not_exist_xyz.py"}}}, fp)
+    assert r.state == cfi.FAIL
+    assert len(r.offenders) == 1
+    assert "does not" in r.offenders[0]
+
+
+def test_F14_superseded_source_may_stay_on_disk():
+    """`superseded` is not `promote`. A superseded script was replaced by something else
+    in the same engagement and deleting it is not what the disposition means."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        fp = _tree(Path(td), "a.py")
+        r = _f14({"scripts": {"a.py": {"disposition": "superseded",
+                                       "target": REAL_TARGET}}}, fp)
+    assert r.state == cfi.PASS
+
+
+def test_F14_retirement_check_needs_an_enumerated_tree():
+    """Without a tree, 'still on disk' is unknowable. It must not be guessed either way."""
+    r = _f14({"scripts": {"a.py": {"disposition": "promote", "target": REAL_TARGET}}})
+    assert r.state == cfi.CANNOT_RUN
+
+
+# --- also_printed_on (2026-09-21) ---------------------------------------------------
+
+def test_F15_also_printed_on_accounts_for_a_setup_surface(tmp_path):
+    """An element MADE on slide 2 whose counts are printed on slide 1. Before this field
+    one element could name exactly one surface, so F15 reported real setup material as
+    unaccounted."""
+    # The real shape: slide-1 IS declared, by an element that carries only part of what
+    # the page prints. The counts underneath belong to a DIFFERENT element, made on
+    # slide 2. That element's facts are printed on slide 1 and accounted for nowhere.
+    frame = _f15_frame(["fB"], surface="slide-1")           # carries 28% only
+    frame["facts"]["fC"] = {"text": "The rate was 88.8%"}
+    frame["elements"].append({"id": "e2", "name": "volume", "measure": "units",
+                              "name_surface": "slide-2", "measure_surface": "slide-2",
+                              "because": ["fA", "fC"]})     # fA holds 3,142
+    r = cfi.check_F15(frame, _deck(tmp_path))
+    assert r.state == cfi.FAIL
+    assert any("3142" in o and o.startswith("slide-1") for o in r.offenders), r.offenders
+
+    frame["elements"][1]["also_printed_on"] = ["slide-1"]
+    assert cfi.check_F15(frame, _deck(tmp_path)).state == cfi.PASS
+
+
+def test_F15_also_printed_on_only_covers_surfaces_it_lists(tmp_path):
+    """Listing one surface must not account for every surface."""
+    frame = _f15_frame(["fA", "fB"], surface="workbook")
+    frame["elements"][0]["also_printed_on"] = ["slide-2"]
+    r = cfi.check_F15(frame, _deck(tmp_path))
+    assert r.state == cfi.FAIL          # slide-2 prints 88.8%, carried by neither fact
+    assert all("slide-1" not in o for o in r.offenders)
+
+
+def test_F1b_does_not_read_also_printed_on():
+    """The asymmetry is deliberate. If F1b widened through this field an element could
+    claim its measure sits on a surface it only supplies evidence to."""
+    f = clean_frame()
+    f["elements"][0]["measure_surface"] = "p12"
+    f["elements"][0]["also_printed_on"] = ["p12"]
+    assert states(f)["F1b"] == cfi.FAIL
+
+
+def test_also_printed_on_entries_must_be_identifiers():
+    """Unvalidated, this is the obvious way prose creeps back into a surface field -- and
+    F15 then silently stops matching, which reads as the page being clean."""
+    schema = yaml.safe_load(SCHEMA.read_text(encoding="utf-8"))
+    f = clean_frame()
+    f["elements"][0]["also_printed_on"] = ["the funnel panel on the opening page"]
+    errs = cfi.validate_surface_identifiers(f, schema)
+    assert errs and "also_printed_on" in errs[0]
+
+
+def test_also_printed_on_must_be_a_list():
+    schema = yaml.safe_load(SCHEMA.read_text(encoding="utf-8"))
+    f = clean_frame()
+    f["elements"][0]["also_printed_on"] = "p5"
+    errs = cfi.validate_surface_identifiers(f, schema)
+    assert errs and "must be a list" in errs[0]
+
+
+def test_also_printed_on_absent_is_fine():
+    schema = yaml.safe_load(SCHEMA.read_text(encoding="utf-8"))
+    assert cfi.validate_surface_identifiers(clean_frame(), schema) == []
+
+
+def test_also_printed_on_valid_list_produces_no_error():
+    """The other half of the list check. Without this, a mutant that errors on EVERY
+    also_printed_on entry survives, because every existing test feeds it bad input."""
+    schema = yaml.safe_load(SCHEMA.read_text(encoding="utf-8"))
+    f = clean_frame()
+    f["elements"][0]["also_printed_on"] = ["p8", "board-left", "spoken"]
+    assert cfi.validate_surface_identifiers(f, schema) == []
+
+
+def test_also_printed_on_non_list_reports_exactly_one_error():
+    """A string is iterable, so dropping the `continue` after the not-a-list error walks
+    its CHARACTERS -- most of which match the identifier pattern, so the count stays
+    plausible and the bug is invisible unless the count is asserted."""
+    schema = yaml.safe_load(SCHEMA.read_text(encoding="utf-8"))
+    f = clean_frame()
+    # "P5" and not "p5": a lowercase string's characters each MATCH the identifier
+    # pattern, so walking them adds no errors and the dropped `continue` is invisible.
+    f["elements"][0]["also_printed_on"] = "P5"
+    errs = cfi.validate_surface_identifiers(f, schema)
+    assert len(errs) == 1, errs
+
+
+def test_surface_error_truncates_only_long_prose():
+    """The ellipsis is a length decision. Inverted, a short value grows a '...' and a long
+    one loses it, and every assertion that only greps for 'identifier' still passes."""
+    schema = yaml.safe_load(SCHEMA.read_text(encoding="utf-8"))
+    f = clean_frame()
+    f["elements"][0]["also_printed_on"] = ["x" * 80]
+    assert "..." in cfi.validate_surface_identifiers(f, schema)[0]
+    f["elements"][0]["also_printed_on"] = ["THIS IS PROSE"]
+    assert "..." not in cfi.validate_surface_identifiers(f, schema)[0]
+
+
+def test_F15_skips_a_non_mapping_element(tmp_path):
+    """A malformed element must not crash the surface walk or silently carry facts."""
+    frame = _f15_frame(["fA", "fB"])
+    frame["elements"].append("not a mapping")
+    assert cfi.check_F15(frame, _deck(tmp_path)).state == cfi.PASS

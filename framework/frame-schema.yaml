@@ -261,7 +261,7 @@ fields:
 
   # ---- THE FRAME ----
   elements:
-    type: list[{id, name, name_surface, measure, measure_surface, name_surface_note, measure_surface_note, because, inputs, protected, first_seen}]
+    type: list[{id, name, name_surface, measure, measure_surface, name_surface_note, measure_surface_note, also_printed_on, because, inputs, protected, first_seen}]
     required: true
     class: per_engagement
     judgment_moment: 4
@@ -287,6 +287,24 @@ fields:
       descriptions and produced 2 false failures out of 4 because one string carried
       extra detail the other did not. Two identifiers either match or they do not.
       Put the prose in name_surface_note / measure_surface_note, which nothing compares.
+
+      also_printed_on ADDED 2026-09-21, optional, a list of identifiers. The surfaces an
+      element's evidence ALSO reaches without the element being made there. Found by
+      running F15 on a real deck: an element whose name and measure both sit on slide 2
+      had the counts it rests on printed on slide 1, and F15 correctly reported them as
+      unaccounted because one element could name exactly one surface.
+
+      IT IS NOT A SECOND HOME, AND F1b DOES NOT READ IT. name_surface remains the single
+      place the element is MADE, so co-location keeps meaning what it meant and cannot be
+      satisfied by listing a second surface. Only F15 reads this field: a number printed
+      on a listed surface counts as accounted for. That asymmetry is deliberate -- the
+      field exists to stop F15 firing on setup material, and widening F1b through it
+      would let an element claim its measure sits somewhere it does not.
+
+      THE COST, STATED: every id added here is a surface on which this element's facts no
+      longer have to be independently accounted for. Listing surfaces liberally is how
+      F15 is turned back off, one element at a time, so the entry is a judgment and
+      belongs to judgment moment 4 with the rest of the element set.
   closure: {type: string, required: true, class: per_engagement, judgment_moment: 4, checks: [F5]}
   exclusions:
     type: list[{element, reason}]
