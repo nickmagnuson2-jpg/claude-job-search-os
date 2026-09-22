@@ -343,47 +343,47 @@ def test_the_summary_line_reports_the_drain_instrument(tmp_path, capsys):
     assert "dispositioned 1" in out
 
 
-# --- I5: the `promoted` token vocabulary (2026-09-21) --------------------------------
+# --- I6: the `promoted` token vocabulary (2026-09-21) --------------------------------
 
-def test_I5_rejects_a_token_outside_the_vocabulary():
+def test_I6_rejects_a_token_outside_the_vocabulary():
     """MEASURED on the live tier: 3 files opened with 'n/a' or 'SUPERSEDED'. Because
     scan_promotion_candidates deliberately fails OPEN on an unrecognised token -- it
     assumes a tier name -- each of those read as a COMPLETED promotion and left the
     backlog silently. The vocabulary has to be gated somewhere, and it cannot be there."""
     v = ps.check_file(
         "f.md", {"promoted": "n/a -- reference"}, grandfathered=False)
-    assert any("I5" in x for x in v), v
+    assert any("I6" in x for x in v), v
     v = ps.check_file(
         "f.md", {"promoted": "SUPERSEDED 2026-08-21 -- the gate was deleted"},
         grandfathered=False)
-    assert any("I5" in x for x in v), v
+    assert any("I6" in x for x in v), v
 
 
 @pytest.mark.parametrize("value", ["no", "yes", "partial", "skill", "hook",
                                    "principle", "hard-rule",
                                    "yes -- hook tier, 2026-08-19",
                                    "partial -- open_draft.py reply mode (NOT proposed)"])
-def test_I5_accepts_every_documented_token(value):
+def test_I6_accepts_every_documented_token(value):
     """A qualifier after the token is the GOOD shape and must never be what fails.
     Tier names are included because scan_promotion_candidates reads a bare tier as a
     promotion, and that behaviour is pinned by its own tests."""
     v = ps.check_file("f.md", {"promoted": value}, grandfathered=False)
-    assert not any("I5" in x for x in v), v
+    assert not any("I6" in x for x in v), v
 
 
-def test_I5_does_not_read_n_slash_a_as_the_tier_n():
+def test_I6_does_not_read_n_slash_a_as_the_tier_n():
     """Splitting the token on '/' would turn 'n/a' into 'n', and a one-letter token that
     matches nothing is a different error message than the one a reader needs."""
     assert ps.promoted_token("n/a -- reference") == "n/a"
 
 
-def test_I5_keeps_a_hyphenated_tier_whole():
+def test_I6_keeps_a_hyphenated_tier_whole():
     assert ps.promoted_token("hard-rule") == "hard-rule"
 
 
-def test_I5_is_silent_on_an_absent_promoted_key():
+def test_I6_is_silent_on_an_absent_promoted_key():
     v = ps.check_file("f.md", {}, grandfathered=False)
-    assert not any("I5" in x for x in v), v
+    assert not any("I6" in x for x in v), v
 
 
 def test_promoted_token_returns_empty_when_there_is_no_leading_word():
@@ -490,3 +490,72 @@ def test_a_value_that_merely_starts_with_gt_is_not_a_block_marker():
     fm = ps.parse_frontmatter(text)
     assert fm["reopen_gate"] == ">= 3 fires"
     assert fm["promoted"] == "no"
+
+
+# --- I7: exit2 MEANS in MEMORY.md (2026-09-21) --------------------------------------
+
+def test_I7_exit2_rule_absent_from_memory_md_is_a_violation():
+    """exit2 is defined at the top of promotion_schema as 'a principle no gate can
+    express, PROMOTED INTO ALWAYS-LOADED MEMORY.md'. I3 charges a detector as the price
+    of admission; nothing checked that the rule was admitted. Measured 2026-09-21: 50
+    rules claim exit2, 2 are in MEMORY.md."""
+    v = ps.check_file("feedback_x.md",
+                      {"promoted": "yes", "promoted_date": "2026-09-01",
+                       "exit_path": "exit2", "detector_signature": "sig",
+                       "reopen_gate": "3rd fire"},
+                      grandfathered=False, in_memory_md=False)
+    assert any("I7" in x for x in v), v
+
+
+def test_I7_exit2_rule_present_in_memory_md_is_clean():
+    v = ps.check_file("feedback_x.md",
+                      {"promoted": "yes", "promoted_date": "2026-09-01",
+                       "exit_path": "exit2", "detector_signature": "sig",
+                       "reopen_gate": "3rd fire"},
+                      grandfathered=False, in_memory_md=True)
+    assert not any("I7" in x for x in v), v
+
+
+def test_I7_cannot_run_without_sight_of_memory_md():
+    """Unknowable is not a pass and not a failure. A caller pointed at a corpus with no
+    MEMORY.md simply does not run this check."""
+    v = ps.check_file("feedback_x.md",
+                      {"promoted": "yes", "promoted_date": "2026-09-01",
+                       "exit_path": "exit2", "detector_signature": "sig",
+                       "reopen_gate": "3rd fire"},
+                      grandfathered=False, in_memory_md=None)
+    assert not any("I7" in x for x in v), v
+
+
+def test_I7_does_not_fire_for_exit1_or_terminal():
+    """Only exit2 claims the always-loaded channel."""
+    for ep in ("exit1", "terminal"):
+        v = ps.check_file("feedback_x.md",
+                          {"promoted": "yes", "promoted_date": "2026-09-01",
+                           "exit_path": ep, "reopen_gate": "3rd fire"},
+                          grandfathered=False, in_memory_md=False)
+        assert not any("I7" in x for x in v), (ep, v)
+
+
+def test_scan_reads_memory_md_and_reports_I7(tmp_path):
+    """End to end: scan() must read the channel once and pass the answer down."""
+    mem = tmp_path / "memory"; mem.mkdir()
+    (mem / "MEMORY.md").write_text("## Critical Context\n\n- nothing here\n", encoding="utf-8")
+    (mem / "feedback_orphan.md").write_text(
+        "---\nname: feedback_orphan\nmetadata:\n  occurrences: 2\n  promoted: yes\n"
+        "  promoted_date: 2026-09-01\n  exit_path: exit2\n  detector_signature: sig\n"
+        "  reopen_gate: \"3rd fire\"\n  last_cited: 2026-09-01\n---\n\nbody\n",
+        encoding="utf-8")
+    rep = ps.scan(mem, {})
+    assert any("I7" in v for v in rep["violations"]), rep["violations"]
+
+
+def test_scan_without_a_memory_md_does_not_invent_I7(tmp_path):
+    mem = tmp_path / "memory"; mem.mkdir()
+    (mem / "feedback_orphan.md").write_text(
+        "---\nname: feedback_orphan\nmetadata:\n  occurrences: 2\n  promoted: yes\n"
+        "  promoted_date: 2026-09-01\n  exit_path: exit2\n  detector_signature: sig\n"
+        "  reopen_gate: \"3rd fire\"\n  last_cited: 2026-09-01\n---\n\nbody\n",
+        encoding="utf-8")
+    rep = ps.scan(mem, {})
+    assert not any("I7" in v for v in rep["violations"]), rep["violations"]

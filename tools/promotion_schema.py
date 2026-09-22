@@ -32,6 +32,8 @@ I3  exit_path == exit2    => `detector_signature` present and non-empty.
 I4  exit_path present     => `reopen_gate` names a NUMBER ("3rd fire"), never the no-op
                              "reopen on the next dated fire", which cannot trip on a count.
 I5  a grandfather entry   => carries a non-empty written reason.
+I6  promoted              => its leading token is in the vocabulary, never invented.
+I7  exit_path == exit2    => the rule is named in MEMORY.md, the channel exit2 MEANS.
 
 I1 and I2 are waived for files listed in the grandfather file, which records promotions
 made before the field existed. The waiver is deliberately noisy: the legacy debt is
@@ -193,7 +195,8 @@ def load_grandfather(path: Path) -> dict:
     return data
 
 
-def check_file(name: str, fm: dict, grandfathered: bool) -> list[str]:
+def check_file(name: str, fm: dict, grandfathered: bool,
+               in_memory_md: bool | None = None) -> list[str]:
     """Return the list of invariant violations for one file. Empty list means clean."""
     violations: list[str] = []
     promoted = fm.get("promoted", "no")
@@ -212,13 +215,13 @@ def check_file(name: str, fm: dict, grandfathered: bool) -> list[str]:
             if not exit_path:
                 violations.append(f"{name}: I2 promoted is {promoted!r} but exit_path is missing")
 
-    # I5. The token is the part consumers key on, so it may not be invented. Without
+    # I6. The token is the part consumers key on, so it may not be invented. Without
     # this the `values:` list beside the field is decoration -- the same defect the frame
     # schema carried in its own enum fields until 2026-09-21.
     tok = promoted_token(promoted)
     if tok and tok not in VALID_PROMOTED_TOKENS:
         violations.append(
-            f"{name}: I5 promoted opens with {tok!r}, which is not one of "
+            f"{name}: I6 promoted opens with {tok!r}, which is not one of "
             f"{'|'.join(VALID_PROMOTED_TOKENS)}. A consumer keying on this token cannot "
             "see a value outside the vocabulary, and the recogniser fails OPEN -- an "
             "unknown token reads as a completed promotion and leaves the backlog"
@@ -230,6 +233,25 @@ def check_file(name: str, fm: dict, grandfathered: bool) -> list[str]:
         )
 
     # I3 and I4 are never waived. See the module docstring.
+    # I7. exit2 is defined at the top of this file as "a principle no gate can express,
+    # PROMOTED INTO ALWAYS-LOADED MEMORY.md". I3 charges the detector as the price of
+    # admission and nothing ever checked that the rule was admitted.
+    #
+    # MEASURED 2026-09-21: 50 rules carry exit_path exit2 and 2 appear in MEMORY.md. The
+    # other 48 paid the price and never got in. Each one reads as PROMOTED -- it leaves
+    # the backlog, the detector stops surfacing it -- while the mechanism it claims, being
+    # loaded into every conversation, does not exist for it. That is the same defect this
+    # whole file was built to catch, at the one tier that cannot be verified from the file
+    # itself, which is exactly why it went unnoticed.
+    #
+    # None when the caller cannot see MEMORY.md: unknowable is not a pass, so it is simply
+    # not checked rather than assumed either way.
+    if exit_path == "exit2" and in_memory_md is False:
+        violations.append(
+            f"{name}: I7 exit_path is exit2, which MEANS promoted into always-loaded "
+            "MEMORY.md, and this rule is not named there. It reads as promoted and left "
+            "the backlog, while the channel it claims does not carry it")
+
     if exit_path == "exit2" and not fm.get("detector_signature", "").strip():
         violations.append(
             f"{name}: I3 exit_path is exit2 but detector_signature is empty. A detector is "
@@ -253,6 +275,12 @@ def scan(memory_dir: Path, grandfather: dict) -> dict:
         # mode is the same bug wearing a safety vest.
         raise ValueError(f"no feedback_*.md files found under {memory_dir}")
 
+    # Read the always-loaded channel ONCE. Its absence is not a failure: a caller may
+    # point this at a corpus that has no MEMORY.md, and then I7 simply cannot run.
+    memory_md = memory_dir / "MEMORY.md"
+    memory_text = (memory_md.read_text(encoding="utf-8", errors="replace")
+                   if memory_md.exists() else None)
+
     violations: list[str] = []
     promoted_total = 0
     with_date = 0
@@ -262,6 +290,7 @@ def scan(memory_dir: Path, grandfather: dict) -> dict:
     for p in files:
         fm = parse_frontmatter(p.read_text(encoding="utf-8", errors="replace"))
         name = p.name
+        in_md = None if memory_text is None else (p.stem in memory_text)
         if is_promoted_value(fm.get("promoted", "no")):
             promoted_total += 1
             if fm.get("promoted_date", "").strip():
@@ -270,7 +299,8 @@ def scan(memory_dir: Path, grandfather: dict) -> dict:
         if ep:
             with_exit_path += 1
             by_exit[ep] = by_exit.get(ep, 0) + 1
-        violations.extend(check_file(name, fm, grandfathered=name in grandfather))
+        violations.extend(check_file(name, fm, grandfathered=name in grandfather,
+                                     in_memory_md=in_md))
 
     for name, reason in grandfather.items():
         if not str(reason).strip():
