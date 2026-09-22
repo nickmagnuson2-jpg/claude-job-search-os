@@ -57,6 +57,27 @@ from pathlib import Path
 
 VALID_EXIT_PATHS = ("exit1", "exit2", "terminal")
 
+# The vocabulary `promoted:` may open with. A qualifier after the token is ENCOURAGED --
+# "partial -- open_draft.py reply mode (NOT proposed)" is the good shape -- but the TOKEN
+# is what every consumer keys on, so it may not be invented.
+#
+# MEASURED 2026-09-21 across the live tier: 584 `no`, 119 `yes`, 52 `partial`, and 3
+# strays ("n/a -- reference" x2, "SUPERSEDED ..." x1). The vocabulary was already closed
+# in practice and enforced nowhere, which is the condition in which it drifts. The three
+# strays currently read as PROMOTED by scan_promotion_candidates, because its recogniser
+# fails OPEN: anything it does not recognise as no/not/false/partial is counted as a
+# completed promotion and leaves the backlog silently.
+#
+# It includes the TIER NAMES as well as the yes/no/partial tokens, because
+# scan_promotion_candidates deliberately reads a bare tier as a promotion and that
+# behaviour is pinned by its own tests. Closing the vocabulary here rather than there is
+# the point: the scanner must keep failing open on an unknown token (or every future tier
+# lands in the backlog), so the vocabulary needs a gate somewhere that a human reads.
+VALID_PROMOTED_TOKENS = (
+    "no", "not", "false", "yes", "partial",
+    "skill", "hook", "principle", "hard-rule", "framework", "script", "doc", "schema",
+)
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_GRANDFATHER = REPO_ROOT / "tools" / "promotion-schema-grandfather.json"
 
@@ -109,6 +130,16 @@ def is_promoted_value(value: str) -> bool:
     return v.startswith("yes") or v.startswith("partial")
 
 
+def promoted_token(value: str) -> str:
+    """The leading word of a `promoted:` value, lowercased. '' when there is none."""
+    m = re.match(r"\s*([A-Za-z][A-Za-z/-]*)", str(value or ""))
+    if not m:
+        return ""
+    tok = m.group(1).lower().rstrip("-")
+    # "n/a" is one token, not "n"; keep the slash so it cannot masquerade as a tier.
+    return tok
+
+
 def gate_names_a_number(gate: str) -> bool:
     return bool(_NUMBER_IN_GATE.search(gate or ""))
 
@@ -140,6 +171,18 @@ def check_file(name: str, fm: dict, grandfathered: bool) -> list[str]:
                 violations.append(f"{name}: I1 promoted_date {stamp!r} is not YYYY-MM-DD")
             if not exit_path:
                 violations.append(f"{name}: I2 promoted is {promoted!r} but exit_path is missing")
+
+    # I5. The token is the part consumers key on, so it may not be invented. Without
+    # this the `values:` list beside the field is decoration -- the same defect the frame
+    # schema carried in its own enum fields until 2026-09-21.
+    tok = promoted_token(promoted)
+    if tok and tok not in VALID_PROMOTED_TOKENS:
+        violations.append(
+            f"{name}: I5 promoted opens with {tok!r}, which is not one of "
+            f"{'|'.join(VALID_PROMOTED_TOKENS)}. A consumer keying on this token cannot "
+            "see a value outside the vocabulary, and the recogniser fails OPEN -- an "
+            "unknown token reads as a completed promotion and leaves the backlog"
+        )
 
     if exit_path and exit_path not in VALID_EXIT_PATHS:
         violations.append(

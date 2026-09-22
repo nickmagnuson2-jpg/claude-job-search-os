@@ -1376,3 +1376,135 @@ def test_F15_skips_a_non_mapping_element(tmp_path):
     frame = _f15_frame(["fA", "fB"])
     frame["elements"].append("not a mapping")
     assert cfi.check_F15(frame, _deck(tmp_path)).state == cfi.PASS
+
+
+# ---------------------------------------------------------------- enum vocabulary
+#
+# `values:` in the schema was documentation exactly like `required:` was. _shape_of maps
+# `enum` to `str`, so any string passed. Found on the live frame 2026-09-21: `status:
+# submitted` sat in a field whose vocabulary is in_progress|awaiting_outcome|complete|
+# abandoned, and passed every gate for a day.
+
+def test_enum_value_outside_the_vocabulary_is_a_structural_error():
+    schema = yaml.safe_load(SCHEMA.read_text(encoding="utf-8"))
+    f = clean_frame()
+    f["status"] = "submitted"
+    errs = cfi.validate_enums(f, schema)
+    assert errs and "submitted" in errs[0] and "awaiting_outcome" in errs[0]
+
+
+def test_enum_value_inside_the_vocabulary_is_clean():
+    schema = yaml.safe_load(SCHEMA.read_text(encoding="utf-8"))
+    f = clean_frame()
+    for v in ("in_progress", "awaiting_outcome", "complete", "abandoned"):
+        f["status"] = v
+        assert cfi.validate_enums(f, schema) == [], v
+
+
+def test_enum_absent_field_is_not_an_error():
+    """A frame is legitimately incomplete for most of its life."""
+    schema = yaml.safe_load(SCHEMA.read_text(encoding="utf-8"))
+    f = clean_frame()
+    f.pop("status", None)
+    assert cfi.validate_enums(f, schema) == []
+
+
+def test_enum_checks_map_values_and_not_map_keys():
+    """d1.metric_roles is map[metric -> enum]. The keys are real metric names and
+    checking them would reject every frame; the VALUES carry the vocabulary."""
+    schema = yaml.safe_load(SCHEMA.read_text(encoding="utf-8"))
+    f = clean_frame()
+    f["d1"]["metric_roles"] = {"some_unusual_metric_name": "guardrail"}
+    assert cfi.validate_enums(f, schema) == []
+    f["d1"]["metric_roles"] = {"throughput": "objective"}      # not in the vocabulary
+    errs = cfi.validate_enums(f, schema)
+    assert errs and "objective" in errs[0]
+
+
+def test_enum_covers_every_vocabulary_the_schema_declares():
+    """Not just status. A future `values:` list must be enforced without a code edit."""
+    schema = yaml.safe_load(SCHEMA.read_text(encoding="utf-8"))
+    f = clean_frame()
+    f["d1"]["problem_type"] = "not_a_problem_type"
+    f["recommendation"]["confidence"] = "quite sure"
+    errs = cfi.validate_enums(f, schema)
+    assert len(errs) == 2, errs
+
+
+def test_enum_violation_blocks_the_whole_run_as_structural():
+    """It must be STRUCTURAL, not a rule FAIL: frame_write refuses a candidate with
+    structural errors and lets rule FAILs through, and this has to stop the write."""
+    f = clean_frame()
+    f["status"] = "submitted"
+    schema = yaml.safe_load(SCHEMA.read_text(encoding="utf-8"))
+    assert any("submitted" in e for e in cfi.validate_structure(f, schema))
+
+
+def test_enum_violation_makes_the_cli_refuse(tmp_path):
+    f = clean_frame()
+    f["status"] = "submitted"
+    r = run(write(tmp_path, f))
+    payload = json.loads(r.stdout)
+    assert payload["structural_errors"]
+    assert payload["clean"] is False
+    assert r.returncode != 0
+
+
+# --- validate_enums against SYNTHETIC schemas ---------------------------------------
+# The real schema exercises only the scalar and map[] shapes, so the list[] branch and
+# every defensive guard were unreachable from the live file and 14 mutants survived in
+# them. A branch no test can reach is enforcement that is not there.
+
+def test_enums_tolerate_a_schema_with_no_fields_block():
+    assert cfi.validate_enums({"status": "x"}, {}) == []
+    assert cfi.validate_enums({"status": "x"}, {"fields": "not a dict"}) == []
+
+
+def test_enums_skip_a_malformed_field_spec():
+    schema = {"fields": {"status": "not a mapping"}}
+    assert cfi.validate_enums({"status": "anything"}, schema) == []
+
+
+def test_enums_skip_a_field_with_no_values_list():
+    schema = {"fields": {"status": {"type": "enum"}}}
+    assert cfi.validate_enums({"status": "anything"}, schema) == []
+
+
+def test_enums_check_every_entry_of_a_list_field():
+    schema = {"fields": {"tags": {"type": "list[enum]", "values": ["a", "b"]}}}
+    assert cfi.validate_enums({"tags": ["a", "b"]}, schema) == []
+    errs = cfi.validate_enums({"tags": ["a", "zzz", "qqq"]}, schema)
+    assert len(errs) == 2 and "zzz" in errs[0] and "qqq" in errs[1]
+
+
+def test_enums_skip_a_list_field_holding_the_wrong_shape():
+    """A wrong SHAPE is validate_structure's job. Reporting it here too would double it,
+    and iterating a string would report each character as a bad enum value."""
+    # "zz" and not "a": a string whose characters ARE in the vocabulary makes the
+    # dropped guard invisible, because iterating it reports nothing.
+    schema = {"fields": {"tags": {"type": "list[enum]", "values": ["a"]}}}
+    assert cfi.validate_enums({"tags": "zz"}, schema) == []
+
+
+def test_enums_skip_a_map_field_holding_the_wrong_shape():
+    schema = {"fields": {"roles": {"type": "map[k -> enum]", "values": ["a"]}}}
+    assert cfi.validate_enums({"roles": ["a"]}, schema) == []
+
+
+def test_enums_report_every_bad_map_value_not_just_the_first():
+    schema = {"fields": {"roles": {"type": "map[k -> enum]", "values": ["target"]}}}
+    errs = cfi.validate_enums({"roles": {"m1": "bad1", "m2": "bad2"}}, schema)
+    assert len(errs) == 2
+
+
+def test_enums_treat_a_present_null_as_absent():
+    """`status: ` with nothing after it is 'not authored yet', not a vocabulary breach."""
+    schema = {"fields": {"status": {"type": "enum", "values": ["a"]}}}
+    assert cfi.validate_enums({"status": None}, schema) == []
+
+
+def test_enums_compare_as_strings_so_a_yaml_bool_is_caught():
+    """YAML turns `no` into False. A vocabulary of strings must still reject it rather
+    than pass it through some accidental equality."""
+    schema = {"fields": {"flag": {"type": "enum", "values": ["no", "yes"]}}}
+    assert cfi.validate_enums({"flag": False}, schema) != []

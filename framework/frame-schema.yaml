@@ -460,6 +460,21 @@ validation:
 
 # What the deterministic layer CANNOT do. Stated so it is never mistaken for coverage.
 limits:
+  values_was_documentation_too: >
+    FIXED 2026-09-21. `values:` had exactly the defect `required:` has below: nothing
+    read it. _shape_of maps `enum` to `str`, so any string passed, and the vocabulary
+    printed beside each field was decoration. Found on a live frame carrying
+    `status: submitted`, a token outside its own declared set, which had passed every
+    gate for a day -- the state it names is `awaiting_outcome`, the value the run
+    protocol actually reads.
+
+    `validate_enums` now checks membership for every field the schema gives a `values:`
+    list, and returns a STRUCTURAL error rather than a rule FAIL, because frame_write.py
+    refuses a candidate with structural errors and lets rule FAILs through. Adding a
+    vocabulary stays a schema edit and never a code edit.
+
+    STILL DOCUMENTATION, both of them: `required:` (see below) and the `values:` lists
+    inside a field's prose `note:`. Only a top-level `values:` key is enforced.
   required_is_documentation: >
     `required: true` on a field in this file is DOCUMENTATION. The checker does not
     read it. Only a field named in a `checks:` list is actually enforced, and only to

@@ -216,6 +216,75 @@ def validate_surface_identifiers(frame, schema):
     return errors
 
 
+_ABSENT = object()
+
+
+def validate_enums(frame, schema):
+    """A field the schema gives a `values:` list must hold one of those values.
+
+    WHY THIS EXISTS. The schema's own `limits:` block already records that
+    `required: true` is DOCUMENTATION -- nothing read it, and a frame missing two
+    required fields returned clean. `values:` was the same defect, undiscovered:
+    _shape_of maps `enum` to `str`, so ANY string passed, and the vocabulary printed
+    beside the field was decoration.
+
+    FOUND ON THE LIVE FRAME, 2026-09-21. `status: submitted` had been sitting in a
+    field whose declared vocabulary is in_progress | awaiting_outcome | complete |
+    abandoned. It passed every gate for a day, and `submitted` is not a synonym --
+    the state it names is `awaiting_outcome`, which is the value the run protocol
+    reads. A consumer keying on the enum sees an unknown token and either crashes or,
+    worse, falls through to a default.
+
+    THE GENERAL SHAPE, third instance in this repo: a producer writes a value outside
+    a declared vocabulary and every consumer collapses it silently. Enum membership is
+    the cheapest possible check and it has to run at WRITE time, which is why this
+    returns a STRUCTURAL error -- frame_write.py refuses a candidate carrying one --
+    rather than a rule FAIL, which it would let through.
+
+    Only fields the schema declares with an explicit `values:` list are checked, so
+    adding a vocabulary is a schema edit and never a code edit.
+    """
+    fields = (schema or {}).get("fields")
+    if not isinstance(fields, dict):
+        return []
+    errors = []
+    for dotted, spec in fields.items():
+        if not isinstance(spec, dict):
+            continue
+        values = spec.get("values")
+        if not isinstance(values, list) or not values:
+            continue
+        declared = str(spec.get("type", ""))
+        val = _dig(frame, dotted, _ABSENT)
+        if val is _ABSENT or val is None:
+            continue
+        allowed = [str(v) for v in values]
+        if declared.startswith("map["):
+            # e.g. d1.metric_roles: map[metric -> enum]. The VALUES carry the vocabulary,
+            # the keys are free. Checking the keys here would reject every real metric.
+            if not isinstance(val, dict):
+                continue
+            for k, v in val.items():
+                if str(v) not in allowed:
+                    errors.append(
+                        f"{dotted}[{k}] is {v!r}, which is not one of "
+                        f"{'|'.join(allowed)}")
+        elif declared.startswith("list["):
+            if not isinstance(val, list):
+                continue
+            for v in val:
+                if str(v) not in allowed:
+                    errors.append(
+                        f"{dotted} entry {v!r} is not one of {'|'.join(allowed)}")
+        else:
+            if str(val) not in allowed:
+                errors.append(
+                    f"{dotted} is {val!r}, which is not one of {'|'.join(allowed)}. "
+                    "The vocabulary is the schema's, not the author's -- a consumer "
+                    "keying on this field cannot see a token that is not in it")
+    return errors
+
+
 def validate_structure(frame, schema):
     """Type-check every PRESENT field against the schema's declared shape.
 
@@ -226,6 +295,7 @@ def validate_structure(frame, schema):
     """
     errors = list(detect_flat_dotted_keys(frame, schema))
     errors += validate_surface_identifiers(frame, schema)
+    errors += validate_enums(frame, schema)
     fields = (schema or {}).get("fields")
     if not isinstance(fields, dict):
         return errors + ["schema has no `fields:` block to validate against"]

@@ -341,3 +341,55 @@ def test_the_summary_line_reports_the_drain_instrument(tmp_path, capsys):
     assert "scanned 1 rules" in out
     assert "promoted 1 (1 dated)" in out
     assert "dispositioned 1" in out
+
+
+# --- I5: the `promoted` token vocabulary (2026-09-21) --------------------------------
+
+def test_I5_rejects_a_token_outside_the_vocabulary():
+    """MEASURED on the live tier: 3 files opened with 'n/a' or 'SUPERSEDED'. Because
+    scan_promotion_candidates deliberately fails OPEN on an unrecognised token -- it
+    assumes a tier name -- each of those read as a COMPLETED promotion and left the
+    backlog silently. The vocabulary has to be gated somewhere, and it cannot be there."""
+    v = ps.check_file(
+        "f.md", {"promoted": "n/a -- reference"}, grandfathered=False)
+    assert any("I5" in x for x in v), v
+    v = ps.check_file(
+        "f.md", {"promoted": "SUPERSEDED 2026-08-21 -- the gate was deleted"},
+        grandfathered=False)
+    assert any("I5" in x for x in v), v
+
+
+@pytest.mark.parametrize("value", ["no", "yes", "partial", "skill", "hook",
+                                   "principle", "hard-rule",
+                                   "yes -- hook tier, 2026-08-19",
+                                   "partial -- open_draft.py reply mode (NOT proposed)"])
+def test_I5_accepts_every_documented_token(value):
+    """A qualifier after the token is the GOOD shape and must never be what fails.
+    Tier names are included because scan_promotion_candidates reads a bare tier as a
+    promotion, and that behaviour is pinned by its own tests."""
+    v = ps.check_file("f.md", {"promoted": value}, grandfathered=False)
+    assert not any("I5" in x for x in v), v
+
+
+def test_I5_does_not_read_n_slash_a_as_the_tier_n():
+    """Splitting the token on '/' would turn 'n/a' into 'n', and a one-letter token that
+    matches nothing is a different error message than the one a reader needs."""
+    assert ps.promoted_token("n/a -- reference") == "n/a"
+
+
+def test_I5_keeps_a_hyphenated_tier_whole():
+    assert ps.promoted_token("hard-rule") == "hard-rule"
+
+
+def test_I5_is_silent_on_an_absent_promoted_key():
+    v = ps.check_file("f.md", {}, grandfathered=False)
+    assert not any("I5" in x for x in v), v
+
+
+def test_promoted_token_returns_empty_when_there_is_no_leading_word():
+    """The no-match branch. Without this the regex could stop matching entirely and
+    every I5 check would silently pass, because '' is treated as 'no token declared'."""
+    assert ps.promoted_token("") == ""
+    assert ps.promoted_token("123 -- numeric") == ""
+    assert ps.promoted_token("   ") == ""
+    assert ps.promoted_token(None) == ""

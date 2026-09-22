@@ -922,3 +922,56 @@ def test_invisible_only_family_reaches_the_backlog(tmp_path):
     assert "Registry defects" in backlog
     assert "uncountable-only" in backlog
     assert "reference_nokey" in backlog
+
+
+def test_is_promoted_still_fails_open_on_an_unknown_token():
+    """PINNED DELIBERATELY. Tier names are open-ended, so an unrecognised value is taken
+    for a tier. Closing this in 2026-09-21 dropped every bare tier back into the backlog
+    and broke five tests. The vocabulary is gated at the schema tier (promotion_schema
+    I5), which SURFACES a stray for a human instead of reclassifying it on a guess."""
+    assert spc.is_promoted({"promoted": "some-future-tier"}) is True
+    assert spc.is_promoted({"promoted": "n/a -- reference"}) is True
+
+
+def test_cron_backlog_carries_the_schema_violations_section(tmp_path):
+    """The wiring. promotion_schema ran from NOTHING until 2026-09-21 -- no hook, no job,
+    no skill -- so its 50 violations reached nobody. It is imported by the weekly scan so
+    the invariants cannot drift from their definition and the output lands in the file
+    this job already writes."""
+    import subprocess, sys as _s
+    mem = tmp_path / "memory"; mem.mkdir()
+    (mem / "feedback_x.md").write_text(
+        "---\nname: feedback_x\nmetadata:\n  occurrences: 3\n  promoted: n/a -- stray\n"
+        "  reopen_gate: \"3rd fire\"\n  last_cited: 2026-09-01\n---\n\nbody\n",
+        encoding="utf-8")
+    out = subprocess.run(
+        [_s.executable, str(Path(spc.__file__)), "--memory-dir", str(mem),
+         "--repo-root", ".", "--mode", "cron"],
+        capture_output=True, text=True)
+    backlog = mem / "promotion-backlog.md"
+    assert backlog.exists(), out.stdout[-800:]
+    text = backlog.read_text(encoding="utf-8")
+    assert "## Schema violations" in text
+    # The other side of the cap: under the limit there must be NO "...and N more" tail.
+    # Without this the truncation branch can be forced always-on and both tests pass.
+    assert "...and" not in text
+
+
+def test_schema_violation_list_is_truncated_with_a_count(tmp_path):
+    """The backlog must not swallow a 200-line violation dump, and the tail must say how
+    many were hidden. Asserting only that the section exists lets the cap and its counter
+    be removed together."""
+    import subprocess, sys as _s
+    mem = tmp_path / "memory"; mem.mkdir()
+    for i in range(45):                      # each file trips I5 exactly once
+        (mem / f"feedback_v{i}.md").write_text(
+            f"---\nname: feedback_v{i}\nmetadata:\n  occurrences: 2\n"
+            "  promoted: n/a -- stray\n  reopen_gate: \"3rd fire\"\n"
+            "  last_cited: 2026-09-01\n---\n\nbody\n", encoding="utf-8")
+    subprocess.run(
+        [_s.executable, str(Path(spc.__file__)), "--memory-dir", str(mem),
+         "--repo-root", ".", "--mode", "cron"], capture_output=True, text=True)
+    text = (mem / "promotion-backlog.md").read_text(encoding="utf-8")
+    assert "## Schema violations" in text
+    assert "...and" in text and "more" in text, "the hidden count must be stated"
+    assert text.count("  - feedback_v") == 40, "the cap must actually cap"

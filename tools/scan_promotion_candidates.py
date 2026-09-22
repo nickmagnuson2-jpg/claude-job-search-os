@@ -188,6 +188,18 @@ def is_promoted(fm: dict) -> bool:
     # "none" and "notation" do not match, "no -- reason" and "not promoted" do.
     if re.match(r"^(?:no|not|false)\b", v) or v in ("", "0"):
         return False
+    # FAILS OPEN, DELIBERATELY, and this was re-checked 2026-09-21 before being changed.
+    # An unrecognised value is taken for a promotion TIER, because tier names are
+    # open-ended ("skill", "hook", "principle", "hard-rule", and whatever the ladder
+    # grows next). Closing it here would drop every bare tier back into the backlog --
+    # pinned by test_a_real_tier_reads_as_promoted and the lookalike tests, which exist
+    # because a previous tightening swallowed tiers beginning "no".
+    #
+    # The cost is real: a typo or an off-vocabulary value ("n/a -- reference",
+    # "SUPERSEDED ...", 3 live files) reads as a completed promotion and leaves the
+    # backlog silently. That is caught at the SCHEMA tier instead, by promotion_schema
+    # I5, which names the vocabulary and surfaces a stray for a human rather than
+    # reclassifying it here on a guess.
     return True
 
 
@@ -595,6 +607,40 @@ def main(argv: list[str]) -> None:
                 bits.append(r["error"])
             bits.extend(r.get("gaps") or [])
             lines.append(f"- `{r.get('canonical')}` -- " + "; ".join(bits))
+    # SCHEMA VIOLATIONS. promotion_schema.py enforces the frontmatter invariants that make
+    # a promotion an observable event, and until 2026-09-21 it ran from NOTHING: not a hook,
+    # not a launchd job, not a skill -- it appeared in the tree, in one comment, and in a log
+    # file. A gate nobody runs is indistinguishable from a gate that passes.
+    #
+    # It is IMPORTED here rather than copied or scheduled separately, so the invariants
+    # cannot drift from their definition and so the violations land in the file this job
+    # already writes and Nick already reads. Failures are caught: a schema-gate error must
+    # not take down the backlog regeneration, which is this job's actual product.
+    schema_lines = []
+    try:
+        import promotion_schema as _ps
+        # The SAME grandfather list the CLI uses. Passing {} instead reported 308
+        # violations against the CLI's 48 -- a second, stricter answer to the same
+        # question, which is how two readings of one gate start disagreeing.
+        _rep = _ps.scan(memory_dir, _ps.load_grandfather(_ps.DEFAULT_GRANDFATHER))
+        _viol = _rep.get("violations") or []
+        schema_lines = [
+            "",
+            "## Schema violations",
+            "",
+            f"- `promotion_schema.py`: {len(_viol)} violation(s) across "
+            f"{len({v.split(':')[0] for v in _viol})} file(s). A promotion missing its "
+            "date or exit path is not an observable event, and a reopen gate naming no "
+            "number can never trip on a count.",
+        ]
+        schema_lines += [f"  - {v}" for v in _viol[:40]]
+        if len(_viol) > 40:
+            schema_lines.append(f"  - ...and {len(_viol) - 40} more")
+    except Exception as exc:                      # pragma: no cover - defensive
+        schema_lines = ["", "## Schema violations", "",
+                        f"- could not run promotion_schema: {exc}"]
+    lines += schema_lines
+
     lines += [
         "",
         "## Signal health",
