@@ -1886,3 +1886,16 @@ def test_claim_numbers_does_not_leak_the_integer_of_an_ungrouped_decimal_percent
     assert cfi._claim_numbers("1234.56%") == {"1234.56%"}
     assert cfi._claim_numbers("up 12345.5% now") == {"12345.5%"}
     assert cfi._claim_numbers("shipped 1234.5 units") == {"1234.5"}
+
+
+def test_F2b_an_unstamped_element_cannot_hide_a_retrofitted_citation():
+    """Cross-model 2026-09-23 (Grok round 2, F1, P0). F2b skipped any element without
+    `first_seen`, so dropping the element's stamp made a retrofitted citation PASS."""
+    f = clean_frame()
+    f["elements"][0]["first_seen"] = 2
+    f["facts"]["f1"]["first_seen"] = 5     # retrofitted: newer than its citer
+    assert cfi.check_F2b(f).state == cfi.FAIL   # stamped: caught today
+    f["elements"][0].pop("first_seen")          # drop the stamp to hide it
+    r = cfi.check_F2b(f)
+    assert r.state == cfi.FAIL
+    assert any("no first_seen" in o for o in r.offenders)

@@ -1394,10 +1394,20 @@ def test_uncovered_and_open_P0_are_both_reported(tmp_path):
     assert "Uncovered" in msg and "1.F1" in msg
 
 
-def test_a_non_qualifying_push_is_not_blocked_by_findings(tmp_path):
-    """The finding check rides on the qualification the gate already makes."""
+def test_a_small_push_to_a_path_with_an_open_P0_is_blocked(tmp_path):
+    """Cross-model 2026-09-23 (Codex round 2, F1, P0). The P0 check ran only after
+    qualification, so a push too small to need verification went straight past an open
+    P0 on the very file it changed."""
     _row(tmp_path, paths=["tools/friction_log.py"], findings=[_p0()])
-    assert g.check(tmp_path, [("tools/friction_log.py", 4, 1)], since=0).blocked is False
+    v = g.check(tmp_path, [("tools/friction_log.py", 4, 1)], since=0)
+    assert v.qualified is False
+    assert v.blocked is True and "1.F1" in v.message
+
+
+def test_a_small_push_with_no_open_P0_still_needs_nothing(tmp_path):
+    _row(tmp_path, paths=["tools/friction_log.py"], findings=[_p0(disposition="fixed")])
+    v = g.check(tmp_path, [("tools/friction_log.py", 4, 1)], since=0)
+    assert v.blocked is False and "no cross-model verification required" in v.message
 
 
 def test_the_address_matches_finding_write(tmp_path):

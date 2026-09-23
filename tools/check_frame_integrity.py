@@ -507,6 +507,12 @@ def check_F2b(frame):
             continue
         e_seen = e.get("first_seen")
         if e_seen is None:
+            # An unstamped element cannot be DATED, so its citations cannot be tested.
+            # Skipping it let a retrofitted citation PASS by dropping the stamp
+            # (cross-model 2026-09-23, Grok round 2, F1). It is an offender.
+            if e.get("because"):
+                bad.append(f"{_label(e, i)} has no first_seen, so the creation order of "
+                           "its citations cannot be tested")
             continue
         for b in (e.get("because") or []):
             f = facts.get(b)

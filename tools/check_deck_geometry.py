@@ -407,7 +407,12 @@ function __run() {
     };
     walk(body);
     pages.push({page: idx + 1, originX: originX,
-                src: srcEl ? box(srcEl) : null, slide: box(slide), nodes: nodes});
+                // A source line must be READABLE: an empty or hidden placeholder is not
+                // one (cross-model 2026-09-23, Codex round 2, F3).
+                src: (srcEl && srcEl.textContent.trim() && srcEl.getClientRects().length
+                      && getComputedStyle(srcEl).visibility !== 'hidden')
+                     ? box(srcEl) : null,
+                slide: box(slide), nodes: nodes});
   });
   // WHICH FACES WERE ACTUALLY AVAILABLE WHEN THIS WAS MEASURED. The deck loads its
   // family over the network with display=swap, so a slow or absent fetch measures the
@@ -514,8 +519,8 @@ def check_g1(pages) -> Result:
     """
     if not pages:
         return Result("G1", CANNOT_RUN, "no pages were measured")
-    offenders = ["page " + str(p["page"]) + ": no source line (.src) -- every page needs "
-                 "one" for p in pages if not p.get("src")]
+    offenders = ["page " + str(p["page"]) + ": no source line (.src with visible text) -- "
+                 "every page needs one" for p in pages if not p.get("src")]
     measured = [p for p in pages if p.get("src")]
     worst = None
     judged = 0

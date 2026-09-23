@@ -560,6 +560,16 @@ def check(repo_root: Path, changes: list[tuple[str, int, int]],
     """
     v = qualifies(changes)
     if not v.qualified:
+        # An open P0 blocks ANY push of its path, not only one big enough to need a
+        # verification: a small fix-up push went straight past the finding on the very
+        # file it changed (cross-model 2026-09-23, Codex round 2, F1).
+        blocking = open_p0_against(repo_root, {p for p, _a, _r in changes})
+        if blocking:
+            v.blocked = True
+            v.changed = sorted({p for p, _a, _r in changes})
+            v.message = ("This push needs no cross-model verification, but it changes "
+                         "paths with open P0 findings.\n" + _p0_block_text(blocking))
+            return v
         v.blocked = False
         v.message = "no cross-model verification required"
         return v

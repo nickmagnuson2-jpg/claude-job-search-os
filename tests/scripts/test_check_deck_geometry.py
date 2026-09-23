@@ -883,15 +883,31 @@ def test_cli_only_flag_runs_just_the_named_rules(tmp_path, capsys):
 
 @needs_chrome
 def test_cli_reports_a_cannot_run_as_not_a_pass(tmp_path, capsys):
-    """A deck with no source line cannot have G1 checked. The report must say so in
-    words, because a CANNOT_RUN silently counted as a pass is this gate's worst outcome."""
+    """The smoke deck carries no chart, so G6 cannot run. The report must say so in
+    words, because a CANNOT_RUN silently counted as a pass is this gate's worst outcome.
+    (Until 2026-09-23 this used a deck with no source line, which G1 now FAILS.)"""
+    deck = tmp_path / "nochart.html"
+    deck.write_text(SMOKE_DECK, encoding="utf-8")
+    g.main([str(deck), "--json"])
+    import json as _json
+    res = {r["rule"]: r["state"] for r in _json.loads(capsys.readouterr().out)["results"]}
+    assert res["G6"] == CANNOT_RUN
+    g.main([str(deck)])
+    assert "a CANNOT_RUN is not a pass" in capsys.readouterr().out
+
+
+@needs_chrome
+def test_cli_fails_G1_on_a_deck_with_no_source_line(tmp_path, capsys):
+    """Cross-model 2026-09-23 (Grok round 2, F4). The test above used to pass on a
+    no-source deck by asserting only that SOME rule could not run, so reverting the
+    every-page-needs-a-source change would have stayed green."""
     deck = tmp_path / "nosrc.html"
     deck.write_text(SMOKE_DECK.replace('<p class="src">Source: the fictional widget ledger.</p>',
                                        ''), encoding="utf-8")
-    g.main([str(deck)])
-    out = capsys.readouterr().out
-    assert "cannot run" in out
-    assert "a CANNOT_RUN is not a pass" in out
+    g.main([str(deck), "--json"])
+    import json as _json
+    res = {r["rule"]: r["state"] for r in _json.loads(capsys.readouterr().out)["results"]}
+    assert res["G1"] == FAIL
 
 
 # --------------------------------------------------------------------------
@@ -1575,3 +1591,17 @@ def test_g8_non_adjacent_collision_skips_table_scaffolding(which):
     nodes[which]["tag"] = "tr"
     r = g.check_g8([page(nodes)])
     assert not any("not DOM neighbours" in o for o in r.offenders)
+
+
+@needs_chrome
+@pytest.mark.parametrize("src", ['<p class="src"></p>',
+                                 '<p class="src" style="display:none">Source: ledger.</p>',
+                                 '<p class="src">   </p>'])
+def test_live_an_empty_or_hidden_source_line_is_no_source_line(tmp_path, src):
+    """Cross-model 2026-09-23 (Codex round 2, F3, P0). Any `.src` element counted, so an
+    empty or hidden placeholder certified a page with no readable source."""
+    deck = tmp_path / "blank-src.html"
+    deck.write_text(SMOKE_DECK.replace('<p class="src">Source: the fictional widget ledger.</p>',
+                                       src), encoding="utf-8")
+    r = g.check_g1(g.measure(deck, CHROME))
+    assert r.state == FAIL and "no source line" in r.offenders[0]
