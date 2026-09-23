@@ -36,6 +36,8 @@ PY = sys.executable
 FAKES = {
     "yt-dlp": f'''#!{PY}
 import os, sys
+if os.environ.get("STUB_READ_STDIN") == "1":
+    open(os.environ["STUB_LOG"], "a").write("stdin-read yt-dlp " + str(len(sys.stdin.read())) + "\\n")
 open(os.environ["STUB_LOG"], "a").write("yt-dlp " + " ".join(sys.argv[1:]) + "\\n")
 if os.environ.get("STUB_YTDLP_FAIL") == "1":
     sys.exit(1)
@@ -48,11 +50,15 @@ if "-k" in sys.argv:
     open("source.webm", "w").write("original")
 ''',
     "ffprobe": f'''#!{PY}
-import os
+import os, sys
+if os.environ.get("STUB_READ_STDIN") == "1":
+    open(os.environ["STUB_LOG"], "a").write("stdin-read ffprobe " + str(len(sys.stdin.read())) + "\\n")
 print(os.environ.get("STUB_DURATION", "2000"))
 ''',
     "ffmpeg": f'''#!{PY}
 import os, sys
+if os.environ.get("STUB_READ_STDIN") == "1":
+    open(os.environ["STUB_LOG"], "a").write("stdin-read ffmpeg " + str(len(sys.stdin.read())) + "\\n")
 a = sys.argv[1:]
 open(os.environ["STUB_LOG"], "a").write("ffmpeg " + " ".join(a) + "\\n")
 out = a[-1]
@@ -66,6 +72,8 @@ else:
 ''',
     "whisper-cli": f'''#!{PY}
 import os, sys
+if os.environ.get("STUB_READ_STDIN") == "1":
+    open(os.environ["STUB_LOG"], "a").write("stdin-read whisper-cli " + str(len(sys.stdin.read())) + "\\n")
 a = sys.argv[1:]
 open(os.environ["STUB_LOG"], "a").write("whisper-cli " + " ".join(a) + "\\n")
 start, dur = map(float, open(a[a.index("-f") + 1]).read().split())
@@ -116,9 +124,9 @@ def env(tmp_path):
             "vtt": root / "data" / "source-transcripts" / "2026-01-01-demo.vtt"}
 
 
-def run(env, *args, **extra):
+def run(env, *args, stdin_text=None, **extra):
     r = subprocess.run([PY, str(TOOLS_DIR / "stream_pipeline.py"), *args, "--slug", "demo", "--date", "2026-01-01"],
-                       capture_output=True, text=True, env={**os.environ, **env["env"], **extra})
+                       capture_output=True, text=True, input=stdin_text, env={**os.environ, **env["env"], **extra})
     out = json.loads(r.stdout) if r.stdout.strip() else {}
     return out, r.returncode
 
@@ -163,6 +171,20 @@ def test_acquire_reports_video_only_source_plainly(env):
     out, code = run(env, "acquire", "https://example.com/stream", STUB_YTDLP_NO_AUDIO="1")
     assert code == 1 and out["error"].startswith("source has no audio track")
     assert not (env["dir"] / "manifest.json").exists()
+
+
+def test_child_processes_never_read_the_callers_stdin(env):
+    """2026-09-23: a shell `while read` loop fed a session list to acquire/transcribe, a child
+    process inherited stdin and consumed the start of the next line, and the next session ran
+    under a slug missing its first three characters. Every external tool must get its own empty stdin."""
+    leftover = "demo-two\t2026-01-02\tvideo-id-2\n"
+    out, code = run(env, "acquire", "https://example.com/stream", stdin_text=leftover, STUB_READ_STDIN="1")
+    assert code == 0, out
+    out, code = run(env, "transcribe", stdin_text=leftover, STUB_READ_STDIN="1")
+    assert code == 0, out
+    reads = [l.split() for l in stub_log(env).splitlines() if l.startswith("stdin-read ")]
+    assert {r[1] for r in reads} >= {"yt-dlp", "ffprobe", "ffmpeg", "whisper-cli"}, reads
+    assert all(r[2] == "0" for r in reads), reads
 
 
 def test_commands_without_manifest_exit_2(env):

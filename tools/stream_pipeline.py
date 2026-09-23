@@ -323,7 +323,10 @@ def emit(obj: dict, code: int = 0):
 
 
 def run(cmd: list[str]) -> subprocess.CompletedProcess:
-    return subprocess.run(cmd, capture_output=True, text=True)
+    # stdin=DEVNULL: ffmpeg and yt-dlp read stdin by default, and a child that inherits the
+    # caller's stdin eats input meant for the caller (a shell `while read` loop lost the start
+    # of its next line this way on 2026-09-23).
+    return subprocess.run(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL)
 
 
 def sha256(path: Path) -> str:
@@ -346,7 +349,7 @@ def acquire_cmd(url: str) -> list[str]:
 def cmd_acquire(a):
     p = paths(a.slug, a.date)
     p["cache"].mkdir(parents=True, exist_ok=True)
-    r = subprocess.run(acquire_cmd(a.url), cwd=p["cache"], capture_output=True, text=True)
+    r = subprocess.run(acquire_cmd(a.url), cwd=p["cache"], capture_output=True, text=True, stdin=subprocess.DEVNULL)
     src = p["cache"] / "source.m4a"
     if r.returncode != 0 or not src.exists():
         err = "yt-dlp failed; if HTTP 402/403, retry with cookies"
