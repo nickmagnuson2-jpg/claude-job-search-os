@@ -92,6 +92,15 @@ fields:
       most recent locked version. Timestamps cannot do this job; the private data
       backup commits on a fixed interval and carries no semantics.
   locked_at: {type: timestamp, required: false, class: derived}
+  unlocks:
+    type: list[{at_version, reason}]
+    required: false
+    class: derived
+    note: >
+      Every write made to a LOCKED frame, with its stated reason. frame_write refuses any
+      write to a locked frame unless it is given --unlock "<reason>", and records the
+      reason here; the frame stays locked. Added 2026-09-23 (closeout build row B6):
+      until then `locked` was recorded and enforced by nothing.
   engagement: {type: string, required: true, class: derived}
 
   delivery:

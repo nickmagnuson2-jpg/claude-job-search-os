@@ -7,10 +7,12 @@ Nothing failed. A correct, promoted, carefully written artifact existed and was 
 and the work got done a second time from scratch. Different detector, different ladder,
 different fix.
 
-WHY IT IS NOT A SECTION PER SKILL. Thirty-eight skills would give thirty-eight mostly-empty
-sections, which is the shape that produced zero consultations across 1,229 transcripts for
-the memory shards. The `surface` emerges from the rows that actually fire. Surfaces that
-never fire cost nothing.
+WHY IT IS NOT A SECTION PER SKILL. Thirty-eight pre-declared sections would be an index
+that nothing reads. That is what the memory shards measured: zero consultations across
+1,229 transcripts, while the shards were POPULATED (12 to 68 entries each). Emptiness was
+not the cause; the channel was: nothing on the path of a working session opened them.
+Sections per skill would sit on the same kind of channel. The `surface` emerges from the
+rows that actually fire. Surfaces that never fire cost nothing.
 
 THE FIELD THAT MATTERS IS `why_missed`. Everything else is bookkeeping. `rebuilt` and
 `existed` tell you a re-derivation happened; `why_missed` tells you WHICH ENTRY POINT NEEDS

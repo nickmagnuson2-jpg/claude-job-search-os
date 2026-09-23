@@ -146,11 +146,26 @@ def test_g1_still_judges_absolutely_positioned_CONTENT():
     assert r.state == FAIL
 
 
-def test_g1_cannot_run_without_a_source_line():
+def test_g1_fails_a_deck_with_no_source_line():
+    """Every page needs a source (Nick, 2026-09-23). A deck with none is a failure of
+    the convention, not an absence of something to measure."""
     p = page([node()])
     p["src"] = None
     r = g.check_g1([p])
-    assert r.state == CANNOT_RUN
+    assert r.state == FAIL
+    assert "page 1" in r.offenders[0] and "no source line" in r.offenders[0]
+
+
+def test_g1_fails_the_page_without_a_source_even_when_another_page_passes():
+    """108.F2 (P0). Pages without a .src were dropped, so a second page's clean
+    measurement certified source clearance on a page G1 never judged."""
+    good = page([node(t=100, hh=20)], num=1)
+    bare = page([node(t=100, hh=20)], num=2)
+    bare["src"] = None
+    r = g.check_g1([good, bare])
+    assert r.state == FAIL
+    assert any("page 2" in o and "no source line" in o for o in r.offenders)
+    assert not any("page 1" in o for o in r.offenders)
 
 
 # --------------------------------------------------------------------------
@@ -280,6 +295,41 @@ def test_g4_does_not_pair_across_different_parents():
     a = node(t=0, hh=20, ord_=0, pid="pA")
     b = node(t=33, hh=20, ord_=1, pid="pB")
     assert g.check_g4([page([a, b])]).state == CANNOT_RUN
+
+
+def _non_adjacent_collision(**kw):
+    """a spans the width; b sits to the right under it; c, the NEXT sibling in DOM order,
+    is drawn back up on top of a. Adjacent pairs are (a,b) clean and (b,c) side by side,
+    so only a non-adjacent comparison can see c land on a."""
+    a = node(l=0, t=0, w=200, hh=20, ord_=0, **kw)
+    b = node(l=150, t=24, w=50, hh=20, ord_=1, **kw)
+    c = node(l=0, t=10, w=50, hh=20, ord_=2, absolute=1, **kw)
+    return [a, b, c]
+
+
+def test_g4_sees_a_collision_between_non_adjacent_siblings():
+    """110.F4 / 111.F4 (P0). zip(members, members[1:]) compared DOM neighbours only."""
+    r = g.check_g4([page(_non_adjacent_collision())])
+    assert r.state == FAIL
+    assert any("OVERLAP" in o for o in r.offenders)
+
+
+def test_g4_non_adjacent_siblings_that_do_not_touch_are_not_a_collision():
+    a = node(l=0, t=0, w=200, hh=20, ord_=0)
+    b = node(l=150, t=24, w=50, hh=20, ord_=1)
+    c = node(l=0, t=48, w=50, hh=20, ord_=2)
+    r = g.check_g4([page([a, b, c])])
+    assert not any("OVERLAP" in o for o in r.offenders)
+
+
+def test_g4_measures_gaps_between_neighbours_only():
+    """A gap exists only between neighbours: a and c in a three-block stack have b
+    between them, and 24+20+... is not a gap anyone laid out."""
+    a = node(t=0, hh=20, ord_=0)
+    b = node(t=24, hh=20, ord_=1)
+    c = node(t=49, hh=20, ord_=2)                   # b->c is 5px, off grid
+    r = g.check_g4([page([a, b, c])])
+    assert r.state == FAIL and len(r.offenders) == 1
 
 
 def test_g4_cannot_run_with_no_stacked_pair():
@@ -485,6 +535,21 @@ def test_g8_fails_when_two_text_blocks_crowd():
     assert "4px between two text blocks" in r.offenders[0]
 
 
+def test_g8_sees_a_text_collision_between_non_adjacent_siblings():
+    """110.F4 / 111.F4 (P0), G8 half."""
+    r = g.check_g8([page(_non_adjacent_collision(own="words"))])
+    assert r.state == FAIL
+    assert any("OVERLAP" in o for o in r.offenders)
+
+
+def test_g8_non_adjacent_collision_needs_text_on_both_sides():
+    a, b, c = _non_adjacent_collision(own="words")
+    c["hasText"] = 0
+    c["ownText"] = ""
+    r = g.check_g8([page([a, b, c])])
+    assert not any("OVERLAP" in o for o in r.offenders)
+
+
 def test_g8_only_judges_text_against_text():
     """A gap between a chart and a heading is composition, not crowding."""
     a = node(t=0, hh=20, ord_=0, own="")
@@ -576,7 +641,7 @@ SMOKE_DECK = """
 <style>
   *{box-sizing:border-box}
   *{text-box:trim-both cap alphabetic}
-  body{margin:0;font-family:"Test Sans",Arial,sans-serif}
+  body{margin:0;font-family:Arial,sans-serif}
   .slide{width:1280px;height:720px;position:relative;padding:40px 52px 100px}
   .src{position:absolute;bottom:20px;left:52px;right:110px;font-size:11px}
   .body{display:flex;gap:24px}
@@ -1236,14 +1301,26 @@ def test_live_a_text_block_containing_bold_is_still_a_leaf(tmp_path):
 # second mutation round: survivors in the code the cross-model review forced
 # --------------------------------------------------------------------------
 
-def test_g1_cannot_run_when_no_page_has_a_source_line_at_all():
-    """Distinct from 'no leaf was judged'. Both end in CANNOT_RUN and they mean different
-    things, so both paths need a test or one of them can be deleted unnoticed."""
+def test_g1_fails_every_page_when_no_page_has_a_source_line():
+    """Was CANNOT_RUN until 2026-09-23. Every page needs a source, so a deck with none
+    fails on every page rather than going unmeasured. Distinct from 'no leaf was
+    judged', which is still CANNOT_RUN (test below)."""
     a, b = page([node()]), page([node()], num=2)
     a["src"] = b["src"] = None
     r = g.check_g1([a, b])
+    assert r.state == FAIL
+    assert len(r.offenders) == 2
+
+
+def test_g1_cannot_run_when_a_sourced_page_has_no_leaf_to_judge():
+    r = g.check_g1([page([node(furniture=1)])])
     assert r.state == CANNOT_RUN
-    assert "source convention" in r.detail
+    assert "no leaf element was judged" in r.detail
+
+
+def test_g1_cannot_run_on_no_pages():
+    r = g.check_g1([])
+    assert r.state == CANNOT_RUN and "no pages were measured" in r.detail
 
 
 def test_g7_exempts_a_marker_but_still_judges_its_neighbours():
@@ -1301,12 +1378,11 @@ def test_the_floor_relaxes_only_for_an_explicit_only_selection(tmp_path, monkeyp
 
 def test_an_only_selection_that_cannot_run_is_still_under_the_floor(tmp_path, monkeypatch,
                                                                     capsys):
-    """--only G1 on a deck with no source line executes ZERO rules. Reporting clean there
+    """--only G1 on a deck with nothing G1 can judge executes ZERO rules. Reporting clean there
     is the same bypass as the unknown-id case, one step further in."""
     import json as _json
     monkeypatch.setattr(g, "find_chrome", lambda *a, **k: "/bin/true")
-    p = page([node()])
-    p["src"] = None
+    p = page([node(furniture=1)])       # sourced, but no leaf to judge: CANNOT_RUN
     monkeypatch.setattr(g, "measure", lambda *a, **k: [p])
     deck = tmp_path / "d.html"
     deck.write_text("<div class='slide'></div>", encoding="utf-8")
@@ -1322,8 +1398,7 @@ def test_the_floor_prints_its_reason(tmp_path, monkeypatch, capsys):
     """A run that fails on coverage must say so in words, or a human reads 'NOT CLEAN'
     and goes looking for a rule that failed."""
     monkeypatch.setattr(g, "find_chrome", lambda *a, **k: "/bin/true")
-    p = page([node()])
-    p["src"] = None
+    p = page([node(furniture=1)])       # sourced, but no leaf to judge: CANNOT_RUN
     monkeypatch.setattr(g, "measure", lambda *a, **k: [p])
     deck = tmp_path / "d.html"
     deck.write_text("<div class='slide'></div>", encoding="utf-8")
@@ -1469,3 +1544,34 @@ def test_a_filtered_run_reports_not_fully_covered_in_the_JSON_too(tmp_path, monk
 # behaviour broke, but because they were testing a GENERALIZABLE INPUT at a CONSUMER,
 # and patching a re-export does not reach the implementation. This suite tests what
 # check_deck_geometry does that nothing else does: the geometry rules.
+
+
+@needs_chrome
+def test_live_probe_refuses_an_undeclared_primary_family(tmp_path):
+    """110.F1 / 111.F1 (P0). document.fonts.check() returns true for a family no
+    @font-face declares and no system provides, so the page was measured in the
+    fallback face without a word. This fixture's own deck did exactly that until
+    2026-09-23: it named "Test Sans", which does not exist."""
+    deck = tmp_path / "ghost.html"
+    deck.write_text(SMOKE_DECK.replace("font-family:Arial,sans-serif",
+                                       'font-family:"Nonexistent Face Qz",sans-serif'),
+                    encoding="utf-8")
+    with pytest.raises(RuntimeError, match="FALLBACK FACE"):
+        g.measure(deck, CHROME)
+
+
+@needs_chrome
+def test_live_probe_accepts_an_installed_system_family(tmp_path):
+    deck = tmp_path / "arial.html"
+    deck.write_text(SMOKE_DECK, encoding="utf-8")
+    assert g.measure(deck, CHROME)
+
+
+@pytest.mark.parametrize("which", [0, 2])
+def test_g8_non_adjacent_collision_skips_table_scaffolding(which):
+    """Table rows touch by construction; their spacing is cell padding, governed by the
+    box half of G8. A non-adjacent pair involving a table part is not a text collision."""
+    nodes = _non_adjacent_collision(own="words")
+    nodes[which]["tag"] = "tr"
+    r = g.check_g8([page(nodes)])
+    assert not any("not DOM neighbours" in o for o in r.offenders)

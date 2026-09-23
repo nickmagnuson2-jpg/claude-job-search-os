@@ -140,6 +140,9 @@ DERIVED_FIELDS = {
     # frame: three consecutive unvalidated writes. A genuine schema migration is a
     # deliberate, rare act and does not belong on the `set` path.
     "schema_version",
+    # `unlocks` is the record of every write made to a locked frame. Written only by
+    # --unlock, so the reason cannot be authored or erased by a caller.
+    "unlocks",
 }
 
 
@@ -391,7 +394,7 @@ def observe(verdict: dict, version: int, segment) -> dict:
 
 
 def write_frame(frame_path: Path, new: dict, expect: int, segment=None,
-                complete_segment: bool = False) -> dict:
+                complete_segment: bool = False, unlock=None) -> dict:
     """The whole guarantee, in order. Any failure leaves frame.yaml byte-identical."""
     with file_lock(frame_path):
         current = load_frame(frame_path)
@@ -403,6 +406,25 @@ def write_frame(frame_path: Path, new: dict, expect: int, segment=None,
 
         new = dict(new)
         new["version"] = actual + 1
+
+        # A LOCKED FRAME IS THE VERSION THAT WENT IN THE ROOM. `locked` was recorded by
+        # `lock` and read only by F13, so any later write rewrote it silently (closeout
+        # comb A2, build row B6, 2026-09-23). A write now needs a stated reason, which is
+        # recorded; the frame stays locked. Checked against the frame RE-READ UNDER THE
+        # LOCK, like the version.
+        if unlock is not None and not unlock.strip():
+            die("--unlock needs a reason; a blank one records nothing. Nothing was written.")
+        if current.get("locked") is True:
+            if unlock is None:
+                die("REFUSED: this frame is locked -- it is the version that went in the "
+                    "room. Pass --unlock \"<reason>\" to write to it anyway; the reason is "
+                    "recorded in `unlocks`. Nothing was written.", locked_at=current.get(
+                        "locked_at"))
+            new["unlocks"] = list(current.get("unlocks") or []) + [
+                {"at_version": new["version"], "reason": unlock.strip()}]
+        elif unlock is not None:
+            die("--unlock was passed but this frame is not locked, so there is nothing to "
+                "unlock. Nothing was written.")
 
         # Ordering is checked against the frame RE-READ UNDER THE LOCK, never against
         # whatever the caller looked at minutes ago.
@@ -697,6 +719,10 @@ def main(argv=None):
                        help="the segment this write belongs to. Ordering is ENFORCED: the "
                             "predecessor must be complete. Omitted records null and skips "
                             "the ordering check, for writes belonging to no segment")
+        p.add_argument("--unlock", default=None, metavar="REASON",
+                       help="write to a LOCKED frame anyway. Required for any write to a "
+                            "locked frame, refused on an unlocked one; the reason is "
+                            "recorded in the frame's `unlocks` list")
         p.add_argument("--complete-segment", action="store_true",
                        help="mark --segment complete after this write. Refused unless that "
                             "segment's exit condition is met")
@@ -887,7 +913,8 @@ def main(argv=None):
 
     out(write_frame(frame_path, new, a.expect_version,
                     segment=getattr(a, "segment", None),
-                    complete_segment=getattr(a, "complete_segment", False)))
+                    complete_segment=getattr(a, "complete_segment", False),
+                    unlock=getattr(a, "unlock", None)))
 
 
 if __name__ == "__main__":

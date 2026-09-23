@@ -418,9 +418,29 @@ function __run() {
   pages.forEach(function (pg) {
     pg.nodes.forEach(function (n) { if (n.fontFamily) fams[n.fontFamily] = 1; });
   });
+  // document.fonts.check() is NOT proof the face rendered: it returns true for a family
+  // that no @font-face declares and no system provides, so a nonexistent primary family
+  // was measured in fallback metrics without a word (cross-model 110.F1 / 111.F1, P0).
+  // The test that holds for webfonts and installed faces alike: text set in the family
+  // must measure differently from text set in each generic fallback. If it matches all
+  // three, the browser drew a fallback.
+  var GENERIC = /^(serif|sans-serif|monospace|cursive|fantasy|system-ui|math|emoji|ui-[a-z-]+|-apple-system)$/i;
+  var ctx = document.createElement('canvas').getContext('2d');
+  var SAMPLE = 'mmmmmmmmmmlli1WQ@#&';
+  function rendered(f) {
+    if (GENERIC.test(f)) return true;
+    var bases = ['monospace', 'serif', 'sans-serif'];
+    for (var i = 0; i < bases.length; i++) {
+      ctx.font = '72px ' + bases[i];
+      var w0 = ctx.measureText(SAMPLE).width;
+      ctx.font = '72px "' + f + '", ' + bases[i];
+      if (ctx.measureText(SAMPLE).width !== w0) return true;
+    }
+    return false;
+  }
   var missing = [];
   for (var f in fams) {
-    try { if (!document.fonts.check('16px "' + f + '"')) missing.push(f); }
+    try { if (!document.fonts.check('16px "' + f + '"') || !rendered(f)) missing.push(f); }
     catch (e) { missing.push(f); }
   }
   document.getElementById('__geom').textContent =
@@ -486,13 +506,17 @@ def off_grid(value: float) -> float:
 
 
 def check_g1(pages) -> Result:
-    """Every visible LEAF in the body clears the source line."""
+    """Every page carries a source line, and every visible LEAF clears it.
+
+    EVERY PAGE NEEDS A SOURCE (Nick, 2026-09-23). Pages without a `.src` used to be
+    dropped, so one page's clean measurement certified clearance on a page G1 never
+    judged (cross-model 108.F2, P0). A page with no source line is now an offender.
+    """
+    if not pages:
+        return Result("G1", CANNOT_RUN, "no pages were measured")
+    offenders = ["page " + str(p["page"]) + ": no source line (.src) -- every page needs "
+                 "one" for p in pages if not p.get("src")]
     measured = [p for p in pages if p.get("src")]
-    if not measured:
-        return Result("G1", CANNOT_RUN,
-                      "no page carries an element matching the source convention (.src), so "
-                      "there is no source line to clear")
-    offenders = []
     worst = None
     judged = 0
     for p in measured:
@@ -602,6 +626,24 @@ def _overlaps_x(a, b) -> bool:
     return (min(a["box"]["r"], b["box"]["r"]) - max(a["box"]["l"], b["box"]["l"])) > TOL
 
 
+def _overlap_y(a, b) -> float:
+    return round(min(a["box"]["b"], b["box"]["b"]) - max(a["box"]["t"], b["box"]["t"]), 1)
+
+
+def _non_adjacent_collisions(members):
+    """Sibling pairs that are NOT DOM neighbours and whose boxes intersect on both axes.
+
+    G4 and G8 walked zip(members, members[1:]), so a positioned sibling drawn back over an
+    earlier one was never compared with it (cross-model 110.F4 / 111.F4, P0). COLLISION is
+    checked across all pairs; GAPS stay between neighbours, because only neighbours have a
+    gap anyone laid out. Neighbour collisions are reported by the gap loops as before.
+    """
+    for i, a in enumerate(members):
+        for b in members[i + 2:]:
+            if _overlaps_x(a, b) and _overlap_y(a, b) > TOL:
+                yield a, b
+
+
 def check_g4(pages) -> Result:
     """Every vertical gap between stacked siblings is a multiple of GRID."""
     offenders = []
@@ -613,6 +655,10 @@ def check_g4(pages) -> Result:
         for members in groups.values():
             members = [m for m in members if not m.get("furniture")]
             members.sort(key=lambda n: n["ord"])
+            for a, b in _non_adjacent_collisions(members):
+                offenders.append("page " + str(p["page"]) + ": two siblings OVERLAP by "
+                                 + str(_overlap_y(a, b)) + "px (not DOM neighbours) -- "
+                                 + a["label"] + "  ->  " + b["label"])
             for a, b in zip(members, members[1:]):
                 # Vertical stack only. Siblings side by side have no vertical gap to reason
                 # about, and their horizontal spacing is G3's business. But "side by side"
@@ -898,6 +944,14 @@ def check_g8(pages) -> Result:
         for members in by_parent.values():
             members = [m for m in members if not m.get("furniture")]
             members.sort(key=lambda n: n["ord"])
+            for a, b in _non_adjacent_collisions(members):
+                if (a.get("hasText") and b.get("hasText") and a["tag"] not in TABLE_PARTS
+                        and b["tag"] not in TABLE_PARTS):
+                    gaps_checked += 1
+                    offenders.append("page " + str(p["page"]) + ": two text blocks "
+                                     "OVERLAP by " + str(_overlap_y(a, b))
+                                     + "px (not DOM neighbours) -- " + a["label"]
+                                     + "  ->  " + b["label"])
             for a, b in zip(members, members[1:]):
                 if b["box"]["t"] < a["box"]["b"] - TOL:
                     # Overlapping on both axes is a COLLISION, not two columns.

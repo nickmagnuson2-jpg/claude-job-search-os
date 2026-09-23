@@ -23,7 +23,8 @@ and runs mostly against `frame.yaml` rather than the pages** (F.2 is the excepti
 note) — it applies unchanged to a deck, a whiteboard,
 a memo, or a spoken answer.
 
-**Nothing ships until E1 and F both pass.**
+**Nothing ships until E1, E7 and F all pass.** E7 is the primary gate for a SENT artifact: it reads
+the whole page cold and fails on things E1 cannot see (see E7 below).
 
 ---
 
@@ -271,7 +272,7 @@ only instrument here that finds decoration rather than error.
 
 | # | Rule | Enforced by |
 |---|---|---|
-| **F6** | **The answer to the most likely probe sits on the surface carrying the claim it defends**, never downstream. Every placement names the delivery model it assumes and answers: *what happens to this if I lose the floor here?* | **blind agent given the ARTIFACT ONLY**, asked what it cannot answer from the page; Nick disposes what it returns |
+| **F6** | **The answer to the most likely probe sits on the surface carrying the claim it defends**, never downstream. Every placement names the delivery model it assumes and answers: *what happens to this if I lose the floor here?* | **blind agent given the ARTIFACT ONLY, run ONE PAGE AT A TIME**: for each page, list the probes its claims invite and where each is answered. A probe answered only on a later page, or not at all, fails F6. Run on the whole artifact at once, the agent tests only whether an answer exists somewhere, not whether it sits beside its claim. Nick disposes what it returns |
 | **F7** | **Spoken vocabulary matches printed vocabulary for every metric.** Read the frame aloud against the artifact | **token diff against the rehearsal transcript is the instrument**; Nick disposes the diff |
 
 ### Why F6 and F7 are not Nick's to run, corrected 2026-09-17
@@ -340,7 +341,7 @@ trackers and stickers to house positions (A2, A4), source lines on every page (A
 **During the content pass.** The client-name sweep decided instance by instance (B3), bold moved to
 the first few words (B7), a number into every lede that can carry one (B1), axis legibility (C4).
 
-**Last, gated.** F in full, then E1. Nothing ships until both pass.
+**Last, gated.** F in full, then E1, then E7 on the final render. Nothing ships until all three pass.
 
 ---
 

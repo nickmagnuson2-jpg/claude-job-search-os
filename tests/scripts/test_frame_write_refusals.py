@@ -549,3 +549,85 @@ def test_no_candidate_is_left_behind_by_a_write_refused_AFTER_it_was_written(tmp
     assert code != 0, f"a structurally invalid candidate must be refused, got: {res}"
     assert temp_leftovers(tmp_path) == [], (
         f"the candidate file was not cleaned up after refusal: {temp_leftovers(tmp_path)}")
+
+
+# ------------------------------------------------------------------ locked frames
+#
+# B6 (closeout 2026-09-23). `locked: true` was recorded by `lock` and read only by F13;
+# frame_write accepted any later write to a locked frame, so the version that went in
+# the room could be rewritten under it. A write now needs --unlock "<reason>", and the
+# reason is recorded in the frame.
+
+def _locked(tmp_path):
+    p = good_frame(tmp_path)
+    d = yaml.safe_load(p.read_text(encoding="utf-8"))
+    d["locked"] = True
+    p.write_text(yaml.safe_dump(d, sort_keys=False), encoding="utf-8")
+    return p, d["version"]
+
+
+def test_a_write_to_a_locked_frame_is_refused(tmp_path):
+    p, v = _locked(tmp_path)
+    before = p.read_bytes()
+    code, res = run("set", "--frame", p, "--expect-version", v, "--field", "engagement=x")
+    assert code != 0
+    assert "locked" in res["message"] and "--unlock" in res["message"]
+    assert p.read_bytes() == before
+
+
+def test_an_unlock_reason_lets_the_write_through_and_is_recorded(tmp_path):
+    p, v = _locked(tmp_path)
+    code, res = run("set", "--frame", p, "--expect-version", v,
+                    "--field", "engagement=x", "--unlock", "correcting a typo found after lock")
+    assert code == 0, res
+    d = yaml.safe_load(p.read_text(encoding="utf-8"))
+    assert d["unlocks"] == [{"at_version": v + 1,
+                             "reason": "correcting a typo found after lock"}]
+    assert d["locked"] is True                       # an unlock is per write, not a release
+
+
+def test_unlocks_accumulate(tmp_path):
+    p, v = _locked(tmp_path)
+    run("set", "--frame", p, "--expect-version", v, "--field", "engagement=x",
+        "--unlock", "first")
+    run("set", "--frame", p, "--expect-version", v + 1, "--field", "engagement=y",
+        "--unlock", "second")
+    d = yaml.safe_load(p.read_text(encoding="utf-8"))
+    assert [u["reason"] for u in d["unlocks"]] == ["first", "second"]
+
+
+def test_a_blank_unlock_reason_is_refused(tmp_path):
+    p, v = _locked(tmp_path)
+    code, res = run("set", "--frame", p, "--expect-version", v,
+                    "--field", "engagement=x", "--unlock", "   ")
+    assert code != 0 and "reason" in res["message"]
+
+
+def test_unlock_on_an_unlocked_frame_is_refused(tmp_path):
+    """A reflexive --unlock on every write would make the record noise."""
+    p = good_frame(tmp_path)
+    v = yaml.safe_load(p.read_text(encoding="utf-8"))["version"]
+    code, res = run("set", "--frame", p, "--expect-version", v,
+                    "--field", "engagement=x", "--unlock", "habit")
+    assert code != 0 and "not locked" in res["message"]
+
+
+def test_an_unlocked_frame_writes_without_a_reason(tmp_path):
+    p = good_frame(tmp_path)
+    v = yaml.safe_load(p.read_text(encoding="utf-8"))["version"]
+    code, res = run("set", "--frame", p, "--expect-version", v, "--field", "engagement=x")
+    assert code == 0, res
+    assert "unlocks" not in yaml.safe_load(p.read_text(encoding="utf-8"))
+
+
+def test_unlocks_cannot_be_authored_by_a_caller(tmp_path):
+    p = good_frame(tmp_path)
+    v = yaml.safe_load(p.read_text(encoding="utf-8"))["version"]
+    code, res = run("set", "--frame", p, "--expect-version", v, "--field", "unlocks=[]")
+    assert code != 0 and "DERIVED" in res["message"]
+
+
+def test_unlocking_a_locked_frame_by_setting_locked_false_is_itself_refused(tmp_path):
+    p, v = _locked(tmp_path)
+    code, res = run("set", "--frame", p, "--expect-version", v, "--field", "locked=false")
+    assert code != 0 and "--unlock" in res["message"]
