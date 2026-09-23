@@ -1420,3 +1420,16 @@ def test_twelve_P0s_carry_no_more_suffix(tmp_path):
     _row(tmp_path, findings=[_p0(f"F{i}") for i in range(1, 13)])
     msg = g.check(tmp_path, [(SCANNER, 200, 40)], since=0).message
     assert "more)" not in msg.split("open P0")[1].split("List:")[0]
+
+
+def test_an_open_P0_on_a_changed_NON_TRIGGER_path_still_blocks(tmp_path):
+    """Cross-model 2026-09-23 F1 (P0). The P0 check read the TRIGGER set, which a
+    higher-tier path narrows to itself, so an open P0 on a lower-tier changed file in the
+    same push was ignored. The check reads every changed path."""
+    hook = "tools/check_draft_voice.py"                    # tier-3 trigger
+    low = "tools/friction_log.py"                           # changed, not a trigger
+    _row(tmp_path, paths=[hook])                            # covers the trigger
+    _row(tmp_path, paths=[low], findings=[_p0("F9")])
+    v = g.check(tmp_path, [(hook, 3, 1), (low, 4, 1)], since=0)
+    assert v.qualified and low not in (v.triggers or [])
+    assert v.blocked is True and "2.F9" in v.message

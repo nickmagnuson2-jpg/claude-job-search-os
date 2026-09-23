@@ -646,7 +646,10 @@ def check(repo_root: Path, changes: list[tuple[str, int, int]],
         return len(outside) >= need
 
     missing = sorted(p for p in required if not path_is_covered(p))
-    blocking = open_p0_against(repo_root, required)
+    # EVERY CHANGED PATH, not the trigger set. `required` is narrowed to the highest-tier
+    # paths, so reading it ignored an open P0 on a lower-tier file pushed alongside a
+    # gate file. Cross-model review 2026-09-23 (F1, P0), on the commit that built this.
+    blocking = open_p0_against(repo_root, changed)
     if not missing and not blocking:
         v.blocked = False
         v.message = (f"cleared: all {len(required)} tier-{v.tier} path(s) covered by "
@@ -686,7 +689,8 @@ def check(repo_root: Path, changes: list[tuple[str, int, int]],
 
 
 def open_p0_against(repo_root: Path, required: set) -> list[dict]:
-    """Open P0 findings recorded against any path this push must cover.
+    """Open P0 findings recorded against any path in `required` (the caller passes
+    every path the push changes).
 
     B2, closeout 2026-09-23. check() counted only freshness and model families, so a
     fresh second-family run cleared a push while the same ledger held open P0s against

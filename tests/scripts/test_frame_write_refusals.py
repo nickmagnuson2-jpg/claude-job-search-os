@@ -631,3 +631,34 @@ def test_unlocking_a_locked_frame_by_setting_locked_false_is_itself_refused(tmp_
     p, v = _locked(tmp_path)
     code, res = run("set", "--frame", p, "--expect-version", v, "--field", "locked=false")
     assert code != 0 and "--unlock" in res["message"]
+
+
+def test_an_unlocked_write_cannot_release_the_lock(tmp_path):
+    """Cross-model 2026-09-23 F2 (P1). --unlock covers ONE write; a write carrying it
+    could also set locked=false, after which every later write needed no reason."""
+    p, v = _locked(tmp_path)
+    before = p.read_bytes()
+    code, res = run("set", "--frame", p, "--expect-version", v, "--field", "locked=false",
+                    "--unlock", "releasing it")
+    assert code != 0 and "cannot be released" in res["message"]
+    assert p.read_bytes() == before
+
+
+def test_patch_cannot_release_the_lock_either(tmp_path):
+    p, v = _locked(tmp_path)
+    j = tmp_path / "p.json"
+    j.write_text('{"locked": null}', encoding="utf-8")
+    code, res = run("patch", "--frame", p, "--expect-version", v, "--json", j,
+                    "--unlock", "releasing it")
+    assert code != 0 and "cannot be released" in res["message"]
+
+
+def test_relocking_a_locked_frame_is_refused_even_with_unlock(tmp_path):
+    """Cross-model 2026-09-23 (Grok F2, P1). `lock --unlock` on a locked frame rewrote
+    prediction.will_be_probed and made_at_version, which set/patch may never touch."""
+    p, v = _locked(tmp_path)
+    before = p.read_bytes()
+    code, res = run("lock", "--frame", p, "--expect-version", v, "--will-be-probed",
+                    "a new guess", "--today", "2026-09-23", "--unlock", "re-lock")
+    assert code != 0 and "already locked" in res["message"]
+    assert p.read_bytes() == before

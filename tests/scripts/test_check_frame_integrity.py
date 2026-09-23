@@ -1878,3 +1878,11 @@ def test_F14_a_stray_target_on_a_non_promote_disposition_is_ignored():
 def test_norm_number_leaves_a_non_finite_token_alone(tok):
     """Decimal accepts 'inf' and 'nan'; they are not numbers a page prints as claims."""
     assert cfi._norm_number(tok) == tok
+
+
+def test_claim_numbers_does_not_leak_the_integer_of_an_ungrouped_decimal_percent():
+    """Cross-model 2026-09-23 (Grok F1, P1). The four-digit pattern backtracked off the
+    decimal and took "1234" out of "1234.56%"."""
+    assert cfi._claim_numbers("1234.56%") == {"1234.56%"}
+    assert cfi._claim_numbers("up 12345.5% now") == {"12345.5%"}
+    assert cfi._claim_numbers("shipped 1234.5 units") == {"1234.5"}

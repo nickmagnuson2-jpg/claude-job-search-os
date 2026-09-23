@@ -471,12 +471,31 @@ def truncate_diff(diff: str, cap: int = MAX_DIFF_LINES) -> str:
             f"NOT seeing the whole change; say so if a conclusion needs the rest.]")
 
 
+def diff_base(repo_root: Path) -> str:
+    """Where the work under review starts: the merge-base with the upstream branch.
+
+    `git diff HEAD` sees only uncommitted changes, so on the commit-then-verify-then-push
+    path the pre-push gate drives it attached NO diff, while the ledger row still recorded
+    the paths as covered (cross-model 2026-09-23, Grok F3). Diffing from the upstream
+    merge-base covers committed-but-unpushed work plus anything uncommitted on top.
+    No upstream (a fresh branch, a bare test repo): fall back to HEAD, as before.
+    """
+    try:
+        proc = subprocess.run(["git", "merge-base", "HEAD", "@{upstream}"],
+                              capture_output=True, text=True,
+                              cwd=str(repo_root), timeout=60)
+    except (subprocess.SubprocessError, OSError):
+        return "HEAD"
+    base = proc.stdout.strip()
+    return base if proc.returncode == 0 and base else "HEAD"
+
+
 def gather_diff(repo_root: Path, paths: list[str], cap: int = MAX_DIFF_LINES) -> str:
-    """The working diff for exactly the named paths, never the whole repo."""
+    """The diff for exactly the named paths since the upstream, never the whole repo."""
     if not paths:
         return ""
     try:
-        proc = subprocess.run(["git", "diff", "HEAD", "--"] + list(paths),
+        proc = subprocess.run(["git", "diff", diff_base(repo_root), "--"] + list(paths),
                               capture_output=True, text=True,
                               cwd=str(repo_root), timeout=60)
     except (subprocess.SubprocessError, OSError):

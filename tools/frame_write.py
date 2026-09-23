@@ -420,6 +420,11 @@ def write_frame(frame_path: Path, new: dict, expect: int, segment=None,
                     "room. Pass --unlock \"<reason>\" to write to it anyway; the reason is "
                     "recorded in `unlocks`. Nothing was written.", locked_at=current.get(
                         "locked_at"))
+            # --unlock covers ONE write. It must not release the lock itself, or every
+            # later write goes through with no reason (cross-model 2026-09-23, F2).
+            if new.get("locked") is not True:
+                die("REFUSED: a locked frame cannot be released by a write; --unlock "
+                    "covers this one write only. Nothing was written.")
             new["unlocks"] = list(current.get("unlocks") or []) + [
                 {"at_version": new["version"], "reason": unlock.strip()}]
         elif unlock is not None:
@@ -855,6 +860,13 @@ def main(argv=None):
             set_dotted(new, k, v, merge=True)
 
     elif a.cmd == "lock":
+        # The prediction is write-once. Re-locking would rewrite will_be_probed and
+        # made_at_version, which set/patch are forbidden to touch, so --unlock does not
+        # cover it (cross-model 2026-09-23, Grok F2).
+        if current.get("locked") is True:
+            die("REFUSED: this frame is already locked; its pre-room prediction is "
+                "write-once and cannot be re-stamped, with or without --unlock. "
+                "Nothing was written.")
         a.segment = "LOCK"
         new["locked"] = True
         new["locked_at"] = a.today

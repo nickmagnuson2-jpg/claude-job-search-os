@@ -1058,12 +1058,14 @@ def _claim_numbers(text: str) -> set:
     # A percent may be comma-grouped, and neither pattern may START inside a number:
     # without the lookbehind "1,234.5%" also yielded "234.5%", a figure the page never
     # printed, and the grouped pattern took "1,234.5" off the same token without its %.
-    # Closeout comb A1 F3 (P1), reproduced 2026-09-23.
+    # Closeout comb A1 F3 (P1), reproduced 2026-09-23. The four-digit pattern's lookahead
+    # skips `.` too: without it the pattern backtracked off the decimal and took "1234"
+    # out of "1234.56%" (cross-model 2026-09-23, Grok F1).
     for m in re.findall(r"(?<![\d.,])[-+]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?%", text):
         out.add(_norm_number(m))
     for m in re.findall(r"(?<![\d.,])[-+]?\d{1,3}(?:,\d{3})+(?:\.\d+)?(?![\d.,]*%)", text):
         out.add(_norm_number(m))
-    for m in re.findall(r"(?<![\d.,%+-])[-+]?\d{4,}(?:\.\d+)?(?![\d,]*%)(?![-\w])", text):
+    for m in re.findall(r"(?<![\d.,%+-])[-+]?\d{4,}(?:\.\d+)?(?![\d.,]*%)(?![-\w])", text):
         out.add(_norm_number(m))
     return out
 

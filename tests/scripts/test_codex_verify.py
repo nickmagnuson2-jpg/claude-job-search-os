@@ -1443,3 +1443,51 @@ def test_missing_detector_does_not_invent_a_second_one(monkeypatch, tmp_path):
 
     monkeypatch.setattr(builtins, "__import__", boom)
     assert cv.refuse_under_active_mutation(tmp_path, ["tools/x.py"]) == ""
+
+
+def _repo_with_unpushed_commit(tmp_path):
+    """base pushed to a bare upstream, then a.py changed AND COMMITTED locally: the
+    commit-then-verify-then-push path the pre-push gate drives."""
+    import subprocess
+    work, bare = tmp_path / "work", tmp_path / "up.git"
+    work.mkdir()
+    env = {"PATH": "/usr/bin:/bin:/usr/local/bin", "HOME": str(tmp_path),
+           "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+           "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
+    def git(*a, cwd=work):
+        return subprocess.run(["git"] + list(a), cwd=str(cwd), env=env,
+                              capture_output=True, text=True)
+    git("init", "-q", "--bare", str(bare), cwd=tmp_path)
+    git("init", "-q", "-b", "main")
+    (work / "a.py").write_text("original\n", encoding="utf-8")
+    git("add", "-A"); git("commit", "-qm", "base")
+    git("remote", "add", "origin", str(bare))
+    git("push", "-q", "-u", "origin", "main")
+    (work / "a.py").write_text("COMMITTED_UNPUSHED\n", encoding="utf-8")
+    git("commit", "-qam", "local work")
+    return work
+
+
+def test_gather_diff_includes_committed_but_unpushed_work(tmp_path):
+    """Cross-model 2026-09-23 (Grok F3, P1). `git diff HEAD` is empty once the work is
+    committed, so a verify run made before a push attached NO diff while its row still
+    recorded the paths as covered. The diff is taken from the upstream merge-base."""
+    got = cv.gather_diff(_repo_with_unpushed_commit(tmp_path), ["a.py"], cap=400)
+    assert "COMMITTED_UNPUSHED" in got
+
+
+def test_gather_diff_still_includes_uncommitted_work_on_top(tmp_path):
+    work = _repo_with_unpushed_commit(tmp_path)
+    (work / "a.py").write_text("AND_UNCOMMITTED\n", encoding="utf-8")
+    assert "AND_UNCOMMITTED" in cv.gather_diff(work, ["a.py"], cap=400)
+
+
+def test_diff_base_falls_back_to_HEAD_when_git_cannot_run(tmp_path, monkeypatch):
+    def boom(*a, **k):
+        raise OSError("no git")
+    monkeypatch.setattr(cv.subprocess, "run", boom)
+    assert cv.diff_base(tmp_path) == "HEAD"
+
+
+def test_diff_base_falls_back_to_HEAD_without_an_upstream(tmp_path):
+    assert cv.diff_base(_tiny_repo(tmp_path)) == "HEAD"
