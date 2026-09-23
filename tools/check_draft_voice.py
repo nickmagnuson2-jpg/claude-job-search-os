@@ -217,6 +217,38 @@ PATTERNS = [
         'resonance frame sibling — "the one I keep coming back to" is the same announcement clause as "stuck with me" (content-rules F1)',
         "state the thing itself; cut the announcement",
     ),
+    # --- Hedged time ask (2026-09-23, 4th fire of feedback_check_drafts_for_implied_claims).
+    # Nick rewrites this close EVERY time. The defect is ask SIZE: the hedged form asks the
+    # recipient to first decide whether the meeting is worth having and THEN respond, which is
+    # two asks and performs indifference about the answer. The sent form asks only to schedule.
+    # The 2026-09-08 promotion was a JUDGMENT step and did not convert: Claude wrote the hedged
+    # close twice more in 90 minutes with the rule marked Promoted. Hence a BLOCK.
+    # Both patterns require an explicit minutes token, so ordinary "happy to take a look" and
+    # "happy to send that over" do not trip. Sent forms that must stay CLEAN:
+    #   "Would love 15 minutes on your calendar if you can spare it."
+    #   "Would love 15 minutes on your calendar!"
+    #   "Would still love 15 minutes if your calendar allows."
+    (
+        re.compile(
+            r"\b(?:happy|glad|love)\s+to\s+(?:take|do|grab|find|jump\s+on|hop\s+on)\b"
+            r"[^.?!\n]{0,40}?\b(?:minutes?|mins?)\b"
+            r"[^.?!\n]{0,60}?\bif\s+(?:it|that)(?:\'s|\s+is)\s+(?:useful|helpful)\b",
+            re.IGNORECASE,
+        ),
+        'hedged time ask — "happy/glad to take N minutes if it is useful" asks the recipient to '
+        'judge the meeting worth scheduling before scheduling it (4th fire; memory/lessons.md '
+        'Section 2, voice-reference.md "Close a time ask on the CALENDAR")',
+        'close on the logistic: "Would love 15 minutes on your calendar if you can spare it."',
+    ),
+    (
+        re.compile(
+            r"\b(?:\d+|a\s+few|some)\s*(?:minutes?|mins?)\b[^.?!\n]{0,60}?\bwhenever\b",
+            re.IGNORECASE,
+        ),
+        'deferred time ask — "N minutes whenever ..." hands the recipient a standing offer they '
+        'can ignore instead of a logistic they can act on (4th fire; voice-reference.md)',
+        'name the logistic instead: "on your calendar", "if your calendar allows"',
+    ),
 ]
 
 # Body-only checks (count-based). Run after isolating the BODY section.
