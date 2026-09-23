@@ -169,7 +169,12 @@ def test_a_run_appends_a_ledger_row_the_gate_can_read(tmp_path, monkeypatch):
     rows = gate.read_ledger(tmp_path)
     assert len(rows) == 1
     assert rows[0]["paths"] == ["tools/scanner.py"] and rows[0]["waived"] is False
-    # ...and it now clears the gate for exactly that path.
+    # ...it COVERS exactly that path, but its own open P0 blocks the push (B2,
+    # 2026-09-23) until the finding carries a disposition. Then it clears.
+    v = gate.check(tmp_path, [("tools/scanner.py", 200, 40)], since=0)
+    assert v.blocked is True and "1.F1" in v.message and "Uncovered" not in v.message
+    import finding_write
+    finding_write.set_disposition(tmp_path, "1.F1", "fixed", "test: fixed in place")
     assert gate.check(tmp_path, [("tools/scanner.py", 200, 40)], since=0).blocked is False
 
 

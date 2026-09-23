@@ -968,9 +968,11 @@ def test_F14_bare_filename_target_is_not_treated_as_a_repo_path():
     """
     import tempfile
     with tempfile.TemporaryDirectory() as td:
-        fp = _tree(Path(td), "a.py")
+        fp = _tree(Path(td), "a.py", "build_workbook.py")
         r = _f14({"scripts": {"a.py": {"disposition": "superseded",
-                                       "target": "build_workbook.py"}}}, fp)
+                                       "target": "build_workbook.py"},
+                              "build_workbook.py": {"disposition": "engagement_only",
+                                                    "reason": "the successor"}}}, fp)
     assert r.state == cfi.PASS
 
 
@@ -1615,7 +1617,7 @@ def test_F13_delivery_with_a_real_prediction_is_not_a_failure():
     f["locked"] = False
     f["delivery"] = {"version": 2, "at": "2026-09-20"}
     r = cfi.check_F13(f)              # clean_frame carries a real prediction
-    assert r.state == cfi.CANNOT_RUN
+    assert r.state == cfi.PASS        # and a rejection record: nothing was lost
 
 
 def test_F13_without_a_delivery_is_still_open():
@@ -1697,9 +1699,10 @@ def test_F14_bare_sibling_target_still_requires_retirement():
     the retirement check below it, so a promote naming a sibling was exempt from both."""
     import tempfile
     with tempfile.TemporaryDirectory() as td:
-        fp = _tree(Path(td), "a.py")
+        fp = _tree(Path(td), "a.py", "sibling.py")
         r = _f14({"scripts": {"a.py": {"disposition": "promote",
-                                       "target": "sibling.py"}}}, fp)
+                                       "target": "sibling.py"}},
+                  }, fp)
     assert r.state == cfi.FAIL
     assert any("still" in o and "on disk" in o for o in r.offenders)
 
@@ -1707,9 +1710,11 @@ def test_F14_bare_sibling_target_still_requires_retirement():
 def test_F14_bare_sibling_target_is_clean_once_retired():
     import tempfile
     with tempfile.TemporaryDirectory() as td:
-        fp = _tree(Path(td))
+        fp = _tree(Path(td), "sibling.py")
         r = _f14({"scripts": {"a.py": {"disposition": "promote",
-                                       "target": "sibling.py"}}}, fp)
+                                       "target": "sibling.py"},
+                              "sibling.py": {"disposition": "engagement_only",
+                                             "reason": "the promoted copy"}}}, fp)
     assert r.state == cfi.PASS
 
 
@@ -1770,3 +1775,106 @@ def test_F16_missing_delivery_version_is_reported_not_skipped():
     r = cfi.check_F16({"schema_version": 3, "version": 2, "delivery": {"at": "2026-09-20"}})
     assert r.state == cfi.FAIL
     assert any("version" in o for o in r.offenders)
+
+
+# --- closeout comb A1, 2026-09-23: four defects reproduced in this file's gate -------
+
+def test_norm_number_keeps_full_precision():
+    """F1 (P0). `:g` kept 6 significant digits, so two different seven-digit figures
+    normalized to the same token 1.23457e+06 and F15 read one as carrying the other."""
+    assert cfi._norm_number("1234567.5") != cfi._norm_number("1234568.1")
+    assert cfi._norm_number("1234567.5") == "1234567.5"
+    assert cfi._norm_number("1,063,326") != cfi._norm_number("1,063,248")
+
+
+def test_norm_number_still_treats_formatting_as_formatting():
+    assert cfi._norm_number("12.0%") == cfi._norm_number("12%") == "12%"
+    assert cfi._norm_number("1,234,567.50") == cfi._norm_number("1234567.5")
+    assert cfi._norm_number("+5") == "5"
+    assert cfi._norm_number("-0.0") == "0"
+
+
+def test_claim_numbers_does_not_split_a_grouped_percent():
+    """F3 (P1). The percent regex had no lookbehind, so "1,234.5%" also yielded the
+    overlapping tail "234.5%", a figure the page never printed."""
+    assert cfi._claim_numbers("1,234.5%") == {"1234.5%"}
+    assert cfi._claim_numbers("rose 12,345% overall") == {"12345%"}
+    assert cfi._claim_numbers("a 3.5% rate") == {"3.5%"}
+
+
+def test_F14_bare_sibling_target_that_does_not_exist_fails():
+    """F2 (P0). A bare-filename target skipped the existence test, so a frame declaring
+    `gone.py -> nonexistent_sibling.py`, with neither file on disk, returned PASS."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        fp = _tree(Path(td))
+        r = _f14({"scripts": {"gone.py": {"disposition": "promote",
+                                          "target": "nonexistent_sibling.py"}}}, fp)
+    assert r.state == cfi.FAIL
+    assert any("does not exist" in o for o in r.offenders)
+
+
+def test_F14_bare_superseded_target_that_does_not_exist_fails():
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        fp = _tree(Path(td), "a.py")
+        r = _f14({"scripts": {"a.py": {"disposition": "superseded",
+                                       "target": "no_such_sibling.py"}}}, fp)
+    assert r.state == cfi.FAIL
+
+
+def test_F14_bare_target_without_a_tree_cannot_run():
+    """With no frame path there is no directory to resolve a sibling against, so the
+    target cannot be checked. That is CANNOT_RUN, never PASS."""
+    r = _f14({"scripts": {"a.py": {"disposition": "promote", "target": "sib.py"}}})
+    assert r.state == cfi.CANNOT_RUN
+
+
+def test_F13_delivered_frame_reads_proposals():
+    """F4 (P1). The delivered branch never read `proposals`: delivered + a prediction +
+    `proposals: []` returned CANNOT_RUN "no delivery is recorded", which was false."""
+    f = clean_frame()
+    f["locked"] = False
+    f["proposals"] = []
+    f["delivery"] = {"version": 2, "at": "2026-09-20"}
+    r = cfi.check_F13(f)
+    assert r.state == cfi.FAIL
+    assert any("proposals" in o for o in r.offenders)
+    assert "no delivery is recorded" not in r.detail
+
+
+def test_F13_delivered_frame_names_both_losses():
+    f = clean_frame()
+    f["locked"] = False
+    f["proposals"] = []
+    f["prediction"] = None
+    f["delivery"] = {"version": 2, "at": "2026-09-20"}
+    r = cfi.check_F13(f)
+    assert r.state == cfi.FAIL and len(r.offenders) == 2
+
+
+def test_F13_locked_and_delivered_losses_are_worded_differently():
+    """A locked frame can still stamp its prediction before the room; a delivered one
+    cannot. The two offenders say different things and must not be swapped."""
+    f = clean_frame()
+    f["prediction"] = None
+    locked = cfi.check_F13(f)
+    assert any("cannot be added after the room" in o for o in locked.offenders)
+    assert not any("permanently lost" in o for o in locked.offenders)
+
+
+def test_F14_a_stray_target_on_a_non_promote_disposition_is_ignored():
+    """Only promote/superseded name a target that must exist. An engagement_only entry
+    that happens to carry a `target` is not a promotion and is not existence-tested."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        fp = _tree(Path(td), "a.py")
+        r = _f14({"scripts": {"a.py": {"disposition": "engagement_only",
+                                       "reason": "policy", "target": "nowhere.py"}}}, fp)
+    assert r.state == cfi.PASS
+
+
+@pytest.mark.parametrize("tok", ["inf", "nan", "Infinity"])
+def test_norm_number_leaves_a_non_finite_token_alone(tok):
+    """Decimal accepts 'inf' and 'nan'; they are not numbers a page prints as claims."""
+    assert cfi._norm_number(tok) == tok

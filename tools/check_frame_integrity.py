@@ -36,6 +36,7 @@ import datetime as _dt
 import json
 import re
 import sys
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -713,31 +714,19 @@ def check_F13(frame):
     grep the schema's own `validation:` block and there is no rule asserting a
     required field is present. A frame that lost both ledgers came back clean.
     """
-    if frame.get("locked") is not True:
-        # A frame that already DELIVERED is not "still open", and reporting it that way
-        # is how an engagement reads as pending forever. The artifact went in the room;
-        # the pre-room prediction was never stamped and now cannot be, because it is
-        # contaminated the instant feedback arrives. That is a permanent, knowable loss
-        # and it must be stated once rather than deferred by a CANNOT_RUN each run.
-        delivery = frame.get("delivery")
-        if isinstance(delivery, dict) and delivery.get("version") is not None:
-            pred = frame.get("prediction")
-            probed = pred.get("will_be_probed") if isinstance(pred, dict) else None
-            if isinstance(probed, str):
-                probed = probed.strip()
-            if not probed:
-                return Result("F13", FAIL,
-                              f"delivered at v{delivery.get('version')} with no "
-                              "pre-room prediction, and one can no longer be made",
-                              ["`prediction.will_be_probed` was never stamped before "
-                               "delivery. It is contaminated the instant feedback "
-                               "arrives, so this run has permanently lost it. Recording "
-                               "the loss is the honest end state -- do NOT author one "
-                               "now to clear this"])
+    locked = frame.get("locked") is True
+    delivery = frame.get("delivery")
+    delivered = isinstance(delivery, dict) and delivery.get("version") is not None
+    if not locked and not delivered:
         return Result("F13", CANNOT_RUN,
                       "frame is not `locked: true` and no delivery is recorded; the "
                       "run record is still open")
 
+    # A frame that already DELIVERED is not "still open", and reporting it that way is
+    # how an engagement reads as pending forever. Delivery closes the record exactly as
+    # lock does, so it gets the SAME two-field check. The delivered branch used to test
+    # only the prediction, so delivered + a prediction + `proposals: []` fell through to
+    # "no delivery is recorded", which was false. Closeout comb A1 F4 (P1), 2026-09-23.
     missing = []
     if not frame.get("proposals"):
         missing.append(
@@ -749,15 +738,27 @@ def check_F13(frame):
     if isinstance(probed, str):
         probed = probed.strip()
     if not probed:
-        missing.append(
-            "`prediction.will_be_probed` is empty -- it is contaminated the instant "
-            "feedback arrives, so it cannot be added after the room")
+        if locked:
+            missing.append(
+                "`prediction.will_be_probed` is empty -- it is contaminated the instant "
+                "feedback arrives, so it cannot be added after the room")
+        else:
+            # The artifact went in the room; the pre-room prediction was never stamped
+            # and now cannot be. A permanent, knowable loss, stated once rather than
+            # deferred by a CANNOT_RUN each run.
+            missing.append(
+                "`prediction.will_be_probed` was never stamped before "
+                "delivery. It is contaminated the instant feedback "
+                "arrives, so this run has permanently lost it. Recording "
+                "the loss is the honest end state -- do NOT author one "
+                "now to clear this")
 
+    when = "locked" if locked else f"delivered at v{delivery.get('version')}"
     if missing:
         return Result("F13", FAIL,
-                      "locked frame is missing backfill-impossible run record", missing)
+                      f"{when}; frame is missing backfill-impossible run record", missing)
     return Result("F13", PASS,
-                  "rejection record and pre-room prediction both present at lock")
+                  f"{when}; rejection record and pre-room prediction both present")
 
 
 def check_F16(frame):
@@ -935,8 +936,17 @@ def check_F14(frame, frame_path=None):
         # not apply to it -- but `continue` here also skipped the retirement check
         # below, so a promote whose target was a bare filename was exempt from both.
         # Cross-model review 2026-09-22 (F4).
+        # A bare filename is still a target that must exist: resolved against the scripts
+        # directory, it got no existence test at all, so `gone.py -> nonexistent.py` with
+        # neither file on disk read PASS. Closeout comb A1 F2 (P0), reproduced 2026-09-23.
+        # With no tree to resolve it against, the target is unchecked and the enumeration
+        # CANNOT_RUN below reports that.
         target_is_repo_path = "/" in target
-        if target_is_repo_path and not (repo_root / target).exists():
+        if target_is_repo_path:
+            target_exists = (repo_root / target).exists()
+        else:
+            target_exists = (d / target).exists() if enumerated else None
+        if target_exists is False:
             problems.append(
                 f"{name}: disposition {disp!r} names target {target!r}, which does not "
                 "exist. The decision was recorded and never carried out")
@@ -949,8 +959,7 @@ def check_F14(frame, frame_path=None):
         # Only fires once the target EXISTS: between promoting and retiring there is a
         # legitimate window, and the target's absence is already reported above, so this
         # cannot double-report the same unfinished promotion.
-        if disp == "promote" and enumerated and name in found and (
-                not target_is_repo_path or (repo_root / target).exists()):
+        if disp == "promote" and enumerated and name in found and target_exists:
             problems.append(
                 f"{name}: promoted to {target!r}, which exists, but the original is still "
                 "on disk beside the frame. Retire it -- two copies of one mechanism drift, "
@@ -1020,11 +1029,16 @@ def _norm_number(tok: str) -> str:
     Precision and grouping are formatting. Value identity is what a claim is made of.
     """
     raw = tok.rstrip("%").replace(",", "").lstrip("+")
+    # Decimal, not float `:g`. `:g` keeps six significant digits, so 1,234,567.5 and
+    # 1,234,568.1 both became 1.23457e+06 and one printed figure read as carrying the
+    # other. Closeout comb A1 F1 (P0), reproduced 2026-09-23.
     try:
-        val = float(raw)
-    except ValueError:
+        val = Decimal(raw)
+    except InvalidOperation:
         return tok
-    body = f"{val:.0f}" if val == int(val) else f"{val:g}"
+    if not val.is_finite():
+        return tok
+    body = "0" if val == 0 else format(val.normalize(), "f")
     return body + "%" if tok.endswith("%") else body
 
 
@@ -1041,9 +1055,13 @@ def _claim_numbers(text: str) -> set:
     # minus made them the same token. The DECIMAL TAIL is too -- `\d{1,3}(?:,\d{3})+`
     # matches "1,234" out of "1,234.56" and truncates it, so 1,234.56 and 1,234.99
     # collapsed onto one another. Both were found by cross-model review 2026-09-22 (F2).
-    for m in re.findall(r"[-+]?\d+(?:\.\d+)?%", text):
+    # A percent may be comma-grouped, and neither pattern may START inside a number:
+    # without the lookbehind "1,234.5%" also yielded "234.5%", a figure the page never
+    # printed, and the grouped pattern took "1,234.5" off the same token without its %.
+    # Closeout comb A1 F3 (P1), reproduced 2026-09-23.
+    for m in re.findall(r"(?<![\d.,])[-+]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?%", text):
         out.add(_norm_number(m))
-    for m in re.findall(r"[-+]?\d{1,3}(?:,\d{3})+(?:\.\d+)?", text):
+    for m in re.findall(r"(?<![\d.,])[-+]?\d{1,3}(?:,\d{3})+(?:\.\d+)?(?![\d.,]*%)", text):
         out.add(_norm_number(m))
     for m in re.findall(r"(?<![\d.,%+-])[-+]?\d{4,}(?:\.\d+)?(?![\d,]*%)(?![-\w])", text):
         out.add(_norm_number(m))

@@ -99,6 +99,7 @@ def collect(repo_root: Path, only_open: bool = False,
                 "run": i,
                 "recorded": row.get("recorded"),
                 "target": row.get("target"),
+                "paths": list(row.get("paths") or []),
                 "report": row.get("report"),
                 "severity": f.get("severity"),
                 # None on every row written before 2026-09-06. A finding with no

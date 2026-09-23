@@ -433,3 +433,13 @@ def test_parked_filter_selects_only_deferred_debts(tmp_path):
 def test_cli_parked_flag(repo):
     out = json.loads(run_cli(repo, "list", "--parked").stdout)
     assert out["count"] == 0        # the fixture has fixed and open, no parked
+
+
+def test_importable_as_a_package_module_from_the_repo_root():
+    """cross_model_gate imports this module from inside the pre-push hook. Imported as
+    `tools.finding_write`, its sibling `inbox_lock` resolves only through the module's
+    own sys.path insert, so dropping that insert must break the import."""
+    repo = Path(TOOLS_DIR).parent
+    r = subprocess.run([sys.executable, "-c", "import tools.finding_write"],
+                       cwd=repo, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr

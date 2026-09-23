@@ -646,7 +646,8 @@ def check(repo_root: Path, changes: list[tuple[str, int, int]],
         return len(outside) >= need
 
     missing = sorted(p for p in required if not path_is_covered(p))
-    if not missing:
+    blocking = open_p0_against(repo_root, required)
+    if not missing and not blocking:
         v.blocked = False
         v.message = (f"cleared: all {len(required)} tier-{v.tier} path(s) covered by "
                      f"{need} independent model(s)")
@@ -654,6 +655,9 @@ def check(repo_root: Path, changes: list[tuple[str, int, int]],
 
     v.blocked = True
     v.changed = sorted(changed)
+    if not missing:
+        v.message = f"This push {v.reason}.\n" + _p0_block_text(blocking)
+        return v
     suggest = " ".join(missing[:3])
     notes = []
     if stale:
@@ -676,8 +680,39 @@ def check(repo_root: Path, changes: list[tuple[str, int, int]],
         f"  Run one:   PYTHONIOENCODING=utf-8 python3 tools/codex_verify.py \\\n"
         f"               --target '<what to check>' --paths {suggest}\n"
         f"  Or waive:  CODEX_VERIFY_WAIVE='<why>' git push\n\n"
-        f"A waiver is recorded and counted; /standup surfaces the running total.")
+        f"A waiver is recorded and counted; /standup surfaces the running total."
+        + (f"\n\nAlso: {_p0_block_text(blocking)}" if blocking else ""))
     return v
+
+
+def open_p0_against(repo_root: Path, required: set) -> list[dict]:
+    """Open P0 findings recorded against any path this push must cover.
+
+    B2, closeout 2026-09-23. check() counted only freshness and model families, so a
+    fresh second-family run cleared a push while the same ledger held open P0s against
+    the pushed code: "fix before the push clears" was enforced by nothing.
+
+    Deliberately NOT filtered by freshness or by whether the run completed. A stale row
+    cannot COVER a push, but age is not a disposition: its open P0 is still an
+    unanswered finding. Only P0 blocks; P1s are carried, per the pre-lock rule.
+    Addressing comes from finding_write.collect(), the one scheme `set` accepts.
+    """
+    import finding_write
+    return [f for f in finding_write.collect(repo_root, only_open=True, severity="P0")
+            if required & set(f["paths"])]
+
+
+def _p0_block_text(blocking: list[dict]) -> str:
+    addrs = [f["addr"] for f in blocking]
+    shown = ", ".join(addrs[:12]) + (f" (+{len(addrs) - 12} more)" if len(addrs) > 12
+                                     else "")
+    return (f"{len(addrs)} open P0 finding(s) are recorded against the paths being "
+            f"pushed: {shown}\n\n"
+            f"  List:      PYTHONIOENCODING=utf-8 python3 tools/finding_write.py list "
+            f"--open --severity P0\n"
+            f"  Resolve:   PYTHONIOENCODING=utf-8 python3 tools/finding_write.py set "
+            f"<addr> --disposition fixed|rejected|parked --why '<reason>'\n"
+            f"  Or waive:  CODEX_VERIFY_WAIVE='<why>' git push\n")
 
 
 def main(argv=None) -> int:

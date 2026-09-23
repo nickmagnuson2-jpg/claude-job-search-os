@@ -1306,3 +1306,117 @@ def test_a_legacy_label_and_its_family_are_ONE_perspective(tmp_path):
 def test_known_legacy_labels_resolve_to_their_family():
     assert g.row_model({"model": "codex"}) == g.row_model({"family": "openai"})
     assert g.row_model({"model": "grok"}) == g.row_model({"family": "xai"})
+
+
+# --- B2 (closeout 2026-09-23): the gate reads open findings -------------------------
+#
+# check() counted only freshness and model families, so a fresh run from a second
+# family cleared a push while that same ledger held open P0s against the pushed code.
+# "Fix before the push clears" was enforced by nothing.
+
+SCANNER = "tools/career_scanner/scanner.py"
+
+
+def _p0(fid="F1", disposition=None, severity="P0"):
+    return {"id": fid, "severity": severity, "summary": "a real defect",
+            "location": f"{SCANNER}:10", "disposition": disposition}
+
+
+def test_an_open_P0_on_a_pushed_path_blocks_an_otherwise_covered_push(tmp_path):
+    _row(tmp_path, findings=[_p0()])
+    v = g.check(tmp_path, [(SCANNER, 200, 40)], since=0)
+    assert v.blocked is True
+    assert "1.F1" in v.message                      # the finding_write address
+    assert "finding_write" in v.message
+
+
+def test_the_open_P0_names_every_blocking_address(tmp_path):
+    _row(tmp_path, findings=[_p0("F1"), _p0("F2")])
+    _row(tmp_path, findings=[_p0("F7")])
+    v = g.check(tmp_path, [(SCANNER, 200, 40)], since=0)
+    assert v.blocked is True
+    for addr in ("1.F1", "1.F2", "2.F7"):
+        assert addr in v.message
+
+
+@pytest.mark.parametrize("disp", ["fixed", "rejected", "parked"])
+def test_a_dispositioned_P0_does_not_block(tmp_path, disp):
+    _row(tmp_path, findings=[_p0(disposition=disp)])
+    assert g.check(tmp_path, [(SCANNER, 200, 40)], since=0).blocked is False
+
+
+@pytest.mark.parametrize("sev", ["P1", "P2"])
+def test_an_open_P1_or_P2_does_not_block(tmp_path, sev):
+    """Only P0 blocks; P1s are carried, per the pre-lock disposition rule."""
+    _row(tmp_path, findings=[_p0(severity=sev)])
+    assert g.check(tmp_path, [(SCANNER, 200, 40)], since=0).blocked is False
+
+
+def test_an_open_P0_on_an_unrelated_path_does_not_block(tmp_path):
+    _row(tmp_path)                                               # covers the push
+    _row(tmp_path, paths=["tools/todo_write.py"], findings=[_p0()])
+    assert g.check(tmp_path, [(SCANNER, 200, 40)], since=0).blocked is False
+
+
+def test_an_OLD_open_P0_still_blocks(tmp_path):
+    """Age is not a disposition. A stale row cannot COVER the push, but its open P0 is
+    still an unanswered finding against the code being pushed."""
+    _row(tmp_path, recorded="2026-09-01T10:00:00+00:00", findings=[_p0()])
+    _row(tmp_path, recorded="2026-09-10T10:00:00+00:00")        # fresh, clean cover
+    since = time.mktime(time.strptime("2026-09-05", "%Y-%m-%d"))
+    v = g.check(tmp_path, [(SCANNER, 200, 40)], since=since)
+    assert v.blocked is True and "1.F1" in v.message
+
+
+def test_an_open_P0_from_a_failed_run_still_blocks(tmp_path):
+    """A run that did not complete cannot clear a push; findings it did record are
+    still findings."""
+    _row(tmp_path)
+    _row(tmp_path, verified=False, findings=[_p0()])
+    assert g.check(tmp_path, [(SCANNER, 200, 40)], since=0).blocked is True
+
+
+def test_a_blank_disposition_is_open(tmp_path):
+    _row(tmp_path, findings=[_p0(disposition="   ")])
+    assert g.check(tmp_path, [(SCANNER, 200, 40)], since=0).blocked is True
+
+
+def test_the_P0_block_does_not_claim_the_path_is_uncovered(tmp_path):
+    _row(tmp_path, findings=[_p0()])
+    msg = g.check(tmp_path, [(SCANNER, 200, 40)], since=0).message
+    assert "Uncovered" not in msg
+
+
+def test_uncovered_and_open_P0_are_both_reported(tmp_path):
+    _row(tmp_path, recorded="2026-09-01T10:00:00+00:00", findings=[_p0()])
+    since = time.mktime(time.strptime("2026-09-05", "%Y-%m-%d"))
+    msg = g.check(tmp_path, [(SCANNER, 200, 40)], since=since).message
+    assert "Uncovered" in msg and "1.F1" in msg
+
+
+def test_a_non_qualifying_push_is_not_blocked_by_findings(tmp_path):
+    """The finding check rides on the qualification the gate already makes."""
+    _row(tmp_path, paths=["tools/friction_log.py"], findings=[_p0()])
+    assert g.check(tmp_path, [("tools/friction_log.py", 4, 1)], since=0).blocked is False
+
+
+def test_the_address_matches_finding_write(tmp_path):
+    """One addressing scheme. The gate prints the address finding_write.set accepts."""
+    import finding_write as fw
+    _row(tmp_path, findings=[])
+    _row(tmp_path, findings=[_p0("F3")])
+    msg = g.check(tmp_path, [(SCANNER, 200, 40)], since=0).message
+    addrs = [f["addr"] for f in fw.collect(tmp_path, only_open=True, severity="P0")]
+    assert addrs == ["2.F3"] and "2.F3" in msg
+
+
+def test_a_long_P0_list_is_truncated_with_a_count(tmp_path):
+    _row(tmp_path, findings=[_p0(f"F{i}") for i in range(1, 15)])
+    msg = g.check(tmp_path, [(SCANNER, 200, 40)], since=0).message
+    assert "14 open P0" in msg and "(+2 more)" in msg and "1.F13" not in msg
+
+
+def test_twelve_P0s_carry_no_more_suffix(tmp_path):
+    _row(tmp_path, findings=[_p0(f"F{i}") for i in range(1, 13)])
+    msg = g.check(tmp_path, [(SCANNER, 200, 40)], since=0).message
+    assert "more)" not in msg.split("open P0")[1].split("List:")[0]
