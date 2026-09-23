@@ -18,8 +18,8 @@ _spec.loader.exec_module(cdv)
 
 
 def detects(command: str) -> bool:
-    """Mirror the hook's real test: regex over the literal-stripped command."""
-    return bool(cdv.OPEN_DRAFT_INVOKE.search(cdv.strip_literals(command)))
+    """The hook's real test: is_open_draft_invocation, exactly as the gate calls it."""
+    return cdv.is_open_draft_invocation(command)
 
 
 # --- real invocations must be detected (gate runs) -------------------------
@@ -50,3 +50,53 @@ def test_real_invocation_detected(command):
 ])
 def test_bare_mention_not_detected(command):
     assert detects(command) is False
+
+
+# --- cross-model 110.F3 (P0): quoted and module-form invocations bypassed the gate --
+#
+# strip_literals blanked the quoted script path, so the regex never saw it. These are
+# real invocations that ran open_draft.py with no voice or provenance check.
+
+@pytest.mark.parametrize("command", [
+    "python3 'tools/open_draft.py'",
+    'python3 "tools/open_draft.py"',
+    "PYTHONIOENCODING=utf-8 python3 'tools/open_draft.py'",
+    "python3 -m tools.open_draft",
+    "PYTHONIOENCODING=utf-8 python3 -m tools.open_draft",
+    "python3 -mtools.open_draft",
+    "cd tools && python3 -m open_draft",
+    "python3 -X utf8 'tools/open_draft.py'",
+    "python3 -u \"$HOME/repo/tools/open_draft.py\"",
+    "env PYTHONIOENCODING=utf-8 python3 'tools/open_draft.py'",
+    "true; python3 'tools/open_draft.py'",
+    "ls\npython3 'tools/open_draft.py'",
+])
+def test_quoted_and_module_invocations_are_detected(command):
+    assert detects(command) is True
+
+
+@pytest.mark.parametrize("command", [
+    "python3 -m pytest tests/ -k open_draft",             # module is pytest
+    "python3 tools/other.py 'tools/open_draft.py'",      # open_draft is an ARGUMENT
+    "git commit -m \"python3 'tools/open_draft.py'\"",   # inside a commit message
+    "git commit -F - <<'EOF'\npython3 'tools/open_draft.py'\nEOF",   # heredoc body
+    "grep -n \"python3 -m tools.open_draft\" docs/",      # grep pattern
+])
+def test_quoted_mentions_that_do_not_run_it_are_not_detected(command):
+    assert detects(command) is False
+
+
+def test_a_plain_flag_before_a_quoted_path_is_skipped():
+    assert detects("python3 -u 'tools/open_draft.py'") is True
+    assert detects("python3 -B -u 'tools/open_draft.py'") is True
+
+
+def test_a_c_program_string_is_not_a_script_argument():
+    assert detects("python3 -c 'open_draft.py'") is False
+
+
+def test_unbalanced_quotes_fall_back_without_raising():
+    """shlex raises on an unterminated quote; the regex pass must stand alone, never a
+    crash in a hook that fires on every Bash call."""
+    assert detects("echo 'unterminated") is False
+    assert detects("echo 'unterminated\npython3 'tools/open_draft.py'") is True

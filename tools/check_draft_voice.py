@@ -46,6 +46,7 @@ Usage:
 import json
 import os
 import re
+import shlex
 import sys
 from pathlib import Path
 
@@ -53,7 +54,7 @@ from pathlib import Path
 # of truth — never re-implement per hook (that drift caused the command-position
 # family's repeat fires). See tools/HOOK_AUTHORING.md.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from hook_command_lint import strip_literals  # noqa: E402
+from hook_command_lint import _strip_heredoc_bodies, strip_literals  # noqa: E402
 from hook_runtime import read_payload  # noqa: E402
 
 # open_draft.py is always run as a script argument to a python interpreter
@@ -90,7 +91,72 @@ def is_open_draft_invocation(command: "str | None") -> bool:
     """
     if command is None:
         return True
-    return bool(OPEN_DRAFT_INVOKE.search(strip_literals(command)))
+    if OPEN_DRAFT_INVOKE.search(strip_literals(command)):
+        return True
+    return _invokes_via_argv(command)
+
+
+_PYTHON = re.compile(r"^python[0-9.]*$")
+_ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+_SEPARATORS = {";", "&&", "||", "|", "&", "(", ")"}
+_OPTS_WITH_ARG = {"-X", "-W", "-Q"}
+
+
+def _invokes_via_argv(command: str) -> bool:
+    """Parse each command segment the way the shell does and ask what Python RUNS.
+
+    strip_literals blanks every quoted span, so `python3 'tools/open_draft.py'`,
+    `python3 "tools/open_draft.py"` and `python3 -m tools.open_draft` all ran the script
+    with no voice or provenance check (cross-model 110.F3, P0; reproduced 2026-09-23).
+    Heredoc bodies are removed first (they are literal text); then each line is split
+    with shlex, which keeps a quoted path as ONE argument, so the script argument is
+    found whether or not it is quoted. A mention inside a commit message or a grep
+    pattern is an argument to git or grep, never a Python script argument.
+    """
+    try:
+        text = _strip_heredoc_bodies(command)
+    except Exception:
+        text = command
+    for line in text.split("\n"):
+        try:
+            lex = shlex.shlex(line, posix=True, punctuation_chars=True)
+            lex.whitespace_split = True
+            tokens = list(lex)
+        except ValueError:
+            continue                       # unbalanced quotes: the regex pass stands
+        segment: list = []
+        for tok in tokens + [";"]:
+            if tok in _SEPARATORS:
+                if _segment_runs_open_draft(segment):
+                    return True
+                segment = []
+            else:
+                segment.append(tok)
+    return False
+
+
+def _segment_runs_open_draft(argv: list) -> bool:
+    i = 0
+    while i < len(argv) and (_ASSIGN.match(argv[i]) or argv[i] == "env"):
+        i += 1
+    if i >= len(argv) or not _PYTHON.match(os.path.basename(argv[i])):
+        return False
+    i += 1
+    while i < len(argv):
+        a = argv[i]
+        if a.startswith("-m"):
+            mod = a[2:] or (argv[i + 1] if i + 1 < len(argv) else "")
+            return mod == "open_draft" or mod.endswith(".open_draft")
+        if a == "-c":
+            return False                  # a program string, not a script
+        if a in _OPTS_WITH_ARG:
+            i += 2
+            continue
+        if a.startswith("-"):
+            i += 1
+            continue
+        return os.path.basename(a) == "open_draft.py"
+    return False
 
 
 # A command writing the marker file (heredoc/printf/echo redirect) in the SAME
