@@ -190,6 +190,28 @@ yet - ask Nick for the spine.
 Save to `output/<company-slug>/MMDDYY-cover-letter.md`. This is the only filename `/apply` owns; CV and cheat
 sheet names belong to the delegate.
 
+### Step 7b: Application form answers (whenever the portal asks free-text questions)
+
+**Pull the real form first; never guess the fields.** For Ashby the same GraphQL endpoint returns the form
+(added 2026-09-23, verified live):
+
+```bash
+curl -s "https://jobs.ashbyhq.com/api/non-user-graphql?op=ApiJobPosting" -H 'content-type: application/json' \
+  -d '{"operationName":"ApiJobPosting","variables":{"organizationHostedJobsPageName":"<org>","jobPostingId":"<id>"},"query":"query ApiJobPosting($organizationHostedJobsPageName: String!, $jobPostingId: String!) { jobPosting(organizationHostedJobsPageName: $organizationHostedJobsPageName, jobPostingId: $jobPostingId) { id title applicationForm { sections { title descriptionHtml fieldEntries { ... on FormFieldEntry { isRequired descriptionHtml field } } } } } }"}'
+```
+
+Each field carries `isRequired`, a `type` (String, Email, ValueSelect, Location, Boolean, File, Url, LongText)
+and, for selects, its `selectableValues`. Fill factual fields from `data/profile.md`. **Never infer pronouns;
+ask.** Draft LongText answers per `framework/application-workflow.md` § Application Answers (150-170 words,
+hard-filter gate, no volunteered disqualifiers) and save everything, with a provenance note per answer, to
+`output/<company-slug>/MMDDYY-application-answers.md`.
+
+**Create-your-own-role postings (Nick, 2026-09-23).** When the posting is an open "Member of Staff" /
+"create your own role" door, the "Why us?" answer IS the role definition: a named title plus 2-4 owned
+responsibilities Nick picks (offer options; he chooses). **Sequence:** application first, outreach second,
+and the outreach points to it ("here's the role I want; I've applied and the role is written into my
+application"). The email then does not have to carry the definition itself.
+
 ### Step 8: Confirm submission status (mandatory — do NOT skip)
 
 `/apply` produces artifacts. Submission is a separate human action. Before any pipeline write that would set

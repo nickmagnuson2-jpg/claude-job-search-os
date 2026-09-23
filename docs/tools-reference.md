@@ -153,6 +153,11 @@ Email body here
 5. `tools/open_draft.py` — thank-you email
 6. If a mock session preceded the call: update `coaching/progress-recruiter/`
 
+**Job postings on Ashby / Greenhouse / Lever are JavaScript-rendered; WebFetch returns a shell.** Use the APIs instead (added 2026-09-23):
+- **Open roles on a board:** `career_scanner.ashby.fetch_ashby('<slug>')` (also `greenhouse.fetch_greenhouse`, `lever.fetch_lever`) in `tools/career_scanner/`. Run from the repo root with `sys.path.insert(0,'tools')`.
+- **Full JD text, one Ashby posting:** the public `https://api.ashbyhq.com/posting-api/job-board/<slug>` returns `descriptionPlain` per job.
+- **Ashby application form fields** (required flags, field types, select options): the `ApiJobPosting` GraphQL query with `applicationForm { sections { ... } }`. The full command is in `/apply` Step 7b.
+
 **Gotchas:**
 - Filter separator-row noise from script output: `[e for e in entries if e.get("task") != "---"]`.
 - Edit-safety hook (`.claude/settings.json`) runs `tools/check_edit_safety.py` on every `.md` Edit.

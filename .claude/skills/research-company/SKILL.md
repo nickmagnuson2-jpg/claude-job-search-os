@@ -420,6 +420,20 @@ After the manifest, synthesize the agent findings:
 3. **Cross-link** — connect findings across agents (e.g., a product mentioned by Agent 1 that's in the news from Agent 4, a leader from Agent 3 who led a funding round from Agent 2, or a competitor from Agent 5 that recently appeared in Agent 4's news).
 4. **Enrich the shortlist** — use findings from Agents 1-4 to enhance Agent 5's similar-companies shortlist. For example, if Agent 2 found a specific investor, note which shortlisted companies share that investor. If Agent 3 found alumni connections, flag shortlisted companies with similar alumni overlap potential.
 
+4a. **Verify the company's open roles against its ATS posting API yourself (MANDATORY when the company uses Ashby, Greenhouse or Lever).**
+
+   Agent 3's `[VERIFIED]` tag is the agent's claim, not verification. In one run an agent listed several open roles marked "verified"
+   that the company's public posting API did not return the same day; some of them did not exist at all. The same run also cited a
+   source dated in the future. Pull the live list with the existing parsers, then treat any agent role
+   not on it as unverified and drop it from the dossier:
+
+   ```bash
+   PYTHONIOENCODING=utf-8 python3 -c "import sys; sys.path.insert(0,'tools'); from career_scanner.ashby import fetch_ashby; [print(r) for r in fetch_ashby('<slug>')]"
+   ```
+
+   (`career_scanner.greenhouse.fetch_greenhouse` / `career_scanner.lever.fetch_lever` for those boards; the slug is the path segment of the
+   careers URL.) Also reject any cited source dated after today. Record the live role list and its fetch date in the dossier.
+
 4b. **Reconcile the shortlist against the pipeline (MANDATORY — do not skip, do not eyeball).**
 
    Agent 5 reasons from the public web and cannot see `data/job-pipeline.md`. A company Nick already closed looks identical to a fresh lead and the rationale is confident either way. Run:

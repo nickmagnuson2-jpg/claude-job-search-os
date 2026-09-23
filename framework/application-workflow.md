@@ -133,14 +133,20 @@ When the candidate's source data uses accurate but different terminology from a 
 
 ### Skills Section Discipline
 
+> **The Skills line and the whole ADDITIONAL INFORMATION section are FIXED for Nick (decided 2026-09-23).** The exact text, order,
+> labels and line limits live in ONE place: `.claude/skills/generate-cv/SKILL.md`, "Skills section" and "Additional Information spec".
+> Use that text; do not re-derive it from the rules below, and do not "correct" it with them. In particular the *Operating* group
+> (cross-functional stakeholder collaboration, change management, executive presentations) is Nick's deliberate override of the
+> buzzword rule below. The rules below still govern any OTHER skills content and any non-Nick use of this framework.
+
 - **Sentence case, not Title Case.** Capitalize only proper nouns, tools, and acronyms (Claude API, SQL, Looker, OKRs). Do NOT Title-Case every term ("Structured Problem-Solving, Customer & Stakeholder Management") — it reads as a keyword dump.
 - **Lead with the concrete and differentiated** (domain craft, tools, technical/AI skills actually used). Strongest, least-generic items first.
-- **Cut generic competency buzzwords even when technically evidenced.** "Cross-functional delivery", "structured problem-solving", "stakeholder management", "requirements gathering" are filler — already demonstrated in the bullets, adding nothing in a skills line. Check #12 (skills evidence) is necessary but not sufficient: a skill can be evidenced and still be fluff.
+- **Cut generic competency buzzwords even when technically evidenced** (except Nick's fixed *Operating* group, above). "Cross-functional delivery", "structured problem-solving", "stakeholder management", "requirements gathering" are filler — already demonstrated in the bullets, adding nothing in a skills line. Check #12 (skills evidence) is necessary but not sufficient: a skill can be evidenced and still be fluff.
 - Group lightly with a semicolon when there are distinct clusters (e.g. operator-craft; then AI/technical), but only if it does not cost a page line.
 
 ### Length & One-Page Verification
 
-- After rendering, render a PNG and count pages (see CV Output Pipeline → Render & verify). For Nick the target is exactly **one page**. If it spills over, trim in this order: tighten the summary, merge or cut the weakest/oldest bullets, shorten the side-project line, drop vague filler — before touching design/margins.
+- After rendering, render a PNG and count pages (see CV Output Pipeline → Render & verify). For Nick the target is exactly **one page**. If it spills over, trim in this order: tighten the summary, merge or cut the weakest/oldest bullets, shorten the side-project line (within the Additional Information spec's limits), drop vague filler — before touching design/margins.
 - **Cut vague, source-unbacked filler bullets.** An older early-career role may stay as a **header-only entry** (company, title, dates, location) with NO bullet, rather than carry a generic line like "Delivered data-driven analytics and strategy recommendations to enterprise clients." A filler bullet invites doubt and costs a line. Origin: 2026-06-11 the IBM bullet (source file had only TODO placeholders) was retained until the candidate cut it.
 
 ### Structural Consistency
@@ -207,7 +213,7 @@ Run all 20 checks against the CV. Fix any issues found **in place** — rewrite 
 
 **12. Skills evidence + quality check:**
 - Every skill listed in the Skills section must appear substantively in at least one experience bullet. Remove any skill that cannot be evidenced in the experience section. "Substantively" means used as a tool/method in a described activity — not just name-dropped.
-- **Beyond evidence, apply Skills Section Discipline:** sentence case (proper nouns/tools only, no Title Case keyword dump); strongest/most-concrete items first; cut generic competency buzzwords even when evidenced ("cross-functional delivery", "structured problem-solving", "stakeholder management" are filler). A skill can pass the evidence test and still be fluff.
+- **Beyond evidence, apply Skills Section Discipline:** sentence case (proper nouns/tools only, no Title Case keyword dump); strongest/most-concrete items first; cut generic competency buzzwords even when evidenced ("cross-functional delivery", "structured problem-solving", "stakeholder management" are filler). A skill can pass the evidence test and still be fluff. **Exception: Nick's fixed *Operating* group is correct as written; see Skills Section Discipline.**
 
 **13. Metric specificity:**
 - Percentage-based claims must include the underlying metric being measured (e.g., "daily active user engagement by 25%" not just "engagement by 25%"). Include a timeframe or baseline where available from source data. Bare percentages without context are vague and invite skepticism.
@@ -238,7 +244,8 @@ Run all 20 checks against the CV. Fix any issues found **in place** — rewrite 
 
 **20. Summary + skills discipline:**
 - **Summary:** opener is a standable, true line (no hollow assertion); no metrics stuffed in to "prove" it; no location (it's in the header); ≤3 sentences; no key word repeated across sentences. Per **Summary Discipline**.
-- **Skills:** sentence case (proper nouns/tools only); strongest/most-concrete first; no generic competency buzzwords even if evidenced. Per **Skills Section Discipline**.
+- **Skills:** matches the fixed line in the generate-cv spec verbatim, renders in exactly two lines, italic group labels. Per **Skills Section Discipline**.
+- **Additional Information:** renders entirely on page 1; Portrait Crossword bullet ≤2 lines; agent-system bullet exactly 1 line with recounted numbers; GitHub on the Building line, not the header. Per the generate-cv **Additional Information spec**.
 
 ### QC Summary Template
 
@@ -316,6 +323,14 @@ depends on remembering does not accumulate, and a single vivid run then gets bui
 evidence. Origin: Nick, 2026-08-31, on why he wanted the log at all: *"I want to make sure that I have
 the data and I continue to revise it so that when I do end up building something, it's based off it and
 has a high sample size."*
+
+### Reuse Nick's standing answers before drafting new ones
+
+**"Proudest accomplishment" defaults to the McKinsey call-center pilot.** Nick chose it over Portrait Crossword on two consecutive
+applications (2026-08-31 and 2026-09-23). Start from the latest approved text (the newest
+`output/<company-slug>/*-application-answers.md` that uses it; the application loop log names it), which ends on his own line ("It was all about building trust with the team.")
+and deliberately does not volunteer that he rolled off before the full rollout. Offer a different story only if the role's
+hard filter needs one. **Factual form fields come from `data/profile.md`,** which now includes pronouns: do not ask again.
 
 ### Draft at final length the first time (measured target)
 
