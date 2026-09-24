@@ -323,7 +323,7 @@ For each: name, one-line description, why they're interesting, size/stage, HQ.
 
 ## Companies to Target — Ranked Shortlist
 
-**CRITICAL: rank by BOTH company-adjacency AND candidate-adjacency. A company that is similar to the anchor company is NOT automatically a fit for the candidate. The Samsara-from-Tulip lesson: Samsara is structurally adjacent to Tulip (vertical AI for ops-heavy industries, SF, public) but its hiring shape is sales-ops-heavy, which does NOT match a candidate looking for BizOps / Strategy & Operations / Chief of Staff seats. A shortlist that ranks Samsara high based on company-adjacency alone wastes the candidate's time.**
+**CRITICAL: rank by BOTH company-adjacency AND candidate-adjacency. A company that is similar to the anchor company is NOT automatically a fit for the candidate. The adjacency-is-not-fit lesson: a company can be structurally adjacent to the anchor (same vertical, city and stage) while its hiring shape is sales-ops-heavy, which does NOT match a candidate looking for BizOps / Strategy & Operations / Chief of Staff seats. A shortlist that ranks such a company high on company-adjacency alone wastes the candidate's time.**
 
 Rank the top 8-10 companies on a composite of:
 

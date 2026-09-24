@@ -245,7 +245,7 @@ Run all 20 checks against the CV. Fix any issues found **in place** — rewrite 
 **20. Summary + skills discipline:**
 - **Summary:** opener is a standable, true line (no hollow assertion); no metrics stuffed in to "prove" it; no location (it's in the header); ≤3 sentences; no key word repeated across sentences. Per **Summary Discipline**.
 - **Skills:** matches the fixed line in the generate-cv spec verbatim, renders in exactly two lines, italic group labels. Per **Skills Section Discipline**.
-- **Additional Information:** renders entirely on page 1; Portrait Crossword bullet ≤2 lines; agent-system bullet exactly 1 line with recounted numbers; GitHub on the Building line, not the header. Per the generate-cv **Additional Information spec**.
+- **Additional Information:** renders entirely on page 1; AI-app bullet ≤2 lines; agent-system bullet exactly 1 line with recounted numbers; GitHub on the Building line, not the header. Per the generate-cv **Additional Information spec**.
 
 ### QC Summary Template
 
@@ -326,7 +326,7 @@ has a high sample size."*
 
 ### Reuse Nick's standing answers before drafting new ones
 
-**"Proudest accomplishment" defaults to the McKinsey call-center pilot.** Nick chose it over Portrait Crossword on two consecutive
+**"Proudest accomplishment" defaults to the McKinsey call-center pilot.** Nick chose it over the AI-app story on two consecutive
 applications (2026-08-31 and 2026-09-23). Start from the latest approved text (the newest
 `output/<company-slug>/*-application-answers.md` that uses it; the application loop log names it), which ends on his own line ("It was all about building trust with the team.")
 and deliberately does not volunteer that he rolled off before the full rollout. Offer a different story only if the role's
