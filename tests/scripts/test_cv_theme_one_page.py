@@ -1,8 +1,8 @@
 """The CV theme must render a full-length CV to ONE page.
 
 THE DRIFT THIS EXISTS TO STOP (2026-09-23). Four values in
-`framework/cv-themes/tuck-mbb.yaml` did not match what shipped CVs actually used.
-Someone had hand-tightened a render to make it fit one page and never wrote the
+`framework/cv-themes/tuck-mbb.yaml` did not match what some hand-tuned one-page
+renders used (others shipped at the old values). Someone had hand-tightened a render to make it fit one page and never wrote the
 values back to the theme, so `cv_merge_theme.py` composed a TWO-PAGE CV from
 content that had shipped as one page. Nothing caught it: the merge exited 0, the
 render exited 0, and the only symptom was a second page nobody looked at. It was
