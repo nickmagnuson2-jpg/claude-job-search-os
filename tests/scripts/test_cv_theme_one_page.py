@@ -48,9 +48,10 @@ REPO = Path(__file__).resolve().parents[2]
 THEME = REPO / "framework" / "cv-themes" / "tuck-mbb.yaml"
 MERGE = REPO / "tools" / "cv_merge_theme.py"
 
-# The density values that shipped CVs actually render at. Changing any of these
-# loosens the layout; the render test below is what tells you whether you have
-# pushed a real CV onto a second page.
+# The density values some hand-tuned one-page renders used (not every shipped CV:
+# some shipped at the old theme values; see the theme's DRIFT FIX note). Only
+# line_spacing decides the page count of the fixture; the render test below is what
+# tells you whether a real-length CV has been pushed onto a second page.
 SHIPPED_DENSITY = {
     "name": "19pt",
     "line_spacing": "0.52em",
@@ -63,6 +64,7 @@ cv:
   name: CASEY DOE
   location: Example City, CA
   email: casey.doe@example.com
+  phone: tel:+1-415-555-0100
   social_networks:
     - network: LinkedIn
       username: casey-doe
@@ -157,7 +159,7 @@ def test_theme_pins_the_shipped_density_values():
             missing.append(f"{key}: {value}")
     assert not missing, (
         "framework/cv-themes/tuck-mbb.yaml no longer carries the density values that "
-        f"shipped CVs render at: {missing}. If this was deliberate, run the render test "
+        f"hand-tuned one-page renders used: {missing}. If this was deliberate, run the render test "
         "below and confirm a full-length CV is still ONE page, then update SHIPPED_DENSITY."
     )
 
