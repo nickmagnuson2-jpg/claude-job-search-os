@@ -863,6 +863,12 @@ def main(argv=None):
         # The prediction is write-once. Re-locking would rewrite will_be_probed and
         # made_at_version, which set/patch are forbidden to touch, so --unlock does not
         # cover it (cross-model 2026-09-23, Grok F2).
+        # A recorded delivery means the room already happened: a prediction stamped now
+        # would be hindsight labelled pre-room, and F13 would PASS on it (cross-model
+        # 2026-09-23 final, Grok F1). record-delivery is the path for a shipped frame.
+        if isinstance(current.get("delivery"), dict):
+            die("REFUSED: a delivery is already recorded for this frame, so a pre-room "
+                "prediction can no longer be stamped. Nothing was written.")
         if current.get("locked") is True:
             die("REFUSED: this frame is already locked; its pre-room prediction is "
                 "write-once and cannot be re-stamped, with or without --unlock. "

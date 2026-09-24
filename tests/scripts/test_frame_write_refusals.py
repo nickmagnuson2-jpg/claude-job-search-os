@@ -662,3 +662,17 @@ def test_relocking_a_locked_frame_is_refused_even_with_unlock(tmp_path):
                     "a new guess", "--today", "2026-09-23", "--unlock", "re-lock")
     assert code != 0 and "already locked" in res["message"]
     assert p.read_bytes() == before
+
+
+def test_lock_is_refused_once_a_delivery_is_recorded(tmp_path):
+    """Cross-model 2026-09-23 final round (Grok F1, P0). record-delivery then lock
+    stamped a 'pre-room' prediction after the room, and F13 would then PASS."""
+    p = good_frame(tmp_path)
+    d = yaml.safe_load(p.read_text(encoding="utf-8"))
+    d["delivery"] = {"version": d["version"], "at": "2026-09-20"}
+    p.write_text(yaml.safe_dump(d, sort_keys=False), encoding="utf-8")
+    before = p.read_bytes()
+    code, res = run("lock", "--frame", p, "--expect-version", d["version"],
+                    "--will-be-probed", "hindsight", "--today", "2026-09-23")
+    assert code != 0 and "delivery" in res["message"]
+    assert p.read_bytes() == before

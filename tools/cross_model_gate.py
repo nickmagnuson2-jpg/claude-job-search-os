@@ -753,7 +753,10 @@ def main(argv=None) -> int:
     waive = os.environ.get("CODEX_VERIFY_WAIVE", "").strip()
     if waive:
         v = qualifies(changes)
-        if v.qualified:
+        # Record whenever the waiver SKIPS something: a required verification, or an
+        # open P0 on a pushed path. Since open P0s block every push, a small push waived
+        # past one exited 0 unrecorded (cross-model 2026-09-23 final, Codex F1/Grok F4).
+        if v.qualified or open_p0_against(root, {p for p, _a, _r in changes}):
             record_waiver(root, [p for p, _a, _r in changes], waive)
             print(f"cross-model verification WAIVED: {waive}\n"
                   f"  recorded; total waivers: {waiver_count(root)}", file=sys.stderr)

@@ -798,12 +798,23 @@ def check_F16(frame):
         problems.append("the frame carries no integer `version`, so `delivery.version` "
                         f"{dv} cannot be checked against it; an unbounded delivery "
                         "version is not a verified one")
+    elif dv < 1:
+        problems.append(f"`delivery.version` is {dv}; versions start at 1 and must be "
+                        ">= 1 (cross-model 2026-09-23 final, Codex F2)")
     elif dv > cur:
         problems.append(f"`delivery.version` is {dv}, ahead of the current version "
                         f"{cur}; a version that does not exist yet cannot have shipped")
 
-    if not str(delivery.get("at") or "").strip():
+    at = delivery.get("at")
+    if not str(at or "").strip():
         problems.append("`delivery.at` is empty -- when it went out")
+    elif not isinstance(at, _dt.date):
+        # YAML may load an unquoted date as a date already; text must parse as one.
+        try:
+            _dt.date.fromisoformat(str(at).strip())
+        except ValueError:
+            problems.append(f"`delivery.at` is {at!r}, not a YYYY-MM-DD date; an "
+                            "arbitrary string cannot order the delivery against anything")
 
     if delivery.get("retrospective") is True:
         if not str(delivery.get("basis") or "").strip():

@@ -1899,3 +1899,26 @@ def test_F2b_an_unstamped_element_cannot_hide_a_retrofitted_citation():
     r = cfi.check_F2b(f)
     assert r.state == cfi.FAIL
     assert any("no first_seen" in o for o in r.offenders)
+
+
+@pytest.mark.parametrize("dv", [0, -3])
+def test_F16_rejects_a_delivery_version_below_one(dv):
+    """Cross-model 2026-09-23 final round (Codex F2, P0). Versions start at 1."""
+    f = clean_frame()
+    f["delivery"] = {"version": dv, "at": "2026-09-20"}
+    r = cfi.check_F16(f)
+    assert r.state == cfi.FAIL and any(">= 1" in o for o in r.offenders)
+
+
+@pytest.mark.parametrize("at", ["soon", "2026-13-40", "20 Sept"])
+def test_F16_rejects_a_delivery_date_that_is_not_a_real_date(at):
+    f = clean_frame()
+    f["delivery"] = {"version": 2, "at": at}
+    r = cfi.check_F16(f)
+    assert r.state == cfi.FAIL and any("YYYY-MM-DD" in o for o in r.offenders)
+
+
+def test_F16_accepts_a_real_date_and_version():
+    f = clean_frame()
+    f["delivery"] = {"version": 2, "at": "2026-09-20"}
+    assert cfi.check_F16(f).state == cfi.PASS

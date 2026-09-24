@@ -1443,3 +1443,14 @@ def test_an_open_P0_on_a_changed_NON_TRIGGER_path_still_blocks(tmp_path):
     v = g.check(tmp_path, [(hook, 3, 1), (low, 4, 1)], since=0)
     assert v.qualified and low not in (v.triggers or [])
     assert v.blocked is True and "2.F9" in v.message
+
+
+def test_cli_RECORDS_a_waiver_that_bypasses_an_open_P0_on_a_small_push(tmp_path):
+    """Cross-model 2026-09-23 final round (Codex F1 / Grok F4, P0). Once open P0s block
+    every push, waiving a small push past one is a real skip; it exited 0 and recorded
+    nothing because the recording was gated on qualification."""
+    _row(tmp_path, paths=["docs/usage.md"], findings=[_p0()])
+    r = _cli(tmp_path, "3\t0\tdocs/usage.md\n", {"CODEX_VERIFY_WAIVE": "ship the typo fix"})
+    assert r.returncode == 0 and "WAIVED" in r.stderr
+    assert [x for x in g.read_ledger(tmp_path) if x.get("waived")][0]["reason"] == \
+        "ship the typo fix"
