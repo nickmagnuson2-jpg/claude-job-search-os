@@ -31,11 +31,11 @@ USAGE (the policy -- which filters matter -- stays with the caller):
     from population_probe import compare_populations, Filter
 
     report = compare_populations(
-        a=new_service_rows, b=prior_service_rows,
-        label_a="new service", label_b="prior service",
+        a=rows_a, b=rows_b,
+        label_a="source A", label_b="source B",
         filters=[
-            Filter("junk", lambda d: d["cr"].isin(JUNK)),
-            Filter("undispositioned", lambda d: d["cr"].eq("No Disposition")),
+            Filter("excluded", lambda d: d["status"].isin(EXCLUDED)),
+            Filter("unlabelled", lambda d: d["status"].eq("unlabelled")),
         ],
     )
     print(report.render())

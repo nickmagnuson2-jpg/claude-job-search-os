@@ -1784,7 +1784,7 @@ def test_norm_number_keeps_full_precision():
     normalized to the same token 1.23457e+06 and F15 read one as carrying the other."""
     assert cfi._norm_number("1234567.5") != cfi._norm_number("1234568.1")
     assert cfi._norm_number("1234567.5") == "1234567.5"
-    assert cfi._norm_number("1,063,326") != cfi._norm_number("1,063,248")
+    assert cfi._norm_number("1,234,567") != cfi._norm_number("1,234,489")
 
 
 def test_norm_number_still_treats_formatting_as_formatting():

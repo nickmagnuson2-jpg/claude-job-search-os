@@ -13,10 +13,9 @@ Those two questions fail in opposite directions and only this one can send Nick 
 work he already finished.
 
 ORIGIN (2026-09-20). Asked "what should I do", Claude answered from a client engagement's todo note,
-which read `NOTHING IS BUILT - no slide exists`, written the night of 2026-09-16. By then the
-frame had gone v29 -> v46, three cross-model verification rounds had run, both deliverables
-had been rebuilt at 07:36, and the work had been emailed to the client at 07:55 — twelve hours
-before its deadline. The note was never wrong. It aged, and it aged fastest *because* the work
+which read `NOTHING IS BUILT - no slide exists`, written days earlier. By then the frame had
+moved on by many versions, several cross-model verification rounds had run, and the work had
+already been sent to the client ahead of its deadline. The note was never wrong. It aged, and it aged fastest *because* the work
 was active: logging competes with doing and doing wins.
 
 So the rows worked hardest carry the stalest notes, which inverts how anyone reads a tracker.
@@ -33,7 +32,7 @@ network reasons is a reporter people stop trusting.
 
 IT DOES NOT COVER ITS OWN ORIGIN CASE, AND THAT IS STATED RATHER THAN HIDDEN. The 2026-09-20
 divergence lived in `data/job-todos.md`, not in the pipeline: that engagement's pipeline row was
-current (`2026-09-20 | Take-home submitted (9/20)`) while the todo note still read
+current (it recorded the submission) while the todo note still read
 `NOTHING IS BUILT`. Verified against live data the day this was written — this scanner reports
 2 diverged rows and that row is correctly not one of them.
 
@@ -45,9 +44,8 @@ only when a field changed.
 **RESOLVED 2026-09-20, by Nick: the baseline IS recoverable, from the session transcripts.**
 `~/.claude/projects/<project-slug>/*.jsonl` records every tool call with an ISO timestamp, so
 the last `todo_write.py add|update` naming a task is that note's write-date. Verified on the
-case that produced this tool: the todo was added 2026-09-15T00:33:56Z and last updated
-2026-09-17T05:36:25Z, which is 2026-09-16 22:36 PDT and matches the note's own text ("2026-09-16
-NIGHT, SESSION END") to the evening. That is the missing baseline.
+case that produced this tool: the last `todo_write.py update` naming the task fell on the same
+evening the note's own text dates itself to. That is the missing baseline.
 
 NOT BUILT HERE, and the reason is cost rather than design: the transcript tree is ~1.0 GB across
 124 files, so a naive scan per todo is not something to put on a daily surface. The shape that
