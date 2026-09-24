@@ -117,6 +117,7 @@ $GIT add --force \
   "$WORK_TREE/tools/.owner-identity.txt" \
   "$WORK_TREE/tools/.private-backup.conf" \
   "$WORK_TREE/tools/.cross-model-ledger.jsonl" \
+  "$WORK_TREE/tools/.personal-recipients.txt" \
   2>/dev/null
 
 echo "Committing..."

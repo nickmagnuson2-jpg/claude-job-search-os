@@ -14,6 +14,21 @@
 #
 # Architecture decision 2026-05-12: chose YAML compose over Typst fork.
 # See data/job-todos.md row "CV-INFRA 4/6" for full rationale.
+#
+# DRIFT FIX 2026-09-23: some recent CVs were hand-tuned after composing to
+# name 19pt / line_spacing 0.52em / space_above 0.28cm /
+# space_between_regular_entries 0.32em to fit one page, and the tuning was never
+# written back here, so composing a full-length CV through this theme gave TWO
+# pages. (Not every CV needed it: a shorter one shipped on one page at the old
+# values. Corrected after cross-model review.) line_spacing is the value that
+# decides the page count; the other three are pinned for consistency.
+# Caught 2026-09-23 while building a generic deployment-strategist CV.
+# The four values below are now the shipped ones.
+#
+# ONE PAGE IS THE CONTRACT. If a content change pushes the render to two pages,
+# fix the CONTENT, not these numbers. Verify page count by counting /Type /Page
+# in the PDF bytes, NOT with `mdls` — Spotlight serves a cached page count for
+# an overwritten file and reported 2 pages for a 1-page PDF on 2026-09-23.
 
 design:
   theme: classic
@@ -26,12 +41,12 @@ design:
       section_titles: Times New Roman
     font_size:
       body: 10.5pt
-      name: 18pt
+      name: 19pt
       section_titles: 1.1em
     small_caps:
       name: false
       section_titles: true
-    line_spacing: 0.6em
+    line_spacing: 0.52em
     bold:
       section_titles: true
   colors:
@@ -60,10 +75,10 @@ design:
   section_titles:
     type: with_full_line
     line_thickness: 0.5pt
-    space_above: 0.25cm
+    space_above: 0.28cm
     space_below: 0.15cm
   sections:
-    space_between_regular_entries: 0.3em
+    space_between_regular_entries: 0.32em
     space_between_text_based_entries: 0.1em
     show_time_spans_in: []
   entries:
