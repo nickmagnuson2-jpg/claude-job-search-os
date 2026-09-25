@@ -1,9 +1,9 @@
 ---
-name: codex-verify
-description: Run a second model (Codex) against work that matters and land the result where something reads it. Use when verifying a plan, a handoff, a build log, or a large code change before pushing; when a push is blocked by the cross-model gate; or when Nick says "have codex check this", "validate this with codex", "second opinion". Also covers the diverge mode for an independent take on a goal.
+name: verify
+description: Run second models (Codex, plus Grok and Fable) against work that matters and land the result where something reads it. Use when verifying a plan, a handoff, a build log, or a large code change before pushing; when a push is blocked by the cross-model gate; when a finished document for a named reader (a take-home, brief, deck, page or cover letter) needs an accuracy, usefulness and confidentiality review (tools/reader_review.py); or when Nick says "verify this", "have codex check this", "validate this with codex", "second opinion". Also covers the diverge mode for an independent take on a goal.
 ---
 
-# /codex-verify
+# /verify
 
 A second model finds what the author cannot see. Measured across four real runs on
 2026-09-02 and 2026-09-03, Codex found something Claude had missed **every time**:
@@ -37,6 +37,27 @@ PYTHONIOENCODING=utf-8 python3 tools/codex_verify.py \
 
 `--print-only` assembles the prompt without spending a run. `--mode diverge` for the
 independent form.
+
+## Reader review: a finished document someone will read
+
+For a page, brief, prep pack or take-home written FOR A NAMED READER, do not hand-build the
+prompt. `tools/reader_review.py` renders the document (HTML: the rendered text with hidden and
+collapsed content included, plus light-mode screenshots at the page's measured height; Markdown:
+text as-is) and runs Codex, Fable and Grok in parallel on three questions: **Q1 accuracy**
+(against `--source-dir` if given), **Q2 usefulness to this reader**, **Q3 confidentiality**
+(only what `--protect` names; skipped explicitly when omitted). Grok gets text only.
+
+```bash
+PYTHONIOENCODING=utf-8 python3 tools/reader_review.py output/<slug>/<file>.html \
+  --reader "Director of Operations at a mid-size manufacturer" \
+  --purpose "how to set up a monthly operating review" \
+  --protect "internal figures from the author's past employers" \
+  --source-dir output/<slug>/research --known-errors "..."
+```
+
+`--dry-run` prints the prompt and plan. Inputs land in `output/analysis/reader-review-inputs/`,
+reports in `output/analysis/MMDDYY-<model>-<slug>-reader-review.md`. Pair it with one
+`--mode diverge` run on the reader's goal (artifact withheld) to see what the page missed.
 
 ## What to feed it — this is the part that decides whether the run is worth anything
 

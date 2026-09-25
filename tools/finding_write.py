@@ -35,7 +35,7 @@ import inbox_lock  # noqa: E402
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LEDGER_NAME = ".cross-model-ledger.jsonl"
 
-# Matches the vocabulary in .claude/skills/codex-verify/SKILL.md: a finding stays open
+# Matches the vocabulary in .claude/skills/verify/SKILL.md: a finding stays open
 # until someone marks it fixed, rejected with a reason, or parked with a reason.
 DISPOSITIONS = ("fixed", "rejected", "parked")
 

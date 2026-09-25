@@ -142,7 +142,7 @@ from tools import cross_model_gate as g
 print(g.summary(Path('.')))"
 ```
 
-This is the consumer half of `/codex-verify`. Built 2026-09-03 with the drain still
+This is the consumer half of `/verify` (renamed from `/codex-verify`). Built 2026-09-03 with the drain still
 fresh: a Codex report written to `output/analysis/` and read by nobody is the
 career-scan defect in a new costume, and the whole reason findings carry a
 `disposition` is so an unresolved one cannot be quietly filed away.
