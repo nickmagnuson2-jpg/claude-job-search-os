@@ -274,9 +274,18 @@ def test_main_surfaces_long_runs_in_its_output(tmp_path):
     """Wiring guard: the check can be correct and still never reach the reader."""
     repo = _mk_run(tmp_path, total=109, banked=3, idle_hours=10.0)
     (repo / "tools" / "launchd").mkdir(parents=True, exist_ok=True)
+    # A stub pgrep that finds nothing. The real one matched the nightly sweep that was
+    # RUNNING this test, so the fake run read as alive, no STALLED warning was emitted,
+    # and three tools went baseline_red every night at 22:00 while passing all day
+    # (diagnosed 2026-09-24). The subprocess must not depend on what else is running.
+    stub_bin = tmp_path / "stub-bin"
+    stub_bin.mkdir()
+    (stub_bin / "pgrep").write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+    (stub_bin / "pgrep").chmod(0o755)
+    env = {**_os.environ, "PATH": f"{stub_bin}{_os.pathsep}{_os.environ.get('PATH', '')}"}
     r = subprocess.run(
         [sys.executable, str(MOD_PATH), "--repo-root", str(repo), "--stall-hours", "4"],
-        capture_output=True, text=True)
+        capture_output=True, text=True, env=env)
     assert r.returncode == 0, r.stderr
     out = _json.loads(r.stdout)
     assert "long_runs" in out

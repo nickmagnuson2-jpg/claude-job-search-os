@@ -638,6 +638,12 @@ def _run_sweep_inner(targets, out: Path, only_mode: bool = False) -> int:
                        "code": d.get("code"),
                        "message": d.get("message"),
                        "error_tests": d.get("tests") if d.get("status") == "error" else None,
+                       # WHICH test died, not just which were mapped. error_tests lists
+                       # every mapped file, so on 2026-09-24 five nights of baseline_red
+                       # named no culprit, while mutation_check had printed the failing
+                       # node id every night and this record dropped it.
+                       "failed_tests": d.get("failed_tests"),
+                       "output_tail": (d.get("output_tail") or "")[-2000:] or None,
                        "stderr": stderr[-1000:] if d.get("status") != "ok" else None}
             except (json.JSONDecodeError, AttributeError) as exc:
                 rec = {**base, "status": "UNAUDITED_ERROR", "error": str(exc)[:200],
@@ -647,7 +653,9 @@ def _run_sweep_inner(targets, out: Path, only_mode: bool = False) -> int:
             fh.write(json.dumps(rec) + "\n")
         print(f"{time.strftime('%H:%M:%S')}  [{i}/{len(todo)}] {t['tool']}: "
               f"status={rec.get('status')} survived={rec.get('survived')} "
-              f"of {t['mutants']} ({base['elapsed']}s)", flush=True)
+              f"of {t['mutants']} ({base['elapsed']}s)"
+              + (f" code={rec.get('code')} first_failed={(rec.get('failed_tests') or [None])[0]}"
+                 if rec.get("status") == "error" else ""), flush=True)
 
     # Re-read the bank: a completed pass over a corpus that still contains
     # unmeasured rows is not a successful sweep, whether they errored tonight or on

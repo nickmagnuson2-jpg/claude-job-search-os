@@ -432,6 +432,26 @@ def test_no_target_list_is_an_error_not_an_empty_clean_sweep(repo, monkeypatch, 
     assert not (state / "baseline.jsonl").exists()
 
 
+def test_a_baseline_red_record_names_the_test_that_failed(repo, monkeypatch, capsys):
+    """error_tests is every MAPPED file; failed_tests is the one that died. Five nights of
+    baseline_red (2026-09-18..23) were undiagnosable because only the first was kept."""
+    state = write_targets(repo, [{"tool": "tools/a.py", "w": False, "h": False,
+                                  "tests": 2, "mutants": 10}])
+    set_control(repo, results={"tools/a.py": {
+        "status": "error", "code": "baseline_red", "_rc": 1,
+        "tests": ["tests/scripts/test_a.py", "tests/scripts/test_b.py"],
+        "failed_tests": ["tests/scripts/test_b.py::test_dies"],
+        "output_tail": "E   assert False"}})
+    mod = load(repo, monkeypatch)
+    mod.run_sweep(state)
+    log = capsys.readouterr().out
+
+    r = banked(state)[0]
+    assert r["failed_tests"] == ["tests/scripts/test_b.py::test_dies"]
+    assert "assert False" in r["output_tail"]
+    assert "first_failed=tests/scripts/test_b.py::test_dies" in log
+
+
 def test_each_measured_tool_banks_one_record_with_its_result(repo, monkeypatch, capsys):
     state = write_targets(repo, [{"tool": "tools/a.py", "w": True, "h": False,
                                   "tests": 3, "mutants": 10}])
