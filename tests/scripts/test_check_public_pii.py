@@ -460,6 +460,67 @@ def test_extract_sed_inplace_quoted_expression_with_spaces_is_one_token():
     assert extract_write_targets("sed -E -i 's/a/b/' docs/a.md") == ["docs/a.md"]
 
 
+@pytest.mark.parametrize("cmd", [
+    # adjacent quoted + bare spans are ONE shell word: the expression is "s/a/-e"
+    "sed -i 's/a/'-e docs/public.md",
+    # after --, "-e" is a filename, not an option
+    "sed -i 's/a/b/' -- -e docs/public.md",
+    # '|' inside a quoted expression is not a pipeline
+    "sed -i 's/a|b/c/' docs/public.md",
+    "sed -i 's/a;b/c/' docs/public.md",
+    # long-form in-place flag
+    "sed --in-place 's/a/b/' docs/public.md",
+    "sed --in-place=.bak 's/a/b/' docs/public.md",
+    # options after the operands (GNU permutes)
+    "sed 's/a/b/' docs/public.md -i",
+    # clustered short options
+    "sed -Ei 's/a/b/' docs/public.md",
+    "sed -ne 's/a/b/p' -i docs/public.md",
+])
+def test_extract_sed_inplace_never_drops_the_public_file(cmd):
+    """Codex review of c0a2a61 (2026-09-28): the -e/-f skip and a quote-unaware
+    command regex each dropped a real public target. False negatives here leak."""
+    assert "docs/public.md" in extract_write_targets(cmd)
+
+
+def test_extract_sed_inplace_escaped_quotes_stay_in_the_expression():
+    cmd = 'sed -i "s/a/\\"hello world\\"/" docs/a.md'
+    assert extract_write_targets(cmd) == ["docs/a.md"]
+
+
+@pytest.mark.parametrize("cmd,expected", [
+    # script given by option: EVERY operand is a file
+    ("sed --expression 's/a/b/' --in-place docs/a.md docs/b.md", ["docs/a.md", "docs/b.md"]),
+    ("sed --expression='s/a/b/' -i docs/a.md docs/b.md", ["docs/a.md", "docs/b.md"]),
+    ("sed --file edits.sed -i docs/a.md", ["docs/a.md"]),
+    ("sed -fedits.sed -i docs/a.md", ["docs/a.md"]),
+    ("sed -es/a/b/ -i docs/a.md", ["docs/a.md"]),
+    # options that take an argument must consume it, not turn it into the script
+    ("sed -l 5 -i 's/a/b/' docs/a.md", ["docs/a.md"]),
+    ("sed -l5 -i 's/a/b/' docs/a.md", ["docs/a.md"]),
+    ("sed --line-length 5 -i 's/a/b/' docs/a.md", ["docs/a.md"]),
+    ("sed --line-length=5 -i 's/a/b/' docs/a.md", ["docs/a.md"]),
+    # a long option containing the letter i is not -i
+    ("sed --posix 's/a/b/' docs/a.md", []),
+    ("sed --debug -E 's/a/b/' docs/a.md", []),
+])
+def test_extract_sed_option_forms(cmd, expected):
+    assert extract_write_targets(cmd) == expected
+
+
+def test_sed_parser_unbalanced_quotes_over_extracts():
+    """shlex cannot parse it; the fallback must keep the file (a miss leaks)."""
+    from check_public_pii import _sed_inplace_files
+    got = _sed_inplace_files("-i 's/a/b docs/public.md")
+    assert "docs/public.md" in got
+    assert "-i" not in got
+
+
+def test_extract_sed_without_inplace_writes_nothing():
+    assert extract_write_targets("sed 's/a/b/' docs/a.md") == []
+    assert extract_write_targets("sed -n -e 's/a/b/p' docs/a.md") == []
+
+
 def test_extract_skips_unresolvable_variable_target():
     assert extract_write_targets('echo hi > "$OUT"') == []
     assert extract_write_targets("echo hi > $OUT") == []

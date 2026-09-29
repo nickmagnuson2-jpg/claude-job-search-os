@@ -27,6 +27,7 @@ NOT wired on MultiEdit or NotebookEdit — those write paths are ungated.
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 
@@ -99,7 +100,11 @@ _REDIRECT_RE = re.compile(rf'(?:^|[\s;|&(])\d?>>?\|?\s*(?!&)({_QUOTED}|{_BARE})'
 # tee takes MANY files. Capturing only the first let `tee data/a.md docs/leak.md`
 # through (2026-08-19): put the public file anywhere but first and it was unseen.
 _TEE_RE = re.compile(rf'(?:^|[\s;|&(])tee\s+((?:-\S+\s+)*)((?:{_QUOTED}|{_BARE})(?:\s+(?:{_QUOTED}|{_BARE}))*)')
-_SED_I_RE = re.compile(r'(?:^|[\s;|&(])sed\s+([^;|&]*?-i\b[^;|&]*)')
+# `sed` plus its argument run. Quote-aware, so a ';', '|' or '&' inside a quoted
+# expression does not end the run (it did, which dropped the target: 2026-09-28).
+_SED_ARGS_RE = re.compile(
+    r"""(?:^|[\s;|&(])sed\s+((?:"(?:\\.|[^"\\])*"|'[^']*'|\\.|[^;|&'"\\])*)"""
+)
 _DD_OF_RE = re.compile(rf'(?:^|[\s;|&(])dd\s+[^;|&]*?\bof=({_QUOTED}|{_BARE})')
 
 # Descriptor sinks and device files: a write here never reaches the repo.
@@ -315,6 +320,74 @@ def mask_heredoc_bodies(command: str) -> str:
     return "".join(out)
 
 
+def _sed_inplace_files(argstr: str) -> list[str]:
+    """Files a `sed` argument string edits in place, parsed the way sed reads them.
+
+    Shell words come from shlex, so quotes, escapes and adjacent quoted/bare spans
+    behave as the shell does. Then sed's own rules: options may appear anywhere
+    until `--`; -e/-f (and the long forms) take an argument and mean the script is
+    NOT the first operand; otherwise the first operand is the script and the rest
+    are files. Returns [] when there is no -i / --in-place.
+
+    Replaces a token-shape heuristic ("quoted = script, bare = file") that produced
+    phantom targets from a spaced expression and, once patched, dropped real ones
+    (Codex review of c0a2a61, 2026-09-28). If shlex cannot parse the string
+    (unbalanced quotes), every bare word is returned: over-extraction only costs a
+    false positive, and a missed public target leaks.
+    """
+    try:
+        words = shlex.split(argstr, posix=True)
+    except ValueError:
+        return [w for w in argstr.split() if w and w[0] not in "-\"'"]
+
+    inplace = False
+    script_given = False
+    operands: list[str] = []
+    k = 0
+    end_opts = False
+    while k < len(words):
+        w = words[k]
+        k += 1
+        if end_opts or w == "-" or not w.startswith("-"):
+            operands.append(w)
+            continue
+        if w == "--":
+            end_opts = True
+            continue
+        if w.startswith("--"):
+            name, _, val = w[2:].partition("=")
+            if name == "in-place":
+                inplace = True
+            elif name in ("expression", "file"):
+                script_given = True
+                if not _:
+                    k += 1          # value is the next word
+            elif name == "line-length" and not _:
+                k += 1
+            continue
+        # short-option cluster, e.g. -Ei, -ne, -i.bak, -es/a/b/
+        chars = w[1:]
+        for pos, ch in enumerate(chars):
+            if ch == "i":
+                inplace = True
+                # BSD: `-i ''` passes the backup suffix as its own (empty) word.
+                if pos == len(chars) - 1 and k < len(words) and words[k] == "":
+                    k += 1
+                break                   # the rest of the cluster is the suffix
+            if ch in "ef":
+                script_given = True
+                if pos == len(chars) - 1:
+                    k += 1              # argument is the next word
+                break                   # otherwise the rest is the argument
+            if ch == "l":
+                if pos == len(chars) - 1:
+                    k += 1
+                break
+    if not inplace:
+        return []
+    return operands if script_given else operands[1:]
+
+
 def extract_write_targets(command: str) -> list[str]:
     """Paths this shell command may WRITE to.
 
@@ -345,30 +418,8 @@ def extract_write_targets(command: str) -> list[str]:
     for m in _DD_OF_RE.finditer(command):
         targets.append(_unquote(m.group(1)))
 
-    # `sed -i` writes in place. The script expression is normally quoted, and the
-    # macOS backup-suffix arg is an empty quoted string, so the BARE tokens after -i
-    # are the files. Flags, and the argument of -e/-f, are skipped.
-    # Tokenize quote-aware: a whitespace split broke a quoted expression into words,
-    # and each word became a phantom "public" target (a nonexistent path reads as
-    # not-ignored), blocking a write to a gitignored file (2026-09-28).
-    for m in _SED_I_RE.finditer(command):
-        seen_i = False
-        skip_next = False
-        for tok in re.findall(rf"{_QUOTED}|{_BARE}", m.group(1)):
-            if skip_next:
-                skip_next = False
-                continue
-            if tok.startswith("-i"):
-                seen_i = True
-                continue
-            if tok in ("-e", "-f", "--expression", "--file"):
-                skip_next = True
-                continue
-            if not seen_i or tok.startswith("-"):
-                continue
-            if tok[0] in "\"'":       # script expression or macOS '' suffix
-                continue
-            targets.append(tok)
+    for m in _SED_ARGS_RE.finditer(command):
+        targets.extend(_sed_inplace_files(m.group(1)))
 
     out = []
     for t in targets:

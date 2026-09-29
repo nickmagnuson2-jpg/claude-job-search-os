@@ -295,7 +295,7 @@ def cmd_update(args, pipeline_path: Path, dry_run: bool) -> None:
 
     if dry_run:
         out_ok("update", f"Would update: {args.company} → {args.new_stage}",
-               dry_run=True, role=cols[1] if len(cols) > 1 else "",
+               dry_run=True, role=cols[1],
                would_mutate=[{"file": str(pipeline_path), "line": row_idx + 1}])
         return
 
@@ -365,7 +365,7 @@ def cmd_remove(args, pipeline_path: Path, dry_run: bool) -> None:
 
     if dry_run:
         out_ok("remove", f"Would soft-delete: {args.company}",
-               dry_run=True, role=cols[1] if len(cols) > 1 else "",
+               dry_run=True, role=cols[1],
                would_mutate=[{"file": str(pipeline_path), "line": row_idx + 1}])
         return
 
