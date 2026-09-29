@@ -320,26 +320,8 @@ def mask_heredoc_bodies(command: str) -> str:
     return "".join(out)
 
 
-def _sed_inplace_files(argstr: str) -> list[str]:
-    """Files a `sed` argument string edits in place, parsed the way sed reads them.
-
-    Shell words come from shlex, so quotes, escapes and adjacent quoted/bare spans
-    behave as the shell does. Then sed's own rules: options may appear anywhere
-    until `--`; -e/-f (and the long forms) take an argument and mean the script is
-    NOT the first operand; otherwise the first operand is the script and the rest
-    are files. Returns [] when there is no -i / --in-place.
-
-    Replaces a token-shape heuristic ("quoted = script, bare = file") that produced
-    phantom targets from a spaced expression and, once patched, dropped real ones
-    (Codex review of c0a2a61, 2026-09-28). If shlex cannot parse the string
-    (unbalanced quotes), every bare word is returned: over-extraction only costs a
-    false positive, and a missed public target leaks.
-    """
-    try:
-        words = shlex.split(argstr, posix=True)
-    except ValueError:
-        return [w for w in argstr.split() if w and w[0] not in "-\"'"]
-
+def _parse_sed_args(words: list[str], dialect: str) -> list[str]:
+    """In-place files for already-split sed words, under one dialect's rules."""
     inplace = False
     script_given = False
     operands: list[str] = []
@@ -354,38 +336,76 @@ def _sed_inplace_files(argstr: str) -> list[str]:
         if w == "--":
             end_opts = True
             continue
-        if w.startswith("--"):
-            name, _, val = w[2:].partition("=")
+        if w.startswith("--"):                  # GNU long options
+            name, has_value, _ = w[2:].partition("=")
             if name == "in-place":
                 inplace = True
             elif name in ("expression", "file"):
                 script_given = True
-                if not _:
-                    k += 1          # value is the next word
-            elif name == "line-length" and not _:
+                if not has_value:
+                    k += 1
+            elif name == "line-length" and not has_value:
                 k += 1
             continue
-        # short-option cluster, e.g. -Ei, -ne, -i.bak, -es/a/b/
-        chars = w[1:]
+        chars = w[1:]                           # short-option cluster
         for pos, ch in enumerate(chars):
-            if ch == "i":
+            last = pos == len(chars) - 1
+            if ch == "i" or (ch == "I" and dialect == "bsd"):
                 inplace = True
-                # BSD: `-i ''` passes the backup suffix as its own (empty) word.
-                if pos == len(chars) - 1 and k < len(words) and words[k] == "":
+                if last and k < len(words) and (dialect == "bsd" or words[k] == ""):
+                    # BSD: the suffix is the next word, always. GNU: only an
+                    # empty word is read as a (BSD-style) suffix, since an empty
+                    # script is never what the author meant.
                     k += 1
-                break                   # the rest of the cluster is the suffix
+                break                           # rest of the cluster is the suffix
             if ch in "ef":
                 script_given = True
-                if pos == len(chars) - 1:
-                    k += 1              # argument is the next word
-                break                   # otherwise the rest is the argument
-            if ch == "l":
-                if pos == len(chars) - 1:
+                if last:
+                    k += 1
+                break                           # otherwise the rest is the argument
+            if ch == "l" and dialect == "gnu":
+                if last:
                     k += 1
                 break
     if not inplace:
         return []
     return operands if script_given else operands[1:]
+
+
+def _sed_inplace_files(argstr: str) -> list[str]:
+    """Files a `sed` argument string edits in place, parsed the way sed reads them.
+
+    Shell words come from shlex, so quotes, escapes and adjacent quoted/bare spans
+    behave as the shell does. GNU and BSD sed disagree on option arity (BSD -i/-I
+    ALWAYS take the next word as the backup suffix and BSD -l is a flag; GNU -i
+    takes no separate word and GNU -l takes a number), so the words are parsed under
+    BOTH rule sets and the files are unioned. Returns [] when there is no in-place
+    flag.
+
+    Why a union and not a detected dialect: a command read under the wrong rules can
+    lose a real file (`sed -i 's/a b/c/' a.md b.md` under BSD rules drops a.md),
+    and a missed public target leaks, while a phantom one only costs a false
+    positive. Accepted false positive: a BSD suffix given as its own word
+    (`-i '.bak' 's/x/y/' f`) makes the expression a GNU-rules file. It blocks only
+    when the command also carries a denylisted token; `-i.bak` avoids it.
+
+    If shlex cannot parse the string, every non-option word is returned with its
+    quotes stripped, for the same reason.
+
+    Replaces a token-shape heuristic ("quoted = script, bare = file") that made
+    phantom targets from a spaced expression and, once patched, dropped real ones
+    (Codex reviews of c0a2a61 and c6c6ce5, 2026-09-28).
+    """
+    try:
+        words = shlex.split(argstr, posix=True)
+    except ValueError:
+        return [w.strip("\"'") for w in argstr.split() if w and not w.startswith("-")]
+    found = set(_parse_sed_args(words, "bsd")) | set(_parse_sed_args(words, "gnu"))
+    files: list[str] = []
+    for w in words:                     # keep command order, drop duplicates
+        if w in found and w not in files:
+            files.append(w)
+    return files
 
 
 def extract_write_targets(command: str) -> list[str]:

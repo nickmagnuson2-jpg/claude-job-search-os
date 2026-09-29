@@ -516,6 +516,56 @@ def test_sed_parser_unbalanced_quotes_over_extracts():
     assert "-i" not in got
 
 
+@pytest.mark.parametrize("args,dialect,expected", [
+    # BSD: -l is a flag, so -i after it is still in-place (Codex c6c6ce5 F1)
+    ("-l -i '' 's/a/b/' docs/public.md", "bsd", ["docs/public.md"]),
+    # BSD: -i always takes the next word as the suffix, empty or not (F2)
+    ("-i '.bak' 's/a b/c/' docs/public.md", "bsd", ["docs/public.md"]),
+    ("-i '' 's/a b/c/' docs/public.md", "bsd", ["docs/public.md"]),
+    ("-I '.bak' 's/a/b/' docs/public.md", "bsd", ["docs/public.md"]),
+    ("-Ei '' 's/a/b/' docs/public.md", "bsd", ["docs/public.md"]),
+    # GNU: -l takes an argument; -i takes no separate word, except an empty one
+    ("-l 5 -i 's/a/b/' docs/public.md", "gnu", ["docs/public.md"]),
+    ("-i 's/a/b/' docs/public.md", "gnu", ["docs/public.md"]),
+    ("-i '' 's/a/b/' docs/public.md", "gnu", ["docs/public.md"]),
+    ("-Ei 's/a/b/' docs/public.md", "gnu", ["docs/public.md"]),
+    ("-I 's/a/b/' docs/public.md", "gnu", []),
+])
+def test_sed_dialect_rules(args, dialect, expected):
+    import shlex
+    from check_public_pii import _parse_sed_args
+    assert _parse_sed_args(shlex.split(args), dialect) == expected
+
+
+@pytest.mark.parametrize("args", [
+    "-l -i '' 's/a/b/' docs/public.md",      # BSD-only reading keeps the file
+    "-i 's/a b/c/' docs/a.md docs/public.md",  # GNU-only reading keeps docs/a.md
+    "-l 5 -i 's/a/b/' docs/public.md",
+])
+def test_sed_union_never_drops_a_file_either_dialect_writes(args):
+    import shlex
+    from check_public_pii import _parse_sed_args, _sed_inplace_files
+    got = _sed_inplace_files(args)
+    for dialect in ("bsd", "gnu"):
+        for f in _parse_sed_args(shlex.split(args), dialect):
+            assert f in got
+    assert "docs/public.md" in got
+
+
+def test_sed_common_macos_form_has_no_phantom():
+    """`-i ''` is the everyday macOS form; neither reading may turn the
+    expression into a target (the original false positive, 2026-09-28)."""
+    from check_public_pii import _sed_inplace_files
+    assert _sed_inplace_files("-i '' 's/a b/Real Name/' output/x.md") == ["output/x.md"]
+
+
+def test_sed_fallback_keeps_quoted_filename_fragment():
+    """Codex c6c6ce5 F3: the unparseable-string fallback dropped words that start
+    with a quote, which can be the file."""
+    from check_public_pii import _sed_inplace_files
+    assert "docs/public.md" in _sed_inplace_files("-i s/a/b/ 'docs/public.md")
+
+
 def test_extract_sed_without_inplace_writes_nothing():
     assert extract_write_targets("sed 's/a/b/' docs/a.md") == []
     assert extract_write_targets("sed -n -e 's/a/b/p' docs/a.md") == []
