@@ -99,13 +99,17 @@ _BARE = r'[^\s;|&<>()]+'
 _REDIRECT_RE = re.compile(rf'(?:^|[\s;|&(])\d?>>?\|?\s*(?!&)({_QUOTED}|{_BARE})')
 # tee takes MANY files. Capturing only the first let `tee data/a.md docs/leak.md`
 # through (2026-08-19): put the public file anywhere but first and it was unseen.
-_TEE_RE = re.compile(rf'(?:^|[\s;|&(])tee\s+((?:-\S+\s+)*)((?:{_QUOTED}|{_BARE})(?:\s+(?:{_QUOTED}|{_BARE}))*)')
-# `sed` plus its argument run. Quote-aware, so a ';', '|' or '&' inside a quoted
+# Where a command name can start: after a shell separator, optionally behind a path
+# (/usr/bin/sed, ./tee). The bare-name form alone let a path-qualified writer
+# through unscanned (Codex review, 2026-09-28).
+_CMD_START = r"""(?:^|[\s;|&(])(?:[^\s;|&()<>'"]*/)?"""
+_TEE_RE = re.compile(rf'{_CMD_START}tee\s+((?:-\S+\s+)*)((?:{_QUOTED}|{_BARE})(?:\s+(?:{_QUOTED}|{_BARE}))*)')
+# `sed` (bare or path-qualified: /usr/bin/sed, ./sed) plus its argument run. Quote-aware, so a ';', '|' or '&' inside a quoted
 # expression does not end the run (it did, which dropped the target: 2026-09-28).
 _SED_ARGS_RE = re.compile(
-    r"""(?:^|[\s;|&(])sed\s+((?:"(?:\\.|[^"\\])*"|'[^']*'|\\.|[^;|&'"\\])*)"""
+    _CMD_START + r"""sed\s+((?:"(?:\\.|[^"\\])*"|'[^']*'|\\.|[^;|&'"\\])*)"""
 )
-_DD_OF_RE = re.compile(rf'(?:^|[\s;|&(])dd\s+[^;|&]*?\bof=({_QUOTED}|{_BARE})')
+_DD_OF_RE = re.compile(rf'{_CMD_START}dd\s+[^;|&]*?\bof=({_QUOTED}|{_BARE})')
 
 # Descriptor sinks and device files: a write here never reaches the repo.
 _NON_FILE_TARGETS = frozenset({"/dev/null", "/dev/stdout", "/dev/stderr", "/dev/tty", "-"})
@@ -336,15 +340,16 @@ def _parse_sed_args(words: list[str], dialect: str) -> list[str]:
         if w == "--":
             end_opts = True
             continue
-        if w.startswith("--"):                  # GNU long options
-            name, has_value, _ = w[2:].partition("=")
-            if name == "in-place":
+        if w.startswith("--"):                  # GNU long options, which accept
+            name, has_value, _ = w[2:].partition("=")   # unique abbreviations
+            if name and "in-place".startswith(name):
                 inplace = True
-            elif name in ("expression", "file"):
+            elif name and ("expression".startswith(name)
+                           or (len(name) >= 2 and "file".startswith(name))):
                 script_given = True
                 if not has_value:
                     k += 1
-            elif name == "line-length" and not has_value:
+            elif name and "line-length".startswith(name) and not has_value:
                 k += 1
             continue
         chars = w[1:]                           # short-option cluster
@@ -372,6 +377,32 @@ def _parse_sed_args(words: list[str], dialect: str) -> list[str]:
     return operands if script_given else operands[1:]
 
 
+_REDIR_OP = re.compile(r"\d*(?:>>?|<<?|&>>?|>&|<&|>\|)")
+_REDIR_WORD = re.compile(r"\d*(?:[<>]|&>)")
+
+
+def _drop_redirections(words: list[str]) -> list[str]:
+    """Remove shell redirections from sed's words: they are not operands.
+
+    `2>/dev/null` arrives as one word; `< input.txt` as an operator word plus its
+    target. The redirect TARGETS are write targets in their own right, and
+    _REDIRECT_RE finds those separately.
+    """
+    out: list[str] = []
+    k = 0
+    while k < len(words):
+        w = words[k]
+        if _REDIR_OP.fullmatch(w):
+            k += 2                               # operator + its target
+            continue
+        if _REDIR_WORD.match(w):
+            k += 1
+            continue
+        out.append(w)
+        k += 1
+    return out
+
+
 def _sed_inplace_files(argstr: str) -> list[str]:
     """Files a `sed` argument string edits in place, parsed the way sed reads them.
 
@@ -385,9 +416,13 @@ def _sed_inplace_files(argstr: str) -> list[str]:
     Why a union and not a detected dialect: a command read under the wrong rules can
     lose a real file (`sed -i 's/a b/c/' a.md b.md` under BSD rules drops a.md),
     and a missed public target leaks, while a phantom one only costs a false
-    positive. Accepted false positive: a BSD suffix given as its own word
-    (`-i '.bak' 's/x/y/' f`) makes the expression a GNU-rules file. It blocks only
-    when the command also carries a denylisted token; `-i.bak` avoids it.
+    positive. Accepted false positives, each blocking only when the command also
+    carries a denylisted token: a BSD suffix given as its own word
+    (`-i '.bak' 's/x/y/' f`) makes the expression a GNU-rules file (`-i.bak`
+    avoids it); a GNU `-l N` makes N the BSD-rules script, so an attached-suffix
+    expression becomes a BSD-rules file. The GNU reading also treats an empty word
+    after -i as a suffix: not GNU arity, a deliberate suppression so the everyday
+    macOS `-i ''` form produces no phantom.
 
     If shlex cannot parse the string, every non-option word is returned with its
     quotes stripped, for the same reason.
@@ -400,6 +435,7 @@ def _sed_inplace_files(argstr: str) -> list[str]:
         words = shlex.split(argstr, posix=True)
     except ValueError:
         return [w.strip("\"'") for w in argstr.split() if w and not w.startswith("-")]
+    words = _drop_redirections(words)
     found = set(_parse_sed_args(words, "bsd")) | set(_parse_sed_args(words, "gnu"))
     files: list[str] = []
     for w in words:                     # keep command order, drop duplicates

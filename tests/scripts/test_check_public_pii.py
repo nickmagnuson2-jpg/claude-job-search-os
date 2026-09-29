@@ -537,19 +537,50 @@ def test_sed_dialect_rules(args, dialect, expected):
     assert _parse_sed_args(shlex.split(args), dialect) == expected
 
 
-@pytest.mark.parametrize("args", [
-    "-l -i '' 's/a/b/' docs/public.md",      # BSD-only reading keeps the file
-    "-i 's/a b/c/' docs/a.md docs/public.md",  # GNU-only reading keeps docs/a.md
-    "-l 5 -i 's/a/b/' docs/public.md",
+@pytest.mark.parametrize("cmd,expected", [
+    # each file is written under only ONE dialect's reading; the union must keep it
+    ("sed -l -i '' 's/a/b/' docs/public.md", ["docs/public.md"]),               # BSD only
+    ("sed -i 's/a b/c/' docs/a.md docs/public.md", ["docs/a.md", "docs/public.md"]),  # GNU keeps a.md
+    # path-qualified sed is still sed (Codex HEAD review F1, P0)
+    ("/usr/bin/sed -i '' 's/a/b/' docs/public.md", ["docs/public.md"]),
+    ("./bin/sed -i 's/a/b/' docs/public.md", ["docs/public.md"]),
+    ("echo x; /opt/homebrew/bin/sed -i '' 's/a/b/' docs/public.md", ["docs/public.md"]),
+    # redirections are not sed operands (F2)
+    ("sed -i '' 's/a/b/' docs/public.md 2>/dev/null", ["docs/public.md"]),
+    ("sed -i '' 's/a/b/' docs/public.md < input.txt", ["docs/public.md"]),
+    # err.log IS a write target, found by the redirect parser, not by sed's
+    ("sed -i '' 's/a/b/' docs/public.md 2> err.log", ["err.log", "docs/public.md"]),
+    # a redirection in the MIDDLE must drop exactly operator + target, no more
+    ("sed -i '' 's/a/b/' < input.txt docs/public.md", ["docs/public.md"]),
+    ("sed -i '' 's/a/b/' 2>/dev/null docs/public.md", ["docs/public.md"]),
+    # GNU accepts unique long-option abbreviations
+    ("sed --fi=edits.sed -i docs/a.md docs/public.md", ["docs/a.md", "docs/public.md"]),
+    ("sed --in 's/a/b/' docs/public.md", ["docs/public.md"]),
+    ("sed --expr='s/a/b/' --in-pl docs/a.md docs/public.md", ["docs/a.md", "docs/public.md"]),
 ])
-def test_sed_union_never_drops_a_file_either_dialect_writes(args):
-    import shlex
-    from check_public_pii import _parse_sed_args, _sed_inplace_files
-    got = _sed_inplace_files(args)
-    for dialect in ("bsd", "gnu"):
-        for f in _parse_sed_args(shlex.split(args), dialect):
-            assert f in got
-    assert "docs/public.md" in got
+def test_sed_command_forms(cmd, expected):
+    assert extract_write_targets(cmd) == expected
+
+
+@pytest.mark.parametrize("cmd", [
+    "echo x | /usr/bin/tee docs/public.md",
+    "echo x | ./tee -a docs/public.md",
+    "/bin/dd if=a of=docs/public.md",
+])
+def test_path_qualified_writers_are_recognised(cmd):
+    """Same prefix assumption as sed (Codex HEAD review F1): a path before the
+    command name hid tee and dd too."""
+    assert extract_write_targets(cmd) == ["docs/public.md"]
+
+
+def test_writers_not_matched_inside_a_longer_word():
+    assert extract_write_targets("echo x | mytee docs/public.md") == []
+    assert extract_write_targets("add if=a of=docs/public.md") == []
+
+
+def test_sed_not_matched_inside_a_longer_word():
+    assert extract_write_targets("unsed -i 's/a/b/' docs/public.md") == []
+    assert extract_write_targets("mysed -i 's/a/b/' docs/public.md") == []
 
 
 def test_sed_common_macos_form_has_no_phantom():
