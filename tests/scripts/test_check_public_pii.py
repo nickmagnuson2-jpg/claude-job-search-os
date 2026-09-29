@@ -443,6 +443,23 @@ def test_extract_sed_inplace_both_forms():
     assert extract_write_targets("sed -i '' 's/a/b/' docs/a.md") == ["docs/a.md"]
 
 
+def test_extract_sed_inplace_quoted_expression_with_spaces_is_one_token():
+    """2026-09-28 false positive: the expression was split on whitespace, so words
+    inside it ('operating', "Lake's") became phantom public targets and a write to a
+    gitignored output/ file was blocked. Only the bare file token is a target."""
+    cmd = """sed -i '' "s/the owner's operating partner/Acme's operating partner/" output/x/cv.yaml"""
+    assert extract_write_targets(cmd) == ["output/x/cv.yaml"]
+    cmd = "sed -i 's/a b c/d e/' docs/a.md docs/b.md"
+    assert extract_write_targets(cmd) == ["docs/a.md", "docs/b.md"]
+    cmd = """sed -i.bak -e 's/x y/z/' -e "s/p q/r/" docs/a.md"""
+    assert extract_write_targets(cmd) == ["docs/a.md"]
+    # a BARE -e expression is the script, not a file
+    assert extract_write_targets("sed -i -e s/a/b/ docs/a.md") == ["docs/a.md"]
+    assert extract_write_targets("sed -i -f edits.sed docs/a.md") == ["docs/a.md"]
+    # flags before -i are not targets either
+    assert extract_write_targets("sed -E -i 's/a/b/' docs/a.md") == ["docs/a.md"]
+
+
 def test_extract_skips_unresolvable_variable_target():
     assert extract_write_targets('echo hi > "$OUT"') == []
     assert extract_write_targets("echo hi > $OUT") == []

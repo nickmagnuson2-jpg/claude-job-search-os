@@ -228,21 +228,17 @@ def cmd_add(args, pipeline_path: Path, dry_run: bool) -> None:
            fit_reason_logged=bool(getattr(args, "fit_reason", None)))
 
 
-def cmd_update(args, pipeline_path: Path, dry_run: bool) -> None:
-    today = date.today().strftime("%Y-%m-%d")
+def select_active_row(args, lines: list, ambiguous_msg: str, with_stage: bool) -> tuple:
+    """Resolve the one Active row a command targets, or exit with the error.
 
-    if dry_run:
-        out_ok("update", f"Would update: {args.company} → {args.new_stage}",
-               dry_run=True, would_mutate=[{"file": str(pipeline_path)}])
-        return
-
-    content, lines = load_pipeline(pipeline_path)
-
+    Shared by update and remove, and run BEFORE the --dry-run early return, so a
+    dry run fails exactly where the real run would (2026-09-28: a dry run said
+    "ok" for a --role the real run rejected as not_found).
+    """
     act_start, act_end = find_section(lines, r"^##\s+Active")
     if act_start == -1:
         out_error("Could not find ## Active section", "missing_section")
 
-    # Find matching rows
     matches = []
     for i in range(act_start, act_end):
         if is_data_row(lines[i]):
@@ -253,29 +249,37 @@ def cmd_update(args, pipeline_path: Path, dry_run: bool) -> None:
     if not matches:
         out_error(f"No active entry found for: {args.company}", "not_found")
 
-    # Ambiguous multi-role case
     if len(matches) > 1 and not args.role:
         match_list = [
-            {"role": c[1] if len(c) > 1 else "", "stage": c[2] if len(c) > 2 else ""}
+            ({"role": c[1] if len(c) > 1 else "", "stage": c[2] if len(c) > 2 else ""}
+             if with_stage else {"role": c[1] if len(c) > 1 else ""})
             for _, c in matches
         ]
-        out_error(
-            f"Multiple roles found for {args.company} — use --role to specify",
-            "ambiguous_match",
-            matches=match_list,
-        )
+        out_error(ambiguous_msg, "ambiguous_match", matches=match_list)
 
-    # Filter by role if specified
     if args.role:
         role_matches = [
             (i, c) for i, c in matches
             if len(c) > 1 and c[1].lower() == args.role.lower()
         ]
         if not role_matches:
-            out_error(f"No entry found for {args.company} / {args.role}", "not_found")
+            # --role is an exact match on the whole Role cell; name the cells
+            # so the caller can retry with the exact text.
+            out_error(f"No entry found for {args.company} / {args.role}", "not_found",
+                      roles=[c[1] if len(c) > 1 else "" for _, c in matches])
         matches = role_matches
 
-    row_idx, cols = matches[0]
+    return matches[0]
+
+
+def cmd_update(args, pipeline_path: Path, dry_run: bool) -> None:
+    today = date.today().strftime("%Y-%m-%d")
+
+    content, lines = load_pipeline(pipeline_path)
+    row_idx, cols = select_active_row(
+        args, lines, f"Multiple roles found for {args.company} — use --role to specify",
+        with_stage=True,
+    )
 
     if len(cols) != 8:
         out_error(
@@ -288,6 +292,12 @@ def cmd_update(args, pipeline_path: Path, dry_run: bool) -> None:
             row=row_idx + 1,
             column_count=len(cols),
         )
+
+    if dry_run:
+        out_ok("update", f"Would update: {args.company} → {args.new_stage}",
+               dry_run=True, role=cols[1] if len(cols) > 1 else "",
+               would_mutate=[{"file": str(pipeline_path), "line": row_idx + 1}])
+        return
 
     new_next_action = args.next_action if args.next_action else (cols[4] if len(cols) > 4 else "—")
     new_cv_used     = args.cv_used     if args.cv_used     else (cols[5] if len(cols) > 5 else "—")
@@ -325,45 +335,11 @@ def cmd_update(args, pipeline_path: Path, dry_run: bool) -> None:
 def cmd_remove(args, pipeline_path: Path, dry_run: bool) -> None:
     today = date.today().strftime("%Y-%m-%d")
 
-    if dry_run:
-        out_ok("remove", f"Would soft-delete: {args.company}",
-               dry_run=True, would_mutate=[{"file": str(pipeline_path)}])
-        return
-
     content, lines = load_pipeline(pipeline_path)
-
-    act_start, act_end = find_section(lines, r"^##\s+Active")
-    if act_start == -1:
-        out_error("Could not find ## Active section", "missing_section")
-
-    matches = []
-    for i in range(act_start, act_end):
-        if is_data_row(lines[i]):
-            cols = parse_cols(lines[i])
-            if cols and cols[0].lower() == args.company.lower():
-                matches.append((i, cols))
-
-    if not matches:
-        out_error(f"No active entry found for: {args.company}", "not_found")
-
-    if len(matches) > 1 and not args.role:
-        match_list = [{"role": c[1] if len(c) > 1 else ""} for _, c in matches]
-        out_error(
-            f"Multiple roles for {args.company} — use --role to specify",
-            "ambiguous_match",
-            matches=match_list,
-        )
-
-    if args.role:
-        role_matches = [
-            (i, c) for i, c in matches
-            if len(c) > 1 and c[1].lower() == args.role.lower()
-        ]
-        if not role_matches:
-            out_error(f"No entry found for {args.company} / {args.role}", "not_found")
-        matches = role_matches
-
-    row_idx, cols = matches[0]
+    row_idx, cols = select_active_row(
+        args, lines, f"Multiple roles for {args.company} — use --role to specify",
+        with_stage=False,
+    )
 
     if len(cols) != 8:
         out_error(
@@ -386,6 +362,12 @@ def cmd_remove(args, pipeline_path: Path, dry_run: bool) -> None:
             "invalid_stage",
             stage=stage,
         )
+
+    if dry_run:
+        out_ok("remove", f"Would soft-delete: {args.company}",
+               dry_run=True, role=cols[1] if len(cols) > 1 else "",
+               would_mutate=[{"file": str(pipeline_path), "line": row_idx + 1}])
+        return
 
     existing_notes = cols[6] if len(cols) > 6 else "—"
     new_notes = (

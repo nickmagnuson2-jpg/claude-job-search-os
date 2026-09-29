@@ -347,12 +347,22 @@ def extract_write_targets(command: str) -> list[str]:
 
     # `sed -i` writes in place. The script expression is normally quoted, and the
     # macOS backup-suffix arg is an empty quoted string, so the BARE tokens after -i
-    # are the files. Flags are skipped.
+    # are the files. Flags, and the argument of -e/-f, are skipped.
+    # Tokenize quote-aware: a whitespace split broke a quoted expression into words,
+    # and each word became a phantom "public" target (a nonexistent path reads as
+    # not-ignored), blocking a write to a gitignored file (2026-09-28).
     for m in _SED_I_RE.finditer(command):
         seen_i = False
-        for tok in m.group(1).split():
+        skip_next = False
+        for tok in re.findall(rf"{_QUOTED}|{_BARE}", m.group(1)):
+            if skip_next:
+                skip_next = False
+                continue
             if tok.startswith("-i"):
                 seen_i = True
+                continue
+            if tok in ("-e", "-f", "--expression", "--file"):
+                skip_next = True
                 continue
             if not seen_i or tok.startswith("-"):
                 continue
@@ -455,7 +465,7 @@ def load_ambiguous(root: Path) -> list[str]:
 def find_pii(content: str, tokens: list[str]) -> list[str]:
     """Case-sensitive whole-word/phrase matches. The trailing/leading \\w boundaries
     keep a short brand token from matching inside a longer word (e.g. 'Zorp' must not
-    fire on 'Zorped', and a word like 'Front' must not fire on 'frontmatter')."""
+    fire on 'Zorped', and a word like 'Market' must not fire on 'marketing')."""
     hits = []
     for tok in tokens:
         pattern = r"(?<![\w])" + re.escape(tok) + r"(?![\w])"

@@ -490,3 +490,96 @@ def test_invalid_fit_verdict_rejected(tmp_path):
     )
     assert code == 2
     assert "invalid choice" in stderr
+
+
+# ---------------------------------------------------------------------------
+# Tests: --dry-run must resolve the row, not just echo "ok"
+# (2026-09-28: a dry run reported ok for a --role value the real run rejected
+# as not_found, so the dry run tested nothing)
+# ---------------------------------------------------------------------------
+
+def test_dry_run_update_unmatched_role_fails_like_real_run(tmp_path):
+    write_fixture(tmp_path, "data/job-pipeline.md", PIPELINE_WITH_ROW)
+    original = (tmp_path / "data/job-pipeline.md").read_text(encoding="utf-8")
+    result, code = run_pipe_write(
+        "--repo-root", str(tmp_path), "--dry-run", "update", "Acme Corp", "Applied",
+        "--role", "Direct",
+    )
+    assert code != 0
+    assert result["code"] == "not_found"
+    assert result["roles"] == ["Director"]  # tells the caller the exact Role text
+    assert (tmp_path / "data/job-pipeline.md").read_text(encoding="utf-8") == original
+
+
+def test_dry_run_update_unknown_company_fails(tmp_path):
+    write_fixture(tmp_path, "data/job-pipeline.md", PIPELINE_WITH_ROW)
+    result, code = run_pipe_write(
+        "--repo-root", str(tmp_path), "--dry-run", "update", "Nobody Inc", "Applied",
+    )
+    assert code != 0
+    assert result["code"] == "not_found"
+
+
+def test_dry_run_update_matched_row_reports_it_and_writes_nothing(tmp_path):
+    write_fixture(tmp_path, "data/job-pipeline.md", PIPELINE_WITH_ROW)
+    original = (tmp_path / "data/job-pipeline.md").read_text(encoding="utf-8")
+    result, code = run_pipe_write(
+        "--repo-root", str(tmp_path), "--dry-run", "update", "Acme Corp", "Applied",
+        "--role", "Director",
+    )
+    assert code == 0
+    assert result["dry_run"] is True
+    assert result["role"] == "Director"
+    assert (tmp_path / "data/job-pipeline.md").read_text(encoding="utf-8") == original
+
+
+def test_dry_run_remove_unmatched_role_fails(tmp_path):
+    write_fixture(tmp_path, "data/job-pipeline.md", PIPELINE_WITH_ROW)
+    result, code = run_pipe_write(
+        "--repo-root", str(tmp_path), "--dry-run", "remove", "Acme Corp",
+        "--role", "Direct",
+    )
+    assert code != 0
+    assert result["code"] == "not_found"
+
+
+def test_dry_run_remove_matched_row_writes_nothing(tmp_path):
+    write_fixture(tmp_path, "data/job-pipeline.md", PIPELINE_WITH_ROW)
+    original = (tmp_path / "data/job-pipeline.md").read_text(encoding="utf-8")
+    result, code = run_pipe_write(
+        "--repo-root", str(tmp_path), "--dry-run", "remove", "Acme Corp",
+    )
+    assert code == 0
+    assert result["dry_run"] is True
+    assert result["role"] == "Director"
+    assert (tmp_path / "data/job-pipeline.md").read_text(encoding="utf-8") == original
+
+
+MALFORMED_ROW = PIPELINE_WITH_ROW.replace(
+    "| Acme Corp | Director | Researching | 2026-01-01 | Research role | — | — | — |",
+    "| Acme Corp | Director | Researching | 2026-01-01 | Research role | — | a | b | — |",
+)
+
+
+@pytest.mark.parametrize("cmd", [["update", "Acme Corp", "Applied"], ["remove", "Acme Corp"]])
+def test_malformed_row_rejected_in_real_and_dry_runs(tmp_path, cmd):
+    for dry in ([], ["--dry-run"]):
+        write_fixture(tmp_path, "data/job-pipeline.md", MALFORMED_ROW)
+        result, code = run_pipe_write("--repo-root", str(tmp_path), *dry, *cmd)
+        assert code != 0, dry
+        assert result["code"] == "malformed_row", dry
+        assert (tmp_path / "data/job-pipeline.md").read_text(encoding="utf-8") == MALFORMED_ROW
+
+
+def test_ambiguous_update_lists_role_and_stage(tmp_path):
+    two = PIPELINE_WITH_ROW.replace(
+        "| Acme Corp | Director | Researching | 2026-01-01 | Research role | — | — | — |",
+        "| Acme Corp | Director | Researching | 2026-01-01 | Research role | — | — | — |\n"
+        "| Acme Corp | PM | Applied | 2026-01-01 | Wait | — | — | — |",
+    )
+    write_fixture(tmp_path, "data/job-pipeline.md", two)
+    result, code = run_pipe_write("--repo-root", str(tmp_path), "--dry-run", "update", "Acme Corp", "X")
+    assert code != 0 and result["code"] == "ambiguous_match"
+    assert {"role": "PM", "stage": "Applied"} in result["matches"]
+    result, code = run_pipe_write("--repo-root", str(tmp_path), "--dry-run", "remove", "Acme Corp")
+    assert code != 0 and result["matches"] == [{"role": "Director"}, {"role": "PM"}]
