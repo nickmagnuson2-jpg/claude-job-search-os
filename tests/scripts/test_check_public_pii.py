@@ -1254,6 +1254,8 @@ def test_parameter_operators_when_the_variable_is_set():
     """sh -c 'OUT=docs/notes.md; echo Pat Zorp | tee "$OUT"'""",
     """eval 'OUT=docs/notes.md; echo Pat Zorp > "$OUT"'""",
     """x=$(OUT=docs/notes.md; echo Pat Zorp > "$OUT")""",
+    # Codex review of be4afb6, F1 (P0): the string after find -exec runs too
+    """find . -name x -exec sh -c 'OUT=docs/notes.md; echo Pat Zorp > "$OUT"' \\;""",
 ])
 def test_nested_string_assignments_STILL_BLOCK(tmp_path, cmd):
     code, err = _run_bash(tmp_path, cmd)

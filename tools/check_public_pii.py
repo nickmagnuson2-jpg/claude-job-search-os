@@ -569,7 +569,9 @@ def command_assignments(command: str) -> dict[str, list[str]]:
             merge(command_assignments(inner))
         positions = _command_positions(words)
         for i, w in enumerate(words):
-            if i not in positions:
+            # Same command positions as _writer_targets, including after find -exec,
+            # so a string it scans for writes is also scanned for assignments.
+            if i not in positions and not (i > 0 and words[i - 1] in _EXEC_FLAGS):
                 continue
             base = os.path.basename(w)
             if base in _SHELLS:
