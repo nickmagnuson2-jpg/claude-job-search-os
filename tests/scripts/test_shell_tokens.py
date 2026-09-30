@@ -260,3 +260,19 @@ def test_ansi_c_and_locale_quoting():
 def test_ansi_c_escape_right_before_the_closing_quote_and_locale_span():
     assert kinds("$'a\\\\' b") == [("word", "a\\"), ("word", "b")]
     assert spans('x $"c d" y') == [("word", "x"), ("word", '$"c d"'), ("word", "y")]
+
+
+def test_ansi_c_escapes_decode_like_bash():
+    w = lambda src: tokenize(src)[0].text
+    assert w("$'a\\x2eb'") == "a.b"
+    assert w("$'\\x64'") == "d"
+    assert w("$'\\144'") == "d"
+    assert w("$'\\u00e9'") == "\u00e9"
+    assert w("$'a\\nb\\tc'") == "a\nb\tc"
+    assert w("$'\\q'") == "\\q"          # unknown escape: kept as written
+
+
+def test_ansi_c_hex_without_digits_and_control_escapes():
+    w = lambda src: tokenize(src)[0].text
+    assert w("$'\\xZ'") == "\\xZ"          # \x with no hex digit: kept as written
+    assert w("$'\\cA'") == "\x01"           # \cX: control character

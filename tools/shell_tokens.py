@@ -122,6 +122,54 @@ def _backtick_sub(s: str, i: int) -> tuple[str, int]:
     return _BACKTICK_UNESCAPE.sub(r"\1", s[i + 1:k]), k + 1
 
 
+_ANSI_NAMED = {"a": "\a", "b": "\b", "e": "\x1b", "E": "\x1b", "f": "\f", "n": "\n",
+               "r": "\r", "t": "\t", "v": "\v", "\\": "\\", "'": "'", '"': '"', "?": "?"}
+_HEX = "0123456789abcdefABCDEF"
+
+
+def _ansi_c(s: str, j: int) -> tuple[str, int]:
+    """Decode a bash $'...' body starting at s[j]; (value, index past the closing quote).
+
+    Decoded as bash does, because the VALUE is the path the shell writes to: a
+    partially decoded `$'data/\\x2e\\x2e/docs/f.md'` read as a data/ path while bash
+    wrote to docs/ (Codex review of a7d6f2a). An unknown escape is kept as written.
+    """
+    out: list[str] = []
+    n = len(s)
+    while j < n and s[j] != "'":
+        if s[j] != "\\" or j + 1 >= n:
+            out.append(s[j])
+            j += 1
+            continue
+        c = s[j + 1]
+        if c in _ANSI_NAMED:
+            out.append(_ANSI_NAMED[c])
+            j += 2
+        elif c in "01234567":
+            k = j + 1
+            while k < n and k < j + 4 and s[k] in "01234567":
+                k += 1
+            out.append(chr(int(s[j + 1:k], 8) & 0xFF))
+            j = k
+        elif c in "xuU":
+            width = {"x": 2, "u": 4, "U": 8}[c]
+            k = j + 2
+            while k < n and k < j + 2 + width and s[k] in _HEX:
+                k += 1
+            if k == j + 2:
+                out.append(s[j:j + 2])
+            else:
+                out.append(chr(int(s[j + 2:k], 16)))
+            j = k
+        elif c == "c" and j + 2 < n:
+            out.append(chr(ord(s[j + 2]) & 0x1F))
+            j += 3
+        else:
+            out.append(s[j:j + 2])
+            j += 2
+    return "".join(out), j + 1
+
+
 def _expansion_subs(text: str) -> list[str]:
     """Commands in `$(...)` and backticks in text read like the inside of double quotes
     (an unquoted heredoc body): a backslash escapes, nothing else quotes."""
@@ -275,17 +323,9 @@ def tokenize(s: str) -> list[Token]:
 
         if s.startswith("$'", i):                     # ANSI-C quoting (bash)
             start_word(i)
-            j = i + 2
-            while j < n and s[j] != "'":
-                if s[j] == "\\" and j + 1 < n:
-                    nxt = s[j + 1]
-                    word.append(nxt if nxt in "'\\\"" else s[j:j + 2])
-                    j += 2
-                    continue
-                word.append(s[j])
-                j += 1
+            text, i = _ansi_c(s, i + 2)
+            word.append(text)
             quoted = True
-            i = j + 1
             continue
 
         if s.startswith('$"', i):                      # locale quoting: a double quote

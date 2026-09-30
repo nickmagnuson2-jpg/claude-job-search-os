@@ -101,10 +101,14 @@ def _unquote(tok: str) -> str:
 
 
 _SEGMENT_SEPARATORS = frozenset({";", "&&", "||", "\n", ";;"})
-_COMPOUND_OPEN = frozenset({"if", "do", "case"})       # for/while/until/select open at `do`
+# A loop opens at its keyword, not at `do`, so a name in its CONDITION or word list
+# (`while echo NAME; false; do ...; done > f`) stays with the redirect (Codex, a7d6f2a).
+_COMPOUND_OPEN = frozenset({"if", "for", "while", "until", "select", "case"})
 _COMPOUND_CLOSE = frozenset({"fi", "done", "esac"})
-# Words after which the next word is again in command position.
-_COMPOUND_PREFIX = frozenset({"then", "do", "else", "elif", "!", "{", "if", "while", "until"})
+# Words after which the next word is again in command position. `time` and `!` are
+# pipeline prefixes: `time if ...; fi > f` is one compound (Codex review of a7d6f2a).
+_COMPOUND_PREFIX = frozenset({"then", "do", "else", "elif", "!", "{", "if", "while",
+                              "until", "time"})
 
 
 def split_command_segments(command: str) -> list[str]:
@@ -491,7 +495,56 @@ def _targets_in(command: str) -> list[str]:
     return targets
 
 
-def extract_write_targets(command: str) -> list[str]:
+_VAR_REF = re.compile(r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))")
+_DECLARERS = frozenset({"export", "declare", "local", "readonly", "typeset"})
+
+
+def _expand_vars(text: str, env: dict[str, str]) -> str | None:
+    """Substitute $NAME / ${NAME} from env, then the process environment. None if any
+    reference stays unresolved (a target that cannot be known is skipped, as before)."""
+    missing = False
+
+    def sub(m):
+        nonlocal missing
+        name = m.group(1) or m.group(2)
+        if name in env:
+            return env[name]
+        if name in os.environ:
+            return os.environ[name]
+        missing = True
+        return ""
+
+    out = _VAR_REF.sub(sub, text)
+    return None if missing else out
+
+
+def command_assignments(command: str) -> dict[str, str]:
+    """Variables a command line assigns (`A=x`, `A+=x`, `export A=x`), expanded in order.
+
+    A write target like `> "$OUT"` was skipped as unresolvable even when the same call
+    had just set `OUT=docs/notes.md`, so the leak went through (Codex review of
+    a7d6f2a). Every assignment is applied in command order; the hook cannot follow
+    control flow, so a later assignment simply wins.
+    """
+    env: dict[str, str] = {}
+    for cmd in simple_commands(command):
+        words = cmd.words
+        k = 1 if words and words[0] in _DECLARERS else 0
+        for w in words[k:]:
+            m = _ASSIGNMENT.match(w)
+            if not m:
+                if k == 0:
+                    break           # past the leading assignments of a plain command
+                continue
+            name = w[:m.end()].rstrip("=").rstrip("+")
+            value = _expand_vars(w[m.end():], env) or ""
+            if value.startswith("~"):          # bash expands a leading ~ in a value
+                value = os.path.expanduser(value)
+            env[name] = env.get(name, "") + value if w[m.end() - 2:m.end()] == "+=" else value
+    return env
+
+
+def extract_write_targets(command: str, env: dict[str, str] | None = None) -> list[str]:
     """Paths this shell command may WRITE to.
 
     Covers the shapes that actually land content in a file from a command line:
@@ -511,14 +564,26 @@ def extract_write_targets(command: str) -> list[str]:
     """
     # Heredoc bodies are tokens, never commands, so no masking is needed here.
     targets = _targets_in(command)
+    # Variables: what the caller saw assigned elsewhere in the full command, then
+    # anything assigned inside this text itself.
+    scope = {**(env or {}), **command_assignments(command)}
 
     out = []
     for t in targets:
         t = t.strip()
         if not t or t in _NON_FILE_TARGETS or t.startswith("/dev/"):
             continue
-        if t.startswith("$") or t.startswith("`"):   # unresolvable at hook time
+        if t.startswith("`"):                         # unresolvable at hook time
             continue
+        if "$" in t:
+            resolved = _expand_vars(t, scope)
+            if resolved is None:                       # unresolvable at hook time
+                continue
+            t = resolved
+        if t.startswith("~"):
+            # bash expands ~ before writing; left literal, `~/x` resolved inside the
+            # repo and read as a public path (replay on real history, 2026-09-30).
+            t = os.path.expanduser(t)
         out.append(t)
     return out
 
@@ -866,8 +931,10 @@ def main():
               resolve_public_targets([tool_input.get("notebook_path", "")], root), root)
     elif tool_name == "Bash":
         command = tool_input.get("command", "")
+        # Assignments in one segment reach the next (`OUT=docs/f; echo x > "$OUT"`).
+        env = command_assignments(command)
         for segment in split_command_segments(command):
-            targets = resolve_public_targets(extract_write_targets(segment), root,
+            targets = resolve_public_targets(extract_write_targets(segment, env), root,
                                              skip_binary=False)
             if targets:
                 judge(strip_sed_search_sides(segment), targets, root)

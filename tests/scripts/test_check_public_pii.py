@@ -1151,3 +1151,58 @@ def test_ansi_c_heredoc_delimiter_does_not_swallow_later_commands():
     cmd = "cat <<$'END-MARK' > docs/clean.md\nclean\nEND-MARK\necho Pat Zorp > output/p.md"
     assert split_command_segments(cmd) == [
         "cat <<$'END-MARK' > docs/clean.md\nclean\nEND-MARK", "echo Pat Zorp > output/p.md"]
+
+
+# --- Codex review of a7d6f2a -----------------------------------------------------------
+
+@pytest.mark.parametrize("cmd", [
+    # F1 (P0, ordinary, pre-existing): a variable assigned in the same command
+    'OUT=docs/notes.md; echo Pat Zorp > "$OUT"',
+    "OUT=docs/notes.md; echo Pat Zorp > $OUT",
+    'D=docs; echo Pat Zorp > "${D}/notes.md"',
+    'OUT=docs/notes.md && echo Pat Zorp | tee "$OUT"',
+    # F2 (P0): `time` before a compound; a name in a loop CONDITION
+    "time if true; then echo Pat Zorp; fi > docs/notes.md",
+    "time for x in 1; do echo Pat Zorp; done > docs/notes.md",
+    "while echo Pat Zorp; false; do :; done > docs/notes.md",
+    "until echo Pat Zorp; true; do :; done > docs/notes.md",
+    "for x in Pat Zorp; do echo $x; done > docs/notes.md",
+    # F3 (P0, crafted bash-only): ANSI-C escapes decode to the real path
+    "echo Pat Zorp > $'data/\\x2e\\x2e/docs/notes.md'",
+    "echo Pat Zorp > $'\\x64ocs/notes.md'",
+    "echo Pat Zorp > $'\\144ocs/notes.md'",
+])
+def test_codex_a7d6f2a_leaks_STILL_BLOCK(tmp_path, cmd):
+    code, err = _run_bash(tmp_path, cmd)
+    assert code == 2, cmd
+    assert "Pat Zorp" in err
+
+
+def test_variable_targets_resolve_from_the_command_then_the_environment(monkeypatch):
+    monkeypatch.setenv("HQ_TEST_DIR", "docs")
+    assert extract_write_targets('echo x > "$HQ_TEST_DIR/a.md"') == ["docs/a.md"]
+    assert extract_write_targets('echo x > "$NOT_SET_ANYWHERE_XYZ/a.md"') == []
+    env = cpp.command_assignments("A=docs/a.md; B=${A}; echo x > $B")
+    assert env == {"A": "docs/a.md", "B": "docs/a.md"}
+    assert extract_write_targets("echo x > $B", env) == ["docs/a.md"]
+
+
+def test_tilde_expands_in_targets_and_assignments():
+    home = os.path.expanduser("~")
+    assert extract_write_targets("echo x > ~/n.md") == [home + "/n.md"]
+    env = cpp.command_assignments("M=~/mem; cat > $M/a.md")
+    assert env == {"M": home + "/mem"}
+    assert extract_write_targets("cat > $M/a.md", env) == [home + "/mem/a.md"]
+
+
+def test_command_assignments_forms():
+    # a plain command's assignments stop at its first non-assignment word
+    assert cpp.command_assignments("A=1 echo B=2") == {"A": "1"}
+    # declarers assign every NAME=value argument
+    assert cpp.command_assignments("export A=1 other B=2") == {"A": "1", "B": "2"}
+    # += appends
+    assert cpp.command_assignments("A=x; A+=y") == {"A": "xy"}
+
+
+def test_command_substitution_target_is_unresolvable():
+    assert extract_write_targets("echo x > `echo docs/f.md`") == []
