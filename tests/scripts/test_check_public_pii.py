@@ -508,12 +508,12 @@ def test_extract_sed_option_forms(cmd, expected):
     assert extract_write_targets(cmd) == expected
 
 
-def test_sed_parser_unbalanced_quotes_over_extracts():
-    """shlex cannot parse it; the fallback must keep the file (a miss leaks)."""
-    from check_public_pii import _sed_inplace_files
-    got = _sed_inplace_files("-i 's/a/b docs/public.md")
-    assert "docs/public.md" in got
-    assert "-i" not in got
+def test_sed_unbalanced_quote_is_not_a_write():
+    """bash refuses to run a line with an unclosed quote ("unexpected EOF"), so it
+    writes nothing. The tokenizer reads the rest of the line as one word, which
+    leaves sed with no file operand. (The earlier over-extracting fallback existed
+    only because shlex raised on this input.)"""
+    assert extract_write_targets("sed -i 's/a/b docs/public.md") == []
 
 
 @pytest.mark.parametrize("args,dialect,expected", [
@@ -578,6 +578,62 @@ def test_writers_not_matched_inside_a_longer_word():
     assert extract_write_targets("add if=a of=docs/public.md") == []
 
 
+@pytest.mark.parametrize("cmd,expected", [
+    # Codex review of 2af4a29, F1 (P0): a descriptor redirect before the operand
+    ("sed -i 's/a/b/' 2>&1 docs/public.md", ["docs/public.md"]),
+    ("sed -i 's/a/b/' 3<&0 docs/public.md", ["docs/public.md"]),
+    ("echo x | tee 2>&1 docs/public.md", ["docs/public.md"]),
+    ("dd 2>&1 if=a of=docs/public.md", ["docs/public.md"]),
+    ("echo x | tee &>err.log docs/public.md", ["err.log", "docs/public.md"]),
+    # F2 (P1): quoted or escaped executable path
+    (""""/usr/bin/sed" -i 's/a/b/' docs/public.md""", ["docs/public.md"]),
+    ("""echo x | "/usr/bin/tee" docs/public.md""", ["docs/public.md"]),
+    ("""'/bin/dd' if=a of=docs/public.md""", ["docs/public.md"]),
+    ("""\\sed -i '' 's/a/b/' docs/public.md""", ["docs/public.md"]),
+    # writes inside a shell string are still writes
+    ('bash -c "sed -i \'\' \'s/a/b/\' docs/public.md"', ["docs/public.md"]),
+    ("""sh -lc 'echo x > docs/public.md'""", ["docs/public.md"]),
+    ('eval "echo x | tee docs/public.md"', ["docs/public.md"]),
+    # prefixes and wrappers
+    ("LC_ALL=C sed -i '' 's/a/b/' docs/public.md", ["docs/public.md"]),
+    ("sudo sed -i '' 's/a/b/' docs/public.md", ["docs/public.md"]),
+    ("xargs sed -i '' 's/a/b/' docs/public.md", ["docs/public.md"]),
+    # bash >& FILE writes both streams to FILE; >&N and >&- are descriptor moves
+    ("echo hi >& docs/public.md", ["docs/public.md"]),
+    ("echo hi >&2", []),
+    ("echo hi 2>&-", []),
+    ("echo hi <> docs/public.md", ["docs/public.md"]),
+    # reads are not writes
+    ("sed -n p < docs/public.md", []),
+    ("cat <<< docs/public.md", []),
+])
+def test_writer_extraction_shell_forms(cmd, expected):
+    assert extract_write_targets(cmd) == expected
+
+
+@pytest.mark.parametrize("cmd,expected", [
+    # a QUOTED writer counts only in command position, which is found past
+    # assignments and wrappers (and their options)
+    ("""A=1 "/usr/bin/sed" -i '' 's/a/b/' docs/p.md""", ["docs/p.md"]),
+    ("""sudo -n "/usr/bin/tee" docs/p.md""", ["docs/p.md"]),
+    ("""env A=1 "tee" docs/p.md""", ["docs/p.md"]),
+    ("""timeout 5 "tee" docs/p.md""", ["docs/p.md"]),
+    ("""A=1 B=2 "tee" docs/p.md""", ["docs/p.md"]),
+    ("""sudo env A=1 "tee" docs/p.md""", ["docs/p.md"]),
+    # ...and a quoted writer name as an ARGUMENT is just text
+    ("""echo "tee" docs/p.md""", []),
+    ("""grep -n "sed" docs/p.md""", []),
+    # tee: after --, a dash-word is a file
+    ("echo x | tee -- -a docs/p.md", ["-a", "docs/p.md"]),
+    # a shell runs a command string only with -c (alone or in a cluster)
+    ("""bash -x 'echo x > docs/p.md'""", []),
+    ("""bash -xc 'echo x > docs/p.md'""", ["docs/p.md"]),
+    ("bash -c", []),
+])
+def test_writer_extraction_command_position(cmd, expected):
+    assert extract_write_targets(cmd) == expected
+
+
 def test_sed_not_matched_inside_a_longer_word():
     assert extract_write_targets("unsed -i 's/a/b/' docs/public.md") == []
     assert extract_write_targets("mysed -i 's/a/b/' docs/public.md") == []
@@ -590,9 +646,9 @@ def test_sed_common_macos_form_has_no_phantom():
     assert _sed_inplace_files("-i '' 's/a b/Real Name/' output/x.md") == ["output/x.md"]
 
 
-def test_sed_fallback_keeps_quoted_filename_fragment():
-    """Codex c6c6ce5 F3: the unparseable-string fallback dropped words that start
-    with a quote, which can be the file."""
+def test_sed_quote_opened_before_the_filename():
+    """Codex c6c6ce5 F3's input. The quote never closes, so bash would not run it;
+    the tokenizer still keeps the text as a word rather than dropping it."""
     from check_public_pii import _sed_inplace_files
     assert "docs/public.md" in _sed_inplace_files("-i s/a/b/ 'docs/public.md")
 

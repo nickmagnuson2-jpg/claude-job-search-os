@@ -27,11 +27,11 @@ NOT wired on MultiEdit or NotebookEdit — those write paths are ungated.
 import json
 import os
 import re
-import shlex
 import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from shell_tokens import simple_commands  # noqa: E402
 from hook_runtime import read_payload  # noqa: E402
 from pathlib import Path
 
@@ -96,20 +96,10 @@ _BARE = r'[^\s;|&<>()]+'
 # `\|?` catches the noclobber-override form `>| file`, which slipped through until
 # 2026-08-19: `|` is excluded from _BARE, so no target was captured and the write
 # was invisible to the gate.
-_REDIRECT_RE = re.compile(rf'(?:^|[\s;|&(])\d?>>?\|?\s*(?!&)({_QUOTED}|{_BARE})')
-# tee takes MANY files. Capturing only the first let `tee data/a.md docs/leak.md`
-# through (2026-08-19): put the public file anywhere but first and it was unseen.
-# Where a command name can start: after a shell separator, optionally behind a path
-# (/usr/bin/sed, ./tee). The bare-name form alone let a path-qualified writer
-# through unscanned (Codex review, 2026-09-28).
-_CMD_START = r"""(?:^|[\s;|&(])(?:[^\s;|&()<>'"]*/)?"""
-_TEE_RE = re.compile(rf'{_CMD_START}tee\s+((?:-\S+\s+)*)((?:{_QUOTED}|{_BARE})(?:\s+(?:{_QUOTED}|{_BARE}))*)')
-# `sed` (bare or path-qualified: /usr/bin/sed, ./sed) plus its argument run. Quote-aware, so a ';', '|' or '&' inside a quoted
-# expression does not end the run (it did, which dropped the target: 2026-09-28).
-_SED_ARGS_RE = re.compile(
-    _CMD_START + r"""sed\s+((?:"(?:\\.|[^"\\])*"|'[^']*'|\\.|[^;|&'"\\])*)"""
-)
-_DD_OF_RE = re.compile(rf'{_CMD_START}dd\s+[^;|&]*?\bof=({_QUOTED}|{_BARE})')
+# Write targets are found by tools/shell_tokens.py, which reads the command the way
+# the shell does. The regexes that used to live here (_REDIRECT_RE, _TEE_RE,
+# _SED_ARGS_RE, _DD_OF_RE) each decided where an argument list ended, and a Codex
+# review found a new ordinary shell form each round they were patched (2026-09-28).
 
 # Descriptor sinks and device files: a write here never reaches the repo.
 _NON_FILE_TARGETS = frozenset({"/dev/null", "/dev/stdout", "/dev/stderr", "/dev/tty", "-"})
@@ -377,71 +367,120 @@ def _parse_sed_args(words: list[str], dialect: str) -> list[str]:
     return operands if script_given else operands[1:]
 
 
-_REDIR_OP = re.compile(r"\d*(?:>>?|<<?|&>>?|>&|<&|>\|)")
-_REDIR_WORD = re.compile(r"\d*(?:[<>]|&>)")
+def _sed_files(words: list[str]) -> list[str]:
+    """Files sed edits in place, given its argument words (no redirections).
 
-
-def _drop_redirections(words: list[str]) -> list[str]:
-    """Remove shell redirections from sed's words: they are not operands.
-
-    `2>/dev/null` arrives as one word; `< input.txt` as an operator word plus its
-    target. The redirect TARGETS are write targets in their own right, and
-    _REDIRECT_RE finds those separately.
-    """
-    out: list[str] = []
-    k = 0
-    while k < len(words):
-        w = words[k]
-        if _REDIR_OP.fullmatch(w):
-            k += 2                               # operator + its target
-            continue
-        if _REDIR_WORD.match(w):
-            k += 1
-            continue
-        out.append(w)
-        k += 1
-    return out
-
-
-def _sed_inplace_files(argstr: str) -> list[str]:
-    """Files a `sed` argument string edits in place, parsed the way sed reads them.
-
-    Shell words come from shlex, so quotes, escapes and adjacent quoted/bare spans
-    behave as the shell does. GNU and BSD sed disagree on option arity (BSD -i/-I
-    ALWAYS take the next word as the backup suffix and BSD -l is a flag; GNU -i
-    takes no separate word and GNU -l takes a number), so the words are parsed under
-    BOTH rule sets and the files are unioned. Returns [] when there is no in-place
-    flag.
+    GNU and BSD sed disagree on option arity (BSD -i/-I ALWAYS take the next word as
+    the backup suffix and BSD -l is a flag; GNU -i takes no separate word and GNU -l
+    takes a number), so the words are read under BOTH rule sets and the files are
+    unioned, in command order. Returns [] when there is no in-place flag.
 
     Why a union and not a detected dialect: a command read under the wrong rules can
-    lose a real file (`sed -i 's/a b/c/' a.md b.md` under BSD rules drops a.md),
-    and a missed public target leaks, while a phantom one only costs a false
-    positive. Accepted false positives, each blocking only when the command also
-    carries a denylisted token: a BSD suffix given as its own word
-    (`-i '.bak' 's/x/y/' f`) makes the expression a GNU-rules file (`-i.bak`
-    avoids it); a GNU `-l N` makes N the BSD-rules script, so an attached-suffix
-    expression becomes a BSD-rules file. The GNU reading also treats an empty word
-    after -i as a suffix: not GNU arity, a deliberate suppression so the everyday
-    macOS `-i ''` form produces no phantom.
-
-    If shlex cannot parse the string, every non-option word is returned with its
-    quotes stripped, for the same reason.
-
-    Replaces a token-shape heuristic ("quoted = script, bare = file") that made
-    phantom targets from a spaced expression and, once patched, dropped real ones
-    (Codex reviews of c0a2a61 and c6c6ce5, 2026-09-28).
+    lose a real file (`sed -i 's/a b/c/' a.md b.md` under BSD rules drops a.md), and a
+    missed public target leaks, while a phantom one only costs a false positive.
+    Accepted false positives, each blocking only when the command also carries a
+    denylisted token: a BSD suffix given as its own word (`-i '.bak' 's/x/y/' f`)
+    makes the expression a GNU-rules file (`-i.bak` avoids it); a GNU `-l N` makes N
+    the BSD-rules script, so an attached-suffix expression becomes a BSD-rules file.
+    The GNU reading also treats an empty word after -i as a suffix: not GNU arity, a
+    deliberate suppression so the everyday macOS `-i ''` form produces no phantom.
     """
-    try:
-        words = shlex.split(argstr, posix=True)
-    except ValueError:
-        return [w.strip("\"'") for w in argstr.split() if w and not w.startswith("-")]
-    words = _drop_redirections(words)
     found = set(_parse_sed_args(words, "bsd")) | set(_parse_sed_args(words, "gnu"))
     files: list[str] = []
     for w in words:                     # keep command order, drop duplicates
         if w in found and w not in files:
             files.append(w)
     return files
+
+
+def _sed_inplace_files(argstr: str) -> list[str]:
+    """_sed_files for a raw argument string (tokenized as the shell would)."""
+    cmds = simple_commands(argstr)
+    return _sed_files(cmds[0].words) if cmds else []
+
+
+# Commands that write files, by base name, and what runs a nested command string.
+_SHELLS = frozenset({"sh", "bash", "zsh", "dash", "ksh", "su"})
+_WRAPPERS = frozenset({"sudo", "env", "command", "exec", "builtin", "nice", "nohup",
+                       "time", "timeout", "stdbuf", "xargs", "caffeinate", "!",
+                       "then", "do", "else", "elif", "if", "while", "until", "{"})
+_ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
+_WRITE_REDIR = frozenset({">", ">>", ">|", "&>", "&>>", "<>"})
+
+
+def _command_index(words: list[str]) -> int:
+    """Index of the word the shell will run, past assignments and wrappers."""
+    i = 0
+    while i < len(words):
+        w = words[i]
+        if _ASSIGNMENT.match(w):
+            i += 1
+            continue
+        if os.path.basename(w) in _WRAPPERS:
+            i += 1
+            while i < len(words) and (words[i].startswith("-") or _ASSIGNMENT.match(words[i])
+                                      or words[i].isdigit()):
+                i += 1
+            continue
+        return i
+    return len(words)
+
+
+def _redirect_targets(cmd) -> list[str]:
+    out = []
+    for r in cmd.redirections:
+        core = r.op.lstrip("0123456789")
+        if core in _WRITE_REDIR:
+            out.append(r.target)
+        elif core == ">&" and not (r.target.isdigit() or r.target == "-"):
+            out.append(r.target)            # bash: `>& FILE` sends both streams to FILE
+    return out
+
+
+def _writer_targets(words: list[str], quoted: list[bool], depth: int) -> list[str]:
+    """Files written by sed -i, tee and dd in one simple command, plus any command
+    string handed to a shell (`bash -c "..."`, `eval "..."`).
+
+    A word counts as the command if it sits in command position (quoted or not, so
+    `"/usr/bin/sed"` counts) or appears unquoted anywhere (`find ... -exec sed -i`),
+    which is what the old regexes matched. Names match on base name, so a path before
+    the name does not hide it and a longer name (mysed) is not it.
+    """
+    out: list[str] = []
+    cmd_at = _command_index(words)
+    for i, w in enumerate(words):
+        if i != cmd_at and quoted[i]:
+            continue
+        name = os.path.basename(w)
+        rest = words[i + 1:]
+        if name in ("sed", "gsed"):
+            out.extend(_sed_files(rest))
+        elif name == "tee":
+            end_opts = False
+            for a in rest:
+                if not end_opts and a == "--":
+                    end_opts = True
+                elif end_opts or not a.startswith("-") or a == "-":
+                    out.append(a)
+        elif name == "dd":
+            out.extend(a[3:] for a in rest if a.startswith("of="))
+        elif name in _SHELLS and depth < 3:
+            for k, a in enumerate(rest):
+                if a.startswith("-") and not a.startswith("--") and "c" in a[1:]:
+                    if k + 1 < len(rest):
+                        out.extend(_targets_in(rest[k + 1], depth + 1))
+                    break
+        elif name == "eval" and depth < 3:
+            out.extend(_targets_in(" ".join(rest), depth + 1))
+    return out
+
+
+def _targets_in(command: str, depth: int = 0) -> list[str]:
+    targets: list[str] = []
+    for cmd in simple_commands(command):
+        targets.extend(_redirect_targets(cmd))
+        targets.extend(_writer_targets(cmd.words, cmd.quoted, depth))
+    return targets
 
 
 def extract_write_targets(command: str) -> list[str]:
@@ -463,19 +502,7 @@ def extract_write_targets(command: str) -> list[str]:
     names, so heredoc bodies are masked below before any target is mined out of them.
     """
     command = mask_heredoc_bodies(command)
-    targets: list[str] = []
-
-    for m in _REDIRECT_RE.finditer(command):
-        targets.append(_unquote(m.group(1)))
-    for m in _TEE_RE.finditer(command):
-        for tok in m.group(2).split():
-            if not tok.startswith("-"):
-                targets.append(_unquote(tok))
-    for m in _DD_OF_RE.finditer(command):
-        targets.append(_unquote(m.group(1)))
-
-    for m in _SED_ARGS_RE.finditer(command):
-        targets.extend(_sed_inplace_files(m.group(1)))
+    targets = _targets_in(command)
 
     out = []
     for t in targets:
