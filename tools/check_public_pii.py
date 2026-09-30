@@ -145,10 +145,16 @@ def split_command_segments(command: str) -> list[str]:
     compound = 0       # nesting of if/fi, do/done, case/esac
     awaiting = 0       # heredocs opened whose body has not arrived yet
     at_command_start = True
+    prev_word = ""
     for t in tokenize(command):
         starts_command = at_command_start
-        at_command_start = (t.kind == "op" or (t.kind == "word" and not t.quoted
-                                                and t.text in _COMPOUND_PREFIX))
+        # `time -p if ...`: options after `time` keep the command position open.
+        time_option = (starts_command and prev_word == "time" and t.kind == "word"
+                       and t.text.startswith("-"))
+        at_command_start = time_option or t.kind == "op" or (
+            t.kind == "word" and not t.quoted and t.text in _COMPOUND_PREFIX)
+        if t.kind == "word" and not time_option:
+            prev_word = t.text
         # A compound command's redirect applies to its whole body, like a group's:
         # splitting at the `;` in `if a; then echo NAME; fi > docs/f.md` put the name
         # and the public target in different segments (Codex review of 68cf50a).
@@ -495,56 +501,87 @@ def _targets_in(command: str) -> list[str]:
     return targets
 
 
-_VAR_REF = re.compile(r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))")
+# $NAME, ${NAME}, or ${NAME<op>word} for the default/alternate operators.
+_VAR_REF = re.compile(r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)(?:(:?[-=+?])([^}]*))?\}"
+                      r"|([A-Za-z_][A-Za-z0-9_]*))|\$\{[^}]*\}")
 _DECLARERS = frozenset({"export", "declare", "local", "readonly", "typeset"})
+_MAX_CANDIDATES = 32
 
 
-def _expand_vars(text: str, env: dict[str, str]) -> str | None:
-    """Substitute $NAME / ${NAME} from env, then the process environment. None if any
-    reference stays unresolved (a target that cannot be known is skipped, as before)."""
-    missing = False
+def _expand_vars(text: str, env: dict[str, list[str]]) -> list[str]:
+    """Every value `text` could expand to, or [] if a reference cannot be resolved.
 
-    def sub(m):
-        nonlocal missing
-        name = m.group(1) or m.group(2)
-        if name in env:
-            return env[name]
-        if name in os.environ:
-            return os.environ[name]
-        missing = True
-        return ""
-
-    out = _VAR_REF.sub(sub, text)
-    return None if missing else out
-
-
-def command_assignments(command: str) -> dict[str, str]:
-    """Variables a command line assigns (`A=x`, `A+=x`, `export A=x`), expanded in order.
-
-    A write target like `> "$OUT"` was skipped as unresolvable even when the same call
-    had just set `OUT=docs/notes.md`, so the leak went through (Codex review of
-    a7d6f2a). Every assignment is applied in command order; the hook cannot follow
-    control flow, so a later assignment simply wins.
+    A variable is treated as EVERY value it could hold -- each assignment seen in the
+    command, its environment value, and the word of a `${X:-word}` style default --
+    because the hook cannot follow the shell's control flow and assignment timing.
+    "Last assignment wins" picked the private value in
+    `OUT=docs/f; OUT=output/f cmd > "$OUT"` while bash wrote the public one (Codex
+    review of 837e638). Over-approximating can only add a target, never drop one.
+    An operator the hook does not evaluate (`${X%.md}`) leaves the text unresolved.
     """
-    env: dict[str, str] = {}
+    results = [""]
+    pos = 0
+    for m in _VAR_REF.finditer(text):
+        literal = text[pos:m.start()]
+        pos = m.end()
+        name = m.group(1) or m.group(4)
+        if name is None:
+            return []                                   # unsupported ${...} form
+        values: list[str] = list(env.get(name, []))
+        if name in os.environ:
+            values.append(os.environ[name])
+        op, word = m.group(2), m.group(3)
+        if op:
+            alt = _expand_vars(word or "", env) or [word or ""]
+            if op.endswith("+"):
+                values = alt + [""]
+            elif op.endswith("?"):
+                pass
+            else:
+                values = values + alt
+        if not values:
+            return []
+        results = [r + literal + v for r in results for v in dict.fromkeys(values)]
+        results = results[:_MAX_CANDIDATES]
+    return [r + text[pos:] for r in results]
+
+
+def command_assignments(command: str) -> dict[str, list[str]]:
+    """Every value each variable is assigned anywhere in a command line.
+
+    Collects `A=x`, `A+=x` and `export A=x` in every simple command, including those
+    inside compounds (`if ...; then OUT=docs/f; fi`, missed before) and prefix
+    assignments. A write target like `> "$OUT"` was skipped as unresolvable even when
+    the same call set it (Codex review of a7d6f2a). See _expand_vars for why a name
+    keeps all of its values.
+    """
+    env: dict[str, list[str]] = {}
     for cmd in simple_commands(command):
         words = cmd.words
-        k = 1 if words and words[0] in _DECLARERS else 0
+        k = 0
+        while k < len(words) and words[k] in _COMPOUND_PREFIX:
+            k += 1                                      # then / do / else / time ...
+        declarer = k < len(words) and words[k] in _DECLARERS
+        if declarer:
+            k += 1
         for w in words[k:]:
             m = _ASSIGNMENT.match(w)
             if not m:
-                if k == 0:
+                if not declarer:
                     break           # past the leading assignments of a plain command
                 continue
             name = w[:m.end()].rstrip("=").rstrip("+")
-            value = _expand_vars(w[m.end():], env) or ""
-            if value.startswith("~"):          # bash expands a leading ~ in a value
-                value = os.path.expanduser(value)
-            env[name] = env.get(name, "") + value if w[m.end() - 2:m.end()] == "+=" else value
+            values = _expand_vars(w[m.end():], env) or [w[m.end():]]
+            values = [os.path.expanduser(v) if v.startswith("~") else v for v in values]
+            if w[m.end() - 2:m.end()] == "+=":
+                base = env.get(name, [""])
+                values = [b + v for b in base for v in values][:_MAX_CANDIDATES]
+            env.setdefault(name, [])
+            env[name] = list(dict.fromkeys(env[name] + values))[:_MAX_CANDIDATES]
     return env
 
 
-def extract_write_targets(command: str, env: dict[str, str] | None = None) -> list[str]:
+def extract_write_targets(command: str, env: dict[str, list[str]] | None = None) -> list[str]:
     """Paths this shell command may WRITE to.
 
     Covers the shapes that actually land content in a file from a command line:
@@ -566,20 +603,24 @@ def extract_write_targets(command: str, env: dict[str, str] | None = None) -> li
     targets = _targets_in(command)
     # Variables: what the caller saw assigned elsewhere in the full command, then
     # anything assigned inside this text itself.
-    scope = {**(env or {}), **command_assignments(command)}
+    scope: dict[str, list[str]] = {k: list(v) for k, v in (env or {}).items()}
+    for k, v in command_assignments(command).items():
+        scope[k] = list(dict.fromkeys(scope.get(k, []) + v))
+
+    expanded: list[str] = []
+    for t in targets:
+        if "$" in t and not t.startswith("`"):
+            expanded.extend(_expand_vars(t, scope))     # [] when unresolvable: skipped
+        else:
+            expanded.append(t)
 
     out = []
-    for t in targets:
+    for t in expanded:
         t = t.strip()
         if not t or t in _NON_FILE_TARGETS or t.startswith("/dev/"):
             continue
         if t.startswith("`"):                         # unresolvable at hook time
             continue
-        if "$" in t:
-            resolved = _expand_vars(t, scope)
-            if resolved is None:                       # unresolvable at hook time
-                continue
-            t = resolved
         if t.startswith("~"):
             # bash expands ~ before writing; left literal, `~/x` resolved inside the
             # repo and read as a public path (replay on real history, 2026-09-30).

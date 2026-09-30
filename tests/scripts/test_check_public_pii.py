@@ -1183,7 +1183,7 @@ def test_variable_targets_resolve_from_the_command_then_the_environment(monkeypa
     assert extract_write_targets('echo x > "$HQ_TEST_DIR/a.md"') == ["docs/a.md"]
     assert extract_write_targets('echo x > "$NOT_SET_ANYWHERE_XYZ/a.md"') == []
     env = cpp.command_assignments("A=docs/a.md; B=${A}; echo x > $B")
-    assert env == {"A": "docs/a.md", "B": "docs/a.md"}
+    assert env == {"A": ["docs/a.md"], "B": ["docs/a.md"]}
     assert extract_write_targets("echo x > $B", env) == ["docs/a.md"]
 
 
@@ -1191,18 +1191,58 @@ def test_tilde_expands_in_targets_and_assignments():
     home = os.path.expanduser("~")
     assert extract_write_targets("echo x > ~/n.md") == [home + "/n.md"]
     env = cpp.command_assignments("M=~/mem; cat > $M/a.md")
-    assert env == {"M": home + "/mem"}
+    assert env == {"M": [home + "/mem"]}
     assert extract_write_targets("cat > $M/a.md", env) == [home + "/mem/a.md"]
 
 
 def test_command_assignments_forms():
     # a plain command's assignments stop at its first non-assignment word
-    assert cpp.command_assignments("A=1 echo B=2") == {"A": "1"}
+    assert cpp.command_assignments("A=1 echo B=2") == {"A": ["1"]}
     # declarers assign every NAME=value argument
-    assert cpp.command_assignments("export A=1 other B=2") == {"A": "1", "B": "2"}
-    # += appends
-    assert cpp.command_assignments("A=x; A+=y") == {"A": "xy"}
+    assert cpp.command_assignments("export A=1 other B=2") == {"A": ["1"], "B": ["2"]}
+    # += appends to every earlier value
+    assert cpp.command_assignments("A=x; A+=y") == {"A": ["x", "xy"]}
 
 
 def test_command_substitution_target_is_unresolvable():
     assert extract_write_targets("echo x > `echo docs/f.md`") == []
+
+
+# --- Codex review of 837e638: a variable target is every value it could hold ---------
+
+@pytest.mark.parametrize("cmd", [
+    # F1 (P0): a command-prefix assignment does not change its own redirect
+    'OUT=docs/notes.md; OUT=output/notes.md echo Pat Zorp > "$OUT"',
+    'OUT=output/a.md; OUT=docs/notes.md; echo Pat Zorp > "$OUT"',
+    # F2 (P0): assignments inside compounds
+    'if true; then OUT=docs/notes.md; fi; echo Pat Zorp > "$OUT"',
+    'for x in 1; do OUT=docs/notes.md; done; echo Pat Zorp > "$OUT"',
+    '{ OUT=docs/notes.md; }; echo Pat Zorp > "$OUT"',
+    # F3 (P0): default-value expansions
+    'echo Pat Zorp > "${OUT_UNSET_XYZ:-docs/notes.md}"',
+    'echo Pat Zorp > "${OUT_UNSET_XYZ-docs/notes.md}"',
+    'echo Pat Zorp > "${OUT_UNSET_XYZ:=docs/notes.md}"',
+    'BASE=${B_UNSET_XYZ:-docs}; echo Pat Zorp > "$BASE/notes.md"',
+    # F4 (P0): `time` with options before a compound
+    "time -p if true; then echo Pat Zorp; fi > docs/notes.md",
+    "time -p for x in 1; do echo Pat Zorp; done > docs/notes.md",
+])
+def test_codex_837e638_leaks_STILL_BLOCK(tmp_path, cmd):
+    code, err = _run_bash(tmp_path, cmd)
+    assert code == 2, cmd
+    assert "Pat Zorp" in err
+
+
+def test_variable_candidates():
+    env = cpp.command_assignments("A=docs/a.md; A=output/b.md")
+    assert sorted(extract_write_targets('echo x > "$A"', env)) == ["docs/a.md", "output/b.md"]
+    assert extract_write_targets('echo x > "${NOPE_XYZ:+docs/a.md}"') == ["docs/a.md"]
+    # an operator the hook cannot evaluate: unresolved, skipped as before
+    assert extract_write_targets('echo x > "${NOPE_XYZ%.md}"') == []
+
+
+def test_parameter_operators_when_the_variable_is_set():
+    env = cpp.command_assignments("A=out/b.md")
+    assert extract_write_targets('echo x > "${A:+docs/a.md}"', env) == ["docs/a.md"]
+    assert extract_write_targets('echo x > "${A:-docs/a.md}"', env) == ["out/b.md", "docs/a.md"]
+    assert extract_write_targets('echo x > "${A:?unset}"', env) == ["out/b.md"]

@@ -276,3 +276,12 @@ def test_ansi_c_hex_without_digits_and_control_escapes():
     w = lambda src: tokenize(src)[0].text
     assert w("$'\\xZ'") == "\\xZ"          # \x with no hex digit: kept as written
     assert w("$'\\cA'") == "\x01"           # \cX: control character
+
+
+def test_ansi_c_invalid_code_points_do_not_crash():
+    """Codex review of 837e638, F5: an exception in the tokenizer lets the hook fail
+    open. Out-of-range and surrogate code points are kept as written."""
+    w = lambda src: tokenize(src)[0].text
+    assert w("$'\\U00110000'") == "\\U00110000"
+    assert w("$'\\uD800'") == "\\uD800"
+    assert w("$'a\\c'") == "a\\c"

@@ -156,12 +156,16 @@ def _ansi_c(s: str, j: int) -> tuple[str, int]:
             k = j + 2
             while k < n and k < j + 2 + width and s[k] in _HEX:
                 k += 1
-            if k == j + 2:
-                out.append(s[j:j + 2])
+            code = int(s[j + 2:k], 16) if k > j + 2 else -1
+            # Out-of-range or surrogate: kept as written. Raising here would make the
+            # hook fail open (Codex review of 837e638). Bash emits raw BYTES for
+            # \\xHH >= 0x80; this yields the code point instead, a documented gap.
+            if code < 0 or code > 0x10FFFF or 0xD800 <= code <= 0xDFFF:
+                out.append(s[j:k])
             else:
-                out.append(chr(int(s[j + 2:k], 16)))
+                out.append(chr(code))
             j = k
-        elif c == "c" and j + 2 < n:
+        elif c == "c" and j + 2 < n and s[j + 2] != "'":
             out.append(chr(ord(s[j + 2]) & 0x1F))
             j += 3
         else:
