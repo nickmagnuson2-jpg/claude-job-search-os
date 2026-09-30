@@ -556,8 +556,28 @@ def command_assignments(command: str) -> dict[str, list[str]]:
     keeps all of its values.
     """
     env: dict[str, list[str]] = {}
+
+    def merge(inner: dict[str, list[str]]) -> None:
+        for name, vals in inner.items():
+            env[name] = list(dict.fromkeys(env.get(name, []) + vals))[:_MAX_CANDIDATES]
+
     for cmd in simple_commands(command):
         words = cmd.words
+        # Command strings that RUN (`bash -c`, `eval`, `$( )`) assign too, and their
+        # own redirects need those values (Codex review of bd947f1).
+        for inner in cmd.subs:
+            merge(command_assignments(inner))
+        positions = _command_positions(words)
+        for i, w in enumerate(words):
+            if i not in positions:
+                continue
+            base = os.path.basename(w)
+            if base in _SHELLS:
+                script = _shell_command_string(words[i + 1:])
+                if script is not None:
+                    merge(command_assignments(script))
+            elif base == "eval":
+                merge(command_assignments(" ".join(words[i + 1:])))
         k = 0
         while k < len(words) and words[k] in _COMPOUND_PREFIX:
             k += 1                                      # then / do / else / time ...

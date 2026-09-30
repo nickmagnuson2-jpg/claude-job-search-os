@@ -1246,3 +1246,21 @@ def test_parameter_operators_when_the_variable_is_set():
     assert extract_write_targets('echo x > "${A:+docs/a.md}"', env) == ["docs/a.md"]
     assert extract_write_targets('echo x > "${A:-docs/a.md}"', env) == ["out/b.md", "docs/a.md"]
     assert extract_write_targets('echo x > "${A:?unset}"', env) == ["out/b.md"]
+
+
+@pytest.mark.parametrize("cmd", [
+    # Codex review of bd947f1, F1 (P0): assignments inside a nested command string
+    """bash -c 'OUT=docs/notes.md; echo Pat Zorp > "$OUT"'""",
+    """sh -c 'OUT=docs/notes.md; echo Pat Zorp | tee "$OUT"'""",
+    """eval 'OUT=docs/notes.md; echo Pat Zorp > "$OUT"'""",
+    """x=$(OUT=docs/notes.md; echo Pat Zorp > "$OUT")""",
+])
+def test_nested_string_assignments_STILL_BLOCK(tmp_path, cmd):
+    code, err = _run_bash(tmp_path, cmd)
+    assert code == 2, cmd
+
+
+def test_a_shell_named_as_an_argument_assigns_nothing():
+    """`bash` as an ARGUMENT does not run its string, so it assigns nothing."""
+    cmd = "echo bash -c 'OUT=docs/x.md'; echo hi > \"$OUT\""
+    assert extract_write_targets("echo hi > \"$OUT\"", cpp.command_assignments(cmd)) == []
