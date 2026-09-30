@@ -88,3 +88,59 @@ def test_the_hook_is_wired_into_settings():
     """An unwired hook is a file, not a guard."""
     s = (REPO / ".claude" / "settings.json").read_text()
     assert "check_heredoc_quoting.py" in s
+
+
+# --- 2026-09-30: rebuilt on tools/shell_tokens.py ------------------------------------
+# The regex version found an "opener" anywhere in the text, including inside a QUOTED
+# heredoc's body and inside quoted strings, and then scanned the lines after it as if
+# they were a body. It fired three times in one session on commands that wrote Python
+# test code containing heredoc markers as string data.
+
+def test_heredoc_marker_inside_a_QUOTED_heredoc_body_is_data():
+    """The false positive, 3 fires on 2026-09-30."""
+    cmd = ("cat >> t.py <<'EOF'\n"
+           "src = 'cat <<A'\n"
+           "print(" + BT + "g" + BT + ")\n"
+           "A\n"
+           "EOF\n")
+    assert run(cmd) == 0
+
+
+def test_heredoc_marker_inside_a_quoted_string_is_not_an_opener():
+    assert run('echo "cat <<EOF"\necho ' + BT + "date" + BT) == 0
+
+
+def test_an_escaped_delimiter_disables_expansion():
+    assert run("cat <<\\EOF\n " + BT + "token" + BT + "\nEOF\n") == 0
+
+
+def test_a_delimiter_with_punctuation_is_still_a_delimiter():
+    assert run("cat <<END-MARK\n " + BT + "token" + BT + "\nEND-MARK\n") == 2
+    assert run("cat <<'END-MARK'\n " + BT + "token" + BT + "\nEND-MARK\n") == 0
+
+
+def test_backtick_AFTER_the_body_is_not_in_the_body():
+    assert run("cat <<EOF > f\nplain\nEOF\necho " + BT + "date" + BT) == 0
+
+
+def test_second_heredoc_on_one_line_is_checked_too():
+    cmd = ("cat <<'A' > f; cat <<B > g\n" + BT + "x" + BT + "\nA\n"
+           + BT + "y" + BT + "\nB\n")
+    assert run(cmd) == 2
+
+
+def test_the_block_message_names_the_offending_delimiter():
+    """Each body is paired with ITS delimiter, in order, so the message names the right
+    one (a fallback of "EOF" would hide a broken pairing)."""
+    p = subprocess.run([sys.executable, str(HOOK)],
+                       input=json.dumps({"tool_input": {"command":
+                           "cat <<'SAFE' > f; cat <<BAD > g\nx\nSAFE\n" + BT + "y" + BT + "\nBAD\n"}}),
+                       capture_output=True, text=True)
+    assert p.returncode == 2
+    assert "<<BAD" in p.stderr
+    assert "<<SAFE" not in p.stderr
+    assert "<<'BAD'" in p.stderr
+
+
+def test_a_descriptor_numbered_heredoc_is_still_a_heredoc():
+    assert run("cat 0<<EOF\n " + BT + "token" + BT + "\nEOF\n") == 2

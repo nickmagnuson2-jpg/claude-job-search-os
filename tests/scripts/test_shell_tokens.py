@@ -57,7 +57,8 @@ def test_newline_and_parens_are_operators():
     ("a >>f", [("word", "a"), ("redir", ">>"), ("word", "f")]),
     ("a >|f", [("word", "a"), ("redir", ">|"), ("word", "f")]),
     ("a <<<x", [("word", "a"), ("redir", "<<<"), ("word", "x")]),
-    ("a <<-EOF", [("word", "a"), ("redir", "<<-"), ("word", "EOF")]),
+    # a heredoc opened on the last line has an empty body (bash: delimited by EOF)
+    ("a <<-EOF", [("word", "a"), ("redir", "<<-"), ("word", "EOF"), ("heredoc", "")]),
     ("a <>f", [("word", "a"), ("redir", "<>"), ("word", "f")]),
     # digits only become an fd when they touch the operator
     ("a 2 > f", [("word", "a"), ("word", "2"), ("redir", ">"), ("word", "f")]),
@@ -167,3 +168,84 @@ def test_substitution_text_stays_in_the_word_inside_double_quotes():
 
 def test_redirect_target_substitutions_are_collected():
     assert simple_commands("a > $(tee f)")[0].subs == ["tee f"]
+
+
+# --- source spans and heredocs (one parser for segmenting, masking, extraction) ---
+
+def spans(src):
+    return [(t.kind, src[t.start:t.end]) for t in tokenize(src)]
+
+
+def test_every_token_knows_its_source_span():
+    src = """a 'b c' "d" 2>&1 x$(y)z; e"""
+    assert spans(src) == [
+        ("word", "a"), ("word", "'b c'"), ("word", '"d"'), ("redir", "2>&"),
+        ("word", "1"), ("word", "x$(y)z"), ("op", ";"), ("word", "e"),
+    ]
+
+
+def heredocs(src):
+    return [(t.text, src[t.start:t.end], t.subs) for t in tokenize(src) if t.kind == "heredoc"]
+
+
+def test_heredoc_body_is_one_token_placed_before_the_newline_that_ends_it():
+    src = "cat <<EOF > f\na; b > c\nEOF\necho d"
+    assert kinds(src) == [
+        ("word", "cat"), ("redir", "<<"), ("word", "EOF"), ("redir", ">"), ("word", "f"),
+        ("heredoc", "a; b > c\n"), ("op", "\n"), ("word", "echo"), ("word", "d"),
+    ]
+
+
+def test_heredoc_delimiters_quoted_escaped_dashed_and_multiple():
+    assert heredocs("cat <<'END-MARK'\nx\nEND-MARK") == [("x\n", "x\n", [])]
+    assert heredocs('cat <<"A"\nx\nA') == [("x\n", "x\n", [])]
+    assert heredocs("cat <<\\A\nx\nA") == [("x\n", "x\n", [])]
+    # <<- strips leading TABS from the delimiter line
+    assert heredocs("cat <<-A\n\tx\n\tA") == [("\tx\n", "\tx\n", [])]
+    # two heredocs on one line: bodies in order
+    assert [h[0] for h in heredocs("a <<A; b <<B\n1\nA\n2\nB\nc")] == ["1\n", "2\n"]
+    # a line that merely ends with the delimiter does not close it
+    assert heredocs("cat <<A\nxA\nA")[0][0] == "xA\n"
+    # never closed: the rest of the input is the body
+    assert heredocs("cat <<A\nx\ny")[0][0] == "x\ny"
+
+
+def test_unquoted_heredoc_body_expands_substitutions():
+    """An UNQUOTED delimiter turns on expansion: $( ) and backticks in the body run."""
+    assert heredocs("cat <<A\n$(tee f) `g`\nA")[0][2] == ["tee f", "g"]
+    assert heredocs("cat <<A\n\\$(tee f)\nA")[0][2] == []
+    assert heredocs("cat <<'A'\n$(tee f)\nA")[0][2] == []
+    assert heredocs("cat <<\\A\n$(tee f)\nA")[0][2] == []
+
+
+def test_heredoc_body_attaches_to_its_redirection_and_command():
+    cmds = simple_commands("a <<A > f; b <<B\n1 $(tee x)\nA\n2\nB\nc")
+    assert [c.words for c in cmds] == [["a"], ["b"], ["c"]]
+    assert [(r.op, r.target, r.body) for r in cmds[0].redirections] == [
+        ("<<", "A", "1 $(tee x)\n"), (">", "f", None)]
+    assert cmds[0].subs == ["tee x"]
+    assert [(r.op, r.body) for r in cmds[1].redirections] == [("<<", "2\n")]
+
+
+def test_herestring_is_not_a_heredoc():
+    assert [t.kind for t in tokenize("cat <<< x\ny")] == ["word", "redir", "word", "op", "word"]
+
+
+def test_expansion_subs_back_to_back_and_after_an_escape():
+    body = lambda b: heredocs("cat <<A\n" + b + "\nA")[0][2]
+    assert body("$(a)$(b)") == ["a", "b"]
+    assert body("`a``b`") == ["a", "b"]
+    assert body("\\$$(b)") == ["b"]
+    # two escapes in a row: the second still escapes its $(
+    assert body("\\a\\$(b)") == []
+
+
+def test_heredoc_to_end_of_input_leaves_no_trailing_newline_token():
+    assert kinds("cat <<A\nx") == [("word", "cat"), ("redir", "<<"), ("word", "A"), ("heredoc", "x")]
+
+
+def test_heredoc_quoted_flag_is_the_delimiter_quoting():
+    q = lambda src: [t.quoted for t in tokenize(src) if t.kind == "heredoc"]
+    assert q("cat <<A\nx\nA") == [False]
+    assert q("cat <<'A'\nx\nA") == [True]
+    assert q("cat <<\\A\nx\nA") == [True]

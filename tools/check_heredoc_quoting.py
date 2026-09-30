@@ -21,16 +21,21 @@ which Claude Code does not surface. For an unambiguous defect with one known cor
 BLOCK (exit 2) is the only tier that reaches anyone.
 
 DETECTION, deliberately narrow so it does not fire on legitimate expansion:
-  - Find heredoc openers: << or <<-, optional whitespace, then the delimiter.
-  - A delimiter wrapped in single or double quotes DISABLES expansion. That is the safe
-    form and is never flagged.
-  - An unquoted delimiter is flagged ONLY IF its body contains a backtick. Unquoted
-    heredocs carrying $VAR are frequently intentional (that is the reason to leave the
-    delimiter bare) and are NOT flagged; $ alone is far too common to block on.
+  - Heredocs are found by tools/shell_tokens.py, which reads the command the way the
+    shell does: only a real `<<` or `<<-` operator opens one, any delimiter word counts,
+    and several on one line each get their own body.
+  - A quoted or backslash-escaped delimiter DISABLES expansion. That is the safe form
+    and is never flagged.
+  - An unquoted delimiter is flagged ONLY IF its body contains a live (unescaped)
+    backtick. Unquoted heredocs carrying $VAR are frequently intentional (that is the
+    reason to leave the delimiter bare) and are NOT flagged; $ alone is far too common
+    to block on.
   - <<< is a here-STRING, not a heredoc. Skipped.
 
-The body is read from the opener line to a line equal to the delimiter, matching the
-shell. <<- permits a tab-indented terminator.
+REBUILT ON THE TOKENIZER 2026-09-30. The regex version found an "opener" anywhere in the
+text, including inside a QUOTED heredoc's body and inside quoted strings, then scanned
+the following lines as a body. It blocked three safe writes in one session, each a
+quoted heredoc carrying Python test code whose string data mentioned a heredoc marker.
 
 THE FIX IS ALWAYS THE SAME, which is what makes this blockable: quote the delimiter and
 pass anything you needed interpolated as an argument instead.
@@ -52,32 +57,26 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from hook_runtime import read_payload  # noqa: E402
+from shell_tokens import tokenize  # noqa: E402
 
 BT = chr(96)
-
-# << or <<-, not <<<; then optional space; then a quoted or bare delimiter.
-OPENER = re.compile(r"<<(-?)\s*(?!<)(?:([\x27\"])(\w+)\2|(\w+))")
+# A backtick not preceded by a backslash runs; an escaped one is literal.
+_LIVE_BACKTICK = re.compile(r"(?<!\\)" + BT)
 
 
 def offenders(command: str) -> list[str]:
-    """Delimiters of unquoted heredocs whose body contains a backtick."""
-    lines = command.splitlines()
+    """Delimiters of unquoted heredocs whose body contains a live backtick."""
+    toks = tokenize(command)
+    delims: list[str] = []          # delimiter words, in the order their bodies arrive
     bad: list[str] = []
-    for i, line in enumerate(lines):
-        for m in OPENER.finditer(line):
-            dash, quote, quoted_delim, bare_delim = m.groups()
-            delim = quoted_delim or bare_delim
-            body: list[str] = []
-            j = i + 1
-            while j < len(lines):
-                candidate = lines[j].lstrip("\t") if dash else lines[j]
-                if candidate.strip() == delim:
-                    break
-                body.append(lines[j])
-                j += 1
-            # A QUOTED delimiter disables expansion: safe by construction.
-            # A bare one is only a problem when the body actually carries a backtick.
-            if not quote and BT in "\n".join(body):
+    for k, t in enumerate(toks):
+        if (t.kind == "redir" and t.text.lstrip("0123456789") in ("<<", "<<-")
+                and k + 1 < len(toks) and toks[k + 1].kind == "word"):
+            delims.append(toks[k + 1].text)
+        elif t.kind == "heredoc":
+            delim = delims.pop(0) if delims else "EOF"
+            # t.quoted: the delimiter was quoted or escaped, so the body is literal.
+            if not t.quoted and _LIVE_BACKTICK.search(t.text):
                 bad.append(delim)
     return bad
 

@@ -792,7 +792,7 @@ def test_escaped_quote_leak_to_public_file_STILL_BLOCKS(tmp_path):
     assert "Pat Zorp" in err
 
 def test_split_keeps_escape_text_exactly():
-    assert split_command_segments('echo a\; b > f') == ['echo a\; b > f']
+    assert split_command_segments(r'echo a\; b > f') == [r'echo a\; b > f']
     assert split_command_segments('echo "a \\"x; y\\"" > f') == ['echo "a \\"x; y\\"" > f']
 
 
@@ -1059,3 +1059,40 @@ def test_no_arguments_still_reads_the_hook_payload():
 def test_scan_mode_is_untouched():
     proc = _run_argv("--scan", "tools/finding_write.py")
     assert proc.returncode == 0
+
+
+@pytest.mark.parametrize("cmd,expected", [
+    # an UNQUOTED delimiter expands the body, so a $( ) there runs
+    ("cat <<EOF > docs/x.md\n$(tee docs/p.md)\nEOF", ["docs/x.md", "docs/p.md"]),
+    ("cat <<EOF > docs/x.md\n`tee docs/p.md`\nEOF", ["docs/x.md", "docs/p.md"]),
+    # a quoted or escaped delimiter does not
+    ("cat <<'EOF' > docs/x.md\n$(tee docs/p.md)\nEOF", ["docs/x.md"]),
+    ("cat <<\\EOF > docs/x.md\n$(tee docs/p.md)\nEOF", ["docs/x.md"]),
+    # the body is content either way: no redirect inside it is a target
+    ("cat <<EOF > docs/x.md\na > b\nEOF", ["docs/x.md"]),
+    # two heredocs on one line, bodies after both commands
+    ("cat <<A > docs/a.md; cat <<B > docs/b.md\n> x\nA\n> y\nB", ["docs/a.md", "docs/b.md"]),
+])
+def test_heredoc_bodies_in_extraction(cmd, expected):
+    assert extract_write_targets(cmd) == expected
+
+
+def test_segments_with_two_heredocs_on_one_line():
+    cmd = "cat <<A > f; cat <<B > g\n1; x\nA\n2; y\nB\necho z"
+    # body A belongs to the FIRST command but arrives after the `;`; splitting there
+    # would judge it against the second command's target. No split while a heredoc
+    # is still waiting for its body.
+    assert split_command_segments(cmd) == ["cat <<A > f; cat <<B > g\n1; x\nA\n2; y\nB", "echo z"]
+
+
+def test_heredoc_body_of_first_command_STILL_BLOCKS_against_its_public_target(tmp_path):
+    cmd = "cat <<A > docs/notes.md; cat <<B > out.txt\nPat Zorp\nA\nplain\nB"
+    code, err = _run_bash(tmp_path, cmd)
+    assert code == 2
+    assert "Pat Zorp" in err
+
+
+def test_mask_heredoc_bodies_blanks_only_bodies_and_keeps_newlines():
+    cmd = "cat > f <<'E'\nab\ncd\nE\necho x > g"
+    assert cpp.mask_heredoc_bodies(cmd) == "cat > f <<'E'\n  \n  \nE\necho x > g"
+    assert cpp.mask_heredoc_bodies("echo a > b") == "echo a > b"

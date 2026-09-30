@@ -31,7 +31,7 @@ import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from shell_tokens import simple_commands  # noqa: E402
+from shell_tokens import simple_commands, tokenize  # noqa: E402
 from hook_runtime import read_payload  # noqa: E402
 from pathlib import Path
 
@@ -98,11 +98,9 @@ def _unquote(tok: str) -> str:
     return tok
 
 
-# The delimiter is any shell word, not only an identifier: a quoted END-MARK or an
-# unquoted EOF.1 went unrecognised, so the body (with a name) was split from its
-# public redirect (Codex review of 6514b88; pre-existing). Unquoted, a leading letter
-# or underscore is still required, so an arithmetic shift is not read as one.
-_HEREDOC_START = re.compile(r"""<<-?\s*(?:(["'])([^"'\n]+)\1|\\?([A-Za-z_][^\s;&|<>()'"`]*))""")
+
+
+_SEGMENT_SEPARATORS = frozenset({";", "&&", "||", "\n", ";;"})
 
 
 def split_command_segments(command: str) -> list[str]:
@@ -116,87 +114,43 @@ def split_command_segments(command: str) -> list[str]:
     normal way work happens here, so that FP would have made the hook unusable and
     the predictable next step is someone disabling it.
 
-    Splits on `;`, `&&`, `||`, and newlines. Deliberately does NOT split on a single
-    `|`: in `echo BODY | tee docs/a.md` the content and its target sit on opposite
-    sides of the pipe, so splitting there would hide the leak it exists to catch.
-    Quoted spans and heredoc bodies are consumed whole, so a `;` or newline inside
-    either never splits the segment away from the redirect that owns it.
+    Splits on `;`, `&&`, `||`, `;;` and newlines. Deliberately does NOT split on a
+    single `|` or `&`: in `echo BODY | tee docs/a.md` the content and its target sit
+    on opposite sides of the pipe, so splitting there would hide the leak it exists
+    to catch.
+
+    A GROUP's redirect applies to the whole group, so a separator inside `{ ... }` or
+    `( ... )` does NOT end the segment: splitting at the `;` in
+    `{ echo TOKEN; } > docs/f.md` put the token in one segment and the public target in
+    another, and the write sailed through (found 2026-08-19 by an adversarial review of
+    the very segment-splitting added the day before to fix a false positive).
+
+    Built on tools/shell_tokens.py since 2026-09-30. The hand-written scanner it
+    replaced disagreed with the tokenizer on escapes (`\"` ended a string early) and on
+    heredoc delimiters (`END-MARK` was not one), and each disagreement split a name
+    from its public target, so the write was allowed. Separators are control-operator
+    TOKENS, so nothing inside quotes, `$(...)`, backticks or a heredoc body can split.
     """
     segs: list[str] = []
-    cur: list[str] = []
-    i, n = 0, len(command)
-    quote = None
-    heredoc_delim = None
+    seg_start = 0
     depth = 0          # nesting of { } and ( ) groups
-
-    while i < n:
-        ch = command[i]
-
-        if heredoc_delim is not None:
-            cur.append(ch)
-            if ch == "\n":
-                j = command.find("\n", i + 1)
-                end = j if j != -1 else n
-                if command[i + 1:end].strip() == heredoc_delim:
-                    cur.append(command[i + 1:end])
-                    i = end
-                    heredoc_delim = None
-                    continue
-            i += 1
-            continue
-
-        # A backslash escapes the next character everywhere except inside single
-        # quotes. Ignoring it let `\"` end a double-quoted string early, so a `;`
-        # still inside the string split a name from its public target and the write
-        # was allowed (found by a transcript replay, 2026-09-30).
-        if ch == "\\" and quote != "'" and i + 1 < n:
-            cur.append(command[i:i + 2])
-            i += 2
-            continue
-
-        if quote:
-            cur.append(ch)
-            if ch == quote:
-                quote = None
-            i += 1
-            continue
-
-        if ch in "\"'`":           # a backtick span is a command, never split inside
-            quote = ch
-            cur.append(ch)
-            i += 1
-            continue
-
-        m = _HEREDOC_START.match(command, i)
-        if m:
-            cur.append(m.group(0))
-            heredoc_delim = m.group(2) or m.group(3)
-            i = m.end()
-            continue
-
-        # A GROUP's redirect applies to the whole group, so a separator inside it must
-        # NOT end the segment. Splitting at the `;` in `{ echo TOKEN; } > docs/f.md`
-        # put the token in one segment and the public target in another, and the write
-        # sailed through (found 2026-08-19 by an adversarial review of the very
-        # segment-splitting added the day before to fix a false positive -- the fix for
-        # one direction opened the other).
-        if ch in "{(":
+    awaiting = 0       # heredocs opened whose body has not arrived yet
+    for t in tokenize(command):
+        if t.kind == "op" and t.text == "(" or (t.kind == "word" and not t.quoted and t.text == "{"):
             depth += 1
-            cur.append(ch); i += 1; continue
-        if ch in "})":
+        elif t.kind == "op" and t.text == ")" or (t.kind == "word" and not t.quoted and t.text == "}"):
             depth = max(0, depth - 1)
-            cur.append(ch); i += 1; continue
-
-        if depth == 0 and (command.startswith("&&", i) or command.startswith("||", i)):
-            segs.append("".join(cur)); cur = []; i += 2; continue
-        if depth == 0 and (ch == ";" or ch == "\n"):
-            segs.append("".join(cur)); cur = []; i += 1; continue
-
-        cur.append(ch)
-        i += 1
-
-    if cur:
-        segs.append("".join(cur))
+        elif t.kind == "redir" and t.text.lstrip("0123456789") in ("<<", "<<-"):
+            awaiting += 1
+        elif t.kind == "heredoc":
+            awaiting = max(0, awaiting - 1)
+        # A body arrives after its line ends, so in `cat <<A > f; cat <<B > g` body A
+        # comes after the `;`. Splitting there would judge it against g, not f.
+        elif (t.kind == "op" and t.text in _SEGMENT_SEPARATORS and depth == 0
+              and awaiting == 0):
+            segs.append(command[seg_start:t.start])
+            seg_start = t.end
+    segs.append(command[seg_start:])
     return [x for x in segs if x.strip()]
 
 
@@ -252,64 +206,17 @@ def mask_heredoc_bodies(command: str) -> str:
 
     The body does not begin until after the newline ending the heredoc's own line, so
     `cat <<'EOF' > docs/x.md` keeps its redirect visible.
+
+    Built on tools/shell_tokens.py since 2026-09-30: the tokenizer finds each body (any
+    delimiter word, `<<-`, several heredocs on one line), and its span is blanked here,
+    keeping newlines so line structure survives.
     """
-    out: list[str] = []
-    i, n = 0, len(command)
-    quote = None
-    heredoc_delim = None
-    in_body = False
-
-    while i < n:
-        ch = command[i]
-
-        if heredoc_delim is not None:
-            if not in_body:
-                # Still on the line that OPENED the heredoc; redirects here are real.
-                out.append(ch)
-                if ch == "\n":
-                    in_body = True
-                i += 1
-                continue
-            if ch == "\n":
-                j = command.find("\n", i + 1)
-                end = j if j != -1 else n
-                if command[i + 1:end].strip() == heredoc_delim:
-                    out.append("\n")
-                    out.append(command[i + 1:end])
-                    i = end
-                    heredoc_delim = None
-                    in_body = False
-                    continue
-                out.append("\n")
-            else:
-                out.append(" ")
-            i += 1
-            continue
-
-        if quote:
-            out.append(ch)
-            if ch == quote:
-                quote = None
-            i += 1
-            continue
-
-        if ch in "\"'":
-            quote = ch
-            out.append(ch)
-            i += 1
-            continue
-
-        m = _HEREDOC_START.match(command, i)
-        if m:
-            out.append(m.group(0))
-            heredoc_delim = m.group(2) or m.group(3)
-            in_body = False
-            i = m.end()
-            continue
-
-        out.append(ch)
-        i += 1
-
+    out = list(command)
+    for t in tokenize(command):
+        if t.kind == "heredoc":
+            for k in range(t.start, t.end):
+                if out[k] != "\n":
+                    out[k] = " "
     return "".join(out)
 
 
@@ -580,7 +487,7 @@ def extract_write_targets(command: str) -> list[str]:
     between 2026-08-19 and 2026-08-24 on private writes whose CONTENT was full of real
     names, so heredoc bodies are masked below before any target is mined out of them.
     """
-    command = mask_heredoc_bodies(command)
+    # Heredoc bodies are tokens, never commands, so no masking is needed here.
     targets = _targets_in(command)
 
     out = []
