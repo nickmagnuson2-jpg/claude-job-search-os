@@ -1266,3 +1266,14 @@ def test_a_shell_named_as_an_argument_assigns_nothing():
     """`bash` as an ARGUMENT does not run its string, so it assigns nothing."""
     cmd = "echo bash -c 'OUT=docs/x.md'; echo hi > \"$OUT\""
     assert extract_write_targets("echo hi > \"$OUT\"", cpp.command_assignments(cmd)) == []
+
+
+@pytest.mark.parametrize("cmd", [
+    # Codex review of 9df3762, F1 (P0): a wrapper right after find -exec
+    """find . -name x -exec sudo sh -c 'OUT=docs/notes.md; echo Pat Zorp > "$OUT"' ';'""",
+    """find . -name x -exec env A=1 sh -c 'echo Pat Zorp > docs/notes.md' ';'""",
+    """echo Pat Zorp | find . -name x -exec sudo "tee" docs/notes.md ';'""",
+])
+def test_wrapper_after_find_exec_STILL_BLOCKS(tmp_path, cmd):
+    code, err = _run_bash(tmp_path, cmd)
+    assert code == 2, cmd

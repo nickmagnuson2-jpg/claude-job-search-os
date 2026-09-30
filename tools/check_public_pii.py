@@ -399,6 +399,18 @@ def _command_positions(words: list[str]) -> set[int]:
     return out
 
 
+def _all_command_positions(words: list[str]) -> set[int]:
+    """_command_positions, plus the same analysis from each word after find -exec
+    (`-exec sudo sh -c ...`: the wrapper is followed there too). One helper so the
+    write scan and the assignment scan can never disagree (Codex reviews of be4afb6
+    and 9df3762)."""
+    out = set(_command_positions(words))
+    for k in range(1, len(words)):
+        if words[k - 1] in _EXEC_FLAGS:
+            out |= {k + p for p in _command_positions(words[k:])}
+    return out
+
+
 # Long options that take the NEXT word as their value (bash); skipping only the
 # option stopped the scan at the value, before a later -c (Codex review of 6514b88).
 _SHELL_LONG_WITH_VALUE = frozenset({"--rcfile", "--init-file"})
@@ -456,9 +468,9 @@ def _writer_targets(words: list[str], quoted: list[bool]) -> list[str]:
     the name does not hide it and a longer name (mysed) is not it.
     """
     out: list[str] = []
-    positions = _command_positions(words)
+    positions = _all_command_positions(words)
     for i, w in enumerate(words):
-        in_command_position = i in positions or (i > 0 and words[i - 1] in _EXEC_FLAGS)
+        in_command_position = i in positions
         if quoted[i] and not in_command_position:
             continue
         name = os.path.basename(w)
@@ -567,11 +579,11 @@ def command_assignments(command: str) -> dict[str, list[str]]:
         # own redirects need those values (Codex review of bd947f1).
         for inner in cmd.subs:
             merge(command_assignments(inner))
-        positions = _command_positions(words)
+        positions = _all_command_positions(words)
         for i, w in enumerate(words):
             # Same command positions as _writer_targets, including after find -exec,
             # so a string it scans for writes is also scanned for assignments.
-            if i not in positions and not (i > 0 and words[i - 1] in _EXEC_FLAGS):
+            if i not in positions:
                 continue
             base = os.path.basename(w)
             if base in _SHELLS:
