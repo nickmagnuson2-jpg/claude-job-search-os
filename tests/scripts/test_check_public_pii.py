@@ -634,6 +634,51 @@ def test_writer_extraction_command_position(cmd, expected):
     assert extract_write_targets(cmd) == expected
 
 
+@pytest.mark.parametrize("cmd,expected", [
+    # Codex review of fd12aa3, F1 (P0): writers inside command substitution run
+    ("x=$(tee docs/public.md)", ["docs/public.md"]),
+    ("x=$(sed -i 's/a/b/' docs/public.md)", ["docs/public.md"]),
+    ("x=$(dd if=/dev/null of=docs/public.md)", ["docs/public.md"]),
+    ("x=`tee docs/public.md`", ["docs/public.md"]),
+    ('echo "$(echo x > docs/public.md)"', ["docs/public.md"]),
+    ("echo $(echo $(tee docs/public.md))", ["docs/public.md"]),
+    # F2 (P0): -c -- COMMAND, and options that take a value before it
+    ("sh -c -- 'echo x > docs/public.md'", ["docs/public.md"]),
+    ("bash -c -- 'tee docs/public.md'", ["docs/public.md"]),
+    ("bash -o pipefail -c 'tee docs/public.md'", ["docs/public.md"]),
+    ("bash -c -e 'tee docs/public.md'", ["docs/public.md"]),
+    ("bash --norc -c 'tee docs/public.md'", ["docs/public.md"]),
+    # after --, the command string may itself start with dashes
+    ("bash -c -- '--x; tee docs/public.md'", ["docs/public.md"]),
+    # nesting deeper than any fixed cap is still scanned
+    ("echo $(echo $(echo $(echo $(echo $(tee docs/public.md)))))", ["docs/public.md"]),
+    # F3 (P0): wrapper options with values; NAME+=value
+    ('timeout 5s "tee" docs/public.md', ["docs/public.md"]),
+    ('sudo -u nobody "/usr/bin/tee" docs/public.md', ["docs/public.md"]),
+    ('env -u X "tee" docs/public.md', ["docs/public.md"]),
+    ('stdbuf -o L "tee" docs/public.md', ["docs/public.md"]),
+    ('PATH+=:/tmp "/usr/bin/tee" docs/public.md', ["docs/public.md"]),
+    # F4 (P1): digits before &> are an argument, not a descriptor
+    ("echo x | tee 2&>err.log", ["err.log", "2"]),
+])
+def test_writer_extraction_nested_and_wrapped(cmd, expected):
+    assert extract_write_targets(cmd) == expected
+
+
+@pytest.mark.parametrize("cmd,expected", [
+    # eval / sh -c run their string only where the SHELL runs them. An argument that
+    # happens to be the word "eval" is not eval (real-data replay, 2026-09-30:
+    # `agent-browser eval "x=>y"` read JavaScript arrows as redirects).
+    ("agent-browser eval \"new Promise(r=>setTimeout(()=>r('ok'),1200))\"", []),
+    ("grep -n bash -c 'echo x > docs/p.md'", []),
+    ("sudo sh -c 'echo x > docs/p.md'", ["docs/p.md"]),
+    ("find . -name x -exec sh -c 'tee docs/p.md' \;", ["docs/p.md"]),
+    ("find . -exec \"tee\" docs/p.md \;", ["docs/p.md", ";"]),
+])
+def test_nested_command_strings_only_where_the_shell_runs_them(cmd, expected):
+    assert extract_write_targets(cmd) == expected
+
+
 def test_sed_not_matched_inside_a_longer_word():
     assert extract_write_targets("unsed -i 's/a/b/' docs/public.md") == []
     assert extract_write_targets("mysed -i 's/a/b/' docs/public.md") == []
@@ -726,6 +771,53 @@ def test_heredoc_body_containing_semicolons_stays_with_its_redirect(tmp_path):
 
 
 # --- split_command_segments unit tests --------------------------------------
+
+
+@pytest.mark.parametrize("cmd", [
+    # an escaped quote does not end a double-quoted string (real-data replay,
+    # 2026-09-30: the split put a name and its public target in different segments,
+    # so neither segment had both and the write was allowed)
+    'echo "a \\"x; y\\"" > docs/f.md',
+    'echo a\\; b > docs/f.md',
+    'echo `a; b` > docs/f.md',
+    'echo "`a; b`" > docs/f.md',
+])
+def test_split_does_not_cut_inside_escapes_or_backticks(cmd):
+    assert len(split_command_segments(cmd)) == 1
+
+
+def test_escaped_quote_leak_to_public_file_STILL_BLOCKS(tmp_path):
+    code, err = _run_bash(tmp_path, 'echo "Pat Zorp \\"x; y\\"" > docs/notes.md')
+    assert code == 2
+    assert "Pat Zorp" in err
+
+def test_split_keeps_escape_text_exactly():
+    assert split_command_segments('echo a\; b > f') == ['echo a\; b > f']
+    assert split_command_segments('echo "a \\"x; y\\"" > f') == ['echo "a \\"x; y\\"" > f']
+
+
+@pytest.mark.parametrize("cmd,expected", [
+    ("{ echo a; echo b; } > f; echo c", ["{ echo a; echo b; } > f", " echo c"]),
+    ("(echo a; echo b) > f; echo c", ["(echo a; echo b) > f", " echo c"]),
+    ("cat <<EOF > f\na; b\nEOF\necho c", ["cat <<EOF > f\na; b\nEOF", "echo c"]),
+    ("cat <<EOF > f\nxEOF; y\nEOF\necho c", ["cat <<EOF > f\nxEOF; y\nEOF", "echo c"]),
+    # a body line that merely ENDS with the delimiter must not close the heredoc
+    ("cat <<EOF > f\nxEOF\na; b\nEOF\necho c", ["cat <<EOF > f\nxEOF\na; b\nEOF", "echo c"]),
+])
+def test_split_keeps_groups_and_heredocs_whole(cmd, expected):
+    assert split_command_segments(cmd) == expected
+
+
+@pytest.mark.parametrize("cmd", [
+    "{ echo Pat Zorp; } > docs/notes.md",
+    "(echo Pat Zorp; true) > docs/notes.md",
+])
+def test_group_leak_to_public_file_STILL_BLOCKS(tmp_path, cmd):
+    code, err = _run_bash(tmp_path, cmd)
+    assert code == 2
+    assert "Pat Zorp" in err
+
+
 
 def test_split_on_semicolon_and_newline():
     assert split_command_segments("a > x; b > y") == ["a > x", " b > y"]

@@ -81,21 +81,6 @@ def is_binary(rel: str) -> bool:
 # NOT strip literals: we scan the whole raw command, and gate on whether the command
 # WRITES to a public path. A denylist hit plus a public write target is a leak
 # regardless of which syntactic position the token sits in.
-_QUOTED = r'"[^"]*"|\'[^\']*\''
-_BARE = r'[^\s;|&<>()]+'
-# `\d?>>?` catches `>`, `>>`, `2>`, `1>>`. `(?!&)` drops `>&1` / `2>&1`, which
-# duplicate a descriptor and never name a file.
-#
-# MUTATION NOTE (2026-08-18): removing `(?!&)` kills no test, and that is correct
-# rather than a coverage hole -- _BARE already excludes `&`, so the lookahead cannot
-# change the outcome today. It is kept as defence-in-depth against a future widening
-# of _BARE, and is unreachable-by-construction from the CLI. The BEHAVIOUR it guards
-# (a descriptor dup is never read as a filename) is covered by
-# test_extract_skips_descriptor_dup and test_bash_stderr_dup_is_not_a_file_target,
-# which hold whichever of the two mechanisms is doing the work.
-# `\|?` catches the noclobber-override form `>| file`, which slipped through until
-# 2026-08-19: `|` is excluded from _BARE, so no target was captured and the write
-# was invisible to the gate.
 # Write targets are found by tools/shell_tokens.py, which reads the command the way
 # the shell does. The regexes that used to live here (_REDIRECT_RE, _TEE_RE,
 # _SED_ARGS_RE, _DD_OF_RE) each decided where an argument list ended, and a Codex
@@ -106,6 +91,7 @@ _NON_FILE_TARGETS = frozenset({"/dev/null", "/dev/stdout", "/dev/stderr", "/dev/
 
 
 def _unquote(tok: str) -> str:
+    """Strip one pair of matching outer quotes. Kept for check_handoff_producer.py."""
     tok = tok.strip()
     if len(tok) >= 2 and tok[0] == tok[-1] and tok[0] in "\"'":
         return tok[1:-1]
@@ -155,6 +141,15 @@ def split_command_segments(command: str) -> list[str]:
             i += 1
             continue
 
+        # A backslash escapes the next character everywhere except inside single
+        # quotes. Ignoring it let `\"` end a double-quoted string early, so a `;`
+        # still inside the string split a name from its public target and the write
+        # was allowed (found by a transcript replay, 2026-09-30).
+        if ch == "\\" and quote != "'" and i + 1 < n:
+            cur.append(command[i:i + 2])
+            i += 2
+            continue
+
         if quote:
             cur.append(ch)
             if ch == quote:
@@ -162,7 +157,7 @@ def split_command_segments(command: str) -> list[str]:
             i += 1
             continue
 
-        if ch in "\"'":
+        if ch in "\"'`":           # a backtick span is a command, never split inside
             quote = ch
             cur.append(ch)
             i += 1
@@ -404,26 +399,56 @@ _SHELLS = frozenset({"sh", "bash", "zsh", "dash", "ksh", "su"})
 _WRAPPERS = frozenset({"sudo", "env", "command", "exec", "builtin", "nice", "nohup",
                        "time", "timeout", "stdbuf", "xargs", "caffeinate", "!",
                        "then", "do", "else", "elif", "if", "while", "until", "{"})
-_ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
+_ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\+?=")   # NAME= and NAME+=
 _WRITE_REDIR = frozenset({">", ">>", ">|", "&>", "&>>", "<>"})
+_EXEC_FLAGS = frozenset({"-exec", "-execdir", "-ok", "-okdir"})   # find runs the next word
 
 
-def _command_index(words: list[str]) -> int:
-    """Index of the word the shell will run, past assignments and wrappers."""
+def _command_start(words: list[str]) -> tuple[int, bool]:
+    """(index of the first command word past assignments, whether it is a wrapper).
+
+    Wrapper options take values in wrapper-specific ways (`sudo -u nobody`,
+    `timeout 5s`, `stdbuf -o L`), so after a wrapper the real command's position is
+    not modelled: every later word is treated as a possible command instead. Modelling
+    each wrapper's options hid a quoted writer behind an option value (Codex review
+    of fd12aa3).
+    """
     i = 0
-    while i < len(words):
-        w = words[i]
-        if _ASSIGNMENT.match(w):
-            i += 1
+    while i < len(words) and _ASSIGNMENT.match(words[i]):
+        i += 1
+    wrapped = i < len(words) and os.path.basename(words[i]) in _WRAPPERS
+    return i, wrapped
+
+
+def _shell_command_string(args: list[str]) -> str | None:
+    """The string a shell runs with -c, from the words after the shell's name.
+
+    -c only says the first NON-OPTION argument is a command string, so options
+    after it (`-c -e`), `--`, and options that take a value (`-o pipefail`) are
+    skipped. None when there is no -c.
+    """
+    has_c = False
+    k = 0
+    while k < len(args):
+        a = args[k]
+        if a == "--":
+            k += 1
+            break
+        if a in ("-o", "+o", "-O", "+O"):
+            k += 2
             continue
-        if os.path.basename(w) in _WRAPPERS:
-            i += 1
-            while i < len(words) and (words[i].startswith("-") or _ASSIGNMENT.match(words[i])
-                                      or words[i].isdigit()):
-                i += 1
+        if len(a) > 1 and a[0] in "-+" and not a.startswith("--"):
+            if a[0] == "-" and "c" in a[1:]:
+                has_c = True
+            k += 1
             continue
-        return i
-    return len(words)
+        if a.startswith("--"):
+            k += 1
+            continue
+        break
+    if has_c and k < len(args):
+        return args[k]
+    return None
 
 
 def _redirect_targets(cmd) -> list[str]:
@@ -437,7 +462,7 @@ def _redirect_targets(cmd) -> list[str]:
     return out
 
 
-def _writer_targets(words: list[str], quoted: list[bool], depth: int) -> list[str]:
+def _writer_targets(words: list[str], quoted: list[bool]) -> list[str]:
     """Files written by sed -i, tee and dd in one simple command, plus any command
     string handed to a shell (`bash -c "..."`, `eval "..."`).
 
@@ -447,12 +472,18 @@ def _writer_targets(words: list[str], quoted: list[bool], depth: int) -> list[st
     the name does not hide it and a longer name (mysed) is not it.
     """
     out: list[str] = []
-    cmd_at = _command_index(words)
+    cmd_at, wrapped = _command_start(words)
     for i, w in enumerate(words):
-        if i != cmd_at and quoted[i]:
+        in_command_position = (i == cmd_at or (wrapped and i > cmd_at)
+                               or (i > 0 and words[i - 1] in _EXEC_FLAGS))
+        if quoted[i] and not in_command_position:
             continue
         name = os.path.basename(w)
         rest = words[i + 1:]
+        # A shell or eval runs its string only when the shell runs IT; the word
+        # "eval" as an argument (`agent-browser eval "x=>y"`) is data.
+        if (name in _SHELLS or name == "eval") and not in_command_position:
+            continue
         if name in ("sed", "gsed"):
             out.extend(_sed_files(rest))
         elif name == "tee":
@@ -464,22 +495,26 @@ def _writer_targets(words: list[str], quoted: list[bool], depth: int) -> list[st
                     out.append(a)
         elif name == "dd":
             out.extend(a[3:] for a in rest if a.startswith("of="))
-        elif name in _SHELLS and depth < 3:
-            for k, a in enumerate(rest):
-                if a.startswith("-") and not a.startswith("--") and "c" in a[1:]:
-                    if k + 1 < len(rest):
-                        out.extend(_targets_in(rest[k + 1], depth + 1))
-                    break
-        elif name == "eval" and depth < 3:
-            out.extend(_targets_in(" ".join(rest), depth + 1))
+        elif name in _SHELLS:
+            script = _shell_command_string(rest)
+            if script is not None:
+                out.extend(_targets_in(script))
+        elif name == "eval":
+            out.extend(_targets_in(" ".join(rest)))
     return out
 
 
-def _targets_in(command: str, depth: int = 0) -> list[str]:
+def _targets_in(command: str) -> list[str]:
     targets: list[str] = []
     for cmd in simple_commands(command):
         targets.extend(_redirect_targets(cmd))
-        targets.extend(_writer_targets(cmd.words, cmd.quoted, depth))
+        targets.extend(_writer_targets(cmd.words, cmd.quoted))
+        # A command substitution runs, wherever its word sits (an argument, an
+        # assignment, a redirect target), so its writes count too.
+        # No depth cap: each level scans a strictly shorter string, so recursion
+        # ends on its own, and a cap would be a way to nest a write out of sight.
+        for inner in cmd.subs:
+            targets.extend(_targets_in(inner))
     return targets
 
 

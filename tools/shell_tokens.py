@@ -34,6 +34,11 @@ class Token:
     kind: str          # "word" | "op" | "redir"
     text: str
     quoted: bool = False
+    # Command strings inside `$(...)` or backticks that RUN when this word is
+    # expanded (outermost only; a caller recurses for nested ones). Recorded while
+    # tokenizing, because only then is an escaped or single-quoted `$(` or backtick
+    # distinguishable from a live one.
+    subs: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -47,6 +52,7 @@ class SimpleCommand:
     words: list[str] = field(default_factory=list)
     quoted: list[bool] = field(default_factory=list)
     redirections: list[Redirection] = field(default_factory=list)
+    subs: list[str] = field(default_factory=list)    # from words AND redirect targets
 
 
 def _read_balanced(s: str, i: int, open_ch: str, close_ch: str) -> int:
@@ -73,19 +79,35 @@ def _read_balanced(s: str, i: int, open_ch: str, close_ch: str) -> int:
     return n
 
 
+def _closing_backtick(s: str, i: int) -> int:
+    """Index of the backtick closing the one at s[i] (escapes skipped), or len(s)."""
+    k = i + 1
+    while k < len(s) and s[k] != "`":
+        k += 2 if s[k] == "\\" else 1
+    return min(k, len(s))
+
+
+def _paren_sub(s: str, i: int) -> tuple[str, int]:
+    """(inner command, index past it) for the `$(` at s[i]."""
+    j = _read_balanced(s, i + 1, "(", ")")
+    inner_end = j - 1 if s[j - 1:j] == ")" else j
+    return s[i + 2:inner_end], j
+
+
 def tokenize(s: str) -> list[Token]:
     toks: list[Token] = []
     word: list[str] = []
+    subs: list[str] = []
     in_word = False            # a word has started (even if empty, e.g. '')
     quoted = False
     i = 0
     n = len(s)
 
     def end_word():
-        nonlocal word, in_word, quoted
+        nonlocal word, in_word, quoted, subs
         if in_word:
-            toks.append(Token("word", "".join(word), quoted))
-        word, in_word, quoted = [], False, False
+            toks.append(Token("word", "".join(word), quoted, subs))
+        word, in_word, quoted, subs = [], False, False, []
 
     while i < n:
         ch = s[i]
@@ -132,31 +154,52 @@ def tokenize(s: str) -> list[Token]:
                         word.append(s[i + 1])
                     i += 2
                     continue
+                if s.startswith("$(", i):              # runs inside double quotes
+                    inner, j = _paren_sub(s, i)
+                    subs.append(inner)
+                    word.append(s[i:j])
+                    i = j
+                    continue
+                if s[i] == "`":
+                    k = _closing_backtick(s, i)
+                    subs.append(s[i + 1:k])
+                    word.append(s[i:k + 1])
+                    i = k + 1
+                    continue
                 word.append(s[i])
                 i += 1
             i += 1                                   # closing quote (or past the end)
             in_word = quoted = True
             continue
 
-        if ch == "$" and i + 1 < n and s[i + 1] in "({":
-            j = _read_balanced(s, i + 1, s[i + 1], ")" if s[i + 1] == "(" else "}")
+        if s.startswith("$(", i):
+            inner, j = _paren_sub(s, i)
+            subs.append(inner)
+            word.append(s[i:j])
+            in_word = True
+            i = j
+            continue
+
+        if s.startswith("${", i):                      # parameter expansion, not a command
+            j = _read_balanced(s, i + 1, "{", "}")
             word.append(s[i:j])
             in_word = True
             i = j
             continue
 
         if ch == "`":
-            j = s.find("`", i + 1)
-            j = n if j == -1 else j + 1
-            word.append(s[i:j])
+            k = _closing_backtick(s, i)
+            subs.append(s[i + 1:k])
+            word.append(s[i:k + 1])
             in_word = True
-            i = j
+            i = k + 1
             continue
 
         if ch in "<>" or (ch == "&" and s.startswith("&>", i)):
             # A word made only of unquoted digits, touching the operator, is its fd.
             fd = ""
-            if in_word and not quoted and word and "".join(word).isdigit():
+            # `&>` takes no descriptor number: in `tee 2&>f` the 2 is an argument.
+            if ch != "&" and in_word and not quoted and word and "".join(word).isdigit():
                 fd = "".join(word)
                 word, in_word = [], False
             end_word()
@@ -202,13 +245,16 @@ def simple_commands(s: str) -> list[SimpleCommand]:
             target = ""
             if k + 1 < len(toks) and toks[k + 1].kind == "word":
                 target = toks[k + 1].text
+                cur.subs.extend(toks[k + 1].subs)
                 k += 1
             cur.redirections.append(Redirection(t.text, target))
             k += 1
             continue
         cur.words.append(t.text)
         cur.quoted.append(t.quoted)
+        cur.subs.extend(t.subs)
         k += 1
     if cur.words or cur.redirections:
         cmds.append(cur)
     return cmds
+

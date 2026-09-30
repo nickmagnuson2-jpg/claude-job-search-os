@@ -51,6 +51,8 @@ def test_newline_and_parens_are_operators():
     ("a 2>&1 b", [("word", "a"), ("redir", "2>&"), ("word", "1"), ("word", "b")]),
     ("a 3<&0 b", [("word", "a"), ("redir", "3<&"), ("word", "0"), ("word", "b")]),
     ("a &>f b", [("word", "a"), ("redir", "&>"), ("word", "f"), ("word", "b")]),
+    # &> takes no descriptor number: the digits stay a word (Codex fd12aa3 F4)
+    ("a 2&>f", [("word", "a"), ("word", "2"), ("redir", "&>"), ("word", "f")]),
     ("a &>>f", [("word", "a"), ("redir", "&>>"), ("word", "f")]),
     ("a >>f", [("word", "a"), ("redir", ">>"), ("word", "f")]),
     ("a >|f", [("word", "a"), ("redir", ">|"), ("word", "f")]),
@@ -126,3 +128,42 @@ def test_escape_directly_before_a_closing_character():
     assert kinds("echo $(a \\)) b") == [("word", "echo"), ("word", "$(a \\))"), ("word", "b")]
     # an escaped quote right before the closing quote
     assert kinds('"a\\"" b') == [("word", 'a"'), ("word", "b")]
+
+
+def subs(src):
+    return [t.subs for t in tokenize(src) if t.kind == "word"]
+
+
+def test_command_substitutions_are_recorded_while_tokenizing():
+    assert subs("x=$(tee a)") == [["tee a"]]
+    assert subs("`b c`") == [["b c"]]
+    assert subs("a$(b)c$(d (e))f") == [["b", "d (e)"]]
+    assert subs("$(a $(b))") == [["a $(b)"]]            # outer only; caller recurses
+    assert subs("${x:-y}") == [[]]
+    assert subs("plain") == [[]]
+    assert subs("$(unclosed") == [["unclosed"]]
+
+
+def test_substitutions_inside_double_quotes_run():
+    assert subs('"a $(tee f) b"') == [["tee f"]]
+    assert subs('"a `tee f` b"') == [["tee f"]]
+    assert subs('"a $(echo ")") b"') == [['echo ")"']]
+
+
+def test_escaped_or_single_quoted_substitutions_do_not_run():
+    """Real-data replay 2026-09-30: `\`` inside double quotes is a literal backtick,
+    but scanning the finished word text read it as a live one."""
+    assert subs('"a \\`b\\` c"') == [[]]
+    assert subs('"a \\$(b) c"') == [[]]
+    assert subs("'a $(b) `c`'") == [[]]
+
+
+def test_substitution_text_stays_in_the_word_inside_double_quotes():
+    assert kinds('"a $(b) c"') == [("word", "a $(b) c")]
+    assert kinds('"a `b` c"') == [("word", "a `b` c")]
+    assert kinds('"$(b)"') == [("word", "$(b)")]
+    assert kinds('"`b`"') == [("word", "`b`")]
+
+
+def test_redirect_target_substitutions_are_collected():
+    assert simple_commands("a > $(tee f)")[0].subs == ["tee f"]
