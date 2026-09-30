@@ -98,7 +98,11 @@ def _unquote(tok: str) -> str:
     return tok
 
 
-_HEREDOC_START = re.compile(r"""<<-?\s*(["']?)([A-Za-z_][A-Za-z0-9_]*)\1""")
+# The delimiter is any shell word, not only an identifier: a quoted END-MARK or an
+# unquoted EOF.1 went unrecognised, so the body (with a name) was split from its
+# public redirect (Codex review of 6514b88; pre-existing). Unquoted, a leading letter
+# or underscore is still required, so an arithmetic shift is not read as one.
+_HEREDOC_START = re.compile(r"""<<-?\s*(?:(["'])([^"'\n]+)\1|\\?([A-Za-z_][^\s;&|<>()'"`]*))""")
 
 
 def split_command_segments(command: str) -> list[str]:
@@ -166,7 +170,7 @@ def split_command_segments(command: str) -> list[str]:
         m = _HEREDOC_START.match(command, i)
         if m:
             cur.append(m.group(0))
-            heredoc_delim = m.group(2)
+            heredoc_delim = m.group(2) or m.group(3)
             i = m.end()
             continue
 
@@ -298,7 +302,7 @@ def mask_heredoc_bodies(command: str) -> str:
         m = _HEREDOC_START.match(command, i)
         if m:
             out.append(m.group(0))
-            heredoc_delim = m.group(2)
+            heredoc_delim = m.group(2) or m.group(3)
             in_body = False
             i = m.end()
             continue
@@ -404,20 +408,61 @@ _WRITE_REDIR = frozenset({">", ">>", ">|", "&>", "&>>", "<>"})
 _EXEC_FLAGS = frozenset({"-exec", "-execdir", "-ok", "-okdir"})   # find runs the next word
 
 
-def _command_start(words: list[str]) -> tuple[int, bool]:
-    """(index of the first command word past assignments, whether it is a wrapper).
+_SHORT_BARE_OPTION = re.compile(r"-[A-Za-z]")
 
-    Wrapper options take values in wrapper-specific ways (`sudo -u nobody`,
-    `timeout 5s`, `stdbuf -o L`), so after a wrapper the real command's position is
-    not modelled: every later word is treated as a possible command instead. Modelling
-    each wrapper's options hid a quoted writer behind an option value (Codex review
-    of fd12aa3).
+
+def _command_positions(words: list[str]) -> set[int]:
+    """Indices of every word that could be the command the shell runs.
+
+    The first word past assignments; and, when that word is a wrapper (sudo, env,
+    timeout, xargs...), whatever the wrapper runs. Wrapper options take values in
+    wrapper-specific ways, so a bare one-letter option (`-u`, `-n`) is read BOTH ways,
+    as a flag and as taking the next word, and `timeout` skips its duration.
+
+    Replaces "every word after a wrapper counts", which read `sudo echo "tee" f` as a
+    write (Codex review of 6514b88), and the earlier single position, which a wrapper
+    option value (`sudo -u nobody "tee" f`) hid.
     """
+    out: set[int] = set()
+    n = len(words)
+
+    def command_at(k: int) -> None:
+        if k >= n or k in out:
+            return
+        out.add(k)
+        name = os.path.basename(words[k])
+        if name in _WRAPPERS:
+            options_from(k + 1, name, positional_seen=False)
+
+    def options_from(k: int, wrapper: str, positional_seen: bool) -> None:
+        while k < n:
+            w = words[k]
+            if w == "--":
+                command_at(k + 1)
+                return
+            if _ASSIGNMENT.match(w) or (w.startswith("-") and len(w) > 1):
+                if _SHORT_BARE_OPTION.fullmatch(w):
+                    command_at(k + 1)                          # a flag
+                    options_from(k + 2, wrapper, positional_seen)   # or it took a value
+                    return
+                k += 1
+                continue
+            if wrapper == "timeout" and not positional_seen:
+                options_from(k + 1, wrapper, positional_seen=True)   # the duration
+                return
+            command_at(k)
+            return
+
     i = 0
-    while i < len(words) and _ASSIGNMENT.match(words[i]):
+    while i < n and _ASSIGNMENT.match(words[i]):
         i += 1
-    wrapped = i < len(words) and os.path.basename(words[i]) in _WRAPPERS
-    return i, wrapped
+    command_at(i)
+    return out
+
+
+# Long options that take the NEXT word as their value (bash); skipping only the
+# option stopped the scan at the value, before a later -c (Codex review of 6514b88).
+_SHELL_LONG_WITH_VALUE = frozenset({"--rcfile", "--init-file"})
 
 
 def _shell_command_string(args: list[str]) -> str | None:
@@ -443,7 +488,7 @@ def _shell_command_string(args: list[str]) -> str | None:
             k += 1
             continue
         if a.startswith("--"):
-            k += 1
+            k += 2 if a in _SHELL_LONG_WITH_VALUE else 1
             continue
         break
     if has_c and k < len(args):
@@ -472,10 +517,9 @@ def _writer_targets(words: list[str], quoted: list[bool]) -> list[str]:
     the name does not hide it and a longer name (mysed) is not it.
     """
     out: list[str] = []
-    cmd_at, wrapped = _command_start(words)
+    positions = _command_positions(words)
     for i, w in enumerate(words):
-        in_command_position = (i == cmd_at or (wrapped and i > cmd_at)
-                               or (i > 0 and words[i - 1] in _EXEC_FLAGS))
+        in_command_position = i in positions or (i > 0 and words[i - 1] in _EXEC_FLAGS)
         if quoted[i] and not in_command_position:
             continue
         name = os.path.basename(w)

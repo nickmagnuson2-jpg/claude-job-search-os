@@ -22,7 +22,12 @@ the rest of the line as the word; the shell would refuse to run it at all.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
+
+# Inside backticks, an escaped backtick, backslash or dollar is unescaped before the
+# command runs, so an escaped backtick there opens a NESTED command substitution.
+_BACKTICK_UNESCAPE = re.compile(r"\\([\\`$])")
 
 _CONTROL = ("&&", "||", ";;", "|&", ";", "&", "|", "(", ")")
 # Longest first, so `>>` is not read as `>` then `>`.
@@ -65,9 +70,15 @@ def _read_balanced(s: str, i: int, open_ch: str, close_ch: str) -> int:
         if ch == "\\":
             i += 2
             continue
-        if ch in "'\"":
-            j = s.find(ch, i + 1)
+        if ch == "'":
+            j = s.find("'", i + 1)
             i = n if j == -1 else j + 1
+            continue
+        if ch == '"':                  # escapes apply inside double quotes: a
+            i += 1                     # backslash-quote is not the end (Codex, 6514b88)
+            while i < n and s[i] != '"':
+                i += 2 if s[i] == "\\" else 1
+            i += 1
             continue
         if ch == open_ch:
             depth += 1
@@ -162,7 +173,7 @@ def tokenize(s: str) -> list[Token]:
                     continue
                 if s[i] == "`":
                     k = _closing_backtick(s, i)
-                    subs.append(s[i + 1:k])
+                    subs.append(_BACKTICK_UNESCAPE.sub(r"\1", s[i + 1:k]))
                     word.append(s[i:k + 1])
                     i = k + 1
                     continue
@@ -189,7 +200,7 @@ def tokenize(s: str) -> list[Token]:
 
         if ch == "`":
             k = _closing_backtick(s, i)
-            subs.append(s[i + 1:k])
+            subs.append(_BACKTICK_UNESCAPE.sub(r"\1", s[i + 1:k]))
             word.append(s[i:k + 1])
             in_word = True
             i = k + 1

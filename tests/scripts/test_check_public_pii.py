@@ -817,6 +817,45 @@ def test_group_leak_to_public_file_STILL_BLOCKS(tmp_path, cmd):
     assert code == 2
     assert "Pat Zorp" in err
 
+@pytest.mark.parametrize("cmd,expected", [
+    # Codex review of 6514b88. F1 (P0): an escaped quote inside a live $( ... )
+    ('x=$(printf "a \\" ) b"; tee docs/public.md)', ["docs/public.md"]),
+    ("x=$(printf 'a ) b'; tee docs/public.md)", ["docs/public.md"]),
+    # nested legacy backticks: \` inside backticks is a nested command
+    ("echo `echo \\`tee docs/public.md\\``", ["docs/public.md"]),
+    # F3 (P1): long shell options that take a separate value
+    ("bash --rcfile /dev/null -c 'tee docs/public.md'", ["docs/public.md"]),
+    ("bash --init-file /dev/null -c 'tee docs/public.md'", ["docs/public.md"]),
+    # F4 (P1): after a wrapper, only a word that could be the wrapped COMMAND counts
+    ('sudo echo "tee" docs/public.md', []),
+    ('xargs echo "tee" docs/public.md', []),
+    ('timeout 5 echo "tee" docs/public.md', []),
+    # ...while every real wrapped form still works
+    ('sudo -n "tee" docs/public.md', ["docs/public.md"]),
+    ('sudo -u nobody -n "tee" docs/public.md', ["docs/public.md"]),
+    ('sudo -u nobody "tee" docs/public.md', ["docs/public.md"]),
+    ('timeout 5s "tee" docs/public.md', ["docs/public.md"]),
+    ('nice -n 5 sudo "tee" docs/public.md', ["docs/public.md"]),
+    ('env A=1 B=2 "tee" docs/public.md', ["docs/public.md"]),
+    ('sudo -- "tee" docs/public.md', ["docs/public.md"]),
+    # only a BARE one-letter option may take the next word; --signal=KILL may not
+    ('timeout --signal=KILL 5 echo "tee" docs/public.md', []),
+])
+def test_codex_6514b88_forms(cmd, expected):
+    assert extract_write_targets(cmd) == expected
+
+
+@pytest.mark.parametrize("delim", ["END-MARK", "EOF.1", "a+b", "X_Y-Z"])
+def test_heredoc_delimiter_with_punctuation_keeps_body_with_target(tmp_path, delim):
+    """Codex review of 6514b88, F2 (P0): an identifier-only delimiter pattern split
+    the body (with the name) from its public redirect. Pre-existing."""
+    cmd = f"cat > docs/notes.md <<'{delim}'\nPat Zorp\n{delim}"
+    assert split_command_segments(cmd) == [cmd]
+    code, err = _run_bash(tmp_path, cmd)
+    assert code == 2
+    assert "Pat Zorp" in err
+
+
 
 
 def test_split_on_semicolon_and_newline():
