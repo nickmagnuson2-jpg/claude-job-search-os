@@ -1096,3 +1096,58 @@ def test_mask_heredoc_bodies_blanks_only_bodies_and_keeps_newlines():
     cmd = "cat > f <<'E'\nab\ncd\nE\necho x > g"
     assert cpp.mask_heredoc_bodies(cmd) == "cat > f <<'E'\n  \n  \nE\necho x > g"
     assert cpp.mask_heredoc_bodies("echo a > b") == "echo a > b"
+
+
+# --- Codex review of 68cf50a -----------------------------------------------------------
+
+@pytest.mark.parametrize("cmd", [
+    # F1 (P0, pre-existing): a compound command's redirect applies to the whole body
+    "if true; then echo Pat Zorp; fi > docs/notes.md",
+    "for x in 1; do echo Pat Zorp; done > docs/notes.md",
+    "while false; do echo Pat Zorp; done > docs/notes.md",
+    "until true; do echo Pat Zorp; done > docs/notes.md",
+    "case x in x) echo Pat Zorp;; esac > docs/notes.md",
+    "case x in (x) echo Pat Zorp;; esac > docs/notes.md",
+    "if true; then if true; then echo Pat Zorp; fi; fi > docs/notes.md",
+    "if false; then :; else echo Pat Zorp; fi > docs/notes.md",
+])
+def test_compound_command_leak_to_public_file_STILL_BLOCKS(tmp_path, cmd):
+    code, err = _run_bash(tmp_path, cmd)
+    assert code == 2, cmd
+    assert "Pat Zorp" in err
+
+
+@pytest.mark.parametrize("cmd,expected", [
+    ("if a; then b; fi > f; echo c", ["if a; then b; fi > f", " echo c"]),
+    ("case x in x) a;; y) b;; esac > f; echo c", ["case x in x) a;; y) b;; esac > f", " echo c"]),
+    # the reserved words only count in command position
+    ("echo if; echo fi", ["echo if", " echo fi"]),
+    ("echo do; echo x", ["echo do", " echo x"]),
+    ("echo 'if'; b", ["echo 'if'", " b"]),
+])
+def test_split_keeps_compound_commands_whole(cmd, expected):
+    assert split_command_segments(cmd) == expected
+
+
+@pytest.mark.parametrize("cmd,expected", [
+    # F3 (P1): long wrapper options that take a separate value
+    ('sudo --user nobody "tee" docs/public.md', ["docs/public.md"]),
+    ('env --unset X "tee" docs/public.md', ["docs/public.md"]),
+    ('stdbuf --output L "tee" docs/public.md', ["docs/public.md"]),
+    ('nice --adjustment 5 "tee" docs/public.md', ["docs/public.md"]),
+    ('xargs --max-args 1 "tee" docs/public.md', ["docs/public.md"]),
+    ('sudo --preserve-env "tee" docs/public.md', ["docs/public.md"]),
+    # F4 (P1): ANSI-C and locale quoting
+    ("cat <<$'END-MARK' > docs/clean.md\nclean\nEND-MARK\necho x > output/p.md",
+     ["docs/clean.md", "output/p.md"]),
+    ("echo x > $'docs/a b.md'", ["docs/a b.md"]),
+    ('echo x > $"docs/c.md"', ["docs/c.md"]),
+])
+def test_codex_68cf50a_forms(cmd, expected):
+    assert extract_write_targets(cmd) == expected
+
+
+def test_ansi_c_heredoc_delimiter_does_not_swallow_later_commands():
+    cmd = "cat <<$'END-MARK' > docs/clean.md\nclean\nEND-MARK\necho Pat Zorp > output/p.md"
+    assert split_command_segments(cmd) == [
+        "cat <<$'END-MARK' > docs/clean.md\nclean\nEND-MARK", "echo Pat Zorp > output/p.md"]

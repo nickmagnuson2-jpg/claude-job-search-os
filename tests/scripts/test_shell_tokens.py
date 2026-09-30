@@ -249,3 +249,14 @@ def test_heredoc_quoted_flag_is_the_delimiter_quoting():
     assert q("cat <<A\nx\nA") == [False]
     assert q("cat <<'A'\nx\nA") == [True]
     assert q("cat <<\\A\nx\nA") == [True]
+
+
+def test_ansi_c_and_locale_quoting():
+    assert kinds("$'a b' $'x\\'y' $\"c d\"") == [("word", "a b"), ("word", "x'y"), ("word", "c d")]
+    assert [t.quoted for t in tokenize("$'a'")] == [True]
+    assert heredocs("cat <<$'E-M'\nx\nE-M") == [("x\n", "x\n", [])]
+
+
+def test_ansi_c_escape_right_before_the_closing_quote_and_locale_span():
+    assert kinds("$'a\\\\' b") == [("word", "a\\"), ("word", "b")]
+    assert spans('x $"c d" y') == [("word", "x"), ("word", '$"c d"'), ("word", "y")]

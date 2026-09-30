@@ -101,6 +101,10 @@ def _unquote(tok: str) -> str:
 
 
 _SEGMENT_SEPARATORS = frozenset({";", "&&", "||", "\n", ";;"})
+_COMPOUND_OPEN = frozenset({"if", "do", "case"})       # for/while/until/select open at `do`
+_COMPOUND_CLOSE = frozenset({"fi", "done", "esac"})
+# Words after which the next word is again in command position.
+_COMPOUND_PREFIX = frozenset({"then", "do", "else", "elif", "!", "{", "if", "while", "until"})
 
 
 def split_command_segments(command: str) -> list[str]:
@@ -134,8 +138,24 @@ def split_command_segments(command: str) -> list[str]:
     segs: list[str] = []
     seg_start = 0
     depth = 0          # nesting of { } and ( ) groups
+    compound = 0       # nesting of if/fi, do/done, case/esac
     awaiting = 0       # heredocs opened whose body has not arrived yet
+    at_command_start = True
     for t in tokenize(command):
+        starts_command = at_command_start
+        at_command_start = (t.kind == "op" or (t.kind == "word" and not t.quoted
+                                                and t.text in _COMPOUND_PREFIX))
+        # A compound command's redirect applies to its whole body, like a group's:
+        # splitting at the `;` in `if a; then echo NAME; fi > docs/f.md` put the name
+        # and the public target in different segments (Codex review of 68cf50a).
+        # Reserved words count only unquoted and in command position (`echo if` is not
+        # an if), and they get their own counter so a case pattern's `)` cannot close
+        # a group.
+        if t.kind == "word" and not t.quoted and starts_command:
+            if t.text in _COMPOUND_OPEN:
+                compound += 1
+            elif t.text in _COMPOUND_CLOSE:
+                compound = max(0, compound - 1)
         if t.kind == "op" and t.text == "(" or (t.kind == "word" and not t.quoted and t.text == "{"):
             depth += 1
         elif t.kind == "op" and t.text == ")" or (t.kind == "word" and not t.quoted and t.text == "}"):
@@ -147,7 +167,7 @@ def split_command_segments(command: str) -> list[str]:
         # A body arrives after its line ends, so in `cat <<A > f; cat <<B > g` body A
         # comes after the `;`. Splitting there would judge it against g, not f.
         elif (t.kind == "op" and t.text in _SEGMENT_SEPARATORS and depth == 0
-              and awaiting == 0):
+              and compound == 0 and awaiting == 0):
             segs.append(command[seg_start:t.start])
             seg_start = t.end
     segs.append(command[seg_start:])
@@ -348,7 +368,9 @@ def _command_positions(words: list[str]) -> set[int]:
                 command_at(k + 1)
                 return
             if _ASSIGNMENT.match(w) or (w.startswith("-") and len(w) > 1):
-                if _SHORT_BARE_OPTION.fullmatch(w):
+                # A bare one-letter option, or a long option with no `=value`, may
+                # take the next word as its value (`sudo --user nobody`); read both.
+                if _SHORT_BARE_OPTION.fullmatch(w) or (w.startswith("--") and "=" not in w):
                     command_at(k + 1)                          # a flag
                     options_from(k + 2, wrapper, positional_seen)   # or it took a value
                     return

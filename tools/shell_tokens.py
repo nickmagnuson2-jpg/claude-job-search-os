@@ -13,6 +13,7 @@ added so the hook's segmenter and heredoc masker could stop being separate hand-
 scanners that disagreed with this one (Codex review of 6514b88, 2026-09-30).
 
 Covered: single and double quotes (with the backslash escapes double quotes allow),
+bash ANSI-C `$'...'` and locale `$"..."` quoting,
 backslash escapes and line continuations, adjacent quoted and bare spans joining into one
 word, `$(...)`, backticks and `${...}` kept inside their word (the commands inside are
 recorded in Token.subs), `#` comments, control operators (`;` `&` `&&` `|` `||` `|&`
@@ -270,6 +271,26 @@ def tokenize(s: str) -> list[Token]:
                 i += 1
             i += 1                                   # closing quote (or past the end)
             quoted = True
+            continue
+
+        if s.startswith("$'", i):                     # ANSI-C quoting (bash)
+            start_word(i)
+            j = i + 2
+            while j < n and s[j] != "'":
+                if s[j] == "\\" and j + 1 < n:
+                    nxt = s[j + 1]
+                    word.append(nxt if nxt in "'\\\"" else s[j:j + 2])
+                    j += 2
+                    continue
+                word.append(s[j])
+                j += 1
+            quoted = True
+            i = j + 1
+            continue
+
+        if s.startswith('$"', i):                      # locale quoting: a double quote
+            start_word(i)
+            i += 1
             continue
 
         if s.startswith("$(", i):

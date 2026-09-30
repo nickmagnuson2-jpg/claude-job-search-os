@@ -144,3 +144,11 @@ def test_the_block_message_names_the_offending_delimiter():
 
 def test_a_descriptor_numbered_heredoc_is_still_a_heredoc():
     assert run("cat 0<<EOF\n " + BT + "token" + BT + "\nEOF\n") == 2
+
+
+def test_an_even_run_of_backslashes_leaves_the_backtick_live():
+    """Codex review of 68cf50a, F2: two backslashes escape each other, so the backtick
+    after them runs."""
+    assert run("cat <<A\n\\\\" + BT + "id\\\\" + BT + "\nA\n") == 2
+    assert run("cat <<A\n\\" + BT + "id\\" + BT + "\nA\n") == 0
+    assert run("cat <<A\n\\\\\\" + BT + "id\\\\\\" + BT + "\nA\n") == 0   # odd runs: escaped

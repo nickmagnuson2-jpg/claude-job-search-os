@@ -52,7 +52,6 @@ with $M interpolation as the reason the delimiter had been left bare.
 from __future__ import annotations
 
 import os
-import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -60,8 +59,21 @@ from hook_runtime import read_payload  # noqa: E402
 from shell_tokens import tokenize  # noqa: E402
 
 BT = chr(96)
-# A backtick not preceded by a backslash runs; an escaped one is literal.
-_LIVE_BACKTICK = re.compile(r"(?<!\\)" + BT)
+
+
+def _has_live_backtick(text: str) -> bool:
+    """True if a backtick in an expanding heredoc body would run. A backslash escapes
+    the next character, so parity decides: in \\\\` the backslashes escape each other
+    and the backtick is live (Codex review of 68cf50a)."""
+    i = 0
+    while i < len(text):
+        if text[i] == "\\":
+            i += 2
+            continue
+        if text[i] == BT:
+            return True
+        i += 1
+    return False
 
 
 def offenders(command: str) -> list[str]:
@@ -76,7 +88,7 @@ def offenders(command: str) -> list[str]:
         elif t.kind == "heredoc":
             delim = delims.pop(0) if delims else "EOF"
             # t.quoted: the delimiter was quoted or escaped, so the body is literal.
-            if not t.quoted and _LIVE_BACKTICK.search(t.text):
+            if not t.quoted and _has_live_backtick(t.text):
                 bad.append(delim)
     return bad
 
