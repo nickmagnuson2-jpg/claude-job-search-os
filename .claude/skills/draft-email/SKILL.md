@@ -147,7 +147,7 @@ Mid-session, Nick's profile and identity context is usually already in the conve
 
 ### Step 4b: Voice-Pure Dictation Mode (when Nick provides a guide)
 
-**Trigger:** Nick passes a voice-pure dictation guide via argument or earlier in the conversation (e.g., "use this as the spine: 'I watched the Loom. Will absolutely provide my resume...'"), OR he signals he'll author the substance himself ("give me the spine," "I want to put it in my words," "I'll write it myself"). In the latter case, give him structure + key points + raw hook material — NOT a finished, polished message — and do NOT run the full Step 5-8 draft flow. Escalate to a full draft only if he explicitly asks for one ("put a draft together"). See `memory/feedback_give_nick_beats_not_a_polished_script.md`.
+**Trigger:** Nick passes a voice-pure dictation guide via argument or earlier in the conversation (e.g., "use this as the spine: '<his dictated sentences>'"), OR he signals he'll author the substance himself ("give me the spine," "I want to put it in my words," "I'll write it myself"). In the latter case, give him structure + key points + raw hook material — NOT a finished, polished message — and do NOT run the full Step 5-8 draft flow. Escalate to a full draft only if he explicitly asks for one ("put a draft together"). See `memory/feedback_give_nick_beats_not_a_polished_script.md`.
 
 **Rule:** The polished output's diff from the guide must be **mechanical only**:
 - Grammar errors → fix

@@ -184,12 +184,12 @@ said it. An inferred spine is not his (2026-09-23 near miss, same memory file).
 research on the company, on the role, on what I would bring, how I should position myself, and then I
 do the outreach? We automate everything around it so that it's still getting my voice."* An opt-in rule
 requires him to remember to invoke it at the exact moment he is moving fast, which is the moment he
-reaches for the finished draft instead. **The 2026-08-25 cold email to a target company is the worked example: it ran
-through this skill, it worked (a same-day reply and a call inside a day), and he still wanted the
+reaches for the finished draft instead. **One cold email is the worked example: it ran
+through this skill, it got a reply, and he still wanted the
 prose to have been his.** A rule that only fires when he remembers to ask loses to urgency. Per
 `memory/feedback_give_nick_beats_not_a_polished_script.md` (4th fire) and his Tier-1 authenticity
-non-negotiable. It is NOT grounded in a recipient objection — the one recipient who noticed said the
-opposite (see that file's 2026-08-26 supplement before citing anyone).
+non-negotiable. It is NOT grounded in a recipient objection (see that file's supplement before citing
+anyone).
 
 **What changed 2026-10-01 and what did not.** From 2026-08-26 this step stopped at the Brief and Nick
 wrote every sentence. On 2026-10-01 he moved the first draft back to the agent, on condition that the
@@ -201,8 +201,8 @@ The pre-August flow, where the agent chose the spine and wrote the message in on
 sentences to edit. Anything Nick could paste is a violation of this step.
 
 1. **Company** — what they do, stage, and **the one thing that changed recently**. This is the why-now
-   and it is the beat most often missing (the 2026-08-25 email had the funding round, the launch press coverage
-   and the posting date all available and used none of them).
+   and it is the beat most often missing (an earlier email had several recent, citable company events available
+   and used none of them).
 2. **Role** — the verbatim JD lines that matter, both shapes if it carries two, and the open screens.
 3. **Recipient** — verified facts only. Flag every Wispr-dictated proper noun as unconfirmed.
 4. **What Nick would bring** — 2-3 candidate proofs, **each with its source line** (`data/projects/*.md`,

@@ -30,7 +30,7 @@ Usage: /apply <job-url-or-jd> [context] [--cover-letter] [--no-deep-review] [--s
 
 ## Why this order
 
-Rewritten 2026-09-01 after a run that produced the bundle in the old order (CV first, cover letter, research
+Rewritten after a run that produced the bundle in the old order (CV first, cover letter, research
 never). Three things went wrong and all three trace to sequencing:
 
 1. **The CV was written from the job description**, because that was the only context available at Step 5. It
@@ -40,8 +40,8 @@ never). Three things went wrong and all three trace to sequencing:
    hiring manager with the CV attached. The bundle spent its effort on the one artifact nobody read. The
    cover letter is the thing to cut under time pressure - never the quality of either co-equal artifact.
 3. **The research ran afterwards, by hand, and immediately made everything better** - it found the hiring
-   manager, her standing public invitation to be messaged, the company's own published deployment doctrine,
-   and a dated convergence with Nick's own prior work that became the strongest line in the email.
+   manager, a public signal that the hiring manager welcomed direct messages, material in the company's own
+   words, and the fact that became the strongest line in the email.
 
 The dossier is the seed. Everything downstream is better for having it, and nothing downstream is cheap to
 redo once it is wrong.
@@ -163,8 +163,8 @@ delegate already applied those - but the claim-level and voice-level decisions h
 
 ### Step 7: Cover letter — ONLY if `--cover-letter` was passed
 
-Skipped by default. Most applications do not read one, and on 2026-09-01 a fully generated and audited cover
-letter went unused because the real artifact was an email.
+Skipped by default. Most applications do not read one, and a fully generated and audited cover
+letter once went unused because the real artifact was an email.
 
 When the form does require one, follow the Problem-Solution structure in
 `framework/application-workflow.md`: lead with their challenge, prove you have solved something like it,
@@ -207,11 +207,9 @@ ask.** Draft LongText answers per `framework/application-workflow.md` § Applica
 hard-filter gate, no volunteered disqualifiers) and save everything, with a provenance note per answer, to
 `output/<company-slug>/MMDDYY-application-answers.md`.
 
-**Create-your-own-role postings (Nick, 2026-09-23).** When the posting is an open "Member of Staff" /
-"create your own role" door, the "Why us?" answer IS the role definition: a named title plus 2-4 owned
+**Create-your-own-role postings.** When the posting is an open-ended "create your own role" door, the "Why us?" answer IS the role definition: a named title plus 2-4 owned
 responsibilities Nick picks (offer options; he chooses). **Sequence:** application first, outreach second,
-and the outreach points to it ("here's the role I want; I've applied and the role is written into my
-application"). The email then does not have to carry the definition itself.
+and the outreach points to it (it says which role he wants and that the application defines it). The email then does not have to carry the definition itself.
 
 ### Step 8: Confirm submission status (mandatory — do NOT skip)
 
@@ -287,9 +285,9 @@ Use `tools/pipe_write.py` (never Edit — rows exceed the Edit-safe length).
 - **JD fetch fails:** ask for a paste. Never reconstruct from a URL slug.
 - **No dossier possible** (stealth company, no public footprint): say so, proceed, and mark every downstream
   claim about the company as unverified.
-- **Company name collides with a better-known company:** check this explicitly in Step 3 and warn Nick. On
-  2026-09-01 a target company was roughly 100x less indexed than an unrelated firm with nearly the same name,
-  which made plain web search return up to 100% wrong-company results.
+- **Company name collides with a better-known company:** check this explicitly in Step 3 and warn Nick. A
+  target company can be far less indexed than an unrelated firm with nearly the same name, and plain web
+  search then returns mostly wrong-company results.
 - **Hiring manager unreachable:** offer the peer path or the portal, and say which you recommend.
 - **Existing pipeline entry at `Applied` or later:** never regress; update CV Used only and surface a note.
 - **Research surfaces a genuine reason not to apply:** stop and say so. Finishing the bundle is not the goal.

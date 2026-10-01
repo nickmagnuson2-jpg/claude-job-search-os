@@ -168,7 +168,7 @@ Analyze the interaction history to determine the follow-up type:
    - The single most resonant thing the interviewer said (verbatim/near — the callback).
    - Any commitment / next step they named (informs the close).
    - A specific topic worth referencing as the value-add.
-   - Anything they flagged as feedback or a question Nick can now answer — **a follow-up that answers their stated concern is the strongest kind** (e.g., a founder who coaches "push back on the AI more" → the follow-up acknowledges that directly and offers a relevant agentic side-project as living proof).
+   - Anything they flagged as feedback or a question Nick can now answer — **a follow-up that answers their stated concern is the strongest kind** (e.g., an interviewer gives a piece of feedback → the follow-up acknowledges it directly and offers a relevant piece of Nick's own work as proof).
 4. **Graceful degradation:** if no transcript is found (and none passed), skip this branch silently and proceed with the existing Step 2 context (networking blockquote + dossier). No warning, no block. **Silent skip applies to content hooks only — the pre-bound-proof safety gate is Step 3e and runs regardless.**
 
 #### Step 3c: Reply-Mode Source Grounding (mandatory when replying to a specific received message)
@@ -288,7 +288,7 @@ Follow channel constraints from `framework/outreach-guide.md`.
 
 Keep it shorter than the original message. Follow-ups should be 50–100 words (shorter than initial outreach).
 
-**Ask scope — broad-open default for nudges** (added 2026-05-21): when the next-step context isn't known (recruiter went silent, founder didn't reply, scheduling pending), prefer **broad-open asks** over narrow-specific asks. Example from sent corpus 2026-05-21: Nick edited `scheduling for the case study we discussed` → `about next steps`. Pinning the topic forecloses paths the recipient might offer. Use narrow scope only when (a) the recipient explicitly asked you to follow up about a specific item or (b) the only outstanding gate IS that specific item. See `memory/feedback_always_follow_up_with_recruiters.md` + voice-reference.md §1 "Broad-open ask > narrow-specific ask in nudges."
+**Ask scope — broad-open default for nudges** (added 2026-05-21): when the next-step context isn't known (recruiter went silent, founder didn't reply, scheduling pending), prefer **broad-open asks** over narrow-specific asks. Example from the sent corpus: Nick edited an ask that named one specific agenda item down to `about next steps`. Pinning the topic forecloses paths the recipient might offer. Use narrow scope only when (a) the recipient explicitly asked you to follow up about a specific item or (b) the only outstanding gate IS that specific item. See `memory/feedback_always_follow_up_with_recruiters.md` + voice-reference.md §1 "Broad-open ask > narrow-specific ask in nudges."
 
 **Iteration safety — re-anchor pass at round 3+** (added 2026-05-21): if Nick has revised the draft 3+ times since this skill was invoked, the voice anchor has drifted (each inline edit bypasses Steps 1-7). Re-load `framework/voice-reference.md` and scan against §2 (anti-patterns) explicitly — phrase by phrase, not vibes-only. The 3-question qualitative tonal self-check in Step 7 is necessary but not sufficient. See `memory/feedback_voice_anchor_pass_at_iteration_3.md`.
 
