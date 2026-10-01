@@ -593,7 +593,10 @@ _VAR_REF = re.compile(r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)(?:(:?[-=+?])([^}]*))?\}"
 # Positional parameters inside a `sh -c` script: $1, ${1}, $@, $*.
 _POSITIONAL = re.compile(r"\$(?:\{[0-9]+\}|[0-9@*])")
 _DECLARERS = frozenset({"export", "declare", "local", "readonly", "typeset"})
-_MAX_CANDIDATES = 32
+# Bounds combinatorial growth only (several multi-valued variables in one word). It
+# must not drop real values: at 32 it cut a for-loop's 33rd word (Codex review of
+# 0a7a39a), so it is set far above any real word list.
+_MAX_CANDIDATES = 1024
 
 
 def _expand_vars(text: str, env: dict[str, list[str]]) -> list[str]:

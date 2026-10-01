@@ -1364,3 +1364,10 @@ def test_long_for_loop_lists_are_not_truncated():
     words = " ".join(f"out/{i}.md" for i in range(40)) + " docs/notes.md"
     env = cpp.command_assignments(f"for f in {words}; do :; done")
     assert "docs/notes.md" in env["f"]
+
+
+def test_long_for_loop_target_is_extracted():
+    words = " ".join(f"out/{i}.md" for i in range(40)) + " docs/notes.md"
+    cmd = f'for f in {words}; do echo x > "$f"; done'
+    env = cpp.command_assignments(cmd)
+    assert "docs/notes.md" in extract_write_targets('echo x > "$f"', env)
