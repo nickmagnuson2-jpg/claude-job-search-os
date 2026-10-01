@@ -173,3 +173,9 @@ def test_a_non_string_command_fails_open_without_crashing():
                        capture_output=True, text=True)
     assert p.returncode == 0
     assert "Traceback" not in p.stderr
+
+
+def test_a_non_mapping_tool_input_fails_open_without_crashing():
+    p = subprocess.run([sys.executable, str(HOOK)], input=json.dumps({"tool_input": ["x"]}),
+                       capture_output=True, text=True)
+    assert p.returncode == 0 and "Traceback" not in p.stderr

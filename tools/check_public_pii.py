@@ -684,7 +684,9 @@ def _command_assignments_unguarded(command: str) -> dict[str, list[str]]:
         # 2026-10-01, 6th: a loop variable redirect was never resolved).
         if k + 2 < len(words) and words[k] == "for" and words[k + 2] == "in":
             env.setdefault(words[k + 1], [])
-            env[words[k + 1]] = list(dict.fromkeys(env[words[k + 1]] + words[k + 3:]))[:_MAX_CANDIDATES]
+            # No cap: the words are literal and already bounded by the command's
+            # length; a cap dropped the 33rd item (Codex review of 19a6e71).
+            env[words[k + 1]] = list(dict.fromkeys(env[words[k + 1]] + words[k + 3:]))
             continue
         declarer = k < len(words) and words[k] in _DECLARERS
         if declarer:

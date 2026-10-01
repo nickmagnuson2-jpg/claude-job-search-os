@@ -1358,3 +1358,9 @@ def test_for_loop_variable_target_STILL_BLOCKS(tmp_path):
     """Codex coverage run 2026-10-01 (6th), F1 (P0)."""
     code, err = _run_bash(tmp_path, 'for f in docs/notes.md; do echo Pat Zorp > "$f"; done')
     assert code == 2
+
+
+def test_long_for_loop_lists_are_not_truncated():
+    words = " ".join(f"out/{i}.md" for i in range(40)) + " docs/notes.md"
+    env = cpp.command_assignments(f"for f in {words}; do :; done")
+    assert "docs/notes.md" in env["f"]

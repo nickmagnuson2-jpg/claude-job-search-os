@@ -126,7 +126,8 @@ def main() -> int:
     p = read_payload()
     if not p.ok:
         return 0                      # fail-open: a bad parse must never block work
-    command = (p.data.get("tool_input", {}) or {}).get("command", "") or ""
+    ti = p.data.get("tool_input") if isinstance(p.data, dict) else None
+    command = ti.get("command", "") if isinstance(ti, dict) else ""
     if not command or not isinstance(command, str):
         return 0                      # nothing to check; never crash on a bad payload
 
