@@ -1317,3 +1317,20 @@ def test_sh_c_positional_assignment_STILL_BLOCKS(tmp_path):
     """Codex coverage run 2026-10-01 (2nd), F1: positional bound into assignments."""
     code, err = _run_bash(tmp_path, """sh -c 'OUT=$1; echo Pat Zorp > "$OUT"' _ docs/notes.md""")
     assert code == 2
+
+
+@pytest.mark.parametrize("cmd", [
+    # Codex coverage run 2026-10-01 (3rd), F1: each $N binds its own argument
+    """sh -c 'echo Pat Zorp > "$1/$2"' _ docs notes.md""",
+    """sh -c 'echo Pat Zorp > "${2}"' _ out.txt docs/notes.md""",
+])
+def test_sh_c_positionals_bind_exactly_STILL_BLOCK(tmp_path, cmd):
+    code, err = _run_bash(tmp_path, cmd)
+    assert code == 2, cmd
+
+
+def test_shell_script_variants_bind_positionals():
+    v = cpp.shell_script_variants
+    assert v(["-c", 'x > "$1/$2"', "_", "docs", "n.md"]) == ['x > "docs/n.md"']
+    assert v(["-c", 'tee "$@"', "_", "a", "b"]) == ['tee "a"', 'tee "b"']
+    assert v(["-c", 'x > "$0"', "zero"]) == ['x > "zero"']

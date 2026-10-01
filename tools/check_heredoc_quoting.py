@@ -57,7 +57,8 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from hook_runtime import read_payload  # noqa: E402
 from shell_tokens import simple_commands, tokenize  # noqa: E402
-from check_public_pii import _SHELLS, shell_script_variants  # noqa: E402
+from check_public_pii import (  # noqa: E402
+    _SHELLS, _expand_vars, command_assignments, shell_script_variants)
 
 BT = chr(96)
 
@@ -83,17 +84,32 @@ def offenders(command: str, _depth: int = 0) -> list[str]:
     heredoc there corrupts its output the same way (Codex coverage run, 2026-10-01)."""
     bad: list[str] = []
     if _depth < 8:
+        # A command string held in a variable runs too (`c='cat <<A ...'; eval "$c"`):
+        # expand eval/shell arguments the way the PII hook resolves write targets.
+        env = command_assignments(command)
         for cmd in simple_commands(command):
             for inner in cmd.subs:
                 bad.extend(offenders(inner, _depth + 1))
             for i, w in enumerate(cmd.words):
                 base = os.path.basename(w)
-                if base in _SHELLS:
-                    for text in shell_script_variants(cmd.words[i + 1:]):
-                        bad.extend(offenders(text, _depth + 1))
-                elif base == "eval":
-                    bad.extend(offenders(" ".join(cmd.words[i + 1:]), _depth + 1))
+                if base in _SHELLS or base == "eval":
+                    args = cmd.words[i + 1:]
+                    for args_variant in _expand_args(args, env):
+                        texts = (shell_script_variants(args_variant) if base in _SHELLS
+                                 else [" ".join(args_variant)])
+                        for text in texts:
+                            bad.extend(offenders(text, _depth + 1))
     return bad + _direct_offenders(command)
+
+
+def _expand_args(args: list[str], env: dict[str, list[str]]) -> list[list[str]]:
+    """args with $VAR references expanded; one list per candidate value (capped)."""
+    out: list[list[str]] = [[]]
+    for a in args:
+        vals = _expand_vars(a, env) if "$" in a else [a]
+        vals = vals or [a]
+        out = [o + [v] for o in out for v in vals][:16]
+    return out
 
 
 def _direct_offenders(command: str) -> list[str]:

@@ -159,3 +159,9 @@ def test_a_heredoc_inside_a_shell_string_is_checked():
     assert run("sh -c 'cat <<A\n" + BT + "id" + BT + "\nA'") == 2
     assert run("sh -c \"cat <<'A'\n" + BT + "id" + BT + "\nA\"") == 0
     assert run("x=$(cat <<A\n" + BT + "id" + BT + "\nA\n)") == 2
+
+
+def test_a_heredoc_held_in_a_variable_is_checked():
+    """Codex coverage run 2026-10-01 (3rd), F2."""
+    assert run("c='cat <<A\n" + BT + "id" + BT + "\nA'; eval \"$c\"") == 2
+    assert run("c='cat <<A\n" + BT + "id" + BT + "\nA'; sh -c \"$c\"") == 2

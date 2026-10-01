@@ -438,9 +438,25 @@ def shell_script_variants(args: list[str]) -> list[str]:
     if script is None:
         return []
     k = args.index(script)
-    after = args[k + 1:]
-    variants = [_POSITIONAL.sub(lambda m, a=a: a, script) for a in after]
-    return (variants or [script])[:_MAX_CANDIDATES]
+    after = args[k + 1:]            # after[0] is $0, after[N] is $N
+
+    def bind(each: str | None) -> str:
+        def sub(m: re.Match) -> str:
+            ref = m.group(0).strip("${}")
+            if ref in "@*":
+                return each if each is not None else " ".join(after[1:])
+            n = int(ref)
+            return after[n] if n < len(after) else ""
+        return _POSITIONAL.sub(sub, script)
+
+    # $N binds exactly; $@ / $* are tried with each argument, since a writer like
+    # `tee "$@"` takes every one as a file (Codex coverage run 2026-10-01: binding
+    # every reference to the same argument never formed "$1/$2").
+    if re.search(r"\$[@*]", script):
+        variants = [bind(a) for a in after[1:]] or [bind(None)]
+    else:
+        variants = [bind(None)]
+    return variants[:_MAX_CANDIDATES]
 
 
 def _shell_command_string(args: list[str]) -> str | None:
