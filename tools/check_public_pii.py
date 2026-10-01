@@ -503,7 +503,13 @@ def _writer_targets(words: list[str], quoted: list[bool]) -> list[str]:
         elif name in _SHELLS:
             script = _shell_command_string(rest)
             if script is not None:
-                out.extend(_targets_in(script))
+                # `sh -c 'echo x > "$1"' _ docs/f.md`: the positional parameters are
+                # the words after the script. Each reference is tried with each of
+                # them (Codex coverage run, 2026-10-01).
+                after = rest[rest.index(script) + 1:] if script in rest else []
+                variants = [_POSITIONAL.sub(a.replace("\\", "\\\\"), script) for a in after]
+                for text in (variants or [script])[:_MAX_CANDIDATES]:
+                    out.extend(_targets_in(text))
         elif name == "eval":
             out.extend(_targets_in(" ".join(rest)))
     return out
@@ -525,7 +531,9 @@ def _targets_in(command: str) -> list[str]:
 
 # $NAME, ${NAME}, or ${NAME<op>word} for the default/alternate operators.
 _VAR_REF = re.compile(r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)(?:(:?[-=+?])([^}]*))?\}"
-                      r"|([A-Za-z_][A-Za-z0-9_]*))|\$\{[^}]*\}")
+                      r"|([A-Za-z_][A-Za-z0-9_]*))|\$\{[^}]*\}|\$[0-9@*#?$!-]")
+# Positional parameters inside a `sh -c` script: $1, ${1}, $@, $*.
+_POSITIONAL = re.compile(r"\$(?:\{[0-9]+\}|[0-9@*])")
 _DECLARERS = frozenset({"export", "declare", "local", "readonly", "typeset"})
 _MAX_CANDIDATES = 32
 

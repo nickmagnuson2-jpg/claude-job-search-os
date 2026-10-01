@@ -1296,3 +1296,18 @@ def test_wrapper_after_find_exec_STILL_BLOCKS(tmp_path, cmd):
 def test_flags_before_a_wrapper_positional_STILL_BLOCK(tmp_path, cmd):
     code, err = _run_bash(tmp_path, cmd)
     assert code == 2, cmd
+
+
+@pytest.mark.parametrize("cmd", [
+    # Codex coverage run 2026-10-01, F1 (P0): positional parameters of sh -c
+    """sh -c 'echo Pat Zorp > "$1"' _ docs/notes.md""",
+    """find . -name x -exec sh -c 'echo Pat Zorp > "$1"' _ docs/notes.md ';'""",
+    """bash -c 'echo Pat Zorp | tee "$@"' _ out.txt docs/notes.md""",
+])
+def test_sh_c_positional_targets_STILL_BLOCK(tmp_path, cmd):
+    code, err = _run_bash(tmp_path, cmd)
+    assert code == 2, cmd
+
+
+def test_unresolved_positional_is_skipped_not_a_literal_path():
+    assert extract_write_targets('echo x > "$1"') == []
