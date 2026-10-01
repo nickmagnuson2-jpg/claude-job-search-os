@@ -377,8 +377,11 @@ def _command_positions(words: list[str]) -> set[int]:
             if w == "--":
                 # Only positionals follow, and timeout's duration is still one of them
                 # (`timeout -- 5 sh -c ...`, Codex review of d187aa6).
+                j = k + 1
+                while j < n and _ASSIGNMENT.match(words[j]):
+                    j += 1                  # `env -- A=1 sh -c ...` (Codex, 9a726c3)
                 skip = 1 if wrapper == "timeout" and not positional_seen else 0
-                command_at(k + 1 + skip)
+                command_at(j + skip)
                 return
             if _ASSIGNMENT.match(w) or (w.startswith("-") and len(w) > 1):
                 # A bare one-letter option, or a long option with no `=value`, may

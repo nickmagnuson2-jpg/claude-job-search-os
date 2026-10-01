@@ -1289,6 +1289,9 @@ def test_wrapper_after_find_exec_STILL_BLOCKS(tmp_path, cmd):
     """timeout -- 5 sh -c 'echo Pat Zorp > docs/notes.md'""",
     """find . -name x -exec timeout -- 5 sh -c 'echo Pat Zorp > docs/notes.md' ';'""",
     """echo Pat Zorp | sudo -- "tee" docs/notes.md""",
+    # Codex review of 9a726c3, F1 (P0): assignments after `--`
+    """env -- A=1 sh -c 'echo Pat Zorp > docs/notes.md'""",
+    """echo Pat Zorp | env -- A=1 B=2 "tee" docs/notes.md""",
 ])
 def test_flags_before_a_wrapper_positional_STILL_BLOCK(tmp_path, cmd):
     code, err = _run_bash(tmp_path, cmd)
