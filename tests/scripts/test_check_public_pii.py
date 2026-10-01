@@ -1277,3 +1277,15 @@ def test_a_shell_named_as_an_argument_assigns_nothing():
 def test_wrapper_after_find_exec_STILL_BLOCKS(tmp_path, cmd):
     code, err = _run_bash(tmp_path, cmd)
     assert code == 2, cmd
+
+
+@pytest.mark.parametrize("cmd", [
+    # Codex review of 236409a, F1 (P0): a flag before timeout's duration
+    """timeout -v 5 sh -c 'echo Pat Zorp > docs/notes.md'""",
+    """echo Pat Zorp | timeout -v 5 "tee" docs/notes.md""",
+    """find . -name x -exec timeout -v 5 sh -c 'OUT=docs/notes.md; echo Pat Zorp > "$OUT"' ';'""",
+    """echo Pat Zorp | sudo -n -E "tee" docs/notes.md""",
+])
+def test_flags_before_a_wrapper_positional_STILL_BLOCK(tmp_path, cmd):
+    code, err = _run_bash(tmp_path, cmd)
+    assert code == 2, cmd

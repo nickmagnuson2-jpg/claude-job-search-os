@@ -381,7 +381,11 @@ def _command_positions(words: list[str]) -> set[int]:
                 # A bare one-letter option, or a long option with no `=value`, may
                 # take the next word as its value (`sudo --user nobody`); read both.
                 if _SHORT_BARE_OPTION.fullmatch(w) or (w.startswith("--") and "=" not in w):
-                    command_at(k + 1)                          # a flag
+                    # A flag: keep parsing options from the next word, so a wrapper
+                    # positional after it (timeout's duration) is still handled.
+                    # Marking the next word as the command skipped that duration in
+                    # `timeout -v 5 sh -c ...` (Codex review of 236409a).
+                    options_from(k + 1, wrapper, positional_seen)
                     options_from(k + 2, wrapper, positional_seen)   # or it took a value
                     return
                 k += 1
