@@ -56,7 +56,8 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from hook_runtime import read_payload  # noqa: E402
-from shell_tokens import tokenize  # noqa: E402
+from shell_tokens import simple_commands, tokenize  # noqa: E402
+from check_public_pii import _SHELLS, shell_script_variants  # noqa: E402
 
 BT = chr(96)
 
@@ -76,8 +77,26 @@ def _has_live_backtick(text: str) -> bool:
     return False
 
 
-def offenders(command: str) -> list[str]:
-    """Delimiters of unquoted heredocs whose body contains a live backtick."""
+def offenders(command: str, _depth: int = 0) -> list[str]:
+    """Delimiters of unquoted heredocs whose body contains a live backtick, including
+    heredocs inside command strings that run (`sh -c '...'`, `eval`, `$( )`): a
+    heredoc there corrupts its output the same way (Codex coverage run, 2026-10-01)."""
+    bad: list[str] = []
+    if _depth < 8:
+        for cmd in simple_commands(command):
+            for inner in cmd.subs:
+                bad.extend(offenders(inner, _depth + 1))
+            for i, w in enumerate(cmd.words):
+                base = os.path.basename(w)
+                if base in _SHELLS:
+                    for text in shell_script_variants(cmd.words[i + 1:]):
+                        bad.extend(offenders(text, _depth + 1))
+                elif base == "eval":
+                    bad.extend(offenders(" ".join(cmd.words[i + 1:]), _depth + 1))
+    return bad + _direct_offenders(command)
+
+
+def _direct_offenders(command: str) -> list[str]:
     toks = tokenize(command)
     delims: list[str] = []          # delimiter words, in the order their bodies arrive
     bad: list[str] = []

@@ -152,3 +152,10 @@ def test_an_even_run_of_backslashes_leaves_the_backtick_live():
     assert run("cat <<A\n\\\\" + BT + "id\\\\" + BT + "\nA\n") == 2
     assert run("cat <<A\n\\" + BT + "id\\" + BT + "\nA\n") == 0
     assert run("cat <<A\n\\\\\\" + BT + "id\\\\\\" + BT + "\nA\n") == 0   # odd runs: escaped
+
+
+def test_a_heredoc_inside_a_shell_string_is_checked():
+    """Codex coverage run 2026-10-01 (2nd), F2: the nested heredoc runs too."""
+    assert run("sh -c 'cat <<A\n" + BT + "id" + BT + "\nA'") == 2
+    assert run("sh -c \"cat <<'A'\n" + BT + "id" + BT + "\nA\"") == 0
+    assert run("x=$(cat <<A\n" + BT + "id" + BT + "\nA\n)") == 2

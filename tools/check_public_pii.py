@@ -426,6 +426,23 @@ def _all_command_positions(words: list[str]) -> set[int]:
 _SHELL_LONG_WITH_VALUE = frozenset({"--rcfile", "--init-file"})
 
 
+def shell_script_variants(args: list[str]) -> list[str]:
+    """The -c script a shell runs, once per positional argument bound into it.
+
+    `sh -c 'OUT=$1; echo x > "$OUT"' _ docs/f.md`: $1, ${1}, $@ and $* are the words
+    after the script, so each reference is tried with each of them. Used for both the
+    write scan and the assignment scan, and by check_heredoc_quoting, so they cannot
+    disagree (Codex coverage runs, 2026-10-01). [] when there is no -c script.
+    """
+    script = _shell_command_string(args)
+    if script is None:
+        return []
+    k = args.index(script)
+    after = args[k + 1:]
+    variants = [_POSITIONAL.sub(lambda m, a=a: a, script) for a in after]
+    return (variants or [script])[:_MAX_CANDIDATES]
+
+
 def _shell_command_string(args: list[str]) -> str | None:
     """The string a shell runs with -c, from the words after the shell's name.
 
@@ -501,15 +518,8 @@ def _writer_targets(words: list[str], quoted: list[bool]) -> list[str]:
         elif name == "dd":
             out.extend(a[3:] for a in rest if a.startswith("of="))
         elif name in _SHELLS:
-            script = _shell_command_string(rest)
-            if script is not None:
-                # `sh -c 'echo x > "$1"' _ docs/f.md`: the positional parameters are
-                # the words after the script. Each reference is tried with each of
-                # them (Codex coverage run, 2026-10-01).
-                after = rest[rest.index(script) + 1:] if script in rest else []
-                variants = [_POSITIONAL.sub(a.replace("\\", "\\\\"), script) for a in after]
-                for text in (variants or [script])[:_MAX_CANDIDATES]:
-                    out.extend(_targets_in(text))
+            for text in shell_script_variants(rest):
+                out.extend(_targets_in(text))
         elif name == "eval":
             out.extend(_targets_in(" ".join(rest)))
     return out
@@ -605,9 +615,8 @@ def command_assignments(command: str) -> dict[str, list[str]]:
                 continue
             base = os.path.basename(w)
             if base in _SHELLS:
-                script = _shell_command_string(words[i + 1:])
-                if script is not None:
-                    merge(command_assignments(script))
+                for text in shell_script_variants(words[i + 1:]):
+                    merge(command_assignments(text))
             elif base == "eval":
                 merge(command_assignments(" ".join(words[i + 1:])))
         k = 0

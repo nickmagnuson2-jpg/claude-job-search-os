@@ -1311,3 +1311,9 @@ def test_sh_c_positional_targets_STILL_BLOCK(tmp_path, cmd):
 
 def test_unresolved_positional_is_skipped_not_a_literal_path():
     assert extract_write_targets('echo x > "$1"') == []
+
+
+def test_sh_c_positional_assignment_STILL_BLOCKS(tmp_path):
+    """Codex coverage run 2026-10-01 (2nd), F1: positional bound into assignments."""
+    code, err = _run_bash(tmp_path, """sh -c 'OUT=$1; echo Pat Zorp > "$OUT"' _ docs/notes.md""")
+    assert code == 2
