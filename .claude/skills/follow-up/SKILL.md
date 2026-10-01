@@ -129,7 +129,7 @@ Read the following files in parallel (skip any that don't exist):
    > ⚠️ Company dossier is [N] days old (last updated YYYY-MM-DD). Consider refreshing: `/research-company "[Company]"`
 4. `data/job-pipeline.md` — pipeline status for this company
 5. `data/job-todos.md` — any pending follow-up to-dos for this contact
-6. `framework/outreach-guide.md` — frameworks, constraints, anti-patterns
+6. `framework/outreach-guide.md` — frameworks, constraints, anti-patterns, and the **Concision Pass** section (run in Step 7; it links to the McKinsey framework sections, which you read at that point)
 7. `framework/style-guidelines.md` — Nick's voice patterns for tone matching (see "Nick's Voice" section)
 8. `framework/voice-reference.md` — **EMPIRICAL voice reference extracted from labeled corpus.** Contains validated rules + verbatim exemplars. **MUST read both the rules AND the exemplars sections — research finding: rules alone underperform; rules + 2-3 exemplars beats both.** Pay particular attention to follow-up patterns (`Following up on my previous email...`, `Bumping this back to the top of your inbox`, post-call thank-you with specific reference) — these are the modes most relevant to this skill. **When Step 5 falls through to the voice-reference exemplar (no prior body), that exemplar is the generative spine — adapt it, don't fill the Step 6 structure with fresh prose.**
 9. `framework/content-rules.md` — **DRAFTING-JUDGMENT index** (what to say / cut / position per audience — distinct from voice mechanics). The **active** rules are the pre-send checklist run in Step 7's Content-Rules Pass; reference-only rules (in `content-rules.yaml`) inform what to include and cut as you draft. Rule-gate to what applies to THIS recipient/type — don't apply all rules blindly.
@@ -200,11 +200,11 @@ Analyze the interaction history to determine the follow-up type:
 
 #### Step 3d: Voice-Pure Dictation Mode (when Nick provides a guide)
 
-**Trigger:** Nick passes a voice-pure dictation guide via argument or earlier in the conversation ("use this as the spine: '...'"), OR signals he'll author the substance himself ("give me the spine," "I want to put it in my words," "I'll write it myself").
+**Trigger:** Nick passes a voice-pure dictation guide (full prose, not beats) via argument or earlier in the conversation, OR signals he'll author the prose himself ("I want to put it in my words," "I'll write it myself"). A spine given as beats does NOT trigger this rule; it goes to Step 3f and then the drafting steps. If it is unclear whether Nick supplied beats or the message itself, ask one question before drafting.
 
 **Rule:** The polished output's diff from the guide must be **mechanical only** — grammar, punctuation, Wispr-homophone silent-correct, sentence-boundary cleanup. Do NOT add new sentences, qualitative adjectives ("solid concept," "really cool"), feature-list descriptors when products are named, volume/scale estimates Nick didn't include, a second ask, or URLs to a company's own docs when the recipient works there. Do NOT reorganize structure beyond the dictation. If something seems missing, pause and ask Nick before adding.
 
-**When Nick signals he'll write it himself** ("give me the spine"), give him structure + key points + raw hook material — NOT a finished, polished message — and do NOT run the fully-drafted Step 4-8 flow. Escalate to a full draft only if he explicitly asks for one ("put a draft together").
+**When Nick signals he'll write it himself**, give him structure + key points + raw hook material — NOT a finished, polished message — and do NOT run the fully-drafted Step 4-8 flow until he either proposes a spine as beats (Step 3f) or explicitly asks for a draft ("put a draft together").
 
 **Pre-present check:** diff the polished draft against the guide. If the diff includes new content beyond mechanical fixes, revise to cut.
 
@@ -227,6 +227,20 @@ See `memory/feedback_voice_pure_diff_minimal.md`, `memory/feedback_minimize_poli
 5. **No transcript found:** emit the literal line `[exclusion scan: NOT RUN — no transcript]` in the draft-review output. **A safety check that did not run is never reported as a check that passed.**
 
 **Origin:** a prep doc pre-bound a single proof and said not to substitute it. Partway into the call the counterpart ruled that entire domain out of scope and called the proof's central deliverable commoditizable. The follow-up, drafted from the full transcript, led with it anyway — because nothing asked anyone to re-read the counterpart's turns for exclusions.
+
+#### Step 3f: Nick's Spine Before the Draft (added 2026-10-01)
+
+Nick, 2026-10-01: *"I propose the spine, and then you draft ... under the existing voice and quality gates."* Whether this skill stops for the spine depends on the follow-up type from Step 3:
+
+| Follow-up type | Stop for Nick's spine? | What to do |
+|---|---|---|
+| Post-meeting, Continue thread, Re-establish | **Yes** | Show what Steps 1-3e found (candidate callbacks, candidate value-adds, any blocked proof), then stop and ask Nick for the spine. Draft only after he states it. |
+| Nudge, Collect, 3rd-or-later sequence touch | No | Draft directly. Print the one-line spine (the new value-add and the ask) above the message in Step 8, so Nick can reject it before reading the draft. |
+| Logistics, scheduling, or a decline (any type) | No | Draft directly. These are not self-positioning prose (2026-08-26 scope boundary in `memory/feedback_give_nick_beats_not_a_polished_script.md`). |
+
+**The spine for a follow-up** is Nick's own statement of: (1) the thread point or callback to pick up, (2) the new value-add, (3) the proof, if the message carries one, (4) the ask. If an item the message needs is missing, ask Nick for it; do not fill it in (Step 6b blocks `G` in these slots). Do not volunteer a spine for approval. If he asks for a suggestion, give beats, no sentences, and wait.
+
+**Status of this table:** Nick approved the per-type split on 2026-10-01 ("I approve the follow-up split"). If he asks for a spine stop on a nudge, or for no stop on a post-meeting note, do that for the message at hand; change this table only if he says the default should change.
 
 #### Step 4: Sequence-Aware Drafting
 
@@ -339,6 +353,8 @@ Both checks are mechanical (pattern-match the draft text), not judgment calls �
 
 **Content-Rules Pass (mandatory — mirror of the provenance audit's visible-output discipline).** Load `framework/content-rules.md`. **Rule-gate:** select only the active rules whose trigger applies to THIS draft (recipient_role, email_type, whether a value-offer/BCC-move/parallel-channel/logistical-concern is in play) — do NOT walk all rules. For each selected rule, check the draft and record a one-line verdict in the Content-rules row of the Step 8 block below (`ok` or the rule id + what fired). This is advisory: you surface hits, Nick decides — nothing here blocks. Run it every time; a silent skip is the exact failure `[[feedback_llm_self_policing_fails]]` documents. (`content-rules.md` rule G1 "shape of role" is also enforced by the `check_draft_voice.py` hook — it fires regardless.)
 
+**Concision Pass (mandatory, visible output).** Run the `## Concision Pass` section of `framework/outreach-guide.md`. It cites five rules by file and heading in `framework/slide-craft-mckinsey.md` and `framework/problem-solving-mckinsey.md`; read each cited section now, then check the draft against it. The section's three limits apply: it is not a length target (the 50-100 range in Step 6 stands), voice signatures from the tone source stay, and sentences Nick dictated are not edited. Record one line per rule in the Concision row of the Step 8 block: the sentence before and after, or `no hits`.
+
 #### Step 8: Present Draft
 
 ```markdown
@@ -367,6 +383,8 @@ Both checks are mechanical (pattern-match the draft text), not judgment calls �
 - Sequence position: [N] of recommended 3–5 max
 - Tone calibration: [networking.md blockquote / archive: `output/<slug>/<file>.md` / voice-reference exemplar (no prior body found)]
 - Content-rules pass: [rules checked: A2, B1, H3... → `ok`, or rule-id + what fired]
+- Concision pass: [rules 1-5 from `outreach-guide.md` → per rule: "before" → "after", or `no hits`]
+- Spine: [Nick's stated spine (Step 3f stop), or the one-line spine the draft was built on (no stop)]
 
 ---
 Want me to log this and update your follow-up to-do? (Y/N)

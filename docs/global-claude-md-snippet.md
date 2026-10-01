@@ -65,7 +65,7 @@ When the user shares information mid-session, classify and route it to the corre
 ### Email & Outreach Quality
 
 - Three-question quality gate for outreach: "Why you?" (what you bring), "Why now?" (timely trigger), "Why me?" (personalization to recipient). All three must be strong before sending.
-- Channel constraints: email 75-125 words, LinkedIn connect request 300 chars, LinkedIn InMail 1,900 chars.
+- Channel constraints: cold first-contact email 200-300 words, follow-up or reply email 50-150 words, logistics reply under 50 words, LinkedIn connect request 300 chars, LinkedIn InMail 1,900 chars.
 - Subject lines: 2-4 words optimal. Questions outperform statements. Personalization adds ~30% open rate.
 - Follow-ups must add new value — never "just checking in." Each touch needs a new insight, article, shared connection, or angle.
 - Follow-up cadence: 3-5 touches at 3-5 day spacing. Each subsequent message should be shorter than the last.

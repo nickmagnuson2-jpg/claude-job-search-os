@@ -297,7 +297,7 @@ Framework selection based on contact type and context:
 | BAB (Before → After → Bridge) | Transformation/outcome focus |
 | AIDA (Attention → Interest → Desire → Action) | Longer-form email with multiple hooks |
 
-**Channel limits:** 75–125 words for email; <300 characters for LinkedIn connection requests.
+**Channel limits:** email is 200–300 words for a cold first contact, 50–150 for follow-ups and replies, under 50 for logistics; <300 characters for LinkedIn connection requests. The email ranges are the measured lengths of sent emails, not the 75–125 industry benchmark this section used until 2026-10-01.
 
 **Quality gate — three questions before sending:**
 1. Why you? (shared context, specific reason to reach out)
@@ -773,7 +773,7 @@ The foundation gave me: a way to store professional experience as structured mar
 
 ### `/cold-outreach`, `/follow-up`, `/draft-email` *(Feb 2026)*
 
-**What was built:** Outreach drafting with framework selection (Persona-Based, 3Ps, PAS, BAB, AIDA), channel limits (75–125 words email / <300 chars LinkedIn), three-question quality gate (Why you? Why now? Why me?), sequence-aware follow-up (1st through 5th+), tone-matching to prior messages, and auto-logging to networking and outreach files.
+**What was built:** Outreach drafting with framework selection (Persona-Based, 3Ps, PAS, BAB, AIDA), channel limits (75–125 words email as built in Feb 2026; since changed to 200–300 for cold first contact and 50–150 for follow-ups / <300 chars LinkedIn), three-question quality gate (Why you? Why now? Why me?), sequence-aware follow-up (1st through 5th+), tone-matching to prior messages, and auto-logging to networking and outreach files.
 
 **Why:** Outreach quality directly affects response rates. I was writing from scratch each time with no system for what framework to use, when to follow up, or how to escalate tone across a sequence.
 

@@ -12,7 +12,8 @@
 
 ## Channel constraints
 
-- Email: **75-125 words**. Subject lines 2-4 words; questions outperform statements.
+- Email, cold first contact: **200-300 words**. Follow-ups and replies: **50-150 words**. Subject lines 2-4 words; questions outperform statements.
+- A common benchmark for high-volume cold email is 75-125 words. Measure the emails you have sent that got replies and use that range instead.
 - LinkedIn connection request: **≤ 300 characters**.
 - LinkedIn InMail: **≤ 1,900 characters** (but shorter still wins).
 

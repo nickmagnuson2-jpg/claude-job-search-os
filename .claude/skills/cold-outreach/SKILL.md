@@ -1,6 +1,6 @@
 ---
 name: cold-outreach
-description: Research a contact and produce an Outreach Brief (why-now, sourced proofs, positioning, hard don'ts) for Nick to write in his own voice — escalates to a full drafted email/LinkedIn message only on explicit request. Auto-logs either way.
+description: Research a contact and produce an Outreach Brief (why-now, sourced proofs, positioning, hard don'ts), stop for Nick to propose the spine, then draft the email/LinkedIn message from his spine under the voice and quality gates. Auto-logs either way.
 argument-hint: <name> <company> [role] [channel:email|linkedin] [context]
 user-invocable: true
 allowed-tools: Read(*), Glob(data/*), Grep(data/*), Edit(data/networking.md), Write(data/networking.md), Write(data/job-todos.md), Write(tools/.pending-draft.txt), Write(tools/.pending-draft.source), Edit(data/outreach-log.md), Write(data/outreach-log.md), Write(output/**), Edit(framework/style-guidelines.md), Write(memory/lessons.md), mcp__exa__web_search_exa, mcp__exa__web_fetch_exa, WebSearch, WebFetch
@@ -8,18 +8,20 @@ allowed-tools: Read(*), Glob(data/*), Grep(data/*), Edit(data/networking.md), Wr
 
 # Cold Outreach — First-Contact Messages
 
-> ## ⚠️ DEFAULT CHANGED 2026-08-26 — READ BEFORE RUNNING
+> ## ⚠️ DEFAULT CHANGED 2026-10-01 — READ BEFORE RUNNING
 >
-> **This skill no longer drafts the message by default. It produces an Outreach Brief and stops.**
-> Nick writes the prose. See **Step 5b: Outreach Brief Mode**, which is now ON unless he explicitly
-> asks for a draft ("put a draft together" / "draft it for me" / "write it"). **"Send it," "let's go,"
-> and time pressure are NOT that ask** — urgency is precisely when the old default used to win.
+> **This skill produces an Outreach Brief, stops, and waits for Nick to propose the spine. It then
+> drafts the message from his spine.** See **Step 5b**. Nick, 2026-10-01: *"I propose the spine, and
+> then you draft ... under the existing voice and quality gates."*
 >
-> Steps 6-8 (drafting, quality gate, `.pending-draft.txt`, `open_draft.py`) run **only** on that
-> explicit escalation. Research, verification, positioning and logging are all still automated; only
-> the sentences are his. Origin: `memory/feedback_give_nick_beats_not_a_polished_script.md`, 4th fire.
+> Steps 6-8 (drafting, quality gate, `.pending-draft.txt`, `open_draft.py`) run **only after Nick has
+> stated the spine in his own words.** **"Send it," "let's go," and time pressure are NOT a spine.**
+> An orchestrator's inference written into this skill's arguments is not a spine either.
+>
+> History: from 2026-08-26 to 2026-10-01 this skill stopped at the Brief and Nick wrote the prose.
+> Origin and the dated reversal: `memory/feedback_give_nick_beats_not_a_polished_script.md`.
 
-Research a recipient and hand Nick everything he needs to write a first-contact message in his own voice: sender context, verified recipient facts, the why-now, sourced proofs, positioning, and the hard don'ts. On explicit request, escalate to a full drafted message that passes the three-question quality gate. Auto-logs the contact and creates a follow-up to-do either way.
+Research a recipient and hand Nick everything he needs to decide the spine of a first-contact message: sender context, verified recipient facts, the why-now, sourced proofs, positioning, and the hard don'ts. Once Nick proposes the spine, draft the message from it and pass it through the provenance audit, the concision pass and the quality gate. Auto-logs the contact and creates a follow-up to-do either way.
 
 ## Arguments
 
@@ -110,7 +112,7 @@ Read the following files in parallel (skip any that don't exist):
    > ⚠️ Company dossier is [N] days old (last updated YYYY-MM-DD). Consider refreshing: `/research-company "[Company]"`
 6. Company notes — `data/company-notes/<slug>.md` — personal context, recruiter call notes, observations
 7. `data/job-pipeline.md` — pipeline status for this company
-8. `framework/outreach-guide.md` — frameworks, constraints, anti-patterns, quality gate
+8. `framework/outreach-guide.md` — frameworks, constraints, anti-patterns, quality gate, and the **Concision Pass** section (run in Step 7; it links to the McKinsey framework sections, which you read at that point)
 9. `framework/style-guidelines.md` — Nick's voice patterns for tone matching (see "Nick's Voice" section)
 10. `framework/voice-reference.md` — **EMPIRICAL voice reference extracted from labeled corpus.** Contains validated rules + verbatim exemplars. **MUST read both the rules AND the exemplars sections — research finding: rules alone underperform; rules + 2-3 exemplars beats both.** **The matched exemplar is the generative spine for Step 6: draft by adapting it to this recipient, NOT by filling the Step 6 structure with fresh prose. The persuasion framework (Step 5) and the structure (Step 6) shape argument ORDER, not voice — the exemplar shapes voice. If the exemplar isn't doing the work, the draft will read generic.**
 11. `framework/content-rules.md` — **DRAFTING-JUDGMENT index** (what to say / cut / position — distinct from voice mechanics). Cold outreach leans on the `L2`/`L3` (subject + no alum-handshake), `I1` (name the company in sentence one), `A3` (no invented research-signal on replies), `C1`/`C3` (one ask, no logistics) rules. The **active** rules are the pre-send checklist run in Step 7's Content-Rules Pass; reference-only rules (in `content-rules.yaml`) inform what to include and cut. Rule-gate to what applies here.
@@ -149,12 +151,36 @@ Use the waterfall personalization logic from `framework/outreach-guide.md`:
 
 Select the framework matching the highest-priority signal available. Note the signal and framework choice for the output.
 
-### Step 5b: Outreach Brief Mode — **THE DEFAULT for cold outreach** (flipped 2026-08-26)
+### Step 5b: Outreach Brief, then Nick's spine — **THE DEFAULT for cold outreach** (changed 2026-10-01)
 
-> **STOP. For cold outreach this mode is ON unless Nick asks for a draft.** Do not fall through to
-> Steps 6-8. Produce the Outreach Brief below, hand it to Nick, and stop. He writes the prose.
+> **STOP after the Brief. Do not fall through to Steps 6-8.** Produce the Outreach Brief below, hand
+> it to Nick, and ask him for the spine. Steps 6-8 run only after he has stated it.
 
-**Why this is the default and not a flag** (Nick, 2026-08-26): *"how can I just get the beats to do the
+**Division of work** (Nick, 2026-10-01): *"I propose the spine, and then you draft ... under the
+existing voice and quality gates."* The spine is his. The first draft is the agent's.
+
+**What counts as the spine.** Nick's own statement, in any form (dictated, typed, bullets), of four things:
+
+1. **The organizing claim** — why he is going after this class of role (Step 7 row 4 quotes it back).
+2. **The hook** — which fact from the Brief the message uses.
+3. **The proof(s)** — which of the Brief's candidate proofs, and in what order.
+4. **The ask.**
+
+If any of the four is missing, ask Nick for it. Do not fill it in; Step 6b blocks `G` in exactly these
+slots. Do not volunteer a spine for him to approve. If he asks for a suggestion, give one as beats
+(no sentences) and wait for him to confirm or change it.
+
+**Spine or dictated prose?** If what Nick supplies is the message itself (sentences he intends to
+send), the mechanical-diff rule below governs and no sentences are added. If it is beats, draft from
+them in Step 6. If it is unclear which, ask one question before drafting.
+
+**He can still write it himself.** "I'll write it myself" / "I want to put it in my words" → stop at
+the Brief; the mechanical-diff rule below governs whatever he dictates.
+
+**Pass Nick's words verbatim.** When an orchestrator invokes this skill, the spine goes in as Nick
+said it. An inferred spine is not his (2026-09-23 near miss, same memory file).
+
+**History, kept because one part still binds** (Nick, 2026-08-26): *"how can I just get the beats to do the
 research on the company, on the role, on what I would bring, how I should position myself, and then I
 do the outreach? We automate everything around it so that it's still getting my voice."* An opt-in rule
 requires him to remember to invoke it at the exact moment he is moving fast, which is the moment he
@@ -165,8 +191,11 @@ prose to have been his.** A rule that only fires when he remembers to ask loses 
 non-negotiable. It is NOT grounded in a recipient objection — the one recipient who noticed said the
 opposite (see that file's 2026-08-26 supplement before citing anyone).
 
-**Escalate to a full draft ONLY on an explicit ask** — "put a draft together," "draft it for me,"
-"write it." Then run Steps 6-8 as normal. "Send it," "let's go," or time pressure are NOT that ask.
+**What changed 2026-10-01 and what did not.** From 2026-08-26 this step stopped at the Brief and Nick
+wrote every sentence. On 2026-10-01 he moved the first draft back to the agent, on condition that the
+spine is his. The part of the 2026-08-26 reasoning that still binds: **the stop is the default, not an
+option he has to remember**, and urgency does not skip it. "Send it" and "let's go" are not a spine.
+The pre-August flow, where the agent chose the spine and wrote the message in one pass, is not restored.
 
 **The Outreach Brief — deliberately stops where the writing starts.** No subject line, no opener, no
 sentences to edit. Anything Nick could paste is a violation of this step.
@@ -183,13 +212,13 @@ sentences to edit. Anything Nick could paste is a violation of this step.
 7. **Hard don'ts** — the falsifiable traps for this specific recipient (bad-overlap dates, claims Nick
    cannot make, a framing the company has moved off).
 
-Then stop. Nick dictates; the mechanical-diff rule below governs cleanup of what he dictates.
+Then stop and ask Nick for the spine (the four items above). When he gives it, go to Step 6.
 
-**Trigger for the dictation-cleanup rule below:** Nick passes a voice-pure dictation guide via argument or earlier in the conversation ("use this as the spine: '...'"), OR signals he'll author the substance himself ("give me the spine," "I want to put it in my words," "I'll write it myself"), OR — now the common path — dictates his prose after receiving the Brief above.
+**Trigger for the dictation-cleanup rule below:** Nick passes a voice-pure dictation guide (full prose, not beats) via argument or earlier in the conversation, OR signals he'll author the prose himself ("I want to put it in my words," "I'll write it myself"), OR dictates the message itself after receiving the Brief above. A spine given as beats does NOT trigger this rule; it goes to Step 6.
 
 **Rule:** The polished output's diff from the guide must be **mechanical only** — grammar, punctuation, Wispr-homophone silent-correct, sentence-boundary cleanup. Do NOT add new sentences, qualitative adjectives ("solid concept," "really cool"), feature-list descriptors when products are named, volume/scale estimates Nick didn't include, a second ask, or URLs to a company's own docs when the recipient works there. Do NOT reorganize structure beyond the dictation. If something seems missing, pause and ask Nick before adding.
 
-**When Nick signals he'll write it himself** ("give me the spine"), give him structure + key points + raw hook material — NOT a finished, polished message — and do NOT run the fully-drafted Step 6-8 flow. Escalate to a full draft only if he explicitly asks for one ("put a draft together").
+**When Nick signals he'll write it himself**, the Brief is what he gets: structure + key points + raw hook material, NOT a finished, polished message. Do NOT run the Step 6-8 drafting flow until he either proposes a spine as beats or explicitly asks for a draft ("put a draft together").
 
 **Pre-present check:** diff the polished draft against the guide. If the diff includes new content beyond mechanical fixes, revise to cut.
 
@@ -197,11 +226,14 @@ See `memory/feedback_voice_pure_diff_minimal.md`, `memory/feedback_minimize_poli
 
 ### Step 6: Draft the Message
 
-**SPINE FIRST.** Before drafting, write one sentence answering *why is Nick going after this class
-of seat?* — from `data/goals.md`, in plain speech, not taxonomy. That sentence is the email's spine;
-the Step 4 research hook is seasoning and must never be the spine. **Step 7 row 4 will demand this
-sentence back, quoted verbatim from the draft**, so a draft written without it fails the gate rather
-than sailing through it. Carry all three pillars (Step 7's pillar table enumerates them).
+**SPINE FIRST, AND IT IS NICK'S.** Do not start this step without the spine Nick proposed in Step 5b.
+Its first item is the organizing claim: *why is Nick going after this class of seat?*, in plain
+speech, not taxonomy. Draft that sentence from his wording; `data/goals.md` is the check on it, not a
+substitute for it. If his spine has no organizing claim, ask him for one. The Step 4 research hook
+supports the spine and must never replace it. **Step 7 row 4 will demand the organizing claim back,
+quoted verbatim from the draft**, so a draft written without it fails the gate. Keep his hook, his
+proofs and his order. Carry all three pillars (Step 7's pillar table enumerates them); if his spine
+drops one, say so in the Step 8 block and do not add it back.
 
 **Generate FROM the matched exemplar, not from the structure below.** The framework (Step 5) sets argument order; the structure below sets length and what each part must accomplish. Neither supplies voice — the `voice-reference.md` exemplar does. Adapt the exemplar to this recipient; any quoted text below is a spec of intent, never a sentence to paste or lightly reword. If the draft could have been sent to any contact at any company, the exemplar didn't drive it — restart from the exemplar, do not patch.
 
@@ -213,7 +245,7 @@ Follow channel constraints from `framework/outreach-guide.md`:
   nudges and short replies 50-150,"* and **both exemplars this step tells you to generate FROM
   (Exemplars 1 and 2) run about 200 words.** A shorter target contradicts the exemplars the same
   step mandates.
-  - **75-125 is the FOLLOW-UP / reply register**, not the cold one. Do not apply it here, and do not
+  - **Shorter ranges (50-150) are the FOLLOW-UP / reply register**, not the cold one. Do not apply it here, and do not
     split the difference between the two - the midpoint satisfies neither and produces the
     compressed register that reads wrong.
   - **Symptom to watch for:** when a cold draft runs short, the compression shows up as sentence
@@ -331,6 +363,8 @@ If any answer is bad, the exemplar didn't drive the draft. **Regenerate from the
 
 **Content-Rules Pass (mandatory — visible-output discipline, like the Step 6b provenance audit).** Load `framework/content-rules.md`. **Rule-gate:** select only the active rules whose trigger applies to a cold draft to THIS recipient (channel=cold always selects `L2`/`L3`/`I1`/`A3`/`C1`/`C3`; add `G2` if the recipient is non-technical, `G3` if they work at the company being discussed, `H6` for the availability close). Check the draft against each selected rule and record a one-line verdict in the Content-rules row of the Step 8 block. Advisory — you surface hits, Nick decides; nothing blocks. Run it every time; a silent skip is the `[[feedback_llm_self_policing_fails]]` failure. (Rule `G1` is also hook-enforced by `check_draft_voice.py`.)
 
+**Concision Pass (mandatory, visible output).** Run the `## Concision Pass` section of `framework/outreach-guide.md`. It cites five rules by file and heading in `framework/slide-craft-mckinsey.md` and `framework/problem-solving-mckinsey.md`; read each cited section now, then check the draft against it. The section's three limits apply: it is not a length target (the 200-300 range in Step 6 stands), voice signatures from the matched exemplar stay, and sentences Nick dictated are not edited. Record one line per rule in the Concision row of the Step 8 block: the sentence before and after, or `no hits`.
+
 ### Step 8: Present Draft
 
 Show the draft with metadata:
@@ -365,11 +399,13 @@ Show the draft with metadata:
 [Any ✗ needs a one-line reason here.]
 
 **Metrics:**
-- Word count: [N] (target: **200-300 for cold**; 75-125 is the follow-up register - see Step 6)
+- Word count: [N] (target: **200-300 for cold**; 50-150 is the follow-up and reply register - see Step 6)
 - Character count: [N] (LinkedIn only — target: <300 for connect)
 - Suggested send time: [day/time in recipient timezone if known]
 - Tone calibration: voice-reference exemplar — [cold outreach / Tuck alum / mission-aware / 3-bullet pitch] (cold = first contact, no prior body for this recipient)
 - Content-rules pass: [rules checked: L2, L3, I1, C1... → `ok`, or rule-id + what fired]
+- Concision pass: [rules 1-5 from `outreach-guide.md` → per rule: "before" → "after", or `no hits`]
+- Spine: [Nick's four items as he stated them; note any pillar his spine left out]
 
 ---
 Want me to log this contact and create a follow-up to-do? (Y/N)

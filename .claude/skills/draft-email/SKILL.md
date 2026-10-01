@@ -307,7 +307,7 @@ If the email type doesn't match any category above:
 
 1. Ask the user for more context about the purpose.
 2. Draft based on the outreach guide's general principles: concise, one CTA, no anti-patterns.
-3. Follow standard metrics: 75–125 words, clear subject line, no filler.
+3. Follow standard metrics: the length for the closest row of the Channel Constraints table in `framework/outreach-guide.md` (50–150 words for a reply or follow-up; a cold first contact belongs in `/cold-outreach`, at 200–300), clear subject line, no filler.
 
 ---
 

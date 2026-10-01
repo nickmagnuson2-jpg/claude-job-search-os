@@ -124,12 +124,13 @@ default to submitting into a portal because the research was inconclusive.
 Pass the dossier findings in the argument. The delegate will do its own research pass, but it should not have
 to rediscover what Step 3 already established.
 
-**Brief mode is the default and stays the default.** `/cold-outreach` produces an Outreach Brief - the
-why-now, verified recipient facts, sourced proofs, positioning, the hook, hard don'ts - and **stops**. Nick
-writes the sentences. It escalates to a full draft only on an explicit ask ("draft it," "write it"). Urgency
-is not that ask. Per Nick 2026-08-26 and the authenticity non-negotiable behind it.
+**The Brief, then Nick's spine, then the draft (changed 2026-10-01).** `/cold-outreach` produces an Outreach
+Brief - the why-now, verified recipient facts, sourced proofs, positioning, the hook, hard don'ts - and
+**stops for Nick to propose the spine**. It drafts the message only after he has stated it. Urgency is not a
+spine, and a spine inferred here and passed in the argument is not his. Per Nick 2026-10-01; from 2026-08-26
+until then the skill stopped at the Brief and Nick wrote the sentences.
 
-**Carry forward into Step 6:** the positioning spine, the proofs the brief selected, and the hook. **These
+**Carry forward into Step 6:** the spine Nick proposed, the proofs it selected, and the hook. **These
 are the seed for the CV.** A CV written after the positioning is settled says the same thing as the outreach;
 a CV written before it says whatever the job description said.
 

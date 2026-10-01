@@ -300,7 +300,7 @@ Six parallel reviewers (recruiter, hiring manager, competitor analyst, skeptic, 
 /cold-outreach "Jordan Kim" "Verdant Foods" "CoS role, MBA alum connection"
 ```
 
-Selects the right framework (Persona-Based, 3Ps, PAS, BAB, or AIDA) based on context, respects channel limits (75–125 words email / <300 chars LinkedIn), and runs a quality gate (Why you? Why now? Why me?). Auto-logs to `data/networking.md`, creates a follow-up to-do, and archives to `output/<slug>/MMDDYY-cold-outreach-[contact-slug].md`.
+Selects the right framework (Persona-Based, 3Ps, PAS, BAB, or AIDA) based on context, respects channel limits (200–300 words for a cold first-contact email / <300 chars LinkedIn), and runs a quality gate (Why you? Why now? Why me?). Auto-logs to `data/networking.md`, creates a follow-up to-do, and archives to `output/<slug>/MMDDYY-cold-outreach-[contact-slug].md`.
 
 ### Follow-up
 
