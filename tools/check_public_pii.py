@@ -680,6 +680,12 @@ def _command_assignments_unguarded(command: str) -> dict[str, list[str]]:
         k = 0
         while k < len(words) and words[k] in _COMPOUND_PREFIX:
             k += 1                                      # then / do / else / time ...
+        # `for NAME in w1 w2 ...` assigns each word to NAME (Codex coverage run
+        # 2026-10-01, 6th: a loop variable redirect was never resolved).
+        if k + 2 < len(words) and words[k] == "for" and words[k + 2] == "in":
+            env.setdefault(words[k + 1], [])
+            env[words[k + 1]] = list(dict.fromkeys(env[words[k + 1]] + words[k + 3:]))[:_MAX_CANDIDATES]
+            continue
         declarer = k < len(words) and words[k] in _DECLARERS
         if declarer:
             k += 1

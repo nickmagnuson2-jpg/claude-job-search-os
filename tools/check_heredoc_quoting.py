@@ -127,8 +127,8 @@ def main() -> int:
     if not p.ok:
         return 0                      # fail-open: a bad parse must never block work
     command = (p.data.get("tool_input", {}) or {}).get("command", "") or ""
-    if not command:
-        return 0
+    if not command or not isinstance(command, str):
+        return 0                      # nothing to check; never crash on a bad payload
 
     bad = offenders(command)
     if not bad:

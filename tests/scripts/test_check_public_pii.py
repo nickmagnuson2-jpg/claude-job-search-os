@@ -1352,3 +1352,9 @@ def test_self_referential_eval_does_not_crash():
     env = cpp.command_assignments(cmd)
     for seg in split_command_segments(cmd):
         extract_write_targets(seg, env)        # must not raise
+
+
+def test_for_loop_variable_target_STILL_BLOCKS(tmp_path):
+    """Codex coverage run 2026-10-01 (6th), F1 (P0)."""
+    code, err = _run_bash(tmp_path, 'for f in docs/notes.md; do echo Pat Zorp > "$f"; done')
+    assert code == 2

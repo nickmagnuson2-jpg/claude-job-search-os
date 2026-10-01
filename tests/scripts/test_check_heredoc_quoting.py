@@ -165,3 +165,11 @@ def test_a_heredoc_held_in_a_variable_is_checked():
     """Codex coverage run 2026-10-01 (3rd), F2."""
     assert run("c='cat <<A\n" + BT + "id" + BT + "\nA'; eval \"$c\"") == 2
     assert run("c='cat <<A\n" + BT + "id" + BT + "\nA'; sh -c \"$c\"") == 2
+
+
+def test_a_non_string_command_fails_open_without_crashing():
+    p = subprocess.run([sys.executable, str(HOOK)],
+                       input=json.dumps({"tool_input": {"command": ["cat", "<<A"]}}),
+                       capture_output=True, text=True)
+    assert p.returncode == 0
+    assert "Traceback" not in p.stderr
