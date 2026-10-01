@@ -1344,3 +1344,11 @@ def test_shell_script_variants_bind_positionals():
 def test_variable_held_command_string_STILL_BLOCKS(tmp_path, cmd):
     code, err = _run_bash(tmp_path, cmd)
     assert code == 2, cmd
+
+
+def test_self_referential_eval_does_not_crash():
+    """Real-history replay 2026-10-01: a RecursionError makes the hook fail open."""
+    cmd = 'PGD=$(grep x f); PGD=$(eval echo "$PGD"); echo hi > out.txt'
+    env = cpp.command_assignments(cmd)
+    for seg in split_command_segments(cmd):
+        extract_write_targets(seg, env)        # must not raise

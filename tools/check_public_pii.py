@@ -556,15 +556,32 @@ def _writer_targets(words: list[str], quoted: list[bool],
     return out
 
 
+# Nesting limit for command strings scanned inside command strings. Strings can GROW
+# through variable expansion (`PGD=$(eval echo "$PGD")` re-expands itself), so
+# recursion does not end on its own, and an uncaught RecursionError would make the
+# hook fail open (found by a real-history replay, 2026-10-01).
+_MAX_NESTING = 16
+_nesting = [0]
+
+
 def _targets_in(command: str, env: dict[str, list[str]] | None = None) -> list[str]:
+    if _nesting[0] >= _MAX_NESTING:
+        return []
+    _nesting[0] += 1
+    try:
+        return _targets_in_unguarded(command, env)
+    finally:
+        _nesting[0] -= 1
+
+
+def _targets_in_unguarded(command: str, env: dict[str, list[str]] | None = None) -> list[str]:
     targets: list[str] = []
     for cmd in simple_commands(command):
         targets.extend(_redirect_targets(cmd))
         targets.extend(_writer_targets(cmd.words, cmd.quoted, env))
         # A command substitution runs, wherever its word sits (an argument, an
         # assignment, a redirect target), so its writes count too.
-        # No depth cap: each level scans a strictly shorter string, so recursion
-        # ends on its own, and a cap would be a way to nest a write out of sight.
+        # Nesting is capped in _targets_in (see _MAX_NESTING).
         for inner in cmd.subs:
             targets.extend(_targets_in(inner, env))
     return targets
@@ -618,6 +635,16 @@ def _expand_vars(text: str, env: dict[str, list[str]]) -> list[str]:
 
 
 def command_assignments(command: str) -> dict[str, list[str]]:
+    if _nesting[0] >= _MAX_NESTING:
+        return {}
+    _nesting[0] += 1
+    try:
+        return _command_assignments_unguarded(command)
+    finally:
+        _nesting[0] -= 1
+
+
+def _command_assignments_unguarded(command: str) -> dict[str, list[str]]:
     """Every value each variable is assigned anywhere in a command line.
 
     Collects `A=x`, `A+=x` and `export A=x` in every simple command, including those
