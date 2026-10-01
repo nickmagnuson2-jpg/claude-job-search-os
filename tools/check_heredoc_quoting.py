@@ -58,7 +58,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from hook_runtime import read_payload  # noqa: E402
 from shell_tokens import simple_commands, tokenize  # noqa: E402
 from check_public_pii import (  # noqa: E402
-    _SHELLS, _expand_vars, command_assignments, shell_script_variants)
+    _SHELLS, command_assignments, expand_args, shell_script_variants)
 
 BT = chr(96)
 
@@ -94,22 +94,12 @@ def offenders(command: str, _depth: int = 0) -> list[str]:
                 base = os.path.basename(w)
                 if base in _SHELLS or base == "eval":
                     args = cmd.words[i + 1:]
-                    for args_variant in _expand_args(args, env):
+                    for args_variant in expand_args(args, env):
                         texts = (shell_script_variants(args_variant) if base in _SHELLS
                                  else [" ".join(args_variant)])
                         for text in texts:
                             bad.extend(offenders(text, _depth + 1))
     return bad + _direct_offenders(command)
-
-
-def _expand_args(args: list[str], env: dict[str, list[str]]) -> list[list[str]]:
-    """args with $VAR references expanded; one list per candidate value (capped)."""
-    out: list[list[str]] = [[]]
-    for a in args:
-        vals = _expand_vars(a, env) if "$" in a else [a]
-        vals = vals or [a]
-        out = [o + [v] for o in out for v in vals][:16]
-    return out
 
 
 def _direct_offenders(command: str) -> list[str]:

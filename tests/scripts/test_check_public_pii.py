@@ -1334,3 +1334,13 @@ def test_shell_script_variants_bind_positionals():
     assert v(["-c", 'x > "$1/$2"', "_", "docs", "n.md"]) == ['x > "docs/n.md"']
     assert v(["-c", 'tee "$@"', "_", "a", "b"]) == ['tee "a"', 'tee "b"']
     assert v(["-c", 'x > "$0"', "zero"]) == ['x > "zero"']
+
+
+@pytest.mark.parametrize("cmd", [
+    # Codex coverage run 2026-10-01 (4th), F1 (P0): variable-held command strings
+    "c='echo Pat Zorp > docs/notes.md'; eval \"$c\"",
+    "c='echo Pat Zorp | tee docs/notes.md'; sh -c \"$c\"",
+])
+def test_variable_held_command_string_STILL_BLOCKS(tmp_path, cmd):
+    code, err = _run_bash(tmp_path, cmd)
+    assert code == 2, cmd

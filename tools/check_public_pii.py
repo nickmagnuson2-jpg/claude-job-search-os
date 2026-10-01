@@ -501,7 +501,20 @@ def _redirect_targets(cmd) -> list[str]:
     return out
 
 
-def _writer_targets(words: list[str], quoted: list[bool]) -> list[str]:
+def expand_args(args: list[str], env: dict[str, list[str]]) -> list[list[str]]:
+    """args with $VAR references expanded; one list per candidate value (capped).
+    A command string held in a variable runs too (`c='echo x > f'; eval "$c"`), so
+    eval and shell arguments are expanded before they are scanned (Codex coverage
+    runs, 2026-10-01). Shared with check_heredoc_quoting."""
+    out: list[list[str]] = [[]]
+    for a in args:
+        vals = (_expand_vars(a, env) or [a]) if "$" in a else [a]
+        out = [o + [v] for o in out for v in vals][:16]
+    return out
+
+
+def _writer_targets(words: list[str], quoted: list[bool],
+                    env: dict[str, list[str]] | None = None) -> list[str]:
     """Files written by sed -i, tee and dd in one simple command, plus any command
     string handed to a shell (`bash -c "..."`, `eval "..."`).
 
@@ -534,24 +547,26 @@ def _writer_targets(words: list[str], quoted: list[bool]) -> list[str]:
         elif name == "dd":
             out.extend(a[3:] for a in rest if a.startswith("of="))
         elif name in _SHELLS:
-            for text in shell_script_variants(rest):
-                out.extend(_targets_in(text))
+            for args in expand_args(rest, env or {}):
+                for text in shell_script_variants(args):
+                    out.extend(_targets_in(text, env))
         elif name == "eval":
-            out.extend(_targets_in(" ".join(rest)))
+            for args in expand_args(rest, env or {}):
+                out.extend(_targets_in(" ".join(args), env))
     return out
 
 
-def _targets_in(command: str) -> list[str]:
+def _targets_in(command: str, env: dict[str, list[str]] | None = None) -> list[str]:
     targets: list[str] = []
     for cmd in simple_commands(command):
         targets.extend(_redirect_targets(cmd))
-        targets.extend(_writer_targets(cmd.words, cmd.quoted))
+        targets.extend(_writer_targets(cmd.words, cmd.quoted, env))
         # A command substitution runs, wherever its word sits (an argument, an
         # assignment, a redirect target), so its writes count too.
         # No depth cap: each level scans a strictly shorter string, so recursion
         # ends on its own, and a cap would be a way to nest a write out of sight.
         for inner in cmd.subs:
-            targets.extend(_targets_in(inner))
+            targets.extend(_targets_in(inner, env))
     return targets
 
 
@@ -676,13 +691,13 @@ def extract_write_targets(command: str, env: dict[str, list[str]] | None = None)
     between 2026-08-19 and 2026-08-24 on private writes whose CONTENT was full of real
     names, so heredoc bodies are masked below before any target is mined out of them.
     """
-    # Heredoc bodies are tokens, never commands, so no masking is needed here.
-    targets = _targets_in(command)
     # Variables: what the caller saw assigned elsewhere in the full command, then
     # anything assigned inside this text itself.
     scope: dict[str, list[str]] = {k: list(v) for k, v in (env or {}).items()}
     for k, v in command_assignments(command).items():
         scope[k] = list(dict.fromkeys(scope.get(k, []) + v))
+    # Heredoc bodies are tokens, never commands, so no masking is needed here.
+    targets = _targets_in(command, scope)
 
     expanded: list[str] = []
     for t in targets:
@@ -1055,7 +1070,12 @@ def main():
             targets = resolve_public_targets(extract_write_targets(segment, env), root,
                                              skip_binary=False)
             if targets:
-                judge(strip_sed_search_sides(segment), targets, root)
+                # The content a segment writes includes the values of variables it
+                # references: in `c='echo NAME > docs/f'; eval "$c"` the name lives
+                # in the assignment segment (Codex coverage run 2026-10-01, 4th).
+                held = [v for m in _VAR_REF.finditer(segment)
+                        for v in env.get(m.group(1) or m.group(4) or "", [])]
+                judge("\n".join([strip_sed_search_sides(segment)] + held), targets, root)
     return
 
 
