@@ -363,3 +363,13 @@ def test_a_mention_of_pipefail_or_pipestatus_does_not_exempt(command):
 ])
 def test_effective_pipefail_or_a_pipestatus_read_still_exempts(command):
     assert _run(command) == 0, command
+
+
+# --- round-five review of 663a887 (Grok run 252, F4) --------------------------
+
+def test_set_with_another_option_before_pipefail_exempts():
+    assert _run("set -o errexit -o pipefail; cmd | tail -5 || echo FAILED") == 0
+
+
+def test_set_pipefail_as_an_argument_is_not_set():
+    assert _run("echo set -o pipefail; false | cat || echo FAILED") == 2

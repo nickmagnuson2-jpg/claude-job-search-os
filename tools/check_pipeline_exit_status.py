@@ -51,8 +51,11 @@ missing` is a legitimate verdict and must stay clean.
 
 ALLOWLIST — the two correct ways to keep the pipe
 -------------------------------------------------
-If the command mentions `PIPESTATUS` or `pipefail`, the author is handling the
-pipeline status explicitly and the hook exits 0.
+The hook exits 0 when the author handles pipeline status: `set -o pipefail` is in
+effect for the statement (set in command position, not turned off again by
+`set +o pipefail`), or a `$PIPESTATUS` value is actually read. A mere mention, in a
+comment, a quoted string, or `echo set -o pipefail`, no longer exempts (Codex review
+of the hook wiring, run 15, F2).
 
 BLOCK tier (exit 2) per feedback_warn_vs_block_hook_design.md: an exit-0 WARN on
 PreToolUse is never surfaced by Claude Code, and this pattern has a single
@@ -61,8 +64,8 @@ deterministic correction (unpipe the command under test, or use PIPESTATUS).
 Hook input: JSON via stdin from Claude Code. {"tool_input": {"command": "..."}}
 
 Exit codes:
-  0 — clean (no formatter-terminated pipeline feeding a verdict, PIPESTATUS/
-      pipefail present, or parse failure -> fail-open)
+  0 — clean (no formatter-terminated pipeline feeding a verdict, pipefail in
+      effect or $PIPESTATUS read, or parse failure -> fail-open)
   2 — verdict taken from a pipeline's exit status, tool call BLOCKED
 
 Origin: memory/feedback_pipeline_masks_the_exit_status_you_are_testing.md
@@ -95,8 +98,12 @@ FORMATTERS = frozenset(
 # `set +o pipefail`) or a `$PIPESTATUS` value is actually READ. A bare mention in a
 # comment, a quoted string, or `set +o pipefail` exempted the whole command (Codex
 # review of the hook wiring, run 15, F2).
-_PIPEFAIL_ON = re.compile(r"\bset\s+(?:[-+]\w+\s+)*-[a-zA-Z]*o\s+pipefail\b")
-_PIPEFAIL_OFF = re.compile(r"\bset\s+(?:[-+]\w+\s+)*\+[a-zA-Z]*o\s+pipefail\b")
+# `set` in command position (statement start, or after && / || / a group opener),
+# with any options before it, including `-o NAME` pairs (`set -o errexit -o pipefail`).
+# `echo set -o pipefail` is an argument, not a set (Grok review of 663a887, F4).
+_SET_OPTS = r"(?:^|&&|\|\||[({])\s*set\s+(?:[-+]\w+\s+(?:(?!pipefail\b)[a-z]\w*\s+)?)*"
+_PIPEFAIL_ON = re.compile(_SET_OPTS + r"-[a-zA-Z]*o\s+pipefail\b")
+_PIPEFAIL_OFF = re.compile(_SET_OPTS + r"\+[a-zA-Z]*o\s+pipefail\b")
 _PIPESTATUS_READ = re.compile(r"\$\{?PIPESTATUS\b")
 _SINGLE_QUOTED = re.compile(r"'[^']*'")
 _COMMENT = re.compile(r"(?:^|(?<=\s))#[^\n]*")
@@ -143,9 +150,9 @@ def find_violation(command: str) -> tuple[str, str] | None:
 
     pipefail = False                 # in effect for the statements that follow
     for i, stmt in enumerate(statements):
-        if _PIPEFAIL_ON.search(stmt):
+        if _PIPEFAIL_ON.search(stmt.strip()):
             pipefail = True
-        if _PIPEFAIL_OFF.search(stmt):
+        if _PIPEFAIL_OFF.search(stmt.strip()):
             pipefail = False
         if pipefail:
             continue

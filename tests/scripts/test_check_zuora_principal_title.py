@@ -571,3 +571,17 @@ def test_cat_with_an_exempt_or_unreadable_source_still_judges_the_rest(tmp_path)
         assert _bash_in("cat locked.md src.md > output/acme-corp/cv.md", cwd) == 2
     finally:
         locked.chmod(0o644)
+
+
+# --- round-five review of 663a887 (Codex run 251, Grok run 252) ---------------
+
+@pytest.mark.parametrize("command", [
+    'src=src.md; cp "$src" output/acme-corp/new-cv.md',          # variable source
+    'D=output/acme-corp; cp src.md "$D/new-cv.md"',               # variable destination
+    'src=src.md; cat "$src" > output/acme-corp/new-cv.md',
+    "cat < src.md > output/acme-corp/new-cv.md",                  # cat reads stdin
+    "LC_ALL=C cat src.md > output/acme-corp/new-cv.md",           # leading assignment
+    "rsync -t src.md output/acme-corp/new-cv.md",                 # rsync -t keeps times
+])
+def test_round_five_copy_forms_block(tmp_path, command):
+    assert _bash_in(command, _copy_repo(tmp_path)) == 2, command

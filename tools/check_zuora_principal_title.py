@@ -109,7 +109,8 @@ from hook_runtime import read_payload  # noqa: E402
 # copy that travels without its siblings cannot start at all and there is nothing left for
 # a per-sibling guard to rescue. Hooks are invoked as $CLAUDE_PROJECT_DIR/tools/check_*.py
 # and live beside their dependencies.
-from check_public_pii import extract_write_targets, split_command_segments  # noqa: E402
+from check_public_pii import (  # noqa: E402
+    _expand_vars, command_assignments, extract_write_targets, split_command_segments)
 from shell_tokens import simple_commands  # noqa: E402
 
 CANONICAL = "Chief Product and Technology Officer"
@@ -221,7 +222,20 @@ def _read(path: str, cwd: str) -> str:
         return ""
 
 
-def copied_content(segment: str, cwd: str) -> list[tuple[str, str]]:
+def _expand(word: str, env: dict) -> list[str]:
+    """A word's possible values given the command's assignments (`cp "$src" ...`:
+    Codex and Grok reviews of 663a887). Unresolvable stays as written."""
+    return (_expand_vars(word, env) or [word]) if "$" in word else [word]
+
+
+def _leading_assignments_removed(words: list[str]) -> list[str]:
+    words = list(words)
+    while words and re.match(r"[A-Za-z_][A-Za-z0-9_]*=", words[0]):
+        words.pop(0)
+    return words
+
+
+def copied_content(segment: str, cwd: str, env: dict | None = None) -> list[tuple[str, str]]:
     """(destination, source text) for every file a copy in this segment writes.
 
     cp/mv/install/rsync write their SOURCE's bytes, which are not in the command
@@ -230,19 +244,21 @@ def copied_content(segment: str, cwd: str) -> list[tuple[str, str]]:
     destination (DIR/<source name>, so the exemption check sees the real path).
     """
     out: list[tuple[str, str]] = []
+    env = env or {}
     for cmd in simple_commands(segment):
-        words = list(cmd.words)
-        while words and re.match(r"[A-Za-z_][A-Za-z0-9_]*=", words[0]):
-            words.pop(0)                     # leading VAR=value assignments
+        words = [v for w in _leading_assignments_removed(cmd.words) for v in _expand(w, env)]
         if not words or os.path.basename(words[0]) not in _COPIERS:
             continue
+        # rsync's -t preserves times; only cp/mv/install name a target directory
+        # with it (Grok review of 663a887, F5).
+        takes_target_dir = os.path.basename(words[0]) != "rsync"
         target_dir = None
         operands: list[str] = []
         rest = words[1:]
         k = 0
         while k < len(rest):
             a = rest[k]
-            if a in ("-t", "--target-directory") and k + 1 < len(rest):
+            if takes_target_dir and a in ("-t", "--target-directory") and k + 1 < len(rest):
                 target_dir = rest[k + 1]
                 k += 2
                 continue
@@ -264,12 +280,19 @@ def copied_content(segment: str, cwd: str) -> list[tuple[str, str]]:
     return out
 
 
-def catted_content(segment: str, cwd: str) -> str:
-    """Text of the files `cat` reads in this segment (`cat a.md > out.md`)."""
+def catted_content(segment: str, cwd: str, env: dict | None = None) -> str:
+    """Text of the files `cat` reads in this segment: its file arguments and a
+    `< file` redirect, after leading assignments (`cat a.md > out.md`,
+    `cat < a.md > out.md`, `LC_ALL=C cat a.md > out.md`: Grok review of 663a887)."""
+    env = env or {}
     texts = []
     for cmd in simple_commands(segment):
-        if cmd.words and os.path.basename(cmd.words[0]) == "cat":
-            texts += [_read(a, cwd) for a in cmd.words[1:] if not a.startswith("-")]
+        words = _leading_assignments_removed(cmd.words)
+        if not words or os.path.basename(words[0]) != "cat":
+            continue
+        sources = [a for a in words[1:] if not a.startswith("-")]
+        sources += [r.target for r in cmd.redirections if r.op.lstrip("0123456789") == "<"]
+        texts += [_read(v, cwd) for a in sources for v in _expand(a, env)]
     return "\n".join(texts)
 
 
@@ -299,12 +322,14 @@ def main() -> None:
         if not command:
             return
         cwd = data.get("cwd") if isinstance(data.get("cwd"), str) else os.getcwd()
+        # Assignments anywhere in the call reach every segment (`src=x; cp "$src" d`).
+        env = command_assignments(command)
         for segment in split_command_segments(command):
             targets = extract_write_targets(segment)
-            content = segment + "\n" + catted_content(segment, cwd)
+            content = segment + "\n" + catted_content(segment, cwd, env)
             for target in targets:
                 judge(content, target)
-            for target, text in copied_content(segment, cwd):
+            for target, text in copied_content(segment, cwd, env):
                 judge(text, target)
     return
 
