@@ -322,6 +322,42 @@ def test_review_of_2ffecb1_forms_are_blocked(cmd):
     assert code == 2, cmd
 
 
+@pytest.mark.parametrize("cmd", [
+    # Codex + Grok review of b9cc6a5: globs, directories and braces reach guards
+    "rm tools/check_*.py",
+    "rm -f tools/shell_tok*",
+    "rm -rf tools",
+    "rm -rf tools/",
+    "mv tools/shell_tokens.py{,.bak}",
+    "git restore .",
+    "git checkout -- .",
+    "git checkout HEAD -- tools",
+    # Grok F4: an option cluster ending in c is -c
+    "python3 -uc \"open('tools/check_public_pii.py','w').write('')\"",
+])
+def test_review_of_b9cc6a5_forms_are_blocked(cmd):
+    code, _ = _bash(cmd)
+    assert code == 2, cmd
+
+
+@pytest.mark.parametrize("cmd", [
+    "rm -rf tools/__pycache__/_pii_old_tmp*",     # 25 of these in history
+    "rm -rf tools/__pycache__",
+    "rm tools/*.bak",
+    "git restore docs/",
+    # `{}` is find's placeholder, not brace expansion (it named the repo root)
+    "find tools tests -name __pycache__ -type d -exec rm -rf {} +",
+    "mv docs/a.md{,.bak}",
+    # whole-tree git operations restore COMMITTED content: out of this gate's scope
+    "git stash",
+    "git checkout main",
+    "git reset --hard",
+])
+def test_review_of_b9cc6a5_allowed_forms(cmd):
+    code, err = _bash(cmd)
+    assert code == 0, (cmd, err)
+
+
 def test_sourcing_a_script_that_edits_a_guard_is_blocked(tmp_path):
     """Grok review of 2ffecb1, F4."""
     guard = SCRIPT.parent / "shell_tokens.py"

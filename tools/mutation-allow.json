@@ -246,5 +246,6 @@
   "tools/check_public_pii.py::_command_assignments_unguarded::DROP_CONTINUE::eee0bbba": "EQUIVALENT MUTANT. Without the `continue` after a for-loop, the assignment scan starts at words[k] == 'for', which is not NAME=, and a non-declarer breaks at once. Allowlisted 2026-10-01.",
   "tools/check_public_pii.py::_command_assignments_unguarded::IF_FALSE::dae56b03": "EQUIVALENT MUTANT. Without skipping the declarer word, `export` is not NAME= and, because declarer is True, the loop continues past it to the assignments. Allowlisted 2026-10-01.",
   "tools/check_guard_edit_approval.py::_guarded_target::RETURN_NONE::f7781144": "EQUIVALENT MUTANT (both `return False` sites share this key). Every caller uses _guarded_target in a truthy filter (`if _guarded_target(...)`), where None and False are both falsy. Allowlisted 2026-10-01.",
-  "tools/check_guard_edit_approval.py::approved_in_command::RETURN_NONE::f7781144": "EQUIVALENT MUTANT. main tests `if approved_in_command(command)`, where None and False are both falsy. Allowlisted 2026-10-01."
+  "tools/check_guard_edit_approval.py::approved_in_command::RETURN_NONE::f7781144": "EQUIVALENT MUTANT. main tests `if approved_in_command(command)`, where None and False are both falsy. Allowlisted 2026-10-01.",
+  "tools/check_guard_edit_approval.py::_names_a_guard::RETURN_NONE::e2c1437b": "EQUIVALENT MUTANT. _guarded_target tests `if form and _names_a_guard(form, cwd)`, where None and False are both falsy. Allowlisted 2026-10-01."
 }

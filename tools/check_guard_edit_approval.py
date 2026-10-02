@@ -62,6 +62,7 @@ See bash_guard_writes for what is covered. It is a heuristic over the command te
 any script file it runs: a path assembled from parts, or a write through a tool under
 tools/, is not seen.
 """
+import fnmatch
 import os
 import re
 import sys
@@ -161,22 +162,46 @@ def is_guarded(path: str) -> bool:
 _REPO_ROOT = os.path.dirname(_TOOLS_DIR)
 
 
+def _guard_files() -> list[str]:
+    """Repo-relative paths of the guard files that exist."""
+    return ([f"tools/{n}" for n in sorted(os.listdir(_TOOLS_DIR)) if _GUARD_BASENAME.match(n)]
+            + [".claude/settings.json", ".claude/settings.local.json"])
+
+
 def _guarded_target(path: str, cwd: str = "", env: dict | None = None) -> bool:
-    """A guard file of THIS repo. Copies into another checkout (a scratchpad worktree
-    for a mutation run, `cp x $W/tools/check_y.py`) are not guard edits: the replay
-    of 88db514's review fixes flagged exactly that. A path that cannot be resolved
-    (an unknown $VAR) is judged as written, which blocks."""
-    if not (is_guarded(path) or ("/" not in path and bool(_GUARD_BASENAME.match(path)))):
-        return False
+    """A path that reaches a guard file of THIS repo: the file itself, a glob that
+    matches one (`rm tools/check_*.py`), a directory holding one (`rm -rf tools`,
+    `git restore .`), or a brace form (`mv tools/shell_tokens.py{,.bak}`): Codex and
+    Grok reviews of b9cc6a5.
+
+    Copies into another checkout (a scratchpad worktree for a mutation run,
+    `cp x $W/tools/check_y.py`) are not guard edits: the replay of 88db514's review
+    fixes flagged exactly that. A path that cannot be resolved (an unknown $VAR) is
+    judged as written, which blocks."""
     from check_public_pii import _expand_vars
     candidates = (_expand_vars(path, env or {}) or [path]) if "$" in path else [path]
     for c in candidates:
-        if "$" in c:
-            return True
-        full = os.path.abspath(os.path.join(cwd or os.getcwd(), os.path.expanduser(c)))
-        if full == _REPO_ROOT or full.startswith(_REPO_ROOT + os.sep):
-            return True
+        # A brace expansion (`{,.bak}`, `{a,b}`: a comma inside) expands to the word
+        # without it, among others. `{}` is not one: it is find's placeholder, and
+        # stripping it named the repo root (replay of this change, 2026-10-01).
+        for form in dict.fromkeys([c, re.sub(r"\{[^{}]*,[^{}]*\}", "", c)]):
+            if form and _names_a_guard(form, cwd):
+                return True
     return False
+
+
+def _names_a_guard(c: str, cwd: str) -> bool:
+    if "$" in c:                                  # unresolved: judged as written
+        return is_guarded(c)
+    full = os.path.abspath(os.path.join(cwd or os.getcwd(), os.path.expanduser(c)))
+    if full != _REPO_ROOT and not full.startswith(_REPO_ROOT + os.sep):
+        return False                              # another checkout's copy
+    rel = os.path.relpath(full, _REPO_ROOT)
+    if any(ch in rel for ch in "*?["):
+        return any(fnmatch.fnmatchcase(f, rel) for f in _guard_files())
+    if os.path.isdir(full):
+        return rel == "." or any(f.startswith(rel + "/") for f in _guard_files())
+    return is_guarded(rel) or ("/" not in c and bool(_GUARD_BASENAME.match(c)))
 
 
 def _non_options(args: list[str]) -> list[str]:
@@ -321,7 +346,10 @@ def bash_guard_writes(command: str, cwd: str = ".", _depth: int = 0) -> list[str
             if _INTERPRETER.match(name):
                 texts = list(_stdin_texts(cmd))
                 for k, a in enumerate(rest):
-                    if a in ("-c", "-e", "-E") and k + 1 < len(rest):
+                    # -c, or a cluster ending in it (`python3 -uc`, `perl -pe`):
+                    # Grok review of b9cc6a5, F4.
+                    if (a in ("-c", "-e", "-E") or (a[:1] == "-" and a[1:2] != "-"
+                                                    and a[-1] in "ceE")) and k + 1 < len(rest):
                         texts.append(rest[k + 1])
                         break
                     if a == "-m":
