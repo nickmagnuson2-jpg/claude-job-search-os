@@ -308,6 +308,36 @@ def test_shell_script_file_forms(tmp_path):
     assert _bash_in(tmp_path, "cat patch.sh") == 0
 
 
+@pytest.mark.parametrize("cmd", [
+    # Grok review of 2ffecb1, F3: a variable-held command string
+    "c='rm tools/shell_tokens.py'; eval \"$c\"",
+    "c='rm tools/shell_tokens.py'; echo \"$c\" | sh",
+    # Grok F1: git global options before the subcommand
+    "git --no-pager checkout HEAD -- tools/shell_tokens.py",
+    "git -C . restore tools/shell_tokens.py",
+    "git -c core.pager=cat checkout -- tools/check_public_pii.py",
+])
+def test_review_of_2ffecb1_forms_are_blocked(cmd):
+    code, _ = _bash(cmd)
+    assert code == 2, cmd
+
+
+def test_sourcing_a_script_that_edits_a_guard_is_blocked(tmp_path):
+    """Grok review of 2ffecb1, F4."""
+    guard = SCRIPT.parent / "shell_tokens.py"
+    (tmp_path / "patch.sh").write_text(f"sed -i '' 's/a/b/' {guard}\n")
+    assert _bash_in(tmp_path, "source patch.sh") == 2
+    assert _bash_in(tmp_path, ". ./patch.sh") == 2
+    (tmp_path / "env.sh").write_text("export X=1\n")
+    assert _bash_in(tmp_path, "source env.sh") == 0
+
+
+def test_git_reads_of_a_guard_pass():
+    for cmd in ("git -C . diff tools/shell_tokens.py", "git --no-pager log -- tools/shell_tokens.py"):
+        code, err = _bash(cmd)
+        assert code == 0, (cmd, err)
+
+
 def test_shell_script_files_contract():
     g = _hook_module()
     assert g._shell_script_files(["-c", "echo hi", "patch.sh"]) == []

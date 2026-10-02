@@ -296,20 +296,28 @@ def bash_guard_writes(command: str, cwd: str = ".", _depth: int = 0) -> list[str
                 paths = _copy_like_paths(name, rest, cwd)
             elif name in ("rm", "unlink", "truncate", "shred"):
                 paths = _non_options(rest)
-            elif name == "git" and rest[:1] and rest[0] in ("checkout", "restore", "rm",
-                                                             "mv", "stash"):
-                paths = _non_options(rest[1:])
+            elif name == "git":
+                # Global options come first (`git -C . restore`, `git --no-pager
+                # checkout`: Grok review of 2ffecb1, F1).
+                g = 0
+                while g < len(rest) and rest[g].startswith("-"):
+                    g += 2 if rest[g] in ("-C", "-c", "--git-dir", "--work-tree") else 1
+                if rest[g:g + 1] and rest[g] in ("checkout", "restore", "rm", "mv", "stash"):
+                    paths = _non_options(rest[g + 1:])
             elif name in ("perl", "ruby") and any(a.startswith("-i") or a.startswith("-pi")
                                                   for a in rest):
                 paths = _non_options(rest)
             hits += [p for p in paths if _guarded_target(p, cwd, env)]
-            for text in scripts_run_by(cmd, i, None):
+            # env: a variable-held string runs too (`c='rm ...'; eval "$c"`, Grok
+            # review of 2ffecb1, F3).
+            for text in scripts_run_by(cmd, i, env):
                 hits += bash_guard_writes(text, cwd, _depth + 1)
-            if name in _SHELLS:
-                # `bash patch.sh`: the file's commands run too (Grok review of
-                # 88db514, F3: the scratchpad incident with a shell script).
-                for script in _shell_script_files(rest):
-                    hits += bash_guard_writes(_read_script(script, cwd), cwd, _depth + 1)
+            # `bash patch.sh` and `source patch.sh`: the file's commands run too
+            # (Grok reviews of 88db514 F3 and 2ffecb1 F4).
+            scripts = (_shell_script_files(rest) if name in _SHELLS
+                       else rest[:1] if name in ("source", ".") else [])
+            for script in scripts:
+                hits += bash_guard_writes(_read_script(script, cwd), cwd, _depth + 1)
             if _INTERPRETER.match(name):
                 texts = list(_stdin_texts(cmd))
                 for k, a in enumerate(rest):
