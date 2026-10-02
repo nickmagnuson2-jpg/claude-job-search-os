@@ -109,7 +109,7 @@ _WRITE_CALL = re.compile(
     r"os\.(?:replace|rename|remove|unlink|truncate)|\.unlink\(|\.rename\(|"
     r"File\.write|unlinkSync|renameSync")
 _INTERPRETER = re.compile(r"^(?:python[0-9.]*|perl|ruby|node)$")
-_OVERRIDE_IN_COMMAND = re.compile(r"(?:^|[\s;&|(])(?:export\s+)?GUARD_EDIT_APPROVED=[^\s;&|)]")
+_APPROVAL_WORD = "GUARD_EDIT_APPROVED=1"
 _TOOLS_DIR = os.path.dirname(os.path.abspath(__file__))
 _MAX_SCRIPT_BYTES = 2_000_000
 
@@ -158,12 +158,93 @@ def is_guarded(path: str) -> bool:
     return any(g.search(p) for g in GUARD_PATTERNS)
 
 
-def _guarded_target(path: str) -> bool:
-    return is_guarded(path) or ("/" not in path and bool(_GUARD_BASENAME.match(path)))
+_REPO_ROOT = os.path.dirname(_TOOLS_DIR)
+
+
+def _guarded_target(path: str, cwd: str = "", env: dict | None = None) -> bool:
+    """A guard file of THIS repo. Copies into another checkout (a scratchpad worktree
+    for a mutation run, `cp x $W/tools/check_y.py`) are not guard edits: the replay
+    of 88db514's review fixes flagged exactly that. A path that cannot be resolved
+    (an unknown $VAR) is judged as written, which blocks."""
+    if not (is_guarded(path) or ("/" not in path and bool(_GUARD_BASENAME.match(path)))):
+        return False
+    from check_public_pii import _expand_vars
+    candidates = (_expand_vars(path, env or {}) or [path]) if "$" in path else [path]
+    for c in candidates:
+        if "$" in c:
+            return True
+        full = os.path.abspath(os.path.join(cwd or os.getcwd(), os.path.expanduser(c)))
+        if full == _REPO_ROOT or full.startswith(_REPO_ROOT + os.sep):
+            return True
+    return False
 
 
 def _non_options(args: list[str]) -> list[str]:
     return [a for a in args if a and not a.startswith("-")]
+
+
+def approved_in_command(command: str) -> bool:
+    """True if a simple command in `command` ASSIGNS GUARD_EDIT_APPROVED=1, as a
+    prefix (`GUARD_EDIT_APPROVED=1 python3 patch.py`) or via export. The text alone
+    is not approval: `echo GUARD_EDIT_APPROVED=1` and a heredoc body carrying it
+    approved before, and so did `=0` (Codex and Grok reviews of 88db514)."""
+    from shell_tokens import simple_commands
+    for cmd in simple_commands(command):
+        words = cmd.words
+        if words[:1] == ["export"]:
+            words = words[1:]
+        for w in words:
+            if w == _APPROVAL_WORD:
+                return True
+            if not re.match(r"[A-Za-z_][A-Za-z0-9_]*=", w):
+                break
+    return False
+
+
+def _copy_like_paths(name: str, rest: list[str], cwd: str) -> list[str]:
+    """Paths cp/mv/install/ln change: the destination (DIR/<source name> when it is a
+    directory or named by -t), and for mv the sources too, since they are removed
+    (Codex and Grok reviews of 88db514: `cp -t tools x`, `mv tools/shell_tokens.py /tmp`).
+    """
+    target_dir = None
+    operands: list[str] = []
+    k = 0
+    while k < len(rest):
+        a = rest[k]
+        if a in ("-t", "--target-directory") and k + 1 < len(rest):
+            target_dir = rest[k + 1]
+            k += 2
+            continue
+        if a.startswith("--target-directory="):
+            target_dir = a.split("=", 1)[1]
+        elif a.startswith("-t") and len(a) > 2:
+            target_dir = a[2:]
+        elif a and not a.startswith("-"):
+            operands.append(a)
+        k += 1
+    if target_dir is not None:
+        sources, dests = operands, [target_dir]
+    else:
+        sources, dests = operands[:-1], operands[-1:]
+    out: list[str] = []
+    for d in dests:
+        is_dir = target_dir is not None or d.endswith("/") or os.path.isdir(
+            os.path.join(cwd, os.path.expanduser(d)))
+        out += [os.path.join(d, os.path.basename(src)) for src in sources] if is_dir else [d]
+    if name in ("mv", "gmv"):
+        out += sources
+    return out
+
+
+def _shell_script_files(rest: list[str]) -> list[str]:
+    """Words after a shell that may be script files it runs (`bash patch.sh`): every
+    non-option word, unless -c or -s makes them arguments. Over-approximates on
+    purpose (`bash -o pipefail x.sh` also tries `pipefail`, which does not exist and
+    reads as empty); _read_script skips repo tools and missing files."""
+    for a in rest:
+        if a.startswith("-") and not a.startswith("--") and ("c" in a[1:] or "s" in a[1:]):
+            return []
+    return [a for a in rest if not a.startswith(("-", "+"))]
 
 
 def _script_rewrites_a_guard(text: str) -> bool:
@@ -195,14 +276,14 @@ def bash_guard_writes(command: str, cwd: str = ".", _depth: int = 0) -> list[str
     (`sh -c`, stdin, `$( )`) are followed. Added 2026-10-01: Bash was outside this
     hook entirely, and a scratchpad patch script rewrote shell_tokens.py unapproved.
     """
-    from check_public_pii import (_all_command_positions, _stdin_texts,
+    from check_public_pii import (_SHELLS, _all_command_positions, _stdin_texts,
                                   command_assignments, extract_write_targets,
                                   scripts_run_by)
     from shell_tokens import simple_commands
     if _depth > 8:
         return []
-    hits = [t for t in extract_write_targets(command, command_assignments(command))
-            if _guarded_target(t)]
+    env = command_assignments(command)
+    hits = [t for t in extract_write_targets(command, env) if _guarded_target(t, cwd, env)]
     for cmd in simple_commands(command):
         for inner in cmd.subs:
             hits += bash_guard_writes(inner, cwd, _depth + 1)
@@ -212,7 +293,7 @@ def bash_guard_writes(command: str, cwd: str = ".", _depth: int = 0) -> list[str
             rest = words[i + 1:]
             paths: list[str] = []
             if name in ("cp", "mv", "install", "ln", "gcp", "gmv"):
-                paths = _non_options(rest)[-1:]
+                paths = _copy_like_paths(name, rest, cwd)
             elif name in ("rm", "unlink", "truncate", "shred"):
                 paths = _non_options(rest)
             elif name == "git" and rest[:1] and rest[0] in ("checkout", "restore", "rm",
@@ -221,9 +302,14 @@ def bash_guard_writes(command: str, cwd: str = ".", _depth: int = 0) -> list[str
             elif name in ("perl", "ruby") and any(a.startswith("-i") or a.startswith("-pi")
                                                   for a in rest):
                 paths = _non_options(rest)
-            hits += [p for p in paths if _guarded_target(p)]
+            hits += [p for p in paths if _guarded_target(p, cwd, env)]
             for text in scripts_run_by(cmd, i, None):
                 hits += bash_guard_writes(text, cwd, _depth + 1)
+            if name in _SHELLS:
+                # `bash patch.sh`: the file's commands run too (Grok review of
+                # 88db514, F3: the scratchpad incident with a shell script).
+                for script in _shell_script_files(rest):
+                    hits += bash_guard_writes(_read_script(script, cwd), cwd, _depth + 1)
             if _INTERPRETER.match(name):
                 texts = list(_stdin_texts(cmd))
                 for k, a in enumerate(rest):
@@ -255,7 +341,7 @@ def main() -> None:
         if not isinstance(command, str) or not command:
             sys.exit(0)
         # Approval is visible in the command itself, so the transcript records it.
-        if _OVERRIDE_IN_COMMAND.search(command):
+        if approved_in_command(command):
             sys.exit(0)
         cwd = p.data.get("cwd") or os.getcwd()
         try:

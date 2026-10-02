@@ -219,6 +219,102 @@ def test_bash_override_in_the_command_allows(cmd):
     assert code == 0, (cmd, err)
 
 
+@pytest.mark.parametrize("cmd", [
+    # Codex review of 88db514, F1: only =1 approves
+    "GUARD_EDIT_APPROVED=0 rm tools/check_heredoc_quoting.py",
+    "GUARD_EDIT_APPROVED=no rm tools/check_heredoc_quoting.py",
+    # Grok review of 88db514, F7: the text alone is not an assignment
+    "echo GUARD_EDIT_APPROVED=1; rm tools/check_heredoc_quoting.py",
+    "cat > notes.md <<'EOF'\nGUARD_EDIT_APPROVED=1\nEOF\nrm tools/check_heredoc_quoting.py",
+    # Grok F2: mv changes its SOURCE too
+    "mv tools/shell_tokens.py /tmp/x.py",
+    "mv tools/check_public_pii.py tools/hook_runtime.py /tmp/",
+    # Codex F4: -t names the destination directory
+    "cp -t tools /tmp/check_public_pii.py",
+    "install -t tools/ /tmp/shell_tokens.py",
+    "cp --target-directory=tools /tmp/hook_runtime.py",
+])
+def test_review_of_88db514_bash_forms_are_blocked(cmd):
+    code, err = _bash(cmd)
+    assert code == 2, cmd
+
+
+@pytest.mark.parametrize("cmd", [
+    "cp -t /tmp/backup tools/check_public_pii.py",
+    "mv /tmp/a.py /tmp/b.py",
+    "export GUARD_EDIT_APPROVED=1 && rm tools/check_heredoc_quoting.py",
+])
+def test_review_of_88db514_allowed_forms(cmd):
+    code, err = _bash(cmd)
+    assert code == 0, (cmd, err)
+
+
+def test_a_shell_script_file_that_edits_a_guard_is_blocked(tmp_path):
+    """Grok review of 88db514, F3: the scratchpad incident with bash instead of python."""
+    guard = SCRIPT.parent / "shell_tokens.py"
+    (tmp_path / "patch.sh").write_text(f"sed -i '' 's/a/b/' {guard}\n")
+    assert _bash_in(tmp_path, "bash patch.sh") == 2
+    (tmp_path / "ok.sh").write_text(f"sed -n 1p {guard}\n")
+    assert _bash_in(tmp_path, "bash ok.sh") == 0
+
+
+@pytest.mark.parametrize("cmd", [
+    # another checkout's copy of a guard is not this repo's guard
+    "W=/tmp/wt; cp tools/check_draft_voice.py $W/tools/check_draft_voice.py",
+    "cp tools/shell_tokens.py /tmp/wt/tools/shell_tokens.py",
+    "sed -i '' 's/a/b/' /tmp/wt/tools/check_public_pii.py",
+])
+def test_another_checkouts_guard_copy_is_not_guarded(cmd):
+    code, err = _bash(cmd)
+    assert code == 0, (cmd, err)
+
+
+def test_relative_guard_paths_resolve_against_the_command_cwd(tmp_path):
+    """`sed -i ... tools/shell_tokens.py` run in a scratch checkout edits that copy."""
+    assert _bash_in(tmp_path, "sed -i '' 's/a/b/' tools/shell_tokens.py") == 0
+    assert _bash_in(SCRIPT.parent.parent, "sed -i '' 's/a/b/' tools/shell_tokens.py") == 2
+
+
+def test_an_unresolved_variable_path_is_still_blocked(tmp_path):
+    """Judged as written even from a cwd outside the repo, where joining it to the
+    cwd would otherwise place it out of scope."""
+    assert _bash_in(tmp_path, "cp /tmp/x.py $SOMEWHERE_UNSET/tools/check_public_pii.py") == 2
+
+
+@pytest.mark.parametrize("cmd", [
+    "cp -ttools /tmp/check_public_pii.py",                 # attached -tDIR
+    "cp /tmp/check_public_pii.py tools/ -v",               # a trailing option
+])
+def test_more_copy_forms_are_blocked(cmd):
+    code, _ = _bash(cmd)
+    assert code == 2, cmd
+
+
+def test_approval_after_another_prefix_assignment_counts():
+    code, err = _bash("X=1 GUARD_EDIT_APPROVED=1 rm tools/check_heredoc_quoting.py")
+    assert code == 0, err
+
+
+def test_shell_script_file_forms(tmp_path):
+    guard = SCRIPT.parent / "shell_tokens.py"
+    (tmp_path / "patch.sh").write_text(f"sed -i '' 's/a/b/' {guard}\n")
+    assert _bash_in(tmp_path, "bash -e patch.sh") == 2
+    assert _bash_in(tmp_path, "bash -o pipefail patch.sh") == 2
+    # -c runs its string; patch.sh is only $0
+    assert _bash_in(tmp_path, "bash -c 'echo hi' patch.sh") == 0
+    # -s reads stdin; patch.sh is $1
+    assert _bash_in(tmp_path, "bash -s patch.sh < /dev/null") == 0
+    # only a shell runs a file: cat prints it
+    assert _bash_in(tmp_path, "cat patch.sh") == 0
+
+
+def test_shell_script_files_contract():
+    g = _hook_module()
+    assert g._shell_script_files(["-c", "echo hi", "patch.sh"]) == []
+    assert g._shell_script_files(["-s", "a"]) == []
+    assert g._shell_script_files(["-e", "--norc", "x.sh", "arg"]) == ["x.sh", "arg"]
+
+
 def _bash_in(cwd, command):
     payload = json.dumps({"tool_name": "Bash", "cwd": str(cwd),
                           "tool_input": {"command": command}})

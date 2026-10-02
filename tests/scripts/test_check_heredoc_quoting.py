@@ -185,6 +185,12 @@ def test_a_long_wrapper_option_chain_does_not_crash_or_hang():
     assert time.monotonic() - t0 < 10
 
 
+def test_a_variable_held_script_on_stdin_is_checked():
+    """Grok review of 88db514, F1."""
+    assert run("c='cat <<A\n" + BT + "id" + BT + "\nA'; echo \"$c\" | sh") == 2
+    assert run("c='cat <<A\n" + BT + "id" + BT + "\nA'; sh <<< \"$c\"") == 2
+
+
 def test_a_self_referential_eval_does_not_recurse_forever():
     """The nesting cap: a string that re-expands itself through eval must end."""
     assert run('PGD=$(grep x f); PGD=$(eval echo "$PGD"); echo hi') == 0

@@ -620,15 +620,19 @@ def scripts_run_by(cmd, i: int, env: dict[str, list[str]] | None) -> list[str]:
     rest = cmd.words[i + 1:]
     variants = expand_args(rest, env) if env is not None else [rest]
     texts: list[str] = []
+    # A script on stdin is expanded like a -c string: `c='...'; echo "$c" | sh`
+    # (Grok review of 88db514, F1).
+    stdin = [v for t in _stdin_texts(cmd)
+             for v in ((_expand_vars(t, env) or [t]) if env and "$" in t else [t])]
     if name in _SHELLS:
         for args in variants:
             texts.extend(shell_script_variants(args))
         if _stdin_is_script(rest):
-            texts.extend(_stdin_texts(cmd))
+            texts.extend(stdin)
     elif name == "eval":
         texts.extend(" ".join(args) for args in variants)
     elif name in ("source", ".") and rest[:1] in (["/dev/stdin"], ["/dev/fd/0"]):
-        texts.extend(_stdin_texts(cmd))
+        texts.extend(stdin)
     out: list[str] = []
     for t in texts:
         out.extend(_unwrap_printed(t))

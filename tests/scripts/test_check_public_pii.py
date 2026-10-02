@@ -1462,6 +1462,17 @@ def test_stdin_that_is_data_is_allowed(tmp_path, cmd):
     assert code == 0, (cmd, err)
 
 
+@pytest.mark.parametrize("cmd", [
+    # Grok review of 88db514, F1: a variable-held script on stdin
+    "c='echo Pat Zorp > docs/notes.md'; echo \"$c\" | sh",
+    "c='echo Pat Zorp > docs/notes.md'; sh <<< \"$c\"",
+    "c='echo Pat Zorp > docs/notes.md'; printf '%s\\n' \"$c\" | bash",
+])
+def test_variable_held_stdin_script_STILL_BLOCKS(tmp_path, cmd):
+    code, err = _run_bash(tmp_path, cmd)
+    assert code == 2, cmd
+
+
 def test_two_shell_options_before_stdin_STILL_BLOCK(tmp_path):
     code, _ = _run_bash(tmp_path, "bash -e -x <<'EOF'\necho Pat Zorp > docs/notes.md\nEOF")
     assert code == 2
