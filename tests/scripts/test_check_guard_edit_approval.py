@@ -118,6 +118,194 @@ def test_override_allows_the_edit():
     assert code == 0
 
 
+# --- hook libraries (Nick, 2026-10-01) ----------------------------------------
+
+@pytest.mark.parametrize("path", ["tools/shell_tokens.py", "tools/hook_runtime.py"])
+def test_hook_libraries_are_guarded(path):
+    """A guard's decision lives in the libraries it parses with. shell_tokens.py was
+    edited unapproved on 2026-10-01 because it was not on the list."""
+    code, err = _run(path)
+    assert code == 2, err
+
+
+def test_every_tools_module_a_guard_imports_is_classified():
+    """Adoption gate: a check_*.py importing a new tools module must put it in
+    HOOK_LIBRARIES (guarded) or NOT_HOOK_LIBRARIES (with a reason). A new parsing
+    library otherwise arrives unguarded, which is how shell_tokens.py did."""
+    import re
+    sys.path.insert(0, str(SCRIPT.parent))
+    import check_guard_edit_approval as g
+    tools = SCRIPT.parent
+    seen, todo = set(), [p.stem for p in tools.glob("check_*.py")]
+    while todo:
+        mod = todo.pop()
+        src = (tools / f"{mod}.py").read_text(encoding="utf-8")
+        for name in re.findall(r"^\s*(?:from|import)\s+([A-Za-z_]\w*)", src, re.M):
+            if (tools / f"{name}.py").exists() and not name.startswith("check_") \
+                    and name not in seen:
+                seen.add(name)
+                todo.append(name)
+    unclassified = seen - set(g.HOOK_LIBRARIES) - set(g.NOT_HOOK_LIBRARIES)
+    assert not unclassified, f"classify in check_guard_edit_approval.py: {sorted(unclassified)}"
+    assert all(g.NOT_HOOK_LIBRARIES.values()), "every exemption needs a reason"
+
+
+# --- Bash writes (Nick, 2026-10-01) --------------------------------------------
+
+def _bash(command, env=None):
+    payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": command}})
+    r = subprocess.run([sys.executable, str(SCRIPT)], input=payload,
+                       capture_output=True, text=True, env=env)
+    return r.returncode, r.stderr
+
+
+@pytest.mark.parametrize("cmd", [
+    "echo x >> tools/check_public_pii.py",
+    "sed -i '' 's/a/b/' tools/shell_tokens.py",
+    "cd tools && sed -i '' 's/a/b/' shell_tokens.py",
+    "cat new.py | tee tools/hook_runtime.py",
+    "cp /tmp/x.py tools/check_public_pii.py",
+    "mv /tmp/x.py tools/shell_tokens.py",
+    "rm tools/check_heredoc_quoting.py",
+    "git checkout HEAD -- tools/shell_tokens.py",
+    "perl -pi -e 's/a/b/' tools/check_public_pii.py",
+    # the 2026-10-01 bypass: an inline interpreter rewriting a guard
+    "python3 - <<'PY'\nfrom pathlib import Path\np = Path('tools/shell_tokens.py')\n"
+    "p.write_text(p.read_text().replace('a', 'b'))\nPY",
+    "python3 -c \"open('tools/check_public_pii.py', 'w').write('')\"",
+    "echo '{}' > .claude/settings.json",
+])
+def test_bash_writes_to_a_guard_are_blocked(cmd):
+    code, err = _bash(cmd)
+    assert code == 2, cmd
+    assert "BLOCKED" in err
+
+
+def test_a_script_file_that_rewrites_a_guard_is_blocked(tmp_path):
+    """The exact 2026-10-01 path: a scratchpad patch script run by python3."""
+    script = tmp_path / "patch.py"
+    script.write_text("from pathlib import Path\n"
+                      "p = Path('/repo/tools/check_public_pii.py')\n"
+                      "p.write_text(p.read_text())\n")
+    code, _ = _bash(f"python3 {script}")
+    assert code == 2
+
+
+@pytest.mark.parametrize("cmd", [
+    "cat tools/shell_tokens.py",
+    "sed -n 1,40p tools/check_public_pii.py",
+    "grep -n def tools/shell_tokens.py > /tmp/out.txt",
+    "python3 -m pytest tests/scripts/test_check_public_pii.py",
+    "python3 tools/check_public_pii.py --scan docs/x.md",
+    "python3 tools/mutation_check.py tools/check_public_pii.py",
+    "git diff tools/shell_tokens.py",
+    "cp tools/shell_tokens.py /tmp/backup.py",
+    "python3 -c \"print(open('tools/shell_tokens.py').read())\"",
+    "echo hi > docs/notes.md",
+])
+def test_bash_reads_of_a_guard_pass(cmd):
+    code, err = _bash(cmd)
+    assert code == 0, (cmd, err)
+    assert err == "", err            # a clean command prints nothing
+
+
+@pytest.mark.parametrize("cmd", [
+    "GUARD_EDIT_APPROVED=1 sed -i '' 's/a/b/' tools/shell_tokens.py",
+    "GUARD_EDIT_APPROVED=1 python3 /tmp/patch.py && echo x >> tools/check_public_pii.py",
+    "export GUARD_EDIT_APPROVED=1; rm tools/check_heredoc_quoting.py",
+])
+def test_bash_override_in_the_command_allows(cmd):
+    code, err = _bash(cmd)
+    assert code == 0, (cmd, err)
+
+
+def _bash_in(cwd, command):
+    payload = json.dumps({"tool_name": "Bash", "cwd": str(cwd),
+                          "tool_input": {"command": command}})
+    r = subprocess.run([sys.executable, str(SCRIPT)], input=payload,
+                       capture_output=True, text=True, cwd=str(cwd))
+    return r.returncode
+
+
+_REWRITE = ("from pathlib import Path\np = Path('tools/check_public_pii.py')\n"
+            "p.write_text(p.read_text())\n")
+
+
+def test_interpreter_options_before_the_script_are_skipped(tmp_path):
+    (tmp_path / "patch.py").write_text(_REWRITE)
+    assert _bash_in(tmp_path, "python3 -u patch.py") == 2
+
+
+def test_dash_m_names_a_module_not_a_script(tmp_path):
+    (tmp_path / "patch.py").write_text(_REWRITE)
+    assert _bash_in(tmp_path, "python3 -m patch.py") == 0
+
+
+def test_a_heredoc_to_a_non_interpreter_is_data():
+    """Writing a note that QUOTES a patch script is not running it."""
+    code, err = _bash("cat > notes.md <<'EOF'\n" + _REWRITE + "EOF")
+    assert code == 0, err
+
+
+def test_a_non_string_command_fails_open():
+    payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": 5}})
+    r = subprocess.run([sys.executable, str(SCRIPT)], input=payload,
+                       capture_output=True, text=True)
+    assert r.returncode == 0
+
+
+def _hook_module():
+    sys.path.insert(0, str(SCRIPT.parent))
+    import check_guard_edit_approval as g
+    return g
+
+
+def test_scripts_under_tools_are_not_read(tmp_path, monkeypatch):
+    """mutation_check.py rewrites guards by design; repo tools are not judged."""
+    g = _hook_module()
+    (tmp_path / "patch.py").write_text(_REWRITE)
+    assert g.bash_guard_writes(f"python3 {tmp_path}/patch.py", str(tmp_path))
+    monkeypatch.setattr(g, "_TOOLS_DIR", str(tmp_path))
+    assert g.bash_guard_writes(f"python3 {tmp_path}/patch.py", str(tmp_path)) == []
+
+
+def test_read_script_returns_text_or_empty(tmp_path):
+    g = _hook_module()
+    assert g._read_script("missing.py", str(tmp_path)) == ""
+    f = tmp_path / "locked.py"
+    f.write_text(_REWRITE)
+    assert g._read_script("locked.py", str(tmp_path)) == _REWRITE
+    f.chmod(0)
+    try:
+        assert g._read_script("locked.py", str(tmp_path)) == ""
+    finally:
+        f.chmod(0o644)
+
+
+def test_nesting_is_capped():
+    g = _hook_module()
+    assert g.bash_guard_writes("rm tools/check_x.py", ".")
+    assert g.bash_guard_writes("rm tools/check_x.py", ".", _depth=9) == []
+
+
+def test_an_analysis_error_fails_open(monkeypatch, capsys):
+    g = _hook_module()
+
+    class P:
+        ok, tool_name = True, "Bash"
+        data = {"tool_input": {"command": "rm tools/check_x.py"}}
+    monkeypatch.setattr(g, "read_payload", lambda: P())
+    monkeypatch.delenv("GUARD_EDIT_APPROVED", raising=False)
+
+    def boom(*a, **k):
+        raise ValueError("parse")
+    monkeypatch.setattr(g, "bash_guard_writes", boom)
+    with pytest.raises(SystemExit) as e:
+        g.main()
+    assert e.value.code == 0
+    assert "allowing" in capsys.readouterr().err
+
+
 # --- fail-open --------------------------------------------------------------
 
 def test_malformed_json_fails_open():

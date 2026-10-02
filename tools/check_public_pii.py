@@ -146,6 +146,13 @@ def split_command_segments(command: str) -> list[str]:
     awaiting = 0       # heredocs opened whose body has not arrived yet
     at_command_start = True
     prev_word = ""
+    # Open compounds, innermost last, each with the group depth it opened at. Inside a
+    # case, a `)` at the case's own depth ends a PATTERN, not a group: counting it as a
+    # group close let `{ case x in a) ...;; esac; }` close the `{` at the pattern, and
+    # the `;` before `}` then split the name from the group's redirect (Grok review of
+    # ffe38ab, F4). An optional `(` before a pattern raises the depth, so its `)` is a
+    # group-depth close and stays balanced.
+    opened: list[tuple[str, int]] = []
     for t in tokenize(command):
         starts_command = at_command_start
         # `time -p if ...`: options after `time` keep the command position open.
@@ -164,11 +171,16 @@ def split_command_segments(command: str) -> list[str]:
         if t.kind == "word" and not t.quoted and starts_command:
             if t.text in _COMPOUND_OPEN:
                 compound += 1
+                opened.append((t.text, depth))
             elif t.text in _COMPOUND_CLOSE:
                 compound = max(0, compound - 1)
+                if opened:
+                    opened.pop()
+        pattern_end = t.kind == "op" and t.text == ")" and opened[-1:] == [("case", depth)]
         if t.kind == "op" and t.text == "(" or (t.kind == "word" and not t.quoted and t.text == "{"):
             depth += 1
-        elif t.kind == "op" and t.text == ")" or (t.kind == "word" and not t.quoted and t.text == "}"):
+        elif (t.kind == "op" and t.text == ")" and not pattern_end) or (
+                t.kind == "word" and not t.quoted and t.text == "}"):
             depth = max(0, depth - 1)
         elif t.kind == "redir" and t.text.lstrip("0123456789") in ("<<", "<<-"):
             awaiting += 1
@@ -337,6 +349,9 @@ def _sed_inplace_files(argstr: str) -> list[str]:
 
 # Commands that write files, by base name, and what runs a nested command string.
 _SHELLS = frozenset({"sh", "bash", "zsh", "dash", "ksh", "su"})
+# Builtins that run a command string: eval (its arguments), source / . (a file, which
+# is a script only when it is stdin). See scripts_run_by.
+_SCRIPT_RUNNERS = frozenset({"eval", "source", "."})
 _WRAPPERS = frozenset({"sudo", "env", "command", "exec", "builtin", "nice", "nohup",
                        "time", "timeout", "stdbuf", "xargs", "caffeinate", "!",
                        "then", "do", "else", "elif", "if", "while", "until", "{"})
@@ -359,54 +374,70 @@ def _command_positions(words: list[str]) -> set[int]:
     Replaces "every word after a wrapper counts", which read `sudo echo "tee" f` as a
     write (Codex review of 6514b88), and the earlier single position, which a wrapper
     option value (`sudo -u nobody "tee" f`) hid.
+
+    A worklist with a seen-set, not recursion: reading each bare option both ways
+    forked two recursive parses per option, so `sudo -n -n ...` took exponential time
+    (40 options: minutes) and 1,000 raised RecursionError (Grok review of ffe38ab, F5).
+    Each (state, index) is now visited once.
     """
     out: set[int] = set()
     n = len(words)
-
-    def command_at(k: int) -> None:
-        if k >= n or k in out:
-            return
-        out.add(k)
-        name = os.path.basename(words[k])
-        if name in _WRAPPERS:
-            options_from(k + 1, name, positional_seen=False)
-
-    def options_from(k: int, wrapper: str, positional_seen: bool) -> None:
-        while k < n:
-            w = words[k]
-            if w == "--":
-                # Only positionals follow, and timeout's duration is still one of them
-                # (`timeout -- 5 sh -c ...`, Codex review of d187aa6).
-                j = k + 1
-                while j < n and _ASSIGNMENT.match(words[j]):
-                    j += 1                  # `env -- A=1 sh -c ...` (Codex, 9a726c3)
-                skip = 1 if wrapper == "timeout" and not positional_seen else 0
-                command_at(j + skip)
-                return
-            if _ASSIGNMENT.match(w) or (w.startswith("-") and len(w) > 1):
-                # A bare one-letter option, or a long option with no `=value`, may
-                # take the next word as its value (`sudo --user nobody`); read both.
-                if _SHORT_BARE_OPTION.fullmatch(w) or (w.startswith("--") and "=" not in w):
-                    # A flag: keep parsing options from the next word, so a wrapper
-                    # positional after it (timeout's duration) is still handled.
-                    # Marking the next word as the command skipped that duration in
-                    # `timeout -v 5 sh -c ...` (Codex review of 236409a).
-                    options_from(k + 1, wrapper, positional_seen)
-                    options_from(k + 2, wrapper, positional_seen)   # or it took a value
-                    return
-                k += 1
-                continue
-            if wrapper == "timeout" and not positional_seen:
-                options_from(k + 1, wrapper, positional_seen=True)   # the duration
-                return
-            command_at(k)
-            return
-
     i = 0
     while i < n and _ASSIGNMENT.match(words[i]):
         i += 1
-    command_at(i)
+    # ("cmd", k, "", False): words[k] is in command position.
+    # ("opt", k, wrapper, positional_seen): parse wrapper options from words[k].
+    todo: list[tuple[str, int, str, bool]] = [("cmd", i, "", False)]
+    seen: set[tuple[str, int, str, bool]] = set()
+    while todo:
+        state = todo.pop()
+        if state in seen:
+            continue
+        seen.add(state)
+        kind, k, wrapper, positional_seen = state
+        if kind == "opt":
+            _parse_wrapper_options(words, k, wrapper, positional_seen, todo)
+        elif k < n:
+            out.add(k)
+            if os.path.basename(words[k]) in _WRAPPERS:
+                todo.append(("opt", k + 1, os.path.basename(words[k]), False))
     return out
+
+
+def _parse_wrapper_options(words: list[str], k: int, wrapper: str, positional_seen: bool,
+                           todo: list[tuple[str, int, str, bool]]) -> None:
+    """One step of _command_positions: read a wrapper's options from words[k] and
+    queue the states that follow (a command position, or more options)."""
+    n = len(words)
+    while k < n:
+        w = words[k]
+        if w == "--":
+            # Only positionals follow, and timeout's duration is still one of them
+            # (`timeout -- 5 sh -c ...`, Codex review of d187aa6).
+            j = k + 1
+            while j < n and _ASSIGNMENT.match(words[j]):
+                j += 1                  # `env -- A=1 sh -c ...` (Codex, 9a726c3)
+            skip = 1 if wrapper == "timeout" and not positional_seen else 0
+            todo.append(("cmd", j + skip, "", False))
+            break
+        if _ASSIGNMENT.match(w) or (w.startswith("-") and len(w) > 1):
+            # A bare one-letter option, or a long option with no `=value`, may
+            # take the next word as its value (`sudo --user nobody`); read both.
+            if _SHORT_BARE_OPTION.fullmatch(w) or (w.startswith("--") and "=" not in w):
+                # A flag: keep parsing options from the next word, so a wrapper
+                # positional after it (timeout's duration) is still handled.
+                # Marking the next word as the command skipped that duration in
+                # `timeout -v 5 sh -c ...` (Codex review of 236409a).
+                todo.append(("opt", k + 1, wrapper, positional_seen))
+                todo.append(("opt", k + 2, wrapper, positional_seen))  # took a value
+                break
+            k += 1
+            continue
+        if wrapper == "timeout" and not positional_seen:
+            todo.append(("opt", k + 1, wrapper, True))     # the duration
+            break
+        todo.append(("cmd", k, "", False))
+        break
 
 
 def _all_command_positions(words: list[str]) -> set[int]:
@@ -490,6 +521,120 @@ def _shell_command_string(args: list[str]) -> str | None:
     return None
 
 
+def _stdin_is_script(args: list[str]) -> bool:
+    """True if a shell given these arguments reads its commands from stdin: no -c,
+    and either -s, no script file, or the script file IS stdin (`bash /dev/stdin`).
+    `bash run.sh <<EOF` hands the body to run.sh as input, so it is data."""
+    if _shell_command_string(args) is not None:
+        return False
+    k = 0
+    while k < len(args):
+        a = args[k]
+        if a == "--":
+            k += 1
+            break
+        if a in ("-o", "+o", "-O", "+O"):
+            k += 2
+            continue
+        if len(a) > 1 and a[0] in "-+" and not a.startswith("--"):
+            if a[0] == "-" and "s" in a[1:]:
+                return True
+            k += 1
+            continue
+        if a.startswith("--"):
+            k += 2 if a in _SHELL_LONG_WITH_VALUE else 1
+            continue
+        break
+    return k >= len(args) or args[k] in ("/dev/stdin", "/dev/fd/0")
+
+
+# Commands whose stdout is knowable from the command itself.
+_PRINTERS = frozenset({"cat", "echo", "printf"})
+_STDIN_REDIR = ("<<", "<<-", "<<<")
+
+
+def _own_stdin(cmd) -> list[str]:
+    """A command's heredoc and here-string bodies."""
+    return [r.body if r.body is not None else r.target for r in cmd.redirections
+            if r.op.lstrip("0123456789") in _STDIN_REDIR]
+
+
+def _printed_texts(cmd) -> list[str]:
+    """What a cat/echo/printf command prints: its heredoc and here-string bodies and,
+    for echo/printf, its arguments (joined by space and by newline, which over-covers
+    `echo` and `printf '%s\\n'`). [] for any other command."""
+    words = cmd.words
+    i = 0
+    while i < len(words) and _ASSIGNMENT.match(words[i]):
+        i += 1
+    if i >= len(words) or os.path.basename(words[i]) not in _PRINTERS:
+        return []
+    out = _own_stdin(cmd)
+    args = words[i + 1:]
+    if args and os.path.basename(words[i]) != "cat":
+        out += [" ".join(args), "\n".join(args)]
+    return out
+
+
+def _stdin_texts(cmd) -> list[str]:
+    """Text on a command's stdin: its own heredoc or here-string, else what the
+    command piped into it prints."""
+    own = _own_stdin(cmd)
+    if own:
+        return own
+    return _printed_texts(cmd.fed_by) if cmd.fed_by is not None else []
+
+
+def _unwrap_printed(text: str) -> list[str]:
+    """`$(cat <<'EOF' ... EOF)` handed to `bash -c` or eval runs what cat prints, so a
+    command string that is exactly one command substitution also yields that output."""
+    t = text.strip()
+    if not (t.startswith("$(") and t.endswith(")")):
+        return [text]
+    toks = tokenize(t)
+    if len(toks) != 1 or toks[0].kind != "word" or len(toks[0].subs) != 1:
+        return [text]
+    out = [text]
+    for inner in simple_commands(toks[0].subs[0]):
+        out.extend(_printed_texts(inner))
+    return out
+
+
+def scripts_run_by(cmd, i: int, env: dict[str, list[str]] | None) -> list[str]:
+    """Every command string the shell, eval or `source` at cmd.words[i] runs.
+
+    A -c script (each positional binding), eval's joined arguments, and, for a shell
+    reading commands from stdin, the script on stdin: its heredoc or here-string, or
+    the text a cat/echo/printf pipes into it. A string that is one `$(cat <<EOF)` is
+    also read as what that prints. env None leaves $VAR references unexpanded.
+
+    One helper for the write scan, the assignment scan and check_heredoc_quoting, so
+    the three cannot disagree on what runs. Stdin was missing from all three: the
+    tokenizer correctly hid the `>` inside `echo '... > f' | sh`, which the old regex
+    had caught by accident, and nothing read the script sh would run (Grok review of
+    ffe38ab, F1 and F2). `eval <<EOF` is NOT one: eval reads only its arguments.
+    """
+    name = os.path.basename(cmd.words[i])
+    if name not in _SHELLS and name not in _SCRIPT_RUNNERS:
+        return []
+    rest = cmd.words[i + 1:]
+    variants = expand_args(rest, env) if env is not None else [rest]
+    texts: list[str] = []
+    if name in _SHELLS:
+        for args in variants:
+            texts.extend(shell_script_variants(args))
+        if _stdin_is_script(rest):
+            texts.extend(_stdin_texts(cmd))
+    elif name == "eval":
+        texts.extend(" ".join(args) for args in variants)
+    elif name in ("source", ".") and rest[:1] in (["/dev/stdin"], ["/dev/fd/0"]):
+        texts.extend(_stdin_texts(cmd))
+    out: list[str] = []
+    for t in texts:
+        out.extend(_unwrap_printed(t))
+    return list(dict.fromkeys(out))
+
+
 def _redirect_targets(cmd) -> list[str]:
     out = []
     for r in cmd.redirections:
@@ -514,7 +659,7 @@ def expand_args(args: list[str], env: dict[str, list[str]]) -> list[list[str]]:
 
 
 def _writer_targets(words: list[str], quoted: list[bool],
-                    env: dict[str, list[str]] | None = None) -> list[str]:
+                    env: dict[str, list[str]] | None, cmd) -> list[str]:
     """Files written by sed -i, tee and dd in one simple command, plus any command
     string handed to a shell (`bash -c "..."`, `eval "..."`).
 
@@ -533,7 +678,7 @@ def _writer_targets(words: list[str], quoted: list[bool],
         rest = words[i + 1:]
         # A shell or eval runs its string only when the shell runs IT; the word
         # "eval" as an argument (`agent-browser eval "x=>y"`) is data.
-        if (name in _SHELLS or name == "eval") and not in_command_position:
+        if (name in _SHELLS or name in _SCRIPT_RUNNERS) and not in_command_position:
             continue
         if name in ("sed", "gsed"):
             out.extend(_sed_files(rest))
@@ -546,13 +691,9 @@ def _writer_targets(words: list[str], quoted: list[bool],
                     out.append(a)
         elif name == "dd":
             out.extend(a[3:] for a in rest if a.startswith("of="))
-        elif name in _SHELLS:
-            for args in expand_args(rest, env or {}):
-                for text in shell_script_variants(args):
-                    out.extend(_targets_in(text, env))
-        elif name == "eval":
-            for args in expand_args(rest, env or {}):
-                out.extend(_targets_in(" ".join(args), env))
+        else:
+            for text in scripts_run_by(cmd, i, env or {}):
+                out.extend(_targets_in(text, env))
     return out
 
 
@@ -578,7 +719,7 @@ def _targets_in_unguarded(command: str, env: dict[str, list[str]] | None = None)
     targets: list[str] = []
     for cmd in simple_commands(command):
         targets.extend(_redirect_targets(cmd))
-        targets.extend(_writer_targets(cmd.words, cmd.quoted, env))
+        targets.extend(_writer_targets(cmd.words, cmd.quoted, env, cmd))
         # A command substitution runs, wherever its word sits (an argument, an
         # assignment, a redirect target), so its writes count too.
         # Nesting is capped in _targets_in (see _MAX_NESTING).
@@ -674,12 +815,8 @@ def _command_assignments_unguarded(command: str) -> dict[str, list[str]]:
             # so a string it scans for writes is also scanned for assignments.
             if i not in positions:
                 continue
-            base = os.path.basename(w)
-            if base in _SHELLS:
-                for text in shell_script_variants(words[i + 1:]):
-                    merge(command_assignments(text))
-            elif base == "eval":
-                merge(command_assignments(" ".join(words[i + 1:])))
+            for text in scripts_run_by(cmd, i, None):     # [] unless a shell/runner
+                merge(command_assignments(text))
         k = 0
         while k < len(words) and words[k] in _COMPOUND_PREFIX:
             k += 1                                      # then / do / else / time ...

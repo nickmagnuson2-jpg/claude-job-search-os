@@ -161,6 +161,43 @@ def test_a_heredoc_inside_a_shell_string_is_checked():
     assert run("x=$(cat <<A\n" + BT + "id" + BT + "\nA\n)") == 2
 
 
+def test_a_heredoc_inside_a_script_on_stdin_is_checked():
+    """Grok review of ffe38ab, F2 (P0): a quoted outer `sh <<'EOF'` still runs the
+    unquoted inner heredoc, so its backticks expand one quoting layer down."""
+    inner = "cat <<A\n" + BT + "id" + BT + "\nA\n"
+    assert run("sh <<'EOF'\n" + inner + "EOF\n") == 2
+    assert run("bash -s <<'EOF'\n" + inner + "EOF\n") == 2
+    assert run("cat <<'EOF' | sh\n" + inner + "EOF\n") == 2
+    assert run("bash -c \"$(cat <<'EOF'\n" + inner + "EOF\n)\"") == 2
+    # the inner heredoc quoted: safe at every layer
+    assert run("sh <<'EOF'\ncat <<'A'\n" + BT + "id" + BT + "\nA\nEOF\n") == 0
+    # stdin of a script file is data, not commands
+    assert run("bash tools/run.sh <<'EOF'\n" + inner + "EOF\n") == 0
+
+
+def test_a_long_wrapper_option_chain_does_not_crash_or_hang():
+    """Grok review of ffe38ab, F5: `sudo -n -n ...` raised RecursionError here, and
+    this hook had no exception guard, so it died with a traceback."""
+    import time
+    t0 = time.monotonic()
+    cmd = "sudo " + "-n " * 3000 + "cat <<A\n" + BT + "id" + BT + "\nA\n"
+    assert run(cmd) == 2
+    assert time.monotonic() - t0 < 10
+
+
+def test_a_self_referential_eval_does_not_recurse_forever():
+    """The nesting cap: a string that re-expands itself through eval must end."""
+    assert run('PGD=$(grep x f); PGD=$(eval echo "$PGD"); echo hi') == 0
+
+
+def test_nested_command_strings_stop_at_the_depth_cap():
+    sys.path.insert(0, str(HOOK.parent))
+    import check_heredoc_quoting as chq
+    cmd = "sh -c 'cat <<A\n" + BT + "id" + BT + "\nA'"
+    assert chq.offenders(cmd) == ["A"]
+    assert chq.offenders(cmd, _depth=8) == []
+
+
 def test_a_heredoc_held_in_a_variable_is_checked():
     """Codex coverage run 2026-10-01 (3rd), F2."""
     assert run("c='cat <<A\n" + BT + "id" + BT + "\nA'; eval \"$c\"") == 2

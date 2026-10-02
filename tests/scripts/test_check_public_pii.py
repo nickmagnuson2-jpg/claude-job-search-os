@@ -1366,6 +1366,156 @@ def test_long_for_loop_lists_are_not_truncated():
     assert "docs/notes.md" in env["f"]
 
 
+@pytest.mark.parametrize("cmd", [
+    # Grok review of ffe38ab, F1 (P0): a script a shell reads on STDIN runs too.
+    "sh <<'EOF'\necho Pat Zorp > docs/notes.md\nEOF",
+    "bash -s <<'EOF'\necho Pat Zorp > docs/notes.md\nEOF",
+    "zsh <<EOF\necho Pat Zorp > docs/notes.md\nEOF",
+    "bash /dev/stdin <<'EOF'\necho Pat Zorp > docs/notes.md\nEOF",
+    "source /dev/stdin <<'EOF'\necho Pat Zorp > docs/notes.md\nEOF",
+    "bash <<< 'echo Pat Zorp > docs/notes.md'",
+    "echo 'echo Pat Zorp > docs/notes.md' | sh",
+    "printf '%s\\n' 'echo Pat Zorp > docs/notes.md' | bash",
+    "cat <<'EOF' | sh\necho Pat Zorp > docs/notes.md\nEOF",
+    "bash -c \"$(cat <<'EOF'\necho Pat Zorp > docs/notes.md\nEOF\n)\"",
+    "eval \"$(cat <<'EOF'\necho Pat Zorp > docs/notes.md\nEOF\n)\"",
+    # an assignment inside the stdin script resolves its own redirect
+    "sh <<'EOF'\nOUT=docs/notes.md\necho Pat Zorp > \"$OUT\"\nEOF",
+])
+def test_script_fed_to_a_shell_on_stdin_STILL_BLOCKS(tmp_path, cmd):
+    code, err = _run_bash(tmp_path, cmd)
+    assert code == 2, cmd
+
+
+@pytest.mark.parametrize("cmd", [
+    # stdin of a shell running a script FILE is that script's input, not commands
+    "bash tools/run.sh <<'EOF'\necho Pat Zorp > docs/notes.md\nEOF",
+    # bash's eval reads only its arguments; `eval <<X` runs nothing (checked in bash)
+    "eval <<'EOF'\necho Pat Zorp > docs/notes.md\nEOF",
+    # piped to something that is not a shell
+    "echo 'echo Pat Zorp > docs/notes.md' | grep Zorp",
+    # a private target inside a stdin script
+    "sh <<'EOF'\necho Pat Zorp > data/networking.md\nEOF",
+])
+def test_stdin_text_that_no_shell_runs_is_allowed(tmp_path, cmd):
+    code, err = _run_bash(tmp_path, cmd)
+    assert code == 0, (cmd, err)
+
+
+@pytest.mark.parametrize("cmd", [
+    # Grok review of ffe38ab, F4: a case pattern's `)` closed the `{` group, so the
+    # mandatory `;` before `}` split the name from the group's redirect.
+    "{ case x in foo) echo Pat Zorp;; esac; } > docs/notes.md",
+    "{ case x in (foo) echo Pat Zorp;; bar|baz) :;; esac; } > docs/notes.md",
+    "( case x in foo) echo Pat Zorp;; esac; ) > docs/notes.md",
+    "{ case x in foo) echo Pat Zorp;; esac; echo done; } > docs/notes.md",
+])
+def test_case_inside_a_group_STILL_BLOCKS(tmp_path, cmd):
+    assert len(split_command_segments(cmd)) == 1, split_command_segments(cmd)
+    code, err = _run_bash(tmp_path, cmd)
+    assert code == 2, cmd
+
+
+def test_a_closed_case_releases_its_depth():
+    """After esac, a `)` closing an outer subshell is a group close again, so the
+    separators after it still split (a case left open would merge them)."""
+    cmd = "( case x in a) :;; esac ); echo Pat Zorp > data/networking.md; echo b > docs/f.md"
+    assert len(split_command_segments(cmd)) == 3
+
+
+def test_a_stray_close_word_does_not_crash(tmp_path):
+    code, _ = _run_bash(tmp_path, "done; echo Pat Zorp > docs/notes.md")
+    assert code == 2
+
+
+@pytest.mark.parametrize("cmd", [
+    # shell options before stdin: still a script on stdin
+    "bash -e <<'EOF'\necho Pat Zorp > docs/notes.md\nEOF",
+    "bash -es <<'EOF'\necho Pat Zorp > docs/notes.md\nEOF",
+    "bash -o pipefail <<'EOF'\necho Pat Zorp > docs/notes.md\nEOF",
+    "bash --norc <<'EOF'\necho Pat Zorp > docs/notes.md\nEOF",
+    "bash --rcfile rc.sh <<'EOF'\necho Pat Zorp > docs/notes.md\nEOF",
+    "bash -- <<'EOF'\necho Pat Zorp > docs/notes.md\nEOF",
+    "bash -s tools/run.sh <<'EOF'\necho Pat Zorp > docs/notes.md\nEOF",
+    "X=1 echo 'echo Pat Zorp > docs/notes.md' | sh",
+])
+def test_stdin_script_after_shell_options_STILL_BLOCKS(tmp_path, cmd):
+    code, err = _run_bash(tmp_path, cmd)
+    assert code == 2, cmd
+
+
+@pytest.mark.parametrize("cmd", [
+    # a -c script runs; stdin is that script's input
+    "bash -c 'cat > out.txt' <<'EOF'\necho Pat Zorp > docs/notes.md\nEOF",
+    # options, then a script FILE: stdin is data
+    "bash -e tools/run.sh <<'EOF'\necho Pat Zorp > docs/notes.md\nEOF",
+    "bash -o pipefail tools/run.sh <<'EOF'\necho Pat Zorp > docs/notes.md\nEOF",
+    "bash -- tools/run.sh <<'EOF'\necho Pat Zorp > docs/notes.md\nEOF",
+    # source of a FILE (not stdin) does not read the heredoc
+    "source tools/env.sh <<'EOF'\necho Pat Zorp > docs/notes.md\nEOF",
+    # only cat/echo/printf output is knowable: grep prints lines of f, cat reads a file
+    "grep 'echo Pat Zorp > docs/notes.md' f | sh",
+    "cat 'echo Pat Zorp > docs/notes.md' | sh",
+])
+def test_stdin_that_is_data_is_allowed(tmp_path, cmd):
+    code, err = _run_bash(tmp_path, cmd)
+    assert code == 0, (cmd, err)
+
+
+def test_two_shell_options_before_stdin_STILL_BLOCK(tmp_path):
+    code, _ = _run_bash(tmp_path, "bash -e -x <<'EOF'\necho Pat Zorp > docs/notes.md\nEOF")
+    assert code == 2
+
+
+def test_dash_c_wins_over_dash_s(tmp_path):
+    """`bash -sc 'x'` runs x; the heredoc is x's input, not commands."""
+    code, err = _run_bash(
+        tmp_path, "bash -sc 'cat > out.txt' <<'EOF'\necho Pat Zorp > docs/notes.md\nEOF")
+    assert code == 0, err
+
+
+def test_printed_texts_contract():
+    first = lambda s: cpp.simple_commands(s)[0]          # noqa: E731
+    assert cpp._printed_texts(first("grep x f")) == []
+    assert cpp._printed_texts(first("echo a b")) == ["a b", "a\nb"]
+    assert cpp._printed_texts(first("cat <<'E'\nbody\nE")) == ["body\n"]
+
+
+def test_unwrap_printed_contract():
+    assert cpp._unwrap_printed("echo hi") == ["echo hi"]
+    assert cpp._unwrap_printed("a$(echo x)") == ["a$(echo x)"]
+    assert cpp._unwrap_printed("$(echo a) $(echo b)") == ["$(echo a) $(echo b)"]
+    assert cpp._unwrap_printed("$(echo a)") == ["$(echo a)", "a", "a"]
+
+
+def test_command_assignments_respects_the_nesting_cap():
+    saved = cpp._nesting[0]
+    cpp._nesting[0] = cpp._MAX_NESTING
+    try:
+        assert cpp.command_assignments("A=1") == {}
+    finally:
+        cpp._nesting[0] = saved
+    assert cpp.command_assignments("A=1") == {"A": ["1"]}
+
+
+def test_case_pattern_parens_do_not_swallow_later_separators():
+    """After the case closes, a top-level `;` still separates (the FP the split exists for)."""
+    cmd = "case x in foo) echo a;; esac; echo Pat Zorp > data/networking.md; echo b > docs/f.md"
+    assert len(split_command_segments(cmd)) == 3
+
+
+def test_long_wrapper_option_chains_are_linear():
+    """Grok review of ffe38ab, F5: each bare one-letter wrapper option forked two
+    recursive parses, so 40 of them took minutes and 1,000 raised RecursionError."""
+    import time
+    t0 = time.monotonic()
+    words = ["sudo"] + ["-n"] * 40 + ["tee", "docs/notes.md"]
+    assert words.index("tee") in cpp._command_positions(words)
+    long = ["sudo"] + ["-n"] * 5000 + ["tee", "docs/notes.md"]
+    assert long.index("tee") in cpp._command_positions(long)
+    assert time.monotonic() - t0 < 5
+
+
 def test_long_for_loop_target_is_extracted():
     words = " ".join(f"out/{i}.md" for i in range(40)) + " docs/notes.md"
     cmd = f'for f in {words}; do echo x > "$f"; done'

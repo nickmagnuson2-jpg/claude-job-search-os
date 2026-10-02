@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""check_guard_edit_approval.py — PreToolUse hook (Write|Edit|MultiEdit).
+"""check_guard_edit_approval.py — PreToolUse hook (Write|Edit|MultiEdit, and Bash).
 
-BLOCKS an edit to guard infrastructure — `tools/check_*.py`, the shared
-`tools/hook_command_lint.py`, and `.claude/settings.json` — so that changing a
+BLOCKS an edit to guard infrastructure — `tools/check_*.py`, the hook libraries they
+decide with (HOOK_LIBRARIES: shell_tokens, hook_runtime, hook_command_lint), and
+`.claude/settings.json` — so that changing a
 guard is always a deliberate, approved act rather than something that happens in
 the same motion as being blocked by one.
 
@@ -51,6 +52,15 @@ FALSE-POSITIVE SURFACE (content hook => PATH SCOPE, per tools/HOOK_AUTHORING.md)
 
 Override (only after explicit approval in this session):
   GUARD_EDIT_APPROVED=1
+  For Bash, put it IN the command (`GUARD_EDIT_APPROVED=1 python3 patch.py`): the hook
+  process does not inherit the agent's environment, and the transcript then records
+  the approval. An Edit/Write cannot carry it, so an approved edit goes through Bash.
+
+BASH (added 2026-10-01, Nick's approval). Until then a Bash command could rewrite any
+guard unchecked, and a scratchpad patch script did exactly that to shell_tokens.py.
+See bash_guard_writes for what is covered. It is a heuristic over the command text and
+any script file it runs: a path assembled from parts, or a write through a tool under
+tools/, is not seen.
 """
 import os
 import re
@@ -59,13 +69,49 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from hook_runtime import read_payload  # noqa: E402
 
+# Libraries a guard decides WITH. Changing one changes every guard built on it, so it
+# is guarded like the guards (Nick, 2026-10-01: shell_tokens.py was edited unapproved
+# because it was not listed). tests/.../test_every_tools_module_a_guard_imports_is_
+# classified fails when a check_*.py imports a tools module in neither set.
+HOOK_LIBRARIES = ("shell_tokens", "hook_runtime", "hook_command_lint")
+# Imported by a guard but deliberately NOT guarded (Nick's call, 2026-10-01: "just the
+# hook libraries"). Each is domain logic or tooling that ordinary work edits.
+NOT_HOOK_LIBRARIES = {
+    "stage_vocab": "pipeline stage vocabulary; domain logic shared with data tools",
+    "artifact_vocab": "artifact naming vocabulary; domain logic",
+    "prep_doc_parse": "prep-doc parser shared with the prep skill",
+    "proof_domains": "domain list for proof checks; data, edited in ordinary work",
+    "slide_check": "slide render checker, also a standalone tool",
+    "chrome_runner": "headless Chrome wrapper used by render tools",
+    "job_quiesce": "launchd job coordination, not a decision library",
+    "mutation_state": "mutation_check bookkeeping, not a decision library",
+}
+
 # Guard infrastructure. Repo-relative, matched against the tail of the path so an
 # absolute path from the tool payload still resolves.
 GUARD_PATTERNS = (
     re.compile(r"(^|/)tools/check_[A-Za-z0-9_]+\.py$"),
-    re.compile(r"(^|/)tools/hook_command_lint\.py$"),
+    re.compile(r"(^|/)tools/(" + "|".join(HOOK_LIBRARIES) + r")\.py$"),
     re.compile(r"(^|/)\.claude/settings(\.local)?\.json$"),
 )
+# A bare file name, after `cd tools` (`sed -i ... shell_tokens.py`).
+_GUARD_BASENAME = re.compile(r"^(check_[A-Za-z0-9_]+|" + "|".join(HOOK_LIBRARIES) + r")\.py$")
+# A guard path as a whole string literal in a script ('tools/check_x.py', also with a
+# directory before it). A literal, not a mention: a script writing a note whose prose
+# names a guard was 2 of the first 6 replay blocks sampled (2026-10-01).
+_GUARD_IN_TEXT = re.compile(r"""['"](?:[^'"\s]*/)?(?:tools/(?:check_[A-Za-z0-9_]+|"""
+                            + "|".join(HOOK_LIBRARIES)
+                            + r""")\.py|\.claude/settings(?:\.local)?\.json)['"]""")
+# A call that writes, renames or deletes a file, in Python, Perl, Ruby or Node.
+_WRITE_CALL = re.compile(
+    r"write_text|write_bytes|\.write\(|writeFileSync|writeFile\(|"
+    r"open\([^)]*['\"][wa]b?\+?['\"]|shutil\.(?:copy\w*|move)|"
+    r"os\.(?:replace|rename|remove|unlink|truncate)|\.unlink\(|\.rename\(|"
+    r"File\.write|unlinkSync|renameSync")
+_INTERPRETER = re.compile(r"^(?:python[0-9.]*|perl|ruby|node)$")
+_OVERRIDE_IN_COMMAND = re.compile(r"(?:^|[\s;&|(])(?:export\s+)?GUARD_EDIT_APPROVED=[^\s;&|)]")
+_TOOLS_DIR = os.path.dirname(os.path.abspath(__file__))
+_MAX_SCRIPT_BYTES = 2_000_000
 
 # Path scope exclusions. A content hook that judges its own fixtures cannot be tested.
 EXCLUDE_PATTERNS = (
@@ -112,6 +158,88 @@ def is_guarded(path: str) -> bool:
     return any(g.search(p) for g in GUARD_PATTERNS)
 
 
+def _guarded_target(path: str) -> bool:
+    return is_guarded(path) or ("/" not in path and bool(_GUARD_BASENAME.match(path)))
+
+
+def _non_options(args: list[str]) -> list[str]:
+    return [a for a in args if a and not a.startswith("-")]
+
+
+def _script_rewrites_a_guard(text: str) -> bool:
+    """An interpreter script that names a guard path and calls a write. A heuristic:
+    it cannot see a path built from parts (`Path("tools") / name`)."""
+    return bool(_GUARD_IN_TEXT.search(text)) and bool(_WRITE_CALL.search(text))
+
+
+def _read_script(path: str, cwd: str) -> str:
+    """A script file an interpreter runs, unless it is a repo tool (mutation_check.py
+    rewrites guards by design, and tools/ is reviewed code)."""
+    full = os.path.abspath(os.path.join(cwd, os.path.expanduser(path)))
+    if os.path.dirname(full) == _TOOLS_DIR or not os.path.isfile(full):
+        return ""
+    try:
+        with open(full, encoding="utf-8", errors="replace") as fh:
+            return fh.read(_MAX_SCRIPT_BYTES)
+    except OSError:
+        return ""
+
+
+def bash_guard_writes(command: str, cwd: str = ".", _depth: int = 0) -> list[str]:
+    """Guard files a Bash command would write, rename, delete or restore.
+
+    Covers redirects, tee, sed -i, dd (via check_public_pii.extract_write_targets),
+    cp/mv/install/ln destinations, rm/unlink/truncate, git checkout/restore/rm/mv,
+    perl/ruby -i, and an interpreter script (inline, on stdin, or a file outside
+    tools/) that names a guard path and calls a write. Command strings a shell runs
+    (`sh -c`, stdin, `$( )`) are followed. Added 2026-10-01: Bash was outside this
+    hook entirely, and a scratchpad patch script rewrote shell_tokens.py unapproved.
+    """
+    from check_public_pii import (_all_command_positions, _stdin_texts,
+                                  command_assignments, extract_write_targets,
+                                  scripts_run_by)
+    from shell_tokens import simple_commands
+    if _depth > 8:
+        return []
+    hits = [t for t in extract_write_targets(command, command_assignments(command))
+            if _guarded_target(t)]
+    for cmd in simple_commands(command):
+        for inner in cmd.subs:
+            hits += bash_guard_writes(inner, cwd, _depth + 1)
+        words = cmd.words
+        for i in sorted(_all_command_positions(words)):
+            name = os.path.basename(words[i])
+            rest = words[i + 1:]
+            paths: list[str] = []
+            if name in ("cp", "mv", "install", "ln", "gcp", "gmv"):
+                paths = _non_options(rest)[-1:]
+            elif name in ("rm", "unlink", "truncate", "shred"):
+                paths = _non_options(rest)
+            elif name == "git" and rest[:1] and rest[0] in ("checkout", "restore", "rm",
+                                                             "mv", "stash"):
+                paths = _non_options(rest[1:])
+            elif name in ("perl", "ruby") and any(a.startswith("-i") or a.startswith("-pi")
+                                                  for a in rest):
+                paths = _non_options(rest)
+            hits += [p for p in paths if _guarded_target(p)]
+            for text in scripts_run_by(cmd, i, None):
+                hits += bash_guard_writes(text, cwd, _depth + 1)
+            if _INTERPRETER.match(name):
+                texts = list(_stdin_texts(cmd))
+                for k, a in enumerate(rest):
+                    if a in ("-c", "-e", "-E") and k + 1 < len(rest):
+                        texts.append(rest[k + 1])
+                        break
+                    if a == "-m":
+                        break
+                    if not a.startswith("-"):
+                        texts.append(_read_script(a, cwd))
+                        break
+                if any(_script_rewrites_a_guard(t) for t in texts):
+                    hits.append(f"{name} script naming a guard path")
+    return list(dict.fromkeys(hits))
+
+
 def main() -> None:
     # Fail open on anything malformed: a guard that crashes blocks all work.
     p = read_payload()
@@ -120,6 +248,24 @@ def main() -> None:
 
     if os.environ.get(OVERRIDE_ENV):
         sys.exit(0)
+
+    if p.tool_name == "Bash":
+        ti = p.data.get("tool_input") if isinstance(p.data, dict) else None
+        command = ti.get("command", "") if isinstance(ti, dict) else ""
+        if not isinstance(command, str) or not command:
+            sys.exit(0)
+        # Approval is visible in the command itself, so the transcript records it.
+        if _OVERRIDE_IN_COMMAND.search(command):
+            sys.exit(0)
+        cwd = p.data.get("cwd") or os.getcwd()
+        try:
+            hits = bash_guard_writes(command, cwd if isinstance(cwd, str) else ".")
+        except Exception as e:                    # fail open, like every other path
+            print(f"check_guard_edit_approval.py error (allowing): {e}", file=sys.stderr)
+            sys.exit(0)
+        if hits:
+            print(MESSAGE.format(path=", ".join(hits), env=OVERRIDE_ENV), file=sys.stderr)
+        sys.exit(2 if hits else 0)
 
     if p.tool_name not in ("Write", "Edit", "MultiEdit"):
         sys.exit(0)

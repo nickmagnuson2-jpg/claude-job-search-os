@@ -58,7 +58,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from hook_runtime import read_payload  # noqa: E402
 from shell_tokens import simple_commands, tokenize  # noqa: E402
 from check_public_pii import (  # noqa: E402
-    _SHELLS, command_assignments, expand_args, shell_script_variants)
+    command_assignments, scripts_run_by)
 
 BT = chr(96)
 
@@ -80,7 +80,8 @@ def _has_live_backtick(text: str) -> bool:
 
 def offenders(command: str, _depth: int = 0) -> list[str]:
     """Delimiters of unquoted heredocs whose body contains a live backtick, including
-    heredocs inside command strings that run (`sh -c '...'`, `eval`, `$( )`): a
+    heredocs inside command strings that run (`sh -c '...'`, `eval`, `$( )`, a script
+    on a shell's stdin): a
     heredoc there corrupts its output the same way (Codex coverage run, 2026-10-01)."""
     bad: list[str] = []
     if _depth < 8:
@@ -90,15 +91,12 @@ def offenders(command: str, _depth: int = 0) -> list[str]:
         for cmd in simple_commands(command):
             for inner in cmd.subs:
                 bad.extend(offenders(inner, _depth + 1))
-            for i, w in enumerate(cmd.words):
-                base = os.path.basename(w)
-                if base in _SHELLS or base == "eval":
-                    args = cmd.words[i + 1:]
-                    for args_variant in expand_args(args, env):
-                        texts = (shell_script_variants(args_variant) if base in _SHELLS
-                                 else [" ".join(args_variant)])
-                        for text in texts:
-                            bad.extend(offenders(text, _depth + 1))
+            for i in range(len(cmd.words)):
+                # -c, eval, and a script on stdin (`sh <<'EOF'` wrapping an unquoted
+                # inner heredoc: Grok review of ffe38ab, F2). scripts_run_by returns
+                # nothing for a word that is not a shell or script runner.
+                for text in scripts_run_by(cmd, i, env):
+                    bad.extend(offenders(text, _depth + 1))
     return bad + _direct_offenders(command)
 
 

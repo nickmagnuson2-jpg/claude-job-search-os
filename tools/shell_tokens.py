@@ -69,6 +69,9 @@ class SimpleCommand:
     quoted: list[bool] = field(default_factory=list)
     redirections: list[Redirection] = field(default_factory=list)
     subs: list[str] = field(default_factory=list)    # from words, targets, heredoc bodies
+    # The command whose stdout is piped into this one (`a | b`: b.fed_by is a), so a
+    # caller can see what a shell reads on stdin. repr=False: a pipeline is a chain.
+    fed_by: "SimpleCommand | None" = field(default=None, repr=False, compare=False)
 
 
 def _read_balanced(s: str, i: int, open_ch: str, close_ch: str) -> int:
@@ -409,9 +412,10 @@ def simple_commands(s: str) -> list[SimpleCommand]:
     while k < len(toks):
         t = toks[k]
         if t.kind == "op":
-            if cur.words or cur.redirections:
-                cmds.append(cur)
-            cur = SimpleCommand()
+            prev = cur if (cur.words or cur.redirections) else None
+            if prev:
+                cmds.append(prev)
+            cur = SimpleCommand(fed_by=prev if t.text in ("|", "|&") else None)
             k += 1
             continue
         if t.kind == "heredoc":
