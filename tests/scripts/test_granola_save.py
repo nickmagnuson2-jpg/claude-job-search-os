@@ -61,3 +61,13 @@ def test_transcript_with_labels_but_no_words_does_not_crash(tmp_path):
     assert out["status"] == "ok"
     assert (tmp_path / "o.md").exists()
 
+
+
+def test_named_channel_capture_does_not_warn(tmp_path):
+    """`System audio (Name):` is a separated channel, not a collapsed one. Before
+    2026-10-01 this label was unread and the tool reported the counterpart at 0.0% of
+    the words on a transcript with two clearly labelled channels."""
+    transcript = ("Microphone: " + "word " * 200 +
+                  "\n\nSystem audio (Jane Doe): " + "reply " * 150)
+    out = _write(tmp_path, transcript)
+    assert "attribution_warning" not in out

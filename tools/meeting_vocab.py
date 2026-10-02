@@ -371,14 +371,53 @@ _SPEAKER_ALIASES = {
     "me": "Me", "them": "Them",
     # Granola desktop export: local mic vs system audio
     "microphone": "Me", "speaker": "Them",
+    # Granola named-channel export: `System audio (Jane Doe):`, also seen bare
+    "system audio": "Them",
 }
 
 # Matches a speaker label at the start of a line OR inline mid-paragraph, because Granola
 # writes both shapes: newline-delimited turns in some exports, one long run-on in others.
+#
+# The two audio-source labels may carry a confirmed participant name in parentheses:
+# `System audio (Jane Doe):`, `Microphone (John Smith):`. WHY (2026-10-01): the named form
+# matched nothing, so every counterpart word folded into the preceding `Microphone:` turn
+# and a correctly diarized call was scored as one speaker in three debriefs before it was fixed.
+#
+# The named and `System audio` forms are accepted at the START OF A LINE only. The four
+# short labels stay matchable inline because run-on exports need that, but these two are
+# always newline-delimited in the corpus (978 of 978 plain occurrences, 2026-10-02), and
+# matching them after any whitespace would turn a sentence that mentions "system audio:"
+# into a counterpart turn.
 _TURN_RE = re.compile(
-    r"(?:(?<=^)|(?<=\s))(Me|Them|Microphone|Speaker)\s*:\s*",
+    r"(?:(?<=^)|(?<=\s))"
+    r"(Me|Them|Microphone|Speaker"
+    r"|(?<=^)(?:System audio|(?:Microphone|System audio) \([^)\n]{1,80}\)))\s*:\s*",
     re.IGNORECASE | re.MULTILINE,
 )
+
+
+def canonical_channel(label: str) -> str | None:
+    """Map a matched channel label to `Me` / `Them`, ignoring any parenthesised name."""
+    return _SPEAKER_ALIASES.get(label.split("(")[0].strip().lower())
+
+
+def channel_turns(text: str) -> list[tuple[str, str, int]]:
+    """Every channel-labelled turn as (canonical_label, body, body_offset).
+
+    The offset-bearing form of the channel path in split_transcript_turns, for consumers
+    that must point back into the source text (transcript_exclusions.py). Bodies are
+    returned unstripped so `text[offset:offset + len(body)] == body` holds. Non-blank text
+    ahead of the first label comes back first with label None, so it is neither dropped
+    nor attributed to a speaker. No labels at all returns an empty list.
+    """
+    matches = list(_TURN_RE.finditer(text))
+    turns = []
+    if matches and text[:matches[0].start()].strip():
+        turns.append((None, text[:matches[0].start()], 0))
+    for i, m in enumerate(matches):
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+        turns.append((canonical_channel(m.group(1)), text[m.end():end], m.end()))
+    return turns
 
 _CORRUPT_DICT_LABEL_RE = re.compile(r"\{'source':[^}]*\}:")
 
@@ -513,6 +552,7 @@ def split_transcript_turns(text: str) -> tuple[list[str], list[str]]:
     Handles every label format known to appear on disk:
       * `Me:` / `Them:`                  -- canonical
       * `Microphone:` / `Speaker:`       -- Granola desktop export
+      * `Microphone:` / `System audio (Name):` -- Granola named-channel export
       * `Speaker A:` / `Speaker B:`      -- assemblyai diarization on in-person meetings,
                                             split only when the text declares which label
                                             is the owner
@@ -542,7 +582,7 @@ def split_transcript_turns(text: str) -> tuple[list[str], list[str]]:
     other: list[str] = []
     # parts = [pre, label, body, label, body, ...]
     for i in range(1, len(parts) - 1, 2):
-        canon = _SPEAKER_ALIASES.get(parts[i].lower())
+        canon = canonical_channel(parts[i])
         body = parts[i + 1].strip()
         if not body:
             continue

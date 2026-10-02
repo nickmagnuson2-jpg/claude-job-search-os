@@ -476,3 +476,65 @@ def test_anon_declaration_ending_in_a_period_still_resolves():
     owner, other = split_transcript_turns(text)
     assert owner == [f"theirs {i}" for i in range(4)]
     assert other == [f"mine {i}" for i in range(4)]
+
+
+# --- named-channel labels: `System audio (Name):` (2026-10-01) --------------
+# Granola's current export labels the counterpart channel `System audio (Jane Doe):`.
+# No pattern matched it, so every counterpart word folded into the preceding
+# `Microphone:` turn and the whole conversation was attributed to the owner. Three
+# debriefs got a pooled filler density with a corpus rank
+# printed beside it.
+
+_NAMED_CHANNEL = ("Microphone: hi there\n\n"
+                  "System audio (Jane Doe): hello back there\n\n"
+                  "Microphone: bye")
+
+
+def test_named_system_audio_label_is_the_counterpart():
+    owner, other = split_transcript_turns(_NAMED_CHANNEL)
+    assert owner == ["hi there", "bye"]
+    assert other == ["hello back there"]
+
+
+def test_bare_system_audio_label_is_the_counterpart():
+    owner, other = split_transcript_turns(
+        "Microphone: mine one\nSystem audio: theirs one\nMicrophone: mine two")
+    assert owner == ["mine one", "mine two"]
+    assert other == ["theirs one"]
+
+
+def test_named_microphone_label_is_the_owner():
+    """The mic channel can carry a confirmed name too. Without this, the owner's turn
+    folds into the counterpart's, which is the same defect pointing the other way."""
+    owner, other = split_transcript_turns(
+        "Microphone (John Smith): mine\nSystem audio (Jane Doe): theirs")
+    assert owner == ["mine"]
+    assert other == ["theirs"]
+
+
+def test_named_channel_file_is_not_flagged_as_collapsed(tmp_path):
+    """End to end through parse_file: a correctly diarized named-channel transcript must
+    count only the owner's words and must not carry the collapsed-channel flag."""
+    p = tmp_path / "2026-03-01-1000-placeholder.md"
+    p.write_text("Microphone: " + "mine " * 40 + "\n\n"
+                 "System audio (Jane Doe): " + "theirs " * 60 + "\n", encoding="utf-8")
+    row = fb.parse_file(p)
+    assert row["nick_words"] == 40
+    assert row["them_words"] == 60
+    assert row["unreliable"] is None
+
+
+def test_system_audio_mentioned_mid_sentence_is_not_a_turn():
+    """The named-channel forms are export markers and sit at the start of a line. The
+    phrase followed by a colon inside a sentence must not become a counterpart turn, and
+    must not stop the named-speaker and anonymous fallbacks from running."""
+    assert split_transcript_turns(
+        "We discussed System audio: enabled for the demo.") == ([], [])
+
+
+def test_mid_sentence_channel_phrase_stays_inside_its_turn():
+    owner, other = split_transcript_turns(
+        "Microphone: I said the System audio: was fine and the Microphone (spare): too\n"
+        "System audio (Jane Doe): ok")
+    assert owner == ["I said the System audio: was fine and the Microphone (spare): too"]
+    assert other == ["ok"]

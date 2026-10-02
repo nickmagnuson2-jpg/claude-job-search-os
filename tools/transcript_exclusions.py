@@ -20,7 +20,13 @@ missing or has no `## Verbatim transcript` section.
 import argparse
 import json
 import re
+import sys
 from pathlib import Path
+
+# Needed for `import tools.transcript_exclusions` / `python3 -m tools.transcript_exclusions`
+# from the repo root, where tools/ is not on the path. Pinned by a fresh-interpreter test.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from meeting_vocab import channel_turns  # noqa: E402  single source of truth
 
 LOCAL_VALIDATORS = "tools/.local-validators.json"
 
@@ -54,12 +60,10 @@ _PHRASE_RES = [(re.compile(rf"\b{p}\b", re.I), p) for p in PHRASES]
 # --wide: low-precision second pass, kept in a SEPARATE array. Never merged into hits.
 _WIDE_RE = re.compile(r"never|not\s|don't|won't|no longer|commoditi|table stakes", re.I)
 
-# Granola writes Me:/Them: for most sessions and Microphone:/Speaker: for others
-# (26 vs 6 of the 57 transcript-bearing files as of 2026-08-12). Microphone is always
-# the note creator, i.e. Nick, so it maps to Me.
-_SPEAKER_ALIASES = {"me": "Me", "them": "Them", "microphone": "Me", "speaker": "Them"}
-_SEGMENT_SPLIT_RE = re.compile(r"(?=\b(?:Me|Them|Microphone|Speaker):)", re.I)
-_SEGMENT_HEAD_RE = re.compile(r"^(Me|Them|Microphone|Speaker):\s*", re.I)
+# Speaker-label decoding lives in meeting_vocab.channel_turns, shared with
+# filler_baseline.py and granola_save.py. This tool kept its own Me|Them|Microphone|Speaker
+# regex until 2026-10-01, so on a `System audio (Name):` transcript the counterpart filter
+# read no counterpart text and returned a null that looked like a clearance.
 
 _TRANSCRIPT_HEADING_RE = re.compile(r"^##\s+Verbatim transcript\s*$", re.I)
 # The body ENDS at the next heading or horizontal rule. Verified against a live file:
@@ -120,20 +124,11 @@ def parse_speaker_labels(text: str) -> dict:
 
 def split_segments(body: str) -> list[tuple[str, str, int]]:
     """(speaker_label, segment_text, char_offset) triples, offsets from the body start."""
-    segments, offset = [], 0
-    for chunk in _SEGMENT_SPLIT_RE.split(body):
-        if not chunk:
-            continue
-        head = _SEGMENT_HEAD_RE.match(chunk)
-        if head:
-            label = _SPEAKER_ALIASES[head.group(1).casefold()]
-            text_start = offset + head.end()
-            segments.append((label, chunk[head.end():], text_start))
-        elif chunk.strip():
-            # Leading text before any marker (or an undiarized transcript).
-            segments.append((None, chunk, offset))
-        offset += len(chunk)
-    return segments
+    turns = channel_turns(body)
+    if not turns:
+        # An undiarized transcript: one unlabelled segment.
+        return [(None, body, 0)] if body.strip() else []
+    return turns
 
 
 def _sentences(segment: str) -> list[tuple[str, int]]:
