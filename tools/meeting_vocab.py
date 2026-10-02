@@ -401,6 +401,29 @@ def canonical_channel(label: str) -> str | None:
     return _SPEAKER_ALIASES.get(label.split("(")[0].strip().lower())
 
 
+def segment_channel(seg) -> str | None:
+    """`Me` / `Them` / None for one REST transcript segment.
+
+    The answer the segment's SAVED line would get: the persist path writes
+    `<_speaker_label(seg)>: <text>` and every reader maps that label through
+    canonical_channel, so composing the two here keeps an analysis of raw segments in
+    agreement with an analysis of the file. An anonymous diarization label
+    (`Speaker A`) has no owner without a declaration and returns None.
+    """
+    if not isinstance(seg, dict):
+        return None
+    # A missing, empty or wrong-typed speaker is not evidence of who spoke. Without this
+    # check _speaker_label's display fallback (`Speaker`) would read as the counterpart.
+    sp = seg.get("speaker")
+    if isinstance(sp, dict):
+        fields = (sp.get(k) for k in ("attribution", "diarization_label", "label", "source"))
+        if not any(isinstance(v, str) and v.strip() for v in fields):
+            return None
+    elif not (isinstance(sp, str) and sp.strip()):
+        return None
+    return canonical_channel(_speaker_label(seg))
+
+
 def channel_turns(text: str) -> list[tuple[str, str, int]]:
     """Every channel-labelled turn as (canonical_label, body, body_offset).
 
@@ -408,15 +431,20 @@ def channel_turns(text: str) -> list[tuple[str, str, int]]:
     that must point back into the source text (transcript_exclusions.py). Bodies are
     returned unstripped so `text[offset:offset + len(body)] == body` holds. Non-blank text
     ahead of the first label comes back first with label None, so it is neither dropped
-    nor attributed to a speaker. No labels at all returns an empty list.
+    nor attributed to a speaker. An anonymous diarization turn (`Speaker A:`) is also
+    returned with label None: it ends the turn before it, so its words cannot fold into
+    an attributed speaker's. No labels at all returns an empty list.
     """
-    matches = list(_TURN_RE.finditer(text))
+    matches = sorted(
+        [(m, canonical_channel(m.group(1))) for m in _TURN_RE.finditer(text)]
+        + [(m, None) for m in _ANON_TURN_RE.finditer(text)],
+        key=lambda pair: pair[0].start())
     turns = []
-    if matches and text[:matches[0].start()].strip():
-        turns.append((None, text[:matches[0].start()], 0))
-    for i, m in enumerate(matches):
-        end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
-        turns.append((canonical_channel(m.group(1)), text[m.end():end], m.end()))
+    if matches and text[:matches[0][0].start()].strip():
+        turns.append((None, text[:matches[0][0].start()], 0))
+    for i, (m, channel) in enumerate(matches):
+        end = matches[i + 1][0].start() if i + 1 < len(matches) else len(text)
+        turns.append((channel, text[m.end():end], m.end()))
     return turns
 
 _CORRUPT_DICT_LABEL_RE = re.compile(r"\{'source':[^}]*\}:")
