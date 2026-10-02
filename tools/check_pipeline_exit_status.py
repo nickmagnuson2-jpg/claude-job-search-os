@@ -98,10 +98,11 @@ FORMATTERS = frozenset(
 # `set +o pipefail`) or a `$PIPESTATUS` value is actually READ. A bare mention in a
 # comment, a quoted string, or `set +o pipefail` exempted the whole command (Codex
 # review of the hook wiring, run 15, F2).
-# `set` in command position (statement start, or after && / || / a group opener),
+# `set` in command position (statement start, after && / || / a group opener, or
+# after then / do / else: Codex and Grok reviews of 7f43845),
 # with any options before it, including `-o NAME` pairs (`set -o errexit -o pipefail`).
 # `echo set -o pipefail` is an argument, not a set (Grok review of 663a887, F4).
-_SET_OPTS = r"(?:^|&&|\|\||[({])\s*set\s+(?:[-+]\w+\s+(?:(?!pipefail\b)[a-z]\w*\s+)?)*"
+_SET_OPTS = r"(?:^|&&|\|\||[({]|\b(?:then|do|else)\b)\s*set\s+(?:[-+]\w+\s+(?:(?!pipefail\b)[a-z]\w*\s+)?)*"
 _PIPEFAIL_ON = re.compile(_SET_OPTS + r"-[a-zA-Z]*o\s+pipefail\b")
 _PIPEFAIL_OFF = re.compile(_SET_OPTS + r"\+[a-zA-Z]*o\s+pipefail\b")
 _PIPESTATUS_READ = re.compile(r"\$\{?PIPESTATUS\b")

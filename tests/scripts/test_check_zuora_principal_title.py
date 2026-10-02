@@ -585,3 +585,17 @@ def test_cat_with_an_exempt_or_unreadable_source_still_judges_the_rest(tmp_path)
 ])
 def test_round_five_copy_forms_block(tmp_path, command):
     assert _bash_in(command, _copy_repo(tmp_path)) == 2, command
+
+
+# --- round-six review of 7f43845 (Codex run 254, Grok run 255) ----------------
+
+@pytest.mark.parametrize("command", [
+    'dest=output/acme-corp/new-cv.md; cat src.md > "$dest"',
+    'src=src.md; dest=output/acme-corp/new-cv.md; cat "$src" > "$dest"',
+    'dest=output/acme-corp/new-cv.md; echo "position: Chief of Staff to the Head of Product" > "$dest"',
+    'files="other.md src.md"; cp $files output/acme-corp/',           # unquoted: two operands
+])
+def test_round_six_variable_forms_block(tmp_path, command):
+    cwd = _copy_repo(tmp_path)
+    (tmp_path / "other.md").write_text("clean\n", encoding="utf-8")
+    assert _bash_in(command, cwd) == 2, command

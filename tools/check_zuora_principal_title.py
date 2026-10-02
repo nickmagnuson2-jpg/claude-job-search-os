@@ -246,7 +246,13 @@ def copied_content(segment: str, cwd: str, env: dict | None = None) -> list[tupl
     out: list[tuple[str, str]] = []
     env = env or {}
     for cmd in simple_commands(segment):
-        words = [v for w in _leading_assignments_removed(cmd.words) for v in _expand(w, env)]
+        pairs = list(zip(cmd.words, cmd.quoted))
+        while pairs and re.match(r"[A-Za-z_][A-Za-z0-9_]*=", pairs[0][0]):
+            pairs.pop(0)                     # leading VAR=value assignments
+        # An UNQUOTED variable splits into several operands (`cp $files dest`:
+        # Codex review of 7f43845, F3); a quoted one stays one.
+        words = [part for w, quoted in pairs for v in _expand(w, env)
+                 for part in (v.split() if not quoted and "$" in w else [v])]
         if not words or os.path.basename(words[0]) not in _COPIERS:
             continue
         # rsync's -t preserves times; only cp/mv/install name a target directory
@@ -325,7 +331,9 @@ def main() -> None:
         # Assignments anywhere in the call reach every segment (`src=x; cp "$src" d`).
         env = command_assignments(command)
         for segment in split_command_segments(command):
-            targets = extract_write_targets(segment)
+            # env: a redirect to "$dest" set earlier in the call (Grok review of
+            # 7f43845, F1) was dropped as unresolvable, so judge never ran.
+            targets = extract_write_targets(segment, env)
             content = segment + "\n" + catted_content(segment, cwd, env)
             for target in targets:
                 judge(content, target)

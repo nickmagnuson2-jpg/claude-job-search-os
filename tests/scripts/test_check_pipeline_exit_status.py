@@ -373,3 +373,12 @@ def test_set_with_another_option_before_pipefail_exempts():
 
 def test_set_pipefail_as_an_argument_is_not_set():
     assert _run("echo set -o pipefail; false | cat || echo FAILED") == 2
+
+
+@pytest.mark.parametrize("command", [
+    "if true; then set -o pipefail; cmd | tail -5 || echo FAILED; fi",
+    "for f in a; do set -o pipefail; cmd | tail -5 || echo FAILED; done",
+])
+def test_set_after_a_compound_keyword_is_in_command_position(command):
+    """Codex and Grok reviews of 7f43845: a false block."""
+    assert _run(command) == 0, command
