@@ -335,3 +335,31 @@ def test_non_string_command_fails_open_without_crashing():
     r = _run_raw(json.dumps({"tool_input": {"command": []}}))
     assert "Traceback" not in r.stderr, r.stderr
     assert r.returncode == 0
+
+
+# --- Codex review of the hook wiring (run 15, 2026-09-07), F2 -----------------
+
+@pytest.mark.parametrize("command", [
+    # a mention is not activation: disabled, commented, or quoted
+    "set +o pipefail; false | cat; echo $?",
+    "false | cat; echo $?  # use pipefail when validating",
+    "echo 'see PIPESTATUS docs'; false | tail -1; echo $?",
+    "false | cat || echo FAILED  # pipefail",
+    # pipefail enabled, then turned off again before the pipeline
+    "set -o pipefail; set +o pipefail; false | cat || echo FAILED",
+    # enabled only AFTER the pipeline it should cover
+    "false | cat || echo FAILED; set -o pipefail",
+])
+def test_a_mention_of_pipefail_or_pipestatus_does_not_exempt(command):
+    assert _run(command) == 2, command
+
+
+@pytest.mark.parametrize("command", [
+    "set -euo pipefail; cmd | tail -5 || echo FAILED",
+    "set -eo pipefail\ncmd | tail -5\necho $?",
+    "cmd | tail -1; echo \"${PIPESTATUS[0]}\"",
+    "cmd | tail -1; s=$PIPESTATUS; echo $?",
+    "cmd | tail -1 || echo failed ${PIPESTATUS[0]}",
+])
+def test_effective_pipefail_or_a_pipestatus_read_still_exempts(command):
+    assert _run(command) == 0, command

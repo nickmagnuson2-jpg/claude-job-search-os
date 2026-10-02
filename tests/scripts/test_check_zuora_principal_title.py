@@ -451,3 +451,123 @@ def test_is_exempt_returns_real_booleans():
     assert mod.is_exempt("memory/index-outreach.md") is True
     assert mod.is_exempt("data/networking.md") is True
     assert mod.is_exempt("output/acme-corp/test_fixture.md") is True
+
+
+# --- Codex review of the hook wiring (run 15, 2026-09-07), F3 -----------------
+
+STALE_LINE = "position: Chief of Staff to the Head of Product\n"
+
+
+def _bash_in(command: str, cwd: str) -> int:
+    return _run({"tool_name": "Bash", "cwd": cwd, "tool_input": {"command": command}})
+
+
+@pytest.mark.parametrize("command", [
+    "cp src.md output/acme-corp/new-cv.md",
+    "cp -f src.md output/acme-corp/",
+    "cp -t output/acme-corp src.md",
+    "mv src.md output/acme-corp/new-cv.md",
+    "install -m 644 src.md output/acme-corp/new-cv.md",
+    "cat src.md > output/acme-corp/new-cv.md",
+    "cat header.md src.md >> output/acme-corp/new-cv.md",
+])
+def test_copying_a_stale_file_into_an_artifact_blocks(tmp_path, command):
+    """`cp /tmp/source.md output/new-cv.md` passed: only the command TEXT was judged,
+    not the bytes it writes."""
+    (tmp_path / "src.md").write_text(STALE_LINE, encoding="utf-8")
+    (tmp_path / "header.md").write_text("# CV\n", encoding="utf-8")
+    (tmp_path / "output" / "acme-corp").mkdir(parents=True)
+    assert _bash_in(command, str(tmp_path)) == 2, command
+
+
+@pytest.mark.parametrize("command", [
+    "cp clean.md output/acme-corp/new-cv.md",
+    "cp src.md data/networking.md",                   # an exempt destination
+    "cat src.md | grep Head",                          # no write
+    "cp missing.md output/acme-corp/new-cv.md",        # unreadable source
+])
+def test_clean_or_exempt_copies_pass(tmp_path, command):
+    (tmp_path / "src.md").write_text(STALE_LINE, encoding="utf-8")
+    (tmp_path / "clean.md").write_text("position: Chief of Staff\n", encoding="utf-8")
+    (tmp_path / "output" / "acme-corp").mkdir(parents=True)
+    assert _bash_in(command, str(tmp_path)) == 0, command
+
+
+def test_a_copy_and_a_write_to_the_same_path_agree(tmp_path):
+    """The hook judges every non-exempt destination; a copy must not differ from a
+    Write of the same bytes (both block for /tmp)."""
+    (tmp_path / "src.md").write_text(STALE_LINE, encoding="utf-8")
+    assert _write("/tmp/scratch.md", STALE_LINE) == 2
+    assert _bash_in("cp src.md /tmp/scratch.md", str(tmp_path)) == 2
+
+
+def test_copies_of_an_exempt_source_pass(tmp_path):
+    """data/ and other exempt files hold the phrase legitimately (a transcript, a
+    contact log). A byte copy states nothing new; the replay of this change found 5
+    such backups and review-source copies, all of which would have been blocked."""
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "networking.md").write_text(STALE_LINE, encoding="utf-8")
+    (tmp_path / "output" / "acme-corp").mkdir(parents=True)
+    assert _bash_in("cp data/networking.md /tmp/networking.bak.md", str(tmp_path)) == 0
+    assert _bash_in("cp data/networking.md output/acme-corp/", str(tmp_path)) == 0
+    assert _bash_in("cat data/networking.md > output/acme-corp/notes.md", str(tmp_path)) == 0
+
+
+# --- mutation-driven coverage of the copy branch (2026-10-01) ----------------
+
+def _copy_repo(tmp_path):
+    (tmp_path / "src.md").write_text(STALE_LINE, encoding="utf-8")
+    (tmp_path / "output" / "acme-corp").mkdir(parents=True)
+    (tmp_path / "data").mkdir()
+    (tmp_path / "memory").mkdir()
+    return str(tmp_path)
+
+
+@pytest.mark.parametrize("command", [
+    "LC_ALL=C cp src.md output/acme-corp/new-cv.md",           # leading assignment
+    "cp --target-directory=output/acme-corp src.md",
+    "cat missing.md src.md > output/acme-corp/new-cv.md",      # a missing source too
+])
+def test_more_copy_forms_block(tmp_path, command):
+    assert _bash_in(command, _copy_repo(tmp_path)) == 2, command
+
+
+@pytest.mark.parametrize("command", [
+    "diff src.md output/acme-corp/new-cv.md",                  # not a copy
+    "cp src.md data/networking.md -v",                         # trailing option
+    "cp src.md memory",                                        # exempt dir, no slash
+    "grep -c Head src.md > output/acme-corp/count.txt",        # grep is not cat
+])
+def test_non_copies_and_exempt_destinations_pass(tmp_path, command):
+    assert _bash_in(command, _copy_repo(tmp_path)) == 0, command
+
+
+def test_copied_content_contract(tmp_path):
+    mod = _load_module()
+    cwd = _copy_repo(tmp_path)
+    assert mod.copied_content("cp --help", cwd) == []
+    assert mod.copied_content("cp src.md", cwd) == []
+    assert mod.copied_content("cp src.md out.md", cwd) == [("out.md", STALE_LINE)]
+    assert mod.catted_content("cat missing.md src.md", cwd) == "\n" + STALE_LINE
+
+
+def test_read_skips_large_and_missing_files(tmp_path, monkeypatch):
+    mod = _load_module()
+    cwd = _copy_repo(tmp_path)
+    assert mod._read("missing.md", cwd) == ""
+    assert mod._read("src.md", cwd) == STALE_LINE
+    monkeypatch.setattr(mod, "_MAX_SOURCE_BYTES", 5)
+    assert mod._read("src.md", cwd) == ""
+
+
+def test_cat_with_an_exempt_or_unreadable_source_still_judges_the_rest(tmp_path):
+    cwd = _copy_repo(tmp_path)
+    (tmp_path / "data" / "networking.md").write_text(STALE_LINE, encoding="utf-8")
+    assert _bash_in("cat data/networking.md src.md > output/acme-corp/cv.md", cwd) == 2
+    locked = tmp_path / "locked.md"
+    locked.write_text("x\n", encoding="utf-8")
+    locked.chmod(0)
+    try:
+        assert _bash_in("cat locked.md src.md > output/acme-corp/cv.md", cwd) == 2
+    finally:
+        locked.chmod(0o644)

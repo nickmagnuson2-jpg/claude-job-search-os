@@ -85,7 +85,12 @@ from hook_command_lint import strip_literals  # noqa: E402
 _INVOKE = re.compile(
     r"(?P<sep>^|\|\||&&|[\n;&|(])"
     r"\s*(?:\w+=\S+\s+)*"
-    r"(?:(?:/usr/bin/env\s+)?python3?\s+)?"
+    r"(?:(?:/usr/bin/env\s+)?python3?\s+"
+    # Interpreter options sit between python3 and the script: `-u`, `-B -u`, and the
+    # two that take a value, `-W x` / `-X x`. Not skipping them let
+    # `python3 -u tools/check_public_pii.py README.md` scan nothing and pass
+    # (Codex review of the hook wiring, run 15, F1). -c and -m are not script runs.
+    r"(?:(?:-[WX]\s*\S+|-[bBdEhiIOPqsSuvx]+)\s+)*)?"
     r"(?P<path>[^\s;&|()<>\"']+\.py)"
     r"(?P<args>[^\n;&|()]*)"
 )

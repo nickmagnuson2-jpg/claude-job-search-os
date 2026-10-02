@@ -378,3 +378,24 @@ def test_a_copy_outside_tools_cannot_start_at_all(tmp_path):
                        capture_output=True, text=True)
     assert r.returncode != 0, "a detached copy must not silently run"
     assert "hook_runtime" in r.stderr, r.stderr
+
+
+# --- Codex review of the hook wiring (run 15, 2026-09-07), F1 -----------------
+
+@pytest.mark.parametrize("opts", ["-u", "-B -u", "-I", "-W ignore", "-X utf8 -u"])
+def test_interpreter_options_before_the_script_still_block(opts):
+    """`python3 -u tools/check_public_pii.py README.md` scanned nothing and passed:
+    the parser required the script path right after the interpreter."""
+    repo = _find_repo()
+    if repo is None:
+        pytest.skip("real repo not reachable from this location")
+    cmd = f"PYTHONIOENCODING=utf-8 python3 {opts} tools/check_public_pii.py docs/usage.md"
+    assert _run(cmd, cwd=str(repo)) == 2
+
+
+def test_interpreter_options_with_the_flag_interface_pass():
+    repo = _find_repo()
+    if repo is None:
+        pytest.skip("real repo not reachable from this location")
+    assert _run("python3 -u tools/check_public_pii.py --scan docs/usage.md", cwd=str(repo)) == 0
+    assert _run("python3 -m pytest tools/check_public_pii.py", cwd=str(repo)) == 0

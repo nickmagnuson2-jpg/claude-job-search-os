@@ -90,8 +90,16 @@ FORMATTERS = frozenset(
     """.split()
 )
 
-# `set -o pipefail` / ${PIPESTATUS[0]} — author is handling pipeline status.
-PIPE_AWARE = re.compile(r"PIPESTATUS|pipefail")
+# The author is handling pipeline status only if pipefail is IN EFFECT for the
+# pipeline (`set -o pipefail`, `set -euo pipefail`, and not turned off again by
+# `set +o pipefail`) or a `$PIPESTATUS` value is actually READ. A bare mention in a
+# comment, a quoted string, or `set +o pipefail` exempted the whole command (Codex
+# review of the hook wiring, run 15, F2).
+_PIPEFAIL_ON = re.compile(r"\bset\s+(?:[-+]\w+\s+)*-[a-zA-Z]*o\s+pipefail\b")
+_PIPEFAIL_OFF = re.compile(r"\bset\s+(?:[-+]\w+\s+)*\+[a-zA-Z]*o\s+pipefail\b")
+_PIPESTATUS_READ = re.compile(r"\$\{?PIPESTATUS\b")
+_SINGLE_QUOTED = re.compile(r"'[^']*'")
+_COMMENT = re.compile(r"(?:^|(?<=\s))#[^\n]*")
 
 _VAR_PREFIX = re.compile(r"^\s*(?:\w+=\S*\s+)*")
 _FIRST_WORD = re.compile(r"[\w./+-]+")
@@ -121,17 +129,26 @@ def _terminal_formatter(element: str) -> str | None:
 def find_violation(command: str) -> tuple[str, str] | None:
     """Return (formatter, shape) for the first masked-exit-status verdict, else
     None. `shape` is "||" (fire 1) or "$?" (fire 2)."""
-    if PIPE_AWARE.search(command):
+    # A real $PIPESTATUS read: double quotes still expand it, single quotes and
+    # comments do not.
+    if _PIPESTATUS_READ.search(_COMMENT.sub("", _SINGLE_QUOTED.sub("''", command))):
         return None
 
     text = _LINE_CONT.sub(" ", command)
-    text = strip_literals(text)
+    text = _COMMENT.sub("", strip_literals(text))
 
     # Statements: top-level `;` / newline. `||` and `&&` contain neither, so
     # and-or lists survive intact inside a statement.
     statements = re.split(r"[;\n]", text)
 
+    pipefail = False                 # in effect for the statements that follow
     for i, stmt in enumerate(statements):
+        if _PIPEFAIL_ON.search(stmt):
+            pipefail = True
+        if _PIPEFAIL_OFF.search(stmt):
+            pipefail = False
+        if pipefail:
+            continue
         parts = _AND_OR.split(stmt)
         # parts = [element, op, element, op, element, ...]
         for j in range(0, len(parts), 2):

@@ -110,6 +110,7 @@ from hook_runtime import read_payload  # noqa: E402
 # a per-sibling guard to rescue. Hooks are invoked as $CLAUDE_PROJECT_DIR/tools/check_*.py
 # and live beside their dependencies.
 from check_public_pii import extract_write_targets, split_command_segments  # noqa: E402
+from shell_tokens import simple_commands  # noqa: E402
 
 CANONICAL = "Chief Product and Technology Officer"
 
@@ -199,6 +200,79 @@ def judge(content: str, path: str) -> None:
     sys.exit(2)
 
 
+_COPIERS = frozenset({"cp", "mv", "install", "rsync", "gcp", "gmv"})
+_MAX_SOURCE_BYTES = 2_000_000
+
+
+def _read(path: str, cwd: str) -> str:
+    """A source file's text, or "" if it is missing, unreadable, too large, or itself
+    exempt. An exempt file (data/, memory/...) holds the phrase legitimately, so a
+    byte copy of it states nothing new: the replay of this change found 5 backups and
+    transcript copies that would otherwise have been blocked."""
+    if is_exempt(path):
+        return ""
+    full = os.path.join(cwd, os.path.expanduser(path))
+    try:
+        if not os.path.isfile(full) or os.path.getsize(full) > _MAX_SOURCE_BYTES:
+            return ""
+        with open(full, encoding="utf-8", errors="replace") as fh:
+            return fh.read()
+    except OSError:
+        return ""
+
+
+def copied_content(segment: str, cwd: str) -> list[tuple[str, str]]:
+    """(destination, source text) for every file a copy in this segment writes.
+
+    cp/mv/install/rsync write their SOURCE's bytes, which are not in the command
+    text, so judging the command alone passed `cp stale.md output/new-cv.md` (Codex
+    review of the hook wiring, run 15, F3). Handles `-t DIR` and a directory
+    destination (DIR/<source name>, so the exemption check sees the real path).
+    """
+    out: list[tuple[str, str]] = []
+    for cmd in simple_commands(segment):
+        words = list(cmd.words)
+        while words and re.match(r"[A-Za-z_][A-Za-z0-9_]*=", words[0]):
+            words.pop(0)                     # leading VAR=value assignments
+        if not words or os.path.basename(words[0]) not in _COPIERS:
+            continue
+        target_dir = None
+        operands: list[str] = []
+        rest = words[1:]
+        k = 0
+        while k < len(rest):
+            a = rest[k]
+            if a in ("-t", "--target-directory") and k + 1 < len(rest):
+                target_dir = rest[k + 1]
+                k += 2
+                continue
+            if a.startswith("--target-directory="):
+                target_dir = a.split("=", 1)[1]
+            elif not a.startswith("-"):
+                operands.append(a)
+            k += 1
+        if target_dir is None:
+            if len(operands) < 2:
+                continue
+            target_dir, operands = operands[-1], operands[:-1]
+            full = os.path.join(cwd, os.path.expanduser(target_dir))
+            if not (target_dir.endswith("/") or os.path.isdir(full)):
+                out += [(target_dir, _read(src, cwd)) for src in operands]
+                continue
+        out += [(os.path.join(target_dir, os.path.basename(src)), _read(src, cwd))
+                for src in operands]
+    return out
+
+
+def catted_content(segment: str, cwd: str) -> str:
+    """Text of the files `cat` reads in this segment (`cat a.md > out.md`)."""
+    texts = []
+    for cmd in simple_commands(segment):
+        if cmd.words and os.path.basename(cmd.words[0]) == "cat":
+            texts += [_read(a, cwd) for a in cmd.words[1:] if not a.startswith("-")]
+    return "\n".join(texts)
+
+
 def main() -> None:
     p = read_payload()
     if not p.ok:
@@ -224,10 +298,14 @@ def main() -> None:
         command = tool_input.get("command", "")
         if not command:
             return
+        cwd = data.get("cwd") if isinstance(data.get("cwd"), str) else os.getcwd()
         for segment in split_command_segments(command):
             targets = extract_write_targets(segment)
+            content = segment + "\n" + catted_content(segment, cwd)
             for target in targets:
-                judge(segment, target)
+                judge(content, target)
+            for target, text in copied_content(segment, cwd):
+                judge(text, target)
     return
 
 
