@@ -599,3 +599,11 @@ def test_round_six_variable_forms_block(tmp_path, command):
     cwd = _copy_repo(tmp_path)
     (tmp_path / "other.md").write_text("clean\n", encoding="utf-8")
     assert _bash_in(command, cwd) == 2, command
+
+
+def test_cat_of_an_unquoted_variable_splits_into_files(tmp_path):
+    """Codex review of 197a070, F2: `cat $files > out` read one path "a b"."""
+    cwd = _copy_repo(tmp_path)
+    (tmp_path / "other.md").write_text("clean\n", encoding="utf-8")
+    assert _bash_in('files="other.md src.md"; cat $files > output/acme-corp/cv.md', cwd) == 2
+    assert _bash_in('f="src.md"; cat "$f" > output/acme-corp/cv.md', cwd) == 2

@@ -228,13 +228,6 @@ def _expand(word: str, env: dict) -> list[str]:
     return (_expand_vars(word, env) or [word]) if "$" in word else [word]
 
 
-def _leading_assignments_removed(words: list[str]) -> list[str]:
-    words = list(words)
-    while words and re.match(r"[A-Za-z_][A-Za-z0-9_]*=", words[0]):
-        words.pop(0)
-    return words
-
-
 def copied_content(segment: str, cwd: str, env: dict | None = None) -> list[tuple[str, str]]:
     """(destination, source text) for every file a copy in this segment writes.
 
@@ -293,12 +286,19 @@ def catted_content(segment: str, cwd: str, env: dict | None = None) -> str:
     env = env or {}
     texts = []
     for cmd in simple_commands(segment):
-        words = _leading_assignments_removed(cmd.words)
-        if not words or os.path.basename(words[0]) != "cat":
+        pairs = list(zip(cmd.words, cmd.quoted))
+        while pairs and re.match(r"[A-Za-z_][A-Za-z0-9_]*=", pairs[0][0]):
+            pairs.pop(0)                     # leading VAR=value assignments
+        if not pairs or os.path.basename(pairs[0][0]) != "cat":
             continue
-        sources = [a for a in words[1:] if not a.startswith("-")]
-        sources += [r.target for r in cmd.redirections if r.op.lstrip("0123456789") == "<"]
-        texts += [_read(v, cwd) for a in sources for v in _expand(a, env)]
+        # An unquoted variable splits into several files (`cat $files > out`: Codex
+        # review of 197a070, F2), as in copied_content.
+        sources = [part for w, quoted in pairs[1:] if not w.startswith("-")
+                   for v in _expand(w, env)
+                   for part in (v.split() if not quoted and "$" in w else [v])]
+        sources += [v for r in cmd.redirections if r.op.lstrip("0123456789") == "<"
+                    for v in _expand(r.target, env)]
+        texts += [_read(src, cwd) for src in sources]
     return "\n".join(texts)
 
 
