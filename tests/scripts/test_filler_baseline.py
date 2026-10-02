@@ -413,8 +413,8 @@ def test_sub_threshold_label_is_excluded_from_the_split():
 # --- anonymous diarization labels (Speaker A: / Speaker B:) -----------------
 # A fifth on-disk format, found 2026-09-08. Granola emits it for IN-PERSON meetings, where
 # both voices reach one microphone and assemblyai diarizes them without names. Three real
-# Sunset Soul working sessions (2026-08-06, 2026-08-19, 2026-09-08), roughly 1,100 turns,
-# parsed to zero and sat outside every per-speaker analysis.
+# in-person working sessions, roughly 1,100 turns, parsed to zero and sat outside every
+# per-speaker analysis.
 #
 # The labels are anonymous, so which one is the owner CANNOT be read off the label and must
 # never be guessed positionally: "Speaker A" is not reliably Nick. The mapping is taken only
@@ -440,8 +440,8 @@ def test_anon_labels_are_not_positional():
 
 
 def test_anon_prose_declaration_is_read():
-    """The 2026-08-06 file words it as prose, not as `=`."""
-    text = ("> **Speaker labels:** Speaker A appears to be Nick and Speaker B Sharon.\n\n"
+    """One real file words it as prose, not as `=`."""
+    text = ("> **Speaker labels:** Speaker A appears to be Nick and Speaker B Jordan.\n\n"
             + _ANON_BODY)
     owner, _ = split_transcript_turns(text)
     assert owner == [f"mine {i}" for i in range(4)]
@@ -465,14 +465,14 @@ def test_anon_three_speakers_decline_rather_than_pick_two():
 
 
 def test_anon_declaration_naming_someone_else_declines():
-    text = "> **Speaker labels:** Speaker A = Taylor, Speaker B = Sharon\n\n" + _ANON_BODY
+    text = "> **Speaker labels:** Speaker A = Taylor, Speaker B = Jordan\n\n" + _ANON_BODY
     assert split_transcript_turns(text) == ([], [])
 
 
 def test_anon_declaration_ending_in_a_period_still_resolves():
     """`Speaker B = Nick.` -- the trailing period is sentence punctuation, not part of the
     name. Capturing it kept a real 604-turn transcript out of the analysis (2026-09-08)."""
-    text = "> **Speaker labels:** Speaker A = Sharon; Speaker B = Nick.\n\n" + _ANON_BODY
+    text = "> **Speaker labels:** Speaker A = Jordan; Speaker B = Nick.\n\n" + _ANON_BODY
     owner, other = split_transcript_turns(text)
     assert owner == [f"theirs {i}" for i in range(4)]
     assert other == [f"mine {i}" for i in range(4)]

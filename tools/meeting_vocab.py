@@ -537,9 +537,9 @@ def _anon_speaker_turns(text: str, owner_ids: tuple) -> tuple[list[str], list[st
     frequency floor, and exactly one of them declared as the owner. Three speakers, no
     declaration, or a declaration naming only other people all return None.
 
-    WHY (2026-09-08): three in-person Sunset Soul sessions (2026-08-06, 08-19, 09-08),
-    roughly 1,100 turns, parsed to zero and dropped out of every per-speaker analysis. The
-    format is documented in the granola-pull skill and was never decoded here.
+    WHY (2026-09-08): three in-person working sessions, roughly 1,100 turns, parsed to
+    zero and dropped out of every per-speaker analysis. The format is documented in the
+    granola-pull skill and was never decoded here.
     """
     counts: dict[str, int] = {}
     for m in _ANON_TURN_RE.finditer(text):
