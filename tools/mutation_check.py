@@ -50,6 +50,7 @@ import argparse
 import ast
 import atexit
 import fcntl
+import functools
 import hashlib
 import json
 import os
@@ -163,6 +164,39 @@ def enumerate_mutants(tree: ast.AST) -> list[tuple]:
     return sorted(set(out))
 
 
+class SelfMutationRefused(Exception):
+    """This file was named as a target. A decision, not a failure to analyse."""
+
+
+def count_mutants(target: Path) -> int:
+    """How many mutants `target` has. Reads and parses; touches nothing else.
+
+    For a tool that has mapped tests this is the number `--list` prints, for callers that
+    want only the number. (`--list` prints no count at all for a tool with no mapped tests,
+    and it runs stranded-file recovery before it counts; this does neither.)
+    `mutation_sweep --targets` used to get it by starting `mutation_check.py <tool> --list`
+    once per tool, and `--list` runs main()'s whole prologue first: tree lock, orphan
+    pruning, stranded-file recovery, a backup of the target, an atexit restore. Counting a
+    corpus of ~160 tools therefore took the lock 160 times and wrote 160 backups of real
+    tools. Two tests of the sweep do that scan on the real repo, so (measured 2026-10-05):
+
+      * every tool that maps their file had a 430s baseline against the 300s budget and
+        was never measured, for as long as the baseline has existed;
+      * a child SIGKILLed at that timeout stranded its backup, which made pytest and
+        cross-model dispatch refuse to run the next morning (three logged blocks);
+      * under a sweep the children inherit MUTATION_SWEEP_ACTIVE, skip the lock, and
+        "recover" the tool being measured, deleting the live run's only backup.
+
+    Raises SelfMutationRefused for this file, and SyntaxError / OSError / ValueError for a
+    file it cannot read or parse. It never returns a number for a file it did not analyse.
+    """
+    target = Path(target)
+    if target.resolve() == SELF:
+        raise SelfMutationRefused(
+            "refusing to enumerate mutation_check.py as a mutation target")
+    return len(enumerate_mutants(ast.parse(target.read_text(encoding="utf-8"))))
+
+
 def enclosing_function(tree: ast.AST, lineno: int) -> str:
     """Innermost def containing `lineno`; used for a line-drift-resistant key."""
     best, best_span = "<module>", None
@@ -191,6 +225,7 @@ def mutant_key(rel_path: str, func: str, op: str, source_line: str) -> str:
 # Test mapping
 # ---------------------------------------------------------------------------
 
+@functools.lru_cache(maxsize=4096)
 def code_text(source: str) -> str:
     """The parts of a test file that can actually REFERENCE a module: identifiers,
     attribute names, def/class names, imported module names, and string literals - with
@@ -213,6 +248,12 @@ def code_text(source: str) -> str:
     UNPARSEABLE FILES FAIL OPEN. A file that will not parse returns its full text, so it
     stays selected. Excluding it would drop real coverage; including it only costs
     runtime. When the analysis is uncertain, measure more rather than less.
+
+    REMEMBERED BY CONTENT (2026-10-06). map_tests calls this for every test file, once per
+    tool, so mapping the corpus parsed 222 files 184 times: 86s, against 0.43s to parse
+    each file once. Keyed on the source text itself, never the path, so an edited file is
+    simply a different key and there is no staleness to reason about. A path-keyed memo
+    would freeze a mapping at whatever the file said the first time it was read.
     """
     try:
         tree = ast.parse(source)
@@ -355,6 +396,14 @@ _RUN_LOCK_FDS: dict[str, int] = {}
 # are running UNDER a lock the sweep already holds; making them queue for it would deadlock
 # the sweep against itself.
 SWEEP_ENV = "MUTATION_SWEEP_ACTIVE"
+
+# Set by THIS tool in the env of every test process it starts (mutant runs and the
+# isolation pass), because it holds the tree lock for its whole life. It is deliberately
+# NOT SWEEP_ENV and acquire_run_lock does not read it: SWEEP_ENV makes the lock itself
+# return success, so exporting that to tests would let any test start a second mutation of
+# the same tree unlocked. This one is honoured only by callers that READ the tree, today
+# `mutation_sweep --targets`, which would otherwise be refused by the run executing it.
+LOCK_HELD_ENV = "MUTATION_TREE_LOCK_HELD"
 
 
 def _run_lock_path() -> Path:
@@ -554,8 +603,12 @@ def run_tests(test_files: list[Path], timeout: int,
     # Measured 2026-08-31 on ss_route_conversation.py -- a mutant that survives by hand
     # 3 of 3 reported KILLED in 5 of 6 runs, correct only on the first run after the cache
     # was cleared. Writing no bytecode at all makes the whole class unreachable.
+    # LOCK_HELD_ENV: this process holds the tree lock for its whole life, so a read-only
+    # caller these tests start must be told its own ancestor has it. Without it a test
+    # that starts `mutation_sweep --targets` is refused by the run executing it
+    # (2026-10-06: this turned mutation_sweep.py's own baseline red in 15s).
     env = {**os.environ, "MUTATION_CHECK_ACTIVE": "1",
-           "PYTHONDONTWRITEBYTECODE": "1"}
+           "PYTHONDONTWRITEBYTECODE": "1", LOCK_HELD_ENV: "1"}
     # MUTATION_CHECK_TARGET names the ONE file this run is deliberately rewriting.
     # A guard that detects corrupted source cannot tell an intended mutant from real
     # corruption, so without this it fires on every mutant and the mutant is scored
@@ -950,8 +1003,11 @@ def main() -> int:
             cmd = [sys.executable, "-m", "pytest", "-q", "--no-header", str(t)]
             # PYTHONDONTWRITEBYTECODE for the same reason as run_tests: this pass must not
             # repopulate the .pyc cache that the mutation loop depends on being absent.
+            # LOCK_HELD_ENV for the same reason as run_tests: the lock is still held here,
+            # and this pass builds its own environment, so it has to say so itself.
             r = subprocess.run(cmd, cwd=str(REPO_ROOT), capture_output=True, text=True,
-                               env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"})
+                               env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1",
+                                    LOCK_HELD_ENV: "1"})
             if r.returncode == CONFTEST_REFUSAL:
                 # tests/conftest.py refused to run because a *.mutation_backup exists
                 # somewhere in the tree -- a sibling run's wreckage, not a property of

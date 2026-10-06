@@ -52,7 +52,35 @@ def load(root, monkeypatch):
     spec = importlib.util.spec_from_file_location("mutation_sweep_under_test", TOOL)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
+    _control_the_mutant_counts(mod, Path(root))
     return mod
+
+
+def _control_the_mutant_counts(mod, root):
+    """Let control.json dictate a tool's mutant count; fall through to the real counter.
+
+    Enumeration is IN-PROCESS since 2026-10-06 (it used to be one `mutation_check.py
+    --list` child per tool, which is what made a whole-repo scan take minutes and write a
+    backup of every real tool). The selection, scheduling and accounting tests below need
+    chosen counts (5, 50, 500), so they name them in control.json exactly as they did when
+    a stub engine answered `--list`. A tool control.json does NOT name is counted by the
+    real engine, which is how the tests of the real path reach it. `counted_tools` records
+    every tool that was asked about, so "this was never enumerated" stays assertable.
+    """
+    real = mod.count_mutants
+    mod.counted_tools = []
+
+    def counted(tool):
+        rel = f"tools/{Path(tool).name}"
+        mod.counted_tools.append(rel)
+        ctl_file = root / "control.json"
+        if ctl_file.exists():
+            named = json.loads(ctl_file.read_text(encoding="utf-8")).get("mutants", {})
+            if rel in named:
+                return named[rel]
+        return real(tool)
+
+    mod.count_mutants = counted
 
 
 STUB = '''\
@@ -63,10 +91,6 @@ target = sys.argv[1]
 with open(os.path.join(root, "calls.log"), "a", encoding="utf-8") as fh:
     fh.write(json.dumps({"target": target, "argv": sys.argv[2:],
                          "encoding": os.environ.get("PYTHONIOENCODING")}) + "\\n")
-if "--list" in sys.argv:
-    print(json.dumps({"mutants": ctl["mutants"][target]})
-          if target in ctl.get("mutants", {}) else ctl.get("list_garbage", "not json"))
-    sys.exit(0)
 time.sleep(ctl.get("sleep", {}).get(target, 0))
 res = ctl.get("results", {}).get(target)
 if res is None:
@@ -240,7 +264,7 @@ def test_the_sweep_refuses_to_target_itself(repo, monkeypatch):
     rows = {r["tool"]: r for r in mod.build_targets()}
     assert rows["tools/mutation_sweep.py"]["mutants"] == -1, \
         "must be recorded as non-auditable, not given a real mutant count"
-    assert not any(c["target"] == "tools/mutation_sweep.py" for c in calls(repo)), \
+    assert "tools/mutation_sweep.py" not in mod.counted_tools, \
         "must not even be enumerated by the engine"
     assert rows["tools/mutation_sweep.py"]["h"] is False, \
         "the row is skipped from measurement, but its metadata must still be truthful"
@@ -262,12 +286,19 @@ def test_self_exclusion_is_visible_in_the_accounting_not_silently_dropped(repo, 
 
 
 def test_mutant_counts_come_from_the_engine(repo, monkeypatch):
-    add_tool(repo, "a", mutants=17)
+    """Through the REAL counter, with a number worked out by hand.
+
+    One `if` (IF_FALSE, IF_TRUE), one comparison (NEGATE_CMP), two value returns
+    (RETURN_NONE x2) = 5. Naming the tool in control.json here would return the harness's
+    number and test nothing (cross-model finding 2026-10-06).
+    """
+    add_tool(repo, "a", src="def f(x):\n    if x > 1:\n        return True\n    return False\n")
     mod = load(repo, monkeypatch)
-    assert mod.build_targets()[0]["mutants"] == 17
+    assert mod.build_targets()[0]["mutants"] == 5
 
 
-def test_unparseable_engine_output_is_an_engine_error_not_a_self_exclusion(repo, monkeypatch):
+def test_a_tool_the_engine_cannot_parse_is_an_engine_error_not_a_self_exclusion(repo,
+                                                                               monkeypatch):
     """An engine failure and a deliberate exclusion must not share a sentinel.
 
     Both were -1, and this test previously PINNED that conflation while its own
@@ -278,9 +309,11 @@ def test_unparseable_engine_output_is_an_engine_error_not_a_self_exclusion(repo,
     Both still filter out of the run via `mutants > 0`, so no downstream reader was
     silently rebucketed by the new value -- audited at the same time, per the rule
     that a third state needs every reader checked.
+
+    2026-10-06: driven through the REAL engine on a file that will not parse. The
+    earlier form fed garbage through a stub `--list` child, which stopped existing.
     """
-    add_tool(repo, "a")                       # no entry in control["mutants"]
-    set_control(repo, list_garbage="engine exploded")
+    add_tool(repo, "a", src="def broken(:\n    return\n")   # not in control["mutants"]
     mod = load(repo, monkeypatch)
     assert mod.build_targets()[0]["mutants"] == mod.ENGINE_ERROR
     assert mod.ENGINE_ERROR != mod.SELF_EXCLUDED
@@ -291,13 +324,42 @@ def test_a_deliberate_refusal_is_still_a_self_exclusion(repo, monkeypatch):
 
     mutation_check refuses to mutate itself on purpose and returns no mutant count.
     Classifying on "no count" alone filed that decision as a breakage; the real
-    signal is the child's `code`. Found by running --targets against the live repo,
-    where mutation_check.py appeared as an engine error.
+    signal is the engine saying it REFUSED. Found by running --targets against the
+    live repo, where mutation_check.py appeared as an engine error.
     """
     add_tool(repo, "a")
-    set_control(repo, list_garbage='{"status": "error", "code": "self_mutation_refused"}')
     mod = load(repo, monkeypatch)
+
+    def refuse(_target):
+        raise mod.mutation_check.SelfMutationRefused("refusing to mutate the engine")
+
+    monkeypatch.setattr(mod.mutation_check, "count_mutants", refuse)
     assert mod.build_targets()[0]["mutants"] == mod.SELF_EXCLUDED
+
+
+def test_enumeration_is_in_process_and_spawns_no_engine_child(repo, monkeypatch):
+    """`--targets` must not start a `mutation_check.py --list` process per tool.
+
+    Origin 2026-10-05. One child per tool made a whole-repo scan take ~170s, and each
+    child took the tree lock, ran stranded-file recovery and wrote a backup of a REAL
+    tool before listing anything. Two tests in this file do that scan on the real repo,
+    so every tool that maps this file inherited a 430s baseline against a 300s budget
+    and was never measured -- and a child killed at the timeout left a backup behind
+    that blocked pytest and cross-model dispatch the next morning.
+    """
+    src = "def f(x):\n    if x > 1:\n        return True\n    return False\n"
+    add_tool(repo, "a", src=src)                      # not in control: the real counter
+    mod = load(repo, monkeypatch)
+
+    def no_processes(*_a, **_k):
+        raise AssertionError("build_targets spawned a process")
+
+    monkeypatch.setattr(mod.subprocess, "run", no_processes)
+    monkeypatch.setattr(mod.subprocess, "Popen", no_processes)
+    row = mod.build_targets()[0]
+    assert row["mutants"] == mod.mutation_check.count_mutants(repo / "tools" / "a.py")
+    assert row["mutants"] > 0, "a tool with a branch in it has something to mutate"
+    assert calls(repo) == [], "the engine script must not have been executed at all"
 
 
 def test_writer_detection_flags_every_write_shape(repo, monkeypatch):
@@ -407,8 +469,8 @@ def test_targets_mode_enumerates_but_never_mutates(repo, monkeypatch, capsys):
     assert rc == 0
     assert out["mutants"] == 10 and out["auditable"] == 2
     assert (repo / "state" / "targets.json").exists()
-    assert all("--list" in c["argv"] for c in calls(repo)), \
-        "--targets must only enumerate; an --isolation call here would mutate the tree"
+    assert calls(repo) == [], \
+        "--targets must only enumerate, in-process; any engine call here could mutate the tree"
     assert not (repo / "state" / "baseline.jsonl").exists()
 
 
@@ -418,6 +480,63 @@ def test_targets_mode_creates_a_missing_state_dir(repo, monkeypatch, capsys):
     mod.main(["--state-dir", str(repo / "deep" / "nested"), "--targets"])
     capsys.readouterr()
     assert (repo / "deep" / "nested" / "targets.json").exists()
+
+
+def test_targets_refuses_while_another_run_owns_the_tree(repo, monkeypatch, capsys):
+    """A target list counted from a tree that is mid-mutation records a MUTANT's shape.
+
+    The per-tool `--list` child used to queue on the tree lock, so `--targets` could not
+    read a file another run was rewriting. Enumerating in-process must keep that property
+    rather than lose it as a side effect of getting faster.
+    """
+    add_tool(repo, "a", mutants=4)
+    mod = load(repo, monkeypatch)
+    monkeypatch.delenv("MUTATION_TREE_LOCK_HELD", raising=False)   # see two tests below
+    monkeypatch.setattr(mod.mutation_check, "acquire_run_lock",
+                        lambda *a, **k: (False, "pid=4242 since=2026-10-06T06:00:00"))
+    rc = mod.main(["--state-dir", str(repo / "state"), "--targets"])
+    assert rc == 1
+    assert "pid=4242" in capsys.readouterr().err
+    assert not (repo / "state" / "targets.json").exists(), \
+        "must not write a target list it refused to build"
+
+
+def test_targets_releases_the_tree_lock_when_it_is_done(repo, monkeypatch, capsys):
+    """Holding it past the scan would refuse the sweep this command exists to set up."""
+    add_tool(repo, "a", mutants=4)
+    mod = load(repo, monkeypatch)
+    monkeypatch.delenv("MUTATION_TREE_LOCK_HELD", raising=False)
+    events = []
+    monkeypatch.setattr(mod.mutation_check, "acquire_run_lock",
+                        lambda *a, **k: (events.append("acquire"), (True, ""))[1])
+    monkeypatch.setattr(mod.mutation_check, "release_run_lock",
+                        lambda: events.append("release"))
+    assert mod.main(["--state-dir", str(repo / "state"), "--targets"]) == 0
+    capsys.readouterr()
+    assert events == ["acquire", "release"]
+
+
+def test_targets_started_by_a_test_of_a_live_run_is_not_refused_by_that_run(
+        repo, monkeypatch, capsys):
+    """A `--targets` started by a test that a mutation run is executing sits UNDER that
+    run's lock. Refusing there is the run blocking itself: it turned this tool's own
+    baseline red in 15s on 2026-10-06, and then failed its isolation pass the same way.
+
+    The holder says so with MUTATION_TREE_LOCK_HELD, and --targets, which only reads,
+    is the one caller that honours it. The lock itself is not consulted.
+    """
+    add_tool(repo, "a", mutants=4)
+    mod = load(repo, monkeypatch)
+    monkeypatch.setenv("MUTATION_TREE_LOCK_HELD", "1")
+
+    def must_not_be_asked(*_a, **_k):
+        raise AssertionError("consulted the tree lock from under a run that holds it")
+
+    monkeypatch.setattr(mod.mutation_check, "acquire_run_lock", must_not_be_asked)
+    monkeypatch.setattr(mod.mutation_check, "release_run_lock", must_not_be_asked)
+    assert mod.main(["--state-dir", str(repo / "state"), "--targets"]) == 0
+    capsys.readouterr()
+    assert (repo / "state" / "targets.json").exists()
 
 
 # --- 4. run_sweep: an unmeasured tool is never recorded as clean -------------

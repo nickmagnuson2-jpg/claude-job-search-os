@@ -129,9 +129,27 @@ def count_tests(path: Path) -> int:
 # returned no verdict and the run still reported success.
 SELF_EXCLUDED = -1      # deliberate: the runner, its dependencies, and
                         # any tool that refuses on purpose
-# Codes the child returns when it is DECLINING, not failing.
-DELIBERATE_REFUSALS = frozenset({"self_mutation_refused"})
 ENGINE_ERROR = -2       # mutation_check could not analyse this file
+
+
+def count_mutants(tool: Path) -> int:
+    """A tool's mutant count, or the sentinel for why there is none. In-process.
+
+    Reads the engine's REASON, not just the absence of a count. mutation_check refuses
+    itself on purpose, which is a decision (SELF_EXCLUDED); a file it cannot read or parse
+    is an engine failure (ENGINE_ERROR). Classifying on "no count" alone got this backwards
+    on the first attempt and filed the deliberate refusal as a breakage.
+
+    NO CHILD PROCESS (2026-10-06). This was `mutation_check.py <tool> --list` once per
+    tool, which made `--targets` take ~170s on the real repo and wrote a backup of every
+    real tool on the way. See mutation_check.count_mutants for what that cost.
+    """
+    try:
+        return mutation_check.count_mutants(tool)
+    except mutation_check.SelfMutationRefused:
+        return SELF_EXCLUDED
+    except (SyntaxError, ValueError, OSError):
+        return ENGINE_ERROR
 
 
 def is_engine_failure(rec: dict) -> bool:
@@ -248,25 +266,7 @@ def build_targets() -> list[dict]:
                          "tests": sum(count_tests(f) for f in test_files),
                          "test_files": len(test_files), "mutants": SELF_EXCLUDED})
             continue
-        proc = subprocess.run(
-            [sys.executable, "tools/mutation_check.py", rel, "--list"],
-            capture_output=True, text=True, cwd=str(REPO_ROOT),
-            env={**os.environ, "PYTHONIOENCODING": "utf-8"})
-        # Read the child's REASON, not just the absence of a count. mutation_check
-        # refuses to mutate itself on purpose (code `self_mutation_refused`), which is
-        # a decision; anything else that fails to yield a count is an engine failure.
-        # Splitting the sentinel without reading the code got this backwards on the
-        # first attempt and filed the deliberate refusal as a breakage.
-        try:
-            payload = json.loads(proc.stdout)
-        except json.JSONDecodeError:
-            payload = {}
-        if "mutants" in payload:
-            mutants = payload["mutants"]
-        elif payload.get("code") in DELIBERATE_REFUSALS:
-            mutants = SELF_EXCLUDED
-        else:
-            mutants = ENGINE_ERROR
+        mutants = count_mutants(tool)
         rows.append({"tool": rel,
                      "w": bool(_WRITER_RE.search(tool.read_text(encoding="utf-8"))),
                      "h": tool.name in wired,
@@ -691,7 +691,28 @@ def main(argv: list[str] | None = None) -> int:
 
     args.state_dir.mkdir(parents=True, exist_ok=True)
     if args.targets:
-        rows = build_targets()
+        # Under the tree lock, and refuse rather than wait. A target list counted while
+        # another run is rewriting a tool records a MUTANT's shape as that tool's mutant
+        # count. The per-tool --list child used to queue on this lock; counting in-process
+        # must keep the property.
+        #
+        # A --targets started by a TEST that a mutation run is executing sits under that
+        # run's lock, so asking for it would be the run refusing itself. The holder says so
+        # with LOCK_HELD_ENV, a signal only read-only callers honour; it does not open the
+        # lock for anything that mutates (see mutation_check.LOCK_HELD_ENV).
+        under_a_holder = bool(os.environ.get(mutation_check.LOCK_HELD_ENV))
+        if not under_a_holder:
+            acquired, holder = mutation_check.acquire_run_lock()
+            if not acquired:
+                print(f"REFUSING: another mutation run owns the tree ({holder}). A target "
+                      f"list built now could count a mutated file. Re-run when it finishes.",
+                      file=sys.stderr)
+                return 1
+        try:
+            rows = build_targets()
+        finally:
+            if not under_a_holder:
+                mutation_check.release_run_lock()
         (args.state_dir / "targets.json").write_text(
             json.dumps(rows, indent=1), encoding="utf-8")
         auditable = [r for r in rows if r["mutants"] > 0]

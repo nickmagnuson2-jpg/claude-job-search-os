@@ -1088,3 +1088,179 @@ def test_a_timeout_is_flagged_as_a_timeout_and_not_as_a_failing_suite(monkeypatc
         f"got {details.get('failed')!r}")
     assert "TIMEOUT" in details["output"] or "timeout" in details["output"], (
         "the output must say plainly that this was a timeout rather than a red suite")
+
+
+# =============================================================================
+# 2026-10-06: a pure mutant count, and a test-file parse that is paid once.
+#
+# `mutation_sweep --targets` asked "how many mutants does this tool have" by starting
+# `mutation_check.py <tool> --list` once per tool. `--list` shares main()'s prologue, so
+# each child took the tree lock, pruned, ran stranded-file recovery and wrote a backup of
+# a real tool before answering. Two tests of the sweep run that scan on the real repo;
+# every tool that maps their file inherited a 430s baseline against the 300s budget and
+# was never measured, and a child killed at the timeout stranded its backup. The count
+# below is the same number with none of the side effects.
+# =============================================================================
+
+def _tiny_repo(tmp_path):
+    (tmp_path / "tools").mkdir()
+    (tmp_path / "tests" / "scripts").mkdir(parents=True)
+    tool = tmp_path / "tools" / "sample_tool.py"
+    tool.write_text("def f(x):\n    if x > 1:\n        return True\n    return False\n",
+                    encoding="utf-8")
+    (tmp_path / "tests" / "scripts" / "test_sample_tool.py").write_text(
+        "import sample_tool\n\n\ndef test_f():\n    assert sample_tool.f(2) is True\n",
+        encoding="utf-8")
+    return tool
+
+
+def test_count_mutants_agrees_with_what_list_reports(tmp_path):
+    """Two answers to one question would let the target list and the engine disagree."""
+    tool = _tiny_repo(tmp_path)
+    listed = json.loads(_run([str(tool), "--list"], cwd=tmp_path).stdout)["mutants"]
+    assert mc.count_mutants(tool) == listed
+    assert listed > 0
+
+
+def test_count_mutants_writes_no_backup(tmp_path, monkeypatch):
+    """The whole point: counting must not touch the store a live run restores from."""
+    tool = _tiny_repo(tmp_path)
+    store = tmp_path / "store"
+    monkeypatch.setenv("MUTATION_BACKUP_DIR", str(store))
+    before = tool.read_bytes()
+    mc.count_mutants(tool)
+    assert not store.exists() or list(store.iterdir()) == []
+    assert tool.read_bytes() == before
+
+
+def test_count_mutants_leaves_a_stranded_backup_alone(tmp_path, monkeypatch):
+    """Recovery belongs to a RUN. A count that "recovers" deletes a live run's backup."""
+    tool = _tiny_repo(tmp_path)
+    monkeypatch.setenv("MUTATION_BACKUP_DIR", str(tmp_path / "store"))
+    bak = mc.backup_path(tool)
+    bak.parent.mkdir(parents=True)
+    bak.write_text("the unmutated original a live run is holding", encoding="utf-8")
+    mc.count_mutants(tool)
+    assert bak.read_text(encoding="utf-8") == "the unmutated original a live run is holding"
+
+
+def test_count_mutants_refuses_the_engine_itself():
+    with pytest.raises(mc.SelfMutationRefused):
+        mc.count_mutants(TOOL)
+
+
+def test_count_mutants_raises_on_source_that_will_not_parse(tmp_path):
+    """An unparseable tool is an engine error for the caller to record, never a zero."""
+    tool = _tiny_repo(tmp_path)
+    tool.write_text("def broken(:\n    return\n", encoding="utf-8")
+    with pytest.raises(SyntaxError):
+        mc.count_mutants(tool)
+
+
+def test_mapping_parses_each_test_file_once_not_once_per_tool(tmp_path, monkeypatch):
+    """Mapping N tools must not re-parse every test file N times.
+
+    Measured 2026-10-05 on the real repo: 222 test files x 184 tools, 86s to map the
+    corpus, against 0.43s to parse every test file once. That per-tool re-parse was half
+    the cost of the scan that kept four tools unmeasured.
+    """
+    import ast as _ast
+    import uuid
+    (tmp_path / "tools").mkdir()
+    (tmp_path / "tests" / "scripts").mkdir(parents=True)
+    tools = []
+    for name in ("alpha_tool", "beta_tool", "gamma_tool"):
+        tool = tmp_path / "tools" / f"{name}.py"
+        tool.write_text("x = 1\n", encoding="utf-8")
+        tools.append(tool)
+        # A unique literal per file, so nothing an earlier test parsed can stand in for it.
+        (tmp_path / "tests" / "scripts" / f"test_{name}.py").write_text(
+            f"import {name}\nTAG = '{uuid.uuid4()}'\n\n\ndef test_a():\n    assert {name}.x == 1\n",
+            encoding="utf-8")
+
+    parsed = []
+    real_parse = _ast.parse
+
+    def counting(source, *a, **k):
+        parsed.append(1)
+        return real_parse(source, *a, **k)
+
+    monkeypatch.setattr(mc.ast, "parse", counting)
+    mapped = [{p.name for p in mc.map_tests(t, repo_root=tmp_path)} for t in tools]
+    assert mapped == [{"test_alpha_tool.py"}, {"test_beta_tool.py"}, {"test_gamma_tool.py"}]
+    assert len(parsed) == 3, f"3 test files mapped for 3 tools cost {len(parsed)} parses"
+
+
+def test_an_edited_test_file_is_mapped_from_its_new_content(tmp_path):
+    """The parse is remembered by CONTENT. Remembering it by path would freeze a mapping
+    at whatever the file said the first time, and the sweep would grade a tool against
+    tests that no longer mention it."""
+    tool = _tiny_repo(tmp_path)
+    other = tmp_path / "tests" / "scripts" / "test_elsewhere.py"
+    other.write_text("def test_a():\n    assert 1 == 1\n", encoding="utf-8")
+    assert "test_elsewhere.py" not in {p.name for p in mc.map_tests(tool, repo_root=tmp_path)}
+    other.write_text("import sample_tool\n\n\ndef test_a():\n    assert sample_tool.f(0) is False\n",
+                     encoding="utf-8")
+    assert "test_elsewhere.py" in {p.name for p in mc.map_tests(tool, repo_root=tmp_path)}
+
+
+def test_every_child_of_a_run_is_told_the_tree_lock_is_already_held(tmp_path):
+    """A run holds the tree lock for its whole life, so anything its tests start that
+    asks for that lock must be let through, in the mutant runs AND in the isolation pass.
+
+    Found 2026-10-06, twice in one morning. `mutation_sweep --targets` began taking the
+    lock, and one of the sweep's tests starts a real `--targets`. Run under the nightly
+    sweep that child inherits MUTATION_SWEEP_ACTIVE and passes. Run under a DIRECT
+    `mutation_check.py tools/mutation_sweep.py` nothing told it the lock was its own
+    ancestor's: the baseline went red in 15s, and after that was patched the isolation
+    pass failed the same way, because that pass builds its own environment. One signal,
+    set by the holder for every child it starts, instead of a special case per caller.
+
+    It is a NARROW signal. It is not MUTATION_SWEEP_ACTIVE, which makes acquire_run_lock
+    itself return success and would hand every test process the right to start a second
+    mutation of the real tree unlocked (cross-model finding, same day). Only read-only
+    callers honour this one.
+    """
+    tool = _tiny_repo(tmp_path)
+    seen = tmp_path / "seen.log"
+    (tmp_path / "tests" / "scripts" / "test_sample_tool.py").write_text(
+        "import os\nimport sample_tool\n\n\ndef test_f():\n"
+        f"    open({str(seen)!r}, 'a').write((os.environ.get('MUTATION_TREE_LOCK_HELD') or 'UNSET') + '\\n')\n"
+        "    assert sample_tool.f(2) is True\n", encoding="utf-8")
+    (tmp_path / "tests" / "conftest.py").write_bytes(
+        (REPO_ROOT / "tests" / "conftest.py").read_bytes())
+    (tmp_path / "tools" / "conftest_guard.py").write_bytes(
+        (REPO_ROOT / "tools" / "conftest_guard.py").read_bytes())
+    r = _run([str(tool), "--isolation", "--json"], cwd=tmp_path)
+    result = json.loads(r.stdout)
+    assert result.get("isolation_failures") == [], result
+    values = seen.read_text(encoding="utf-8").split()
+    assert len(values) >= 3, "expected the baseline, at least one mutant run and the isolation run"
+    assert set(values) == {"1"}, f"a child ran without being told the lock was held: {values}"
+
+
+def test_the_lock_held_signal_does_not_open_the_tree_lock_itself(tmp_path, monkeypatch):
+    """Telling a child "your ancestor holds the lock" must not let it ACQUIRE the lock.
+
+    acquire_run_lock is what a mutating run calls. If this signal satisfied it, any test
+    a run executes could start a second mutation of the same tree with no lock at all.
+    """
+    monkeypatch.delenv("MUTATION_SWEEP_ACTIVE", raising=False)
+    monkeypatch.setenv(mc.LOCK_HELD_ENV, "1")
+    monkeypatch.setenv("MUTATION_BACKUP_DIR", str(tmp_path / "store"))
+    holder = subprocess.Popen(
+        [sys.executable, "-c",
+         "import sys, time; sys.path.insert(0, %r); import mutation_check as m; "
+         "print(m.acquire_run_lock()[0], flush=True); time.sleep(30)" % str(REPO_ROOT / "tools")],
+        stdout=subprocess.PIPE, text=True,
+        env={k: v for k, v in os.environ.items()
+             if k not in ("MUTATION_SWEEP_ACTIVE", mc.LOCK_HELD_ENV)})
+    try:
+        assert holder.stdout.readline().strip() == "True"
+        acquired, _ = mc.acquire_run_lock()
+        assert acquired is False, "the narrow signal opened the mutating lock"
+    finally:
+        holder.kill()
+        holder.wait()
+        mc.release_run_lock()
+

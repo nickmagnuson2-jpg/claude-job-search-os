@@ -318,6 +318,12 @@ each of which writes a backup beside its target. `todo_write.py` is the largest 
 widest write window, and a file-sync process duplicated the backup before cleanup removed the
 original. The duplicate is not tracked by the restore handler, so it stranded permanently.
 
+**No longer true as of 2026-10-06.** `mutation_sweep --targets` counts mutants in-process through
+`mutation_check.count_mutants`, which reads and parses and writes nothing. It starts no
+`--list` child and no backup is written during a target build. `mutation_check.py <tool> --list`
+run by hand still takes the lock and writes a backup before listing; that is a separate, open
+item in `data/workstreams/mutation.md`.
+
 Two fixes, both in `tools/conftest_guard.py` (new — the single source both `tests/conftest.py` and
 `tools/mutation_check.py` import, so the two can no longer drift):
 
