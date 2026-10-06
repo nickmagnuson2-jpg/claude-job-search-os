@@ -1,12 +1,12 @@
 ---
 name: outreach-batch
-description: Batch-draft cold outreach for a company — finds and ranks contacts (contact_finder + evidence gate), drafts a Nick-voice cold email for each of the top N, and writes them all to one review queue file with provenance tags. No auto-send; you approve/edit/send each one.
+description: Batch cold outreach for a company — finds and ranks contacts (contact_finder + evidence gate), writes an Outreach Brief for each of the top N to one review queue file, stops for Nick's spine, then drafts a Nick-voice cold email from each stated spine with provenance tags. No auto-send; you approve/edit/send each one.
 argument-hint: <company-name> [count] [draft:N]
 user-invocable: true
 allowed-tools: Read(*), Glob(data/*), Grep(data/*), Write(output/**), Write(data/networking.md), Bash(*), mcp__exa__web_search_exa, mcp__exa__web_fetch_exa, WebSearch, WebFetch
 ---
 
-# Outreach Batch — Contact Finder → Ranked Drafts → Review Queue
+# Outreach Batch — Contact Finder → Ranked Briefs → Nick's Spine → Drafts → Review Queue
 
 Wire the acquisition engine (`tools/contact_finder.py`) through the ranking gate
 (from `/scan-contacts`) into batch cold-email drafting (from `/cold-outreach`),
@@ -59,10 +59,27 @@ Take the top **N** ranked survivors (N = `draft:N` arg, default 3). Skip anyone
 whose `personalization_surface` is so thin that no citable hook is plausible — a
 generic-coded email fails worse than one fewer draft. Note who you dropped and why.
 
-### Step 4: Draft each one (delegate to /cold-outreach logic)
+### Step 4: Brief each one, then STOP for the spine (delegate to /cold-outreach Steps 4 and 5b)
 
-For EACH selected contact, run the `/cold-outreach` drafting flow — do not
-shortcut it, and do not batch-generate templated variants:
+**Batch does not exempt the `/cold-outreach` default (changed 2026-10-01): no draft is written
+before Nick states the spine.** This step previously went straight from research to drafting; that
+contradicted `/cold-outreach` Step 5b and is closed as of 2026-10-06.
+
+For EACH selected contact:
+
+- **Research-personalization gate** (`/cold-outreach` Step 4, item 1 below).
+- **Outreach Brief** (`/cold-outreach` Step 5b): why-now, verified recipient facts, sourced proofs,
+  positioning, the hook, hard don'ts. Write every Brief to the queue file (Step 5) with status
+  `AWAITING-SPINE`.
+
+Then **stop and ask Nick for the spine**: the organizing claim, the hook, the proofs, the ask. He
+may give one spine that covers several contacts or one per contact. A contact with no stated spine
+stays `AWAITING-SPINE` and gets no draft.
+
+### Step 4b: Draft from the spine (delegate to /cold-outreach Steps 6-7)
+
+For each contact whose spine Nick has stated, run the `/cold-outreach` drafting flow — do not
+shortcut it, and do not batch-generate templated variants. Items 2-4 below run only here:
 
 1. **Step 4 (research-personalization gate):** a real Exa pass on the company + this
    person; find a cited, specific hook (company's own words / a named project / a
@@ -77,8 +94,8 @@ shortcut it, and do not batch-generate templated variants:
    **Batch amplifies this risk:** N drafts are audited in one pass with no per-contact
    dictation, so the temptation to let a `G` slide is highest here and the blast radius
    is N contacts, not one. `NEEDS-SPINE` is the correct outcome, not a failed run.
-4. **Step 7 (quality gate + tonal self-check + Content-Rules Pass):** the three-question
-   test, the ex-colleague readability bar, AND the `/cold-outreach` Content-Rules Pass —
+4. **Step 7 (quality gate + tonal self-check + Content-Rules Pass):** the four-question
+   extraction gate (Why you / Why now / Why me / Why this class of role, each quoting the draft), the ex-colleague readability bar, AND the `/cold-outreach` Content-Rules Pass —
    rule-gate `framework/content-rules.md` to the cold-draft rules (`L2`/`L3`/`I1`/`A3`/`C1`/`C3`,
    plus `G2`/`G3`/`H6` as they apply) per contact. Record the content-rules verdict in each
    contact's queue row; don't drop it just because this is a batch.
@@ -89,13 +106,13 @@ note it as "ready to send on reply," don't attach it.
 
 ### Step 5: Write the review queue file
 
-Write all drafts to `output/outreach-queue/MMDDYY-<company-slug>.md` (create the
+Write all Briefs, and later the drafts, to `output/outreach-queue/MMDDYY-<company-slug>.md` (create the
 `output/outreach-queue/` directory if needed). Format:
 
 ```markdown
 # Outreach Queue: <Company> — <YYYY-MM-DD>
 
-**Source:** contact_finder.py → evidence gate → rank → batch draft (/outreach-batch)
+**Source:** contact_finder.py → evidence gate → rank → brief → spine → draft (/outreach-batch)
 **Status:** REVIEW — none sent. Approve/edit/send each below individually.
 **CV:** <path to general deployment CV, or "none"> — ready to send on reply, NOT attached.
 
@@ -103,12 +120,18 @@ Write all drafts to `output/outreach-queue/MMDDYY-<company-slug>.md` (create the
 
 ## 1. <Name> — <Role> (rank <Total>/40)
 **LinkedIn:** <url> · **Evidence:** "<current-employment quote>"
-**Subject:** <subject>
+**Status:** AWAITING-SPINE | DRAFTED | NEEDS-RESEARCH | NEEDS-SPINE
 
-<full draft body>
+**Outreach Brief:** <why-now · verified recipient facts · sourced proofs · positioning · hook · hard don'ts>
+
+**Spine (Nick's, verbatim):** <organizing claim · hook · proofs · ask, or blank while AWAITING-SPINE>
+
+**Subject:** <subject, after the spine>
+
+<full draft body, after the spine>
 
 **Provenance audit:** identity → C · credibility → C · personalization → I (<source URL>) · ask → N/C
-**Quality gate:** Why you? <Strong/…> · Why now? <…> · Why me? <…>
+**Quality gate:** Why you? "<quoted sentence>" · Why now? "<…>" · Why me? "<…>" · Why this class of role? "<…>"
 **To send:** write this subject+body to `tools/.pending-draft.txt` (TO blank), write
 `tools/.pending-draft.source` (`outreach-batch` + timestamp), run `python3 tools/open_draft.py`.
 
@@ -122,8 +145,8 @@ that flag and no body, so Nick can decide whether to source the missing piece.
 
 ### Step 6: Present summary + send instructions
 
-Show a compact table (rank, name, role, subject, flag) and point Nick to the queue
-file. Remind him: review/edit in the file, then to send any one, either invoke
+Show a compact table (rank, name, role, status, subject once drafted) and point Nick to the queue
+file. After Step 4 the table shows Briefs awaiting his spine; after Step 4b it shows drafts. Remind him: review/edit in the file, then to send any one, either invoke
 `/cold-outreach "<Name>" "<Company>"` (which reopens the full single flow) or use
 the per-contact "To send" stub. **This skill never opens Gmail or sends.**
 

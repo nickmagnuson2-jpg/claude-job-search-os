@@ -61,7 +61,7 @@ A warm-recruiter sim cannot rehearse the muscle a cold adversarial deep-dive tes
 **Seed the persona with current-week company facts** from the freshest dossier, so the sim interrogates from accurate present state rather than stale context.
 
 **Length variant — offer it, don't wait to be asked:**
-- **Full sim** (~25 min) — the complete loop.
+- **Full sim** (~15-20 min) — the complete loop. (Was "~25 min" here while Step 6 and `framework/voice-export.md` said 15-20; reconciled to 15-20 on 2026-10-06.)
 - **Focused rep** (~10-12 min) — names the must-hit beats up front and **guarantees the run reaches them**. Use before a real call. This exists because an open-ended full sim ran out of time before the highest-value beat: the live-need bridge (hypothesis H4), which is the recurring miss. A focused rep that reaches the bridge beats a longer unfocused one.
 
 ### Step 4: Extract Recruiter Persona
@@ -107,7 +107,7 @@ Build the prompt following this exact section order (use `##` headers):
 
    **For a focused rep**, replace the open flow with the named must-hit beats and instruct the persona to reach every one before closing — e.g. force a substance-first open, demand the numbers, and GUARANTEE the run reaches the live-need moment. A rep that ends before its target beat produced nothing.
 6. **Session Rules** — Language match, stay in character, natural behaviour, ending instruction ("End of simulation. Take this conversation to Claude Code for a full debrief with your coaching files.")
-7. **Start Instruction** — match CV language. Provide the start instruction in the detected language. Examples — EN: `Say "Start" to begin the call.` / DE: `Sag "Start" um das Gespräch zu beginnen.` / For other languages, translate accordingly.
+7. **Opening and handshake** — match CV language. **Do NOT end the prompt with a start line such as `Say "Start" to begin the call`**: Step 7 property 1 fails exactly that. Instead put the persona's exact first words at the TOP of the prompt followed by "and nothing else" (property 1), and instruct the partner to reply with one word (`Ready.`), say nothing else, and deliver those first words only after the operator says `go` (property 8). This item prescribed the start line until 2026-10-06, which contradicted the Step 7 gate.
 
 8. **Scenario Hold Clause** — **MANDATORY whenever the sim carries a scenario, case, prompt, or exercise.** "Open with Scenario 1" is not sufficient. A persona told only to open with a scenario will follow the candidate's first interesting tangent and never return to it, and the rep silently tests nothing. Write the recovery behavior explicitly:
 
@@ -157,14 +157,14 @@ failure this gate exists to prevent.
 
 ### Step 7b: Quality Check
 
-1. **Count words.** If > 8,000, apply compression strategies from `framework/voice-export.md` in priority order.
+1. **Byte-count each paste.** Step 7 property 4 is the ceiling: under ~6KB per paste. If a paste is over, apply the compression strategies from `framework/voice-export.md` in priority order, or split it into standalone pastes (property 5). The earlier 8,000-word limit here was looser than the gate and is superseded.
 2. **Scan for file references.** If any path-like string (`data/...`, `coaching/...`, `output/...`) appears in the prompt, remove it — everything must be inline.
 3. **Check language consistency.** No mixing DE/EN within the prompt.
 4. **Verify no coached answers leaked.** The prompt must NOT contain any prepared candidate answers.
 
 ### Step 8: Output
 
-Output the assembled prompt inside a single fenced code block (` ```markdown ... ``` `) so the candidate can copy it directly into the Claude App.
+Output the prompt as **two fenced code blocks** (` ```markdown ... ``` `), per Step 7 property 6: (1) the **durable half** (role binding, prohibition with self-check, persona, session rules) to set once in the host app's persistent-instructions field; (2) the **variable half** (this rep's probe or call flow, opening with the first-words block and handshake) to paste as the first message of a new chat. Each block must stand alone (property 5). This step said "a single fenced code block" until 2026-10-06, which the Step 7 gate would have failed.
 
 Before the code block, print a short summary:
 - Role name

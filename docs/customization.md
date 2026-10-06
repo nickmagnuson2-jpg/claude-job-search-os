@@ -150,7 +150,7 @@ The framework ships with four regional CV formats in `framework/style-guidelines
 
 ### Coached answers
 
-[coaching/coached-answers.md](../coaching/coached-answers.md) stores refined phrasings that evolve across sessions. You can edit this file directly to:
+[coaching/coached-answers/](../coaching/coached-answers/) stores refined phrasings that evolve across sessions, one file per question type. You can edit these files directly to:
 - Pre-load answers for questions you expect
 - Refine phrasings the coaching sessions generated
 - Remove answers that no longer reflect your current positioning

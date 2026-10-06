@@ -75,7 +75,10 @@ cp -r examples/output/* output/
 Reads your goals, pipeline, todos, outreach log, and networking contacts in parallel, then outputs:
 - Pipeline health snapshot (stages, staleness alerts)
 - Today's top 3 actions, with any interview/screen scheduled within 3 days (parsed from the pipeline Next-Action column, which the to-do ranker can't see) pinned to the top, then cross-references to relevant contacts and companies
-- Pending outreach with follow-up sequence positions (cross-references networking.md to detect replies not yet reflected in outreach-log.md; threads tied to a closed/rejected/withdrawn pipeline company, or thank-you / graceful-close messages, are suppressed from the "awaiting response" list)
+- Outreach awaiting a response, oldest first, with days since sent and channel (cross-references networking.md to detect replies not yet reflected in outreach-log.md; threads tied to a closed/rejected/withdrawn pipeline company, or thank-you / graceful-close messages, are suppressed from the "awaiting response" list)
+- Headline outcome metric: conversations and interviews had over 7/30/90 days, shown beside outreach sent. When the 7-day count is 0 or 1, Today's Top 3 is shaped toward creating conversations
+- New roles from the nightly career scan, each with a ready `/apply <url>` (shown only when there are new ones)
+- A one-line queue-depth summary and an automation-health warning when a background job is broken
 - Networking follow-ups due or overdue (inferred from Interaction Log `**Follow-up:**` lines, not the Contacts table)
 - One suggested priority action
 
@@ -87,9 +90,10 @@ Also surfaces a daily **Stoic prompt** distilled from the latest Daily Stoic med
 
 ```
 /todo                  # View active list with priority and due-date flags
-/todo add <task>       # Add a new item
+/todo add <task> [priority] [due]   # Add a new item (priority High/Med/Low; due YYYY-MM-DD)
 /todo done <item>      # Mark complete
 /todo withdraw <item>  # Mark withdrawn (fell away, not a completion)
+/todo clear            # Archive all completed items
 ```
 
 Tasks cross-reference pipeline entries and contacts — you can see that several open items are all related to the same company.
@@ -110,9 +114,9 @@ Sibling to `/todo` — same schema, different scope. Writes to a separate person
 /checkout
 ```
 
-Bookend to `/standup`. Runs `todo_daily_metrics.py` to build today's progress snapshot (completion rate, streak, velocity trend), appends to `data/job-todos-daily-log.md`, and surfaces tomorrow's top 3 priorities — pinning any interview/screen scheduled within 3 days (from the pipeline Next-Action column) ahead of regular to-dos, then cross-referenced against the weekly review's Top 5.
+Bookend to `/standup`. Runs `todo_daily_metrics.py` to build today's progress snapshot (completed count, streak, velocity, overdue trend), writes it to the top of `data/job-todos-daily-log.md`, and surfaces tomorrow's top 3 priorities — pinning any interview/screen scheduled within 3 days (from the pipeline Next-Action column) ahead of regular to-dos, then cross-referenced against the weekly review's Top 5.
 
-It also runs a Granola debrief cascade (Step 4d): surfaces calls from the day that haven't been debriefed yet and proposes them, propose-only, it never auto-debriefs. It proposes any milestone-level accomplishment candidates from the day's real artifacts for you to confirm into `data/accomplishments.md` (a strict bar — most days produce none, and nothing is ever auto-logged), and runs a silent-failure probe to catch tracked items left in an unexpected state. As its closing action it pushes an automatic private-data backup to a private remote (non-blocking — a backup failure never aborts checkout, and the public repo is never touched).
+It also runs a Granola debrief cascade (Step 4d): surfaces calls from the day that haven't been debriefed yet and proposes them, propose-only, it never auto-debriefs. It proposes any milestone-level accomplishment candidates from the day's real artifacts for you to confirm into `data/accomplishments.md` (a strict bar — most days produce none, and nothing is ever auto-logged), and runs a state audit that surfaces stuck tasks, long-overdue to-dos and stalled pipeline rows for your decision without closing any of them, and ends with a silent-failure probe: an open question asking whether anything happened today that the system never captured. As its closing action it pushes an automatic private-data backup to a private remote (non-blocking — a backup failure never aborts checkout, and the public repo is never touched).
 
 ### Weekly retrospective
 
@@ -120,7 +124,7 @@ It also runs a Granola debrief cascade (Step 4d): surfaces calls from the day th
 /weekly-review
 ```
 
-Covers pipeline health by stage, outreach response rates, task velocity trend, research activity, and Top 5 priorities for the coming week. Logs to `data/weekly-review-log.md`.
+Covers pipeline health by stage, outreach activity (sent, replied, no-reply counts; no response-rate percentage), task velocity trend, research activity, and Top 5 priorities for the coming week. Logs to `data/weekly-review-log.md`.
 
 ### Autonomous execution
 
@@ -128,7 +132,7 @@ Covers pipeline health by stage, outreach response rates, task velocity trend, r
 /act
 ```
 
-Reviews your active to-do list, classifies items as Bucket A (executable: careers page checks, article reads, company research) or Bucket B (manual: phone calls, in-person tasks), previews the action plan, then executes Bucket A items in parallel on your confirmation. Also processes any items in the `inbox/` raw capture zone. (Two distinct places share the name: `inbox/` is the top-level directory where automated capture lands — fetched emails, nudges — for `/act` to triage; `data/inbox.md` is the single file where `/remember` routes your mid-session notes.) The 15-minute `gmail-fetch` job fires a single batched desktop notification when new job emails land (sender summary plus count), prompting you to run `/act` to triage them from `inbox/`.
+Reviews your active to-do list, classifies items as Bucket A (executable: careers page checks, article reads, company research) or Bucket B (manual: phone calls, in-person tasks), previews the action plan, then executes Bucket A items in parallel on your confirmation. At the preview you can type `run`, `run fast` (skip company research), `run 1 2 5`, `skip 3`, or `cancel`. It also processes the `inbox/` raw capture zone: items that came from Gmail are held for a second per-item approval, and inbox files detected as stale are deleted on `run` without per-item approval. (Two distinct places share the name: `inbox/` is the top-level directory where automated capture lands — fetched emails, nudges — for `/act` to triage; `data/inbox.md` is the single file where `/remember` routes your mid-session notes.) The 15-minute `gmail-fetch` job fires a single batched desktop notification when new job emails land (sender summary plus count), prompting you to run `/act` to triage them from `inbox/`.
 
 ---
 
@@ -138,8 +142,9 @@ Reviews your active to-do list, classifies items as Bucket A (executable: career
 
 ```
 /pipe                              # View full pipeline with staleness alerts
-/pipe add <company> <role>         # Add a new entry
-/pipe update <company> <stage>     # Advance to next stage
+/pipe add <company> <role> [url]   # Add a new entry
+/pipe update <company> <stage>     # Advance to a non-terminal stage
+/pipe remove <company>             # Close a row: archived as Withdrawn, Rejected, or Accepted (update to a terminal stage is blocked)
 ```
 
 Stages: Researching → Applied → Phone Screen → Interview → Offer → Accepted / Rejected / Withdrawn
@@ -169,7 +174,7 @@ To configure targets, edit `data/scan-targets.yaml`:
 
 To find a company's ATS slug: visit their careers page and check the URL. If it redirects to `boards.greenhouse.io/`, `jobs.lever.co/`, or `jobs.ashbyhq.com/`, the slug is the path segment after the domain. Use `ats: generic` with `careers_url:` for anything else.
 
-A daily launchd schedule (`career-scan`) runs this automatically — new matches land in `inbox/` without manual invocation. Run `/scan-companies` manually to trigger on demand or debug results.
+A daily launchd schedule (`career-scan`) runs this automatically — new matches land in `data/inbox.md` without manual invocation. Run `/scan-companies` manually to trigger on demand or debug results.
 
 For roles scoring 7+, the skill suggests: `/research-company`, `/generate-cv`, or `/pipe add`.
 
@@ -194,7 +199,7 @@ Key bindings: `arrow keys` navigate rows, `Tab` moves between stage groups, `/` 
 /research-industry "climate fintech" "focus on Series A-B companies"
 ```
 
-Five parallel agents cover market structure, funding trends, talent demand, regulation, and entry strategy. Produces a dossier at `output/<slug>/<slug>.md`. Run this first when entering a new sector — it produces a ranked target company list you can then deep-dive with `/research-company`.
+Six parallel agents: five cover market overview and structure, key players, talent demand, trends and regulation, and entry strategy using Exa retrieval, and a sixth runs an independent web-search cross-check. Produces a dossier at `output/<slug>/<slug>.md`. Run this first when entering a new sector — it produces a ranked target company list you can then deep-dive with `/research-company`.
 
 ### Company research
 
@@ -203,15 +208,16 @@ Five parallel agents cover market structure, funding trends, talent demand, regu
 /research-company "Clearpath" "https://clearpath.com" "CoS role, coffee chat next week"
 ```
 
-Five parallel agents cover overview, funding, people/culture, news/strategy, and competitive landscape. Output includes conversation starters calibrated to your context (coffee chat, interview, networking) and a ranked similar-companies shortlist.
+Six parallel agents: five cover overview, funding, people/culture, news/strategy, and competitive landscape using Exa retrieval, and a sixth re-covers the same ground with plain web search as an independent cross-check. Output includes conversation starters calibrated to your context (coffee chat, interview, networking) and a ranked similar-companies shortlist.
 
 **Research handoff chain:** `/research-industry` → `/research-company` → `/cold-outreach` or `/follow-up`. Each skill suggests the next step explicitly at the end of its output.
 
 ### Discover new target companies
 
 ```
-/discover-companies
-/discover-companies "vertical SaaS for the trades"
+/discover-companies                 # default preset (lane-a)
+/discover-companies lane-b          # a named preset
+/discover-companies --query "vertical SaaS for the trades"
 ```
 
 Uses the Exa Agent API to find companies you are not yet tracking, scores each against your thesis (geography as a hard gate, then configurable stage / sector / keyword weights with lane keywords from your goals), deduplicates against the pipeline and existing targets, and proposes the survivors to `data/inbox.md` for review. Feeds `/scan-companies`: discovery finds the company, the career-page scan finds the role. Engine: `tools/agent_discover.py` (the earlier Websets path was retired — it 401s for this account and is deprecating). Config in `data/discover-presets.yaml`.
@@ -233,7 +239,7 @@ Takes a URL (research paper, GitHub repo, article, or YouTube video) and answers
 /learn "PLG metrics for vertical SaaS"
 ```
 
-Turns a topic into a deep briefing you can trust and cite. Fans out parallel live-web research, synthesizes a BLUF-and-bullets learning document with a comprehension and interview quiz, then runs an adversarial validation pass that independently tries to refute each load-bearing claim against live sources, auto-corrects anything wrong or overstated, and attaches real source URLs. Sibling to `/analyze` (evaluates one artifact you were handed) and `/deep-research` (answers one question) — `/learn` is for understanding a whole subject well enough to interview or speak on it. Validation is always on.
+Turns a topic into a deep briefing you can trust and cite. Fans out parallel live-web research, synthesizes a BLUF-and-bullets learning document with a comprehension and interview quiz, then runs an adversarial validation pass that independently tries to refute each load-bearing claim against live sources, auto-corrects anything wrong or overstated, and attaches real source URLs. Sibling to `/analyze` (evaluates one artifact you were handed) and `/deep-research` (answers one question) — `/learn` is for understanding a whole subject well enough to interview or speak on it. Validation is always on. Saves the briefing (with quiz) to `output/MMDDYY-<topic-slug>-briefing.md`, a validation report to `output/MMDDYY-<topic-slug>-validation.md`, and a PDF of the briefing. Default depth is about 6,000-8,000 words; `--focused` and `--comprehensive` change it. A run is token-heavy.
 
 ---
 
@@ -248,47 +254,46 @@ Turns a topic into a deep briefing you can trust and cite. Fans out parallel liv
 Or paste a job description directly:
 
 ```
-/generate-cv
+/generate-cv "Full job description text..." "optional context"
 
-[paste job description here]
 ```
 
-Runs an 11-step workflow: matches your experience to the role, selects the most relevant projects, tailors the summary, orders by relevance, chooses language and format. Saves to `output/<company-slug>/MMDDYY-[role-slug].md` plus a companion cheat sheet at `output/<company-slug>/MMDDYY-[role-slug]-cheatsheet.md`.
+Runs an 11-step workflow: matches your experience to the role, selects the most relevant projects, tailors the summary, keeps experience in strict reverse-chronological order, and picks the market format. Saves the CV under `output/<company-slug>/` with the stem `MMDDYY-<lastname>` (`.pdf`, `.yaml`, `.content.yaml`, `.md`), then runs `/review-cv-deep` on it automatically (skip with `--no-deep-review`), plus a companion cheat sheet at `output/<company-slug>/MMDDYY-[role-slug]-cheatsheet.md`.
 
 The cheat sheet maps coached answers to each must-have requirement — keep it open during recruiter calls.
 
-### One-command apply bundle
+### Research-first application campaign
 
 ```
 /apply https://jobs.lever.co/company/role-id
-/apply https://jobs.lever.co/company/role-id "context notes"
+/apply https://jobs.lever.co/company/role-id "context notes" --cover-letter
 ```
 
-Generates a tailored CV + Problem-Solution cover letter and adds the entry to the pipeline — all in one command. Use this when you're ready to apply. Use `/generate-cv` alone when you want just the CV without a cover letter.
+Runs a full campaign for one role, in this order: company dossier (delegated to `/research-company`), identification of the hiring manager and a contact route, an Outreach Brief and message (delegated to `/cold-outreach`, which stops for you to state the spine), then a tailored CV and cheat sheet (delegated to `/generate-cv`, seeded with the research and the outreach positioning). It then asks whether you actually submitted before writing the pipeline stage. A cover letter is generated only with `--cover-letter`. Other flags: `--no-deep-review` (skip the CV deep review) and `--skip-research` (reuse a dossier under 14 days old). Use `/generate-cv` alone when you want only the CV.
 
 ### Generate a cover letter
 
 ```
 /cover-letter https://jobs.lever.co/company/role-id
-/cover-letter "Meridian Health" "Chief of Staff"
+/cover-letter "Chief of Staff, Meridian Health... [pasted job description]" "emphasize operations experience"
 ```
 
-**Problem-Solution format** — leads with the company's challenge, not your background: Hook (their problem) → Proof (you've solved it) → Bridge (how it maps to what they need now) → Close (specific ask). 250–350 words. Saves to `output/<company-slug>/MMDDYY-cover-letter.md`.
+**Problem-Solution format** — leads with the company's challenge, not your background: Hook (their problem) → Proof (you've solved it) → Bridge (how it maps to what they need now) → Close (specific ask). 250–350 words. Before the quality gates it runs the Substance-Provenance Audit and stops to ask you for the spine if a self-positioning or bridge sentence is model-generated. Saves to `output/<company-slug>/MMDDYY-cover-letter.md` and renders `MMDDYY-cover-letter.pdf` beside it.
 
 ### Review a CV
 
 ```
-/review-cv output/verdant-foods/022526-chief-of-staff.md
-/review-cv output/verdant-foods/022526-chief-of-staff.md https://jobs.lever.co/company/role
+/review-cv verdant-foods/022526-<lastname>.md
+/review-cv verdant-foods/022526-<lastname>.md https://jobs.lever.co/company/role
 ```
 
 Fast quality-gate check: keyword coverage, claim integrity, formatting, no self-sabotage language.
 
 ```
-/review-cv-deep output/verdant-foods/022526-chief-of-staff.md https://jobs.lever.co/company/role
+/review-cv-deep verdant-foods/022526-<lastname>.md https://jobs.lever.co/company/role
 ```
 
-Six parallel reviewers (recruiter, hiring manager, competitor analyst, skeptic, copy editor, source data auditor) each assess the CV from their perspective. Produces severity-rated issues, specific rewrites, and the Top 10 Probing Interview Questions this CV would trigger — useful input for voice simulation.
+Six parallel reviewers (recruiter, hiring manager, competitor analyst, skeptic, copy editor, source data auditor) each assess the CV from their perspective. Produces severity-rated issues, specific rewrites, and the Top 10 Probing Interview Questions this CV would trigger — useful input for voice simulation. Each finding is verified against the CV before it enters the report, and rejected findings are kept in a Findings Ledger. The report is saved beside the CV as `<cv-filename>-DEEP-REVIEW.md`. `/generate-cv` runs this review automatically.
 
 ---
 
@@ -300,7 +305,7 @@ Six parallel reviewers (recruiter, hiring manager, competitor analyst, skeptic, 
 /cold-outreach "Jordan Kim" "Verdant Foods" "CoS role, MBA alum connection"
 ```
 
-Selects the right framework (Persona-Based, 3Ps, PAS, BAB, or AIDA) based on context, respects channel limits (200–300 words for a cold first-contact email / <300 chars LinkedIn), and runs a quality gate (Why you? Why now? Why me?). Auto-logs to `data/networking.md`, creates a follow-up to-do, and archives to `output/<slug>/MMDDYY-cold-outreach-[contact-slug].md`.
+Runs a cited research pass, selects a framework (Persona-Based, 3Ps, PAS, BAB, or AIDA), and produces an Outreach Brief, then stops until you state the spine (organizing claim, hook, proofs, ask). It drafts from your spine within channel limits (200–300 words for a cold first-contact email / <300 chars LinkedIn connect) and runs a four-question gate (Why you? Why now? Why me? Why this class of role?) that must quote the draft. After you approve, it logs to `data/networking.md` and `data/outreach-log.md`, creates a follow-up to-do, and archives to `output/<slug>/MMDDYY-cold-outreach-[contact-slug].md`.
 
 ### Follow-up
 
@@ -313,15 +318,15 @@ Checks the message history with this contact, determines sequence position (1st 
 ### General email drafts
 
 ```
-/draft-email "thank-you note to Jamie Torres after coffee chat"
-/draft-email "status update to Clearpath recruiter"
+/draft-email "Jamie Torres" "thank you for coffee chat"
+/draft-email "Jordan Kim" "update on my job search"
 ```
 
 Auto-detects message type and matches tone to prior messages with the same recipient.
 
 ### Substance-Provenance Audit
 
-Every outgoing draft (`/draft-email`, `/follow-up`, `/cold-outreach`) runs a Substance-Provenance Audit (Step 6b) before presenting the draft. Each substantive sentence is labeled:
+Every outgoing draft (`/draft-email`, `/follow-up`, `/cold-outreach`) runs a Substance-Provenance Audit (Step 6b in `/follow-up` and `/cold-outreach`, Step 5b in `/draft-email`; `/cover-letter` runs it too) before presenting the draft. Each substantive sentence is labeled:
 
 | Label | Meaning |
 |---|---|
@@ -346,9 +351,9 @@ This is a structural guard, not a style check. It fires on the tool-call surface
 ### Contact tracking
 
 ```
-/networking add "Jamie Torres" "Meridian Health" "MBA alum, met at alumni event"
+/networking add "Jamie Torres" "Meridian Health" "Chief of Staff"
 /networking log "Jamie Torres" "coffee chat 2026-02-20, discussed CoS role"
-/networking view "Jamie Torres"
+/networking                       # all contacts, stale ones flagged
 ```
 
 Logs interactions (calls, emails, coffee, events, LinkedIn), flags contacts with no activity in 14+ days, and auto-generates follow-up to-dos. When logging an interaction with reply-signal keywords (replied, call scheduled, etc.), automatically updates `data/outreach-log.md` status from "Sent" to "Replied". Adding a contact blocks on a fuzzy name match to someone already in the roster (a spelling variant of the same person), reporting the likely duplicate; re-run with `--force` once you've confirmed they're distinct.
@@ -413,7 +418,7 @@ Without a prefix, Claude infers from context. But explicit prefixes help when a 
 /scan-jobs ashby.io operations health tech
 ```
 
-Scans a job portal for matching roles, assesses fit against your profile and goals, and outputs a ranked table. Deduplicates previously seen ads.
+Scans a job portal for matching roles, assesses fit against your profile, skills, certifications, and project history, and outputs a ranked table. Previously evaluated ads are skipped via a cache at `.claude/skills/scan-jobs/cache.md`. Boards hosted on Greenhouse, Lever, or Ashby are read through their public APIs. Roles scoring 80%+ that are not already in the pipeline are offered for a confirmed pipeline add.
 
 ---
 
@@ -427,27 +432,28 @@ Three-step workflow for spoken practice.
 /voice-export output/verdant-foods/022526-chief-of-staff.md https://jobs.lever.co/company/role
 ```
 
-Produces a self-contained recruiter simulation prompt — persona, question pool, call flow, all context baked in. Copy it into a voice-capable AI app (Claude mobile app or similar).
+Produces a self-contained interview simulation prompt — persona, question pool, call flow, all context baked in. The persona is set on four axes (temperature, the actual next interviewer where known, round type, and a scenario-hold clause), and you choose a full sim or a 10–12 minute focused rep that is guaranteed to reach its must-hit beats. Copy it into a voice-capable AI app (Claude mobile app or similar).
 
 ### Step 2: Practise by speaking
 
-No typing, no coaching. A realistic 15–20 minute screening call. As close to the real thing as possible.
+No typing, no coaching. A full simulation or a 10–12 minute focused rep. As close to the real thing as possible.
 
 ### Step 3: Debrief the transcript
 
 ```
-/debrief output/verdant-foods/022526-chief-of-staff.md
+/debrief "Verdant Foods hiring-manager call, 2026-02-25"
 ```
 
-Paste the transcript from your voice session. The debrief:
-- Parses the transcript into Q&A pairs
-- Rates each answer (1–5) with trust/credibility impact
-- Compares against coached answers from your coaching files
-- Identifies every triggered anti-pattern
-- Generates a recruiter assessment (checkbox match + trust/credibility)
-- Logs the session to the progress tracker
+The debrief works from the call transcript, which must be saved to `data/voice-corpus/granola/` first (`/granola-pull` does this; `/debrief` blocks otherwise). It:
+- Asks you to score the call cold on five dimensions (Format Resilience, Delivery Crispness, STAR Quality, Applied Listening, Authenticity) before Claude says anything
+- Claude then scores independently with quoted evidence; any dimension where the two scores differ by 1+ point is reconciled, and your adjudicated score is final
+- Flags every triggered anti-pattern and updates the counts
+- Screens the call against the non-negotiables in `data/goals.md`
+- Appends a row to each active hypothesis's test log in `coaching/hypotheses.md`
+- Writes the per-call file to `coaching/progress/` and updates `coaching/progress/_summary.md`
+- For a networking call (nobody evaluating you), it skips the rubric: you rate only how you told your story, and Claude extracts new information, commitments on both sides, the next step, and creates the to-do for anything you owe
 - Advances the `data/job-pipeline.md` stage for the company (real interviews only, Step 9b), so a debriefed round is not re-surfaced by `/standup` as "prep needed"
-- For a real interview, offers to hand off to `/follow-up` (Step 12), which reuses this transcript to ground the thank-you content — completing the chain `/granola-pull → /debrief → /follow-up` (`/granola-pull` is an optional Granola-integration skill that pulls a meeting transcript; it needs the Granola app + MCP. Without it, just paste the transcript into `/debrief` directly.)
+- For a real interview, offers to hand off to `/follow-up` (Step 12), which reuses this transcript to ground the thank-you content — completing the chain `/granola-pull → /debrief → /follow-up` (`/granola-pull` is an optional Granola-integration skill that pulls a meeting transcript; it needs the Granola app + MCP. Without it, save the transcript with `tools/granola_save.py` first; `/debrief` blocks until the raw transcript is on disk, unless `DEBRIEF_NO_RAW=1` is set for a notes-only debrief.)
 
 ---
 
@@ -472,48 +478,50 @@ Saved to `output/<company-slug>/MMDDYY-prep.md`. A debrief to-do is created auto
 
 ## Skills Reference
 
-Full list of all 38 skills:
+Full list of all 40 skills:
 
 | Skill | Arguments | What it does |
 |---|---|---|
 | `/import-cv` | `<path>` or pasted text | Extract and merge CV data into `data/` files. Additive — safe to run repeatedly. |
 | `/extract-identity` | *(none — interactive)* | Guided conversation → `data/professional-identity.md` |
 | `/setup-goals` | *(none — interactive)* | Identity-aware goals setup → `data/goals.md` |
-| `/generate-cv` | `<job-url-or-jd> [context]` | 11-step tailored CV + cheat sheet, saved to `output/<slug>/` |
-| `/apply` | `<job-url-or-jd> [context]` | One-command apply bundle: CV + cover letter + pipeline add |
-| `/cover-letter` | `<job-url-or-role> [context]` | Problem-Solution cover letter saved to `output/<slug>/` |
-| `/review-cv` | `<cv-path> [job-ad-url]` | Fast quality gate: keywords, claims, format |
-| `/review-cv-deep` | `<cv-path> <job-ad-url>` | 6-perspective deep review + Top 10 probing questions |
+| `/generate-cv` | `<job-url-or-jd> [context]` | 11-step tailored CV (PDF + YAML + Markdown) + cheat sheet in `output/<slug>/`; runs `/review-cv-deep` afterwards unless `--no-deep-review` is in the context |
+| `/apply` | `<job-url-or-jd> [context] [--cover-letter] [--no-deep-review] [--skip-research]` | Research-first application campaign: dossier → hiring-manager contact → cold-outreach brief → seeded CV + cheat sheet → confirmed pipeline update. Cover letter only with `--cover-letter` |
+| `/cover-letter` | `<job-url-or-jd> [context]` | Problem-Solution cover letter saved to `output/<slug>/` as Markdown + PDF |
+| `/review-cv` | `<cv-path> [job-ad-url-or-file]` | Fast quality gate: keywords, claims, format |
+| `/review-cv-deep` | `<cv-path> <job-ad-url-or-file>` | 6-perspective deep review + Top 10 probing questions |
 | `/scan-jobs` | `<portal> [search terms]` | Scan a job portal, score fit, deduplicate |
-| `/scan-contacts` | `"Company Name"` | LinkedIn contact scanner — ranks contacts by role proximity, education, network, fit |
-| `/pipe` | `[add/update + args]` | Application pipeline with staleness alerts |
+| `/scan-contacts` | `"Company Name" [count]` | Exa-based contact finder (no LinkedIn login): drops anyone without quotable evidence of current employment, then ranks by role proximity, warm tie, reachability, and personalization surface; offers to add picks to `data/networking.md` |
+| `/pipe` | `[add/update/remove + args]` | Application pipeline with staleness alerts; `remove` closes a row |
 | `/dashboard` | *(none)* | Terminal UI — pipeline by stage, staleness, conversion funnel, search |
-| `/todo` | `[add/done/withdraw + args]` | Task manager with pipeline/contact cross-references |
+| `/todo` | `[add/done/clear + args]` | Task manager with pipeline/contact cross-references and a confirm-first pipeline sync |
 | `/personal-todo` | `[add/done/clear + args]` | Personal life to-do list (household, admin, errands) — sibling of `/todo`, vault-scoped |
-| `/scan-companies` | `[--dry-run]` | Scan configured career pages, score vs. profile, write new matches to `inbox/` |
-| `/discover-companies` | `[thesis or query]` | Exa Agent API discovery of new target companies, scored vs. thesis, proposed to `inbox/` |
+| `/scan-companies` | `[--dry-run]` | Scan configured career pages, score vs. profile, write new matches to `data/inbox.md` |
+| `/discover-companies` | `[preset-name \| --query "..."]` | Exa Agent API discovery of new target companies (or people), scored vs. thesis, proposed to `data/inbox.md` |
 | `/analyze` | `<url> [focus]` | Teardown of a paper/repo/article/video vs. your systems and wisdom -> `output/analysis/MMDDYY-<slug>.md` |
-| `/learn` | `<topic>` | Validated deep briefing — parallel research, BLUF synthesis, comprehension/interview quiz, adversarial claim-check that auto-fixes + cites |
-| `/standup` | *(none)* | Morning briefing — pipeline, todos, outreach, scheduled-interview pins, suggested priority |
+| `/learn` | `<topic> [--focused\|--comprehensive] [--repos <paths>] [--no-quiz] [--no-pdf] [--neutral] [--audience "..."]` | Validated deep briefing: parallel research, BLUF synthesis, comprehension and interview quiz, adversarial claim-check that auto-fixes and cites → `output/MMDDYY-<topic-slug>-briefing.md` (+ PDF) and `-validation.md` |
+| `/standup` | *(none)* | Morning briefing: conversations-had metric, pipeline, new scanned roles, top 3 (scheduled interviews pinned), outreach, follow-ups, suggested priority |
 | `/checkout` | *(none)* | End-of-day close-out — daily log, scheduled-event pins, accomplishments capture, tomorrow's top 3, velocity snapshot, auto private-backup |
 | `/weekly-review` | *(none)* | Weekly retrospective → `data/weekly-review-log.md` |
 | `/memory-refresh` | *(none)* | Shows memory rules due for promotion (recurring but not yet skill/hook-wired) or demotion (unread 60+ days), and offers to act |
 | `/trim-context-file` | `<path>` (default `CLAUDE.md`) | Shrink an always-loaded context file by relocating reference-shaped sections to on-demand docs, leaving a router pointer. Measures first, proposes KEEP/MOVE per section, never deletes, never acts without approval. Runs `tools/trim_context_gate.sh` as a mandatory Step 0. |
 | `/act` | *(none)* | Autonomous execution of Bucket A to-dos, processes inbox/ |
-| `/critique-plan` | *(none — paste plan inline)* | Six-agent plan critique + independent Claude plan + hybrid synthesis |
+| `/analyze-stream` | `<url or "day N of <event>"> [stream_type] [focus]` | Analyze a long recording (45+ min livestream, conference session, podcast, workshop): local Whisper transcription, anomaly review, per-chunk evidence extraction, synthesis against goals, adversarial verification pass → `output/analysis/MMDDYY-<slug>.md` and `-verify.md` |
+| `/verify` | *(no declared argument: state what to verify, the changed paths, your numbered claims and known errors)* | Second-model review. Default mode runs `tools/codex_verify.py` against a plan, handoff, build log or large code change; `--mode diverge` gives an independent answer from the goal alone; a finished document for a named reader goes through `tools/reader_review.py` (Codex, Fable and Grok on accuracy, usefulness, confidentiality). Results land in the ledger read by the pre-push gate and `/standup` |
+| `/critique-plan` | `<path-to-plan-file>` | Six-agent critique of a plan file (five critique lenses plus an independent plan written without seeing the original steps), then an inline hybrid plan. Writes no file |
 | `/research-industry` | `"industry name" [context]` | Parallel-agent industry dossier → `output/<slug>/<slug>.md` |
 | `/research-company` | `"Company Name" [url] [context]` | Parallel-agent company dossier → `output/<slug>/<slug>.md` |
-| `/cold-outreach` | `"Name" "Company" [context]` | First-contact draft, framework-selected, quality-gated, auto-logged |
-| `/outreach-batch` | `"Company" [count] [draft:N]` | Batch cold outreach for one company: finds + ranks contacts, drafts the top N in Nick's voice, writes them all to one review queue in `output/outreach-queue/`. Never auto-sends. |
-| `/follow-up` | `"Name"` or *(none)* | Sequence-aware follow-up, tone-matched; no arg = stale contact dashboard |
-| `/draft-email` | `[context]` | General email drafting — thank-you, status update, intro request, etc. |
-| `/networking` | `add/log/view + args` | Contact tracker with interaction logs and stale-contact alerts |
-| `/prep-interview` | `"Company" [role] [context]` | 3-agent prep package → `output/<slug>/MMDDYY-prep.md` |
+| `/cold-outreach` | `"Name" "Company" [role] [channel:email\|linkedin\|inmail] [context]` | Outreach Brief → stops for your spine → first-contact draft, quality-gated, logged on approval |
+| `/outreach-batch` | `"Company" [count] [draft:N]` | Batch cold outreach for one company: finds + ranks contacts, writes an Outreach Brief for each of the top N, stops for your spine, then drafts from it; everything lands in one review queue in `output/outreach-queue/`. Never auto-sends. |
+| `/follow-up` | `["Name"] [channel:email\|linkedin\|inmail] [context]` | Sequence-aware follow-up, tone-matched; no arg = stale contact dashboard |
+| `/draft-email` | `"Recipient" "purpose" [context]` | General email drafting: thank-you, status update, intro request, expression of interest |
+| `/networking` | *(none)* or `add/log/remove/promote "Name" [args]` | Contact tracker with interaction logs, stale-contact alerts, and per-person dossiers via `promote` |
+| `/prep-interview` | `"Company" [role] [context]` | 3-agent prep package → `output/<slug>/MMDDYY-prep.md` + `.pdf` (rendered only after `tools/check_prep_doc.py` passes) |
 | `/voice-export` | `<cv-path> <job-ad-url>` | Self-contained voice simulation prompt for the Claude App |
-| `/debrief` | `<cv-path>` | Transcript analysis → session log, anti-pattern tracker, coached answers |
+| `/debrief` | `<call context>` (company or person, date) | Interview or drill debrief: you score five dimensions first, Claude annotates, disagreements of 1+ point are reconciled → per-call file in `coaching/progress/`, `_summary.md`, `hypotheses.md`, `anti-pattern-tracker.md` |
 | `/remember` | `<note>` | Route a mid-session note to the right data file (decisions and accomplishments route to their chronological logs) |
 | `/audit-pii` | *(none)* | Pre-commit public-repo PII gate — deterministic denylist scan + anti-anchored semantic subagent pass over changed public files |
-| `/wispr` | *(none, or pasted dictation)* | Pull recent Wispr Flow voice dictations into the session; route to reflections, inbox, or active workflow |
+| `/wispr` | `[30m\|2h\|24h\|all\|peek]` | Pull Wispr Flow voice dictations since the last pull (or a given window) into the session; route to reflections, inbox, or the active workflow. `peek` previews without writing |
 | `/ss` | `[N] [instruction]` | Read your most recent screenshot(s) and act on them. No arg = describe; `huh` = explain it and suggest a skill; `fix` = treat as an error and locate the code. Captures taken within ~2 min of each other are read as one document. An inbound message from a named person routes to a gated networking log |
 
 **Note on CV paths:** `/review-cv` and `/review-cv-deep` accept paths relative to `output/` (e.g., `verdant-foods/022526-chief-of-staff.md`). All other skills that take a CV path expect the full relative path from the repo root (e.g., `output/verdant-foods/022526-chief-of-staff.md`).
@@ -544,14 +552,14 @@ PYTHONIOENCODING=utf-8 python3 tools/projects_to_yaml.py
 
 # Step 2: compose content + theme into render-ready YAML
 PYTHONIOENCODING=utf-8 python3 tools/cv_merge_theme.py \
-  --content output/<company-slug>/MMDDYY-<role-slug>.content.yaml \
+  --content output/<company-slug>/MMDDYY-<lastname>.content.yaml \
   --theme   framework/cv-themes/tuck-mbb.yaml \
-  --out     output/<company-slug>/MMDDYY-<role-slug>.yaml
+  --out     output/<company-slug>/MMDDYY-<lastname>.yaml
 
 # Step 3: render to PDF
-~/.local/bin/rendercv render output/<company-slug>/MMDDYY-<role-slug>.yaml \
-  --pdf-path output/<company-slug>/MMDDYY-<role-slug>.pdf \
-  --markdown-path output/<company-slug>/MMDDYY-<role-slug>.md \
+~/.local/bin/rendercv render output/<company-slug>/MMDDYY-<lastname>.yaml \
+  --pdf-path MMDDYY-<lastname>.pdf \
+  --markdown-path MMDDYY-<lastname>.md \
   --dont-generate-html --dont-generate-png
 ```
 
@@ -658,7 +666,7 @@ After coaching sessions or career reflection, run `/extract-identity` again or d
 /remember Jamie Torres mentioned they're hiring a second CoS-type role in Q2
 ```
 
-Routes to the right file automatically (contact note → networking.md, company note → output dossier, pipeline update → job-pipeline.md, etc.). Captures classified as a `decision` route to `data/decisions.md` and captures classified as an `accomplishment` route to `data/accomplishments.md`, both append-only chronological logs, newest first. `/weekly-review` and `/standup` read these logs.
+Routes to the right file automatically (contact note → networking.md, company note → output dossier, pipeline update → job-pipeline.md, etc.). A note that matches nothing falls back to `data/notes.md`. Tag a note `#personal` to send it to your personal vault's inbox instead; nothing is then written to this repo. Captures classified as a `decision` route to `data/decisions.md` and captures classified as an `accomplishment` route to `data/accomplishments.md`, both append-only chronological logs, newest first. `/weekly-review` and `/standup` read these logs.
 
 **Daily orientation (global command):**
 ```
@@ -666,4 +674,4 @@ Routes to the right file automatically (contact note → networking.md, company 
 /my-world deep
 ```
 
-`/my-world` is a global command (lives in `~/.claude/commands/`, not among the 38 project skills). It loads daily orientation, then runs a gated longitudinal three-axis synthesis over your reflections, written to `data/reflections/_longitudinal.md`. The synthesis pass is gated by default; `/my-world deep` forces it. It is driven by `tools/my_world_synthesis.py`.
+`/my-world` is a global command (lives in `~/.claude/commands/`, not among the 40 project skills). It loads daily orientation, then runs a gated longitudinal three-axis synthesis over your reflections, written to `data/reflections/_longitudinal.md`. The synthesis pass is gated by default; `/my-world deep` forces it. It is driven by `tools/my_world_synthesis.py`.

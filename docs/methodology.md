@@ -95,8 +95,8 @@ Four sub-systems keep the search running daily.
 
 **`/standup`** — Morning briefing. Reads goals, pipeline, todos, outreach log, and networking in parallel, then outputs:
 - Pipeline health snapshot (stages and staleness)
-- Today's top 3 actions with cross-references to contacts and companies
-- Pending outreach with follow-up sequence positions
+- Today's top 3 actions, with scheduled interviews pinned first, shaped by a headline conversations-had metric
+- Outreach awaiting a response, with days since sent and channel
 - One suggested priority action for the day
 
 Reading all five data files together surfaces connections that reading them individually misses — e.g., a stale pipeline entry with an upcoming follow-up that needs to be sent today.
@@ -108,7 +108,7 @@ Reading all five data files together surfaces connections that reading them indi
 
 Cross-referencing to-dos with pipeline entries and contacts adds context that makes prioritization easier — you can see that three of your open tasks are all blocked on the same company.
 
-**`/checkout`** — End-of-day close-out. Generates today's progress snapshot (completion rate, streak, velocity trend) and appends to `data/job-todos-daily-log.md`. Surfaces tomorrow's top 3 priorities and cross-references the weekly review. Bookend to `/standup`.
+**`/checkout`** — End-of-day close-out. Generates today's progress snapshot (completed count, streak, velocity, overdue trend) and writes it to the top of `data/job-todos-daily-log.md`. Surfaces tomorrow's top 3 priorities and cross-references the weekly review. Bookend to `/standup`.
 
 ### Pipeline Management
 
@@ -122,8 +122,9 @@ Researching → Applied → Phone Screen → Interview → Offer → Accepted
 Features:
 - Staleness alerts: entries with no update in >7 days are flagged automatically
 - Per-stage action suggestions (e.g., "7 days in Phone Screen — follow up?")
-- `/pipe add <company> <role>` — add a new entry
-- `/pipe update <company> <stage>` — advance to the next stage
+- `/pipe add <company> <role> [url]` — add a new entry
+- `/pipe update <company> <stage>` — advance to a non-terminal stage
+- `/pipe remove <company>` — close a row (archived as Withdrawn, Rejected, or Accepted)
 - CV Used field updated automatically when `/generate-cv` runs for a company
 
 Staleness alerts are the most useful feature — they surface what needs attention without requiring manual review of the whole pipeline.
@@ -131,8 +132,8 @@ Staleness alerts are the most useful feature — they surface what needs attenti
 ### Weekly Retrospectives
 
 **`/weekly-review`** — Structured retrospective covering:
-- Pipeline health by stage (entries, average age, staleness)
-- Outreach response rates (sent vs. replied, by type and channel)
+- Pipeline health by stage (stage distribution, stalled entries, days since update)
+- Outreach activity: sent, replied, and no-reply counts plus overdue awaiting-response threads (no response-rate percentage)
 - Task velocity: completed this week vs. last week vs. trend
 - Research activity: companies and industries researched
 - Top 5 priorities for the coming week (ranked with rationale)
@@ -143,7 +144,7 @@ Logs to `data/weekly-review-log.md` (newest entries first). Tracking task veloci
 
 **`/act`** — Autonomous execution of actionable to-dos. Classifies items into two buckets before running:
 
-- **Bucket A (executable):** Careers page checks, company research, article reads, pipeline status updates — Claude can run these in parallel
+- **Bucket A (executable):** Careers page checks, company research, article reads, resource browses — Claude can run these in parallel
 - **Bucket B (manual):** Phone calls, in-person tasks, anything requiring human action — listed but not executed
 
 Flow: preview the action plan → user confirms → Bucket A items execute in parallel → results summarized. Also processes items from the `inbox/` capture zone (gitignored raw notes).
@@ -158,12 +159,13 @@ Two depth levels: industry-wide (sector map) and company-specific (deep dossier)
 
 ### Industry Research (`/research-industry`)
 
-Five parallel agents cover:
-1. Market structure and key players
-2. Funding and investment trends
-3. Talent demand and hiring patterns
-4. Trends, regulation, and headwinds
-5. Entry strategy and positioning for the candidate
+Six parallel agents cover:
+1. Market overview and structure
+2. Key players and ecosystem map
+3. Talent demand and career paths
+4. Trends, innovation, and regulation
+5. Entry strategy and target companies for the candidate
+6. Web cross-check: an independent plain-web-search pass over the same ground
 
 Output: industry dossier at `output/<slug>/<slug>.md` — canonical file, versioned in place.
 
@@ -171,12 +173,13 @@ Natural handoff: run industry first to map the sector, then `/research-company` 
 
 ### Company Research (`/research-company`)
 
-Five parallel agents cover:
+Six parallel agents cover:
 1. Company overview — mission, product, stage, business model
 2. Funding and financials — rounds, investors, runway signals
 3. People and culture — founders, leadership, team signals, Glassdoor patterns
 4. News and strategy — recent announcements, pivots, hiring signals
 5. Competitive landscape — positioning, market share, similar companies
+6. Web cross-check — re-covers overview, funding, leadership, and news with plain web search (no Exa), so the synthesis can compare the two for contradictions and gaps
 
 Output: company dossier at `output/<slug>/<slug>.md` with:
 - Conversation starters calibrated to context (coffee-chat, interview, networking)
@@ -234,10 +237,10 @@ An 11-step workflow (defined inline in `.claude/skills/generate-cv/SKILL.md`) ta
 7. **Adjust skill emphasis** — highlight what matches, de-emphasise what doesn't
 8. **Choose language** — match the language of the job posting (or the candidate's preferred language from `data/profile.md`)
 9. **Choose format** — select the appropriate market format (see [style-guidelines.md](../framework/style-guidelines.md))
-10. **Output** — clean markdown at `output/<company-slug>/MMDDYY-[role-slug].md`
+10. **Output** — RenderCV YAML merged with the shared theme and rendered to `output/<company-slug>/MMDDYY-<lastname>.pdf` (plus `.yaml`, `.content.yaml`, and a `.md` used by the review skills); the render is checked to be one page
 11. **Generate cheat sheet** — a companion quick-reference at `output/<company-slug>/MMDDYY-[role-slug]-cheatsheet.md`, with coached answers mapped to each must-have requirement
 
-Also updates the pipeline's CV Used field for the matched company entry.
+Also updates the pipeline's CV Used field for the matched company entry, then automatically runs `/review-cv-deep` on the saved CV (skip with `--no-deep-review`).
 
 **The key insight:** instead of maintaining one generic CV that you retrofit for each application, the system generates a role-specific CV every time, drawing from complete data. A CV for a chief of staff role pulls different projects and emphasises different achievements than one for a product manager role — even though both draw from the same data.
 
@@ -246,7 +249,7 @@ Also updates the pipeline's CV Used field for the matched company entry.
 A **Problem-Solution format** based on meta-analysis of 80+ cover letter studies — leads with the company's challenge, not the candidate's background:
 
 1. **Hook** — the specific problem or challenge the company is facing (opens from their perspective, not yours)
-2. **Proof** — 2–3 concrete proof points showing you've solved that exact problem before (quantified where possible)
+2. **Proof** — 1–2 concrete proof points showing you've solved a similar problem before (quantified where possible)
 3. **Bridge** — how your approach maps to what they need now (forward-looking, not backward-looking)
 4. **Close** — clear signal of interest and a specific ask
 
@@ -291,18 +294,21 @@ Framework selection based on contact type and context:
 
 | Framework | Best for |
 |---|---|
-| Persona-Based | Shared background (alumni, former employer, mutual connection) |
-| 3Ps (Problem → Personal → Proposal) | Direct connection with a clear ask |
-| PAS (Problem → Agitate → Solution) | Decision-maker with a specific pain point |
-| BAB (Before → After → Bridge) | Transformation/outcome focus |
-| AIDA (Attention → Interest → Desire → Action) | Longer-form email with multiple hooks |
+| 1. Persona-Based | Shared alumni, mutual contact, or same company history |
+| 2. 3Ps (Praise → Picture → Push) | Known admirable work, content, or decisions |
+| 3. PAS (Problem → Agitate → Solve) | Identifiable operational pain you can address |
+| 4. BAB (Before → After → Bridge) | Company at an inflection point (post-funding, scaling, pivoting) |
+| 5. AIDA (Attention → Interest → Desire → Action) | General case, no strong signal |
 
 **Channel limits:** email is 200–300 words for a cold first contact, 50–150 for follow-ups and replies, under 50 for logistics; <300 characters for LinkedIn connection requests. The email ranges are the measured lengths of sent emails, not the 75–125 industry benchmark this section used until 2026-10-01.
 
-**Quality gate — three questions before sending:**
-1. Why you? (shared context, specific reason to reach out)
-2. Why now? (timing relevance)
-3. Why me? (what the recipient gets from the conversation)
+**Brief first.** The skill produces an Outreach Brief and stops; drafting starts only after you state the spine (organizing claim, hook, proofs, ask).
+
+**Quality gate — four questions, each answered by quoting the draft verbatim:**
+1. Why you? (this specific person, not anyone at the company)
+2. Why now? (the timing trigger)
+3. Why me? (credibility for this specific ask)
+4. Why this class of role? (the organizing claim)
 
 **Auto-logging:**
 - Contact added/updated in `data/networking.md`
@@ -341,12 +347,13 @@ Matches tone to prior messages with the same recipient. Saved to `output/<compan
 
 ### Contact Tracking (`/networking`)
 
-- **Add contacts** — creates a structured entry with source, context, and first interaction
+- **Add contacts** — creates a roster entry with company, role, and an inferred relationship type
 - **Log interactions** — appends to the contact's interaction log (call, email, coffee, event, LinkedIn)
-- **View history** — shows full interaction log for a contact with suggested next action
+- **View contacts** — no arguments shows every contact sorted by last interaction, with stale contacts called out
 - **Stale flag** — contacts with no interaction in 14+ days are flagged
-- **Auto to-dos** — generates follow-up tasks when a contact's next-action date approaches
-- **Remove contacts** — marks as inactive with a reason
+- **Auto to-dos** — when a logged interaction contains a follow-up action, a follow-up task is created in `data/job-todos.md`
+- **Remove contacts** — deletes the roster row and marks the contact's interaction log `[ARCHIVED]`
+- **Promote** — creates a per-person relationship dossier at `data/people/<slug>.md` for an active relationship
 
 Logging every interaction (even brief ones) creates a searchable contact history that informs outreach personalization — you can reference specific conversations and show continuity across months.
 
@@ -456,13 +463,14 @@ You speak out loud. No typing, no pauses for coaching. As close to a real phone 
 
 ### Step 3: Debrief (`/debrief`)
 
-Paste the transcript back into Claude Code. The debrief skill:
-- Parses the transcript into Q&A pairs
-- Rates each answer (1–5) with trust/credibility impact
-- Compares against coached answers from your coaching files
-- Identifies every triggered anti-pattern
-- Generates a recruiter assessment (checkbox match + trust/credibility)
-- Logs the session to the progress tracker
+Save the transcript (`/granola-pull`, or `tools/granola_save.py`), then run `/debrief`. The debrief skill:
+- Asks you to score the call cold on five dimensions (Format Resilience, Delivery Crispness, STAR Quality, Applied Listening, Authenticity) before Claude says anything
+- Claude then scores independently with quoted evidence; any dimension where the two scores differ by 1+ point is reconciled, and your adjudicated score is final
+- Flags every triggered anti-pattern and updates the counts
+- Screens the call against the non-negotiables in `data/goals.md`
+- Appends a row to each active hypothesis's test log in `coaching/hypotheses.md`
+- Writes the per-call file to `coaching/progress/` and updates `coaching/progress/_summary.md`
+- For a networking call (nobody evaluating you), it skips the rubric: you rate only how you told your story, and Claude extracts new information, commitments on both sides, the next step, and creates the to-do for anything you owe
 
 ---
 
@@ -473,10 +481,10 @@ Paste the transcript back into Claude Code. The debrief skill:
 Takes a company name (and optionally a role and context) and produces a complete prep package in one command. Three parallel agents run simultaneously:
 
 1. **Question mapping** — 10–12 questions this company/role is likely to ask, each mapped to the closest coached answer from your coaching files. Reveals gaps where a prepared answer doesn't exist.
-2. **Company context digest** — mission, key challenge, culture signals, recent news, and 3–5 conversation starters for the interview
+2. **Company context digest** — mission, key business challenge, 1–3 recent developments with conversation starters, what the interviewer likely cares about, and culture signals
 3. **Tactics & logistics** — opening and closing strategy, 5–7 questions to ask the interviewer, logistics checklist
 
-Output: `output/<company-slug>/MMDDYY-prep.md` — one document, everything you need. A debrief to-do is created automatically after the interview is logged.
+Output: `output/<company-slug>/MMDDYY-prep.md` — one document, everything you need, checked by `tools/check_prep_doc.py` and then rendered to a PDF beside it. A debrief to-do is created during the prep run, due on the interview date when one is known.
 
 Separating question mapping, company context, and tactics into parallel agents produces a more complete package and explicitly surfaces gaps in coached answers before the interview, not during it.
 
@@ -484,7 +492,7 @@ Separating question mapping, company context, and tactics into parallel agents p
 
 ## Progress Tracking
 
-Structured scorecards in `coaching/progress-recruiter/` and `coaching/progress-interview/` track improvement across sessions:
+Structured scorecards in `coaching/progress/` track improvement across sessions:
 
 - **Anti-pattern frequency counts** — each pattern is tracked with occurrence count, last-seen date, and trend arrow (improving/stable/worsening)
 - **Per-session logs** — specific examples, coaching notes, strongest/weakest answers, focus areas for next session
@@ -578,11 +586,10 @@ data/                            ← Professional experience (private, gitignore
   ├── weekly-review-log.md        ← Weekly retrospective log
   └── notes.md                    ← General notes and inbox captures
 coaching/                        ← Coaching outputs and progress (private)
-  ├── coached-answers.md          ← Refined spoken phrasings
+  ├── coached-answers/            ← Refined spoken phrasings, one file per question type
   ├── anti-pattern-tracker.md     ← Anti-pattern status, trends, update log
   ├── pressure-points.md          ← Pressure points for tough mode probing
-  ├── progress-recruiter/         ← Session logs + scorecard
-  └── progress-interview/         ← Session logs + scorecard
+  └── progress/                   ← Session logs + scorecard (`_summary.md`)
 inbox/                           ← Raw capture zone (gitignored, processed by /act)
 memory/                          ← Persistent session context (auto-memory system)
   ├── MEMORY.md                  ← Auto-loaded every session — router + critical context only (<100 lines)
@@ -594,14 +601,14 @@ memory/                          ← Persistent session context (auto-memory sys
   ├── extract-identity/           ← /extract-identity — professional self-discovery
   ├── setup-goals/                ← /setup-goals — identity-aware goals bootstrapper
   ├── generate-cv/                ← /generate-cv — 11-step tailored CV + cheat sheet
-  ├── apply/                      ← /apply — one-command apply bundle (CV + cover letter + pipeline)
+  ├── apply/                      ← /apply — research-first application campaign (dossier → contact → outreach brief → CV → pipeline)
   ├── cover-letter/               ← /cover-letter — Problem-Solution cover letter
   ├── review-cv/                  ← /review-cv — fast quality gate
   ├── review-cv-deep/             ← /review-cv-deep — 6-perspective deep review
   ├── scan-jobs/                  ← /scan-jobs — job portal scanner with fit scoring
-  ├── scan-contacts/              ← /scan-contacts — LinkedIn contact scanner + ranker
+  ├── scan-contacts/              ← /scan-contacts — Exa-based contact finder + evidence gate + ranker
   ├── scan-companies/             ← /scan-companies — career-page scanner → inbox matches
-  ├── discover-companies/         ← /discover-companies — Exa Websets company discovery
+  ├── discover-companies/         ← /discover-companies — Exa Agent API company discovery
   ├── pipe/                       ← /pipe — application pipeline tracking
   ├── dashboard/                  ← /dashboard — Textual TUI pipeline view
   ├── todo/                       ← /todo — task manager with cross-references
@@ -709,9 +716,9 @@ Goals + identity ──→ /setup-goals ──→ data/goals.md
 Industry name ──→ /research-industry ──→ output/<slug>/<slug>.md
 Company name  ──→ /research-company  ──→ output/<slug>/<slug>.md
 
-Job ad ──→ /scan-jobs ──→ fit assessment + pipeline entry
+Job portal ──→ /scan-jobs ──→ ranked fit table + evaluated-ads cache (pipeline entry on confirmation)
 
-Job ad ──→ /generate-cv ──→ output/<slug>/MMDDYY-[role].md
+Job ad ──→ /generate-cv ──→ output/<slug>/MMDDYY-<lastname>.{pdf,yaml,md}
        └─→ Cheat sheet  ──→ output/<slug>/MMDDYY-[role]-cheatsheet.md
 
 Job ad ──→ /cover-letter ──→ output/<slug>/MMDDYY-cover-letter.md
@@ -723,7 +730,7 @@ Company ──→ /prep-interview ──→ output/<slug>/MMDDYY-prep.md
 
 /cold-outreach ──→ networking.md + outreach-log.md + output/<slug>/MMDDYY-cold-outreach-*.md
 /follow-up     ──→ networking.md + outreach-log.md + output/<slug>/MMDDYY-follow-up-*.md
-/draft-email   ──→ outreach-log.md + output/<slug>/MMDDYY-draft-email-*.md
+/draft-email   ──→ networking.md + outreach-log.md + job-todos.md (follow-up to-do) + output/<slug>/MMDDYY-draft-email-*.md
 
 /standup ──→ daily brief (reads goals, pipeline, todos, outreach, networking)
 /weekly-review ──→ data/weekly-review-log.md
@@ -735,14 +742,14 @@ CV + job ad ──→ /voice-export ──→ Voice prompt (paste into voice app
                        Transcript ←────┘
                            │
                     /debrief ──→ Session analysis ──→ Progress tracker
-                                                  ├─→ Coached answers update
+                                                  ├─→ Cross-call summary update (_summary.md)
                                                   ├─→ Anti-pattern tracker update
-                                                  └─→ Pressure points update
+                                                  └─→ Hypothesis test log update
 
 CV + job ad ──→ Coaching session (recruiter/HM/full-sim) ──→ Progress tracker
-                                                  ├─→ Coached answers update
+                                                  ├─→ Cross-call summary update (_summary.md)
                                                   ├─→ Anti-pattern tracker update
-                                                  └─→ Pressure points update
+                                                  └─→ Hypothesis test log update
 ```
 
 ---

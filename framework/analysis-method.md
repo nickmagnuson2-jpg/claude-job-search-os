@@ -11,9 +11,27 @@ minutes of reading, something per-engagement has leaked in and should be evicted
 | Layer | Where | Holds |
 |---|---|---|
 | **Standing** | this file, `frame-schema.yaml`, `method-moves.yaml` | Encoded once. Free at run time |
-| **Execution** | `.claude/workflows/analysis-method.js` | Stages. Agent stages run unbounded; operator stages stop and ask |
+| **Execution** | The session, writing through `tools/frame_write.py` | Stages. Agent stages run unbounded; operator stages stop and ask. `frame_write.py` enforces segment order and is the only write path. **No workflow script runs this method end to end yet** (see below) |
 | **State** | `output/<slug>/frame.yaml` | One file, whole engagement |
 | **Gates** | `tools/check_frame_integrity.py`, `framework/deck-rubric.md` | Deterministic where possible, blind-agent or human where not |
+
+### Framework versus workflow
+
+A **framework doc** (`framework/*.md`) holds rules a session reads and applies. A **workflow**
+(`.claude/workflows/*.js`) is a script the `Workflow` tool executes: fixed control flow over many
+agents. This method is a framework with tool-enforced state, and only one part of it is a workflow.
+
+| Part of the method | What runs it | Kind |
+|---|---|---|
+| The stages (D1, D2, element set, dispositions, recommendation) | The session, following this file | Framework |
+| Stage order and every frame mutation | `tools/frame_write.py` | Tool |
+| The integrity gate (Section F) | `tools/check_frame_integrity.py` | Tool |
+| The adversarial fork on a frame | `.claude/workflows/plan-hardening.js`, specified in `framework/plan-hardening-v2-spec.md` | Workflow |
+
+An earlier version of this table named `.claude/workflows/analysis-method.js` as the execution
+layer. That script is planned and not yet built (decided 2026-10-06: build it from the logged ad hoc
+runs); `analysis-method-CHANGELOG.md` records the orchestrating skill and segment workflow as
+unbuilt, with the tool layer beneath them done. Until it exists, the table above is what runs.
 
 ## The unit of cost
 

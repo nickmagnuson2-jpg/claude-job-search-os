@@ -1,5 +1,16 @@
 # Analysis Method — Changelog
 
+## 2026-10-06 — Pointer correction: the execution layer is not a workflow script
+
+**No rule changed.** The layers table in `analysis-method.md` named
+`.claude/workflows/analysis-method.js` as the execution layer. That file is not on disk and has no
+git history. The table now says what runs each part: the session runs the stages,
+`tools/frame_write.py` enforces order and owns every write, `tools/check_frame_integrity.py` is the
+gate, and `.claude/workflows/plan-hardening.js` is the one scripted workflow (the adversarial fork).
+A short "Framework versus workflow" section states the distinction. The orchestrating skill and
+segment workflow remain unbuilt, as recorded in the 2026-08 entries below. Decision the same day:
+build `analysis-method.js` from the logged ad hoc runs.
+
 ## 2026-09-21 — F15: the frame now has to account for what the page prints
 
 **What was missing.** F2a checks that every ELEMENT traces to a real fact. Nothing checked the

@@ -40,7 +40,7 @@ How the 11 behavioral patterns in the global CLAUDE.md snippet map to this proje
 **Project implementation:**
 - `.claude/skills/weekly-review/SKILL.md` — append-only with "Do not delete entries"
 - `.claude/skills/checkout/SKILL.md` — daily log snapshots to `data/job-todos-daily-log.md` (absorbed from `/todo daily` 2026-02-26)
-- `coaching/progress-recruiter/_summary.md` and `coaching/progress-interview/_summary.md` — session scorecards
+- `coaching/progress/_summary.md` — session scorecards
 - `coaching/anti-pattern-tracker.md` — Update Log section
 
 ### 5. Note Routing

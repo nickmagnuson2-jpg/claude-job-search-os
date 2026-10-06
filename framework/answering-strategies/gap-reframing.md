@@ -181,7 +181,7 @@ Don't bring it up. Recruiters forget half the nice-to-haves. Only address gaps t
 
 ## Real-World Examples from Coaching Sessions
 
-As you practise with `/debrief` and coaching sessions, strong reframes get saved to `coaching/coached-answers.md`. Below is the structure of a good example — replace the placeholders with your own after sessions.
+As you practise with `/debrief` and coaching sessions, strong reframes get saved to `coaching/coached-answers/`, one file per question type. Below is the structure of a good example — replace the placeholders with your own after sessions.
 
 ### Example Structure
 
@@ -196,7 +196,7 @@ As you practise with `/debrief` and coaching sessions, strong reframes get saved
 - ✅ Question-back reframes the requirement (tooling vs. outcome, specific product vs. underlying skill)
 - ✅ Confident framing — states what you *have* done, not what you haven't
 
-**Scoring:** After each session, rate your reframes 1-5 and save the best ones to `coaching/coached-answers.md` for reuse.
+**Scoring:** After each session, rate your reframes 1-5 and save the best ones to `coaching/coached-answers/` for reuse.
 
 ---
 

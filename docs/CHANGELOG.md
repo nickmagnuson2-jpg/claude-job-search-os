@@ -3,6 +3,90 @@
 All notable changes to this job search system are recorded here.
 Format: newest entries at the top.
 
+## 2026-10-06: Documentation brought back in line with the skills, two skill contradictions closed, one framework doc depersonalized
+
+**What prompted it.** A single stale path (`coaching/coached-answers.md`, retired 2026-09-21) turned
+up in four framework docs. Checking for others showed the drift was wider than paths: the user-facing
+docs described several skills as they worked months ago. No tool or hook changed in this pass; it is
+docs, three skill files, and two framework files.
+
+**Stale references repointed.**
+- `coaching/coached-answers.md` (single file) -> the `coaching/coached-answers/` directory, 20
+  references across 10 files. Two framework docs named pitch sections that no longer exist; they now
+  point at the "Current pitch" section of `recruiter-pitch.md`.
+- `coaching/progress-recruiter/` and `coaching/progress-interview/` -> the single
+  `coaching/progress/` directory that `/debrief` writes to, about 20 references including `CLAUDE.md`.
+- One archived research file repointed to its archive location.
+
+**Inventories corrected.**
+- Skill count 38 -> 40 in `README.md`, `CLAUDE.md`, `docs/usage.md`. Five skills were missing from
+  the README catalog and two from the usage table.
+- 18 hooks wired in `.claude/settings.json` had no row in the README hook table; added, each from its
+  own docstring and trigger. `check_plan_partner_critique.py` was documented as active and is not
+  wired; its row now says so.
+- Two scheduled jobs (`automation-health`, `detector-scan`) added to `docs/tools-reference.md`.
+
+**Skill descriptions checked against all 40 `SKILL.md` files** (four parallel read-only reviewers,
+each finding re-checked against the cited skill line before it was applied). About 100 doc lines
+changed across `docs/usage.md`, `docs/methodology.md`, `docs/workflows.md`,
+`docs/getting-started.md`, `docs/faq.md`, `docs/tools-reference.md` and `README.md`. The largest:
+- `/apply` was documented as a CV + cover-letter bundle. It is a research-first campaign (dossier,
+  hiring-manager contact, outreach brief, seeded CV), with a cover letter only on `--cover-letter`,
+  and it writes "To Apply", not "Draft Generated".
+- `/debrief` was documented as per-answer ratings feeding coached answers. It is candidate-first
+  scoring on five dimensions with reconciliation, and it writes progress, hypotheses and the
+  anti-pattern tracker. It does not write coached answers.
+- `/cold-outreach`: brief first, stop for the spine, four-question gate, 200-300 words.
+- `/research-company` and `/research-industry`: six agents, Exa primary with a web cross-check.
+- `/scan-contacts`: Exa-based, no LinkedIn login. `/discover-companies`: Exa Agent API.
+- `/generate-cv`: reverse-chronological, person-named file stem, PDF output, automatic deep review.
+- Argument forms corrected for `/pipe`, `/todo`, `/networking`, `/draft-email`, `/follow-up`,
+  `/wispr`, `/critique-plan`, `/verify`, `/learn`, `/cover-letter`.
+
+**Two skill contradictions closed.**
+- **`/outreach-batch` drafted before the spine.** `/cold-outreach` changed its default on 2026-10-01
+  (Outreach Brief, then stop for the candidate's spine, then draft). `/outreach-batch` still went
+  from research straight to drafting. It now writes a Brief per contact to the review queue, stops
+  for the spine, and drafts only contacts whose spine has been stated. Its gate is the four-question
+  form.
+- **`/voice-export` disagreed with its own Step 7 gate in four places.** The mandatory
+  eight-property gate was treated as authoritative: the prompt no longer ends with a `Say "Start"`
+  line (property 1 fails it) and uses the first-words block plus the `Ready.` / `go` handshake; the
+  output is two blocks, durable half and first-message half (property 6), not one; the size check is
+  the ~6KB-per-paste ceiling (property 4), replacing a looser 8,000-word limit; and the full-sim
+  length is 15-20 minutes everywhere (one line said ~25). `framework/voice-export.md` section 7
+  updated to match.
+- Smaller self-inconsistencies fixed in `/research-industry` (intro said five agents) and
+  `/discover-companies` (heading still said Websets).
+
+**`framework/application-workflow.md` depersonalized.** Verbatim application answers, application
+dates, an employment detail the candidate does not volunteer, real titles used as an example, and
+origin-incident specifics were replaced with generic statements of the same rules. The specifics
+moved to a private memory file that the doc points to, so the standing-answer behavior is unchanged.
+
+**Framework versus workflow made explicit.** `framework/analysis-method.md` named
+`.claude/workflows/analysis-method.js` as its execution layer; that script does not exist. The doc
+now has a table of what runs each part (the session, `tools/frame_write.py`,
+`tools/check_frame_integrity.py`, and `plan-hardening.js` for the adversarial fork), and
+`framework/multi-agent-workflows.md` maps each workflow script to its framework doc.
+`framework/multi-model-architecture.md`, cited four times, also does not exist; those references
+now point at the `/verify` skill and its scripts.
+
+**Planned, not built (both queued as to-dos):** `analysis-method.js`, to be built from the logged ad
+hoc runs, and `framework/multi-model-architecture.md`.
+
+**Left open for a decision, deliberately not changed:**
+- The profile guard. `CLAUDE.md` says never fall back to generic candidate context;
+  `/research-company`, `/research-industry` and an edge case in `/generate-cv` say to proceed
+  without a profile, and `docs/methodology.md` lists several skills as guarded that carry no guard.
+- `/todo withdraw` is in the docs and the script but not in the skill file.
+- `/personal-todo` and `/remember` disagree on where a personal action item goes.
+- `/review-cv` prepends `output/` to its argument while `/generate-cv` suggests a path that already
+  starts with it.
+
+**What this pass does not establish.** Docs were compared to skill files, not to the scripts the
+skills call. The dated "what was built" history in `docs/methodology.md` was left as history.
+
 ## 2026-09-14: CLAUDE.md trimmed to 1.1KB of headroom, and a reconciler so agent shortlists stop recommending closed companies
 
 **`CLAUDE.md` was 26 bytes from its 40,960-byte always-loaded budget.** A documentation pass earlier

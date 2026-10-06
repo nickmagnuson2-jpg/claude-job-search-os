@@ -19,7 +19,7 @@ The system runs without these, but several skills unlock more when they are conn
 
 - **Wispr Flow** (voice-dictation desktop app) — powers the `/wispr` capture path, so a voice dump routes into the right files. Install the app; `/wispr` reads its recent transcripts.
 - **Granola** (meeting-notes app) — powers `/granola-pull`, the transcript sourcing in `/debrief` and `/follow-up`, and the auto-debrief background job. Needs the Granola app and its local auth.
-- **Exa** — an optional research booster, not required. The research skills run on standard web search by default; adding an Exa API key sharpens `/research-company` and `/research-industry` retrieval (better primary-source reach), with web search kept in the mix as an independent cross-check. Only `/discover-companies` (Exa Websets) actually depends on Exa, and that endpoint needs an Exa Pro plan.
+- **Exa** — the primary retrieval source for the research skills. `/research-company` and `/research-industry` send five of their six agents to Exa and keep one plain-web-search agent as an independent cross-check. `/discover-companies` (Exa Agent API) and `/scan-contacts` (Exa search) cannot run without `EXA_API_KEY`.
 
 ---
 
@@ -102,9 +102,9 @@ With your data in place, generate something you would actually use. Find a job p
 /apply https://jobs.lever.co/company/role-id
 ```
 
-This runs the full application bundle: a tailored CV, a companion interview cheat sheet, a problem-solution cover letter, and a new pipeline entry, all under `output/<company-slug>/`.
+This runs the full application campaign: a company dossier, the hiring-manager contact and an outreach brief, then a tailored CV with a companion interview cheat sheet, all under `output/<company-slug>/`, and a pipeline entry. Add `--cover-letter` if the application form requires one.
 
-> **You should see:** a complete, role-specific application bundle. The pipeline entry is marked "Draft Generated," not "Applied," and only flips to Applied after you confirm you actually submitted.
+> **You should see:** research, an outreach brief that waits for your spine, and a role-specific CV. If you have not submitted yet, the pipeline entry is set to "To Apply," not "Applied," and only flips to Applied after you confirm you actually submitted.
 
 That is the loop. From here, the system rewards a simple habit: capture context as it arrives with `/wispr` and `/remember`, and run `/standup` to start each day. The more you feed the data layer, the sharper every output gets.
 

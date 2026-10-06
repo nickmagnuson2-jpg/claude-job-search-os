@@ -108,14 +108,14 @@ Scan `memory/MEMORY.md` (auto-loaded every session — Critical Context + the To
 
 ```
 framework/         Workflows, methodologies, style guides, templates
-coaching/          coached-answers/, pressure-points/, anti-pattern-tracker.md, progress-recruiter/
+coaching/          coached-answers/, pressure-points/, anti-pattern-tracker.md, progress/
 data/              Owner data (profile.md, goals.md, professional-identity.md gitignored)
   ├─ company-notes/, industry-notes/, projects/
   ├─ people/               Per-person relationship dossiers (active relationships only; no date prefix)
   ├─ project-background/   Sensitive — never in output
   ├─ reflections/          Snapshots of Nick's processing (date-prefixed)
   └─ workbooks/            Reusable frameworks (no date prefix)
-.claude/skills/    38 slash-command skill definitions
+.claude/skills/    40 slash-command skill definitions
 memory/            ⚠️ THREE PHYSICAL ROOTS, not one. Resolve before asserting any file is absent.
   ├─ ~/.claude/projects/-Users-mag-Documents-Obsidian-30-projects-job-search/memory/
   │                    THE LIVE TIER (910 files, measured 2026-09-15). MEMORY.md (router + Critical

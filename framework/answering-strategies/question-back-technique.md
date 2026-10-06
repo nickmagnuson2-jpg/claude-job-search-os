@@ -239,7 +239,7 @@ Add these to your cheat sheets.
 
 ## Building Your Own Examples
 
-As you practise (via coaching sessions or `/debrief`), strong question-back moments get saved to `coaching/coached-answers.md`. Review those for real examples that worked in your voice — they're more useful than generic templates.
+As you practise (via coaching sessions or `/debrief`), strong question-back moments get saved to `coaching/coached-answers/`, one file per question type. Review those for real examples that worked in your voice — they're more useful than generic templates.
 
 ## Key Principles
 

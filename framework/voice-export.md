@@ -19,7 +19,7 @@ No other user input is required.
 
 ## Output
 
-A single markdown code block (< 8,000 words) that the candidate copies into the Claude App to start a voice-based recruiter screening simulation.
+Two markdown code blocks, each under ~6KB (a durable half for the host app's persistent-instructions field and a variable half pasted as the first message), that the candidate copies into the Claude App to start a voice-based recruiter screening simulation.
 
 ## Data Sources
 
@@ -131,19 +131,19 @@ Instructions for natural call pacing:
 - **Natural behaviour:** Pause, react, follow up on interesting answers. Don't just read from a list.
 - **Ending:** When the call reaches a natural end, close professionally. Then — and only then — drop the recruiter role and say: "End of simulation. Take this conversation to Claude Code for a full debrief with your coaching files."
 
-### 7. Start Instruction
+### 7. Opening and Handshake
 
-A short line at the very end:
-
-Provide the start instruction in the detected CV language. Translate to match. Examples:
-- EN: `Say "Start" to begin the call.`
-- DE: `Sag "Start" um das Gespräch zu beginnen.`
+Do not end the prompt with a start line such as `Say "Start" to begin the call`: a trailing
+instruction is ambiguous about who speaks. Put the persona's exact first words at the top of the
+prompt, followed by "and nothing else", in the detected CV language. Instruct the partner to reply
+with one word (`Ready.`) and to deliver those first words only after the operator says `go`. The
+governing checks are the eight structural properties in `.claude/skills/voice-export/SKILL.md` Step 7.
 
 ## Quality Rules
 
 The generated export prompt must satisfy:
 
-1. **< 8,000 words** — Claude App context limit. Count before output.
+1. **Under ~6KB per paste** — the ceiling set by the Step 7 structural gate in the skill (persona and rules at the top of a longer paste decay by mid-session). Byte-count each paste before output.
 2. **No file references** — no paths, no `data/...`, no `coaching/...`. Everything inline.
 3. **Clear section headers** — use `##` so Claude can parse the structure.
 4. **Consistent language** — match the CV language throughout (don't mix DE/EN).
@@ -152,7 +152,7 @@ The generated export prompt must satisfy:
 
 ## Compression Strategies
 
-If the assembled prompt exceeds 8,000 words, apply in this order:
+If a paste exceeds the ~6KB ceiling, apply in this order:
 
 1. **CV → keep summary + skills table + project headers with key bullets** — drop detailed technology lists per project
 2. **Deep review questions → top 5 only** — prioritise by severity (CRITICAL > IMPORTANT)

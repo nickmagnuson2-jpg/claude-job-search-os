@@ -6,7 +6,7 @@ user-invocable: true
 allowed-tools: Bash(*), Read(*), Write(data/inbox.md), Write(data/discover-presets.yaml)
 ---
 
-# Discover Companies (Exa Websets)
+# Discover Companies (Exa Agent API)
 
 Discover *new* companies matching Nick's role-shape thesis, score them
 deterministically, and write a review-gated proposal to `data/inbox.md`.

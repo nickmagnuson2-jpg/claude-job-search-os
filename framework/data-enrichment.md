@@ -58,6 +58,6 @@ This step should take 1-2 minutes, not become a second session. If the enrichmen
 ## What NOT to Do
 
 - **Don't invent details.** Only capture what the candidate actually said. Don't infer achievements or embellish.
-- **Don't update coached-answers.md here.** Strong phrasings are already handled in the progress tracking step. This step is for raw data, not coached delivery.
+- **Don't update `coaching/coached-answers/` here.** Strong phrasings are already handled in the progress tracking step. This step is for raw data, not coached delivery.
 - **Don't update coaching files** (anti-pattern tracker, pressure points, etc.). Those are handled in earlier progress tracking steps.
 - **Don't force it.** If the session didn't surface any new data file information, say so and move on. Not every session produces enrichment.

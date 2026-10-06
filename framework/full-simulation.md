@@ -65,7 +65,7 @@ Which answer was most problematic? Quote the core of the answer and explain the 
 
 ### 4. Anti-Pattern Log
 
-Table of every anti-pattern triggered during the conversation. Use the anti-patterns from the relevant scorecard in `coaching/progress-recruiter/_summary.md` or `coaching/progress-interview/_summary.md`, plus any plugin-provided anti-patterns that were loaded for this session. Also note moments where a strategy from `framework/answering-strategies/` or an active plugin's strategies was applied well or should have been applied.
+Table of every anti-pattern triggered during the conversation. Use the anti-patterns from the relevant scorecard in `coaching/progress/_summary.md`, plus any plugin-provided anti-patterns that were loaded for this session. Also note moments where a strategy from `framework/answering-strategies/` or an active plugin's strategies was applied well or should have been applied.
 
 | Anti-Pattern | Quote | Moment |
 |---|---|---|
@@ -77,7 +77,7 @@ If no anti-patterns were triggered, say so explicitly — that's a result worth 
 
 **Only include this section if the candidate chose "with cheat sheet."**
 
-Compare the candidate's answers against the coached answers from `coaching/coached-answers.md` and any role-specific cheat sheet from `output/`.
+Compare the candidate's answers against the coached answers in `coaching/coached-answers/` (every file) and any role-specific cheat sheet from `output/`.
 
 | Coached Answer Topic | Status |
 |---|---|
@@ -103,7 +103,7 @@ Three concrete, actionable changes for the next simulation. Not generic advice �
 
 When the debrief is delivered:
 
-1. **Create a session file** — copy the relevant template (`framework/templates/recruiter-session.md` or `framework/templates/interview-session.md`) to `coaching/progress-recruiter/YYYY-MM-DD-HHMM-[FULL-SIM]-role-slug.md` or `coaching/progress-interview/YYYY-MM-DD-HHMM-[FULL-SIM]-role-slug.md`. Fill in all standard sections, then append the full debrief as an additional "## Full Simulation Debrief" section.
+1. **Create a session file** — copy the relevant template (`framework/templates/recruiter-session.md` or `framework/templates/interview-session.md`) to `coaching/progress/YYYY-MM-DD-HHMM-[FULL-SIM]-role-slug.md`. Fill in all standard sections, then append the full debrief as an additional "## Full Simulation Debrief" section.
 2. **Update the summary** — in the relevant `_summary.md` (if it doesn't exist yet, copy the matching summary template from `framework/templates/` first):
    - Add a row to the Session Index with `[FULL-SIM]` tag
    - Increment anti-pattern counts from the Anti-Pattern-Log, update "Last Seen" date, set Trend
@@ -113,7 +113,7 @@ When the debrief is delivered:
    - Move patterns between status categories if warranted
    - Add new patterns if discovered during the simulation
    - Add a line to the Update Log
-4. **Ask the candidate** if any strong phrasings should be saved to `coaching/coached-answers.md`
+4. **Ask the candidate** if any strong phrasings should be saved to the matching `<question-type>.md` in `coaching/coached-answers/`
 5. **Data enrichment** — check if the simulation surfaced new information (project details, achievements, technologies, skills) that should be captured in the data files. Follow the procedure in `framework/data-enrichment.md`.
 
 ## See Also

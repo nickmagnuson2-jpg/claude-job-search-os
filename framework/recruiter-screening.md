@@ -39,7 +39,7 @@ Load the following data files to inform the session:
 - `coaching/pressure-points.md` — known pressure points for targeted probing
 - `coaching/anti-pattern-tracker.md` — current status of all anti-patterns (which are resolved, which to watch for)
 - `data/professional-identity.md` — identity, values, narrative patterns (if exists from `/extract-identity`)
-- `coaching/coached-answers.md` — use the **15-Second Pitch (Recruiter)** as the baseline pitch
+- `coaching/coached-answers/recruiter-pitch.md` — use the **Current pitch** section at the top as the baseline pitch; ignore everything under "Superseded pitches"
 - Match relevant projects from `data/projects/` to the target role
 - `framework/answering-strategies/` — answering strategy frameworks (gap reframing, pin-down defense, direct answer structure, etc.). Use these as evaluation lenses when coaching — name the specific strategy in feedback when the candidate applies one well or misses one.
 - **Plugins:** If active plugins were loaded in `framework/interview-workflow.md` step 3, include their questions in the question pool and their anti-patterns in session tracking. Plugin-provided answering strategies are additional evaluation lenses alongside the core strategies.
@@ -131,7 +131,7 @@ In addition to the standard coaching, tough mode coaching should specifically as
 - **Did the answer defuse the concern or amplify it?** The goal is to acknowledge reality, pivot to strength, and leave the recruiter comfortable.
 - **Was the candidate defensive?** Defensiveness confirms the concern. Confident contextualisation dissolves it.
 - **Did the candidate volunteer additional negatives** while being honest about the first one?
-- **Check against the coached frameworks** in `coaching/coached-answers.md` and `framework/answering-strategies/` — did the candidate use them or fall back to anti-patterns?
+- **Check against the coached frameworks** in `coaching/coached-answers/` and `framework/answering-strategies/` — did the candidate use them or fall back to anti-patterns?
 - Provide a "strongest possible answer" that addresses the underlying concern while landing positively.
 
 ## After the Session — Progress Tracking
@@ -139,12 +139,12 @@ In addition to the standard coaching, tough mode coaching should specifically as
 When the session wraps up (or the candidate says they're done):
 
 1. **Deliver Takeaway** — before saving anything, deliver a **Takeaway** to the candidate in chat: a 3-4 sentence executive summary covering what happened in the session, what the dominant patterns were, what went well, and the single most important thing to fix next. This is the candidate's immediate debrief — keep it direct and actionable.
-2. **Create a session file** — copy `framework/templates/recruiter-session.md` to `coaching/progress-recruiter/YYYY-MM-DD-HHMM-role-slug.md` and fill in all sections based on the session
-3. **Update the summary** — in `coaching/progress-recruiter/_summary.md` (if it doesn't exist yet, copy `framework/templates/recruiter-summary.md` first):
+2. **Create a session file** — copy `framework/templates/recruiter-session.md` to `coaching/progress/YYYY-MM-DD-HHMM-role-slug.md` and fill in all sections based on the session
+3. **Update the summary** — in `coaching/progress/_summary.md` (if it doesn't exist yet, copy `framework/templates/recruiter-summary.md` first):
    - Add a row to the Session Index linking to the new file
    - Increment anti-pattern counts in the Scorecard for any that were triggered, update "Last Seen" date, and set Trend (↑ worse / → stable / ↓ improving)
    - Recalculate Overall Status (session count, average confidence, top recurring anti-pattern)
-4. **Save strong phrasings** — if any answers from the session are stronger than existing coached answers (or cover new topics), update `coaching/coached-answers.md` directly
+4. **Save strong phrasings** — if any answers from the session are stronger than existing coached answers (or cover new topics), update the matching `<question-type>.md` in `coaching/coached-answers/` directly (create the file if none exists and delete its row from `_backlog.md`)
 5. **Update pressure points** — if new pressure points were discovered or existing ones changed status, update `coaching/pressure-points.md`
 6. **Update anti-pattern tracker** — in `coaching/anti-pattern-tracker.md`:
    - Update status, last-seen, and trend for any pattern triggered or notably absent

@@ -172,7 +172,7 @@ Every vault file gets a `voice:` frontmatter field declaring its provenance. Thi
 | Tier | Meaning | Examples | Test: does it sound like Nick? |
 |---|---|---|---|
 | `voice: self` | Nick wrote/dictated every word, no AI editing | Raw Wispr captures, manually-typed outreach drafts, first-draft journal entries, `/remember` captures | Yes (gold standard) |
-| `voice: mixed` | Nick's voice with **light AI editing** OR recalled content from others | Lightly-Claude-edited reflections, recruiter debriefs in `coaching/progress-recruiter/`, networking interaction logs, call notes citing what someone else said | Yes (still recognizable) |
+| `voice: mixed` | Nick's voice with **light AI editing** OR recalled content from others | Lightly-Claude-edited reflections, recruiter debriefs in `coaching/progress/`, networking interaction logs, call notes citing what someone else said | Yes (still recognizable) |
 | `voice: co-authored` | **Heavy AI articulation.** Nick approved the synthesis but didn't write the prose. | `data/professional-identity.md` (from `/extract-identity`), `data/projects/*.md`, `data/goals.md` three-paths framework, `data/profile.md` (from `/import-cv`), Claude-synthesized journal/debrief writeups | No — reads more like Claude |
 
 **The mixed-vs-co-authored line is a judgment call.** The test: would a recruiter who knows Nick recognize the voice? Light editing (Claude trimming, fixing typos, tightening) keeps the answer yes — `mixed`. Heavy synthesis (Claude structuring sections, writing the prose, applying Claude's pattern-stamps like "Lesson:" / parallel structure / em dashes) reads as Claude — `co-authored`.

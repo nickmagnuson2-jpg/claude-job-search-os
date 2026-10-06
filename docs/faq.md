@@ -68,13 +68,13 @@ Only the files the skills instruct it to read, routed by `CLAUDE.md`. That data 
 ## Using it day to day
 
 **What is the difference between `/generate-cv` and `/apply`?**
-`/generate-cv` produces just the tailored CV plus a cheat sheet. `/apply` is the full bundle: CV, problem-solution cover letter, and a new pipeline entry, in one command. Use `/apply` when you are ready to apply, `/generate-cv` when you only want the CV.
+`/generate-cv` produces just the tailored CV plus a cheat sheet. `/apply` is the full campaign: company dossier, hiring-manager contact, outreach brief, then a seeded CV and a pipeline update. It writes a cover letter only with `--cover-letter`. Use `/apply` when you are ready to apply, `/generate-cv` when you only want the CV.
 
 **What is the difference between `/todo` and `/personal-todo`?**
 `/todo` is the job-search list, cross-referenced against your pipeline and contacts. `/personal-todo` is the same idea scoped to your personal vault (household, admin, errands) with no pipeline sync. They are siblings, deliberately separate.
 
 **Why didn't it mark my application as Applied?**
-By design. New artifact generation sets the pipeline to "Draft Generated," never "Applied." It only flips to Applied when you confirm you actually submitted, because a phantom Applied row quietly corrupts every view of where your search stands. Run `/pipe update "<company>" Applied` after you submit.
+By design. New artifact generation sets the pipeline to "To Apply," never "Applied." It only flips to Applied when you confirm you actually submitted, because a phantom Applied row quietly corrupts every view of where your search stands. Run `/pipe update "<company>" Applied` after you submit.
 
 **`/review-cv` or `/review-cv-deep`?**
 `/review-cv` is a fast quality gate (keywords, claim integrity, formatting). `/review-cv-deep` runs six reviewers from different perspectives and also surfaces the top ten probing questions the CV would trigger. Use the fast one routinely, the deep one for high-stakes applications.

@@ -214,6 +214,18 @@ To adapt one, copy it, keep the skeleton (the loop / fan-out / schema discipline
 and change the prompts and schema for your domain. The skeleton is the reusable part;
 the prompts are the disposable part.
 
+### Which framework doc each workflow implements
+
+A framework doc states rules for a session to apply; a workflow is a script that executes. Not
+every framework has a workflow, and the mapping is:
+
+| Workflow script | Framework doc | Relationship |
+|---|---|---|
+| `plan-hardening.js` | `framework/plan-hardening-v2-spec.md` | Implements the spec. Also the adversarial fork described in `framework/analysis-method.md` |
+| `research-audit.js` | This doc, patterns #1 and #2 | Reusable template |
+| `extract-verify.js` | This doc, pattern #4 | Reusable template |
+| *(none)* | `framework/analysis-method.md` | Run by the session, with `tools/frame_write.py` and `tools/check_frame_integrity.py` enforcing state and gates. No script runs it end to end yet; `analysis-method.js` is planned |
+
 ---
 
 ## A worked example, end to end (how these compose)

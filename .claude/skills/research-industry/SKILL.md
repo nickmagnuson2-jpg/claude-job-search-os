@@ -8,7 +8,7 @@ allowed-tools: Read(*), Glob(data/*), Glob(output/**), Grep(data/*), Write(outpu
 
 # Research Industry — Deep Landscape Analysis with Parallel Agents
 
-Research an industry in depth by launching five parallel agents, each investigating a different dimension. Produces a comprehensive landscape analysis with target companies ranked by candidate fit, positioning advice, and actionable next steps.
+Research an industry in depth by launching six parallel agents, five each investigating a different dimension and a sixth running an independent web cross-check. Produces a comprehensive landscape analysis with target companies ranked by candidate fit, positioning advice, and actionable next steps.
 
 Use this when exploring a new industry, preparing for interviews in an unfamiliar sector, evaluating a career pivot, or building a systematic target list for your job search.
 

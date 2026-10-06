@@ -22,7 +22,7 @@ Read the following files in parallel — skip any that don't exist, never fail. 
 | 9b | `framework/voice-reference.md` | — | ✅ | **EMPIRICAL voice reference (corpus-validated rules + verbatim exemplars).** MUST read both rules AND exemplars sections — research finding: rules alone underperform; rules + 2-3 exemplars beats both. |
 | 10 | `data/company-notes/<company-slug>.md` | ✅ | ✅ | Personal notes, call context, observations |
 | 11 | `data/networking.md` | — | ✅ | Check for contacts at this company (informs hook) |
-| 12 | `coaching/coached-answers.md` | cheat sheet | — | Cross-reference for cheat sheet |
+| 12 | `coaching/coached-answers/*.md` | cheat sheet | — | Cross-reference for cheat sheet |
 | 13 | `coaching/anti-pattern-tracker.md` | cheat sheet | — | "Do NOT say" warnings for cheat sheet |
 | 14 | `framework/answering-strategies/anti-patterns.md` | cheat sheet | — | Pre-call warnings for cheat sheet |
 
@@ -70,7 +70,7 @@ rm -rf output/<slug>/rendercv_output/
 Do not reason about layout from the markdown alone — rendercv quirks are only visible in the actual render.
 
 1. **Render a PNG and `Read` it.** Drop `--dont-generate-png`, then open the PNG (`rendercv_output/*_1.png`) with the Read tool to visually confirm italics, line breaks, spacing, and page fill. This catches broken emphasis, stray asterisks, and awkward wraps that the markdown hides.
-2. **Count pages.** `PYTHONIOENCODING=utf-8 python3 -c "from pypdf import PdfReader; print(len(PdfReader('output/<slug>/MMDDYY-magnuson.pdf').pages))"`. For Nick this must be 1; trim per Length & One-Page Verification if over.
+2. **Count pages.** `PYTHONIOENCODING=utf-8 python3 -c "from pypdf import PdfReader; print(len(PdfReader('output/<slug>/MMDDYY-magnuson.pdf').pages))"`. For the candidate this must be 1; trim per Length & One-Page Verification if over.
 3. **Clean up** `rm -rf rendercv_output/` once verified.
 
 **RenderCV layout gotchas (learned 2026-06-11):**
@@ -91,8 +91,8 @@ See [[reference_rendercv_layout_tricks]].
 - Early-career experience (internships, student jobs, apprenticeships, bootcamps, first roles) is usually omitted unless specifically relevant to the target role.
 - **No parroting company marketing language.** The summary may reference the company's mission or stage, but must not copy distinctive phrases from the company's own marketing or the JD verbatim (e.g. "capital-efficient approach", "frontier AI"). Paraphrase in the candidate's language.
 - **Token de-duplication.** Any distinctive phrase or scale number should appear at most twice across the CV (ideally once in summary and once in the most relevant bullet). Watch for the same headcount, dollar figure, or descriptor repeating three or more times.
-- **One page is the default for Nick** (US market, ~10 years experience, recruiter-forward). Two pages only with an explicit reason. After rendering, verify the page count and trim to one page *before presenting* (see CV Output Pipeline → Render & verify). DACH/international may run 2-4 pages with extensive project history.
-- **When building from a prior CV as a baseline, re-verify every title, label, and number against `data/projects/<slug>.md` — not the prior CV.** Baselines silently propagate errors forward (an inherited wrong job title, a redundant summary line, stale phrasing). Treat the prior CV as a hypothesis and the source files as truth. Per [[feedback_zuora_principal_title_is_cpto]] + lesson #54. Origin: 2026-06-11 a recruiter-channel CV inherited "Head of Product and Technology" (wrong; CPTO) and a redundant location line from the prior-role CV baseline.
+- **One page is the default for the candidate** (US market, ~10 years experience, recruiter-forward). Two pages only with an explicit reason. After rendering, verify the page count and trim to one page *before presenting* (see CV Output Pipeline → Render & verify). DACH/international may run 2-4 pages with extensive project history.
+- **When building from a prior CV as a baseline, re-verify every title, label, and number against `data/projects/<slug>.md` — not the prior CV.** Baselines silently propagate errors forward (an inherited wrong job title, a redundant summary line, stale phrasing). Treat the prior CV as a hypothesis and the source files as truth. Per [[feedback_zuora_principal_title_is_cpto]] + lesson #54. Origin: a CV built from a prior-role baseline inherited a wrong title for a former principal and a redundant location line.
 - Daily rate and availability are only included if explicitly requested.
 
 ### Keyword Pragmatism
@@ -126,28 +126,28 @@ When the candidate's source data uses accurate but different terminology from a 
 
 ### Summary Discipline
 
-- **The opener must be a line the candidate can stand behind — true and ownable, not abstract assertion.** Avoid hollow consultant-fluff ("turns ambiguous business problems into shipped solutions", "results-driven leader who delivers impact"). Ground it in who the candidate actually is and what they actually do. The test: could Nick say this sentence out loud, in his own voice, without flinching?
-- **Do NOT stuff the summary with metrics to "prove" the opener.** When the candidate says "back it up," that means *make it true and ownable*, not add a dollar figure. Numbers live in the bullets; the summary establishes identity and positioning. Origin: 2026-06-11 a recruiter-channel CV — an abstract opener was over-corrected by jamming in a $10M figure the candidate did not want to lead with. See [[feedback_cv_summary_must_be_standable]] + [[feedback_give_nick_beats_not_a_polished_script]].
-- **No location in the summary.** Location lives in the header. A trailing "San Francisco, in-person or hybrid" in the summary is redundant — cut it.
+- **The opener must be a line the candidate can stand behind — true and ownable, not abstract assertion.** Avoid hollow consultant-fluff ("turns ambiguous business problems into shipped solutions", "results-driven leader who delivers impact"). Ground it in who the candidate actually is and what they actually do. The test: could the candidate say this sentence out loud, in his own voice, without flinching?
+- **Do NOT stuff the summary with metrics to "prove" the opener.** When the candidate says "back it up," that means *make it true and ownable*, not add a dollar figure. Numbers live in the bullets; the summary establishes identity and positioning. Origin: an abstract opener was over-corrected by jamming in a dollar figure the candidate did not want to lead with. See [[feedback_cv_summary_must_be_standable]] + [[feedback_give_nick_beats_not_a_polished_script]].
+- **No location in the summary.** Location lives in the header. A trailing "[City], in-person or hybrid" in the summary is redundant — cut it.
 - Keep to ~3 sentences (identity, current role, one differentiator). Watch for a single word ("cross-functional", "operator") repeating across the sentences.
 
 ### Skills Section Discipline
 
-> **The Skills line and the whole ADDITIONAL INFORMATION section are FIXED for Nick (decided 2026-09-23).** The exact text, order,
+> **The Skills line and the whole ADDITIONAL INFORMATION section are FIXED for the candidate (decided 2026-09-23).** The exact text, order,
 > labels and line limits live in ONE place: `.claude/skills/generate-cv/SKILL.md`, "Skills section" and "Additional Information spec".
 > Use that text; do not re-derive it from the rules below, and do not "correct" it with them. In particular the *Operating* group
-> (cross-functional stakeholder collaboration, change management, executive presentations) is Nick's deliberate override of the
-> buzzword rule below. The rules below still govern any OTHER skills content and any non-Nick use of this framework.
+> (cross-functional stakeholder collaboration, change management, executive presentations) is the candidate's deliberate override of the
+> buzzword rule below. The rules below still govern any OTHER skills content and any other use of this framework.
 
 - **Sentence case, not Title Case.** Capitalize only proper nouns, tools, and acronyms (Claude API, SQL, Looker, OKRs). Do NOT Title-Case every term ("Structured Problem-Solving, Customer & Stakeholder Management") — it reads as a keyword dump.
 - **Lead with the concrete and differentiated** (domain craft, tools, technical/AI skills actually used). Strongest, least-generic items first.
-- **Cut generic competency buzzwords even when technically evidenced** (except Nick's fixed *Operating* group, above). "Cross-functional delivery", "structured problem-solving", "stakeholder management", "requirements gathering" are filler — already demonstrated in the bullets, adding nothing in a skills line. Check #12 (skills evidence) is necessary but not sufficient: a skill can be evidenced and still be fluff.
+- **Cut generic competency buzzwords even when technically evidenced** (except the candidate's fixed *Operating* group, above). "Cross-functional delivery", "structured problem-solving", "stakeholder management", "requirements gathering" are filler — already demonstrated in the bullets, adding nothing in a skills line. Check #12 (skills evidence) is necessary but not sufficient: a skill can be evidenced and still be fluff.
 - Group lightly with a semicolon when there are distinct clusters (e.g. operator-craft; then AI/technical), but only if it does not cost a page line.
 
 ### Length & One-Page Verification
 
-- After rendering, render a PNG and count pages (see CV Output Pipeline → Render & verify). For Nick the target is exactly **one page**. If it spills over, trim in this order: tighten the summary, merge or cut the weakest/oldest bullets, shorten the side-project line (within the Additional Information spec's limits), drop vague filler — before touching design/margins.
-- **Cut vague, source-unbacked filler bullets.** An older early-career role may stay as a **header-only entry** (company, title, dates, location) with NO bullet, rather than carry a generic line like "Delivered data-driven analytics and strategy recommendations to enterprise clients." A filler bullet invites doubt and costs a line. Origin: 2026-06-11 the IBM bullet (source file had only TODO placeholders) was retained until the candidate cut it.
+- After rendering, render a PNG and count pages (see CV Output Pipeline → Render & verify). For the candidate the target is exactly **one page**. If it spills over, trim in this order: tighten the summary, merge or cut the weakest/oldest bullets, shorten the side-project line (within the Additional Information spec's limits), drop vague filler — before touching design/margins.
+- **Cut vague, source-unbacked filler bullets.** An older early-career role may stay as a **header-only entry** (company, title, dates, location) with NO bullet, rather than carry a generic line like "Delivered data-driven analytics and strategy recommendations to enterprise clients." A filler bullet invites doubt and costs a line. Origin: an early-career employer's bullet, whose source file had only TODO placeholders, was retained until the candidate cut it.
 
 ### Structural Consistency
 
@@ -213,7 +213,7 @@ Run all 20 checks against the CV. Fix any issues found **in place** — rewrite 
 
 **12. Skills evidence + quality check:**
 - Every skill listed in the Skills section must appear substantively in at least one experience bullet. Remove any skill that cannot be evidenced in the experience section. "Substantively" means used as a tool/method in a described activity — not just name-dropped.
-- **Beyond evidence, apply Skills Section Discipline:** sentence case (proper nouns/tools only, no Title Case keyword dump); strongest/most-concrete items first; cut generic competency buzzwords even when evidenced ("cross-functional delivery", "structured problem-solving", "stakeholder management" are filler). A skill can pass the evidence test and still be fluff. **Exception: Nick's fixed *Operating* group is correct as written; see Skills Section Discipline.**
+- **Beyond evidence, apply Skills Section Discipline:** sentence case (proper nouns/tools only, no Title Case keyword dump); strongest/most-concrete items first; cut generic competency buzzwords even when evidenced ("cross-functional delivery", "structured problem-solving", "stakeholder management" are filler). A skill can pass the evidence test and still be fluff. **Exception: the candidate's fixed *Operating* group is correct as written; see Skills Section Discipline.**
 
 **13. Metric specificity:**
 - Percentage-based claims must include the underlying metric being measured (e.g., "daily active user engagement by 25%" not just "engagement by 25%"). Include a timeframe or baseline where available from source data. Bare percentages without context are vague and invite skepticism.
@@ -223,7 +223,7 @@ Run all 20 checks against the CV. Fix any issues found **in place** — rewrite 
 - At consulting firms or agencies, bullets from different client engagements must be clearly attributed to separate clients. Do not bundle bullets from 3 different clients under one employer header without distinguishing which client each bullet refers to. Use descriptors like "for an ecommerce marketplace" vs "for an online retailer" to disambiguate.
 
 **15. Role progression in titles:**
-- When a candidate held multiple titles at one company (e.g., promoted or transitioned roles), show the progression explicitly in the header (e.g., "Digital Growth Manager (2018-2020) / Analyst, Product Analytics (2017-2018)"). Do not collapse multiple roles into the final title only.
+- When a candidate held multiple titles at one company (e.g., promoted or transitioned roles), show the progression explicitly in the header (e.g., "Senior Manager (YYYY-YYYY) / Analyst (YYYY-YYYY)"). Do not collapse multiple roles into the final title only.
 
 **16. Jargon translation:**
 - Replace casual or overly informal language with professional equivalents. Examples: "stood up" → "established", "tiger team" → "cross-functional task force". Standard strategy/ops terms like "rhythm-of-business", "operating cadence", and "OKRs" are fine — only translate slang or company-internal shorthand that an outside reader wouldn't recognize.
@@ -239,7 +239,7 @@ Run all 20 checks against the CV. Fix any issues found **in place** — rewrite 
 - Also verify every skill in the Skills section against at least one experience bullet that evidences it substantively (not just name-drops it). Remove skills that cannot be evidenced.
 
 **19. One page + layout verification (post-render):**
-- Render a PNG and `Read` it (CV Output Pipeline → Render & verify). Confirm: exactly one page for Nick; italics, line breaks, and spacing render cleanly (no stray asterisks, no broken emphasis, no awkward title wraps); page is well-filled but not overflowing.
+- Render a PNG and `Read` it (CV Output Pipeline → Render & verify). Confirm: exactly one page for the candidate; italics, line breaks, and spacing render cleanly (no stray asterisks, no broken emphasis, no awkward title wraps); page is well-filled but not overflowing.
 - If over one page, trim per **Length & One-Page Verification** before presenting. Never hand the candidate a 2-page CV to "edit down" when the trims are mechanical.
 
 **20. Summary + skills discipline:**
@@ -263,7 +263,7 @@ Template:
 - **#13 Metric specificity:** [List every percentage and dollar figure with its qualifier.]
 - **#17 Employment gap:** [List end-to-start deltas between adjacent roles. Flag any >3 months not covered by education or pre-empted on CV.]
 - **#18 JD-keyword-to-source:** [For each JD keyword appearing in a bullet, cite the source file line that substantiates it. List any rewrites.]
-- **#19 One page + layout:** page count (must be 1 for Nick), and the PNG layout confirmation (italics/line-breaks/spacing clean).
+- **#19 One page + layout:** page count (must be 1 for the candidate), and the PNG layout confirmation (italics/line-breaks/spacing clean).
 - **#20 Summary + skills discipline:** confirm the summary is standable + location-free + ≤3 sentences, and the skills line is sentence-case, strongest-first, filler-free.
 - Other checks (#4, #5, #6, #9, #10, #14, #15, #16): confirm each ran and list any fixes.
 
@@ -271,7 +271,7 @@ If a check genuinely has nothing to flag, write "n/a — [one-line reason]", not
 
 ## Application Answers (portal / recruiter-form questions)
 
-**A distinct artifact from the CV, with its own failure modes.** The CV standards above do not cover it, and in the one case where it was the only thing sent, the CV standards could not have helped. Origin: 2026-08, a client-facing strategy role sourced through a recruiter marketplace. See [[feedback_hard_filter_needs_demonstrating_artifact_confirmed_sent]] and [[feedback_overridden_dissent_needs_owner_and_reread_trigger]].
+**A distinct artifact from the CV, with its own failure modes.** The CV standards above do not cover it, and in the one case where it was the only thing sent, the CV standards could not have helped. Origin: one application where the answers were the only thing sent. See [[feedback_hard_filter_needs_demonstrating_artifact_confirmed_sent]] and [[feedback_overridden_dissent_needs_owner_and_reread_trigger]].
 
 ### Hard-filter demonstration gate (BLOCKING)
 
@@ -283,12 +283,12 @@ Identify the JD's **hard filter**: the one explicit experience bar it states as 
 
 **Any hard filter that cannot name all three BLOCKS the send.** Two specific rejections:
 
-- **Assertion is not demonstration.** A clause claiming the experience does not satisfy the filter; a story showing it does. If the question-clause checklist row reads `ASSERTED, NOT DEMONSTRATED` or `PARTIAL` against the hard filter, that is a block, not a note. In the origin incident that exact row shipped, and the company came back citing that exact gap.
+- **Assertion is not demonstration.** A clause claiming the experience does not satisfy the filter; a story showing it does. If the question-clause checklist row reads `ASSERTED, NOT DEMONSTRATED` or `PARTIAL` against the hard filter, that is a block, not a note. In the origin incident that exact row shipped unresolved, and the application did not advance.
 - **"Optional" on the form is not optional to the case.** When the answers do not demonstrate the filter, the CV becomes mandatory regardless of what the form says. In the origin incident the answers left the filter "resting entirely on the resume" by the document's own words, and no resume was sent.
 
 ### Slot assignment: sort by filter, not by recency
 
-When choosing which story fills a question, the sort key is **relevance to the hard filter**, not recency and not which story is best rehearsed. A more recent story that structurally cannot evidence the filter is the wrong choice even when it is the better-told story. In the origin incident the third answer was drafted against the consulting engagement (the only story hitting all three legs of the question), then pivoted to a more recent internal story, and the resulting answer could not evidence enterprise-client work because no version of it contains an external client.
+When choosing which story fills a question, the sort key is **relevance to the hard filter**, not recency and not which story is best rehearsed. A more recent story that structurally cannot evidence the filter is the wrong choice even when it is the better-told story. In the origin incident one answer was first drafted against the only story that met every part of the question, then switched to a more recent story that could not evidence the filter in any version.
 
 **Corollary for the CV.** Reverse-chron buries the filter when the qualifying work is not the top role. If the hard filter lives in job three, the summary must carry it explicitly into the six-second scan.
 
@@ -313,24 +313,26 @@ loop data is worse than a smaller sample. Two runs from 2026-08-27 are listed in
 captured" for exactly this reason, and their absence is what makes Run 1's four-for-four on answer length
 a hypothesis rather than a finding.
 
-**Minimum content:** Nick's touch count split into irreducibly-human vs avoidable-machine-failure; the
+**Minimum content:** the candidate's touch count split into irreducibly-human vs avoidable-machine-failure; the
 judgments only he could make; every edit he made with word counts where the artifact has them; skills and
 agent counts; machine failures he absorbed; and any recurring pattern that fired, with its occurrence
 number.
 
 **Why this is a step and not a suggestion:** the point of the ledger is sample size. A capture that
 depends on remembering does not accumulate, and a single vivid run then gets built on as if it were
-evidence. Origin: Nick, 2026-08-31, on why he wanted the log at all: *"I want to make sure that I have
-the data and I continue to revise it so that when I do end up building something, it's based off it and
-has a high sample size."*
+evidence. Origin: the candidate asked for the log so that anything built later rests on an accumulated
+sample rather than on one run.
 
-### Reuse Nick's standing answers before drafting new ones
+### Reuse the candidate's standing answers before drafting new ones
 
-**"Proudest accomplishment" defaults to the McKinsey call-center pilot.** Nick chose it over the AI-app story on two consecutive
-applications (2026-08-31 and 2026-09-23). Start from the latest approved text (the newest
-`output/<company-slug>/*-application-answers.md` that uses it; the application loop log names it), which ends on his own line ("It was all about building trust with the team.")
-and deliberately does not volunteer that he rolled off before the full rollout. Offer a different story only if the role's
-hard filter needs one. **Factual form fields come from `data/profile.md`,** which now includes pronouns: do not ask again.
+**Recurring questions have standing answers.** When the candidate has approved the same story for a
+question on consecutive applications ("proudest accomplishment" is the usual one), start from the latest
+approved text: the newest `output/<company-slug>/*-application-answers.md` that uses it, which the
+application loop log names. Keep its closing line and its scope guards exactly as approved; the guards
+come from the correction comments in `data/projects/*.md`. Offer a different story only if the role's
+hard filter needs one. Which story is the current default, and the guard it carries, are recorded
+privately in [[reference_application_standing_answers]]. **Factual form fields come from
+`data/profile.md`:** do not ask for anything it already holds.
 
 ### Draft at final length the first time (measured target)
 
@@ -338,34 +340,34 @@ hard filter needs one. **Factual form fields come from `data/profile.md`,** whic
 proudest of," "what are you looking for"). Short factual questions (how did you hear about us, visa,
 location) stay under 50.
 
-**This is a measured default, not a preference.** On a 2026-08-31 application, all four
-substantive answers were drafted long and Nick cut every one of them on request:
+**This is a measured default, not a preference.** On one application, all four substantive answers were
+drafted long and the candidate cut every one of them on request:
 
-| Question | First draft | After Nick asked to tighten | Cut |
+| Question | First draft | After the request to tighten | Cut |
 |---|---|---|---|
-| Why are you interested | 250 | 159 | 36% |
-| Most proud of | 201 | 167 | 17% |
-| Looking for in next role | 200 | 169 | 16% |
-| Technology that excites you | 215 | 163 | 24% |
+| 1 | 250 | 159 | 36% |
+| 2 | 201 | 167 | 17% |
+| 3 | 200 | 169 | 16% |
+| 4 | 215 | 163 | 24% |
 
 Four for four is a default, not four independent misjudgments. Every long draft costs a full round trip
-at the exact moment Nick is trying to submit.
+at the exact moment the candidate is trying to submit.
 
 **What gets cut when drafting to length, in this order:**
-1. **Sentences that assert the point the next sentence demonstrates.** "That is the kind of call I
-   respect" before a sentence that shows the respect.
+1. **Sentences that assert the point the next sentence demonstrates.** A line declaring respect for a
+   decision, placed before the sentence that shows the respect.
 2. **Restated claims already carried by another answer.** Check across the whole set before finalising:
-   on 8/31, tightening one answer moved an idea into it that the last answer was already closing on, and
-   the application would have made the same argument twice.
-3. **Wants stated as evidence.** "I would rather do this for operators than for myself" is a preference,
-   not a proof, and the question rarely asked for it.
-4. **Duration and scope hedges that invite a question.** "I spent a year at X" where the tenure was
-   eleven months: name the title, drop the duration.
+   tightening one answer can move an idea into it that another answer is already closing on, and the
+   application then makes the same argument twice.
+3. **Wants stated as evidence.** A stated preference for one kind of work is a preference, not a proof,
+   and the question rarely asked for it.
+4. **Duration and scope hedges that invite a question.** State the title and the work; leave out a
+   duration figure the question did not ask for.
 
 **Do not cut:** the load-bearing scope guards (modeled vs delivered, the correction-comment wording from
 `data/projects/*.md`), or the one detail that answers the JD's stated bar.
 
-**Nick rewrites these in his own voice regardless.** Drafting to final length is not about producing
+**The candidate rewrites these in their own voice regardless.** Drafting to final length is not about producing
 final prose; it is about handing him a piece the right size to work on, so the loop is rewrite-once
 rather than tighten-then-rewrite. Origin: `output/analysis/083126-application-human-loop-log.md` §6.1.
 
@@ -385,7 +387,7 @@ Generate a pre-interview cheat sheet alongside each CV. Contents:
 
 **3. Compensation, availability, start date** — pulled from `data/profile.md` (skip if not present)
 
-**4. Coached answers to cross-reference** — read `coaching/coached-answers.md` if it exists. Flag any coached answers that directly apply to likely questions for this role. List: "Existing coached answer for: [topic]."
+**4. Coached answers to cross-reference** — read every file in `coaching/coached-answers/` if the directory exists. Flag any coached answers that directly apply to likely questions for this role. List: "Existing coached answer for: [topic]."
 
 **5. Do NOT say warnings** — read `coaching/anti-pattern-tracker.md` and `framework/answering-strategies/anti-patterns.md`. Include the most relevant 5-7 warnings for this specific role/context.
 
@@ -423,9 +425,9 @@ Generate a pre-interview cheat sheet alongside each CV. Contents:
 - **Start date:** [from profile.md]
 
 ## Existing Coached Answers (cross-reference coaching/)
-- [topic] → see coached-answers.md: "[answer title/section]"
-- [topic] → see coached-answers.md: "[answer title/section]"
-(omit section if coaching/coached-answers.md not found)
+- [topic] → see `coaching/coached-answers/<file>.md`: "[answer title/section]"
+- [topic] → see `coaching/coached-answers/<file>.md`: "[answer title/section]"
+(omit section if `coaching/coached-answers/` not found)
 
 ## Do NOT Say — Pre-Call Warnings
 1. [Warning from anti-patterns relevant to this role]

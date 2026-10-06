@@ -31,7 +31,7 @@ This is the spine of the system. These are the skills a search touches most days
 /standup
 ```
 
-Reads your goals, pipeline, todos, outreach log, and networking contacts in parallel and returns one briefing: pipeline health with staleness alerts, today's top three actions cross-referenced to the relevant companies and contacts, pending outreach with follow-up sequence positions, and one suggested priority. An interview, screen, or call scheduled within the next three days is pinned to the top automatically, even when it lives in your pipeline's Next-Action text instead of a dated to-do, so a next-day interview can't hide.
+Reads your goals, pipeline, todos, outreach log, and networking contacts in parallel and returns one briefing: pipeline health with staleness alerts, today's top three actions cross-referenced to the relevant companies and contacts, outreach still awaiting a response (days since sent, channel), and one suggested priority. An interview, screen, or call scheduled within the next three days is pinned to the top automatically, even when it lives in your pipeline's Next-Action text instead of a dated to-do, so a next-day interview can't hide.
 
 > **You should see:** a single screen that replaces manually opening five files. If a contact replied but the outreach log still says "Sent," standup catches the mismatch. Outreach on threads you have already closed or settled is filtered out, so standup stops flagging resolved conversations as still awaiting a reply.
 
@@ -61,11 +61,11 @@ Context arrives all day: a recruiter mentions a second open role, you have a tho
 /checkout
 ```
 
-The bookend to standup. Builds today's progress snapshot (completion rate, streak, velocity trend), logs it, and surfaces tomorrow's top three cross-referenced against the weekly review's priorities, with any interview or screen scheduled in the next three days pinned ahead of every to-do. It proposes any calls from today that have not been debriefed yet, and proposes at most one or two milestone-level wins from the day's real artifacts for you to confirm into your accomplishments log (a strict bar, so most days produce none, and nothing is ever auto-logged). It runs a silent-failure probe that asks whether anything produced today looked right but rested on a wrong assumption, then, as its closing action, pushes an automatic backup of your private data, so the end-of-day snapshot is captured without a manual step.
+The bookend to standup. Builds today's progress snapshot (completed count, streak, velocity, overdue trend), logs it, and surfaces tomorrow's top three cross-referenced against the weekly review's priorities, with any interview or screen scheduled in the next three days pinned ahead of every to-do. It proposes any calls from today that have not been debriefed yet, and proposes at most one or two milestone-level wins from the day's real artifacts for you to confirm into your accomplishments log (a strict bar, so most days produce none, and nothing is ever auto-logged). It ends with a silent-failure probe, an open question asking whether anything happened today that the system never captured, then, as its closing action, pushes an automatic backup of your private data, so the end-of-day snapshot is captured without a manual step.
 
 > **You should see:** a clean close. Tomorrow's standup starts from today's real state, not from memory.
 
-**Weekly:** run `/weekly-review` once a week for pipeline health by stage, outreach response rates, task velocity, and the coming week's top five.
+**Weekly:** run `/weekly-review` once a week for pipeline health by stage, outreach counts (sent, replied, no reply), task velocity, and the coming week's top five.
 
 ---
 
@@ -76,11 +76,11 @@ The bookend to standup. Builds today's progress snapshot (completion rate, strea
 ### Step 0: Find the target (when you need new ones)
 
 ```
-/discover-companies "vertical SaaS for the trades"
+/discover-companies --query "vertical SaaS for the trades"
 /scan-companies
 ```
 
-Most of the time you start this flow from a role you already found. When you need fresh targets, `/discover-companies` uses Exa Websets to surface companies you are not yet tracking, scores them against your thesis (geography as a hard gate, then stage, sector, and lane-keyword fit), and proposes the survivors to your inbox; `/scan-companies` then checks the career pages of your configured targets for live roles. (`/discover-companies` needs an Exa Pro key — see [getting-started.md](getting-started.md#optional-integrations); `/scan-companies` works on the standard setup.) Discovery finds the company, the scan finds the role.
+Most of the time you start this flow from a role you already found. When you need fresh targets, `/discover-companies` uses the Exa Agent API to surface companies you are not yet tracking, scores them against your thesis (geography as a hard gate, then stage, sector, and lane-keyword fit), and proposes the survivors to your inbox; `/scan-companies` then checks the career pages of your configured targets for live roles. (`/discover-companies` needs an Exa Pro key — see [getting-started.md](getting-started.md#optional-integrations); `/scan-companies` works on the standard setup.) Discovery finds the company, the scan finds the role.
 
 > **You should see:** new, thesis-fit companies and roles waiting in `data/inbox.md` to triage, instead of a blank page when you go looking for where to apply next.
 
@@ -90,7 +90,7 @@ Most of the time you start this flow from a role you already found. When you nee
 /research-company "Meridian Health" "https://meridian.com" "CoS role, applying this week"
 ```
 
-Five parallel agents produce a dossier: overview, funding, people and culture, news and strategy, competitive landscape. Output includes a ranked list of similar companies, which is often a better source of next targets than the role you started from.
+Six parallel agents produce a dossier: overview, funding, people and culture, news and strategy, competitive landscape, plus an independent web cross-check. Output includes a ranked list of similar companies, which is often a better source of next targets than the role you started from.
 
 > **You should see:** `output/meridian-health/meridian-health.md`, plus conversation starters calibrated to your context.
 
@@ -100,14 +100,14 @@ Five parallel agents produce a dossier: overview, funding, people and culture, n
 /apply https://jobs.lever.co/meridian/cos-role-id "context notes"
 ```
 
-One command runs the eleven-step CV workflow, writes a problem-solution cover letter that leads with the company's challenge rather than your background, and adds the entry to your pipeline. Use `/generate-cv` alone if you want just the CV.
+One command researches the company (pass `--skip-research` to reuse a dossier under 14 days old), finds the hiring manager and a contact route, produces a cold-outreach brief and stops for you to state the spine, then generates a CV seeded with all of it, and updates your pipeline. A cover letter is written only if you pass `--cover-letter`. Use `/generate-cv` alone if you want just the CV.
 
-> **You should see:** a tailored CV, a companion cheat sheet mapping your coached answers to each must-have requirement, a cover letter, and a new pipeline row, all under `output/meridian-health/`. The pipeline entry is marked "Draft Generated," not "Applied." It only flips to Applied when you confirm you actually submitted.
+> **You should see:** a dossier, an outreach brief for a named person, and a tailored CV with a companion cheat sheet, all under `output/meridian-health/`, plus a pipeline row. If you have not submitted yet, the row is set to "To Apply," not "Applied." It only flips to Applied when you confirm you actually submitted.
 
 ### Step 3: Quality-gate before you send
 
 ```
-/review-cv output/meridian-health/MMDDYY-cos.md https://jobs.lever.co/meridian/cos-role-id
+/review-cv meridian-health/MMDDYY-<lastname>.md https://jobs.lever.co/meridian/cos-role-id
 ```
 
 A fast check on keyword coverage, claim integrity, formatting, and self-sabotage language. For a high-stakes application, `/review-cv-deep` runs six reviewers (recruiter, hiring manager, competitor, skeptic, copy editor, source-data auditor) and surfaces the top ten probing questions the CV would trigger, which doubles as interview prep.
@@ -153,14 +153,14 @@ Produces a self-contained recruiter-simulation prompt you paste into a voice-cap
 ### Step 3: Debrief the real thing
 
 ```
-/debrief output/meridian-health/MMDDYY-cos.md
+/debrief "Meridian Health hiring-manager call"
 ```
 
-Paste the transcript (from the real call or the voice rehearsal). The debrief parses it into question-and-answer pairs, rates each answer with its trust and credibility impact, compares against your coached answers, flags every anti-pattern you triggered, and logs the session to your progress tracker.
+Save the transcript first (from the real call or the voice rehearsal). The debrief asks you to score the call on five dimensions, then Claude scores it independently from the transcript and the two reads are reconciled where they differ by a point or more. It flags every anti-pattern you triggered, screens the call against your non-negotiables, logs evidence against your active hypotheses, and writes the session to your progress tracker.
 
-> **You should see:** your coaching files getting smarter. Refined phrasings flow back into `coaching/coached-answers/`, and your anti-pattern trends update, so the next prep package is built on a more honest picture of your weak spots.
+> **You should see:** your coaching files getting smarter. Anti-pattern counts, hypothesis test logs, and the cross-call summary update, so the next prep package is built on a more honest picture of your weak spots.
 
-**Why this is a loop, not a line:** the coached answers and anti-pattern tracker that Step 1 reads from are exactly what Step 3 updates. Five interviews in, prep is drawing on five debriefs' worth of calibration.
+**Why this is a loop, not a line:** the anti-pattern scorecard and hypotheses that Step 1 reads are exactly what Step 3 updates. Coached answers are not written by `/debrief`; they are updated by hand. Five interviews in, prep is drawing on five debriefs' worth of calibration.
 
 **Then close the loop outward:** after a real interview, the debrief offers to hand off to `/follow-up`, which pulls the same call transcript to ground the thank-you in what was actually said: the specific callback, the moment that resonated, a concern you can now answer. It sources content from the transcript only, never tone, so the note still reads in your email voice. The full chain is `/granola-pull → /debrief → /follow-up`.
 
@@ -176,9 +176,9 @@ Paste the transcript (from the real call or the voice rehearsal). The debrief pa
 /cold-outreach "Jordan Kim" "Verdant Foods" "CoS role, MBA alum connection"
 ```
 
-Selects the right framework for the context, respects channel limits (75 to 125 words for email, under 300 characters for a LinkedIn connect), and runs a three-question quality gate: why you, why now, why me. It auto-logs to your networking file, creates a follow-up to-do, and archives the message.
+Selects the right framework for the context, respects channel limits (200 to 300 words for a cold email, under 300 characters for a LinkedIn connect), and runs a four-question quality gate: why you, why now, why me, why this class of role. It first hands you an Outreach Brief and stops until you state the spine. It auto-logs to your networking file, creates a follow-up to-do, and archives the message.
 
-> **You should see:** a draft that passes the gate, plus the relationship already recorded and the next touch already scheduled as a to-do. Every outgoing message also runs the Substance-Provenance Audit, so a model-generated self-positioning line stops the draft and asks you for the real one.
+> **You should see:** first an Outreach Brief and a request for your spine; after you give it, a draft that passes the gate, with the relationship recorded and the next touch scheduled as a to-do once you approve logging. Every outgoing message also runs the Substance-Provenance Audit, so a model-generated self-positioning line stops the draft and asks you for the real one.
 
 ### Step 2: Follow up without nagging
 
