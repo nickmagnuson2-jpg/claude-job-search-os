@@ -226,10 +226,18 @@ def mutant_key(rel_path: str, func: str, op: str, source_line: str) -> str:
 # ---------------------------------------------------------------------------
 
 @functools.lru_cache(maxsize=4096)
-def code_text(source: str) -> str:
-    """The parts of a test file that can actually REFERENCE a module: identifiers,
-    attribute names, def/class names, imported module names, and string literals - with
-    comments and docstrings excluded.
+def code_refs(source: str) -> tuple[str, tuple[str, ...]] | None:
+    """The parts of a test file that can actually REFERENCE a module, in two groups:
+    (identifiers, string literals). Identifiers are names, attribute names, def/class
+    names and imported module names. Comments and docstrings are in neither group.
+    None means the file would not parse, and the caller keeps it selected.
+
+    TWO GROUPS BECAUSE THEY NEED DIFFERENT TESTS (2026-10-06). An identifier equal to the
+    module's name is a reference. A string literal that merely contains the name as a word
+    is usually a sentence: tools/sweep.py was mapped to 14 test files, 10 of them through
+    the English word "sweep" in an assertion message or a job name ("mutation-sweep"), and
+    one of those was test_mutation_sweep.py, slow enough that sweep.py could not be
+    measured inside the time limit. See _LITERAL_REF for what a literal has to look like.
 
     Origin 2026-08-31. map_tests selected files with `if stem in text` over the raw source:
     a bare substring scan, no word boundary, prose included. For tools/todo_write.py that
@@ -245,8 +253,8 @@ def code_text(source: str) -> str:
     importing it (`subprocess.run([..., "tools/todo_write.py"])`). Dropping literals would
     un-cover every CLI-invoked tool and convert real kills into survivors.
 
-    UNPARSEABLE FILES FAIL OPEN. A file that will not parse returns its full text, so it
-    stays selected. Excluding it would drop real coverage; including it only costs
+    UNPARSEABLE FILES FAIL OPEN. A file that will not parse returns None and map_tests
+    keeps it selected. Excluding it would drop real coverage; including it only costs
     runtime. When the analysis is uncertain, measure more rather than less.
 
     REMEMBERED BY CONTENT (2026-10-06). map_tests calls this for every test file, once per
@@ -258,7 +266,7 @@ def code_text(source: str) -> str:
     try:
         tree = ast.parse(source)
     except (SyntaxError, ValueError):
-        return source  # fail open
+        return None  # fail open: map_tests keeps an unparseable file selected
 
     docstrings = set()
     for node in ast.walk(tree):
@@ -271,6 +279,7 @@ def code_text(source: str) -> str:
                 docstrings.add(id(first.value))
 
     parts: list[str] = []
+    literals: list[str] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Name):
             parts.append(node.id)
@@ -289,8 +298,33 @@ def code_text(source: str) -> str:
                 parts.extend([a.name, a.asname or ""])
         elif isinstance(node, ast.Constant) and isinstance(node.value, str):
             if id(node) not in docstrings:
-                parts.append(node.value)
-    return "\n".join(parts)
+                literals.append(node.value)
+    return "\n".join(parts), tuple(literals)
+
+
+def _literal_ref(names: set[str]) -> re.Pattern:
+    """What a string literal must contain to count as naming one of `names`.
+
+    A file name (`todo_write.py`, as in a subprocess argv or a path), a dotted path into
+    the module (`todo_write.main`, as in monkeypatch.setattr or `-m`), or the bare name
+    as the WHOLE string (importlib.import_module("todo_write")). Not the name as one word
+    among others.
+
+    Measured on the real repo, 2026-10-06, old rule against this one over every
+    tools/*.py: 652 tool-to-test pairs become 638, and no pair is added. The 14 dropped
+    are in 4 tools and each was read: eleven are the word "sweep" in prose or in
+    "mutation-sweep", one is an `outreach_status:` stamp in fixture text, one is a
+    free-text note naming schema_guard, one is "attention" inside another file's name
+    ("what-captures-attention.md"). None imports, runs or patches the tool.
+    """
+    alt = "|".join(re.escape(n) for n in sorted(names))
+    # A hyphen before the name is part of a longer word ("mutation-sweep.plist"), so it
+    # is excluded with the word characters and the dot.
+    # `tools.<name>` is the one dotted prefix that IS a reference: the package-qualified
+    # form, as in importlib.import_module("tools.todo_write") or a patch target.
+    return re.compile(
+        r"(?:(?<![\w.\-])|(?<=\btools\.))(?:%s)(?:\.py\b|\.[A-Za-z_])"
+        r"|^\s*(?:tools\.)?(?:%s)\s*$" % (alt, alt))
 
 
 def covering_names(stem: str, tools_dir: Path) -> set[str]:
@@ -349,12 +383,18 @@ def map_tests(target: Path, repo_root: Path | None = None) -> list[Path]:
         hits.add(path)
     names = covering_names(stem, target.parent)
     word = re.compile(r"\b(?:" + "|".join(re.escape(n) for n in sorted(names)) + r")\b")
+    literal = _literal_ref(names)
     for path in tests_dir.rglob("test_*.py"):
         try:
             text = path.read_text(encoding="utf-8", errors="ignore")
         except OSError:
             continue
-        if word.search(code_text(text)):
+        refs = code_refs(text)
+        if refs is None:
+            hits.add(path)              # would not parse: measure more rather than less
+            continue
+        identifiers, literals = refs
+        if word.search(identifiers) or any(literal.search(s) for s in literals):
             hits.add(path)
     return sorted(hits)
 
@@ -415,7 +455,48 @@ def _run_lock_path() -> Path:
     mutation and refuse the entire test suite.
     """
     enc = str(REPO_ROOT).replace("%", "%25").replace("/", "%2F")
-    return backup_dir() / (enc + ".mutation-run.lock")
+    return backup_dir() / (enc + LOCK_SUFFIX)
+
+
+LOCK_SUFFIX = ".mutation-run.lock"
+
+
+def prune_stale_locks() -> list[Path]:
+    """Delete lock files whose tree no longer exists, returning what was removed.
+
+    The lock is one file per repo root, in a store shared by every tree. Releasing an
+    flock does not remove the file, and every test that runs this tool in a throwaway
+    repo leaves one behind for a directory pytest then deletes: 713 of them on
+    2026-09-23, 1,083 on 2026-10-06, and nothing removed any. Same reason and same rule
+    as prune_orphans: a file that names a tree which is gone cannot be in use.
+
+    Three checks, in this order, before a file is removed. The tree is missing. The lock
+    can be taken without waiting, so no process holds it. The tree is STILL missing once
+    the lock is held, which covers a tree created at the same path in between (pytest
+    reuses its temp directory names).
+    """
+    removed: list[Path] = []
+    store = backup_dir()
+    if not store.is_dir():
+        return removed
+    for lock in sorted(store.glob("*" + LOCK_SUFFIX)):
+        root = Path(lock.name[:-len(LOCK_SUFFIX)].replace("%2F", "/").replace("%25", "%"))
+        if root.exists():
+            continue
+        try:
+            fd = os.open(lock, os.O_RDWR)
+        except OSError:
+            continue
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            if not root.exists():
+                os.unlink(lock)
+                removed.append(lock)
+        except OSError:
+            pass                            # held, or already gone: not ours to remove
+        finally:
+            os.close(fd)
+    return removed
 
 
 def release_run_lock() -> None:
@@ -575,7 +656,10 @@ def run_tests(test_files: list[Path], timeout: int,
       "assertion"  at least one failure was an AssertionError -> a test checked a value
       "error"      failures were all non-assertion (ImportError, TypeError, collection
                    error, ...) -> the mutation was OBSERVED but nothing was asserted
-      "timeout"    the run hung; a detected behavior change, but nothing was asserted
+      "timeout"    the run exceeded the time limit. NOT a kill and NOT a survivor: a
+                   mutant that loops forever and a suite that was merely slow that
+                   night look identical from here, so the caller records it as
+                   unmeasured (2026-10-06; it used to be scored as a kill)
       ""           the suite passed (mutant survived)
 
     WHY THIS EXISTS: plain mutation survival measures OBSERVABILITY, not assertion
@@ -878,15 +962,26 @@ def main() -> int:
                        f"backups. Wait for it, or check `ps aux | grep mutation_`."}))
         return 1
 
-    # Unrestorable leftovers from trees that no longer exist. The store is shared and
-    # outside every tree it serves, so nothing else would ever clear them.
-    prune_orphans()
-    recovered = recover_if_stranded(target)
+    # --list READS THE TREE. It holds the lock above, because the target is unstable while
+    # another run rewrites it, and then changes neither the target nor any backup: no
+    # pruning, no stranded-file recovery, no backup, no atexit restore. Taking the lock
+    # does create the store directory and this tree's lock file, so it is not write-free. It used to fall through all four before listing, so
+    # listing a tool "recovered" it -- a backup that differed from the target was written
+    # over the target and deleted, which under a live run is the run's mutant replaced
+    # behind its back and its only on-disk original thrown away (2026-10-05/06).
+    recovered = None
+    if not args.list:
+        # Unrestorable leftovers from trees that no longer exist. The store is shared and
+        # outside every tree it serves, so nothing else would ever clear them.
+        prune_orphans()
+        prune_stale_locks()
+        recovered = recover_if_stranded(target)
 
     original = target.read_text(encoding="utf-8")
-    backup_dir().mkdir(parents=True, exist_ok=True)
-    backup_path(target).write_text(original, encoding="utf-8")
-    arm_restore(target, original)
+    if not args.list:
+        backup_dir().mkdir(parents=True, exist_ok=True)
+        backup_path(target).write_text(original, encoding="utf-8")
+        arm_restore(target, original)
     src_lines = original.splitlines()
     try:
         tree = ast.parse(original)
@@ -921,7 +1016,9 @@ def main() -> int:
 
     # Baseline: the suite must be green BEFORE mutating, or every result is meaningless.
     baseline_details: dict = {}
+    baseline_started = time.monotonic()
     baseline_pass, _ = run_tests(test_files, args.timeout, details=baseline_details)
+    baseline_seconds = round(time.monotonic() - baseline_started, 1)
     if not baseline_pass:
         timed_out = baseline_details.get("timed_out")
         print(json.dumps({"status": "error",
@@ -936,7 +1033,7 @@ def main() -> int:
         return 1
 
     survived, killed, allowed, weak = [], 0, [], []
-    unclassified = []
+    unclassified, timed_out = [], []
     try:
         for entry in catalog:
             key = entry["key"]
@@ -961,11 +1058,19 @@ def main() -> int:
                     allowed.append({**entry, "reason": allow[key]})
                 else:
                     survived.append(entry)
+            elif kind == "timeout":
+                # UNMEASURED, never killed (2026-10-06). The limit is one number shared by
+                # the baseline and every mutant, and night runs measure about twice as slow
+                # as day runs, so a mutant whose tests only ran long was being scored as a
+                # kill. A false kill is the one error this tool must not make: it certifies
+                # that a suite protects a behaviour it does not. A mutant that really does
+                # hang is named here instead, where someone can read it.
+                timed_out.append(entry)
             else:
                 killed += 1
                 # Killed WITHOUT an assertion firing: the suite noticed the mutation
-                # only by crashing or hanging. Observability without assertion.
-                if kind in ("error", "timeout"):
+                # only by crashing. Observability without assertion.
+                if kind == "error":
                     weak.append({**entry, "killed_by": kind})
                 elif kind == "unknown":
                     unclassified.append({**entry, "killed_by": kind})
@@ -980,11 +1085,20 @@ def main() -> int:
     audit = audit_test_quality(test_files)
     result = {
         "recovered_stranded_file": recovered,
-        "status": "ok" if not survived else "survivors",
+        # "ok" claims every mutant got a verdict. One that timed out did not, so a run
+        # with timeouts and no survivors is its own status rather than a clean one.
+        "status": ("survivors" if survived
+                   else "mutants_timed_out" if timed_out else "ok"),
         "target": rel,
         "tests": [str(t) for t in test_files],
         "killed": killed,
         "survived": len(survived),
+        "timed_out": len(timed_out),
+        "timed_out_mutants": timed_out,
+        "timeout": args.timeout,
+        # The unmutated suite's own duration: the margin every mutant run has under the
+        # same limit, and the only measurement of how much slower a night run is.
+        "baseline_seconds": baseline_seconds,
         "allowlisted": len(allowed),
         "survivors": survived,
         "allowlisted_detail": allowed,
@@ -998,16 +1112,25 @@ def main() -> int:
     }
 
     if args.isolation:
-        lonely, refused = [], []
+        lonely, refused, timed_out_alone = [], [], []
         for t in test_files:
             cmd = [sys.executable, "-m", "pytest", "-q", "--no-header", str(t)]
             # PYTHONDONTWRITEBYTECODE for the same reason as run_tests: this pass must not
             # repopulate the .pyc cache that the mutation loop depends on being absent.
             # LOCK_HELD_ENV for the same reason as run_tests: the lock is still held here,
             # and this pass builds its own environment, so it has to say so itself.
-            r = subprocess.run(cmd, cwd=str(REPO_ROOT), capture_output=True, text=True,
-                               env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1",
-                                    LOCK_HELD_ENV: "1"})
+            # BOUNDED, and reaped by process group (2026-10-06). This was a bare
+            # subprocess.run with no timeout: one file that hangs when run alone consumed
+            # the rest of the sweep's 5-hour allowance for the tool, and a plain timeout
+            # would have orphaned whatever pytest had started (the 2026-09-06 class).
+            try:
+                r = _run_reaping_descendants(
+                    cmd, {**os.environ, "PYTHONDONTWRITEBYTECODE": "1", LOCK_HELD_ENV: "1"},
+                    args.timeout)
+            except subprocess.TimeoutExpired:
+                # Nothing was learned about this file. Unmeasured, never "fails alone".
+                timed_out_alone.append(str(t))
+                continue
             if r.returncode == CONFTEST_REFUSAL:
                 # tests/conftest.py refused to run because a *.mutation_backup exists
                 # somewhere in the tree -- a sibling run's wreckage, not a property of
@@ -1018,6 +1141,9 @@ def main() -> int:
             elif r.returncode != 0:
                 lonely.append(str(t))
         result["isolation_failures"] = lonely
+        if timed_out_alone:
+            result["isolation_timed_out"] = timed_out_alone
+            result["status"] = "isolation_unmeasured"
         if refused:
             result["isolation_refused"] = refused
             result["status"] = "isolation_unmeasured"

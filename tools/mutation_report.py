@@ -132,6 +132,16 @@ def build(state_dir: Path) -> str:
           f"mutants = {100*tot_s/tot_m:.1f}% survival.** {tot_k} killed. A survivor is a "
           f"decision that was changed with the whole suite still green.\n")
 
+    # Mutants that got no verdict inside a measured tool. Stated next to the survival
+    # rate because they are in its denominator and in neither of its other two terms.
+    slow = [r for r in ok if r.get("timed_out")]
+    if slow:
+        w(f"**{sum(r['timed_out'] for r in slow)} mutant(s) TIMED OUT and are neither "
+          f"killed nor survived:** "
+          + ", ".join(f"`{r['tool'][6:]}` ({r['timed_out']})" for r in slow)
+          + ". A timeout is a mutant that hangs or a suite that ran slow; the run cannot "
+            "tell which. Re-measure with `mutation_sweep.py --only`.\n")
+
     # THE LOUDEST FINDING GOES FIRST, above the ranked list.
     #
     # A tool whose mapped tests kill ZERO mutants is not "poorly covered" -- it is

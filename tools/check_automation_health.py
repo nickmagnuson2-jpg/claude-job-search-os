@@ -36,6 +36,7 @@ Usage: PYTHONIOENCODING=utf-8 python3 tools/check_automation_health.py [--repo-r
 """
 import argparse
 import json
+import plistlib
 import os
 import re
 import subprocess
@@ -48,21 +49,37 @@ from pathlib import Path
 # sys.path[0]) and by path from its own tests (where it is not).
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import job_quiesce  # noqa: E402
+import mutation_state  # noqa: E402
+
+
+def _state_dirs(repo_root: Path) -> list:
+    """Every directory a sweep may have left state in: the live store, then the old ones.
+
+    Derived from `repo_root`, not from mutation_state.STATE_DIR, because this tool takes
+    --repo-root and its tests run it against a throwaway tree; only the store's LOCATION
+    WITHIN a repo is taken from mutation_state, so there is one definition of it.
+
+    Until 2026-10-06 both checks below looked only in output/analysis/*/, which the sweep
+    left on 2026-09-08. For a month this watchdog could not see a stalled sweep or jobs a
+    killed sweep had left unloaded, and its tests planted the old path, so they passed.
+    """
+    live = repo_root / mutation_state.STATE_DIR.relative_to(mutation_state.REPO_ROOT)
+    legacy = sorted(p for p in (repo_root / "output" / "analysis").glob("*") if p.is_dir())
+    return [live, *legacy]
 
 JOB_PREFIX = "com.nickmagnuson.jobsearch."
 
 
 def _age_hours(iso_str: str):
-    """Hours since an ISO-ish timestamp, or None if unparseable."""
-    if not iso_str:
+    """Hours since an ISO timestamp, or None if it is missing or unparseable.
+
+    A trailing Z is dropped and the time read as local, as the fetchers write it.
+    """
+    try:
+        then = datetime.fromisoformat(str(iso_str or "").rstrip("Z"))
+    except ValueError:
         return None
-    normalized = re.sub(r"\.\d+", "", str(iso_str)).rstrip("Z")
-    for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M", "%Y-%m-%d"):
-        try:
-            return (datetime.now() - datetime.strptime(normalized, fmt)).total_seconds() / 3600.0
-        except ValueError:
-            continue
-    return None
+    return (datetime.now() - then.replace(tzinfo=None)).total_seconds() / 3600.0
 
 
 def check_gmail(repo_root: Path, stale_hours: float) -> tuple[list, list]:
@@ -99,20 +116,114 @@ def expected_jobs(repo_root: Path) -> set:
     deriving from them keeps this watchdog in sync as jobs are added/removed.
     """
     plist_dir = repo_root / "tools" / "launchd"
-    jobs = set()
-    if plist_dir.is_dir():
-        for p in plist_dir.glob(f"{JOB_PREFIX}*.plist"):
-            jobs.add(p.name[len(JOB_PREFIX):-len(".plist")])
-    return jobs
+    # A missing folder globs to nothing, so there is no separate "does it exist" branch.
+    return {p.name[len(JOB_PREFIX):-len(".plist")]
+            for p in plist_dir.glob(f"{JOB_PREFIX}*.plist")}
 
 
-def check_jobs(repo_root: Path) -> tuple[list, list]:
+SWEEP_JOB = "mutation-sweep"
+
+
+def schedule_seconds(plist: Path):
+    """How often this job is meant to run, in seconds, or None if that cannot be read.
+
+    StartInterval is taken as written. A calendar schedule is reduced to its period:
+    weekly when it names a Weekday, monthly when it names a Day, daily when it names an
+    Hour, hourly when it names only a Minute. A list of calendar entries takes the
+    shortest.
+    """
+    try:
+        data = plistlib.loads(plist.read_bytes())
+    except Exception:
+        return None
+    if isinstance(data.get("StartInterval"), int) and data["StartInterval"] > 0:
+        return data["StartInterval"]
+    cal = data.get("StartCalendarInterval")
+    entries = cal if isinstance(cal, list) else [cal]
+    # Several times of day (granola-auto-debrief fires every 3 hours as a list of Hour
+    # entries): the period is the shortest gap between consecutive entries around the
+    # clock, not a day. Reading each entry as "daily" gave that job a 48-hour threshold
+    # where 6 hours was meant (cross-model finding, 2026-10-06).
+    if (len(entries) > 1 and all(isinstance(e, dict) and "Hour" in e
+                                 and not ({"Weekday", "Day", "Month"} & set(e))
+                                 for e in entries)):
+        minutes = sorted({int(e["Hour"]) * 60 + int(e.get("Minute", 0)) for e in entries})
+        # The wrap-around gap is always present, so entries that all name the same time
+        # come out as one day with no special case.
+        gaps = [b - a for a, b in zip(minutes, minutes[1:])]
+        gaps.append(minutes[0] + 24 * 60 - minutes[-1])
+        return min(gaps) * 60
+    periods = []
+    for e in entries:
+        if not isinstance(e, dict):
+            continue
+        if "Weekday" in e:
+            periods.append(7 * 86400)
+        elif "Day" in e or "Month" in e:
+            periods.append(31 * 86400)
+        elif "Hour" in e:
+            periods.append(86400)
+        elif "Minute" in e:
+            periods.append(3600)
+    return min(periods) if periods else None
+
+
+def boot_time():
+    """When this machine last booted, as a timestamp, or None if it cannot be read."""
+    try:
+        out = subprocess.run(["sysctl", "-n", "kern.boottime"], capture_output=True,
+                             text=True, timeout=10).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    m = re.search(r"\bsec\s*=\s*(\d+)", out)
+    return float(m.group(1)) if m else None
+
+
+def overdue_hours(repo_root: Path, short: str, now: float | None = None,
+                  launch_agents: Path | None = None, booted=None):
+    """Hours since this job last showed any sign of running, if that is more than twice
+    its schedule. None when it is not overdue OR when nothing can date it.
+
+    The evidence is the newest of: its two log files, the installed plist (a job loaded
+    an hour ago has not had its turn yet), and the last boot. The boot counts because
+    neither file is touched by a restart: without it, a job with week-old logs warned at
+    the first health check after a reboot, before it had been given a chance to run.
+    No evidence is not an alarm.
+    """
+    period = schedule_seconds(repo_root / "tools" / "launchd" / f"{JOB_PREFIX}{short}.plist")
+    if not period:
+        return None
+    agents = launch_agents or job_quiesce.LAUNCH_AGENTS
+    seen = []
+    for f in (repo_root / "tools" / "launchd" / "logs" / f"{short}.log",
+              repo_root / "tools" / "launchd" / "logs" / f"{short}.err",
+              agents / f"{JOB_PREFIX}{short}.plist"):
+        try:
+            seen.append(f.stat().st_mtime)
+        except OSError:
+            pass
+    if not seen:
+        return None
+    since_boot = (booted or boot_time)()
+    if since_boot is not None:
+        seen.append(since_boot)
+    idle = (now if now is not None else datetime.now().timestamp()) - max(seen)
+    return round(idle / 3600.0, 1) if idle > 2 * period else None
+
+
+def check_jobs(repo_root: Path, launch_agents: Path | None = None) -> tuple[list, list]:
     """Return (job_status_entries, warnings) from `launchctl list`.
 
-    Two failure modes are caught: (1) a loaded job whose last exit was non-zero,
-    and (2) a job that has a plist but is NOT loaded at all — the exact shape of
+    Three failure modes are caught: (1) a loaded job whose last exit was non-zero,
+    (2) a job that has a plist but is NOT loaded at all — the exact shape of
     the 2026-06 die-off, where jobs vanished from `launchctl list` and the old
-    check (which only warned on ZERO loaded jobs) reported healthy for 3 weeks.
+    check (which only warned on ZERO loaded jobs) reported healthy for 3 weeks, and
+    (3) since 2026-10-06, a loaded job with NO recorded exit that is overdue. launchd
+    shows no exit for a job that has not run since it was loaded, which after a reboot
+    is every job, so "no exit" alone was treated as healthy and a job that never ran
+    again read as healthy indefinitely. Warning on every such job would alert on every
+    reboot; it warns only when the job's logs and installed plist are all older than
+    twice its schedule.
     """
     entries, warnings = [], []
     try:
@@ -132,6 +243,14 @@ def check_jobs(repo_root: Path) -> tuple[list, list]:
         entries.append({"job": short, "last_exit": exit_code})
         if exit_code not in (0, None):
             warnings.append(f"launchd job '{short}' last exited {exit_code} (non-zero = broken).")
+        elif exit_code is None:
+            late = overdue_hours(repo_root, short, launch_agents=launch_agents)
+            if late is not None:
+                entries[-1]["overdue_hours"] = late
+                warnings.append(
+                    f"launchd job '{short}' is loaded with no recorded exit and has shown "
+                    f"no sign of running for {late}h, more than twice its schedule. "
+                    f"Check: launchctl print gui/$(id -u)/{label}")
     if not entries:
         warnings.append("No com.nickmagnuson.jobsearch.* launchd jobs are loaded — automation is off.")
         return entries, warnings
@@ -166,7 +285,8 @@ def check_long_runs(repo_root: Path, stall_hours: float = 4.0,
     which is what lets an outside observer judge it without cooperation from the job.
     """
     entries, warnings = [], []
-    state_dirs = sorted((repo_root / "output" / "analysis").glob("*/targets.json"))
+    state_dirs = [d / mutation_state.TARGETS_NAME for d in _state_dirs(repo_root)
+                  if (d / mutation_state.TARGETS_NAME).is_file()]
     for targets_file in state_dirs:
         state = targets_file.parent
         try:
@@ -179,10 +299,14 @@ def check_long_runs(repo_root: Path, stall_hours: float = 4.0,
 
         results = state / "baseline.jsonl"
         try:
-            banked = sum(1 for ln in results.read_text(encoding="utf-8").splitlines()
-                         if ln.strip())
+            # MEASURED TOOLS, not lines. The file is append-only and a failing tool is
+            # retried every night, so a line count grows without anything being banked.
+            rows = [json.loads(ln) for ln in results.read_text(encoding="utf-8").splitlines()
+                    if ln.strip()]
+            banked = sum(1 for r in mutation_state.latest_per_tool(rows)
+                         if not mutation_state.is_engine_failure(r))
             progress_at = results.stat().st_mtime
-        except OSError:
+        except (OSError, ValueError):
             banked, progress_at = 0, targets_file.stat().st_mtime
 
         idle_hours = (datetime.now().timestamp() - progress_at) / 3600.0
@@ -193,6 +317,14 @@ def check_long_runs(repo_root: Path, stall_hours: float = 4.0,
 
         # Complete, or actively working: nothing to say.
         if banked >= total or alive:
+            continue
+        # Deliberately parked (2026-10-06). A sweep job whose plist sits in
+        # tools/launchd/disarmed/ was stopped on purpose with work remaining; reporting
+        # that as a stall every morning is an alert nobody can act on. Armed and idle
+        # still warns.
+        if (repo_root / "tools" / "launchd" / "disarmed"
+                / f"{JOB_PREFIX}{SWEEP_JOB}.plist").is_file():
+            entry["disarmed"] = True
             continue
         if idle_hours < stall_hours:
             continue                      # just stopped; someone is probably still here
@@ -223,7 +355,9 @@ def check_quiesced_jobs(repo_root: Path, running=_process_running,
     """
     restorer = restorer or job_quiesce.restore
     entries, warnings = [], []
-    for marker in sorted((repo_root / "output" / "analysis").glob("*/.quiesced-jobs.json")):
+    markers = [d / mutation_state.QUIESCE_MARKER_NAME for d in _state_dirs(repo_root)
+               if (d / mutation_state.QUIESCE_MARKER_NAME).is_file()]
+    for marker in markers:
         alive = running("tools/mutation_sweep.py")
         entry = {"run": marker.parent.name, "sweep_running": alive}
         if alive:
@@ -265,11 +399,10 @@ def write_inbox_alert(repo_root: Path, warnings: list) -> Path | None:
     stamp = datetime.now().strftime("%Y%m%d")
     alert = inbox / f"{stamp}-automation-health-alert.md"
     if not warnings:
-        if alert.exists():
-            try:
-                alert.unlink()
-            except OSError:
-                pass
+        try:
+            alert.unlink(missing_ok=True)
+        except OSError:
+            pass
         return None
     inbox.mkdir(parents=True, exist_ok=True)
     body = (

@@ -3,8 +3,15 @@
 <!--
   mutation-sweep: finish the corpus mutation baseline overnight.
 
-  TEMPORARY, NOT PART OF THE STANDING SET. This is deliberately absent from install.sh's
-  PLISTS array so a routine `install.sh` never resurrects it. As of 2026-09-01 it drives
+  TEMPORARY, NOT PART OF THE STANDING SET. While it is not in use this file lives in
+  tools/launchd/disarmed/, which install.sh and the health watchdog do not read, so a routine
+  `install.sh install` never resurrects it and the watchdog does not report it as missing.
+  (Until 2026-10-06 this comment said it was "absent from install.sh's PLISTS array". That
+  array has been derived from the folder since 2026-09-02, so the installer DID reinstall it,
+  and the watchdog alerted every day it was unloaded.)
+      bash tools/launchd/install.sh arm mutation-sweep      (move here to tools/launchd/, install, load)
+      bash tools/launchd/install.sh disarm mutation-sweep   (unload, remove, move back)
+  As of 2026-09-01 it drives
   the FROM-SCRATCH re-sweep of all 108 auditable tools (10,811 mutants) that the
   2026-08-31 PYTHONDONTWRITEBYTECODE fix made necessary - every pre-fix number may be a
   false kill.
@@ -17,9 +24,10 @@
   calls answer to the mutant (measured 2026-09-07).
 
   ~12,918 mutants at the 2026-08 rate is well past one night. That is fine and expected: the
-  sweep resumes by tool name against baseline.jsonl, so it picks up where it stopped. Unload it once the sweep reports SWEEP COMPLETE:
-      launchctl unload ~/Library/LaunchAgents/com.nickmagnuson.jobsearch.mutation-sweep.plist
-      rm ~/Library/LaunchAgents/com.nickmagnuson.jobsearch.mutation-sweep.plist
+  sweep resumes against baseline.jsonl, so it picks up where it stopped. Since 2026-10-06 a banked
+  tool is skipped only while its source matches the hash recorded in its row; a tool edited since
+  it was measured is measured again. Disarm it once the sweep reports SWEEP COMPLETE:
+      bash tools/launchd/install.sh disarm mutation-sweep
 
   22:00, Nick's instruction 2026-09-13. HOUR HISTORY, so nobody "restores" a stale value:
   16:00 originally, 18:00 on 2026-09-01, 22:00 now. A 2026-09-08 correction found the prose
@@ -40,13 +48,16 @@
   Check tools/launchd/logs/mutation-sweep.log for "restored 9 launchd job(s)" before treating a
   stalled fetch as broken.
 
-  IT RECURS UNTIL UNLOADED, AND THAT IS SAFE. mutation_sweep resumes by tool name against
-  baseline.jsonl, so a second 22:00 fire finds 0 unbanked tools and exits in seconds. The
-  cost of forgetting is noise in the log, not a re-run.
+  IT RECURS UNTIL DISARMED, AND THAT IS SAFE. mutation_sweep resumes against baseline.jsonl,
+  so a 22:00 fire with nothing unbanked and nothing edited exits in seconds. Left armed, it
+  will re-measure any tool edited that day, which takes the launchd jobs down while it runs.
 
   CAFFEINATE. The run is ~7 hours. Without -is the Mac idle-sleeps partway and the sweep
   is suspended mid-tool, which strands a .mutation_backup and makes the next run refuse
-  at conftest. -i blocks idle sleep, -s blocks system sleep while on AC power.
+  at conftest. -i blocks idle sleep, -s blocks system sleep while on AC power. ON BATTERY
+  NEITHER HOLDS: the Mac sleeps and the run advances in short wake-ups with the launchd jobs
+  unloaded (8h20m on 2026-10-02). Since 2026-10-06 the sweep reads the power source before
+  each tool and stops, restoring the jobs, if the Mac is on battery.
 
   LOG FILES: never create, touch, or truncate anything in tools/launchd/logs/ from a Claude
   Code Bash call - files created that way inherit a com.apple.provenance xattr that launchd

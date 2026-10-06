@@ -31,7 +31,9 @@ stranded backup, and every suite-green claim in that run became worthless. Do NO
 around. If parallelism is wanted, it is one git worktree per runner, not one tree.
 
 RESUMABLE. Completed tools are read back from the state file and skipped, so a kill, crash,
-or reboot costs at most the single tool in flight.
+or reboot costs at most the single tool in flight. A tool is completed only while its
+source is what was measured: each row records a hash of the file (`src`), and a tool whose
+file has changed since is measured again.
 
 WHILE IT RUNS THE TREE IS UNSAFE FOR ORDINARY WORK. At any instant one `tools/*.py` is
 mutated on disk. `tests/conftest.py` refuses to run at all (exit 3) while a
@@ -47,6 +49,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import hashlib
 import json
 import os
 import pathlib
@@ -152,20 +155,8 @@ def count_mutants(tool: Path) -> int:
         return ENGINE_ERROR
 
 
-def is_engine_failure(rec: dict) -> bool:
-    """Is this banked row an engine failure rather than a measurement?
-
-    NOT "the child exited non-zero". mutation_check exits 2 for GENUINE SURVIVORS,
-    which is the tool working and must stay a normal banked result. The failure
-    condition is a structured engine error, or any UNAUDITED_* row -- a scan that
-    did not happen. Getting this distinction wrong in either direction is costly:
-    too broad and every imperfect tool fails the sweep, too narrow and this whole
-    guard is decorative.
-    """
-    status = str((rec or {}).get("status") or "")
-    if status.startswith("UNAUDITED"):
-        return True
-    return status == "error"
+# ONE definition, shared with the health watchdog. See mutation_state.is_engine_failure.
+is_engine_failure = mutation_state.is_engine_failure
 
 
 def unmeasured_tools(rows: list[dict]) -> list[str]:
@@ -196,15 +187,91 @@ def unmeasured_tools(rows: list[dict]) -> list[str]:
                   if is_engine_failure(r))
 
 
-def completed_tools(rows: list[dict]) -> set:
+def source_fingerprint(rel: str) -> str | None:
+    """A short hash of a tool's source as it is on disk now, or None if it cannot be read.
+
+    Written into every banked row as `src`, and compared on resume. It is the tool's
+    source only: a row is a statement about that file under the suite of the night it
+    ran, and re-measuring every tool whenever any test file changes would mean
+    re-measuring everything, every night.
+    """
+    try:
+        return hashlib.sha1((REPO_ROOT / rel).read_bytes()).hexdigest()[:16]
+    except OSError:
+        return None
+
+
+def is_stale(row: dict, target: dict | None) -> bool:
+    """Was this row measured on source that is no longer what is on disk?
+
+    Resume used to be keyed on the tool's NAME alone, so a tool banked in September was
+    skipped in October whatever had happened to it since. On 2026-10-06 the store held
+    rows for 20 tools whose mutant count had changed: measurements of code that no longer
+    existed, each reading exactly like a current one.
+
+    A row written since then carries `src` and the answer is exact. An older row carries
+    no fingerprint, and the one thing it does record about the source is the mutant count
+    it was scheduled with, so it is stale when that differs from the current target
+    list's count. That catches a changed count and MISSES an edit that left the count the
+    same; nothing in an old row can tell those apart, and treating every old row as stale
+    would throw away the whole baseline. A row that records neither is left alone for the
+    same reason. A tool with no target, or whose file cannot be read, is not this
+    function's question.
+    """
+    if target is None:
+        return False
+    recorded = row.get("src")
+    if recorded:
+        current = source_fingerprint(row["tool"])
+        return current is not None and current != recorded
+    scheduled_with = row.get("mutants")
+    return scheduled_with is not None and scheduled_with != target.get("mutants")
+
+
+def stale_tools(rows: list[dict], targets: list[dict]) -> list[str]:
+    """Measured tools whose source has changed since. Sorted."""
+    by_tool = {t["tool"]: t for t in targets}
+    return sorted(r["tool"] for r in mutation_state.latest_per_tool(rows)
+                  if not is_engine_failure(r) and is_stale(r, by_tool.get(r["tool"])))
+
+
+def partially_measured_tools(rows: list[dict]) -> list[str]:
+    """Tools whose latest row has a verdict for some of the work and not all of it. Sorted.
+
+    Two shapes: mutants whose tests ran out of time (`timed_out`, status
+    `mutants_timed_out` when nothing survived) and an isolation pass that did not run
+    (`isolation_unmeasured`). Such a row is NOT an engine failure and resume does not
+    retry it, on purpose: a mutant that really hangs would cost its full time limit
+    every night for ever. What it must not do is pass for a clean row, so the end of
+    every sweep names these tools and the completion line carries the count.
+    """
+    return sorted(
+        r["tool"] for r in mutation_state.latest_per_tool(rows)
+        if not is_engine_failure(r)
+        and (r.get("timed_out") or r.get("status") in ("mutants_timed_out",
+                                                       "isolation_unmeasured")))
+
+
+def completed_tools(rows: list[dict], targets: list[dict] | None = None) -> set:
     """Tool names that are genuinely DONE, for resume.
 
     Previously every banked tool NAME counted, whatever its status, so an errored
     tool was banked, failed one run, was skipped the next night as "already done",
     and the run after that returned 0 with the tool still unmeasured. A banked
     failure is work remaining, not work finished.
+
+    The LATEST row speaks for a tool, as everywhere else in this file (2026-10-06). This
+    took any clean row ever banked, so a tool that measured clean once and errored on a
+    later run was skipped by resume while unmeasured_tools reported it unmeasured: the
+    sweep exited 1 every night and never retried it.
+
+    With `targets`, a row measured on source that has since changed is not done either.
+    See is_stale.
     """
-    return {r["tool"] for r in rows if r.get("tool") and not is_engine_failure(r)}
+    by_tool = {t["tool"]: t for t in targets} if targets is not None else None
+    return {r["tool"] for r in mutation_state.latest_per_tool(rows)
+            if not is_engine_failure(r)
+            and not (by_tool is not None and is_stale(r, by_tool.get(r["tool"])))}
 
 
 def build_targets() -> list[dict]:
@@ -290,6 +357,31 @@ def build_targets() -> list[dict]:
     return rows
 
 
+def on_ac_power() -> bool | None:
+    """True on mains, False on battery, None when it cannot be determined.
+
+    WHY THE SWEEP ASKS (2026-10-06). The launchd job runs under `caffeinate -is`, and -s
+    holds the system awake only on AC power. On battery the Mac sleeps anyway and the run
+    advances in 45-second wake-ups: on 2026-10-02 nine launchd jobs, both Gmail fetches
+    among them, stayed unloaded for 8h20m while almost nothing was measured. The per-test
+    time limit is a monotonic clock that stops during sleep, so nothing inside the run
+    notices. Not starting a tool on battery is the only point where this can be decided;
+    the jobs come back at once and the next scheduled run resumes.
+
+    None is "proceed": a machine with no `pmset` is not a laptop on battery.
+    """
+    try:
+        out = subprocess.run(["pmset", "-g", "batt"], capture_output=True, text=True,
+                             timeout=10).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if "'AC Power'" in out:
+        return True
+    if "'Battery Power'" in out:
+        return False
+    return None
+
+
 def repair_stranded(rel: str) -> str | None:
     """Restore a target left mutated on disk, and say so.
 
@@ -340,7 +432,8 @@ def _report_quiesce(action: str, res: dict) -> None:
               f"`bash tools/launchd/install.sh install`", flush=True)
 
 
-def run_sweep(state_dir: Path, only: list[str] | None = None) -> int:
+def run_sweep(state_dir: Path, only: list[str] | None = None,
+              allow_battery: bool = False) -> int:
     targets_file, out = state_dir / "targets.json", state_dir / "baseline.jsonl"
     if not targets_file.exists():
         print(f"no target list at {targets_file}; run with --targets first", file=sys.stderr)
@@ -397,28 +490,26 @@ def run_sweep(state_dir: Path, only: list[str] | None = None) -> int:
     # against real Gmail and real data files. conftest guards pytest, not launchd.
     # See tools/job_quiesce.py for why the guard cannot live inside the mutated files.
     marker = state_dir / ".quiesced-jobs.json"
-    restored_once = []
-
-    def put_jobs_back():
-        if restored_once:
-            return
-        restored_once.append(True)
-        _report_quiesce("restore", job_quiesce.restore(REPO_ROOT, marker))
 
     def _on_signal(signum, _frame):
         # launchd SIGTERMs a job it wants gone and Nick may ctrl-C the run. Neither
-        # unwinds `finally` by itself, so without this the jobs stay down until the
-        # next sweep or the 08:00 health check notices the stranded marker.
-        put_jobs_back()
+        # unwinds `finally` by itself; raising SystemExit does, and the `finally` below
+        # is the ONE place the jobs are put back, so they are restored exactly once.
         raise SystemExit(128 + signum)
 
     for sig in (signal.SIGTERM, signal.SIGINT):
         signal.signal(sig, _on_signal)
-    _report_quiesce("quiesce", job_quiesce.quiesce(REPO_ROOT, marker))
+    # The takedown is INSIDE the try (2026-10-06, cross-model finding). It used to sit
+    # just above it, so an exception or a signal between unloading the jobs and entering
+    # the try left them down with nothing to restore them but the next morning's
+    # health check. restore reads the marker quiesce writes, so restoring after a
+    # takedown that never started is a no-op.
     try:
-        return _run_sweep_inner(targets, out, only_mode=bool(only))
+        _report_quiesce("quiesce", job_quiesce.quiesce(REPO_ROOT, marker))
+        return _run_sweep_inner(targets, out, only_mode=bool(only),
+                                allow_battery=allow_battery)
     finally:
-        put_jobs_back()
+        _report_quiesce("restore", job_quiesce.restore(REPO_ROOT, marker))
         # Release explicitly rather than leaning on process exit: the test suite calls
         # run_sweep many times in ONE pytest process, and a lock held past the first call
         # would refuse every later one. The OS still releases it on a crash, which is the
@@ -469,7 +560,8 @@ def currently_wired(root: pathlib.Path | None = None) -> set[str]:
         raise
 
 
-def _run_sweep_inner(targets, out: Path, only_mode: bool = False) -> int:
+def _run_sweep_inner(targets, out: Path, only_mode: bool = False,
+                     allow_battery: bool = False) -> int:
 
     banked = []
     if out.exists():
@@ -479,11 +571,15 @@ def _run_sweep_inner(targets, out: Path, only_mode: bool = False) -> int:
     # Only genuinely-measured tools count as done. A banked engine failure is work
     # remaining: counting it as complete is how one failed night became a clean run
     # two nights later with the tool never measured.
-    done = completed_tools(banked)
-    retrying = sorted({r["tool"] for r in banked} - done)
+    done = completed_tools(banked, targets)
+    changed = stale_tools(banked, targets)
+    retrying = sorted({r["tool"] for r in banked} - done - set(changed))
     if retrying:
         print(f"{time.strftime('%H:%M:%S')}  retrying {len(retrying)} previously-errored "
               f"tool(s): {', '.join(retrying)}", flush=True)
+    if changed:
+        print(f"{time.strftime('%H:%M:%S')}  re-measuring {len(changed)} tool(s) whose "
+              f"source changed since they were banked: {', '.join(changed)}", flush=True)
 
     # WIRED HOOKS ARE NEVER SWEPT (codex F3, 2026-09-08). The `h` flag was recorded at
     # target-construction time and then used only as a SORT KEY, so a wired PreToolUse guard
@@ -575,9 +671,31 @@ def _run_sweep_inner(targets, out: Path, only_mode: bool = False) -> int:
     env = {**os.environ, "PYTHONIOENCODING": "utf-8",
            mutation_check.SWEEP_ENV: "1"}
 
+    power_unknown_said = False
     for i, t in enumerate(todo, 1):
+        # Asked before EVERY tool, not once at the start: the charger comes out mid-run.
+        # A tool already in flight is allowed to finish, so the exposure is one tool.
+        power = None if allow_battery else on_ac_power()
+        if power is None and not allow_battery and not power_unknown_said:
+            # Proceeding on "unknown" is a choice, so it is written down where the
+            # morning read will see it. Refusing instead would stop every run on a
+            # machine with no pmset; a Mac whose pmset stopped answering is the rarer case.
+            print(f"{time.strftime('%H:%M:%S')}  power source UNKNOWN (pmset gave no "
+                  f"reading); measuring anyway. If this Mac is on battery the run will "
+                  f"stall in sleep.", flush=True)
+            power_unknown_said = True
+        if power is False:
+            print(f"{time.strftime('%H:%M:%S')}  STOPPING ON BATTERY POWER before "
+                  f"[{i}/{len(todo)}] {t['tool']}: {len(todo) - i + 1} tool(s) not started. "
+                  f"The Mac sleeps on battery whatever caffeinate asks, and the launchd "
+                  f"jobs would stay unloaded for the whole stretched run. Plug in and "
+                  f"re-run, or pass --allow-battery.", flush=True)
+            return 1
         start = time.time()
         timed_out = False
+        # Taken BEFORE the child runs: the child rewrites this file for the whole
+        # measurement, and the row has to name the source that was measured.
+        fingerprint = source_fingerprint(t["tool"])
         try:
             # Reaping variant, NOT subprocess.run. A plain run() timeout SIGKILLs only the
             # mutation_check child; the pytest it spawned and everything pytest spawned
@@ -596,7 +714,7 @@ def _run_sweep_inner(targets, out: Path, only_mode: bool = False) -> int:
 
         base = {k: t[k] for k in ("tool", "w", "h", "tests", "mutants")}
         base["own"] = t.get("own")
-        base |= {"elapsed": round(time.time() - start, 1), "rc": rc}
+        base |= {"elapsed": round(time.time() - start, 1), "rc": rc, "src": fingerprint}
 
         # Before the next tool starts: a mutated file left here contaminates every
         # measurement after it, not just this one.
@@ -623,6 +741,16 @@ def _run_sweep_inner(targets, out: Path, only_mode: bool = False) -> int:
                        "recovered_stranded_file": d.get("recovered_stranded_file"),
                        "isolation_refused": d.get("isolation_refused"),
                        "isolation_failures": d.get("isolation_failures"),
+                       # Same omission, third time (2026-10-06): the row could read
+                       # `isolation_unmeasured` or `mutants_timed_out` with nothing
+                       # saying which file or how many mutants.
+                       "isolation_timed_out": d.get("isolation_timed_out"),
+                       "timed_out": d.get("timed_out"),
+                       # How long the unmutated suite took, against the limit it ran
+                       # under. "Night runs are about twice as slow" was inferred from
+                       # two leftover backups; this makes it a number per tool per night.
+                       "baseline_seconds": d.get("baseline_seconds"),
+                       "timeout": d.get("timeout"),
                        "assertion_free_tests": d.get("assertion_free_tests"),
                        "tautological_assertions": d.get("tautological_assertions"),
                        "survivors": d.get("survivors") or [],
@@ -654,6 +782,7 @@ def _run_sweep_inner(targets, out: Path, only_mode: bool = False) -> int:
         print(f"{time.strftime('%H:%M:%S')}  [{i}/{len(todo)}] {t['tool']}: "
               f"status={rec.get('status')} survived={rec.get('survived')} "
               f"of {t['mutants']} ({base['elapsed']}s)"
+              + (f" timed_out={rec['timed_out']}" if rec.get("timed_out") else "")
               + (f" code={rec.get('code')} first_failed={(rec.get('failed_tests') or [None])[0]}"
                  if rec.get("status") == "error" else ""), flush=True)
 
@@ -667,11 +796,18 @@ def _run_sweep_inner(targets, out: Path, only_mode: bool = False) -> int:
             if line.strip():
                 final.append(json.loads(line))
     unaudited = unmeasured_tools(final)
+    partial = partially_measured_tools(final)
+    if partial:
+        print(f"{time.strftime('%H:%M:%S')}  {len(partial)} TOOL(S) PARTLY MEASURED "
+              f"(mutants that timed out, or an isolation pass that did not run): "
+              f"{', '.join(partial)}. Not retried automatically; re-measure with --only.",
+              flush=True)
     if unaudited:
         print(f"{time.strftime('%H:%M:%S')}  SWEEP COMPLETE WITH {len(unaudited)} "
               f"UNMEASURED TOOL(S): {', '.join(unaudited)}", flush=True)
         return 1
-    print(f"{time.strftime('%H:%M:%S')}  SWEEP COMPLETE", flush=True)
+    print(f"{time.strftime('%H:%M:%S')}  SWEEP COMPLETE"
+          + (f" WITH {len(partial)} PARTLY MEASURED" if partial else ""), flush=True)
     return 0
 
 
@@ -687,6 +823,9 @@ def main(argv: list[str] | None = None) -> int:
                          "this instead of writing a loop around mutation_check.py.")
     ap.add_argument("--targets", action="store_true",
                     help="rebuild the target list and exit, running no mutations")
+    ap.add_argument("--allow-battery", action="store_true",
+                    help="measure even on battery power. Off by default: on battery the "
+                         "Mac sleeps mid-run and the scheduled jobs stay unloaded for hours.")
     args = ap.parse_args(argv)
 
     args.state_dir.mkdir(parents=True, exist_ok=True)
@@ -729,7 +868,7 @@ def main(argv: list[str] | None = None) -> int:
         # A target list built over tools the engine could not read is not a target
         # list. Fail here rather than measuring a silently smaller corpus.
         return 1 if broken else 0
-    return run_sweep(args.state_dir, only=args.only)
+    return run_sweep(args.state_dir, only=args.only, allow_battery=args.allow_battery)
 
 
 if __name__ == "__main__":

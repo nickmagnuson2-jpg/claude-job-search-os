@@ -331,6 +331,16 @@ def test_every_checker_is_registered_or_explicitly_exempt():
 # launchd scheduled jobs
 # --------------------------------------------------------------------------
 
+def _all_plists():
+    """Every tracked plist, INCLUDING the ones parked in tools/launchd/disarmed/.
+
+    A disarmed job is out of the installer's and the watchdog's sight on purpose. It must
+    not also drop out of these checks: it is armed again by one command, and a plist whose
+    script moved while it was parked would then fail on a timer.
+    """
+    return (REPO / "tools" / "launchd").rglob("*.plist")
+
+
 def _launchd_script_refs(plist_path):
     """Every .py path referenced by a plist's ProgramArguments.
 
@@ -357,7 +367,7 @@ def _launchd_script_refs(plist_path):
 def test_every_launchd_plist_points_at_an_existing_script():
     """A scheduled job whose script moved fails on a timer, into a log nobody reads."""
     missing = []
-    for plist in sorted((REPO / "tools" / "launchd").glob("*.plist")):
+    for plist in sorted(_all_plists()):
         for ref in _launchd_script_refs(plist):
             candidate = Path(ref)
             if not candidate.is_absolute():
@@ -374,7 +384,7 @@ def test_launchd_script_ref_parser_sees_every_plist():
     reference. If a future plist shape parses to zero refs, the job it schedules is
     unchecked and this fails loudly instead of passing green.
     """
-    unparsed = [p.name for p in sorted((REPO / "tools" / "launchd").glob("*.plist"))
+    unparsed = [p.name for p in sorted(_all_plists())
                 if not _launchd_script_refs(p)]
     # career-scan invokes a skill, not a script, so it legitimately references no .py.
     unparsed = [n for n in unparsed if "career-scan" not in n]
@@ -385,7 +395,7 @@ def test_launchd_script_ref_parser_sees_every_plist():
 def test_every_launchd_plist_has_a_schedule():
     """A plist with neither StartInterval nor StartCalendarInterval never fires."""
     unscheduled = []
-    for plist in sorted((REPO / "tools" / "launchd").glob("*.plist")):
+    for plist in sorted(_all_plists()):
         data = plistlib.loads(plist.read_bytes())
         if "StartInterval" not in data and "StartCalendarInterval" not in data:
             unscheduled.append(f"  {plist.name}")
@@ -416,7 +426,7 @@ def test_no_launchd_job_passes_a_corpus_WRITE_flag():
     rather than in a check.
     """
     violations = []
-    for plist in sorted((REPO / "tools" / "launchd").glob("*.plist")):
+    for plist in sorted(_all_plists()):
         args = " ".join(a for a in plistlib.loads(plist.read_bytes()).get("ProgramArguments", [])
                         if isinstance(a, str))
         for (script, flag), reason in UNATTENDED_WRITE_FLAGS.items():

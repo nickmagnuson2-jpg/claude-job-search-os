@@ -152,7 +152,7 @@ def test_substitutions_inside_double_quotes_run():
 
 
 def test_escaped_or_single_quoted_substitutions_do_not_run():
-    """Real-data replay 2026-09-30: `\`` inside double quotes is a literal backtick,
+    """Real-data replay 2026-09-30: `\\`` inside double quotes is a literal backtick,
     but scanning the finished word text read it as a live one."""
     assert subs('"a \\`b\\` c"') == [[]]
     assert subs('"a \\$(b) c"') == [[]]

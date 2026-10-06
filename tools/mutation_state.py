@@ -38,10 +38,6 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 #: The canonical store. Deliberately NOT date-prefixed -- see the module docstring.
 STATE_DIR = REPO_ROOT / "output" / "mutation-state"
 
-#: Where the store used to live. Kept so a stale path in a doc, a log, an old skill or a
-#: memory entry resolves to something instead of silently reading as absent.
-LEGACY_STATE_DIR = REPO_ROOT / "output" / "analysis" / "082626-mutation-baseline"
-
 TARGETS_NAME = "targets.json"
 BASELINE_NAME = "baseline.jsonl"
 TREND_NAME = "survival-trend.jsonl"
@@ -54,54 +50,28 @@ ALLOW_PATH = REPO_ROOT / "tools" / "mutation-allow.json"
 
 
 def state_dir() -> Path:
-    """The live store, tolerating a tree that has not been migrated yet.
+    """The store. A function because three tools resolve it at import time.
 
-    Prefers the canonical directory. Falls back to the legacy one ONLY when the canonical
-    one does not exist and the legacy one does, so a checkout that predates the rename keeps
-    working instead of silently starting an empty history -- which would look exactly like a
-    clean corpus.
+    Until 2026-10-06 this fell back to the pre-rename directory
+    (output/analysis/082626-mutation-baseline/) when the canonical one was absent, with
+    helpers to match: a `base` argument on every path function, a `targets_path` and an
+    `is_inside_store` that nothing called. The old directory no longer exists and the
+    store is gitignored, so there is no checkout the fallback could serve. All of it
+    was removed rather than tested: 13 of this file's 18 surviving mutants were in it.
     """
-    if STATE_DIR.exists():
-        return STATE_DIR
-    if LEGACY_STATE_DIR.exists():
-        return LEGACY_STATE_DIR
     return STATE_DIR
 
 
-def targets_path(base: Path | None = None) -> Path:
-    return (base or state_dir()) / TARGETS_NAME
+def baseline_path() -> Path:
+    return STATE_DIR / BASELINE_NAME
 
 
-def baseline_path(base: Path | None = None) -> Path:
-    return (base or state_dir()) / BASELINE_NAME
+def trend_path() -> Path:
+    return STATE_DIR / TREND_NAME
 
 
-def trend_path(base: Path | None = None) -> Path:
-    return (base or state_dir()) / TREND_NAME
-
-
-def quiesce_marker_path(base: Path | None = None) -> Path:
-    return (base or state_dir()) / QUIESCE_MARKER_NAME
-
-
-def is_inside_store(path: Path | str) -> bool:
-    """True when `path` lands inside the store (canonical or legacy).
-
-    Used by the bespoke-runner gate to answer "are these results going somewhere the next
-    session will find them, or into a scratchpad nobody reads again". Resolved rather than
-    string-compared so `../` and symlinks cannot walk out of the store undetected.
-    """
-    try:
-        resolved = Path(path).resolve()
-    except (OSError, RuntimeError):
-        return False
-    for root in (STATE_DIR, LEGACY_STATE_DIR):
-        try:
-            resolved.relative_to(root.resolve())
-            return True
-        except ValueError:
-            continue
-    return False
+def quiesce_marker_path() -> Path:
+    return STATE_DIR / QUIESCE_MARKER_NAME
 
 
 # ---------------------------------------------------------------------------------
@@ -123,6 +93,26 @@ def read_rows(path: Path | None = None) -> list[dict]:
         return []
     return [json.loads(l) for l in path.read_text(encoding="utf-8").splitlines()
             if l.strip()]
+
+
+def is_engine_failure(rec: dict) -> bool:
+    """Is this banked row an engine failure rather than a measurement?
+
+    NOT "the child exited non-zero". mutation_check exits 2 for GENUINE SURVIVORS,
+    which is the tool working and must stay a normal banked result. The failure
+    condition is a structured engine error, or any UNAUDITED_* row -- a scan that
+    did not happen. Getting this distinction wrong in either direction is costly:
+    too broad and every imperfect tool fails the sweep, too narrow and this whole
+    guard is decorative.
+
+    Lives here, next to latest_per_tool, since 2026-10-06: the sweep and the health
+    watchdog both have to answer "which tools are actually measured", and the watchdog's
+    own answer (count the lines) read four tools retried for weeks as more than complete.
+    """
+    status = str((rec or {}).get("status") or "")
+    if status.startswith("UNAUDITED"):
+        return True
+    return status == "error"
 
 
 def latest_per_tool(rows: list[dict]) -> list[dict]:

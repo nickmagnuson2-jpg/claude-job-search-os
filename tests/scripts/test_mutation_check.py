@@ -49,8 +49,15 @@ def _run(args, cwd=None):
 
     Stripping it here makes these tests measure the tool's behaviour rather than the
     caller's environment. Do NOT replace this with `{**os.environ}`.
+
+    MUTATION_SWEEP_ACTIVE is stripped for the same reason (2026-10-06). Under the nightly
+    sweep every test inherits it, and it makes acquire_run_lock return success without
+    taking the lock, so each nested run here skipped the lock it exists to exercise. Every
+    call that reaches the lock passes `cwd`, and the lock is keyed per repo root, so a
+    nested run takes its own throwaway tree's lock and never waits on the sweep's.
     """
-    env = {k: v for k, v in os.environ.items() if k != "MUTATION_CHECK_ACTIVE"}
+    env = {k: v for k, v in os.environ.items()
+           if k not in ("MUTATION_CHECK_ACTIVE", "MUTATION_SWEEP_ACTIVE")}
     env["PYTHONIOENCODING"] = "utf-8"
     if cwd:
         env["MUTATION_REPO_ROOT"] = str(cwd)
@@ -642,7 +649,7 @@ class TestBytecodeCachingCannotFakeAKill:
         `env=` kwarg deleted -- because the explanatory comment above the call contains
         the same string. Asserting on a comment is not asserting on behavior; the mutant
         that removed the real kwarg survived it. This version drives the actual code path
-        with subprocess.run patched, so only a real env can satisfy it."""
+        with the tool's one process launcher patched, so only a real env can satisfy it."""
         import ast
         import mutation_check as mc
         envs = []
@@ -652,8 +659,8 @@ class TestBytecodeCachingCannotFakeAKill:
             stdout = ""
             stderr = ""
 
-        def fake_run(cmd, **kw):
-            envs.append(kw.get("env") or {})
+        def fake_run(cmd, env=None, timeout=None, cwd=None):
+            envs.append(env or {})
             return _R()
 
         target = tmp_path / "sample.py"
@@ -662,7 +669,10 @@ class TestBytecodeCachingCannotFakeAKill:
         tests = tmp_path / "test_sample.py"
         tests.write_text("def test_ok():\n    assert True\n", encoding="utf-8")
 
-        monkeypatch.setattr(mc.subprocess, "run", fake_run)
+        # Every pytest the tool starts goes through _run_reaping_descendants since
+        # 2026-10-06 (the isolation pass used a bare subprocess.run with no timeout until
+        # then), so this now sees the baseline, the mutant runs AND the isolation runs.
+        monkeypatch.setattr(mc, "_run_reaping_descendants", fake_run)
         monkeypatch.setattr(mc, "REPO_ROOT", tmp_path)
         monkeypatch.setattr(mc.sys, "argv",
                             ["mutation_check.py", str(target),
@@ -1264,3 +1274,286 @@ def test_the_lock_held_signal_does_not_open_the_tree_lock_itself(tmp_path, monke
         holder.wait()
         mc.release_run_lock()
 
+
+# --- 2026-10-06: --list reads; the isolation pass is bounded ------------------
+
+def test_list_does_not_run_stranded_file_recovery(tmp_path, monkeypatch):
+    """`--list` is the look-before-you-leap command. It used to share main()'s prologue,
+    so listing a tool "recovered" it: a backup that differed from the target was written
+    OVER the target and deleted. Under a live run that is the run's mutant being replaced
+    behind its back, and its only on-disk original being thrown away."""
+    tool = _tiny_repo(tmp_path)
+    monkeypatch.setenv("MUTATION_BACKUP_DIR", str(tmp_path / "store"))
+    bak = mc.backup_path(tool)
+    bak.parent.mkdir(parents=True)
+    bak.write_text("x = 'what a live run is holding as the original'\n", encoding="utf-8")
+    before = tool.read_bytes()
+    r = _run([str(tool), "--list"], cwd=tmp_path)
+    assert json.loads(r.stdout)["mutants"] > 0
+    assert tool.read_bytes() == before, "--list rewrote the target"
+    assert bak.read_text(encoding="utf-8") == "x = 'what a live run is holding as the original'\n"
+
+
+def test_list_still_waits_its_turn_behind_a_run_that_owns_the_tree(tmp_path, monkeypatch):
+    """Reading is not exempt from the lock: the target is unstable while a run rewrites
+    it, and a catalogue of a transient mutant is a wrong catalogue."""
+    tool = _tiny_repo(tmp_path)
+    monkeypatch.setenv("MUTATION_BACKUP_DIR", str(tmp_path / "store"))
+    monkeypatch.delenv("MUTATION_SWEEP_ACTIVE", raising=False)
+    holder = subprocess.Popen(
+        [sys.executable, "-c",
+         "import sys, time; sys.path.insert(0, %r); import mutation_check as m; "
+         "print(m.acquire_run_lock()[0], flush=True); time.sleep(30)" % str(REPO_ROOT / "tools")],
+        stdout=subprocess.PIPE, text=True,
+        env={**{k: v for k, v in os.environ.items() if k != "MUTATION_SWEEP_ACTIVE"},
+             "MUTATION_REPO_ROOT": str(tmp_path)})
+    try:
+        assert holder.stdout.readline().strip() == "True"
+        r = _run([str(tool), "--list", "--wait", "0"], cwd=tmp_path)
+        assert json.loads(r.stdout).get("code") == "run_in_flight"
+    finally:
+        holder.kill()
+        holder.wait()
+
+
+def test_a_test_file_that_hangs_when_run_alone_is_bounded_and_named(tmp_path):
+    """The isolation pass ran each file with no timeout at all, so one file that hangs
+    alone ate the rest of the tool's 5-hour budget. It is also not a FAILURE: nothing was
+    learned about the file, so it must be reported as unmeasured and named."""
+    tool = _tiny_repo(tmp_path)
+    (tmp_path / "tests" / "scripts" / "test_sample_tool.py").write_text(
+        "import os, time\nimport sample_tool\n\n\ndef test_f():\n"
+        "    if not os.environ.get('MUTATION_CHECK_ACTIVE'):\n        time.sleep(40)\n"
+        "    assert sample_tool.f(2) is True\n", encoding="utf-8")
+    (tmp_path / "tests" / "conftest.py").write_bytes(
+        (REPO_ROOT / "tests" / "conftest.py").read_bytes())
+    (tmp_path / "tools" / "conftest_guard.py").write_bytes(
+        (REPO_ROOT / "tools" / "conftest_guard.py").read_bytes())
+    started = time.time()
+    r = _run([str(tool), "--isolation", "--json", "--timeout", "4"], cwd=tmp_path)
+    took = time.time() - started
+    result = json.loads(r.stdout)
+    assert took < 30, f"the isolation pass was not bounded ({took:.0f}s)"
+    assert [Path(p).name for p in result.get("isolation_timed_out", [])] == ["test_sample_tool.py"]
+    assert result["isolation_failures"] == [], "a timeout is not evidence the file fails alone"
+    assert result["status"] == "isolation_unmeasured"
+
+
+
+# --- 2026-10-06: a mutant that times out is unmeasured, not killed -------------
+
+def _runnable_tiny_repo(tmp_path):
+    """_tiny_repo plus the real conftest, so its test file can import the tool and a
+    full (non --list) run gets past the baseline."""
+    tool = _tiny_repo(tmp_path)
+    (tmp_path / "tests" / "conftest.py").write_bytes(
+        (REPO_ROOT / "tests" / "conftest.py").read_bytes())
+    (tmp_path / "tools" / "conftest_guard.py").write_bytes(
+        (REPO_ROOT / "tools" / "conftest_guard.py").read_bytes())
+    return tool
+
+
+def test_a_mutant_whose_tests_time_out_is_not_scored_as_killed(tmp_path):
+    """The limit is shared by the baseline and every mutant, and a night run measures
+    about twice as slow as a day run. Scoring a timeout as a kill certified that a suite
+    protects behaviour it never checked, on the nights the machine was merely slow."""
+    tool = _runnable_tiny_repo(tmp_path)
+    # Passes at once on the real source. On any mutant that changes f(2) it does not
+    # fail, it stalls, which is what a slow suite looks like from outside.
+    (tmp_path / "tests" / "scripts" / "test_sample_tool.py").write_text(
+        "import time\nimport sample_tool\n\n\ndef test_f():\n"
+        "    if sample_tool.f(2) is not True:\n        time.sleep(40)\n"
+        "    assert sample_tool.f(2) is True\n", encoding="utf-8")
+    r = _run([str(tool), "--json", "--timeout", "3"], cwd=tmp_path)
+    d = json.loads(r.stdout)
+    assert d["timed_out"] >= 1, "no mutant stalled; the fixture proves nothing"
+    assert d["killed"] == 0, "a stalled run was counted as a kill"
+    assert d["weak_kill_count"] == 0, "a stalled run was counted as a crash-only kill"
+    assert len(d["timed_out_mutants"]) == d["timed_out"]
+    assert {m["op"] for m in d["timed_out_mutants"]} <= {m["op"] for m in
+            json.loads(_run([str(tool), "--list"], cwd=tmp_path).stdout)["catalog"]}
+    assert d["timeout"] == 3, "the limit that was hit is not on the record"
+
+
+def test_timeouts_without_survivors_are_not_a_clean_status(tmp_path):
+    """`ok` says every mutant got a verdict."""
+    tool = _runnable_tiny_repo(tmp_path)
+    tool.write_text("def f(x):\n    return not x\n", encoding="utf-8")
+    (tmp_path / "tests" / "scripts" / "test_sample_tool.py").write_text(
+        "import time\nimport sample_tool\n\n\ndef test_f():\n"
+        "    if sample_tool.f(0) is not True:\n        time.sleep(40)\n"
+        "    assert sample_tool.f(0) is True\n", encoding="utf-8")
+    r = _run([str(tool), "--json", "--timeout", "3"], cwd=tmp_path)
+    d = json.loads(r.stdout)
+    assert d["survived"] == 0 and d["timed_out"] >= 1, d
+    assert d["status"] == "mutants_timed_out"
+
+
+def test_a_real_kill_is_still_a_kill(tmp_path):
+    """The other direction: the timeout branch must not swallow ordinary failures."""
+    tool = _runnable_tiny_repo(tmp_path)
+    r = _run([str(tool), "--json", "--timeout", "30"], cwd=tmp_path)
+    d = json.loads(r.stdout)
+    assert d["killed"] >= 1 and d["timed_out"] == 0 and d["timed_out_mutants"] == []
+    assert d["status"] in ("ok", "survivors")
+    assert 0 < d["baseline_seconds"] < 30, "the unmutated suite's duration is not recorded"
+
+
+# --- 2026-10-06: lock files for trees that are gone are removed ----------------
+
+def _lock_file_for(store, root):
+    enc = str(root).replace("%", "%25").replace("/", "%2F")
+    f = store / (enc + mc.LOCK_SUFFIX)
+    f.write_text("pid=1 since=2026-01-01T00:00:00", encoding="utf-8")
+    return f
+
+
+def test_lock_files_for_vanished_trees_are_removed_and_live_ones_kept(tmp_path, monkeypatch):
+    """Releasing an flock leaves the file. 1,083 had piled up in the shared store, one per
+    throwaway test repo, with nothing to remove them."""
+    store = tmp_path / "store"
+    store.mkdir()
+    monkeypatch.setenv("MUTATION_BACKUP_DIR", str(store))
+    live_tree = tmp_path / "still here"
+    live_tree.mkdir()
+    gone = _lock_file_for(store, tmp_path / "deleted" / "repo")
+    kept = _lock_file_for(store, live_tree)
+    bystander = store / "something.else"
+    bystander.write_text("x", encoding="utf-8")
+    assert mc.prune_stale_locks() == [gone]
+    assert not gone.exists()
+    assert kept.exists(), "a lock whose tree exists may be the one a run is about to take"
+    assert bystander.exists(), "only lock files are this function's to remove"
+
+
+def test_a_stale_looking_lock_that_a_process_holds_is_left_alone(tmp_path, monkeypatch):
+    import fcntl
+    store = tmp_path / "store"
+    store.mkdir()
+    monkeypatch.setenv("MUTATION_BACKUP_DIR", str(store))
+    held = _lock_file_for(store, tmp_path / "deleted" / "repo")
+    fd = os.open(held, os.O_RDWR)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        assert mc.prune_stale_locks() == []
+        assert held.exists()
+    finally:
+        os.close(fd)
+
+
+def test_pruning_locks_with_no_store_is_a_no_op(tmp_path, monkeypatch):
+    monkeypatch.setenv("MUTATION_BACKUP_DIR", str(tmp_path / "never made"))
+    assert mc.prune_stale_locks() == []
+
+
+def test_a_full_run_prunes_stale_locks_and_list_does_not(tmp_path, monkeypatch):
+    """Wired, not merely defined; and --list stays read-only."""
+    tool = _runnable_tiny_repo(tmp_path)
+    store = tmp_path / "store"
+    store.mkdir()
+    monkeypatch.setenv("MUTATION_BACKUP_DIR", str(store))
+    stale = _lock_file_for(store, tmp_path / "deleted" / "repo")
+    _run([str(tool), "--list"], cwd=tmp_path)
+    assert stale.exists(), "--list removed a file from the shared store"
+    r = _run([str(tool), "--json", "--timeout", "30"], cwd=tmp_path)
+    assert json.loads(r.stdout)["killed"] >= 1
+    assert not stale.exists()
+
+
+# --- 2026-10-06: a word in a string is not a reference to a tool ---------------
+
+class TestAWordInAStringLiteralIsNotAReference:
+    """tools/sweep.py was mapped to 14 test files, 10 of them through the English word
+    "sweep" in an assertion message or in the job name "mutation-sweep". One was
+    test_mutation_sweep.py, slow enough that sweep.py could never be measured inside the
+    time limit. A string literal has to LOOK like a reference to count.
+
+    The fixtures use a made-up tool, `plover`. Written with the real name, this file's own
+    literals mapped it to that tool, which is the defect being tested."""
+
+    def _mapped(self, tmp_path, body, stem="plover"):
+        tests = tmp_path / "tests" / "scripts"
+        tests.mkdir(parents=True, exist_ok=True)
+        (tests / "test_x.py").write_text(body, encoding="utf-8")
+        tools = tmp_path / "tools"
+        tools.mkdir(exist_ok=True)
+        (tools / f"{stem}.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+        return {p.name for p in mc.map_tests(tools / f"{stem}.py", repo_root=tmp_path)}
+
+    @pytest.mark.parametrize("body", [
+        "def test_a():\n    assert 1 == 1, 'hardening the plover would make every tool an error'\n",
+        "JOB = 'com.example.mutation-plover'\n\n\ndef test_a():\n    assert JOB\n",
+        "PLIST = 'mutation-plover.plist'\n\n\ndef test_a():\n    assert PLIST\n",
+        "def test_a(monkeypatch):\n    monkeypatch.setattr('other.plover.f', lambda: 2)\n",
+        "def test_a():\n    assert 'mytools.plover'\n",
+        "def test_a():\n    assert 'post plover suite'\n",
+        "STAMP = '<!-- plover: recipient=jane doe -->'\n\n\ndef test_a():\n    assert STAMP\n",
+    ])
+    def test_the_name_as_one_word_among_others_does_not_select(self, tmp_path, body):
+        assert self._mapped(tmp_path, body) == set()
+
+    @pytest.mark.parametrize("body", [
+        "import subprocess\n\n\ndef test_a():\n    subprocess.run(['python3', 'tools/plover.py'])\n",
+        "from pathlib import Path\nTOOL = Path('tools') / 'plover.py'\n\n\ndef test_a():\n    assert TOOL\n",
+        "import importlib\n\n\ndef test_a():\n    assert importlib.import_module('plover')\n",
+        "def test_a(monkeypatch):\n    monkeypatch.setattr('plover.f', lambda: 2)\n",
+        "import plover\n\n\ndef test_a():\n    assert plover.f() == 1\n",
+        "from plover import f\n\n\ndef test_a():\n    assert f() == 1\n",
+        "import importlib\n\n\ndef test_a():\n    assert importlib.import_module('tools.plover')\n",
+        "def test_a(monkeypatch):\n    monkeypatch.setattr('tools.plover.f', lambda: 2)\n",
+    ])
+    def test_every_way_a_test_really_reaches_a_tool_still_selects(self, tmp_path, body):
+        assert self._mapped(tmp_path, body) == {"test_x.py"}
+
+    def test_a_longer_name_that_ends_with_this_one_is_a_different_tool(self, tmp_path):
+        body = ("import subprocess\n\n\ndef test_a():\n"
+                "    subprocess.run(['python3', 'tools/mutation_plover.py'])\n")
+        assert self._mapped(tmp_path, body) == set()
+
+    def test_a_file_that_will_not_parse_stays_selected(self, tmp_path):
+        assert self._mapped(tmp_path, "def test_a(:\n    'plover'\n") == {"test_x.py"}
+
+
+def test_the_real_sweep_helper_is_no_longer_graded_by_the_mutation_sweep_suite():
+    """Real data, not a fixture: the pairing this change exists to remove."""
+    # The name is assembled so that this file does not itself contain a reference to it.
+    helper = REPO_ROOT / "tools" / ("swee" + "p.py")
+    mapped = {p.name for p in mc.map_tests(helper, repo_root=REPO_ROOT)}
+    assert "test_mutation_sweep.py" not in mapped
+    assert "test_mutation_check.py" not in mapped, "this file now names the helper itself"
+    assert "test_launchd_install.py" not in mapped, "'mutation-sweep.plist' is a job name"
+    assert {"test_sweep_helper.py", "test_sweep_signature_guard.py"} <= mapped
+
+
+def test_pruning_never_opens_the_lock_of_a_tree_that_exists(tmp_path, monkeypatch):
+    """Taking a live tree's lock, even for an instant, can refuse the run that wants it."""
+    store = tmp_path / "store"
+    store.mkdir()
+    monkeypatch.setenv("MUTATION_BACKUP_DIR", str(store))
+    live_tree = tmp_path / "still here"
+    live_tree.mkdir()
+    kept = _lock_file_for(store, live_tree)
+    opened = []
+    real_open = os.open
+    monkeypatch.setattr(mc.os, "open", lambda p, *a, **k: opened.append(str(p)) or real_open(p, *a, **k))
+    assert mc.prune_stale_locks() == []
+    assert str(kept) not in opened
+
+
+def test_a_tree_created_while_its_stale_lock_is_being_checked_keeps_the_lock(tmp_path, monkeypatch):
+    """pytest reuses its temp directory names, so "gone" can stop being true mid-check."""
+    import fcntl
+    store = tmp_path / "store"
+    store.mkdir()
+    monkeypatch.setenv("MUTATION_BACKUP_DIR", str(store))
+    tree = tmp_path / "comes back"
+    lock = _lock_file_for(store, tree)
+    real_flock = fcntl.flock
+
+    def flock_then_the_tree_appears(fd, op):
+        real_flock(fd, op)
+        tree.mkdir()
+
+    monkeypatch.setattr(mc.fcntl, "flock", flock_then_the_tree_appears)
+    assert mc.prune_stale_locks() == []
+    assert lock.exists()

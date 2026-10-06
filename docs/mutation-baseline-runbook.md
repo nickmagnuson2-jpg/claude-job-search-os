@@ -11,7 +11,7 @@ makes it a good unattended job: there is no judgment call for it to get wrong at
 
 Harness: `tools/mutation_sweep.py` · report: `tools/mutation_report.py` ·
 per-tool engine: `tools/mutation_check.py`.
-State (target list + results) lands in gitignored `output/analysis/082626-mutation-baseline/`.
+State (target list + results) lands in gitignored `output/mutation-state/`.
 
 ---
 
@@ -52,7 +52,7 @@ PYTHONIOENCODING=utf-8 python3 tools/mutation_check.py tools/mutation_sweep.py -
 
 ```
 PYTHONIOENCODING=utf-8 nohup python3 tools/mutation_sweep.py \
-    >> output/analysis/082626-mutation-baseline/sweep.log 2>&1 &
+    >> output/mutation-state/sweep.log 2>&1 &
 ```
 
 Resuming is automatic — banked tools are read from `baseline.jsonl` and skipped, so a kill,
@@ -61,8 +61,8 @@ crash, or reboot costs at most the single tool in flight. Just run the same comm
 ## Check on it
 
 ```
-tail -5 output/analysis/082626-mutation-baseline/sweep.log
-wc -l < output/analysis/082626-mutation-baseline/baseline.jsonl    # tools banked
+tail -5 output/mutation-state/sweep.log
+wc -l < output/mutation-state/baseline.jsonl    # tools banked
 pgrep -f tools/mutation_sweep.py || echo "not running"
 ```
 
@@ -321,8 +321,9 @@ original. The duplicate is not tracked by the restore handler, so it stranded pe
 **No longer true as of 2026-10-06.** `mutation_sweep --targets` counts mutants in-process through
 `mutation_check.count_mutants`, which reads and parses and writes nothing. It starts no
 `--list` child and no backup is written during a target build. `mutation_check.py <tool> --list`
-run by hand still takes the lock and writes a backup before listing; that is a separate, open
-item in `data/workstreams/mutation.md`.
+run by hand takes the tree lock (which creates this tree's lock file) and then changes neither
+the target nor any backup: it does not prune the store, recover a stranded file, write a backup
+or arm a restore.
 
 Two fixes, both in `tools/conftest_guard.py` (new — the single source both `tests/conftest.py` and
 `tools/mutation_check.py` import, so the two can no longer drift):
@@ -415,3 +416,34 @@ subprocess and re-raises an unexpected exit as `AssertionError: unexpected exit 
 a crash as an assertion. That inflates the strong count and cannot be fixed in the
 classifier — it is a test-authoring pattern. `check_scanner_examined_something` reports
 `weak_kill_count: 0` while genuinely having crash-shaped kills for exactly this reason.
+
+## Changes of 2026-10-06 that alter how a baseline is read or run
+
+- **Arming and disarming the nightly job.** The job's plist lives in `tools/launchd/disarmed/`
+  while it is not in use. `install.sh install` and the health watchdog read only the plists
+  directly in `tools/launchd/`, so a disarmed job is neither reinstalled nor reported missing.
+  `bash tools/launchd/install.sh arm mutation-sweep` moves it in, installs it and loads it;
+  `disarm mutation-sweep` unloads it, removes the installed copy and moves it back.
+- **Resume is keyed on source, not on name.** Each new row records `src`, a hash of the tool's
+  file at the time it was measured. A tool whose file has changed since is measured again and the
+  log says `re-measuring N tool(s) whose source changed`. Rows from before this date have no
+  `src`; they are treated as stale only when the mutant count they were scheduled with differs
+  from the current target list's, so an edit that left the count unchanged is not detected for
+  those rows.
+- **The latest row speaks for a tool on resume.** A tool that measured clean once and errored on
+  a later run is retried. It used to be skipped and then reported unmeasured every night.
+- **A mutant whose tests time out is not a kill.** It is counted in `timed_out`, named in
+  `timed_out_mutants`, and left out of `killed` and `weak`. A run with timeouts and no survivors
+  has status `mutants_timed_out`, not `ok`. Rows from before this date may count timeouts as
+  kills; `weak` in those rows includes them.
+- **`baseline_seconds` and `timeout`** are in every new row: how long the unmutated suite took and
+  the limit it ran under.
+- **No tool is started on battery power.** The sweep reads `pmset -g batt` before each tool and
+  stops with exit 1 if the Mac is on battery, restoring the launchd jobs. `--allow-battery`
+  overrides. A tool already running when the charger comes out is allowed to finish.
+- **A string literal maps a test file to a tool only when it looks like a reference**: the file
+  name (`todo_write.py`), a dotted path (`todo_write.main`), or the bare name as the whole string.
+  The name as one word in a sentence no longer maps. Measured on this repo: 652 tool-to-test
+  pairs became 638, with none added.
+- **Stale lock files are removed.** A full run deletes `*.mutation-run.lock` files in the shared
+  store whose tree no longer exists and which no process holds.

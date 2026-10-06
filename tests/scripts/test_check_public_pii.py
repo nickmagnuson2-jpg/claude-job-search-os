@@ -672,8 +672,8 @@ def test_writer_extraction_nested_and_wrapped(cmd, expected):
     ("agent-browser eval \"new Promise(r=>setTimeout(()=>r('ok'),1200))\"", []),
     ("grep -n bash -c 'echo x > docs/p.md'", []),
     ("sudo sh -c 'echo x > docs/p.md'", ["docs/p.md"]),
-    ("find . -name x -exec sh -c 'tee docs/p.md' \;", ["docs/p.md"]),
-    ("find . -exec \"tee\" docs/p.md \;", ["docs/p.md", ";"]),
+    ("find . -name x -exec sh -c 'tee docs/p.md' \\;", ["docs/p.md"]),
+    ("find . -exec \"tee\" docs/p.md \\;", ["docs/p.md", ";"]),
 ])
 def test_nested_command_strings_only_where_the_shell_runs_them(cmd, expected):
     assert extract_write_targets(cmd) == expected

@@ -53,6 +53,9 @@ def load(root, monkeypatch):
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     _control_the_mutant_counts(mod, Path(root))
+    # The sweep refuses to start a tool on battery. These tests must not depend on
+    # whether the machine running them is plugged in; the ones about power say so.
+    mod.on_ac_power = lambda: True
     return mod
 
 
@@ -1225,6 +1228,35 @@ def test_a_conftest_refusal_reaches_the_banked_record(repo, monkeypatch, capsys)
     assert row["status"] == "isolation_unmeasured"
 
 
+def test_what_timed_out_reaches_the_banked_record(repo, monkeypatch, capsys):
+    """Third time for the same omission (2026-10-06). The checker gained two ways to say
+    "not measured" -- a test file that hangs alone, a mutant whose tests ran out of time --
+    and the row copied neither, so it could read `isolation_unmeasured` or
+    `mutants_timed_out` with no file and no count attached."""
+    state = write_targets(repo, [{"tool": "tools/a.py", "w": False, "h": False,
+                                  "tests": 1, "mutants": 9}])
+    set_control(repo, results={"tools/a.py": {
+        "status": "isolation_unmeasured", "killed": 5, "survived": 0, "timed_out": 4,
+        "isolation_failures": [], "isolation_timed_out": ["tests/scripts/test_a.py"]}})
+    mod = load(repo, monkeypatch)
+    mod.run_sweep(state)
+    printed = capsys.readouterr().out
+    row = banked(state)[0]
+    assert row["isolation_timed_out"] == ["tests/scripts/test_a.py"]
+    assert row["timed_out"] == 4
+    assert "timed_out=4" in printed, "the night's log must show it without opening the file"
+
+
+def test_a_run_with_no_timeouts_does_not_print_one(repo, monkeypatch, capsys):
+    state = write_targets(repo, [{"tool": "tools/a.py", "w": False, "h": False,
+                                  "tests": 1, "mutants": 2}])
+    set_control(repo, results={"tools/a.py": {"status": "ok", "killed": 2, "survived": 0,
+                                              "timed_out": 0}})
+    mod = load(repo, monkeypatch)
+    mod.run_sweep(state)
+    assert "timed_out" not in capsys.readouterr().out
+
+
 def test_the_backup_path_module_is_self_excluded_too(repo, monkeypatch):
     """conftest_guard.py computes WHERE backups are written and DELETES orphaned ones, so
     it cannot be a target.
@@ -1320,6 +1352,225 @@ def test_resume_does_not_launder_a_banked_error_into_success(tmp_path, monkeypat
         f"errored/unaudited tools were counted as complete: {sorted(done)}")
 
 
+# --- 2026-10-06: resume is keyed on what was measured, not on a name -----------
+
+def _banked_tool(repo, monkeypatch, row_extra, mutants=3):
+    """One banked tool, one target for it, and a result ready if it is run again."""
+    add_tool(repo, "a")
+    state = write_targets(repo, [{"tool": "tools/a.py", "w": False, "h": False,
+                                  "tests": 1, "mutants": mutants}])
+    mod = load(repo, monkeypatch)
+    row = {"tool": "tools/a.py", "status": "ok", "killed": 3, "survived": 0, **row_extra(mod)}
+    (state / "baseline.jsonl").write_text(json.dumps(row) + "\n", encoding="utf-8")
+    set_control(repo, results={"tools/a.py": {"status": "ok", "killed": 3, "survived": 0}})
+    return mod, state
+
+
+def test_a_banked_tool_whose_source_is_unchanged_is_skipped(repo, monkeypatch, capsys):
+    mod, state = _banked_tool(
+        repo, monkeypatch, lambda m: {"src": m.source_fingerprint("tools/a.py"), "mutants": 3})
+    assert mod.run_sweep(state) == 0
+    assert calls(repo) == []
+    assert "re-measuring" not in capsys.readouterr().out
+
+
+def test_a_banked_tool_whose_source_changed_is_measured_again(repo, monkeypatch, capsys):
+    """The row said "measured" about a file that no longer existed in that form."""
+    mod, state = _banked_tool(
+        repo, monkeypatch, lambda m: {"src": m.source_fingerprint("tools/a.py"), "mutants": 3})
+    (repo / "tools" / "a.py").write_text("def go(p):\n    return p.read_bytes()\n",
+                                         encoding="utf-8")
+    assert mod.run_sweep(state) == 0
+    assert [c["target"] for c in calls(repo)] == ["tools/a.py"]
+    out = capsys.readouterr().out
+    assert "re-measuring 1 tool(s) whose source changed" in out and "tools/a.py" in out
+    assert "previously-errored" not in out, "a changed tool is not a failed one"
+    rows = banked(state)
+    assert len(rows) == 2, "the old row is history; resume appends, never rewrites"
+    assert rows[-1]["src"] == mod.source_fingerprint("tools/a.py")
+    assert rows[-1]["src"] != rows[0]["src"]
+
+
+def test_every_new_row_records_the_source_it_measured(repo, monkeypatch, capsys):
+    add_tool(repo, "a")
+    state = write_targets(repo, [{"tool": "tools/a.py", "w": False, "h": False,
+                                  "tests": 1, "mutants": 3}])
+    set_control(repo, results={"tools/a.py": {"status": "ok", "killed": 3, "survived": 0}})
+    mod = load(repo, monkeypatch)
+    mod.run_sweep(state)
+    capsys.readouterr()
+    src = banked(state)[0]["src"]
+    assert src == mod.source_fingerprint("tools/a.py") and len(src) == 16
+
+
+def test_an_old_row_is_stale_when_the_mutant_count_it_was_scheduled_with_has_moved(
+        repo, monkeypatch, capsys):
+    """Rows banked before 2026-10-06 carry no fingerprint. The count is all they have."""
+    mod, state = _banked_tool(repo, monkeypatch, lambda m: {"mutants": 9}, mutants=3)
+    mod.run_sweep(state)
+    assert [c["target"] for c in calls(repo)] == ["tools/a.py"]
+    assert "re-measuring 1 tool(s)" in capsys.readouterr().out
+
+
+def test_an_old_row_with_the_same_mutant_count_is_kept(repo, monkeypatch, capsys):
+    """Treating every unfingerprinted row as stale would discard the whole baseline."""
+    mod, state = _banked_tool(repo, monkeypatch, lambda m: {"mutants": 3}, mutants=3)
+    assert mod.run_sweep(state) == 0
+    assert calls(repo) == []
+
+
+def test_a_fingerprint_outranks_the_mutant_count(repo, monkeypatch, capsys):
+    """Same source, different count in the target list: the exact evidence wins."""
+    mod, state = _banked_tool(
+        repo, monkeypatch, lambda m: {"src": m.source_fingerprint("tools/a.py"), "mutants": 9},
+        mutants=3)
+    mod.run_sweep(state)
+    assert calls(repo) == []
+
+
+def test_a_tool_that_measured_clean_and_then_errored_is_retried(repo, monkeypatch, capsys):
+    """Last row speaks for the tool. Any clean row ever banked used to count as done, so
+    this tool was skipped by resume and reported unmeasured at the end, every night."""
+    add_tool(repo, "a")
+    state = write_targets(repo, [{"tool": "tools/a.py", "w": False, "h": False,
+                                  "tests": 1, "mutants": 3}])
+    (state / "baseline.jsonl").write_text(
+        json.dumps({"tool": "tools/a.py", "status": "ok", "killed": 3, "survived": 0}) + "\n"
+        + json.dumps({"tool": "tools/a.py", "status": "error", "code": "baseline_red"}) + "\n",
+        encoding="utf-8")
+    set_control(repo, results={"tools/a.py": {"status": "ok", "killed": 3, "survived": 0}})
+    mod = load(repo, monkeypatch)
+    assert mod.run_sweep(state) == 0
+    assert [c["target"] for c in calls(repo)] == ["tools/a.py"]
+    assert "retrying 1 previously-errored tool(s): tools/a.py" in capsys.readouterr().out
+
+
+def test_staleness_helpers_on_their_own(repo, monkeypatch):
+    add_tool(repo, "a")
+    mod = load(repo, monkeypatch)
+    fp = mod.source_fingerprint("tools/a.py")
+    target = {"tool": "tools/a.py", "mutants": 3}
+    assert mod.source_fingerprint("tools/not_there.py") is None
+    assert mod.is_stale({"tool": "tools/a.py", "src": fp}, target) is False
+    assert mod.is_stale({"tool": "tools/a.py", "src": "0" * 16}, target) is True
+    assert mod.is_stale({"tool": "tools/a.py", "src": "0" * 16}, None) is False, \
+        "a tool that is not a target is not this run's to re-measure"
+    assert mod.is_stale({"tool": "tools/gone.py", "src": "0" * 16},
+                        {"tool": "tools/gone.py", "mutants": 3}) is False, \
+        "a file that cannot be read cannot be compared"
+    assert mod.is_stale({"tool": "tools/a.py"}, target) is False, "no evidence either way"
+    rows = [{"tool": "tools/a.py", "status": "ok", "src": "0" * 16},
+            {"tool": "tools/b.py", "status": "error", "src": "0" * 16}]
+    targets = [target, {"tool": "tools/b.py", "mutants": 1}]
+    assert mod.stale_tools(rows, targets) == ["tools/a.py"], "an errored row is retried, not stale"
+    assert mod.completed_tools(rows, targets) == set()
+    assert mod.completed_tools(rows) == {"tools/a.py"}, "without targets there is nothing to compare"
+
+
+# --- 2026-10-06: no tool is started on battery power ---------------------------
+
+def _two_tools(repo, monkeypatch):
+    for n in ("a", "b"):
+        add_tool(repo, n)
+    state = write_targets(repo, [
+        {"tool": f"tools/{n}.py", "w": False, "h": False, "tests": 1, "mutants": 3}
+        for n in ("a", "b")])
+    set_control(repo, results={f"tools/{n}.py": {"status": "ok", "killed": 3, "survived": 0}
+                               for n in ("a", "b")})
+    return load(repo, monkeypatch), state
+
+
+def test_on_battery_nothing_is_measured_and_the_run_fails(repo, monkeypatch, capsys):
+    """caffeinate cannot hold the Mac awake on battery. On 2026-10-02 nine launchd jobs
+    stayed unloaded for 8h20m while the run advanced in 45-second wake-ups."""
+    mod, state = _two_tools(repo, monkeypatch)
+    mod.on_ac_power = lambda: False
+    assert mod.run_sweep(state) == 1
+    assert calls(repo) == [] and banked(state) == []
+    out = capsys.readouterr().out
+    assert "STOPPING ON BATTERY POWER" in out and "2 tool(s) not started" in out
+    assert "SWEEP COMPLETE" not in out
+
+
+def test_the_jobs_come_back_when_the_run_stops_for_battery(repo, monkeypatch, capsys):
+    mod, state = _two_tools(repo, monkeypatch)
+    spy = SpyQuiesce()
+    monkeypatch.setattr(mod, "job_quiesce", spy)
+    mod.on_ac_power = lambda: False
+    mod.run_sweep(state)
+    assert "restore" in capsys.readouterr().out.lower()
+
+
+def test_power_is_asked_before_every_tool_not_once(repo, monkeypatch, capsys):
+    """The charger comes out mid-run."""
+    mod, state = _two_tools(repo, monkeypatch)
+    answers = iter([True, False])
+    mod.on_ac_power = lambda: next(answers)
+    assert mod.run_sweep(state) == 1
+    assert [c["target"] for c in calls(repo)] == ["tools/a.py"]
+    assert [r["tool"] for r in banked(state)] == ["tools/a.py"], "what was measured is kept"
+    assert "1 tool(s) not started" in capsys.readouterr().out
+
+
+def test_an_unknown_power_state_does_not_stop_the_run(repo, monkeypatch, capsys):
+    mod, state = _two_tools(repo, monkeypatch)
+    mod.on_ac_power = lambda: None
+    assert mod.run_sweep(state) == 0
+    assert len(calls(repo)) == 2
+
+
+def test_allow_battery_measures_anyway(repo, monkeypatch, capsys):
+    mod, state = _two_tools(repo, monkeypatch)
+    mod.on_ac_power = lambda: False
+    assert mod.main(["--state-dir", str(state), "--allow-battery"]) == 0
+    assert len(calls(repo)) == 2
+
+
+@pytest.mark.parametrize("text, expected", [
+    ("Now drawing from 'AC Power'\n -InternalBattery-0 (id=1)\t100%; charged;", True),
+    ("Now drawing from 'Battery Power'\n -InternalBattery-0 (id=1)\t71%; discharging;", False),
+    ("something this code has never seen", None),
+])
+def test_the_power_reading_is_parsed_from_pmset(tmp_path, monkeypatch, text, expected):
+    spec = importlib.util.spec_from_file_location("mutation_sweep_power", TOOL)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    class _R:
+        stdout = text
+
+    seen = []
+    monkeypatch.setattr(mod.subprocess, "run", lambda cmd, **k: seen.append(cmd) or _R())
+    assert mod.on_ac_power() is expected
+    assert seen == [["pmset", "-g", "batt"]]
+
+
+def test_a_machine_without_pmset_is_not_treated_as_on_battery(monkeypatch):
+    spec = importlib.util.spec_from_file_location("mutation_sweep_power", TOOL)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    def missing(*a, **k):
+        raise FileNotFoundError("pmset")
+
+    monkeypatch.setattr(mod.subprocess, "run", missing)
+    assert mod.on_ac_power() is None
+
+
+def test_the_baseline_duration_and_its_limit_reach_the_banked_record(repo, monkeypatch, capsys):
+    """How much slower a night run is was inferred from two leftover backups. Recording
+    the unmutated suite's duration beside the limit makes it a measurement."""
+    state = write_targets(repo, [{"tool": "tools/a.py", "w": False, "h": False,
+                                  "tests": 1, "mutants": 2}])
+    set_control(repo, results={"tools/a.py": {"status": "ok", "killed": 2, "survived": 0,
+                                              "baseline_seconds": 93.4, "timeout": 300}})
+    mod = load(repo, monkeypatch)
+    mod.run_sweep(state)
+    capsys.readouterr()
+    row = banked(state)[0]
+    assert row["baseline_seconds"] == 93.4 and row["timeout"] == 300
+
+
 # --- unmeasured accounting --------------------------------------------------
 #
 # baseline.jsonl is APPEND-ONLY. The sweep's end-of-run "N UNMEASURED TOOL(S)" line
@@ -1386,3 +1637,404 @@ def test_unmeasured_tools_are_sorted_not_in_bank_order(repo, monkeypatch):
     ]
     assert mod.unmeasured_tools(rows) == ["tools/alpha.py", "tools/mid.py", "tools/zeta.py"], \
         "output must be sorted; bank order is arrival order and tells the reader nothing"
+
+
+# =============================================================================
+# 2026-10-06: the failure paths. Each of these `return 1` lines survived mutation.
+#
+# `sys.exit(None)` is exit 0, so a failure path whose return is lost reports success to
+# launchd, to the watchdog and to whoever reads the exit status. The suite either never
+# reached these paths (--only and the wired-hook skip had no test at all) or reached them
+# without asserting the number.
+# =============================================================================
+
+def _spied(repo, monkeypatch, wired=frozenset()):
+    """One measurable tool, a spy for the launchd jobs, and a known hook registry.
+
+    currently_wired is pinned because the real one also reads ~/.claude/settings.json,
+    and these tests must not depend on what the machine running them has wired."""
+    add_tool(repo, "a")
+    state = _one_tool_state(repo)
+    mod = load(repo, monkeypatch)
+    spy = SpyQuiesce()
+    monkeypatch.setattr(mod, "job_quiesce", spy)
+    monkeypatch.setattr(mod, "currently_wired", lambda *a, **k: set(wired))
+    monkeypatch.delenv("CLAUDECODE", raising=False)
+    return mod, state, spy
+
+
+def test_only_naming_an_unknown_tool_fails_before_anything_is_touched(repo, monkeypatch, capsys):
+    mod, state, spy = _spied(repo, monkeypatch)
+    assert mod.run_sweep(state, only=["a", "nope"]) == 1
+    err = capsys.readouterr().err
+    assert "tools/nope.py" in err
+    assert "tools/a.py" not in err, "the tool that IS known was reported as missing"
+    assert calls(repo) == [] and spy.events == [], "it measured or quiesced before refusing"
+
+
+@pytest.mark.parametrize("spelling", ["a", "a.py", "tools/a.py"])
+def test_only_accepts_a_bare_name_a_file_name_or_a_path(repo, monkeypatch, capsys, spelling):
+    mod, state, spy = _spied(repo, monkeypatch)
+    assert mod.run_sweep(state, only=[spelling]) == 0
+    assert [c["target"] for c in calls(repo)] == ["tools/a.py"]
+
+
+def test_only_measures_the_named_tools_and_no_others(repo, monkeypatch, capsys):
+    add_tool(repo, "b")
+    mod, _, spy = _spied(repo, monkeypatch)
+    state = write_targets(repo, [
+        {"tool": f"tools/{n}.py", "w": False, "h": False, "tests": 1, "mutants": 3}
+        for n in ("a", "b")])
+    set_control(repo, results={f"tools/{n}.py": {"status": "ok", "killed": 3, "survived": 0}
+                               for n in ("a", "b")})
+    assert mod.run_sweep(state, only=["b"]) == 0
+    assert [c["target"] for c in calls(repo)] == ["tools/b.py"]
+
+
+def test_only_measures_a_tool_again_even_when_it_is_banked(repo, monkeypatch, capsys):
+    """An explicit --only is a request to re-measure; "already banked" would do nothing."""
+    mod, state, spy = _spied(repo, monkeypatch)
+    (state / "baseline.jsonl").write_text(
+        json.dumps({"tool": "tools/a.py", "status": "ok", "killed": 3, "survived": 0}) + "\n",
+        encoding="utf-8")
+    assert mod.run_sweep(state) == 0 and calls(repo) == []
+    assert mod.run_sweep(state, only=["a"]) == 0
+    assert [c["target"] for c in calls(repo)] == ["tools/a.py"]
+
+
+def test_an_empty_target_list_fails_and_takes_no_job_down(repo, monkeypatch, capsys):
+    mod, state, spy = _spied(repo, monkeypatch)
+    (state / "targets.json").write_text("[]", encoding="utf-8")
+    assert mod.run_sweep(state) == 1
+    assert "is EMPTY" in capsys.readouterr().err
+    assert spy.events == [] and calls(repo) == []
+
+
+def test_a_sweep_refused_by_the_tree_lock_fails_and_takes_no_job_down(repo, monkeypatch, capsys):
+    """A second sweep that quiesced and then bailed would restore jobs the first still
+    needs down. It must fail, by number, before touching launchd."""
+    mod, state, spy = _spied(repo, monkeypatch)
+    monkeypatch.setattr(mod.mutation_check, "acquire_run_lock",
+                        lambda *a, **k: (False, "pid=4242 since=2026-10-06T06:00:00"))
+    released = []
+    monkeypatch.setattr(mod.mutation_check, "release_run_lock", lambda: released.append(1))
+    assert mod.run_sweep(state) == 1
+    err = capsys.readouterr().err
+    assert "REFUSING" in err and "pid=4242" in err
+    assert spy.events == [] and calls(repo) == []
+    assert released == [], "released a lock it never held"
+
+
+def test_the_tree_lock_is_released_when_a_sweep_ends(repo, monkeypatch, capsys):
+    mod, state, spy = _spied(repo, monkeypatch)
+    released = []
+    real = mod.mutation_check.release_run_lock
+    monkeypatch.setattr(mod.mutation_check, "release_run_lock",
+                        lambda: (released.append(1), real())[1])
+    assert mod.run_sweep(state) == 0
+    assert released == [1]
+
+
+def test_an_unreadable_hook_registry_fails_the_sweep_and_restores_the_jobs(
+        repo, monkeypatch, capsys):
+    mod, state, spy = _spied(repo, monkeypatch)
+
+    def unreadable(*a, **k):
+        raise ValueError("settings.json: Expecting value")
+
+    monkeypatch.setattr(mod, "currently_wired", unreadable)
+    assert mod.run_sweep(state) == 1
+    err = capsys.readouterr().err
+    assert "cannot determine which hooks are wired" in err and "Expecting value" in err
+    assert calls(repo) == [], "a guard was handed to the mutator with the registry unread"
+    assert spy.events == ["quiesce", "restore"]
+
+
+def test_an_empty_registry_beside_a_real_settings_file_fails_the_sweep(repo, monkeypatch, capsys):
+    mod, state, spy = _spied(repo, monkeypatch)
+    (repo / ".claude").mkdir()
+    (repo / ".claude" / "settings.json").write_text("{}", encoding="utf-8")
+    assert mod.run_sweep(state) == 1
+    assert "came back EMPTY" in capsys.readouterr().err
+    assert calls(repo) == []
+
+
+def test_an_empty_registry_with_no_settings_file_is_a_tree_that_wires_nothing(
+        repo, monkeypatch, capsys):
+    mod, state, spy = _spied(repo, monkeypatch)
+    assert mod.run_sweep(state) == 0
+    assert len(calls(repo)) == 1
+
+
+def test_a_sweep_that_ends_with_an_unmeasured_tool_exits_one_and_names_it(
+        repo, monkeypatch, capsys):
+    mod, state, spy = _spied(repo, monkeypatch)
+    set_control(repo, results={"tools/a.py": {"status": "error", "code": "baseline_red"}})
+    assert mod.run_sweep(state) == 1
+    out = capsys.readouterr().out
+    assert "SWEEP COMPLETE WITH 1 UNMEASURED TOOL(S): tools/a.py" in out
+
+
+def test_a_clean_sweep_exits_zero_and_says_complete_without_a_caveat(repo, monkeypatch, capsys):
+    mod, state, spy = _spied(repo, monkeypatch)
+    assert mod.run_sweep(state) == 0
+    out = capsys.readouterr().out
+    assert "SWEEP COMPLETE" in out and "UNMEASURED" not in out
+    assert "PARTLY MEASURED" not in out, "reported a partial measurement that did not happen"
+    assert "STILL DOWN" not in out, "reported jobs down after a restore that failed nothing"
+
+
+def test_blank_lines_in_the_bank_are_skipped_and_the_rows_around_them_still_count(
+        repo, monkeypatch, capsys):
+    """Read twice, at the start (resume) and at the end (the exit status)."""
+    add_tool(repo, "b")
+    mod, _, spy = _spied(repo, monkeypatch)
+    state = write_targets(repo, [
+        {"tool": f"tools/{n}.py", "w": False, "h": False, "tests": 1, "mutants": 3}
+        for n in ("a", "b")])
+    (state / "baseline.jsonl").write_text(
+        "\n" + json.dumps({"tool": "tools/a.py", "status": "ok", "killed": 3, "survived": 0})
+        + "\n\n   \n", encoding="utf-8")
+    set_control(repo, results={"tools/b.py": {"status": "error", "code": "no_tests"}})
+    assert mod.run_sweep(state) == 1
+    assert [c["target"] for c in calls(repo)] == ["tools/b.py"], "a banked row was not read"
+    assert "UNMEASURED TOOL(S): tools/b.py" in capsys.readouterr().out
+
+
+def test_a_sweep_with_nothing_banked_and_nothing_to_do_does_not_need_a_bank_file(
+        repo, monkeypatch, capsys):
+    """Every target at zero mutants: no row is written, and the end-of-run read must cope."""
+    mod, _, spy = _spied(repo, monkeypatch)
+    state = write_targets(repo, [{"tool": "tools/a.py", "w": False, "h": False,
+                                  "tests": 1, "mutants": 0}])
+    assert mod.run_sweep(state) == 0
+    assert not (state / "baseline.jsonl").exists()
+
+
+# --- wired hooks and a live session ------------------------------------------
+
+def _wired_and_loose(repo, monkeypatch, cached_h=False, registry=("wired.py",)):
+    for n in ("wired", "loose"):
+        add_tool(repo, n)
+    mod = load(repo, monkeypatch)
+    monkeypatch.setattr(mod, "job_quiesce", SpyQuiesce())
+    monkeypatch.setattr(mod, "currently_wired", lambda *a, **k: set(registry))
+    state = write_targets(repo, [
+        {"tool": "tools/wired.py", "w": False, "h": cached_h, "tests": 1, "mutants": 3},
+        {"tool": "tools/loose.py", "w": False, "h": False, "tests": 1, "mutants": 3}])
+    set_control(repo, results={f"tools/{n}.py": {"status": "ok", "killed": 3, "survived": 0}
+                               for n in ("wired", "loose")})
+    return mod, state
+
+
+def test_a_wired_hook_is_skipped_and_named_while_a_session_is_live(repo, monkeypatch, capsys):
+    """For the length of its measurement the live guard IS the mutant, and this session's
+    own tool calls answer to it."""
+    mod, state = _wired_and_loose(repo, monkeypatch)
+    monkeypatch.setenv("CLAUDECODE", "1")
+    mod.run_sweep(state)
+    assert [c["target"] for c in calls(repo)] == ["tools/loose.py"]
+    out = capsys.readouterr().out
+    assert "SKIPPING" in out and "tools/wired.py" in out
+
+
+def test_a_wired_hook_is_measured_when_no_session_is_live(repo, monkeypatch, capsys):
+    """Unattended there is nobody for the mutant to judge, and skipping would leave the
+    guards, the tools that matter most, permanently out of the baseline."""
+    mod, state = _wired_and_loose(repo, monkeypatch)
+    monkeypatch.delenv("CLAUDECODE", raising=False)
+    assert mod.run_sweep(state) == 0
+    assert sorted(c["target"] for c in calls(repo)) == ["tools/loose.py", "tools/wired.py"]
+    assert "SKIPPING" not in capsys.readouterr().out
+
+
+def test_a_cached_wired_flag_still_skips_when_the_live_registry_has_dropped_the_tool(
+        repo, monkeypatch, capsys):
+    """A stale True is the safe direction."""
+    mod, state = _wired_and_loose(repo, monkeypatch, cached_h=True, registry=("other.py",))
+    monkeypatch.setenv("CLAUDECODE", "1")
+    mod.run_sweep(state)
+    assert [c["target"] for c in calls(repo)] == ["tools/loose.py"]
+
+
+def test_only_cannot_force_a_wired_hook_while_a_session_is_live(repo, monkeypatch, capsys):
+    mod, state = _wired_and_loose(repo, monkeypatch)
+    monkeypatch.setenv("CLAUDECODE", "1")
+    mod.run_sweep(state, only=["wired"])
+    assert calls(repo) == []
+    assert "tools/wired.py" in capsys.readouterr().out, "skipped without saying which tool"
+
+
+def test_a_registry_module_that_cannot_be_imported_reads_as_nothing_wired(repo, monkeypatch):
+    mod = load(repo, monkeypatch)
+    monkeypatch.setitem(sys.modules, "check_hook_warn_tier", None)   # import now raises
+    assert mod.currently_wired(repo) == set()
+
+
+# --- selection details ---------------------------------------------------------
+
+def test_own_records_whether_a_test_file_is_named_for_the_tool(repo, monkeypatch):
+    """A survival rate computed from tests written for something else is not evidence
+    about the tool, and reads exactly like one that is."""
+    add_tool(repo, "named", mutants=2)
+    add_tool(repo, "borrowed", tested=False, mutants=2)
+    (repo / "tests" / "scripts" / "test_elsewhere.py").write_text(
+        "import borrowed\n\n\ndef test_a():\n    assert borrowed\n", encoding="utf-8")
+    mod = load(repo, monkeypatch)
+    own = {r["tool"]: r["own"] for r in mod.build_targets()}
+    assert own == {"tools/named.py": True, "tools/borrowed.py": False}
+
+
+def test_a_conflict_copy_with_a_test_file_of_its_own_is_still_not_a_target(repo, monkeypatch):
+    """The existing conflict-copy test planted copies that no test maps to, so they were
+    dropped for having no tests and the conflict rule itself was never exercised."""
+    add_tool(repo, "real", mutants=2)
+    for n in ("2", "3"):
+        (repo / "tools" / f"real {n}.py").write_text("X = 1\n", encoding="utf-8")
+        (repo / "tests" / "scripts" / f"test_real {n}.py").write_text(
+            "def test_a():\n    assert 1 == 1\n", encoding="utf-8")
+    mod = load(repo, monkeypatch)
+    assert [r["tool"] for r in mod.build_targets()] == ["tools/real.py"]
+
+
+# --- the record ------------------------------------------------------------------
+
+def test_mapped_tests_are_recorded_for_an_error_and_only_for_an_error(repo, monkeypatch, capsys):
+    mod, state, spy = _spied(repo, monkeypatch)
+    set_control(repo, results={"tools/a.py": {"status": "error", "code": "baseline_red",
+                                              "tests": ["tests/scripts/test_a.py"]}})
+    mod.run_sweep(state)
+    assert banked(state)[-1]["error_tests"] == ["tests/scripts/test_a.py"]
+    set_control(repo, results={"tools/a.py": {"status": "survivors", "killed": 2, "survived": 1,
+                                              "tests": ["tests/scripts/test_a.py"]}})
+    mod.run_sweep(state)
+    assert banked(state)[-1]["error_tests"] is None
+    capsys.readouterr()
+
+
+def test_stderr_is_kept_for_every_status_except_ok(repo, monkeypatch, capsys):
+    mod, state, spy = _spied(repo, monkeypatch)
+    set_control(repo, results={"tools/a.py": {"status": "survivors", "killed": 2, "survived": 1}})
+    mod.run_sweep(state)
+    assert banked(state)[-1]["stderr"] == "", "a non-clean row lost its stderr field"
+    set_control(repo, results={"tools/a.py": {"status": "ok", "killed": 3, "survived": 0}})
+    mod.run_sweep(state, only=["a"])
+    assert banked(state)[-1]["stderr"] is None
+    capsys.readouterr()
+
+
+# --- the log --------------------------------------------------------------------
+
+def test_notes_from_a_quiesce_or_restore_are_printed(repo, monkeypatch, capsys):
+    mod, state, spy = _spied(repo, monkeypatch)
+    monkeypatch.setattr(spy, "quiesce", lambda *a, **k: {
+        "quiesced": [], "failed": [], "notes": ["launchctl was not reachable"]})
+    mod.run_sweep(state)
+    assert "quiesce: launchctl was not reachable" in capsys.readouterr().out
+
+
+def test_a_signal_during_the_takedown_itself_still_puts_the_jobs_back(repo, monkeypatch, capsys):
+    """The handler is installed before the jobs come down and the `try` starts after, so
+    in that window the `finally` does not exist yet and only the handler can restore."""
+    mod, state, spy = _spied(repo, monkeypatch)
+    installed = {}
+    monkeypatch.setattr(mod.signal, "signal",
+                        lambda sig, handler: installed.setdefault(sig, handler))
+
+    def signalled_mid_takedown(repo_root, marker, runner=None):
+        spy.events.append("quiesce")
+        installed[mod.signal.SIGTERM](mod.signal.SIGTERM, None)
+
+    monkeypatch.setattr(spy, "quiesce", signalled_mid_takedown)
+    with pytest.raises(SystemExit):
+        mod.run_sweep(state)
+    capsys.readouterr()
+    assert spy.events == ["quiesce", "restore"]
+
+
+def test_the_module_imports_by_path_from_a_process_that_knows_nothing_about_tools():
+    """Its own tests load it by path, and so does anything else that is not `python3
+    tools/mutation_sweep.py`. The bare imports of its siblings only work because the
+    module puts its own directory on sys.path first."""
+    code = ("import importlib.util, sys\n"
+            "spec = importlib.util.spec_from_file_location('ms', %r)\n"
+            "mod = importlib.util.module_from_spec(spec)\n"
+            "spec.loader.exec_module(mod)\n"
+            "print(mod.SELF_NAME)\n" % str(TOOL))
+    env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
+    r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True,
+                       cwd="/", env=env)
+    assert r.returncode == 0, r.stderr[-400:]
+    assert r.stdout.strip() == "mutation_sweep.py"
+
+
+# --- 2026-10-06, from cross-model review of the changes above -----------------
+
+def test_a_takedown_that_raises_partway_still_restores_the_jobs(repo, monkeypatch, capsys):
+    """The takedown sat just above the try, so anything that went wrong between unloading
+    the jobs and entering it left them down."""
+    mod, state, spy = _spied(repo, monkeypatch)
+
+    def unloads_then_breaks(repo_root, marker, runner=None):
+        spy.events.append("quiesce")
+        raise RuntimeError("launchctl went away after the third job")
+
+    monkeypatch.setattr(spy, "quiesce", unloads_then_breaks)
+    with pytest.raises(RuntimeError):
+        mod.run_sweep(state)
+    capsys.readouterr()
+    assert spy.events == ["quiesce", "restore"]
+    assert calls(repo) == []
+
+
+def test_a_row_with_timed_out_mutants_is_named_at_the_end_and_not_retried(
+        repo, monkeypatch, capsys):
+    """Not an engine failure, so resume leaves it: a mutant that really hangs would cost
+    its full time limit every night. It must not pass for a clean row either."""
+    mod, state, spy = _spied(repo, monkeypatch)
+    set_control(repo, results={"tools/a.py": {"status": "mutants_timed_out", "killed": 2,
+                                              "survived": 0, "timed_out": 1}})
+    assert mod.run_sweep(state) == 0
+    out = capsys.readouterr().out
+    assert "1 TOOL(S) PARTLY MEASURED" in out and "tools/a.py" in out
+    assert "SWEEP COMPLETE WITH 1 PARTLY MEASURED" in out
+    assert mod.run_sweep(state) == 0
+    assert len(calls(repo)) == 1, "a partly measured tool was retried on resume"
+    assert "SWEEP COMPLETE WITH 1 PARTLY MEASURED" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("row, partial", [
+    ({"status": "survivors", "timed_out": 2}, True),
+    ({"status": "mutants_timed_out"}, True),
+    ({"status": "isolation_unmeasured", "timed_out": 0}, True),
+    ({"status": "ok", "timed_out": 0}, False),
+    ({"status": "survivors"}, False),
+    ({"status": "error", "timed_out": 3}, False),
+])
+def test_which_rows_count_as_partly_measured(repo, monkeypatch, row, partial):
+    mod = load(repo, monkeypatch)
+    rows = [{"tool": "tools/old.py", "status": "mutants_timed_out"},
+            {"tool": "tools/old.py", "status": "ok"},
+            {"tool": "tools/a.py", **row}]
+    assert mod.partially_measured_tools(rows) == (["tools/a.py"] if partial else [])
+
+
+def test_an_unknown_power_state_is_said_once_in_the_log(repo, monkeypatch, capsys):
+    mod, state = _two_tools(repo, monkeypatch)
+    mod.on_ac_power = lambda: None
+    assert mod.run_sweep(state) == 0
+    out = capsys.readouterr().out
+    assert out.count("power source UNKNOWN") == 1
+    assert len(calls(repo)) == 2
+
+
+def test_allow_battery_does_not_ask_about_power_at_all(repo, monkeypatch, capsys):
+    mod, state = _two_tools(repo, monkeypatch)
+
+    def must_not_be_asked():
+        raise AssertionError("asked for the power source with --allow-battery")
+
+    mod.on_ac_power = must_not_be_asked
+    assert mod.run_sweep(state, allow_battery=True) == 0
+    assert "UNKNOWN" not in capsys.readouterr().out
+

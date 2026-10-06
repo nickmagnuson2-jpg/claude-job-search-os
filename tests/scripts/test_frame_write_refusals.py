@@ -107,7 +107,10 @@ def test_coerce_keeps_the_scalar_ladder_distinct():
     assert fw.coerce("7") == 7 and isinstance(fw.coerce("7"), int)
     assert fw.coerce("7.5") == 7.5 and isinstance(fw.coerce("7.5"), float)
     assert fw.coerce("hello") == "hello"
-    assert fw.coerce("true") is not "true"  # noqa: F632 -- the point is the type changed
+    # Compared through a name: a literal on the right of `is not` makes the compiler emit
+    # a SyntaxWarning on every parse.
+    word = "true"
+    assert fw.coerce("true") is not word  # the point is the type changed
 
 
 # ------------------------------------------------------------- verdict_refuses

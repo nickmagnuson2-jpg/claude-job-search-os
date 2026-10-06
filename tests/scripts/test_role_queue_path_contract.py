@@ -96,7 +96,10 @@ def test_a_missing_queue_never_reports_zero(tmp_path):
     not run' must not render identically - that conflation is the false-zero defect
     one layer up."""
     out = read_queue(tmp_path / "nope")
-    assert out["new_count"] is not 0  # noqa: F632 - identity check is the point
+    # Compared through a name: `is not 0` written literally makes the compiler emit a
+    # SyntaxWarning on every parse, which filled the stderr tail of banked mutation rows.
+    zero = 0
+    assert out["new_count"] is not zero  # identity check is the point
 
 
 # ---------------------------------------------------------------------------

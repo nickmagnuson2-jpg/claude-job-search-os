@@ -741,3 +741,24 @@ def test_a_zero_killed_row_still_counts_as_measured():
     tools in the corpus, dropped from the coverage denominator."""
     from tools.mutation_report import measured_rows
     assert len(measured_rows([{"tool": "t", "killed": 0, "survived": 9}])) == 1
+
+
+# --- 2026-10-06: a timed-out mutant is in the denominator and in neither count ---
+
+def test_timed_out_mutants_are_named_beside_the_survival_rate(tmp_path):
+    mod = load()
+    d = state(tmp_path,
+              [target("tools/a.py"), target("tools/b.py")],
+              [result("tools/a.py", survived=1, killed=6, timed_out=3),
+               result("tools/b.py", survived=0, killed=10, timed_out=0)])
+    text = mod.build(d)
+    assert "3 mutant(s) TIMED OUT" in text
+    assert "`a.py` (3)" in text
+    assert "`b.py` (" not in text.split("TIMED OUT")[1].split("\n")[0]
+
+
+def test_a_sweep_with_no_timeouts_says_nothing_about_them(tmp_path):
+    mod = load()
+    d = state(tmp_path, [target("tools/a.py")], [result("tools/a.py", survived=1)])
+    assert "TIMED OUT" not in mod.build(d)
+
