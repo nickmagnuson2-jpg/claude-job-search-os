@@ -26,8 +26,58 @@ import time
 import webbrowser
 import urllib.parse
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import draft_capture  # noqa: E402
+
 DRAFT_FILE = os.path.join(os.path.dirname(__file__), ".pending-draft.txt")
+SOURCE_MARKER = os.path.join(os.path.dirname(__file__), ".pending-draft.source")
 STALE_AFTER_SECONDS = 120
+# The staging file is renamed once compose has been OPENED. Until 2026-10-06 the suffix
+# was `.sent`, which nothing here ever observed: opening a compose window is not sending.
+OPENED_SUFFIX = ".opened"
+
+
+def record_draft():
+    """Keep the exact draft under an ID before it leaves, and say how to confirm it.
+
+    Never stops the draft from opening: a capture that fails is reported and skipped.
+    """
+    try:
+        with open(DRAFT_FILE, "r", encoding="utf-8") as f:
+            text = f.read()
+        skill = ""
+        if os.path.exists(SOURCE_MARKER):
+            with open(SOURCE_MARKER, "r", encoding="utf-8") as f:
+                skill = (f.read().splitlines() or [""])[0].strip()
+        capture_id = draft_capture.capture(text, kind="email", skill=skill)
+        waiting = len(draft_capture.pending(kind="email"))
+    except Exception as exc:
+        print(f"\nWARNING: draft was NOT captured ({exc}). It still opens; there will be "
+              f"no record to compare with what gets sent.")
+        return
+    print(f"\nDraft captured as {capture_id}.")
+    print("After Nick sends it (or decides not to), record which, in ONE of these forms:")
+    print(f"  PYTHONIOENCODING=utf-8 python3 tools/draft_capture.py confirm {capture_id} unchanged")
+    print(f"  PYTHONIOENCODING=utf-8 python3 tools/draft_capture.py confirm {capture_id} edited "
+          f"--body-file <file with the sent text> [--screenshot <image>]")
+    print(f"  PYTHONIOENCODING=utf-8 python3 tools/draft_capture.py confirm {capture_id} not-sent")
+    print("If he shares a screenshot of the sent mail, transcribe its body to a file exactly, "
+          "then use `edited` with --screenshot.")
+    if waiting > 1:
+        print(f"NOTE: {waiting - 1} earlier draft(s) are still unconfirmed "
+              f"(`draft_capture.py pending`). Ask Nick what happened to them.")
+
+
+def consume_draft():
+    """Rename the staging file so the next run needs a fresh draft."""
+    opened_path = DRAFT_FILE + OPENED_SUFFIX
+    try:
+        os.replace(DRAFT_FILE, opened_path)
+        print(f"\nDraft consumed. File renamed to {os.path.basename(opened_path)}. "
+              f"That means compose was opened, not that anything was sent.")
+        print("Next run requires a fresh tools/.pending-draft.txt.")
+    except OSError as e:
+        print(f"\nWARNING: could not rename draft file ({e}). Delete it manually before next run.")
 
 
 def parse_draft(path):
@@ -148,13 +198,8 @@ def main():
 
     if is_reply(subject):
         handle_reply(to, subject, body, attachments)
-        sent_path = DRAFT_FILE + ".sent"
-        try:
-            os.replace(DRAFT_FILE, sent_path)
-            print(f"\nDraft consumed. File renamed to {os.path.basename(sent_path)}.")
-            print("Next run requires a fresh tools/.pending-draft.txt.")
-        except OSError as e:
-            print(f"\nWARNING: could not rename draft file ({e}). Delete it manually before next run.")
+        record_draft()
+        consume_draft()
         return
 
     params = {"view": "cm", "fs": "1"}
@@ -195,13 +240,8 @@ def main():
 
     webbrowser.open(url)
 
-    sent_path = DRAFT_FILE + ".sent"
-    try:
-        os.replace(DRAFT_FILE, sent_path)
-        print(f"\nDraft consumed. File renamed to {os.path.basename(sent_path)}.")
-        print("Next run requires a fresh tools/.pending-draft.txt.")
-    except OSError as e:
-        print(f"\nWARNING: could not rename draft file ({e}). Delete it manually before next run.")
+    record_draft()
+    consume_draft()
 
 
 if __name__ == "__main__":

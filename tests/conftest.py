@@ -22,6 +22,26 @@ from conftest_guard import (  # noqa: E402
 MUTATION_ENV = "MUTATION_CHECK_ACTIVE"
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _draft_captures_go_to_a_throwaway_store(tmp_path_factory):
+    """No test, and no tool a test starts, writes into the real output/draft-captures/.
+
+    tools/draft_capture.py records drafts on the way out, and tools that every CV or email
+    passes through call it. A test that runs one of those tools as a subprocess therefore
+    wrote a "first draft" record into the real store: on 2026-10-06 one existing CV test,
+    run once per mutant by a mutation check, left about 150 of them there within two
+    minutes of the capture step being added. Set here, for the whole session and inherited
+    by every child process, so a new test cannot forget it.
+    """
+    previous = os.environ.get("DRAFT_CAPTURE_DIR")
+    os.environ["DRAFT_CAPTURE_DIR"] = str(tmp_path_factory.mktemp("draft-captures"))
+    yield
+    if previous is None:
+        os.environ.pop("DRAFT_CAPTURE_DIR", None)
+    else:
+        os.environ["DRAFT_CAPTURE_DIR"] = previous
+
+
 def _show(backup: Path) -> str:
     """Render a backup as the SOURCE file it protects, repo-relative where possible.
 

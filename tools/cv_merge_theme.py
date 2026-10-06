@@ -93,6 +93,25 @@ def dump_yaml(data: dict) -> str:
     )
 
 
+def _capture_first_draft(content_path: Path):
+    """Keep the first saved version of this CV's content, once. Returns the new capture's
+    id, or None when this file was captured on an earlier run or the capture failed.
+
+    Every generated CV passes through this tool before it is rendered, and its content file
+    is then corrected in place by review passes and by Nick. Without a copy taken here there
+    is no first draft to compare with what was sent (2026-10-06: 32 companies had a CV on
+    disk and none had one). A failure here must not stop a CV from being built.
+    """
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import draft_capture
+        capture_id, was_new = draft_capture.capture_file_once(
+            content_path, kind="cv", skill="generate-cv")
+        return capture_id if was_new else None
+    except Exception:
+        return None
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--content", required=True, type=Path)
@@ -129,10 +148,17 @@ def main(argv: list[str] | None = None) -> int:
     if args.out:
         args.out.parent.mkdir(parents=True, exist_ok=True)
         args.out.write_text(rendered, encoding="utf-8")
+        captured = _capture_first_draft(args.content)
         if args.json:
-            print(json.dumps({"status": "ok", "out": str(args.out)}))
+            print(json.dumps({"status": "ok", "out": str(args.out),
+                              "first_draft_capture": captured}))
         else:
             print(f"Wrote {args.out}")
+            if captured:
+                print(f"First draft of this CV captured as {captured}. When the CV is sent, "
+                      f"record the final content file: PYTHONIOENCODING=utf-8 python3 "
+                      f"tools/draft_capture.py confirm {captured} edited --body-file "
+                      f"{args.content}  (or `unchanged` / `not-sent`).")
     else:
         sys.stdout.write(rendered)
 
