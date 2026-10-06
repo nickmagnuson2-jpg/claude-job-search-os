@@ -843,3 +843,54 @@ def test_the_watchdog_imports_by_path_from_a_process_that_knows_nothing_about_to
     assert r.returncode == 0, r.stderr[-400:]
     assert r.stdout.strip() == "com.nickmagnuson.jobsearch."
 
+
+# --- 2026-10-06, from the review the push gate required ------------------------------
+
+def test_a_timestamp_with_an_offset_is_aged_from_the_instant_it_names():
+    from datetime import datetime, timedelta, timezone
+    five_hours_ago = datetime.now(timezone.utc) - timedelta(hours=5)
+    for zone in (timezone.utc, timezone(timedelta(hours=9)), timezone(timedelta(hours=-7))):
+        age = cah._age_hours(five_hours_ago.astimezone(zone).isoformat())
+        assert 4.9 < age < 5.1, f"an offset of {zone} was dropped instead of converted"
+
+
+@pytest.mark.parametrize("key", ["Hour", "Minute"])
+def test_a_calendar_array_with_a_value_that_is_not_a_number_has_no_schedule(tmp_path, key):
+    """A hand-edited plist must not take the whole watchdog down with a ValueError."""
+    other = "<key>Hour</key><integer>3</integer>" if key == "Minute" else ""
+    body = ("<key>StartCalendarInterval</key><array>"
+            f"<dict>{other}<key>{key}</key><string>x</string></dict>"
+            "<dict><key>Hour</key><integer>9</integer></dict></array>")
+    assert cah.schedule_seconds(_plist(tmp_path, "j", body)) is None
+
+
+def test_a_job_that_is_running_now_is_not_overdue_however_old_its_logs(tmp_path, monkeypatch):
+    """The first column of `launchctl list` is the PID while a job runs."""
+    _plist(tmp_path, "gmail-fetch", EVERY_15_MIN)
+    _aged(tmp_path / "tools" / "launchd" / "logs" / "gmail-fetch.log", hours=30)
+
+    class _R:
+        stdout = f"4242\t-\t{PREFIX}gmail-fetch"
+
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: _R())
+    entries, warnings = cah.check_jobs(tmp_path, launch_agents=tmp_path / "LaunchAgents")
+    assert warnings == [] and "overdue_hours" not in entries[0]
+
+    class _Idle:
+        stdout = f"-\t-\t{PREFIX}gmail-fetch"
+
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: _Idle())
+    assert len(cah.check_jobs(tmp_path, launch_agents=tmp_path / "LaunchAgents")[1]) == 1
+
+
+def test_a_sweep_plist_in_both_folders_is_armed_and_its_stall_is_reported(tmp_path):
+    tools = [f"tools/t{i}.py" for i in range(10)]
+    _mk_canonical(tmp_path, tools, [{"tool": t, "status": "ok"} for t in tools[:3]])
+    launchd = tmp_path / "tools" / "launchd"
+    (launchd / "disarmed").mkdir(parents=True)
+    for d in (launchd, launchd / "disarmed"):
+        (d / f"{PREFIX}mutation-sweep.plist").write_text("x", encoding="utf-8")
+    entries, warnings = cah.check_long_runs(tmp_path, stall_hours=4.0, running=lambda p: False)
+    assert len(warnings) == 1 and "STALLED" in warnings[0]
+    assert "disarmed" not in entries[0]
+

@@ -73,13 +73,17 @@ JOB_PREFIX = "com.nickmagnuson.jobsearch."
 def _age_hours(iso_str: str):
     """Hours since an ISO timestamp, or None if it is missing or unparseable.
 
-    A trailing Z is dropped and the time read as local, as the fetchers write it.
+    A trailing Z is dropped and the time read as local, as the fetchers write it. A
+    timestamp that carries an explicit offset is converted to local time first; dropping
+    the offset would read 12:00+09:00 as local noon and report an age hours off.
     """
     try:
         then = datetime.fromisoformat(str(iso_str or "").rstrip("Z"))
     except ValueError:
         return None
-    return (datetime.now() - then.replace(tzinfo=None)).total_seconds() / 3600.0
+    # astimezone() reads a timestamp with no offset as local time, so one line covers both.
+    then = then.astimezone().replace(tzinfo=None)
+    return (datetime.now() - then).total_seconds() / 3600.0
 
 
 def check_gmail(repo_root: Path, stale_hours: float) -> tuple[list, list]:
@@ -147,7 +151,10 @@ def schedule_seconds(plist: Path):
     if (len(entries) > 1 and all(isinstance(e, dict) and "Hour" in e
                                  and not ({"Weekday", "Day", "Month"} & set(e))
                                  for e in entries)):
-        minutes = sorted({int(e["Hour"]) * 60 + int(e.get("Minute", 0)) for e in entries})
+        try:
+            minutes = sorted({int(e["Hour"]) * 60 + int(e.get("Minute", 0)) for e in entries})
+        except (ValueError, TypeError):
+            return None                   # a hand-edited plist; unreadable is not a schedule
         # The wrap-around gap is always present, so entries that all name the same time
         # come out as one day with no special case.
         gaps = [b - a for a, b in zip(minutes, minutes[1:])]
@@ -241,9 +248,12 @@ def check_jobs(repo_root: Path, launch_agents: Path | None = None) -> tuple[list
         except ValueError:
             exit_code = None
         entries.append({"job": short, "last_exit": exit_code})
+        # The first column is the PID while the job is running. A job that is running
+        # right now has no exit to record and is not late, however quiet its logs are.
+        running_now = cols[0].strip().isdigit()
         if exit_code not in (0, None):
             warnings.append(f"launchd job '{short}' last exited {exit_code} (non-zero = broken).")
-        elif exit_code is None:
+        elif exit_code is None and not running_now:
             late = overdue_hours(repo_root, short, launch_agents=launch_agents)
             if late is not None:
                 entries[-1]["overdue_hours"] = late
@@ -322,8 +332,12 @@ def check_long_runs(repo_root: Path, stall_hours: float = 4.0,
         # tools/launchd/disarmed/ was stopped on purpose with work remaining; reporting
         # that as a stall every morning is an alert nobody can act on. Armed and idle
         # still warns.
-        if (repo_root / "tools" / "launchd" / "disarmed"
-                / f"{JOB_PREFIX}{SWEEP_JOB}.plist").is_file():
+        launchd_dir = repo_root / "tools" / "launchd"
+        sweep_plist = f"{JOB_PREFIX}{SWEEP_JOB}.plist"
+        # Parked means in disarmed/ AND not in the standing set. A copy left in both
+        # places is an armed job, and its stall must still be reported.
+        if ((launchd_dir / "disarmed" / sweep_plist).is_file()
+                and not (launchd_dir / sweep_plist).is_file()):
             entry["disarmed"] = True
             continue
         if idle_hours < stall_hours:
