@@ -76,6 +76,13 @@ def _age_hours(iso_str: str):
     A trailing Z is dropped and the time read as local, as the fetchers write it. A
     timestamp that carries an explicit offset is converted to local time first; dropping
     the offset would read 12:00+09:00 as local noon and report an age hours off.
+
+    KNOWN LIMIT, accepted 2026-10-06. A timestamp with no offset that was written during
+    the one hour each year that the local clock repeats (01:00 to 02:00 on the night the
+    clocks go back) is read as the first of the two occurrences, so its age can be
+    overstated by one hour. Nothing here can tell which was meant; the fetchers write
+    `datetime.now().isoformat()` with no offset. The fix belongs in the fetchers (write an
+    offset), not in this function.
     """
     try:
         then = datetime.fromisoformat(str(iso_str or "").rstrip("Z"))
