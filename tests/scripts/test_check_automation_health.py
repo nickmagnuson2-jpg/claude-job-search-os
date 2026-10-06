@@ -854,14 +854,41 @@ def test_a_timestamp_with_an_offset_is_aged_from_the_instant_it_names():
         assert 4.9 < age < 5.1, f"an offset of {zone} was dropped instead of converted"
 
 
-@pytest.mark.parametrize("key", ["Hour", "Minute"])
-def test_a_calendar_array_with_a_value_that_is_not_a_number_has_no_schedule(tmp_path, key):
-    """A hand-edited plist must not take the whole watchdog down with a ValueError."""
-    other = "<key>Hour</key><integer>3</integer>" if key == "Minute" else ""
-    body = ("<key>StartCalendarInterval</key><array>"
-            f"<dict>{other}<key>{key}</key><string>x</string></dict>"
-            "<dict><key>Hour</key><integer>9</integer></dict></array>")
+@pytest.mark.parametrize("entries", [
+    '<dict><key>Hour</key><string>x</string></dict><dict><key>Hour</key><integer>9</integer></dict>',
+    '<dict><key>Hour</key><integer>3</integer><key>Minute</key><string>x</string></dict>'
+    '<dict><key>Hour</key><integer>9</integer></dict>',
+    '<dict><key>Weekday</key><integer>1</integer><key>Hour</key><string>x</string></dict>',
+    '<dict><key>Weekday</key><string>mon</string></dict>',
+    '<dict><key>Day</key><true/></dict>',
+    '<dict><key>Hour</key><integer>9</integer></dict><dict><key>Minute</key><real>1.5</real></dict>',
+])
+def test_a_calendar_field_that_is_not_an_integer_means_no_schedule_in_any_shape(tmp_path, entries):
+    """A hand-edited plist must neither raise out of the watchdog nor be read as a schedule."""
+    body = f"<key>StartCalendarInterval</key><array>{entries}</array>"
     assert cah.schedule_seconds(_plist(tmp_path, "j", body)) is None
+
+
+def test_an_age_that_spans_a_clock_change_is_the_real_elapsed_time(monkeypatch):
+    """Noon the day before the clocks go back to noon the day after is 25 hours, not 24."""
+    import time as _t
+    from datetime import datetime as _real, timezone as _tz
+    monkeypatch.setenv("TZ", "America/Los_Angeles")
+    _t.tzset()
+    try:
+        class _Frozen(_real):
+            @classmethod
+            def now(cls, tz=None):
+                instant = _real(2026, 11, 1, 20, 0, tzinfo=_tz.utc)     # 12:00 PST, Nov 1
+                return instant.astimezone(tz) if tz else instant.astimezone().replace(tzinfo=None)
+
+        monkeypatch.setattr(cah, "datetime", _Frozen)
+        assert cah._age_hours("2026-10-31T12:00:00") == 25.0            # 12:00 PDT, Oct 31
+        assert cah._age_hours("2026-10-31T19:00:00+00:00") == 25.0
+        assert cah._age_hours("2026-11-01T12:00:00") == 0.0
+    finally:
+        monkeypatch.undo()
+        _t.tzset()
 
 
 def test_a_job_that_is_running_now_is_not_overdue_however_old_its_logs(tmp_path, monkeypatch):

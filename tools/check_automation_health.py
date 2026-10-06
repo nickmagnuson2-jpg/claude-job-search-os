@@ -41,7 +41,7 @@ import os
 import re
 import subprocess
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 # Sibling import: the quiesce/restore primitive mutation_sweep uses. Same path-insert
@@ -81,9 +81,10 @@ def _age_hours(iso_str: str):
         then = datetime.fromisoformat(str(iso_str or "").rstrip("Z"))
     except ValueError:
         return None
-    # astimezone() reads a timestamp with no offset as local time, so one line covers both.
-    then = then.astimezone().replace(tzinfo=None)
-    return (datetime.now() - then).total_seconds() / 3600.0
+    # Both ends are instants. astimezone() reads a timestamp with no offset as local time,
+    # and the subtraction is done between aware values, so an age that spans a
+    # daylight-saving change is the real elapsed time and not an hour off.
+    return (datetime.now(timezone.utc) - then.astimezone()).total_seconds() / 3600.0
 
 
 def check_gmail(repo_root: Path, stale_hours: float) -> tuple[list, list]:
@@ -144,6 +145,13 @@ def schedule_seconds(plist: Path):
         return data["StartInterval"]
     cal = data.get("StartCalendarInterval")
     entries = cal if isinstance(cal, list) else [cal]
+    # Every calendar field launchd reads is an integer. A hand-edited plist with anything
+    # else in one of them has no schedule this function can state, in any array shape.
+    for e in entries:
+        if isinstance(e, dict) and any(
+                isinstance(v, bool) or not isinstance(v, int)
+                for k, v in e.items() if k in ("Minute", "Hour", "Day", "Weekday", "Month")):
+            return None
     # Several times of day (granola-auto-debrief fires every 3 hours as a list of Hour
     # entries): the period is the shortest gap between consecutive entries around the
     # clock, not a day. Reading each entry as "daily" gave that job a 48-hour threshold
@@ -151,10 +159,7 @@ def schedule_seconds(plist: Path):
     if (len(entries) > 1 and all(isinstance(e, dict) and "Hour" in e
                                  and not ({"Weekday", "Day", "Month"} & set(e))
                                  for e in entries)):
-        try:
-            minutes = sorted({int(e["Hour"]) * 60 + int(e.get("Minute", 0)) for e in entries})
-        except (ValueError, TypeError):
-            return None                   # a hand-edited plist; unreadable is not a schedule
+        minutes = sorted({e["Hour"] * 60 + e.get("Minute", 0) for e in entries})
         # The wrap-around gap is always present, so entries that all name the same time
         # come out as one day with no special case.
         gaps = [b - a for a, b in zip(minutes, minutes[1:])]
