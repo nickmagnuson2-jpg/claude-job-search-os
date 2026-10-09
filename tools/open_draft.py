@@ -17,9 +17,15 @@ attach. Gmail compose URLs do not support attachments directly; clipboard
 paste is the workaround. Multiple ATTACH lines are supported but only the
 last file ends up on the clipboard (paste it, then update and re-run for
 the next).
+
+Every ATTACH: file is also copied into a staging folder (~/Documents/to-send
+by default, OPEN_DRAFT_STAGING_DIR to override) after the folder is emptied,
+and Finder opens with the staged copy selected. The folder then holds only
+the file(s) for this draft, so the one to drag in is the only one there.
 """
 
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -35,6 +41,12 @@ STALE_AFTER_SECONDS = 120
 # The staging file is renamed once compose has been OPENED. Until 2026-10-06 the suffix
 # was `.sent`, which nothing here ever observed: opening a compose window is not sending.
 OPENED_SUFFIX = ".opened"
+# CVs are all named MMDDYY-magnuson.pdf, so two different ones look the same in a file
+# picker. On 2026-10-08 the previous day's CV went out on a reply for that reason.
+DEFAULT_STAGING_DIR = os.path.join("~", "Documents", "to-send")
+# Only a folder carrying this marker is ever emptied, so pointing the override at an
+# ordinary folder cannot delete what is in it.
+STAGING_MARKER = ".open-draft-staging"
 
 
 def record_draft():
@@ -142,6 +154,78 @@ def copy_text_to_clipboard(text):
         return False
 
 
+def staging_dir():
+    return os.path.abspath(os.path.expanduser(
+        os.environ.get("OPEN_DRAFT_STAGING_DIR") or DEFAULT_STAGING_DIR))
+
+
+def reveal_in_finder(path):
+    subprocess.run(["open", "-R", path], capture_output=True)
+
+
+def stage_attachments(attachments, directory=None, reveal=None):
+    """Leave the staging folder holding copies of exactly these files, and nothing else.
+
+    Returns (staged_paths, problems). Never raises: the draft still opens if staging fails.
+    """
+    directory = directory or staging_dir()
+    marker = os.path.join(directory, STAGING_MARKER)
+    staged, problems = [], []
+    if os.path.islink(directory):
+        # Emptying a symlinked folder would delete files in whatever it points at.
+        return [], [f"{directory} is a symlink, so nothing was staged. Point "
+                    f"OPEN_DRAFT_STAGING_DIR at a real folder."]
+    try:
+        if not os.path.isdir(directory):
+            os.makedirs(directory)
+            with open(marker, "w", encoding="utf-8") as f:
+                f.write("Emptied and refilled by tools/open_draft.py on every draft.\n")
+        elif not os.path.exists(marker):
+            if os.listdir(directory):
+                return [], [f"{directory} already holds files and was not created by this "
+                            f"tool, so nothing was staged. Empty it or set "
+                            f"OPEN_DRAFT_STAGING_DIR to another folder."]
+            with open(marker, "w", encoding="utf-8") as f:
+                f.write("Emptied and refilled by tools/open_draft.py on every draft.\n")
+        for name in os.listdir(directory):
+            old = os.path.join(directory, name)
+            if name != STAGING_MARKER and os.path.isfile(old):
+                os.remove(old)
+        for i, a in enumerate(attachments):
+            src = os.path.abspath(os.path.expanduser(a))
+            if not os.path.isfile(src):
+                problems.append(f"file not found, not staged: {src}")
+                continue
+            base = os.path.basename(src)
+            name, n = base, i + 1
+            while os.path.exists(os.path.join(directory, name)):
+                name, n = f"{n}-{base}", n + 1
+            dest = os.path.join(directory, name)
+            shutil.copy2(src, dest)
+            staged.append(dest)
+    except OSError as exc:
+        problems.append(f"staging failed ({exc})")
+    if staged:
+        try:
+            (reveal or reveal_in_finder)(staged[0])
+        except OSError as exc:
+            problems.append(f"staged, but Finder could not be opened ({exc})")
+    return staged, problems
+
+
+def report_staging(attachments):
+    """Stage the draft's attachments and say where they are. Returns the staged paths."""
+    staged, problems = stage_attachments(attachments)
+    if staged:
+        print(f"\nAttachment staged. {os.path.dirname(staged[0])} now holds only:")
+        for path in staged:
+            print(f"  - {os.path.basename(path)}  ({os.path.getsize(path):,} bytes)")
+        print("Finder is open on it. Drag from there.")
+    for problem in problems:
+        print(f"  WARNING: {problem}")
+    return staged
+
+
 def is_reply(subject):
     """Detect a reply subject (case-insensitive 'Re:' prefix)."""
     s = subject.strip().lower()
@@ -176,9 +260,10 @@ def handle_reply(to, subject, body, attachments):
     if attachments:
         print()
         print(f"NOTE: {len(attachments)} attachment(s) listed. Replies-via-paste don't")
-        print("auto-attach. After pasting the body, drag from Finder:")
+        print("auto-attach. After pasting the body, drag the file in. Source:")
         for a in attachments:
             print(f"  - {a}")
+        report_staging(attachments)
 
 
 def main():
@@ -237,6 +322,7 @@ def main():
                       "Attach this one, then re-run with the others or drag from Finder.)")
         else:
             print(f"  WARNING: could not copy to clipboard ({info}). Drag the file in from Finder.")
+        report_staging(attachments)
 
     webbrowser.open(url)
 

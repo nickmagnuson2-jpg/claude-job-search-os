@@ -148,6 +148,8 @@ Email body here
 
 `CC:` is optional (omit the line entirely if unused). Then `PYTHONIOENCODING=utf-8 python3 tools/open_draft.py` opens Gmail compose pre-filled.
 
+**Attachments are staged (added 2026-10-08).** Each `ATTACH:` line (absolute path, between `SUBJECT:` and `BODY:`) is copied into `~/Documents/to-send` after that folder is emptied, and Finder opens with the copy selected, so the folder holds only the file(s) for the current draft. Override the folder with `OPEN_DRAFT_STAGING_DIR`. The tool empties only a folder carrying its own `.open-draft-staging` marker and refuses a non-empty folder without one. Origin: CVs share one filename pattern, and on a reply the previous day's CV was attached in place of the current one.
+
 **Post-interview workflow:**
 1. `data/company-notes/<slug>.md` — call intel, newest at top
 2. `pipe_write.py` — stage, next-action, notes
