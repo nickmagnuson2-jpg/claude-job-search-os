@@ -301,8 +301,13 @@ def test_stroked_letters_fold_by_rule_not_by_list(tmp_path, stored, query):
     assert term(rl.search(repo, [query]))["line_hits"] == 1
 
 
-def test_non_latin_text_is_left_alone(tmp_path):
+def test_non_latin_letters_are_not_mapped_to_latin(tmp_path):
     assert rl.normalize("Ωmega Жук") == "ωmegaжук"
+
+
+def test_accents_are_removed_in_non_latin_scripts_too():
+    """Documented behavior: a Cyrillic short i loses its breve, and stays Cyrillic."""
+    assert rl.normalize("Йод") == rl.normalize("Иод") == "иод"
 
 
 @pytest.mark.parametrize("deep", [False, True])

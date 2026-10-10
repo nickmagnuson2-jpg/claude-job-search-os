@@ -243,7 +243,14 @@ def test_a_new_message_with_no_attachment_does_not_create_the_staging_folder(tmp
 
 def test_finder_is_asked_to_select_the_file(monkeypatch):
     calls = []
-    monkeypatch.setattr(od.subprocess, "run", lambda cmd, **kw: calls.append(cmd))
+
+    class Worked:
+        returncode = 0
+
+    def fake_run(cmd, **kw):
+        calls.append(cmd)
+        return Worked()
+    monkeypatch.setattr(od.subprocess, "run", fake_run)
     od.reveal_in_finder("/tmp/example.pdf")
     assert calls == [["open", "-R", "/tmp/example.pdf"]]
 
@@ -293,4 +300,51 @@ def test_symlinked_staging_folder_is_refused_and_its_target_untouched(tmp_path):
     assert staged == []
     assert any("symlink" in p for p in problems)
     assert (real / "keep.pdf").read_bytes() == b"do not delete"
+
+
+def test_reveal_raises_when_open_exits_nonzero(monkeypatch):
+    class Failed:
+        returncode = 1
+    monkeypatch.setattr(od.subprocess, "run", lambda *a, **k: Failed())
+    with pytest.raises(OSError):
+        od.reveal_in_finder("/tmp/example.pdf")
+
+
+def test_reveal_is_quiet_when_open_succeeds(monkeypatch):
+    class Worked:
+        returncode = 0
+    monkeypatch.setattr(od.subprocess, "run", lambda *a, **k: Worked())
+    assert od.reveal_in_finder("/tmp/example.pdf") is None
+
+
+@pytest.mark.parametrize("finder_works", [True, False])
+def test_report_only_says_finder_is_open_when_it_is(tmp_path, monkeypatch, capsys, finder_works):
+    source = tmp_path / "a.pdf"
+    source.write_bytes(b"cv")
+    monkeypatch.setenv("OPEN_DRAFT_STAGING_DIR", str(tmp_path / "stage"))
+
+    def reveal(path):
+        if not finder_works:
+            raise OSError("open -R exited 1")
+    monkeypatch.setattr(od, "reveal_in_finder", reveal)
+    staged = od.report_staging([str(source)])
+    out = capsys.readouterr().out
+    assert len(staged) == 1
+    assert ("Finder is open on it" in out) is finder_works
+    assert ("Open that folder yourself" in out) is (not finder_works)
+    assert ("WARNING" in out) is (not finder_works)
+
+
+def test_a_missing_file_whose_path_mentions_finder_is_not_read_as_a_finder_failure(
+        tmp_path, monkeypatch, capsys):
+    good = tmp_path / "a.pdf"
+    good.write_bytes(b"cv")
+    missing = tmp_path / "staged, but Finder could not be opened" / "gone.pdf"
+    monkeypatch.setenv("OPEN_DRAFT_STAGING_DIR", str(tmp_path / "stage"))
+    monkeypatch.setattr(od, "reveal_in_finder", lambda path: None)
+    od.report_staging([str(good), str(missing)])
+    out = capsys.readouterr().out
+    assert "Finder is open on it" in out
+    assert "Open that folder yourself" not in out
+    assert "file not found, not staged" in out
 

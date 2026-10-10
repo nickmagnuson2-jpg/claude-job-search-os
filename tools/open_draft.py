@@ -47,6 +47,9 @@ DEFAULT_STAGING_DIR = os.path.join("~", "Documents", "to-send")
 # Only a folder carrying this marker is ever emptied, so pointing the override at an
 # ordinary folder cannot delete what is in it.
 STAGING_MARKER = ".open-draft-staging"
+# A problem string that STARTS with this means the files were staged and only the Finder
+# step failed. Matched by prefix, so a path that happens to contain the words cannot trip it.
+FINDER_FAILED = "staged, but Finder could not be opened"
 
 
 def record_draft():
@@ -160,7 +163,9 @@ def staging_dir():
 
 
 def reveal_in_finder(path):
-    subprocess.run(["open", "-R", path], capture_output=True)
+    result = subprocess.run(["open", "-R", path], capture_output=True)
+    if result.returncode != 0:
+        raise OSError(f"open -R exited {result.returncode}")
 
 
 def stage_attachments(attachments, directory=None, reveal=None):
@@ -209,7 +214,7 @@ def stage_attachments(attachments, directory=None, reveal=None):
         try:
             (reveal or reveal_in_finder)(staged[0])
         except OSError as exc:
-            problems.append(f"staged, but Finder could not be opened ({exc})")
+            problems.append(f"{FINDER_FAILED} ({exc})")
     return staged, problems
 
 
@@ -220,7 +225,10 @@ def report_staging(attachments):
         print(f"\nAttachment staged. {os.path.dirname(staged[0])} now holds only:")
         for path in staged:
             print(f"  - {os.path.basename(path)}  ({os.path.getsize(path):,} bytes)")
-        print("Finder is open on it. Drag from there.")
+        if any(problem.startswith(FINDER_FAILED) for problem in problems):
+            print("Open that folder yourself and drag from there.")
+        else:
+            print("Finder is open on it. Drag from there.")
     for problem in problems:
         print(f"  WARNING: {problem}")
     return staged

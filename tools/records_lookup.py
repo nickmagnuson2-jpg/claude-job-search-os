@@ -11,7 +11,8 @@ WHY THIS EXISTS
 
 WHAT IT DOES
     Matching ignores case, spaces and punctuation ON BOTH SIDES and folds accented, stroked
-    and ligature Latin letters to plain ASCII (other scripts are compared as written), so "north wind", "Northwind", "North-Wind" and
+    and ligature Latin letters to plain ASCII (in other scripts, accents that Unicode can separate from
+    their letter are removed too, and letters are never mapped to Latin ones), so "north wind", "Northwind", "North-Wind" and
     "north ?wind" are the same query and all find the same lines. There is no regex engine,
     so there is no pattern syntax to get wrong. Punctuation in a query is not matched
     literally; it is dropped.
