@@ -93,3 +93,61 @@ def test_research_audit_fails_loud_without_date():
     build = src.index("${cfg.date}-best-practices-audit.md")
     assert src.index("if (!cfg.date)") < build, \
         "the date guard must run BEFORE the filename is built"
+
+
+HANDOFF_CUT = re.compile(r"(JSON\.stringify\([^)]*\)|\.join\([^)]*\))\.slice\(0,\s*\d+\)")
+
+
+def handoff_cuts(src):
+    """Bare character cuts applied to data one agent hands to the next."""
+    return [m.group(0) for m in HANDOFF_CUT.finditer(src)]
+
+
+def test_research_audit_handoffs_are_not_silently_cut():
+    """A bare .slice() on an agent-to-agent hand-off drops data without telling anyone.
+
+    Origin 2026-10-11, run wf_8056843a-238. The validator received the first 6,000 chars of
+    research that ran 23,000-34,000, and the synthesizer the first 14,000 of a 50,000-75,000
+    payload whose first validator verdict began after char 23,000. Ten validators checked 53
+    claims and not one reached a synthesizer; five sections were written from half of one
+    angle's raw research. Every hand-off now goes through capped(), which logs and marks any cut.
+    """
+    src = (WF_DIR / "research-audit.js").read_text()
+    assert handoff_cuts(src) == [], f"bare cut on a hand-off: {handoff_cuts(src)}"
+    assert src.count("capped(") >= 4, "the three hand-offs (validator, synthesizer, final doc) must use capped()"
+    assert "truncations.push" in src and "TRUNCATED" in src, "a cut that does happen must be recorded and marked"
+    assert unexpected_cuts(src) == [], f"text cut outside the three known places: {unexpected_cuts(src)}"
+
+
+# The only places research-audit.js may shorten a string: the label helper, capped() itself,
+# and the default reader description. Anything else is a hand-off cut by another spelling
+# (capped(x).slice(0, N), .substring, a variable bound), which HANDOFF_CUT cannot see.
+ALLOWED_CUTS = ("function short(s)", "return text.slice(0, CAP)", "SUBJECT.slice(0, 400)")
+ANY_CUT = re.compile(r"\.(?:slice|substring|substr)\(")
+
+
+def unexpected_cuts(src):
+    return [
+        line.strip() for line in src.splitlines()
+        if ANY_CUT.search(line) and not line.lstrip().startswith("//")
+        and not any(ok in line for ok in ALLOWED_CUTS)
+    ]
+
+
+def test_a_cut_applied_after_capped_is_still_caught():
+    """Codex 2026-10-12: capped(JSON.stringify(x), 'y').slice(0, 6000) restores the defect and passed every assertion."""
+    assert unexpected_cuts("const p = capped(JSON.stringify(research), 'research').slice(0, 6000)")
+    assert unexpected_cuts("const p = big.substring(0, n)")
+    assert unexpected_cuts("// a comment that mentions .slice(0, 6000)") == []
+
+
+def test_handoff_cut_detector_catches_the_original_defect():
+    """The detector must fire on the three lines that caused the defect, or the test above is decorative."""
+    originals = [
+        "RESEARCH TO VALIDATE (JSON): ${JSON.stringify(research).slice(0, 6000)}",
+        "VALIDATED RESEARCH (JSON): ${JSON.stringify(payload).slice(0, 14000)}",
+        "${sections.join('\\n\\n---\\n\\n').slice(0, 60000)}",
+    ]
+    for line in originals:
+        assert handoff_cuts(line), f"detector missed: {line}"
+    assert handoff_cuts("function short(s) { return s.slice(0, 32) }") == [], "label shortening is not a hand-off"
