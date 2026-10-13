@@ -695,6 +695,24 @@ def test_append_adds_an_exclusion_without_disturbing_the_existing_ones(tmp_path)
     assert d["exclusions"][1]["element"] == "volume comparison"
 
 
+def test_append_accumulates_lede_claims_one_entry_at_a_time(tmp_path):
+    """`patch` REPLACES a list, so a register that accumulates needs the append path.
+    Without it the second claim registered through `patch` silently drops the first,
+    and rule B11 then fails a title for a claim the author did declare."""
+    f = frame(tmp_path)
+    for version, token in ((1, "faster"), (2, "largest")):
+        p = tmp_path / f"claim-{version}.json"
+        p.write_text(json.dumps({
+            "surface": "slide-1", "token": token, "type": "comparison",
+            "asserts": "Line A against Line B", "population": "both lines, March",
+            "backing": {"kind": "cell", "ref": "workbook Lines!D14"}}))
+        code, res = run("append", "--frame", f, "--expect-version", version,
+                        "--list", "lede_claims", "--json", p)
+        assert code == 0, res
+    d = yaml.safe_load(f.read_text())
+    assert [c["token"] for c in d["lede_claims"]] == ["faster", "largest"]
+
+
 def test_appending_a_malformed_element_lands_but_reports_unclean(tmp_path):
     """A half-authored element is WRITTEN, not refused, and the caller is told.
 
@@ -818,3 +836,88 @@ def test_show_reports_the_resume_point(tmp_path):
     assert res["version"] == 1
     assert res["engagement"] == "acme"
     assert res["segment_completed"] is None
+
+
+# ------------------------------------------------------------- record-delivery
+# The command had no test (mutation run 2026-10-13: every decision in it could be
+# broken with the suite green). It records WHICH version shipped; it is not a lock.
+
+def _deliver(f, *extra, version=1, expect=1):
+    return run("record-delivery", "--frame", f, "--expect-version", expect,
+               "--delivered-version", version, "--at", "2026-09-20", *extra)
+
+
+def test_record_delivery_writes_the_version_and_date_and_nothing_else(tmp_path):
+    f = frame(tmp_path)
+    code, res = _deliver(f)
+    assert code == 0, res
+    d = yaml.safe_load(f.read_text())
+    assert d["delivery"] == {"version": 1, "at": "2026-09-20"}
+    assert d["locked"] is False and "prediction" not in d, "a delivery is not a lock"
+    assert d["version"] == 2
+
+
+def test_record_delivery_keeps_a_stated_basis_trimmed(tmp_path):
+    f = frame(tmp_path)
+    code, res = _deliver(f, "--basis", "  the send log line  ")
+    assert code == 0, res
+    assert yaml.safe_load(f.read_text())["delivery"] == {
+        "version": 1, "at": "2026-09-20", "basis": "the send log line"}
+
+
+def test_a_retrospective_delivery_is_marked_and_needs_a_basis(tmp_path):
+    f = frame(tmp_path)
+    before = f.read_bytes()
+    for basis in ((), ("--basis", "   ")):
+        code, res = _deliver(f, "--retrospective", *basis)
+        assert code != 0 and "--retrospective requires --basis" in res["message"]
+        assert f.read_bytes() == before
+    code, res = _deliver(f, "--retrospective", "--basis", "file timestamp")
+    assert code == 0, res
+    assert yaml.safe_load(f.read_text())["delivery"] == {
+        "version": 1, "at": "2026-09-20", "basis": "file timestamp", "retrospective": True}
+
+
+def test_a_basis_alone_does_not_make_a_delivery_retrospective(tmp_path):
+    f = frame(tmp_path)
+    assert _deliver(f, "--basis", "confirmed by the recipient")[0] == 0
+    assert "retrospective" not in yaml.safe_load(f.read_text())["delivery"]
+
+
+def test_a_delivered_version_ahead_of_the_frame_is_refused(tmp_path):
+    f = frame(tmp_path)
+    before = f.read_bytes()
+    code, res = _deliver(f, version=2)
+    assert code != 0 and "is ahead of the current version 1" in res["message"]
+    assert f.read_bytes() == before
+
+
+def test_an_earlier_version_can_be_the_one_that_shipped(tmp_path):
+    f = frame(tmp_path)
+    assert run("set", "--frame", f, "--expect-version", 1, "--field", "engagement=beta")[0] == 0
+    code, res = _deliver(f, version=1, expect=2)
+    assert code == 0, res
+    assert yaml.safe_load(f.read_text())["delivery"]["version"] == 1
+
+
+def test_record_delivery_requires_its_version_and_date(tmp_path):
+    f = frame(tmp_path)
+    before = f.read_bytes()
+    for args in (("--at", "2026-09-20"), ("--delivered-version", 1)):
+        r = subprocess.run([sys.executable, str(SCRIPT), "record-delivery", "--frame", str(f),
+                            "--expect-version", "1", *map(str, args)],
+                           capture_output=True, text=True)
+        assert r.returncode == 2 and "required" in r.stderr
+    r = subprocess.run([sys.executable, str(SCRIPT), "record-delivery", "--frame", str(f),
+                        "--expect-version", "1", "--delivered-version", "one", "--at", "x"],
+                       capture_output=True, text=True)
+    assert r.returncode == 2 and "invalid int value" in r.stderr
+    assert f.read_bytes() == before
+
+
+def test_record_delivery_takes_the_shared_write_flags(tmp_path):
+    """--expect-version comes from the shared flag set; a wrong one writes nothing."""
+    f = frame(tmp_path)
+    before = f.read_bytes()
+    code, _ = _deliver(f, expect=7)
+    assert code != 0 and f.read_bytes() == before

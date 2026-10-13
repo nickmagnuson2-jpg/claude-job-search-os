@@ -53,6 +53,7 @@ Usage:
   ... --json
   ... --convention-report
   ... --bold-cap 10
+  ... --frame output/<slug>/frame.yaml   # B11's register; default: frame.yaml beside the deck
 """
 
 from __future__ import annotations
@@ -266,7 +267,7 @@ def _dash_hits_in_declaration(decl):
 
 
 # --------------------------------------------------------------------------
-# the nine checks
+# the checks
 # --------------------------------------------------------------------------
 
 def check_a2(slides):
@@ -616,6 +617,302 @@ def check_c13(slides):
 
 
 # --------------------------------------------------------------------------
+# B11: the lede-claim register
+# --------------------------------------------------------------------------
+#
+# WHY THIS RULE EXISTS. Every other check in this file is structural or numeric. B4
+# confirms a title number is on the page and has no opinion about the word beside it.
+# Five times a deck carried a correct figure inside a false sentence ("the worst hour"
+# with the right percentage and the wrong superlative) and every gate was green.
+#
+# WHAT IS MECHANICAL AND WHAT IS NOT. Whether "worst" is TRUE needs the data and is not
+# decidable here. Whether the author DECLARED what "worst" asserts, over which
+# population, and which cell or check backs it, is decidable. So the rule forces the
+# declaration and refuses the undeclared token. It does not verify the declaration.
+#
+# THE REGISTER LIVES IN frame.yaml (`lede_claims`), the governed record for a deck, not
+# in a new file beside it.
+
+CLAIM_TYPES = ("comparison", "superlative", "causal", "count", "attribution")
+NOT_A_CLAIM = "not_a_claim"
+BACKING_KINDS = ("cell", "check", "fact")
+# The types that quantify over a population, and so must name it. "Worst hour" was true
+# only among hours above a volume floor; the qualifier was dropped on the way to the page.
+POPULATION_TYPES = ("comparison", "superlative", "count")
+
+QUANTIFIER_WORDS = frozenset({
+    "every", "all", "only", "never", "always", "none", "same",
+    "everyone", "everything", "nobody", "nothing"})
+RELATION_WORDS = frozenset({
+    "replace", "replaces", "replaced", "replacing",
+    "prove", "proves", "proved", "proven"})
+COMPARATIVE_WORDS = frozenset({
+    "more", "less", "fewer", "better", "worse", "faster", "slower", "higher", "lower",
+    "larger", "smaller", "bigger", "greater", "cheaper", "longer", "shorter",
+    "stronger", "weaker", "twice"})
+SUPERLATIVE_WORDS = frozenset({"best", "worst", "most", "least", "fewest",
+                               "maximum", "minimum", "dominant"})
+# Verbs that compare without a comparative ending (added 2026-10-13: "Line A
+# outperforms Line B" passed with no entry). Still a list: a comparison made with a
+# word that is not here is not seen, and the PASS detail says so.
+COMPARISON_VERBS = frozenset({
+    "outperform", "outperforms", "outperformed", "outperforming",
+    "underperform", "underperforms", "underperformed", "underperforming",
+    "exceed", "exceeds", "exceeded", "exceeding",
+    "surpass", "surpasses", "surpassed", "surpassing",
+    "outpace", "outpaces", "outpaced", "outpacing",
+    "dominate", "dominates", "dominated", "dominating"})
+# Words of six or more letters ending in "est" that are not superlatives. The generic
+# suffix rule exists so an unlisted superlative ("nearest", "busiest") is not a silent
+# miss; this list is what keeps it from firing on nouns and verbs.
+EST_NOT_SUPERLATIVE = frozenset({
+    "interest", "request", "harvest", "forest", "invest", "reinvest", "divest",
+    "suggest", "manifest", "contest", "protest", "honest", "dishonest", "modest",
+    "immodest", "arrest", "digest", "ingest", "congest", "infest", "conquest",
+    "inquest", "bequest", "behest", "earnest", "unrest", "attest", "detest", "molest",
+    "retest", "pretest", "backtest", "playtest", "midwest", "northwest", "southwest",
+    "tempest", "armrest", "headrest", "footrest", "everest"})
+# An "-er" word directly before "than" is a comparative even when it is not in the list
+# above ("pricier than"), except these two. Any word before "than" was tried first and
+# flagged the noun in "300 more units than", double-counting a claim "more" already
+# carries (measured on real decks, 2026-10-12).
+THAN_NOT_COMPARATIVE = frozenset({"rather", "other"})
+# A trigger word that is not a claim when this word precedes it.
+PRECEDED_EXEMPT = {"least": ("at",), "most": ("at",), "longer": ("no",)}
+
+_LEDE_WORD_RE = re.compile(r"\d+(?:\.\d+)?x\b|[a-z]+", re.IGNORECASE)
+_MULTIPLIER_RE = re.compile(r"\d+(?:\.\d+)?x")
+_QUOTE_RE = re.compile(r'"[^"]*"|“[^”]*”')
+
+
+def _lede_tokens(text):
+    """Trigger tokens in a lede, in order, as (token, start_offset). Lowercased."""
+    words = [(m.group(0).lower(), m.start()) for m in _LEDE_WORD_RE.finditer(text or "")]
+    out = []
+    for k, (w, pos) in enumerate(words):
+        prev = words[k - 1][0] if k else ""
+        nxt = words[k + 1][0] if k + 1 < len(words) else ""
+        if prev in PRECEDED_EXEMPT.get(w, ()):
+            continue
+        if (w in QUANTIFIER_WORDS or w in RELATION_WORDS or w in COMPARATIVE_WORDS
+                or w in SUPERLATIVE_WORDS or w in COMPARISON_VERBS
+                or _MULTIPLIER_RE.fullmatch(w)):
+            out.append((w, pos))
+        elif len(w) >= 6 and w.endswith("est") and w not in EST_NOT_SUPERLATIVE:
+            out.append((w, pos))
+        elif (nxt == "than" and len(w) >= 4 and w.endswith("er")
+              and w not in THAN_NOT_COMPARATIVE):
+            out.append((w, pos))
+    return out
+
+
+def _in_quotes(text, pos):
+    return any(m.start() < pos < m.end() for m in _QUOTE_RE.finditer(text or ""))
+
+
+def _norm_phrase(s):
+    return " ".join(str(s).lower().split())
+
+
+def _entry_errors(entry, facts):
+    """Why a register entry is not a usable declaration. Empty list when it is."""
+    if not isinstance(entry, dict):
+        return ["is not a mapping"]
+    errs = []
+    for key in ("surface", "token"):
+        if not isinstance(entry.get(key), str) or not entry[key].strip():
+            errs.append("has no `" + key + "`")
+    ctype = entry.get("type")
+    if ctype == NOT_A_CLAIM:
+        if not isinstance(entry.get("reason"), str) or not entry["reason"].strip():
+            errs.append("is `type: not_a_claim` with no `reason`")
+        return errs
+    if ctype not in CLAIM_TYPES:
+        errs.append("has `type` " + repr(ctype) + ", which is not one of "
+                    + ", ".join(CLAIM_TYPES + (NOT_A_CLAIM,)))
+        return errs
+    if not isinstance(entry.get("asserts"), str) or not entry["asserts"].strip():
+        errs.append("has no `asserts` (what the sentence claims, in one line)")
+    if ctype in POPULATION_TYPES and (
+            not isinstance(entry.get("population"), str)
+            or not entry["population"].strip()):
+        errs.append("is a " + ctype + " with no `population` (what it quantifies over)")
+    backing = entry.get("backing")
+    if not isinstance(backing, dict):
+        errs.append("has no `backing` mapping of {kind, ref}")
+        return errs
+    kind, ref = backing.get("kind"), backing.get("ref")
+    if kind not in BACKING_KINDS:
+        errs.append("has backing `kind` " + repr(kind) + ", which is not one of "
+                    + ", ".join(BACKING_KINDS))
+    if not isinstance(ref, str) or not ref.strip():
+        errs.append("has an empty backing `ref`")
+    elif kind == "fact" and ref.strip() not in (facts or {}):
+        errs.append("names backing fact " + ref.strip()
+                    + ", which is not in the frame's `facts`")
+    return errs
+
+
+def frame_context(deck_path, frame_arg=None):
+    """Locate and load the frame whose `lede_claims` B11 reads.
+
+    --frame wins; otherwise a frame.yaml beside the deck, so the rule does not depend
+    on anyone remembering a flag. Returns {"frame", "origin", "problem"}; `problem` is
+    a (state, detail) pair when no frame could be loaded. A frame that was explicitly
+    named, or was found, and then fails to load is a FAIL: the register exists and
+    cannot be read. No frame anywhere is CANNOT_RUN."""
+    if frame_arg:
+        path, origin = Path(frame_arg), "--frame " + str(frame_arg)
+    else:
+        path = Path(deck_path).parent / "frame.yaml"
+        origin = "frame.yaml beside the deck"
+        if not path.is_file():
+            return {"frame": None, "origin": origin, "problem": (
+                CANNOT_RUN, "no --frame supplied and no frame.yaml beside the deck, so "
+                "there is no lede_claims register to read")}
+    try:
+        import yaml
+    except ImportError:
+        return {"frame": None, "origin": origin, "problem": (
+            CANNOT_RUN, "PyYAML is not installed, so " + origin + " cannot be read")}
+    try:
+        frame = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError) as exc:
+        return {"frame": None, "origin": origin, "problem": (
+            FAIL, origin + " could not be loaded: " + " ".join(str(exc).split())[:160])}
+    if not isinstance(frame, dict):
+        return {"frame": None, "origin": origin, "problem": (
+            FAIL, origin + " is not a mapping, so it holds no register")}
+    return {"frame": frame, "origin": origin, "problem": None}
+
+
+def check_b11(slides, frame_ctx):
+    """Every comparative, superlative or quantifier in a lede has a registered claim.
+
+    THREE STATES, AND WHICH IS WHICH.
+      CANNOT_RUN  no frame; or a frame with no `lede_claims` key (this tool is shared,
+                  and a deck whose frame predates the register is not failed for it; the
+                  unchecked tokens are counted in the detail); or no lede element; or a
+                  declared register and nothing to measure on either side.
+      FAIL        a trigger token no entry covers; an entry that is untyped or unbacked;
+                  an entry whose token its lede does not print; a register of the wrong
+                  shape; a frame that exists and cannot be loaded.
+      PASS        every trigger token is covered by a well-formed entry.
+
+    `lede_claims: []` is a DECLARED register and fails an unbacked token. Absent says
+    nothing; empty says "this deck makes no such claims".
+
+    NOT EXEMPTED, ON PURPOSE: a token inside quotation marks, and a token inside a
+    proper noun. Neither is separable from a real claim without semantics (scare quotes
+    around the claim, a title-cased lede), so both are handled by DECLARATION: a
+    quotation is `type: attribution` naming its source, a name is `type: not_a_claim`
+    with a reason.
+
+    WHAT A PASS DOES NOT MEAN. The trigger list is a lexicon, so a claim with no trigger
+    word is not seen. And the author writes the register, so this forces a declaration,
+    not a correct one. The PASS detail says both every time."""
+    if frame_ctx is None:
+        return Result("B11", CANNOT_RUN,
+                      "no frame.yaml supplied, so there is no lede_claims register to read")
+    if frame_ctx.get("problem"):
+        state, detail = frame_ctx["problem"]
+        return Result("B11", state, detail)
+    frame, origin = frame_ctx["frame"], frame_ctx.get("origin") or "frame"
+
+    ledes = {}
+    for i, s in enumerate(slides, 1):
+        nodes = _find(s, "lede")
+        if nodes:
+            ledes[i] = " ".join(n.all_text() for n in nodes)
+    if not ledes:
+        return Result("B11", CANNOT_RUN,
+                      "no element matching the lede convention on any page (looked for "
+                      "class in " + str(CONVENTION["lede"]) + ")")
+    found = {i: _lede_tokens(t) for i, t in ledes.items()}
+    n_tokens = sum(len(v) for v in found.values())
+    n_ledes = sum(1 for v in found.values() if v)
+
+    register = frame.get("lede_claims")
+    if register is None:
+        return Result("B11", CANNOT_RUN,
+                      origin + " declares no `lede_claims` register. " + str(n_tokens)
+                      + " trigger token(s) in " + str(n_ledes) + " of " + str(len(ledes))
+                      + " lede(s) went unchecked")
+    if not isinstance(register, list):
+        return Result("B11", FAIL,
+                      "`lede_claims` in " + origin + " must be a list of entries, got "
+                      + type(register).__name__)
+    if not n_tokens and not register:
+        return Result("B11", CANNOT_RUN,
+                      "no trigger token in any of " + str(len(ledes)) + " lede(s) and "
+                      "no register entry, so nothing was measured. A claim with no "
+                      "trigger word is not seen by this rule")
+
+    facts = frame.get("facts") if isinstance(frame.get("facts"), dict) else {}
+    offenders = []
+    usable = {}  # page -> [[phrase, used]]
+    n_claims = n_not_claims = 0
+    for k, entry in enumerate(register, 1):
+        errs = _entry_errors(entry, facts)
+        label = "lede_claims[" + str(k) + "]"
+        if isinstance(entry, dict) and isinstance(entry.get("token"), str):
+            label += ' "' + entry["token"].strip() + '"'
+        if errs:
+            offenders += [label + " " + e for e in errs]
+            continue
+        surface = entry["surface"].strip()
+        m = re.fullmatch(r"slide-(\d+)", surface)
+        page = int(m.group(1)) if m else None
+        if page not in ledes:
+            offenders.append(label + " names surface " + surface + ", which is not a "
+                             "page with a lede in this deck (pages are slide-1 to slide-"
+                             + str(len(slides)) + ")")
+            continue
+        phrase = _norm_phrase(entry["token"])
+        if not re.search(r"(?<![a-z0-9])" + re.escape(phrase) + r"(?![a-z0-9])",
+                         _norm_phrase(ledes[page])):
+            offenders.append(label + " is registered on " + surface + ", whose lede "
+                             "does not print it. The register describes a sentence the "
+                             "page no longer carries")
+            continue
+        usable.setdefault(page, []).append([phrase, False])
+        if entry["type"] == NOT_A_CLAIM:
+            n_not_claims += 1
+        else:
+            n_claims += 1
+
+    for page in sorted(found):
+        for tok, pos in found[page]:
+            for slot in usable.get(page, []):
+                if not slot[1] and (tok == slot[0] or tok in slot[0].split()):
+                    slot[1] = True
+                    break
+            else:
+                msg = ("page " + str(page) + ': "' + tok + '" in the lede has no '
+                       "registered claim on slide-" + str(page))
+                if _in_quotes(ledes[page], pos):
+                    msg += (". It sits inside a quotation: register it as `type: "
+                            "attribution` and name the source as its backing")
+                else:
+                    msg += (". Register what it asserts and what backs it, or, if it "
+                            "is part of a name, `type: not_a_claim` with a reason")
+                offenders.append(msg)
+
+    if offenders:
+        return Result("B11", FAIL,
+                      str(len(offenders)) + " defect(s) across " + str(n_tokens)
+                      + " trigger token(s) and " + str(len(register))
+                      + " register entr" + ("y" if len(register) == 1 else "ies")
+                      + " (" + origin + ")", offenders)
+    return Result("B11", PASS,
+                  "all " + str(n_tokens) + " trigger token(s) in " + str(n_ledes)
+                  + " lede(s) are covered: " + str(n_claims) + " typed and backed, "
+                  + str(n_not_claims) + " declared not a claim (" + origin + "). "
+                  "Backing is declared, not verified, and a claim with no trigger word "
+                  "is not seen")
+
+
+# --------------------------------------------------------------------------
 # driver
 # --------------------------------------------------------------------------
 
@@ -655,7 +952,8 @@ def convention_report(slides):
     return rows
 
 
-def run_checks(slides, style_blocks, bold_cap=DEFAULT_BOLD_CAP, deck_path=None):
+def run_checks(slides, style_blocks, bold_cap=DEFAULT_BOLD_CAP, deck_path=None,
+               frame_ctx=None):
     out = [] if deck_path is None else [check_r1(deck_path)]
     return out + [
         check_a2(slides),
@@ -664,6 +962,7 @@ def run_checks(slides, style_blocks, bold_cap=DEFAULT_BOLD_CAP, deck_path=None):
         check_b4(slides),
         check_b5(slides),
         check_b7(slides, bold_cap),
+        check_b11(slides, frame_ctx),
         check_c2(slides),
         check_c7(slides),
         check_c11(slides, style_blocks),
@@ -679,6 +978,9 @@ def main(argv=None):
     ap.add_argument("--convention-report", action="store_true",
                     help="print what the class conventions matched, per page")
     ap.add_argument("--bold-cap", type=int, default=DEFAULT_BOLD_CAP)
+    ap.add_argument("--frame", default=None,
+                    help="frame.yaml holding the lede_claims register B11 reads "
+                         "(default: frame.yaml beside the deck)")
     args = ap.parse_args(argv)
 
     path = Path(args.deck)
@@ -694,7 +996,8 @@ def main(argv=None):
               "convention " + str(CONVENTION["slide"]), file=sys.stderr)
         return 4
 
-    results = run_checks(slides, style_blocks, args.bold_cap, deck_path=path)
+    results = run_checks(slides, style_blocks, args.bold_cap, deck_path=path,
+                         frame_ctx=frame_context(path, args.frame))
 
     fails = [r for r in results if r.state == FAIL]
     cannot = [r for r in results if r.state == CANNOT_RUN]

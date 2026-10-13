@@ -71,6 +71,48 @@ fit. An inherited projection bar stands.
 | B8 | **Kill empty adjectives.** "Current" and "existing" are almost always redundant. "Significant" and "material" get used when you do not have an actual number. If you have a number or a range, use it |
 | B9 | **Eliminate trailing prepositional phrases.** Key information goes in front |
 | B10 | **No filler** like "Based on the analysis" |
+| B11 | **A comparative, superlative or quantifier in a title is a separate claim with its own evidence.** *Worst, largest, faster, more than, every, all, only, never, same, replaced*: each is registered in `frame.yaml` under `lede_claims` with a type, what it asserts, the population it quantifies over, and the cell or check that backs it. See the note below |
+
+### The B11 rule: B4 checks the number, B11 checks the sentence around it
+
+**A page can be numerically perfect and factually false.** Take the title *"Tuesday, the worst
+day: 31% scrap"*. B4 passes, because 31% is on the page. The superlative is a second claim that
+nothing tested: 31% is the worst rate only among days with more than 500 units, and a
+low-volume Sunday runs at 44%. The qualifier existed in the analysis and was dropped when the
+finding moved onto the page.
+
+**So each such word is declared before it ships.** One entry per trigger word, in the deck's
+`frame.yaml`:
+
+    lede_claims:
+      - surface: slide-1
+        token: worst
+        type: superlative          # comparison | superlative | causal | count | attribution
+        asserts: Tuesday has the highest scrap rate of any day
+        population: days with more than 500 units
+        backing: {kind: cell, ref: "workbook Days!D14"}   # cell | check | fact
+
+`population` is required for comparison, superlative and count, because the question that
+catches the defect is *what does this quantify over, and did you check that*. A `fact` backing
+must resolve to an id in the frame's `facts`.
+
+**Enforced by `tools/check_deck_craft.py`, which reads `--frame`, or `frame.yaml` beside the
+deck.** It FAILS a trigger word no entry covers, an entry that is untyped or unbacked, and an
+entry whose word the title no longer prints. It reports CANNOT_RUN when there is no frame or the
+frame has no `lede_claims` key, because the checker is shared with decks that predate the
+register; the unchecked words are counted in the detail. `lede_claims: []` is a declared register
+and fails.
+
+**Two cases look like claims and are declared, not exempted.** A quoted comparative is
+registered as `attribution`, with the source of the quotation as its backing. A word inside a
+proper noun is registered as `type: not_a_claim` with a `reason`. Neither is skipped
+mechanically: quotation marks and capital letters are both available to a sentence that is
+making the claim.
+
+**What a PASS does not mean.** The trigger list is a word list, so a claim with no trigger word
+(*"would otherwise have gone unanswered"*) is not seen. The author writes the register, so the
+rule forces a declaration and does not verify it. The check reads titles only; a caption or a
+takeaway box making the same claim is not read.
 
 ### The B3 rule is not a find-and-replace
 
@@ -362,6 +404,9 @@ was built 2026-09-17 as the sibling of `check_frame_integrity.py`: **A2, A4, A8,
 C7, C11**, three-state PASS / FAIL / CANNOT_RUN, exit 0 or 2.
 
     PYTHONIOENCODING=utf-8 python3 tools/check_deck_craft.py <deck.html> --convention-report
+
+**B11 was added 2026-10-12** and is the first rule here that reads a second file: the
+`lede_claims` register in the deck's `frame.yaml`.
 
 **What it deliberately does NOT check, so nobody reads a green run as a clean deck.** A10, C13,
 C14 and the B1/B8 word-quality rules need semantics the script does not have, and a weak detector

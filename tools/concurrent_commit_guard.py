@@ -26,6 +26,20 @@ A staged path that appears in neither list is refused. Naming the path in a comm
 what attributes it, so `git commit -m "..." -- <paths>` passes by construction, and so
 does a deliberate `git add <their file>` when a peer's work is being landed on purpose.
 
+The PATHSPECS of the `git commit` that started this hook count as named (added
+2026-10-13). The transcript is not written promptly: on that day a session's file on
+disk held nothing from its last several hours of tool calls, so the explicit-pathspec
+form was refused twice for paths the session had created minutes earlier. Two things
+must both hold, and neither comes from the transcript:
+  * git built a pathspec-only index for this commit. It exports that index to the hook
+    as `next-index-<pid>.lock`; a plain commit, `-a` and `-i` get `index` or
+    `index.lock`. This is what proves the commit HAS pathspecs.
+  * the path is spelled after the last `--` on the commit's command line, read from the
+    process table. The words before `--` are options and the message, and are ignored:
+    a message that mentions a file does not attribute it.
+`git add -A` and `git commit -a` have no pathspec index, so they still depend on the
+transcript and are refused when it is behind. So is a pathspec given without `--`.
+
 WHAT IT CANNOT DETECT (read before trusting a pass)
 ---------------------------------------------------
   * A path this session named in ANY Bash command counts, including `cat <path>` or
@@ -254,19 +268,66 @@ def live_process_rows():
     return rows
 
 
+PATHSPEC_INDEX_PREFIX = "next-index-"
+
+
+def commit_pathspecs(command: str, index_file: str) -> str:
+    """The pathspec words of a `git commit ... -- <paths>` command line, or ''.
+
+    '' unless git built a pathspec-only index for this commit (see the module docstring)
+    and the command has a `--`. Only the words after the LAST `--` are returned: `ps`
+    has lost the quoting, so nothing before it can be told apart from the message.
+    Residual: a message that itself contains ` -- <path>`, on a commit whose pathspec
+    was given WITHOUT `--`, would be read as that pathspec.
+    """
+    if not os.path.basename(index_file or "").startswith(PATHSPEC_INDEX_PREFIX):
+        return ""
+    words = command.split()
+    if "--" not in words:
+        return ""
+    last = len(words) - 1 - words[::-1].index("--")
+    return " ".join(words[last + 1:])
+
+
+def invoking_commit_command(pid: int, run=subprocess.run) -> str:
+    """The command line of the `git commit` that started this hook, or ''.
+
+    Walks up from pid: the hook script, then git. `ps` prints the arguments joined by
+    spaces, so quoting is lost; commit_pathspecs keeps only the part that survives that.
+    """
+    for _ in range(8):
+        try:
+            out = run(["ps", "-o", "ppid=,args=", "-p", str(pid)], capture_output=True,
+                      text=True, timeout=10).stdout
+        except (OSError, subprocess.SubprocessError):
+            return ""
+        parts = out.strip().split(None, 1)
+        if len(parts) < 2 or not parts[0].isdigit():
+            return ""
+        words = parts[1].split()
+        if os.path.basename(words[0]) == "git" and "commit" in words[1:]:
+            return parts[1]
+        pid = int(parts[0])
+    return ""
+
+
 # --------------------------------------------------------------------------- decision
 
 def decide(staged: list[str], *, session_id: str, transcripts: list[Path],
-           peers: list[int], root: Path) -> Verdict:
+           peers: list[int], root: Path, commit_command: str = "") -> Verdict:
     if not staged:
         return Verdict(False, mode="nothing-staged")
     if not session_id:
         return Verdict(False, mode="not-a-session")
+    claims = session_claims(transcripts)
+    claims.commands.append(commit_command)      # '' when there is none: names nothing
+    missing = unattributed(staged, claims, root)
+    if not missing:
+        return Verdict(False, mode="attribution")
     if not transcripts:
-        # Attribution is impossible. The narrower check that is still reliable.
+        # Attribution of the rest is impossible. The narrower check that is still reliable.
         return Verdict(bool(peers), list(staged) if peers else [], "no-transcript")
-    missing = unattributed(staged, session_claims(transcripts), root)
-    return Verdict(bool(missing), missing, "attribution")
+    return Verdict(True, missing, "attribution")
 
 
 # -------------------------------------------------------------------------------- git
@@ -308,7 +369,9 @@ def _message(v: Verdict, peers: list[int]) -> str:
                "attributed to it, and another session is live in this tree.")
     else:
         why = (f"{len(v.paths)} staged path(s) were never named by this session: no "
-               "Edit/Write call on them and no Bash command spelling them out.")
+               "Edit/Write call on them, no Bash command spelling them out, and not "
+               "after `--` on this commit's own command line. (The session transcript "
+               "can be hours behind; naming the paths after `--` does not depend on it.)")
     return (
         "\nBLOCKED: concurrent-session commit guard\n\n"
         f"{why}\n{peer_line}\n\n{listing}\n\n"
@@ -337,7 +400,10 @@ def main(argv=None) -> int:
         peers = (peer_sessions(live_process_rows(), os.getpid(), root)
                  if need_peers else [])
         v = decide(staged, session_id=session_id, transcripts=transcripts,
-                   peers=peers, root=root)
+                   peers=peers, root=root,
+                   commit_command=commit_pathspecs(
+                       invoking_commit_command(os.getpid()),
+                       os.environ.get("GIT_INDEX_FILE", "")))
         if not v.blocked:
             return 0
         if waive:

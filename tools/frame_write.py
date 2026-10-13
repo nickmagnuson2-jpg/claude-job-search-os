@@ -233,8 +233,6 @@ def deep_merge(old, new):
     merge-only patch path could never retire a fact, and the operator would be pushed
     back to hand-editing the YAML, which is the thing this module exists to prevent.
     """
-    if new is None:
-        return None
     if isinstance(old, dict) and isinstance(new, dict):
         merged = dict(old)
         for k, v in new.items():
@@ -776,7 +774,7 @@ def main(argv=None):
     # the return value; a zero exit code here does not mean the element is sound.
     p_app.add_argument("--list", required=True,
                        choices=["proposals", "declines", "overrides", "compression_ledger",
-                                "elements", "exclusions"])
+                                "elements", "exclusions", "lede_claims"])
     p_app.add_argument("--json", required=True)
 
     p_init = sub.add_parser("init", help="create version 1; refuses if the frame exists")

@@ -21,6 +21,8 @@ WHAT THIS ENFORCES, MECHANICALLY.
      skill step can only be checked as text, and is labelled as such below.
   C. A field with no fail-closed consumer is recorded in the registry as `Gap(reason)`.
      The number of gaps has a ceiling, so the list can shrink and cannot grow unnoticed.
+     A field ruled informational is `Displayed`: the line that shows it, and the branch
+     that enforces the condition it describes, are both checked.
   D. Write end: every `VALID_*` vocabulary declared in tools/ is used in a validation
      expression, and the tokens the `promoted` readers branch on are in the vocabulary
      its validator enforces.
@@ -128,6 +130,22 @@ class Text:
 class Gap:
     """No consumer fails closed on this field. A finding, not an approval."""
     reason: str
+
+
+@dataclass(frozen=True)
+class Displayed:
+    """Shown to a person or written to a record, and nothing fails on it BY DECISION.
+
+    Not a Gap: a Gap is a field somebody still owes a consumer. This is a field that was
+    looked at and ruled informational (owner's instruction, 2026-10-13: decide each of
+    the six displayed fields). The ruling is only as good as its two halves, so both are
+    checked: `shown` must still match the line that prints or records the field, and
+    `enforced`, when given, must still be a branch that fails closed on the condition
+    the field describes. `reason` says why failing on the field itself would be wrong.
+    """
+    reason: str
+    shown: Text
+    enforced: Branch | None = None
 
 
 @dataclass(frozen=True)
@@ -249,9 +267,10 @@ def consumer_problem(spec, root: Path) -> str | None:
 
 STANDUP = ".claude/skills/standup/SKILL.md"
 _UNDER_FLOOR = "exit 2 from main() when fewer than the minimum number of checks executed"
-_FULLY_COVERED_GAP = (
-    "exit code reads the coverage FLOOR, not this field: a run with CANNOT_RUN rows above "
-    "the floor exits 0 and no code anywhere branches on fully_covered (printed only)")
+_FULLY_COVERED_DISPLAYED = (
+    "printed beside the verdict so a reader sees that some rule could not run; the exit "
+    "code reads the coverage FLOOR instead, because a rule that cannot run on a given "
+    "deck or frame (no register declared, a filtered run) is normal and must not fail it")
 _VALIDATE_LOCAL_GAP = (
     "--validate-local returns exit 0 with status SKIPPED when the gitignored validators "
     "file is absent or has no cases, and nothing invokes the mode or reads the status")
@@ -271,12 +290,29 @@ REGISTRY: dict[tuple[str, str, str | None], object] = {
         Branch("check_deck_geometry.py", "main", reads="under_floor", closes="exit")],
     ("check_deck_craft.py", "under_coverage_floor", None): [
         Branch("check_deck_craft.py", "main", reads="under_floor", closes="exit")],
-    ("check_frame_integrity.py", "fully_covered", None): Gap(_FULLY_COVERED_GAP),
-    ("check_deck_geometry.py", "fully_covered", None): Gap(_FULLY_COVERED_GAP),
-    ("check_deck_craft.py", "fully_covered", None): Gap(_FULLY_COVERED_GAP),
-    ("frame_write.py", "fully_covered", None): Gap(
-        "copies the checker's value into its own JSON and the frame's check_log; "
-        "never branches on it"),
+    ("check_frame_integrity.py", "fully_covered", None): Displayed(
+        _FULLY_COVERED_DISPLAYED,
+        shown=Text("tools/check_frame_integrity.py",
+                   r"fully_covered=\{payload\['fully_covered'\]\}"),
+        enforced=Branch("check_frame_integrity.py", "main", reads="under_floor",
+                        closes="exit")),
+    ("check_deck_geometry.py", "fully_covered", None): Displayed(
+        _FULLY_COVERED_DISPLAYED,
+        shown=Text("tools/check_deck_geometry.py", r'print\(.*payload\["certification"\]'),
+        enforced=Branch("check_deck_geometry.py", "main", reads="under_floor",
+                        closes="exit")),
+    ("check_deck_craft.py", "fully_covered", None): Displayed(
+        _FULLY_COVERED_DISPLAYED,
+        shown=Text("tools/check_deck_craft.py",
+                   r'fully_covered=" \+ str\(payload\["fully_covered"\]\)'),
+        enforced=Branch("check_deck_craft.py", "main", reads="under_floor",
+                        closes="exit")),
+    ("frame_write.py", "fully_covered", None): Displayed(
+        "a faithful copy of what the checker reported, written to the frame's check_log "
+        "and returned to the caller; the writer refuses a write on what the checker "
+        "FAILS, and reclassifying its coverage here would be a second opinion",
+        shown=Text("tools/frame_write.py",
+                   r'"fully_covered": verdict\.get\("fully_covered"\),$')),
 
     # --- fire 2 lives at the write end; see the VALID_* tests below ------------------
     ("scan_promotion_candidates.py", "partial", None): [
@@ -338,8 +374,12 @@ REGISTRY: dict[tuple[str, str, str | None], object] = {
     ("mutation_sweep.py", "status", "UNAUDITED_TIMEOUT"): [
         Branch("mutation_state.py", "is_engine_failure", reads="status",
                literal="UNAUDITED", closes="exit")],
-    ("mutation_state.py", "tools_no_verdict", None): Gap(
-        "a column in the trend table; no reader compares it with anything"),
+    ("mutation_state.py", "tools_no_verdict", None): Displayed(
+        "a count for the trend table; each tool behind it is an UNAUDITED row, and those "
+        "rows already fail the sweep one by one",
+        shown=Text("tools/mutation_trend.py", r"e\['tools_no_verdict'\]"),
+        enforced=Branch("mutation_state.py", "is_engine_failure", reads="status",
+                        literal="UNAUDITED", closes="exit")),
 
     # --- agent runs ------------------------------------------------------------------
     ("agent_core.py", "status", "timeout"): [
@@ -362,8 +402,10 @@ REGISTRY: dict[tuple[str, str, str | None], object] = {
     ("check_public_pii.py", "skipped", None): NotCoverage(
         "paths outside the repo, gitignored, not public, or binary: none of them ships "
         "as text, so none needed the check"),
-    ("records_lookup.py", "hits_truncated", None): Gap(
-        "no reader; low severity because hit_count is always the full count"),
+    ("records_lookup.py", "hits_truncated", None): Displayed(
+        "only the printed sample of hits is cut; the count beside it and the claim "
+        "sentence are computed from every hit, so no answer is drawn from the cut list",
+        shown=Text("tools/records_lookup.py", r'"hit_count": len\(found\)')),
     ("calibration_review.py", "skipped", None): [
         Branch("calibration_review.py", "main", reads="status", literal="ok", closes="exit")],
 
@@ -380,7 +422,12 @@ REGISTRY: dict[tuple[str, str, str | None], object] = {
 
 # Lower this when a gap is closed. Raising it is a decision to ship a field nothing
 # fails closed on, and should be made in review rather than by editing a row.
-MAX_KNOWN_GAPS = 12
+MAX_KNOWN_GAPS = 6
+
+# A Displayed row takes a field OUT of the gap count without giving it a consumer, so
+# it has a ceiling of its own. Raising this is the owner's decision that one more field
+# is informational, made here where a reviewer sees it, not by retyping a Gap row.
+MAX_DISPLAYED = 6
 
 
 def registry_problems(root: Path, registry: dict) -> list[str]:
@@ -425,8 +472,40 @@ def test_every_row_names_a_consumer_or_a_written_reason():
         if isinstance(entry, list):
             assert entry, f"{key}: an empty consumer list is a field with no consumer"
         else:
-            assert isinstance(entry, (Gap, NotCoverage)), f"{key}: unknown entry type"
+            assert isinstance(entry, (Gap, NotCoverage, Displayed)), \
+                f"{key}: unknown entry type"
             assert len(entry.reason.strip()) >= 20, f"{key}: the reason is missing or too short"
+
+
+def _displayed_rows(registry: dict):
+    return [(key, entry) for key, entry in registry.items() if isinstance(entry, Displayed)]
+
+
+def displayed_problem(entry: Displayed, root: Path) -> str | None:
+    """None when the field is still shown where the row says and, if the row names an
+    enforcing branch, that branch still fails closed."""
+    problem = text_problem(entry.shown, root)
+    if problem is None and entry.enforced is not None:
+        problem = branch_problem(entry.enforced, root)
+    return problem
+
+
+@pytest.mark.parametrize("key,entry", _displayed_rows(REGISTRY),
+                         ids=[f"{k[0]}:{k[1]}" for k, _ in _displayed_rows(REGISTRY)])
+def test_a_displayed_field_is_still_shown_and_its_condition_still_enforced(key, entry):
+    problem = displayed_problem(entry, REPO_ROOT)
+    assert problem is None, f"{key}: {problem}"
+
+
+def test_displayed_rows_cannot_grow_without_raising_their_ceiling():
+    rows = _displayed_rows(REGISTRY)
+    assert len(rows) <= MAX_DISPLAYED, (
+        f"{len(rows)} fields are marked Displayed; the ceiling is {MAX_DISPLAYED}. "
+        "Moving a Gap to Displayed is a ruling that nothing should fail on the field: "
+        "raise MAX_DISPLAYED in the same change so the ruling is visible in review")
+    assert len(rows) == MAX_DISPLAYED, (
+        f"{MAX_DISPLAYED - len(rows)} Displayed row(s) were removed: lower MAX_DISPLAYED "
+        f"to {len(rows)}")
 
 
 def test_known_gaps_can_shrink_and_cannot_grow():
@@ -626,3 +705,25 @@ def test_guard_fails_on_a_vocabulary_nothing_validates(tmp_path):
         "def check(value):\n"
         "    return value in VALID_TIERS\n", encoding="utf-8")
     assert unvalidated_vocabularies(root) == []
+
+
+def test_guard_fails_when_a_displayed_field_is_no_longer_shown_or_enforced(tmp_path):
+    """Planted: the print line is removed, then the enforcing branch stops exiting."""
+    root = tmp_path
+    (root / "tools").mkdir()
+    tool = root / "tools" / "example_check.py"
+    row = Displayed("x" * 20, shown=Text("tools/example_check.py", r"fully_covered="),
+                    enforced=Branch("example_check.py", "main", reads="under_floor",
+                                    closes="exit"))
+    good = ("import sys\n\ndef main():\n    under_floor = False\n"
+            "    print('fully_covered=', True)\n"
+            "    if under_floor:\n        sys.exit(2)\n")
+    tool.write_text(good, encoding="utf-8")
+    assert displayed_problem(row, root) is None
+    tool.write_text(good.replace("    print('fully_covered=', True)\n", ""), encoding="utf-8")
+    assert "no line matching" in displayed_problem(row, root)
+    tool.write_text(good.replace("sys.exit(2)", "print('low')"), encoding="utf-8")
+    assert "governs a return, raise or sys.exit" in displayed_problem(row, root)
+    shown_only = Displayed("x" * 20, shown=Text("tools/example_check.py", r"fully_covered="))
+    assert displayed_problem(shown_only, root) is None
+

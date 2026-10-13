@@ -646,3 +646,143 @@ def test_installer_check_reports_the_pre_commit_hook(tmp_path):
     after = subprocess.run(["bash", inst, "--check"], cwd=root, env=env,
                            capture_output=True, text=True)
     assert after.returncode == 0 and "ok: pre-commit" in after.stdout
+
+
+# ------------------------------------------- the commit's own command line, 2026-10-13
+# The transcript is not written promptly. A session's file on disk held nothing from
+# its last several hours of tool calls, and `git commit -- <paths>` was refused twice
+# for paths the session had created minutes earlier. The older pathspec test above
+# wrote the commit command into the transcript first, which is what hid this.
+
+def test_explicit_pathspec_passes_when_the_transcript_never_heard_of_the_file(repo, cfg):
+    (repo / "theirs.py").write_text("y = 2\n")
+    _git(repo, "add", "theirs.py")
+    (repo / "mine.py").write_text("x = 1\n")
+    _git(repo, "add", "mine.py")
+    _write_main(cfg, _record("Bash", {"command": "ls"}))        # a stale transcript
+    r = _git(repo, "commit", "-m", "mine", "--", "mine.py", env=_env(cfg), check=False)
+    assert r.returncode == 0, r.stderr
+    assert _committed(repo) == ["mine.py"]
+
+
+def test_explicit_pathspec_passes_with_no_transcript_at_all(repo, cfg):
+    (repo / "mine.py").write_text("x = 1\n")
+    _git(repo, "add", "mine.py")
+    r = _git(repo, "commit", "-m", "mine", "--", "mine.py", env=_env(cfg), check=False)
+    assert r.returncode == 0, r.stderr
+
+
+def test_a_broad_commit_is_still_refused_when_the_transcript_is_stale(repo, cfg):
+    """`git commit -m` names no path on its command line, so nothing changes for it."""
+    (repo / "mine.py").write_text("x = 1\n")
+    (repo / "theirs.py").write_text("y = 2\n")
+    _write_main(cfg, _record("Bash", {"command": "ls"}))
+    _git(repo, "add", "-A")
+    r = _git(repo, "commit", "-m", "both", env=_env(cfg), check=False)
+    assert r.returncode != 0
+    assert "mine.py" in r.stderr and "theirs.py" in r.stderr
+    assert "not after `--` on this commit's own command line" in r.stderr
+
+
+def test_a_pathspec_names_only_what_it_names(tmp_path, cfg):
+    v = g.decide(["mine.py", "theirs.py"], session_id=SID, transcripts=[], peers=[7],
+                 root=tmp_path, commit_command="mine.py")
+    assert (v.blocked, v.mode) == (True, "no-transcript")
+    _write_main(cfg, _record("Bash", {"command": "ls"}))
+    v = g.decide(["mine.py", "theirs.py"], session_id=SID,
+                 transcripts=[_main_transcript(cfg)], peers=[], root=tmp_path,
+                 commit_command="mine.py")
+    assert (v.blocked, v.paths, v.mode) == (True, ["theirs.py"], "attribution")
+    v = g.decide(["mine.py"], session_id=SID, transcripts=[], peers=[7], root=tmp_path,
+                 commit_command="mine.py")
+    assert (v.blocked, v.mode) == (False, "attribution")
+    v = g.decide(["mine.py"], session_id=SID, transcripts=[], peers=[7], root=tmp_path)
+    assert v.blocked is True, "no command line and no transcript: the peer check decides"
+
+
+class _Ps:
+    """A process table for invoking_commit_command: {pid: (ppid, args)}."""
+    def __init__(self, table):
+        self.table, self.asked = table, []
+
+    def __call__(self, argv, **kw):
+        pid = int(argv[-1])
+        self.asked.append(pid)
+        row = self.table.get(pid)
+        out = f"{row[0]:>5} {row[1]}\n" if row else ""
+        return subprocess.CompletedProcess(argv, 0 if row else 1, stdout=out, stderr="")
+
+
+def test_the_commit_command_is_found_above_the_hook_script():
+    ps = _Ps({30: (20, "python3 tools/concurrent_commit_guard.py --repo-root /r"),
+              20: (10, "/bin/bash .git/hooks/pre-commit"),
+              10: (5, "/usr/bin/git commit -q -F msg.txt -- tools/a.py docs/b.md"),
+              5: (1, "zsh")})
+    assert g.invoking_commit_command(30, run=ps) == (
+        "/usr/bin/git commit -q -F msg.txt -- tools/a.py docs/b.md")
+    assert ps.asked == [30, 20, 10], "it stops at the commit and reads no further up"
+
+
+def test_a_git_process_that_is_not_a_commit_is_not_the_commit():
+    ps = _Ps({30: (20, "bash hook"), 20: (10, "git rebase main"),
+              10: (5, "git commit -m x -- a.py"), 5: (1, "zsh")})
+    assert g.invoking_commit_command(30, run=ps) == "git commit -m x -- a.py"
+    ps = _Ps({30: (20, "bash hook"), 20: (1, "mygit commit -- a.py"), 1: (0, "launchd")})
+    assert g.invoking_commit_command(30, run=ps) == ""
+
+
+def test_no_commit_in_the_chain_or_an_unreadable_table_yields_nothing():
+    assert g.invoking_commit_command(30, run=_Ps({30: (1, "bash"), 1: (0, "launchd")})) == ""
+    assert g.invoking_commit_command(30, run=_Ps({})) == ""
+    loop = _Ps({30: (30, "bash")})
+    assert g.invoking_commit_command(30, run=loop) == "" and len(loop.asked) == 8
+
+    def boom(argv, **kw):
+        raise OSError("no ps")
+    assert g.invoking_commit_command(30, run=boom) == ""
+
+    def garbage(argv, **kw):
+        return subprocess.CompletedProcess(argv, 0, stdout="not-a-pid args\n", stderr="")
+    assert g.invoking_commit_command(30, run=garbage) == ""
+
+
+# --- Cross-model review 307: a file named in the MESSAGE is not a pathspec ---
+
+def test_a_commit_message_that_names_a_file_does_not_attribute_it(repo, cfg):
+    """`git add -A; git commit -m "update mine.py and theirs.py"` passed for one
+    afternoon: the whole command line was searched, message included."""
+    (repo / "mine.py").write_text("x = 1\n")
+    (repo / "theirs.py").write_text("y = 2\n")
+    _write_main(cfg, _record("Bash", {"command": "ls"}))
+    _git(repo, "add", "-A")
+    r = _git(repo, "commit", "-m", "update mine.py and theirs.py", env=_env(cfg), check=False)
+    assert r.returncode != 0
+    assert "mine.py" in r.stderr and "theirs.py" in r.stderr
+
+
+def test_a_broad_pathspec_does_not_attribute_a_file_the_message_names(repo, cfg):
+    """`git commit -m "... theirs.py" -- .` has a pathspec index, and the only word
+    after `--` is the dot."""
+    (repo / "seed.txt").write_text("changed by another session\n")
+    _write_main(cfg, _record("Bash", {"command": "ls"}))
+    r = _git(repo, "commit", "-m", "touch seed.txt", "--", ".", env=_env(cfg), check=False)
+    assert r.returncode != 0 and "seed.txt" in r.stderr
+
+
+@pytest.mark.parametrize("command,index,expected", [
+    ("git commit -m msg -- a.py docs/b.md", ".git/next-index-123.lock", "a.py docs/b.md"),
+    ("/usr/bin/git commit -q -F m.txt -- a.py", "/r/.git/next-index-9.lock", "a.py"),
+    # the message is before the separator and is dropped, even when it holds one
+    ("git commit -m update a.py -- theirs.py -- mine.py", ".git/next-index-1.lock", "mine.py"),
+    # not a pathspec commit: the plain index, the -a / -i lock, or nothing exported
+    ("git commit -m msg -- a.py", ".git/index", ""),
+    ("git commit -a -m msg -- a.py", ".git/index.lock", ""),
+    ("git commit -m msg -- a.py", "", ""),
+    ("git commit -m msg -- a.py", ".git/my-next-index-1.lock", ""),
+    # a pathspec index and no separator: nothing can be told apart from the message
+    ("git commit -m update a.py a.py", ".git/next-index-1.lock", ""),
+    ("git commit -m msg --", ".git/next-index-1.lock", ""),
+    ("", ".git/next-index-1.lock", ""),
+])
+def test_commit_pathspecs(command, index, expected):
+    assert g.commit_pathspecs(command, index) == expected

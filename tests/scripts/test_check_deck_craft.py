@@ -792,7 +792,7 @@ def test_whitespace_only_text_is_not_recorded():
 FULL_COVERAGE_DECK = """
 <style>.slide{width:1280px}</style>
 <div class="slide">
-  <p class="lede">Widget output reached 1,200 units in March</p>
+  <p class="lede">Widget output reached 1,200 units in March, more than plan</p>
   <div class="tracker">Output &middot; 1 of 1</div>
   <div class="rule"></div>
   <div class="sticker">AS OF MARCH</div>
@@ -802,6 +802,20 @@ FULL_COVERAGE_DECK = """
   <p class="src">Source: the March production log.</p>
 </div>
 """
+
+
+# B11 reads a register from frame.yaml, so "every check executes" needs one. The lede
+# above prints "more than"; this is the claim that covers it.
+FULL_COVERAGE_REGISTER = [{
+    "surface": "slide-1", "token": "more than", "type": "comparison",
+    "asserts": "March output exceeded the March plan",
+    "population": "the one widget line, March",
+    "backing": {"kind": "cell", "ref": "workbook Output!B4"}}]
+
+
+def _full_coverage_ctx():
+    return {"frame": {"facts": {}, "lede_claims": FULL_COVERAGE_REGISTER},
+            "origin": "test frame", "problem": None}
 
 
 def _with_fresh_render(tmp_path, html, name="deck.html"):
@@ -819,7 +833,8 @@ def _with_fresh_render(tmp_path, html, name="deck.html"):
 
 def test_the_full_coverage_deck_executes_every_in_memory_check():
     slides, styles = _parse(FULL_COVERAGE_DECK)
-    results = cdc.run_checks(slides, styles)
+    results = cdc.run_checks(slides, styles, frame_ctx=_full_coverage_ctx())
+    assert "B11" in [r.rule for r in results]
     assert [r.rule for r in results if r.state == cdc.CANNOT_RUN] == []
     assert all(r.state == cdc.PASS for r in results), [
         (r.rule, r.state, r.detail) for r in results if r.state != cdc.PASS]
@@ -827,7 +842,11 @@ def test_the_full_coverage_deck_executes_every_in_memory_check():
 
 def test_fully_covered_is_true_only_when_nothing_was_skipped(tmp_path):
     full = _with_fresh_render(tmp_path, FULL_COVERAGE_DECK, "full.html")
-    assert json.loads(_run_cli(full, "--json").stdout)["fully_covered"] is True
+    frame = _frame_file(tmp_path / "full-frame.yaml", FULL_COVERAGE_REGISTER)
+    assert json.loads(_run_cli(full, "--json", "--frame", str(frame)).stdout)[
+        "fully_covered"] is True
+    # The same deck with no register is NOT fully covered: B11 could not run.
+    assert json.loads(_run_cli(full, "--json").stdout)["fully_covered"] is False
 
     partial = _with_fresh_render(tmp_path, CLEAN_DECK, "clean.html")
     assert json.loads(_run_cli(partial, "--json").stdout)["fully_covered"] is False
@@ -836,7 +855,8 @@ def test_fully_covered_is_true_only_when_nothing_was_skipped(tmp_path):
 def test_the_cannot_run_note_is_suppressed_when_every_check_ran(tmp_path):
     """Printed unconditionally the note stops carrying information."""
     full = _with_fresh_render(tmp_path, FULL_COVERAGE_DECK, "full.html")
-    assert "CANNOT_RUN is not a pass" not in _run_cli(full).stdout
+    frame = _frame_file(tmp_path / "full-frame.yaml", FULL_COVERAGE_REGISTER)
+    assert "CANNOT_RUN is not a pass" not in _run_cli(full, "--frame", str(frame)).stdout
 
 
 def test_result_as_dict_carries_all_four_fields():
@@ -850,7 +870,7 @@ def test_json_results_carry_the_detail_for_every_rule(tmp_path):
     deck = tmp_path / "bad.html"
     deck.write_text(DEFECTIVE_DECK, encoding="utf-8")
     payload = json.loads(_run_cli(deck, "--json").stdout)
-    assert len(payload["results"]) == 12
+    assert len(payload["results"]) == 13
     for row in payload["results"]:
         assert row["detail"].strip()
         assert set(row) == {"rule", "state", "detail", "offenders"}
@@ -1158,3 +1178,422 @@ def test_d1_does_not_truncate_a_short_sentence():
     off = " ".join(r.offenders)
     assert "true to count." in off
     assert "..." not in off
+
+
+# --- B11: the lede-claim register ----------------------------------------
+#
+# A gate that asserts NUMBERS says nothing about the CLAIM the numbers sit inside. B4
+# checks that a title number is on the page; B11 checks that a comparative, superlative
+# or quantifier in the title has a registered, typed claim naming what backs it.
+#
+# Every fixture is an invented widget line. The register lives in frame.yaml under
+# `lede_claims`, so these tests hand the check a frame dict.
+
+_NO_REGISTER = object()
+
+
+def _ctx(register=_NO_REGISTER, facts=None):
+    frame = {"facts": facts or {}}
+    if register is not _NO_REGISTER:
+        frame["lede_claims"] = register
+    return {"frame": frame, "origin": "test frame", "problem": None}
+
+
+def _b11(lede, register=_NO_REGISTER, facts=None, body=""):
+    slides, _ = _parse('<div class="slide"><p class="lede">' + lede + "</p>"
+                       + body + "</div>")
+    return cdc.check_b11(slides, _ctx(register, facts))
+
+
+def _claim(token, ctype="comparison", surface="slide-1", **over):
+    row = {"surface": surface, "token": token, "type": ctype,
+           "asserts": "Line A against Line B, March, all shifts",
+           "population": "both lines, every March shift",
+           "backing": {"kind": "cell", "ref": "workbook Lines!D14"}}
+    row.update(over)
+    return row
+
+
+@pytest.mark.parametrize("lede,token", [
+    ("Line A is faster on every shift measure", "faster"),
+    ("Line A ships more than Line B", "more"),
+    ("Line A is the largest source of scrap", "largest"),
+    ("Tuesday is the worst day for scrap", "worst"),
+    ("Line A never misses plan", "never"),
+    ("Both lines earn the same margin", "same"),
+    ("The new press replaced the old one", "replaced"),
+    ("Line A is the nearest to plan", "nearest"),        # generic -est, not in the list
+    ("Line A is pricier than Line B", "pricier"),        # generic word-before-than
+    ("Line A scraps 3x the units of Line B", "3x"),
+    ("Nobody has measured Line B scrap", "nobody"),
+])
+def test_b11_fails_a_trigger_token_with_no_registered_claim(lede, token):
+    r = _b11(lede, register=[])
+    assert r.state == cdc.FAIL, r.detail
+    assert any('"' + token + '"' in o for o in r.offenders), r.offenders
+
+
+def test_b11_does_not_flag_the_noun_that_happens_to_precede_than():
+    """ONE CLAIM, ONE TOKEN. A first draft flagged any word before "than", which on
+    real decks reported the noun in "300 more units than" beside the "more" that
+    already carries the claim, so one sentence demanded two entries."""
+    r = _b11("Line A ships 300 more units than Line B", register=[])
+    assert r.state == cdc.FAIL
+    assert len(r.offenders) == 1 and '"more"' in r.offenders[0], r.offenders
+
+
+def test_b11_passes_the_same_lede_once_the_claim_is_registered_typed_and_backed():
+    lede = "Line A is faster than Line B"
+    assert _b11(lede, register=[]).state == cdc.FAIL
+    r = _b11(lede, register=[_claim("faster")])
+    assert r.state == cdc.PASS, (r.detail, r.offenders)
+
+
+def test_b11_accepts_a_phrase_token_that_contains_the_trigger_word():
+    r = _b11("Line A ships more than Line B", register=[_claim("more than")])
+    assert r.state == cdc.PASS, (r.detail, r.offenders)
+
+
+def test_b11_cannot_run_without_a_frame():
+    slides, _ = _parse('<div class="slide"><p class="lede">Line A is the worst</p></div>')
+    r = cdc.check_b11(slides, None)
+    assert r.state == cdc.CANNOT_RUN
+    assert "frame" in r.detail
+
+
+def test_b11_cannot_run_when_the_frame_declares_no_register_and_says_what_went_unchecked():
+    """The tool is shared: a deck whose frame predates the register is NOT failed for
+    it. But the unchecked tokens are counted, so the CANNOT_RUN is not silent."""
+    r = _b11("Line A is the worst and the largest")
+    assert r.state == cdc.CANNOT_RUN
+    assert "lede_claims" in r.detail
+    assert "2 trigger token" in r.detail
+
+
+def test_b11_an_empty_register_is_a_declared_register_and_fails_an_unbacked_token():
+    """`lede_claims: []` says "this deck makes no such claims". Absent says nothing.
+    Collapsing the two would let an opted-in deck go quiet by deleting its entries."""
+    assert _b11("Line A is the worst", register=[]).state == cdc.FAIL
+
+
+def test_b11_cannot_run_when_no_lede_element_exists():
+    slides, _ = _parse('<div class="slide"><p>Line A is the worst</p></div>')
+    r = cdc.check_b11(slides, _ctx([]))
+    assert r.state == cdc.CANNOT_RUN
+    assert "lede convention" in r.detail
+
+
+def test_b11_cannot_run_rather_than_pass_when_it_measured_nothing():
+    """No trigger token and no entry: a green result here would be the vacuous pass."""
+    r = _b11("Line A output reached 1,200 units in March", register=[])
+    assert r.state == cdc.CANNOT_RUN
+    assert "no trigger token" in r.detail
+
+
+@pytest.mark.parametrize("lede", [
+    "Customer interest in the tester request grew",   # -er and -est nouns
+    "Line A shipped at least 1,200 units",            # "at least" is a bound
+    "Line A no longer runs a night shift",            # "no longer" is not a comparison
+    "Line A runs days rather than nights",            # "rather than"
+    "Overall output almost reached plan",             # all/most inside longer words
+    "The harvest contest in the Midwest drew a modest crowd",
+])
+def test_b11_false_positive_floor(lede):
+    r = _b11(lede, register=[])
+    assert r.state == cdc.CANNOT_RUN, (r.detail, r.offenders)
+
+
+def test_b11_reads_the_lede_only_and_not_the_body():
+    r = _b11("Line A output reached 1,200 units", register=[],
+             body="<p>Line A is the worst and the largest, faster than every other.</p>")
+    assert r.state == cdc.CANNOT_RUN, r.offenders
+
+
+# -- the two documented false-positive cases: a quotation and a proper noun --
+
+def test_b11_a_quoted_comparative_still_fails_and_the_offender_says_how_to_register_it():
+    """NOT exempted mechanically. Scare quotes around the claim would then be a free
+    bypass. A quotation is a claim someone made, so it is registered as `attribution`."""
+    r = _b11('The plant manager calls Line A "the best line in the region"', register=[])
+    assert r.state == cdc.FAIL
+    assert any("attribution" in o for o in r.offenders), r.offenders
+
+
+def test_b11_a_quoted_comparative_passes_as_an_attribution_naming_its_source():
+    r = _b11('The plant manager calls Line A "the best line in the region"',
+             register=[{"surface": "slide-1", "token": "best", "type": "attribution",
+                        "asserts": "the plant manager said this, verbatim",
+                        "backing": {"kind": "check", "ref": "interview notes, line 40"}}])
+    assert r.state == cdc.PASS, (r.detail, r.offenders)
+
+
+def test_b11_a_proper_noun_fails_until_declared_not_a_claim_with_a_reason():
+    lede = "Best Widget Co supplies 1,200 units"
+    r = _b11(lede, register=[])
+    assert r.state == cdc.FAIL
+    assert any("not_a_claim" in o for o in r.offenders), r.offenders
+    ok = _b11(lede, register=[{"surface": "slide-1", "token": "Best",
+                               "type": "not_a_claim",
+                               "reason": "part of the supplier's registered name"}])
+    assert ok.state == cdc.PASS, (ok.detail, ok.offenders)
+    assert "1 declared not a claim" in ok.detail
+
+
+def test_b11_not_a_claim_without_a_reason_fails():
+    r = _b11("Best Widget Co supplies 1,200 units",
+             register=[{"surface": "slide-1", "token": "Best", "type": "not_a_claim"}])
+    assert r.state == cdc.FAIL
+    assert any("reason" in o for o in r.offenders), r.offenders
+
+
+# -- the register's own shape: a wrong shape is a FAIL, never a quiet CANNOT_RUN --
+
+def test_b11_fails_a_register_that_is_not_a_list():
+    r = _b11("Line A is the worst", register={"slide-1": "worst"})
+    assert r.state == cdc.FAIL
+    assert "list" in r.detail
+
+
+@pytest.mark.parametrize("broken,needle", [
+    ({"type": None}, "type"),
+    ({"type": "vibes"}, "type"),
+    ({"backing": None}, "backing"),
+    ({"backing": "the workbook"}, "backing"),
+    ({"backing": {"kind": "cell", "ref": ""}}, "ref"),
+    ({"backing": {"kind": "hunch", "ref": "x"}}, "kind"),
+    ({"asserts": ""}, "asserts"),
+    ({"population": ""}, "population"),
+    ({"surface": None}, "surface"),
+])
+def test_b11_fails_an_untyped_or_unbacked_entry(broken, needle):
+    r = _b11("Line A is the worst line", register=[_claim("worst", "superlative", **broken)])
+    assert r.state == cdc.FAIL, r.detail
+    assert any(needle in o for o in r.offenders), r.offenders
+
+
+def test_b11_fails_an_entry_that_is_not_a_mapping():
+    r = _b11("Line A is the worst line", register=["worst"])
+    assert r.state == cdc.FAIL
+    assert any("mapping" in o for o in r.offenders), r.offenders
+
+
+def test_b11_population_is_not_demanded_of_a_causal_or_attribution_claim():
+    row = _claim("replaced", "causal")
+    del row["population"]
+    r = _b11("The new press replaced the old one", register=[row])
+    assert r.state == cdc.PASS, (r.detail, r.offenders)
+
+
+def test_b11_a_fact_backing_must_resolve_in_the_frame():
+    row = _claim("worst", "superlative", backing={"kind": "fact", "ref": "f9"})
+    lede = "Tuesday is the worst day for scrap"
+    bad = _b11(lede, register=[row], facts={"f1": {"text": "x"}})
+    assert bad.state == cdc.FAIL
+    assert any("f9" in o for o in bad.offenders), bad.offenders
+    good = _b11(lede, register=[row], facts={"f9": {"text": "x"}})
+    assert good.state == cdc.PASS, (good.detail, good.offenders)
+
+
+def test_b11_fails_a_stale_entry_whose_token_the_lede_no_longer_prints():
+    r = _b11("Line A is faster than Line B",
+             register=[_claim("faster"), _claim("largest", "superlative")])
+    assert r.state == cdc.FAIL
+    assert any("largest" in o and "does not print" in o for o in r.offenders), r.offenders
+
+
+def test_b11_fails_an_entry_naming_a_surface_the_deck_does_not_render():
+    r = _b11("Line A is faster than Line B",
+             register=[_claim("faster"), _claim("faster", surface="slide-7")])
+    assert r.state == cdc.FAIL
+    assert any("slide-7" in o for o in r.offenders), r.offenders
+
+
+def test_b11_an_entry_on_another_surface_does_not_cover_this_one():
+    deck = ('<div class="slide"><p class="lede">Line A is faster than Line B</p></div>'
+            '<div class="slide"><p class="lede">Line B is faster than Line C</p></div>')
+    slides, _ = _parse(deck)
+    one = cdc.check_b11(slides, _ctx([_claim("faster", surface="slide-2")]))
+    assert one.state == cdc.FAIL
+    assert any(o.startswith("page 1") for o in one.offenders), one.offenders
+    both = cdc.check_b11(slides, _ctx([_claim("faster"),
+                                       _claim("faster", surface="slide-2")]))
+    assert both.state == cdc.PASS, (both.detail, both.offenders)
+
+
+def test_b11_one_entry_covers_one_occurrence():
+    lede = "Line A ships more units and earns more margin"
+    assert _b11(lede, register=[_claim("more")]).state == cdc.FAIL
+    assert _b11(lede, register=[_claim("more"), _claim("more")]).state == cdc.PASS
+
+
+def test_b11_an_entry_covers_only_its_own_token():
+    """An entry for one word must not discharge a different word in the same title."""
+    lede = "Line A is faster and ships more units"
+    r = _b11(lede, register=[_claim("faster"), _claim("faster")])
+    assert r.state == cdc.FAIL
+    assert any('"more"' in o for o in r.offenders), r.offenders
+
+
+def test_b11_token_match_ignores_case():
+    r = _b11("6pm, THE WORST HOUR for scrap",
+             register=[_claim("worst", "superlative")])
+    assert r.state == cdc.PASS, (r.detail, r.offenders)
+
+
+def test_b11_pass_states_what_it_measured_and_what_it_cannot_see():
+    """A lexicon run measures the lexicon. The PASS must say so, every time."""
+    r = _b11("Line A is faster than Line B", register=[_claim("faster")])
+    assert r.state == cdc.PASS
+    assert "1 trigger token" in r.detail
+    assert "no trigger word" in r.detail
+    assert "declared, not verified" in r.detail
+
+
+# -- wiring: where the frame comes from --
+
+def _frame_file(path, register):
+    import yaml
+    path.write_text(yaml.safe_dump({"schema_version": 3, "facts": {},
+                                    "lede_claims": register}), encoding="utf-8")
+    return path
+
+
+COMPARATIVE_DECK = CLEAN_DECK.replace(
+    "Scrap fell to 40 units", "Scrap fell to 40 units, the lowest of any month")
+
+
+def _b11_row(tmp_path, *extra, name="deck.html"):
+    deck = _with_fresh_render(tmp_path, COMPARATIVE_DECK, name)
+    r = _run_cli(deck, "--json", *extra)
+    payload = json.loads(r.stdout)
+    return r, next(x for x in payload["results"] if x["rule"] == "B11")
+
+
+def test_cli_b11_cannot_run_and_exits_0_when_no_frame_sits_beside_the_deck(tmp_path):
+    r, row = _b11_row(tmp_path)
+    assert row["state"] == cdc.CANNOT_RUN
+    assert r.returncode == 0
+
+
+def test_cli_b11_reads_a_frame_passed_with_the_flag(tmp_path):
+    frame = _frame_file(tmp_path / "elsewhere.yaml", [])
+    r, row = _b11_row(tmp_path, "--frame", str(frame))
+    assert row["state"] == cdc.FAIL
+    assert r.returncode == 2
+    assert any('"lowest"' in o for o in row["offenders"]), row["offenders"]
+
+
+def test_cli_b11_finds_frame_yaml_beside_the_deck_without_the_flag(tmp_path):
+    """The gate must not depend on someone remembering a flag."""
+    _frame_file(tmp_path / "frame.yaml", [])
+    r, row = _b11_row(tmp_path)
+    assert row["state"] == cdc.FAIL
+    assert "frame.yaml" in row["detail"]
+
+
+def test_cli_b11_passes_with_a_registered_claim_in_the_frame(tmp_path):
+    _frame_file(tmp_path / "frame.yaml",
+                [_claim("lowest", "superlative", surface="slide-2")])
+    r, row = _b11_row(tmp_path)
+    assert row["state"] == cdc.PASS, row
+    assert r.returncode == 0
+
+
+def test_cli_b11_fails_when_a_named_frame_cannot_be_read(tmp_path):
+    """An explicit --frame that does not load is a broken request, not a skipped check."""
+    r, row = _b11_row(tmp_path, "--frame", str(tmp_path / "nope.yaml"))
+    assert row["state"] == cdc.FAIL
+    assert r.returncode == 2
+
+
+def test_cli_b11_fails_on_a_frame_that_is_not_valid_yaml(tmp_path):
+    (tmp_path / "frame.yaml").write_text("lede_claims: [unclosed", encoding="utf-8")
+    r, row = _b11_row(tmp_path)
+    assert row["state"] == cdc.FAIL
+
+
+def test_the_schema_declares_the_register_and_agrees_with_the_checker_on_types():
+    """ONE SOURCE OF TRUTH, CHECKED. The schema documents the claim types and the
+    checker enforces them; if they drift, an author following the schema writes a
+    register the checker refuses."""
+    import yaml
+    schema = yaml.safe_load(
+        (REPO / "framework" / "frame-schema.yaml").read_text(encoding="utf-8"))
+    field = schema["fields"]["lede_claims"]
+    assert field["type"].startswith("list[")
+    assert set(field["claim_types"]) == set(cdc.CLAIM_TYPES) | {cdc.NOT_A_CLAIM}
+    assert set(field["backing_kinds"]) == set(cdc.BACKING_KINDS)
+
+
+# -- B11 mutation survivors, 2026-10-13 --
+
+def test_cli_b11_says_why_it_cannot_run_when_no_frame_exists(tmp_path):
+    r, row = _b11_row(tmp_path)
+    assert row["detail"].startswith("no --frame supplied and no frame.yaml beside the deck")
+
+
+def test_cli_b11_fails_on_a_frame_that_is_not_a_mapping(tmp_path):
+    (tmp_path / "frame.yaml").write_text("- one\n- two\n", encoding="utf-8")
+    r, row = _b11_row(tmp_path)
+    assert row["state"] == cdc.FAIL and r.returncode == 2
+    assert "is not a mapping" in row["detail"]
+
+
+def test_frame_context_reports_a_missing_yaml_reader_as_cannot_run(tmp_path, monkeypatch):
+    import builtins
+    real = builtins.__import__
+
+    def no_yaml(name, *a, **k):
+        if name == "yaml":
+            raise ImportError("no yaml here")
+        return real(name, *a, **k)
+    (tmp_path / "frame.yaml").write_text("lede_claims: []\n", encoding="utf-8")
+    monkeypatch.setattr(builtins, "__import__", no_yaml)
+    ctx = cdc.frame_context(tmp_path / "deck.html")
+    assert ctx["frame"] is None
+    assert ctx["problem"][0] == cdc.CANNOT_RUN and "PyYAML is not installed" in ctx["problem"][1]
+
+
+def test_b11_a_stale_phrase_entry_does_not_cover_the_word_the_lede_still_prints():
+    """The entry says "far faster"; the lede says "faster". The entry is stale AND the
+    printed word is uncovered: two defects, not one."""
+    r = _b11("Line A is faster than Line B", register=[_claim("far faster")])
+    assert r.state == cdc.FAIL
+    assert r.detail.startswith("2 defect(s) across 1 trigger token(s) and 1 register entry (")
+    assert any("does not print it" in o for o in r.offenders)
+    assert any("has no registered claim" in o for o in r.offenders)
+
+
+def test_b11_counts_register_entries_in_the_plural_when_there_are_several():
+    r = _b11("Line A is faster than Line B",
+             register=[_claim("far faster"), _claim("much faster")])
+    assert "and 2 register entries (" in r.detail
+
+
+def test_b11_pass_counts_claims_and_names_apart():
+    r = _b11("Line A is faster than Line B", register=[_claim("faster")])
+    assert "1 typed and backed, 0 declared not a claim" in r.detail
+    r = _b11("The Faster Press line met plan",
+             register=[_claim("faster", "not_a_claim", asserts="part of the product name",
+                              reason="Faster Press is the product's name")])
+    assert r.state == cdc.PASS, (r.detail, r.offenders)
+    assert "0 typed and backed, 1 declared not a claim" in r.detail
+
+
+# -- cross-model review 307: comparison verbs --
+
+@pytest.mark.parametrize("lede,token", [
+    ("Line A outperforms Line B and is faster in March", "outperforms"),
+    ("Line B underperformed plan in March", "underperformed"),
+    ("Scrap exceeded the March target", "exceeded"),
+    ("Line A surpasses Line B on units shipped", "surpasses"),
+    ("Line A is outpacing the plan", "outpacing"),
+    ("Line A dominates March output", "dominates"),
+    ("March set the maximum scrap rate", "maximum"),
+    ("Line B hit its minimum output in March", "minimum"),
+    ("Line A is the dominant source of scrap", "dominant"),
+])
+def test_b11_sees_a_comparison_made_with_a_verb(lede, token):
+    r = _b11(lede, register=[_claim("faster")] if "faster" in lede else [])
+    assert r.state == cdc.FAIL, r.detail
+    assert any('"' + token + '"' in o for o in r.offenders), r.offenders

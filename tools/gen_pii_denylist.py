@@ -74,6 +74,12 @@ KEEP = {
     # A recruiter marketplace, not a hiring target. Named in a tracked template and its
     # filename since 2026-07; the owner ruled it public-safe on 2026-10-12.
     "paraform",
+    # Ruled public-safe by the owner on 2026-10-13. The first is a search tool this repo
+    # calls by name in a dozen tracked files; the other three are ordinary words that
+    # reached the ambiguous tier as parts of longer names and accounted for 117 of the
+    # 220 (file, token) pairs a whole-tree sweep still reported. A multi-word name that
+    # contains one of them is unaffected: the full phrase still blocks.
+    "exa", "first", "loop", "deep",
     # The repo owner's own surname. Public by construction: it is the git author name and
     # appears in README.md, docs/getting-started.md and CHANGELOG.md among 40 tracked files.
     # It reaches person_components the moment any relative is added to networking.md, and on

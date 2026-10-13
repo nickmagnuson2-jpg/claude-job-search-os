@@ -393,6 +393,41 @@ fields:
       condition. ALSO A CANDIDATE-RULE GENERATOR: an override is a rule under test and
       feeds framework/rule-candidates.yaml.
 
+  # ---- LEDE CLAIMS. Read by tools/check_deck_craft.py rule B11, not by F. ----
+  lede_claims:
+    type: list[{surface, token, type, asserts, population, backing, reason}]
+    required: false
+    class: per_engagement
+    checks: [B11]
+    claim_types: [comparison, superlative, causal, count, attribution, not_a_claim]
+    backing_kinds: [cell, check, fact]
+    note: >
+      ADDED 2026-10-12. One entry per comparative, superlative or quantifier a page
+      TITLE prints (worst, largest, faster, more than, every, all, only, never, same,
+      replaced). A gate that asserts the numbers says nothing about the sentence built
+      around them: five times a title carried a correct figure and a false superlative,
+      and every numeric check was green.
+
+      surface is the page as slide-N, the vocabulary F15 already uses. token is the
+      word or short phrase as the title prints it. type is one of claim_types.
+      asserts states the claim in one line. population says what it quantifies over
+      and is required for comparison, superlative and count. backing is {kind, ref}:
+      kind is one of backing_kinds, ref names the workbook cell, the coverage check, or
+      the fact id (a fact ref must resolve in `facts`).
+
+      TWO DECLARED NON-CASES. A quotation is type attribution, its backing naming the
+      source. A token inside a proper noun is type not_a_claim, which takes a `reason`
+      and no backing. Neither is exempted mechanically, because quotation marks and
+      capital letters are both available to a sentence that is making the claim.
+
+      ABSENT IS NOT EMPTY. With no `lede_claims` key the rule reports CANNOT_RUN, since
+      the checker is shared with decks whose frame predates this field. `lede_claims: []`
+      is a declared register and FAILS any trigger token in a title.
+
+      THE AUTHOR WRITES THIS, so it forces a declaration and not a correct one, and a
+      claim with no trigger word is not seen. NO schema_version BUMP: optional and
+      additive, same reasoning as check_log.
+
   # ---- LEDGERS. All backfill-impossible; recorded during the run or lost. ----
   compression_ledger:
     type: list[{was, definition_was, now_lives}]
