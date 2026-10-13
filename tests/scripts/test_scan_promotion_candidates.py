@@ -290,7 +290,10 @@ TOOL = TOOLS / "scan_promotion_candidates.py"
 
 
 def _scan(memory_dir: Path, *extra) -> dict:
-    r = _sp.run([sys.executable, str(TOOL), "--memory-dir", str(memory_dir), *extra],
+    # --min-coverage 0: these fixtures are small, deliberately partial corpora. The floor
+    # is tested in test_scan_promotion_coverage.py.
+    r = _sp.run([sys.executable, str(TOOL), "--memory-dir", str(memory_dir),
+                 "--min-coverage", "0", *extra],
                 capture_output=True, text=True, cwd=str(REPO_ROOT),
                 env={"PYTHONIOENCODING": "utf-8", "PATH": "/usr/bin:/bin"})
     assert r.returncode == 0, r.stderr
@@ -416,7 +419,8 @@ def test_an_empty_memory_dir_reports_ok_with_zero_counts(tmp_path):
 
 def _cron(memory_dir: Path, repo_root: Path, *extra) -> dict:
     r = _sp.run([sys.executable, str(TOOL), "--memory-dir", str(memory_dir),
-                 "--repo-root", str(repo_root), "--mode", "cron", *extra],
+                 "--repo-root", str(repo_root), "--mode", "cron", "--min-coverage", "0",
+                 *extra],
                 capture_output=True, text=True, cwd=str(REPO_ROOT),
                 env={"PYTHONIOENCODING": "utf-8", "PATH": "/usr/bin:/bin"})
     assert r.returncode == 0, r.stderr
@@ -445,7 +449,8 @@ def test_the_backlog_says_none_rather_than_going_blank(tmp_path):
     _cron(mem, tmp_path)
     body = (mem / "promotion-backlog.md").read_text(encoding="utf-8")
     assert "_none_" in body
-    assert "## Promotion candidates" in body
+    assert "## Due for promotion" in body and "## Not due yet" in body
+    assert "## Gate needs a number" in body
     assert "## Demotion candidates" in body
 
 
@@ -505,7 +510,7 @@ def test_cron_mode_creates_a_todo_when_candidates_exist(tmp_path):
     assert marker.exists(), "todo_write.py was never invoked"
     args = marker.read_text(encoding="utf-8")
     assert "add" in args and "Low" in args
-    assert "1 promotion" in args
+    assert "0 rules due for promotion + 1 with a gate that names no number" in args
 
 
 def test_no_todo_is_created_when_there_is_nothing_to_report(tmp_path):

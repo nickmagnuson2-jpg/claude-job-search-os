@@ -463,3 +463,33 @@ def test_a_writer_without_a_yaml_reader_still_writes_and_says_the_dimension_is_b
     written = (repo / "data" / ("job-pipeline.md" if script == "pipe_write.py"
                                 else "networking.md")).read_text(encoding="utf-8")
     assert args[1] in written
+
+
+def test_sync_holds_an_exclusive_lock_while_it_reads_and_writes(tmp_path, monkeypatch):
+    """Review 308: unlocked, two syncs read the same file and one addition was lost."""
+    repo = fake_repo(tmp_path, pipeline=["Acme", "Ghost Co"])
+    p = _dim_in(repo, [ACME])
+    events = []
+    real_flock, real_locked = cd.fcntl.flock, cd._sync_locked
+
+    def flock(fh, mode):
+        events.append(("lock", mode == cd.fcntl.LOCK_EX, Path(fh.name).name))
+        return real_flock(fh, mode)
+
+    def locked(*a, **k):
+        events.append(("work",))
+        return real_locked(*a, **k)
+    monkeypatch.setattr(cd.fcntl, "flock", flock)
+    monkeypatch.setattr(cd, "_sync_locked", locked)
+    assert len(cd.sync(repo)) == 1
+    assert events == [("lock", True, "companies.yaml.lock"), ("work",)]
+
+
+def test_many_syncs_at_once_add_each_company_exactly_once(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    repo = fake_repo(tmp_path, pipeline=["Acme", "Ghost Co", "Lantern Works", "Northwind Systems"])
+    p = _dim_in(repo, [ACME])
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(pool.map(lambda _: len(cd.sync(repo)), range(16)))
+    assert sorted(results) == [0] * 15 + [3]
+    assert sorted(_entries(p)) == ["Acme", "Ghost Co", "Lantern Works", "Northwind Systems"]

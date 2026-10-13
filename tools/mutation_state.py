@@ -161,3 +161,39 @@ def summarise(rows: list[dict]) -> dict:
         "own_suite": sum(1 for r in rows if r.get("own") is True),
         "own_suite_unknown": sum(1 for r in rows if r.get("own") is None),
     }
+
+
+def hook_status(rows: list[dict]) -> dict:
+    """Where the wired hooks stand in the latest sweep.
+
+    The mutation workstream's terminal condition since 2026-10-13: every wired hook has
+    zero surviving mutants that are not allowlisted with a reason, and no tool in the
+    sweep is left without a verdict. `h` is the sweep's own "wired as a hook" flag and
+    `survived` already excludes allowlisted mutants. This reads the LAST SWEEP, so a
+    hook fixed since then still counts against the number until the sweep reruns.
+    """
+    latest = latest_per_tool(rows)
+    hooks = [r for r in latest if r.get("h")]
+    dirty = [r for r in hooks if isinstance(r.get("survived"), int) and r["survived"] > 0]
+    no_verdict = [r for r in latest if not isinstance(r.get("survived"), int)]
+    return {
+        "hooks": len(hooks),
+        "hooks_with_survivors": len(dirty),
+        "tools_no_verdict": len(no_verdict),
+        "value": (f"{len(dirty)} of {len(hooks)} wired hooks have survivors | "
+                  f"{len(no_verdict)} tools with no verdict"),
+        "done": bool(hooks) and not dirty and not no_verdict,
+    }
+
+
+if __name__ == "__main__":
+    import sys
+    if sys.argv[1:] != ["hooks"]:
+        print("usage: mutation_state.py hooks", file=sys.stderr)
+        sys.exit(2)
+    _rows = read_rows()
+    if not _rows:
+        # No sweep recorded is not "0 hooks have survivors".
+        print(json.dumps({"error": f"no sweep rows in {baseline_path()}"}))
+        sys.exit(2)
+    print(json.dumps(hook_status(_rows)))

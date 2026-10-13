@@ -77,9 +77,12 @@ def build_corpus(tmp_path: Path, visible: int, invisible: int, projects: int) ->
 
 
 def run(memory_dir: Path, repo_root: Path) -> dict:
+    # --min-coverage 0: these fixtures are deliberately low-coverage corpora and the
+    # tests are about the denominators. The floor has its own tests at the end.
     proc = subprocess.run(
         [sys.executable, str(SCRIPT), "--memory-dir", str(memory_dir),
-         "--repo-root", str(repo_root), "--mode", "interactive", "--dry-run"],
+         "--repo-root", str(repo_root), "--mode", "interactive", "--dry-run",
+         "--min-coverage", "0"],
         capture_output=True, text=True,
     )
     assert proc.returncode == 0, proc.stderr
@@ -449,3 +452,141 @@ def test_an_annotated_no_still_reaches_the_candidate_list(tmp_path):
     assert "feedback_annotated_no.md" in names, (
         f"annotated-no rule missing from candidates: {names}"
     )
+
+
+# ---------------------------------------------------- due by the rule's own gate (2026-10-13)
+# "Fired twice and not promoted" listed 186 rules when 99 were due by their own gates.
+
+@pytest.mark.parametrize("gate,occ,expected", [
+    ("3rd fire. Target: a hook", 3, "due"),
+    ("3rd fire. Target: a hook", 4, "due"),
+    ("3rd fire. Target: a hook", 2, "not_due"),
+    ("5th fire, OR any single session with 2+ fires", 4, "not_due"),
+    ("2nd time a company is found", 2, "due"),
+    ("3rd occurrence of the same shape", 2, "not_due"),
+    ("REOPEN on the 2nd dated fire", 2, "due"),
+    ("10th fire", 9, "not_due"),
+    ("10th fire", 10, "due"),
+    # the rule file says so itself, whatever the count
+    ("TRIPPED 2026-09-14 by fire 2 on a narrower substrate", 2, "due"),
+    ("GATE TRIPPED 2026-09-06; guard OWED, not built", 2, "due"),
+    ("REOPENED 2026-09-17 (2nd dated fire)", 2, "due"),
+    ("the gate tripped once in lowercase prose, 5th fire", 2, "not_due"),
+    # no number: a defect in the gate, not a guess
+    ("count verified 2026-08-13. No structural gate set", 6, "no_number"),
+    ("the next dated fire", 2, "no_number"),
+    ("fire 3 of this shape", 5, "no_number"),
+    ("", 2, "no_number"),
+    (None, 2, "no_number"),
+])
+def test_gate_state(gate, occ, expected):
+    assert sp.gate_state(gate, occ) == expected
+
+
+RULE = """---
+name: feedback_{name}
+description: a rule
+metadata:
+  node_type: memory
+  type: feedback
+  occurrences: {occ}
+  promoted: no
+  reopen_gate: "{gate}"
+  last_cited: __TODAY__
+---
+body
+""".replace("__TODAY__", date.today().isoformat())
+
+
+def _gated_corpus(tmp_path):
+    d = tmp_path / "memory"
+    d.mkdir()
+    for name, occ, gate in (("due_a", 3, "3rd fire"), ("due_b", 2, "TRIPPED 2026-09-14"),
+                            ("early", 2, "5th fire"), ("vague", 4, "the next dated fire"),
+                            ("once", 1, "2nd fire")):
+        (d / f"feedback_{name}.md").write_text(RULE.format(name=name, occ=occ, gate=gate))
+    return d
+
+
+def _scan(memory_dir, repo_root, *extra):
+    return subprocess.run(
+        [sys.executable, str(SCRIPT), "--memory-dir", str(memory_dir), "--repo-root",
+         str(repo_root), "--dry-run", *extra], capture_output=True, text=True)
+
+
+def test_candidates_are_counted_by_their_own_gate(tmp_path):
+    report = run(_gated_corpus(tmp_path), tmp_path)
+    assert report["promotion_count"] == 4, "the total still means fired twice, not promoted"
+    assert (report["due_count"], report["not_due_count"],
+            report["gate_no_number_count"]) == (2, 1, 1)
+    assert {c["file"]: c["gate_state"] for c in report["promotion_candidates"]} == {
+        "feedback_due_a.md": "due", "feedback_due_b.md": "due",
+        "feedback_early.md": "not_due", "feedback_vague.md": "no_number"}
+
+
+def test_the_backlog_is_written_as_three_lists(tmp_path):
+    d = _gated_corpus(tmp_path)
+    r = subprocess.run([sys.executable, str(SCRIPT), "--memory-dir", str(d), "--repo-root",
+                        str(tmp_path), "--mode", "cron"], capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    text = (d / "promotion-backlog.md").read_text(encoding="utf-8")
+    due, rest = text.split("## Gate needs a number", 1)
+    vague, rest = rest.split("## Not due yet", 1)
+    early = rest.split("## Demotion candidates", 1)[0]
+    assert "## Due for promotion" in due
+    assert "feedback_due_a.md" in due and "feedback_due_b.md" in due
+    assert "feedback_early.md" not in due and "feedback_vague.md" not in due
+    assert "feedback_vague.md" in vague and "feedback_due_a.md" not in vague
+    assert "feedback_early.md" in early and "(2x) -- gate: 5th fire" in early
+    assert "feedback_once.md" not in text
+    assert "LOW COVERAGE" not in text
+    assert "\n\n\n" not in text, "one blank line between sections, never two"
+
+
+def test_an_empty_list_says_none(tmp_path):
+    d = tmp_path / "memory"
+    d.mkdir()
+    (d / "feedback_due_a.md").write_text(RULE.format(name="due_a", occ=3, gate="3rd fire"))
+    subprocess.run([sys.executable, str(SCRIPT), "--memory-dir", str(d), "--repo-root",
+                    str(tmp_path), "--mode", "cron"], capture_output=True, text=True)
+    text = (d / "promotion-backlog.md").read_text(encoding="utf-8")
+    assert text.split("## Gate needs a number", 1)[1].split("## Not due yet", 1)[0].strip().endswith("_none_")
+    assert text.split("## Not due yet", 1)[1].split("## Demotion", 1)[0].strip().endswith("_none_")
+
+
+# ---------------------------------------------------- the coverage floor
+
+@pytest.mark.parametrize("mode", ["interactive", "cron"])
+def test_a_scan_below_the_floor_is_exit_3_and_says_low_coverage(tmp_path, mode):
+    d = build_corpus(tmp_path, visible=3, invisible=27, projects=0)
+    r = _scan(d, tmp_path, "--mode", mode)
+    assert r.returncode == 3
+    report = json.loads(r.stdout)
+    assert report["status"] == "LOW_COVERAGE" and report["floor_pct"] == 95.0
+    assert "10.0% of feedback rules (3 of 30)" in report["reason"]
+
+
+def test_the_floor_is_inclusive_and_can_be_moved(tmp_path):
+    d = build_corpus(tmp_path, visible=19, invisible=1, projects=0)      # exactly 95.0%
+    r = _scan(d, tmp_path, "--mode", "interactive")
+    assert r.returncode == 0 and json.loads(r.stdout)["status"] == "ok"
+    r = _scan(d, tmp_path, "--mode", "interactive", "--min-coverage", "96")
+    assert r.returncode == 3 and json.loads(r.stdout)["status"] == "LOW_COVERAGE"
+
+
+def test_a_directory_with_no_feedback_rules_is_not_failed_for_coverage(tmp_path):
+    d = tmp_path / "memory"
+    d.mkdir()
+    r = _scan(d, tmp_path, "--mode", "interactive")
+    assert r.returncode == 0 and json.loads(r.stdout)["status"] == "ok"
+
+
+def test_a_low_coverage_backlog_says_so_at_the_top(tmp_path):
+    d = build_corpus(tmp_path, visible=3, invisible=27, projects=0)
+    r = subprocess.run([sys.executable, str(SCRIPT), "--memory-dir", str(d), "--repo-root",
+                        str(tmp_path), "--mode", "cron"], capture_output=True, text=True)
+    assert r.returncode == 3
+    text = (d / "promotion-backlog.md").read_text(encoding="utf-8")
+    assert "**LOW COVERAGE: the scan can see 10.0% of feedback rules" in text
+    assert text.index("LOW COVERAGE") < text.index("## Due for promotion")
+

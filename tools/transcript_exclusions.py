@@ -232,6 +232,9 @@ def validate_local() -> tuple[int, dict]:
             want for want in case.get("must_surface", [])
             if re.sub(r"\s+", " ", want).casefold() not in blob
         ]
+        # A case with nothing in must_surface asserts nothing and used to pass.
+        if not case.get("must_surface"):
+            missing = ["(the case lists no must_surface phrases, so it checks nothing)"]
         failed += bool(missing)
         results.append({
             "transcript": case["transcript"],

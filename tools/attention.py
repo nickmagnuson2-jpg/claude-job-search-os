@@ -137,7 +137,9 @@ def queue_promotion(repo: Path, memory_dir: Path) -> dict:
     cov = payload.get("schema_coverage", {})
     return {
         "name": "promotion", "status": "ok", "source": str(src),
-        "count": payload.get("promotion_count"),
+        # DUE by each rule's own gate, not "fired twice". The total (promotion_count)
+        # read 186 on 2026-10-13 when 99 were due; the rest are in `detail`.
+        "count": payload.get("due_count"),
         # the denominator that matters is the rules the signal can SEE, not the corpus
         "denominator": cov.get("feedback_visible"),
         "oldest_age_days": None,
@@ -147,6 +149,8 @@ def queue_promotion(repo: Path, memory_dir: Path) -> dict:
             # number hides which one you are looking at. 23 of 35 were partial on 2026-08-13.
             "partial": sum(1 for c in (payload.get("promotion_candidates") or [])
                            if c.get("partial")),
+            "not_due": payload.get("not_due_count"),
+            "gate_no_number": payload.get("gate_no_number_count"),
             "terminal": payload.get("terminal_count"),
             "needs_review": payload.get("needs_review_count"),
             "oversized_context_files": payload.get("oversized_count"),

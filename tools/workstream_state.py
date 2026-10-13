@@ -113,7 +113,10 @@ def _parse_probe(text: str) -> dict | None:
     ok_exit = raw.get("ok_exit", [0])
     if not isinstance(ok_exit, list) or not all(isinstance(c, int) for c in ok_exit):
         return None
-    return {"argv": argv, "field": raw.get("field", "value"),
+    field = raw.get("field", "value")
+    if not isinstance(field, str) or not field:
+        return None          # not a usable declaration: the row is `typed`, not a crash
+    return {"argv": argv, "field": field,
             "ok_exit": ok_exit, "text": bool(raw.get("text", False))}
 
 

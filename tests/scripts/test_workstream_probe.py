@@ -168,9 +168,9 @@ def test_lift_errors_instead_of_guessing(tmp_path, capsys, args, needle):
 
 
 def test_lift_errors_on_output_that_is_not_json_and_on_no_command(tmp_path, capsys):
-    code, out = _main(tmp_path, "lift", "--field", "x", "--", *_emit(tmp_path, "Traceback", 1),
+    code, out = _main(tmp_path, "lift", "--field", "x", "--", *_emit(tmp_path, "Traceback"),
                       capsys=capsys)
-    assert code == 2 and "not JSON (exit 1)" in out["error"]
+    assert code == 2 and "not JSON (exit 0)" in out["error"]
     code, out = _main(tmp_path, "lift", "--field", "x", capsys=capsys)
     assert code == 2 and "needs a command" in out["error"]
 
@@ -247,3 +247,21 @@ def test_an_unknown_subcommand_is_a_usage_error(tmp_path):
     r = subprocess.run([sys.executable, str(REPO / "tools" / "workstream_probe.py"), "guess"],
                        capture_output=True, text=True)
     assert r.returncode == 2 and "invalid choice" in r.stderr
+
+
+def test_lift_refuses_json_printed_by_a_command_that_failed(tmp_path, capsys):
+    """Review 308: a failed command's JSON was read as a measurement, zero included."""
+    cmd = _emit(tmp_path, json.dumps({"count": 0, "pending": []}), code=1)
+    code, out = _main(tmp_path, "lift", "--field", "count", "--", *cmd, capsys=capsys)
+    assert code == 2 and "command exited 1, expected one of [0]" in out["error"]
+    code, out = _main(tmp_path, "lift", "--len", "pending", "--", *cmd, capsys=capsys)
+    assert code == 2 and "value" not in out
+
+
+def test_lift_accepts_an_exit_code_the_probe_declares_normal(tmp_path, capsys):
+    cmd = _emit(tmp_path, json.dumps({"violations": 6}), code=1)
+    assert _main(tmp_path, "lift", "--field", "violations", "--ok-exit", "0", "--ok-exit", "1",
+                 "--", *cmd, capsys=capsys) == (0, {"value": 6})
+    code, out = _main(tmp_path, "lift", "--field", "violations", "--ok-exit", "2",
+                      "--", *cmd, capsys=capsys)
+    assert code == 2 and "expected one of [2]" in out["error"]

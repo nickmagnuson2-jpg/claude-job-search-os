@@ -318,3 +318,15 @@ def test_validate_local_with_a_case_runs_it_instead_of_reporting_no_cases(tmp_pa
     code, payload = _validate_local_in(tmp_path)
     assert payload["status"] == "FAIL" and code == 1, payload
     assert len(payload["results"]) == 1 and payload["results"][0]["pass"] is False
+
+
+def test_a_case_that_asserts_nothing_fails(tmp_path):
+    """Review 308: a case with no must_surface phrases passed at exit 0."""
+    (tmp_path / "tools").mkdir()
+    (tmp_path / "t.md").write_text(
+        "# Call\n\n## Verbatim transcript\n\n**Them:** We decided not to use it.\n",
+        encoding="utf-8")
+    (tmp_path / "tools" / ".local-validators.json").write_text(
+        json.dumps({"w3": [{"transcript": "t.md"}]}), encoding="utf-8")
+    code, payload = _validate_local_in(tmp_path)
+    assert code == 1 and payload["status"] == "FAIL", payload

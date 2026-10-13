@@ -458,3 +458,12 @@ def test_every_live_workstream_has_a_probe():
                if ws._parse_status(p.read_text(encoding="utf-8")) != "TERMINAL"
                and ws._parse_probe(p.read_text(encoding="utf-8")) is None]
     assert not missing, f"workstream(s) with no PROBE line: {missing}"
+
+
+@pytest.mark.parametrize("field", [7, None, ["value"], {"a": 1}, ""])
+def test_a_probe_whose_field_is_not_a_name_is_typed_not_a_crash(tmp_path, field):
+    """Review 308: a non-string field passed parsing and raised inside the scan."""
+    p = write_ws(tmp_path, "badfield", probe={"argv": ["python3", "-c", "print(1)"],
+                                               "field": field})
+    row = ws.evaluate(p, repo_root=tmp_path)
+    assert (row["state"], row["surfaces"]) == ("typed", True)

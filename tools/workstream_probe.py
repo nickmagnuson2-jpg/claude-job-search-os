@@ -19,7 +19,7 @@ which always surfaces. A reading that could not be taken is never printed as 0.
   frontmatter PATH KEY
       One key from a file's YAML frontmatter, for example a rule file's `occurrences`.
 
-  lift [--len KEY]... [--field KEY] -- ARGV...
+  lift [--len KEY]... [--field KEY] [--ok-exit N]... -- ARGV...
       Run ARGV from the repo root, parse its stdout as JSON, and report the length of
       each --len list (one KEY: an integer; several: "a=2 | b=0") or the value at
       --field. For a tool whose full output is too large for the runner or is a list
@@ -107,7 +107,7 @@ def _dig(data, dotted: str):
 
 
 def lift(argv: list[str], root: Path, lens: list[str], field: str | None,
-         run=subprocess.run):
+         run=subprocess.run, ok_exit=(0,)):
     if not argv:
         raise ProbeError("lift needs a command after --")
     if bool(lens) == bool(field):
@@ -117,6 +117,10 @@ def lift(argv: list[str], root: Path, lens: list[str], field: str | None,
                 env={**os.environ, "PYTHONIOENCODING": "utf-8"})
     except (OSError, subprocess.SubprocessError) as exc:
         raise ProbeError(f"command did not run: {type(exc).__name__}") from exc
+    # A command that failed may still print JSON (an error object, a partial result).
+    # Reading a count out of that reports a failure as a measurement.
+    if r.returncode not in ok_exit:
+        raise ProbeError(f"command exited {r.returncode}, expected one of {sorted(ok_exit)}")
     try:
         data = json.loads(r.stdout)
     except ValueError as exc:
@@ -179,6 +183,8 @@ def main(argv: list[str] | None = None, root: Path = REPO_ROOT) -> int:
     p = sub.add_parser("lift")
     p.add_argument("--len", action="append", default=[], dest="lens")
     p.add_argument("--field", default=None)
+    p.add_argument("--ok-exit", action="append", type=int, default=[], dest="ok_exit",
+                   help="an exit code that means the command RAN (default 0; repeatable)")
     p.add_argument("argv", nargs=argparse.REMAINDER)
     p = sub.add_parser("const-len")
     p.add_argument("specs", nargs="+")
@@ -191,7 +197,7 @@ def main(argv: list[str] | None = None, root: Path = REPO_ROOT) -> int:
             value = frontmatter(a.path, a.key, root)
         elif a.cmd == "lift":
             value = lift(a.argv[1:] if a.argv[:1] == ["--"] else a.argv,
-                         root, a.lens, a.field)
+                         root, a.lens, a.field, ok_exit=tuple(a.ok_exit) or (0,))
         else:
             value = const_len(a.specs, root)
     except ProbeError as exc:

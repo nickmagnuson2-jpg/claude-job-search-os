@@ -314,9 +314,8 @@ REGISTRY: dict[tuple[str, str, str | None], object] = {
     ("scan_promotion_candidates.py", "partial", None): [
         Branch("attention.py", "queue_promotion", reads="partial"),
         Text(STANDUP, r"`partial` is called out separately")],
-    ("scan_promotion_candidates.py", "schema_coverage", None): Gap(
-        "printed as a Signal health line and passed to attention.py as a denominator; "
-        "no threshold, so a scan that can see few of the rules still reports normally"),
+    ("scan_promotion_candidates.py", "schema_coverage", None): [
+        Branch("scan_promotion_candidates.py", "main", reads="low_coverage")],
 
     # --- fire 3: the workstream runner ----------------------------------------------
     ("workstream_state.py", "state", "typed"): [
@@ -419,7 +418,7 @@ REGISTRY: dict[tuple[str, str, str | None], object] = {
 
 # Lower this when a gap is closed. Raising it is a decision to ship a field nothing
 # fails closed on, and should be made in review rather than by editing a row.
-MAX_KNOWN_GAPS = 1
+MAX_KNOWN_GAPS = 0
 
 # A Displayed row takes a field OUT of the gap count without giving it a consumer, so
 # it has a ceiling of its own. Raising this is the owner's decision that one more field

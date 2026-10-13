@@ -45,6 +45,7 @@ The outreach log has no writer script, so a company that appears only there is p
 up by the next pipeline or networking write, or by --sync.
 """
 import argparse
+import fcntl
 import os
 import sys
 from datetime import date
@@ -157,6 +158,15 @@ def sync(repo_root: Path, path: Path | None = None, today: str | None = None) ->
     path = Path(path) if path else repo_root / "data" / "companies.yaml"
     if not path.exists():
         return []
+    # One sync at a time. Two writers finishing together each read the same file and the
+    # second replace dropped the first one's addition (review 308). The lock is held for
+    # the read, the write and the replace.
+    with open(path.with_suffix(path.suffix + ".lock"), "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        return _sync_locked(repo_root, path, today)
+
+
+def _sync_locked(repo_root: Path, path: Path, today: str | None) -> list[dict]:
     dim = load(path)
     seen: dict[str, list[str]] = {}
     for file, names in unresolved(dim, repo_root).items():

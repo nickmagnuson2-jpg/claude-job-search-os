@@ -427,6 +427,39 @@ def family_candidates(families: list, fm_by_stem: dict, threshold: int) -> list:
     return rows
 
 
+# --- is a candidate DUE, by the trigger its own rule file states? --------------------
+#
+# "Fired twice and not promoted" listed 186 rules on 2026-10-13. Each rule also carries a
+# reopen_gate naming the fire that should trigger promotion ("3rd fire", "5th fire"), and
+# by those gates 99 were due, 64 were not yet, and 23 had a gate with no number in it.
+# A backlog that reads 186 when 99 are due teaches its reader to ignore it.
+_GATE_TRIPPED_RE = re.compile(r"\b(TRIPPED|OWED|REOPENED)\b")
+_GATE_NUMBER_RE = re.compile(
+    r"\b(\d+)(?:st|nd|rd|th)\b\s+(?:dated\s+)?(?:fire|occurrence|time|repeat|instance)",
+    re.IGNORECASE)
+GATE_STATES = ("due", "not_due", "no_number")
+MIN_COVERAGE_DEFAULT = 95.0
+LOW_COVERAGE_EXIT = 3
+
+
+def gate_state(reopen_gate: str, occurrences: int) -> str:
+    """due | not_due | no_number, for a rule that has fired at least twice.
+
+    due        the gate says in capitals that it TRIPPED, is OWED or was REOPENED; or it
+               names an ordinal fire ("3rd fire") and the rule has fired that many times.
+    not_due    it names an ordinal fire the rule has not reached.
+    no_number  neither. CLAUDE.md requires a gate to name a number, so this is a defect
+               in the rule file and is listed as one, not guessed either way.
+    """
+    gate = str(reopen_gate or "")
+    if _GATE_TRIPPED_RE.search(gate):
+        return "due"
+    m = _GATE_NUMBER_RE.search(gate)
+    if not m:
+        return "no_number"
+    return "due" if occurrences >= int(m.group(1)) else "not_due"
+
+
 def main(argv: list[str]) -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
     ap.add_argument("--memory-dir", required=True, help="path to the auto-memory directory")
@@ -434,6 +467,9 @@ def main(argv: list[str]) -> None:
     ap.add_argument("--mode", choices=["cron", "interactive"], default="interactive")
     ap.add_argument("--stale-days", type=int, default=60)
     ap.add_argument("--dry-run", action="store_true", help="cron mode: compute but don't write backlog/todo")
+    ap.add_argument("--min-coverage", type=float, default=MIN_COVERAGE_DEFAULT,
+                    help="percent of feedback rules the scan must be able to see; below it "
+                         "the status is LOW_COVERAGE and the exit is 3 (default %(default)s)")
     ap.add_argument("--families", default=None,
                     help="path to framework/rule-families.yaml (default: <repo-root>/framework/rule-families.yaml)")
     ap.add_argument("--family-threshold", type=int, default=FAMILY_THRESHOLD_DEFAULT,
@@ -479,6 +515,7 @@ def main(argv: list[str]) -> None:
                 # list because the remaining gap is real work, but flagged so the
                 # backlog can be triaged (finish the half-built one vs start a new one).
                 "partial": is_partially_promoted(fm),
+                "gate_state": gate_state(fm.get("reopen_gate", ""), occurrences),
                 "promoted_value": str(fm.get("promoted", "no")),
                 "reopen_gate": fm.get("reopen_gate", ""),
                 "description": fm.get("description", ""),
@@ -552,9 +589,29 @@ def main(argv: list[str]) -> None:
         "families_skipped": families_skipped,
     }
 
+    by_gate = {state: [c for c in promotion_candidates if c["gate_state"] == state]
+               for state in GATE_STATES}
+    report["due_count"] = len(by_gate["due"])
+    report["not_due_count"] = len(by_gate["not_due"])
+    report["gate_no_number_count"] = len(by_gate["no_number"])
+
+    # A scan that cannot see most of the rules returns a short list that reads as an
+    # all-clear (2026-08-13: 1 candidate at 3.5% coverage). Below the floor the result is
+    # not a result: the status says so and the exit is non-zero. An empty directory has
+    # nothing to cover and is not failed for it.
+    low_coverage = (coverage["feedback_rules"] > 0
+                    and coverage["feedback_pct"] < args.min_coverage)
+    exit_code = LOW_COVERAGE_EXIT if low_coverage else 0
+    if low_coverage:
+        report["status"] = "LOW_COVERAGE"
+        report["reason"] = (f"the scan can see {coverage['feedback_pct']}% of feedback rules "
+                            f"({coverage['feedback_visible']} of {coverage['feedback_rules']}); "
+                            f"the floor is {args.min_coverage}%")
+    report["floor_pct"] = args.min_coverage
+
     if args.mode == "interactive":
         sys.stdout.write(json.dumps(report, indent=2) + "\n")
-        sys.exit(0)
+        sys.exit(exit_code)
 
     # --- cron mode: regenerate the living backlog doc + surface a todo ---
     backlog_path = memory_dir / "promotion-backlog.md"
@@ -565,15 +622,24 @@ def main(argv: list[str]) -> None:
         "Only covers memory files with an `occurrences:` frontmatter field (opted into the schema, 2026-07-08+).",
         "Pre-2026-07-08 corpus was hand-swept once; see `promotion-backlog-2026-07.md` for that one-time pass.",
         "",
-        "## Promotion candidates (occurrences >= 2, not yet promoted)",
-        "",
     ]
-    if promotion_candidates:
-        for c in promotion_candidates:
-            gate = f" -- gate: {c['reopen_gate']}" if c["reopen_gate"] else ""
-            lines.append(f"- `{c['file']}` ({c['occurrences']}x){gate}")
-    else:
-        lines.append("_none_")
+    if low_coverage:
+        lines += [f"**LOW COVERAGE: {report['reason']}. The lists below are incomplete.**", ""]
+    sections = (
+        ("due", "## Due for promotion (fired at least as often as the rule's own gate says)"),
+        ("no_number", "## Gate needs a number (the gate names no fire count, so it cannot be judged)"),
+        ("not_due", "## Not due yet (fired twice or more, fewer times than its own gate)"),
+    )
+    for state, heading in sections:
+        lines += [heading, ""]
+        if by_gate[state]:
+            for c in by_gate[state]:
+                gate = f" -- gate: {c['reopen_gate']}" if c["reopen_gate"] else ""
+                lines.append(f"- `{c['file']}` ({c['occurrences']}x){gate}")
+        else:
+            lines.append("_none_")
+        lines.append("")
+    lines.pop()
     lines += ["", "## Demotion candidates (unread >= {}d)".format(args.stale_days), ""]
     if demotion_candidates:
         for c in demotion_candidates:
@@ -659,14 +725,15 @@ def main(argv: list[str]) -> None:
 
     # Crossing families and registry defects are ACTIONABLE and must reach the todo,
     # or the aggregation is a number in a file nobody opens.
-    new_total = (len(promotion_candidates) + len(demotion_candidates)
+    new_total = (len(by_gate["due"]) + len(by_gate["no_number"]) + len(demotion_candidates)
                  + len(crossing) + len(registry_defects))
     if new_total and not args.dry_run:
         todo_script = repo_root / "tools" / "todo_write.py"
         if todo_script.exists():
             subprocess.run(
                 ["python3", str(todo_script), "--repo-root", str(repo_root), "add",
-                 (f"Memory refresh: {len(promotion_candidates)} promotion + "
+                 (f"Memory refresh: {len(by_gate['due'])} rules due for promotion + "
+                  f"{len(by_gate['no_number'])} with a gate that names no number + "
                   f"{len(demotion_candidates)} demotion candidates"
                   + (f" + {len(crossing)} rule FAMILY crossing its threshold" if crossing else "")
                   + (f" + {len(registry_defects)} family registry defect(s)" if registry_defects else "")
@@ -677,7 +744,7 @@ def main(argv: list[str]) -> None:
 
     report["backlog_written"] = str(backlog_path) if not args.dry_run else None
     sys.stdout.write(json.dumps(report, indent=2) + "\n")
-    sys.exit(0)
+    sys.exit(exit_code)
 
 
 if __name__ == "__main__":

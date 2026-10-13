@@ -810,6 +810,8 @@ def _quiet_main(tmp_path, monkeypatch, capsys, *flags, warnings=()):
     monkeypatch.setattr(sys, "argv", ["x", "--repo-root", str(tmp_path), *flags])
     monkeypatch.setattr(cah, "check_jobs", lambda r: ([], list(warnings)))
     monkeypatch.setattr(cah, "check_gmail", lambda r, h: ([], []))
+    if cah.check_local_validators.__name__ == "check_local_validators":   # not stubbed yet
+        monkeypatch.setattr(cah, "check_local_validators", lambda r: ([], []))
     rc = cah.main()
     return rc, _json.loads(capsys.readouterr().out)
 
@@ -979,10 +981,13 @@ def test_a_tool_that_cannot_be_run_or_prints_no_json_is_a_warning_not_a_crash(tm
     assert "check_prep_doc.py --validate-local (exit 0, UNREADABLE_OUTPUT)" in warnings[1]
 
 
-def test_a_tree_with_no_validators_file_runs_nothing_and_warns_about_nothing(tmp_path):
+def test_a_tree_with_no_validators_file_runs_nothing_and_says_so(tmp_path):
     def run(argv, **kw):
         raise AssertionError("nothing should be run")
-    assert cah.check_local_validators(tmp_path, run=run) == ([], [])
+    rows, warnings = cah.check_local_validators(tmp_path, run=run)
+    assert rows == [] and len(warnings) == 1
+    assert "Self-tests did not run: tools/.local-validators.json is absent" in warnings[0]
+    assert "none of the 4" in warnings[0]
 
 
 def test_main_reports_the_validators_and_their_warnings(tmp_path, monkeypatch, capsys):

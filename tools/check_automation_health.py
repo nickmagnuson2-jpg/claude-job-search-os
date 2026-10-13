@@ -428,13 +428,14 @@ def check_local_validators(repo_root: Path, run=subprocess.run) -> tuple[list, l
     """Run each tool's real-case self-test. Anything but exit 0 with status PASS is a
     warning.
 
-    A tree with no validators file at all (a fresh clone, a fork) has nothing to run and
-    is not warned about; on this machine the file exists, so a tool that finds no cases
-    for itself in it, or fails one, is reported.
+    A missing validators file is a warning too (review 308): staying quiet about it made
+    "the file was deleted" look the same as "everything passed". A fork that never had
+    the file sees this one line until it adds cases or removes the four tools.
     """
     repo_root = Path(repo_root)
     if not (repo_root / LOCAL_VALIDATORS_FILE).is_file():
-        return [], []
+        return [], [f"Self-tests did not run: {LOCAL_VALIDATORS_FILE} is absent, so none of "
+                    f"the {len(LOCAL_VALIDATOR_TOOLS)} --validate-local modes has a case."]
     rows, warnings = [], []
     for tool in LOCAL_VALIDATOR_TOOLS:
         row = {"tool": tool, "exit": None, "status": None}
