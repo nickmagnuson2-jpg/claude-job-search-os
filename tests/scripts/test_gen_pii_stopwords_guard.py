@@ -561,3 +561,36 @@ def test_a_real_run_writes_every_tier_file_and_reports(tmp_path):
 def test_load_manual_additions_is_empty_when_the_path_cannot_be_read(tmp_path):
     (tmp_path / "manual.txt").mkdir()            # exists, and reading it raises OSError
     assert g.load_manual_additions(tmp_path / "manual.txt") == (set(), set())
+
+
+# --- The WARN tier filters the networking-header harvest too (2026-10-13) -----
+# The harvest was merged in after the KEEP and STOPWORDS checks, so public-safe names
+# and the placeholder a blank header carries reached the tier.
+
+def test_ambiguous_tier_drops_keep_names_and_placeholders_from_headers():
+    d = {"lantern", "gravel"}
+    got = g.ambiguous_tier(["Lantern"], {"LinkedIn", "Yahoo Sports", "TODO", "Unknown",
+                                         "Partners", "Gravel", "Zephyrine Dynamics"}, d)
+    assert got == ["Gravel", "Lantern", "Partners", "Zephyrine Dynamics"], (
+        "a generic word in the company position of a header is still a company")
+
+
+def test_ambiguous_tier_filters_the_company_side_as_well():
+    assert g.ambiguous_tier(["Zuora", "tbd", "Lantern"], set(), {"lantern"}) == ["Lantern"]
+    assert g.ambiguous_tier([], {"Health"}, {"health"}) == ["Health"]
+
+
+def test_ambiguous_tier_drops_an_allowlisted_target_seen_in_a_header():
+    d = {"lantern", "gravel"}
+    assert g.ambiguous_tier([], {"Lantern", "Gravel"}, d, targets={"Lantern"}) == ["Gravel"]
+    # a distinctive name is kept even when it is a target: only ordinary words move up
+    assert g.ambiguous_tier([], {"Quillfeather"}, d, targets={"Quillfeather"}) == ["Quillfeather"]
+
+
+def test_ambiguous_tier_is_sorted_and_deduplicated():
+    assert g.ambiguous_tier(["Lantern", "Gravel"], {"Lantern"}, {"lantern", "gravel"}) == [
+        "Gravel", "Lantern"]
+
+
+def test_placeholder_cells_hold_no_company_name():
+    assert g.PLACEHOLDER_CELLS == {"todo", "tbd", "unknown", "none", "n/a"}

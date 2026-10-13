@@ -89,8 +89,9 @@ def compile_pattern(pattern: str, *, substring: bool = False, regex: bool = Fals
     return re.compile(left + body + right, flags)
 
 
-def _readable(path: Path) -> bool:
-    return path.is_file() and path.suffix.lower() not in BINARY_SUFFIXES
+def _not_text(path: Path) -> bool:
+    """A directory or a binary file: a path a text sweep is not meant to read."""
+    return path.is_dir() or path.suffix.lower() in BINARY_SUFFIXES
 
 
 def sweep(paths, pattern: str, *, substring: bool = False, regex: bool = False,
@@ -114,17 +115,22 @@ def sweep(paths, pattern: str, *, substring: bool = False, regex: bool = False,
 
     scanned: list[str] = []
     skipped: list[dict] = []
+    # A path that should have been read and was not. Kept apart from `skipped`
+    # because it is the one that makes a negative result untrustworthy: until
+    # 2026-10-13 a missing or undecodable file sat in `skipped` beside the binaries
+    # and the sweep still reported clean and exited 0.
+    unreadable: list[dict] = []
     matches: list[dict] = []
     control_hits = 0
 
     for path in paths:
-        if not _readable(path):
-            skipped.append({"path": str(path), "why": "missing, a directory, or binary"})
+        if _not_text(path):
+            skipped.append({"path": str(path), "why": "a directory or a binary file"})
             continue
         try:
             text = path.read_text(encoding="utf-8")
         except (UnicodeDecodeError, OSError) as exc:
-            skipped.append({"path": str(path), "why": f"unreadable: {exc}"})
+            unreadable.append({"path": str(path), "why": f"{type(exc).__name__}: {exc}"})
             continue
         scanned.append(str(path))
         for lineno, line in enumerate(text.splitlines(), start=1):
@@ -136,7 +142,8 @@ def sweep(paths, pattern: str, *, substring: bool = False, regex: bool = False,
     if not scanned:
         raise EmptyScopeError(
             f"sweep read ZERO files out of {len(paths)} given path(s) — "
-            f"every one was missing, a directory, or unreadable: {skipped}"
+            f"every one was missing, a directory, binary, or unreadable: "
+            f"{skipped + unreadable}"
         )
 
     result = {
@@ -146,6 +153,7 @@ def sweep(paths, pattern: str, *, substring: bool = False, regex: bool = False,
         "given": len(paths),
         "scanned": len(scanned),
         "skipped": skipped,
+        "unreadable": unreadable,
         "matched": len({m["file"] for m in matches}),
         "match_count": len(matches),
         "matches": matches,
@@ -158,10 +166,10 @@ def sweep(paths, pattern: str, *, substring: bool = False, regex: bool = False,
         result["control_ok"] = control_hits > 0
         # A negative result is only trustworthy once the mechanism is proven to have read
         # the files. Without the control passing, `clean` must not be asserted.
-        result["clean"] = (not matches) and control_hits > 0
+        result["clean"] = (not matches) and control_hits > 0 and not unreadable
     else:
         result["control_ok"] = None
-        result["clean"] = not matches
+        result["clean"] = not matches and not unreadable
 
     return result
 
@@ -199,7 +207,10 @@ def main(argv: list[str]) -> int:
     sys.stdout.write(json.dumps(result, indent=2) + "\n")
     if result.get("control_ok") is False:
         return 3
-    return 1 if result["matches"] else 0
+    if result["matches"]:
+        return 1
+    # No match, and some of the given files were never read: not a negative result.
+    return 3 if result["unreadable"] else 0
 
 
 if __name__ == "__main__":

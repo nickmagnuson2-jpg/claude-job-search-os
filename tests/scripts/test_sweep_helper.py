@@ -186,3 +186,71 @@ def test_compile_pattern_escapes_regex_metacharacters():
     """A token containing '.' or '(' must not silently widen the match."""
     pat = sweep_mod.compile_pattern("a.c")
     assert pat.search("a.c") and not pat.search("abc")
+
+
+# --- A file that should have been read and was not (2026-10-13) -----------------------
+# A missing or undecodable file used to sit in `skipped` beside the binaries, and the
+# sweep reported clean and exited 0 as long as one other file was readable.
+
+def test_a_missing_file_beside_a_readable_one_is_unreadable_and_not_clean(tmp_path):
+    good = tmp_path / "a.md"
+    good.write_text("nothing here\n", encoding="utf-8")
+    result = sweep([good, tmp_path / "gone.md"], "Zorp")
+    assert result["scanned"] == 1 and result["skipped"] == []
+    assert [u["path"] for u in result["unreadable"]] == [str(tmp_path / "gone.md")]
+    assert result["clean"] is False
+    rc, report = run("--pattern", "Zorp", str(good), str(tmp_path / "gone.md"))
+    assert rc == 3 and report["clean"] is False and len(report["unreadable"]) == 1
+
+
+def test_an_undecodable_file_is_unreadable(tmp_path):
+    good = tmp_path / "a.md"
+    good.write_text("nothing here\n", encoding="utf-8")
+    bad = tmp_path / "b.md"
+    bad.write_bytes(b"\xff\xfe not utf-8 \xff")
+    result = sweep([good, bad], "Zorp")
+    assert [u["path"] for u in result["unreadable"]] == [str(bad)]
+    assert "UnicodeDecodeError" in result["unreadable"][0]["why"]
+    assert result["clean"] is False
+
+
+def test_an_unread_file_does_not_hide_a_match_elsewhere(tmp_path):
+    good = tmp_path / "a.md"
+    good.write_text("Zorp was here\n", encoding="utf-8")
+    rc, report = run("--pattern", "Zorp", str(good), str(tmp_path / "gone.md"))
+    assert rc == 1 and report["matched"] == 1 and len(report["unreadable"]) == 1
+
+
+def test_a_directory_or_binary_is_skipped_and_the_result_stays_clean(tmp_path):
+    good = tmp_path / "a.md"
+    good.write_text("nothing here\n", encoding="utf-8")
+    pic = tmp_path / "p.PNG"
+    pic.write_bytes(b"\x89PNG")
+    result = sweep([good, tmp_path, pic], "Zorp")
+    assert result["unreadable"] == [] and len(result["skipped"]) == 2
+    assert result["clean"] is True
+    rc, _ = run("--pattern", "Zorp", str(good), str(tmp_path), str(pic))
+    assert rc == 0
+
+
+def test_a_passing_control_does_not_make_an_unread_file_clean(tmp_path):
+    good = tmp_path / "a.md"
+    good.write_text("def f(): pass\n", encoding="utf-8")
+    result = sweep([good, tmp_path / "gone.md"], "Zorp", control="def ")
+    assert result["control_ok"] is True and result["clean"] is False
+
+
+def test_an_all_unread_scope_names_the_files_in_its_error(tmp_path):
+    with pytest.raises(EmptyScopeError, match="gone.md"):
+        sweep([tmp_path / "gone.md"], "x")
+
+
+def test_an_empty_path_list_is_refused_before_anything_is_read():
+    with pytest.raises(EmptyScopeError, match="received ZERO paths"):
+        sweep([], "x")
+
+
+def test_stdin_is_read_only_when_asked_for(corpus):
+    """Without --stdin-paths, text waiting on stdin is not a path list."""
+    rc, report = run("--pattern", "Ace", str(corpus / "b.md"), stdin=str(corpus / "a.md") + "\n")
+    assert rc == 0 and report["given"] == 1 and report["matched"] == 0

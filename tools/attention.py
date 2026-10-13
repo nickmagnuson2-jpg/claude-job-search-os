@@ -149,7 +149,6 @@ def queue_promotion(repo: Path, memory_dir: Path) -> dict:
                            if c.get("partial")),
             "terminal": payload.get("terminal_count"),
             "needs_review": payload.get("needs_review_count"),
-            "coverage_pct": cov.get("feedback_pct"),
             "oversized_context_files": payload.get("oversized_count"),
         },
         "reason": None,

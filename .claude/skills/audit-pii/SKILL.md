@@ -106,8 +106,20 @@ git status --porcelain | awk '{print $2}' \
 
 Or pass paths directly: `... check_public_pii.py --scan path/a.md path/b.py`.
 Exit 2 = denylist hits (in `hits[]`); exit 1 = it scanned **zero** files, which is a
-failure, not a pass; exit 0 = clean. Ambiguous-tier matches come back separately in
-`ambiguous_hits[]` and are for judgment, not auto-edits.
+failure, not a pass; exit 0 = clean.
+
+**Exit 3 = an ambiguous-tier match has no verdict, and the audit is not done.** Each
+entry of `ambiguous_unresolved[]` is `FILE:TOKEN`: a pipeline company name that is also
+an ordinary word, found in that file. `ambiguous_hits[].lines` gives the line numbers.
+Open each one and decide:
+
+- it refers to the real company: replace it with a placeholder and rerun;
+- it is the ordinary word: rerun with `--accept-ambiguous FILE:TOKEN`, once per entry.
+
+There is no way to accept a token for every file, because the same word is a placeholder
+in one file and the real company in another. A verdict lasts for one run and is never
+stored. Report the entries you accepted in the audit summary. An accept that matched
+nothing comes back in `ambiguous_accept_unused[]`; treat it as a typo to fix.
 
 **Never hand-roll this sweep with `grep`.** Hand-rolled greps default to substring
 matching, and a short brand token then fires inside unrelated common words — a 2026-08-12

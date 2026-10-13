@@ -153,6 +153,11 @@ def apply_worksheet(repo_root: Path) -> dict:
         if e["color"]:
             r["human_color"] = e["color"]
             r["human_labeled"] = True
+    # An edit whose company is not in the ledger (removed or renamed after the worksheet
+    # was generated) matched no record above and used to vanish without a word.
+    known = {r["entity"] for r in records}
+    changes += [{"entity": name, "skipped": "no such company in the ledger"}
+                for name in sorted(set(edits) - known)]
     # Atomic write.
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(json.dumps(records, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -177,7 +182,15 @@ def main() -> int:
         print(json.dumps({"status": "ok", "worksheet": str(out), "companies": n}, indent=2))
     else:
         result = apply_worksheet(repo_root)
-        print(json.dumps({"status": "ok", **result}, indent=2, ensure_ascii=False))
+        # A missing worksheet, or an edit whose label is not one of LABELS, was printed
+        # under status ok at exit 0 until 2026-10-13, so a typo in a label looked applied.
+        if "error" in result:
+            status = "error"
+        else:
+            status = "partial" if result["skipped"] else "ok"
+        print(json.dumps({"status": status, **result}, indent=2, ensure_ascii=False))
+        if status != "ok":
+            return 1
     return 0
 
 

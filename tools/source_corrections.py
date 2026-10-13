@@ -106,11 +106,16 @@ def main() -> int:
     corrections, scanned, unreadable = [], 0, []
     for raw in args.paths:
         p = Path(raw)
-        if not p.is_file():
+        try:
+            found = scan_file(p)
+        except (OSError, UnicodeDecodeError):
+            # Missing, a directory, or not text. Until 2026-10-13 a file that existed and
+            # could not be decoded was a traceback that also discarded what the earlier
+            # files had yielded.
             unreadable.append(raw)
             continue
         scanned += 1
-        corrections.extend(scan_file(p))
+        corrections.extend(found)
 
     if scanned == 0:
         payload = {"error": "empty scope: no readable file among the given paths",
@@ -130,14 +135,26 @@ def main() -> int:
         "corrections": corrections,
     }
 
+    # A file that was named and not read may hold the correction the caller is about to
+    # contradict, so a partly read scope is exit 2 like an empty one. The results for
+    # the files that were read are still printed.
+
     if args.json:
         print(json.dumps(payload, ensure_ascii=False, indent=2))
-        return 0
+        return 2 if unreadable else 0
+
+    if unreadable:
+        print(f"NOT READ ({len(unreadable)} of {len(args.paths)} given): "
+              + ", ".join(unreadable)
+              + "\nFix the path(s) and rerun. What follows covers only the files read.\n")
 
     if not corrections:
-        print(f"No corrections found. Scanned {scanned} file(s) — "
-              f"that is a real zero, against a real denominator.")
-        return 0
+        if unreadable:
+            print(f"No corrections found in the {scanned} file(s) read.")
+        else:
+            print(f"No corrections found. Scanned {scanned} file(s) — "
+                  f"that is a real zero, against a real denominator.")
+        return 2 if unreadable else 0
 
     print(f"{len(real)} correction(s) across {scanned} file(s)"
           + (f", plus {len(scaffold)} unfilled template TODO(s) listed after." if scaffold else ".")
@@ -150,7 +167,7 @@ def main() -> int:
         else:
             print("    CLAIM     (section-level — applies to the whole block)")
         print(f"    CORRECTION {c['comment'][:300]}\n")
-    return 0
+    return 2 if unreadable else 0
 
 
 if __name__ == "__main__":

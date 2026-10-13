@@ -108,3 +108,106 @@ def test_human_output_is_not_json(tmp_path):
     assert proc.returncode == 0
     assert "Lesson #17" in proc.stdout
     assert not proc.stdout.lstrip().startswith("{")
+
+
+# --- A named file that was not read (2026-10-13) -----------------------------
+# Exit 2 used to need EVERY path to be unreadable. One typo among three paths exited 0
+# and the text mode printed "a real zero" without saying a file had been left out.
+
+def _text(*args):
+    return subprocess.run([sys.executable, str(SCRIPT), *args], capture_output=True, text=True)
+
+
+def test_one_unread_file_among_readable_ones_is_exit_2_in_json(tmp_path):
+    p = tmp_path / "clean.md"
+    p.write_text(CLEAN, encoding="utf-8")
+    out = run(str(p), str(tmp_path / "typo.md"), "--json", expect=2)
+    assert out["scanned"] == 1 and out["unreadable"] == [str(tmp_path / "typo.md")]
+
+
+def test_text_mode_names_the_unread_file_and_does_not_claim_a_real_zero(tmp_path):
+    p = tmp_path / "clean.md"
+    p.write_text(CLEAN, encoding="utf-8")
+    r = _text(str(p), str(tmp_path / "typo.md"))
+    assert r.returncode == 2
+    assert "NOT READ (1 of 2 given)" in r.stdout and "typo.md" in r.stdout
+    assert "real zero" not in r.stdout
+    assert "No corrections found in the 1 file(s) read." in r.stdout
+
+
+def test_corrections_in_the_read_files_are_still_printed_beside_an_unread_one(tmp_path):
+    p = tmp_path / "acme.md"
+    p.write_text(SAMPLE, encoding="utf-8")
+    r = _text(str(p), str(tmp_path / "typo.md"))
+    assert r.returncode == 2
+    assert "NOT READ" in r.stdout and "CORRECTION" in r.stdout and "Lesson #17" in r.stdout
+
+
+def test_a_fully_read_scope_keeps_exit_0_and_its_wording(tmp_path):
+    clean, acme = tmp_path / "clean.md", tmp_path / "acme.md"
+    clean.write_text(CLEAN, encoding="utf-8")
+    acme.write_text(SAMPLE, encoding="utf-8")
+    r = _text(str(clean))
+    assert r.returncode == 0 and "real zero" in r.stdout and "NOT READ" not in r.stdout
+    r = _text(str(acme))
+    assert r.returncode == 0 and "NOT READ" not in r.stdout
+    assert run(str(acme), "--json", expect=0)["unreadable"] == []
+
+
+# --- Older behaviour nothing asserted (mutation survivors, 2026-10-13) --------
+
+SCAFFOLDED = SAMPLE + "- A new bullet <!-- TODO: add the metric -->\n- Plain <!-- just a note -->\n"
+
+
+def test_each_correction_carries_the_first_known_marker_it_names(tmp_path):
+    p = tmp_path / "acme.md"
+    p.write_text(SCAFFOLDED, encoding="utf-8")
+    by_comment = {c["comment"][:12]: c["marker"] for c in run(str(p), "--json")["corrections"]}
+    assert by_comment == {
+        "HONESTY CORR": "HONESTY CORRECTION", '"Facilitated': "Lesson #",
+        "SCOPE FLAG (": "SCOPE FLAG", "CORRECTED 20": "CORRECTED",
+        "TODO: add th": None, "just a note": None,
+    }
+
+
+def test_template_todos_are_counted_apart_from_corrections(tmp_path):
+    p = tmp_path / "acme.md"
+    p.write_text(SCAFFOLDED, encoding="utf-8")
+    out = run(str(p), "--json")
+    assert (out["correction_count"], out["real_correction_count"], out["scaffold_count"]) == (6, 5, 1)
+
+
+def test_empty_scope_says_why_and_reports_a_zero_denominator(tmp_path):
+    out = run(str(tmp_path / "does-not-exist.md"), "--json", expect=2)
+    assert out["scanned"] == 0 and "empty scope" in out["error"]
+    assert "correction_count" not in out
+
+
+def test_text_mode_prints_the_count_the_location_the_claim_and_the_correction(tmp_path):
+    p = tmp_path / "acme.md"
+    p.write_text(SCAFFOLDED, encoding="utf-8")
+    out = _text(str(p)).stdout
+    assert out.startswith("5 correction(s) across 1 file(s), plus 1 unfilled template TODO(s)")
+    assert "acme.md:5 [HONESTY CORRECTION] " in out
+    assert "    CLAIM     (section-level" in out
+    assert "acme.md:7 [Lesson #] " in out
+    assert "    CLAIM     Facilitated rhythm-of-business for a 600-person org" in out
+    assert "acme.md:12 \n" in out, "a comment with no known marker prints no tag"
+    p.write_text(SAMPLE, encoding="utf-8")
+    assert _text(str(p)).stdout.startswith("4 correction(s) across 1 file(s).\n")
+
+
+def test_an_undecodable_file_is_unread_and_does_not_discard_the_others(tmp_path):
+    """It used to raise: exit 1, a traceback, and nothing from the file read before it."""
+    good, bad = tmp_path / "acme.md", tmp_path / "bad.md"
+    good.write_text(SAMPLE, encoding="utf-8")
+    bad.write_bytes(b"\xff\xfe not utf-8 \xff")
+    out = run(str(good), str(bad), "--json", expect=2)
+    assert out["scanned"] == 1 and out["unreadable"] == [str(bad)]
+    assert out["correction_count"] == 4
+    r = _text(str(good), str(bad))
+    assert r.returncode == 2 and r.stderr == ""
+    assert "NOT READ (1 of 2 given)" in r.stdout and "Lesson #17" in r.stdout
+    run(str(bad), "--json", expect=2)
+    assert run(str(tmp_path), str(good), "--json", expect=2)["unreadable"] == [str(tmp_path)], (
+        "a directory is not a file that was read")

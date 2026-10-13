@@ -1103,7 +1103,40 @@ def find_pii(content: str, tokens: list[str]) -> list[str]:
     return hits
 
 
-def scan_paths(paths: list[str]) -> int:
+ACCEPT_FLAG = "--accept-ambiguous"
+
+
+def parse_scan_args(args: list[str]):
+    """Split the words after --scan into (paths, accepted, error).
+
+    `--accept-ambiguous FILE:TOKEN` (or `=FILE:TOKEN`), repeatable, is one explicit
+    verdict that TOKEN in FILE is not the company. There is no token-wide form: the
+    same word is a placeholder in one file and the real company in another.
+    """
+    paths, accepted = [], set()
+    k = 0
+    while k < len(args):
+        a = args[k]
+        k += 1
+        if a == "--stdin-paths":
+            continue
+        if a == ACCEPT_FLAG or a.startswith(ACCEPT_FLAG + "="):
+            if a == ACCEPT_FLAG:
+                value = args[k] if k < len(args) else ""
+                k += 1
+            else:
+                value = a[len(ACCEPT_FLAG) + 1:]
+            file, sep, token = value.rpartition(":")
+            if not sep or not file.strip() or not token.strip():
+                return [], set(), (f"{ACCEPT_FLAG} takes FILE:TOKEN, one entry of "
+                                   f"ambiguous_unresolved[]; got {value!r}")
+            accepted.add(f"{file.strip()}:{token.strip()}")
+            continue
+        paths.append(a)
+    return paths, accepted, None
+
+
+def scan_paths(paths: list[str], accepted=frozenset()) -> int:
     """`--scan` sweep mode: run the SAME word-boundary matcher over a list of files.
 
     WHY THIS EXISTS (promoted from [[feedback_replace_all_substring_check]], 3 fires).
@@ -1118,7 +1151,13 @@ def scan_paths(paths: list[str]) -> int:
     The false-positive cost is not just noise: a substring sweep feeding a
     `git filter-repo --replace-text` scrub corrupts unrelated content.
 
-    Exit 2 if any denylist token is found (same contract as the hook), else 0.
+    Exit 2 if any denylist token is found (same contract as the hook), 1 if zero
+    files were scanned or a public file could not be read, else 0 -- except:
+
+    Exit 3 if no denylist token is found but an ambiguous-tier match has no verdict
+    (added 2026-10-13). The write path prints that tier at exit 0, which reaches
+    nobody; this sweep is its only reader (/audit-pii Step 1), and it used to print
+    the matches at exit 0 too. `accepted` holds the FILE:TOKEN verdicts for this run.
     """
     root_env = os.environ.get("PII_REPO_ROOT")
     root = Path(root_env).resolve() if root_env else Path(__file__).resolve().parent.parent
@@ -1126,7 +1165,8 @@ def scan_paths(paths: list[str]) -> int:
     ambiguous = load_ambiguous(root)
     target_words = load_target_words(root)
 
-    result = {"scanned": 0, "skipped": [], "hits": [], "ambiguous_hits": [],
+    result = {"scanned": 0, "skipped": [], "unreadable": [], "hits": [],
+              "ambiguous_hits": [], "ambiguous_unresolved": [],
               "denylist_tokens": len(tokens)}
     if not tokens:
         result["error"] = "denylist empty — run gen_pii_denylist.py first; a sweep with no tokens is not a pass"
@@ -1153,8 +1193,11 @@ def scan_paths(paths: list[str]) -> int:
             continue
         try:
             content = (root / rel).read_text(encoding="utf-8")
-        except OSError as exc:
-            result["skipped"].append({"path": rel, "why": f"unreadable: {exc}"})
+        except (OSError, UnicodeDecodeError) as exc:
+            # A public file that could not be read is not a skip: it ships, and it was
+            # not checked. Until 2026-10-13 it sat in skipped[] beside the gitignored
+            # and binary paths and the sweep still said clean.
+            result["unreadable"].append({"path": rel, "why": f"{type(exc).__name__}: {exc}"})
             continue
 
         result["scanned"] += 1
@@ -1166,17 +1209,41 @@ def scan_paths(paths: list[str]) -> int:
         amb = find_pii(content, ambiguous) + [
             w for w in find_pii(content, target_words) if w not in hits]
         if amb:
-            result["ambiguous_hits"].append({"file": rel, "tokens": amb})
+            # Line numbers, so a verdict does not need a second search.
+            lines = {t: [n for n, ln in enumerate(content.splitlines(), 1)
+                         if find_pii(ln, [t])] for t in amb}
+            result["ambiguous_hits"].append({"file": rel, "tokens": amb, "lines": lines})
+            result["ambiguous_unresolved"] += [
+                f"{rel}:{t}" for t in amb if f"{rel}:{t}" not in accepted]
 
-    result["clean"] = not result["hits"]
+    seen = {f"{h['file']}:{t}" for h in result["ambiguous_hits"] for t in h["tokens"]}
+    unused = sorted(set(accepted) - seen)
+    if unused:
+        result["ambiguous_accept_unused"] = unused
+
+    result["clean"] = (not result["hits"] and not result["ambiguous_unresolved"]
+                       and not result["unreadable"])
     # A sweep that examined nothing is never a pass — that shape has produced a
     # false all-clear before (an empty list plus a loop that silently ran zero times).
     if result["scanned"] == 0:
         result["clean"] = False
         result["error"] = "scanned 0 files — an empty sweep is not a pass"
+    elif result["unreadable"] and not result["hits"]:
+        result["error"] = (f"{len(result['unreadable'])} public file(s) could not be "
+                           "read and were not checked; see unreadable[]")
+    elif result["ambiguous_unresolved"] and not result["hits"]:
+        result["error"] = (
+            "ambiguous-tier match(es) with no verdict. Each token is a pipeline "
+            "company name that is also an ordinary word. Open each file at the "
+            "lines given; replace a real reference with a placeholder, and pass "
+            "--accept-ambiguous FILE:TOKEN for each one that is not the company.")
 
     print(json.dumps(result, indent=2))
-    return 2 if result["hits"] else (1 if result["scanned"] == 0 else 0)
+    if result["hits"]:
+        return 2
+    if result["scanned"] == 0 or result["unreadable"]:
+        return 1
+    return 3 if result["ambiguous_unresolved"] else 0
 
 
 def resolve_public_targets(candidates: list[str], root: Path,
@@ -1273,9 +1340,23 @@ def main():
     # --scan <paths...> | --scan --stdin-paths : sweep mode (NOT the hook path).
     argv = sys.argv[1:]
     if argv and argv[0] == "--scan":
-        rest = [a for a in argv[1:] if a != "--stdin-paths"]
+        rest, accepted, bad = parse_scan_args(argv[1:])
+        if bad:
+            print(bad, file=sys.stderr)
+            sys.exit(2)
         paths = rest or [ln.strip() for ln in sys.stdin.read().splitlines() if ln.strip()]
-        sys.exit(scan_paths(paths))
+        # The sweep fails CLOSED. The handler at the bottom of this file turns any
+        # exception into exit 0, which is right for the hook (never break a session) and
+        # wrong here: an undecodable tier file raised before one path was opened and the
+        # sweep "passed" (2026-10-13).
+        try:
+            code = scan_paths(paths, accepted)
+        except Exception as exc:
+            print(json.dumps({"clean": False, "scanned": 0,
+                              "error": f"sweep did not run: {type(exc).__name__}: {exc}"},
+                             indent=2))
+            code = 1
+        sys.exit(code)
 
     # AN UNRECOGNISED ARGUMENT IS AN ERROR, NOT A FALL-THROUGH.
     #

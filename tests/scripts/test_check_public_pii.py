@@ -1740,3 +1740,158 @@ def test_opens_a_sentence_answers_with_a_boolean():
     assert cpp.opens_a_sentence("", "") is False               # nothing follows the word
     assert cpp.opens_a_sentence("", " Systems hired") is False  # a capitalised word follows
     assert cpp.opens_a_sentence("we met ", " rose again") is False
+
+
+# ===========================================================================
+# --scan fails on an ambiguous-tier match nobody has ruled on (2026-10-13).
+#
+# The write path prints the ambiguous tier at exit 0, which reaches nobody. The sweep
+# /audit-pii Step 1 runs is the tier's only reader, and it printed ambiguous_hits[]
+# as advisory output at exit 0 too. It now exits 3 until every (file, token) entry
+# carries an explicit --accept-ambiguous verdict.
+# ===========================================================================
+
+def _scan(root, *args):
+    r = subprocess.run([sys.executable, str(SCRIPT), "--scan", *args],
+                       capture_output=True, text=True, cwd=str(root), timeout=20,
+                       env={**os.environ, "PII_REPO_ROOT": str(root)})
+    return r.returncode, json.loads(r.stdout)
+
+
+def _scan_repo(tmp_path):
+    root = _private_repo(tmp_path)
+    (root / "tools" / ".pii-denylist.txt").write_text(FIXTURE_DENYLIST, encoding="utf-8")
+    (root / "tools" / ".pii-denylist-ambiguous.txt").write_text(
+        "# fixture\nLantern\nHarbor\n", encoding="utf-8")
+    (root / "docs" / "a.md").write_text("intro\nthe Lantern round\n", encoding="utf-8")
+    (root / "docs" / "b.md").write_text("Lantern and Harbor\n", encoding="utf-8")
+    (root / "docs" / "c.md").write_text("nothing here\n", encoding="utf-8")
+    return root
+
+
+def test_scan_fails_on_an_unruled_ambiguous_hit(tmp_path):
+    code, out = _scan(_scan_repo(tmp_path), "docs/a.md", "docs/c.md")
+    assert code == 3
+    assert out["clean"] is False
+    assert out["hits"] == []
+    assert out["ambiguous_unresolved"] == ["docs/a.md:Lantern"]
+    assert out["ambiguous_hits"] == [
+        {"file": "docs/a.md", "tokens": ["Lantern"], "lines": {"Lantern": [2]}}]
+
+
+def test_scan_passes_once_every_entry_is_accepted(tmp_path):
+    code, out = _scan(_scan_repo(tmp_path), "docs/a.md", "docs/b.md",
+                      "--accept-ambiguous", "docs/a.md:Lantern",
+                      "--accept-ambiguous", "docs/b.md:Lantern",
+                      "--accept-ambiguous=docs/b.md:Harbor")
+    assert code == 0, out
+    assert out["clean"] is True
+    assert out["ambiguous_unresolved"] == []
+    assert len(out["ambiguous_hits"]) == 2, "accepted entries are still reported"
+
+
+def test_scan_accept_is_per_file_and_per_token(tmp_path):
+    root = _scan_repo(tmp_path)
+    # one of b.md's two tokens
+    code, out = _scan(root, "docs/b.md", "--accept-ambiguous", "docs/b.md:Lantern")
+    assert code == 3 and out["ambiguous_unresolved"] == ["docs/b.md:Harbor"]
+    # the same token accepted in a different file
+    code, out = _scan(root, "docs/a.md", "docs/b.md",
+                      "--accept-ambiguous", "docs/a.md:Lantern",
+                      "--accept-ambiguous", "docs/b.md:Harbor")
+    assert code == 3 and out["ambiguous_unresolved"] == ["docs/b.md:Lantern"]
+
+
+def test_scan_accept_that_matches_nothing_is_reported(tmp_path):
+    code, out = _scan(_scan_repo(tmp_path), "docs/a.md",
+                      "--accept-ambiguous", "docs/a.md:Lantern",
+                      "--accept-ambiguous", "docs/a.md:Harbor")
+    assert code == 0
+    assert out["ambiguous_accept_unused"] == ["docs/a.md:Harbor"]
+
+
+def test_scan_block_hit_outranks_ambiguous(tmp_path):
+    root = _scan_repo(tmp_path)
+    (root / "docs" / "a.md").write_text("Pat Zorp at the Lantern round\n", encoding="utf-8")
+    code, out = _scan(root, "docs/a.md", "--accept-ambiguous", "docs/a.md:Lantern")
+    assert code == 2 and out["clean"] is False
+    code, out = _scan(root, "docs/a.md")
+    assert code == 2
+
+
+def test_scan_without_ambiguous_hits_is_unchanged(tmp_path):
+    code, out = _scan(_scan_repo(tmp_path), "docs/c.md")
+    assert code == 0 and out["clean"] is True and out["ambiguous_unresolved"] == []
+
+
+@pytest.mark.parametrize("args", [
+    ["docs/a.md", "--accept-ambiguous"],             # no value
+    ["docs/a.md", "--accept-ambiguous", "Lantern"],  # no file: a token-wide accept
+    ["docs/a.md", "--accept-ambiguous", "docs/a.md:"],
+])
+def test_scan_rejects_a_malformed_accept(tmp_path, args):
+    r = subprocess.run([sys.executable, str(SCRIPT), "--scan", *args],
+                       capture_output=True, text=True, cwd=str(tmp_path), timeout=20,
+                       env={**os.environ, "PII_REPO_ROOT": str(_scan_repo(tmp_path))})
+    assert r.returncode == 2
+    assert "FILE:TOKEN" in r.stderr
+    assert r.stdout == "", "a malformed verdict must not print a result that reads as a scan"
+
+
+# --- A public file the sweep could not read (2026-10-13) ----------------------
+# It used to be appended to skipped[] beside the gitignored and binary paths, and the
+# sweep still said clean at exit 0. It ships, and it was not checked.
+
+def test_scan_reports_an_unreadable_public_file_and_is_not_clean(tmp_path):
+    root = _scan_repo(tmp_path)
+    (root / "docs" / "bad.md").write_bytes(b"\xff\xfe not utf-8 \xff")
+    code, out = _scan(root, "docs/c.md", "docs/bad.md")
+    assert code == 1
+    assert out["clean"] is False and out["scanned"] == 1
+    assert [u["path"] for u in out["unreadable"]] == ["docs/bad.md"]
+    assert "could not be read" in out["error"]
+    assert all(s["path"] != "docs/bad.md" for s in out["skipped"])
+
+
+def test_scan_block_hit_outranks_an_unreadable_file(tmp_path):
+    root = _scan_repo(tmp_path)
+    (root / "docs" / "bad.md").write_bytes(b"\xff\xfe")
+    (root / "docs" / "c.md").write_text("Pat Zorp\n", encoding="utf-8")
+    code, out = _scan(root, "docs/c.md", "docs/bad.md")
+    assert code == 2 and len(out["unreadable"]) == 1 and "error" not in out
+
+
+def test_scan_unreadable_outranks_an_unruled_ambiguous_hit(tmp_path):
+    root = _scan_repo(tmp_path)
+    (root / "docs" / "bad.md").write_bytes(b"\xff\xfe")
+    code, out = _scan(root, "docs/a.md", "docs/bad.md")
+    assert code == 1 and out["ambiguous_unresolved"] == ["docs/a.md:Lantern"]
+    assert "could not be read" in out["error"]
+
+
+def test_scan_legitimate_skips_stay_clean(tmp_path):
+    root = _scan_repo(tmp_path)
+    (root / "output" / "acme" / "x.md").write_text("x\n", encoding="utf-8")
+    code, out = _scan(root, "docs/c.md", "output/acme/x.md", "docs/pic.png")
+    assert code == 0 and out["clean"] is True and out["unreadable"] == []
+    assert len(out["skipped"]) == 2
+
+
+def test_scan_fails_closed_when_a_tier_file_cannot_be_decoded(tmp_path):
+    """The hook's allow-through handler used to catch this: exit 0, no result, and not
+    one requested file opened."""
+    root = _scan_repo(tmp_path)
+    (root / "tools" / ".pii-denylist-ambiguous.txt").write_bytes(b"\xff\xfe")
+    code, out = _scan(root, "docs/c.md")
+    assert code == 1
+    assert out["clean"] is False and out["scanned"] == 0
+    assert "sweep did not run: UnicodeDecodeError" in out["error"]
+
+
+def test_scan_fails_closed_when_the_denylist_cannot_be_decoded(tmp_path):
+    root = _scan_repo(tmp_path)
+    (root / "tools" / ".pii-denylist.txt").write_bytes(b"\xff\xfe")
+    r = subprocess.run([sys.executable, str(SCRIPT), "--scan", "docs/c.md"],
+                       capture_output=True, text=True, cwd=str(root), timeout=20,
+                       env={**os.environ, "PII_REPO_ROOT": str(root)})
+    assert r.returncode != 0

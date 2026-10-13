@@ -300,8 +300,6 @@ REGISTRY: dict[tuple[str, str, str | None], object] = {
         Text(STANDUP, r"`complete: false` is surfaced, always")],
     ("attention.py", "partial", None): [
         Text(STANDUP, r"`partial` is called out separately")],
-    ("attention.py", "coverage_pct", None): Gap(
-        "emitted under detail and read by nothing in tools/ or the standup step"),
     ("conversations_metric.py", "complete", None): [
         Text(STANDUP, r"If `complete: false`, append")],
     ("conversations_metric.py", "unreadable_sources", None): [
@@ -351,19 +349,23 @@ REGISTRY: dict[tuple[str, str, str | None], object] = {
         Text(".claude/skills/discover-companies/SKILL.md", r"`partial: true`")],
 
     # --- sweeps and lookups ----------------------------------------------------------
-    ("sweep.py", "skipped", None): Gap(
-        "`clean` and the exit code ignore it: a sweep that could not read some of its "
-        "paths reports clean and exits 0 unless EVERY path was unreadable"),
-    ("source_corrections.py", "unreadable", None): Gap(
-        "exit 2 only when zero files were readable; a partly unreadable scope exits 0 "
-        "and the text mode prints a 'real zero' sentence without naming the unread files"),
-    ("check_public_pii.py", "skipped", None): Gap(
-        "the sweep fails only when scanned == 0; an unreadable public file is appended "
-        "to skipped beside the legitimate skips and does not change clean or the exit"),
+    # Closed 2026-10-13: each tool now keeps the paths it should have read and could
+    # not apart from the paths it is not meant to read, and exits non-zero on the former.
+    ("sweep.py", "unreadable", None): [
+        Branch("sweep.py", "main", reads="unreadable", closes="exit")],
+    ("sweep.py", "skipped", None): NotCoverage(
+        "directories and binary files, which a text sweep is not meant to read"),
+    ("source_corrections.py", "unreadable", None): [
+        Branch("source_corrections.py", "main", reads="unreadable", closes="exit")],
+    ("check_public_pii.py", "unreadable", None): [
+        Branch("check_public_pii.py", "scan_paths", reads="unreadable", closes="exit")],
+    ("check_public_pii.py", "skipped", None): NotCoverage(
+        "paths outside the repo, gitignored, not public, or binary: none of them ships "
+        "as text, so none needed the check"),
     ("records_lookup.py", "hits_truncated", None): Gap(
         "no reader; low severity because hit_count is always the full count"),
-    ("calibration_review.py", "skipped", None): Gap(
-        "worksheet edits with an invalid label are listed and the command exits 0"),
+    ("calibration_review.py", "skipped", None): [
+        Branch("calibration_review.py", "main", reads="status", literal="ok", closes="exit")],
 
     # --- name matches, not a measurement signal --------------------------------------
     ("granola_save.py", "status", "skip"): NotCoverage(
@@ -378,7 +380,7 @@ REGISTRY: dict[tuple[str, str, str | None], object] = {
 
 # Lower this when a gap is closed. Raising it is a decision to ship a field nothing
 # fails closed on, and should be made in review rather than by editing a row.
-MAX_KNOWN_GAPS = 17
+MAX_KNOWN_GAPS = 12
 
 
 def registry_problems(root: Path, registry: dict) -> list[str]:

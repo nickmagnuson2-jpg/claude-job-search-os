@@ -650,6 +650,34 @@ def build_ambiguous_list(companies: set[str], dictionary: set[str],
     return sorted(out)
 
 
+# What a Company cell or header holds when nobody has filled it in. Lowercased.
+PLACEHOLDER_CELLS = {"todo", "tbd", "unknown", "none", "n/a"}
+
+
+def ambiguous_tier(from_companies: list[str], from_networking: set[str],
+                   dictionary: set[str], targets=frozenset()) -> list[str]:
+    """The WARN tier: build_ambiguous_list's output plus the networking-header harvest.
+
+    An allowlisted target that also appears in a networking header is dropped, or the
+    header harvest would put it back on the tier it was just promoted from.
+
+    The header harvest is filtered through KEEP (added 2026-10-13). It used
+    to bypass it, so names ruled public-safe and the placeholder a blank
+    header carries reached this tier: 113 of the 333 (file, token) pairs a whole-tree
+    sweep reported on that day were KEEP names or placeholders.
+    """
+    # STOPWORDS is deliberately NOT applied to the header harvest. A value in the company
+    # position of a header is a company, and one spelled like a generic word would leave
+    # every tier. build_ambiguous_list applies it to pipeline names, which the data-driven
+    # stopwords guard test covers; nothing covers this source.
+    def noise(c: str) -> bool:
+        return c.lower() in KEEP or c.lower() in PLACEHOLDER_CELLS
+    return sorted(
+        c for c in set(from_companies) | set(from_networking)
+        if not noise(c)
+        and (is_distinctive_single(c, dictionary) or not is_allowlisted_target(c, targets)))
+
+
 def merge_retired(tokens: list[str], retired_path: Path) -> list[str]:
     """Union `tokens` with every token this generator has emitted before.
 
@@ -799,11 +827,8 @@ def main():
     # WARN tier, per the 2026-09-02 decision: harvested from prose-shaped headers, so less
     # trustworthy than the pipeline column, and a false BLOCK on an always-on hook is worse
     # than a missed WARN that /audit-pii Step 1 surfaces to a human anyway.
-    # An allowlisted target that also appears in a networking header is subtracted here,
-    # or the header harvest would put it back on the WARN tier it was just promoted from.
-    ambiguous = sorted(
-        c for c in set(ambiguous) | parse_networking_companies(networking)
-        if is_distinctive_single(c, dictionary) or not is_allowlisted_target(c, targets))
+    ambiguous = ambiguous_tier(ambiguous, parse_networking_companies(networking),
+                               dictionary, targets)
 
     # Hand-maintained additions merge LAST and bypass the distinctiveness filters on
     # purpose: a human put them there deliberately, so the generator must not
