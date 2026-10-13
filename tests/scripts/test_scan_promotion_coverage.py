@@ -590,3 +590,16 @@ def test_a_low_coverage_backlog_says_so_at_the_top(tmp_path):
     assert "**LOW COVERAGE: the scan can see 10.0% of feedback rules" in text
     assert text.index("LOW COVERAGE") < text.index("## Due for promotion")
 
+
+def test_an_unreadable_rule_file_counts_against_coverage(tmp_path):
+    """Review 309: a file that could not be read left the denominator, so an unreadable
+    corpus could pass the floor."""
+    d = build_corpus(tmp_path, visible=19, invisible=0, projects=0)
+    (d / "feedback_undecodable_a.md").write_bytes(b"\xff\xfe")
+    r = _scan(d, tmp_path, "--mode", "interactive")
+    cov = json.loads(r.stdout)["schema_coverage"]
+    assert (cov["feedback_rules"], cov["feedback_visible"], cov["feedback_pct"]) == (20, 19, 95.0)
+    assert r.returncode == 0
+    (d / "feedback_undecodable_b.md").write_bytes(b"\xff\xfe")
+    r = _scan(d, tmp_path, "--mode", "interactive")
+    assert r.returncode == 3 and json.loads(r.stdout)["status"] == "LOW_COVERAGE"

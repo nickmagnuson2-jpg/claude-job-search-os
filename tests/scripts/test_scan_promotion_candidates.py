@@ -273,11 +273,14 @@ def test_with_last_cited_is_counted_independently_of_the_schema(tmp_path):
     assert cov["visible"] == 2
 
 
-def test_an_undecodable_file_is_skipped_not_fatal(tmp_path):
-    """One corrupt byte sequence must not take down the whole scan."""
+def test_an_undecodable_file_is_not_fatal_and_counts_as_a_rule_the_scan_cannot_see(tmp_path):
+    """One corrupt byte sequence must not take down the whole scan. It also must not
+    leave the denominator (review 309): it is a rule file, and it was not read."""
     _write(tmp_path, "feedback_ok.md", fm(occurrences=2))
     (tmp_path / "feedback_bad.md").write_bytes(b"\xff\xfe\x00binary")
-    assert spc.schema_coverage(tmp_path)["files"] == 1
+    cov = spc.schema_coverage(tmp_path)
+    assert (cov["files"], cov["visible"], cov["feedback_rules"], cov["feedback_visible"]) == (
+        2, 1, 2, 1)
 
 
 # --- main: the end-to-end signals -------------------------------------------

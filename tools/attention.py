@@ -134,6 +134,12 @@ def queue_promotion(repo: Path, memory_dir: Path) -> dict:
          "--repo-root", str(repo), "--mode", "interactive", "--dry-run"], repo)
     if err:
         return _skip("promotion", src, err)
+    # The scan prints a full report even when it could not see enough rules to trust
+    # it (LOW_COVERAGE, exit 3). Its counts are then partial, so the queue is unread,
+    # not short.
+    if payload.get("status") != "ok":
+        return _skip("promotion", src, payload.get("reason")
+                     or f"scan status {payload.get('status')!r}")
     cov = payload.get("schema_coverage", {})
     return {
         "name": "promotion", "status": "ok", "source": str(src),

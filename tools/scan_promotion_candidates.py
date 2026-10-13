@@ -96,6 +96,10 @@ def iter_candidate_files(memory_dir: Path):
         try:
             text = p.read_text(encoding="utf-8")
         except (UnicodeDecodeError, OSError):
+            # Still a rule file, and one the scan cannot see. Dropping it here took it
+            # out of the denominator, so an unreadable corpus could pass the coverage
+            # floor. Empty frontmatter counts it and leaves it invisible.
+            yield p, {}
             continue
         yield p, parse_frontmatter(text)
 

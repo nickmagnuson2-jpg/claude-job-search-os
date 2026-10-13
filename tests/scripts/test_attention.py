@@ -116,3 +116,28 @@ def test_empty_repo_does_not_claim_all_clear(tmp_path):
     assert r["complete"] is False
     assert r["skipped_count"] == len(r["queues"])
     assert r["total_open"] is None, "an all-skipped run has no meaningful total"
+
+
+def test_a_low_coverage_promotion_scan_is_an_unread_queue_not_a_short_one(tmp_path, monkeypatch):
+    """Review 309: the scan prints a full report at exit 3, and its partial due_count
+    was reported as the queue depth."""
+    sys.path.insert(0, str(SCRIPT.parent))
+    import attention
+    mem = tmp_path / "memory"
+    mem.mkdir()
+    low = {"status": "LOW_COVERAGE", "due_count": 1,
+           "reason": "the scan can see 10.0% of feedback rules (3 of 30); the floor is 95.0%",
+           "schema_coverage": {"feedback_visible": 3}}
+    monkeypatch.setattr(attention, "_run_json", lambda argv, cwd: (low, None))
+    q = attention.queue_promotion(tmp_path, mem)
+    assert q["status"] == "SKIPPED" and q["count"] is None
+    assert "10.0% of feedback rules" in q["reason"]
+    monkeypatch.setattr(attention, "_run_json",
+                        lambda argv, cwd: ({"status": "ODD", "due_count": 4}, None))
+    assert attention.queue_promotion(tmp_path, mem)["reason"] == "scan status 'ODD'"
+    ok = {"status": "ok", "due_count": 7, "not_due_count": 2, "gate_no_number_count": 1,
+          "schema_coverage": {"feedback_visible": 30}, "promotion_candidates": []}
+    monkeypatch.setattr(attention, "_run_json", lambda argv, cwd: (ok, None))
+    q = attention.queue_promotion(tmp_path, mem)
+    assert (q["status"], q["count"], q["denominator"]) == ("ok", 7, 30)
+    assert q["detail"]["not_due"] == 2 and q["detail"]["gate_no_number"] == 1
