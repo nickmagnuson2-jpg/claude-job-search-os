@@ -569,7 +569,7 @@ framework/                       ← Methodology (reusable, no personal data)
       └── plugin-activation.md    ←   Plugin activation config template
 data/                            ← Professional experience (private, gitignored)
   ├── projects/*.md               ← One file per engagement
-  ├── project-background/         ← Sensitive background (NEVER used in CVs)
+  ├── (project-background/)       ← Sensitive background (NEVER used in CVs); lives in ../<repo>-sealed/data/
   ├── skills.md                   ← Skill inventory with experience levels
   ├── certifications.md           ← Certification status tracking
   ├── education.md                ← Degrees, training, qualifications

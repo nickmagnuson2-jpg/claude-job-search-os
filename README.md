@@ -234,7 +234,7 @@ Personal data files are gitignored. When you fill in your data, none of it is ch
 - `data/goals.md`, search thesis, target criteria, compensation, phase, weekly focus
 - `data/professional-identity.md`, strengths, growth edges, work style, values, narrative patterns
 - `data/decisions.md` and `data/accomplishments.md`, chronological strategic and process logs
-- `data/project-background/`, sensitive captures, never in any external-facing artifact
+- `data/project-background/`, sensitive captures, never in any external-facing artifact. Kept outside the repo, in a sibling `<repo>-sealed/` directory, so a recursive search of the repo cannot read it
 - `output/`, all generated artifacts (CVs, dossiers, cover letters)
 - `memory/MEMORY.md` and `memory/friction-log.md`, session-level context
 - `coaching/`, coaching session outputs and progress tracking

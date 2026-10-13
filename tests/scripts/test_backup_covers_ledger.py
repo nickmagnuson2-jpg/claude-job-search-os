@@ -12,7 +12,7 @@ SCRIPT = REPO / "tools" / "backup-data.sh"
 
 def _staged_paths():
     text = SCRIPT.read_text(encoding="utf-8")
-    block = text.split("$GIT add --force", 1)[1].split("2>/dev/null", 1)[0]
+    block = text.split("STAGE_PATHS=(", 1)[1].split("\n)", 1)[0]
     return re.findall(r'"\$WORK_TREE/([^"]+)"', block)
 
 

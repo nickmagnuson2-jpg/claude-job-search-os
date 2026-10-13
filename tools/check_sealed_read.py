@@ -2,7 +2,11 @@
 """
 check_sealed_read.py — PreToolUse hook (Read|Grep|Glob|Bash).
 
-Defense-in-depth for the sealed vault. `data/project-background/` is SEALED: its
+Defense-in-depth for the sealed vault. `data/project-background/` is SEALED. Since
+2026-10-13 it lives OUTSIDE the repository tree, in a sibling directory named after the
+repo: `<repo>-sealed/data/project-background/`. A recursive read of the repo or of its
+`data/` therefore no longer reaches it. Both that sibling (anything in it) and the old
+in-tree path are guarded. Its
 contents must never appear in any external-facing artifact (CVs, cover letters,
 recruiter prep, voice exports, networking notes). The seal is already enforced by
 a CLAUDE.md hard rule, by .gitignore (it can't reach the public repo), and by a
@@ -29,11 +33,11 @@ a read. A passing mention adds no read: the same command with the name removed w
 open the same files.
 
 WHAT THIS DOES NOT STOP
-    A read that never spells the name: a recursive search of `data/` or of the repo
-    root (`grep -r term .`, `find . -name '*.md' | xargs grep term`), a glob such as
-    `data/proj*`, or a name assembled from variables. Those reach the directory and
-    pass this hook. A text match on a command cannot close that; moving the directory
-    out of the tree, or a filesystem-level deny, can.
+    A read that never spells the name: a recursive search of a directory ABOVE the
+    repo (`grep -r term ..`), a glob such as `../*-seal*`, or a name assembled from
+    variables. Those reach the directory and pass this hook. A recursive search of the
+    repo root or of `data/` used to be on this list; moving the directory out of the
+    tree closed it. A copy put back inside the tree reopens it.
 
 Exit 2 = block. Any other path = allow. Fails OPEN on a payload it cannot read; a Bash
 command that names the directory and cannot be parsed is BLOCKED.
@@ -52,11 +56,24 @@ from pathlib import Path
 SEALED_REL = "data/project-background"
 SEALED_NAME = "project-background"
 
+
+def _root() -> Path:
+    env = os.environ.get("SEAL_REPO_ROOT")
+    return Path(env).resolve() if env else Path(__file__).resolve().parent.parent
+
+
+# The sibling directory that holds the sealed tree: the repo's own name plus this
+# suffix, beside the repo. tools/backup-data.sh derives the same path.
+SEALED_HOME_SUFFIX = "-sealed"
+SEALED_HOME = _root().name + SEALED_HOME_SUFFIX
+
 # The directory's own name as a whole path component, in any case (this volume is
 # case-insensitive). Matched after quote and backslash removal, so a quote or a
 # backslash spliced into the name does not hide it. The `data/` parent is not required:
-# `cd data && cat project-background/x.md` reads the same files.
-_SEALED_RE = re.compile(r"(?<![\w-])project-background(?![\w-])(?!\.\w)", re.I)
+# `cd data && cat project-background/x.md` reads the same files. The sibling home's
+# name counts the same way: everything in it is sealed.
+_SEALED_RE = re.compile(
+    r"(?<![\w-])(?:project-background|%s)(?![\w-])(?!\.\w)" % re.escape(SEALED_HOME), re.I)
 _SHELL_QUOTING = re.compile(r"""["'\\]""")
 
 # The inline override, as a whole word. It counts only as an assignment in front of the
@@ -137,8 +154,9 @@ def _repo_tool_index(words: list, h: int):
 def _is_a_sealed_path(word: str) -> bool:
     """Read as ONE path, does this word point under the sealed directory?"""
     parts = [p.lower() for p in os.path.normpath(word).split("/")]
-    return any(p == SEALED_NAME and (k == 0 or parts[k - 1] == "data")
-               for k, p in enumerate(parts))
+    return SEALED_HOME.lower() in parts or any(
+        p == SEALED_NAME and (k == 0 or parts[k - 1] == "data")
+        for k, p in enumerate(parts))
 
 
 def _is_prose(word: str, quoted: bool) -> bool:
@@ -383,15 +401,17 @@ def _bash_reads_sealed(command: str, depth: int = 0, intent: bool = False) -> bo
     return False
 
 
-def _root() -> Path:
-    env = os.environ.get("SEAL_REPO_ROOT")
-    return Path(env).resolve() if env else Path(__file__).resolve().parent.parent
-
-
 def _under_sealed(root: Path, p: str) -> bool:
+    """Is p the sealed directory or a path in it, at the old in-tree place or anywhere
+    in the sibling home?"""
     p = os.path.join(str(root), os.path.expanduser(p))   # an absolute p stays as it is
-    rel = os.path.relpath(os.path.normpath(p), str(root)).replace(os.sep, "/").lower()
-    return rel == SEALED_REL or rel.startswith(SEALED_REL + "/")
+    # Resolved on both sides, so a symlink into the sealed tree, or a second spelling of
+    # the same directory (/var and /private/var), is judged by where it leads.
+    here = os.path.realpath(str(root))
+    rel = os.path.relpath(os.path.realpath(p), here).replace(os.sep, "/").lower()
+    home = "../" + (os.path.basename(here) + SEALED_HOME_SUFFIX).lower()
+    return (rel == SEALED_REL or rel.startswith(SEALED_REL + "/")
+            or rel == home or rel.startswith(home + "/"))
 
 
 def _overridden() -> bool:
@@ -437,7 +457,8 @@ def main() -> None:
         return
 
     msg = [
-        f"BLOCKED: this {tool} targets the SEALED directory {SEALED_REL}/.",
+        f"BLOCKED: this {tool} targets the SEALED directory {SEALED_REL}/ "
+        f"(kept outside the repo, in ../{SEALED_HOME}/).",
         "",
         "Sealed content (Zuora/McKinsey raw materials, personal captures) must never",
         "enter context that could reach an external-facing artifact (CV, cover letter,",

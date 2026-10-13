@@ -518,7 +518,10 @@ def test_importing_the_hook_does_not_run_it(tmp_path):
          f"import sys; sys.path.insert(0, {str(SCRIPT.parent)!r}); "
          "import check_sealed_read; print('imported')"],
         input=payload, capture_output=True, text=True,
-        env={**os.environ, "SEAL_REPO_ROOT": str(tmp_path)})
+        # Without the session override: with SEAL_READ_OK=1 inherited, a hook that DID
+        # run on import would allow the read and this test could not tell.
+        env={**{k: v for k, v in os.environ.items() if k != "SEAL_READ_OK"},
+             "SEAL_REPO_ROOT": str(tmp_path)})
     assert (r.returncode, r.stdout.strip()) == (0, "imported")
 
 
@@ -610,3 +613,108 @@ def test_a_command_nested_too_deep_to_parse_blocks_only_when_it_names_the_direct
 def test_under_sealed(tmp_path, p, expected):
     assert csr._under_sealed(tmp_path, p) is expected
     assert csr._under_sealed(tmp_path, str(tmp_path / p)) is expected
+
+
+
+# --- The out-of-tree home, 2026-10-13 ----------------------------------------
+# The sealed tree moved to <repo>-sealed/data/project-background/, beside the repo.
+# Everything in that sibling is sealed, whether or not a path spells the old name.
+
+def _home(root):
+    return root.parent / (root.name + "-sealed")
+
+
+def test_blocks_read_in_the_sibling_home(tmp_path):
+    root = tmp_path / "repo"
+    code, err = _run(root, "Read", {"file_path": str(_home(root) / SEALED / "a.md")})
+    assert code == 2
+    assert "repo-sealed" in err
+    code, _ = _run(root, "Read", {"file_path": str(_home(root) / "other" / "a.md")})
+    assert code == 2
+
+
+def test_blocks_grep_and_glob_of_the_sibling_home_itself(tmp_path):
+    root = tmp_path / "repo"
+    assert _run(root, "Grep", {"pattern": "x", "path": str(_home(root))})[0] == 2
+    assert _run(root, "Glob", {"pattern": "**/*.md", "path": "../repo-sealed"})[0] == 2
+    assert _run(root, "Glob", {"pattern": "../repo-sealed/**/*.md"})[0] == 2
+
+
+def test_allows_a_sibling_whose_name_only_starts_the_same(tmp_path):
+    root = tmp_path / "repo"
+    for name in ("repo-sealed-notes", "repo-seal", "other-sealed"):
+        code, _ = _run(root, "Read", {"file_path": str(tmp_path / name / "a.md")})
+        assert code == 0, name
+    assert _run(root, "Bash", {"command": "ls ../repo-sealed-notes"})[0] == 0
+    assert _run(root, "Bash", {"command": "cat ../repo-sealed.md"})[0] == 0
+
+
+def test_blocks_bash_that_reads_the_sibling_home(tmp_path):
+    root = tmp_path / "repo"
+    for cmd in ("grep -r term ../repo-sealed", "ls ../REPO-Sealed/data",
+                f"find {_home(root)} -name '*.md'", 'cat "../repo-sealed/data/x y.md"'):
+        assert _run(root, "Bash", {"command": cmd})[0] == 2, cmd
+
+
+def test_allows_bash_that_only_mentions_the_sibling_home(tmp_path):
+    root = tmp_path / "repo"
+    for cmd in ('git commit -m "moved the sealed tree to ../repo-sealed"',
+                'echo "sealed files now live in repo-sealed"'):
+        assert _run(root, "Bash", {"command": cmd})[0] == 0, cmd
+    assert _run(root, "Bash", {"command": "SEAL_READ_OK=1 ls ../repo-sealed"})[0] == 0
+
+
+def test_under_sealed_covers_the_sibling_home_and_nothing_beside_it(tmp_path):
+    root = tmp_path / "repo"
+    for p, expected in [("../repo-sealed", True), ("../Repo-Sealed/data", True),
+                        ("../repo-sealed/data/project-background/a.md", True),
+                        ("../repo-sealed-notes", False), ("../other-sealed", False),
+                        ("..", False), ("repo-sealed", False)]:
+        assert csr._under_sealed(root, p) is expected, p
+
+
+def test_the_sibling_home_is_named_after_the_repo():
+    assert csr.SEALED_HOME == csr._root().name + "-sealed"
+    assert csr._is_a_sealed_path(f"../{csr.SEALED_HOME}/notes") is True
+    assert csr._is_a_sealed_path(f"../{csr.SEALED_HOME}-notes/x") is False
+
+
+# --- A path is judged by where it leads (cross-model review 305) --------------
+
+def test_blocks_read_through_a_symlink_into_the_sibling_home(tmp_path):
+    root = tmp_path / "repo"
+    (_home(root) / SEALED).mkdir(parents=True)
+    (_home(root) / SEALED / "a.md").write_text("x", encoding="utf-8")
+    root.mkdir()
+    (root / "alias").symlink_to(_home(root))
+    (root / "notes").symlink_to(_home(root) / SEALED)
+    assert _run(root, "Read", {"file_path": str(root / "alias" / SEALED / "a.md")})[0] == 2
+    assert _run(root, "Read", {"file_path": "notes/a.md"})[0] == 2
+    assert _run(root, "Grep", {"pattern": "x", "path": str(root / "alias")})[0] == 2
+
+
+def test_blocks_read_through_a_symlink_to_the_old_in_tree_place(tmp_path):
+    root = tmp_path / "repo"
+    (root / SEALED).mkdir(parents=True)
+    (root / "shortcut").symlink_to(root / SEALED)
+    assert _run(root, "Read", {"file_path": str(root / "shortcut" / "a.md")})[0] == 2
+
+
+def test_an_ordinary_symlink_is_not_sealed(tmp_path):
+    root = tmp_path / "repo"
+    (root / "docs").mkdir(parents=True)
+    (root / "d").symlink_to(root / "docs")
+    assert _run(root, "Read", {"file_path": str(root / "d" / "a.md")})[0] == 0
+
+
+def test_a_second_spelling_of_the_root_does_not_hide_the_sibling(tmp_path):
+    """The root reached through a symlinked parent: the repo and the path given to the
+    tool spell the same directory two ways."""
+    real = tmp_path / "real"
+    (real / "repo").mkdir(parents=True)
+    (tmp_path / "link").symlink_to(real)
+    spelled = tmp_path / "link" / "repo-sealed" / SEALED / "a.md"
+    assert _run(real / "repo", "Read", {"file_path": str(spelled)})[0] == 2
+    assert _run(tmp_path / "link" / "repo", "Read",
+                {"file_path": str(real / "repo-sealed" / SEALED / "a.md")})[0] == 2
+    assert csr._under_sealed(tmp_path / "link" / "repo", str(real / "repo-sealed")) is True

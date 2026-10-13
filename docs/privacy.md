@@ -11,7 +11,7 @@ The `.gitignore` excludes all personal data directories by default:
 | Path | Contains | Gitignored |
 |---|---|---|
 | `data/` | Profile, projects, skills, certifications, education, companies, professional identity | Yes |
-| `data/project-background/` | Sensitive background (legal disputes, failures, internal assessments) | Yes (inside `data/`) |
+| `data/project-background/` | Sensitive background (legal disputes, failures, internal assessments) | Not in the repo at all: kept in the sibling `<repo>-sealed/data/project-background/` |
 | `coaching/` | Coached answers, anti-pattern tracking, progress scorecards | Yes |
 | `output/` | Generated CVs, cheat sheets, review reports | Yes |
 | `files/` | PDF input files (CVs you import) | Yes |

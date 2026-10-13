@@ -91,39 +91,103 @@ else
 fi
 
 echo "Staging changes..."
-$GIT add --force \
-  "$WORK_TREE/data/" \
-  "$WORK_TREE/output/" \
-  "$WORK_TREE/coaching/" \
-  "$WORK_TREE/memory/" \
-  "$WORK_TREE/inbox/" \
-  "$WORK_TREE/frames/" \
-  "$WORK_TREE/_archive/" \
-  "$WORK_TREE/framework/voice-reference.md" \
-  "$WORK_TREE/framework/slide-craft-mckinsey.md" \
-  "$WORK_TREE/framework/problem-solving-mckinsey.md" \
-  "$WORK_TREE/framework/personal-vs-job-os-architecture.md" \
-  "$WORK_TREE/framework/two-tier-capture.md" \
-  "$WORK_TREE/framework/voice-pure-dictation.md" \
-  "$WORK_TREE/framework/verification-umbrella.md" \
-  "$WORK_TREE/framework/interview-prep-discipline.md" \
-  "$WORK_TREE/framework/overnight-queue-design.md" \
-  "$WORK_TREE/framework/outreach-guide.md" \
-  "$WORK_TREE/framework/content-rules.md" \
-  "$WORK_TREE/framework/content-rules.yaml" \
-  "$WORK_TREE/.claude/skills/scan-jobs/cache.md" \
-  "$WORK_TREE/tools/generate_sidebiz_pitch.py" \
-  "$WORK_TREE/tools/generate_sidebiz_model.py" \
-  "$WORK_TREE/tools/.owner-identity.txt" \
-  "$WORK_TREE/tools/.private-backup.conf" \
-  "$WORK_TREE/tools/.cross-model-ledger.jsonl" \
-  "$WORK_TREE/tools/.personal-recipients.txt" \
-  2>/dev/null
+# One `git add` per path. Until 2026-10-13 all of these went to a single `git add` with
+# its errors discarded, and git stages NOTHING when one pathspec matches no file: delete
+# or rename any one path below and every later backup committed an empty change and
+# still printed "Done". A path that cannot be staged is now named, and the rest go in.
+STAGE_PATHS=(
+  "$WORK_TREE/data/"
+  "$WORK_TREE/output/"
+  "$WORK_TREE/coaching/"
+  "$WORK_TREE/memory/"
+  "$WORK_TREE/inbox/"
+  "$WORK_TREE/frames/"
+  "$WORK_TREE/_archive/"
+  "$WORK_TREE/framework/voice-reference.md"
+  "$WORK_TREE/framework/slide-craft-mckinsey.md"
+  "$WORK_TREE/framework/problem-solving-mckinsey.md"
+  "$WORK_TREE/framework/personal-vs-job-os-architecture.md"
+  "$WORK_TREE/framework/two-tier-capture.md"
+  "$WORK_TREE/framework/voice-pure-dictation.md"
+  "$WORK_TREE/framework/verification-umbrella.md"
+  "$WORK_TREE/framework/interview-prep-discipline.md"
+  "$WORK_TREE/framework/overnight-queue-design.md"
+  "$WORK_TREE/framework/outreach-guide.md"
+  "$WORK_TREE/framework/content-rules.md"
+  "$WORK_TREE/framework/content-rules.yaml"
+  "$WORK_TREE/.claude/skills/scan-jobs/cache.md"
+  "$WORK_TREE/tools/generate_sidebiz_pitch.py"
+  "$WORK_TREE/tools/generate_sidebiz_model.py"
+  "$WORK_TREE/tools/.owner-identity.txt"
+  "$WORK_TREE/tools/.private-backup.conf"
+  "$WORK_TREE/tools/.cross-model-ledger.jsonl"
+  "$WORK_TREE/tools/.personal-recipients.txt"
+)
+not_staged=0
+for path in "${STAGE_PATHS[@]}"; do
+  if ! $GIT add --force "$path" 2>/dev/null; then
+    echo "WARNING: not staged (missing, or git refused it): $path" >&2
+    not_staged=$((not_staged + 1))
+  fi
+done
+if [ "$not_staged" -eq "${#STAGE_PATHS[@]}" ]; then
+  echo "ERROR: none of the ${#STAGE_PATHS[@]} backup paths could be staged. Nothing was committed." >&2
+  exit 1
+fi
 
+# The sealed tree lives OUTSIDE the work tree since 2026-10-13, in a sibling directory
+# named after the repo ("<repo>-sealed"), so a recursive read of the repo cannot reach
+# it. tools/check_sealed_read.py derives the same path. Inside that sibling it keeps its
+# old relative path, so staging it with the sibling as the work tree writes the SAME
+# index paths the files always had: the `add data/` above stages them as deleted (they
+# are gone from this tree) and this add puts them back.
+#
+# Never mirror it into the work tree the way memory/ is mirrored. A copy inside the repo
+# is reachable by a recursive read again, which is what the move exists to prevent.
+SEALED_HOME="${SEALED_HOME:-$(dirname "$WORK_TREE")/$(basename "$WORK_TREE")-sealed}"
+SEALED_REL="data/project-background"
+if [ -d "$SEALED_HOME/$SEALED_REL" ]; then
+  echo "Staging the sealed tree from $SEALED_HOME ..."
+  if ! git --git-dir="$GIT_DIR" --work-tree="$SEALED_HOME" add --force "$SEALED_HOME/$SEALED_REL/"; then
+    echo "ERROR: could not stage the sealed tree from $SEALED_HOME. Nothing was committed." >&2
+    $GIT reset -q -- ":/$SEALED_REL"
+    exit 1
+  fi
+fi
+
+# Refuse to commit the deletion of ANY sealed file. A missing, half-restored or
+# unmounted sibling shows up here as sealed paths staged for deletion: the `add data/`
+# above staged every one of them as deleted, and only the files the sibling still holds
+# were put back. These are the least recoverable files in the backup, so a deletion has
+# to be asked for by name: SEALED_ALLOW_DELETE=1 bash tools/backup-data.sh
+sealed_staged=$($GIT ls-files --cached -- ":/$SEALED_REL" | wc -l | tr -d ' ')
+sealed_deleted=$($GIT diff --cached --name-only --diff-filter=D HEAD -- ":/$SEALED_REL" 2>/dev/null | wc -l | tr -d ' ')
+echo "Sealed tree: $sealed_staged files staged, $sealed_deleted staged for deletion."
+if [ "$sealed_deleted" -gt 0 ] && [ "${SEALED_ALLOW_DELETE:-}" != "1" ]; then
+  echo "ERROR: $sealed_deleted sealed file(s) in the last backup are missing now." >&2
+  echo "       Expected them in $SEALED_HOME/$SEALED_REL (or in the work tree)." >&2
+  echo "       Nothing was committed. Restore them, set SEALED_HOME, or, if you deleted" >&2
+  echo "       them on purpose, rerun with SEALED_ALLOW_DELETE=1." >&2
+  $GIT reset -q -- ":/$SEALED_REL"
+  exit 1
+fi
+
+# RESTORING: this git dir's work tree is the repo, so `checkout` or `restore` of the
+# sealed paths with the plain $GIT above would write them back INSIDE the repo. Restore
+# them with the sibling as the work tree instead:
+#   git --git-dir="$GIT_DIR" --work-tree="$SEALED_HOME" checkout HEAD -- data/project-background
+
+# A failed commit or push used to fall through to "Done" at exit 0.
 echo "Committing..."
-$GIT commit -m "Backup $(date '+%Y-%m-%d %H:%M')" --allow-empty
+if ! $GIT commit -m "Backup $(date '+%Y-%m-%d %H:%M')" --allow-empty; then
+  echo "ERROR: the backup commit failed. Nothing was pushed." >&2
+  exit 1
+fi
 
 echo "Pushing..."
-$GIT push origin master
+if ! $GIT push origin master; then
+  echo "ERROR: the push failed. The backup is committed locally and is NOT on the remote." >&2
+  exit 1
+fi
 
 echo "Done. Data backed up to ${PRIVATE_REPO_URL:-the private remote}."
