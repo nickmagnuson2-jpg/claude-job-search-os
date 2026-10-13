@@ -198,7 +198,8 @@ def test_scan_registry_enumerates_every_file(tmp_path):
     write_ws(tmp_path, "three", probe=probe_emitting(tmp_path, '{"value": 2}'), status="TERMINAL")
     rows = ws.scan_registry(tmp_path, repo_root=tmp_path)
     assert {r["name"] for r in rows} == {"one", "two", "three"}
-    assert sum(1 for r in rows if r["surfaces"]) == 1  # typed-not-stale and terminal do not
+    assert {r["name"] for r in rows if r["surfaces"]} == {"one", "two"}, (
+        "a workstream with no probe surfaces; a terminal one does not")
 
 
 def test_dotfiles_are_not_workstreams(tmp_path):
@@ -304,7 +305,7 @@ def test_summary_counts_each_state(tmp_path):
     s = ws.summary(ws.scan_registry(tmp_path, repo_root=tmp_path))
     assert s["total"] == 4 and s["changed"] == 1 and s["error"] == 1
     assert s["typed"] == 1 and s["terminal"] == 1
-    assert set(s["names"]) == {"a", "c"}
+    assert set(s["names"]) == {"a", "b", "c"}
 
 
 # ---------- the CLI (13 mutants survived here with no test at all) ----------
@@ -424,3 +425,36 @@ def test_dotted_path_through_a_non_dict_is_error(tmp_path):
     p = _obj_ws(tmp_path, "scalar", argv, field="summary.open")
     r = ws.evaluate(p, repo_root=tmp_path)
     assert r["state"] == "error" and "summary.open" in r["error"]
+
+
+# ---------- every workstream has a probe (owner's rule, 2026-10-13) ----------
+
+def test_a_workstream_with_no_probe_surfaces_and_fails_the_run(tmp_path, capsys):
+    write_ws(tmp_path, "measured", probe=probe_emitting(tmp_path, '{"value": 1}'))
+    ws.acknowledge(tmp_path / ws.OBSERVATIONS, {"measured": 1})
+    assert ws.main(["--registry", str(tmp_path), "--repo-root", str(tmp_path)]) == 0
+    capsys.readouterr()
+    p = write_ws(tmp_path, "unmeasured", probe=None)
+    row = ws.evaluate(p, repo_root=tmp_path)
+    assert (row["state"], row["surfaces"]) == ("typed", True)
+    assert ws.main(["--registry", str(tmp_path), "--repo-root", str(tmp_path)]) == 1
+    out = capsys.readouterr().out
+    assert "typed     unmeasured" in out and "1 of 2 surfacing" in out
+
+
+def test_a_malformed_probe_line_surfaces_like_a_missing_one(tmp_path):
+    p = write_ws(tmp_path, "broken", probe=None, body="<!-- PROBE: {not json} -->")
+    row = ws.evaluate(p, repo_root=tmp_path)
+    assert (row["state"], row["surfaces"]) == ("typed", True)
+
+
+def test_every_live_workstream_has_a_probe():
+    """The guard. Skipped only where there is no registry at all (a clean clone)."""
+    if not ws.REGISTRY.is_dir():
+        pytest.skip("no data/workstreams in this tree")
+    files = sorted(p for p in ws.REGISTRY.glob("*.md") if not p.name.startswith("."))
+    assert files, "an empty registry is not a registry in which everything has a probe"
+    missing = [p.stem for p in files
+               if ws._parse_status(p.read_text(encoding="utf-8")) != "TERMINAL"
+               and ws._parse_probe(p.read_text(encoding="utf-8")) is None]
+    assert not missing, f"workstream(s) with no PROBE line: {missing}"

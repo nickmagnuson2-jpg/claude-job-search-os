@@ -178,6 +178,13 @@ def save_lines(path: Path, lines: list, original_content: str) -> None:
     if original_content.endswith("\n"):
         content += "\n"
     write_atomic(path, content)
+    # Keep data/companies.yaml in step with any company this write introduced.
+    try:
+        from company_dim import sync_after_write
+    except ImportError as exc:      # PyYAML missing: the write itself is unaffected
+        print(f"WARNING: company dimension not updated ({exc})", file=sys.stderr)
+    else:
+        sync_after_write(path)
 
 
 # ---------------------------------------------------------------------------

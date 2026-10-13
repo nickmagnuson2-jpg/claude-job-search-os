@@ -29,6 +29,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from meeting_vocab import channel_turns  # noqa: E402  single source of truth
 
 LOCAL_VALIDATORS = "tools/.local-validators.json"
+# Exit code for "there was nothing to validate against". Not 0: until 2026-10-13 a
+# missing validators file, or one with no cases for this tool, printed SKIPPED and
+# exited as a success, and nothing ran the mode anyway. Not 2: argparse uses it.
+NO_CASES_EXIT = 3
 
 COVERAGE = ("literal phrase list v1; paraphrased exclusions are NOT detected — "
             "read the counterpart's turns")
@@ -207,11 +211,12 @@ def dedup(primary: dict, secondary: dict) -> dict:
 def validate_local() -> tuple[int, dict]:
     vpath = Path(LOCAL_VALIDATORS)
     if not vpath.exists():
-        return 0, {"status": "SKIPPED", "reason": f"{LOCAL_VALIDATORS} absent"}
+        return NO_CASES_EXIT, {"status": "NO_CASES", "reason": f"{LOCAL_VALIDATORS} absent"}
 
     cases = json.loads(vpath.read_text(encoding="utf-8")).get("w3", [])
     if not cases:
-        return 0, {"status": "SKIPPED", "reason": f"no 'w3' cases in {LOCAL_VALIDATORS}"}
+        return NO_CASES_EXIT, {"status": "NO_CASES",
+                               "reason": f"no 'w3' cases in {LOCAL_VALIDATORS}"}
 
     results, failed = [], 0
     for case in cases:

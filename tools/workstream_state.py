@@ -29,8 +29,12 @@ CONTRACT (output/analysis/091426-workstreams-build-spec.md, D1 and D3):
     oversized output are all `error` -- and `error` NEVER collapses to `unchanged` or to 0.
     That collapse is the defect this contract exists to prevent: a broken probe would make
     a workstream go quiet, which reads exactly like a workstream that is fine.
-  * A workstream with NO probe is `typed`, which is a legitimate state and distinct from a
-    probe that failed. Coverage is not uniform and must not pretend to be.
+  * A workstream with NO probe is `typed`: distinct from a probe that failed, and since
+    2026-10-13 a DEFECT rather than a legitimate state. The owner's rule is that every
+    workstream has a probe, so a typed row surfaces every run and the command exits 1.
+    Before that it set surfaces=False and could never be seen: six of thirteen
+    workstreams sat that way. tools/workstream_probe.py holds four generic readings so
+    that wiring one needs a PROBE line, not a new tool.
   * `terminal` is excluded from the count entirely.
 
   * `changed` ::= current != last_surfaced. The last-surfaced store
@@ -185,7 +189,7 @@ def evaluate(ws_path: Path, *, repo_root: Path = REPO_ROOT, observations: dict |
     spec = _parse_probe(text)
     if spec is None:
         row["state"] = "typed"
-        row["surfaces"] = False  # only a staleness check can raise a typed row
+        row["surfaces"] = True   # no probe is a defect to fix, shown until it is fixed
         return row
 
     result = _run_probe(spec, repo_root, timeout, max_bytes)
@@ -299,7 +303,7 @@ def main(argv: list[str]) -> int:
         print(f"\n{s['surfacing']} of {s['total']} surfacing "
               f"(changed {s['changed']}, error {s['error']}, "
               f"typed {s['typed']}, terminal {s['terminal']})")
-    return 1 if s["error"] else 0
+    return 1 if (s["error"] or s["typed"]) else 0
 
 
 if __name__ == "__main__":

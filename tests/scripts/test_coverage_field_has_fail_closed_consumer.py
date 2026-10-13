@@ -271,10 +271,6 @@ _FULLY_COVERED_DISPLAYED = (
     "printed beside the verdict so a reader sees that some rule could not run; the exit "
     "code reads the coverage FLOOR instead, because a rule that cannot run on a given "
     "deck or frame (no register declared, a filtered run) is normal and must not fail it")
-_VALIDATE_LOCAL_GAP = (
-    "--validate-local returns exit 0 with status SKIPPED when the gitignored validators "
-    "file is absent or has no cases, and nothing invokes the mode or reads the status")
-
 REGISTRY: dict[tuple[str, str, str | None], object] = {
     # --- fire 1: clean vs fully_covered, and the family gap buckets ------------------
     ("population_probe.py", "fully_covered", None): [
@@ -323,10 +319,9 @@ REGISTRY: dict[tuple[str, str, str | None], object] = {
         "no threshold, so a scan that can see few of the rules still reports normally"),
 
     # --- fire 3: the workstream runner ----------------------------------------------
-    ("workstream_state.py", "state", "typed"): Gap(
-        "a typed row sets surfaces=False and main() exits non-zero on `error` only; the "
-        "standup step filters on `surfaces`, so a workstream with no probe never surfaces. "
-        "Whether typed rows should print daily is a product decision, not a code fix"),
+    ("workstream_state.py", "state", "typed"): [
+        Branch("workstream_state.py", "main", reads="typed", closes="exit"),
+        Text(STANDUP, r"A `typed` row \(a workstream with no probe\) is a defect")],
 
     # --- the attention queue ---------------------------------------------------------
     ("attention.py", "status", "SKIPPED"): [
@@ -351,12 +346,14 @@ REGISTRY: dict[tuple[str, str, str | None], object] = {
     ("check_doc_precedence.py", "status", "PARSE_ERROR"): [
         Branch("check_doc_precedence.py", "validate_local", reads="status",
                literal="PARSE_ERROR")],
-    ("check_doc_precedence.py", "status", "SKIPPED"): Gap(
-        _VALIDATE_LOCAL_GAP + "; the default mode also exits 0 with SKIPPED when any of "
-        "its three gitignored inputs is absent"),
-    ("check_prep_doc.py", "status", "SKIPPED"): Gap(_VALIDATE_LOCAL_GAP),
-    ("outreach_status.py", "status", "SKIPPED"): Gap(_VALIDATE_LOCAL_GAP),
-    ("transcript_exclusions.py", "status", "SKIPPED"): Gap(_VALIDATE_LOCAL_GAP),
+    # The four --validate-local modes (check_doc_precedence, check_prep_doc,
+    # outreach_status, transcript_exclusions) emitted `status: SKIPPED` at exit 0 when
+    # their cases were absent. Since 2026-10-13 that is NO_CASES at exit 3, and
+    # check_automation_health.py runs all four daily, so there is no middle state left
+    # here to register. The runner's own "could not read the answer" state is below.
+    ("check_automation_health.py", "status", "UNREADABLE_OUTPUT"): [
+        Branch("check_automation_health.py", "check_local_validators", reads="status",
+               literal="PASS")],
     ("detector_probe.py", "status", "no_pattern_found"): [
         # The consumer reads the sibling boolean, which is False for every non-fired state.
         Branch("detector_run.py", "validate", reads="fired")],
@@ -422,7 +419,7 @@ REGISTRY: dict[tuple[str, str, str | None], object] = {
 
 # Lower this when a gap is closed. Raising it is a decision to ship a field nothing
 # fails closed on, and should be made in review rather than by editing a row.
-MAX_KNOWN_GAPS = 6
+MAX_KNOWN_GAPS = 1
 
 # A Displayed row takes a field OUT of the gap count without giving it a consumer, so
 # it has a ceiling of its own. Raising this is the owner's decision that one more field

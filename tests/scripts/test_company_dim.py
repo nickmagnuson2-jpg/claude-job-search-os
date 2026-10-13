@@ -291,3 +291,175 @@ def test_main_without_check_does_not_run_the_guard(tmp_path, capsys):
     assert cd.main(["--path", str(p), "--repo-root", str(repo)]) == 0
     out = capsys.readouterr().out
     assert "unresolved" not in out and "1 companies loaded" in out
+
+
+# --- sync: the dimension follows the data files (2026-10-13) -------------------
+# The live guard above went red every time any session added a company and stayed red
+# until the YAML was edited by hand. The writers now call sync after each write.
+
+import os  # noqa: E402
+import subprocess  # noqa: E402
+
+TOOLS = REPO / "tools"
+
+
+def _entries(path):
+    doc = cd.yaml.safe_load(path.read_text(encoding="utf-8"))
+    return {e["canonical"]: e for e in doc["companies"]}
+
+
+def _dim_in(repo, entries):
+    p = repo / "data" / "companies.yaml"
+    p.write_text(cd.yaml.safe_dump({"schema": 1, "companies": entries}, sort_keys=False),
+                 encoding="utf-8")
+    return p
+
+
+def test_sync_adds_a_pipeline_company_as_target_and_any_other_as_review(tmp_path):
+    repo = fake_repo(tmp_path, pipeline=["Acme", "Ghost Co"],
+                     outreach=["Ghost Co", "Lantern Works"],
+                     networking=["Lantern Works", "Acme"])
+    p = _dim_in(repo, [ACME])
+    added = cd.sync(repo, today="2026-10-13")
+    assert [(e["canonical"], e["type"], e["seen_in"]) for e in added] == [
+        ("Ghost Co", "target", ["pipeline", "outreach"]),
+        ("Lantern Works", "REVIEW", ["outreach", "networking"])]
+    got = _entries(p)
+    assert got["Ghost Co"]["added_by"] == "sync 2026-10-13"
+    assert got["Acme"] == ACME, "an existing entry is not touched"
+    assert cd.unresolved(cd.load(p), repo) == {
+        "job-pipeline.md": [], "outreach-log.md": [], "networking.md": []}
+
+
+def test_sync_is_idempotent_and_leaves_a_complete_dimension_byte_identical(tmp_path):
+    repo = fake_repo(tmp_path, pipeline=["Acme", "Ghost Co"])
+    p = _dim_in(repo, [ACME])
+    assert len(cd.sync(repo)) == 1
+    after = p.read_bytes()
+    assert cd.sync(repo) == []
+    assert p.read_bytes() == after
+    assert not p.with_suffix(".yaml.tmp").exists()
+
+
+def test_sync_does_not_add_a_string_an_alias_already_resolves(tmp_path):
+    repo = fake_repo(tmp_path, pipeline=["Acme Inc"])
+    p = _dim_in(repo, [{**ACME, "aliases": ["Acme Inc"]}])
+    assert cd.sync(repo) == [] and len(_entries(p)) == 1
+
+
+def test_sync_without_a_dimension_file_does_nothing(tmp_path):
+    repo = fake_repo(tmp_path, pipeline=["Ghost Co"])
+    assert cd.sync(repo) == []
+    assert not (repo / "data" / "companies.yaml").exists()
+
+
+def test_sync_refuses_two_new_strings_that_would_collide_and_writes_nothing(tmp_path):
+    repo = fake_repo(tmp_path, pipeline=["Ghost Co"], networking=["GHOST CO"])
+    p = _dim_in(repo, [ACME])
+    before = p.read_bytes()
+    with pytest.raises(ValueError, match="claimed by both"):
+        cd.sync(repo)
+    assert p.read_bytes() == before
+
+
+def test_main_sync_reports_what_it_added(tmp_path, capsys):
+    repo = fake_repo(tmp_path, pipeline=["Acme", "Ghost Co"])
+    p = _dim_in(repo, [ACME])
+    assert cd.main(["--path", str(p), "--repo-root", str(repo), "--sync"]) == 0
+    out = capsys.readouterr().out
+    assert "added 'Ghost Co' as target (seen in pipeline)" in out and "1 added" in out
+    assert cd.main(["--path", str(p), "--repo-root", str(repo), "--sync"]) == 0
+    assert "0 added" in capsys.readouterr().out
+
+
+def test_main_sync_reports_a_collision_as_exit_1(tmp_path, capsys):
+    repo = fake_repo(tmp_path, pipeline=["Ghost Co"], networking=["GHOST CO"])
+    p = _dim_in(repo, [ACME])
+    assert cd.main(["--path", str(p), "--repo-root", str(repo), "--sync"]) == 1
+    assert "claimed by both" in capsys.readouterr().err
+
+
+def test_sync_after_write_never_raises_and_says_what_to_run(tmp_path, capsys):
+    repo = fake_repo(tmp_path, pipeline=["Ghost Co"], networking=["GHOST CO"])
+    _dim_in(repo, [ACME])
+    cd.sync_after_write(repo / "data" / "job-pipeline.md")
+    err = capsys.readouterr().err
+    assert "WARNING: company dimension not updated" in err and "--sync" in err
+
+
+def test_sync_after_write_names_each_company_it_added(tmp_path, capsys):
+    repo = fake_repo(tmp_path, pipeline=["Acme", "Ghost Co"])
+    _dim_in(repo, [ACME])
+    cd.sync_after_write(repo / "data" / "job-pipeline.md")
+    assert "company dimension: added 'Ghost Co' as target" in capsys.readouterr().err
+    cd.sync_after_write(repo / "data" / "job-pipeline.md")
+    assert capsys.readouterr().err == ""
+
+
+def _tool(repo, script, *args):
+    return subprocess.run([sys.executable, str(TOOLS / script), "--repo-root", str(repo), *args],
+                          capture_output=True, text=True)
+
+
+def test_pipe_write_add_puts_the_new_company_in_the_dimension(tmp_path):
+    repo = fake_repo(tmp_path, pipeline=["Acme"])
+    p = _dim_in(repo, [ACME])
+    r = _tool(repo, "pipe_write.py", "add", "Northwind Systems", "Operations Lead")
+    assert r.returncode == 0, r.stderr
+    assert _entries(p)["Northwind Systems"]["type"] == "target"
+    assert "added 'Northwind Systems' as target" in r.stderr
+
+
+def test_networking_write_add_puts_the_new_company_in_the_dimension(tmp_path):
+    repo = fake_repo(tmp_path, networking=["Acme"])
+    net = repo / "data" / "networking.md"
+    net.write_text("# Networking\n\n## Contacts\n\n" + NET_HDR + "\n" + SEP + "\n"
+                   "| Casey Doe | Acme | Role | peer | 2026-01-01 | 2026-09-01 | — |\n\n"
+                   "## Interaction Log\n", encoding="utf-8")
+    p = _dim_in(repo, [ACME])
+    r = _tool(repo, "networking_write.py", "add", "Jordan Sample", "--company", "Lantern Works")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert _entries(p)["Lantern Works"]["type"] == "REVIEW"
+
+
+def test_a_writer_in_a_tree_with_no_dimension_file_still_writes_quietly(tmp_path):
+    repo = fake_repo(tmp_path, pipeline=["Acme"])
+    r = _tool(repo, "pipe_write.py", "add", "Northwind Systems", "Operations Lead")
+    assert r.returncode == 0 and r.stderr == ""
+    assert "Northwind Systems" in (repo / "data" / "job-pipeline.md").read_text(encoding="utf-8")
+
+
+def test_sync_with_nothing_to_add_does_not_rewrite_a_hand_edited_file(tmp_path):
+    """A rewrite would drop the comment: YAML comments do not survive a load and dump."""
+    repo = fake_repo(tmp_path, pipeline=["Acme"])
+    p = _dim_in(repo, [ACME])
+    p.write_text("# reviewed by hand\n" + p.read_text(encoding="utf-8"), encoding="utf-8")
+    before = p.read_bytes()
+    assert cd.sync(repo) == []
+    assert p.read_bytes() == before
+
+
+@pytest.mark.parametrize("script,args", [
+    ("pipe_write.py", ["add", "Northwind Systems", "Operations Lead"]),
+    ("networking_write.py", ["add", "Jordan Sample", "--company", "Lantern Works"]),
+])
+def test_a_writer_without_a_yaml_reader_still_writes_and_says_the_dimension_is_behind(
+        tmp_path, script, args):
+    repo = fake_repo(tmp_path, pipeline=["Acme"], networking=["Acme"])
+    net = repo / "data" / "networking.md"
+    net.write_text("# Networking\n\n## Contacts\n\n" + NET_HDR + "\n" + SEP + "\n"
+                   "| Casey Doe | Acme | Role | peer | 2026-01-01 | 2026-09-01 | — |\n\n"
+                   "## Interaction Log\n", encoding="utf-8")
+    _dim_in(repo, [ACME])
+    shadow = tmp_path / "shadow"
+    shadow.mkdir()
+    (shadow / "yaml.py").write_text("raise ImportError('no yaml in this interpreter')\n",
+                                    encoding="utf-8")
+    r = subprocess.run([sys.executable, str(TOOLS / script), "--repo-root", str(repo), *args],
+                       capture_output=True, text=True,
+                       env={**os.environ, "PYTHONPATH": str(shadow)})
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "WARNING: company dimension not updated (no yaml in this interpreter)" in r.stderr
+    written = (repo / "data" / ("job-pipeline.md" if script == "pipe_write.py"
+                                else "networking.md")).read_text(encoding="utf-8")
+    assert args[1] in written

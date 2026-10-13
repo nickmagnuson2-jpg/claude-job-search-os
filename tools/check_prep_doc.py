@@ -27,6 +27,10 @@ import prep_doc_parse  # noqa: E402
 import proof_domains  # noqa: E402
 
 LOCAL_VALIDATORS = "tools/.local-validators.json"
+# Exit code for "there was nothing to validate against". Not 0: until 2026-10-13 a
+# missing validators file, or one with no cases for this tool, printed SKIPPED and
+# exited as a success, and nothing ran the mode anyway. Not 2: argparse uses it.
+NO_CASES_EXIT = 3
 
 # The frozen W1 v2 stamp. A v1 stamp (no `artifact=` field) must FAIL check 6 rather
 # than be silently accepted, because a recipient-level stamp cannot license an
@@ -244,11 +248,12 @@ def validate_local() -> tuple[int, dict]:
     gitignored validators file, and assert it is caught."""
     vpath = Path(LOCAL_VALIDATORS)
     if not vpath.exists():
-        return 0, {"status": "SKIPPED", "reason": f"{LOCAL_VALIDATORS} absent"}
+        return NO_CASES_EXIT, {"status": "NO_CASES", "reason": f"{LOCAL_VALIDATORS} absent"}
 
     cases = json.loads(vpath.read_text(encoding="utf-8")).get("w4", [])
     if not cases:
-        return 0, {"status": "SKIPPED", "reason": f"no 'w4' cases in {LOCAL_VALIDATORS}"}
+        return NO_CASES_EXIT, {"status": "NO_CASES",
+                               "reason": f"no 'w4' cases in {LOCAL_VALIDATORS}"}
 
     results, failed = [], 0
     for case in cases:

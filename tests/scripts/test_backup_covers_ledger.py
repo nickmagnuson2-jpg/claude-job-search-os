@@ -32,3 +32,9 @@ def test_the_ledger_file_the_backup_names_is_the_one_the_gate_reads():
     sys.path.insert(0, str(REPO / "tools"))
     import cross_model_gate as g
     assert str(g.ledger_path(REPO).relative_to(REPO)) == "tools/.cross-model-ledger.jsonl"
+
+
+def test_the_backup_stages_the_private_validator_cases():
+    """The four --validate-local self-tests fail without this file since 2026-10-13, and
+    until then it existed on one disk only."""
+    assert "tools/.local-validators.json" in _staged_paths()

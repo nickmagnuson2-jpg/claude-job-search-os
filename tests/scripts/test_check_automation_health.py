@@ -818,7 +818,8 @@ def test_main_exits_zero_and_prints_every_section(tmp_path, monkeypatch, capsys)
     rc, out = _quiet_main(tmp_path, monkeypatch, capsys, warnings=["job X is down"])
     assert rc == 0
     assert out["warnings"] == ["job X is down"]
-    assert set(out) == {"warnings", "gmail", "jobs", "long_runs", "quiesced_jobs"}
+    assert set(out) == {"warnings", "gmail", "jobs", "long_runs", "quiesced_jobs",
+                        "local_validators"}
 
 
 def test_the_inbox_alert_is_written_only_when_asked_for(tmp_path, monkeypatch, capsys):
@@ -921,3 +922,73 @@ def test_a_sweep_plist_in_both_folders_is_armed_and_its_stall_is_reported(tmp_pa
     assert len(warnings) == 1 and "STALLED" in warnings[0]
     assert "disarmed" not in entries[0]
 
+
+# --- the real-case self-tests are run daily (2026-10-13) ----------------------
+
+class _Proc:
+    def __init__(self, code, out):
+        self.returncode, self.stdout, self.stderr = code, out, ""
+
+
+def _validators_tree(tmp_path):
+    (tmp_path / "tools").mkdir(exist_ok=True)
+    (tmp_path / "tools" / ".local-validators.json").write_text("{}", encoding="utf-8")
+    return tmp_path
+
+
+def test_every_validator_tool_is_run_from_the_repo_root_and_a_pass_is_quiet(tmp_path):
+    calls = []
+
+    def run(argv, **kw):
+        calls.append((Path(argv[1]).name, argv[2], kw["cwd"]))
+        return _Proc(0, _json.dumps({"status": "PASS"}))
+    rows, warnings = cah.check_local_validators(_validators_tree(tmp_path), run=run)
+    assert warnings == []
+    assert [c[0] for c in calls] == list(cah.LOCAL_VALIDATOR_TOOLS) and len(calls) == 4
+    assert all(c[1] == "--validate-local" and c[2] == str(tmp_path) for c in calls)
+    assert rows == [{"tool": t, "exit": 0, "status": "PASS"} for t in cah.LOCAL_VALIDATOR_TOOLS]
+
+
+def test_a_failed_case_and_a_tool_with_no_cases_are_each_a_warning(tmp_path):
+    answers = {"outreach_status.py": _Proc(1, _json.dumps({"status": "FAIL"})),
+               "check_prep_doc.py": _Proc(3, _json.dumps({"status": "NO_CASES"}))}
+
+    def run(argv, **kw):
+        return answers.get(Path(argv[1]).name, _Proc(0, _json.dumps({"status": "PASS"})))
+    rows, warnings = cah.check_local_validators(_validators_tree(tmp_path), run=run)
+    assert len(warnings) == 2
+    assert "outreach_status.py --validate-local (exit 1, FAIL)" in warnings[0]
+    assert "check_prep_doc.py --validate-local (exit 3, NO_CASES)" in warnings[1]
+    assert "tools/.local-validators.json" in warnings[0]
+
+
+def test_a_tool_that_cannot_be_run_or_prints_no_json_is_a_warning_not_a_crash(tmp_path):
+    def run(argv, **kw):
+        name = Path(argv[1]).name
+        if name == "outreach_status.py":
+            raise subprocess.TimeoutExpired(argv, 120)
+        if name == "check_prep_doc.py":
+            return _Proc(0, "Traceback ...")
+        return _Proc(0, _json.dumps({"status": "PASS"}))
+    rows, warnings = cah.check_local_validators(_validators_tree(tmp_path), run=run)
+    by = {r["tool"]: r for r in rows}
+    assert by["outreach_status.py"] == {"tool": "outreach_status.py", "exit": None,
+                                        "status": "DID_NOT_RUN: TimeoutExpired"}
+    assert by["check_prep_doc.py"]["status"] == "UNREADABLE_OUTPUT"
+    assert len(warnings) == 2 and "outreach_status.py" in warnings[0]
+    assert "check_prep_doc.py --validate-local (exit 0, UNREADABLE_OUTPUT)" in warnings[1]
+
+
+def test_a_tree_with_no_validators_file_runs_nothing_and_warns_about_nothing(tmp_path):
+    def run(argv, **kw):
+        raise AssertionError("nothing should be run")
+    assert cah.check_local_validators(tmp_path, run=run) == ([], [])
+
+
+def test_main_reports_the_validators_and_their_warnings(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(cah, "check_local_validators",
+                        lambda r: ([{"tool": "x.py", "exit": 3, "status": "NO_CASES"}],
+                                   ["Self-test failed: x.py"]))
+    rc, out = _quiet_main(tmp_path, monkeypatch, capsys)
+    assert out["local_validators"] == [{"tool": "x.py", "exit": 3, "status": "NO_CASES"}]
+    assert "Self-test failed: x.py" in out["warnings"]

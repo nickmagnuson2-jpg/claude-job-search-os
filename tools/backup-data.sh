@@ -122,6 +122,7 @@ STAGE_PATHS=(
   "$WORK_TREE/tools/.private-backup.conf"
   "$WORK_TREE/tools/.cross-model-ledger.jsonl"
   "$WORK_TREE/tools/.personal-recipients.txt"
+  "$WORK_TREE/tools/.local-validators.json"
 )
 not_staged=0
 for path in "${STAGE_PATHS[@]}"; do

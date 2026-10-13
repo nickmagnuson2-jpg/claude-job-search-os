@@ -17,6 +17,8 @@ Checks (all degrade gracefully — never raises, never fails standup):
   1. Gmail fetch freshness — last_refresh age in tools/.gmail_state*.json.
   2. launchd job health — last exit code of every com.nickmagnuson.jobsearch.*
      user agent (non-zero == broken).
+  4. Real-case self-tests — the four `--validate-local` modes (see
+     check_local_validators); a failed case or a tool with no cases is a warning.
   3. Stalled long runs — a declared multi-hour job (a state dir holding targets.json
      + baseline.jsonl, i.e. the mutation sweep) that is INCOMPLETE with no process
      running and no progress for hours.
@@ -414,6 +416,48 @@ def check_quiesced_jobs(repo_root: Path, running=_process_running,
     return entries, warnings
 
 
+# Tools whose `--validate-local` mode replays REAL private cases (a past prep doc, a
+# real outreach thread) and asserts the tool still judges them the way it did. Nothing
+# ran these until 2026-10-13, and each one exited 0 when its cases were missing.
+LOCAL_VALIDATOR_TOOLS = ("outreach_status.py", "check_doc_precedence.py",
+                         "transcript_exclusions.py", "check_prep_doc.py")
+LOCAL_VALIDATORS_FILE = "tools/.local-validators.json"
+
+
+def check_local_validators(repo_root: Path, run=subprocess.run) -> tuple[list, list]:
+    """Run each tool's real-case self-test. Anything but exit 0 with status PASS is a
+    warning.
+
+    A tree with no validators file at all (a fresh clone, a fork) has nothing to run and
+    is not warned about; on this machine the file exists, so a tool that finds no cases
+    for itself in it, or fails one, is reported.
+    """
+    repo_root = Path(repo_root)
+    if not (repo_root / LOCAL_VALIDATORS_FILE).is_file():
+        return [], []
+    rows, warnings = [], []
+    for tool in LOCAL_VALIDATOR_TOOLS:
+        row = {"tool": tool, "exit": None, "status": None}
+        try:
+            r = run([sys.executable, str(repo_root / "tools" / tool), "--validate-local"],
+                    capture_output=True, text=True, timeout=120, cwd=str(repo_root),
+                    env={**os.environ, "PYTHONIOENCODING": "utf-8"})
+            row["exit"] = r.returncode
+            try:
+                row["status"] = json.loads(r.stdout).get("status")
+            except (ValueError, AttributeError):
+                row["status"] = "UNREADABLE_OUTPUT"
+        except (OSError, subprocess.SubprocessError) as exc:
+            row["status"] = "DID_NOT_RUN: " + type(exc).__name__
+        rows.append(row)
+        # Both, not either: exit 0 with output nobody could read is not a pass.
+        if row["exit"] != 0 or row["status"] != "PASS":
+            warnings.append(f"Self-test failed: {tool} --validate-local "
+                            f"(exit {row['exit']}, {row['status']}). Its real cases live in "
+                            f"{LOCAL_VALIDATORS_FILE}.")
+    return rows, warnings
+
+
 def write_inbox_alert(repo_root: Path, warnings: list) -> Path | None:
     """When run headless (launchd), surface warnings by writing a dated alert to
     inbox/ so /standup or /act catches an outage even if the watchdog is never
@@ -460,11 +504,13 @@ def main() -> int:
     jobs, jw = check_jobs(repo_root)
     runs, rw = check_long_runs(repo_root, args.stall_hours)
     quiesced, qw = check_quiesced_jobs(repo_root)
-    warnings = gw + jw + rw + qw
+    validators, vw = check_local_validators(repo_root)
+    warnings = gw + jw + rw + qw + vw
     if args.inbox_on_warn:
         write_inbox_alert(repo_root, warnings)
     print(json.dumps({"warnings": warnings, "gmail": gmail, "jobs": jobs,
-                      "long_runs": runs, "quiesced_jobs": quiesced}, indent=2))
+                      "long_runs": runs, "quiesced_jobs": quiesced,
+                      "local_validators": validators}, indent=2))
     return 0
 
 

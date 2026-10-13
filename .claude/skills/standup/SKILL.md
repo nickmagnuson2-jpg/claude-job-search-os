@@ -565,7 +565,9 @@ Output the brief in this exact format:
 [⚠️ **A probe `error` is NEVER silent and never reads as zero** — if any row is `error`, the line
  appears even when nothing else moved, and names the workstream. A broken probe otherwise looks
  exactly like a workstream that is fine, which is the defect the runner's contract exists to prevent.]
-[`typed` rows (no probe) do not surface here; they are not evidence of quiet, only of no probe.]
+[⚠️ **A `typed` row (a workstream with no probe) is a defect and surfaces every run**: append
+ `· ⚠️ [N] with no probe: [names]`. Every workstream is required to have one (2026-10-13);
+ `tools/workstream_probe.py` has four generic readings, so wiring it is one PROBE line.]
 
 🎯 **Conversations & interviews had:** 7d **[N]** · 30d **[N]** · 90d **[N]**   (outreach sent: 7d [N] · 30d [N] · 90d [N])
 [If complete=false: ⚠️ metric incomplete — unreadable: [sources]]

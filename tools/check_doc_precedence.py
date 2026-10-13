@@ -21,10 +21,11 @@ different words, and it cannot see a phrase nobody registered. The semantic pass
 one-time reconciliation audit at output/analysis/081226-voice-content-rules-reconciliation.md.
 **Do not read a green checker as "the docs agree."**
 
-All three source files are GITIGNORED, so this cannot run in CI. Absent files -> SKIPPED
+All three source files are GITIGNORED, so this cannot run in CI. Absent files -> INPUT_MISSING and exit 3: a run that compared nothing is not a clean run.
 on stdout, exit 0. Never a silent pass.
 
-Exit codes: 0 clean or SKIPPED | 1 conflicts found, or a malformed marker.
+Exit codes: 0 clean | 1 conflicts found, or a malformed marker | 3 an input file or
+the validators' cases are absent, so nothing was compared.
 """
 import argparse
 import json
@@ -37,6 +38,10 @@ DEFAULT_MD = "framework/content-rules.md"
 DEFAULT_VOICE = "framework/voice-reference.md"
 DEFAULT_HOOK = "tools/check_draft_voice.py"
 LOCAL_VALIDATORS = "tools/.local-validators.json"
+# Exit code for "there was nothing to validate against". Not 0: until 2026-10-13 a
+# missing validators file, or one with no cases for this tool, printed SKIPPED and
+# exited as a success, and nothing ran the mode anyway. Not 2: argparse uses it.
+NO_CASES_EXIT = 3
 
 # `X`/`Y` are the only placeholder tokens, and only as standalone capitals. Rendering
 # them to fixed fillers (not random) keeps the subsumption test deterministic.
@@ -218,8 +223,9 @@ def run(yaml_path: Path, md_path: Path, voice_path: Path,
         hook_path: Path | None = None) -> tuple[int, dict]:
     missing = [str(p) for p in (yaml_path, md_path, voice_path) if not p.is_file()]
     if missing:
-        return 0, {"status": "SKIPPED",
-                   "reason": f"{', '.join(missing)} absent (gitignored); Tier 2 validation only"}
+        return NO_CASES_EXIT, {"status": "INPUT_MISSING",
+                               "reason": f"{', '.join(missing)} absent (gitignored); "
+                                         "nothing was compared"}
 
     try:
         banned, preferred = load_yaml_registry(yaml_path)
@@ -283,10 +289,11 @@ def run(yaml_path: Path, md_path: Path, voice_path: Path,
 def validate_local() -> tuple[int, dict]:
     vpath = Path(LOCAL_VALIDATORS)
     if not vpath.exists():
-        return 0, {"status": "SKIPPED", "reason": f"{LOCAL_VALIDATORS} absent"}
+        return NO_CASES_EXIT, {"status": "NO_CASES", "reason": f"{LOCAL_VALIDATORS} absent"}
     cases = json.loads(vpath.read_text(encoding="utf-8")).get("w2", [])
     if not cases:
-        return 0, {"status": "SKIPPED", "reason": f"no 'w2' cases in {LOCAL_VALIDATORS}"}
+        return NO_CASES_EXIT, {"status": "NO_CASES",
+                               "reason": f"no 'w2' cases in {LOCAL_VALIDATORS}"}
 
     results, failed = [], 0
     for case in cases:
@@ -295,7 +302,10 @@ def validate_local() -> tuple[int, dict]:
                            Path(case.get("voice_reference", DEFAULT_VOICE)))
         expected = case.get("expect_conflicts", 0)
         actual = len(report.get("conflicts", []))
-        ok = report.get("status") != "PARSE_ERROR" and actual == expected
+        # A case whose inputs were absent compared nothing: zero conflicts found is not
+        # zero conflicts present, so it cannot satisfy `expect_conflicts: 0`.
+        ok = (report.get("status") not in ("PARSE_ERROR", "INPUT_MISSING")
+              and actual == expected)
         failed += not ok
         results.append({**report, "expect_conflicts": expected, "pass": ok})
     return (1 if failed else 0), {

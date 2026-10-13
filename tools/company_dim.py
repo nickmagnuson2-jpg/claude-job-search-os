@@ -31,9 +31,23 @@ Source of truth: data/companies.yaml (gitignored -- it holds real company names)
 Usage:
   PYTHONIOENCODING=utf-8 python3 tools/company_dim.py --check      # guard: all strings resolve
   PYTHONIOENCODING=utf-8 python3 tools/company_dim.py --list-type recruiter
+  PYTHONIOENCODING=utf-8 python3 tools/company_dim.py --sync       # add every unknown string
+
+SYNC (added 2026-10-13). pipe_write.py and networking_write.py call sync_after_write()
+after every write, so a company added through them reaches the dimension in the same
+command. Until then the live guard test failed each time any session added a company,
+and stayed red until someone edited the YAML by hand. Sync adds the string AS WRITTEN as
+a new canonical entry: `target` when it is in the pipeline (that is what the type means),
+`REVIEW` otherwise. It never merges a new spelling into an existing company, because
+that is the guess this module refuses to make; such an entry is a duplicate until a
+human makes it an alias, and `added_by: sync <date>` marks the entries to look at.
+The outreach log has no writer script, so a company that appears only there is picked
+up by the next pipeline or networking write, or by --sync.
 """
 import argparse
+import os
 import sys
+from datetime import date
 from pathlib import Path
 
 import yaml
@@ -130,6 +144,54 @@ def unresolved(dim: Dimension, repo_root: Path) -> dict[str, list[str]]:
     return out
 
 
+SOURCE_OF = {"job-pipeline.md": "pipeline", "outreach-log.md": "outreach",
+             "networking.md": "networking"}
+
+
+def sync(repo_root: Path, path: Path | None = None, today: str | None = None) -> list[dict]:
+    """Add every company string the dimension does not know. Returns the new entries.
+
+    No dimension file means nothing to keep in step: returns [] and writes nothing.
+    """
+    repo_root = Path(repo_root)
+    path = Path(path) if path else repo_root / "data" / "companies.yaml"
+    if not path.exists():
+        return []
+    dim = load(path)
+    seen: dict[str, list[str]] = {}
+    for file, names in unresolved(dim, repo_root).items():
+        for name in names:
+            seen.setdefault(name, []).append(SOURCE_OF[file])
+    if not seen:
+        return []
+    stamp = "sync " + (today or date.today().isoformat())
+    added = [{"canonical": name,
+              "type": "target" if "pipeline" in where else "REVIEW",
+              "seen_in": where, "added_by": stamp}
+             for name, where in sorted(seen.items())]
+    doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+    doc["companies"] = list(doc["companies"]) + added
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(yaml.safe_dump(doc, sort_keys=False, allow_unicode=True, width=100),
+                   encoding="utf-8")
+    load(tmp)                       # two new strings that differ only in case collide here
+    os.replace(tmp, path)
+    return added
+
+
+def sync_after_write(data_file: Path) -> None:
+    """Called by the writers of data/*.md after a successful write. Never raises: the
+    write it follows has already landed, and a failure here must not report it as lost."""
+    try:
+        added = sync(Path(data_file).resolve().parent.parent)
+    except Exception as exc:  # noqa: BLE001
+        print(f"WARNING: company dimension not updated ({type(exc).__name__}: {exc}). "
+              "Run: python3 tools/company_dim.py --sync", file=sys.stderr)
+        return
+    for e in added:
+        print(f"company dimension: added {e['canonical']!r} as {e['type']}", file=sys.stderr)
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="Company dimension: resolve, list, and guard.")
     ap.add_argument("--path", type=Path, default=DEFAULT_PATH)
@@ -137,6 +199,8 @@ def main(argv=None) -> int:
                     default=Path(__file__).resolve().parent.parent)
     ap.add_argument("--check", action="store_true",
                     help="exit 2 if any live company string does not resolve")
+    ap.add_argument("--sync", action="store_true",
+                    help="add every live company string the dimension does not know")
     ap.add_argument("--list-type", choices=VALID_TYPES)
     ap.add_argument("--resolve", metavar="NAME")
     args = ap.parse_args(argv)
@@ -146,6 +210,17 @@ def main(argv=None) -> int:
     except (FileNotFoundError, ValueError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
+
+    if args.sync:
+        try:
+            added = sync(args.repo_root, args.path)
+        except ValueError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 1
+        for e in added:
+            print(f"added {e['canonical']!r} as {e['type']} (seen in {', '.join(e['seen_in'])})")
+        print(f"{len(added)} added")
+        return 0
 
     if args.resolve:
         e = dim.resolve(args.resolve)

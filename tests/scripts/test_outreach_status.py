@@ -294,5 +294,50 @@ def test_bare_validate_local_parses():
     assert proc.returncode != 2, proc.stderr
     payload = json.loads(proc.stdout)
     assert "status" in payload
-    if payload["status"] == "SKIPPED":
-        assert "absent" in payload["reason"]
+    if payload["status"] == "NO_CASES":
+        assert proc.returncode == 3 and "absent" in payload["reason"]
+    else:
+        assert payload["status"] == "PASS" and proc.returncode == 0, payload
+
+
+# --- No cases is a failure, not a skip (2026-10-13) ---------------------------
+
+def _validate_local_in(cwd):
+    import subprocess as _sp
+    import sys as _sys
+    from pathlib import Path as _P
+    script = _P(__file__).resolve().parents[2] / "tools" / "outreach_status.py"
+    r = _sp.run([_sys.executable, str(script), "--validate-local"], cwd=str(cwd),
+                capture_output=True, text=True)
+    return r.returncode, json.loads(r.stdout)
+
+
+def test_validate_local_with_no_validators_file_is_exit_3(tmp_path):
+    code, payload = _validate_local_in(tmp_path)
+    assert code == 3 and payload["status"] == "NO_CASES" and "absent" in payload["reason"]
+
+
+def test_validate_local_with_a_file_holding_no_cases_for_this_tool_is_exit_3(tmp_path):
+    (tmp_path / "tools").mkdir()
+    (tmp_path / "tools" / ".local-validators.json").write_text(
+        json.dumps({"other": [{"x": 1}], "w1": []}), encoding="utf-8")
+    code, payload = _validate_local_in(tmp_path)
+    assert code == 3 and payload["status"] == "NO_CASES"
+    assert "no 'w1' cases" in payload["reason"]
+
+
+def test_validate_local_with_a_case_runs_it_instead_of_reporting_no_cases(tmp_path):
+    """Hermetic: the case points at something that is not there, so it must FAIL. What
+    matters is that a file WITH cases is judged, and a broken case is exit 1, not 3."""
+    (tmp_path / "tools").mkdir()
+    (tmp_path / "tools" / ".local-validators.json").write_text(
+        json.dumps({"w1": [{"recipient": "Casey Doe", "expect": {"state": "replied"}}]}), encoding="utf-8")
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "outreach-log.md").write_text(
+        "# Outreach Log\n\n| Date | Skill | Channel | Recipient | Company | Subject / Summary "
+        "| Status |\n|---|---|---|---|---|---|---|\n"
+        "| 2026-09-01 | follow-up | email | Jordan Sample | Acme | subj | Sent |\n",
+        encoding="utf-8")
+    code, payload = _validate_local_in(tmp_path)
+    assert payload["status"] == "FAIL" and code == 1, payload
+    assert len(payload["results"]) == 1 and payload["results"][0]["pass"] is False

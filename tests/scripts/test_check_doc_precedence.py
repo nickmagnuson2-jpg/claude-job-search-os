@@ -93,17 +93,17 @@ def test_malformed_marker_is_a_parse_error_not_a_silent_skip():
     assert "scope=" in report["error"]
 
 
-def test_missing_gitignored_files_skip_loudly(tmp_path):
+def test_missing_gitignored_files_are_a_failure_that_says_what_is_absent(tmp_path):
     proc = run_script_raw(
         "check_doc_precedence.py",
         "--content-rules-yaml", str(tmp_path / "absent.yaml"),
         "--content-rules-md", str(tmp_path / "absent.md"),
         "--voice-reference", str(tmp_path / "absent-voice.md"),
     )
-    assert proc.returncode == 0
+    assert proc.returncode == 3
     payload = json.loads(proc.stdout)
-    assert payload["status"] == "SKIPPED"
-    assert "absent" in payload["reason"]
+    assert payload["status"] == "INPUT_MISSING"
+    assert "absent" in payload["reason"] and "nothing was compared" in payload["reason"]
 
 
 def test_bare_validate_local_parses():
@@ -156,8 +156,45 @@ def test_live_hook_is_clean():
     """Tier-2 guard on the REAL hook. This is the assertion that would have caught it."""
     proc = run_script_raw("check_doc_precedence.py")
     payload = json.loads(proc.stdout)
-    if payload["status"] == "SKIPPED":
-        return  # gitignored content-rules absent (clean clone) — Tier 2 only
+    if payload["status"] == "INPUT_MISSING":
+        return  # gitignored content-rules absent (clean clone): nothing to assert on
     hook_hits = [c for c in payload["conflicts"]
                  if c["kind"] == "voice_hook_prescribes_a_banned_phrase"]
     assert not hook_hits, f"live voice hook prescribes a banned phrase: {hook_hits}"
+
+
+# --- No cases is a failure, not a skip (2026-10-13) ---------------------------
+
+def _validate_local_in(cwd):
+    import subprocess as _sp
+    import sys as _sys
+    from pathlib import Path as _P
+    script = _P(__file__).resolve().parents[2] / "tools" / "check_doc_precedence.py"
+    r = _sp.run([_sys.executable, str(script), "--validate-local"], cwd=str(cwd),
+                capture_output=True, text=True)
+    return r.returncode, json.loads(r.stdout)
+
+
+def test_validate_local_with_no_validators_file_is_exit_3(tmp_path):
+    code, payload = _validate_local_in(tmp_path)
+    assert code == 3 and payload["status"] == "NO_CASES" and "absent" in payload["reason"]
+
+
+def test_validate_local_with_a_file_holding_no_cases_for_this_tool_is_exit_3(tmp_path):
+    (tmp_path / "tools").mkdir()
+    (tmp_path / "tools" / ".local-validators.json").write_text(
+        json.dumps({"other": [{"x": 1}], "w2": []}), encoding="utf-8")
+    code, payload = _validate_local_in(tmp_path)
+    assert code == 3 and payload["status"] == "NO_CASES"
+    assert "no 'w2' cases" in payload["reason"]
+
+
+def test_validate_local_with_a_case_runs_it_instead_of_reporting_no_cases(tmp_path):
+    """Hermetic: the case points at something that is not there, so it must FAIL. What
+    matters is that a file WITH cases is judged, and a broken case is exit 1, not 3."""
+    (tmp_path / "tools").mkdir()
+    (tmp_path / "tools" / ".local-validators.json").write_text(
+        json.dumps({"w2": [{"expect_conflicts": 0}]}), encoding="utf-8")
+    code, payload = _validate_local_in(tmp_path)
+    assert payload["status"] == "FAIL" and code == 1, payload
+    assert len(payload["results"]) == 1 and payload["results"][0]["pass"] is False

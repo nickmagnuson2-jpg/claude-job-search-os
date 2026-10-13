@@ -44,6 +44,10 @@ import artifact_vocab  # noqa: E402
 
 DEFAULT_LOG = "data/outreach-log.md"
 LOCAL_VALIDATORS = "tools/.local-validators.json"
+# Exit code for "there was nothing to validate against". Not 0: until 2026-10-13 a
+# missing validators file, or one with no cases for this tool, printed SKIPPED and
+# exited as a success, and nothing ran the mode anyway. Not 2: argparse uses it.
+NO_CASES_EXIT = 3
 
 # The frozen stamp format. check_prep_doc.py parses this exact string; bumping the
 # format means bumping TOOL_VERSION and teaching check_prep_doc the new shape.
@@ -358,16 +362,17 @@ def render_stamp(result: dict) -> str:
 def validate_local(log_path: Path) -> tuple[int, dict]:
     """Tier 2: assert real-data expectations from the gitignored validators file.
 
-    Absent file -> SKIPPED on stdout and exit 0. Never a silent pass: a validator that
-    quietly returns success when its expectations are missing is worse than no validator.
+    Absent file, or no cases for this tool -> NO_CASES on stdout and exit 3. A validator
+    that returns success when its expectations are missing is worse than no validator.
     """
     vpath = Path(LOCAL_VALIDATORS)
     if not vpath.exists():
-        return 0, {"status": "SKIPPED", "reason": f"{LOCAL_VALIDATORS} absent"}
+        return NO_CASES_EXIT, {"status": "NO_CASES", "reason": f"{LOCAL_VALIDATORS} absent"}
 
     cases = json.loads(vpath.read_text(encoding="utf-8")).get("w1", [])
     if not cases:
-        return 0, {"status": "SKIPPED", "reason": f"no 'w1' cases in {LOCAL_VALIDATORS}"}
+        return NO_CASES_EXIT, {"status": "NO_CASES",
+                               "reason": f"no 'w1' cases in {LOCAL_VALIDATORS}"}
 
     results, failed = [], 0
     for case in cases:
