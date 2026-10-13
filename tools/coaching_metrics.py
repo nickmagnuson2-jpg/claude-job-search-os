@@ -3,6 +3,7 @@
 coaching_metrics.py — Longitudinal projection of interview performance, for the console.
 
 Reads: coaching/progress/_summary.md (the Per-Dimension Trend table)
+       coaching/hypotheses.md (the per-hypothesis test logs), with --ledger
 
 WHY THIS EXISTS
 ---------------
@@ -23,8 +24,26 @@ rows were backfilled under an earlier instrument, and a half-split is a crude tr
 test. The numbers are reported with their n so a reader can discount them; dressing
 them up as inference would be the exact defect this repo's name-the-scope rule governs.
 
+LEDGER MODE (--ledger)
+----------------------
+Counts each hypothesis's test-log rows as real / drill / corrective and tallies the
+verdicts, reading every value from the column the table's own header names. It never
+searches a row for a word. Two whole-row classifiers were tried by hand on 2026-09-14
+and both returned clean, wrong numbers: matching "drill" anywhere filed real calls as
+drills, because one hypothesis has a column recording whether a drill preceded a real
+call; scanning for a verdict word found the Note column's prose first.
+
+Some rows in the append-only logs are one cell narrower than their header. For those
+the verdict is read right-aligned and the Format cell is accepted only if it is made
+of known format words. A row that fails either check is reported by line number as
+unclassified or unparsed. It is never resolved by looking elsewhere in the row.
+
+Ledger mode covers the hypothesis test logs only. Anti-pattern tallies and the
+session counts in _summary.md are not computed here.
+
 Usage:
   PYTHONIOENCODING=utf-8 python3 tools/coaching_metrics.py [--repo-root PATH] [--out FILE]
+  PYTHONIOENCODING=utf-8 python3 tools/coaching_metrics.py --ledger [--repo-root PATH] [--out FILE]
 """
 import argparse
 import json
@@ -158,12 +177,176 @@ def compute(content: str) -> dict:
     }
 
 
+# --- ledger mode -----------------------------------------------------------------
+
+LEDGER_KINDS = ("real", "drill", "corrective", "unclassified")
+VERDICTS = ("Support", "Refute", "Inconclusive")
+# The six formats /debrief prescribes, plus two more that appear in the logs, plus
+# the "controlled" qualifier used on drill rows. Consulted ONLY for rows whose cell
+# count differs from the header, to confirm the cell at the Format index is a Format.
+FORMAT_WORDS = frozenset({
+    "unstructured-chat", "structured-behavioral", "founder-vibe-check", "peer-screen",
+    "technical-deep-dive", "drill", "structured-case-reasoning", "hiring-manager",
+    "controlled",
+})
+# Non-verdict labels the Verdict column legitimately carries.
+OTHER_VERDICT_LABELS = frozenset({"soft-miss", "not tested"})
+_HYP_HEADING = re.compile(r"^##\s+(H\d+[a-z]?)\s*:")
+_CELL_SPLIT = re.compile(r"(?<!\\)\|")
+_VERDICT = re.compile(r"^(support|refute|inconclusive)\b\s*(?=$|[(/\-–—])", re.I)
+_LABEL_END = re.compile(r"\s*(?:\(|/|–|—|\s-\s)")
+_CORRECTIVE = re.compile(r"^(?:\w+\s+)?corrective row\b", re.I)
+
+
+def _cells(line: str) -> list[str]:
+    body = line.strip()
+    body = body[1:] if body.startswith("|") else body
+    body = body[:-1] if body.endswith("|") and not body.endswith("\\|") else body
+    return [c.strip() for c in _CELL_SPLIT.split(body)]
+
+
+def _is_separator(line: str) -> bool:
+    return line.startswith("|") and "-" in line and set(line.strip()) <= set("|-: ")
+
+
+def _format_words(cell: str) -> list[str]:
+    """Words of the Format cell's head. A parenthetical is a qualifier, not the format."""
+    head = cell.replace("*", "").split("(", 1)[0].lower()
+    return re.findall(r"[^\s+:,;]+", head)
+
+
+def _verdict(cell: str) -> tuple[str | None, str]:
+    """(canonical verdict or None, leading label) of a Verdict cell."""
+    text = cell.replace("*", "").strip()
+    m = _VERDICT.match(text)
+    if m:
+        return m.group(1).capitalize(), m.group(1).capitalize()
+    return None, _LABEL_END.split(text, 1)[0].strip()
+
+
+def compute_ledger(content: str) -> dict:
+    """Per-hypothesis real/drill/corrective counts and verdict tallies.
+
+    Line numbers in the result are 1-based file lines.
+    """
+    hyps: dict[str, dict] = {}
+    malformed, unclassified, unparsed, others, missing = [], [], [], [], []
+    lines = content.splitlines()
+    hyp = cols = None
+    for i, line in enumerate(lines):
+        lineno = i + 1
+        if line.startswith("## "):
+            m = _HYP_HEADING.match(line)
+            hyp = m.group(1) if m else None
+        if not line.startswith("|"):
+            cols = None
+            continue
+        if _is_separator(line):
+            continue
+        if i + 1 < len(lines) and _is_separator(lines[i + 1]):
+            cols = None
+            if hyp is not None:
+                header = _cells(line)
+                if "Format" in header and "Verdict" in header:
+                    cols = {"n": len(header), "format": header.index("Format"),
+                            "verdict": header.index("Verdict"),
+                            "call": header.index("Call") if "Call" in header else None}
+                else:
+                    missing.append({"line": lineno, "hypothesis": hyp, "header": header})
+            continue
+        if cols is None:
+            continue
+
+        cells = _cells(line)
+        short = cols["n"] - len(cells)
+        where = {"line": lineno, "hypothesis": hyp}
+        if short:
+            malformed.append({**where, "cells": len(cells), "header_cells": cols["n"]})
+
+        # Format: always the header's index. On a mis-sized row that index is only
+        # trusted when the cell there is built from format words.
+        fmt = cells[cols["format"]] if cols["format"] < len(cells) else ""
+        words = _format_words(fmt)
+        format_ok = short == 0 or (bool(words) and all(w in FORMAT_WORDS for w in words))
+        call = cells[cols["call"]] if cols["call"] is not None else ""
+        if _CORRECTIVE.match(call.replace("*", "").strip()):
+            kind = "corrective"
+        elif not format_ok:
+            kind = "unclassified"
+            unclassified.append({**where, "date": cells[0]})
+        else:
+            kind = "drill" if "drill" in words else "real"
+
+        # Verdict: the header's index, right-aligned when the row is narrow. A row
+        # WIDER than its header has no defensible alignment and is left unparsed.
+        vi = cols["verdict"] - short
+        canonical, label = _verdict(cells[vi]) if short >= 0 and 0 <= vi < len(cells) \
+            else (None, "")
+        if canonical:
+            verdict = canonical
+        elif short == 0 or (short > 0 and label.lower() in OTHER_VERDICT_LABELS):
+            verdict = "Other"
+            others.append({**where, "label": label})
+        else:
+            verdict = "Unparsed"
+            unparsed.append({**where, "date": cells[0]})
+
+        h = hyps.setdefault(hyp, {"rows": 0, **{k: {"n": 0, "verdicts": {}}
+                                               for k in LEDGER_KINDS}})
+        h["rows"] += 1
+        h[kind]["n"] += 1
+        h[kind]["verdicts"][verdict] = h[kind]["verdicts"].get(verdict, 0) + 1
+
+    totals = {"rows": sum(h["rows"] for h in hyps.values()),
+              **{k: sum(h[k]["n"] for h in hyps.values()) for k in LEDGER_KINDS}}
+    return {
+        "source": "coaching/hypotheses.md",
+        "hypotheses": hyps,
+        "totals": totals,
+        "malformed_rows": malformed,
+        "unclassified_rows": unclassified,
+        "unparsed_verdicts": unparsed,
+        "other_verdicts": others,
+        "tables_missing_columns": missing,
+        "caveats": [
+            "Line numbers are 1-based file lines.",
+            "Drill, real and corrective rows are reported separately, never pooled.",
+            "A row in unclassified_rows or unparsed_verdicts is NOT in the real or "
+            "drill counts; those counts are short by that many until the row is read "
+            "by hand.",
+            "Covers hypothesis test logs only: no anti-pattern tallies, no session counts.",
+        ],
+    }
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="Longitudinal interview-performance metrics.")
     ap.add_argument("--repo-root", type=Path,
                     default=Path(__file__).resolve().parent.parent)
     ap.add_argument("--out", type=Path)
+    ap.add_argument("--ledger", action="store_true",
+                    help="count coaching/hypotheses.md test-log rows by column")
     args = ap.parse_args(argv)
+
+    if args.ledger:
+        src = args.repo_root / "coaching" / "hypotheses.md"
+        if not src.exists():
+            print(f"ERROR: {src} not found", file=sys.stderr)
+            return 1
+        result = compute_ledger(src.read_text(encoding="utf-8"))
+        n = result["totals"]["rows"]
+        # Same reasoning as below: zero rows parsed is a shape change, not a real zero.
+        if n == 0:
+            print("REFUSED: no test-log table with both a Format and a Verdict column "
+                  "was found under a '## H<n>:' heading.", file=sys.stderr)
+            return 2
+        payload = json.dumps(result, indent=2)
+        if args.out:
+            args.out.write_text(payload + "\n", encoding="utf-8")
+            print(f"wrote {args.out} ({n} test-log rows)")
+        else:
+            print(payload)
+        return 0
 
     src = args.repo_root / "coaching" / "progress" / "_summary.md"
     if not src.exists():

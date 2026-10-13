@@ -35,6 +35,7 @@ from pathlib import Path
 OUTPUT_REL = "tools/.pii-denylist.txt"
 AMBIGUOUS_REL = "tools/.pii-denylist-ambiguous.txt"
 RETIRED_REL = "tools/.pii-denylist-retired.txt"
+TARGET_WORDS_REL = "tools/.pii-denylist-targetwords.txt"
 MANUAL_REL = "tools/.pii-manual-additions.txt"
 
 MANUAL_TEMPLATE = """# Hand-maintained PII additions — GITIGNORED, do not commit.
@@ -70,6 +71,9 @@ KEEP = {
     "notion", "stripe", "anthropic", "google", "github", "openai", "linkedin",
     "ali rohde", "ryan holiday", "molly graham", "raphael", "daily stoic",
     "claude", "granola", "wispr", "obsidian", "vercel", "neon",
+    # A recruiter marketplace, not a hiring target. Named in a tracked template and its
+    # filename since 2026-07; the owner ruled it public-safe on 2026-10-12.
+    "paraform",
     # The repo owner's own surname. Public by construction: it is the git author name and
     # appears in README.md, docs/getting-started.md and CHANGELOG.md among 40 tracked files.
     # It reaches person_components the moment any relative is added to networking.md, and on
@@ -301,8 +305,7 @@ def parse_inbox_companies(content: str) -> set[str]:
     in_company_block = False
     for line in content.splitlines():
         if line.startswith("## "):
-            in_company_block = "(company)" in line.lower()
-            continue
+            in_company_block = "(company)" in line.lower()   # a header is never a bullet
         if not in_company_block:
             continue
         m = re.match(r"\s*-\s+\*\*(.+?)\*\*", line)
@@ -323,6 +326,79 @@ def parse_pipeline_companies(content: str) -> set[str]:
         if cols and cols[0] and cols[0].lower() not in ("company", "---") and not cols[0].startswith("--"):
             companies.add(cols[0])
     return companies
+
+
+def _clean_company(company: str) -> str:
+    """A company cell as a bare name: markdown emphasis and a trailing parenthetical
+    are annotation, not the name. Same cleaning build_denylist applies inline."""
+    clean = company.strip().strip("*").strip()
+    return re.sub(r"\s*\(.*\)$", "", clean).strip()
+
+
+def parse_pipeline_target_names(content: str) -> set[str]:
+    """The target-name allowlist: cleaned names from the pipeline's Company column.
+
+    WHY THIS IS NOT parse_pipeline_companies. That function takes column 0 of every
+    table row in the file, which is fine for a source whose tokens still pass through
+    the ordinary-word filter. This set BYPASSES that filter (see is_allowlisted_target),
+    so its source has to be exactly the Company column: a table whose header's first
+    cell is not `Company` contributes nothing, and a summary table added to the file
+    later cannot turn its row labels into BLOCK tokens.
+
+    Active and archived rows both count. A closed company's name is still in whatever
+    public file was written while it was live.
+    """
+    names: set[str] = set()
+    in_company_table = False
+    prev_was_row = False
+    for line in content.splitlines():
+        if not line.startswith("|"):
+            in_company_table = False
+            prev_was_row = False
+            continue
+        cols = [c.strip() for c in line.strip("|").split("|")]
+        first = cols[0] if cols else ""
+        if not prev_was_row:
+            # First row of a table is its header.
+            in_company_table = first.lower() == "company"
+            prev_was_row = True
+            continue
+        if not in_company_table or not first or first.startswith("--"):
+            continue
+        name = _clean_company(first)
+        if name:
+            names.add(name)
+    return names
+
+
+def is_allowlisted_target(clean: str, targets) -> bool:
+    """Is this single-token company name on the real target list?
+
+    THE GAP THIS CLOSES (feedback_pii_denylist_drops_common_word_company_names, 5 fires
+    from 2026-08-26 to 2026-09-15). BLOCK membership for a single-token company was
+    decided by a dictionary lookup alone, and that one decision failed in both
+    directions: a target whose name is an ordinary word went to the WARN tier, which
+    reaches nobody on the write path, and each attempt to tighten the lookup either put
+    ordinary English on BLOCK or moved another real target off it. The dictionary cannot
+    tell a company from a noun. The pipeline can: a name in its Company column is a
+    target by construction.
+
+    An explicit list from the target column, not a cleverer classifier. The 2026-09-01
+    work tried a general rule (split a compound into two dictionary words) and it
+    dissolved a legitimate brand the same hour.
+
+    Bypasses the DICTIONARY test only. The length floor, STOPWORDS and KEEP still apply:
+    KEEP is public-safe by decision, and a name under four characters matches too much
+    as a whole word to block on.
+
+    Exact, case-sensitive membership, because the hook matches case-sensitively: the
+    token emitted is the name as written in the pipeline. No lowercase or slug form is
+    emitted for an allowlisted name (see build_denylist).
+    """
+    t = clean.strip().lower()
+    if len(t.split()) != 1 or len(t) < 4 or t in STOPWORDS or t in KEEP:
+        return False
+    return clean.strip() in targets
 
 
 # Closed-compound sector words the system dictionary omits. They are not brand names and
@@ -448,11 +524,11 @@ def person_components(name: str, dictionary: set[str]) -> list[str]:
     anyway, and a surname that is also an ordinary word (Brown, Field, Baker) is filtered
     by the same distinctiveness test the rest of this module uses.
     """
-    if name.strip().lower() in FICTIONAL_CAST:
-        return []
     toks = [x for x in re.split(r"[^A-Za-zÀ-ÿ'\-]+", name) if x]
     if len(toks) < 2:
         return []
+    # Covers the whole fictional cast too: every multi-word cast name ends in one of
+    # these surnames, and a one-word name returned above.
     if toks[-1].lower() in FICTIONAL_SURNAMES:
         return []
     # No length or KEEP guard here on purpose: is_distinctive_single already rejects both
@@ -462,7 +538,10 @@ def person_components(name: str, dictionary: set[str]) -> list[str]:
     return [toks[-1]] if is_distinctive_single(toks[-1], dictionary) else []
 
 
-def build_denylist(names: set[str], companies: set[str], dictionary: set[str]) -> list[str]:
+def build_denylist(names: set[str], companies: set[str], dictionary: set[str],
+                   targets=frozenset()) -> list[str]:
+    """BLOCK-tier tokens. `targets` is the pipeline Company-column allowlist
+    (parse_pipeline_target_names); empty, the default, means no bypass."""
     out: set[str] = set()
 
     for name in names:
@@ -505,11 +584,17 @@ def build_denylist(names: set[str], companies: set[str], dictionary: set[str]) -
             slug = slugify(clean)
             if slug and slug not in KEEP:
                 out.add(slug)
+        elif is_allowlisted_target(clean, targets):
+            # An ordinary English word that is also a real target. The name AS WRITTEN
+            # only: the slug of an ordinary word is that word in lowercase, and blocking
+            # it would refuse the common noun in every sentence that uses it.
+            out.add(clean)
 
     return sorted(out, key=lambda s: (s.lower(), s))
 
 
-def build_ambiguous_list(companies: set[str], dictionary: set[str]) -> list[str]:
+def build_ambiguous_list(companies: set[str], dictionary: set[str],
+                         targets=frozenset()) -> list[str]:
     """Single-token company names that ARE ordinary English words.
 
     These are deliberately excluded from the BLOCK denylist: matching them would
@@ -557,6 +642,8 @@ def build_ambiguous_list(companies: set[str], dictionary: set[str]) -> list[str]
             continue
         if is_distinctive_single(clean, dictionary):
             continue  # already in the BLOCK tier
+        if is_allowlisted_target(_clean_company(clean), targets):
+            continue  # an ordinary word, but a real target: BLOCK tier, not here
         if clean.lower() in STOPWORDS or clean.lower() in KEEP:
             continue
         out.add(clean)
@@ -623,9 +710,7 @@ def parse_scan_target_companies(path: Path) -> set[str]:
     Missing or malformed file degrades to an empty set rather than failing: the
     denylist must still generate from the other sources.
     """
-    if not path.is_file():
-        return set()
-    try:
+    try:                       # a missing file raises here and degrades the same way
         import yaml
         data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     except Exception:
@@ -696,12 +781,29 @@ def main():
     # failing the whole regeneration.
     companies |= parse_inbox_companies(read_file(root / "data" / "inbox.md"))
     dictionary = load_dictionary()
+    # Names in the pipeline's Company column bypass the ordinary-word filter: they are
+    # targets by construction, so a dictionary hit must not leave them on WARN only.
+    #
+    # They go to their OWN tier file, not into the BLOCK list. The hook matches that tier
+    # with find_target_words, which skips a word that opens a sentence. Measured
+    # 2026-10-12 on 647 tracked public text files with the 45 live names: put in the
+    # plain BLOCK list they refused 11 files, 9 of them over the ordinary word
+    # capitalised at the start of a sentence, including the two files edited on most
+    # pushes. Keeping them out of the BLOCK list also keeps
+    # test_the_BLOCK_tier_carries_no_ordinary_english_words true as written.
+    targets = parse_pipeline_target_names(pipeline)
     tokens = build_denylist(names, companies, dictionary)
-    ambiguous = build_ambiguous_list(companies, dictionary)
+    target_words = sorted(
+        set(build_denylist(names, companies, dictionary, targets)) - set(tokens))
+    ambiguous = build_ambiguous_list(companies, dictionary, targets)
     # WARN tier, per the 2026-09-02 decision: harvested from prose-shaped headers, so less
     # trustworthy than the pipeline column, and a false BLOCK on an always-on hook is worse
     # than a missed WARN that /audit-pii Step 1 surfaces to a human anyway.
-    ambiguous = sorted(set(ambiguous) | parse_networking_companies(networking))
+    # An allowlisted target that also appears in a networking header is subtracted here,
+    # or the header harvest would put it back on the WARN tier it was just promoted from.
+    ambiguous = sorted(
+        c for c in set(ambiguous) | parse_networking_companies(networking)
+        if is_distinctive_single(c, dictionary) or not is_allowlisted_target(c, targets))
 
     # Hand-maintained additions merge LAST and bypass the distinctiveness filters on
     # purpose: a human put them there deliberately, so the generator must not
@@ -714,10 +816,14 @@ def main():
     retired_path = root / RETIRED_REL
     tokens = merge_retired(tokens, retired_path)
     ambiguous = sorted((set(ambiguous) | manual_ambiguous) - manual_block)
+    # A hand-added BLOCK token outranks the sentence-aware tier.
+    target_words = sorted(set(target_words) - manual_block)
 
     if args.dry_run:
         print(json.dumps({"count": len(tokens), "tokens": tokens,
                           "ambiguous_count": len(ambiguous), "ambiguous": ambiguous,
+                          "target_words_count": len(target_words),
+                          "target_words": target_words,
                           "manual_added": manual_added,
                           "manual_source": str(root / MANUAL_REL)},
                          indent=2, ensure_ascii=False))
@@ -753,8 +859,20 @@ def main():
     )
     amb_path.write_text(amb_header + "\n".join(ambiguous) + "\n", encoding="utf-8")
 
+    # Third tier: ordinary-word names from the pipeline Company column, as written.
+    tw_path = root / TARGET_WORDS_REL
+    tw_header = (
+        "# TARGET-WORD PII tier — GITIGNORED, do not commit.\n"
+        "# Pipeline company names that are also ordinary English words, exactly as the\n"
+        "# pipeline's Company column writes them. check_public_pii.py BLOCKs on these\n"
+        "# case-sensitively and whole-word, except where the word opens a sentence.\n"
+    )
+    tw_path.write_text(tw_header + "\n".join(target_words) + "\n", encoding="utf-8")
+
     print(json.dumps({"status": "ok", "written": str(out_path), "count": len(tokens),
                       "ambiguous_written": str(amb_path), "ambiguous_count": len(ambiguous),
+                      "target_words_written": str(tw_path),
+                      "target_words_count": len(target_words),
                       "retired_written": str(retired_path),
                       "manual_added_count": len(manual_added),
                       "manual_added": manual_added},

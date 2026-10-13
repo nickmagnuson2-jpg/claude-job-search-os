@@ -15,6 +15,7 @@ These fixtures are synthetic; the real memory dir is outside the repo and gitign
 import json
 import subprocess
 import sys
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -30,10 +31,13 @@ metadata:
   occurrences: {occ}
   promoted: no
   reopen_gate: "x"
-  last_cited: 2026-08-13
+  last_cited: __TODAY__
 ---
 body
 """
+# Cited today, so this fixture is never a staleness hit. A literal date here made
+# test_never_cited_files_get_their_own_bucket fail once it was --stale-days (60) old.
+VISIBLE = VISIBLE.replace("__TODAY__", date.today().isoformat())
 
 INVISIBLE = """---
 name: feedback_invisible_{n}

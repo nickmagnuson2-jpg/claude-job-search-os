@@ -118,6 +118,7 @@ tools/.pii-denylist-ambiguous.txt
 # Every token the generator has ever emitted, so a company that leaves data/ keeps
 # its coverage. Holds real names by construction - must never be tracked.
 tools/.pii-denylist-retired.txt
+tools/.pii-denylist-targetwords.txt
 # Hand-maintained PII additions: real people/companies that exist only in
 # data/projects/, data/source-articles/ or the personal vault, so the generator's
 # automatic sources cannot see them. Holds real names -- never commit.

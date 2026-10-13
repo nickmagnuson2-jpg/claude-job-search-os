@@ -37,6 +37,7 @@ from pathlib import Path
 
 DENYLIST_REL = "tools/.pii-denylist.txt"
 AMBIGUOUS_REL = "tools/.pii-denylist-ambiguous.txt"
+TARGET_WORDS_REL = "tools/.pii-denylist-targetwords.txt"
 
 # Public-repo path prefixes/globs. A file outside these is not a public artifact.
 # examples/ + plugins/ are tracked public surface too (fable-audit 2026-07-07 #10/#17).
@@ -662,6 +663,47 @@ def expand_args(args: list[str], env: dict[str, list[str]]) -> list[list[str]]:
     return out
 
 
+# One whole `s<d>search<d>replacement<d>flags` word, for any punctuation delimiter.
+_SED_SCRIPT_WORD = re.compile(
+    r"s([^\w\s\\])(?:\\.|(?!\1).)*\1(?:\\.|(?!\1).)*\1[A-Za-z0-9]*", re.S)
+_FILE_EXTENSION = re.compile(r"\.\w+$")
+
+
+def _is_sed_script(word: str) -> bool:
+    """True if a word _sed_files returned is a substitution expression, not a file.
+
+    _sed_files unions two dialects' readings, and its documented phantoms are all this
+    shape: the expression of `sed -i '.bak' 's/a/b c/' f` is a file under GNU rules. The
+    expression carries the replacement text, so the phantom target was prose, did not
+    exist, read as "not ignored", and blocked an edit of a gitignored file. Neither sed
+    writes to it: read as a file, it does not exist and sed stops. A path that does
+    exist is kept, whatever it looks like.
+    """
+    return bool(_SED_SCRIPT_WORD.fullmatch(word)) and not os.path.exists(word)
+
+
+def _path_shaped(word: str) -> bool:
+    """Could this word be a file a GUESSED writer writes?
+
+    Used only for a writer name found outside command position, where the hook cannot
+    tell `flock lock tee docs/f.md` (a wrapper it does not know) from `--note tee up
+    the call` (an argument). The words after such a name used to be reported as
+    public-repo artifacts.
+
+    A word counts if it exists as a file, has a directory part, has a file extension, or
+    is a reference resolved later ($VAR, ~, a backtick). A directory is never a write
+    target. What this gives up: an unknown wrapper writing a NEW top-level file with no
+    extension. A writer in command position is not filtered at all.
+    """
+    path = os.path.expanduser(word)
+    if os.path.isdir(path):
+        return False
+    if os.path.exists(path):
+        return True
+    return (any(c in word for c in "/$`") or word.startswith("~")
+            or bool(_FILE_EXTENSION.search(word)))
+
+
 def _writer_targets(words: list[str], quoted: list[bool],
                     env: dict[str, list[str]] | None, cmd) -> list[str]:
     """Files written by sed -i, tee and dd in one simple command, plus any command
@@ -671,6 +713,9 @@ def _writer_targets(words: list[str], quoted: list[bool],
     `"/usr/bin/sed"` counts) or appears unquoted anywhere (`find ... -exec sed -i`),
     which is what the old regexes matched. Names match on base name, so a path before
     the name does not hide it and a longer name (mysed) is not it.
+
+    Outside command position the name may be an argument, so only path-shaped words
+    after it count (see _path_shaped).
     """
     out: list[str] = []
     positions = _all_command_positions(words)
@@ -684,20 +729,24 @@ def _writer_targets(words: list[str], quoted: list[bool],
         # "eval" as an argument (`agent-browser eval "x=>y"`) is data.
         if (name in _SHELLS or name in _SCRIPT_RUNNERS) and not in_command_position:
             continue
+        found: list[str] = []
         if name in ("sed", "gsed"):
-            out.extend(_sed_files(rest))
+            found = [f for f in _sed_files(rest) if not _is_sed_script(f)]
         elif name == "tee":
             end_opts = False
             for a in rest:
                 if not end_opts and a == "--":
                     end_opts = True
                 elif end_opts or not a.startswith("-") or a == "-":
-                    out.append(a)
+                    found.append(a)
         elif name == "dd":
-            out.extend(a[3:] for a in rest if a.startswith("of="))
+            found = [a[3:] for a in rest if a.startswith("of=")]
         else:
             for text in scripts_run_by(cmd, i, env or {}):
                 out.extend(_targets_in(text, env))
+        if not in_command_position:
+            found = [t for t in found if _path_shaped(t)]
+        out.extend(found)
     return out
 
 
@@ -981,6 +1030,67 @@ def load_ambiguous(root: Path) -> list[str]:
     return [ln.strip() for ln in lines if ln.strip() and not ln.startswith("#")]
 
 
+def load_target_words(root: Path) -> list[str]:
+    """Pipeline company names that are also ordinary English words, as written in the
+    pipeline's Company column. Missing file = empty list (fail open, as the other tiers)."""
+    try:
+        lines = (root / TARGET_WORDS_REL).read_text(encoding="utf-8").splitlines()
+    except (FileNotFoundError, PermissionError):
+        return []
+    return [ln.strip() for ln in lines if ln.strip() and not ln.startswith("#")]
+
+
+_QUOTE_OPENERS = "\"'`\u201c\u2018"
+_MARKUP_OPENERS = " \t*_([{" + _QUOTE_OPENERS
+_LINE_MARKERS = re.compile(r"[ \t]*(?:[-+*>#|/]+[ \t]*)*(?:\d+[.)])?")
+_SENTENCE_CONTINUES = re.compile(r"(?:[ \t]+|-)[a-z]")
+
+
+def opens_a_sentence(before: str, after: str) -> bool:
+    """Is a capitalised word at this position capitalised because it starts a sentence?
+
+    `before` is the text on the same line ahead of the word, `after` the text behind it.
+    Both halves must hold. The word is followed by a lowercase word (or a hyphenated
+    lowercase suffix), so a bare name in a table cell, a list item or a quoted fixture
+    string is NOT an opener. And it sits where a sentence starts: at the start of the
+    line, after list, heading, quote, table or comment markers, after . ! ? : ; or
+    directly after an opening quote.
+
+    What this gives up, on purpose: a real company name that itself starts a sentence
+    passes the BLOCK tier. The sweep reports those under ambiguous_hits instead.
+    """
+    if not _SENTENCE_CONTINUES.match(after):
+        return False
+    if before.rstrip("*_")[-1:] in _QUOTE_OPENERS and before.rstrip("*_"):
+        return True
+    bare = before.rstrip(_MARKUP_OPENERS)
+    if not bare or bare[-1] in ".!?:;":
+        return True
+    return bool(_LINE_MARKERS.fullmatch(bare))
+
+
+def find_target_words(content: str, words: list[str]) -> list[str]:
+    """Target words used as a NAME somewhere in `content`: case-sensitive, whole word,
+    and at least one occurrence that does not open a sentence.
+
+    WHY A SEPARATE TIER (2026-10-12). A pipeline company whose name is an ordinary word
+    could only sit on the WARN tier, which reaches nobody on the write path, because
+    find_pii cannot tell an imperative verb that opens a sentence from a company
+    of the same name. Measured on
+    647 tracked files with the 45 live words: 12 occurrences, 7 of them sentence
+    openers. Skipping openers is what makes blocking the rest affordable.
+    """
+    hits = []
+    for word in words:
+        pattern = r"(?<![\w])" + re.escape(word) + r"(?![\w])"
+        for m in re.finditer(pattern, content):
+            line_start = content.rfind("\n", 0, m.start()) + 1
+            if not opens_a_sentence(content[line_start:m.start()], content[m.end():m.end() + 8]):
+                hits.append(word)
+                break
+    return hits
+
+
 def find_pii(content: str, tokens: list[str]) -> list[str]:
     """Case-sensitive whole-word/phrase matches. The trailing/leading \\w boundaries
     keep a short brand token from matching inside a longer word (e.g. 'Zorp' must not
@@ -1014,6 +1124,7 @@ def scan_paths(paths: list[str]) -> int:
     root = Path(root_env).resolve() if root_env else Path(__file__).resolve().parent.parent
     tokens = load_denylist(root)
     ambiguous = load_ambiguous(root)
+    target_words = load_target_words(root)
 
     result = {"scanned": 0, "skipped": [], "hits": [], "ambiguous_hits": [],
               "denylist_tokens": len(tokens)}
@@ -1047,10 +1158,13 @@ def scan_paths(paths: list[str]) -> int:
             continue
 
         result["scanned"] += 1
-        hits = find_pii(content, tokens)
+        hits = find_pii(content, tokens) + find_target_words(content, target_words)
         if hits:
             result["hits"].append({"file": rel, "tokens": hits})
-        amb = find_pii(content, ambiguous)
+        # A target word that only ever opens a sentence here passed the block above.
+        # It is still a company name in a public file as far as a matcher can tell.
+        amb = find_pii(content, ambiguous) + [
+            w for w in find_pii(content, target_words) if w not in hits]
         if amb:
             result["ambiguous_hits"].append({"file": rel, "tokens": amb})
 
@@ -1111,7 +1225,7 @@ def judge(content: str, public_targets: list[str], root: Path) -> None:
     if not tokens:
         return  # fail open — no denylist, nothing to enforce
 
-    hits = find_pii(content, tokens)
+    hits = find_pii(content, tokens) + find_target_words(content, load_target_words(root))
     names = ", ".join(Path(t).name for t in public_targets)
 
     # WARN tier (added 2026-08-10). Single-token company names that are also ordinary

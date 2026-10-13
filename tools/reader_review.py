@@ -23,7 +23,19 @@ Usage:
       --purpose "how to set up a monthly operating review" \\
       --protect "internal figures from the author's past employers" \\
       --source-dir output/<slug>/research
-  --dry-run prints the prompt and the planned commands without dispatching.
+  --dry-run prints the prompt, each model's evidence scope and the planned commands
+  without dispatching.
+
+EVIDENCE SCOPE (added 2026-10-12)
+---------------------------------
+A reviewer's "unsupported" means "not in the evidence I was shown", exactly as its "clean"
+means "nothing wrong in the bytes I was shown". The sandbox in codex_verify.py denies data/
+and coaching/, so a true career claim sourced there comes back flagged on every prep
+document. After each model returns, its report gets a block prepended that states what that
+model could and could not read, and lists each unsupported-claim finding whose wording
+matches a line in data/projects or coaching/coached-answers that the model was not shown,
+labeled "outside reviewer scope?". The label is a pointer for a human check. It does not
+change the findings array, a severity or the ledger.
 """
 from __future__ import annotations
 
@@ -38,6 +50,12 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT))
+
+# Imported, not copied: the denied trees and the findings parser are the facts the scope
+# block reports, and a second copy here could disagree with the sandbox that enforces them.
+from tools import codex_verify  # noqa: E402
+
 DEFAULT_MODELS = ("codex", "fable", "grok")
 TEXT_ONLY_MODELS = {"grok"}
 CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
@@ -113,6 +131,202 @@ def plan_commands(models, target, text_rel, images_rel, claim_list, report_for,
                 argv += ["--image", img]
         plans.append((m, argv))
     return plans
+
+
+# --- EVIDENCE SCOPE -------------------------------------------------------------------------
+# Trees that hold the sourced record of the author's own career claims. Both sit under a
+# sandbox-denied tree, so no reviewer can confirm a claim against them.
+CLAIM_SOURCE_DIRS = ("data/projects", "coaching/coached-answers")
+OUTSIDE_LABEL = "outside reviewer scope?"
+SCOPE_BEGIN = "<!-- reader-review-scope:begin -->"
+SCOPE_END = "<!-- reader-review-scope:end -->"
+
+# A finding is of the "unsupported claim" kind when its summary says the reviewer could not
+# find support. Wording outside this list is a FALSE NEGATIVE: the finding is not examined.
+UNSUPPORTED_RE = re.compile(
+    r"\b(unsupported|unsourced|unverified|unverifiable|uncorroborated|unsubstantiated"
+    r"|not (be )?(supported|sourced|verified|substantiated|established|corroborated)"
+    r"|cannot (be )?verif\w*"
+    r"|no (supporting )?(source|sources|evidence|support)"
+    r"|without (any )?(source|sources|evidence|support))\b", re.I)
+
+# Words a reviewer uses to describe a finding, which say nothing about the claim itself.
+REVIEW_WORDS = frozenset("""
+about above across after against allowed among asserts attributes before being between claim
+claimed could doing during evidence exact figure files given having number other page
+permitted presented presents reader review reviewer should source statement stated states
+supplied support supported their there these thing those through under unsupported
+unverified where whether which while without would
+""".split())
+MIN_SHARED = 4          # distinct shared terms on ONE source line; a figure counts as two
+_YEAR = re.compile(r"(19|20)\d\d")
+
+
+def claim_terms(text: str) -> set[str]:
+    """Words of 5+ letters (trailing s dropped) and figures such as $2m, 37%, 183."""
+    out = set()
+    for tok in re.findall(r"\$?\d[\d,.]*[a-z%]*|[a-z]{5,}", text.lower()):
+        if tok[0].isalpha():
+            if tok not in REVIEW_WORDS:
+                out.add(tok[:-1] if tok.endswith("s") and len(tok) > 5 else tok)
+        else:
+            tok = tok.replace(",", "").rstrip(".")
+            bare_digits = tok.isdigit()
+            if (bare_digits and len(tok) < 2) or (bare_digits and _YEAR.fullmatch(tok)):
+                continue        # a lone digit or a year matches too much to count
+            out.add(tok)
+    return out
+
+
+def _weight(shared: set[str]) -> int:
+    return sum(1 if t[0].isalpha() else 2 for t in shared)
+
+
+def is_unsupported_finding(summary: str) -> bool:
+    return bool(UNSUPPORTED_RE.search(summary or ""))
+
+
+def _located_line(location, repo: Path) -> str:
+    """The line a finding points at, or '' when it cannot be read from inside the repo."""
+    if not isinstance(location, str) or ":" not in location:
+        return ""
+    path, _, line = location.rpartition(":")
+    if not line.strip().isdigit():
+        return ""
+    target = (repo / path.strip()).resolve()
+    if repo.resolve() not in target.parents or not target.is_file():
+        return ""
+    lines = target.read_text(encoding="utf-8", errors="replace").splitlines()
+    n = int(line)
+    return lines[n - 1] if 1 <= n <= len(lines) else ""
+
+
+def withheld_lines(repo: Path, shown=()) -> list[tuple[str, int, set[str]]]:
+    """(relative path, line number, terms) for every line the reviewer was NOT shown."""
+    shown = {str(Path(s).as_posix()) for s in shown}
+    out = []
+    for d in CLAIM_SOURCE_DIRS:
+        for f in sorted((repo / d).glob("*.md")):
+            rel = f.relative_to(repo).as_posix()
+            if rel in shown:
+                continue
+            for i, ln in enumerate(f.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
+                terms = claim_terms(ln)
+                if terms:
+                    out.append((rel, i, terms))
+    return out
+
+
+def label_outside_scope(findings, repo: Path, shown=()) -> list[dict]:
+    """Unsupported-claim findings whose wording matches one withheld source line.
+
+    The claim text is the finding's summary plus the page line its location names. A finding
+    is labeled when ONE line of a withheld file shares MIN_SHARED distinct terms with it
+    (a figure counts as two). The best line is reported as path:line, never its content.
+
+    FALSE POSITIVES: shared vocabulary without shared meaning. The source line can state a
+    DIFFERENT figure or scope than the page (the words match, the number does not), so the
+    label means "open this line before rejecting or accepting the finding", never "the
+    claim is supported". Long source lines and long page lines match more easily.
+    FALSE NEGATIVES: a claim paraphrased with other words; a figure written differently
+    ("$2M" against "2 million"); support split across two source lines; a finding whose
+    summary does not use the wording in UNSUPPORTED_RE; support that lives outside
+    CLAIM_SOURCE_DIRS (an email, data/profile.md, a subdirectory). No label is not evidence
+    that the reviewer saw everything relevant.
+    """
+    repo = Path(repo)
+    index = None
+    labels = []
+    for f in findings or []:
+        summary = str(f.get("summary") or "")
+        if not is_unsupported_finding(summary):
+            continue
+        terms = claim_terms(summary) | claim_terms(_located_line(f.get("location"), repo))
+        if index is None:
+            index = withheld_lines(repo, shown)
+        best = None
+        for rel, n, line_terms in index:
+            w = _weight(terms & line_terms)
+            if w >= MIN_SHARED and (best is None or w > best[0]):
+                best = (w, rel, n)
+        if best:
+            labels.append({"id": str(f.get("id")), "label": OUTSIDE_LABEL,
+                           "evidence": f"{best[1]}:{best[2]}", "shared": best[0]})
+    return labels
+
+
+def evidence_scope(model: str, text_rel: str, source_dir: str, source_paths, images_rel) -> dict:
+    """What one reviewing model was given and what it was denied. Facts only, no judgment."""
+    text_only = model in TEXT_ONLY_MODELS
+    return {"model": model, "page_text": text_rel, "source_dir": source_dir,
+            "source_paths": list(source_paths), "images_rendered": len(images_rel),
+            "images_sent": 0 if text_only else len(images_rel), "text_only": text_only,
+            "denied": [f"{t}/" for t in codex_verify.PRIVATE_TREES]}
+
+
+def scope_header(scope: dict, labels=None) -> str:
+    """The block prepended to a report. labels=None (dry run) omits the label section."""
+    s = scope
+    if s["text_only"]:
+        images = f"0 ({s['model']} is text-only; {s['images_rendered']} rendered, withheld)"
+    elif s["images_sent"]:
+        images = str(s["images_sent"])
+    else:
+        images = "0 (none rendered)"
+    if s["source_dir"]:
+        src = f"{s['source_dir']} ({len(s['source_paths'])} file(s) named to the reviewer)"
+        src_files = "".join(f"\n  - {p}" for p in s["source_paths"]) or "\n  - (no .md files found)"
+    else:
+        src = "NOT GIVEN (the reviewer had the page alone to check claims against)"
+        src_files = ""
+    out = [
+        SCOPE_BEGIN,
+        f"## EVIDENCE SCOPE ({s['model']}) -- written by tools/reader_review.py, not by the reviewer",
+        "",
+        f"- Told to review: {s['page_text']}",
+        f"- --source-dir: {src}{src_files}",
+        f"- Page images sent: {images}",
+        f"- Sandbox-denied, unreadable whatever the prompt says: {', '.join(s['denied'])}"
+        " (plus sealed subpaths and sibling repositories)",
+        "- Prompt instruction: \"Do not read anything under data/\"",
+        "- Readable but not named: the rest of this repository outside the denied trees.",
+        f"- So the reviewer could NOT check a claim against {' or '.join(CLAIM_SOURCE_DIRS)},"
+        " or against any email.",
+        "",
+        "Every \"unsupported\" or \"unverified\" below means \"not in the evidence listed above\"."
+        " Every \"clean\" covers the same evidence and nothing wider.",
+    ]
+    if labels is not None:
+        out += ["", f"### Findings auto-labeled \"{OUTSIDE_LABEL}\""]
+        if labels:
+            out += [f"- {l['id']}: {l['label']} -> check {l['evidence']}"
+                    f" (shared-term weight {l['shared']})" for l in labels]
+            out.append("A label means one withheld line shares wording with the claim. It may"
+                       " state a different figure. Open the line before rejecting the finding.")
+        else:
+            out.append("No finding was auto-labeled. That is a narrow word match over"
+                       f" {' and '.join(CLAIM_SOURCE_DIRS)}; it does not show that the reviewer"
+                       " saw every relevant source.")
+    out += [SCOPE_END, "", ""]
+    return "\n".join(out)
+
+
+def annotate_report(report: Path, scope: dict, repo: Path, shown=()):
+    """Prepend the scope block to a written report. Returns the labels, or None if no report.
+
+    Prepended, never inserted after the findings marker: codex_verify parses the first JSON
+    array after that marker, so nothing here can change what the ledger recorded. Re-running
+    replaces the earlier block.
+    """
+    report = Path(report)
+    if not report.is_file():
+        return None
+    labels = label_outside_scope(codex_verify.parse_findings(report), repo, shown)
+    text = report.read_text(encoding="utf-8")
+    if text.startswith(SCOPE_BEGIN) and SCOPE_END in text:
+        text = text.split(SCOPE_END, 1)[1].lstrip("\n")
+    report.write_text(scope_header(scope, labels) + text, encoding="utf-8")
+    return labels
 
 
 def render(doc: Path, out_dir: Path) -> tuple[Path, list[Path]]:
@@ -216,13 +430,22 @@ def main(argv=None) -> int:
     report_for = lambda m: f"output/analysis/{stamp}-{m}-{slug}-reader-review.md"  # noqa: E731
     plans = plan_commands(models, target, rel(text_path), [rel(i) for i in images],
                           claims(a.protect), report_for, a.known_errors, source_paths)
+    images_rel = [rel(i) for i in images]
+    scopes = {m: evidence_scope(m, rel(text_path), a.source_dir, source_paths, images_rel)
+              for m in models}
     if a.dry_run:
         print(target, "\n")
         for m, argv_ in plans:
             print(m, "images:", argv_.count("--image"), "report:", report_for(m))
+        for m in models:
+            print()
+            print(scope_header(scopes[m]).rstrip())
         return 0
     with ThreadPoolExecutor(max_workers=len(plans)) as ex:
         results = dict(zip([m for m, _ in plans], ex.map(lambda p: run_one(p[1], repo), plans)))
+    for m, r in results.items():
+        # None = no report on disk to annotate, which is different from "nothing labeled".
+        r["outside_scope"] = annotate_report(repo / report_for(m), scopes[m], repo, source_paths)
     print(json.dumps({"inputs": rel(out_dir), "images": len(images), "results": results}, indent=2))
     return 0 if all(r["rc"] == 0 for r in results.values()) else 1
 

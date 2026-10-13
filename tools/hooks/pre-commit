@@ -1,0 +1,28 @@
+#!/bin/bash
+# Pre-commit gate for this repo: one check.
+#
+# Concurrent-session guard. More than one Claude Code session works in this tree at
+# once. `git add -A`, `git add .`, `git commit -a`, or a plain `git commit` over an
+# index another session already staged into, puts that session's uncommitted work in
+# a commit whose message does not describe it. On this PUBLIC repo that work has
+# carried a PII leak. The guard refuses a commit whose staged set holds a path that no
+# tool call of the committing session named.
+#
+# The form that passes by construction:   git commit -m "..." -- <paths>
+# Override (recorded in the git dir):      CONCURRENT_COMMIT_WAIVE="why" git commit ...
+#
+# Logic lives in tools/concurrent_commit_guard.py (tracked, tested). This file is
+# installed by:  bash tools/hooks/install.sh     (--check reports drift)
+#
+# git exports GIT_INDEX_FILE to this hook. For `git commit -- <paths>` that is a
+# temporary index holding only the named paths, which is why that form passes even
+# when the real index holds another session's staged work.
+root="$(git rev-parse --show-toplevel)"
+guard="$root/tools/concurrent_commit_guard.py"
+
+# A checkout that predates the guard (bisect, an old branch) has no script to run.
+# Skipping there is deliberate; failing would block every commit on such a checkout.
+[ -f "$guard" ] || exit 0
+
+PYTHONIOENCODING=utf-8 python3 "$guard" --repo-root "$root" || exit 1
+exit 0

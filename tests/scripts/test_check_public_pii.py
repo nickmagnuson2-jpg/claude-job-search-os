@@ -669,7 +669,7 @@ def test_writer_extraction_nested_and_wrapped(cmd, expected):
     # eval / sh -c run their string only where the SHELL runs them. An argument that
     # happens to be the word "eval" is not eval (real-data replay, 2026-09-30:
     # `agent-browser eval "x=>y"` read JavaScript arrows as redirects).
-    ("agent-browser eval \"new Promise(r=>setTimeout(()=>r('ok'),1200))\"", []),
+    ("agent-browser eval \"wait(r=>setTimeout(()=>r('ok'),1200))\"", []),
     ("grep -n bash -c 'echo x > docs/p.md'", []),
     ("sudo sh -c 'echo x > docs/p.md'", ["docs/p.md"]),
     ("find . -name x -exec sh -c 'tee docs/p.md' \\;", ["docs/p.md"]),
@@ -1518,13 +1518,16 @@ def test_case_pattern_parens_do_not_swallow_later_separators():
 def test_long_wrapper_option_chains_are_linear():
     """Grok review of ffe38ab, F5: each bare one-letter wrapper option forked two
     recursive parses, so 40 of them took minutes and 1,000 raised RecursionError."""
-    import time
-    t0 = time.monotonic()
-    words = ["sudo"] + ["-n"] * 40 + ["tee", "docs/notes.md"]
-    assert words.index("tee") in cpp._command_positions(words)
-    long = ["sudo"] + ["-n"] * 5000 + ["tee", "docs/notes.md"]
-    assert long.index("tee") in cpp._command_positions(long)
-    assert time.monotonic() - t0 < 5
+    # In a child with a timeout: a parse that has gone exponential never returns, so a
+    # clock read after the call cannot fail. The timeout can.
+    code = (
+        "import sys; sys.path.insert(0, %r); import check_public_pii as cpp\n"
+        "for n in (40, 5000):\n"
+        "    words = ['sudo'] + ['-n'] * n + ['tee', 'docs/notes.md']\n"
+        "    assert words.index('tee') in cpp._command_positions(words)\n"
+    ) % str(SCRIPT.parent)
+    r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=20)
+    assert r.returncode == 0, r.stderr
 
 
 def test_long_for_loop_target_is_extracted():
@@ -1532,3 +1535,208 @@ def test_long_for_loop_target_is_extracted():
     cmd = f'for f in {words}; do echo x > "$f"; done'
     env = cpp.command_assignments(cmd)
     assert "docs/notes.md" in extract_write_targets('echo x > "$f"', env)
+
+
+# ---------------------------------------------------------------------------
+# THE TARGET-WORD TIER (2026-10-12). A pipeline company whose name is an ordinary
+# English word blocks as a NAME and passes as the word that opens a sentence.
+# `Lantern` and `Thimble` are invented and stand in for the gitignored tier file.
+# ---------------------------------------------------------------------------
+
+TARGET_WORDS = ["Lantern", "Thimble"]
+
+
+@pytest.mark.parametrize("text", [
+    "Lantern the path before you walk it.",
+    "- **Lantern for the scan**, then stop.",
+    "# Lantern the seam the caller uses",
+    "The run ended. Lantern-lit rooms were skipped.",
+    'print(f"Lantern complete: {n} files")',
+    '> swept. "Lantern the script" was misread.',
+    "1. Lantern each row before the write.",
+])
+def test_a_target_word_that_opens_a_sentence_is_not_a_hit(text):
+    assert cpp.find_target_words(text, TARGET_WORDS) == []
+
+
+@pytest.mark.parametrize("text", [
+    "Applied 2026-01-01 via Lantern",
+    "| Lantern | Applied | 2026-01-01 |",
+    '    assert classify("Lantern") == "closed"',
+    "- Lantern: passed after the screen",
+    "Lantern",
+    "the Lantern recruiter replied",
+    "Notes on Lantern.",
+    "Spoke with Lantern and Thimble today",
+])
+def test_a_target_word_used_as_a_name_is_a_hit(text):
+    assert "Lantern" in cpp.find_target_words(text, TARGET_WORDS)
+
+
+def test_one_name_use_is_enough_even_beside_a_sentence_opener():
+    text = "Lantern the path first.\nThen I applied to Lantern.\n"
+    assert cpp.find_target_words(text, TARGET_WORDS) == ["Lantern"]
+
+
+def test_target_words_are_case_sensitive_and_whole_word():
+    assert cpp.find_target_words("a lantern and Lanterns and unLantern", TARGET_WORDS) == []
+
+
+def _with_target_words(tmp_path):
+    tw = tmp_path / "tools" / ".pii-denylist-targetwords.txt"
+    tw.parent.mkdir(parents=True, exist_ok=True)
+    tw.write_text("# fixture\n" + "\n".join(TARGET_WORDS) + "\n", encoding="utf-8")
+
+
+def test_the_hook_blocks_a_target_word_used_as_a_name(tmp_path):
+    _with_target_words(tmp_path)
+    code, err = _run(tmp_path, "docs/notes.md", "Applied via Lantern last week.\n")
+    assert code == 2 and "Lantern" in err
+
+
+def test_the_hook_passes_a_target_word_that_opens_a_sentence(tmp_path):
+    _with_target_words(tmp_path)
+    code, _ = _run(tmp_path, "docs/notes.md", "Lantern the path before you walk it.\n")
+    assert code == 0
+
+
+def test_the_hook_ignores_target_words_in_a_private_path(tmp_path):
+    _with_target_words(tmp_path)
+    code, _ = _run(tmp_path, "data/notes.md", "Applied via Lantern last week.\n")
+    assert code == 0
+
+
+def test_a_missing_target_word_file_changes_nothing(tmp_path):
+    code, _ = _run(tmp_path, "docs/notes.md", "Applied via Lantern last week.\n")
+    assert code == 0
+
+
+# ===========================================================================
+# A word that is not a path is not a write target (2026-10-12).
+#
+# The owed second half of the heredoc-misparse patch (8 recorded fires). The heredoc
+# half landed with tools/shell_tokens.py on 2026-09-30. Two guesses were left that
+# still turned prose into a target, and a target that does not exist reads as "not
+# ignored", so as public:
+#   * a writer NAME as an ordinary unquoted argument (`--note tee up the call`):
+#     every later word became a file tee writes;
+#   * a sed expression read as a file under the other dialect's option rules
+#     (`sed -i '.bak' 's/a/b c/' f`).
+# Each test below that must stay BLOCKING is the restraint half: the filter drops
+# words, so it has to be shown not to drop a real path.
+# ===========================================================================
+
+def _private_repo(tmp_path):
+    """A git repo with gitignored output/ and coaching/, and a public docs/."""
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    (tmp_path / ".gitignore").write_text(
+        "/output/\n/coaching/\n/tools/.pii-denylist*\n", encoding="utf-8")
+    for d in ("output/acme", "coaching/progress", "docs", "tools"):
+        (tmp_path / d).mkdir(parents=True, exist_ok=True)
+    for f in ("output/acme/a.md", "output/acme/b.md", "docs/a.md"):
+        (tmp_path / f).write_text("Old title\n", encoding="utf-8")
+    return tmp_path
+
+
+def test_prose_after_a_writer_word_is_not_a_target(tmp_path, monkeypatch):
+    monkeypatch.chdir(_private_repo(tmp_path))
+    cmd = "python3 tools/todo_write.py add --note tee up call with Pat Zorp, soon"
+    assert extract_write_targets(cmd) == []
+
+
+def test_prose_after_a_writer_word_does_not_block(tmp_path):
+    """The fire-7 report shape: `up, call, with, Pat, Zorp,, soon is a public-repo
+    artifact`, on a command that writes no file."""
+    cmd = "python3 tools/todo_write.py add --note tee up call with Pat Zorp, soon"
+    code, err = _run_bash(_private_repo(tmp_path), cmd)
+    assert code == 0, err
+
+
+def test_a_directory_after_a_writer_word_is_not_a_target(tmp_path):
+    """`grep tee docs/` reads. tee cannot write to a directory either."""
+    cmd = "grep -rn tee docs/ | grep -c 'Pat Zorp'"
+    code, err = _run_bash(_private_repo(tmp_path), cmd)
+    assert code == 0, err
+
+
+def test_sed_expression_is_not_a_target(tmp_path, monkeypatch):
+    monkeypatch.chdir(_private_repo(tmp_path))
+    cmd = "sed -i '.bak' 's/Old title/Pat Zorp optional questions/' output/acme/a.md"
+    assert extract_write_targets(cmd) == ["output/acme/a.md"]
+    cmd = "sed -l 5 -i.bak 's/Old title/Pat Zorp optional questions/' output/acme/a.md"
+    assert extract_write_targets(cmd) == ["output/acme/a.md"]
+    # other delimiters, and flags
+    cmd = "sed -i '.bak' 's|Old title|Pat Zorp, optional|g' output/acme/a.md"
+    assert extract_write_targets(cmd) == ["output/acme/a.md"]
+
+
+def test_sed_expression_on_gitignored_files_does_not_block(tmp_path):
+    """Fire 8 with a separate backup suffix: both files are gitignored, and the
+    reported target was the replacement text."""
+    cmd = ("sed -i '.bak' 's/Old title/Zorptech optional questions/' "
+           "output/acme/a.md output/acme/b.md")
+    code, err = _run_bash(_private_repo(tmp_path), cmd)
+    assert code == 0, err
+
+
+@pytest.mark.parametrize("cmd", [
+    # fire 7: prose in quoted arguments, no heredoc, no redirect
+    "PYTHONIOENCODING=utf-8 python3 tools/codex_verify.py output/acme/plan.md "
+    "--claim 'the identification, no-commitment, mechanical qualification of "
+    "Zorptech engagement' --claim 'Pat Zorp said 3 > 2 rounds'",
+    # fire 8: a sed replacement with a title in it, two gitignored files
+    "sed -i '' 's/Old title/Zorptech optional questions — Zorptech optional "
+    "questions/' output/acme/a.md output/acme/b.md",
+    # fire 3: a comparison inside a heredoc body bound for a gitignored file
+    "cat > coaching/progress/d.md <<'EOF'\nIf fails >=2 more times, Pat Zorp decides\nEOF",
+    # 2026-08-20: a stdin script, no redirect in the command
+    "python3 - <<'PY'\nn = 0\nif n > 0: print('Pat Zorp')\nPY",
+])
+def test_recorded_fires_do_not_block(tmp_path, cmd):
+    """Locks for the recorded commands. These passed before this change (the
+    tokenizer fixed them); they are here so the shapes stay fixed."""
+    code, err = _run_bash(_private_repo(tmp_path), cmd)
+    assert code == 0, err
+
+
+@pytest.mark.parametrize("cmd", [
+    # the three named write forms
+    'echo "Pat Zorp" > docs/notes.md',
+    "cat > docs/notes.md <<'EOF'\n> Pat Zorp said so\nEOF",
+    'echo "Pat Zorp" | tee docs/notes.md',
+    # the sed expression is dropped, the real file is not
+    "sed -i '.bak' 's/Old title/Pat Zorp/' docs/a.md",
+    # a file created earlier in the same command does not exist at hook time
+    "cp output/acme/a.md docs/new.md && sed -i '' 's/Old title/Pat Zorp/' docs/new.md",
+    # an unknown wrapper puts the writer outside command position: a path still counts
+    'echo "Pat Zorp" | flock /tmp/l tee docs/notes.md',
+    'OUT=docs/notes.md; echo "Pat Zorp" | flock /tmp/l tee "$OUT"',
+    # ...and so does a new top-level file with an extension, or an existing bare name
+    'echo "Pat Zorp" | flock /tmp/l tee NOTES.txt',
+    'touch NOTES; echo "Pat Zorp" | flock /tmp/l tee NOTES',
+    # in command position every operand is a file, bare word or not
+    'echo "Pat Zorp" | tee NOTES',
+])
+def test_real_write_targets_STILL_BLOCK(tmp_path, cmd):
+    root = _private_repo(tmp_path)
+    if cmd.startswith("touch NOTES"):
+        (root / "NOTES").write_text("x\n", encoding="utf-8")
+    code, err = _run_bash(root, cmd)
+    assert code == 2, f"must block: {cmd}"
+    assert "Pat Zorp" in err
+
+
+def test_path_shaped_contract(tmp_path, monkeypatch):
+    monkeypatch.chdir(_private_repo(tmp_path))
+    for word in ("docs/new.md", "new.md", "$OUT", "~/x", "output/acme/a.md"):
+        assert cpp._path_shaped(word) is True, word
+    for word in ("up", "Zorp,", "soon.", "docs", "docs/", "e.g."):
+        assert cpp._path_shaped(word) is False, word
+
+
+def test_opens_a_sentence_answers_with_a_boolean():
+    assert cpp.opens_a_sentence("", " rose again") is True
+    assert cpp.opens_a_sentence("- ", " rose again") is True
+    assert cpp.opens_a_sentence("", "") is False               # nothing follows the word
+    assert cpp.opens_a_sentence("", " Systems hired") is False  # a capitalised word follows
+    assert cpp.opens_a_sentence("we met ", " rose again") is False

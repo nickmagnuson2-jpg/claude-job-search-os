@@ -191,7 +191,7 @@ Both skills produce dossiers with a **two-speed reading design:**
 
 **Speed 1 — Executive Summary** (top of every dossier): thesis/verdict, opportunity rating, top 3 reasons to target, top 3 risks, recommended next action. Fits one screen. Scan in 2 minutes.
 
-**Speed 2 — Full dossier:** Every major section opens with a bold **BLUF** (Bottom Line Up Front) sentence summarizing the takeaway. Scan all BLUFs in 60 seconds, or read any section in full for detail.
+**Speed 2 — Full dossier:** Every major section opens with a bold **BLUF** (bottom line up front) sentence summarizing the takeaway. Scan all BLUFs in 60 seconds, or read any section in full for detail.
 
 **Evidence quality rules:**
 

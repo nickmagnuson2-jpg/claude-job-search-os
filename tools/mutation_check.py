@@ -42,13 +42,22 @@ USAGE
 EXIT CODES
     0  every mutant killed (or allowlisted with a reason)
     2  at least one mutant SURVIVED, or an isolation run failed
-    1  usage / setup error (no tests mapped, unparseable target, ...)
+    1  usage / setup error (no tests mapped, unparseable target, ...), or the target
+       could not be put back: `code` is target_diverged (another process edited it
+       during the run, and it was left as found) or target_not_restored
+
+WHAT IT LEAVES ON DISK
+    On every exit it can act on (normal, exception, SIGTERM, SIGINT, SIGHUP) the target
+    is put back to its PRE-RUN content, read back, and the result is reported: silence
+    means restored, `TARGET NOT RESTORED` on stderr means it was not. SIGKILL and power
+    loss cannot be handled here; the backup stays and the next run recovers from it.
 """
 from __future__ import annotations
 
 import argparse
 import ast
 import atexit
+import contextlib
 import fcntl
 import functools
 import hashlib
@@ -840,31 +849,262 @@ def recover_if_stranded(target: Path) -> str | None:
 
 _IN_FLIGHT: tuple[Path, str] | None = None
 
+# The text this process last put on the target: the pre-run content until the first mutant
+# is written, then the latest mutant. A later mutant and the restore may replace THIS or
+# the pre-run content and nothing else. Anything else on disk was put there by someone
+# else, and this tool has no way to rebuild it.
+_LAST_WRITTEN: str | None = None
 
-def _restore_in_flight() -> None:
-    """Put the target back. Safe to call twice; the `finally` and atexit both call it."""
-    global _IN_FLIGHT
-    if _IN_FLIGHT is None:
+# Whether the pre-run content was identical to git HEAD. True / False / None (unknown: not
+# a git checkout, untracked file, git unavailable). It decides nothing. It is reported, so
+# that a reader of a failure knows whether git still holds the pre-run content.
+_HEAD_MATCHED: bool | None = None
+
+# What the one restore of this run found, kept so that later callers (the atexit hook, a
+# signal arriving during the isolation pass) repeat it instead of touching the file again.
+_RESTORE_OUTCOME: dict | None = None
+
+RESTORED, DIVERGED, FAILED = "restored", "diverged", "failed"
+
+# Copies set aside when the target is left as found. In the backup store, which is outside
+# every working tree. The names must NOT end in `.mutation_backup`: that suffix makes
+# tests/conftest.py refuse the suite and makes the next run's recover_if_stranded write
+# the file over the target, which is the overwrite these copies exist to avoid.
+ASIDE_ORIGINAL = ".pre-run-original"
+ASIDE_MUTANT = ".last-mutant"
+
+_HELD_SIGNALS = tuple(getattr(signal, n) for n in ("SIGTERM", "SIGINT", "SIGHUP")
+                      if hasattr(signal, n))
+
+
+class TargetDiverged(Exception):
+    """The target holds content this run did not write. Nothing was overwritten."""
+
+
+@contextlib.contextmanager
+def _signals_held():
+    """Hold SIGTERM / SIGINT / SIGHUP until the block ends, then let them arrive.
+
+    The handler restores the target, and it decides what to do from what it reads on
+    disk. `write_text` truncates and then writes, so a handler that ran between the two
+    would read an empty file, take it for someone else's content and leave it empty. The
+    same applies between a write and the line that records it. The signal is not lost:
+    the OS keeps it pending and delivers it when the mask is put back.
+    """
+    try:
+        old = signal.pthread_sigmask(signal.SIG_BLOCK, _HELD_SIGNALS)
+    except (AttributeError, ValueError, OSError):
+        yield                     # no pthread_sigmask on this platform: run unprotected
         return
-    target, original = _IN_FLIGHT
-    _IN_FLIGHT = None
     try:
+        yield
+    finally:
+        signal.pthread_sigmask(signal.SIG_SETMASK, old)
+
+
+def _shout(text: str) -> None:
+    """Write to stderr through the file descriptor.
+
+    Called from a signal handler, which can interrupt the main thread inside a write to
+    sys.stderr; a second write through the same buffered object raises RuntimeError
+    there. stderr, never stdout: stdout is the JSON contract.
+    """
+    try:
+        os.write(2, (text.rstrip("\n") + "\n").encode("utf-8", "replace"))
+    except OSError:
+        pass
+
+
+def matches_head(target: Path, text: str, root: Path | None = None) -> bool | None:
+    """Is `text` identical to the committed version of `target`? None when unknown.
+
+    Read-only (`git show`), and never a guess: any failure to ask git is None. GIT_*
+    variables are dropped so that a run started from a git hook asks about the tree it is
+    standing in, not the one the hook's environment points at.
+    """
+    root = Path(root or REPO_ROOT)
+    try:
+        rel = Path(target).resolve().relative_to(root.resolve()).as_posix()
+        env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+        r = subprocess.run(["git", "show", f"HEAD:./{rel}"], cwd=str(root), env=env,
+                           capture_output=True, timeout=15)
+        if r.returncode != 0:
+            return None
+        # read_text() translates line endings, so the committed bytes get the same
+        # treatment before the comparison.
+        head = r.stdout.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+    return head == text
+
+
+def _write_owned(target: Path, text: str) -> None:
+    """Write the target and record what was written, with no signal able to separate the two."""
+    global _LAST_WRITTEN
+    with _signals_held():
+        target.write_text(text, encoding="utf-8")
+        _LAST_WRITTEN = text
+
+
+def write_mutant(target: Path, original: str, mutated: str) -> None:
+    """Put a mutant on disk, unless the file is not what this run left there.
+
+    THE INCIDENT THIS EXISTS FOR (2026-09-06, twice in one day). Each mutant was written
+    over whatever the file held, and the final restore did the same. A peer session lost
+    93 uncommitted lines in a tool that way, and hours later a backgrounded run reverted
+    an edit made by the session that had started it. Both commands reported success and
+    the file matched its last commit afterwards, so there was nothing to notice.
+
+    The check is a read followed by a write, so an edit landing in the microseconds
+    between them is still lost. The window used to be the whole run.
+    """
+    with _signals_held():
+        on_disk = target.read_text(encoding="utf-8")
+        if on_disk != original and on_disk != _LAST_WRITTEN:
+            raise TargetDiverged(str(target))
+        _write_owned(target, mutated)
+
+
+def _set_aside(target: Path, original: str) -> dict:
+    """Keep the pre-run content and the last mutant when the target is left as found.
+
+    The pre-run content may exist nowhere else (uncommitted work), so it is written
+    first and the `.mutation_backup` is removed only once that copy is on disk. The
+    backup has to go: the next run's recover_if_stranded, and the sweep's repair step,
+    both write a backup over the target without looking at what is there.
+    """
+    bak = backup_path(target)
+    stamp = time.strftime("%Y%m%dT%H%M%S") + f"-{os.getpid()}"
+    out: dict = {"original_saved_at": None, "mutant_saved_at": None}
+    try:
+        bak.parent.mkdir(parents=True, exist_ok=True)
+        aside = bak.with_name(f"{bak.stem}.{stamp}{ASIDE_ORIGINAL}")
+        aside.write_text(original, encoding="utf-8")
+        out["original_saved_at"] = str(aside)
+        if _LAST_WRITTEN is not None and _LAST_WRITTEN != original:
+            mutant = bak.with_name(f"{bak.stem}.{stamp}{ASIDE_MUTANT}")
+            mutant.write_text(_LAST_WRITTEN, encoding="utf-8")
+            out["mutant_saved_at"] = str(mutant)
+    except OSError as e:
+        out["aside_error"] = f"{type(e).__name__}: {e}"
+    if out["original_saved_at"]:
+        try:
+            bak.unlink()
+        except OSError:
+            pass
+    elif bak.exists():
+        out["backup"] = str(bak)      # the only copy left; say where it is
+    return out
+
+
+def _restore(target: Path, original: str) -> dict:
+    """One attempt to put the target back. Returns what happened; raises nothing expected."""
+    out = {"target": str(target), "head_matched": _HEAD_MATCHED}
+    bak = backup_path(target)
+    try:
+        try:
+            on_disk = target.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            on_disk = None            # nothing on disk, so nothing to destroy
+        if on_disk is not None and on_disk != original and on_disk != _LAST_WRITTEN:
+            return {**out, "state": DIVERGED, **_set_aside(target, original)}
+        if on_disk != original:
+            _write_owned(target, original)
+        # Read it back. A write that raised nothing is not evidence that the file
+        # now holds the text.
         if target.read_text(encoding="utf-8") != original:
-            target.write_text(original, encoding="utf-8")
-    except OSError:
-        pass
+            raise OSError("the file does not hold the pre-run content after the write")
+    except (OSError, ValueError) as e:
+        # The backup is deliberately KEPT: it is how the next run recovers.
+        return {**out, "state": FAILED, "error": f"{type(e).__name__}: {e}",
+                "backup": str(bak) if bak.exists() else None}
     try:
-        backup_path(target).unlink()
+        bak.unlink()
     except OSError:
         pass
+    return {**out, "state": RESTORED}
+
+
+def _failure_report(outcome: dict) -> str:
+    target = outcome["target"]
+    lines = [f"mutation_check: TARGET NOT RESTORED: {target}"]
+    if outcome["state"] == DIVERGED:
+        lines += [
+            "  The file holds content this run did not write: it is neither the pre-run",
+            "  content nor the last mutant. Another process edited it during the run.",
+            "  It was left exactly as found, because writing over it would delete that edit.",
+            "  If the edit was made on top of a mutant, the file still contains the mutation.",
+        ]
+        if outcome.get("original_saved_at"):
+            lines.append(f"  Pre-run content saved at: {outcome['original_saved_at']}")
+        else:
+            lines.append(f"  Pre-run content could NOT be saved aside "
+                         f"({outcome.get('aside_error')}); it is still in the backup "
+                         f"{outcome.get('backup')}, which the next mutation_check run on "
+                         f"this file will write over the target.")
+        if outcome.get("mutant_saved_at"):
+            lines.append(f"  Last mutant this run wrote: {outcome['mutant_saved_at']}")
+            lines.append("  A diff of that file against the target shows the other edit alone.")
+    else:
+        lines += [
+            f"  Putting the pre-run content back failed: {outcome.get('error')}",
+            "  The file may hold a mutant.",
+            f"  Pre-run content is in the backup: {outcome.get('backup')}",
+            "  Running mutation_check on this file again restores it from that backup.",
+        ]
+    head = outcome.get("head_matched")
+    if head is True:
+        lines.append("  The pre-run content was identical to git HEAD, so `git diff` on the "
+                     "file shows everything that is different now.")
+    elif head is False:
+        lines.append("  The pre-run content had uncommitted changes, so it is NOT in git. "
+                     "The copy named above is the only one.")
+    else:
+        lines.append("  The pre-run content could not be compared with git HEAD (not a "
+                     "checkout, or the file is untracked), so do not assume git has it.")
+    return "\n".join(lines)
+
+
+def _restore_in_flight() -> dict | None:
+    """Put the target back, check that it took, and report if it did not.
+
+    Runs ONCE per run. The `finally` in main(), the signal handler and atexit all call
+    it; every call after the first returns the first one's outcome and does not touch the
+    file. That matters: after the restore this tool no longer owns the file, and the
+    atexit call used to compare it with the pre-run content again and write that back,
+    reverting anything edited during the isolation pass.
+
+    Returns None when nothing was armed. Signals are held for the duration, so a second
+    signal cannot abandon a restore half way.
+    """
+    global _IN_FLIGHT, _RESTORE_OUTCOME
+    with _signals_held():
+        if _IN_FLIGHT is None:
+            return _RESTORE_OUTCOME
+        target, original = _IN_FLIGHT
+        outcome = _restore(target, original)
+        _IN_FLIGHT = None
+        _RESTORE_OUTCOME = outcome
+        if outcome["state"] != RESTORED:
+            _shout(_failure_report(outcome))
+    return outcome
 
 
 def _on_signal(signum, _frame):
-    _restore_in_flight()
+    outcome = _restore_in_flight()
+    if outcome is not None and outcome["state"] == RESTORED:
+        try:
+            name = signal.Signals(signum).name
+        except ValueError:
+            name = f"signal {signum}"
+        # Said out loud because a killed run prints no result, and the question after
+        # killing one is always what the file holds now (2026-09-03: asked three times).
+        _shout(f"mutation_check: stopped by {name}; {outcome['target']} was restored to "
+               f"its pre-run content and read back to confirm.")
     raise SystemExit(128 + signum)
 
 
-def arm_restore(target: Path, original: str) -> None:
+def arm_restore(target: Path, original: str, head_matched: bool | None = None) -> None:
     """Restore the target even if this process is SIGTERMed mid-mutation.
 
     THE INCIDENT THIS EXISTS FOR (2026-08-26). `finally` covers a clean exit and it
@@ -875,9 +1115,17 @@ def arm_restore(target: Path, original: str) -> None:
     duplicate `## Archived` header to the real job-pipeline.md on the next /pipe call.
     The hazard had been written up in prose hours earlier, in the same run that then
     tripped over it again. A handler is the enforcement tier; the write-up was not.
+
+    WHAT "RESTORE" MEANS: the content the file had when this run started, never git HEAD.
+    A file with uncommitted edits is a normal thing to measure, and restoring it to HEAD
+    would delete those edits. `head_matched` is carried only so a failure report can say
+    whether git also holds the pre-run content.
     """
-    global _IN_FLIGHT
+    global _IN_FLIGHT, _LAST_WRITTEN, _HEAD_MATCHED, _RESTORE_OUTCOME
     _IN_FLIGHT = (target, original)
+    _LAST_WRITTEN = original
+    _HEAD_MATCHED = head_matched
+    _RESTORE_OUTCOME = None
     atexit.register(_restore_in_flight)
     for name in ("SIGTERM", "SIGINT", "SIGHUP"):
         sig = getattr(signal, name, None)
@@ -887,18 +1135,6 @@ def arm_restore(target: Path, original: str) -> None:
             signal.signal(sig, _on_signal)
         except (ValueError, OSError):
             pass          # not on the main thread, or unsupported on this platform
-
-
-def assert_intact(target: Path, original: str) -> None:
-    """Hard-abort if the target does not match its pre-run content.
-
-    Belt and braces over the `finally`: the finally itself can be mutated away when the
-    target IS this tool, and a silent mismatch means corrupted source on disk.
-    """
-    if target.read_text(encoding="utf-8") != original:
-        target.write_text(original, encoding="utf-8")
-        raise SystemExit("mutation_check: target did not match after restore; "
-                         "rewrote it from the in-memory original. Verify with git diff.")
 
 
 def load_allowlist() -> dict:
@@ -978,10 +1214,19 @@ def main() -> int:
         recovered = recover_if_stranded(target)
 
     original = target.read_text(encoding="utf-8")
+    head_matched = None
     if not args.list:
+        # Asked BEFORE the backup exists, so the git call adds no time during which a
+        # kill would leave a backup behind.
+        head_matched = matches_head(target, original)
         backup_dir().mkdir(parents=True, exist_ok=True)
         backup_path(target).write_text(original, encoding="utf-8")
-        arm_restore(target, original)
+        arm_restore(target, original, head_matched)
+        if head_matched is False:
+            print(f"mutation_check: note: {target} differs from git HEAD before this run "
+                  f"(uncommitted edits, or a mutant an earlier run left behind). This run "
+                  f"restores the content it started from, not HEAD.",
+                  file=sys.stderr, flush=True)
     src_lines = original.splitlines()
     try:
         tree = ast.parse(original)
@@ -1034,6 +1279,7 @@ def main() -> int:
 
     survived, killed, allowed, weak = [], 0, [], []
     unclassified, timed_out = [], []
+    diverged = False
     try:
         for entry in catalog:
             key = entry["key"]
@@ -1048,7 +1294,14 @@ def main() -> int:
                 continue
             if mutated == original:
                 continue
-            target.write_text(mutated, encoding="utf-8")
+            try:
+                write_mutant(target, original, mutated)
+            except TargetDiverged:
+                # Someone else's content is on disk. Stop: the mutants measured so far
+                # ran against a file that was being edited, and the next write would
+                # delete that edit. The restore below reports it and leaves it alone.
+                diverged = True
+                break
             # `target` is passed ONLY here, never on the baseline run above: at baseline
             # the file is unmutated, so a ratchet firing on it means real corruption and
             # must still turn the run baseline_red.
@@ -1075,12 +1328,29 @@ def main() -> int:
                 elif kind == "unknown":
                     unclassified.append({**entry, "killed_by": kind})
     finally:
-        target.write_text(original, encoding="utf-8")
-        assert_intact(target, original)
-        try:
-            backup_path(target).unlink()
-        except OSError:
-            pass
+        outcome = _restore_in_flight()
+
+    if diverged or outcome is None or outcome["state"] != RESTORED:
+        # No result is printed. A partial count from a run whose target was being edited
+        # would read as a measurement.
+        state = (outcome or {}).get("state")
+        print(json.dumps({
+            "status": "error",
+            "code": "target_not_restored" if state == FAILED else "target_diverged",
+            "message": ("the target was edited by another process during the run and was "
+                        "left as found; the results are discarded. See stderr for where "
+                        "the pre-run content was saved."
+                        if state != FAILED else
+                        "the target could not be put back to its pre-run content. See "
+                        "stderr; the backup was kept."),
+            "target": rel,
+            "restore_state": state,
+            "original_saved_at": (outcome or {}).get("original_saved_at"),
+            "mutant_saved_at": (outcome or {}).get("mutant_saved_at"),
+            "backup": (outcome or {}).get("backup"),
+            "target_matched_head_at_start": head_matched,
+            "tests": [str(t) for t in test_files]}))
+        return 1
 
     audit = audit_test_quality(test_files)
     result = {
@@ -1090,6 +1360,9 @@ def main() -> int:
         "status": ("survivors" if survived
                    else "mutants_timed_out" if timed_out else "ok"),
         "target": rel,
+        # True means: put back to the pre-run content AND read back. Not inferred.
+        "target_restored": True,
+        "target_matched_head_at_start": head_matched,
         "tests": [str(t) for t in test_files],
         "killed": killed,
         "survived": len(survived),

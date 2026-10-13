@@ -223,9 +223,9 @@ def test_unresolved_resolves_through_aliases(tmp_path):
 
 
 def test_unresolved_ignores_placeholder_company_cells(tmp_path):
-    """An em-dash placeholder is an absent value, not an unknown company."""
+    """A dash placeholder (em dash or hyphen) is an absent value, not an unknown company."""
     dim = cd.load(write_dim(tmp_path, [ACME]))
-    repo = fake_repo(tmp_path, outreach=["—", "Acme"], networking=["—", "Acme"])
+    repo = fake_repo(tmp_path, outreach=["—", "-", "Acme"], networking=["—", "-", "Acme"])
     gaps = cd.unresolved(dim, repo)
     assert gaps["outreach-log.md"] == []
     assert gaps["networking.md"] == []
@@ -271,3 +271,23 @@ def test_main_check_reports_the_review_backlog(tmp_path, capsys):
     repo = fake_repo(tmp_path, pipeline=["Acme"])
     assert cd.main(["--path", str(p), "--repo-root", str(repo), "--check"]) == 0
     assert "1 still REVIEW" in capsys.readouterr().out
+
+
+# --- Mutation survivors, 2026-10-13 ---
+
+def test_unresolved_reads_only_table_rows_of_the_networking_file(tmp_path):
+    """A prose line that happens to hold pipes is not a contact row."""
+    dim = cd.load(write_dim(tmp_path, [ACME]))
+    repo = fake_repo(tmp_path, networking=["Acme"])
+    net = repo / "data" / "networking.md"
+    net.write_text(net.read_text(encoding="utf-8")
+                   + "\nSee also: one | Ghost Co | two | three | four\n", encoding="utf-8")
+    assert cd.unresolved(dim, repo)["networking.md"] == []
+
+
+def test_main_without_check_does_not_run_the_guard(tmp_path, capsys):
+    p = write_dim(tmp_path, [ACME])
+    repo = fake_repo(tmp_path, pipeline=["Ghost Co"])
+    assert cd.main(["--path", str(p), "--repo-root", str(repo)]) == 0
+    out = capsys.readouterr().out
+    assert "unresolved" not in out and "1 companies loaded" in out

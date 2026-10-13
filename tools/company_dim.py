@@ -39,6 +39,10 @@ from pathlib import Path
 import yaml
 
 VALID_TYPES = ("target", "recruiter", "other", "REVIEW")
+# A company cell holding only a dash is an absent value. The hyphen is here because
+# the writers stopped emitting em dashes; before it was listed, one such row made
+# `unresolved` report "-" as an unknown company.
+PLACEHOLDERS = ("", "—", "-")
 DEFAULT_PATH = Path(__file__).resolve().parent.parent / "data" / "companies.yaml"
 
 
@@ -111,7 +115,7 @@ def unresolved(dim: Dimension, repo_root: Path) -> dict[str, list[str]]:
                                      if r["company"].strip() and not dim.resolve(r["company"])})
     log = parse_rows(read_file(repo_root / "data" / "outreach-log.md"))
     out["outreach-log.md"] = sorted({r["company"].strip() for r in log
-                                     if r["company"].strip() not in ("", "—")
+                                     if r["company"].strip() not in PLACEHOLDERS
                                      and not dim.resolve(r["company"])})
     net = []
     for line in read_file(repo_root / "data" / "networking.md").splitlines():
@@ -120,7 +124,7 @@ def unresolved(dim: Dimension, repo_root: Path) -> dict[str, list[str]]:
         c = [x.strip() for x in line.strip("|").split("|")]
         if len(c) < 4 or c[0] in ("Name", "---") or set(c[0]) <= set("- "):
             continue
-        if c[1] and c[1] not in ("", "—"):
+        if c[1] not in PLACEHOLDERS:
             net.append(c[1])
     out["networking.md"] = sorted({c for c in net if not dim.resolve(c)})
     return out

@@ -92,3 +92,27 @@ def test_branch_deletion_sha_skipped(tmp_path):
     # A deletion pushes an all-zero local sha; nothing to scan -> allow.
     r = _run(repo, _push_line(ZERO_SHA))
     assert r.returncode == 0, r.stderr
+
+
+def _target_words(repo):
+    (repo / "tools" / ".pii-denylist-targetwords.txt").write_text(
+        "# fixture\nLantern\n", encoding="utf-8")
+
+
+def test_blocks_a_target_word_used_as_a_name_in_a_pushed_commit(tmp_path):
+    """The push gate reads the same sentence-aware tier as the write hook (2026-10-12).
+    `Lantern` is invented."""
+    repo = _init_repo(tmp_path)
+    _target_words(repo)
+    sha = _commit(repo, "framework/leak.md", "Applied via Lantern last week.\n")
+    r = _run(repo, _push_line(sha))
+    assert r.returncode == 1, r.stderr
+    assert "Lantern" in r.stderr
+
+
+def test_a_target_word_that_opens_a_sentence_does_not_block_a_push(tmp_path):
+    repo = _init_repo(tmp_path)
+    _target_words(repo)
+    sha = _commit(repo, "framework/ok.md", "Lantern the path before you walk it.\n")
+    r = _run(repo, _push_line(sha))
+    assert r.returncode == 0, r.stderr

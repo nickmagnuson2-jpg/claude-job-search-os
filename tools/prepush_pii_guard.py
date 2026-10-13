@@ -106,13 +106,14 @@ def main() -> int:
               "(regenerate with tools/gen_pii_denylist.py).", file=sys.stderr)
         return 0
 
+    target_words = cp.load_target_words(root)
     hits = {}
     stdin_present, shas = read_prepush_stdin()
     if shas:
         # Scan what is actually being pushed: the committed blobs at each sha.
         for sha in shas:
             for rel, content in public_blobs_at(root, sha):
-                found = cp.find_pii(content, tokens)
+                found = cp.find_pii(content, tokens) + cp.find_target_words(content, target_words)
                 if found:
                     hits[rel] = sorted(set(hits.get(rel, []) + found))
     elif stdin_present:
@@ -125,7 +126,7 @@ def main() -> int:
                 content = (root / rel).read_text(encoding="utf-8", errors="replace")
             except Exception:
                 continue
-            found = cp.find_pii(content, tokens)
+            found = cp.find_pii(content, tokens) + cp.find_target_words(content, target_words)
             if found:
                 hits[rel] = sorted(set(found))
 

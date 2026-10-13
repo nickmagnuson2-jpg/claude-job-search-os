@@ -253,3 +253,274 @@ def test_page_height_falls_back_when_unmeasurable(monkeypatch, tmp_path):
     monkeypatch.setattr(rr.subprocess, "run",
                         lambda *a, **k: types.SimpleNamespace(stdout="<body>", returncode=0))
     assert rr.page_height(light, fallback=1234) == 1234
+
+
+# --- evidence scope header + "outside reviewer scope?" labels -------------------------------
+# A reviewer's "unsupported" means "not in the evidence I was shown". The jail denies data/ and
+# coaching/, so a true career claim sourced there is flagged on every prep doc. The report has
+# to say what the reviewer could read, and flag the findings that a withheld file may answer.
+
+def _scope_repo(tmp_path):
+    repo = tmp_path / "repo"
+    (repo / "data" / "projects").mkdir(parents=True)
+    (repo / "coaching" / "coached-answers").mkdir(parents=True)
+    (repo / "output" / "analysis" / "in").mkdir(parents=True)
+    (repo / "data" / "projects" / "acme.md").write_text(
+        "# Acme Widgets\n\n- Rebuilt the warehouse routing model and cut forklift idle hours"
+        " by 37% across eleven depots.\n- Ran a pricing pilot.\n", encoding="utf-8")
+    (repo / "coaching" / "coached-answers" / "story.md").write_text(
+        "I interviewed the dispatch supervisors and wrote the onboarding curriculum from"
+        " their own shift notes.\n", encoding="utf-8")
+    (repo / "output" / "analysis" / "in" / "page-text.md").write_text(
+        "# Page\n\nAt Acme he rebuilt the warehouse routing model, cutting forklift idle"
+        " hours by 37%.\nThe market for widgets doubled last decade.\n", encoding="utf-8")
+    return repo
+
+
+def test_scope_states_what_the_reviewer_could_and_could_not_read():
+    s = rr.evidence_scope("codex", "in/page-text.md", "research", ["research/a.md"],
+                          ["in/page-1.png", "in/page-2.png"])
+    h = rr.scope_header(s)
+    assert "in/page-text.md" in h and "research/a.md" in h
+    assert "--source-dir: research" in h
+    assert "Page images sent: 2" in h
+    for tree in rr.codex_verify.PRIVATE_TREES:
+        assert f"{tree}/" in h
+    assert "data/projects" in h and "coaching/coached-answers" in h
+    assert "not in the evidence" in h
+
+
+def test_scope_says_so_when_no_source_dir_and_when_the_model_is_text_only():
+    s = rr.evidence_scope("grok", "in/page-text.md", "", [], ["in/page-1.png"])
+    h = rr.scope_header(s)
+    assert "--source-dir: NOT GIVEN" in h
+    assert "Page images sent: 0 (grok is text-only; 1 rendered, withheld)" in h
+    s2 = rr.evidence_scope("codex", "in/page-text.md", "", [], [])
+    assert "Page images sent: 0 (none rendered)" in rr.scope_header(s2)
+
+
+def test_header_never_contains_the_findings_marker():
+    s = rr.evidence_scope("codex", "p.md", "", [], [])
+    labels = [{"id": "F1", "label": rr.OUTSIDE_LABEL, "evidence": "data/projects/acme.md:3",
+               "shared": 5}]
+    assert rr.codex_verify.FINDINGS_MARKER not in rr.scope_header(s, labels)
+
+
+def test_unsupported_kind_is_recognized_and_other_kinds_are_not():
+    assert rr.is_unsupported_finding("The 37% figure is unsupported by the supplied sources.")
+    assert rr.is_unsupported_finding("No source backs the routing claim; it is UNVERIFIED.")
+    assert rr.is_unsupported_finding("The claim cannot be verified from the allowed evidence.")
+    assert not rr.is_unsupported_finding("The page contradicts itself about the agenda.")
+    assert not rr.is_unsupported_finding("The question invites gossip about the CEO.")
+
+
+def test_unsupported_finding_matching_a_withheld_file_is_labeled(tmp_path):
+    repo = _scope_repo(tmp_path)
+    findings = [
+        {"id": "F1", "location": "output/analysis/in/page-text.md:3",
+         "summary": "The warehouse routing and forklift idle hours figure is unsupported."},
+        {"id": "F2", "location": "output/analysis/in/page-text.md:4",
+         "summary": "The widget market doubling is unsupported by any supplied source."},
+        {"id": "F3", "location": "output/analysis/in/page-text.md:3",
+         "summary": "The warehouse routing forklift idle hours sentence is too long."},
+    ]
+    labels = rr.label_outside_scope(findings, repo)
+    assert [l["id"] for l in labels] == ["F1"]
+    assert labels[0]["label"] == "outside reviewer scope?"
+    assert labels[0]["evidence"] == "data/projects/acme.md:3"
+
+
+def test_coached_answers_are_searched_and_summary_alone_can_match(tmp_path):
+    repo = _scope_repo(tmp_path)
+    f = [{"id": "F9", "location": None,
+          "summary": "Unsupported: that he interviewed dispatch supervisors and wrote the"
+                     " onboarding curriculum from shift notes."}]
+    labels = rr.label_outside_scope(f, repo)
+    assert labels and labels[0]["evidence"] == "coaching/coached-answers/story.md:1"
+
+
+def test_a_file_the_reviewer_was_shown_does_not_trigger_the_label(tmp_path):
+    repo = _scope_repo(tmp_path)
+    f = [{"id": "F1", "location": None,
+          "summary": "The warehouse routing and forklift idle hours figure is unsupported."}]
+    assert rr.label_outside_scope(f, repo, shown=["data/projects/acme.md"]) == []
+
+
+def test_two_shared_words_are_not_enough(tmp_path):
+    repo = _scope_repo(tmp_path)
+    f = [{"id": "F1", "location": None,
+          "summary": "The warehouse pricing statement is unsupported."}]
+    assert rr.label_outside_scope(f, repo) == []
+
+
+def test_location_outside_the_repo_or_missing_file_is_ignored(tmp_path):
+    repo = _scope_repo(tmp_path)
+    f = [{"id": "F1", "location": "../../etc/passwd:1", "summary": "Unsupported superlative."},
+         {"id": "F2", "location": "output/analysis/in/nope.md:9", "summary": "Unsupported."},
+         {"id": "F3", "location": "output/analysis/in/page-text.md:999", "summary": "Unsupported."}]
+    assert rr.label_outside_scope(f, repo) == []
+
+
+REPORT = """# Review
+
+Prose with a bracket [x] in it.
+
+## FINDINGS (machine-readable)
+
+[
+  {"id": "F1", "severity": "P1", "location": "output/analysis/in/page-text.md:3",
+   "summary": "The warehouse routing and forklift idle hours figure is unsupported."},
+  {"id": "F2", "severity": "P2", "location": "output/analysis/in/page-text.md:4",
+   "summary": "The widget market doubling is unsupported."}
+]
+"""
+
+
+def test_annotate_report_prepends_scope_and_labels_and_keeps_findings_parseable(tmp_path):
+    repo = _scope_repo(tmp_path)
+    rep = repo / "output" / "analysis" / "r-reader-review.md"
+    rep.write_text(REPORT, encoding="utf-8")
+    scope = rr.evidence_scope("codex", "output/analysis/in/page-text.md", "", [], [])
+    labels = rr.annotate_report(rep, scope, repo)
+    text = rep.read_text(encoding="utf-8")
+    assert text.startswith(rr.SCOPE_BEGIN)
+    assert text.index("EVIDENCE SCOPE") < text.index("# Review")
+    assert "F1: outside reviewer scope? -> check data/projects/acme.md:3" in text
+    assert "F2: outside reviewer scope?" not in text
+    assert [l["id"] for l in labels] == ["F1"]
+    assert text.endswith(REPORT)
+    parsed = rr.codex_verify.parse_findings(rep)
+    assert [p["id"] for p in parsed] == ["F1", "F2"]
+
+
+def test_annotate_report_is_idempotent(tmp_path):
+    repo = _scope_repo(tmp_path)
+    rep = repo / "output" / "analysis" / "r-reader-review.md"
+    rep.write_text(REPORT, encoding="utf-8")
+    scope = rr.evidence_scope("codex", "output/analysis/in/page-text.md", "", [], [])
+    rr.annotate_report(rep, scope, repo)
+    once = rep.read_text(encoding="utf-8")
+    rr.annotate_report(rep, scope, repo)
+    assert rep.read_text(encoding="utf-8") == once
+    assert once.count(rr.SCOPE_BEGIN) == 1
+
+
+def test_annotate_report_says_when_nothing_was_labeled_and_skips_a_missing_report(tmp_path):
+    repo = _scope_repo(tmp_path)
+    rep = repo / "output" / "analysis" / "r-reader-review.md"
+    rep.write_text("# Review\n\n## FINDINGS (machine-readable)\n\n[]\n", encoding="utf-8")
+    scope = rr.evidence_scope("codex", "p.md", "", [], [])
+    assert rr.annotate_report(rep, scope, repo) == []
+    assert "No finding was auto-labeled" in rep.read_text(encoding="utf-8")
+    assert rr.annotate_report(repo / "absent.md", scope, repo) is None
+
+
+def test_dry_run_prints_the_scope_statement_per_model(monkeypatch, tmp_path, capsys):
+    repo, doc = _repo_with_doc(tmp_path, monkeypatch)
+    monkeypatch.setattr(rr, "run_one", lambda *a, **k: pytest.fail("dry run dispatched"))
+    rr.main([str(doc), "--reader", "r", "--purpose", "p", "--repo-root", str(repo),
+             "--source-dir", "research", "--slug", "demo", "--models", "codex,grok", "--dry-run"])
+    out = capsys.readouterr().out
+    assert out.count("EVIDENCE SCOPE") == 2
+    assert "--source-dir: research" in out and "research/a.md" in out
+    assert "Sandbox-denied" in out
+
+
+def test_a_real_run_annotates_each_report_and_returns_the_labels(monkeypatch, tmp_path, capsys):
+    repo, doc = _repo_with_doc(tmp_path, monkeypatch)
+    (repo / "data" / "projects").mkdir(parents=True)
+    (repo / "data" / "projects" / "acme.md").write_text(
+        "- Rebuilt the warehouse routing model and cut forklift idle hours by 37%.\n",
+        encoding="utf-8")
+
+    def fake(argv, r):
+        rep = Path(r) / argv[argv.index("--report") + 1]
+        rep.parent.mkdir(parents=True, exist_ok=True)
+        rep.write_text(REPORT, encoding="utf-8")
+        return {"rc": 0, "findings": 2, "report": str(rep), "stderr": ""}
+
+    monkeypatch.setattr(rr, "run_one", fake)
+    rc = rr.main([str(doc), "--reader", "r", "--purpose", "p", "--repo-root", str(repo),
+                  "--models", "codex", "--slug", "demo"])
+    printed = _json.loads(capsys.readouterr().out)
+    assert rc == 0
+    assert [l["id"] for l in printed["results"]["codex"]["outside_scope"]] == ["F1"]
+    rep = next((repo / "output" / "analysis").glob("*-codex-demo-reader-review.md"))
+    assert rep.read_text(encoding="utf-8").startswith(rr.SCOPE_BEGIN)
+
+
+def test_the_page_line_at_the_location_supplies_the_claim_text(tmp_path):
+    # The summary alone names nothing; only the page line it points at carries the claim.
+    repo = _scope_repo(tmp_path)
+    f = [{"id": "F1", "location": "output/analysis/in/page-text.md:3",
+          "summary": "This line is unsupported."}]
+    assert [l["evidence"] for l in rr.label_outside_scope(f, repo)] == ["data/projects/acme.md:3"]
+    f[0]["location"] = "output/analysis/in/page-text.md:4"
+    assert rr.label_outside_scope(f, repo) == []
+
+
+# --- mutation survivors killed 2026-10-12 --------------------------------------------------
+
+def test_claim_terms_keeps_content_words_and_figures_and_drops_the_rest():
+    text = "Revenue grew 37% across segments in 2024 with 5 pilots, $2m, 1,200. and 183 seats."
+    assert rr.claim_terms(text) == {"revenue", "segment", "pilot", "seats",
+                                    "37%", "$2m", "1200", "183"}
+
+
+def test_a_location_whose_line_part_is_not_a_number_is_ignored_not_raised(tmp_path):
+    repo = _scope_repo(tmp_path)
+    f = [{"id": "F1", "location": "output/analysis/in/page-text.md:L3",
+          "summary": "Unsupported superlative."}]
+    assert rr.label_outside_scope(f, repo) == []
+
+
+def test_withheld_lines_lists_only_lines_that_carry_a_term(tmp_path):
+    repo = _scope_repo(tmp_path)
+    got = [(rel, n) for rel, n, _ in rr.withheld_lines(repo)]
+    assert got == [("data/projects/acme.md", 1), ("data/projects/acme.md", 3),
+                   ("data/projects/acme.md", 4), ("coaching/coached-answers/story.md", 1)]
+
+
+def test_the_strongest_withheld_line_is_the_one_reported(tmp_path):
+    repo = _scope_repo(tmp_path)
+    (repo / "data" / "projects" / "acme.md").write_text(
+        "Rebuilt the warehouse routing model for forklift fleets.\n"
+        "Rebuilt the warehouse routing model and cut forklift idle hours at eleven depots.\n"
+        "Planned the warehouse routing model and forklift budget.\n", encoding="utf-8")
+    f = [{"id": "F1", "location": None,
+          "summary": "Unsupported: rebuilt the warehouse routing model, cutting forklift idle"
+                     " hours at eleven depots."}]
+    labels = rr.label_outside_scope(f, repo)
+    assert [l["evidence"] for l in labels] == ["data/projects/acme.md:2"]
+    assert labels[0]["shared"] > 4
+
+
+def test_withheld_files_are_read_once_for_a_whole_set_of_findings(tmp_path, monkeypatch):
+    repo = _scope_repo(tmp_path)
+    calls = []
+    real = rr.withheld_lines
+    monkeypatch.setattr(rr, "withheld_lines", lambda *a, **k: calls.append(1) or real(*a, **k))
+    f = [{"id": f"F{i}", "location": None,
+          "summary": "The warehouse routing and forklift idle hours figure is unsupported."}
+         for i in range(3)]
+    assert len(rr.label_outside_scope(f, repo)) == 3
+    assert len(calls) == 1
+
+
+def test_the_label_section_is_left_out_of_a_dry_run_and_explains_itself_otherwise():
+    s = rr.evidence_scope("codex", "p.md", "", [], [])
+    assert "auto-labeled" not in rr.scope_header(s)
+    assert "No finding was auto-labeled" in rr.scope_header(s, [])
+    labeled = rr.scope_header(s, [{"id": "F1", "label": rr.OUTSIDE_LABEL,
+                                   "evidence": "data/projects/acme.md:3", "shared": 5}])
+    assert "F1: outside reviewer scope? -> check data/projects/acme.md:3" in labeled
+    assert "Open the line before rejecting the finding" in labeled
+    assert "No finding was auto-labeled" not in labeled
+
+
+def test_dry_run_separates_each_scope_block_with_a_blank_line(monkeypatch, tmp_path, capsys):
+    repo, doc = _repo_with_doc(tmp_path, monkeypatch)
+    rr.main([str(doc), "--reader", "r", "--purpose", "p", "--repo-root", str(repo),
+             "--slug", "demo", "--models", "codex,grok", "--dry-run"])
+    out = capsys.readouterr().out
+    assert out.count("\n\n" + rr.SCOPE_BEGIN) == 2

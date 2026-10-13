@@ -245,3 +245,261 @@ def test_main_reports_the_session_count_when_writing_out(tmp_path, capsys):
     dest = tmp_path / "m.json"
     assert cm.main(["--repo-root", str(tmp_path), "--out", str(dest)]) == 0
     assert "5 scored sessions" in capsys.readouterr().out
+
+
+# --- ledger mode: coaching/hypotheses.md test logs ---
+#
+# Every fixture below is invented. The defect these guard is a classifier that
+# searches the whole row for a word that belongs to one column.
+
+H_A = "| Date | Call | Format | Drill state | Pred | Obs | Verdict | Note |"
+H_B = "| Date | Call | Format | Pred | Obs | Verdict | Note |"
+
+
+def ledger_doc(*sections):
+    """sections: (heading, header, [rows]). Returns (content, {row_text: 1-based line})."""
+    lines = ["# Registry", ""]
+    for heading, header, rows in sections:
+        lines += [heading, "", "### Test log (append-only)", header,
+                  "|" + "---|" * (header.count("|") - 1), *rows, ""]
+    return "\n".join(lines) + "\n", {l: i for i, l in enumerate(lines, 1)}
+
+
+def only(content, hyp="H9"):
+    return cm.compute_ledger(content)["hypotheses"][hyp]
+
+
+def test_ledger_real_row_whose_drill_state_cell_says_drill_is_real():
+    """The fire-3 row: the Drill state column records that a drill preceded a REAL
+    call. A whole-row match on 'drill' files it as a drill."""
+    r = ("| 2026-01-05 | Acme / Jane Doe | unstructured-chat (recruiter) "
+         "| drill RAN 20 min before | low | low | **Support** | the drill helped |")
+    content, _ = ledger_doc(("## H9: Invented", H_A, [r]))
+    assert "drill" in r.lower()
+    h = only(content)
+    assert h["real"]["n"] == 1 and h["drill"]["n"] == 0
+
+
+def test_ledger_drill_is_read_from_the_format_cell():
+    rows = [
+        "| 2026-01-05 | Acme sim | drill | controlled | low | low | Support | x |",
+        "| 2026-01-06 | Acme sim 2 | technical-deep-dive drill | n/a | low | low | Support | x |",
+        "| 2026-01-07 | Acme sim 3 | drill (voice, degraded) | n/a | low | low | Refute | x |",
+        "| 2026-01-08 | Globex / Sam Roe | peer-screen | skipped | hi | hi | Support | x |",
+    ]
+    h = only(ledger_doc(("## H9: Invented", H_A, rows))[0])
+    assert h["drill"]["n"] == 3 and h["real"]["n"] == 1
+    assert h["drill"]["verdicts"] == {"Support": 2, "Refute": 1}
+
+
+def test_ledger_call_cell_mentioning_drill_does_not_make_the_row_a_drill():
+    r = ("| 2026-01-05 | Acme / Jane Doe (post-drill, real screen) | peer-screen "
+         "| skipped | hi | hi | Support | x |")
+    h = only(ledger_doc(("## H9: Invented", H_A, [r]))[0])
+    assert h["real"]["n"] == 1 and h["drill"]["n"] == 0
+
+
+def test_ledger_drill_inside_a_format_parenthetical_is_a_qualifier_not_the_format():
+    r = ("| 2026-01-05 | Acme / Jane Doe | unstructured-chat (drill ran that morning) "
+         "| ran | hi | hi | Support | x |")
+    h = only(ledger_doc(("## H9: Invented", H_A, [r]))[0])
+    assert h["real"]["n"] == 1 and h["drill"]["n"] == 0
+
+
+def test_ledger_verdict_comes_from_the_verdict_column_not_the_note():
+    """The second fire-3 defect: a right-to-left or whole-row scan finds the Note's
+    verdict word first and flips the tally."""
+    rows = [
+        "| 2026-01-05 | Acme / Jane Doe | peer-screen | hi | hi | **Support** "
+        "| would be a Refute if the timing differed |",
+        "| 2026-01-06 | Globex / Sam Roe | peer-screen | hi | lo | **Refute (mechanism)** "
+        "| earlier rows were Support |",
+        "| 2026-01-07 | Initech / Lee Poe | peer-screen | hi | lo "
+        "| **Inconclusive (leans Refute)** | not Support |",
+    ]
+    h = only(ledger_doc(("## H9: Invented", H_B, rows))[0])
+    assert h["real"]["verdicts"] == {"Support": 1, "Refute": 1, "Inconclusive": 1}
+
+
+def test_ledger_verdict_is_the_leading_label_of_its_cell():
+    """'Soft-miss (not clean Support)' is not a Support; 'Not tested' is not a verdict."""
+    rows = [
+        "| 2026-01-05 | Acme / Jane Doe | peer-screen | hi | hi "
+        "| **Soft-miss (not clean Support)** | x |",
+        "| 2026-01-06 | Acme sim | drill | n/a | n/a | **Not tested — logged** | x |",
+    ]
+    out = cm.compute_ledger(ledger_doc(("## H9: Invented", H_B, rows))[0])
+    h = out["hypotheses"]["H9"]
+    assert h["real"]["verdicts"] == {"Other": 1}
+    assert h["drill"]["verdicts"] == {"Other": 1}
+    assert sorted(o["label"] for o in out["other_verdicts"]) == ["Not tested", "Soft-miss"]
+
+
+def test_ledger_narrow_row_reads_verdict_from_the_right_and_format_from_the_left():
+    """One cell short (Pred and Obs merged). Verdict sits one index left of where the
+    header puts it; Format has not moved."""
+    r = "| 2026-01-05 | Acme sim | drill | controlled | low, as predicted | Refute | Support was expected |"
+    content, at = ledger_doc(("## H9: Invented", H_A, [r]))
+    out = cm.compute_ledger(content)
+    h = out["hypotheses"]["H9"]
+    assert h["drill"] == {"n": 1, "verdicts": {"Refute": 1}}
+    assert out["malformed_rows"] == [
+        {"line": at[r], "hypothesis": "H9", "cells": 7, "header_cells": 8}]
+
+
+def test_ledger_narrow_row_missing_its_format_cell_is_unclassified_not_guessed():
+    """The Format cell itself is the missing one, so index 2 holds the Drill state
+    text. Reading it by index would file a real call as a drill."""
+    r = ("| 2026-01-05 | Acme onsite | evening-before drill ran, reset unconfirmed "
+         "| elevated | dim2 = 3 | **Inconclusive** | x |")
+    content, at = ledger_doc(("## H9: Invented", H_A, [r]))
+    out = cm.compute_ledger(content)
+    h = out["hypotheses"]["H9"]
+    assert h["drill"]["n"] == 0 and h["real"]["n"] == 0
+    assert h["unclassified"] == {"n": 1, "verdicts": {"Inconclusive": 1}}
+    assert [u["line"] for u in out["unclassified_rows"]] == [at[r]]
+
+
+def test_ledger_narrow_row_with_a_qualified_drill_format_is_still_a_drill():
+    r = ("| 2026-01-05 | Acme sim | **CONTROLLED: drill (self-monitored) + one topic** "
+         "| n/a | LOW | **Support (controlled)** | not a real call |")
+    h = only(ledger_doc(("## H9: Invented", H_A, [r]))[0])
+    assert h["drill"] == {"n": 1, "verdicts": {"Support": 1}}
+
+
+def test_ledger_narrow_row_whose_verdict_slot_holds_no_verdict_is_unparsed():
+    """Missing the trailing Note: right-alignment lands on Obs. Report, never search."""
+    r = "| 2026-01-05 | Acme / Jane Doe | peer-screen | skipped | hi | Support seemed likely | Refute |"
+    content, at = ledger_doc(("## H9: Invented", H_A, [r]))
+    out = cm.compute_ledger(content)
+    assert out["hypotheses"]["H9"]["real"]["verdicts"] == {"Unparsed": 1}
+    assert [u["line"] for u in out["unparsed_verdicts"]] == [at[r]]
+
+
+def test_ledger_corrective_rows_are_not_counted_as_tests():
+    rows = [
+        "| 2026-01-05 | Acme / Jane Doe | peer-screen | ran | lo | lo | **Support** | x |",
+        "| 2026-01-05 | **CORRECTIVE ROW to the entry above** | peer-screen | same | same "
+        "| lo | **Support (downgraded)** | x |",
+        "| 2026-01-05 | **SECOND CORRECTIVE ROW (append-only)** | peer-screen | same | same "
+        "| lo | **Support (unchanged)** | x |",
+    ]
+    h = only(ledger_doc(("## H9: Invented", H_A, rows))[0])
+    assert h["rows"] == 3
+    assert h["real"] == {"n": 1, "verdicts": {"Support": 1}}
+    assert h["corrective"]["n"] == 2
+
+
+def test_ledger_keeps_hypotheses_apart_and_reads_each_tables_own_header():
+    """Verdict is index 6 under H_A and index 5 under H_B. One fixed index misreads one."""
+    a = ["| 2026-01-05 | Acme / Jane Doe | peer-screen | ran | Support | lo | Refute | x |"]
+    b = ["| 2026-01-06 | Globex / Sam Roe | drill | hi | hi | Support | x |",
+         "| 2026-01-07 | Globex / Sam Roe | peer-screen | hi | hi | Inconclusive | x |"]
+    out = cm.compute_ledger(ledger_doc(("## H8a: First", H_A, a), ("## H9: Second", H_B, b))[0])
+    assert out["hypotheses"]["H8a"]["real"] == {"n": 1, "verdicts": {"Refute": 1}}
+    assert out["hypotheses"]["H9"]["drill"] == {"n": 1, "verdicts": {"Support": 1}}
+    assert out["hypotheses"]["H9"]["real"] == {"n": 1, "verdicts": {"Inconclusive": 1}}
+    assert out["totals"] == {"rows": 3, "real": 2, "drill": 1, "corrective": 0,
+                             "unclassified": 0}
+
+
+def test_ledger_ignores_tables_outside_a_hypothesis_or_without_the_named_columns():
+    content, _ = ledger_doc(("## H9: Invented", H_B, [
+        "| 2026-01-05 | Acme / Jane Doe | peer-screen | hi | hi | Support | x |"]))
+    content += ("\n## Backlog\n\n| Date | Call | Format | Pred | Obs | Verdict | Note |\n"
+                "|---|---|---|---|---|---|---|\n"
+                "| 2026-01-09 | Acme | drill | a | b | Refute | c |\n"
+                "\n## H7: No verdict column\n\n| Date | Call | Format | Note |\n|---|---|---|---|\n"
+                "| 2026-01-09 | Acme | drill | Refute |\n")
+    out = cm.compute_ledger(content)
+    assert list(out["hypotheses"]) == ["H9"]
+    assert out["totals"]["rows"] == 1
+    assert [t["hypothesis"] for t in out["tables_missing_columns"]] == ["H7"]
+
+
+def test_ledger_line_numbers_are_one_based_file_lines():
+    r = ("| 2026-01-05 | Acme onsite | some prep text | elevated | 3 | Inconclusive | x |")
+    content, at = ledger_doc(("## H9: Invented", H_A, [r]))
+    line = cm.compute_ledger(content)["unclassified_rows"][0]["line"]
+    assert content.splitlines()[line - 1] == r and line == at[r]
+
+
+def test_main_ledger_prints_the_ledger_json(tmp_path, capsys):
+    (tmp_path / "coaching").mkdir()
+    content, _ = ledger_doc(("## H9: Invented", H_B, [
+        "| 2026-01-05 | Acme / Jane Doe | peer-screen | hi | hi | Support | x |"]))
+    (tmp_path / "coaching" / "hypotheses.md").write_text(content, encoding="utf-8")
+    assert cm.main(["--repo-root", str(tmp_path), "--ledger"]) == 0
+    parsed = json.loads(capsys.readouterr().out)
+    assert parsed["hypotheses"]["H9"]["real"] == {"n": 1, "verdicts": {"Support": 1}}
+
+
+def test_main_ledger_refuses_when_no_test_log_table_is_found(tmp_path, capsys):
+    """An empty parse must not read as 'no hypotheses tested'."""
+    (tmp_path / "coaching").mkdir()
+    (tmp_path / "coaching" / "hypotheses.md").write_text("# Registry\n\n## H9: x\n",
+                                                        encoding="utf-8")
+    assert cm.main(["--repo-root", str(tmp_path), "--ledger"]) == 2
+    assert "REFUSED" in capsys.readouterr().err
+
+
+def test_main_ledger_errors_when_the_registry_is_missing(tmp_path, capsys):
+    assert cm.main(["--repo-root", str(tmp_path), "--ledger"]) == 1
+    assert "hypotheses.md" in capsys.readouterr().err
+
+
+def test_live_hypotheses_ledger_accounts_for_every_row():
+    """Real-file shape guard: every row lands in exactly one bucket, per hypothesis."""
+    src = REPO / "coaching" / "hypotheses.md"
+    if not src.exists():
+        pytest.skip("live registry not present")
+    out = cm.compute_ledger(src.read_text(encoding="utf-8"))
+    assert out["totals"]["rows"] >= 50
+    for h in out["hypotheses"].values():
+        assert h["rows"] == sum(h[k]["n"] for k in cm.LEDGER_KINDS)
+        for k in cm.LEDGER_KINDS:
+            assert h[k]["n"] == sum(h[k]["verdicts"].values())
+
+
+# --- mutation survivors killed 2026-10-12 --------------------------------------------------
+
+def test_ledger_well_formed_rows_are_not_reported_as_malformed():
+    rows = ["| 2026-01-05 | Acme / Jane Doe | peer-screen | hi | hi | Support | x |"]
+    out = cm.compute_ledger(ledger_doc(("## H9: Invented", H_B, rows))[0])
+    assert out["malformed_rows"] == []
+
+
+def test_ledger_narrow_row_with_a_known_other_label_is_counted_as_other():
+    r = "| 2026-01-05 | Acme / Jane Doe | peer-screen | hi | hi | Soft-miss | x |"
+    content, at = ledger_doc(("## H9: Invented", H_A, [r]))
+    out = cm.compute_ledger(content)
+    assert out["hypotheses"]["H9"]["real"]["verdicts"] == {"Other": 1}
+    assert out["other_verdicts"] == [{"line": at[r], "hypothesis": "H9", "label": "Soft-miss"}]
+    assert out["unparsed_verdicts"] == []
+
+
+def test_ledger_prose_line_above_a_rule_is_not_reported_as_a_table(tmp_path):
+    content = ("# Registry\n\n## H9: Invented\n\nA sentence, then a rule made of pipes.\n"
+               "|---|---|\n")
+    assert cm.compute_ledger(content)["tables_missing_columns"] == []
+
+
+def test_dimension_trend_skips_rows_with_no_score_for_that_dimension():
+    """Guards `r["scores"][name] is not None`: inverting it drops every real score."""
+    rows = [row(f"2026-05-0{i}", d1="4") for i in range(1, 5)]
+    rows.append(row("2026-05-05", d1="n/a"))
+    t = cm.compute(doc(*rows))["trends"]["format_resilience"]
+    assert t is not None
+    assert t["n"] == 4 and t["late"] == 4.0
+
+
+def test_main_ledger_writes_the_out_file_and_says_how_many_rows(tmp_path, capsys):
+    (tmp_path / "coaching").mkdir()
+    content, _ = ledger_doc(("## H9: Invented", H_B, [
+        "| 2026-01-05 | Acme / Jane Doe | peer-screen | hi | hi | Support | x |"]))
+    (tmp_path / "coaching" / "hypotheses.md").write_text(content, encoding="utf-8")
+    out = tmp_path / "ledger.json"
+    assert cm.main(["--repo-root", str(tmp_path), "--ledger", "--out", str(out)]) == 0
+    assert json.loads(out.read_text(encoding="utf-8"))["totals"]["rows"] == 1
+    said = capsys.readouterr().out
+    assert str(out) in said and "1 test-log rows" in said

@@ -192,7 +192,7 @@ class Model:
     Admission rule: a family must differ from the INCUMBENT verifier and from the
     AUTHOR of the work. The author here is Claude, so `anthropic` is inadmissible --
     using Claude to verify Claude is the anchoring failure this gate exists to defeat,
-    dressed as a second opinion. Remaining admissible families on the Cursor
+    dressed as a second opinion. Remaining admissible families on the cursor-agent
     subscription: google (gemini), moonshot (kimi), zhipu (glm).
 
     Check the `NO ZDR` tag in `cursor-agent --list-models` before adding one; retention
