@@ -24,6 +24,7 @@ Triggered by .claude/settings.json PreToolUse hooks on Write|Edit AND on Bash
 (Bash added 2026-08-18; see the write-target extractor below).
 NOT wired on MultiEdit or NotebookEdit — those write paths are ungated.
 """
+import glob
 import json
 import os
 import re
@@ -113,7 +114,16 @@ _COMPOUND_PREFIX = frozenset({"then", "do", "else", "elif", "!", "{", "if", "whi
 
 
 def split_command_segments(command: str) -> list[str]:
-    """Split a shell command into independently-evaluated segments.
+    """Split a shell command into independently-evaluated segments. See
+    segments_with_separators, which does the work and also reports the separators."""
+    return [text for text, _ in segments_with_separators(command)]
+
+
+def segments_with_separators(command: str) -> list[tuple[str, frozenset[str]]]:
+    """Segments of a shell command, each with the separators that precede it.
+
+    The separators are what tell an unconditional `cd d; cmd` from a conditional
+    `a && cd d; cmd` (see apply_cd).
 
     WHY: the first live smoke of the Bash branch (2026-08-18) FALSE-POSITIVED on a
     single compound call that wrote clean content to docs/ in step 1 and a
@@ -140,7 +150,7 @@ def split_command_segments(command: str) -> list[str]:
     from its public target, so the write was allowed. Separators are control-operator
     TOKENS, so nothing inside quotes, `$(...)`, backticks or a heredoc body can split.
     """
-    segs: list[str] = []
+    segs: list[tuple[str, str]] = []     # (text, the separator that follows it)
     seg_start = 0
     depth = 0          # nesting of { } and ( ) groups
     compound = 0       # nesting of if/fi, do/done, case/esac
@@ -191,10 +201,20 @@ def split_command_segments(command: str) -> list[str]:
         # comes after the `;`. Splitting there would judge it against g, not f.
         elif (t.kind == "op" and t.text in _SEGMENT_SEPARATORS and depth == 0
               and compound == 0 and awaiting == 0):
-            segs.append(command[seg_start:t.start])
+            segs.append((command[seg_start:t.start], t.text))
             seg_start = t.end
-    segs.append(command[seg_start:])
-    return [x for x in segs if x.strip()]
+    segs.append((command[seg_start:], ""))
+    # Each kept segment carries every separator since the previous kept one, so in
+    # `a &&\n cd x` the cd is still seen as conditional on `a`.
+    out: list[tuple[str, frozenset[str]]] = []
+    before: set[str] = set()
+    for text, sep_after in segs:
+        if text.strip():
+            out.append((text, frozenset(before)))
+            before = set()
+        if sep_after:
+            before.add(sep_after)
+    return out
 
 
 _SED_SUBST_RE = re.compile(r"s([/|#,@])((?:\\.|(?!\1).)*)\1((?:\\.|(?!\1).)*)\1([gipw0-9]*)")
@@ -1246,36 +1266,351 @@ def scan_paths(paths: list[str], accepted=frozenset()) -> int:
     return 3 if result["ambiguous_unresolved"] else 0
 
 
+# --- `cd` inside a Bash command ----------------------------------------------
+# WHY THIS EXISTS: a relative write target was resolved against the session cwd even
+# when the command began `cd some/dir && ...`. Two wrong answers followed. A write to a
+# gitignored folder was read as a root-level public file and blocked (4 logged fires,
+# 2026-08-20 to 2026-10-13, the last on `cd output/... && for f in ...; do ... >
+# sub/$f.json; done`). And `cd tools && echo NAME > data/x.py` was read as the private
+# `data/x.py` and ALLOWED while bash wrote the public `tools/data/x.py`.
+#
+# The rule is fail-closed. A `cd` moves the tracked cwd EXCLUSIVELY only when all hold:
+#   - it is a whole top-level segment `cd DIR` (options -L and -P allowed), literal DIR;
+#   - it is reached unconditionally (first, or after `;` / newline only);
+#   - DIR exists and is searchable, so the cd cannot fail;
+#   - nothing else in the command can change a working directory (see _CWD_CHANGERS).
+# When a pure cd fails any other condition, the old directory stays a candidate
+# alongside the new one, and a target that is public from ANY candidate is judged. A cd
+# that is not pure (a variable operand, a subshell, an unknown option) adds no candidate:
+# the directories already held stay, so the hook is no weaker there than before cd
+# tracking existed. Nothing that was blocked before is allowed now unless the command
+# can only have written somewhere else.
+
+# Any other way a cwd can change, anywhere in the raw text (nested `bash -c` strings and
+# heredoc scripts included): another cd/pushd/popd, code the hook cannot read (eval,
+# source, `.`), and tool flags that run a child elsewhere (`env -C`, `tee` under
+# `sudo -D`, `--chdir`). One match more than the pure top-level cds found ends exclusive
+# tracking for the whole command.
+_CWD_CHANGERS = re.compile(
+    r"(?<![\w./-])(?:cd|pushd|popd|eval|source)(?![\w./-])"
+    r"|(?:^|[;&|({'\"`\n]\s*|\b(?:then|do|else)\s+)\.\s"
+    r"|(?<!\S)(?:-C|-D|--chdir|--directory|--cwd)(?![\w-])")
+_CD_OPERAND_UNSAFE = re.compile(r"[$`*?\[\]{}~\\]")
+
+
+_CD_OPTION = re.compile(r"-[LP]+")
+
+
+def pure_cd_operand(segment: str) -> str | None:
+    """DIR when the segment is exactly `cd [-L|-P]... [--] DIR` with a literal DIR.
+
+    Every token must be a plain word: a trailing `&` (background subshell), a pipe, a
+    redirect or a group paren means the cd does not move the shell that runs the next
+    segment. The options move bash exactly as a plain `cd DIR` does (`-P` changes how
+    `..` reads, and apply_cd keeps both readings anyway); before they were accepted,
+    `cd -P tools; echo NAME > data/x.py` was not tracked at all (Codex review,
+    2026-10-13). Any other option returns None: `-e` and `-@` are rejected by macOS
+    bash 3.2 and zsh, so the cd fails and the shell stays where it was (tested
+    2026-10-13; accepting them briefly made `cd -e output; echo NAME > notes.md` pass).
+    Known gaps, no worse than before tracking existed: `cd -- -P` (a directory named
+    like an option) and `cd -` are not tracked.
+    """
+    operand = cd_operand_text(segment)
+    # `+N` is zsh's directory stack, not a folder named `+N` (Codex review, 2026-10-13).
+    if not operand or operand[0] in "-+" or _CD_OPERAND_UNSAFE.search(operand):
+        return None
+    return operand
+
+
+def cd_operand_text(segment: str) -> str | None:
+    """The operand of a `cd [-L|-P]... [--] WORD` segment as written, `$dir` unexpanded.
+
+    None for any other shape. pure_cd_operand narrows this to a literal directory; the
+    Bash branch also expands a variable operand the command assigns (see main).
+    """
+    parts = cd_parts(segment)
+    return parts[1] if parts else None
+
+
+def cd_parts(segment: str) -> tuple[list[str], str] | None:
+    """(options, operand) of a `cd [-L|-P]... [--] WORD` segment, else None."""
+    toks = tokenize(segment)
+    if not toks or any(t.kind != "word" or t.subs for t in toks):
+        return None
+    if toks[0].text != "cd" or toks[0].quoted:
+        return None
+    rest = [t.text for t in toks[1:]]
+    opts = []
+    while rest and _CD_OPTION.fullmatch(rest[0]):
+        opts.append(rest.pop(0))
+    if rest[:1] == ["--"]:
+        rest = rest[1:]
+    if len(rest) != 1:
+        return None
+    return opts, rest[0]
+
+
+# Shell startup state the hook cannot see in the command: a search path (`cdpath` in
+# zsh, CDPATH in bash), a `cd` alias or function, or a chpwd hook sends `cd sub`
+# somewhere else. zsh with `cdpath=(tools .)` runs `cd sub` into tools/sub even when sub/
+# exists (Codex review, 2026-10-13). Claude Code runs each Bash call as
+# `zsh -c 'source <snapshot> ... && eval <command>'`, a non-login, non-interactive shell,
+# so the state is the snapshot plus the zshenv files zsh always reads.
+#
+# The hook ASKS the shell rather than reading those files as text. Two rounds of
+# pattern-matching lost to spellings the shell accepts (`alias c'd'=z`,
+# `builtin . file`) and fired on text that changes nothing (`# source ...`), which
+# restored the very false block tracking removes (Codex review, 2026-10-13). No answer
+# means unknown, which ends exact tracking: the old directory stays a candidate, as before tracking existed.
+#
+# Fidelity (Codex review, 2026-10-13, three rounds): the probe command has the shape
+# Claude Code runs, `<zsh> -c 'source <snapshot> ...'` with the path written into the
+# command text and no positional parameters ($# and $1 are visible to startup code); zsh
+# reads /etc/zshenv and $ZDOTDIR/.zshenv itself, in its own order; the shell is named by
+# absolute path, and when $SHELL names a different one than /bin/<shell> both are asked.
+# There is NO cache: startup code can branch on the inherited environment, so no key
+# short of rerunning it says the answer still holds. The cost is one probe per Bash call
+# that contains a pure cd (see cwd_tracking_is_exact), about 30 ms.
+# After the three questions the probe runs the COMMAND'S OWN cds, from each directory
+# the session can start in, and reports where each landed (see _cd_trial). That catches
+# what the questions miss: a restricted shell (`setopt restricted`, `set -r`) answers
+# them clean while every cd fails, and startup code can branch on the directory it
+# starts in (`[[ $PWD == */repo ]] && cdpath=(tools .)`), so a trial from any other
+# directory proves nothing (Codex review, 2026-10-13, two rounds).
+_ZSH_QUERY = (
+    'builtin print -r -- "W=$(builtin whence -w cd)"\n'
+    'builtin print -r -- "P=${(j: :)cdpath}:${CDPATH-}"\n'
+    'builtin print -r -- "H=${+functions[chpwd]}:${(j: :)chpwd_functions}"\n')
+_ZSH_LANDED = 'builtin print -r -- "X=$(builtin pwd -P)"\n'
+_ZSH_CLEAN = "W=cd: builtin\nP=:\nH=0:"
+# bash reads $BASH_ENV by itself. expand_aliases is on so a `cd` alias counts whether
+# or not the snapshot enables it.
+_BASH_QUERY = ('builtin echo "W=$(builtin type -t cd)"\n'
+               'builtin echo "P=${CDPATH-}"\n')
+_BASH_LANDED = 'builtin echo "X=$(builtin pwd -P)"\n'
+_BASH_CLEAN = "W=builtin\nP="
+_SHELL_PROBE_TIMEOUT_S = 5
+
+
+def _sh_quote(text: str) -> str:
+    """`text` as one single-quoted word for zsh and bash."""
+    return "'" + text.replace("'", "'\\''") + "'"
+
+
+def _shell_paths(name: str) -> list[str]:
+    """Every absolute path the shell could be run from: /bin/<name>, plus $SHELL when
+    it is that shell somewhere else. Never a PATH lookup, which another `zsh` could
+    answer."""
+    paths = [f"/bin/{name}"]
+    sh = os.environ.get("SHELL", "")
+    if os.path.isabs(sh) and os.path.basename(sh) == name and sh not in paths:
+        paths.append(sh)
+    return paths
+
+
+def _shell_state_parts() -> tuple[str, list[str], list[str], list[str]]:
+    """(home, snapshots, zshenv files, BASH_ENV files) for the shell a Bash call runs in.
+
+    PII_SHELL_STATE_HOME stands in for $HOME so tests never read the tester's own
+    config. zsh itself decides which zshenv it reads; the list says whether a zsh with
+    no snapshot is worth asking at all.
+    """
+    fake = os.environ.get("PII_SHELL_STATE_HOME")
+    home = fake or os.path.expanduser("~")
+    snaps = sorted(glob.glob(os.path.join(home, ".claude", "shell-snapshots", "*.sh")))
+    zdot = os.environ.get("ZDOTDIR") or home
+    zshenv = ["/etc/zshenv", os.path.join(zdot, ".zshenv")]
+    bash_env = [os.environ["BASH_ENV"]] if os.environ.get("BASH_ENV") else []
+    return home, snaps, zshenv, bash_env
+
+
+def shell_state_files() -> list[str]:
+    """Every file whose contents shape the shell a Bash call runs in."""
+    _, snaps, zshenv, bash_env = _shell_state_parts()
+    return snaps + zshenv + bash_env
+
+
+def _cd_trial(cd_segments: list[str], landed: str) -> str:
+    """Shell lines that run the command's own pure cds, each followed by `landed`."""
+    lines = []
+    for seg in cd_segments:
+        opts, operand = cd_parts(seg)
+        lines.append(" ".join(["cd", *opts, "--", _sh_quote(operand)]) + " >/dev/null 2>&1\n")
+        lines.append(landed)
+    return "".join(lines)
+
+
+def _shell_probes(cd_segments: list[str]) -> list[tuple[list[str], str, dict[str, str]]]:
+    """(argv, the answer a shell that leaves cd alone gives before its X= lines, env)
+    per shell to ask. Each runs `cd_segments` after the questions."""
+    home, snaps, zshenv, _ = _shell_state_parts()
+    env = {**os.environ, "HOME": home}
+    zsh_snaps = [f for f in snaps if os.path.basename(f).startswith("snapshot-zsh")]
+    probes = []
+    if zsh_snaps or any(os.path.exists(f) for f in zshenv):
+        trial = _ZSH_QUERY + _cd_trial(cd_segments, _ZSH_LANDED)
+        for snap in zsh_snaps or [""]:
+            load = f"source {_sh_quote(snap)} >/dev/null 2>&1 || true\n" if snap else ""
+            for zsh in _shell_paths("zsh"):
+                probes.append(([zsh, "-c", load + trial], _ZSH_CLEAN, env))
+    trial = _BASH_QUERY + _cd_trial(cd_segments, _BASH_LANDED)
+    for snap in snaps:
+        if snap not in zsh_snaps:
+            load = ("shopt -s expand_aliases\n"
+                    f"source {_sh_quote(snap)} >/dev/null 2>&1 || true\n")
+            for bash in _shell_paths("bash"):
+                probes.append(([bash, "--norc", "--noprofile", "-c", load + trial],
+                               _BASH_CLEAN, env))
+    return probes
+
+
+def _expected_landings(start: str, cd_segments: list[str]) -> list[set[str]]:
+    """For each cd in turn, the physical directories the model says it can land in:
+    the typed and the on-disk reading of every directory the previous cd could reach
+    (the same two readings apply_cd keeps)."""
+    cur, out = [start], []
+    for seg in cd_segments:
+        _, operand = cd_parts(seg)
+        nxt = []
+        for c in cur:
+            joined = operand if os.path.isabs(operand) else os.path.join(c, operand)
+            nxt += [os.path.normpath(joined), os.path.realpath(joined)]
+        cur = list(dict.fromkeys(nxt))
+        out.append({os.path.realpath(d) for d in cur})
+    return out
+
+
+def shell_may_redirect_cd(starts: list[str], cd_segments: list[str]) -> bool:
+    """True unless every shell a Bash call can run in, started in every directory the
+    session can be in, answers the questions clean and lands each of the command's
+    cds where the model expects.
+
+    A shell that fails to answer is unknown, and unknown is True.
+    """
+    probes = _shell_probes(cd_segments)
+    if not probes:
+        return False
+    try:
+        for start in starts:
+            expected = _expected_landings(start, cd_segments)
+            for argv, clean, env in probes:
+                r = subprocess.run(argv, capture_output=True, text=True,
+                                   env={**env, "PWD": start}, cwd=start,
+                                   stdin=subprocess.DEVNULL,
+                                   timeout=_SHELL_PROBE_TIMEOUT_S)
+                lines = r.stdout.strip().splitlines()
+                n = len(clean.splitlines())
+                if "\n".join(lines[:n]) != clean or len(lines) != n + len(expected):
+                    return True
+                for line, allowed in zip(lines[n:], expected):
+                    if not line.startswith("X=") or line[2:] not in allowed:
+                        return True
+    except (OSError, subprocess.SubprocessError):
+        return True
+    return False
+
+
+def cwd_tracking_is_exact(command: str, pairs: list[tuple[str, frozenset[str]]],
+                          starts: list[str] | None = None) -> bool:
+    """True when the command's only cwd changes are its pure top-level `cd DIR` segments
+    and the shell, started where the session is (`starts`), runs them as modeled."""
+    # zsh's search path is the lowercase array `cdpath` (Codex review, 2026-10-13).
+    if "cdpath" in command.lower() or os.environ.get("CDPATH"):
+        return False                # `cd rel` may then land somewhere else entirely
+    cds = [text.strip() for text, _ in pairs if pure_cd_operand(text) is not None]
+    if len(_CWD_CHANGERS.findall(command)) != len(cds):
+        return False
+    # Asked last, and only when there is a cd to trust: it starts a shell.
+    return not cds or not shell_may_redirect_cd(
+        starts or [os.path.realpath(os.getcwd())], cds)
+
+
+def apply_cd(cwds: list[str], operand: str, certain: bool) -> list[str]:
+    """The candidate working directories after `cd operand`.
+
+    `certain` means the cd is known to run. It replaces the candidates only when it
+    also cannot fail: every directory it could land in exists and is searchable.
+    Otherwise old and new are both kept.
+
+    `..` after a symlink has two readings. bash resolves it on the path as typed
+    (`tools/link/..` is `tools/`), and under `set -P` or `cd -P` on the disk (`..` of
+    whatever the link points at). Both are kept as candidates, so neither a default
+    shell nor a physical one can write somewhere this did not judge. The typed reading
+    is kept unresolved, so a LATER separate `cd ..` still sees the link: after
+    `cd tools/link; cd ..` bash is in tools/ (Codex review, 2026-10-13).
+    """
+    new: list[str] = []
+    settled = certain
+    for c in cwds:
+        joined = operand if os.path.isabs(operand) else os.path.join(c, operand)
+        # The shell walks the operand as typed, so `output/missing/..` fails even though
+        # it simplifies to an existing `output` (Codex review, 2026-10-13).
+        if not os.path.isdir(joined):
+            settled = False
+        for d in (os.path.normpath(joined), os.path.realpath(joined)):
+            if not (os.path.isdir(d) and os.access(d, os.X_OK)):
+                settled = False
+            new.append(d)
+    new = list(dict.fromkeys(new))
+    return new if settled else list(dict.fromkeys(cwds + new))
+
+
+def start_cwds(typed: list[str]) -> list[str]:
+    """The directories a command starts in: the one on disk, plus its typed spelling.
+
+    getcwd() is the resolved path. A shell that entered through a symlink also holds the
+    path as typed, and its `cd ..` follows that one (from docs/alias -> .. it lands in
+    docs/, not above the repo). Each typed spelling (the payload's `cwd`, $PWD) is kept
+    only when it is absolute and resolves to this same directory, so a stale one adds
+    nothing (Codex review, 2026-10-13).
+    """
+    here = os.path.realpath(os.getcwd())
+    out = [here]
+    for t in typed:
+        if t and os.path.isabs(t) and os.path.realpath(t) == here:
+            out.append(os.path.normpath(t))
+    return list(dict.fromkeys(out))
+
+
 def resolve_public_targets(candidates: list[str], root: Path,
-                           skip_binary: bool = True) -> list[str]:
+                           skip_binary: bool = True,
+                           cwds: list[str] | None = None) -> list[str]:
     """Repo-relative paths from `candidates` that actually ship to the public remote.
 
-    A relative Bash target resolves against the hook process cwd, which is the session
-    cwd. That is the repo root in normal use; when it is not, the path falls outside
-    the repo and is skipped -- fail open, never a false block.
+    A relative target resolves against the hook process cwd, which is the session cwd,
+    unless `cwds` is given: the Bash branch passes every directory the command could be
+    in when the write happens (see apply_cd), and a target public from ANY of them is
+    returned. A path that falls outside the repo is skipped -- fail open, never a false
+    block.
     """
     out = []
     for cand in candidates:
         if not cand:
             continue
-        try:
-            # realpath, not abspath: a repo reached through a symlink resolved to a
-            # path 'outside the repo' and failed open (2026-08-19).
-            rel = os.path.relpath(os.path.realpath(cand), os.path.realpath(root))
-        except Exception:
-            continue
-        if rel.startswith(".."):  # outside the repo
-            continue
-        rel = rel.replace(os.sep, "/")
-        if not is_public_path(rel, root) or is_gitignored(root, rel):
-            continue
-        # The binary skip exists because a PDF's BYTE STREAM false-positives. On the
-        # Bash path the scanned text is the COMMAND, not the file, so the extension is
-        # irrelevant -- and skipping let `echo TOKEN > docs/leak.pdf` write a plain-text
-        # name into a tracked file unchecked (2026-08-19).
-        if skip_binary and is_binary(rel):
-            continue
-        out.append(rel)
+        if cwds is None or os.path.isabs(cand):
+            paths = [cand]
+        else:
+            paths = [os.path.join(c, cand) for c in cwds]
+        for path in paths:
+            try:
+                # realpath, not abspath: a repo reached through a symlink resolved to a
+                # path 'outside the repo' and failed open (2026-08-19).
+                rel = os.path.relpath(os.path.realpath(path), os.path.realpath(root))
+            except Exception:
+                continue
+            if rel.startswith(".."):  # outside the repo
+                continue
+            rel = rel.replace(os.sep, "/")
+            if not is_public_path(rel, root) or is_gitignored(root, rel):
+                continue
+            # The binary skip exists because a PDF's BYTE STREAM false-positives. On the
+            # Bash path the scanned text is the COMMAND, not the file, so the extension is
+            # irrelevant -- and skipping let `echo TOKEN > docs/leak.pdf` write a plain-text
+            # name into a tracked file unchecked (2026-08-19).
+            if skip_binary and is_binary(rel):
+                continue
+            if rel not in out:
+                out.append(rel)
     return out
 
 
@@ -1440,9 +1775,30 @@ def main():
         command = tool_input.get("command", "")
         # Assignments in one segment reach the next (`OUT=docs/f; echo x > "$OUT"`).
         env = command_assignments(command)
-        for segment in split_command_segments(command):
+        pairs = segments_with_separators(command)
+        cwds = start_cwds([str(data.get("cwd") or ""), os.environ.get("PWD", "")])
+        exact = cwd_tracking_is_exact(command, pairs, cwds)
+        for segment, before in pairs:
+            operand = pure_cd_operand(segment)
+            if operand is not None:
+                cwds = apply_cd(cwds, operand,
+                                certain=exact and before <= {";", "\n"})
+                continue                                # a bare cd writes nothing
+            # `dir=tools; cd "$dir"` moves the shell to every value the command gives
+            # dir. Each is ADDED (never certain), so the old directories stay. HEAD
+            # allowed `... > data/x.py` there (Codex review, 2026-10-13). A variable the
+            # command does not assign adds nothing, as before tracking existed.
+            text = cd_operand_text(segment)
+            if text is not None and _VAR_REF.search(text):
+                for value in _expand_vars(text, env):
+                    if (value and value[0] not in "-+"
+                            and not _CD_OPERAND_UNSAFE.search(value)):
+                        cwds = apply_cd(cwds, value, certain=False)
+                continue
+            # When tracking is not exact no cd is `certain`, so apply_cd only ever adds
+            # candidates and the session cwd is still among them, as before this existed.
             targets = resolve_public_targets(extract_write_targets(segment, env), root,
-                                             skip_binary=False)
+                                             skip_binary=False, cwds=cwds)
             if targets:
                 # The content a segment writes includes the values of variables it
                 # references: in `c='echo NAME > docs/f'; eval "$c"` the name lives

@@ -299,15 +299,22 @@ def test_git_ignore_state_distinguishes_all_three(tmp_path):
 extract_write_targets = cpp.extract_write_targets  # module imported above (line ~160)
 
 
-def _run_bash(tmp_path, command, with_denylist=True, cwd=None):
-    """Run the hook against a Bash payload in a fixture repo at tmp_path."""
+def _run_bash(tmp_path, command, with_denylist=True, cwd=None, shell_home=None):
+    """Run the hook against a Bash payload in a fixture repo at tmp_path.
+
+    Shell startup state (snapshots, .zshenv) is read from `shell_home`, by default an
+    empty directory, so the tester's own shell config cannot change a result.
+    """
     if with_denylist:
         dl = tmp_path / "tools" / ".pii-denylist.txt"
         dl.parent.mkdir(parents=True, exist_ok=True)
         dl.write_text("# fixture\n" + FIXTURE_DENYLIST, encoding="utf-8")
 
     payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": command}})
-    env = {**os.environ, "PII_REPO_ROOT": str(tmp_path)}
+    env = {**os.environ, "PII_REPO_ROOT": str(tmp_path),
+           "PII_SHELL_STATE_HOME": str(shell_home or tmp_path / "no-shell-home")}
+    env.pop("ZDOTDIR", None)
+    env.pop("BASH_ENV", None)
     r = subprocess.run([sys.executable, str(SCRIPT)],
                        input=payload, capture_output=True, text=True,
                        cwd=str(cwd) if cwd else str(tmp_path), env=env)
@@ -1895,3 +1902,602 @@ def test_scan_fails_closed_when_the_denylist_cannot_be_decoded(tmp_path):
                        capture_output=True, text=True, cwd=str(root), timeout=20,
                        env={**os.environ, "PII_REPO_ROOT": str(root)})
     assert r.returncode != 0
+
+
+# --- `cd` inside a Bash command (2026-10-13) ---------------------------------
+# A relative write target used to resolve against the session cwd even after a
+# `cd`. That blocked private writes (4 logged fires) and allowed a public one.
+# The fixture has no git repo, so "public" here comes from the path rules alone:
+# a top-level .md and tools/**/*.py are public, output/** is not.
+
+def _cd_fixture(tmp_path):
+    for d in ("output/sub", "tools", "docs"):
+        (tmp_path / d).mkdir(parents=True, exist_ok=True)
+
+
+def test_bash_cd_into_private_dir_then_relative_write_allows(tmp_path):
+    """The false positive: notes.md lands in output/, not at the public root."""
+    _cd_fixture(tmp_path)
+    code, _ = _run_bash(tmp_path, 'cd output && echo "Pat Zorp" > notes.md')
+    assert code == 0
+
+
+def test_bash_cd_absolute_into_private_dir_allows(tmp_path):
+    _cd_fixture(tmp_path)
+    code, _ = _run_bash(tmp_path, f'cd {tmp_path}/output/sub && echo "Pat Zorp" > notes.md')
+    assert code == 0
+
+
+def test_bash_cd_then_loop_variable_target_allows(tmp_path):
+    """The shape of the 2026-10-13 fire: cd, then a for-loop redirect."""
+    _cd_fixture(tmp_path)
+    cmd = 'cd output && for f in one two; do echo "Pat Zorp" > $f.md; done'
+    assert _run_bash(tmp_path, cmd)[0] == 0
+
+
+def test_bash_cd_into_public_dir_then_private_looking_target_blocks(tmp_path):
+    """The false negative: bash writes tools/data/x.py, which is public."""
+    _cd_fixture(tmp_path)
+    code, err = _run_bash(tmp_path, 'cd tools && echo "Pat Zorp" > data/x.py')
+    assert code == 2 and "Pat Zorp" in err
+
+
+def test_bash_cd_private_then_target_climbs_back_to_public_blocks(tmp_path):
+    _cd_fixture(tmp_path)
+    code, _ = _run_bash(tmp_path, 'cd output && echo "Pat Zorp" > ../docs/x.md')
+    assert code == 2
+
+
+@pytest.mark.parametrize("cmd", [
+    'false && cd output; echo "Pat Zorp" > notes.md',               # cd is conditional
+    'true || cd output; echo "Pat Zorp" > notes.md',
+    'cd nope; echo "Pat Zorp" > notes.md',                          # cd fails, write still runs
+    'cd output; cd ..; echo "Pat Zorp" > notes.md',                 # back at the root
+    '(cd output); echo "Pat Zorp" > notes.md',                      # subshell
+    'cd output &\necho "Pat Zorp" > notes.md',                      # background subshell
+    'cd output | cat; echo "Pat Zorp" > notes.md',                  # pipeline subshell
+    'cd output && bash -c \'cd .. && echo "Pat Zorp" > notes.md\'',  # nested cd
+    'c="cd .."; cd output; eval "$c"; echo "Pat Zorp" > notes.md',  # eval
+    'f() { cd ..; }; cd output; f; echo "Pat Zorp" > notes.md',     # function
+    'cd output && env -C .. tee notes.md <<< "Pat Zorp"',           # child runs elsewhere
+    'cd output; . ./x.sh; echo "Pat Zorp" > notes.md',              # sourced code
+    'cd output; pushd ..; echo "Pat Zorp" > notes.md',
+    'cd output; popd; echo "Pat Zorp" > notes.md',
+    'cd output; eval "$(cat x.sh)"; echo "Pat Zorp" > notes.md',     # eval of unseen code
+    'cd output; source ./x.sh; echo "Pat Zorp" > notes.md',
+    'CDPATH=/tmp; cd output; echo "Pat Zorp" > notes.md',
+    'cd $HOME; echo "Pat Zorp" > notes.md',                         # unresolved operand
+])
+def test_bash_cd_that_may_not_hold_keeps_the_session_cwd_and_blocks(tmp_path, cmd):
+    """Whenever the cd might not be where the write happens, the root stays a candidate."""
+    _cd_fixture(tmp_path)
+    code, err = _run_bash(tmp_path, cmd)
+    assert code == 2, err
+
+
+def test_bash_cd_does_not_hide_an_absolute_public_target(tmp_path):
+    _cd_fixture(tmp_path)
+    code, _ = _run_bash(tmp_path, f'cd output && echo "Pat Zorp" > {tmp_path}/docs/x.md')
+    assert code == 2
+
+
+def test_pure_cd_operand_accepts_only_a_bare_literal_cd():
+    f = cpp.pure_cd_operand
+    assert f("cd output") == "output" and f(' cd -- "my dir" ') == "my dir"
+    for seg in ("cd", "cd -", "cd a b", "cd $X", "cd ~/x", "cd output &", "(cd output)",
+                "cd output > log", "X=1 cd output", "! cd output", '"cd" output', "cd `pwd`",
+                "cd &", "cd |"):
+        assert f(seg) is None, seg
+
+
+def test_segments_with_separators_reports_what_precedes_each_segment():
+    got = cpp.segments_with_separators("a &&\n cd x; y")
+    assert [(t.strip(), set(b)) for t, b in got] == [("a", set()), ("cd x", {"&&", "\n"}), ("y", {";"})]
+
+
+def test_bash_cd_dotdot_through_a_symlink_keeps_the_logical_directory(tmp_path):
+    """bash resolves `..` on the path as typed; realpath resolves it through the link.
+
+    tools/link points into output/. `cd tools/link/..` leaves bash in tools/ (public),
+    while the physical path says output/ (private). The write must be judged as public.
+    """
+    _cd_fixture(tmp_path)
+    os.symlink("../output/sub", tmp_path / "tools" / "link")
+    code, err = _run_bash(tmp_path, 'cd tools/link/..; echo "Pat Zorp" > x.py')
+    assert code == 2, err
+
+
+def test_bash_cd_dotdot_through_a_symlink_keeps_the_physical_directory_too(tmp_path):
+    """The other reading of `..`: under `set -P` bash follows the link first.
+
+    output/link points into tools/sub. Typed, `cd output/link/..` is output/ (private);
+    on disk it is tools/ (public). Both are candidates, so the write is judged as public.
+    """
+    _cd_fixture(tmp_path)
+    (tmp_path / "tools" / "sub").mkdir()
+    os.symlink("../tools/sub", tmp_path / "output" / "link")
+    code, err = _run_bash(tmp_path, 'cd output/link/..; echo "Pat Zorp" > x.py')
+    assert code == 2, err
+
+
+def test_bash_separate_cd_dotdot_after_a_symlink_keeps_the_logical_directory(tmp_path):
+    """The typed path must survive between cds, not only inside one operand.
+
+    After `cd tools/link` bash's cwd is the typed `tools/link`; the next `cd ..` lands in
+    tools/ (public). Resolving the first cd to output/sub lost that, and the write was
+    allowed. Found by Codex review, 2026-10-13.
+    """
+    _cd_fixture(tmp_path)
+    os.symlink("../output/sub", tmp_path / "tools" / "link")
+    code, err = _run_bash(tmp_path, 'cd tools/link; cd ..; echo "Pat Zorp" > x.py')
+    assert code == 2, err
+
+
+@pytest.mark.parametrize("cd", ["cd -P tools", "cd -L tools", "cd -LP tools",
+                                "cd -P -- tools", "cd -L -P tools"])
+def test_bash_cd_with_options_is_tracked(tmp_path, cd):
+    """`cd -P DIR` moves bash like `cd DIR`. It was not tracked at all, so the write was
+    read from the repo root as the private data/x.py while bash wrote the public
+    tools/data/x.py. Found by Codex review, 2026-10-13."""
+    _cd_fixture(tmp_path)
+    code, err = _run_bash(tmp_path, f'{cd}; echo "Pat Zorp" > data/x.py')
+    assert code == 2, err
+
+
+@pytest.mark.parametrize("cd", ["cd -P output", "cd -P -- output"])
+def test_bash_cd_with_options_into_private_dir_allows(tmp_path, cd):
+    _cd_fixture(tmp_path)
+    assert _run_bash(tmp_path, f'{cd} && echo "Pat Zorp" > notes.md')[0] == 0
+
+
+@pytest.mark.parametrize("seg", ["cd -x tools", "cd -P", "cd -P tools extra", "cd - tools",
+                                 "cd -e tools", "cd -Pe tools", "cd -@ tools"])
+def test_pure_cd_operand_rejects_unknown_options_and_shapes(seg):
+    assert cpp.pure_cd_operand(seg) is None
+
+
+@pytest.mark.parametrize("cd", ["cd -e output", "cd -Pe output", "cd -@ output"])
+def test_bash_cd_with_an_option_the_shell_rejects_keeps_the_old_directory(tmp_path, cd):
+    """macOS bash 3.2 and zsh reject `-e` and `-@`: the cd fails and the write lands at
+    the root, where notes.md is public. Accepting them made this pass (Codex review,
+    2026-10-13)."""
+    _cd_fixture(tmp_path)
+    code, err = _run_bash(tmp_path, f'{cd}; echo "Pat Zorp" > notes.md')
+    assert code == 2, err
+
+
+@pytest.mark.parametrize("operand", ["output/missing/..", "output/file/.."])
+def test_bash_cd_through_a_missing_or_file_component_keeps_the_old_directory(tmp_path, operand):
+    """bash and zsh walk the operand as typed, so a missing or non-directory step fails
+    the cd and the write lands at the root (public). Simplifying the path to `output`
+    first made it look certain. Found by Codex review, 2026-10-13."""
+    _cd_fixture(tmp_path)
+    (tmp_path / "output" / "file").write_text("x", encoding="utf-8")
+    code, err = _run_bash(tmp_path, f'cd {operand}; echo "Pat Zorp" > notes.md')
+    assert code == 2, err
+
+
+def test_bash_cd_through_an_existing_component_and_dotdot_still_moves(tmp_path):
+    _cd_fixture(tmp_path)
+    assert _run_bash(tmp_path, 'cd output/sub/..; echo "Pat Zorp" > notes.md')[0] == 0
+
+
+def test_zsh_cd_plus_n_is_a_stack_entry_not_a_directory(tmp_path):
+    """zsh reads `cd +0` as the directory stack, so it stays put even if a `+0/` exists."""
+    _cd_fixture(tmp_path)
+    (tmp_path / "+0").mkdir()
+    assert cpp.pure_cd_operand("cd +0") is None
+    code, err = _run_bash(tmp_path, 'cd +0; echo "Pat Zorp" > notes.md')
+    assert code == 2, err
+
+
+@pytest.mark.parametrize("assign", ["cdpath=(tools .)", "CDPATH=tools:."])
+def test_a_cd_search_path_set_in_the_command_ends_exact_tracking(tmp_path, assign):
+    """zsh's lowercase `cdpath` sends `cd sub` to tools/sub (public) even when sub/ exists."""
+    _cd_fixture(tmp_path)
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "tools" / "sub").mkdir()
+    code, err = _run_bash(tmp_path, f'{assign}; cd sub; echo "Pat Zorp" > notes.md')
+    assert code == 2, err
+
+
+@pytest.mark.parametrize("cmd", [
+    'dir=tools; cd "$dir"; echo "Pat Zorp" > data/x.py',
+    'dir=tools; cd $dir; echo "Pat Zorp" > data/x.py',
+    'dir=tools; cd ${dir} && echo "Pat Zorp" > data/x.py',
+    'd=tools; cd -P "$d"; echo "Pat Zorp" > data/x.py',
+    'd=output; d=tools; cd "$d"; echo "Pat Zorp" > data/x.py',
+    'export D=tools; cd "$D"; echo "Pat Zorp" > data/x.py',
+])
+def test_bash_cd_to_a_variable_the_command_assigns_is_followed(tmp_path, cmd):
+    """`cd "$dir"` adds the directories the command assigns to dir. HEAD and the first
+    tracking patch both allowed these: the write lands in public tools/data/x.py.
+    Found by Codex review, 2026-10-13."""
+    _cd_fixture(tmp_path)
+    code, err = _run_bash(tmp_path, cmd)
+    assert code == 2, err
+
+
+def test_bash_cd_to_a_variable_keeps_the_old_directory_too(tmp_path):
+    """A variable cd only ADDS candidates, so the root stays: root notes.md is judged."""
+    _cd_fixture(tmp_path)
+    assert _run_bash(tmp_path, 'd=output; cd "$d" && echo "Pat Zorp" > notes.md')[0] == 2
+
+
+def test_bash_cd_to_a_variable_the_command_does_not_assign_adds_nothing(tmp_path):
+    """Unknown value: no candidate added, the same as before tracking existed."""
+    _cd_fixture(tmp_path)
+    env_free = 'cd "$PII_TEST_UNSET_DIR"; echo "Pat Zorp" > data/x.py'
+    assert _run_bash(tmp_path, env_free)[0] == 0
+
+
+@pytest.mark.parametrize("seg,want", [
+    ('cd "$dir"', "$dir"), ("cd -P -- $d/sub", "$d/sub"), ("cd tools", "tools"),
+    ("cd a b", None), ("cd $(pwd)", None), ("cd -e $d", None), ("ls $d", None),
+])
+def test_cd_operand_text(seg, want):
+    assert cpp.cd_operand_text(seg) == want
+
+
+def _shell_state_home(tmp_path, files):
+    home = tmp_path / "home"
+    for rel, text in files.items():
+        p = home / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(text, encoding="utf-8")
+    return home
+
+
+_SNAP = ".claude/shell-snapshots/snapshot-zsh-1.sh"
+_DIRS = {".zsh/dirs.zsh": "alias cd=z\n"}       # a file a startup file pulls in
+
+
+@pytest.mark.parametrize("files", [
+    {_SNAP: "cdpath=(tools .)\n"},
+    {_SNAP: "export CDPATH=tools:.\n"},
+    {".claude/shell-snapshots/snapshot-bash-1.sh": "alias cd='z'\n"},
+    {_SNAP: "cd () {\n  z \"$@\"\n}\n"},
+    {_SNAP: "function cd {\n  z \"$@\"\n}\n"},
+    {".zshenv": "cdpath=(tools .)\n"},
+    # Every spelling the shell accepts as defining `cd` (Codex review, 2026-10-13):
+    # the hook asks the shell, so quoting cannot hide one.
+    {_SNAP: "alias 'cd=z'\n"},
+    {_SNAP: 'alias -- "cd=z"\n'},
+    {_SNAP: "alias ll='ls -l' cd=z\n"},
+    {_SNAP: 'alias "cd"=z\n'},
+    {_SNAP: "alias c'd'=z\n"},
+    {_SNAP: "'cd' () { z; }\n"},
+    {_SNAP: 'c"d" () { z "$@"; }\n'},
+    {_SNAP: "function c'd' { z \"$@\"; }\n"},
+    # A hook that runs on every directory change.
+    {_SNAP: "chpwd () { builtin cd tools; }\n"},
+    {_SNAP: "jump () { :; }\nchpwd_functions+=(jump)\n"},
+    # Definitions pulled in from another file, however it is pulled in.
+    {".zshenv": "source ~/.zsh/dirs.zsh\n", **_DIRS},
+    {".zshenv": ". ~/.zsh/dirs.zsh\n", **_DIRS},
+    {".zshenv": "if true; then . ~/.zsh/dirs.zsh; fi\n", **_DIRS},
+    {".zshenv": "builtin . ~/.zsh/dirs.zsh\n", **_DIRS},
+    {".zshenv": "noglob . ~/.zsh/dirs.zsh\n", **_DIRS},
+    {".zshenv": "eval 'alias cd=z'\n"},
+    # The real command has no positional parameters; startup code can see that.
+    {".zshenv": "(( $# == 0 )) && alias cd=z\n"},
+    {_SNAP: "[[ -z $1 ]] && alias cd=z\n"},
+    # A restricted shell keeps the builtin cd but refuses to run it (Codex review).
+    {_SNAP: "setopt restricted\n"},
+    {".claude/shell-snapshots/snapshot-bash-1.sh": "set -r\n"},
+])
+def test_a_cd_search_path_or_cd_override_in_shell_startup_ends_exact_tracking(
+        tmp_path, files):
+    """zsh with `cdpath=(tools .)` sends `cd sub` to public tools/sub even when sub/
+    exists, and the command never says so. The hook asks the shell what its startup
+    files leave behind."""
+    _cd_fixture(tmp_path)
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "tools" / "sub").mkdir()
+    home = _shell_state_home(tmp_path, files)
+    code, err = _run_bash(tmp_path, 'cd sub; echo "Pat Zorp" > notes.md', shell_home=home)
+    assert code == 2, err
+
+
+@pytest.mark.parametrize("files", [
+    {_SNAP: "# source optional local setup here\n"},
+    {_SNAP: "alias note='source ~/.notes'\n"},
+    {_SNAP: "# install a chpwd hook if desired\n"},
+    {_SNAP: "alias go='cd tools'\n"},
+    {".zshenv": "source ~/.zsh/missing.zsh\n"},
+    {".zshenv": "autoload -Uz jump\n"},
+])
+def test_startup_text_that_does_not_change_cd_keeps_exact_tracking(tmp_path, files):
+    """Mentioning source, chpwd or cd is not changing cd. Treating it as if it were
+    restored the false block tracking removes (Codex review, 2026-10-13)."""
+    _cd_fixture(tmp_path)
+    home = _shell_state_home(tmp_path, files)
+    code, err = _run_bash(tmp_path, 'cd output; echo "Pat Zorp" > notes.md', shell_home=home)
+    assert code == 0, err
+
+
+def test_clean_shell_startup_state_keeps_exact_tracking(tmp_path):
+    """The shape of a real Claude Code snapshot must not end exact tracking, or the
+    false block this tracking exists to remove comes back."""
+    _cd_fixture(tmp_path)
+    snapshot = ("# Unset all aliases to avoid conflicts with functions\n"
+                "unalias -a 2>/dev/null || true\n"
+                "setopt nohashdirs\n"
+                "alias -- claude='claude --debug api,hooks --debug-file ~/x-$(date +%s).log'\n"
+                "alias -- run-help=man\n"
+                "alias -- which-command=whence\n"
+                "if ! (unalias rg 2>/dev/null; command -v rg) >/dev/null 2>&1; then\n"
+                "  function rg {\n    command rg \"$@\"\n  }\nfi\n"
+                "unalias find 2>/dev/null || true\n"
+                "export PATH=/usr/bin:/bin\n")
+    home = _shell_state_home(tmp_path, {
+        ".claude/shell-snapshots/snapshot-zsh-1.sh": snapshot,
+        ".zshenv": "export PATH=/usr/bin\n"})
+    code, err = _run_bash(tmp_path, 'cd output && echo "Pat Zorp" > notes.md', shell_home=home)
+    assert code == 0, err
+
+
+def test_shell_state_files_reads_zdotdir_and_bash_env(tmp_path, monkeypatch):
+    home = _shell_state_home(tmp_path, {"z/.zshenv": "", "b.sh": ""})
+    monkeypatch.setenv("PII_SHELL_STATE_HOME", str(home))
+    monkeypatch.setenv("ZDOTDIR", str(home / "z"))
+    monkeypatch.setenv("BASH_ENV", str(home / "b.sh"))
+    got = cpp.shell_state_files()
+    assert str(home / "z" / ".zshenv") in got and str(home / "b.sh") in got
+
+
+def _clean_zsh(kw):
+    """What a zsh that leaves cd alone prints for `cd s`, run from kw["cwd"]."""
+    return ("W=cd: builtin\nP=:\nH=0:\nX="
+            + os.path.realpath(os.path.join(kw["cwd"], "s")) + "\n")
+
+
+def _start(tmp_path):
+    """([a start directory that has s/], ["cd s"]): arguments for shell_may_redirect_cd."""
+    start = tmp_path / "start"
+    (start / "s").mkdir(parents=True, exist_ok=True)
+    return [str(start)], ["cd s"]
+
+
+def _count_probes(monkeypatch, result=None, exc=None):
+    calls = []
+
+    def fake_run(argv, **kw):
+        calls.append(argv)
+        if exc:
+            raise exc
+        out = result(kw) if callable(result) else result
+        return subprocess.CompletedProcess(argv, 0, stdout=out, stderr="")
+    monkeypatch.setattr(cpp.subprocess, "run", fake_run)
+    return calls
+
+
+def test_the_probe_command_has_the_shape_claude_code_runs(tmp_path, monkeypatch):
+    """`zsh -c 'source <snapshot> ...'`: the path is in the command text and there are
+    no positional parameters (Codex review, 2026-10-13). The command's own cds follow."""
+    home = _shell_state_home(tmp_path, {".claude/shell-snapshots/snapshot-zsh-it's.sh": ""})
+    monkeypatch.setenv("PII_SHELL_STATE_HOME", str(home))
+    monkeypatch.setenv("SHELL", "/bin/zsh")
+    (argv, _, env), = cpp._shell_probes(['cd -P "it\'s dir"'])
+    assert argv[:2] == ["/bin/zsh", "-c"] and len(argv) == 3
+    snap = str(home / ".claude/shell-snapshots/snapshot-zsh-it's.sh")
+    assert argv[2].startswith("source " + cpp._sh_quote(snap))
+    assert "cd -P -- " + cpp._sh_quote("it's dir") + " >/dev/null 2>&1\n" in argv[2]
+    assert argv[2].endswith(cpp._ZSH_LANDED)
+    assert env["HOME"] == str(home)
+
+
+def test_the_probe_asks_bin_zsh_and_a_different_shell_zsh_too(tmp_path, monkeypatch):
+    """Never a PATH lookup; and when $SHELL is another zsh, both must answer clean."""
+    home = _shell_state_home(tmp_path, {_SNAP: "",
+                                        ".claude/shell-snapshots/snapshot-bash-1.sh": ""})
+    monkeypatch.setenv("PII_SHELL_STATE_HOME", str(home))
+    monkeypatch.setenv("SHELL", "zsh")
+    assert [c[0][0] for c in cpp._shell_probes(["cd s"])] == ["/bin/zsh", "/bin/bash"]
+    monkeypatch.setenv("SHELL", "/usr/local/bin/zsh")
+    assert [c[0][0] for c in cpp._shell_probes(["cd s"])] == [
+        "/bin/zsh", "/usr/local/bin/zsh", "/bin/bash"]
+    answers = iter([_clean_zsh, lambda kw: "W=cd: alias\nP=:\nH=0:\n"])
+    calls = _count_probes(monkeypatch, result=lambda kw: next(answers)(kw))
+    assert cpp.shell_may_redirect_cd(*_start(tmp_path)) is True
+    assert [a[0] for a in calls] == ["/bin/zsh", "/usr/local/bin/zsh"]
+
+
+def test_every_call_asks_the_shell_again(tmp_path, monkeypatch):
+    """No cache: startup code can branch on the environment, so an earlier clean answer
+    says nothing about this call (Codex review, 2026-10-13)."""
+    home = _shell_state_home(tmp_path, {_SNAP: "setopt nohashdirs\n"})
+    monkeypatch.setenv("PII_SHELL_STATE_HOME", str(home))
+    monkeypatch.setenv("SHELL", "/bin/zsh")
+    calls = _count_probes(monkeypatch, result=_clean_zsh)
+    assert cpp.shell_may_redirect_cd(*_start(tmp_path)) is False
+    assert cpp.shell_may_redirect_cd(*_start(tmp_path)) is False
+    assert len(calls) == 2
+
+
+def test_an_environment_dependent_snapshot_is_judged_on_the_current_environment(
+        tmp_path, monkeypatch):
+    home = _shell_state_home(tmp_path, {_SNAP: "[[ $PII_T_MODE = dirty ]] && alias cd=z\n"})
+    monkeypatch.setenv("PII_SHELL_STATE_HOME", str(home))
+    monkeypatch.setenv("SHELL", "/bin/zsh")
+    monkeypatch.setenv("PII_T_MODE", "clean")
+    assert cpp.shell_may_redirect_cd(*_start(tmp_path)) is False
+    monkeypatch.setenv("PII_T_MODE", "dirty")
+    assert cpp.shell_may_redirect_cd(*_start(tmp_path)) is True
+
+
+def test_a_start_directory_dependent_snapshot_is_judged_where_the_session_is(
+        tmp_path, monkeypatch):
+    """Startup code can branch on where it starts. A trial anywhere else proved nothing
+    (Codex review, 2026-10-13): this one is clean from a scratch directory."""
+    home = _shell_state_home(tmp_path, {
+        _SNAP: '[[ $PWD == */proj ]] && cdpath=(tools .)\n'})
+    monkeypatch.setenv("PII_SHELL_STATE_HOME", str(home))
+    monkeypatch.setenv("SHELL", "/bin/zsh")
+    for d in ("proj/sub", "proj/tools/sub", "scratch/sub"):
+        (tmp_path / d).mkdir(parents=True)
+    assert cpp.shell_may_redirect_cd([str(tmp_path / "scratch")], ["cd sub"]) is False
+    assert cpp.shell_may_redirect_cd([str(tmp_path / "proj")], ["cd sub"]) is True
+
+
+def test_every_start_directory_is_asked(tmp_path, monkeypatch):
+    home = _shell_state_home(tmp_path, {_SNAP: ""})
+    monkeypatch.setenv("PII_SHELL_STATE_HOME", str(home))
+    monkeypatch.setenv("SHELL", "/bin/zsh")
+    for d in ("a/s", "b/s"):
+        (tmp_path / d).mkdir(parents=True)
+    seen = []
+
+    def fake_run(argv, **kw):
+        seen.append((kw["cwd"], kw["env"]["PWD"]))
+        return subprocess.CompletedProcess(argv, 0, stdout=_clean_zsh(kw), stderr="")
+    monkeypatch.setattr(cpp.subprocess, "run", fake_run)
+    starts = [str(tmp_path / "a"), str(tmp_path / "b")]
+    assert cpp.shell_may_redirect_cd(starts, ["cd s"]) is False
+    assert seen == [(s, s) for s in starts]
+
+
+def test_each_cd_must_land_where_the_model_expects(tmp_path, monkeypatch):
+    """Two cds give two X= lines; the second is judged from where the first landed."""
+    home = _shell_state_home(tmp_path, {_SNAP: ""})
+    monkeypatch.setenv("PII_SHELL_STATE_HOME", str(home))
+    monkeypatch.setenv("SHELL", "/bin/zsh")
+    (tmp_path / "st" / "a" / "b").mkdir(parents=True)
+    st = str(tmp_path / "st")
+    a, b = os.path.realpath(st + "/a"), os.path.realpath(st + "/a/b")
+    head = "W=cd: builtin\nP=:\nH=0:\n"
+    _count_probes(monkeypatch, result=head + f"X={a}\nX={b}\n")
+    assert cpp.shell_may_redirect_cd([st], ["cd a", "cd b"]) is False
+    _count_probes(monkeypatch, result=head + f"X={a}\nX={a}\n")
+    assert cpp.shell_may_redirect_cd([st], ["cd a", "cd b"]) is True
+    _count_probes(monkeypatch, result=head + f"X={a}\n")
+    assert cpp.shell_may_redirect_cd([st], ["cd a", "cd b"]) is True
+    _count_probes(monkeypatch, result=head + f"X={a}\nX={b}\nX={b}\n")
+    assert cpp.shell_may_redirect_cd([st], ["cd a", "cd b"]) is True
+
+
+def test_no_probe_runs_for_a_command_without_a_cd(monkeypatch):
+    """Starting a shell costs ~30 ms, so only a command with a cd to trust pays it."""
+    asked = []
+    monkeypatch.setattr(cpp, "shell_may_redirect_cd",
+                        lambda starts, cds: asked.append((starts, cds)) or False)
+    cmd = "echo hi > notes.md"
+    assert cpp.cwd_tracking_is_exact(cmd, cpp.segments_with_separators(cmd), ["/x"]) is True
+    assert asked == []
+    cmd = "cd output && echo hi > notes.md"
+    assert cpp.cwd_tracking_is_exact(cmd, cpp.segments_with_separators(cmd), ["/x"]) is True
+    assert asked == [(["/x"], ["cd output"])]
+    monkeypatch.setattr(cpp, "shell_may_redirect_cd", lambda starts, cds: True)
+    assert cpp.cwd_tracking_is_exact(cmd, cpp.segments_with_separators(cmd)) is False
+
+
+@pytest.mark.parametrize("exc", [subprocess.TimeoutExpired("zsh", 5), FileNotFoundError("zsh")])
+def test_a_shell_probe_that_cannot_answer_ends_exact_tracking(tmp_path, monkeypatch, exc):
+    """No answer means unknown, and unknown keeps the old directory (fail closed)."""
+    home = _shell_state_home(tmp_path, {_SNAP: "setopt nohashdirs\n"})
+    monkeypatch.setenv("PII_SHELL_STATE_HOME", str(home))
+    _count_probes(monkeypatch, exc=exc)
+    assert cpp.shell_may_redirect_cd(*_start(tmp_path)) is True
+
+
+@pytest.mark.parametrize("out", ["W=cd: alias\nP=:\nH=0:\n", "W=cd: builtin\nP=tools:\nH=0:\n",
+                                 "W=cd: builtin\nP=:\nH=1:\n", "", "W=cd: builtin\n",
+                                 "W=cd: builtin\nP=:\nH=0:\n",
+                                 "W=cd: builtin\nP=:\nH=0:\nX=/elsewhere\n",
+                                 "W=cd: builtin\nP=:\nH=0:\nY=whatever\n"])
+def test_any_probe_answer_but_the_clean_one_ends_exact_tracking(tmp_path, monkeypatch, out):
+    home = _shell_state_home(tmp_path, {_SNAP: "setopt nohashdirs\n"})
+    monkeypatch.setenv("PII_SHELL_STATE_HOME", str(home))
+    _count_probes(monkeypatch, result=out)
+    assert cpp.shell_may_redirect_cd(*_start(tmp_path)) is True
+
+
+def test_no_startup_files_at_all_needs_no_probe(tmp_path, monkeypatch):
+    monkeypatch.setenv("PII_SHELL_STATE_HOME", str(tmp_path / "empty"))
+    monkeypatch.delenv("ZDOTDIR", raising=False)
+    monkeypatch.delenv("BASH_ENV", raising=False)
+    calls = _count_probes(monkeypatch, result="")
+    assert cpp.shell_may_redirect_cd(*_start(tmp_path)) is False
+    assert calls == []
+
+
+def test_a_cd_alias_in_the_zdotdir_zshenv_ends_exact_tracking(tmp_path):
+    """zsh reads $ZDOTDIR/.zshenv by itself; the probe must let it."""
+    _cd_fixture(tmp_path)
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "tools" / "sub").mkdir()
+    home = _shell_state_home(tmp_path, {"z/.zshenv": "alias cd=z\n"})
+    (tmp_path / "tools" / ".pii-denylist.txt").write_text(
+        "# fixture\n" + FIXTURE_DENYLIST, encoding="utf-8")
+    payload = {"tool_name": "Bash",
+               "tool_input": {"command": 'cd sub; echo "Pat Zorp" > notes.md'}}
+    env = {**os.environ, "PII_REPO_ROOT": str(tmp_path), "PII_SHELL_STATE_HOME": str(home),
+           "ZDOTDIR": str(home / "z")}
+    env.pop("BASH_ENV", None)
+    r = subprocess.run([sys.executable, str(SCRIPT)], input=json.dumps(payload),
+                       capture_output=True, text=True, cwd=str(tmp_path), env=env)
+    assert r.returncode == 2, r.stderr
+
+
+def _run_bash_in_logical_cwd(tmp_path, command, via):
+    """Run the hook from the physical repo root while the shell's typed cwd is docs/alias.
+
+    docs/alias points at `..`, so on disk it IS the repo root, but bash's `cd ..` from
+    the typed path lands in docs/. `via` says where the typed path reaches the hook: the
+    payload's `cwd` field, or $PWD.
+    """
+    _cd_fixture(tmp_path)
+    os.symlink("..", tmp_path / "docs" / "alias")
+    logical = str(tmp_path / "docs" / "alias")
+    dl = tmp_path / "tools" / ".pii-denylist.txt"
+    dl.write_text("# fixture\n" + FIXTURE_DENYLIST, encoding="utf-8")
+    payload = {"tool_name": "Bash", "tool_input": {"command": command}}
+    env = {**os.environ, "PII_REPO_ROOT": str(tmp_path)}
+    env.pop("PWD", None)
+    if via == "payload":
+        payload["cwd"] = logical
+    else:
+        env["PWD"] = logical
+    r = subprocess.run([sys.executable, str(SCRIPT)], input=json.dumps(payload),
+                       capture_output=True, text=True, cwd=str(tmp_path), env=env)
+    return r.returncode, r.stderr
+
+
+@pytest.mark.parametrize("via", ["payload", "pwd"])
+def test_bash_cd_dotdot_from_a_session_cwd_reached_through_a_symlink(tmp_path, via):
+    """The typed session cwd is a candidate from the start, not only after a cd.
+
+    Bash's `cd ..` from docs/alias lands in docs/ (public); the physical parent of the
+    repo root is outside the repo, which was allowed. Found by Codex review, 2026-10-13.
+    """
+    code, err = _run_bash_in_logical_cwd(tmp_path, 'cd ..; echo "Pat Zorp" > x.md', via)
+    assert code == 2, err
+
+
+@pytest.mark.parametrize("via", ["payload", "pwd"])
+def test_a_typed_cwd_that_is_not_this_directory_is_ignored(tmp_path, via):
+    """A stale or unrelated $PWD / payload cwd must not add a candidate."""
+    _cd_fixture(tmp_path)
+    (tmp_path / "tools" / ".pii-denylist.txt").write_text(
+        "# fixture\n" + FIXTURE_DENYLIST, encoding="utf-8")
+    payload = {"tool_name": "Bash",
+               "tool_input": {"command": 'echo "Pat Zorp" > notes.md'}}
+    env = {**os.environ, "PII_REPO_ROOT": str(tmp_path)}
+    env.pop("PWD", None)
+    if via == "payload":
+        payload["cwd"] = str(tmp_path)
+    else:
+        env["PWD"] = str(tmp_path)
+    r = subprocess.run([sys.executable, str(SCRIPT)], input=json.dumps(payload),
+                       capture_output=True, text=True,
+                       cwd=str(tmp_path / "output" / "sub"), env=env)
+    assert r.returncode == 0, r.stderr
+
+
+def test_bash_separate_cd_dotdot_after_a_symlink_keeps_the_physical_directory_too(tmp_path):
+    """The mirror case: typed, output/link then `..` is output/; on disk it is tools/."""
+    _cd_fixture(tmp_path)
+    (tmp_path / "tools" / "sub").mkdir()
+    os.symlink("../tools/sub", tmp_path / "output" / "link")
+    code, err = _run_bash(tmp_path, 'cd output/link; cd ..; echo "Pat Zorp" > x.py')
+    assert code == 2, err
