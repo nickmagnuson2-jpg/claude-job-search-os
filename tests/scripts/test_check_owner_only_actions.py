@@ -53,6 +53,14 @@ ACCEPT = "PYTHONIOENCODING=utf-8 python3 tools/finding_write.py accept 335.F1 --
     ("sed -i '' 's/a/b/' tools/.cross-model-ledger.jsonl", "ledger"),
     ("cp /tmp/forged tools/.cross-model-ledger.jsonl", "ledger"),
     ("dd if=/tmp/x of=tools/.cross-model-ledger.jsonl", "ledger"),
+    # Codex 9b588cd F1/F2: shell wrappers, eval, flag clusters, other copiers
+    ('bash -c "python3 tools/finding_write.py accept 1.F1 --why x"', "accept"),
+    ("sh -lc 'CODEX_VERIFY_WAIVE=x git push'", "waive"),
+    ('zsh -c "echo hi; CODEX_VERIFY_WAIVE=x git push"', "waive"),
+    ('eval "CODEX_VERIFY_WAIVE=x git push"', "waive"),
+    ("perl -pi -e 's/a/b/' tools/.cross-model-ledger.jsonl", "ledger"),
+    ("sed -Ei 's/a/b/' tools/.cross-model-ledger.jsonl", "ledger"),
+    ("rsync -a /tmp/f tools/.cross-model-ledger.jsonl", "ledger"),
     ("mv -f /tmp/forged tools/.cross-model-ledger.jsonl", "ledger"),
     ("python3 -m pytest -q; CODEX_VERIFY_WAIVE=x git push", "waive"),
     ('echo "$(date)"; CODEX_VERIFY_WAIVE=x git push', "waive"),     # after a subst
@@ -103,6 +111,15 @@ def test_blocks(command, kind):
     "python3 - < /tmp/prog.py",
     # an assignment alone, and a missing subcommand
     "X=1",
+    'bash -c "git status"',
+    # only a SHELL's -c runs its argument, and only after the -c flag
+    "grep -c 'CODEX_VERIFY_WAIVE=x git push' notes.md",
+    'bash deploy.sh "CODEX_VERIFY_WAIVE=x git push"',
+    "bash -x script.sh",
+    'eval "$(ssh-agent -s)"',
+    "perl -ne 'print' tools/.cross-model-ledger.jsonl",
+    "sed -n 1p tools/.cross-model-ledger.jsonl",
+    "rsync -a tools/.cross-model-ledger.jsonl /tmp/backup/",
     "python3 tools/finding_write.py --repo-root /r",
     "python3 tools/finding_write.py --repo-root=/r list",
     # a plain push, and tests

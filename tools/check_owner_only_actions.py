@@ -61,7 +61,9 @@ _CALLS_ACCEPT = re.compile(r"\baccept\s*\(")
 _CALLS_LEDGER_WRITER = re.compile(r"\b(append_row|record_waiver)\s*\(")
 _SETS_ENV = re.compile(r"\b(environ|putenv)\b")
 # Programs whose LAST argument is the file they write; the others are sources.
-_DEST_LAST = {"cp", "mv", "install", "ln"}
+_DEST_LAST = {"cp", "mv", "install", "ln", "rsync", "scp", "ditto"}
+# Shells whose `-c STRING` runs STRING as a command line (Codex 9b588cd F1).
+_SHELLS = {"bash", "sh", "zsh", "dash", "ksh"}
 
 
 def _is_ledger(word: str) -> bool:
@@ -112,10 +114,24 @@ def _command_violation(words: list[str], redirections) -> str | None:
         if prog in _FILE_WRITERS - _DEST_LAST and any(
                 _is_ledger(w.split("=", 1)[-1]) for w in args):     # dd of=FILE
             return "ledger"
-        if prog in _IN_PLACE and any(w.startswith("-i") or w == "--in-place"
-                                     for w in rest[1:]) \
+        # In place: `-i`, or any short-flag cluster holding i (`-pi`, `-Ei`).
+        if prog in _IN_PLACE and any(
+                w == "--in-place" or (w.startswith("-") and not w.startswith("--")
+                                      and "i" in w[1:]) for w in rest[1:]) \
                 and any(_is_ledger(w) for w in rest[1:]):
             return "ledger"
+        # `bash -c STRING`, `sh -lc STRING`, `eval STRING`: the string is a command.
+        if prog in _SHELLS:
+            for n, w in enumerate(rest[1:-1], start=1):
+                if w.startswith("-") and not w.startswith("--") and "c" in w[1:]:
+                    found = find_violation(rest[n + 1])
+                    if found:
+                        return found
+                    break
+        if prog == "eval" and len(rest) > 1:
+            found = find_violation(" ".join(rest[1:]))
+            if found:
+                return found
     for r in redirections:
         if r.op.lstrip("0123456789") in _WRITE_REDIRS and _is_ledger(r.target):
             return "ledger"
