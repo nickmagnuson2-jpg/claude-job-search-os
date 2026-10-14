@@ -443,3 +443,82 @@ def test_importable_as_a_package_module_from_the_repo_root():
     r = subprocess.run([sys.executable, "-c", "import tools.finding_write"],
                        cwd=repo, capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
+
+
+# --- accept: Nick's decision that a parked P0 may ship (2026-10-14) -------------------
+
+def _finding(repo: Path, run: int, fid: str) -> dict:
+    row = json.loads(ledger_lines(repo)[run - 1])
+    return next(f for f in row["findings"] if f["id"] == fid)
+
+
+def test_accept_records_all_three_fields_on_a_parked_P0(repo):
+    fw.set_disposition(repo, "1.F1", "parked", "deferred")
+    out = fw.accept(repo, "1.F1", "ship the debt")
+    f = _finding(repo, 1, "F1")
+    assert f["accepted_by"] == "owner" and f["accepted_why"] == "ship the debt"
+    assert f["accepted_at"] and out["accepted_at"] == f["accepted_at"]
+    assert f["disposition"] == "parked"
+
+
+@pytest.mark.parametrize("prep, addr", [
+    (None, "1.F1"),                       # open P0: park it first
+    ("fixed", "1.F1"),                    # closed P0: nothing to accept
+    ("parked-P1", "1.F2"),                # a P1 never blocks
+])
+def test_accept_refuses_anything_but_a_parked_P0_and_writes_nothing(repo, prep, addr):
+    if prep == "fixed":
+        fw.set_disposition(repo, "1.F1", "fixed", "done")
+    if prep == "parked-P1":
+        fw.set_disposition(repo, "1.F2", "parked", "later")
+    before = ledger_lines(repo)
+    with pytest.raises(ValueError):
+        fw.accept(repo, addr, "why")
+    assert ledger_lines(repo) == before
+
+
+def test_accept_requires_a_reason(repo):
+    fw.set_disposition(repo, "1.F1", "parked", "deferred")
+    before = ledger_lines(repo)
+    with pytest.raises(ValueError):
+        fw.accept(repo, "1.F1", "   ")
+    assert ledger_lines(repo) == before
+
+
+def test_accept_twice_is_refused(repo):
+    fw.set_disposition(repo, "1.F1", "parked", "deferred")
+    fw.accept(repo, "1.F1", "first")
+    with pytest.raises(ValueError):
+        fw.accept(repo, "1.F1", "second")
+    assert _finding(repo, 1, "F1")["accepted_why"] == "first"
+
+
+def test_any_new_disposition_clears_the_acceptance(repo):
+    """An acceptance was given for one decision. Re-parking must need a fresh one, or
+    the agent could re-park an accepted finding with a new reason and ship on the old
+    acceptance."""
+    fw.set_disposition(repo, "1.F1", "parked", "deferred")
+    fw.accept(repo, "1.F1", "ok")
+    fw.set_disposition(repo, "1.F1", "parked", "a different reason", force=True)
+    f = _finding(repo, 1, "F1")
+    for k in fw.ACCEPT_FIELDS:
+        assert k not in f
+
+
+def test_collect_reports_the_acceptor(repo):
+    fw.set_disposition(repo, "1.F1", "parked", "deferred")
+    fw.accept(repo, "1.F1", "ok")
+    got = [f for f in fw.collect(repo) if f["addr"] == "1.F1"][0]
+    assert got["accepted_by"] == "owner"
+
+
+def test_cli_accept(repo):
+    fw.set_disposition(repo, "1.F1", "parked", "deferred")
+    r = run_cli(repo, "accept", "1.F1", "--why", "ship")
+    assert r.returncode == 0, r.stderr
+    assert json.loads(r.stdout)["accepted_by"] == "owner"
+
+
+def test_cli_accept_on_an_open_P0_exits_2(repo):
+    r = run_cli(repo, "accept", "1.F1", "--why", "ship")
+    assert r.returncode == 2 and "Park it first" in r.stderr

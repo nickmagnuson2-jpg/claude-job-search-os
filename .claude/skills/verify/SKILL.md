@@ -159,23 +159,26 @@ an origin: for three weeks the career scanner scored ~30 roles a night into a fi
 nothing read. A report written to `output/analysis/` and consumed by nobody is that same
 defect in a new costume.
 
-## Ending a blocked push: park, never waive, and Nick does the push
+## Ending a blocked push
 
-The gate counts only reviews recorded after the newest commit, so every fix commit forces
-another round. The loop ends on a round whose findings are handled WITHOUT a commit.
+The gate's block message names what is blocking and the commands that clear it; follow
+it. This section holds only what the gate cannot know.
 
-1. **Run `/audit-pii` before the final round, not after.** The audit itself commits
-   nothing, but a scrub it finds needs a commit, and that commit forces another round.
-2. **Never propose `CODEX_VERIFY_WAIVE` as the way out.** Nick, 2026-09-23: "I don't want
-   to have to waive anything."
-3. **On the final round:** reject any finding that does not reproduce, with the evidence.
-   Park each real P0 with a reason (`PYTHONIOENCODING=utf-8 python3 tools/finding_write.py
-   set <run>.<Fn> --disposition parked --why "..."`). A parked P0 stops blocking the push,
-   but it is NOT closed: it is debt, and `/standup` keeps showing it until fixed.
-4. **Announce the park in its own message, before the push.** List the findings and the
-   reason, then stop. Nick either pushes himself (`! git push`) or says go. A park and a
-   push by the agent in the same turn is the agent clearing its own gate. On 2026-10-14 the
-   permission classifier denied exactly that as a CI bypass, and it was right to.
+1. **Run `/audit-pii` before the last verification round, not after.** The audit commits
+   nothing, but a scrub it finds needs a commit, and a commit makes the earlier reviews
+   stale: the gate counts a review only if it was recorded at or after the newest commit
+   being pushed.
+2. **A real P0 you are not fixing: park it, tell Nick, and stop.** Parking
+   (`finding_write.py set <addr> --disposition parked --why ...`) records why it is
+   deferred. It does not unblock the push. A parked P0 blocks until Nick accepts it with
+   `finding_write.py accept`, and `tools/check_owner_only_actions.py` blocks the agent
+   from accepting, from setting `CODEX_VERIFY_WAIVE`, and from writing the ledger. List
+   the addresses and reasons for him; he accepts and pushes with `! <command>`.
+3. **Never propose the waiver as the way out.** Nick, 2026-09-23: "I don't want to have
+   to waive anything."
+
+`/standup` lists parked P0s awaiting acceptance by name, and shows every other parked
+finding in its own section for as long as it stays parked.
 
 ## Before relaying anything it says
 

@@ -67,16 +67,11 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from shell_tokens import simple_commands  # noqa: E402
 from hook_runtime import read_payload  # noqa: E402
+from hook_command_lint import python_script_args  # noqa: E402
 
 # The four kwargs, matched against ONE argument word. `\b` keeps `--notes-append` and
 # `--due=X` inside the match and `--duet` outside it.
 KWARG = re.compile(r"--(task|priority|due|notes)\b")
-
-# The interpreter word, by basename: python, python3, python3.12, /usr/bin/python3.
-PYTHON = re.compile(r"python(\d+(\.\d+)*)?")
-
-# Interpreter options that take the NEXT word as their value.
-_PYTHON_OPTS_WITH_VALUE = {"-X", "-W"}
 
 # `update` (added 2026-08-14) is the one MUTATING subcommand that legitimately takes
 # these flags: it edits a single field in place, so naming the field IS the interface.
@@ -113,22 +108,10 @@ def todo_write_args(words: list[str]):
 
     `words` is ONE simple command. todo_write.py has to be the script the interpreter
     runs: the first word after it that is not an interpreter option. `-c` and `-m` run
-    no script file, so what follows them is never this script.
+    no script file, so what follows them is never this script. The scan itself lives in
+    hook_command_lint.python_calls, shared with check_owner_only_actions.py.
     """
-    for i, word in enumerate(words):
-        if not PYTHON.fullmatch(os.path.basename(word)):
-            continue
-        j = i + 1
-        while j < len(words) and words[j].startswith("-") and words[j] != "-":
-            if words[j][:2] in ("-c", "-m"):
-                j = len(words)
-            elif words[j] in _PYTHON_OPTS_WITH_VALUE:
-                j += 2
-            else:
-                j += 1
-        if j < len(words) and os.path.basename(words[j]) == "todo_write.py":
-            return words[j + 1:]
-    return None
+    return python_script_args(words, "todo_write.py")
 
 
 def find_violation(command: str):

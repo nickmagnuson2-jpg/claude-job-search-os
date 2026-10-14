@@ -154,8 +154,12 @@ career-scan defect in a new costume, and the whole reason findings carry a
   Nick's condition for this not being theatre was that skipping is a conscious act; a
   waiver count nobody sees is how it stops being one. A rising count is the signal that
   the gate is being routed around rather than used.
-- **Zero open findings and zero waivers renders nothing at all** — same rule as the
-  role queue. A daily "0 findings" line trains the reader to skip the section.
+- **Parked findings get their own section** for as long as they stay parked: verified
+  real, deferred with a reason, NOT closed. Parked P0s awaiting Nick's acceptance come
+  first, by name, because they are blocking pushes and only he can clear them
+  (`finding_write.py accept`). The P0s grandfathered on 2026-10-14 are counted, not listed.
+- **Nothing open, nothing parked and zero waivers renders nothing at all** — same rule
+  as the role queue. A daily "0 findings" line trains the reader to skip the section.
 
 Empty queue with `new_count: 0` renders **nothing at all** — a daily "0 new roles" line
 trains the reader to skip the section, which is how the original defect stayed invisible.

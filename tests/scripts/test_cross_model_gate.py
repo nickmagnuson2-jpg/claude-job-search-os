@@ -1339,10 +1339,88 @@ def test_the_open_P0_names_every_blocking_address(tmp_path):
         assert addr in v.message
 
 
-@pytest.mark.parametrize("disp", ["fixed", "rejected", "parked"])
-def test_a_dispositioned_P0_does_not_block(tmp_path, disp):
+@pytest.mark.parametrize("disp", ["fixed", "rejected"])
+def test_a_closed_P0_does_not_block(tmp_path, disp):
     _row(tmp_path, findings=[_p0(disposition=disp)])
     assert g.check(tmp_path, [(SCANNER, 200, 40)], since=0).blocked is False
+
+
+# --- a parked P0 blocks until Nick accepts it (2026-10-14) ---------------------------
+#
+# `parked` cleared a P0 exactly as `fixed` did, because the check asked for findings
+# with no disposition at all. The agent could park and push in one motion; 102 P0s were
+# parked by the day this changed. Codex 335.F1.
+
+def test_a_parked_P0_still_blocks(tmp_path):
+    _row(tmp_path, findings=[_p0(disposition="parked")])
+    v = g.check(tmp_path, [(SCANNER, 200, 40)], since=0)
+    assert v.blocked is True
+    assert "1.F1" in v.message and "accept" in v.message
+
+
+def test_an_accepted_parked_P0_does_not_block(tmp_path):
+    f = _p0(disposition="parked")
+    f["accepted_by"] = "owner"
+    _row(tmp_path, findings=[f])
+    assert g.check(tmp_path, [(SCANNER, 200, 40)], since=0).blocked is False
+
+
+def test_a_legacy_accepted_P0_does_not_block(tmp_path):
+    import finding_write as fw
+    f = _p0(disposition="parked")
+    f["accepted_by"] = fw.LEGACY_ACCEPTOR
+    _row(tmp_path, findings=[f])
+    assert g.check(tmp_path, [(SCANNER, 200, 40)], since=0).blocked is False
+
+
+def test_acceptance_on_a_non_parked_finding_does_not_unblock_it(tmp_path):
+    """accepted_by is meaningful only on a parked finding. An open P0 carrying a stray
+    acceptance field (a hand edit, or one left behind) is still unanswered."""
+    f = _p0(disposition=None)
+    f["accepted_by"] = "owner"
+    _row(tmp_path, findings=[f])
+    assert g.check(tmp_path, [(SCANNER, 200, 40)], since=0).blocked is True
+
+
+def test_the_block_names_which_P0s_await_acceptance(tmp_path):
+    _row(tmp_path, findings=[_p0("F1"), _p0("F2", disposition="parked")])
+    msg = g.check(tmp_path, [(SCANNER, 200, 40)], since=0).message
+    tail = msg.split("awaiting acceptance:")[1].splitlines()[0]
+    assert "1.F2" in tail and "1.F1" not in tail
+
+
+def test_a_parked_P0_blocks_even_a_small_push(tmp_path):
+    _row(tmp_path, paths=["tools/friction_log.py"], findings=[_p0(disposition="parked")])
+    v = g.check(tmp_path, [("tools/friction_log.py", 4, 1)], since=0)
+    assert v.qualified is False and v.blocked is True
+
+
+def test_a_P0_awaiting_acceptance_is_listed_by_name_in_the_summary(tmp_path):
+    _row(tmp_path, findings=[_f("F1", "P0", "parked", "design call", summary="waiting one")])
+    out = g.summary(tmp_path)
+    head, _, rest = out.partition("BLOCKING pushes")
+    assert "1 parked P0(s)" in head
+    assert "waiting one" in rest.split("parked finding(s)")[0]
+
+
+def test_legacy_acceptances_are_counted_not_listed(tmp_path):
+    import finding_write as fw
+    f = _f("F1", "P0", "parked", "old", summary="legacy one")
+    f["accepted_by"] = fw.LEGACY_ACCEPTOR
+    _row(tmp_path, findings=[f, _f("F2", "P1", "parked", "x", summary="normal one")])
+    out = g.summary(tmp_path)
+    assert "legacy one" not in out
+    assert "1 P0s accepted as legacy" in out
+    assert "normal one" in out
+    assert "BLOCKING" not in out
+
+
+def test_an_owner_accepted_P0_is_still_listed_as_parked_debt(tmp_path):
+    f = _f("F1", "P0", "parked", "ship it", summary="accepted one")
+    f["accepted_by"] = "owner"
+    _row(tmp_path, findings=[f])
+    out = g.summary(tmp_path)
+    assert "accepted one" in out and "BLOCKING" not in out
 
 
 @pytest.mark.parametrize("sev", ["P1", "P2"])
@@ -1423,13 +1501,13 @@ def test_the_address_matches_finding_write(tmp_path):
 def test_a_long_P0_list_is_truncated_with_a_count(tmp_path):
     _row(tmp_path, findings=[_p0(f"F{i}") for i in range(1, 15)])
     msg = g.check(tmp_path, [(SCANNER, 200, 40)], since=0).message
-    assert "14 open P0" in msg and "(+2 more)" in msg and "1.F13" not in msg
+    assert "14 unresolved P0" in msg and "(+2 more)" in msg and "1.F13" not in msg
 
 
 def test_twelve_P0s_carry_no_more_suffix(tmp_path):
     _row(tmp_path, findings=[_p0(f"F{i}") for i in range(1, 13)])
     msg = g.check(tmp_path, [(SCANNER, 200, 40)], since=0).message
-    assert "more)" not in msg.split("open P0")[1].split("List:")[0]
+    assert "more)" not in msg.split("unresolved P0")[1].split("List:")[0]
 
 
 def test_an_open_P0_on_a_changed_NON_TRIGGER_path_still_blocks(tmp_path):

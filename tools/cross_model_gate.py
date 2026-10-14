@@ -526,14 +526,35 @@ def summary(repo_root: Path) -> str:
         # overstate what nobody has looked at; dropping them entirely is what this
         # function did until 2026-09-07. Reasons are truncated because they are written
         # to be read at the ledger, not in a daily brief.
-        lines.append(f"\n{len(parked)} parked finding(s) -- verified real, deferred "
-                     f"with a reason. Not closed. `finding_write list --parked` for "
-                     f"addresses:")
-        for f in parked:
+        # P0s awaiting acceptance come first and by name: they are blocking pushes now
+        # and only Nick can clear them. Legacy acceptances are counted, not listed; the
+        # 2026-10-14 grandfathering would otherwise put ~100 rows in every brief.
+        import finding_write
+
+        def _render(f: dict) -> None:
             why = " ".join((f.get("why") or "").split())
             lines.append(f"  [{f.get('severity', 'P2')}] {f.get('summary', '')}")
             if why:
                 lines.append(f"        why: {why[:150]}{'...' if len(why) > 150 else ''}")
+
+        waiting = [f for f in parked if f.get("severity") == "P0"
+                   and not f.get("accepted_by")]
+        legacy = [f for f in parked
+                  if f.get("accepted_by") == finding_write.LEGACY_ACCEPTOR]
+        if waiting:
+            lines.append(f"\n{len(waiting)} parked P0(s) BLOCKING pushes until Nick "
+                         f"accepts (`! ... finding_write.py accept <addr> --why ...`):")
+            for f in waiting:
+                _render(f)
+        skip = {id(f) for f in waiting + legacy}
+        lines.append(f"\n{len(parked)} parked finding(s) -- verified real, deferred "
+                     f"with a reason. Not closed. `finding_write list --parked` for "
+                     f"addresses:"
+                     + (f" ({len(legacy)} P0s accepted as legacy on 2026-10-14, "
+                        f"not listed)" if legacy else ""))
+        for f in parked:
+            if id(f) not in skip:
+                _render(f)
     return "\n".join([head] + lines) if lines else head
 
 
@@ -692,7 +713,7 @@ def check(repo_root: Path, changes: list[tuple[str, int, int]],
         f"{f' (+{len(missing) - 6} more)' if len(missing) > 6 else ''}\n\n"
         f"  Run one:   PYTHONIOENCODING=utf-8 python3 tools/codex_verify.py \\\n"
         f"               --target '<what to check>' --paths {suggest}\n"
-        f"  Or waive:  CODEX_VERIFY_WAIVE='<why>' git push\n\n"
+        f"  Or Nick waives (the agent cannot):  CODEX_VERIFY_WAIVE='<why>' git push\n\n"
         f"A waiver is recorded and counted; /standup surfaces the running total."
         + (f"\n\nAlso: {_p0_block_text(blocking)}" if blocking else ""))
     return v
@@ -710,23 +731,42 @@ def open_p0_against(repo_root: Path, required: set) -> list[dict]:
     cannot COVER a push, but age is not a disposition: its open P0 is still an
     unanswered finding. Only P0 blocks; P1s are carried, per the pre-lock rule.
     Addressing comes from finding_write.collect(), the one scheme `set` accepts.
+
+    A PARKED P0 BLOCKS until Nick accepts it (2026-10-14). Until then this asked for
+    `only_open`, which drops every finding with any disposition, so `parked` cleared a
+    P0 exactly as `fixed` did while parked_findings() below calls it unpaid debt. The
+    agent could park and push in one motion, and 102 P0s were parked that way. Now
+    parking records the deferral, and `finding_write.py accept`, which the agent is
+    blocked from running, records that the debt may ship.
     """
     import finding_write
-    return [f for f in finding_write.collect(repo_root, only_open=True, severity="P0")
-            if required & set(f["paths"])]
+    return [f for f in finding_write.collect(repo_root, severity="P0")
+            if required & set(f["paths"]) and blocks_push(f)]
+
+
+def blocks_push(f: dict) -> bool:
+    """Does this P0 still stop a push? Open, or parked without an acceptance."""
+    disp = (f.get("disposition") or "").strip()
+    return not disp or (disp == "parked" and not f.get("accepted_by"))
 
 
 def _p0_block_text(blocking: list[dict]) -> str:
     addrs = [f["addr"] for f in blocking]
     shown = ", ".join(addrs[:12]) + (f" (+{len(addrs) - 12} more)" if len(addrs) > 12
                                      else "")
-    return (f"{len(addrs)} open P0 finding(s) are recorded against the paths being "
+    parked = [f["addr"] for f in blocking if (f.get("disposition") or "").strip()]
+    return (f"{len(addrs)} unresolved P0 finding(s) are recorded against the paths being "
             f"pushed: {shown}\n\n"
             f"  List:      PYTHONIOENCODING=utf-8 python3 tools/finding_write.py list "
-            f"--open --severity P0\n"
+            f"--severity P0\n"
             f"  Resolve:   PYTHONIOENCODING=utf-8 python3 tools/finding_write.py set "
             f"<addr> --disposition fixed|rejected|parked --why '<reason>'\n"
-            f"  Or waive:  CODEX_VERIFY_WAIVE='<why>' git push\n")
+            f"  A parked P0 still blocks until Nick accepts it (the agent cannot):\n"
+            f"             ! PYTHONIOENCODING=utf-8 python3 tools/finding_write.py accept "
+            f"<addr> --why '<reason>'\n"
+            + (f"  Parked, awaiting acceptance: {', '.join(parked[:12])}\n" if parked
+               else "")
+            + "  Or Nick waives:  CODEX_VERIFY_WAIVE='<why>' git push\n")
 
 
 def main(argv=None) -> int:

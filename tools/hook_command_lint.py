@@ -28,7 +28,9 @@ Origin: 2026-06-05 — the parked "2nd heredoc fire" REOPEN gate tripped when
 `git commit -F - <<'EOF' ... python crash ... EOF` was blocked by
 check_bare_python.py. Pure functions, stdlib only.
 """
+import os
 import re
+from dataclasses import dataclass
 
 _SINGLE_QUOTED = re.compile(r"'[^']*'")
 _DOUBLE_QUOTED_LITERAL = re.compile(r'"[^"$`]*"')
@@ -62,3 +64,63 @@ def strip_literals(command: str) -> str:
     command = _SINGLE_QUOTED.sub(" ", command)
     command = _DOUBLE_QUOTED_LITERAL.sub(" ", command)
     return command
+
+
+# --- python interpreter calls, read from shell_tokens words -------------------------
+#
+# Moved here 2026-10-14 from check_todo_write_kwargs.todo_write_args, when a second hook
+# (check_owner_only_actions.py) needed the same answer: which script, or which -c code,
+# does this `python ...` word list run? Mechanism, not policy.
+
+# The interpreter word, by basename: python, python3, python3.12, /usr/bin/python3.
+PYTHON = re.compile(r"python(\d+(\.\d+)*)?")
+
+# Interpreter options that take the NEXT word as their value.
+_PYTHON_OPTS_WITH_VALUE = {"-X", "-W"}
+
+
+@dataclass
+class PythonCall:
+    script: str | None    # the script file run, or None for -c / -m / stdin
+    args: list[str]       # words after the script (or after the -c code / -m module)
+    code: str | None      # the -c program text, if any
+    module: str | None    # the -m module name, if any
+
+
+def python_calls(words: list[str]):
+    """Every python interpreter invocation in ONE simple command's words, in order.
+
+    The script is the first word after the interpreter that is not an interpreter
+    option. `-c CODE` and `-m MODULE` run no script file. A bare `-` (or nothing)
+    reads the program from stdin, which a heredoc supplies; that call has no script
+    and no code here, and the caller reads the heredoc body off the command.
+    """
+    for i, word in enumerate(words):
+        if not PYTHON.fullmatch(os.path.basename(word)):
+            continue
+        j = i + 1
+        call = None
+        while j < len(words) and words[j].startswith("-") and words[j] != "-":
+            w = words[j]
+            if w[:2] in ("-c", "-m"):
+                val = w[2:] if len(w) > 2 else (words[j + 1] if j + 1 < len(words) else "")
+                rest = words[j + (1 if len(w) > 2 else 2):]
+                call = (PythonCall(None, rest, val, None) if w[:2] == "-c"
+                        else PythonCall(None, rest, None, val))
+                break
+            j += 2 if w in _PYTHON_OPTS_WITH_VALUE else 1
+        if call is None:
+            if j < len(words) and words[j] != "-":
+                call = PythonCall(words[j], words[j + 1:], None, None)
+            else:
+                call = PythonCall(None, words[j + 1:], None, None)
+        yield call
+
+
+def python_script_args(words: list[str], script_basename: str):
+    """The argument words of the first `python ... <script_basename> ...` call in ONE
+    simple command, or None."""
+    for call in python_calls(words):
+        if call.script and os.path.basename(call.script) == script_basename:
+            return call.args
+    return None

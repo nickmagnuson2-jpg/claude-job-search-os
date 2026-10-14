@@ -21,6 +21,17 @@ Usage:
 
 A disposition ALWAYS carries a reason. An allowlist without justification is how a
 gate decays back into "green means done", so --why is required and may not be blank.
+
+ACCEPTING A PARKED P0 (2026-10-14). A parked P0 keeps blocking every push to its paths
+until Nick accepts it:
+  ! PYTHONIOENCODING=utf-8 python3 tools/finding_write.py accept 1.F3 --why "..."
+
+Until this existed, `parked` unblocked a P0 exactly as `fixed` did, so parking became
+the routine way past the gate: 102 parked P0s by 2026-10-14. Parking is still how the
+agent records "real, deferred"; accepting is the separate decision that the debt may
+ship, and it is Nick's. tools/check_owner_only_actions.py blocks the agent from running
+`accept`. Changing a finding's disposition clears any acceptance, so a re-park needs a
+fresh one.
 """
 import argparse
 import json
@@ -38,6 +49,12 @@ LEDGER_NAME = ".cross-model-ledger.jsonl"
 # Matches the vocabulary in .claude/skills/verify/SKILL.md: a finding stays open
 # until someone marks it fixed, rejected with a reason, or parked with a reason.
 DISPOSITIONS = ("fixed", "rejected", "parked")
+
+# The fields an acceptance writes. Listed once so set_disposition clears exactly these.
+ACCEPT_FIELDS = ("accepted_by", "accepted_at", "accepted_why")
+# accepted_by for the P0s that were parked before acceptance existed, grandfathered
+# in one pass on Nick's decision (2026-10-14) so core files did not all start blocking.
+LEGACY_ACCEPTOR = "legacy-2026-10-14"
 
 
 def ledger_path(repo_root: Path) -> Path:
@@ -109,23 +126,15 @@ def collect(repo_root: Path, only_open: bool = False,
                 "summary": f.get("summary"),
                 "disposition": disp or None,
                 "why": f.get("why"),
+                "accepted_by": f.get("accepted_by"),
             })
     return out
 
 
-def set_disposition(repo_root: Path, addr: str, disposition: str, why: str,
-                    force: bool = False) -> dict:
-    """Write one disposition. Returns the updated finding.
-
-    Raises KeyError if the address does not resolve, ValueError on a bad input or on
-    an already-dispositioned finding without force. Nothing is written on any error.
+def _edit_finding(repo_root: Path, addr: str, apply) -> None:
+    """Resolve `addr` to exactly one finding and let `apply(finding)` change it in place,
+    under the ledger lock. `apply` raises to abort; nothing is written on any error.
     """
-    if disposition not in DISPOSITIONS:
-        raise ValueError(f"disposition must be one of {', '.join(DISPOSITIONS)}, "
-                         f"got {disposition!r}")
-    if not why or not why.strip():
-        raise ValueError("--why is required and may not be blank")
-
     run_no, fid = parse_addr(addr)
     path = ledger_path(repo_root)
 
@@ -155,7 +164,6 @@ def set_disposition(repo_root: Path, addr: str, disposition: str, why: str,
     # primitive is how the two drift apart.
     # Found by adversarial cross-model verification 2026-09-06 (F1, P0):
     # output/analysis/090626-codex-tools-finding-write-py-does-it-atomical.md
-    captured: dict = {}
 
     def _transform(text: str) -> str:
         # Deliberately re-derived from `text` on EVERY call, not closed over from an
@@ -188,8 +196,28 @@ def set_disposition(repo_root: Path, addr: str, disposition: str, why: str,
                 f"run {run_no} has {len(matches)} findings with id {fid!r}, so {addr!r} "
                 f"does not identify one record. Fix the duplicate ids in the ledger row "
                 f"before dispositioning it.")
-        target = matches[0]
+        apply(matches[0])
+        lines[run_no - 1] = json.dumps(row, ensure_ascii=False)
+        return "\n".join(lines) + "\n"
 
+    inbox_lock.atomic_update(path, _transform)
+
+
+def set_disposition(repo_root: Path, addr: str, disposition: str, why: str,
+                    force: bool = False) -> dict:
+    """Write one disposition. Returns the updated finding.
+
+    Raises KeyError if the address does not resolve, ValueError on a bad input or on
+    an already-dispositioned finding without force. Nothing is written on any error.
+    """
+    if disposition not in DISPOSITIONS:
+        raise ValueError(f"disposition must be one of {', '.join(DISPOSITIONS)}, "
+                         f"got {disposition!r}")
+    if not why or not why.strip():
+        raise ValueError("--why is required and may not be blank")
+    captured: dict = {}
+
+    def _apply(target: dict) -> None:
         existing = (target.get("disposition") or "").strip()
         if existing and not force:
             raise ValueError(
@@ -200,15 +228,49 @@ def set_disposition(repo_root: Path, addr: str, disposition: str, why: str,
         target["disposition"] = disposition
         target["why"] = why.strip()
         target["dispositioned"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
-
-        lines[run_no - 1] = json.dumps(row, ensure_ascii=False)
+        # An acceptance was given for the decision it was given on. Any new decision,
+        # including parking again, needs a new one.
+        for k in ACCEPT_FIELDS:
+            target.pop(k, None)
         captured["result"] = {
             "addr": addr, "severity": target.get("severity"),
             "summary": target.get("summary"), "disposition": disposition,
             "why": target["why"], "dispositioned": target["dispositioned"]}
-        return "\n".join(lines) + "\n"
 
-    inbox_lock.atomic_update(path, _transform)
+    _edit_finding(repo_root, addr, _apply)
+    return captured["result"]
+
+
+def accept(repo_root: Path, addr: str, why: str, by: str = "owner") -> dict:
+    """Accept a PARKED P0 so it stops blocking pushes. Returns the updated finding.
+
+    Only a parked P0 can be accepted. An open P0 must be parked first, so the reason for
+    deferring it and the decision to ship it are two separate records. Raises KeyError
+    if the address does not resolve, ValueError otherwise. Nothing is written on error.
+    """
+    if not why or not why.strip():
+        raise ValueError("--why is required and may not be blank")
+    captured: dict = {}
+
+    def _apply(target: dict) -> None:
+        if str(target.get("severity") or "") != "P0":
+            raise ValueError(f"{addr} is {target.get('severity')!r}; only a P0 blocks, "
+                             "so only a P0 needs accepting")
+        disp = (target.get("disposition") or "").strip()
+        if disp != "parked":
+            raise ValueError(f"{addr} is {disp or 'open'!r}, not parked. Park it first "
+                             "with `set --disposition parked --why ...`.")
+        if target.get("accepted_by"):
+            raise ValueError(f"{addr} is already accepted by {target['accepted_by']!r}")
+        target["accepted_by"] = by
+        target["accepted_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        target["accepted_why"] = why.strip()
+        captured["result"] = {
+            "addr": addr, "severity": target.get("severity"),
+            "summary": target.get("summary"), "disposition": disp,
+            **{k: target[k] for k in ACCEPT_FIELDS}}
+
+    _edit_finding(repo_root, addr, _apply)
     return captured["result"]
 
 
@@ -234,6 +296,11 @@ def main(argv=None) -> int:
     p_set.add_argument("--force", action="store_true",
                        help="overwrite an existing disposition")
 
+    p_acc = sub.add_parser("accept", help="Nick only: let a parked P0 stop blocking pushes")
+    p_acc.add_argument("addr", help="'<run>.<finding id>', e.g. 1.F3")
+    p_acc.add_argument("--why", required=True,
+                       help="why this debt may ship unpaid, recorded on the finding")
+
     args = ap.parse_args(argv)
     root = Path(args.repo_root).resolve()
 
@@ -245,8 +312,11 @@ def main(argv=None) -> int:
         return 0
 
     try:
-        result = set_disposition(root, args.addr, args.disposition, args.why,
-                                 force=args.force)
+        if args.cmd == "accept":
+            result = accept(root, args.addr, args.why)
+        else:
+            result = set_disposition(root, args.addr, args.disposition, args.why,
+                                     force=args.force)
     except (KeyError, ValueError) as exc:
         print(json.dumps({"error": str(exc).strip("'")}), file=sys.stderr)
         return 2
