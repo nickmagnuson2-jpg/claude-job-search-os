@@ -354,3 +354,36 @@ def test_a_tty_stdin_ignores_the_pipe_and_scans_the_working_tree(repo):
     assert proc.returncode == 1, (
         "a tty means a manual run: the working tree must be scanned, not the piped sha")
     assert "framework/leak.md" in err
+
+
+# --- tracked files outside the prefix list (Grok finding, 2026-10-13) ---
+
+OUTSIDE_PREFIXES = [".claude/settings.json", "config/notes.txt", ".editorconfig"]
+
+
+@pytest.mark.parametrize("rel", OUTSIDE_PREFIXES)
+def test_a_tracked_file_outside_the_prefix_list_is_scanned_at_push(repo, rel):
+    """is_public_path was called without root, so its gitignore fallback never ran and
+    these files were treated as private and skipped."""
+    sha = commit(repo, rel, "Contact: Pat Zorp\n")
+    r = run(repo, push_line(sha))
+    assert r.returncode == 1, (rel, r.returncode, r.stderr)
+    assert rel in r.stderr and "Pat Zorp" in r.stderr
+
+
+@pytest.mark.parametrize("rel", OUTSIDE_PREFIXES)
+def test_a_tracked_file_outside_the_prefix_list_is_scanned_in_a_manual_run(repo, rel):
+    commit(repo, rel, "Contact: Pat Zorp\n")
+    r = run(repo, "")
+    assert r.returncode == 1, (rel, r.returncode, r.stderr)
+    assert rel in r.stderr and "Pat Zorp" in r.stderr
+
+
+def test_a_force_added_file_under_an_ignored_path_is_scanned_because_it_ships(repo):
+    """Matching a .gitignore pattern does not keep a tracked file off the remote."""
+    (repo / ".gitignore").write_text("private/\n", encoding="utf-8")
+    _git(repo, "add", ".gitignore")
+    sha = commit(repo, "private/notes.txt", "Contact: Pat Zorp\n")
+    r = run(repo, push_line(sha))
+    assert r.returncode == 1 and "private/notes.txt" in r.stderr, r.stderr
+

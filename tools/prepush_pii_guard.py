@@ -40,7 +40,10 @@ def tracked_public_files(root: Path) -> list[str]:
     files = []
     for rel in out:
         rel = rel.strip()
-        if not rel or not cp.is_public_path(rel) or cp.is_binary(rel):
+        # Pass root: without it the gitignore fallback never runs, and a tracked file
+        # outside the prefix list (.claude/settings.json, a top-level dotfile) was
+        # never scanned at push.
+        if not rel or not cp.is_public_path(rel, root) or cp.is_binary(rel):
             continue
         if cp.is_gitignored(root, rel):
             continue
@@ -81,7 +84,10 @@ def public_blobs_at(root: Path, sha: str):
     ).stdout.split(b"\0")
     for raw in names:
         rel = raw.decode("utf-8", "replace").strip()
-        if not rel or not cp.is_public_path(rel) or cp.is_binary(rel):
+        # Pass root: without it the gitignore fallback never runs, and a tracked file
+        # outside the prefix list (.claude/settings.json, a top-level dotfile) was
+        # never scanned at push.
+        if not rel or not cp.is_public_path(rel, root) or cp.is_binary(rel):
             continue
         if cp.is_gitignored(root, rel):
             continue
