@@ -416,3 +416,94 @@ def test_a_pushed_ref_that_is_not_checked_out_is_judged_by_its_own_tree(repo):
     r = run(repo, f"refs/heads/side {sha} refs/heads/side {ZERO_SHA}\n")
     assert r.returncode == 1 and "secret/notes.txt" in r.stderr, r.stderr
 
+
+
+# --- every pushed commit, not only each tip (review 316, 2026-10-13) ---
+
+def test_a_name_added_then_removed_in_the_same_push_blocks(repo):
+    """316.F1 (P0): only the tip tree was scanned, so the add-then-delete pair
+    published the name while the scan reported clean."""
+    commit(repo, "framework/a.md", "clean\n")
+    commit(repo, "framework/leak.md", "Contact: Pat Zorp\n")
+    _git(repo, "rm", "-q", "framework/leak.md")
+    _git(repo, "commit", "-q", "-m", "remove")
+    sha = _git(repo, "rev-parse", "HEAD").stdout.strip()
+    r = run(repo, push_line(sha))
+    assert r.returncode == 1 and "framework/leak.md" in r.stderr, r.stderr
+
+
+def test_a_name_overwritten_by_a_clean_edit_in_the_same_push_blocks(repo):
+    commit(repo, "framework/leak.md", "Contact: Pat Zorp\n")
+    sha = commit(repo, "framework/leak.md", "Contact: Jordan Sample\n")
+    r = run(repo, push_line(sha))
+    assert r.returncode == 1 and "Pat Zorp" in r.stderr, r.stderr
+
+
+def test_what_the_remote_already_has_is_not_rescanned(repo):
+    """The remote's tip bounds the scan. Without the bound, every push would re-block on
+    anything already public."""
+    old = commit(repo, "framework/old.md", "Contact: Pat Zorp\n")
+    new = commit(repo, "framework/new.md", "clean\n")
+    r = run(repo, f"refs/heads/main {new} refs/heads/main {old}\n")
+    assert r.returncode == 0, r.stderr
+    newer = commit(repo, "framework/newer.md", "Zorptech\n")
+    r = run(repo, f"refs/heads/main {newer} refs/heads/main {old}\n")
+    assert r.returncode == 1 and "framework/newer.md" in r.stderr
+    assert "framework/old.md" not in r.stderr
+
+
+def test_a_remote_tip_this_clone_does_not_have_falls_back_to_scanning_everything(repo):
+    commit(repo, "framework/leak.md", "Contact: Pat Zorp\n")
+    sha = commit(repo, "framework/b.md", "clean\n")
+    r = run(repo, f"refs/heads/main {sha} refs/heads/main {'1' * 40}\n")
+    assert r.returncode == 1 and "framework/leak.md" in r.stderr, r.stderr
+
+
+def test_a_git_failure_is_announced_not_read_as_clean(repo):
+    """The guard fails open on an internal error by design; it must say so."""
+    commit(repo, "framework/a.md", "clean\n")
+    r = run(repo, push_line("f" * 40))
+    assert r.returncode == 0
+    assert "error (allowing push)" in r.stderr and "clean" not in r.stderr
+
+
+# --- legal names that used to be mangled (review 316.F2/F3) ---
+
+NEWLINE_NAME = "framework/odd\nname.md"
+
+
+def test_a_name_with_a_newline_is_scanned_at_push(repo):
+    sha = commit(repo, NEWLINE_NAME, "Contact: Pat Zorp\n")
+    r = run(repo, push_line(sha))
+    assert r.returncode == 1 and "Pat Zorp" in r.stderr, r.stderr
+
+
+def test_a_name_with_a_leading_space_is_scanned_at_push(repo):
+    sha = commit(repo, " lead.md", "Contact: Pat Zorp\n")
+    r = run(repo, push_line(sha))
+    assert r.returncode == 1 and "Pat Zorp" in r.stderr, r.stderr
+
+
+def test_a_name_with_a_newline_is_scanned_in_a_manual_run(repo):
+    commit(repo, NEWLINE_NAME, "Contact: Pat Zorp\n")
+    r = run(repo, "")
+    assert r.returncode == 1 and "Pat Zorp" in r.stderr, r.stderr
+
+
+def test_a_manual_run_scans_a_symlink_as_its_link_text(repo, tmp_path_factory):
+    """Git commits a symlink as its target path, so that text is what ships. Following
+    the link scanned a file that never ships, and missed a name in the link text."""
+    outside = tmp_path_factory.mktemp("outside") / "private.md"
+    outside.write_text("Contact: Pat Zorp\n", encoding="utf-8")
+    (repo / "framework").mkdir(exist_ok=True)
+    (repo / "framework" / "link.md").symlink_to(outside)
+    _git(repo, "add", "framework/link.md")
+    _git(repo, "commit", "-q", "-m", "link")
+    assert run(repo, "").returncode == 0
+    (repo / "framework" / "Zorptech.md").symlink_to("nowhere")
+    _git(repo, "add", "framework/Zorptech.md")
+    _git(repo, "commit", "-q", "-m", "named link")
+    (repo / "framework" / "Zorptech.md").unlink()
+    (repo / "framework" / "Zorptech.md").symlink_to("Zorptech/target")
+    r = run(repo, "")
+    assert r.returncode == 1 and "Zorptech" in r.stderr, r.stderr
