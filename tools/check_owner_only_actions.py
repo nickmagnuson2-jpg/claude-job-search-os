@@ -64,6 +64,40 @@ _SETS_ENV = re.compile(r"\b(environ|putenv)\b")
 _DEST_LAST = {"cp", "mv", "install", "ln", "rsync", "scp", "ditto"}
 # Shells whose `-c STRING` runs STRING as a command line (Codex 9b588cd F1).
 _SHELLS = {"bash", "sh", "zsh", "dash", "ksh"}
+# Programs that run the rest of their arguments as a command (Codex d71cd64 F1).
+_WRAPPERS = {"command", "exec", "nohup", "time", "nice", "sudo", "doas", "stdbuf",
+             "timeout", "builtin"}
+# Wrapper options that take the next word as their value.
+_WRAPPER_VALUE_OPTS = {"-n", "-u", "-g", "-s", "-k", "-o", "-e", "-a"}
+
+
+def _unwrap(words: list[str]) -> tuple[bool, list[str]]:
+    """(sets the waiver, the command words left once assignments, `env`, and wrapper
+    programs like `command`, `exec`, `nohup` and `timeout 5` are peeled off)."""
+    rest = list(words)
+    while rest:
+        if _ASSIGN.match(rest[0]):
+            if rest[0].startswith(WAIVE + "="):
+                return True, rest
+            rest = rest[1:]
+            continue
+        prog = os.path.basename(rest[0])
+        if prog == "env":
+            rest = rest[1:]
+            while rest and (rest[0].startswith("-") or _ASSIGN.match(rest[0])):
+                if rest[0].startswith(WAIVE + "="):
+                    return True, rest
+                rest = rest[2:] if rest[0] in ("-u", "-C", "-S") else rest[1:]
+            continue
+        if prog in _WRAPPERS:
+            rest = rest[1:]
+            while rest and rest[0].startswith("-"):
+                rest = rest[2:] if rest[0] in _WRAPPER_VALUE_OPTS else rest[1:]
+            if prog == "timeout" and rest:
+                rest = rest[1:]                         # the duration
+            continue
+        break
+    return False, rest
 
 
 def _is_ledger(word: str) -> bool:
@@ -95,48 +129,88 @@ def _code_violation(code: str) -> str | None:
     return None
 
 
-def _command_violation(words: list[str], redirections) -> str | None:
-    # 1. A leading assignment: `CODEX_VERIFY_WAIVE=why git push`.
-    k = 0
-    while k < len(words) and _ASSIGN.match(words[k]):
-        if words[k].startswith(WAIVE + "="):
-            return "waive"
-        k += 1
-    rest = words[k:]
+# Programs whose arguments, piped into a shell or python, become its program text.
+_PRODUCERS = {"echo", "printf", "cat"}
+
+
+def _stdin_texts(cmd) -> list[str]:
+    """What this simple command reads on stdin, where the command line shows it:
+    heredoc bodies, here-strings, and the words or heredoc of an echo/printf/cat
+    piped into it (Grok d71cd64 F2: `bash <<EOF`, `bash <<< ...`, `echo ... | bash`)."""
+    out = []
+    for r in cmd.redirections:
+        if r.body is not None:
+            out.append(r.body)
+        elif r.op.lstrip("0123456789") == "<<<":
+            out.append(r.target)
+    src = cmd.fed_by
+    if src is not None:
+        _w, words = _unwrap(src.words)
+        if words and os.path.basename(words[0]) in _PRODUCERS:
+            out.append(" ".join(w for w in words[1:] if not w.startswith("-")))
+            out.extend(r.body for r in src.redirections if r.body is not None)
+    return out
+
+
+def _command_violation(cmd) -> str | None:
+    words, redirections = cmd.words, cmd.redirections
+    # 1. `CODEX_VERIFY_WAIVE=why git push`, also behind env and wrapper programs.
+    waives, rest = _unwrap(words)
+    if waives:
+        return "waive"
     if rest:
         prog = os.path.basename(rest[0])
-        # `export CODEX_VERIFY_WAIVE=...`, `env CODEX_VERIFY_WAIVE=... git push`.
+        # `export CODEX_VERIFY_WAIVE=...`, `declare ...`.
         if prog in _SETTERS and any(w.startswith(WAIVE + "=") for w in rest[1:]):
             return "waive"
         args = [w for w in rest[1:] if not w.startswith("-")]
         if prog in _DEST_LAST and args and _is_ledger(args[-1]):
+            return "ledger"
+        # `cp /tmp/.cross-model-ledger.jsonl tools/`: a ledger-named source into tools/.
+        if prog in _DEST_LAST and len(args) > 1 \
+                and os.path.basename(args[-1].rstrip("/")) == "tools" \
+                and any(_is_ledger(w) for w in args[:-1]):
             return "ledger"
         if prog in _FILE_WRITERS - _DEST_LAST and any(
                 _is_ledger(w.split("=", 1)[-1]) for w in args):     # dd of=FILE
             return "ledger"
         # In place: `-i`, or any short-flag cluster holding i (`-pi`, `-Ei`).
         if prog in _IN_PLACE and any(
-                w == "--in-place" or (w.startswith("-") and not w.startswith("--")
+                w.startswith("--in-place") or (w.startswith("-") and not w.startswith("--")
                                       and "i" in w[1:]) for w in rest[1:]) \
                 and any(_is_ledger(w) for w in rest[1:]):
             return "ledger"
         # `bash -c STRING`, `sh -lc STRING`, `eval STRING`: the string is a command.
         if prog in _SHELLS:
-            for n, w in enumerate(rest[1:-1], start=1):
-                if w.startswith("-") and not w.startswith("--") and "c" in w[1:]:
-                    found = find_violation(rest[n + 1])
+            reads_stdin = True
+            for n, w in enumerate(rest[1:], start=1):
+                if w.startswith("-") and not w.startswith("--"):
+                    if "c" in w[1:]:
+                        reads_stdin = False
+                        found = find_violation(rest[n + 1]) if n + 1 < len(rest) else None
+                        if found:
+                            return found
+                        break
+                    if "s" in w[1:]:
+                        break                          # `bash -s ARGS`: stdin
+                    continue
+                reads_stdin = False                    # `bash script.sh`: a file
+                break
+            if reads_stdin:
+                for text in _stdin_texts(cmd):
+                    found = find_violation(text)
                     if found:
                         return found
-                    break
-        if prog == "eval" and len(rest) > 1:
-            found = find_violation(" ".join(rest[1:]))
+        if prog == "eval":
+            tail = rest[2:] if rest[1:2] == ["--"] else rest[1:]
+            found = find_violation(" ".join(tail)) if tail else None
             if found:
                 return found
     for r in redirections:
         if r.op.lstrip("0123456789") in _WRITE_REDIRS and _is_ledger(r.target):
             return "ledger"
     # 2. python: the accept subcommand, or code that does any of the three.
-    for call in python_calls(words):
+    for call in python_calls(rest):
         if call.script and os.path.basename(call.script) == "finding_write.py" \
                 and _accept_subcommand(call.args):
             return "accept"
@@ -148,11 +222,10 @@ def _command_violation(words: list[str], redirections) -> str | None:
             if found:
                 return found
         if call.script is None and call.code is None and call.module is None:
-            for r in redirections:              # `python3 - <<'EOF'`
-                if r.body is not None:
-                    found = _code_violation(r.body)
-                    if found:
-                        return found
+            for text in _stdin_texts(cmd):      # `python3 - <<'EOF'`, `echo ... | python3`
+                found = _code_violation(text)
+                if found:
+                    return found
     return None
 
 
@@ -161,7 +234,7 @@ def find_violation(command: str) -> str | None:
     None. Pure. Each simple command is judged on its own; `$(...)` and backticks are
     commands too."""
     for cmd in simple_commands(command):
-        found = _command_violation(cmd.words, cmd.redirections)
+        found = _command_violation(cmd)
         if found:
             return found
         for inner in cmd.subs:

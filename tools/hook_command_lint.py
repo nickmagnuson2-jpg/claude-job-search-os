@@ -75,8 +75,6 @@ def strip_literals(command: str) -> str:
 # The interpreter word, by basename: python, python3, python3.12, /usr/bin/python3.
 PYTHON = re.compile(r"python(\d+(\.\d+)*)?")
 
-# Interpreter options that take the NEXT word as their value.
-_PYTHON_OPTS_WITH_VALUE = {"-X", "-W"}
 
 
 @dataclass
@@ -102,13 +100,28 @@ def python_calls(words: list[str]):
         call = None
         while j < len(words) and words[j].startswith("-") and words[j] != "-":
             w = words[j]
-            if w[:2] in ("-c", "-m"):
-                val = w[2:] if len(w) > 2 else (words[j + 1] if j + 1 < len(words) else "")
-                rest = words[j + (1 if len(w) > 2 else 2):]
-                call = (PythonCall(None, rest, val, None) if w[:2] == "-c"
-                        else PythonCall(None, rest, None, val))
+            if w.startswith("--"):
+                # The one long option that takes its value as the next word.
+                j += 2 if w == "--check-hash-based-pycs" else 1
+                continue
+            # A short-option CLUSTER, read the way CPython reads it: `-uc CODE` is -u
+            # then -c, and an option taking a value (-c, -m, -X, -W) takes the rest of
+            # the cluster or else the next word (Grok d71cd64 F1: `-uc` hid the code).
+            step = 1
+            for k in range(1, len(w)):
+                ch = w[k]
+                if ch in "cmXW":
+                    inline = w[k + 1:]
+                    val = inline or (words[j + 1] if j + 1 < len(words) else "")
+                    step = 1 if inline else 2
+                    if ch in "cm":
+                        rest = words[j + step:]
+                        call = (PythonCall(None, rest, val, None) if ch == "c"
+                                else PythonCall(None, rest, None, val))
+                    break
+            if call is not None:
                 break
-            j += 2 if w in _PYTHON_OPTS_WITH_VALUE else 1
+            j += step
         if call is None:
             if j < len(words) and words[j] != "-":
                 call = PythonCall(words[j], words[j + 1:], None, None)

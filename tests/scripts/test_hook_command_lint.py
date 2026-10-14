@@ -85,3 +85,56 @@ def test_real_python_outside_heredoc_survives():
 def test_no_heredoc_is_unchanged_modulo_quotes():
     cmd = "python3 tools/foo.py --flag"
     assert h.strip_literals(cmd) == cmd
+
+
+# --- python_calls: which script, -c code or -m module a python word list runs --------
+
+import pytest  # noqa: E402
+
+
+@pytest.mark.parametrize("words, script, args, code, module", [
+    (["python3", "s.py", "a"], "s.py", ["a"], None, None),
+    (["/usr/bin/python3.12", "-u", "s.py"], "s.py", [], None, None),
+    (["python3", "-X", "dev", "s.py", "a"], "s.py", ["a"], None, None),
+    (["python3", "-Xdev", "s.py"], "s.py", [], None, None),
+    (["python3", "-W", "ignore", "-c", "X", "a"], None, ["a"], "X", None),
+    (["python3", "--quiet", "s.py"], "s.py", [], None, None),
+    (["python3", "-c", "X"], None, [], "X", None),
+    (["python3", "-cX", "a"], None, ["a"], "X", None),
+    # a CLUSTER, read as CPython reads it (Grok d71cd64 F1: -uc hid the code)
+    (["python3", "-uc", "X"], None, [], "X", None),
+    (["python3", "-Buc", "X", "a"], None, ["a"], "X", None),
+    (["python3", "-um", "mod", "a"], None, ["a"], None, "mod"),
+    (["python3", "-m", "mod"], None, [], None, "mod"),
+    (["python3", "-"], None, [], None, None),
+    (["python3"], None, [], None, None),
+])
+def test_python_calls_reads_the_program(words, script, args, code, module):
+    (call,) = list(h.python_calls(words))
+    assert (call.script, call.args, call.code, call.module) == (script, args, code, module)
+
+
+def test_python_calls_finds_every_interpreter_and_ignores_other_words():
+    calls = list(h.python_calls(["time", "python3", "a.py", "python-dateutil"]))
+    assert [c.script for c in calls] == ["a.py"]
+    assert list(h.python_calls(["echo", "python.md"])) == []
+
+
+def test_a_trailing_c_with_no_code_is_empty_not_a_crash():
+    (call,) = list(h.python_calls(["python3", "-c"]))
+    assert call.code == ""
+
+
+def test_python_script_args():
+    assert h.python_script_args(["python3", "tools/t.py", "x"], "t.py") == ["x"]
+    assert h.python_script_args(["python3", "-c", "t.py"], "t.py") is None
+
+
+def test_a_second_c_after_the_code_is_an_argument_not_an_option():
+    (call,) = list(h.python_calls(["python3", "-c", "X", "-c", "Y"]))
+    assert call.code == "X" and call.args == ["-c", "Y"]
+
+
+def test_a_long_option_that_takes_a_value_skips_it():
+    (call,) = list(h.python_calls(["python3", "--check-hash-based-pycs", "always", "s.py"]))
+    assert call.script == "s.py" and call.code is None
