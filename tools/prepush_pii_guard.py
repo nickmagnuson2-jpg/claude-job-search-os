@@ -19,7 +19,8 @@ Scope: deterministic only (high precision). The semantic catch-all for NEW names
 the denylist does not yet carry is the `/audit-pii` skill — this guard prints a
 reminder to run it, but cannot replace it.
 
-Exit 0 = clean (allow push). Exit 1 = denylist hit (block).
+Exit 0 = clean (allow push). Exit 1 = denylist hit, or the scan could not run
+(block; a guard error fails CLOSED since 2026-10-13).
 Override a confirmed false positive with PUSH_PII_OVERRIDE=1.
 
 Wired via .git/hooks/pre-push (fires only for the public claude-job-search-os
@@ -202,7 +203,15 @@ if __name__ == "__main__":
     except SystemExit:
         raise
     except Exception as e:
-        # Fail open on guard error (never wedge a push on infrastructure failure),
-        # but make the failure visible.
-        print(f"prepush_pii_guard error (allowing push): {e}", file=sys.stderr)
-        sys.exit(0)
+        # Fail CLOSED (Nick, 2026-10-13: "Block the push until it gets worked").
+        # A scan that could not run has not shown the push is clean, and this is the
+        # last check before a PUBLIC remote. The one way past is the same deliberate
+        # override as for a false positive.
+        if os.environ.get("PUSH_PII_OVERRIDE") == "1":
+            print(f"prepush_pii_guard error, PUSH_PII_OVERRIDE=1 -- allowing UNSCANNED "
+                  f"push: {e}", file=sys.stderr)
+            sys.exit(0)
+        print(f"\nBLOCKED: prepush_pii_guard could not scan this push: {e}\n"
+              "Fix the cause and re-push. To push unscanned anyway:\n"
+              "  PUSH_PII_OVERRIDE=1 git push ...\n", file=sys.stderr)
+        sys.exit(1)

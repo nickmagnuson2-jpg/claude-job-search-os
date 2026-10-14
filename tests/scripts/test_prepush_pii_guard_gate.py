@@ -255,7 +255,7 @@ def test_a_deletion_only_push_is_allowed_without_a_worktree_fallback(repo):
 
 
 def test_malformed_stdin_lines_do_not_crash_the_guard(repo):
-    """A guard that crashes fails open. It must survive junk on stdin."""
+    """A guard that crashes blocks every push. It must survive junk on stdin."""
     sha = commit(repo, "framework/leak.md", "Contact: Pat Zorp\n")
     r = run(repo, "garbage\n\n" + push_line(sha) + "one-field\n")
     assert r.returncode == 1, "the valid line must still be scanned"
@@ -306,18 +306,17 @@ def test_a_tracked_file_missing_from_disk_does_not_crash_the_fallback(repo):
     assert "Traceback" not in r.stderr
 
 
-# --- 7. fail-open, but visibly -----------------------------------------------
+# --- 7. fail-closed, and says why (Nick, 2026-10-13; was fail-open) -----------
 
-def test_an_infrastructure_failure_allows_the_push_and_says_why(repo):
-    """Deliberate: never wedge a push on a broken guard. But a silent fail-open is
-    indistinguishable from a clean scan, which is how a dead gate goes unnoticed. With
-    git absent, every subprocess call raises."""
+def test_an_infrastructure_failure_blocks_the_push_and_says_why(repo):
+    """A scan that could not run has not shown the push is clean. With git absent,
+    every subprocess call raises."""
     sha = commit(repo, "framework/leak.md", "Contact: Pat Zorp\n")
     empty_bin = repo / "emptybin"
     empty_bin.mkdir()
     r = run(repo, push_line(sha), env={"PATH": str(empty_bin)})
-    assert r.returncode == 0, "an infrastructure failure must not wedge the push"
-    assert "error" in r.stderr.lower(), "a silent fail-open reads exactly like a clean run"
+    assert r.returncode == 1, "a guard that could not run must block the push"
+    assert "could not scan this push" in r.stderr
 
 
 # --- 8. a terminal is not a hook ---------------------------------------------
@@ -459,12 +458,27 @@ def test_a_remote_tip_this_clone_does_not_have_falls_back_to_scanning_everything
     assert r.returncode == 1 and "framework/leak.md" in r.stderr, r.stderr
 
 
-def test_a_git_failure_is_announced_not_read_as_clean(repo):
-    """The guard fails open on an internal error by design; it must say so."""
+def test_a_git_failure_blocks_the_push(repo):
+    """Nick, 2026-10-13: a scan that could not run blocks the push until it is fixed."""
     commit(repo, "framework/a.md", "clean\n")
     r = run(repo, push_line("f" * 40))
+    assert r.returncode == 1, r.stderr
+    assert "BLOCKED: prepush_pii_guard could not scan this push" in r.stderr
+    assert "scan clean" not in r.stderr
+
+
+def test_the_override_lets_an_unscanned_push_through_and_says_so(repo):
+    commit(repo, "framework/a.md", "clean\n")
+    r = run(repo, push_line("f" * 40), env={"PUSH_PII_OVERRIDE": "1"})
     assert r.returncode == 0
-    assert "error (allowing push)" in r.stderr and "clean" not in r.stderr
+    assert "allowing UNSCANNED push" in r.stderr
+
+
+@pytest.mark.parametrize("value", ["0", "", "true", "yes"])
+def test_only_the_exact_override_value_lets_an_unscanned_push_through(repo, value):
+    commit(repo, "framework/a.md", "clean\n")
+    r = run(repo, push_line("f" * 40), env={"PUSH_PII_OVERRIDE": value})
+    assert r.returncode == 1, r.stderr
 
 
 # --- legal names that used to be mangled (review 316.F2/F3) ---
