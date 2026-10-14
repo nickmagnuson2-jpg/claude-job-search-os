@@ -159,6 +159,22 @@ an origin: for three weeks the career scanner scored ~30 roles a night into a fi
 nothing read. A report written to `output/analysis/` and consumed by nobody is that same
 defect in a new costume.
 
+## Ending a blocked push: park, never waive, and Nick does the push
+
+The gate counts only reviews recorded after the newest commit, so every fix commit forces
+another round. The loop ends on a round whose findings are handled WITHOUT a commit.
+
+1. **Run `/audit-pii` before the final round, not after.** A PII scrub is a commit too.
+2. **Never propose `CODEX_VERIFY_WAIVE` as the way out.** Nick, 2026-09-23: "I don't want
+   to have to waive anything."
+3. **On the final round:** reject any finding that does not reproduce, with the evidence.
+   Park each real P0 with a reason and a build row (`tools/finding_write.py set <run>.<Fn>
+   --disposition parked --why "..."`). Parked counts as closed for the gate.
+4. **Announce the park in its own message, before the push.** List the findings and the
+   reason, then stop. Nick either pushes himself (`! git push`) or says go. A park and a
+   push by the agent in the same turn is the agent clearing its own gate. On 2026-10-14 the
+   permission classifier denied exactly that as a CI bypass, and it was right to.
+
 ## Before relaying anything it says
 
 Cross-model output is where relaying is most tempting and least safe: you cannot inspect
