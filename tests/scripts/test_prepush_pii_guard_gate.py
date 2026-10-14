@@ -278,12 +278,13 @@ def test_an_empty_pipe_falls_back_to_the_working_tree(repo):
 # vs public_blobs_at). Both had every filter branch surviving, and a filter that only
 # works on one of the two paths is a filter you cannot reason about.
 
-def test_the_fallback_skips_binary_and_non_public_paths(repo):
+def test_the_fallback_skips_binary_paths(repo):
+    """Binary extensions only. A committed data/ file ships and IS scanned (review 313;
+    see test_a_force_added_file_under_data_is_scanned_in_a_manual_run)."""
     commit(repo, "framework/ok.md", "Vendor: Acme\n")
     commit(repo, "docs/img.png", "Pat Zorp\n")
-    commit(repo, "data/notes.md", "Pat Zorp\n")
     r = run(repo, "")
-    assert r.returncode == 0, "binary extensions and non-public prefixes are not scanned"
+    assert r.returncode == 0, "binary extensions are not scanned"
 
 
 def test_the_fallback_still_blocks_a_real_public_hit(repo):
@@ -386,4 +387,32 @@ def test_a_force_added_file_under_an_ignored_path_is_scanned_because_it_ships(re
     sha = commit(repo, "private/notes.txt", "Contact: Pat Zorp\n")
     r = run(repo, push_line(sha))
     assert r.returncode == 1 and "private/notes.txt" in r.stderr, r.stderr
+
+
+# --- the pushed tree is the scope (Codex review of 9a0b77b, 2026-10-13) ---
+
+def test_a_force_added_file_under_data_is_scanned_at_push(repo):
+    """data/ was excluded before any other check, so a force-added file shipped unscanned."""
+    sha = commit(repo, "data/contacts.txt", "Contact: Pat Zorp\n")
+    r = run(repo, push_line(sha))
+    assert r.returncode == 1 and "data/contacts.txt" in r.stderr, r.stderr
+
+
+def test_a_force_added_file_under_data_is_scanned_in_a_manual_run(repo):
+    commit(repo, "data/contacts.txt", "Contact: Pat Zorp\n")
+    r = run(repo, "")
+    assert r.returncode == 1 and "data/contacts.txt" in r.stderr, r.stderr
+
+
+def test_a_pushed_ref_that_is_not_checked_out_is_judged_by_its_own_tree(repo):
+    """Gitignore was read from the checked-out branch. Here the pushed ref tracks
+    secret/notes.txt while the checked-out branch ignores secret/ and lacks the file."""
+    base = commit(repo, "README.md", "hello\n")
+    _git(repo, "checkout", "-q", "-b", "side")
+    sha = commit(repo, "secret/notes.txt", "Contact: Pat Zorp\n")
+    _git(repo, "checkout", "-q", base)
+    (repo / ".gitignore").write_text("secret/\n", encoding="utf-8")
+    assert _git(repo, "check-ignore", "-q", "secret/notes.txt", check=False).returncode == 0
+    r = run(repo, f"refs/heads/side {sha} refs/heads/side {ZERO_SHA}\n")
+    assert r.returncode == 1 and "secret/notes.txt" in r.stderr, r.stderr
 

@@ -40,12 +40,10 @@ def tracked_public_files(root: Path) -> list[str]:
     files = []
     for rel in out:
         rel = rel.strip()
-        # Pass root: without it the gitignore fallback never runs, and a tracked file
-        # outside the prefix list (.claude/settings.json, a top-level dotfile) was
-        # never scanned at push.
-        if not rel or not cp.is_public_path(rel, root) or cp.is_binary(rel):
-            continue
-        if cp.is_gitignored(root, rel):
+        # Every tracked file ships, so tracked IS the scope. Filtering by path or by
+        # gitignore skipped force-added files (data/ was excluded outright) and files
+        # outside the prefix list (review 311/313).
+        if not rel or cp.is_binary(rel):
             continue
         if (root / rel).is_file():
             files.append(rel)
@@ -75,21 +73,21 @@ def read_prepush_stdin():
 
 
 def public_blobs_at(root: Path, sha: str):
-    """Yield (rel, content) for every public, non-gitignored file in the tree at
-    `sha`. Content is decoded utf-8 with replacement so a binary blob never crashes
-    the scan."""
+    """Yield (rel, content) for every non-binary file in the tree at `sha`. Content is
+    decoded utf-8 with replacement so a binary blob never crashes the scan.
+
+    Membership in the pushed tree is the whole scope: every blob listed there reaches
+    the remote. The path and gitignore filters this used to apply were wrong twice
+    over (review 313): `data/` was excluded outright, so a force-added file shipped
+    unscanned, and gitignore was read from the CHECKED-OUT branch, not from `sha`, so
+    a pushed ref that tracks a path the current branch ignores was skipped."""
     names = subprocess.run(
         ["git", "-C", str(root), "ls-tree", "-r", "--name-only", "-z", sha],
         capture_output=True,
     ).stdout.split(b"\0")
     for raw in names:
         rel = raw.decode("utf-8", "replace").strip()
-        # Pass root: without it the gitignore fallback never runs, and a tracked file
-        # outside the prefix list (.claude/settings.json, a top-level dotfile) was
-        # never scanned at push.
-        if not rel or not cp.is_public_path(rel, root) or cp.is_binary(rel):
-            continue
-        if cp.is_gitignored(root, rel):
+        if not rel or cp.is_binary(rel):
             continue
         blob = subprocess.run(
             ["git", "-C", str(root), "show", f"{sha}:{rel}"],
