@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """fetch_x_source.py - pull an X (Twitter) post or X Article into the job-search OS.
 
-Exa, WebFetch, and r.jina.ai do not return X content. The FxTwitter API
-(api.fxtwitter.com, third party, no auth, no SLA) does, including the full body of an
-X Article. Emits a JSON ExtractionBlock to stdout for /analyze to consume, in the same
+Exa, WebFetch, and r.jina.ai returned nothing for X when tested. The FxTwitter API
+(api.fxtwitter.com, third party, no auth, no SLA) returned a plain post and an X Article
+body when tested live on 2026-10-19. Other payload shapes are handled defensively: they
+fail with a reason_code or return ok:true with a warning naming what is missing. Emits a JSON ExtractionBlock to stdout for /analyze to consume, in the same
 shape family as tools/fetch_transcript.py.
 
 ALWAYS run with PYTHONIOENCODING=utf-8 (repo convention) or it crashes on Unicode.
@@ -18,18 +19,20 @@ Output JSON shape:
     "author": {"handle": "...", "name": "...", "followers": 0},
     "created_at": "...",
     "metrics": {"likes": 0, "retweets": 0, "replies": 0, "bookmarks": 0, "views": 0},
-    "text": "full plaintext; articles keep headers, lists, and embedded prompt/code blocks",
-    "warnings": ["..."]                 # e.g. a reply in a thread, an unknown block type
+    "text": "plaintext; articles keep headers, lists, and embedded prompt/code blocks;
+             a quoted post is appended as a > block",
+    "warnings": ["..."]                 # anything known to be missing or unrendered
   }
 On failure:
   {"ok": false, "error": "human message", "reason_code": "...", "url": "..."}
-  reason_code: bad_url | not_found | private | http_error | network_error | schema_drift
+  reason_code: bad_url | not_found | private | unavailable | no_text | http_error |
+               network_error | schema_drift
 
 X Article bodies are Draft.js content: `blocks[]` plus an `entityMap`. An `atomic` block
 carries no text of its own; its content (an embedded prompt or code block, an image, a
 divider) is the entity named by `entityRanges[0].key`, which matches the entity's
-`key` FIELD, not its position in the list. Reading only `blocks[].text` silently drops
-every embedded prompt (verified 2026-10-19 against a live X Article).
+`key` FIELD, not its position in the list. Reading only `blocks[].text` dropped every
+embedded prompt in the X Article tested on 2026-10-19.
 
 Usage:
   PYTHONIOENCODING=utf-8 python3 tools/fetch_x_source.py <x-or-twitter-status-url>
@@ -50,11 +53,11 @@ TIMEOUT_S = 20
 
 _HOSTS = {"x.com", "twitter.com", "mobile.twitter.com", "mobile.x.com",
           "fxtwitter.com", "vxtwitter.com", "fixupx.com"}
-_STATUS_PATH_RE = re.compile(r"^/(?:(?P<handle>[A-Za-z0-9_]{1,15})|i(?:/web)?)/status(?:es)?/(?P<id>\d{1,25})(?:/|$)")
+_STATUS_PATH_RE = re.compile(r"^/(?:[A-Za-z0-9_]{1,15}|i/web)/status(?:es)?/(?P<id>\d{1,25})(?:/|$)")
 
 
 def parse_status_url(url: str):
-    """Return (handle_or_None, status_id) for an X/Twitter status URL, else None.
+    """Return the status id for an X/Twitter status URL, else None.
 
     Profiles, searches, lists, and /i/article/<id> links are NOT status URLs and
     return None: the article id is not a status id and the API cannot resolve it.
@@ -71,7 +74,7 @@ def parse_status_url(url: str):
     m = _STATUS_PATH_RE.match(parsed.path or "")
     if not m:
         return None
-    return m.group("handle"), m.group("id")
+    return m.group("id")
 
 
 _BLOCK_PREFIX = {
@@ -103,7 +106,8 @@ def _render_entity(entity):
     etype = (entity or {}).get("type")
     data = (entity or {}).get("data") or {}
     if etype == "MARKDOWN":
-        return data.get("markdown", ""), None
+        md = (data.get("markdown") or "").strip()
+        return (md, None) if md else (None, "embedded MARKDOWN block has no content")
     if etype == "MEDIA":
         return "[media]", None
     if etype == "DIVIDER":
@@ -130,7 +134,8 @@ def article_to_text(content):
             text, warn = _render_entity(entities[ref])
             if warn and warn not in warnings:
                 warnings.append(warn)
-            parts.append(text)
+            if text:
+                parts.append(text)
             continue
         text = (block.get("text") or "").strip()
         if not text:
@@ -164,7 +169,9 @@ def normalize(payload, status_id: str, url: str) -> dict:
 
     warnings = []
     article = tweet.get("article")
-    if isinstance(article, dict) and isinstance(article.get("content"), dict):
+    if article is not None:
+        if not (isinstance(article, dict) and isinstance(article.get("content"), dict)):
+            return _fail("post has an article object without readable content", "schema_drift", url)
         kind = "article"
         text, warnings = article_to_text(article["content"])
         title = article.get("title") or ""
@@ -172,8 +179,15 @@ def normalize(payload, status_id: str, url: str) -> dict:
             return _fail("article content rendered to empty text", "schema_drift", url)
     else:
         kind = "post"
-        text = tweet.get("text") or ""
+        text = (tweet.get("text") or "").strip()
+        if not text:
+            return _fail("post has no text (media-only or empty)", "no_text", url)
         title = " ".join(text.split()[:10])
+    quoted, quote_warning = render_quote(tweet.get("quote"))
+    if quoted:
+        text += "\n\n" + quoted
+    if quote_warning:
+        warnings.append(quote_warning)
     if tweet.get("replying_to_status"):
         warnings.append("this post replies to another; only this post was fetched, not the thread")
 
@@ -196,6 +210,28 @@ def normalize(payload, status_id: str, url: str) -> dict:
     }
 
 
+def render_quote(quote):
+    """Return (quoted_block_or_None, warning_or_None) for a post's `quote` field.
+
+    FxTwitter's documented field (docs.fxembed.com, 2026-10-19): `quote` is a nested
+    post object, or a placeholder with no text when the quoted post is unavailable.
+    """
+    if quote is None:
+        return None, None
+    if not isinstance(quote, dict):
+        return None, "quoted post present in an unreadable shape; not included"
+    qtext = (quote.get("text") or "").strip()
+    if not qtext:
+        why = quote.get("reason") or "no text"
+        return None, f"quoted post not included ({why})"
+    handle = (quote.get("author") or {}).get("screen_name") or "unknown"
+    body = "\n".join("> " + line for line in qtext.splitlines())
+    warning = None
+    if quote.get("article") is not None:
+        warning = "quoted post is an X Article; only its post text is included, fetch it separately"
+    return f"> Quoted post by @{handle}:\n{body}", warning
+
+
 def _fail(error: str, reason_code: str, url: str) -> dict:
     return {"ok": False, "error": error, "reason_code": reason_code, "url": url}
 
@@ -203,34 +239,33 @@ def _fail(error: str, reason_code: str, url: str) -> dict:
 # --- network step (manual smoke test; not in CI) -----------------------------
 
 
-def http_get(endpoint: str):
-    """Return (status, content_type, body_text). Raises urllib errors."""
+def http_get(endpoint: str) -> str:
+    """Return the response body. Raises urllib errors (HTTPError on non-2xx)."""
     req = urllib.request.Request(endpoint, headers={"User-Agent": "Mozilla/5.0 job-search-os"})
     with urllib.request.urlopen(req, timeout=TIMEOUT_S) as resp:
-        return resp.status, resp.headers.get("Content-Type", ""), resp.read().decode("utf-8", "replace")
+        return resp.read().decode("utf-8", "replace")
 
 
 def build_block(url: str, getter=http_get) -> dict:
-    parsed = parse_status_url(url)
-    if not parsed:
+    status_id = parse_status_url(url)
+    if not status_id:
         return _fail(f"Not an X/Twitter status URL (need /<handle>/status/<id>): {url}", "bad_url", url)
-    _, status_id = parsed
     try:
-        status, ctype, body = getter(API_BASE + status_id)
+        body = getter(API_BASE + status_id)
     except urllib.error.HTTPError as exc:
         reason = {404: "not_found", 401: "private"}.get(exc.code, "http_error")
         return _fail(f"HTTP {exc.code} from FxTwitter", reason, url)
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         return _fail(f"network error reaching FxTwitter: {exc}", "network_error", url)
-    # A missing or deleted status comes back as HTTP 200 with an HTML page, not JSON
-    # (verified 2026-10-19), so the status code alone cannot detect it.
-    if "json" not in (ctype or "").lower():
-        return _fail(f"FxTwitter returned {ctype or 'no content type'} (HTTP {status}), "
-                     "not JSON: the status is likely deleted, missing, or protected",
-                     "not_found", url)
     try:
         payload = json.loads(body)
     except json.JSONDecodeError:
+        # A missing status came back as HTTP 200 with an HTML page (2026-10-19), but an
+        # HTML service-error page looks the same, so HTML cannot be read as "not found".
+        if body.lstrip().startswith("<"):
+            return _fail("FxTwitter returned an HTML page, not JSON: the status may be "
+                         "deleted or missing, or the service may be erroring. Open the "
+                         "URL in a browser to tell which.", "unavailable", url)
         return _fail("FxTwitter returned invalid JSON", "schema_drift", url)
     return normalize(payload, status_id, url)
 

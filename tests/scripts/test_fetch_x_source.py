@@ -54,12 +54,12 @@ def _payload(article=None, text="hello world from a plain post", **extra):
     return {"code": 200, "message": "OK", "tweet": tweet}
 
 
-def _getter(status=200, ctype="application/json; charset=utf-8", body=None, exc=None):
+def _getter(body=None, exc=None):
     def get(endpoint):
         get.endpoint = endpoint
         if exc is not None:
             raise exc
-        return status, ctype, body if body is not None else json.dumps(_payload())
+        return body if body is not None else json.dumps(_payload())
     return get
 
 
@@ -67,14 +67,14 @@ def _getter(status=200, ctype="application/json; charset=utf-8", body=None, exc=
 
 class TestParseStatusUrl:
     def test_x_status(self):
-        assert fx.parse_status_url("https://x.com/example_user/status/123?s=20") == ("example_user", "123")
+        assert fx.parse_status_url("https://x.com/example_user/status/123?s=20") == "123"
 
     def test_twitter_www_and_mobile(self):
-        assert fx.parse_status_url("https://www.twitter.com/a/status/9") == ("a", "9")
-        assert fx.parse_status_url("https://mobile.twitter.com/a/status/9/photo/1") == ("a", "9")
+        assert fx.parse_status_url("https://www.twitter.com/a/status/9") == "9"
+        assert fx.parse_status_url("https://mobile.twitter.com/a/status/9/photo/1") == "9"
 
     def test_i_web_status(self):
-        assert fx.parse_status_url("https://x.com/i/web/status/42") == (None, "42")
+        assert fx.parse_status_url("https://x.com/i/web/status/42") == "42"
 
     def test_profile_rejected(self):
         assert fx.parse_status_url("https://x.com/example_user") is None
@@ -105,9 +105,15 @@ class TestArticleToText:
         assert parts[5] == "[media]"
         assert warnings == []
 
-    def test_embedded_prompt_text_is_kept(self):
-        text, _ = fx.article_to_text(_article_content())
-        assert "PROMPT BODY" in text
+    def test_empty_markdown_entity_warns_and_is_skipped(self):
+        content = {
+            "blocks": [{"type": "unstyled", "text": "Intro", "key": "a"},
+                       {"type": "atomic", "key": "z", "entityRanges": [{"key": 1}]}],
+            "entityMap": [{"key": "1", "value": {"type": "MARKDOWN", "data": {}}}],
+        }
+        text, warnings = fx.article_to_text(content)
+        assert text == "Intro"
+        assert warnings == ["embedded MARKDOWN block has no content"]
 
     def test_block_prefixes(self):
         text, _ = fx.article_to_text(_article_content())
@@ -206,6 +212,49 @@ class TestNormalize:
         b = fx.normalize(_payload(article=art), "123", "u")
         assert b["ok"] is False and b["reason_code"] == "schema_drift"
 
+    def test_article_without_content_is_schema_drift(self):
+        for art in ({"title": "T"}, {"title": "T", "content": None}, {"content": []}, "junk"):
+            b = fx.normalize(_payload(article=art, text="https://t.co/x"), "123", "u")
+            assert b["ok"] is False and b["reason_code"] == "schema_drift", art
+
+    def test_empty_post_text_is_no_text(self):
+        for t in ("", "   ", None):
+            b = fx.normalize(_payload(text=t), "123", "u")
+            assert b["ok"] is False and b["reason_code"] == "no_text"
+
+    def test_quote_appended_with_attribution(self):
+        q = {"text": "line one\nline two", "author": {"screen_name": "other_user"}}
+        b = fx.normalize(_payload(quote=q), "123", "u")
+        assert b["text"] == ("hello world from a plain post\n\n> Quoted post by @other_user:\n"
+                             "> line one\n> line two")
+        assert b["warnings"] == []
+
+    def test_unavailable_quote_warns(self):
+        q = {"type": "tombstone", "reason": "deleted"}
+        b = fx.normalize(_payload(quote=q), "123", "u")
+        assert b["text"] == "hello world from a plain post"
+        assert b["warnings"] == ["quoted post not included (deleted)"]
+
+    def test_quote_without_reason_or_author(self):
+        assert fx.render_quote({}) == (None, "quoted post not included (no text)")
+        assert fx.render_quote({"text": "x"}) == ("> Quoted post by @unknown:\n> x", None)
+
+    def test_unreadable_quote_warns(self):
+        b = fx.normalize(_payload(quote="junk"), "123", "u")
+        assert b["warnings"] == ["quoted post present in an unreadable shape; not included"]
+
+    def test_quoted_article_warns(self):
+        q = {"text": "https://t.co/q", "author": {"screen_name": "o"}, "article": {"title": "A"}}
+        b = fx.normalize(_payload(quote=q), "123", "u")
+        assert "> https://t.co/q" in b["text"]
+        assert b["warnings"] == ["quoted post is an X Article; only its post text is included, fetch it separately"]
+
+    def test_quote_on_article_is_appended(self):
+        art = {"title": "My Guide", "content": _article_content()}
+        q = {"text": "quoted", "author": {"screen_name": "o"}}
+        b = fx.normalize(_payload(article=art, quote=q), "123", "u")
+        assert b["text"].endswith("> Quoted post by @o:\n> quoted")
+
     def test_null_article_is_a_post(self):
         b = fx.normalize(_payload(article=None), "123", "u")
         assert b["kind"] == "post"
@@ -240,11 +289,11 @@ class TestBuildBlock:
         g = _getter(exc=AssertionError("network called"))
         assert fx.build_block("https://x.com/example_user", getter=g)["reason_code"] == "bad_url"
 
-    def test_html_200_is_not_found(self):
-        # A missing status returns HTTP 200 + an HTML page (verified live 2026-10-19).
-        g = _getter(ctype="text/html; charset=UTF-8", body="<!DOCTYPE html><html>")
-        b = fx.build_block(self.URL, getter=g)
-        assert b["ok"] is False and b["reason_code"] == "not_found"
+    def test_html_page_is_unavailable_not_not_found(self):
+        # A missing status returned HTTP 200 + an HTML page (live, 2026-10-19), but an
+        # HTML error page looks the same, so it must not be reported as not_found.
+        b = fx.build_block(self.URL, getter=_getter(body="  <!DOCTYPE html><html>"))
+        assert b["ok"] is False and b["reason_code"] == "unavailable"
 
     def test_invalid_json_is_schema_drift(self):
         b = fx.build_block(self.URL, getter=_getter(body="{not json"))
