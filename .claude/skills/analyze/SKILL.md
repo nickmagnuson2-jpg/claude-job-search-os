@@ -49,6 +49,7 @@ The **`ExtractionBlock` is the load-bearing interface.** Everything downstream r
 **Detect** (deterministic, trivial):
 - `arxiv.org`, `*.pdf`, DOI links, journal/proceedings domains -> `paper`.
 - `github.com/<owner>/<repo>` -> `repo`.
+- `x.com/<handle>/status/<id>` or `twitter.com/...` -> `article` (an X post or X Article). Exa and WebFetch fail on X, so fetch via `curl -s "https://api.fxtwitter.com/<handle>/status/<id>"` (no auth). A plain post's text is in `tweet.text`; an X Article's full body is in `tweet.article.content.blocks[].text`. Extraction one-liner and the syndication-CDN fallback: `reference_fetch_x_tweet_via_syndication_cdn.md` in the live memory tier.
 - YouTube / video URLs -> `video`: fetch the transcript via `PYTHONIOENCODING=utf-8 python3 tools/fetch_transcript.py <url> --repo-root .` (built 2026-06-09). It returns a JSON ExtractionBlock to stdout (`title`, `slug`, `text`, `segments`, `is_auto_generated`, `cached_path`) and caches `data/source-transcripts/<video_id>.md`. Use `text` as the source content and `slug` for the output filename, then run triage + extract + applicability exactly as for an `article` (core claim + evidence offered). If the JSON is `ok:false`, report the `reason_code` plainly (`no_captions` = no usable captions, ask Nick to paste a transcript; `private`/`age_restricted` = can't access; `dep_missing` = run the pip install the error names; `ip_blocked` = YouTube is rate-limiting, retry later) and do NOT fabricate around it. Flag auto-generated captions (`is_auto_generated: true`) as a transcription-quality caveat: speaker names, jargon, and numbers may be mis-rendered, so verbatim-number extraction (Step 2 evidence rule) is lower-confidence from auto-captions.
 - everything else -> `article`.
 - Derive a `slug` (lowercase-hyphens) from the title or repo name for the output filename.
@@ -153,6 +154,6 @@ Promotion trigger for the script split (per the skill-rebuild methodology): invo
 ## Out of scope for v1
 
 - Non-YouTube video hosts (Vimeo, recorded talks). YouTube transcript ingestion shipped 2026-06-09 via `tools/fetch_transcript.py` (reusable by `/reflect`, `/remember` when those add a video path; only `/analyze` is wired today).
-- Social threads (X), recorded talks.
+- Multi-post X threads (single posts and X Articles are in scope via fxtwitter, Step 1), recorded talks.
 - Multi-source synthesis (that is `/deep-research`).
 - The orchestrator-script split and subagent fan-out (documented seams above, built only when the promotion trigger fires).
