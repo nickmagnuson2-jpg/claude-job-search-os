@@ -527,7 +527,7 @@ def summary(repo_root: Path) -> str:
         # function did until 2026-09-07. Reasons are truncated because they are written
         # to be read at the ledger, not in a daily brief.
         # P0s awaiting acceptance come first and by name: they are blocking pushes now
-        # and only Nick can clear them. Legacy acceptances are counted, not listed; the
+        # and accepting them is Nick's decision. Legacy acceptances are counted, not listed; the
         # 2026-10-14 grandfathering would otherwise put ~100 rows in every brief.
         import finding_write
 
