@@ -49,7 +49,7 @@ The **`ExtractionBlock` is the load-bearing interface.** Everything downstream r
 **Detect** (deterministic, trivial):
 - `arxiv.org`, `*.pdf`, DOI links, journal/proceedings domains -> `paper`.
 - `github.com/<owner>/<repo>` -> `repo`.
-- `x.com/<handle>/status/<id>` or `twitter.com/...` -> `article` (an X post or X Article). Exa and WebFetch fail on X, so fetch via `curl -s "https://api.fxtwitter.com/<handle>/status/<id>"` (no auth). A plain post's text is in `tweet.text`; an X Article's full body is in `tweet.article.content.blocks[].text`. Extraction one-liner and the syndication-CDN fallback: `reference_fetch_x_tweet_via_syndication_cdn.md` in the live memory tier.
+- An X/Twitter **status** URL (`x.com/<handle>/status/<id>`, `twitter.com/...`, `mobile.`/`www.` variants, `x.com/i/web/status/<id>`) -> `x_post`: fetch via `PYTHONIOENCODING=utf-8 python3 tools/fetch_x_source.py <url>` (built 2026-10-19), never Exa or WebFetch, which returned nothing for X when tested (Exa `SOURCE_NOT_AVAILABLE` on 2026-10-19). It returns a JSON ExtractionBlock (`kind` post|article, `title`, `slug`, `author`, `metrics`, `text`, `warnings`). For an X Article, `text` includes the embedded prompt/code blocks, which carry much of an article's substance. Use `text` and `slug`, then run triage + extract + applicability exactly as for an `article`. If `ok:false`, report the `reason_code` plainly (`bad_url` = a profile, search, or `/i/article/` link, ask Nick for the post's status URL; `not_found` = deleted, missing, or protected; `network_error`/`http_error` = FxTwitter, a third-party service, is unreachable, retry or ask Nick to paste the text; `schema_drift` = FxTwitter changed its payload, the script needs fixing). Read every `warnings` entry before extracting: a reply-in-a-thread warning means only one post was fetched, and a missing-entity warning means part of an article is absent.
 - YouTube / video URLs -> `video`: fetch the transcript via `PYTHONIOENCODING=utf-8 python3 tools/fetch_transcript.py <url> --repo-root .` (built 2026-06-09). It returns a JSON ExtractionBlock to stdout (`title`, `slug`, `text`, `segments`, `is_auto_generated`, `cached_path`) and caches `data/source-transcripts/<video_id>.md`. Use `text` as the source content and `slug` for the output filename, then run triage + extract + applicability exactly as for an `article` (core claim + evidence offered). If the JSON is `ok:false`, report the `reason_code` plainly (`no_captions` = no usable captions, ask Nick to paste a transcript; `private`/`age_restricted` = can't access; `dep_missing` = run the pip install the error names; `ip_blocked` = YouTube is rate-limiting, retry later) and do NOT fabricate around it. Flag auto-generated captions (`is_auto_generated: true`) as a transcription-quality caveat: speaker names, jargon, and numbers may be mis-rendered, so verbatim-number extraction (Step 2 evidence rule) is lower-confidence from auto-captions.
 - everything else -> `article`.
 - Derive a `slug` (lowercase-hyphens) from the title or repo name for the output filename.
@@ -87,7 +87,7 @@ Build the factual layer before any synthesis. Every later claim must trace to it
   Read entry points, core modules, tests. For a large repo, dispatch an `Explore` subagent (Task tool) to read the code so it does not flood the main context; ask it for the architecture, how it actually works, and adoption cost. **Delete the temp clone when done** (`rm -rf /tmp/analyze-<slug>`).
 - If Pass 1 already showed the repo is irrelevant/abandoned/low-maturity, STOP - do not clone (this is the triage bail for repos).
 
-*Article:* `mcp__exa__web_fetch_exa`; capture the core claim and any evidence.
+*Article:* `mcp__exa__web_fetch_exa`; capture the core claim and any evidence. An `x_post` is NOT fetched here: it already has its text from `tools/fetch_x_source.py` (Step 1).
 
 If a fetch fails or is paywalled: report it, try WebFetch as a fallback, then ask Nick to paste the content. Never fabricate around a failed fetch.
 
@@ -154,6 +154,6 @@ Promotion trigger for the script split (per the skill-rebuild methodology): invo
 ## Out of scope for v1
 
 - Non-YouTube video hosts (Vimeo, recorded talks). YouTube transcript ingestion shipped 2026-06-09 via `tools/fetch_transcript.py` (reusable by `/reflect`, `/remember` when those add a video path; only `/analyze` is wired today).
-- Multi-post X threads (single posts and X Articles are in scope via fxtwitter, Step 1), recorded talks.
+- Multi-post X threads: `tools/fetch_x_source.py` fetches one status and warns when it is a reply; it does not walk a thread. Single posts and X Articles are in scope (Step 1). Recorded talks.
 - Multi-source synthesis (that is `/deep-research`).
 - The orchestrator-script split and subagent fan-out (documented seams above, built only when the promotion trigger fires).
