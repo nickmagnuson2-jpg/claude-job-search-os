@@ -713,7 +713,7 @@ def check(repo_root: Path, changes: list[tuple[str, int, int]],
         f"{f' (+{len(missing) - 6} more)' if len(missing) > 6 else ''}\n\n"
         f"  Run one:   PYTHONIOENCODING=utf-8 python3 tools/codex_verify.py \\\n"
         f"               --target '<what to check>' --paths {suggest}\n"
-        f"  Or Nick waives (the agent cannot):  CODEX_VERIFY_WAIVE='<why>' git push\n\n"
+        f"  Or Nick waives:  CODEX_VERIFY_WAIVE='<why>' git push\n\n"
         f"A waiver is recorded and counted; /standup surfaces the running total."
         + (f"\n\nAlso: {_p0_block_text(blocking)}" if blocking else ""))
     return v
@@ -736,8 +736,9 @@ def open_p0_against(repo_root: Path, required: set) -> list[dict]:
     `only_open`, which drops every finding with any disposition, so `parked` cleared a
     P0 exactly as `fixed` did while parked_findings() below calls it unpaid debt. The
     agent could park and push in one motion, and 102 P0s were parked that way. Now
-    parking records the deferral, and `finding_write.py accept`, which the agent is
-    blocked from running, records that the debt may ship.
+    parking records the deferral, and `finding_write.py accept`, which is Nick's to run,
+    records that the debt may ship. Nothing local enforces that; his Touch ID on every
+    push does (2026-10-15).
     """
     import finding_write
     return [f for f in finding_write.collect(repo_root, severity="P0")
@@ -761,7 +762,7 @@ def _p0_block_text(blocking: list[dict]) -> str:
             f"--severity P0\n"
             f"  Resolve:   PYTHONIOENCODING=utf-8 python3 tools/finding_write.py set "
             f"<addr> --disposition fixed|rejected|parked --why '<reason>'\n"
-            f"  A parked P0 still blocks until Nick accepts it (the agent cannot):\n"
+            f"  A parked P0 still blocks until Nick accepts it:\n"
             f"             ! PYTHONIOENCODING=utf-8 python3 tools/finding_write.py accept "
             f"<addr> --why '<reason>'\n"
             + (f"  Parked, awaiting acceptance: {', '.join(parked[:12])}\n" if parked

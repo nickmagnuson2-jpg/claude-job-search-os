@@ -69,7 +69,7 @@ def strip_literals(command: str) -> str:
 # --- python interpreter calls, read from shell_tokens words -------------------------
 #
 # Moved here 2026-10-14 from check_todo_write_kwargs.todo_write_args, when a second hook
-# (check_owner_only_actions.py) needed the same answer: which script, or which -c code,
+# (check_owner_only_actions.py, deleted 2026-10-15) needed the same answer: which script, or which -c code,
 # does this `python ...` word list run? Mechanism, not policy.
 
 # The interpreter word, by basename: python, python3, python3.12, /usr/bin/python3.

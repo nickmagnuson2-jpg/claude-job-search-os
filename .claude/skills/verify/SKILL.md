@@ -171,9 +171,9 @@ it. This section holds only what the gate cannot know.
 2. **A real P0 you are not fixing: park it, tell Nick, and stop.** Parking
    (`finding_write.py set <addr> --disposition parked --why ...`) records why it is
    deferred. It does not unblock the push. A parked P0 blocks until Nick accepts it with
-   `finding_write.py accept`, and `tools/check_owner_only_actions.py` blocks the agent
-   from accepting, from setting `CODEX_VERIFY_WAIVE`, and from writing the ledger. List
-   the addresses and reasons for him; he accepts and pushes with `! <command>`.
+   `finding_write.py accept`. Never run `accept` or set `CODEX_VERIFY_WAIVE` yourself:
+   nothing local can stop you, which is why every push needs Nick's Touch ID. List the
+   addresses and reasons for him; he accepts and pushes with `! <command>`.
 3. **Never propose the waiver as the way out.** Nick, 2026-09-23: "I don't want to have
    to waive anything."
 

@@ -109,7 +109,7 @@ def todo_write_args(words: list[str]):
     `words` is ONE simple command. todo_write.py has to be the script the interpreter
     runs: the first word after it that is not an interpreter option. `-c` and `-m` run
     no script file, so what follows them is never this script. The scan itself lives in
-    hook_command_lint.python_calls, shared with check_owner_only_actions.py.
+    hook_command_lint.python_calls.
     """
     return python_script_args(words, "todo_write.py")
 

@@ -29,9 +29,11 @@ until Nick accepts it:
 Until this existed, `parked` unblocked a P0 exactly as `fixed` did, so parking became
 the routine way past the gate: 102 parked P0s by 2026-10-14. Parking is still how the
 agent records "real, deferred"; accepting is the separate decision that the debt may
-ship, and it is Nick's. tools/check_owner_only_actions.py blocks the agent from running
-`accept`. Changing a finding's disposition clears any acceptance, so a re-park needs a
-fresh one.
+ship, and it is Nick's. Nothing local stops the agent from running `accept`: a hook that
+tried (2026-10-14) was bypassed in three straight review rounds and deleted. The control
+is that every push needs Nick's Touch ID (2026-10-15), so `accept` is workflow state he
+sees at push time, not a lock. Changing a finding's disposition clears any acceptance,
+so a re-park needs a fresh one.
 """
 import argparse
 import json
