@@ -182,6 +182,8 @@ def normalize(payload, status_id: str, url: str) -> dict:
             return _fail("post has an article object without readable content", "schema_drift", url)
         kind = "article"
         text, warnings = article_to_text(article["content"])
+        if article.get("cover_media") or article.get("media_entities"):
+            warnings.append("the article has images that are not extracted")
         warnings += unaccounted(article, _ARTICLE_FIELDS, "the article")
         title = article.get("title") or ""
         if not text:
@@ -258,7 +260,8 @@ def render_poll(poll):
             if w not in warnings:
                 warnings.append(w)
     lines = [f"Poll ({poll.get('total_votes', 'unknown')} votes):"]
-    lines += [f"- {c['label']}: {c.get('percentage', '?')}%" for c in labels]
+    lines += [f"- {c['label']}: {c.get('percentage', '?')}% ({c.get('count', '?')} votes)"
+              for c in labels]
     return "\n".join(lines), warnings
 
 

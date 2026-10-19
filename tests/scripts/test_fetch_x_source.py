@@ -252,14 +252,14 @@ class TestNormalize:
         assert b["text"].endswith("> Quoted post by @o:\n> quoted")
 
     def test_poll_rendered(self):
-        poll = {"total_votes": 10, "choices": [{"label": "Yes", "percentage": 70},
-                                               {"label": "No", "percentage": 30}, {"count": 0}]}
+        poll = {"total_votes": 10, "choices": [{"label": "Yes", "count": 7, "percentage": 70},
+                                               {"label": "No", "count": 3, "percentage": 30}, {"count": 0}]}
         b = fx.normalize(_payload(poll=poll), "123", "u")
-        assert b["text"].endswith("\n\nPoll (10 votes):\n- Yes: 70%\n- No: 30%")
+        assert b["text"].endswith("\n\nPoll (10 votes):\n- Yes: 70% (7 votes)\n- No: 30% (3 votes)")
         assert b["warnings"] == []
 
     def test_poll_defaults(self):
-        assert fx.render_poll({"choices": [{"label": "A"}]}) == ("Poll (unknown votes):\n- A: ?%", [])
+        assert fx.render_poll({"choices": [{"label": "A"}]}) == ("Poll (unknown votes):\n- A: ?% (? votes)", [])
 
     def test_unreadable_poll_warns(self):
         for poll in ({}, {"choices": []}, "junk"):
@@ -298,17 +298,23 @@ class TestNormalize:
 
     def test_unknown_article_field_warns(self):
         art = {"title": "T", "content": _article_content(), "preview_text": "p",
-               "subtitle": "A DEK", "cover_media": {}}
+               "subtitle": "A DEK", "cover_media": {}, "media_entities": []}
         b = fx.normalize(_payload(article=art), "123", "u")
         assert b["ok"] is True
         assert b["warnings"] == ["the article has an unrecognized field 'subtitle' that is not extracted"]
+
+    def test_article_images_warn(self):
+        for extra in ({"cover_media": {"media_id": "1"}}, {"media_entities": [{"id": "2"}]}):
+            art = {"title": "T", "content": _article_content(), **extra}
+            b = fx.normalize(_payload(article=art), "123", "u")
+            assert b["warnings"] == ["the article has images that are not extracted"]
 
     def test_unknown_poll_fields_warn_once(self):
         poll = {"question": "WHICH", "ends_at": "x",
                 "choices": [{"label": "A", "count": 1, "description": "D1"},
                             {"label": "B", "description": "D2"}, "junk"]}
         block, warnings = fx.render_poll(poll)
-        assert block == "Poll (unknown votes):\n- A: ?%\n- B: ?%"
+        assert block == "Poll (unknown votes):\n- A: ?% (1 votes)\n- B: ?% (? votes)"
         assert warnings == ["the poll has an unrecognized field 'question' that is not extracted",
                             "a poll choice has an unrecognized field 'description' that is not extracted"]
 
@@ -318,7 +324,7 @@ class TestNormalize:
                "poll": {"choices": [{"label": "P", "percentage": 1}]}}
         b = fx.normalize(_payload(quote=mid), "123", "u")
         assert b["text"] == ("hello world from a plain post\n\n> Quoted post by @b:\n> mid\n>\n"
-                             "> Poll (unknown votes):\n> - P: 1%\n>\n> > Quoted post by @c:\n> > inner")
+                             "> Poll (unknown votes):\n> - P: 1% (? votes)\n>\n> > Quoted post by @c:\n> > inner")
         assert b["warnings"] == []
 
     def test_quoted_post_adjunct_warnings_name_the_level(self):
