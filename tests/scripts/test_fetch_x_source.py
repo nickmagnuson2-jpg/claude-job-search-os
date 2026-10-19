@@ -259,7 +259,7 @@ class TestNormalize:
         assert b["warnings"] == []
 
     def test_poll_defaults(self):
-        assert fx.render_poll({"choices": [{"label": "A"}]}) == ("Poll (unknown votes):\n- A: ?%", None)
+        assert fx.render_poll({"choices": [{"label": "A"}]}) == ("Poll (unknown votes):\n- A: ?%", [])
 
     def test_unreadable_poll_warns(self):
         for poll in ({}, {"choices": []}, "junk"):
@@ -285,12 +285,32 @@ class TestNormalize:
                 "bookmarks", "quotes", "created_at", "created_timestamp", "possibly_sensitive",
                 "views", "is_note_tweet", "community_note", "lang", "replying_to",
                 "replying_to_status", "article", "twitter_card", "color", "provider", "reposted_by"}
-        assert live <= fx._METADATA_FIELDS | fx._CONTENT_FIELDS
-        assert not fx._METADATA_FIELDS & fx._CONTENT_FIELDS
+        assert live <= fx._POST_FIELDS
+        live_article = {"created_at", "modified_at", "id", "title", "preview_text",
+                        "cover_media", "content", "media_entities"}
+        assert live_article <= fx._ARTICLE_FIELDS
 
-    def test_metadata_fields_do_not_warn(self):
-        extra = {k: "x" for k in fx._METADATA_FIELDS if k not in ("author", "id")}
-        assert fx.normalize(_payload(**extra), "123", "u")["warnings"] == []
+    def test_card_label_does_not_warn_but_card_object_does(self):
+        assert fx.normalize(_payload(twitter_card="summary", embed_card="tweet"), "123", "u")["warnings"] == []
+        b = fx.normalize(_payload(twitter_card={"title": "LINK"}, embed_card=["x"]), "123", "u")
+        assert b["warnings"] == ["this post has a link card ('twitter_card') that is not extracted",
+                                 "this post has a link card ('embed_card') that is not extracted"]
+
+    def test_unknown_article_field_warns(self):
+        art = {"title": "T", "content": _article_content(), "preview_text": "p",
+               "subtitle": "A DEK", "cover_media": {}}
+        b = fx.normalize(_payload(article=art), "123", "u")
+        assert b["ok"] is True
+        assert b["warnings"] == ["the article has an unrecognized field 'subtitle' that is not extracted"]
+
+    def test_unknown_poll_fields_warn_once(self):
+        poll = {"question": "WHICH", "ends_at": "x",
+                "choices": [{"label": "A", "count": 1, "description": "D1"},
+                            {"label": "B", "description": "D2"}, "junk"]}
+        block, warnings = fx.render_poll(poll)
+        assert block == "Poll (unknown votes):\n- A: ?%\n- B: ?%"
+        assert warnings == ["the poll has an unrecognized field 'question' that is not extracted",
+                            "a poll choice has an unrecognized field 'description' that is not extracted"]
 
     def test_nested_quote_and_poll_rendered(self):
         inner = {"text": "inner", "author": {"screen_name": "c"}}

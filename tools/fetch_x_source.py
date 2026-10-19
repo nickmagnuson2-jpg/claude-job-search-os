@@ -35,10 +35,12 @@ In the one X Article payload captured (2026-10-19), the body was Draft.js-style 
 Reading only `blocks[].text` dropped every embedded prompt in that article. A payload
 that departs from this shape fails as schema_drift or warns; it is not assumed.
 
-Completeness gate: every field of a post is either metadata (_METADATA_FIELDS),
-rendered or accounted for with a warning (_CONTENT_FIELDS), or unrecognized. An
-unrecognized, non-empty field produces a warning, so a content type this module does
-not know about is reported, never dropped silently.
+Completeness gate: every object this module reads (the post, each quoted post, the
+article, a poll and its choices) is checked by `unaccounted()` against the fields this
+module knows for that object. A known field is rendered, warned about, or is metadata;
+any other non-empty field produces a warning. So content this module does not know
+about is reported, never dropped silently. What the known-field sets cannot prove is
+that FxTwitter will never put content into a field listed here as metadata.
 
 Usage:
   PYTHONIOENCODING=utf-8 python3 tools/fetch_x_source.py <x-or-twitter-status-url>
@@ -180,6 +182,7 @@ def normalize(payload, status_id: str, url: str) -> dict:
             return _fail("post has an article object without readable content", "schema_drift", url)
         kind = "article"
         text, warnings = article_to_text(article["content"])
+        warnings += unaccounted(article, _ARTICLE_FIELDS, "the article")
         title = article.get("title") or ""
         if not text:
             return _fail("article content rendered to empty text", "schema_drift", url)
@@ -212,60 +215,84 @@ def normalize(payload, status_id: str, url: str) -> dict:
     }
 
 
-# Fields that describe a post rather than carry its content: seen in the live payloads
-# of 2026-10-19 or listed in the FxTwitter docs.
-_METADATA_FIELDS = frozenset({
+# Known fields per object, from the live payloads of 2026-10-19 and the FxTwitter docs.
+# A field here is rendered, warned about, or metadata that describes rather than
+# carries content. `raw_text` is the same text as `text` with t.co link facets.
+_POST_FIELDS = frozenset({
+    # rendered or warned about by render_adjuncts / normalize
+    "text", "article", "quote", "poll", "media", "replying_to_status", "community_note",
+    "twitter_card", "embed_card",
+    # metadata
     "url", "id", "raw_text", "author", "replies", "retweets", "likes", "bookmarks",
     "quotes", "reposts", "created_at", "created_timestamp", "possibly_sensitive", "views",
-    "is_note_tweet", "lang", "replying_to", "twitter_card", "color", "provider",
-    "reposted_by", "source", "type", "embed_card",
+    "is_note_tweet", "lang", "replying_to", "color", "provider", "reposted_by", "source",
+    "type",
 })
-# Content fields this module renders, or accounts for with a warning.
-_CONTENT_FIELDS = frozenset({
-    "text", "article", "quote", "poll", "media", "replying_to_status", "community_note",
+# `preview_text` is the opening of the body; `cover_media` and `media_entities` are images.
+_ARTICLE_FIELDS = frozenset({
+    "title", "content", "preview_text", "cover_media", "media_entities",
+    "created_at", "modified_at", "id",
 })
+_POLL_FIELDS = frozenset({"choices", "total_votes", "ends_at", "time_left_en"})
+_POLL_CHOICE_FIELDS = frozenset({"label", "count", "percentage"})
 MAX_QUOTE_DEPTH = 3
 
 
+def unaccounted(obj, known, where):
+    """Warnings for every non-empty field of `obj` outside `known`: the completeness gate."""
+    return [f"{where} has an unrecognized field '{key}' that is not extracted"
+            for key in sorted(set(obj) - known) if obj[key] not in (None, "", [], {})]
+
+
 def render_poll(poll):
-    """Return (poll_block_or_None, warning_or_None). v1 docs: poll.choices[label, percentage]."""
-    choices = poll.get("choices") if isinstance(poll, dict) else None
-    labels = [c for c in (choices or []) if isinstance(c, dict) and c.get("label")]
+    """Return (poll_block_or_None, warnings). v1 docs: poll.choices[label, percentage]."""
+    if not isinstance(poll, dict):
+        return None, ["poll present but has no readable choices; not included"]
+    choices = [c for c in (poll.get("choices") or []) if isinstance(c, dict)]
+    labels = [c for c in choices if c.get("label")]
     if not labels:
-        return None, "poll present but has no readable choices; not included"
+        return None, ["poll present but has no readable choices; not included"]
+    warnings = unaccounted(poll, _POLL_FIELDS, "the poll")
+    for c in choices:
+        for w in unaccounted(c, _POLL_CHOICE_FIELDS, "a poll choice"):
+            if w not in warnings:
+                warnings.append(w)
     lines = [f"Poll ({poll.get('total_votes', 'unknown')} votes):"]
     lines += [f"- {c['label']}: {c.get('percentage', '?')}%" for c in labels]
-    return "\n".join(lines), None
+    return "\n".join(lines), warnings
 
 
 def render_adjuncts(status, depth=0):
     """Render everything in a post besides its main text. Returns (parts, warnings).
 
-    This is the completeness gate: poll and quote are rendered, media, community notes
-    and replies are warned about, and any unrecognized non-empty field is warned about.
+    Poll and quote are rendered; media, community notes, replies and a link card in an
+    unexpected shape are warned about; any other non-empty field is warned about.
     """
     parts, warnings = [], []
     where = "this post" if depth == 0 else f"a quoted post (level {depth})"
     if status.get("poll") is not None:
-        block, warn = render_poll(status["poll"])
+        block, poll_warnings = render_poll(status["poll"])
         if block:
             parts.append(block)
-        if warn:
-            warnings.append(warn)
+        warnings += poll_warnings
     if status.get("media"):
         warnings.append(f"{where} has media (images or video) that is not extracted")
     if status.get("community_note"):
         warnings.append(f"{where} has a community note that is not extracted")
     if status.get("replying_to_status"):
         warnings.append(f"{where} replies to another post; the thread was not fetched")
+    for key in ("twitter_card", "embed_card"):
+        # Documented as a card-type label ("tweet", "summary"). Anything else may carry
+        # link-preview content this module does not render.
+        value = status.get(key)
+        if value not in (None, "", [], {}) and not isinstance(value, str):
+            warnings.append(f"{where} has a link card ('{key}') that is not extracted")
     if status.get("quote") is not None:
         block, quote_warnings = render_quote(status["quote"], depth + 1)
         if block:
             parts.append(block)
         warnings += quote_warnings
-    for key in sorted(set(status) - _METADATA_FIELDS - _CONTENT_FIELDS):
-        if status[key] not in (None, "", [], {}):
-            warnings.append(f"{where} has an unrecognized field '{key}' that is not extracted")
+    warnings += unaccounted(status, _POST_FIELDS, where)
     return parts, warnings
 
 
