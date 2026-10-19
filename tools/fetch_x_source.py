@@ -28,11 +28,17 @@ On failure:
   reason_code: bad_url | not_found | private | unavailable | no_text | http_error |
                network_error | schema_drift
 
-X Article bodies are Draft.js content: `blocks[]` plus an `entityMap`. An `atomic` block
-carries no text of its own; its content (an embedded prompt or code block, an image, a
-divider) is the entity named by `entityRanges[0].key`, which matches the entity's
-`key` FIELD, not its position in the list. Reading only `blocks[].text` dropped every
-embedded prompt in the X Article tested on 2026-10-19.
+In the one X Article payload captured (2026-10-19), the body was Draft.js-style content:
+`blocks[]` plus an `entityMap` list. Its `atomic` blocks carried no text; their content
+(an embedded prompt or code block, an image, a divider) was the entity named by
+`entityRanges[0].key`, matching the entity's `key` FIELD, not its list position.
+Reading only `blocks[].text` dropped every embedded prompt in that article. A payload
+that departs from this shape fails as schema_drift or warns; it is not assumed.
+
+Completeness gate: every field of a post is either metadata (_METADATA_FIELDS),
+rendered or accounted for with a warning (_CONTENT_FIELDS), or unrecognized. An
+unrecognized, non-empty field produces a warning, so a content type this module does
+not know about is reported, never dropped silently.
 
 Usage:
   PYTHONIOENCODING=utf-8 python3 tools/fetch_x_source.py <x-or-twitter-status-url>
@@ -183,13 +189,9 @@ def normalize(payload, status_id: str, url: str) -> dict:
         if not text:
             return _fail("post has no text (media-only or empty)", "no_text", url)
         title = " ".join(text.split()[:10])
-    quoted, quote_warning = render_quote(tweet.get("quote"))
-    if quoted:
-        text += "\n\n" + quoted
-    if quote_warning:
-        warnings.append(quote_warning)
-    if tweet.get("replying_to_status"):
-        warnings.append("this post replies to another; only this post was fetched, not the thread")
+    parts, adjunct_warnings = render_adjuncts(tweet)
+    text = "\n\n".join([text] + parts)
+    warnings += adjunct_warnings
 
     author = tweet.get("author") or {}
     handle = author.get("screen_name")
@@ -210,26 +212,87 @@ def normalize(payload, status_id: str, url: str) -> dict:
     }
 
 
-def render_quote(quote):
-    """Return (quoted_block_or_None, warning_or_None) for a post's `quote` field.
+# Fields that describe a post rather than carry its content: seen in the live payloads
+# of 2026-10-19 or listed in the FxTwitter docs.
+_METADATA_FIELDS = frozenset({
+    "url", "id", "raw_text", "author", "replies", "retweets", "likes", "bookmarks",
+    "quotes", "reposts", "created_at", "created_timestamp", "possibly_sensitive", "views",
+    "is_note_tweet", "lang", "replying_to", "twitter_card", "color", "provider",
+    "reposted_by", "source", "type", "embed_card",
+})
+# Content fields this module renders, or accounts for with a warning.
+_CONTENT_FIELDS = frozenset({
+    "text", "article", "quote", "poll", "media", "replying_to_status", "community_note",
+})
+MAX_QUOTE_DEPTH = 3
 
-    FxTwitter's documented field (docs.fxembed.com, 2026-10-19): `quote` is a nested
-    post object, or a placeholder with no text when the quoted post is unavailable.
+
+def render_poll(poll):
+    """Return (poll_block_or_None, warning_or_None). v1 docs: poll.choices[label, percentage]."""
+    choices = poll.get("choices") if isinstance(poll, dict) else None
+    labels = [c for c in (choices or []) if isinstance(c, dict) and c.get("label")]
+    if not labels:
+        return None, "poll present but has no readable choices; not included"
+    lines = [f"Poll ({poll.get('total_votes', 'unknown')} votes):"]
+    lines += [f"- {c['label']}: {c.get('percentage', '?')}%" for c in labels]
+    return "\n".join(lines), None
+
+
+def render_adjuncts(status, depth=0):
+    """Render everything in a post besides its main text. Returns (parts, warnings).
+
+    This is the completeness gate: poll and quote are rendered, media, community notes
+    and replies are warned about, and any unrecognized non-empty field is warned about.
     """
-    if quote is None:
-        return None, None
+    parts, warnings = [], []
+    where = "this post" if depth == 0 else f"a quoted post (level {depth})"
+    if status.get("poll") is not None:
+        block, warn = render_poll(status["poll"])
+        if block:
+            parts.append(block)
+        if warn:
+            warnings.append(warn)
+    if status.get("media"):
+        warnings.append(f"{where} has media (images or video) that is not extracted")
+    if status.get("community_note"):
+        warnings.append(f"{where} has a community note that is not extracted")
+    if status.get("replying_to_status"):
+        warnings.append(f"{where} replies to another post; the thread was not fetched")
+    if status.get("quote") is not None:
+        block, quote_warnings = render_quote(status["quote"], depth + 1)
+        if block:
+            parts.append(block)
+        warnings += quote_warnings
+    for key in sorted(set(status) - _METADATA_FIELDS - _CONTENT_FIELDS):
+        if status[key] not in (None, "", [], {}):
+            warnings.append(f"{where} has an unrecognized field '{key}' that is not extracted")
+    return parts, warnings
+
+
+def render_quote(quote, depth=1):
+    """Return (quoted_block_or_None, warnings) for a post's `quote` field.
+
+    FxTwitter docs (docs.fxembed.com and the v1 wiki, read 2026-10-19): `quote` is a
+    nested post object. The v2 docs also describe a text-less placeholder for an
+    unavailable post; a quote with no text is warned about whatever its shape.
+    """
     if not isinstance(quote, dict):
-        return None, "quoted post present in an unreadable shape; not included"
+        return None, ["quoted post present in an unreadable shape; not included"]
+    if depth > MAX_QUOTE_DEPTH:
+        return None, [f"quoted posts nested deeper than {MAX_QUOTE_DEPTH} levels not included"]
     qtext = (quote.get("text") or "").strip()
     if not qtext:
         why = quote.get("reason") or "no text"
-        return None, f"quoted post not included ({why})"
-    handle = (quote.get("author") or {}).get("screen_name") or "unknown"
-    body = "\n".join("> " + line for line in qtext.splitlines())
-    warning = None
+        return None, [f"quoted post not included ({why})"]
+    warnings = []
     if quote.get("article") is not None:
-        warning = "quoted post is an X Article; only its post text is included, fetch it separately"
-    return f"> Quoted post by @{handle}:\n{body}", warning
+        warnings.append("quoted post is an X Article; only its post text is included, fetch it separately")
+    parts, inner_warnings = render_adjuncts(quote, depth)
+    warnings += inner_warnings
+    handle = (quote.get("author") or {}).get("screen_name") or "unknown"
+    body = "\n\n".join([qtext] + parts)
+    quoted = "\n".join("> " + line if line else ">" for line in body.splitlines())
+    return f"> Quoted post by @{handle}:\n{quoted}", warnings
 
 
 def _fail(error: str, reason_code: str, url: str) -> dict:

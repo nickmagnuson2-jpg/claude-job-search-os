@@ -158,7 +158,8 @@ class TestArticleToText:
 
     def test_unknown_block_type_warns_once(self):
         content = {"blocks": [{"type": "code-block", "text": t, "key": t} for t in ("a", "b")], "entityMap": []}
-        _, warnings = fx.article_to_text(content)
+        text, warnings = fx.article_to_text(content)
+        assert text == "a\n\nb"
         assert warnings == ["unknown block type rendered as plain text: code-block"]
 
     def test_missing_entity_warns(self):
@@ -181,11 +182,6 @@ class TestArticleToText:
         assert text == "[TWEET embed]\n\n[TWEET embed]"
         assert warnings == ["unrendered embed type: TWEET"]
 
-    def test_unknown_block_type_kept_and_warned(self):
-        content = {"blocks": [{"type": "code-block", "text": "x = 1", "key": "q"}], "entityMap": []}
-        text, warnings = fx.article_to_text(content)
-        assert text == "x = 1"
-        assert warnings == ["unknown block type rendered as plain text: code-block"]
 
 
 # --- normalization ---------------------------------------------------------------
@@ -236,8 +232,8 @@ class TestNormalize:
         assert b["warnings"] == ["quoted post not included (deleted)"]
 
     def test_quote_without_reason_or_author(self):
-        assert fx.render_quote({}) == (None, "quoted post not included (no text)")
-        assert fx.render_quote({"text": "x"}) == ("> Quoted post by @unknown:\n> x", None)
+        assert fx.render_quote({}) == (None, ["quoted post not included (no text)"])
+        assert fx.render_quote({"text": "x"}) == ("> Quoted post by @unknown:\n> x", [])
 
     def test_unreadable_quote_warns(self):
         b = fx.normalize(_payload(quote="junk"), "123", "u")
@@ -254,6 +250,71 @@ class TestNormalize:
         q = {"text": "quoted", "author": {"screen_name": "o"}}
         b = fx.normalize(_payload(article=art, quote=q), "123", "u")
         assert b["text"].endswith("> Quoted post by @o:\n> quoted")
+
+    def test_poll_rendered(self):
+        poll = {"total_votes": 10, "choices": [{"label": "Yes", "percentage": 70},
+                                               {"label": "No", "percentage": 30}, {"count": 0}]}
+        b = fx.normalize(_payload(poll=poll), "123", "u")
+        assert b["text"].endswith("\n\nPoll (10 votes):\n- Yes: 70%\n- No: 30%")
+        assert b["warnings"] == []
+
+    def test_poll_defaults(self):
+        assert fx.render_poll({"choices": [{"label": "A"}]}) == ("Poll (unknown votes):\n- A: ?%", None)
+
+    def test_unreadable_poll_warns(self):
+        for poll in ({}, {"choices": []}, "junk"):
+            b = fx.normalize(_payload(poll=poll), "123", "u")
+            assert b["text"] == "hello world from a plain post"
+            assert b["warnings"] == ["poll present but has no readable choices; not included"]
+
+    def test_media_and_community_note_warn(self):
+        b = fx.normalize(_payload(media={"all": [{"type": "photo"}]}, community_note={"text": "n"}), "123", "u")
+        assert b["warnings"] == ["this post has media (images or video) that is not extracted",
+                                 "this post has a community note that is not extracted"]
+
+    def test_empty_media_does_not_warn(self):
+        assert fx.normalize(_payload(media={}, community_note=None), "123", "u")["warnings"] == []
+
+    def test_unrecognized_field_warns(self):
+        b = fx.normalize(_payload(translation={"text": "hola"}, empty_thing=[]), "123", "u")
+        assert b["warnings"] == ["this post has an unrecognized field 'translation' that is not extracted"]
+
+    def test_live_payload_fields_are_all_known(self):
+        # Every key in the two live payloads captured 2026-10-19 is metadata or content.
+        live = {"url", "id", "text", "raw_text", "author", "replies", "retweets", "likes",
+                "bookmarks", "quotes", "created_at", "created_timestamp", "possibly_sensitive",
+                "views", "is_note_tweet", "community_note", "lang", "replying_to",
+                "replying_to_status", "article", "twitter_card", "color", "provider", "reposted_by"}
+        assert live <= fx._METADATA_FIELDS | fx._CONTENT_FIELDS
+        assert not fx._METADATA_FIELDS & fx._CONTENT_FIELDS
+
+    def test_metadata_fields_do_not_warn(self):
+        extra = {k: "x" for k in fx._METADATA_FIELDS if k not in ("author", "id")}
+        assert fx.normalize(_payload(**extra), "123", "u")["warnings"] == []
+
+    def test_nested_quote_and_poll_rendered(self):
+        inner = {"text": "inner", "author": {"screen_name": "c"}}
+        mid = {"text": "mid", "author": {"screen_name": "b"}, "quote": inner,
+               "poll": {"choices": [{"label": "P", "percentage": 1}]}}
+        b = fx.normalize(_payload(quote=mid), "123", "u")
+        assert b["text"] == ("hello world from a plain post\n\n> Quoted post by @b:\n> mid\n>\n"
+                             "> Poll (unknown votes):\n> - P: 1%\n>\n> > Quoted post by @c:\n> > inner")
+        assert b["warnings"] == []
+
+    def test_quoted_post_adjunct_warnings_name_the_level(self):
+        mid = {"text": "mid", "author": {}, "media": {"all": [1]}, "replying_to_status": "5"}
+        b = fx.normalize(_payload(quote=mid), "123", "u")
+        assert b["warnings"] == ["a quoted post (level 1) has media (images or video) that is not extracted",
+                                 "a quoted post (level 1) replies to another post; the thread was not fetched"]
+
+    def test_quote_depth_limit(self):
+        q = {"text": "deepest"}
+        for _ in range(fx.MAX_QUOTE_DEPTH):
+            q = {"text": "level", "quote": q}
+        b = fx.normalize(_payload(quote=q), "123", "u")
+        assert "deepest" not in b["text"]
+        assert b["text"].count("Quoted post by") == fx.MAX_QUOTE_DEPTH
+        assert b["warnings"] == [f"quoted posts nested deeper than {fx.MAX_QUOTE_DEPTH} levels not included"]
 
     def test_null_article_is_a_post(self):
         b = fx.normalize(_payload(article=None), "123", "u")
