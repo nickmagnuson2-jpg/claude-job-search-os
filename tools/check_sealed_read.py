@@ -26,7 +26,9 @@ Neither authorizes a read that spells the name earlier in the call or beside it.
 A Bash command is blocked when it READS the directory, not when it only NAMES it.
 The command is split with tools/shell_tokens.py and every place the name appears is
 classified. The default is "read": the name passes only in a comment, in text handed
-on standard input to a command that treats it as text, and in the positions listed
+on standard input to a command that treats it as text, as text in a Python program
+(stdin or `-c`) whose syntax tree shows the string ends only as output (see
+`_PyFlow`), and in the positions listed
 under `_mentions` (a commit message, echoed prose, a prose argument to a repo tool, a
 search pattern, an exclusion), and only when nothing downstream turns that text into
 a read. A passing mention adds no read: the same command with the name removed would
@@ -43,10 +45,15 @@ Exit 2 = block. Any other path = allow. Fails OPEN on a payload it cannot read; 
 command that names the directory and cannot be parsed is BLOCKED.
 Wired via .claude/settings.json PreToolUse on Read|Grep|Glob|Bash.
 """
+import ast
+import io
+import itertools
 import json
 import os
 import re
+import string
 import sys
+import tokenize
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from hook_runtime import read_payload  # noqa: E402
@@ -135,20 +142,8 @@ def _repo_tool_index(words: list, h: int):
         return None
     if _REPO_TOOL.search(words[h]):
         return h
-    if not _INTERPRETER.match(os.path.basename(words[h])):
-        return None
-    j = h + 1
-    while j < len(words):
-        w = words[j]
-        if w in _PY_VALUE_OPTS:
-            j += 2
-        elif w.startswith("-"):
-            if w == "-" or not w.startswith("--") and ("c" in w or "m" in w):
-                return None
-            j += 1
-        else:
-            return j if _REPO_TOOL.search(w) else None
-    return None
+    src = _python_source(words, h)
+    return src[1] if src and src[0] == "file" and _REPO_TOOL.search(words[src[1]]) else None
 
 
 def _is_a_sealed_path(word: str) -> bool:
@@ -172,6 +167,414 @@ def _is_prose(word: str, quoted: bool) -> bool:
         if start == 0:
             return False       # the run of path characters holding the name opens the word
     return True
+
+
+# --- Python: is the name only text? -------------------------------------------------
+#
+# A Python program fed on standard input or through `-c` may name the directory as TEXT:
+# in a comment, or in a string whose value provably ends up only as output. The proof
+# follows the VALUE through the syntax tree, never the shape of the string. Each step
+# the value takes must be one listed in `_PyFlow.text`, and the last one a text sink:
+# print, a write to an opened file or to stdout/stderr, json.dump, sys.exit, a
+# comparison, a bare statement. Anything else it reaches is a read.
+#
+# A sink is only text if nothing in the program can turn the sink into a process, and
+# a variable is only text if nothing can reach it except by its name. Both are enforced
+# by POSITIVE lists over the whole program, because a list of dangerous spellings is
+# never complete (six reviews found more than twenty ways around them): imports, and the
+# attributes used on each module, only from `_PY_MODULE_ATTRS`; builtins only from
+# `_PY_BUILTINS` (so no `type()` to build an object whose methods open their argument);
+# no name beginning with `__` except `__name__`/`__file__`, and no attribute beginning
+# with `_`; no class; no assignment to an attribute; `.format` only on a literal whose
+# fields are plain names; and a method is a sink only on a receiver proven to be a file,
+# a container or the string itself.
+#
+# Around it, the Bash call: no process substitution anywhere (it connects output to a
+# command without a pipe the hook follows), and the Python command's own output goes
+# only to stdout/stderr, a plain file, or fd 1/2 (`_plain_output`). Pipes are already
+# followed: `python3 - <<'PY' ... | sh` blocks because the program names the directory.
+#
+# A program that spells the name anywhere, a comment included, has its paths checked
+# too: a path built from pieces ('data/project-' + 'background') is a read the name
+# check never sees. `open` is the only way an allowed program reaches the filesystem
+# (pathlib is deliberately not allowed: its many ways to build and walk a path defeated
+# folding in review), so `open` may appear only as the function of a call, and its path
+# must fold to literals (`_static`) none of which names or resolves into the directory
+# (`_paths_are_known`).
+#
+# RESIDUAL, shared with `echo`: a value is not followed through the filesystem. Text
+# written to a file or descriptor and then used as a path or a command, by this program
+# (write it, read it back, open it), by a later command, or by another process (a FIFO
+# made with mknod/mkfifo, a script run later), is not seen.
+# `mknod q p; sh < q & echo "cat <dir>/a.md" > q` passes this hook today; the same text
+# from Python is no more dangerous. Accidental reads do not take that shape, and a list
+# of spellings (mkfifo, mknod, /dev/fd) cannot close it.
+#
+# RESIDUAL, the interpreter: `python3 -` and `-c` import from the working directory
+# first, so a file named like an allowed module (json.py) runs instead of the module.
+# The analysis trusts the Python installation and the working directory.
+
+_PY_LEXICAL_OK = {tokenize.COMMENT, tokenize.STRING} | (
+    {tokenize.FSTRING_MIDDLE} if hasattr(tokenize, "FSTRING_MIDDLE") else set())
+# The modules a program may import, and the only attributes it may use on each. A module
+# object exposes the modules IT imported (re.enum.sys.modules, collections._sys), so a
+# module name may appear only as `<module>.<listed attribute>`, `from <module> import`
+# only names listed, and no attribute anywhere may start with `_`.
+_PY_MODULE_ATTRS = {
+    "json": {"dumps", "dump", "loads", "load", "JSONDecodeError"},
+    "sys": {"argv", "stdout", "stderr", "stdin", "exit", "version", "version_info"},
+    "re": {"sub", "subn", "search", "match", "fullmatch", "findall", "finditer", "split",
+           "compile", "escape", "IGNORECASE", "I", "MULTILINE", "M", "DOTALL", "S",
+           "VERBOSE", "X", "ASCII", "A"},
+    "textwrap": {"dedent", "indent", "wrap", "fill", "shorten"},
+    "datetime": {"date", "datetime", "timedelta", "timezone", "time"},
+    "collections": {"Counter", "defaultdict", "OrderedDict", "deque", "namedtuple"},
+    "csv": {"writer", "reader", "DictWriter", "DictReader", "QUOTE_ALL", "QUOTE_MINIMAL"},
+    "math": {"ceil", "floor", "sqrt", "log", "log10", "exp", "inf", "pi", "isclose",
+             "fsum", "prod"},
+    "itertools": {"chain", "groupby", "islice", "product", "combinations", "permutations",
+                  "count", "cycle", "repeat", "zip_longest", "accumulate", "starmap",
+                  "takewhile", "dropwhile", "pairwise", "batched"},
+    "difflib": {"SequenceMatcher", "unified_diff", "ndiff", "get_close_matches",
+                "context_diff", "Differ"},
+}
+_PY_BUILTINS = {"print", "open", "str", "dict", "list", "tuple", "set", "frozenset",
+                "len", "sorted", "reversed", "enumerate", "range", "zip", "min", "max",
+                "sum", "any", "all", "abs", "round", "int", "float", "bool", "isinstance",
+                "repr", "map", "filter", "Exception", "ValueError", "KeyError",
+                "TypeError", "IndexError", "OSError", "FileNotFoundError", "RuntimeError",
+                "ZeroDivisionError", "AssertionError", "SystemExit", "StopIteration"}
+_PY_DUNDERS_OK = {"__name__", "__file__"}
+_PY_STR_STEPS = {"join", "format", "strip", "lstrip", "rstrip", "replace", "split",
+                 "splitlines", "lower", "upper", "title"}
+_PY_VERDICTS = {"startswith", "endswith", "count"}                 # a bool or an int out
+_PY_COLLECT = {"append", "extend"}
+_PY_CONTAINERS = {"str", "dict", "list", "tuple"}
+_PY_IMPORTED = {"json": None, "sys": None, "textwrap": None}
+_PLAIN_FILE_OUT = (">", ">>", ">|", "&>", "&>>")
+_PY_MAX_VALUES = 256        # a path folding to more possible values than this is unknown
+# Bindings recorded as identifier strings, not Name nodes: a match capture, `except as`,
+# and type parameters.
+_PY_NAMED_BINDINGS = tuple(getattr(ast, k) for k in (
+    "MatchAs", "MatchStar", "MatchMapping", "ExceptHandler", "TypeVar", "ParamSpec",
+    "TypeVarTuple") if hasattr(ast, k))
+
+
+def _plain_template(s) -> bool:
+    """A str.format template whose fields are plain names or positions: `{0.attr}` and
+    `{x[k]}` look values up, so they can reach a variable without spelling it."""
+    try:
+        return isinstance(s, str) and all(
+            f is None or re.fullmatch(r"\w*", f) and "{" not in (spec or "")
+            for _, f, spec, _ in string.Formatter().parse(s))
+    except ValueError:
+        return False
+
+
+class _PyFlow:
+    def __init__(self, tree):
+        self.parent = {c: p for p in ast.walk(tree) for c in ast.iter_child_nodes(p)}
+        self.sources, self.loads, modules = {}, {}, {}
+        safe = True
+        for n in ast.walk(tree):
+            if isinstance(n, ast.Name):
+                if isinstance(n.ctx, ast.Load):
+                    self.loads.setdefault(n.id, []).append(n)
+                elif isinstance(n.ctx, ast.Store):
+                    self.sources.setdefault(n.id, []).append(self._bound_to(n))
+                safe = safe and _plain_name(n.id)
+            elif isinstance(n, ast.alias):
+                self.sources.setdefault((n.asname or n.name).split(".")[0], []).append(n)
+                safe = safe and _plain_name(n.name)
+            elif isinstance(n, ast.Import):
+                safe = safe and all(a.name in _PY_MODULE_ATTRS for a in n.names)
+                modules.update({a.asname or a.name: a.name for a in n.names})
+            elif isinstance(n, ast.ImportFrom):
+                safe = safe and n.level == 0 and n.module in _PY_MODULE_ATTRS and all(
+                    a.name in _PY_MODULE_ATTRS[n.module] for a in n.names)
+            elif isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                self.sources.setdefault(n.name, []).append(None)
+            elif isinstance(n, ast.arg):
+                self.sources.setdefault(n.arg, []).append(None)
+            elif isinstance(n, _PY_NAMED_BINDINGS):
+                for k in ("name", "rest"):
+                    if isinstance(getattr(n, k, None), str):
+                        self.sources.setdefault(getattr(n, k), []).append(None)
+            elif isinstance(n, ast.Attribute):
+                safe = safe and isinstance(n.ctx, ast.Load) and not n.attr.startswith("_")
+                if n.attr in ("format", "format_map"):
+                    safe = safe and n.attr == "format" and isinstance(n.value, ast.Constant) \
+                        and _plain_template(n.value.value)
+            elif isinstance(n, ast.ClassDef):
+                safe = False
+        # Every name the program uses but never binds is a builtin, from the list, and
+        # every use of an imported module is one of its listed attributes.
+        self.safe = safe and all(n in self.sources or n in _PY_BUILTINS or n in _PY_DUNDERS_OK
+                                 for n in self.loads) and all(
+            isinstance(self.parent.get(use), ast.Attribute) and self.parent[use].value is use
+            and self.parent[use].attr in _PY_MODULE_ATTRS[mod]
+            for name, mod in modules.items() for use in self.loads.get(name, []))
+        self.seen = set()
+
+    def _bound_to(self, name):
+        """The expression a plain assignment or `with ... as name` gives this name."""
+        p = self.parent.get(name)
+        if isinstance(p, ast.Assign) and name in p.targets or (
+                isinstance(p, ast.AnnAssign) and p.target is name):
+            return p.value
+        if isinstance(p, ast.withitem) and p.optional_vars is name:
+            return p.context_expr
+        return None
+
+    def _trusted(self, name: str) -> bool:
+        """A builtin never rebound, or a module bound only by its own `import`."""
+        for s in self.sources.get(name, []):
+            if not (isinstance(s, ast.alias) and s.asname is None and name in _PY_IMPORTED
+                    and s.name == name and isinstance(self.parent.get(s), ast.Import)):
+                return False
+        return True
+
+    def _names_only(self, name: str, test, depth: int = 0) -> bool:
+        s = self.sources.get(name, [])
+        return depth < 8 and bool(s) and all(
+            isinstance(v, ast.expr) and test(v, depth + 1) for v in s)
+
+    def _module(self, e, name: str) -> bool:
+        return isinstance(e, ast.Name) and e.id == name and self._trusted(name)
+
+    def _writer(self, e, depth: int = 0) -> bool:
+        """An opened file, or sys.stdout / sys.stderr."""
+        if isinstance(e, ast.Attribute):
+            return e.attr in ("stdout", "stderr") and self._module(e.value, "sys")
+        if isinstance(e, ast.Call):
+            f = e.func
+            return isinstance(f, ast.Name) and f.id == "open" and self._trusted("open")
+        return isinstance(e, ast.Name) and self._names_only(e.id, self._writer, depth)
+
+    def _static(self, e, depth: int = 0):
+        """The possible values of a string built only from literals, or None."""
+        if depth > 8:
+            return None
+        if isinstance(e, ast.Constant):
+            return {e.value} if isinstance(e.value, str) else None
+        if isinstance(e, ast.BinOp):
+            parts = [self._static(e.left, depth + 1), self._static(e.right, depth + 1)]
+            return _combine(parts, "") if isinstance(e.op, ast.Add) else None
+        if isinstance(e, ast.JoinedStr):
+            return _combine([self._static(v, depth + 1) for v in e.values], "")
+        if isinstance(e, ast.FormattedValue):
+            return self._static(e.value, depth + 1) if e.format_spec is None \
+                and e.conversion == -1 else None
+        if isinstance(e, ast.Name):
+            vals = [self._static(v, depth + 1) if isinstance(v, ast.expr) else None
+                    for v in self.sources.get(e.id) or [None]]
+            out = None if None in vals else set().union(*vals)
+            return out if out is None or len(out) <= _PY_MAX_VALUES else None
+        return None
+
+    def _paths_are_known(self) -> bool:
+        """`open` is the only filesystem call an allowed program can make. Every use of
+        it is a call whose path folds to literals, none naming or resolving into the
+        sealed directory. A program that rebinds `open` gets no exemption."""
+        if not self._trusted("open"):
+            return False
+        for use in self.loads.get("open", []):
+            call = self.parent.get(use)
+            if not (isinstance(call, ast.Call) and call.func is use):
+                return False                    # `o = open`, map(open, ...), [open][0]
+            first = call.args[0] if call.args else next(
+                (k.value for k in call.keywords if k.arg == "file"), None)
+            vals = self._static(first) if first is not None else None
+            if vals is None or any(_names_sealed(v) or _under_sealed(_root(), v)
+                                   for v in vals):
+                return False
+        return True
+
+    def _container(self, e, depth: int = 0) -> bool:
+        """A list or dict built here, so storing into it reaches nothing else."""
+        if isinstance(e, ast.Call):
+            return isinstance(e.func, ast.Name) and e.func.id in ("list", "dict") \
+                and self._trusted(e.func.id)
+        return isinstance(e, (ast.List, ast.Dict)) or (
+            isinstance(e, ast.Name) and self._names_only(e.id, self._container, depth))
+
+    def text(self, node) -> bool:
+        """Does the value of this expression end up only as text?"""
+        p = self.parent.get(node)
+        if isinstance(p, (ast.Expr, ast.Compare)):
+            return True
+        if isinstance(p, ast.Assert):
+            return node is p.msg
+        if isinstance(p, (ast.JoinedStr, ast.FormattedValue, ast.List, ast.Tuple, ast.Dict)):
+            return self.text(p)
+        if isinstance(p, ast.BinOp):
+            return isinstance(p.op, (ast.Add, ast.Mod)) and self.text(p)
+        if isinstance(p, ast.IfExp):
+            return node is not p.test and self.text(p)
+        if isinstance(p, ast.Subscript):
+            return node is p.value and isinstance(p.ctx, ast.Load) and self.text(p)
+        if isinstance(p, ast.Attribute):            # a method called on the value
+            call = self.parent.get(p)
+            if not (isinstance(call, ast.Call) and call.func is p):
+                return False
+            return p.attr in _PY_VERDICTS or p.attr in _PY_STR_STEPS and self.text(call)
+        if isinstance(p, ast.keyword):
+            return self._argument(self.parent.get(p), node, p.arg)
+        if isinstance(p, ast.Call):
+            return node is not p.func and self._argument(p, node, None)
+        if isinstance(p, ast.For):
+            return node is p.iter and isinstance(p.target, ast.Name) \
+                and self._variable_is_text(p.target.id)
+        if isinstance(p, (ast.Assign, ast.AnnAssign, ast.AugAssign)) and node is p.value:
+            targets = p.targets if isinstance(p, ast.Assign) else [p.target]
+            return all(self._stored_as_text(t) for t in targets)
+        return False
+
+    def _argument(self, call, node, kw) -> bool:
+        f = call.func
+        if isinstance(f, ast.Name):
+            if not self._trusted(f.id):
+                return False
+            if f.id == "print":
+                return kw != "file" and all(
+                    k.arg is not None and (k.arg != "file" or self._writer(k.value))
+                    for k in call.keywords)
+            return f.id in _PY_CONTAINERS and self.text(call)
+        if not isinstance(f, ast.Attribute):
+            return False
+        if f.attr in ("write", "writelines"):
+            return self._writer(f.value)
+        if f.attr in _PY_COLLECT:
+            return isinstance(f.value, ast.Name) and self._container(f.value) \
+                and self._variable_is_text(f.value.id)
+        if f.attr in ("join", "format"):
+            return isinstance(f.value, (ast.Constant, ast.JoinedStr)) and self.text(call)
+        if f.attr in ("dedent", "indent") and self._module(f.value, "textwrap"):
+            return self.text(call)
+        if f.attr == "exit" and self._module(f.value, "sys"):
+            return True
+        if self._module(f.value, "json"):
+            if f.attr == "dumps":
+                return self.text(call)
+            return f.attr == "dump" and call.args[:1] == [node] and len(call.args) > 1 \
+                and self._writer(call.args[1])
+        return False
+
+    def _stored_as_text(self, target) -> bool:
+        """`x = v`, or `x[k] = v` into a container built here: x must then be text."""
+        if isinstance(target, ast.Subscript):
+            target = target.value
+            if not self._container(target):
+                return False
+        return isinstance(target, ast.Name) and self._variable_is_text(target.id)
+
+    def _variable_is_text(self, name: str) -> bool:
+        """A value stored in this variable: every use of the variable must be text."""
+        if name in self.seen:
+            return True
+        self.seen.add(name)
+        for use in self.loads.get(name, []):
+            p = self.parent.get(use)
+            if isinstance(p, ast.Subscript) and not isinstance(p.ctx, ast.Load):
+                continue                            # `x[k] = ...` stores into it
+            if isinstance(p, ast.Attribute) and p.attr in _PY_COLLECT and isinstance(
+                    self.parent.get(p), ast.Call) and self.parent[p].func is p:
+                continue                            # `x.append(...)` adds to it
+            if not self.text(use):
+                return False
+        return True
+
+
+def _combine(parts, sep: str):
+    """Every way to join one value from each part, or None if any part is unknown or
+    there would be more than _PY_MAX_VALUES (counted before any are built)."""
+    if not parts or any(p is None for p in parts):
+        return None
+    count = 1
+    for p in parts:
+        count *= len(p)
+    return {sep.join(c) for c in itertools.product(*parts)} if count <= _PY_MAX_VALUES else None
+
+
+def _plain_name(name: str) -> bool:
+    return not name.startswith("__") or name in _PY_DUNDERS_OK
+
+
+def _python_only_mentions(code: str) -> bool:
+    """Does this Python program name the directory only as text? Fails closed: a
+    program that does not parse, a naming outside a comment or a string, a string that
+    names it as bytes, one whose value is not proven to end as text, and any exception
+    while deciding (deep nesting included) is a read."""
+    try:
+        tree = ast.parse(code)
+        tokens = list(tokenize.generate_tokens(io.StringIO(code).readline))
+        if sum(_hits(t.string) for t in tokens if t.type in _PY_LEXICAL_OK) != _hits(code):
+            return False
+        flow = _PyFlow(tree)
+        named = [n for n in ast.walk(tree)
+                 if isinstance(n, ast.Constant) and _names_sealed(str(n.value))]
+        # A comment opens nothing, but the program around it can: every program needs
+        # the gates and known paths, and every string naming the directory must be text.
+        return flow.safe and flow._paths_are_known() and all(
+            isinstance(n.value, str) and flow.text(n) for n in named)
+    except Exception:
+        return False
+
+
+def _python_source(words: list, h: int):
+    """Where a python command takes its program from: ("file", i) for a script at
+    words[i], ("code", i) for `-c` code at words[i], ("stdin", None) for `python -` or
+    bare python, ("other", None) for -m or a form this does not follow. None when the
+    command is not python."""
+    if h >= len(words) or not _INTERPRETER.match(os.path.basename(words[h])):
+        return None
+    j = h + 1
+    while j < len(words):
+        w = words[j]
+        if w in _PY_VALUE_OPTS:
+            j += 2
+        elif w == "-":
+            return ("stdin", None)
+        elif w.startswith("-") and not w.startswith("--") and ("c" in w or "m" in w):
+            # The first option in a cluster that takes a value consumes the rest:
+            # `-uc` is -u -c, but `-mc` is -m c and `-cu` is -c u.
+            return ("code", j + 1) if re.fullmatch(r"-[A-BD-LN-VYZa-bd-ln-z]*c", w) \
+                else ("other", None)
+        elif w.startswith("-"):
+            j += 1
+        else:
+            return ("file", j)
+    return ("stdin", None)
+
+
+def _plain_output(c) -> bool:
+    """Does this command write only to stdout/stderr, plain files, or fd 1 and 2? A
+    descriptor duplicated from elsewhere, or a target built from a variable, may be a
+    process."""
+    for r in c.redirections:
+        op = r.op.lstrip("0123456789")
+        if op in _STDIN_OPS:
+            continue
+        if op in _PLAIN_FILE_OUT and r.target and not re.search(r"[$`]", r.target):
+            continue
+        if op == ">&" and r.target in ("1", "2"):
+            continue
+        return False
+    return True
+
+
+def _no_process_substitution(cmds) -> bool:
+    """shell_tokens reads `<(cmd)` and `>(cmd)` as a redirection with no target."""
+    return all(r.target for c in cmds for r in c.redirections)
+
+
+def _stdin_program_only_mentions(c) -> bool:
+    """A Python program on standard input whose every naming of the directory is text."""
+    if _python_source(c.words, _head_index(c.words)) != ("stdin", None):
+        return False
+    bodies = [r.target if r.body is None else r.body for r in c.redirections
+              if r.op.lstrip("0123456789") in _STDIN_OPS]
+    return all(_python_only_mentions(b) for b in bodies if _names_sealed(b))
 
 
 def _git_subcommand(words: list, h: int) -> str:
@@ -273,7 +676,8 @@ def _find_excludes(words: list, i: int, h: int) -> bool:
     return j < len(words) and words[j] == "-prune"
 
 
-def _mentions(words: list, quoted: list, h: int, piped: bool = False) -> dict:
+def _mentions(words: list, quoted: list, h: int, piped: bool = False,
+              py_ok: bool = False) -> dict:
     """{word index: kind} for each word that names the directory without reading it.
     Kinds: "prose" and "pattern" put the name on standard output or leave it in text;
     "message" and "exclusion" do not."""
@@ -298,6 +702,9 @@ def _mentions(words: list, quoted: list, h: int, piped: bool = False) -> dict:
         elif tool is not None:
             if i > tool and _is_prose(w, quoted[i]):
                 out[i] = "prose"
+        elif _python_source(words, h) == ("code", i):
+            if py_ok and _python_only_mentions(w):
+                out[i] = "prose"   # `python -c` code that names it only as text
         elif head == "find":
             if _find_excludes(words, i, h):
                 out[i] = "exclusion"
@@ -328,7 +735,7 @@ def _passes_the_name_on(c) -> bool:
     return _stdin_names_sealed(c) or (c.fed_by is not None and _passes_the_name_on(c.fed_by))
 
 
-def _command_reads(c) -> bool:
+def _command_reads(c, py_ok: bool = False) -> bool:
     words = c.words
     h = _head_index(words)
     if any(_names_sealed(w) for w in words[:h + 1]):
@@ -338,10 +745,11 @@ def _command_reads(c) -> bool:
         return True
     head = os.path.basename(words[h]) if h < len(words) else ""
     text_only = head in _STDIN_IS_TEXT or _repo_tool_index(words, h) is not None
-    if not text_only and (_stdin_names_sealed(c)
+    if not text_only and ((_stdin_names_sealed(c) and not (py_ok and _plain_output(c)
+                                                   and _stdin_program_only_mentions(c)))
                           or (c.fed_by is not None and _passes_the_name_on(c.fed_by))):
         return True            # a shell, an interpreter, xargs or a loop is fed the name
-    kinds = _mentions(words, c.quoted, h, c.fed_by is not None)
+    kinds = _mentions(words, c.quoted, h, c.fed_by is not None, py_ok and _plain_output(c))
     return any(_names_sealed(w) and i not in kinds for i, w in enumerate(words) if i > h)
 
 
@@ -376,7 +784,8 @@ def _any_override(cmds, depth: int = 0) -> bool:
                for c in cmds)
 
 
-def _bash_reads_sealed(command: str, depth: int = 0, intent: bool = False) -> bool:
+def _bash_reads_sealed(command: str, depth: int = 0, intent: bool = False,
+                       py_ok: bool = False) -> bool:
     """True when some command in this call reads the directory without an override.
 
     A command that spells the name needs the override in front of IT, or an
@@ -389,14 +798,16 @@ def _bash_reads_sealed(command: str, depth: int = 0, intent: bool = False) -> bo
         return _names_sealed(command)   # it cannot be parsed: naming the directory blocks
     if depth == 0:
         intent = _any_override(cmds)
+        py_ok = True
+    py_ok = py_ok and _no_process_substitution(cmds)
     for c in cmds:
         if depth == 0 and _exports_override(c):
             return False       # everything after it in this call is covered
         if _overrides(c):
             continue
-        if not (intent and _carries(c)) and _command_reads(c):
+        if not (intent and _carries(c)) and _command_reads(c, py_ok):
             return True
-        if any(_bash_reads_sealed(s, depth + 1, intent) for s in c.subs):
+        if any(_bash_reads_sealed(s, depth + 1, intent, py_ok) for s in c.subs):
             return True
     return False
 

@@ -718,3 +718,612 @@ def test_a_second_spelling_of_the_root_does_not_hide_the_sibling(tmp_path):
     assert _run(tmp_path / "link" / "repo", "Read",
                 {"file_path": str(real / "repo-sealed" / SEALED / "a.md")})[0] == 2
     assert csr._under_sealed(tmp_path / "link" / "repo", str(real / "repo-sealed")) is True
+
+
+# ---------------------------------------------------------------------------
+# A Python program may name the directory as TEXT. 2026-10-20: a program fed on stdin
+# that wrote a brief saying "nothing from <the directory>" was blocked as a read. A
+# first fix judged the string's SHAPE (the name mid-sentence) and was rejected in
+# cross-model review: `open('read <dir>/a.md'.split()[1])` and an aliased os.system
+# both passed. The rebuild follows the VALUE: it passes only when the string provably
+# ends as output. The block cases below include every bypass from that review.
+# ---------------------------------------------------------------------------
+
+PY_TEXT = {
+    "todays_fire_raw_string_written_out":
+        f"tail = r'''Hard constraints: no em dashes; nothing from {SEALED} or any sealed source.'''\n"
+        "open('notes/wf.js', 'w').write(tail)\n",
+    "print": f"print('see the note on {SEALED} below')\n",
+    "comment_only": f"# never read {SEALED} from here\nprint(1)\n",
+    "bare_string_and_docstring":
+        f"'''Notes about {SEALED}.'''\ndef f():\n    '''{SEALED} stays shut.'''\n    return 1\n",
+    "with_open_write":
+        f"with open('notes/a.md', 'w') as f:\n    f.write('the sealed tree is {SEALED}')\n",
+    "json_dump_dict":
+        f"import json\njson.dump({{'claim': '{SEALED} is sealed'}}, open('notes/a.json', 'w'))\n",
+    "records_appended_then_dumped":
+        "import json\nC = []\n"
+        f"C.append(dict(claim='nothing from {SEALED}', turn=3))\n"
+        "json.dump(C, open('notes/a.json', 'w'), indent=2)\n",
+    "subscript_store_then_dumps":
+        f"import json\nd = {{}}\nd['k'] = 'text on {SEALED}'\nprint(json.dumps(d))\n",
+    "membership_test":
+        f"for line in open('notes/log.md'):\n    if '{SEALED}' in line:\n        print(line)\n",
+    "startswith_on_the_string_itself": f"print('{SEALED}/a.md'.startswith('data'))\n",
+    "fstring_printed": f"n = 3\nprint(f'{{n}} files, none under {SEALED}')\n",
+    "join_of_literals_printed": f"print('\\n'.join(['a', 'note on {SEALED}']))\n",
+    "format_printed": f"print('{{}} is sealed'.format('{SEALED}'))\n",
+    "percent_format_printed": f"print('%s is sealed' % '{SEALED}')\n",
+    "stdout_and_stderr":
+        f"import sys\nsys.stdout.write('{SEALED} note')\nprint('x {SEALED}', file=sys.stderr)\n",
+    "assert_message": f"x = 1\nassert x, 'x must not touch {SEALED}'\n",
+    "augmented_assignment_printed": f"s = ''\ns += 'note on {SEALED}'\nprint(s)\n",
+    "variable_copied_then_printed": f"a = 'note on {SEALED}'\nb = a\nprint(b.strip())\n",
+    # Two variables that feed each other: the analysis must not loop or give up.
+    "variables_assigned_back_and_forth": f"a = 'note on {SEALED}'\nb = a\na = b\nprint(a)\n",
+    "file_deleted_after_write":
+        f"with open('notes/a.md', 'w') as f:\n    f.write('{SEALED} x')\ndel f\n",
+    "annotated_file": f"f: 'TextIO' = open('notes/a.md', 'w')\nf.write('{SEALED} x')\n",
+}
+
+PY_READ = {
+    # Cross-model review, F1 and F2.
+    "split_back_into_a_path": f"print(open('read {SEALED}/a.md'.split()[1]).read())\n",
+    "sliced_back_into_a_path":
+        f"from pathlib import Path\nprint(Path('path: {SEALED}/a.md'[6:]).read_text())\n",
+    "aliased_os_system": f"from os import system as run\nrun('cat {SEALED}/a.md')\n",
+    "os_system_held_in_a_variable":
+        f"import os\nrunner = os.system\nrunner('cat {SEALED}/a.md')\n",
+    # A sink name rebound to something that runs or opens.
+    "print_rebound": f"import os\nprint = os.system\nprint('cat {SEALED}/a.md')\n",
+    "print_imported_as": f"from os import system as print\nprint('cat {SEALED}/a.md')\n",
+    "str_imported_as":
+        f"from subprocess import getoutput as str\nprint(str('cat {SEALED}/a.md'))\n",
+    "json_imported_as": f"import subprocess as json\njson.dumps('cat {SEALED}/a.md')\n",
+    "path_from_elsewhere": f"from shutil import Path\nPath('x').write_text('{SEALED} note')\n",
+    "print_defined_as_a_function":
+        f"import os\ndef print(s):\n    os.system(s)\nprint('cat {SEALED}/a.md')\n",
+    "print_as_a_parameter":
+        f"import os\ndef f(print):\n    print('cat {SEALED}/a.md')\nf(os.system)\n",
+    "sink_called_from_a_list": f"import os\nfns = [os.system]\nfns[0]('cat {SEALED}/a.md')\n",
+    "bound_method_self": f"print(open('{SEALED}/a.md'.count.__self__).read())\n",
+    # A write whose receiver is a process, not a file.
+    "write_to_a_shell":
+        "import subprocess\np = subprocess.Popen(['bash'], stdin=subprocess.PIPE, text=True)\n"
+        f"p.stdin.write('cat {SEALED}/a.md\\n')\n",
+    "print_to_a_shell":
+        "import subprocess\np = subprocess.Popen(['bash'], stdin=subprocess.PIPE, text=True)\n"
+        f"print('cat {SEALED}/a.md', file=p.stdin)\n",
+    "json_dump_to_a_shell":
+        "import json, subprocess\np = subprocess.Popen(['sh'], stdin=subprocess.PIPE, text=True)\n"
+        f"json.dump('cat {SEALED}/a.md', p.stdin)\n",
+    "stdout_replaced":
+        "import sys, subprocess\nsys.stdout = subprocess.Popen(['sh'], stdin=subprocess.PIPE, text=True).stdin\n"
+        f"sys.stdout.write('cat {SEALED}/a.md')\n",
+    "file_name_rebound_to_a_process":
+        "import subprocess\nf = subprocess.Popen(['sh'], stdin=subprocess.PIPE, text=True).stdin\n"
+        f"with open('notes/a.md', 'w') as f:\n    pass\nf.write('cat {SEALED}/a.md')\n",
+    "self_bound_name": f"f = f\nf.write('{SEALED} x')\n",
+    "write_text_on_an_unknown_object": f"import notes\nnotes.thing().write_text('{SEALED} x')\n",
+    "class_defines_a_text_step":
+        "class R:\n    def startswith(self, p):\n        return open(p).read()\n"
+        f"print(R().startswith('{SEALED}/a.md'))\n",
+    # A variable reached without spelling its name.
+    "globals_lookup": f"import os\nt = 'cat {SEALED}/a.md'\nos.system(globals()['t'])\n",
+    "main_module_attribute":
+        f"t = '{SEALED}/a.md'\nprint(t)\nimport __main__\nprint(open(__main__.t).read())\n",
+    "name_spelled_in_a_string":
+        f"import operator, sys\nt = '{SEALED}/a.md'\nprint(t)\nprint(open(vars(sys.modules[__name__])['t']).read())\n",
+    "variable_name_as_an_attribute":
+        f"import notes\nt = '{SEALED}/a.md'\nprint(t)\nprint(open(notes.t).read())\n",
+    "variable_name_as_a_string":
+        f"import notes\nt = '{SEALED}/a.md'\nprint(t)\nprint(open(notes.lookup('t')).read())\n",
+    # The value reaches a call that is not a text sink.
+    "variable_opened": f"t = '{SEALED}/a.md'\nprint(open(t).read())\n",
+    "loop_over_a_list": f"for p in ['{SEALED}/a.md']:\n    print(open(p).read())\n",
+    "dict_value_subscripted": f"d = {{'p': '{SEALED}/a.md'}}\nprint(open(d['p']).read())\n",
+    "appended_then_iterated":
+        f"L = []\nL.append('{SEALED}/a.md')\nfor p in L:\n    print(open(p).read())\n",
+    "walrus": f"print(open(p := '{SEALED}/a.md').read())\n",
+    "replace_into_a_path": f"t = 'x{SEALED}/a.md'.replace('x', '')\nprint(open(t).read())\n",
+    "os_path_join": "import os\nprint(open(os.path.join('data', 'project-background', 'a.md')).read())\n",
+    "format_into_open": f"print(open('{{}}/a.md'.format('{SEALED}')).read())\n",
+    "join_into_open": f"print(open('/'.join(['{SEALED}', 'a.md'])).read())\n",
+    "concat_into_open": f"print(open('{SEALED}' + '/a.md').read())\n",
+    "fstring_expression_opens": f"print(f\"{{open('{SEALED}/a.md').read()}}\")\n",
+    "exec_of_a_string": f"exec(\"print(open('{SEALED}/a.md').read())\")\n",
+    "bytes_path": f"print(open(b'{SEALED}/a.md').read())\n",
+    "augmented_then_run": f"import os\ns = 'cat '\ns += '{SEALED}/a.md'\nos.system(s)\n",
+    "unknown_function": f"def c(x):\n    return open(x).read()\nprint(c('{SEALED}/a.md'))\n",
+    # Spelled outside any string or comment, or not Python at all.
+    "name_in_code": f"x = 1\ny = {SEALED}\n",
+    "unparseable": f"print('unterminated {SEALED} \n",
+}
+
+
+@pytest.mark.parametrize("name", sorted(PY_TEXT))
+def test_python_text_is_a_mention(name):
+    assert csr._python_only_mentions(PY_TEXT[name]) is True
+
+
+@pytest.mark.parametrize("name", sorted(PY_READ))
+def test_python_read_is_not_a_mention(name):
+    assert csr._python_only_mentions(PY_READ[name]) is False
+
+
+@pytest.mark.parametrize("command", [
+    f"python3 - <<'PY'\n{PY_TEXT['todays_fire_raw_string_written_out']}PY",
+    f"cd /tmp && PYTHONIOENCODING=utf-8 python3 - <<'PY'\n{PY_TEXT['records_appended_then_dumped']}PY",
+    f"python3 <<'PY'\n{PY_TEXT['print']}PY",
+    f"python3 -u - <<'PY'\n{PY_TEXT['comment_only']}PY",
+    f"python3 -W ignore - <<'PY'\n{PY_TEXT['with_open_write']}PY",
+    f"python3 --no-site - <<'PY'\n{PY_TEXT['print']}PY",
+    f"python3 - notes/out.md <<'PY'\n{PY_TEXT['print']}PY",
+    f"python3 -c \"print('the sealed tree is {SEALED}')\"",
+    f"python3 -uc \"print('the sealed tree is {SEALED}')\"",
+])
+def test_bash_python_text_is_allowed(tmp_path, command):
+    assert _bash(tmp_path, command) == 0, command
+
+
+@pytest.mark.parametrize("command", [
+    f"python3 - <<'PY'\n{PY_READ['split_back_into_a_path']}PY",
+    f"python3 -c \"{PY_READ['split_back_into_a_path'].strip()}\"",
+    f"python3 - <<'PY'\n{PY_READ['aliased_os_system']}PY",
+    # Text programs, but not a Python program on stdin or in -c.
+    f"python3 notes/runner.py <<'PY'\n{PY_TEXT['print']}PY",
+    f"python3 -m notes_runner <<'PY'\n{PY_TEXT['print']}PY",
+    f"python3 -W ignore notes/runner.py <<'PY'\n{PY_TEXT['print']}PY",
+    f"python3 -c\"print('the sealed tree is {SEALED}')\"",
+    f"node <<'EOF'\nconsole.log('see the note on {SEALED} below')\nEOF",
+    f"cat <<'PY' | python3\n{PY_TEXT['print']}PY",
+    # A text program does not cover a read beside it.
+    f"python3 - <<'PY'\n{PY_TEXT['print']}PY\ncat {SEALED}/a.md",
+    f"python3 - {SEALED}/a.md <<'PY'\n{PY_TEXT['print']}PY",
+    f"python3 -c \"print('{SEALED} note')\" {SEALED}/a.md",
+])
+def test_bash_python_read_is_blocked(tmp_path, command):
+    assert _bash(tmp_path, command) == 2, command
+
+
+@pytest.mark.parametrize("words, expected", [
+    (["python3", "-"], ("stdin", None)),
+    (["python3"], ("stdin", None)),
+    (["python3", "-W", "ignore", "-"], ("stdin", None)),
+    (["python3", "-c", "x"], ("code", 2)),
+    (["python3", "-uc", "x"], ("code", 2)),
+    (["python3", "-m", "x"], ("other", None)),
+    (["python3", "-cx"], ("other", None)),
+    (["python3", "-u", "a.py"], ("file", 2)),
+    (["python3", "--no-site", "a.py"], ("file", 2)),
+    (["node", "-"], None),
+    ([], None),
+])
+def test_python_source(words, expected):
+    assert csr._python_source(words, 0) == expected
+
+
+def test_python_analysis_that_raises_is_a_read(monkeypatch):
+    """A crash in the hook exits 1, which Claude Code treats as allow. The analysis
+    must turn any exception into a read instead."""
+    def boom(tree):
+        raise RecursionError("too deep")
+    monkeypatch.setattr(csr, "_PyFlow", boom)
+    assert csr._python_only_mentions(PY_TEXT["print"]) is False
+
+
+# Second review (Fable). F9: ordinary brief-writing idioms must pass. F1-F7: each gate
+# tested on its own, without an import that would trip the module list first.
+PY_TEXT_2 = {
+    "textwrap_dedent": f'import textwrap\nprint(textwrap.dedent("""\n    see {SEALED}\n"""))\n',
+    "loop_over_lines_written":
+        f"lines = ['a', 'nothing from {SEALED}']\nwith open('notes/a.md', 'w') as f:\n"
+        "    for line in lines:\n        f.write(line + '\\n')\n",
+    "replace_then_printed": f"s = 'X {SEALED}'\ns = s.replace('X', 'Y')\nprint(s)\n",
+    "split_then_printed": f"print('read {SEALED}/a.md'.split()[1])\n",
+    "conditional_expression": f"x = 1\nprint('a' if x else 'no {SEALED}')\n",
+    "sys_exit_message": f"import sys\nsys.exit('refusing {SEALED}')\n",
+    "main_guard": f"if __name__ == '__main__':\n    print('note on {SEALED}')\n",
+    "plain_format_template": f"print('{{0}} and {{name}}'.format('{SEALED}', name='x'))\n",
+}
+
+PY_READ_2 = {
+    "print_keyword_unpacking": f"print('{SEALED} x', **{{'file': open('notes/a.md', 'w')}})\n",
+    "match_capture_rebinds_print":
+        f"import json\nmatch json.dumps:\n    case print:\n        print('{SEALED} x')\n",
+    "except_as_rebinds_print":
+        f"try:\n    1 / 0\nexcept ZeroDivisionError as print:\n    pass\nprint('{SEALED} x')\n",
+    "store_into_sys_argv": f"import sys\na = sys.argv\na[0] = '{SEALED}/a.md'\nprint(a)\n",
+    "append_to_sys_argv": f"import sys\na = sys.argv\na.append('{SEALED}/a.md')\nprint(a)\n",
+    "dunder_globals":
+        f"t = '{SEALED}/a.md'\nprint(t)\ndef f():\n    pass\n"
+        "for v in f.__globals__.values():\n    print(open(v).read())\n",
+    "dunder_builtins": f"t = '{SEALED}/a.md'\nprint(t)\nprint(open(__builtins__.eval('t')).read())\n",
+    "format_template_lookup":
+        f"t = '{SEALED}/a.md'\nprint(t)\ndef f():\n    pass\n"
+        "print(open('{0.__globals__[t]}'.format(f)).read())\n",
+    "format_on_a_variable": f"t = '{SEALED}/a.md'\nprint(t)\nk = '{{t}}'\nprint(k.format(t=1))\n",
+    "format_map": f"t = '{SEALED}/a.md'\nprint(t)\nprint('{{t}}'.format_map({{}}))\n",
+    "sys_modules": f"import sys\nt = '{SEALED}/a.md'\nprint(t)\nprint(sys.modules)\n",
+    "setattr_on_sys":
+        f"import sys\nsetattr(sys, 'stdout', open('notes/a.md', 'w'))\nprint('{SEALED} x')\n",
+    "module_not_listed": f"import os\nprint('{SEALED} x')\n",
+    "relative_import": f"from . import notes\nprint('{SEALED} x')\n",
+    "deeply_nested": "x = " + "-" * 100000 + f"1\nprint('{SEALED} x')\n",
+}
+
+
+@pytest.mark.parametrize("name", sorted(PY_TEXT_2))
+def test_python_text_is_a_mention_2(name):
+    assert csr._python_only_mentions(PY_TEXT_2[name]) is True
+
+
+@pytest.mark.parametrize("name", sorted(PY_READ_2))
+def test_python_read_is_not_a_mention_2(name):
+    assert csr._python_only_mentions(PY_READ_2[name]) is False
+
+
+@pytest.mark.parametrize("command", [
+    f"sh <(python3 -c \"print('cat {SEALED}/a.md')\")",
+    f"python3 - > >(sh) <<'PY'\n{PY_TEXT['print']}PY",
+    f"python3 - 3> >(sh) <<'PY'\n{PY_TEXT['print']}PY",
+    f"coproc sh; python3 - >&${{COPROC[1]}} <<'PY'\n{PY_TEXT['print']}PY",
+    f"python3 - 1>&3 <<'PY'\n{PY_TEXT['print']}PY",
+    f"python3 - > \"$OUT\" <<'PY'\n{PY_TEXT['print']}PY",
+    f"python3 - <&3 <<'PY'\n{PY_TEXT['print']}PY",
+    f"python3 -c \"print('{SEALED} x')\" >&3",
+    f"echo $(cat <(python3 -c \"print('{SEALED} x')\"))",
+])
+def test_python_output_wired_to_another_command_is_blocked(tmp_path, command):
+    assert _bash(tmp_path, command) == 2, command
+
+
+@pytest.mark.parametrize("template, plain", [
+    ("{0} and {name}", True), ("{}", True), ("{0:>{width}}", False),
+    ("{0.attr}", False), ("{x[k]}", False), ("{", False), (3, False),
+])
+def test_plain_template(template, plain):
+    assert csr._plain_template(template) is plain
+
+
+# Third review (Grok, Fable). A builtin outside the list, `type()` above all, builds an
+# object whose methods run code, and a method is a sink only on a proven receiver.
+PY_READ_3 = {
+    "type_builds_a_startswith_that_opens":
+        f"R = type('R', (), {{'startswith': lambda self, p: open(p).read()}})\n"
+        f"print(R().startswith('{SEALED}/a.md'))\n",
+    "type_builds_a_contains_that_opens":
+        f"R = type('R', (), {{'__contains__': lambda self, p: bool(open(p).read())}})\n"
+        f"print('{SEALED}/a.md' in R())\n",
+    "namedtuple_field_named_startswith":
+        "import collections\nT = collections.namedtuple('T', 'startswith')\n"
+        f"print(T(lambda p: open(p).read()).startswith('{SEALED}/a.md'))\n",
+    "verdict_method_on_an_unknown_receiver":
+        f"for line in open('notes/log.md'):\n    print(line.startswith('{SEALED}'))\n",
+    "builtin_not_listed": f"print(hasattr(print, 'x'), '{SEALED} x')\n",
+}
+
+
+@pytest.mark.parametrize("name", sorted(PY_READ_3))
+def test_python_read_is_not_a_mention_3(name):
+    assert csr._python_only_mentions(PY_READ_3[name]) is False
+
+
+@pytest.mark.parametrize("command", [
+    # Output to plain files and fd 1/2 is still text.
+    f"python3 - > notes/out.md 2>&1 <<'PY'\n{PY_TEXT['print']}PY",
+    f"python3 - >> notes/out.md 2>/dev/null <<'PY'\n{PY_TEXT['print']}PY",
+    f"python3 -c \"print('{SEALED} x')\" 1>&2",
+    # A program whose TEXT mentions the plumbing words is not plumbing.
+    f"python3 - <<'PY'\nprint('do not use mkfifo or <(cmd) or coproc; nothing from {SEALED}')\nPY",
+])
+def test_python_text_with_plain_output_is_allowed(tmp_path, command):
+    assert _bash(tmp_path, command) == 0, command
+
+
+def test_plain_output_and_process_substitution_helpers():
+    one = lambda cmd: simple_commands(cmd)[0]
+    assert csr._plain_output(one("python3 - > a 2>&1 3>b &>c <<'P'\nx\nP")) is True
+    assert csr._plain_output(one("python3 - >&3")) is False
+    assert csr._plain_output(one("python3 - > $F")) is False
+    assert csr._plain_output(one("python3 - < a.py")) is False
+    assert csr._no_process_substitution(simple_commands("sh <(python3 -c x)")) is False
+    assert csr._no_process_substitution(simple_commands("python3 - > a")) is True
+
+
+# Mutation round 3: each gate reached by a program that passes every other gate.
+PY_TEXT_4 = {
+    "dict_call_container": f"d = dict()\nd['k'] = 'note on {SEALED}'\nprint(d)\n",
+    "list_call_container": f"a = list()\na.append('note on {SEALED}')\nprint(a)\n",
+}
+
+PY_READ_4 = {
+    "function_named_print": f"def print(s):\n    return open(s).read()\nprint('{SEALED}/a.md')\n",
+    "parameter_named_print": f"def f(print):\n    print('{SEALED}/a.md')\nf(open)\n",
+    "class_named_like_a_builtin":
+        "class str:\n    def __contains__(self, p):\n        return bool(open(p).read())\n"
+        f"print('{SEALED}/a.md' in str())\n",
+    "store_into_a_call_that_is_not_a_container":
+        f"a = sorted([])\na.append('{SEALED}/a.md')\nprint(a)\n",
+    "uncalled_method_on_the_value": f"print('{SEALED}/a.md'.strip)\n",
+    "print_file_not_a_writer": f"f = 'notes/a.md'\nprint('{SEALED} x', file=f)\n",
+    "json_imported_as_another_name": f"import json as j\nprint(j.dumps('{SEALED} x'))\n",
+    "json_dump_to_a_string": f"import json\njson.dump('{SEALED} x', 'notes/a.json')\n",
+    # Python 3.14 t-strings build a Template, not a str; not followed, so a read.
+    "t_string": f"print(t'nothing from {SEALED}')\n",
+    "call_through_a_subscript": f"fns = [print]\nfns[0]('{SEALED}/a.md')\n",
+}
+
+
+@pytest.mark.parametrize("name", sorted(PY_TEXT_4))
+def test_python_text_is_a_mention_4(name):
+    assert csr._python_only_mentions(PY_TEXT_4[name]) is True
+
+
+@pytest.mark.parametrize("name", sorted(PY_READ_4))
+def test_python_read_is_not_a_mention_4(name):
+    assert csr._python_only_mentions(PY_READ_4[name]) is False
+
+
+# Fifth review (Fable, Grok): a program that spells the name in a print could open the
+# directory through a path built from pieces. Every path must now fold to literals.
+PY_TEXT_5 = {
+    "folded_fstring_path":
+        f"base = 'notes'\nopen(f'{{base}}/a.md', 'w').write('nothing from {SEALED}')\n",
+    "read_a_literal_file_then_write":
+        f"import json\nd = json.load(open('notes/a.json'))\nprint('{SEALED} x', len(d))\n",
+}
+
+PY_READ_5 = {
+    "concatenated_path":
+        f"print('nothing from {SEALED}')\nprint(open('data/project-' + 'background/a.md').read())\n",
+    "fstring_pieces_path":
+        f"a = 'project-'\nprint('nothing from {SEALED}')\nprint(open(f'data/{{a}}background/a.md').read())\n",
+    "path_built_from_pieces":
+        f"from pathlib import Path\nprint('nothing from {SEALED}')\n"
+        "print((Path('data') / ('project-' + 'background') / 'a.md').read_text())\n",
+    "path_method_argument_from_pieces":
+        f"from pathlib import Path\nprint('nothing from {SEALED}')\n"
+        "print(Path('data').joinpath('project-' + 'background', 'a.md').read_text())\n",
+    "walk_above_the_repo":
+        f"from pathlib import Path\nprint('nothing from {SEALED}')\n"
+        "for p in Path('..').rglob('*.md'):\n    print(p.read_text())\n",
+    "path_from_argv": f"import sys\nprint('nothing from {SEALED}')\nprint(open(sys.argv[1]).read())\n",
+    "path_from_a_loop":
+        f"print('nothing from {SEALED}')\nfor n in ['a', 'b']:\n    print(open(n).read())\n",
+    "open_a_descriptor": f"open(3, 'w').write('cat {SEALED}/a.md')\n",
+    "implicitly_concatenated_path":
+        f"print('nothing from {SEALED}')\nprint(open('data/project-' 'background/a.md').read())\n",
+    "open_with_no_path": f"open().write('{SEALED} x')\n",
+    "path_with_keywords": f"from pathlib import Path\nPath('notes', x=1).write_text('{SEALED} x')\n",
+}
+
+
+@pytest.mark.parametrize("name", sorted(PY_TEXT_5))
+def test_python_text_is_a_mention_5(name):
+    assert csr._python_only_mentions(PY_TEXT_5[name]) is True
+
+
+@pytest.mark.parametrize("name", sorted(PY_READ_5))
+def test_python_read_is_not_a_mention_5(name):
+    assert csr._python_only_mentions(PY_READ_5[name]) is False
+
+
+def test_combine_and_static_folding():
+    assert csr._combine([{"a", "b"}, {"c"}], "/") == {"a/c", "b/c"}
+    assert csr._combine([{"a"}, None], "") is None
+    assert csr._combine([], "") is None
+    assert csr._combine([{str(i) for i in range(17)}] * 2, "") is None   # 289 > 256
+    assert csr._combine([{str(i) for i in range(16)}] * 2, "") is not None
+
+
+# Sixth review (Fable, Grok): pathlib has too many ways to build and walk a path to fold
+# (cwd(), resolve(), parents[i], PosixPath, '..' in a glob pattern, absolute segments),
+# so it is not an allowed module, and a comment no longer excuses the program around
+# it. These were text under earlier versions and are reads now, by decision.
+PY_READ_6 = {
+    "path_open_write":
+        f"from pathlib import Path\nPath('notes/a.md').open('w').write('{SEALED} x')\n",
+    "path_write_text_concat":
+        f"from pathlib import Path\nPath('notes/a.md').write_text('see ' + '{SEALED}' + ' below')\n",
+    "pathlib_path_div_write_text":
+        f"import pathlib\nroot = pathlib.Path('notes')\n(root / 'a.md').write_text('about {SEALED}')\n",
+    "comment_in_an_unsafe_program":
+        f'import os\n# never read {SEALED}\nprint(os.getcwd())\n',
+    "path_parent_write_text":
+        f"from pathlib import Path\n(Path('notes/a.md').parent / 'b.md').write_text('{SEALED} x')\n",
+    "glob_inside_the_repo":
+        f"from pathlib import Path\nfor p in Path('notes').glob('*.md'):\n    print(p.name.startswith('x'), '{SEALED} note')\n",
+    "path_division_of_literals":
+        f"from pathlib import Path\n(Path('notes') / 'sub' / 'a.md').write_text('{SEALED} x')\n",
+    "comment_plus_assembled_path":
+        f"# nothing from {SEALED}\nprint(open('data/project-' + 'background/a.md').read())\n",
+    "open_held_in_a_variable":
+        f"o = open\nprint('nothing from {SEALED}')\nprint(o('data/project-' + 'background/a.md').read())\n",
+    "open_passed_to_map":
+        f"print('nothing from {SEALED}')\nprint(list(map(open, ['notes/a.md'])))\n",
+    "open_from_a_list": f"print('nothing from {SEALED}')\nprint([open][0]('notes/a.md').read())\n",
+    "open_rebound": f"def open(p):\n    return p\nprint('{SEALED} x')\n",
+    "open_with_file_keyword_assembled":
+        f"print('{SEALED} x')\nprint(open(file='data/project-' + 'background/a.md').read())\n",
+}
+
+
+@pytest.mark.parametrize("name", sorted(PY_READ_6))
+def test_python_read_is_not_a_mention_6(name):
+    assert csr._python_only_mentions(PY_READ_6[name]) is False
+
+
+def test_open_with_file_keyword_literal_is_text():
+    assert csr._python_only_mentions(
+        f"open(file='notes/a.md', mode='w').write('nothing from {SEALED}')\n") is True
+
+
+@pytest.mark.parametrize("cluster, expected", [
+    ("-uc", ("code", 2)), ("-mc", ("other", None)), ("-Wc", ("other", None)),
+    ("-Xc", ("other", None)), ("-cu", ("other", None)), ("-c", ("code", 2)),
+])
+def test_python_option_cluster(cluster, expected):
+    assert csr._python_source(["python3", cluster, "x"], 0) == expected
+
+
+def test_combine_counts_before_building():
+    big = {str(i) for i in range(1000)}
+    assert csr._combine([big, big, big], "") is None        # 10^9 joins never built
+
+
+def test_open_of_the_sealed_home_from_pieces():
+    """The sibling home is named after the repo directory, so build it from the module."""
+    home = csr.SEALED_HOME
+    code = f"print('{SEALED} x')\nprint(open('../' + {home[:4]!r} + {home[4:]!r} + '/x.md').read())\n"
+    assert csr._python_only_mentions(code) is False
+
+
+# Seventh review (Grok): an allowed module exposes the modules it imported, and an
+# allowed module has submodules. Each module now has a list of usable attributes.
+_ASSEMBLED = "'data/project-' + 'background/a.md'"
+PY_READ_7 = {
+    "from_sys_import_modules":
+        f"from sys import modules\nprint('{SEALED} x')\nprint(modules['builtins'].open({_ASSEMBLED}).read())\n",
+    "submodule_import_from": f"import sys\nfrom json.tool import main\nprint('{SEALED} x')\nmain()\n",
+    "dotted_import": f"import json.tool\nprint('{SEALED} x')\n",
+    "module_through_a_module":
+        f"import re\nprint('{SEALED} x')\nprint(re.enum.sys.modules['builtins'].open({_ASSEMBLED}).read())\n",
+    "module_held_in_a_variable": f"import re\nm = re\nprint('{SEALED} x')\nprint(m.escape('x'))\n",
+    "module_passed_as_a_value": f"import re\nprint('{SEALED} x', re)\n",
+    "private_attribute":
+        f"import collections\nprint('{SEALED} x')\nprint(collections._sys.modules['builtins'].open({_ASSEMBLED}).read())\n",
+    "from_import_unlisted_name": f"from collections import abc\nprint('{SEALED} x', abc)\n",
+    "relative_from_import": f"from .json import dumps\nprint(dumps('{SEALED} x'))\n",
+}
+
+PY_TEXT_7 = {
+    "from_import_listed_name": f"from collections import Counter\nprint(Counter('ab'), '{SEALED} x')\n",
+    "module_alias_listed_attribute": f"import re as r\nprint(r.escape('x'), '{SEALED} x')\n",
+    "listed_module_attributes":
+        f"import re, datetime\nprint(re.sub('a', 'b', 'a'), datetime.date.today(), '{SEALED} x')\n",
+}
+
+
+@pytest.mark.parametrize("name", sorted(PY_READ_7))
+def test_python_read_is_not_a_mention_7(name):
+    assert csr._python_only_mentions(PY_READ_7[name]) is False
+
+
+@pytest.mark.parametrize("name", sorted(PY_TEXT_7))
+def test_python_text_is_a_mention_7(name):
+    assert csr._python_only_mentions(PY_TEXT_7[name]) is True
+
+
+# Mutation round 7: gates the path rule now reaches first in older cases, each reached
+# by a program that passes every other gate (no `open`, or a literal `open` path).
+_CHAIN = "".join(f"p{i} = p{i - 1}\n" for i in range(1, 11))
+PY_READ_8 = {
+    "parameter_named_print_without_open":
+        f"def f(print):\n    print('{SEALED} x')\nf(len)\n",
+    "class_without_open": f"class str:\n    pass\nprint('{SEALED} x' in str())\n",
+    "path_folded_through_too_many_names":
+        f"p0 = 'notes/a.md'\n{_CHAIN}open(p10, 'w').write('{SEALED} x')\n",
+    "percent_formatted_path": f"open('notes/%s' % 'a.md', 'w').write('{SEALED} x')\n",
+    # A regression case: `open` as a keyword value fails closed whichever check catches
+    # it. The isolating case for the call-position check is open_passed_as_a_value.
+    "open_as_a_key_function":
+        f"print('{SEALED} x', max('notes/a.md', 'data/project-' + 'background/a.md', key=open))\n",
+    "open_file_keyword_after_mode":
+        f"print('{SEALED} x')\nprint(open(mode='r', file='data/project-' + 'background/a.md').read())\n",
+    # len IS an allowed builtin, so the builtin list passes; what decides is that len is
+    # not a text sink (_argument's _PY_CONTAINERS test).
+    "literal_into_a_builtin_that_is_not_a_sink": f"n = len('{SEALED} x')\n",
+    "variable_into_a_builtin_that_is_not_a_sink": f"t = '{SEALED} x'\nn = len(t)\n",
+    "name_spelled_as_arithmetic":
+        "project = background = 2\ny = project-background\nprint(y)\n",
+    "open_passed_as_a_value": f"print('notes/a.md', open, '{SEALED} x')\n",
+    "walrus_without_open": f"print((t := '{SEALED} x'))\n",
+}
+
+PY_TEXT_8 = {
+    "open_concatenated_literal_path": f"open('notes/' + 'a.md', 'w').write('{SEALED} x')\n",
+    # A binding recorded as an identifier string (except-as, match capture) in an
+    # otherwise text-only program must not cost the exemption (round 9, Fable F1).
+    "except_as_binding":
+        f"try:\n    n = int('x')\nexcept ValueError as e:\n    print('{SEALED} x', e)\n",
+    "match_capture_binding":
+        f"match 3:\n    case n:\n        print('{SEALED} x', n)\n",
+}
+
+
+@pytest.mark.parametrize("name", sorted(PY_READ_8))
+def test_python_read_is_not_a_mention_8(name):
+    assert csr._python_only_mentions(PY_READ_8[name]) is False
+
+
+@pytest.mark.parametrize("name", sorted(PY_TEXT_8))
+def test_python_text_is_a_mention_8(name):
+    assert csr._python_only_mentions(PY_TEXT_8[name]) is True
+
+
+def test_a_name_folding_past_the_cap_is_unknown(monkeypatch):
+    code = f"p = 'notes/a.md'\np = 'notes/b.md'\nopen(p, 'w').write('{SEALED} x')\n"
+    assert csr._python_only_mentions(code) is True
+    monkeypatch.setattr(csr, "_PY_MAX_VALUES", 1)
+    assert csr._python_only_mentions(code) is False
+
+
+def test_no_listed_attribute_or_builtin_reaches_a_module_or_open():
+    """The positive lists ARE the boundary (round 8, Fable F1; round 9, Fable F2/F3, Grok
+    F1). Two checks: what each listed name resolves to, and a pin of both lists, so any
+    addition fails here and must be made deliberately in this test too."""
+    import builtins
+    import importlib
+    import types
+    # Each listed attribute must be defined by its own module, that module's C
+    # accelerator, builtins, or json.decoder (JSONDecodeError): an allowed set, so a
+    # helper re-exported from os/io/gzip/tokenize fails. Openers are also caught by
+    # name. Neither is complete on its own; the equality pin below is the primary
+    # guard, and these are the backstop that explains WHY a pinned entry is safe.
+    openers = {"open", "urlopen", "connect", "input", "getline", "parse", "main"}
+    streams = {("sys", "stdout"), ("sys", "stderr"), ("sys", "stdin")}
+    for mod, attrs in csr._PY_MODULE_ATTRS.items():
+        m = importlib.import_module(mod)
+        for a in attrs:
+            v = getattr(m, a)
+            assert not isinstance(v, types.ModuleType), (mod, a)
+            assert not (isinstance(v, dict) and any(
+                isinstance(x, types.ModuleType) for x in v.values())), (mod, a)
+            assert v is not builtins.open, (mod, a)
+            assert getattr(v, "__name__", "") not in openers, (mod, a)
+            if (mod, a) not in streams:
+                owner = getattr(v, "__module__", None) or type(v).__module__
+                allowed = {mod, "_" + mod, "builtins"} | ({"json.decoder"} if mod == "json" else set())
+                assert owner in allowed, (mod, a, owner)
+    reaches = {"open", "exec", "eval", "compile", "__import__", "input", "breakpoint",
+               "type", "getattr", "setattr", "delattr", "vars", "globals", "locals", "dir",
+               "object", "super", "classmethod", "staticmethod", "property", "memoryview",
+               "help", "id", "hasattr", "callable", "iter", "next", "issubclass"}
+    assert all(hasattr(builtins, b) for b in csr._PY_BUILTINS)
+    assert csr._PY_BUILTINS & reaches == {"open"}
+    assert csr._PY_BUILTINS == {
+        "print", "open", "str", "dict", "list", "tuple", "set", "frozenset", "len",
+        "sorted", "reversed", "enumerate", "range", "zip", "min", "max", "sum", "any",
+        "all", "abs", "round", "int", "float", "bool", "isinstance", "repr", "map",
+        "filter", "Exception", "ValueError", "KeyError", "TypeError", "IndexError",
+        "OSError", "FileNotFoundError", "RuntimeError", "ZeroDivisionError",
+        "AssertionError", "SystemExit", "StopIteration"}
+    assert {m: sorted(a) for m, a in csr._PY_MODULE_ATTRS.items()} == {
+        "collections": ["Counter", "OrderedDict", "defaultdict", "deque", "namedtuple"],
+        "csv": ["DictReader", "DictWriter", "QUOTE_ALL", "QUOTE_MINIMAL", "reader", "writer"],
+        "datetime": ["date", "datetime", "time", "timedelta", "timezone"],
+        "difflib": ["Differ", "SequenceMatcher", "context_diff", "get_close_matches", "ndiff",
+                    "unified_diff"],
+        "itertools": ["accumulate", "batched", "chain", "combinations", "count", "cycle",
+                      "dropwhile", "groupby", "islice", "pairwise", "permutations", "product",
+                      "repeat", "starmap", "takewhile", "zip_longest"],
+        "json": ["JSONDecodeError", "dump", "dumps", "load", "loads"],
+        "math": ["ceil", "exp", "floor", "fsum", "inf", "isclose", "log", "log10", "pi",
+                 "prod", "sqrt"],
+        "re": ["A", "ASCII", "DOTALL", "I", "IGNORECASE", "M", "MULTILINE", "S", "VERBOSE",
+               "X", "compile", "escape", "findall", "finditer", "fullmatch", "match", "search",
+               "split", "sub", "subn"],
+        "sys": ["argv", "exit", "stderr", "stdin", "stdout", "version", "version_info"],
+        "textwrap": ["dedent", "fill", "indent", "shorten", "wrap"],
+    }
