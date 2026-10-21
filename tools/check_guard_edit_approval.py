@@ -321,7 +321,10 @@ def _script_rewrites_a_guard(text: str, cwd: str = ".", argv: list[str] | None =
 
 _UNKNOWN = "\0"
 _GUARD_HIT = "\0guard"            # a command that edits a guard; never a real path
-_CD = re.compile(r"(?:^|[;&|(\s'\"])(?:cd|pushd)\s")     # also `sh -c 'cd x && ...'`
+_READ_ONLY_COMMANDS = {"ls", "cat", "grep", "rg", "head", "tail", "wc", "echo", "printf",
+                       "diff", "stat", "du", "file", "which", "pwd", "date", "true"}
+_READ_ONLY_GIT = {"status", "diff", "log", "show", "rev-parse", "ls-files", "ls-remote",
+                  "branch", "remote", "blame", "grep"}
 # Modules whose every file-writing call the analysis below knows. Anything else imported
 # leaves the script to the heuristic, which blocks.
 _PY_SAFE_MODULES = {
@@ -523,21 +526,22 @@ class _PyWrites:
         runs (`python3 tools/check_x.py`), or _UNKNOWN when it cannot be read. A child
         fed on stdin (input=, stdin=) may be fed a program, so only this repo's own
         guard may take input."""
-        import shlex
         ast = self.ast
         if isinstance(cmd, (ast.List, ast.Tuple)):
             parts = [self.fold(x) for x in cmd.elts]
             if len(parts) >= 2 and all(re.match(r"(?:.*/)?python[0-9.]*$", v) for v in parts[0]) \
                     and all(_UNKNOWN not in v and _guarded_target(v, cwd) for v in parts[1]):
                 return []                             # running this repo's guard is not editing it
-            if fed or any(is_guarded(v) or _GUARD_BASENAME.match(v.rsplit("/", 1)[-1])
-                          for p in parts for v in p):
-                return [_UNKNOWN]     # names a guard: only running this repo's guard passes
-            if all(len(p) == 1 for p in parts):
-                words = [next(iter(p)) for p in parts]
-                if _UNKNOWN not in "".join(words) and not _CD.search(shlex.join(words)):
-                    return [_GUARD_HIT if bash_guard_writes(shlex.join(words), cwd) else ""]
-            return [_UNKNOWN]
+            # Any other command passes only if its program is on a read-only list: a
+            # formatter, `git apply` or `patch` rewrites files the Bash scan cannot see
+            # (pre-push review 2026-10-21), so an allow-list, not more writer names.
+            if fed or not all(len(p) == 1 for p in parts):
+                return [_UNKNOWN]
+            words = [next(iter(p)) for p in parts]
+            head = os.path.basename(words[0])
+            sub = words[1] if len(words) > 1 else ""
+            read_only = head in _READ_ONLY_COMMANDS or (head == "git" and sub in _READ_ONLY_GIT)
+            return [""] if read_only and _UNKNOWN not in "".join(words) else [_UNKNOWN]
         return [_UNKNOWN]          # a shell string (os.system, shell=True): not followed
 
 

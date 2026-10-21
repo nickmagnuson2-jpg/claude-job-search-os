@@ -835,3 +835,17 @@ def test_a_tool_run_on_a_guard_blocks(cmd):
 def test_shell_true_with_a_list_is_unknown():
     code, _ = _bash(f"python3 - <<'PY'\nimport subprocess\nsubprocess.run(['echo x > {_G}'], shell=True)\nprint('{_G}')\nopen('n', 'w')\nPY")
     assert code == 2
+
+
+@pytest.mark.parametrize("cmd", [["git", "apply", "/tmp/fix.diff"], ["patch", "-p1", "-i", "/tmp/fix.diff"],
+                                 ["black", "tools"], ["ruff", "format", "."]])
+def test_a_command_that_is_not_read_only_blocks(cmd):
+    """Pre-push review 2 (2026-10-21): patch tools and directory formatters name no guard."""
+    code, _ = _bash(f"python3 - <<'PY'\nimport subprocess\nsubprocess.run({cmd!r})\nprint('{_G}')\nopen('n', 'w')\nPY")
+    assert code == 2
+
+
+@pytest.mark.parametrize("cmd", [["git", "status"], ["ls", "-la"], ["git", "diff", "HEAD"]])
+def test_a_read_only_command_passes(cmd):
+    code, err = _bash(f"python3 - <<'PY'\nimport subprocess\nsubprocess.run({cmd!r})\nprint(open('{_G}').read())\nopen('/tmp/o.txt', 'w')\nPY")
+    assert code == 0, err
