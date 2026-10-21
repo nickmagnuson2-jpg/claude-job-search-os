@@ -93,6 +93,14 @@ Per `memory/feedback_guard_must_hard_abort_on_empty_input.md`.
 
 ## Checklist
 
+- [ ] **Name the adversary and its bypass paths before claiming what the guard stops.** If
+      the actor being checked is the agent, list what it can do to the guard: edit its code,
+      remove its settings entry, skip it (`--no-verify`), or reach the protected action another
+      way (another tool, an API, `sed -i` or `rm` on a read-only file in a writable folder).
+      If any path works, call it a tripwire in the docs, or move the authority out of the
+      agent's reach. Applies to any protection, not only hooks: a file permission was
+      described as stopping writes when it did not.
+      (`feedback_a_guard_against_the_agent_must_remove_a_capability.md`)
 - [ ] **Classify the hook first** — command-scanner or content-scanner? Use the matching
       FP discipline (command position vs path scope). Content hooks: exclude `tests/` and
       any spec/analysis directory that quotes the pattern as prose.
