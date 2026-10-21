@@ -272,10 +272,292 @@ def _shell_script_files(rest: list[str]) -> list[str]:
     return [a for a in rest if not a.startswith(("-", "+"))]
 
 
-def _script_rewrites_a_guard(text: str) -> bool:
+def _script_rewrites_a_guard(text: str, cwd: str = ".", argv: list[str] | None = None) -> bool:
     """An interpreter script that names a guard path and calls a write. A heuristic:
-    it cannot see a path built from parts (`Path("tools") / name`)."""
-    return bool(_GUARD_IN_TEXT.search(text)) and bool(_WRITE_CALL.search(text))
+    it cannot see a path built from parts (`Path("tools") / name`). For a Python script
+    (argv given) the write targets are then resolved, and a script whose writes all
+    land outside the guards passes (`_python_rewrites_a_guard`)."""
+    if not (_GUARD_IN_TEXT.search(text) and _WRITE_CALL.search(text)):
+        return False
+    return argv is None or _python_rewrites_a_guard(text, cwd, argv)
+
+
+# --- Python scripts: where do the writes go? ----------------------------------------
+#
+# The heuristic above blocks a script that NAMES a guard and WRITES anything, so a script
+# that reads, hashes or runs a guard and writes its result elsewhere was blocked (friction
+# ledger: 3 fires, script-patch rung, 2026-10-21). For Python the hook now finds every
+# write the script makes and folds its target path through literals, simple variables,
+# os.path.join, Path(...) and sys.argv (from the Bash words). Those are the only forms
+# the 15 replayed false positives this change clears needed: f-strings, `+`, .parent,
+# joinpath and function parameters were switched off one at a time, cleared none of the
+# 15 by themselves, and were removed (each was a way to mis-fold a path, and an unfolded
+# path just blocks; scripts using them stay blocked, as before). The script still blocks when any target may be a
+# guard: it resolves to one, or its last component is unknown or guard-shaped (an
+# unknown part may be absolute or hold '..', so a known directory proves nothing). It also blocks when it
+# cannot be analysed: it does not parse; it imports a module outside _PY_SAFE_MODULES
+# (io.FileIO, fileinput's in-place mode and the like write files this list does not
+# name, so the analysis applies only where its write list is complete) or uses `import *`;
+# it reaches code or names dynamically (exec, getattr, sys.modules, a dunder attribute, a
+# module held in a variable); it changes the working directory; or it refers to a write
+# function without calling it (`w = os.replace`), passes arguments it cannot see
+# (`*args`, `**kw`), or rewrites sys.argv.
+#
+# CONTRACT. Like the rest of this hook, this is a heuristic, not a proof: it is built
+# so that a script the old heuristic examined still blocks when it edits a guard the
+# ORDINARY way (open, write_text, shutil, os.replace, a command run through subprocess,
+# a link), and it closes the cheap evasions
+# reviews found. It is not proof against a script written to evade it (the hook already
+# misses `Path("tools") / name`), consistent with WHAT THIS HOOK CAN AND CANNOT DO above.
+# It turns blocks into allows, with one exception: `python3 -W x patch.py` now reads
+# patch.py, which the old option loop mistook for `x`.
+#
+# NOT COVERED, pre-existing: a script reaches this analysis only when the old
+# pre-filter fires (a guard path as a whole quoted string AND a _WRITE_CALL token), so
+# `subprocess.run(['rm', G])` or `os.system("sed -i ... G")` alone is never examined.
+# Widening the pre-filter to every write the analysis knows was measured on 3,472
+# replayed commands (2026-10-21): 63 newly blocked, none of which wrote a guard. That
+# trade is a separate decision, parked as a todo.
+
+_UNKNOWN = "\0"
+_GUARD_HIT = "\0guard"            # a command that edits a guard; never a real path
+_CD = re.compile(r"(?:^|[;&|(\s'\"])(?:cd|pushd)\s")     # also `sh -c 'cd x && ...'`
+# Modules whose every file-writing call the analysis below knows. Anything else imported
+# leaves the script to the heuristic, which blocks.
+_PY_SAFE_MODULES = {
+    "os", "os.path", "posixpath", "shutil", "pathlib", "subprocess", "sys", "json", "re",
+    "hashlib", "datetime", "time", "collections", "itertools", "functools", "math",
+    "textwrap", "difflib", "csv", "glob", "fnmatch", "string", "typing",
+    "statistics", "base64", "uuid", "random", "copy", "enum", "ast", "tokenize", "shlex",
+    "dataclasses", "pprint", "traceback", "__future__", "warnings", "stat", "errno",
+    "tomllib"}
+# An attribute with one of these names is a module reached through another module
+# (shutil.os, os.path.os), which the qualified-name tables would not recognise.
+_PY_MODULE_ATTRS = {"os", "sys", "shutil", "subprocess", "pathlib", "io", "builtins",
+                    "posix", "nt", "importlib"}
+_PY_MAX_VALUES = 64
+# Write functions by qualified name, and which positional arguments are paths they change.
+_PY_WRITE_FUNCS = {
+    "os.replace": (0, 1), "os.rename": (0, 1), "os.renames": (0, 1), "os.remove": (0,),
+    "os.unlink": (0,), "os.truncate": (0,), "os.rmdir": (0,), "os.removedirs": (0,),
+    # A link makes a later write to either end reach the other.
+    "os.link": (0, 1), "os.symlink": (0, 1), "os.open": (0,), "os.chmod": (0,),
+    "shutil.copy": (1,), "shutil.copy2": (1,), "shutil.copyfile": (1,),
+    "shutil.copytree": (1,), "shutil.copymode": (1,), "shutil.copystat": (1,),
+    "shutil.move": (0, 1), "shutil.rmtree": (0,), "shutil.unpack_archive": (1,),
+    "shutil.make_archive": (0,),
+}
+_PY_OPENERS = {"open"}
+_PY_RUNNERS = {"subprocess.run", "subprocess.call", "subprocess.check_call",
+               "subprocess.check_output", "subprocess.Popen", "subprocess.getoutput",
+               "subprocess.getstatusoutput", "os.system", "os.popen"}
+_PY_DYNAMIC = {"exec", "eval", "compile", "getattr", "setattr", "delattr", "__import__",
+               "globals", "locals", "vars", "breakpoint", "sys.modules", "os.chdir",
+               "os.fchdir", "os.chroot"}
+_PY_DYNAMIC_PREFIXES = ("os.exec", "os.spawn", "os.posix_spawn", "os.fork")
+# Path methods: those that change the receiver, and those that move it to an argument.
+_PY_PATH_WRITES = {"write_text", "write_bytes", "touch", "unlink", "rmdir", "chmod"}
+# The receiver and the single argument: a move, a copy, or a link between the two.
+_PY_PATH_MOVES = {"rename", "replace", "copy", "copy_into", "move", "move_into",
+                  "symlink_to", "hardlink_to"}
+_PY_PATH_CTORS = {"pathlib.Path", "pathlib.PurePath", "pathlib.PosixPath",
+                  "os.path.join", "posixpath.join"}
+
+
+def _join(parts: list[set]) -> set:
+    """Every way to join one value from each part, os.path.join style."""
+    import itertools
+    import posixpath
+    count = 1
+    for p in parts:
+        count *= len(p)
+    if not parts or count > _PY_MAX_VALUES:
+        return {_UNKNOWN}
+    return {posixpath.join(*c) for c in itertools.product(*parts)}
+
+
+class _PyWrites:
+    def __init__(self, tree, argv: list[str]):
+        import ast
+        self.ast, self.argv, self.tree = ast, argv, tree
+        self.parent = {c: p for p in ast.walk(tree) for c in ast.iter_child_nodes(p)}
+        self.imports: dict[str, str] = {}
+        self.values: dict[str, list] = {}
+        self.modules: set[str] = set()                 # local names bound to a module
+        self.unsafe = False
+        for n in ast.walk(tree):
+            if isinstance(n, ast.Import):
+                for a in n.names:
+                    self.unsafe |= a.name not in _PY_SAFE_MODULES
+                    local = a.asname or a.name.split(".")[0]
+                    self.imports[local] = a.name if a.asname else a.name.split(".")[0]
+                    self.modules.add(local)
+            elif isinstance(n, ast.ImportFrom):
+                self.unsafe |= n.level != 0 or n.module not in _PY_SAFE_MODULES
+                for a in n.names:
+                    self.unsafe |= a.name == "*"
+                    self.imports[a.asname or a.name] = f"{n.module}.{a.name}"
+            elif isinstance(n, ast.Assign):
+                for t in n.targets:
+                    if isinstance(t, ast.Name):
+                        self.values.setdefault(t.id, []).append(n.value)
+            elif isinstance(n, ast.arg):
+                self.values.setdefault(n.arg, []).append(None)    # a parameter: unknown
+            elif isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store) and not isinstance(
+                    self.parent.get(n), ast.Assign):
+                self.values.setdefault(n.id, []).append(None)     # a loop, a with: unknown
+
+    def qual(self, e) -> str:
+        """`os.path.join`, `shutil.copy` (also through `from shutil import copy`), or ''."""
+        ast = self.ast
+        if isinstance(e, ast.Name):
+            return self.imports.get(e.id, e.id)
+        if isinstance(e, ast.Attribute):
+            base = self.qual(e.value)
+            return f"{base}.{e.attr}" if base else ""
+        return ""
+
+    def fold(self, e, depth: int = 0) -> set:
+        """The possible string values of a path expression; _UNKNOWN marks unknown parts."""
+        ast = self.ast
+        if e is None or depth > 12:
+            return {_UNKNOWN}
+        d = depth + 1
+        if isinstance(e, ast.Constant):
+            return {e.value} if isinstance(e.value, str) else {_UNKNOWN}
+        if isinstance(e, ast.Name):
+            return self._fold_name(e.id, d)
+        if isinstance(e, ast.Subscript) and self.qual(e.value) == "sys.argv" \
+                and isinstance(e.slice, ast.Constant) and isinstance(e.slice.value, int):
+            i = e.slice.value
+            return {self.argv[i]} if 0 <= i < len(self.argv) else {_UNKNOWN}
+        if isinstance(e, ast.Call) and self.qual(e.func) in _PY_PATH_CTORS and e.args \
+                and not e.keywords:
+            return _join([self.fold(a, d) for a in e.args])
+        return {_UNKNOWN}
+
+    def _fold_name(self, name: str, d: int) -> set:
+        """Every value a name can hold: the union over its plain assignments. A name
+        bound any other way (a parameter, a loop, `with`) is unknown."""
+        sources = self.values.get(name, [])
+        if not sources or None in sources:
+            return {_UNKNOWN}
+        out = set().union(*(self.fold(v, d) for v in sources))
+        return out if len(out) <= _PY_MAX_VALUES else {_UNKNOWN}
+
+    def _write_mode(self, mode) -> bool:
+        ast = self.ast
+        return not (isinstance(mode, ast.Constant) and isinstance(mode.value, str)
+                    and not set(mode.value) & set("wax+"))
+
+    def targets(self, cwd: str):
+        """The folded path of every write, or None when the script cannot be analysed."""
+        ast = self.ast
+        out: list[str] = []
+        if self.unsafe:
+            return None
+        for n in ast.walk(self.tree):
+            name = n.attr if isinstance(n, ast.Attribute) else getattr(n, "id", "")
+            if name.startswith("__") and name not in ("__name__", "__file__"):
+                return None                           # __builtins__, os.__dict__[...]
+            if isinstance(n, ast.Attribute) and n.attr in _PY_MODULE_ATTRS \
+                    and self.qual(n) not in ("os.path",):
+                return None                           # shutil.os.replace(...)
+            if isinstance(n, ast.Name) and n.id in self.modules and not (
+                    isinstance(self.parent.get(n), ast.Attribute)
+                    and self.parent[n].value is n):
+                return None                           # `o = os`: a module as a value
+            q = self.qual(n)                          # "" for anything but a name or attribute
+            if q in _PY_DYNAMIC or q.startswith(_PY_DYNAMIC_PREFIXES):
+                return None
+            p = self.parent.get(n)
+            if q == "sys.argv" and not (
+                    isinstance(p, ast.Subscript) and p.value is n
+                    and isinstance(p.ctx, ast.Load) and isinstance(p.slice, ast.Constant)):
+                return None                           # sys.argv changed or passed around
+            called = isinstance(p, ast.Call) and p.func is n
+            writes = q in _PY_WRITE_FUNCS or q in _PY_OPENERS or q in _PY_RUNNERS or (
+                isinstance(n, ast.Attribute)
+                and n.attr in _PY_PATH_WRITES | _PY_PATH_MOVES | {"open"})
+            if writes and not called:
+                return None                           # `w = os.replace`: not followed
+            if not isinstance(n, ast.Call):
+                continue
+            q, f = self.qual(n.func), n.func
+            kw = {k.arg: k.value for k in n.keywords}
+            method = f.attr if isinstance(f, ast.Attribute) else ""
+            if (q in _PY_OPENERS or q in _PY_WRITE_FUNCS or q in _PY_RUNNERS
+                    or method in _PY_PATH_WRITES | _PY_PATH_MOVES | {"open"}) and (
+                    None in kw or any(isinstance(a, ast.Starred) for a in n.args)):
+                return None                           # open(*a), open(p, **kw): unseen
+            if q in _PY_OPENERS:
+                mode = n.args[1] if len(n.args) > 1 else kw.get("mode")
+                if mode is not None and self._write_mode(mode):    # no mode: read
+                    out += self.fold(n.args[0] if n.args else kw.get("file"))
+            elif q in _PY_WRITE_FUNCS:
+                for i in _PY_WRITE_FUNCS[q]:
+                    out += self.fold(n.args[i] if i < len(n.args) else None)
+            elif q in _PY_RUNNERS:
+                # cwd= moves relative paths, executable= replaces the program.
+                out += [_UNKNOWN] if kw.keys() & {"cwd", "executable"} else self._run_targets(
+                    n.args[0] if n.args else kw.get("args"), cwd,
+                    fed=bool(kw.keys() & {"input", "stdin"}))
+            elif not method or isinstance(f.value, ast.Name) and f.value.id in self.modules:
+                pass                                  # a module function: the tables above
+            elif method in _PY_PATH_WRITES:
+                out += self.fold(f.value)
+            elif method in _PY_PATH_MOVES and (method != "replace"      # str.replace takes two
+                                               or len(n.args) + len(n.keywords) == 1):
+                dest = n.args[:1] or [k.value for k in n.keywords
+                                      if k.arg in ("target", "target_dir")]
+                if dest:                              # d.copy(): a dict, not a path
+                    out += self.fold(f.value) | self.fold(dest[0])
+            elif method == "open":
+                mode = n.args[0] if n.args else kw.get("mode")
+                if mode is not None and self._write_mode(mode):
+                    out += self.fold(f.value)
+        return out
+
+    def _run_targets(self, cmd, cwd: str, fed: bool = False) -> list[str]:
+        """A command the script runs: the guards its shell form writes, a guard it only
+        runs (`python3 tools/check_x.py`), or _UNKNOWN when it cannot be read. A child
+        fed on stdin (input=, stdin=) may be fed a program, so only this repo's own
+        guard may take input."""
+        import shlex
+        ast = self.ast
+        if isinstance(cmd, (ast.List, ast.Tuple)):
+            parts = [self.fold(x) for x in cmd.elts]
+            if len(parts) >= 2 and all(re.match(r"(?:.*/)?python[0-9.]*$", v) for v in parts[0]) \
+                    and all(_UNKNOWN not in v and _guarded_target(v, cwd) for v in parts[1]):
+                return []                             # running this repo's guard is not editing it
+            if fed:
+                return [_UNKNOWN]
+            if all(len(p) == 1 for p in parts):
+                words = [next(iter(p)) for p in parts]
+                if _UNKNOWN not in "".join(words) and not _CD.search(shlex.join(words)):
+                    return [_GUARD_HIT if bash_guard_writes(shlex.join(words), cwd) else ""]
+            return [_UNKNOWN]
+        return [_UNKNOWN]          # a shell string (os.system, shell=True): not followed
+
+
+def _may_be_guard(value: str, cwd: str) -> bool:
+    """Could this folded write target be a guard file of this repo? (_GUARD_HIT holds
+    _UNKNOWN in its name, so it is caught below.)"""
+    if _UNKNOWN not in value:
+        return _guarded_target(value, cwd)
+    base = value.rsplit("/", 1)[-1]
+    return _UNKNOWN in base or bool(_GUARD_BASENAME.match(base)) or base in (
+        "settings.json", "settings.local.json", "tools", ".claude", ".", "..", "")
+
+
+def _python_rewrites_a_guard(text: str, cwd: str, argv: list[str]) -> bool:
+    import ast
+    try:
+        tree = ast.parse(text)
+        targets = _PyWrites(tree, argv).targets(cwd)
+    except (SyntaxError, ValueError, RecursionError):
+        return True
+    return targets is None or any(_may_be_guard(t, cwd) for t in targets)
 
 
 def _read_script(path: str, cwd: str) -> str:
@@ -289,6 +571,16 @@ def _read_script(path: str, cwd: str) -> str:
             return fh.read(_MAX_SCRIPT_BYTES)
     except OSError:
         return ""
+
+
+def _one_value(word: str, env: dict) -> str:
+    """A Bash word as one string: its single possible expansion, else _UNKNOWN. A
+    command substitution comes back from _expand_vars unexpanded, so the `[$`]` test
+    catches it, and an unset variable expands to nothing."""
+    from check_public_pii import _expand_vars
+    vals = set(_expand_vars(word, env))
+    return vals.pop() if len(vals) == 1 and not re.search(r"[$`]", next(iter(vals))) \
+        else _UNKNOWN
 
 
 def bash_guard_writes(command: str, cwd: str = ".", _depth: int = 0) -> list[str]:
@@ -307,9 +599,24 @@ def bash_guard_writes(command: str, cwd: str = ".", _depth: int = 0) -> list[str
     from shell_tokens import simple_commands
     if _depth > 8:
         return []
+    from shell_tokens import tokenize as sh_tokenize
     env = command_assignments(command)
     hits = [t for t in extract_write_targets(command, env) if _guarded_target(t, cwd, env)]
+    # Every directory a later Python program may run in: the start, plus each `cd` seen
+    # (kept alongside the old ones, since a cd can fail). None: a cd we cannot resolve.
+    cwds: list[str] | None = [cwd]
+    try:
+        literal = {t.text for t in sh_tokenize(command) if t.kind == "heredoc" and t.quoted}
+    except Exception:
+        literal = set()
     for cmd in simple_commands(command):
+        lead = [w for w in cmd.words if not re.match(r"[A-Za-z_]\w*=", w)]
+        if lead[:1] in (["cd"], ["pushd"]) and cwds is not None:
+            to = _one_value(lead[1], env) if len(lead) > 1 else _UNKNOWN
+            cwds = None if _UNKNOWN in to else list(dict.fromkeys(
+                cwds + [os.path.abspath(os.path.join(c, os.path.expanduser(to))) for c in cwds]))
+            if cwds is not None and len(cwds) > 8:
+                cwds = None                           # too many places: the heuristic
         for inner in cmd.subs:
             hits += bash_guard_writes(inner, cwd, _depth + 1)
         words = cmd.words
@@ -342,22 +649,47 @@ def bash_guard_writes(command: str, cwd: str = ".", _depth: int = 0) -> list[str
             scripts = (_shell_script_files(rest) if name in _SHELLS
                        else rest[:1] if name in ("source", ".") else [])
             for script in scripts:
-                hits += bash_guard_writes(_read_script(script, cwd), cwd, _depth + 1)
+                for c in cwds or [cwd]:               # the directory a cd moved to
+                    hits += bash_guard_writes(_read_script(script, c), c, _depth + 1)
             if _INTERPRETER.match(name):
                 texts = list(_stdin_texts(cmd))
+                # Bash expands $ and backticks in an unquoted heredoc, a here-string and
+                # -c, so a program from there is analysed only if it has none. A heredoc
+                # whose delimiter was quoted is literal (the tokenizer's own flag).
+                expandable = [t for t in texts if t not in literal]
+                argv = ["-"] + rest                   # what sys.argv will hold
+                skip = False
                 for k, a in enumerate(rest):
                     # -c, or a cluster ending in it (`python3 -uc`, `perl -pe`):
                     # Grok review of b9cc6a5, F4.
-                    if (a in ("-c", "-e", "-E") or (a[:1] == "-" and a[1:2] != "-"
-                                                    and a[-1] in "ceE")) and k + 1 < len(rest):
+                    code_flags = "c" if name.startswith("python") else "ceE"  # python -E is a flag
+                    if a[:1] == "-" and a[1:2] != "-" and a[-1] in code_flags \
+                            and not (name.startswith("python") and a[1:2] in "WX") \
+                            and k + 1 < len(rest):
                         texts.append(rest[k + 1])
+                        expandable.append(rest[k + 1])
+                        argv = ["-c"] + rest[k + 2:]
                         break
                     if a == "-m":
                         break
-                    if not a.startswith("-"):
-                        texts.append(_read_script(a, cwd))
+                    if skip:
+                        skip = False
+                        continue
+                    if name.startswith("python") and a in ("-W", "-X"):
+                        skip = True                   # its value is not the script
+                    if a == "-":
+                        argv = rest[k:]
                         break
-                if any(_script_rewrites_a_guard(t) for t in texts):
+                    if not a.startswith("-"):
+                        texts += [_read_script(a, c) for c in cwds or [cwd]]
+                        argv = rest[k:]
+                        break
+                py_argv = [_one_value(w, env) for w in argv] if name.startswith("python") \
+                    else None
+                if any(_script_rewrites_a_guard(
+                        t, c, None if cwds is None or t in expandable and re.search(r"[$`]", t)
+                        else py_argv)
+                        for t in texts for c in (cwds or [cwd])):
                     hits.append(f"{name} script naming a guard path")
     return list(dict.fromkeys(hits))
 

@@ -185,7 +185,7 @@ def test_a_script_file_that_rewrites_a_guard_is_blocked(tmp_path):
     """The exact 2026-10-01 path: a scratchpad patch script run by python3."""
     script = tmp_path / "patch.py"
     script.write_text("from pathlib import Path\n"
-                      "p = Path('/repo/tools/check_public_pii.py')\n"
+                      f"p = Path({str(SCRIPT.parents[1] / 'tools' / 'check_public_pii.py')!r})\n"
                       "p.write_text(p.read_text())\n")
     code, _ = _bash(f"python3 {script}")
     assert code == 2
@@ -389,7 +389,10 @@ def _bash_in(cwd, command):
     return r.returncode
 
 
-_REWRITE = ("from pathlib import Path\np = Path('tools/check_public_pii.py')\n"
+# This repo's own guard, by absolute path: relative to a temp cwd it would name another
+# checkout's copy, which is not a guard (the Python write analysis resolves it, 2026-10-21).
+_GUARD_ABS = str(SCRIPT.parents[1] / "tools" / "check_public_pii.py")
+_REWRITE = (f"from pathlib import Path\np = Path({_GUARD_ABS!r})\n"
             "p.write_text(p.read_text())\n")
 
 
@@ -488,3 +491,333 @@ def test_empty_stdin_fails_open():
     r = subprocess.run([sys.executable, str(SCRIPT)], input="",
                        capture_output=True, text=True)
     assert r.returncode == 0
+
+
+# ---------------------------------------------------------------------------
+# Python scripts: the write targets decide (friction ledger, 3 fires, 2026-10-21). A
+# script that names a guard and writes ELSEWHERE passes; one whose write may reach a
+# guard, or cannot be followed, still blocks. Commands run from the repo root.
+# ---------------------------------------------------------------------------
+
+_G = "tools/check_public_pii.py"
+_PY_PASSES = {
+    # the 2026-10-21 fire: hash a guard, write a JSON report to a scratch path from argv
+    "hash_guard_write_report_from_argv":
+        f"SP=/tmp/scratch; python3 - \"$SP/replay.json\" <<'PY'\nimport hashlib, json, sys\n"
+        f"d = hashlib.sha256(open('{_G}', 'rb').read()).hexdigest()\n"
+        "json.dump({'h': d}, open(sys.argv[1], 'w'))\nPY",
+    # the 2026-10-14 fire: run a guard as a subprocess, write a marker file
+    "run_guard_then_write_marker":
+        f"python3 - <<'PY'\nimport subprocess\nsubprocess.run(['python3', '{_G}'], input='{{}}', text=True)\n"
+        "open('tools/.pending-draft.txt', 'w').write('x')\nPY",
+    "run_this_repos_guard_then_write_elsewhere":
+        f"python3 - <<'PY'\nimport subprocess\nsubprocess.run(['python3', '{_G}'])\nopen('/tmp/o.txt', 'w')\nPY",
+    # an edit script for a non-guard file whose inserted text names a guard path
+    "edit_other_file_whose_text_names_a_guard":
+        f"python3 - <<'PY'\np = 'notes/replay.py'\ns = open(p).read()\n"
+        f"s = s.replace('X', \"open('{_G}').read()\")\nopen(p, 'w').write(s)\nPY",
+    # a scratch copy whose directory is a literal outside the repo
+    "write_a_scratch_copy_by_literal_dir":
+        f"python3 - <<'PY'\nimport os, shutil\nW = '/private/tmp/wt'\n"
+        f"shutil.copy('{_G}', os.path.join(W, '{_G}'))\nopen(os.path.join(W, '{_G}'), 'w').write('x')\nPY",
+    "read_mode_only": f"python3 -c \"print(open('{_G}', 'r').read()); open('x.txt', 'a').write('1')\"",
+    "path_write_text_elsewhere":
+        f"python3 - <<'PY'\nfrom pathlib import Path\nt = Path('{_G}').read_text()\n"
+        "Path('notes', 'copy.md').write_text(t)\nPY",
+}
+_PY_BLOCKS = {
+    "write_guard_by_join": f"python3 - <<'PY'\nimport os\nopen(os.path.join('tools', 'check_public_pii.py'), 'w').write('{_G}')\nPY",
+    "write_target_from_environ":
+        f"python3 - <<'PY'\nimport os\nopen(os.environ['T'], 'w').write('{_G}')\nPY",
+    "unknown_dir_guard_name":
+        f"python3 - <<'PY'\nimport os\nopen(os.getcwd() + '/{_G}', 'w').write('x')\nPY",
+    "guard_name_from_unknown_argv": f"python3 - <<'PY'\nimport sys\nopen(sys.argv[1], 'w').write('{_G}')\nPY",
+    "aliased_write_function":
+        f"python3 - <<'PY'\nimport os\nw = os.replace\nw('/tmp/x', '{_G}')\nPY",
+    "from_import_alias": f"python3 - <<'PY'\nfrom shutil import copy as c\nc('/tmp/x', '{_G}')\nopen('n', 'w')\nPY",
+    "exec_reaches_code": f"python3 - <<'PY'\nexec(\"open('{_G}', 'w').write('')\")\nopen('n', 'w')\nPY",
+    "getattr_reaches_a_name": f"python3 - <<'PY'\nimport os\ngetattr(os, 'replace')('/tmp/x', '{_G}')\nopen('n', 'w')\nPY",
+    # The guard path must appear as a whole literal for the script to be examined at
+    # all (the pre-filter, unchanged); here it does, so the shell command is followed.
+    "subprocess_shell_edits_a_guard":
+        f"python3 - <<'PY'\nimport subprocess\nG = '{_G}'\nsubprocess.run(\"sed -i '' 's/a/b/' \" + G, shell=True)\nopen('n', 'w')\nPY",
+    "subprocess_list_edits_a_guard":
+        f"python3 - <<'PY'\nimport subprocess\nsubprocess.run(['rm', '{_G}'])\nopen('n', 'w')\nPY",
+    "subprocess_unknown_command":
+        f"python3 - <<'PY'\nimport subprocess, os\nsubprocess.run(os.environ['C'], shell=True)\nopen('{_G}')\nopen('n', 'w')\nPY",
+    "path_rename_onto_a_guard":
+        f"python3 - <<'PY'\nfrom pathlib import Path\nPath('/tmp/x').rename('{_G}')\nPY",
+    "path_open_for_write": f"python3 - <<'PY'\nfrom pathlib import Path\nPath('{_G}').open('w').write('x')\nPY",
+    "loop_variable_target":
+        f"python3 - <<'PY'\nfor p in ['{_G}']:\n    open(p, 'w').write('x')\nPY",
+    "unparseable": f"python3 - <<'PY'\nopen('{_G}', 'w').write(\nPY",
+    "mode_not_a_literal": f"python3 - <<'PY'\nm = input()\nopen('{_G}', m).write('x')\nPY",
+    "directory_holding_guards_removed":
+        f"python3 - <<'PY'\nimport shutil\nshutil.rmtree('tools')\nprint('{_G}')\nopen('n', 'w')\nPY",
+}
+
+
+@pytest.mark.parametrize("name", sorted(_PY_PASSES))
+def test_python_script_writing_elsewhere_passes(name):
+    code, err = _bash(_PY_PASSES[name])
+    assert code == 0, (name, err)
+
+
+@pytest.mark.parametrize("name", sorted(_PY_BLOCKS))
+def test_python_script_that_may_write_a_guard_blocks(name):
+    code, _ = _bash(_PY_BLOCKS[name])
+    assert code == 2, name
+
+
+def test_non_python_interpreters_keep_the_heuristic():
+    assert _bash(f"node -e \"require('fs').writeFileSync('/tmp/x', require('fs').readFileSync('{_G}'))\"")[0] == 2
+
+
+def test_may_be_guard_contract():
+    g = _hook_module()
+    U = g._UNKNOWN
+    root = g._REPO_ROOT
+    assert g._may_be_guard(g._GUARD_HIT, root) is True
+    assert g._may_be_guard("guard", root) is False        # a file named guard is a file
+    assert g._may_be_guard("", root) is False
+    assert g._may_be_guard(f"{root}/tools/check_x.py", root) is True
+    # An unknown part may be absolute or hold '..', so a known directory proves nothing
+    # (guard review round 1, Fable F1 / Grok F2): a guard-shaped name blocks.
+    assert g._may_be_guard("/private/tmp/w/" + U + "/tools/check_x.py", root) is True
+    assert g._may_be_guard(U + "/tools/check_x.py", root) is True
+    assert g._may_be_guard(U + "/notes/report.json", root) is False
+    assert g._may_be_guard(U + "/report" + U + ".md", root) is True     # unknown name part
+    assert g._may_be_guard(U, root) is True
+    assert g._may_be_guard(U + "/tools", root) is True
+    assert g._may_be_guard("/private/tmp/../" + U + "/x.md", root) is False
+
+
+# Second pass (own probes, 2026-10-21): the analysis applies only where its list of
+# writes is complete, so a script reaching anything outside it keeps the heuristic.
+_PY_BLOCKS_2 = {
+    "module_outside_the_safe_list": f"python3 - <<'PY'\nimport io\nio.FileIO('{_G}', 'w')\nopen('n', 'w')\nPY",
+    "fileinput_in_place":
+        f"python3 - <<'PY'\nimport fileinput\nfor l in fileinput.input('{_G}', inplace=True):\n    print(l)\nopen('n', 'w')\nPY",
+    "star_import": f"python3 - <<'PY'\nfrom os import *\nreplace('/tmp/x', '{_G}')\nopen('n', 'w')\nPY",
+    "relative_import": f"python3 - <<'PY'\nfrom . import x\nprint('{_G}')\nopen('n', 'w')\nPY",
+    "sys_modules": f"python3 - <<'PY'\nimport sys\nsys.modules['os'].replace('/tmp/x', '{_G}')\nopen('n', 'w')\nPY",
+    "dunder_attribute": f"python3 - <<'PY'\nimport os\nos.__dict__['replace']('/tmp/x', '{_G}')\nopen('n', 'w')\nPY",
+    "module_as_a_value": f"python3 - <<'PY'\nimport os\no = os\no.replace('/tmp/x', '{_G}')\nopen('n', 'w')\nPY",
+    "module_passed_to_a_function":
+        f"python3 - <<'PY'\nimport os\ndef f(m):\n    m.replace('/tmp/x', '{_G}')\nf(os)\nopen('n', 'w')\nPY",
+    "working_directory_changed":
+        f"python3 - <<'PY'\nimport os\nprint('{_G}')\nos.chdir('/tmp')\nopen('n', 'w')\nPY",
+    "process_spawned": f"python3 - <<'PY'\nimport os\nos.posix_spawn('/bin/rm', ['rm', '{_G}'], {{}})\nopen('n', 'w')\nPY",
+    # The two below also write elsewhere, so the pre-filter (unchanged) examines them.
+    "path_copy_onto_a_guard": f"python3 - <<'PY'\nfrom pathlib import Path\nPath('/tmp/x').copy('{_G}')\nopen('n', 'w')\nPY",
+    "archive_unpacked_into_tools":
+        f"python3 - <<'PY'\nimport shutil\nprint('{_G}')\nshutil.unpack_archive('/tmp/a.zip', 'tools')\nopen('n', 'w')\nPY",
+}
+
+
+@pytest.mark.parametrize("name", sorted(_PY_BLOCKS_2))
+def test_python_script_outside_the_analysis_blocks(name):
+    code, _ = _bash(_PY_BLOCKS_2[name])
+    assert code == 2, name
+
+
+def test_dict_copy_with_no_argument_is_not_a_path_move():
+    code, err = _bash(f"python3 - <<'PY'\nd = {{'g': '{_G}'}}\ne = d.copy()\nopen('/tmp/o.json', 'w').write(str(e))\nPY")
+    assert code == 0, err
+
+
+# Guard review round 1 (Fable F1-F17, Grok F1-F6), each as a program the analysis must
+# block, on top of a decoy write so the pre-filter examines it.
+_PY_BLOCKS_3 = {
+    "unknown_absolute_tail":
+        f"python3 - <<'PY'\nimport os\nprint('{_G}')\nopen(os.path.join('/private/tmp/wt', os.environ['X']), 'w').write('x')\nPY",
+    "open_mode_in_kwargs": f"python3 - <<'PY'\nopen('{_G}', **dict(mode='w')).write('x')\nPY",
+    "open_args_starred": f"python3 - <<'PY'\nopen(*['{_G}', 'w']).write('x')\nopen('n', 'w')\nPY",
+    "rename_by_keyword": f"python3 - <<'PY'\nfrom pathlib import Path\nPath('/tmp/x').rename(target='{_G}')\nopen('n', 'w')\nPY",
+    "decoy_function_sharing_a_parameter_name":
+        f"python3 - <<'PY'\ndef g(p):\n    pass\ng('/tmp/x')\ndef f(p):\n    open(p, 'w').write('x')\nf('{_G}')\nPY",
+    "function_called_through_an_alias":
+        f"python3 - <<'PY'\ndef f(p):\n    open(p, 'w')\nf('/tmp/x')\nh = f\nh('{_G}')\nPY",
+    "decorated_function":
+        f"python3 - <<'PY'\nimport functools\n@functools.lru_cache\ndef f(p):\n    open(p, 'w')\nf('/tmp/x')\nprint('{_G}')\nPY",
+    "parameter_reassigned_inside":
+        f"python3 - <<'PY'\ndef f(p):\n    p = '{_G}'\n    open(p, 'w')\nf('/tmp/x')\nPY",
+    "argv_rewritten": f"python3 - /tmp/x <<'PY'\nimport sys\nsys.argv[1] = '{_G}'\nopen(sys.argv[1], 'w')\nPY",
+    "argv_from_a_command_substitution":
+        f"python3 - \"$(printf %s {_G})\" <<'PY'\nimport sys\nprint('{_G}')\nopen(sys.argv[1], 'w')\nPY",
+    "hard_link_then_write":
+        f"python3 - <<'PY'\nimport os\nos.link('{_G}', '/tmp/h')\nopen('/tmp/h', 'w').write('x')\nPY",
+    "path_hardlink_then_write":
+        f"python3 - <<'PY'\nfrom pathlib import Path\nPath('/tmp/h').hardlink_to('{_G}')\nopen('/tmp/h', 'w')\nPY",
+    "subprocess_with_cwd":
+        "python3 - <<'PY'\nimport subprocess\nsubprocess.run(['sed', '-i', '', 's/a/b/', './check_public_pii.py'], cwd='tools')\n"
+        f"print('{_G}')\nopen('n', 'w')\nPY",
+}
+
+
+@pytest.mark.parametrize("name", sorted(_PY_BLOCKS_3))
+def test_guard_review_round_1_forms_block(name):
+    code, _ = _bash(_PY_BLOCKS_3[name])
+    assert code == 2, name
+
+
+def test_interpreter_value_options_are_not_the_script(tmp_path):
+    (tmp_path / "patch.py").write_text(_REWRITE)
+    assert _bash_in(tmp_path, "python3 -W ignore patch.py") == 2
+    assert _bash_in(tmp_path, "python3 -X dev patch.py") == 2
+
+
+def test_a_function_parameter_is_unknown_so_it_blocks():
+    """Parameters are not folded (measured unused by every replayed false positive, and
+    the source of the decoy/alias/decorator holes in review round 1)."""
+    code, _ = _bash(f"python3 - <<'PY'\ndef f(p):\n    open(p, 'w').write('{_G}')\nf('/tmp/a.json')\nPY")
+    assert code == 2
+
+
+def test_a_script_named_like_a_guard_elsewhere_is_read_not_trusted(tmp_path):
+    """A subprocess running `.../check_x.py` outside this repo is not 'running a guard':
+    the command is scanned like the Bash form, which reads the script it runs."""
+    evil = tmp_path / "check_public_pii.py"
+    evil.write_text(_REWRITE)
+    code, _ = _bash(f"python3 - <<'PY'\nimport subprocess\nsubprocess.run(['python3', '{evil}'])\n"
+                    f"print('{_G}')\nopen('n', 'w')\nPY")
+    assert code == 2
+
+
+# Guard review round 2 (Fable F1-F3, Grok F1-F5): each closed form, on top of a write
+# the pre-filter sees.
+_PY_BLOCKS_4 = {
+    "builtins_dunder_open": f"python3 - <<'PY'\n__builtins__.open('{_G}', 'w').write('x')\nPY",
+    "builtins_dunder_exec":
+        f"python3 - <<'PY'\n__builtins__.exec(\"open('{_G}', 'w').write('x')\")\nopen('n', 'w')\nPY",
+    "module_through_a_module": f"python3 - <<'PY'\nimport shutil\nshutil.os.replace('/tmp/x', '{_G}')\nopen('n', 'w')\nPY",
+    "chdir_through_a_module":
+        "python3 - <<'PY'\nimport shutil\nshutil.os.chdir('tools')\n"
+        f"open('./check_public_pii.py', 'w')\nprint('{_G}')\nPY",
+    "shell_string_with_cd":
+        "python3 - <<'PY'\nimport subprocess\nsubprocess.run('cd tools && echo x > ./check_public_pii.py', shell=True)\n"
+        f"print('{_G}')\nopen('n', 'w')\nPY",
+    "child_fed_a_program_on_stdin":
+        "python3 - <<'PY'\nimport subprocess\n"
+        f"subprocess.run(['python3', '-'], input=\"open('{_G}', 'w').write('x')\", text=True)\nopen('n', 'w')\nPY",
+    "argparse_file_type": f"python3 - <<'PY'\nimport argparse\nargparse.FileType('w')('{_G}')\nopen('n', 'w')\nPY",
+    "tempfile_in_tools":
+        f"python3 - <<'PY'\nimport tempfile\nprint('{_G}')\ntempfile.mkstemp(dir='tools', prefix='check_x', suffix='.py')\nopen('n', 'w')\nPY",
+    "unquoted_heredoc_expands_a_variable":
+        f"T={_G}; python3 - <<PY\nprint('{_G}')\nopen('$T', 'w').write('x')\nPY",
+    "dash_c_expands_a_variable":
+        f"T={_G}; python3 -c \"print('{_G}'); open('$T', 'w').write('x')\"",
+}
+
+
+@pytest.mark.parametrize("name", sorted(_PY_BLOCKS_4))
+def test_guard_review_round_2_forms_block(name):
+    code, _ = _bash(_PY_BLOCKS_4[name])
+    assert code == 2, name
+
+
+def test_a_quoted_heredoc_with_a_dollar_is_still_analysed():
+    """A regex anchor in a quoted heredoc is Python text, not a shell expansion."""
+    code, err = _bash(f"python3 - <<'PY'\nimport re\nt = open('{_G}').read()\n"
+                      "open('/tmp/o.txt', 'w').write(re.sub(r'\\s+$', '', t))\nPY")
+    assert code == 0, err
+
+
+# Guard review round 3 (confirmation, Grok F1-F3, Fable F1-F5): ordinary edits the old
+# write regex never reached, Bash-level cd, per-heredoc quoting, python option parsing.
+# Forms the old pre-filter does not examine on their own (see NOT COVERED in the hook)
+# carry an ordinary write so the analysis is reached.
+_PY_BLOCKS_5 = {
+    "subprocess_rm": f"python3 - <<'PY'\nimport subprocess\nsubprocess.run(['rm', '{_G}'])\nopen('n', 'w')\nPY",
+    "path_replace": f"python3 - <<'PY'\nfrom pathlib import Path\nPath('/tmp/x').replace('{_G}')\nopen('n', 'w')\nPY",
+    "from_import_copy": f"python3 - <<'PY'\nfrom shutil import copy\ncopy('/tmp/x', '{_G}')\nopen('n', 'w')\nPY",
+    "rmtree_tools": f"python3 - <<'PY'\nimport shutil\nprint('{_G}')\nshutil.rmtree('tools')\nopen('n', 'w')\nPY",
+    "path_copy_with_keyword": f"python3 - <<'PY'\nfrom pathlib import Path\nPath('/tmp/x').copy('{_G}', preserve_metadata=True)\nopen('n', 'w')\nPY",
+    "bash_cd_then_relative": f"cd tools && python3 -c \"print('{_G}'); open('../{_G}', 'w').write('x')\"",
+    "here_string_expands": f"T={_G}; python3 - <<< \"print('{_G}'); open('$T', 'w').write('x')\"",
+    "unquoted_heredoc_after_a_quoted_one":
+        f"cat <<'A' >/dev/null\nx\nA\nT={_G}; python3 - <<PY\nprint('{_G}')\nopen('$T', 'w').write('x')\nPY",
+}
+
+
+@pytest.mark.parametrize("name", sorted(_PY_BLOCKS_5))
+def test_guard_review_round_3_forms_block(name):
+    code, _ = _bash(_PY_BLOCKS_5[name])
+    assert code == 2, name
+
+
+def test_python_dash_E_and_attached_W_still_read_the_script(tmp_path):
+    (tmp_path / "patch.py").write_text(_REWRITE)
+    assert _bash_in(tmp_path, "python3 -E patch.py") == 2
+    assert _bash_in(tmp_path, "python3 -Wignore patch.py") == 2
+
+
+def test_harmless_forms_still_pass():
+    for cmd in [f"python3 - <<'PY'\nimport sys, copy\nx = copy.copy([1])\nprint(sys.path, '{_G}')\nopen('/tmp/o.txt', 'w')\nPY",
+                f"cd /tmp && python3 - <<'PY'\nprint(open('{SCRIPT.parents[1]}/{_G}').read())\nopen('/tmp/o.txt', 'w')\nPY"]:
+        code, err = _bash(cmd)
+        assert code == 0, (cmd, err)
+
+
+def test_a_script_run_after_a_cd_is_read_from_there(tmp_path):
+    """Guard review round 4 (Fable F1, Grok F2): `cd dir && python3 patch.py` runs
+    dir/patch.py, so that is the file read."""
+    (tmp_path / "patch.py").write_text(_REWRITE)
+    assert _bash(f"cd {tmp_path} && python3 patch.py")[0] == 2
+    assert _bash(f"cd {tmp_path} && bash patch.py")[0] == 0     # not a shell script
+
+
+def test_many_cds_fall_back_to_the_heuristic():
+    cds = " && ".join(f"cd d{i}" for i in range(5))
+    code, _ = _bash(f"{cds} && python3 - <<'PY'\nprint(open('{_G}').read())\nopen('/tmp/o.txt', 'w')\nPY")
+    assert code == 2
+
+
+# Mutation round (2026-10-21): each check reached by a script that passes every other.
+_CHAIN = "".join(f"a{i} = a{i - 1}\n" for i in range(1, 15))
+_MANY = "\n".join(f"p = '/tmp/{i}'" for i in range(9))
+_PY_PASSES_2 = {
+    "names_a_guard_without_writing_and_imports_freely": f"python3 - <<'PY'\nimport io\nprint('{_G}')\nPY",
+    "keyword_unpacking_in_a_harmless_call":
+        f"python3 - <<'PY'\nd = dict(**{{'a': 1}})\nprint(open('{_G}').read())\nopen('/tmp/o.txt', 'w')\nPY",
+    "path_opened_for_reading": f"python3 - <<'PY'\nfrom pathlib import Path\nprint(Path('{_G}').open().read())\nopen('/tmp/o.txt', 'w')\nPY",
+    "harmless_command_list": f"python3 - <<'PY'\nimport subprocess\nsubprocess.run(['ls'])\nprint(open('{_G}').read())\nopen('/tmp/o.txt', 'w')\nPY",
+}
+_PY_BLOCKS_6 = {
+    "too_many_joined_values":
+        f"python3 - <<'PY'\nimport os\n{_MANY}\nq = p\nprint('{_G}')\nopen(os.path.join(p, q), 'w').write('x')\nPY",
+    "parameter_shadows_a_module_variable":
+        f"python3 - <<'PY'\np = '/tmp/x'\ndef f(p):\n    open(p, 'w').write('x')\nf('{_G}')\nPY",
+    "loop_rebinds_an_assigned_name":
+        f"python3 - <<'PY'\np = '/tmp/x'\nfor p in ['{_G}']:\n    open(p, 'w').write('x')\nPY",
+    "folding_past_the_depth_cap": f"python3 - <<'PY'\na0 = '/tmp/x'\n{_CHAIN}print('{_G}')\nopen(a14, 'w').write('x')\nPY",
+    "write_function_missing_its_path": f"python3 - <<'PY'\nimport os\nos.remove()\nprint('{_G}')\nopen('n', 'w')\nPY",
+    "undefined_name_as_target": f"python3 - <<'PY'\nprint('{_G}')\nopen(somewhere, 'w').write('x')\nPY",
+    "dict_copy_beside_a_guard_write": f"python3 - <<'PY'\nd = {{}}\ne = d.copy()\nopen('{_G}', 'w').write('x')\nPY",
+    "run_a_guard_and_also_write_it":
+        f"python3 - <<'PY'\nimport subprocess\nsubprocess.run(['python3', '{_G}'])\nopen('{_G}', 'w').write('x')\nPY",
+    "command_list_with_cd":
+        f"python3 - <<'PY'\nimport subprocess\nsubprocess.run(['sh', '-c', 'cd tools && rm ./check_public_pii.py'])\nprint('{_G}')\nopen('n', 'w')\nPY",
+    "command_list_with_an_unknown_word":
+        f"python3 - <<'PY'\nimport subprocess, os\nsubprocess.run(['rm', os.environ['X']])\nprint('{_G}')\nopen('n', 'w')\nPY",
+    "argv_from_a_variable_naming_a_guard":
+        f"G2={_G}; python3 - \"$G2\" <<'PY'\nimport sys\nprint('{_G}')\nopen(sys.argv[1], 'w').write('x')\nPY",
+}
+
+
+@pytest.mark.parametrize("name", sorted(_PY_PASSES_2))
+def test_mutation_round_passes(name):
+    code, err = _bash(_PY_PASSES_2[name])
+    assert code == 0, (name, err)
+
+
+@pytest.mark.parametrize("name", sorted(_PY_BLOCKS_6))
+def test_mutation_round_blocks(name):
+    code, _ = _bash(_PY_BLOCKS_6[name])
+    assert code == 2, name
+
+
+def test_a_command_word_with_several_values_is_unknown():
+    code, _ = _bash(f"python3 - <<'PY'\nimport subprocess\nt = '/tmp/a'\nt = '/tmp/b'\n"
+                    f"subprocess.run(['rm', t])\nprint('{_G}')\nopen('n', 'w')\nPY")
+    assert code == 2
