@@ -105,7 +105,8 @@ between them. Three rules would have cut most of it:
    false positives the fix must clear. Then switch each candidate feature off in turn
    and count what it alone clears. Delete anything that clears nothing, because it
    fails closed anyway, and every unused feature is a way to fool the hook (9 of 13
-   features were unused on 2026-10-21). Keep it as simple as possible without losing
+   features were unused on 2026-10-21; measurement and replay in
+   `output/analysis/sealed-read-patch-102026/guard-edit-replay.json`, commit c914c43). Keep it as simple as possible without losing
    function.
 3. **An exemption that judges code uses an allow-list, never a deny-list.** List the
    few modules, builtins, calls and paths that are allowed, and refuse everything else.

@@ -3,6 +3,27 @@
 All notable changes to this job search system are recorded here.
 Format: newest entries at the top.
 
+## 2026-10-21: Two hook false positives fixed; guard reviews now need a stated bar
+
+**What prompted it.** `check_sealed_read.py` blocked a Python program that only wrote a brief
+naming the sealed directory as text, and `check_guard_edit_approval.py` blocked scripts that
+read, hashed or ran a guard and wrote elsewhere (3 friction-ledger fires).
+
+- **`check_sealed_read.py`** (de7b3a4): a Python program on stdin or in `-c` may name the
+  sealed directory when its syntax tree proves the string only ends up as output. Built from
+  positive lists (allowed imports and their attributes, builtins, `open()` as the only file
+  call, paths that fold to literals). Residuals stated in the hook.
+- **`check_guard_edit_approval.py`** (c914c43): a Python script naming a guard is judged by
+  where its writes go; 15 replayed false positives cleared, none newly blocked. Not proof
+  against a script written to evade it, consistent with the hook's own contract.
+- **`codex_verify.py`** (bba22fa): refuses a review of guard infrastructure without `--bar`.
+  `tools/HOOK_AUTHORING.md` Step 0b: set the bar, measure the real cases before building,
+  allow-lists over deny-lists.
+
+**Why the last item.** The two fixes took about fifteen hours of review and mutation rounds,
+mostly because reviewers were asked to find any bypass with no stopping rule. Evidence for all
+three: `output/analysis/sealed-read-patch-102026/`.
+
 ## 2026-10-06: Documentation brought back in line with the skills, two skill contradictions closed, one framework doc depersonalized
 
 **What prompted it.** A single stale path (`coaching/coached-answers.md`, retired 2026-09-21) turned

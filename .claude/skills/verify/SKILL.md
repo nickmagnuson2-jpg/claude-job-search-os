@@ -38,6 +38,24 @@ PYTHONIOENCODING=utf-8 python3 tools/codex_verify.py \
 `--print-only` assembles the prompt without spending a run. `--mode diverge` for the
 independent form.
 
+## Guard changes: state the bar first (`--bar`, required)
+
+When `--paths` touch guard infrastructure (`tools/check_*.py`, `shell_tokens.py`,
+`hook_runtime.py`, `hook_command_lint.py`, `.claude/settings*.json`), `codex_verify.py`
+refuses with exit 4 unless `--bar` states, in at least a sentence, the threat model the
+guard serves, what a finding must show to count, and when the review stops. The bar is
+sent to the reviewer. Quote the guard's own contract if its docstring has one.
+
+```bash
+  --bar "Accidental reads only, per the hook's docstring; a finding must be an ordinary
+         read path, not a script written to evade; stop when a round finds no new class"
+```
+
+Why it is a gate: on 2026-10-20/21 one hook fix took ten review rounds with no stated
+bar, and the next converged in two once the bar was written down. A reviewer asked to
+find bypasses with no stopping rule always finds one. Ask Fable or Grok, not Codex:
+Codex refuses bypass-hunting prompts under OpenAI's cyber filter.
+
 ## Reader review: a finished document someone will read
 
 For a page, brief, prep pack or take-home written FOR A NAMED READER, do not hand-build the

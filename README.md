@@ -95,9 +95,9 @@ PreToolUse and PostToolUse hooks wired into `.claude/settings.json`. They enforc
 | `check_banned_phrase.py` | PreToolUse on Write/Edit/MultiEdit | Blocks the phrases enumerated in `tools/mannered-phrases.txt`. A listed-phrase gate, not a prose-quality detector |
 | `check_zuora_principal_title.py` | PreToolUse on Write/Edit/MultiEdit/NotebookEdit/Bash | Blocks the stale rendering of a former principal's title (the role is Chief Product and Technology Officer) |
 | `check_handoff_producer.py` | PreToolUse on Write/Edit/MultiEdit/NotebookEdit/Bash | Blocks creating a new handoff-shaped file under `output/`; cross-session state goes to the workstreams registry |
-| `check_guard_edit_approval.py` | PreToolUse on Write/Edit/MultiEdit and Bash | Blocks edits to guard infrastructure (`tools/check_*.py`, the hook libraries, `.claude/settings.json`) unless approved |
+| `check_guard_edit_approval.py` | PreToolUse on Write/Edit/MultiEdit and Bash | Blocks edits to guard infrastructure (`tools/check_*.py`, the hook libraries, `.claude/settings.json`) unless approved. A Python script that names a guard is judged by where its writes go, so reading, hashing or running a guard is not blocked |
 | `check_new_toplevel_dir_protected.py` | PreToolUse on Write | Blocks a file under a new top-level directory that is neither gitignored nor covered by the data backup |
-| `check_sealed_read.py` | PreToolUse on Read/Grep/Glob/Bash | Defense in depth for the sealed project-background vault |
+| `check_sealed_read.py` | PreToolUse on Read/Grep/Glob/Bash | Defense in depth for the sealed project-background vault. A Python program may name it when the syntax tree proves the string only ends up as output |
 | `check_gmail_read_mcp.py` | PreToolUse on the Gmail read MCP tools | Blocks MCP reads and points to `tools/gmail_fetch.py --search` instead |
 | `check_draft_pleasantry.py` | PreToolUse on Bash `open_draft.py` | Blocks a weekend or holiday-adjacent send whose body has no warm open or close |
 | `check_pipe_close_via_update.py` | PreToolUse on Bash | Blocks closing a pipeline row with `pipe_write.py update`; closing is `remove --stage` |
