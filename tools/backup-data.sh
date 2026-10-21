@@ -86,6 +86,20 @@ if [ -d "$GLOBAL_CLAUDE" ]; then
   else
     echo "WARNING: $GLOBAL_CLAUDE/settings.json not found -- hooks would restore unwired" >&2
   fi
+  # Every OTHER project's auto-memory (peer repos such as dailyidea and mag5-advisors keep
+  # theirs here, outside any repo, and nothing else backs them up). All of them, not a named
+  # list: a new peer repo must not need an edit here to be covered. This repo's own memory is
+  # already mirrored as canonical-sidecar above, so it is skipped rather than copied twice.
+  # Under global-claude-mirror/ on purpose: that tree is already gitignored from the public
+  # repo and already pruned by every documented corpus search.
+  for mem in "$GLOBAL_CLAUDE"/projects/*/memory; do
+    [ -d "$mem" ] || continue
+    [ "$mem" = "$CANONICAL_MEMORY" ] && continue
+    [ -n "$(ls -A "$mem")" ] || continue
+    slug=$(basename "$(dirname "$mem")")
+    mkdir -p "$GLOBAL_MIRROR/projects/$slug/memory"
+    rsync -a --delete "$mem/" "$GLOBAL_MIRROR/projects/$slug/memory/"
+  done
 else
   echo "WARNING: $GLOBAL_CLAUDE not found -- global Claude config NOT backed up" >&2
 fi
