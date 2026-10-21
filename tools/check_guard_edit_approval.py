@@ -501,7 +501,7 @@ class _PyWrites:
                 # cwd= moves relative paths, executable= replaces the program.
                 out += [_UNKNOWN] if kw.keys() & {"cwd", "executable"} else self._run_targets(
                     n.args[0] if n.args else kw.get("args"), cwd,
-                    fed=bool(kw.keys() & {"input", "stdin"}))
+                    fed=bool(kw.keys() & {"input", "stdin", "shell"}))
             elif not method or isinstance(f.value, ast.Name) and f.value.id in self.modules:
                 pass                                  # a module function: the tables above
             elif method in _PY_PATH_WRITES:
@@ -530,8 +530,9 @@ class _PyWrites:
             if len(parts) >= 2 and all(re.match(r"(?:.*/)?python[0-9.]*$", v) for v in parts[0]) \
                     and all(_UNKNOWN not in v and _guarded_target(v, cwd) for v in parts[1]):
                 return []                             # running this repo's guard is not editing it
-            if fed:
-                return [_UNKNOWN]
+            if fed or any(is_guarded(v) or _GUARD_BASENAME.match(v.rsplit("/", 1)[-1])
+                          for p in parts for v in p):
+                return [_UNKNOWN]     # names a guard: only running this repo's guard passes
             if all(len(p) == 1 for p in parts):
                 words = [next(iter(p)) for p in parts]
                 if _UNKNOWN not in "".join(words) and not _CD.search(shlex.join(words)):

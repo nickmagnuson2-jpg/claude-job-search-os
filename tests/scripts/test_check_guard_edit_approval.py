@@ -821,3 +821,17 @@ def test_a_command_word_with_several_values_is_unknown():
     code, _ = _bash(f"python3 - <<'PY'\nimport subprocess\nt = '/tmp/a'\nt = '/tmp/b'\n"
                     f"subprocess.run(['rm', t])\nprint('{_G}')\nopen('n', 'w')\nPY")
     assert code == 2
+
+
+@pytest.mark.parametrize("cmd", [["black", "tools/check_public_pii.py"], ["git", "apply", "x.diff", "tools/check_public_pii.py"],
+                                 ["python3", "-m", "black", "tools/check_public_pii.py"]])
+def test_a_tool_run_on_a_guard_blocks(cmd):
+    """Pre-push review 2026-10-21: a formatter or patch tool rewrites a guard, and the
+    Bash scan does not know those tools as writers."""
+    code, _ = _bash(f"python3 - <<'PY'\nimport subprocess\nsubprocess.run({cmd!r})\nprint('{_G}')\nopen('n', 'w')\nPY")
+    assert code == 2
+
+
+def test_shell_true_with_a_list_is_unknown():
+    code, _ = _bash(f"python3 - <<'PY'\nimport subprocess\nsubprocess.run(['echo x > {_G}'], shell=True)\nprint('{_G}')\nopen('n', 'w')\nPY")
+    assert code == 2
