@@ -569,7 +569,7 @@ def test_outreach_reply_ignores_replied_rows_and_falls_back(tmp_path):
         "--destinations", dest_json({"type": "outreach_reply", "entity": "Jane Doe"}),
     )
     assert code == 0, "fallback path must succeed"
-    assert result["warning"] == "No Sent/Drafted outreach row found for Jane Doe — logged to networking.md", \
+    assert result["warning"] == "No open outreach row found for Jane Doe — logged to networking.md", \
         f"unexpected warning: {result.get('warning')}"
     assert result["action"] == "contact_note", \
         f"fallback writes a contact_note, got {result['action']}"
@@ -1302,3 +1302,25 @@ def test_write_atomic_creates_parents_and_leaves_no_tmp(tmp_path):
     mod.write_atomic(target, "hello")
     assert target.read_text(encoding="utf-8") == "hello", "content must be written"
     assert list(tmp_path.rglob("*.tmp")) == [], "the temp file must be renamed away"
+
+
+def test_outreach_reply_surfaces_an_ambiguous_name_instead_of_no_open_row(tmp_path):
+    """An ambiguous name is not the same as no open row; the warning must say which."""
+    write_fixture(tmp_path, "data/networking.md", NETWORKING_MD)
+    write_fixture(tmp_path, "data/outreach-log.md",
+                  "# Outreach Log\n\n"
+                  "| Date | Skill | Channel | Recipient | Company | Subject / Summary | Status |\n"
+                  "| --- | --- | --- | --- | --- | --- | --- |\n"
+                  "| 2026-01-10 | cold-outreach | email | Jane Doe | Acme | Hi | Sent |\n"
+                  "| 2026-01-10 | cold-outreach | email | Mark Doe | Northwind | Hi | Sent |\n")
+    result, code = run_apply(
+        "--repo-root", str(tmp_path),
+        "--note", "Doe replied",
+        "--destinations", dest_json({"type": "outreach_reply", "entity": "Doe"}),
+    )
+    assert code == 0
+    assert "ambiguous recipient" in result["warning"], result["warning"]
+    assert result["candidates"] == ["jane doe", "mark doe"]
+    log = (tmp_path / "data/outreach-log.md").read_text(encoding="utf-8")
+    assert log.count("| Sent |") == 2, "an ambiguous name must not flip either row"
+

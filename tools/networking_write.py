@@ -40,6 +40,7 @@ from pathlib import Path
 # Sibling import: fuzzy name-duplicate guard (stdlib-only module in tools/).
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from name_dedup import find_near_duplicates  # noqa: E402
+import outreach_status  # noqa: E402
 
 NETWORKING_FILE  = "data/networking.md"
 TODOS_FILE       = "data/job-todos.md"
@@ -237,55 +238,16 @@ def save_lines(path: Path, lines: list, original_content: str) -> None:
 # Outreach-log cross-update
 # ---------------------------------------------------------------------------
 
-def update_outreach_status(repo_root: Path, contact_name: str, log_date: str) -> bool:
-    """Update the most recent 'Sent' entry in outreach-log.md for contact_name to 'Replied'.
+def update_outreach_status(repo_root: Path, contact_name: str) -> bool:
+    """Mark the contact's newest open outreach-log row Replied. True if a row was set.
 
-    Returns True if an entry was updated.
+    Delegates to outreach_status.set_latest_open, the only writer of that cell.
     """
-    outreach_path = repo_root / OUTREACH_FILE
-    content = read_file(outreach_path)
-    if not content:
+    try:
+        code, _ = outreach_status.set_latest_open(repo_root / OUTREACH_FILE, contact_name, "Replied")
+    except outreach_status.LogError:
         return False
-
-    name_lower = contact_name.lower().strip()
-    lines = content.splitlines()
-    best_idx = -1
-    best_date = None
-
-    for i, line in enumerate(lines):
-        if not line.startswith("|") or line.startswith("| Date") or line.startswith("|---"):
-            continue
-        cols = [c.strip() for c in line.strip("|").split("|")]
-        if len(cols) < 7:
-            continue
-        row_name = cols[3].lower().strip()
-        row_status = cols[6].strip().lower()
-        if row_name != name_lower:
-            continue
-        if row_status not in ("sent", "drafted", "pending"):
-            continue
-        # Track the most recent matching row
-        try:
-            row_date = datetime.strptime(cols[0].strip(), "%Y-%m-%d").date()
-        except ValueError:
-            continue
-        if best_date is None or row_date > best_date:
-            best_date = row_date
-            best_idx = i
-
-    if best_idx == -1:
-        return False
-
-    # Replace status in the matched row
-    cols = [c.strip() for c in lines[best_idx].strip("|").split("|")]
-    cols[6] = "Replied"
-    lines[best_idx] = "| " + " | ".join(cols) + " |"
-
-    new_content = "\n".join(lines)
-    if content.endswith("\n"):
-        new_content += "\n"
-    write_atomic(outreach_path, new_content)
-    return True
+    return code == 0
 
 
 # ---------------------------------------------------------------------------
@@ -526,7 +488,7 @@ def cmd_log(args, networking_path: Path, repo_root: Path, dry_run: bool) -> None
     else:
         should_flip = reply_received(args.summary)
     if should_flip:
-        outreach_updated = update_outreach_status(repo_root, args.name, log_date)
+        outreach_updated = update_outreach_status(repo_root, args.name)
 
     out_ok("log", f"Logged interaction for {args.name}: {args.summary}",
            name=args.name, date=log_date,

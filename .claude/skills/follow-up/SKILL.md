@@ -111,10 +111,19 @@ Before determining follow-up type, check whether the contact has replied to prio
      N — No response yet
      S — Skip / don't update status now
    ```
-4. **If Yes (replied):** Update the most recent matching row's Status to `Replied` in `data/outreach-log.md`. Store `reply_status = "replied"` — this informs Step 3.
+4. **If Yes (replied):** Set the most recent matching row's Status to `Replied` with the script below (never by hand). Store `reply_status = "replied"` — this informs Step 3.
    Optionally ask: "Briefly, what did they say? (helps tailor the follow-up — press Enter to skip)"
    If context is provided, carry it into Steps 3 and 6.
-5. **If No (no response):** Update the most recent matching row's Status to `No reply` in `data/outreach-log.md`. Store `reply_status = "no_reply"`.
+5. **If No (no response):** Set the most recent matching row's Status to `No reply` with the same script. Store `reply_status = "no_reply"`.
+
+   **The write, for both 4 and 5:**
+   ```bash
+   PYTHONIOENCODING=utf-8 python3 tools/outreach_status.py --set-status --latest \
+     --recipient "<Name>" --status <Replied|No reply>
+   ```
+   `--latest` targets the newest open (Drafted/Sent) row, which is the row this step
+   means. On `"ok": false`, show Nick the `reason` and `candidates`; never edit the row by
+   hand, because the script writes one row or nothing.
 6. **If Skip:** Proceed without updating outreach-log. Store `reply_status = "unknown"`.
 
 #### Step 2: Load Context

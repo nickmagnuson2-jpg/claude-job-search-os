@@ -674,7 +674,7 @@ Every data file mutation (pipeline, networking, notes, todos) goes through a ded
 |--------|-------------|------------|
 | `todo_write.py` | `data/job-todos.md` | add, done, withdraw, supersede, clear, sync |
 | `pipe_write.py` | `data/job-pipeline.md` | add, update, remove |
-| `networking_write.py` | `data/networking.md` + `data/outreach-log.md` | add, log (flips outreach status to Replied only when the *recipient* replied), remove |
+| `networking_write.py` | `data/networking.md` + `data/outreach-log.md` | add, log (flips outreach status to Replied only when the *recipient* replied, via `outreach_status.py`, the only writer of that cell), remove |
 | `remember_apply.py` | 12 destinations (pipeline, networking, notes, profile, decisions, accomplishments, personal-vault, etc.) | route-and-write |
 | `act_apply.py` | pipeline, networking, notes, company-notes (via inbox routing) | pipeline-add, contact-add, notes-add, company-note-add |
 

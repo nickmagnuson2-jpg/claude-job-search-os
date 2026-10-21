@@ -46,6 +46,7 @@ from pathlib import Path
 import sys as _sys
 _sys.path.insert(0, str(Path(__file__).resolve().parent))
 import inbox_lock
+import outreach_status  # noqa: E402
 
 NOTES_FILE      = "data/notes.md"
 DECISIONS_FILE  = "data/decisions.md"
@@ -209,56 +210,30 @@ def apply_contact_note(note: str, dest: dict, repo_root: Path) -> dict:
 
 
 def apply_outreach_reply(note: str, dest: dict, repo_root: Path) -> dict:
-    """Update most recent Sent/Drafted row for entity in outreach-log.md to Replied."""
+    """Mark the entity's newest open outreach-log row Replied, via outreach_status (the
+    only writer of that cell). Falls back to a networking.md note when there is none."""
     entity = dest.get("entity", "")
     path = repo_root / OUTREACH_FILE
 
-    content = read_file(path)
-    if not content:
-        # Fallback to networking.md
+    if not path.exists():
         result = apply_contact_note(note, dest, repo_root)
         result["warning"] = "No outreach-log.md found — logged to networking.md"
         return result
 
-    lines = [ln.rstrip("\n").rstrip("\r") for ln in content.splitlines(keepends=True)]
-    name_lower = entity.lower().strip()
-
-    # Find most recent Sent/Drafted row matching entity.
-    # Real outreach-log.md schema (data/outreach-log.md header):
-    #   Date | Skill | Channel | Recipient | Company | Subject / Summary | Status
-    #   idx    0       1         2           3          4        5            6
-    # Recipient is cols[3], Status is cols[6]. (Pre-2026-07-14 this used cols[1]/
-    # cols[5] against an imaginary schema, so the flip never matched a real name and
-    # a match would have overwritten the Subject cell. See networking_write.py
-    # update_outreach_status, which already uses the correct indices.)
-    last_match = -1
-    for i, line in enumerate(lines):
-        if not is_data_row_generic(line):
-            continue
-        cols = parse_cols(line)
-        if len(cols) < 7:
-            continue
-        recipient = cols[3].lower()
-        status = cols[6].strip()
-        if name_lower in recipient and status in ("Sent", "Drafted"):
-            last_match = i
-
-    if last_match == -1:
-        # Fallback to contact note
+    try:
+        code, payload = outreach_status.set_latest_open(path, entity, "Replied")
+    except outreach_status.LogError as exc:
+        code, payload = 1, {"reason": str(exc)}
+    if code != 0:
         result = apply_contact_note(note, dest, repo_root)
-        result["warning"] = f"No Sent/Drafted outreach row found for {entity} — logged to networking.md"
+        reason = payload.get("reason", "unknown")
+        if reason == "no open row for recipient":
+            result["warning"] = f"No open outreach row found for {entity} — logged to networking.md"
+        else:
+            result["warning"] = f"Outreach row not updated for {entity} ({reason}) — logged to networking.md"
+            if payload.get("candidates"):
+                result["candidates"] = payload["candidates"]
         return result
-
-    cols = parse_cols(lines[last_match])
-    while len(cols) < 7:
-        cols.append("—")
-    cols[6] = "Replied"
-    lines[last_match] = "| " + " | ".join(cols) + " |"
-
-    new_content = "\n".join(lines)
-    if content.endswith("\n"):
-        new_content += "\n"
-    write_atomic(path, new_content)
     return {"status": "ok", "type": "outreach_reply", "file": str(path), "entity": entity}
 
 

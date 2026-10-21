@@ -288,6 +288,255 @@ def test_set_status_refuses_an_ambiguous_target(tmp_path):
     assert log.read_bytes() == before, "an ambiguous write must leave the file byte-identical"
 
 
+def test_set_status_without_artifact_addresses_the_row_by_recipient_and_date(tmp_path):
+    """A plain LinkedIn DM carries no artifact. Marking it Replied must not require one."""
+    log = make_log(tmp_path, [
+        "| 2026-10-21 | cold-outreach | linkedin | Jane Doe | Acme Corp | Peer DM, compare notes | Sent |",
+        "| 2026-10-21 | cold-outreach | linkedin | John Smith | Northwind Inc | Peer DM | Sent |",
+        "| 2026-10-20 | cold-outreach | linkedin | Jane Doe | Acme Corp | Earlier connect note | Sent |",
+    ])
+    before = log.read_text(encoding="utf-8").splitlines()
+
+    code, out = query("--set-status", "--recipient", "Jane Doe", "--date", "2026-10-21",
+                      "--status", "Replied", "--log", log)
+    assert code == 0, out
+    assert out["ok"] is True and out["before"] == "Sent" and out["after"] == "Replied"
+
+    after = log.read_text(encoding="utf-8").splitlines()
+    changed = [i for i, (a, b) in enumerate(zip(before, after)) if a != b]
+    assert len(changed) == 1, f"exactly one line may change, got {changed}"
+    assert "Jane Doe" in after[changed[0]] and "2026-10-21" in after[changed[0]]
+    assert after[changed[0]].rstrip().endswith("| Replied |")
+
+
+def test_set_status_without_artifact_refuses_two_rows_on_the_same_date(tmp_path):
+    log = make_log(tmp_path, [
+        "| 2026-10-21 | cold-outreach | linkedin | Jane Doe | Acme Corp | Connect note | Sent |",
+        "| 2026-10-21 | follow-up | email | Jane Doe | Acme Corp | CV attached (a.pdf) | Sent |",
+    ])
+    before = log.read_bytes()
+
+    code, out = query("--set-status", "--recipient", "Jane Doe", "--date", "2026-10-21",
+                      "--status", "Replied", "--log", log)
+    assert code == 2
+    assert out["ok"] is False and len(out["candidates"]) == 2
+    assert "--artifact" in out["reason"], "the refusal must say how to disambiguate"
+    assert log.read_bytes() == before, "an ambiguous write must leave the file byte-identical"
+
+
+def test_set_status_with_no_row_on_that_date_writes_nothing(tmp_path):
+    log = make_log(tmp_path, [
+        "| 2026-10-20 | cold-outreach | linkedin | Jane Doe | Acme Corp | Connect note | Sent |",
+    ])
+    before = log.read_bytes()
+
+    code, out = query("--set-status", "--recipient", "Jane Doe", "--date", "2026-10-21",
+                      "--status", "Replied", "--log", log)
+    assert code == 2 and out["ok"] is False and out["candidates"] == []
+    assert "--artifact" not in out["reason"], "no row to narrow, so no --artifact hint"
+    assert log.read_bytes() == before
+
+
+def test_set_status_to_the_current_value_is_a_clean_no_op(tmp_path):
+    """Re-applying the status a row already has must succeed without writing, not report
+    a failed write. Found 2026-10-21 on the real log: it returned ok:false, rolled_back."""
+    log = make_log(tmp_path, [
+        # Hand-edited padding: a rewrite would normalize it, so byte identity proves no write.
+        "| 2026-10-21 | cold-outreach | linkedin | Jane Doe | Acme Corp | Peer DM |  Replied  |",
+    ])
+    before = log.read_bytes()
+
+    code, out = query("--set-status", "--recipient", "Jane Doe", "--date", "2026-10-21",
+                      "--status", "Replied", "--log", log)
+    assert code == 0, out
+    assert out["ok"] is True and out["before"] == out["after"] == "Replied"
+    assert log.read_bytes() == before
+
+
+# ------------------------------------------------- latest open row (shared writer)
+
+
+def test_latest_picks_the_newest_open_row_and_skips_closed_ones(tmp_path):
+    log = make_log(tmp_path, [
+        "| 2026-10-01 | cold-outreach | email | Jane Doe | Acme Corp | First note | Sent |",
+        "| 2026-10-05 | follow-up | email | Jane Doe | Acme Corp | Nudge | Sent |",
+        "| 2026-10-09 | follow-up | email | Jane Doe | Acme Corp | Already answered | Replied |",
+    ])
+    code, out = query("--set-status", "--latest", "--recipient", "Jane Doe",
+                      "--status", "Replied", "--log", log)
+    assert code == 0, out
+    assert out["row"]["date"] == "2026-10-05" and out["before"] == "Sent"
+    lines = log.read_text(encoding="utf-8").splitlines()
+    assert [l.rstrip().endswith("| Replied |") for l in lines[-3:]] == [False, True, True]
+
+
+def test_latest_breaks_a_same_date_tie_by_position_since_the_log_is_chronological(tmp_path):
+    log = make_log(tmp_path, [
+        "| 2026-10-21 | cold-outreach | linkedin | Jane Doe | Acme Corp | Morning DM | Sent |",
+        "| 2026-10-21 | follow-up | email | Jane Doe | Acme Corp | Afternoon email | Sent |",
+    ])
+    code, out = query("--set-status", "--latest", "--recipient", "Jane Doe",
+                      "--status", "Replied", "--log", log)
+    assert code == 0, out
+    assert out["row"]["summary"] == "Afternoon email"
+
+
+def test_latest_with_no_open_row_writes_nothing(tmp_path):
+    log = make_log(tmp_path, [
+        "| 2026-10-21 | cold-outreach | linkedin | Jane Doe | Acme Corp | DM | Replied |",
+    ])
+    before = log.read_bytes()
+    code, out = query("--set-status", "--latest", "--recipient", "Jane Doe",
+                      "--status", "Replied", "--log", log)
+    assert code == 2 and out["ok"] is False
+    assert log.read_bytes() == before
+
+
+def test_latest_and_date_are_mutually_exclusive(tmp_path):
+    log = make_log(tmp_path, [
+        "| 2026-10-21 | cold-outreach | linkedin | Jane Doe | Acme Corp | DM | Sent |",
+    ])
+    code, out = query("--set-status", "--latest", "--date", "2026-10-21",
+                      "--recipient", "Jane Doe", "--status", "Replied", "--log", log)
+    assert code == 2 and "error" in out
+    code, out = query("--set-status", "--recipient", "Jane Doe",
+                      "--status", "Replied", "--log", log)
+    assert code == 2 and "--date" in out["error"], "without --latest, --date is required"
+
+
+@pytest.mark.parametrize("address", [["--latest"], ["--date", "2026-10-21"]])
+def test_set_status_refuses_an_ambiguous_name_on_both_paths(tmp_path, address):
+    """The shared matcher refuses rather than guesses; neither row may change."""
+    log = make_log(tmp_path, [
+        "| 2026-10-21 | cold-outreach | email | Jane Doe | Acme Corp | Note | Sent |",
+        "| 2026-10-21 | cold-outreach | email | Mark Doe | Northwind Inc | Note | Sent |",
+    ])
+    before = log.read_bytes()
+    code, out = query("--set-status", *address, "--recipient", "Doe",
+                      "--status", "Replied", "--log", log)
+    assert code == 2 and out["reason"] == "ambiguous recipient"
+    assert out["candidates"] == ["jane doe", "mark doe"]
+    assert log.read_bytes() == before
+
+
+def test_status_cell_write_keeps_the_column_aligned(tmp_path):
+    """Only the status cell changes, padded like every other cell."""
+    log = make_log(tmp_path, [
+        "| 2026-10-21 | cold-outreach | linkedin | Jane Doe | Acme Corp | DM | Sent |",
+    ])
+    query("--set-status", "--latest", "--recipient", "Jane Doe",
+          "--status", "No reply", "--log", log)
+    assert log.read_text(encoding="utf-8").splitlines()[-1] == (
+        "| 2026-10-21 | cold-outreach | linkedin | Jane Doe | Acme Corp | DM | No reply |")
+
+
+def _function_calls(path: Path, func: str) -> set[str]:
+    """Names of every call made inside one top-level function of a tool."""
+    import ast
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == func)
+    names = set()
+    for node in ast.walk(fn):
+        if isinstance(node, ast.Call):
+            f = node.func
+            names.add(f.attr if isinstance(f, ast.Attribute) else getattr(f, "id", ""))
+    return names
+
+
+@pytest.mark.parametrize("tool,func", [
+    ("networking_write.py", "update_outreach_status"),
+    ("remember_apply.py", "apply_outreach_reply"),
+])
+def test_reply_callers_call_set_latest_open_and_no_write_function_directly(tool, func):
+    """Regression test for the two copies removed 2026-10-21: each caller must call
+    set_latest_open and must make no direct write call in its own body. It inspects only
+    that body, so a write moved into a helper would pass; it does not prove that
+    write_status is the only writer in tools/."""
+    calls = _function_calls(TOOLS / tool, func)
+    assert "set_latest_open" in calls, calls
+    assert not calls & {"write_text", "write_atomic", "open", "replace"}, calls
+
+
+def test_no_other_tool_writes_a_status_literal_into_a_cell():
+    """Backstop for a copy elsewhere, in the shape both old copies used."""
+    writers = sorted(p.name for p in TOOLS.glob("*.py")
+                     if STATUS_LITERAL_INTO_CELL.search(p.read_text(encoding="utf-8")))
+    assert writers == [], writers
+
+
+TOOLS = Path(__file__).resolve().parents[2] / "tools"
+STATUS_LITERAL_INTO_CELL = re.compile(
+    r"\w+\[\d+\]\s*=\s*f?[\"'][^\"']*\b(Replied|No reply|Bounced|Delivered|Sent)\b")
+
+
+def test_the_literal_guard_catches_the_old_copies():
+    assert STATUS_LITERAL_INTO_CELL.search('    cols[6] = "Replied"\n')
+    assert not STATUS_LITERAL_INTO_CELL.search('    cells[7] = f" {new_status} "\n')
+
+
+# ------------------------------------------------- write_status, called directly
+
+
+def _writer():
+    sys.path.insert(0, str(TOOLS))
+    import outreach_status
+    return outreach_status
+
+
+def _other_writer_before_replace(monkeypatch, os_, edit, times):
+    """Simulate another process writing the log after write_status read it and before it
+    replaces it: the dangerous order, where a stale whole-file write would erase the edit."""
+    real = os_.tempfile.mkstemp
+    calls = {"n": 0}
+
+    def mkstemp(*a, **k):
+        if calls["n"] < times:
+            calls["n"] += 1
+            edit(calls["n"])
+        return real(*a, **k)
+
+    monkeypatch.setattr(os_.tempfile, "mkstemp", mkstemp)
+
+
+def test_write_status_keeps_a_concurrent_edit_to_another_row(tmp_path, monkeypatch):
+    os_ = _writer()
+    log = make_log(tmp_path, [
+        "| 2026-10-21 | cold-outreach | email | Jane Doe | Acme Corp | Note | Sent |",
+        "| 2026-10-21 | cold-outreach | email | John Smith | Northwind Inc | Note | Sent |",
+    ])
+
+    def bounce_john(_):
+        log.write_text(log.read_text(encoding="utf-8").replace(
+            "| John Smith | Northwind Inc | Note | Sent |",
+            "| John Smith | Northwind Inc | Note | Bounced |"), encoding="utf-8")
+
+    _other_writer_before_replace(monkeypatch, os_, bounce_john, times=1)
+    code, out = os_.set_status(log, "Jane Doe", "2026-10-21", None, "Replied")
+    assert code == 0, out
+    lines = log.read_text(encoding="utf-8").splitlines()
+    assert lines[-2].endswith("| Replied |") and lines[-1].endswith("| Bounced |")
+    assert list(tmp_path.glob("*.tmp")) == []
+
+
+def test_write_status_gives_up_when_the_log_keeps_changing(tmp_path, monkeypatch):
+    os_ = _writer()
+    log = make_log(tmp_path, [
+        "| 2026-10-21 | cold-outreach | email | Jane Doe | Acme Corp | Note | Sent |",
+    ])
+
+    def append_row(n):
+        with log.open("a", encoding="utf-8") as fh:
+            fh.write(f"| 2026-10-2{n} | follow-up | email | John Smith | Northwind Inc | Row {n} | Sent |\n")
+
+    _other_writer_before_replace(monkeypatch, os_, append_row, times=99)
+    code, out = os_.set_latest_open(log, "Jane Doe", "Replied")
+    assert code == 1 and out["ok"] is False and "changed" in out["reason"]
+    text = log.read_text(encoding="utf-8")
+    assert "| Jane Doe | Acme Corp | Note | Sent |" in text, "our write must not land"
+    assert text.count("| John Smith |") == os_.WRITE_ATTEMPTS, "every other write is kept"
+    assert list(tmp_path.glob("*.tmp")) == []
+
+
 def test_bare_validate_local_parses():
     """--validate-local must be a valid zero-argument invocation (no argparse exit 2)."""
     proc = run_script_raw("outreach_status.py", "--validate-local")

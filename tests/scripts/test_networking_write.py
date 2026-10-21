@@ -556,3 +556,36 @@ def test_update_dry_run_writes_nothing(tmp_path):
                                 "update", "Bob Jones", "--email", "bob@gamma.com")
     assert code == 0 and result.get("dry_run") is True
     assert (tmp_path / "data/networking.md").read_text(encoding="utf-8") == before
+
+
+def test_reply_flip_without_an_outreach_log_reports_false(tmp_path):
+    """No outreach log: the log entry still lands, and the flip reports False, not None."""
+    write_fixture(tmp_path, "data/networking.md", NETWORKING_WITH_CONTACT)
+    result, code = run_nw_write(
+        "--repo-root", str(tmp_path), "log", "Jane Doe",
+        "--date", "2026-06-19", "--type", "email",
+        "--summary", "Heard back from Jane", "--reply-received",
+    )
+    assert code == 0
+    assert result["outreach_log_updated"] is False
+
+
+def test_reply_flip_on_a_same_date_tie_marks_the_later_row(tmp_path):
+    """Changed 2026-10-21 by decision: the log is chronological, so the later row of two
+    open rows on one date is the later message. (The old copy kept the first.)"""
+    write_fixture(tmp_path, "data/networking.md", NETWORKING_WITH_CONTACT)
+    write_fixture(tmp_path, "data/outreach-log.md",
+                  "# Outreach Log\n\n"
+                  "| Date | Skill | Channel | Recipient | Company | Subject / Summary | Status |\n"
+                  "| --- | --- | --- | --- | --- | --- | --- |\n"
+                  "| 2026-06-18 | cold-outreach | linkedin | Jane Doe | Acme | Morning DM | Sent |\n"
+                  "| 2026-06-18 | follow-up | email | Jane Doe | Acme | Afternoon email | Sent |\n")
+    result, code = run_nw_write(
+        "--repo-root", str(tmp_path), "log", "Jane Doe",
+        "--date", "2026-06-19", "--type", "email",
+        "--summary", "Heard back from Jane", "--reply-received",
+    )
+    assert code == 0 and result["outreach_log_updated"] is True
+    rows = (tmp_path / "data/outreach-log.md").read_text(encoding="utf-8").splitlines()[-2:]
+    assert rows[0].endswith("| Sent |") and rows[1].endswith("| Replied |")
+

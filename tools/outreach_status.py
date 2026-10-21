@@ -34,6 +34,8 @@ write-back assertion | 2 ambiguous recipient or ambiguous --set-status target |
 """
 import argparse
 import json
+import os
+import tempfile
 import re
 import sys
 import unicodedata
@@ -108,11 +110,17 @@ class LogError(Exception):
 
 def parse_log(path: Path) -> list[dict]:
     """Parse the markdown table into row dicts, preserving file order."""
+    return parse_text(_read(path))
+
+
+def _read(path: Path) -> str:
     try:
-        text = path.read_text(encoding="utf-8")
+        return path.read_text(encoding="utf-8")
     except OSError as exc:
         raise LogError(f"cannot read log: {exc}") from exc
 
+
+def parse_text(text: str) -> list[dict]:
     rows = []
     for lineno, line in enumerate(text.splitlines(), start=1):
         if not line.lstrip().startswith("|"):
@@ -249,63 +257,97 @@ def _public(row: dict) -> dict:
 # ---------------------------------------------------------------- writer
 
 
-def set_status(path: Path, rows: list[dict], recipient: str, date: str,
-               artifact: str, new_status: str) -> tuple[int, dict]:
-    """Set one row's Status cell, addressed by (recipient AND date AND artifact).
+OPEN_STATUSES = {"Drafted", "Sent"}
 
-    Writes nothing unless exactly one row matches. Re-reads and asserts after the write;
-    any assertion failure rolls the file back to its pre-write bytes.
+
+def set_status(path: Path, recipient: str, date: str, artifact: str | None,
+               new_status: str) -> tuple[int, dict]:
+    """Set one row's Status cell, addressed by (recipient AND date [AND artifact]).
+
+    `artifact` is optional, for messages that carry none; then two rows on the date refuse.
     """
-    resolution, matched, candidates = resolve_recipient(rows, recipient, None)
-    if resolution == "ambiguous":
-        return 2, {"action": "set-status", "ok": False,
-                   "reason": "ambiguous recipient", "candidates": candidates}
+    def select(rows):
+        resolution, matched, candidates = resolve_recipient(rows, recipient, None)
+        if resolution == "ambiguous":
+            return _refuse("ambiguous recipient", candidates)
+        targets = [
+            r for r in matched
+            if r["date"] == date
+            and (artifact is None or artifact in artifact_vocab.find_in_text(r["summary"]))
+        ]
+        if len(targets) != 1:
+            reason = f"expected exactly 1 matching row, found {len(targets)}"
+            if len(targets) > 1:
+                reason += "; narrow it with --artifact"
+            return _refuse(reason, [_public(r) for r in targets])
+        return targets[0]
 
-    targets = [
-        r for r in matched
-        if r["date"] == date and artifact in artifact_vocab.find_in_text(r["summary"])
-    ]
-    if len(targets) != 1:
-        return 2, {
-            "action": "set-status", "ok": False,
-            "reason": f"expected exactly 1 matching row, found {len(targets)}",
-            "candidates": [_public(r) for r in targets],
-        }
+    return write_status(path, select, new_status)
 
-    target = targets[0]
-    before_text = path.read_text(encoding="utf-8")
-    before_lines = before_text.splitlines(keepends=True)
-    idx = target["_line"] - 1
-    original_line = before_lines[idx]
 
-    cells = original_line.rstrip("\n").split("|")
-    old_status = cells[7].strip()
-    cells[7] = f" {new_status} "
-    new_line = "|".join(cells) + ("\n" if original_line.endswith("\n") else "")
+def set_latest_open(path: Path, recipient: str, new_status: str) -> tuple[int, dict]:
+    """Set the status of the recipient's newest open (Drafted/Sent) row.
 
-    after_lines = list(before_lines)
-    after_lines[idx] = new_line
-    path.write_text("".join(after_lines), encoding="utf-8")
+    The log is chronological, so on a same-date tie the later row is the later message.
+    This is the one entry point for "they replied" from other tools.
+    """
+    def select(rows):
+        resolution, matched, candidates = resolve_recipient(rows, recipient, None)
+        if resolution == "ambiguous":
+            return _refuse("ambiguous recipient", candidates)
+        open_rows = [r for r in matched if r["status"] in OPEN_STATUSES]
+        if not open_rows:
+            return _refuse("no open row for recipient", [])
+        return _latest(open_rows)
 
-    # Verify, and roll back on any surprise rather than leaving a half-edit behind.
-    verify = path.read_text(encoding="utf-8").splitlines(keepends=True)
-    problems = []
-    if len(verify) != len(before_lines):
-        problems.append(f"line count changed {len(before_lines)} -> {len(verify)}")
-    elif verify[idx].split("|")[7].strip() != new_status:
-        problems.append("target cell does not hold the new value")
-    else:
-        changed = [i for i, (a, b) in enumerate(zip(before_lines, verify)) if a != b]
-        if changed != [idx]:
-            problems.append(f"unexpected lines changed: {changed}")
+    return write_status(path, select, new_status)
 
-    if problems:
-        path.write_text(before_text, encoding="utf-8")
-        return 1, {"action": "set-status", "ok": False,
-                   "reason": "; ".join(problems), "rolled_back": True}
 
-    return 0, {"action": "set-status", "row": _public(target),
-               "before": old_status, "after": new_status, "ok": True}
+def _refuse(reason: str, candidates: list) -> tuple[int, dict]:
+    return 2, {"action": "set-status", "ok": False, "reason": reason, "candidates": candidates}
+
+
+WRITE_ATTEMPTS = 3
+
+
+def write_status(path: Path, select, new_status: str) -> tuple[int, dict]:
+    """The only code that writes a Status cell. Same status = no-op.
+
+    `select(rows)` returns the target row, or a `(code, payload)` refusal. Selection and
+    the write use the same read of the file, and the file is re-read just before the
+    atomic replace: if anything changed in between, the attempt is discarded and redone
+    from a fresh read, so a concurrent edit to another row is kept rather than overwritten.
+    Residual: a write landing between that last re-read and the replace itself.
+    """
+    for _ in range(WRITE_ATTEMPTS):
+        text = _read(path)
+        target = select(parse_text(text))
+        if isinstance(target, tuple):
+            return target
+
+        lines = text.splitlines(keepends=True)
+        idx = target["_line"] - 1
+        cells = lines[idx].rstrip("\n").split("|")
+        result = {"action": "set-status", "row": _public(target),
+                  "before": cells[7].strip(), "after": new_status, "ok": True}
+        if result["before"] == new_status:
+            return 0, result
+        cells[7] = f" {new_status} "
+        lines[idx] = "|".join(cells) + ("\n" if lines[idx].endswith("\n") else "")
+
+        fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write("".join(lines))
+            if _read(path) != text:
+                continue  # someone else wrote; redo from their version
+            os.replace(tmp, path)
+            return 0, result
+        finally:
+            if os.path.exists(tmp):
+                os.unlink(tmp)
+    return 1, {"action": "set-status", "ok": False,
+               "reason": f"the log changed during each of {WRITE_ATTEMPTS} attempts; re-run"}
 
 
 # ---------------------------------------------------------------- query
@@ -415,6 +457,8 @@ def main() -> int:
     parser.add_argument("--stamp", action="store_true",
                         help="emit the frozen provenance comment instead of JSON")
     parser.add_argument("--set-status", action="store_true")
+    parser.add_argument("--latest", action="store_true",
+                        help="with --set-status: target the newest open row instead of --date")
     parser.add_argument("--date", help="required with --set-status")
     parser.add_argument("--status", help="required with --set-status")
     parser.add_argument("--validate-local", action="store_true", dest="validate_local")
@@ -437,8 +481,11 @@ def main() -> int:
 
     try:
         if args.set_status:
-            missing = [f for f in ("recipient", "date", "artifact", "status")
-                       if not getattr(args, f)]
+            if args.latest and args.date:
+                print(json.dumps({"error": "--latest and --date are mutually exclusive"}))
+                return 2
+            required = ("recipient", "status") if args.latest else ("recipient", "date", "status")
+            missing = [f for f in required if not getattr(args, f)]
             if missing:
                 print(json.dumps({"error": f"--set-status requires: {', '.join('--' + m for m in missing)}"}))
                 return 2
@@ -446,9 +493,11 @@ def main() -> int:
                 print(json.dumps({"error": f"unrecognized status: {args.status}",
                                   "valid_statuses": sorted(KNOWN_STATUSES)}))
                 return 3
-            rows = parse_log(log_path)
-            code, payload = set_status(log_path, rows, args.recipient,
-                                       args.date, args.artifact, args.status)
+            if args.latest:
+                code, payload = set_latest_open(log_path, args.recipient, args.status)
+            else:
+                code, payload = set_status(log_path, args.recipient, args.date,
+                                           args.artifact, args.status)
             print(json.dumps(payload, ensure_ascii=False))
             return code
 

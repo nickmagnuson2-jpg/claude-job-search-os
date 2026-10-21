@@ -3,6 +3,42 @@
 All notable changes to this job search system are recorded here.
 Format: newest entries at the top.
 
+## 2026-10-21: One writer for outreach-log statuses
+
+**What prompted it.** A LinkedIn DM reply could not be marked `Replied`: `outreach_status.py
+--set-status` required `--artifact`, which a plain message does not have, so the row was
+edited by hand. Looking for the fix turned up three separate writers of the Status cell with
+different matching rules, and only one of them checked its own write.
+
+- **`outreach_status.py`**: `write_status` is now the only code that writes a Status cell.
+  It picks the row and writes from the same read of the file, re-reads just before an atomic
+  replace, and starts over from a fresh read if anything changed, so another writer's edit to
+  a different row is kept rather than overwritten (3 attempts, then it refuses). Each write
+  uses its own temp file. The old whole-file rollback is gone. Re-applying the current status
+  is a no-op instead of a reported failure. Residual: a write landing in the instant between
+  the last re-read and the replace; closing that needs cross-process locking, out of scope. Two ways to pick the row: by recipient
+  and date with `--artifact` now optional, or `--latest` for the recipient's newest open
+  (Drafted/Sent) row, where a same-date tie goes to the later row because the log is
+  chronological.
+- **`networking_write.py log --reply-received`** and **`remember_apply.py` `outreach_reply`**
+  call `set_latest_open` instead of rewriting the row themselves. Both now use the shared
+  name matcher, which refuses an ambiguous name rather than guessing.
+- **`/follow-up` Step 1b** sets `Replied` / `No reply` with `--set-status --latest` instead
+  of a hand edit.
+- Regression tests: each caller must call `set_latest_open` and make no direct write call in
+  its own body (the pre-change copies trip it), and no tool may write a status literal into
+  a cell. Neither proves `write_status` is the only writer: a write moved into a helper, or a
+  dynamic assignment, would pass. Round 3 (`output/analysis/102126-codex-round-3-final-on-the-outreach-log-stat.md`)
+  confirmed the round-2 fixes and flagged only this overclaim, now reworded.
+- **Reviewed by Codex** (`output/analysis/102126-codex-merge-of-three-outreach-log-status-cell.md`):
+  7 findings, all fixed, including `Pending` dropped from the open set (it was never a
+  recognized status), and `/remember` now reports an ambiguous name instead of "no open row".
+  Round 2 (`output/analysis/102126-codex-round-2-fixes-for-the-7-findings-on-the.md`) found
+  the first concurrency fix still lost a concurrent edit; fixed as above.
+- Smaller behavior changes: `--artifact` is optional on `--set-status`; an empty or malformed
+  log now gives `/remember` the "outreach row not updated (reason)" warning instead of
+  "No outreach-log.md found".
+
 ## 2026-10-21: Two hook false positives fixed; guard reviews now need a stated bar
 
 **What prompted it.** `check_sealed_read.py` blocked a Python program that only wrote a brief

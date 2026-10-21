@@ -16,7 +16,7 @@ Quickly saves something you want to retain across sessions, routed to the right 
 
 Examples:
 - `/remember "Jordan mentioned Acme is building a new site in a new metro"` → appended to Jordan Lee's contact entry in networking.md
-- `/remember "Jordan Lee replied to my email"` → updates outreach-log.md Status to Replied for most recent Jordan Lee row
+- `/remember "Jordan Lee replied to my email"` → updates outreach-log.md Status to Replied on Jordan Lee's newest open (Drafted/Sent) row
 - `/remember "heard back from Sarah Chen, she's happy to connect"` → updates outreach-log.md Status to Replied + logs contact note
 - `/remember "comp floor is $130K in practice, not $140K"` → appended to profile.md compensation section
 - `/remember "decided not to pursue Lumen — too similar to what I want to leave"` → `data/decisions.md` (prompts for what drove it / what changes if wrong)
