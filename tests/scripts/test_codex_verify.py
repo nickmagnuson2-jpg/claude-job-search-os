@@ -1491,3 +1491,43 @@ def test_diff_base_falls_back_to_HEAD_when_git_cannot_run(tmp_path, monkeypatch)
 
 def test_diff_base_falls_back_to_HEAD_without_an_upstream(tmp_path):
     assert cv.diff_base(_tiny_repo(tmp_path)) == "HEAD"
+
+
+# A bypass review of guard infrastructure needs a stated bar (2026-10-21: ~15 hours of
+# review rounds on two hook fixes, converging only once the bar was written down).
+@pytest.mark.parametrize("path", ["tools/check_sealed_read.py", "tools/shell_tokens.py",
+                                  "tools/hook_runtime.py", ".claude/settings.json"])
+def test_guard_review_without_a_bar_is_refused(path):
+    msg = cv.refuse_guard_review_without_bar(["docs/x.md", path], "")
+    assert msg.startswith("REFUSING TO DISPATCH") and path in msg
+
+
+def test_guard_review_with_a_bar_or_no_guard_dispatches():
+    bar = "accidental reads only; a finding must be an ordinary read; stop when no new class"
+    assert cv.refuse_guard_review_without_bar(["tools/check_x.py"], bar) == ""
+    assert cv.refuse_guard_review_without_bar(["tools/check_x.py"], "   ") != ""
+    assert cv.refuse_guard_review_without_bar(["tools/check_x.py"], "x") != ""      # a placeholder
+    assert cv.refuse_guard_review_without_bar(["tools/codex_verify.py", "tests/scripts/test_check_x.py"], "") == ""
+    assert cv.refuse_guard_review_without_bar(None, "") == ""
+
+
+def test_main_refuses_without_a_bar_and_carries_the_bar(capsys):
+    assert cv.main(["--target", "t", "--paths", "tools/check_x.py", "--print-only"]) == 4
+    assert "REFUSING" in capsys.readouterr().err
+
+
+def test_main_puts_the_bar_into_the_prompt(capsys):
+    assert cv.main(["--target", "t", "--paths", "tools/check_x.py", "--print-only",
+                    "--bar", "accidental edits only; a finding must be an ordinary edit; stop when none"]) == 0
+    assert "BAR (threat model, what counts as a finding, when to stop): accidental edits" \
+        in capsys.readouterr().out
+
+
+def test_main_refuses_while_a_mutation_run_owns_the_tree(monkeypatch, capsys):
+    monkeypatch.setattr(cv, "refuse_under_active_mutation", lambda root, paths: "MUTATION OWNS IT")
+    # Never dispatch for real: a mutant that skips the refusal must fail here, offline.
+    monkeypatch.setattr(cv, "run", lambda *a, **k: {"status": "ok"})
+    assert cv.main(["--target", "t", "--paths", "docs/x.md", "--model", "codex"]) == 3
+    assert "MUTATION OWNS IT" in capsys.readouterr().err
+    # --print-only dispatches nothing, so the mutation refusal does not apply
+    assert cv.main(["--target", "t", "--paths", "docs/x.md", "--print-only"]) == 0

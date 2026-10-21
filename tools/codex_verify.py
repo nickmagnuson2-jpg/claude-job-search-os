@@ -42,6 +42,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -807,6 +808,32 @@ def refuse_under_active_mutation(repo_root: Path, paths: list[str]) -> str:
     )
 
 
+# Guard infrastructure: a review of a change here hunts for bypasses, and a bypass hunt
+# with no stated bar never converges (2026-10-20/21: ten rounds on one hook, two on the
+# next once the bar was written down; ~15 hours for two fixes).
+# Which paths are guard infrastructure is decided by the guard hook itself, imported so
+# the two cannot drift (a hand-copied pattern here was the third copy: review, 2026-10-21).
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from check_guard_edit_approval import is_guarded  # noqa: E402
+
+
+def refuse_guard_review_without_bar(paths, bar: str) -> str:
+    """A refusal message when the review covers guard infrastructure and no --bar was
+    given, else ''. The bar names the threat model, what counts as a finding, and when
+    the review stops."""
+    guards = [p for p in (paths or []) if is_guarded(p)]
+    if not guards or len(bar.split()) >= 8:     # a sentence, not a placeholder like `x`
+        return ""
+    return (
+        "REFUSING TO DISPATCH: this review covers guard infrastructure ("
+        + ", ".join(guards) + ") and no --bar was given (or it is under 8 words).\n\n"
+        "A reviewer asked to find bypasses always finds one, so the loop never ends\n"
+        "unless the bar is set first. Pass --bar with: the threat model the guard serves\n"
+        "(accidental or deliberate), what a finding must show to count, and when the\n"
+        "review stops. If the guard's docstring states its contract, quote it.\n"
+        "Rule: memory feedback_set_the_bar_before_a_bypass_review.md")
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--target", required=True, help="what Codex should verify")
@@ -836,7 +863,15 @@ def main(argv=None) -> int:
     ap.add_argument("--known-errors", default="",
                     help="mistakes already made on this work, so it can say which "
                          "conclusions rest on contaminated evidence")
+    ap.add_argument("--bar", default="",
+                    help="REQUIRED when --paths touch guard infrastructure: the threat "
+                         "model, what counts as a finding, and when the review stops")
     args = ap.parse_args(argv)
+
+    refusal = refuse_guard_review_without_bar(args.paths, args.bar)
+    if refusal:
+        print(refusal, file=sys.stderr)
+        return 4
 
     # Before anything else: a verifier pointed at a mutated tree reviews fiction.
     if not args.print_only:
@@ -854,6 +889,9 @@ def main(argv=None) -> int:
         report = (root / "output" / "analysis" /
                   f"{datetime.now().strftime('%m%d%y')}-{args.model}-{slug}.md")
 
+    if args.bar.strip():      # after the report name, so the bar never enters the slug
+        args.target += ("\n\nBAR (threat model, what counts as a finding, when to stop): "
+                        + args.bar.strip())
     out = run(root, args.target, args.paths, args.question, report,
               args.prior, args.print_only, mode=args.mode, claims=args.claims,
               known_errors=args.known_errors, model=args.model,

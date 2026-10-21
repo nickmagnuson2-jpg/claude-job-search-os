@@ -91,6 +91,27 @@ the same class of error as a claim asserted from memory: the docstring of
 implements**, and a reader would reasonably conclude the extension had shipped.
 Per `memory/feedback_guard_must_hard_abort_on_empty_input.md`.
 
+## Step 0b — before an EXEMPTION or false-positive fix (2026-10-21)
+
+Two hook fixes on 2026-10-20/21 took about fifteen hours of review and mutation rounds
+between them. Three rules would have cut most of it:
+
+1. **Write the bar first.** State the threat model the hook serves (accidental or
+   deliberate), what a finding must show to count, and when review stops. Quote the
+   hook's own contract if its docstring has one. `tools/codex_verify.py` refuses a review
+   of guard infrastructure without `--bar`. A reviewer asked to find bypasses with no
+   stopping rule always finds one.
+2. **Measure the real cases, then build only for them.** Replay history and list the
+   false positives the fix must clear. Then switch each candidate feature off in turn
+   and count what it alone clears. Delete anything that clears nothing, because it
+   fails closed anyway, and every unused feature is a way to fool the hook (9 of 13
+   features were unused on 2026-10-21). Keep it as simple as possible without losing
+   function.
+3. **An exemption that judges code uses an allow-list, never a deny-list.** List the
+   few modules, builtins, calls and paths that are allowed, and refuse everything else.
+   A list of dangerous names lost every review round on both hooks. It was relearned on
+   the second hook the same day.
+
 ## Checklist
 
 - [ ] **Name the adversary and its bypass paths before claiming what the guard stops.** If
