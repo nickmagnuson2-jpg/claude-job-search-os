@@ -18,6 +18,7 @@ import subprocess
 import sys
 import textwrap
 import time
+from pathlib import Path
 
 import pytest
 
@@ -493,3 +494,101 @@ def test_malformed_but_complete_payload_is_not_flagged_truncated(monkeypatch):
     p = hook_runtime.read_payload()
     assert p.ok is False
     assert p.truncated is False, "a complete-but-garbage payload is NOT truncation"
+
+
+# ---------- last_assistant_text (shared by the Stop hooks, 2026-10-21) ----------
+
+def _transcript(tmp_path, *records):
+    p = tmp_path / "t.jsonl"
+    p.write_text("".join((r if isinstance(r, str) else json.dumps(r)) + "\n" for r in records))
+    return str(p)
+
+
+def _asst(content, by="type"):
+    rec = {"message": {"content": content}}
+    if by == "type":
+        rec["type"] = "assistant"
+    else:
+        rec["message"]["role"] = "assistant"
+    return rec
+
+
+def test_last_assistant_text_missing_or_unreadable_file_is_empty(tmp_path):
+    assert hr.last_assistant_text(str(tmp_path / "nope.jsonl")) == ""
+    assert hr.last_assistant_text(str(tmp_path)) == ""
+
+
+def test_last_assistant_text_returns_the_final_assistant_message(tmp_path):
+    path = _transcript(tmp_path, _asst("first"), {"type": "user", "message": {"content": "q"}},
+                       _asst("second"))
+    assert hr.last_assistant_text(path) == "second"
+
+
+def test_last_assistant_text_ignores_user_records(tmp_path):
+    path = _transcript(tmp_path, _asst("answer"),
+                       {"type": "user", "message": {"role": "user", "content": "later"}})
+    assert hr.last_assistant_text(path) == "answer"
+
+
+def test_last_assistant_text_accepts_role_without_type(tmp_path):
+    assert hr.last_assistant_text(_transcript(tmp_path, _asst("by role", by="role"))) == "by role"
+
+
+def test_last_assistant_text_joins_text_blocks_and_skips_others(tmp_path):
+    blocks = [{"type": "text", "text": "a"}, {"type": "tool_use", "text": "x"}, "junk",
+              {"type": "text", "text": "b"}]
+    assert hr.last_assistant_text(_transcript(tmp_path, _asst(blocks))) == "a\nb"
+
+
+def test_last_assistant_text_a_tool_only_message_keeps_the_previous_text(tmp_path):
+    path = _transcript(tmp_path, _asst("kept"), _asst([{"type": "tool_use", "id": "1"}]))
+    assert hr.last_assistant_text(path) == "kept"
+
+
+def test_last_assistant_text_skips_blank_and_malformed_lines(tmp_path):
+    path = _transcript(tmp_path, _asst("good"), "", "{not json", "   ")
+    assert hr.last_assistant_text(path) == "good"
+
+
+def test_last_assistant_text_skips_records_that_are_not_objects(tmp_path):
+    """Both pre-2026-10-21 copies crashed here (list.get / str.get)."""
+    path = _transcript(tmp_path, _asst("good"), "[1, 2]", '"str"',
+                       {"type": "assistant", "message": "not a dict"})
+    assert hr.last_assistant_text(path) == "good"
+
+
+# ---------- claude_project_dir (one derivation for seven tools, 2026-10-21) ----------
+
+def test_claude_project_dir_turns_slashes_into_dashes_and_keeps_dots(tmp_path):
+    got = hr.claude_project_dir("/Users/x/my.repo", config_dir=tmp_path)
+    assert got == tmp_path / "projects" / "-Users-x-my.repo"
+
+
+def test_claude_project_dir_makes_a_relative_root_absolute(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    got = hr.claude_project_dir(".", config_dir="/cfg")
+    assert got.name == str(tmp_path).replace("/", "-")
+
+
+def test_claude_project_dir_expands_tilde_and_strips_trailing_slash(monkeypatch):
+    monkeypatch.setenv("HOME", "/Users/h")
+    assert hr.claude_project_dir("~/repo/", config_dir="/cfg").name == "-Users-h-repo"
+
+
+def test_claude_project_dir_honours_claude_config_dir(monkeypatch):
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", "/elsewhere")
+    assert hr.claude_project_dir("/r") == Path("/elsewhere/projects/-r")
+
+
+def test_claude_project_dir_defaults_to_dot_claude_under_home(monkeypatch):
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+    monkeypatch.setenv("HOME", "/Users/h")
+    assert hr.claude_project_dir("/r") == Path("/Users/h/.claude/projects/-r")
+
+
+def test_last_assistant_text_a_malformed_first_line_is_skipped(tmp_path):
+    """Not only after a good record: a bad line before any record must not be parsed."""
+    path = _transcript(tmp_path, "{not json", {"type": "user", "message": {"content": "q"}},
+                       _asst("answer"), "{also bad")
+    assert hr.last_assistant_text(path) == "answer"
+    assert hr.last_assistant_text(_transcript(tmp_path, "{not json")) == ""

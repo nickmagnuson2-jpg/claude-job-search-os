@@ -15,10 +15,9 @@ import os
 import re
 import sys
 from datetime import datetime, timezone
+from hook_runtime import claude_project_dir  # noqa: E402
 
-DEFAULT_DIR = os.path.expanduser(
-    "~/.claude/projects/-Users-mag-Documents-Obsidian-30-projects-job-search/memory"
-)
+DEFAULT_DIR = str(claude_project_dir(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) / "memory")
 
 # Files that are NOT memory entries (skip from partition)
 SKIP_EXACT = {"MEMORY.md"}

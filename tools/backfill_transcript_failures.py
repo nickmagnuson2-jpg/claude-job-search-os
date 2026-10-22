@@ -4,7 +4,7 @@ backfill_transcript_failures.py — one-shot recovery of friction events
 missed by the broken-PostToolUse-on-error hook design (2026-05-21 → 2026-05-27).
 
 Walks every Claude Code session transcript JSONL in
-~/.claude/projects/-Users-mag-Documents-Obsidian-30-projects-job-search/,
+~/.claude/projects/<project-folder>/,
 finds all tool_result entries with is_error: true, and appends a friction-log
 row for each (with [auto-backfill] tag). friction_log.py's 5-row dedup window
 will collapse repeated identical errors so the ledger doesn't explode.
@@ -28,12 +28,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import friction_surface as fs  # shared surface/nature derivation (single source of truth)
+from hook_runtime import claude_project_dir  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 FRICTION_LOG_PY = REPO_ROOT / "tools" / "friction_log.py"
 
-PROJECT_DIR_HASH = "-Users-mag-Documents-Obsidian-30-projects-job-search"
-SESSIONS_DIR = Path.home() / ".claude" / "projects" / PROJECT_DIR_HASH
+SESSIONS_DIR = claude_project_dir(REPO_ROOT)
 
 # Was a locally-duplicated copy of tools/friction_surface.py's own
 # EXCLUDE_SCRIPTS/SCRIPT_RE/derive_surface/derive_nature — meant this script

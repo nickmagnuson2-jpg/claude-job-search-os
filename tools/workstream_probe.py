@@ -46,6 +46,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+from hook_runtime import claude_project_dir  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MEMORY_PREFIX = "memory:"
@@ -57,8 +58,7 @@ class ProbeError(Exception):
 
 
 def memory_dir(root: Path) -> Path:
-    home = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
-    return home / "projects" / str(root).replace("/", "-") / "memory"
+    return claude_project_dir(root) / "memory"
 
 
 def resolve(spec: str, root: Path) -> Path:

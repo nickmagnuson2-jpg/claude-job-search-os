@@ -52,6 +52,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import friction_surface as fs  # shared surface/nature derivation (single source of truth)
 import hook_trace  # shared rotating trace-log writer (size-capped, single source of truth)
+from hook_runtime import claude_project_dir  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 FRICTION_LOG_PY = REPO_ROOT / "tools" / "friction_log.py"
@@ -210,9 +211,7 @@ def resolve_transcript_path(data: dict) -> Path | None:
 
     session_id = data.get("session_id")
     project_dir = os.environ.get("CLAUDE_PROJECT_DIR") or str(REPO_ROOT)
-    # Hash convention: replace / with - in the project dir path
-    project_hash = project_dir.replace("/", "-")
-    candidate = Path.home() / ".claude" / "projects" / project_hash / f"{session_id}.jsonl"
+    candidate = claude_project_dir(project_dir) / f"{session_id}.jsonl"
     if candidate.exists():
         trace(f"resolve_transcript_path FALLBACK HIT: {candidate}")
         return candidate

@@ -63,13 +63,12 @@ EXIT CODES
 
 Override: STALE_CLAIM_OVERRIDE=1
 """
-import json
 import os
 import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from hook_runtime import read_payload  # noqa: E402
+from hook_runtime import last_assistant_text, read_payload  # noqa: E402
 import time
 from pathlib import Path
 
@@ -278,40 +277,6 @@ def evaluate(text: str, root: Path, midnight: float,
     return bad
 
 
-def read_last_assistant_text(transcript_path: str) -> str:
-    """Return concatenated text of the final assistant message in the transcript."""
-    p = Path(transcript_path)
-    if not p.exists():
-        return ""
-    last = ""
-    try:
-        with p.open(encoding="utf-8") as fh:
-            for line in fh:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    rec = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                msg = rec.get("message") or {}
-                if rec.get("type") != "assistant" and msg.get("role") != "assistant":
-                    continue
-                blocks = msg.get("content")
-                if isinstance(blocks, str):
-                    last = blocks
-                elif isinstance(blocks, list):
-                    parts = [
-                        b.get("text", "")
-                        for b in blocks
-                        if isinstance(b, dict) and b.get("type") == "text"
-                    ]
-                    if any(parts):
-                        last = "\n".join(parts)
-    except OSError:
-        return ""
-    return last
-
 
 def main() -> int:
     if os.environ.get(OVERRIDE_ENV) == "1":
@@ -326,7 +291,7 @@ def main() -> int:
         return 0
 
     transcript = payload.get("transcript_path") or ""
-    text = read_last_assistant_text(transcript)
+    text = last_assistant_text(transcript)
     if not text:
         return 0
 

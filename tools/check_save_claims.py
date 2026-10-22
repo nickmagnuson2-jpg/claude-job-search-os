@@ -42,13 +42,12 @@ EXIT CODES
 
 Override: SAVE_CLAIMS_OVERRIDE=1
 """
-import json
 import os
 import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from hook_runtime import read_payload  # noqa: E402
+from hook_runtime import claude_project_dir, last_assistant_text, read_payload  # noqa: E402
 from pathlib import Path
 
 OVERRIDE_ENV = "SAVE_CLAIMS_OVERRIDE"
@@ -101,40 +100,6 @@ def strip_code_blocks(text: str) -> str:
     text = re.sub(r"```.*?```", " ", text, flags=re.S)
     return URL_RE.sub(" ", text)
 
-
-def read_last_assistant_text(transcript_path: str) -> str:
-    """Return concatenated text of the final assistant message in the transcript."""
-    p = Path(transcript_path)
-    if not p.exists():
-        return ""
-    last = ""
-    try:
-        with p.open(encoding="utf-8") as fh:
-            for line in fh:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    rec = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                msg = rec.get("message") or {}
-                if rec.get("type") != "assistant" and msg.get("role") != "assistant":
-                    continue
-                content = msg.get("content")
-                if isinstance(content, str):
-                    last = content
-                elif isinstance(content, list):
-                    parts = [
-                        b.get("text", "")
-                        for b in content
-                        if isinstance(b, dict) and b.get("type") == "text"
-                    ]
-                    if any(parts):
-                        last = "\n".join(parts)
-    except OSError:
-        return ""
-    return last
 
 
 def extract_claimed_paths(text: str):
@@ -223,11 +188,9 @@ def memory_tier(root: Path, home: Path | None = None) -> Path:
     """This project's LIVE memory tier: `~/.claude/projects/<slugified-root>/memory/`.
 
     It sits OUTSIDE the repo and is where every `feedback_*`/`reference_*` rule and
-    MEMORY.md are written, so the basename walk below can never reach it. The slug is
-    derived from the literal root, which `project_root` has already made absolute.
+    MEMORY.md are written, so the basename walk below can never reach it.
     """
-    slug = str(root).replace("/", "-")
-    return (home or Path.home()) / ".claude" / "projects" / slug / "memory"
+    return claude_project_dir(root, home / ".claude" if home else None) / "memory"
 
 
 def candidate_paths(tok: str, root: Path, home: Path | None = None) -> list[Path]:
@@ -300,7 +263,7 @@ def main() -> int:
         return 0
 
     transcript = payload.get("transcript_path") or ""
-    text = read_last_assistant_text(transcript)
+    text = last_assistant_text(transcript)
     if not text:
         return 0
 

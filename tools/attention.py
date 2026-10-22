@@ -35,13 +35,13 @@ import subprocess
 import sys
 from datetime import date, datetime
 from pathlib import Path
+from hook_runtime import claude_project_dir  # noqa: E402
 
 TOOLS = Path(__file__).resolve().parent
 # The auto-memory dir lives OUTSIDE the repo, so --repo-root alone does not scope this tool.
 # Overridable rather than hardcoded, so a caller (or a test) can say which corpus it means --
 # a tool whose scope cannot be stated is a tool whose output cannot be trusted.
-DEFAULT_MEMORY_DIR = (Path.home()
-                      / ".claude/projects/-Users-mag-Documents-Obsidian-30-projects-job-search/memory")
+DEFAULT_MEMORY_DIR = claude_project_dir(TOOLS.parent) / "memory"
 
 
 def _skip(name, source, reason):

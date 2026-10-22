@@ -60,6 +60,7 @@ import select
 import sys
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 # A hook payload is a prompt or a tool call, not a data stream: milliseconds in the
@@ -271,3 +272,61 @@ def read_payload(deadline_s: float = STDIN_DEADLINE_S,
         return Payload(ok=False, raw=raw, truncated=truncated,
                        error=f"payload is {type(data).__name__}, not an object")
     return Payload(ok=True, data=data, raw=raw, truncated=truncated)
+
+
+def last_assistant_text(transcript_path: str) -> str:
+    """Concatenated text of the final assistant message in a session transcript.
+
+    Shared by the Stop hooks that judge what Claude just told the user
+    (check_save_claims, check_stale_file_claim), which held identical copies until
+    2026-10-21. A record counts as assistant by `type` or by `message.role`. A string
+    content is the text; a list contributes its text blocks, and a message with no
+    text (only tool calls) leaves the previous answer in place. A line that is not a
+    JSON object is skipped (both copies used to crash on one). A missing or unreadable
+    file, or no assistant message, returns "".
+    """
+    last = ""
+    try:
+        with open(transcript_path, encoding="utf-8") as fh:
+            for line in fh:
+                try:
+                    rec = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(rec, dict):
+                    continue
+                msg = rec.get("message")
+                if not isinstance(msg, dict):
+                    msg = {}
+                if rec.get("type") != "assistant" and msg.get("role") != "assistant":
+                    continue
+                content = msg.get("content")
+                if isinstance(content, str):
+                    last = content
+                elif isinstance(content, list):
+                    parts = [b.get("text", "") for b in content
+                             if isinstance(b, dict) and b.get("type") == "text"]
+                    if any(parts):
+                        last = "\n".join(parts)
+    except OSError:
+        return ""
+    return last
+
+
+def claude_project_dir(root, config_dir=None) -> Path:
+    """Claude Code's per-project folder for `root`, which holds the session transcripts
+    (`*.jsonl`) and the live memory tier (`memory/`).
+
+    The folder name is the absolute project path with every "/" turned into "-"; dots
+    and other characters are kept (measured against ~/.claude/projects on 2026-10-21:
+    "kiki-41.16", "-.claude-worktrees-..."). `abspath`, not `resolve()`: Claude Code
+    names the folder from the literal path, so following a symlink could name a
+    different folder. The config folder is CLAUDE_CONFIG_DIR when set, else ~/.claude.
+
+    Seven tools derived this separately until 2026-10-21, three of them by hard-coding
+    one machine's folder name.
+    """
+    config = Path(config_dir) if config_dir else Path(
+        os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
+    slug = os.path.abspath(os.path.expanduser(str(root))).replace("/", "-")
+    return config / "projects" / slug

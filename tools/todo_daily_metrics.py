@@ -42,6 +42,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from schema_guard import assert_schema, find_header_line, SchemaDriftError  # noqa: E402
+from hook_runtime import claude_project_dir  # noqa: E402
 
 # Canonical schemas (see the writers: tools/todo_write.py, tools/pipe_write.py). The
 # cols[N] indices throughout this file's parsers assume these exact column orders.
@@ -605,13 +606,10 @@ def scan_substantive_work(repo_root: Path, today: date) -> dict:
         str(repo_root / "data" / "reflections" / "*.md")
     )
 
-    # Memory dir is in ~/.claude/projects/<sanitized-cwd>/memory/
-    # .resolve() is load-bearing: the sanitized key is built from the PATH TEXT, so a
-    # relative --repo-root (e.g. `.`, the convention everywhere else in this repo)
-    # produced the key "-." , missed the directory, and silently reported
-    # memories_today: 0 instead of 23. A wrong answer with no error. Fixed 2026-08-19.
-    sanitized_cwd = "-" + str(Path(repo_root).resolve()).replace("/", "-").lstrip("-")
-    memory_dir = Path.home() / ".claude" / "projects" / sanitized_cwd / "memory"
+    # The live memory tier. A relative --repo-root (e.g. `.`) once produced the key
+    # "-." here and silently reported memories_today: 0 instead of 23 (2026-08-19);
+    # claude_project_dir makes the root absolute itself.
+    memory_dir = claude_project_dir(repo_root) / "memory"
     memories_n, memories_paths = (0, [])
     if memory_dir.exists():
         memories_n, memories_paths = count_modified_after(str(memory_dir / "*.md"))
