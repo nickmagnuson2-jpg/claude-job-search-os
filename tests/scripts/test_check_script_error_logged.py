@@ -382,6 +382,7 @@ def test_a_real_traceback_beside_an_infrastructure_script_is_still_logged(hook_r
     r = hook_run("python3 tools/friction_log.py list; python3 tools/pipe_write.py add x",
                  stderr=TRACEBACK)
     assert r.logged
+    assert r.surface == "pipe_write.py", "the crash belongs to the real script, not a frame"
 
 
 def test_a_traceback_in_output_with_no_python_invocation_is_not_logged(hook_run):

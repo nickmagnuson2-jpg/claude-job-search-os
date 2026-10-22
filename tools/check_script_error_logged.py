@@ -113,8 +113,7 @@ def derive_traceback_surface(command: str, combined: str) -> str:
     """Best-effort surface name for a Python traceback that isn't a tools/*.py
     JSON-contract call. Priority: tools script in command > skill name in command
     > deepest real .py frame in the traceback > generic inline label."""
-    m = SCRIPT_RE.search(command)
-    if m:
+    for m in SCRIPT_RE.finditer(command):
         name = m.group(1).lower() + ".py"
         if name not in EXCLUDE_SCRIPTS:
             return name
