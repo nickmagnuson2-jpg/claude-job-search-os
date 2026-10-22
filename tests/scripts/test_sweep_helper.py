@@ -320,3 +320,11 @@ def test_a_tracked_symlink_is_not_read_through(git_repo):
     (git_repo / "link.md").symlink_to(git_repo / "private" / "notes.md")
     code, out = _run_in(git_repo, "--pattern", "Zebracorp", "--public")
     assert str(git_repo / "link.md") not in out["paths"]
+
+
+def test_ignore_case_reaches_the_history_query(git_repo):
+    """-i on the tree but not on history would miss a commit with another capitalization."""
+    _, out = _run_in(git_repo, "--pattern", "ZEBRACORP", "-i", "--public", "--history")
+    assert [c.split(" ", 2)[2] for c in out["history_commits"]] == ["base"]
+    _, out = _run_in(git_repo, "--pattern", "ZEBRACORP", "--public", "--history")
+    assert out["history_commits"] == [], "without -i the pickaxe stays case-sensitive"

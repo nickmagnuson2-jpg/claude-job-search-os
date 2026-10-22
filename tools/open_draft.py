@@ -155,6 +155,8 @@ def copy_text_to_clipboard(text):
     clipboard still held the previous email (infrastructure-defects D2). Only a pbpaste
     that returns exactly `text` counts.
     """
+    if not text.strip():
+        return False  # an empty body delivers nothing, so it must not consume the draft
     try:
         if subprocess.run(["pbcopy"], input=text, text=True).returncode != 0:
             return False

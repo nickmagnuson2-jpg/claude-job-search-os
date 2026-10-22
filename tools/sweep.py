@@ -194,9 +194,16 @@ def public_paths() -> list[str]:
     return [p for p in paths if not os.path.islink(p)]
 
 
-def history_commits(pattern: str, *, regex: bool = False) -> list[str]:
-    """Commits on any ref whose diff added or removed `pattern` (pickaxe; case-sensitive)."""
+def history_commits(pattern: str, *, regex: bool = False, ignore_case: bool = False) -> list[str]:
+    """Commits on any ref whose diff added or removed `pattern` (git log -S pickaxe).
+
+    -i must reach this query too: a scrub check that is case-insensitive on the tree and
+    case-sensitive on history misses a commit carrying another capitalization."""
     flags = ["--pickaxe-regex"] if regex else []
+    if ignore_case:
+        flags = ["--pickaxe-regex", "--regexp-ignore-case"]
+        if not regex:
+            pattern = re.escape(pattern)
     return _git("log", "--all", "--format=%h %ad %s", "--date=short", *flags, "-S", pattern)
 
 
@@ -239,7 +246,8 @@ def main(argv: list[str]) -> int:
 
     result["status"] = "ok"
     if args.history:
-        result["history_commits"] = history_commits(args.pattern, regex=args.regex)
+        result["history_commits"] = history_commits(args.pattern, regex=args.regex,
+                                                    ignore_case=args.ignore_case)
     sys.stdout.write(json.dumps(result, indent=2) + "\n")
     if result.get("control_ok") is False:
         return 3

@@ -1201,6 +1201,8 @@ def main():
 
     repo_root = Path(args.repo_root).resolve()
     tools_dir = repo_root / "tools"
+    if args.list_labels and args.auth:
+        parser.error("--list-labels is read-only and --auth writes state; run them separately.")
     if args.job_search_label and args.label_id:
         parser.error("--job-search-label and --label-id are mutually exclusive.")
     if args.job_search_label:

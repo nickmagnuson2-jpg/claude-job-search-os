@@ -89,3 +89,10 @@ def test_a_paste_draft_is_kept_when_the_clipboard_does_not_hold_it(run_main, cap
 def test_a_draft_with_a_recipient_or_cc_still_opens_compose(run_main, head):
     seen = run_main(head + "BODY:\nHi Casey\n")
     assert len(seen["opened"]) == 1 and seen["consumed"] == 1
+
+
+def test_an_empty_body_never_counts_as_copied(monkeypatch):
+    """An empty clipboard 'matches' an empty body exactly; that is not a delivery."""
+    _fake_clipboard(monkeypatch)
+    assert od.copy_text_to_clipboard("") is False
+    assert od.copy_text_to_clipboard("  \n") is False

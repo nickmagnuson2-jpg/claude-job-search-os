@@ -827,3 +827,11 @@ def test_list_labels_returns_id_name_type_sorted_by_name():
         {"id": "INBOX", "name": "INBOX", "type": "system"},
         {"id": "Label_9", "name": "Job Search", "type": "user"},
         {"id": "Label_1", "name": "zeta", "type": "user"}]
+
+
+def test_list_labels_refuses_to_combine_with_auth():
+    """--auth writes OAuth state and seeds history; --list-labels promises read-only."""
+    import subprocess
+    r = subprocess.run([sys.executable, str(Path(gmail_fetch.__file__)), "--list-labels", "--auth"],
+                       capture_output=True, text=True)
+    assert r.returncode == 2 and "run them separately" in r.stderr

@@ -189,8 +189,8 @@ between them. Three rules would have cut most of it:
       can fire on prose that quotes its own pattern; a poll can be satisfied by its own side
       effect (a loop waiting for a file that its own first iteration writes, a grep for a marker
       that the check itself prints). Before trusting the exit, name what else could make it
-      true. macOS `pgrep` already excludes itself and its ancestors (`man pgrep`, `-a`), so a
-      `pgrep -f` check does not match the shell running it.
+      true. macOS `pgrep` already excludes itself and its ancestors by default (`-a` turns
+      that off; `man pgrep`), so a plain `pgrep -f` check does not match the shell running it.
       (`feedback_a_poller_must_not_match_itself.md`)
 - [ ] **Write the test file** with BOTH block cases AND clean cases — including token-in-quoted-pattern and token-in-heredoc.
 - [ ] **Smoke it live** before trusting it: pipe a real payload through, and run the actual command you expect to be clean (e.g. the grep you'll use to verify the sweep). Unit tests use inputs you chose; smoke surfaces the input shapes you didn't imagine (`feedback_smoke_test_catches_unit_test_blind_spots.md`).
