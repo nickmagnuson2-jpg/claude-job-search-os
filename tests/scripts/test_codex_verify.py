@@ -1511,6 +1511,46 @@ def test_guard_review_with_a_bar_or_no_guard_dispatches():
     assert cv.refuse_guard_review_without_bar(None, "") == ""
 
 
+# The gate's demand is printed before dispatch (2026-10-21: two pushes blocked because
+# the reviewer was picked without reading the gate's tier and family rules).
+def test_gate_requirement_names_tier_need_and_whether_this_run_counts():
+    paths = ["tools/check_sealed_read.py"]
+    fable = cv.gate_requirement(paths, "fable")
+    assert fable.startswith("GATE: tier 3") and "tools/check_sealed_read.py" in fable
+    assert "needs 2 distinct" in fable and "(fable=anthropic) does NOT count" in fable
+    assert "(codex=openai, grok=xai)" in fable
+    assert "counts as one" in cv.gate_requirement(paths, "grok")
+    tier1 = cv.gate_requirement(["tools/foo.py"], "codex")   # qualified by size, not path
+    assert tier1.startswith("GATE: tier 1") and "only if it changes" in tier1
+    assert "needs 1 distinct" not in tier1
+    assert cv.gate_requirement(["data/x.md"], "codex") == ""
+    assert cv.gate_requirement(None, "codex") == ""
+
+
+def test_main_prints_the_gate_requirement(capsys):
+    cv.main(["--target", "t", "--paths", "tools/foo.py", "--print-only"])
+    assert "GATE: tier 1" in capsys.readouterr().err
+
+
+def test_main_prints_nothing_for_a_path_the_gate_ignores(capsys):
+    cv.main(["--target", "t", "--paths", "data/x.md", "--print-only"])
+    assert capsys.readouterr().err == ""
+
+
+def test_main_without_a_bar_adds_no_bar_block(capsys):
+    cv.main(["--target", "t", "--paths", "data/x.md", "--print-only"])
+    assert "BAR (threat model" not in capsys.readouterr().out
+
+
+def test_imports_as_a_package_without_tools_on_the_path(tmp_path):
+    # check_guard_edit_approval is imported bare; the module must put tools/ on the path
+    # itself, since the test conftest does it for every in-process test.
+    code = f"import sys; sys.path.insert(0, {str(REPO_ROOT)!r}); import tools.codex_verify"
+    r = subprocess.run([sys.executable, "-I", "-c", code], cwd=tmp_path,
+                       capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+
+
 def test_main_refuses_without_a_bar_and_carries_the_bar(capsys):
     assert cv.main(["--target", "t", "--paths", "tools/check_x.py", "--print-only"]) == 4
     assert "REFUSING" in capsys.readouterr().err

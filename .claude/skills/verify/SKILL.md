@@ -53,8 +53,10 @@ sent to the reviewer. Quote the guard's own contract if its docstring has one.
 
 Why it is a gate: on 2026-10-20/21 one hook fix took ten review rounds with no stated
 bar, and the next converged in two once the bar was written down. A reviewer asked to
-find bypasses with no stopping rule always finds one. Ask Fable or Grok, not Codex:
-Codex refuses bypass-hunting prompts under OpenAI's cyber filter.
+find bypasses with no stopping rule always finds one. Codex refuses bypass-hunting prompts
+under OpenAI's cyber filter, but answers the same review framed as correctness and
+regression against the stated bar. Guard changes need an OpenAI review AND an xAI review to
+clear the gate (`cross_model_gate.py` counts model families), so Fable alone does not.
 
 ## Reader review: a finished document someone will read
 
@@ -181,6 +183,14 @@ defect in a new costume.
 
 The gate's block message names what is blocking and the commands that clear it; follow
 it. This section holds only what the gate cannot know.
+
+0. **Choose reviewers against the `GATE:` line, before dispatch.** `codex_verify.py` prints
+   to stderr what the gate will demand for `--paths`: the tier, how many families outside
+   Anthropic it needs, and whether this run counts. Enforcement machinery needs both
+   `codex` and `grok`, and `fable` never counts toward the total. A commit by anyone
+   after a review, even to unrelated files, makes that review out of date. Before telling
+   Nick to push, run the gate's dry run (`cross_model_gate.py --since <newest commit's
+   epoch> --numstat <file>`); exit 0 means clear.
 
 1. **Run `/audit-pii` before the last verification round, not after.** The audit commits
    nothing, but a scrub it finds needs a commit, and a commit makes the earlier reviews

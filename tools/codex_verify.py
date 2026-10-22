@@ -813,7 +813,7 @@ def refuse_under_active_mutation(repo_root: Path, paths: list[str]) -> str:
 # next once the bar was written down; ~15 hours for two fixes).
 # Which paths are guard infrastructure is decided by the guard hook itself, imported so
 # the two cannot drift (a hand-copied pattern here was the third copy: review, 2026-10-21).
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+# tools/ is already on sys.path: cross_model_gate puts it there on import (line 58).
 from check_guard_edit_approval import is_guarded  # noqa: E402
 
 
@@ -832,6 +832,30 @@ def refuse_guard_review_without_bar(paths, bar: str) -> str:
         "(accidental or deliberate), what a finding must show to count, and when the\n"
         "review stops. If the guard's docstring states its contract, quote it.\n"
         "Rule: memory feedback_set_the_bar_before_a_bypass_review.md")
+
+
+def gate_requirement(paths, model: str) -> str:
+    """What the pre-push gate will demand for these paths, and whether this run counts.
+
+    Printed before dispatch so the reviewer is chosen against the gate, not discovered
+    at push time (2026-10-21: two blocked pushes, one from a same-family review, one
+    from a tier-3 push cleared by a single outside family)."""
+    tier, triggers, reason = gate.classify(paths or [])
+    if tier < 2:    # below tier 2 the gate qualifies a push by its size, not its paths
+        return "" if not tier else (
+            f"GATE: tier 1 for {', '.join(triggers)}: a push needs 1 model family outside "
+            f"{gate.AUTHOR_FAMILY} only if it changes >= {gate.LARGE_CHANGE_LINES} code "
+            f"lines or >= {gate.BROAD_CHANGE_FILES} code files.")
+    need = gate.models_required(tier)
+    family = MODELS[model].family
+    outside = sorted(f"{name}={m.family}" for name, m in MODELS.items()
+                     if m.family != gate.AUTHOR_FAMILY)
+    counts = ("does NOT count (same family as the author)" if family == gate.AUTHOR_FAMILY
+              else "counts as one")
+    return (f"GATE: tier {tier} ({reason}) for {', '.join(triggers)}.\n"
+            f"Push needs {need} distinct model family(ies) outside {gate.AUTHOR_FAMILY} "
+            f"({', '.join(outside)}), each recorded after the newest pushed commit. "
+            f"This run ({model}={family}) {counts}.")
 
 
 def main(argv=None) -> int:
@@ -872,6 +896,9 @@ def main(argv=None) -> int:
     if refusal:
         print(refusal, file=sys.stderr)
         return 4
+    requirement = gate_requirement(args.paths, args.model)
+    if requirement:
+        print(requirement, file=sys.stderr)
 
     # Before anything else: a verifier pointed at a mutated tree reviews fiction.
     if not args.print_only:
