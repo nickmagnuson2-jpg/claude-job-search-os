@@ -3,6 +3,9 @@
 """agent_core.py - Exa Agent engine (raw-request layer to dodge exa_py 2.13.0 float bug)."""
 import os, re, time
 from pathlib import Path
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from slug import slugify as _slugify  # noqa: E402
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 BETAS = ["agent-2026-05-07"]
@@ -79,8 +82,7 @@ def filter_known(candidates, known_names):
 
 
 def guess_slug(name):
-    s = re.sub(r"[.,&]", " ", (name or "").lower())
-    return re.sub(r"[^a-z0-9]+", "-", s).strip("-")
+    return _slugify(name)
 
 
 def load_known_names(paths):

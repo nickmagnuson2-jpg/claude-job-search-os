@@ -53,8 +53,8 @@ def is_promo(subject: str, sender: str) -> tuple[bool, str]:
 
 
 def slugify_subject(subject: str, max_len: int = 60) -> str:
-    """Kebab-case a subject: fold accents, drop apostrophes, collapse, cap length."""
-    return _slugify(subject, max_len, "meditation", elide_apostrophes=True)
+    """Kebab-case a subject: fold accents, drop punctuation, collapse, cap length."""
+    return _slugify(subject, max_len, "meditation", drop_punctuation=True)
 
 
 def archive_filename(date_str: str, subject: str) -> str:

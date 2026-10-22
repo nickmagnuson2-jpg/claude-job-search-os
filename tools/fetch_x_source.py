@@ -161,7 +161,7 @@ def article_to_text(content):
 
 def slugify(text: str, fallback: str = "x-post") -> str:
     """lowercase-hyphens slug (repo output convention)."""
-    return _slugify(text, 80, fallback, elide_apostrophes=True)
+    return _slugify(text, 80, fallback, drop_punctuation=True)
 
 
 def normalize(payload, status_id: str, url: str) -> dict:

@@ -17,6 +17,9 @@ import json
 import re
 from datetime import date, datetime, timedelta
 from pathlib import Path
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from slug import slugify as _slugify  # noqa: E402
 
 
 def parse_args():
@@ -72,7 +75,7 @@ def load_pipeline_targets(repo_root: Path) -> set:
             continue
         if any(k in stage for k in TERMINAL_STAGE_KEYWORDS):
             continue  # dead lead — not a target
-        slugs.add(re.sub(r"[^a-z0-9]+", "-", company.lower()).strip("-"))
+        slugs.add(_slugify(company))
     return slugs
 
 

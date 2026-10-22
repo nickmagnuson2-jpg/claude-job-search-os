@@ -78,7 +78,7 @@ def parse_wispr_ts(ts: str) -> datetime:
 
 
 def slugify(text: str, maxlen: int = 40) -> str:
-    return _slugify(text, maxlen, "untitled", elide_apostrophes=True)
+    return _slugify(text, maxlen, "untitled", drop_punctuation=True)
 
 
 def is_low_signal(content: str) -> tuple[bool, str]:

@@ -18,9 +18,12 @@ def test_the_output_slug_convention(text, expected):
     assert slugify(text) == expected
 
 
-def test_apostrophes_can_be_elided_including_the_curly_one():
-    assert slugify("Cato Wasn't Always", elide_apostrophes=True) == "cato-wasnt-always"
-    assert slugify("Cato Wasn’t Always", elide_apostrophes=True) == "cato-wasnt-always"
+def test_punctuation_can_be_dropped_instead_of_split_on():
+    """The title/filename callers always deleted punctuation: v1.2 -> v12, wasn't -> wasnt."""
+    assert slugify("Cato Wasn't Always", drop_punctuation=True) == "cato-wasnt-always"
+    assert slugify("Cato Wasn’t Always", drop_punctuation=True) == "cato-wasnt-always"
+    assert slugify("v1.2 Release: notes", drop_punctuation=True) == "v12-release-notes"
+    assert slugify("v1.2 Release") == "v1-2-release"
 
 
 def test_maxlen_cuts_without_leaving_a_trailing_hyphen():

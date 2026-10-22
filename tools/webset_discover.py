@@ -20,6 +20,8 @@ import os
 import re
 import sys
 from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from slug import slugify as _slugify  # noqa: E402
 
 # Repo root on sys.path so `tools.career_scanner.*` imports resolve when this
 # script is invoked directly (python3 tools/webset_discover.py).
@@ -114,9 +116,7 @@ def filter_known(candidates: list, known_names: set) -> list:
 
 def guess_slug(name: str) -> str:
     """Lowercase-hyphenate a company name into a best-effort ATS slug."""
-    s = re.sub(r"[.,&]", " ", (name or "").lower())
-    s = re.sub(r"[^a-z0-9]+", "-", s).strip("-")
-    return s
+    return _slugify(name)
 
 
 def run_webset(client, payload, timeout: int = 1800):

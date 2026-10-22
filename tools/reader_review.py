@@ -51,6 +51,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
+from tools.slug import slugify as _slugify  # noqa: E402
 
 # Imported, not copied: the denied trees and the findings parser are the facts the scope
 # block reports, and a second copy here could disagree with the sandbox that enforces them.
@@ -420,7 +421,7 @@ def main(argv=None) -> int:
         print(f"reader_review: no such document: {doc}", file=sys.stderr)
         return 2
     models = [m.strip() for m in a.models.split(",") if m.strip()]
-    slug = a.slug or re.sub(r"[^a-z0-9]+", "-", doc.stem.lower()).strip("-")
+    slug = a.slug or _slugify(doc.stem)
     stamp = dt.date.today().strftime("%m%d%y")
     out_dir = repo / "output" / "analysis" / "reader-review-inputs" / f"{stamp}-{slug}"
     text_path, images = render(doc, out_dir)

@@ -102,7 +102,7 @@ def segments_to_text(segments) -> str:
 
 def slugify(text: str, fallback: str = "video") -> str:
     """lowercase-hyphens slug from a title (repo output convention)."""
-    return _slugify(text, 80, fallback, elide_apostrophes=True)
+    return _slugify(text, 80, fallback, drop_punctuation=True)
 
 
 def to_markdown(block: dict) -> str:

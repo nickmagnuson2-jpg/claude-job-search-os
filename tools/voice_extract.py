@@ -23,6 +23,7 @@ from pathlib import Path
 
 # Reuse gmail_fetch.py functions including injection sanitization
 sys.path.insert(0, str(Path(__file__).parent))
+from slug import slugify as _slugify  # noqa: E402
 from gmail_fetch import (
     get_or_refresh_creds,
     extract_plain_text,
@@ -220,7 +221,7 @@ def main():
         # Save
         dt = _parse_email_date(date)
         date_prefix = dt.strftime("%Y%m%d-%H%M%S")
-        slug = re.sub(r"[^a-z0-9]+", "-", subject.lower()).strip("-")[:40] or "email"
+        slug = _slugify(subject, 40, "email")
         filename = f"{date_prefix}-{slug}.md"
 
         content = (
