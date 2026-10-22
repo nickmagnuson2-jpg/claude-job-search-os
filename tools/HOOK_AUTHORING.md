@@ -146,6 +146,10 @@ between them. Three rules would have cut most of it:
 - [ ] **Extractors: assert that named known items ARE captured, and near-misses are not.**
       Self-consistency is not coverage — a detector can be perfectly consistent about the
       39 lines it sees and silently miss the 201 it does not.
+- [ ] **Every cap reports its own drop.** A `slice()`, `head`, `LIMIT` or top-N over a set of
+      findings, claims or files must print both counts, eligible and processed, into its own
+      output. A truncation that does not announce itself reads as full coverage.
+      (`feedback_a_silent_cap_reads_as_full_coverage.md`)
 - [ ] **Anchor the token to command position** — start, or after a separator (`|`, `;`, `&`, `(`, newline), with optional leading `VAR=val`. Never a bare substring.
 - [ ] **Strip quoted literals before matching** so a boundary char inside a string isn't read as shell syntax.
 - [ ] **Negative lookahead** for adjacent word chars / `.` / `-` so prefixed names (`python3`, `python-dateutil`, `python.md`) stay clean.
@@ -181,6 +185,13 @@ between them. Three rules would have cut most of it:
 - [ ] **BLOCK (exit 2) only for unambiguous, single-correction violations** (per `feedback_warn_vs_block_hook_design.md`). PreToolUse WARN-via-exit-0+stderr is NOT surfaced by Claude Code — a true "warn" is invisible, so a real warning must be exit 2 with a corrective message, reserved for cases that always fail anyway. **The exception, and it is a real one: on `UserPromptSubmit`, stdout IS the injection channel, so exit 0 DELIVERS.** That is the correct home for a reminder that must not block — the surface did not exist in this repo until `check_status_query_verification.py` (2026-09-07), and it is now the fourth option alongside Stop, pre-commit and a skill step. Do not generalise it backwards: on PreToolUse, exit 0 plus stderr still reaches nobody.
 - [ ] **Distinguishable block message** — make the BLOCKED line specific enough that a transcript scan can tell a true catch from a false-positive.
 - [ ] **Log false-positives manually — this is the ONLY telemetry path for them.** Auto-capture cannot see or classify a hook block: a block is intent-ambiguous (a correct catch vs a wrong block look identical, and only the agent in-context knows which). The PostToolUse auto-logger is blind to PreToolUse blocks entirely; the transcript-scan backfill miscounts a false-positive as another occurrence of the thing being blocked. So if a hook blocks work you believe is legitimate, log it *at that moment*: `PYTHONIOENCODING=utf-8 python3 tools/friction_log.py append <hook>.py "FP: <what got wrongly blocked>"`. A distinct nature keeps it separate from the true-positive row. Origin: 2026-06-02 #4 investigation. **PARKED — auto-logger PreToolUse-block blindness. REOPEN gate: if a buggy hook is discovered late because its false-positives were invisible/miscounted in the ledger, build a stderr FP-logging hint for BLOCK-tier hooks.**
+- [ ] **A wait loop, retry or guard must not be able to satisfy its own exit condition.** A hook
+      can fire on prose that quotes its own pattern; a poll can be satisfied by its own side
+      effect (a loop waiting for a file that its own first iteration writes, a grep for a marker
+      that the check itself prints). Before trusting the exit, name what else could make it
+      true. macOS `pgrep` already excludes itself and its ancestors (`man pgrep`, `-a`), so a
+      `pgrep -f` check does not match the shell running it.
+      (`feedback_a_poller_must_not_match_itself.md`)
 - [ ] **Write the test file** with BOTH block cases AND clean cases — including token-in-quoted-pattern and token-in-heredoc.
 - [ ] **Smoke it live** before trusting it: pipe a real payload through, and run the actual command you expect to be clean (e.g. the grep you'll use to verify the sweep). Unit tests use inputs you chose; smoke surfaces the input shapes you didn't imagine (`feedback_smoke_test_catches_unit_test_blind_spots.md`).
 
