@@ -205,20 +205,20 @@ def candidate_paths(tok: str, root: Path, home: Path | None = None) -> list[Path
         2026-09-02, 2026-09-07 twice. Only those two forms: a deeper path is checked
         exactly, because a wrong directory is itself a defect worth catching.
 
-    The extra places apply only to a plainly relative token. One that starts with "~",
-    "/" or "." or contains a ".." segment gets no extra places: it is checked only where
-    it points from the repo root (which may be outside the repo, as it always could).
-    This is narrower than before 2026-10-21, when the sibling-repo lookup also accepted a
-    mid-token ".." ("a/../b/x.md"); prose does not write paths that way.
+    The extra places apply only to a relative token: one that starts with "~", "/" or
+    "." is checked only where it points. A ".." segment anywhere else rules out the
+    skills place, which resolves inside this repo; the sibling place accepts it, as the
+    sibling lookup always did.
     """
     # Joining an absolute path onto root yields that path unchanged, so "/x" and "~/x"
     # come back as a single candidate from the escape check below.
     out = [root / os.path.expanduser(tok)]
-    if not tok or tok.startswith(("~", "/", ".")) or ".." in tok.split("/"):
+    if not tok or tok.startswith(("~", "/", ".")):
         return out
     if "/" in tok:
         out.append(root.parent / tok)
-    out.append(root / ".claude" / "skills" / tok)
+    if ".." not in tok.split("/"):
+        out.append(root / ".claude" / "skills" / tok)
     name = tok[len("memory/"):] if tok.startswith("memory/") else tok
     if name and "/" not in name:
         out.append(memory_tier(root, home) / name)

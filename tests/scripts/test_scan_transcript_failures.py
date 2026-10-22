@@ -403,6 +403,7 @@ def test_a_missing_payload_path_falls_back_to_the_constructed_one(tmp_path, monk
     """Issue #44450: in a git worktree the payload path can point at a file that does
     not exist. Without the fallback the hook silently does nothing, forever, in every
     worktree -- no error, just no friction ever recorded."""
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
     monkeypatch.setenv("HOME", str(tmp_path))
     project = "/some/project/dir"
     monkeypatch.setenv("CLAUDE_PROJECT_DIR", project)
@@ -415,6 +416,7 @@ def test_a_missing_payload_path_falls_back_to_the_constructed_one(tmp_path, monk
 
 
 def test_the_fallback_is_tried_even_with_no_payload_path(tmp_path, monkeypatch):
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("CLAUDE_PROJECT_DIR", "/p")
     built = tmp_path / ".claude" / "projects" / "-p"
@@ -649,3 +651,27 @@ def test_an_old_cursor_with_no_logged_ids_still_recovers_it_once(raced):
     start = max(0, raced.error_line - st.OVERLAP_LINES)
     _, logged, _ = st.scan(raced.path, start, None)
     assert logged == 1
+
+
+def test_the_fallback_looks_under_claude_config_dir(tmp_path, monkeypatch):
+    """The fallback uses hook_runtime.claude_project_dir, so it finds the folder where
+    Claude Code keeps projects when CLAUDE_CONFIG_DIR moves it."""
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "cfg"))
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", "/p")
+    built = tmp_path / "cfg" / "projects" / "-p"
+    built.mkdir(parents=True)
+    (built / "s.jsonl").write_text("", encoding="utf-8")
+    assert st.resolve_transcript_path({"session_id": "s"}) == built / "s.jsonl"
+
+
+def test_a_trailing_slash_on_the_project_dir_names_the_real_folder(tmp_path, monkeypatch):
+    """Changed on purpose 2026-10-21: the old replace-only slug turned "/p/" into "-p-",
+    a folder Claude Code never creates. The path is now normalised first."""
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", "/p/")
+    built = tmp_path / ".claude" / "projects" / "-p"
+    built.mkdir(parents=True)
+    (built / "s.jsonl").write_text("", encoding="utf-8")
+    assert st.resolve_transcript_path({"session_id": "s"}) == built / "s.jsonl"

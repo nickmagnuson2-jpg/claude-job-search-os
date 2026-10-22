@@ -4,7 +4,11 @@
 Until 2026-10-21 these helpers were copied into up to eleven tools (pipe_write,
 networking_write, act_apply, remember_apply, todo_write, personal_todo_write,
 person_write, my_world_synthesis, granola_save, living_log_append,
-migrate_todos_column_drift). The copies were identical, so they live here once.
+migrate_todos_column_drift). Each group of identical copies lives here once. Three
+differences from what they replaced: table_insert_pos takes the caller's is_data_row as
+a fourth argument; safe_cell is todo_write's former _safe_cell; and write_atomic creates
+a missing parent folder, which the copies in todo_write, personal_todo_write,
+granola_save and living_log_append did not.
 
 MECHANISM ONLY. What counts as a data row (which header names to skip) is each
 writer's policy, so `table_insert_pos` takes the caller's `is_data_row`. Variants

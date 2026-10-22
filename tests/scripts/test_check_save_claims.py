@@ -692,3 +692,15 @@ def test_a_slashed_or_tilde_token_never_walks_the_repo(tmp_path, monkeypatch):
     monkeypatch.setattr(csc.os, "walk", no_walk)
     assert csc.exists_anywhere("docs/missing.md", tmp_path) is False
     assert csc.exists_anywhere("~/missing-xyz.md", tmp_path) is False
+
+
+def test_a_mid_token_dotdot_still_reaches_a_sibling_repo_but_not_skills(tmp_path):
+    """Kept from the pre-2026-10-21 sibling lookup, which accepted "a/../b/x.md";
+    the skills place never did."""
+    root = tmp_path / "projects" / "repo"
+    (tmp_path / "projects" / "b").mkdir(parents=True)
+    (tmp_path / "projects" / "a").mkdir()   # the OS resolves "a/.." only if "a" exists
+    (tmp_path / "projects" / "b" / "x.md").write_text("x")
+    root.mkdir()
+    assert csc.exists_anywhere("a/../b/x.md", root) is True
+    assert root / ".claude" / "skills" / "a/../b/x.md" not in csc.candidate_paths("a/../b/x.md", root)
