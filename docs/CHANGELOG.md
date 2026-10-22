@@ -30,9 +30,9 @@ data, mutation-tested.
     `table_insert_pos`. `test_md_table.py` now pins every branch.
   - `personal_todo_write` never got the 2026-07 fix that stops a "|" in a value from
     splitting a row. It now uses the shared `safe_cell`.
-- **PII denylist**: an ordinary word added to `STOPWORDS` on 2026-10-06 moved to
-  `INDUSTRY_WORDS`. `STOPWORDS` also removes a pipeline target spelled the same way
-  from every tier, which `test_gen_pii_stopwords_guard` caught.
+- **PII denylist**: an operations word added to `STOPWORDS` on 2026-10-06 moved to
+  `INDUSTRY_WORDS`, the list for ordinary words the dictionary omits. `STOPWORDS` is
+  for generic glue words.
 
 ## 2026-10-21: One writer for outreach-log statuses
 

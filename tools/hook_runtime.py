@@ -319,7 +319,7 @@ def claude_project_dir(root, config_dir=None) -> Path:
 
     The folder name is the absolute project path with every "/" turned into "-"; dots
     and other characters are kept (measured against ~/.claude/projects on 2026-10-21:
-    "kiki-41.16", "-.claude-worktrees-..."). `abspath`, not `resolve()`: Claude Code
+    "app-1.2", "-.claude-worktrees-..."). `abspath`, not `resolve()`: Claude Code
     names the folder from the literal path, so following a symlink could name a
     different folder. The config folder is CLAUDE_CONFIG_DIR when set, else ~/.claude.
 

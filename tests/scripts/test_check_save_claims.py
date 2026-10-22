@@ -330,15 +330,15 @@ def test_a_filename_containing_a_verb_alone_is_not_a_claim():
 
 
 # ---------- peer-repo resolution (friction ladder 3rd rung, 2026-09-04) ----------
-# Sibling projects live beside this repo (30-projects/job-search, .../mag5-advisors,
+# Sibling projects live beside this repo (30-projects/job-search, .../peer-repo,
 # .../personal) and prose names their files repo-relatively. Resolving those against
 # CLAUDE_PROJECT_DIR reported genuine cross-repo writes as false claims, 3 times.
 
 def _peer_layout(tmp):
-    """Build 30-projects/{job-search,mag5-advisors} and return (root, peer)."""
+    """Build 30-projects/{job-search,peer-repo} and return (root, peer)."""
     projects = Path(tmp) / "30-projects"
     root = projects / "job-search"
-    peer = projects / "mag5-advisors" / "data"
+    peer = projects / "peer-repo" / "data"
     peer.mkdir(parents=True)
     root.mkdir(parents=True)
     return root, peer
@@ -348,14 +348,14 @@ def test_peer_repo_file_that_exists_is_not_reported_missing():
     with tempfile.TemporaryDirectory() as tmp:
         root, peer = _peer_layout(tmp)
         (peer / "method.md").write_text("x", encoding="utf-8")
-        assert csc.exists_anywhere("mag5-advisors/data/method.md", root) is True
+        assert csc.exists_anywhere("peer-repo/data/method.md", root) is True
 
 
 def test_peer_repo_file_that_does_not_exist_is_still_reported_missing():
     """The guard must not blanket-pass anything with a sibling-looking prefix."""
     with tempfile.TemporaryDirectory() as tmp:
         root, _ = _peer_layout(tmp)
-        assert csc.exists_anywhere("mag5-advisors/data/never-written.md", root) is False
+        assert csc.exists_anywhere("peer-repo/data/never-written.md", root) is False
 
 
 def test_unknown_first_segment_is_not_treated_as_a_peer_repo():
@@ -368,7 +368,7 @@ def test_a_dotdot_token_is_checked_only_where_it_points():
     """'../x' is joined onto root and nowhere else: no sibling or skills candidate."""
     with tempfile.TemporaryDirectory() as tmp:
         root, _ = _peer_layout(tmp)
-        tok = "../mag5-advisors/data/method.md"
+        tok = "../peer-repo/data/method.md"
         assert csc.candidate_paths(tok, root) == [root / tok]
 
 

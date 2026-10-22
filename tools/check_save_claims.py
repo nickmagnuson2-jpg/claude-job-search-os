@@ -198,7 +198,7 @@ def candidate_paths(tok: str, root: Path, home: Path | None = None) -> list[Path
 
     Each extra place exists because a real write was reported as a false claim:
       - root.parent/<tok>: a sibling repo named repo-relatively
-        ("mag5-advisors/data/method.md"). Fired 3x, 2026-09-02..04.
+        ("peer-repo/data/method.md"). Fired 3x, 2026-09-02..04.
       - .claude/skills/<tok>: a short skill path ("generate-cv/SKILL.md"). Fired 3x,
         2026-10-01, 2026-10-21 twice.
       - the memory tier: a bare rule-file name or a `memory/`-prefixed one. Fired 3x,
