@@ -47,7 +47,9 @@ BOUNDED, NOT "NEVER BLOCKS". An earlier version of this docstring claimed the ho
 never blocks. That was false and an external review reproduced it: `sys.stdin.read()`
 waits for EOF, so a producer that writes and retains the pipe stalled the hook until
 the host's 30-second timeout. The honest and now-provable contract is BOUNDED: this
-hook reads stdin for at most `_STDIN_DEADLINE_S` seconds, then proceeds regardless.
+hook reads stdin for at most `hook_runtime.STDIN_DEADLINE_S` seconds (and at most
+`MAX_STDIN_BYTES`), then proceeds regardless. The bounded reader was written here first
+and moved to hook_runtime, which every other hook uses; this hook adopted it 2026-10-21.
 Do not restore the absolute claim; assert the deadline instead, which
 `test_a_retained_open_stdin_does_not_stall_past_the_deadline` does.
 
@@ -57,12 +59,12 @@ Exit codes:
 """
 from __future__ import annotations
 
-import json
 import os
 import re
-import select
 import sys
-import time
+
+# No sys.path line: run as a script, Python already puts this file's folder first.
+from hook_runtime import read_payload
 
 # Curly apostrophes reach here constantly: macOS smart quotes, and Wispr dictation, which is
 # how a large share of this user's prompts are written. Matching only U+0027 would make the
@@ -164,88 +166,6 @@ def extract_prompt(data) -> str:
     return ""
 
 
-# The host's documented default timeout for a UserPromptSubmit hook is 30 seconds,
-# and it waits for the hook before processing the prompt. Our own deadline has to be
-# far under that or it never fires first. Reading a JSON payload off a local pipe
-# takes milliseconds; 2 seconds is ~1000x headroom and 15x under the host.
-_STDIN_DEADLINE_S = 2.0
-
-# The deadline bounds TIME. It does not bound VOLUME, and those are different
-# failure modes -- found by test, not by review. A producer flooding a pipe for two
-# seconds delivers hundreds of megabytes; the read loop then exits on schedule and
-# the process spends far longer than its own deadline in `b"".join(...).decode()`
-# and `json.loads()`, which is the stall the deadline was added to prevent, moved
-# one step downstream. A UserPromptSubmit payload is a prompt, so 1 MiB is already
-# orders of magnitude more than the real thing.
-_MAX_STDIN_BYTES = 1024 * 1024
-
-
-def read_stdin_bounded(deadline_s: float = _STDIN_DEADLINE_S) -> str:
-    """Read stdin until EOF or the deadline, whichever comes first.
-
-    WHY NOT `sys.stdin.read()` (codex F1, 2026-09-07). That waits for EOF. A producer
-    that writes bytes, flushes, and RETAINS the pipe never sends EOF, so the hook
-    blocks until the host kills it -- stalling the user's prompt for the full host
-    timeout. "Never blocks" was the claim and it was false; a wedged or atypical
-    producer is all it takes.
-
-    A size cap does not fix this: the problem is waiting, not volume. A DEADLINE does.
-    `select` reports readability, `os.read` takes what is there, and an empty read is
-    EOF. When the clock runs out we return what we have and let the caller fail open.
-
-    Falls back to a plain read if `select` cannot poll this fd (not the case on the
-    platform this runs on, but a non-pollable stdin should degrade to the old
-    behaviour rather than crash -- the hook must never be the thing that breaks).
-    """
-    try:
-        fd = sys.stdin.fileno()
-    except Exception:
-        # NO UNBOUNDED FALLBACK (codex F4, 2026-09-07). This used to call
-        # sys.stdin.read(), which is precisely the unbounded wait this function
-        # exists to remove -- a "graceful degradation" that abandoned both halves
-        # of the contract the moment it was needed. A bounded reader that cannot
-        # poll must fail open on what it has, which here is nothing.
-        return ""
-
-    chunks: list[bytes] = []
-    total = 0
-    end = time.monotonic() + deadline_s
-    while True:
-        remaining = end - time.monotonic()
-        if remaining <= 0:
-            break
-        try:
-            ready, _, _ = select.select([fd], [], [], remaining)
-        except (OSError, ValueError):
-            # Same reasoning as the fileno() arm: never fall back to an unbounded
-            # read. Return what was already collected, which also stops the old
-            # behaviour of DISCARDING accumulated chunks on the way out.
-            break
-        if not ready:
-            break
-        # CLAMPED to the remaining allowance (codex F3, 2026-09-07). Asking for a
-        # full 64 KiB and checking the total AFTERWARDS lets a partial read
-        # de-align the running count from the chunk boundary, so a later read can
-        # cross the ceiling by up to 65,535 bytes. Reproduced through the CLI at
-        # 1,048,577 bytes: the hook read past its own declared limit, parsed the
-        # complete JSON, and fired. "At most 1 MiB" has to be enforced at the
-        # request, not audited after the fact.
-        want = min(65536, _MAX_STDIN_BYTES - total)
-        if want <= 0:
-            break              # volume ceiling reached exactly
-        try:
-            chunk = os.read(fd, want)
-        except (OSError, ValueError):
-            break
-        if not chunk:          # EOF, the normal path
-            break
-        chunks.append(chunk)
-        total += len(chunk)
-        if total >= _MAX_STDIN_BYTES:
-            break              # volume ceiling; see _MAX_STDIN_BYTES
-    return b"".join(chunks).decode("utf-8", "replace")
-
-
 def _emit(text: str) -> None:
     """Write the reminder, surviving a consumer that has gone away.
 
@@ -273,13 +193,11 @@ def _emit(text: str) -> None:
 
 
 def main() -> int:
-    raw = read_stdin_bounded()
-    try:
-        data = json.loads(raw)
-    except (json.JSONDecodeError, ValueError, TypeError):
+    p = read_payload()
+    if not p.ok:
         return 0
 
-    if is_status_query(extract_prompt(data)):
+    if is_status_query(extract_prompt(p.data)):
         # stdout, not stderr: on UserPromptSubmit stdout is the injection channel.
         _emit(REMINDER)
     return 0

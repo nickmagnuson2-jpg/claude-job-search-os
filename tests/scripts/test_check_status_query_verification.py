@@ -25,6 +25,7 @@ HOOK = os.path.join(REPO_ROOT, "tools", "check_status_query_verification.py")
 
 sys.path.insert(0, os.path.join(REPO_ROOT, "tools"))
 import check_status_query_verification as sq  # noqa: E402
+import hook_runtime as hr  # noqa: E402
 
 
 def _run(prompt, key="prompt"):
@@ -326,18 +327,18 @@ def test_a_retained_open_stdin_does_not_stall_past_the_deadline():
     p.stdin.write('{not-json')      # partial, invalid
     p.stdin.flush()                  # ... and deliberately NOT closed
     try:
-        code = p.wait(timeout=sq._STDIN_DEADLINE_S + 8)
+        code = p.wait(timeout=hr.STDIN_DEADLINE_S + 8)
     except subprocess.TimeoutExpired:
         p.kill(); p.wait()
         raise AssertionError(
-            f"hook did not exit within {sq._STDIN_DEADLINE_S + 8}s on a retained "
+            f"hook did not exit within {hr.STDIN_DEADLINE_S + 8}s on a retained "
             "open stdin -- the read is unbounded and will stall the session")
     finally:
         try: p.stdin.close()
         except Exception: pass
     elapsed = time.monotonic() - start
     assert code == 0, f"expected exit 0, got {code}"
-    assert elapsed < sq._STDIN_DEADLINE_S + 8, f"took {elapsed:.1f}s"
+    assert elapsed < hr.STDIN_DEADLINE_S + 8, f"took {elapsed:.1f}s"
 
 
 def test_a_closed_stdout_does_not_produce_exit_120_or_stderr_noise():
@@ -364,7 +365,7 @@ def test_a_closed_stdout_does_not_produce_exit_120_or_stderr_noise():
 
 def test_the_deadline_is_short_enough_to_matter():
     """A deadline above the host's own timeout would be decoration."""
-    assert 0 < sq._STDIN_DEADLINE_S <= 5, (
+    assert 0 < hr.STDIN_DEADLINE_S <= 5, (
         "UserPromptSubmit's documented default host timeout is 30s; the hook's "
         "own deadline must be well under it or it never fires first")
 
@@ -382,8 +383,8 @@ def test_the_normal_eof_path_returns_immediately_not_at_the_deadline():
     code, out = _run("what's left?")
     elapsed = time.monotonic() - start
     assert code == 0 and out.strip()
-    assert elapsed < sq._STDIN_DEADLINE_S, (
-        f"normal EOF path took {elapsed:.2f}s against a {sq._STDIN_DEADLINE_S}s "
+    assert elapsed < hr.STDIN_DEADLINE_S, (
+        f"normal EOF path took {elapsed:.2f}s against a {hr.STDIN_DEADLINE_S}s "
         "deadline -- it is waiting out the clock instead of stopping at EOF")
 
 
@@ -418,7 +419,7 @@ def test_a_producer_that_never_stops_writing_still_exits_at_the_deadline():
     t.start()
     started = time.monotonic()
     try:
-        code = p.wait(timeout=sq._STDIN_DEADLINE_S + 8)
+        code = p.wait(timeout=hr.STDIN_DEADLINE_S + 8)
     except subprocess.TimeoutExpired:
         p.kill(); p.wait()
         raise AssertionError(
@@ -430,7 +431,7 @@ def test_a_producer_that_never_stops_writing_still_exits_at_the_deadline():
         except Exception: pass
     elapsed = time.monotonic() - started
     assert code == 0, f"expected exit 0, got {code}"
-    assert elapsed < sq._STDIN_DEADLINE_S + 8, f"hook took {elapsed:.1f}s to exit"
+    assert elapsed < hr.STDIN_DEADLINE_S + 8, f"hook took {elapsed:.1f}s to exit"
 
 
 def test_a_payload_larger_than_one_read_chunk_is_assembled_whole():
@@ -481,7 +482,7 @@ def test_a_slow_trickle_that_never_ends_is_stopped_by_the_deadline():
     t.start()
     started = time.monotonic()
     try:
-        code = p.wait(timeout=sq._STDIN_DEADLINE_S + 8)
+        code = p.wait(timeout=hr.STDIN_DEADLINE_S + 8)
     except subprocess.TimeoutExpired:
         p.kill(); p.wait()
         raise AssertionError(
@@ -492,7 +493,7 @@ def test_a_slow_trickle_that_never_ends_is_stopped_by_the_deadline():
         try: p.stdin.close()
         except Exception: pass
     assert code == 0
-    assert time.monotonic() - started < sq._STDIN_DEADLINE_S + 8
+    assert time.monotonic() - started < hr.STDIN_DEADLINE_S + 8
 
 
 @pytest.mark.parametrize("prompt", [
@@ -519,9 +520,9 @@ def test_a_payload_whose_prompt_sits_past_the_byte_ceiling_does_not_fire():
     to invalid JSON and stays quiet, while an unbounded one reads through and
     fires.
     """
-    padding = "x" * (sq._MAX_STDIN_BYTES + 500_000)
+    padding = "x" * (hr.MAX_STDIN_BYTES + 500_000)
     payload = json.dumps({"padding": padding, "prompt": "what's left?"})
-    assert payload.index('"prompt"') > sq._MAX_STDIN_BYTES, "fixture must straddle the ceiling"
+    assert payload.index('"prompt"') > hr.MAX_STDIN_BYTES, "fixture must straddle the ceiling"
     r = subprocess.run(
         [sys.executable, HOOK], input=payload, capture_output=True, text=True,
         env={**os.environ, "PYTHONIOENCODING": "utf-8"},
@@ -547,10 +548,10 @@ def test_a_partial_first_read_cannot_push_the_total_past_the_ceiling():
     The tiny first write forces a partial read, which is what de-aligns `total`
     from the chunk boundary and enables the overshoot at all.
     """
-    filler = "x" * sq._MAX_STDIN_BYTES
+    filler = "x" * hr.MAX_STDIN_BYTES
     body = json.dumps({"prompt": "what's left?", "padding": filler})
-    body = body[:sq._MAX_STDIN_BYTES + 1 - 2] + '"}'          # land just past the ceiling
-    assert sq._MAX_STDIN_BYTES < len(body) <= sq._MAX_STDIN_BYTES + 65535, \
+    body = body[:hr.MAX_STDIN_BYTES + 1 - 2] + '"}'          # land just past the ceiling
+    assert hr.MAX_STDIN_BYTES < len(body) <= hr.MAX_STDIN_BYTES + 65535, \
         f"fixture must sit inside the one-chunk overshoot window, got {len(body)}"
     assert json.loads(body)["prompt"] == "what's left?", "fixture must be valid JSON that WOULD fire"
 
@@ -566,40 +567,3 @@ def test_a_partial_first_read_cannot_push_the_total_past_the_ceiling():
     assert not out.strip(), (
         "fired on a payload past the byte ceiling -- the read overshot its "
         "allowance and the document stayed parseable")
-
-
-def test_a_polling_failure_does_not_restore_an_unbounded_read(monkeypatch):
-    """codex F4. The fallback must fail open on collected bytes, never re-block.
-
-    The previous fallbacks called sys.stdin.read() -- the exact unbounded wait
-    this function exists to remove, reintroduced at the moment it was needed.
-    Injecting the failure at select() is legitimate here: select IS the thing
-    that fails in the scenario, and the assertion is about what the function
-    does next, not about the mock.
-    """
-    calls = {"stdin_read": 0}
-
-    def exploding_select(*a, **k):
-        raise OSError("simulated polling failure")
-
-    class Boom:
-        def fileno(self): return 0
-        def read(self, *a):
-            calls["stdin_read"] += 1
-            raise AssertionError("fell back to an unbounded sys.stdin.read()")
-
-    monkeypatch.setattr(sq.select, "select", exploding_select)
-    monkeypatch.setattr(sq.sys, "stdin", Boom())
-    result = sq.read_stdin_bounded(deadline_s=0.5)
-    assert result == "", "should fail open on what it had, which is nothing"
-    assert calls["stdin_read"] == 0
-
-
-def test_an_unusable_stdin_fails_open_without_blocking():
-    """The fileno() arm of the same F4 fix."""
-    class NoFileno:
-        def fileno(self): raise OSError("no descriptor")
-        def read(self, *a): raise AssertionError("fell back to an unbounded read")
-    import unittest.mock as m
-    with m.patch.object(sq.sys, "stdin", NoFileno()):
-        assert sq.read_stdin_bounded(deadline_s=0.5) == ""

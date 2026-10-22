@@ -31,10 +31,10 @@ but at least one (`check_draft_voice.py`) documents that it must fail CONSERVATI
 a module that exits on the caller's behalf would have silently flipped that hook's
 contract. Extracting the exit call would be extracting policy.
 
-THE BOUNDED READ is ported verbatim in behaviour from
-`check_status_query_verification.read_stdin_bounded`, which is the only bounded reader
-in the repo (93 tests, mutation clean) and which is UNWIRED ON PURPOSE, so today it
-protects nothing. Four hardening decisions from the 2026-09-07 cross-model review are
+THE BOUNDED READ was ported verbatim in behaviour from the reader first written in
+`check_status_query_verification.py` (93 tests, mutation clean); that hook dropped its
+own copy and adopted this module on 2026-10-21, so there is now one bounded reader.
+Four hardening decisions from the 2026-09-07 cross-model review are
 necessary and must not be "simplified" back out:
 
   F1  `sys.stdin.read()` waits for EOF. A producer that writes, flushes, and RETAINS

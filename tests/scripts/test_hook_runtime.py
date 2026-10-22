@@ -592,3 +592,24 @@ def test_last_assistant_text_a_malformed_first_line_is_skipped(tmp_path):
                        _asst("answer"), "{also bad")
     assert hr.last_assistant_text(path) == "answer"
     assert hr.last_assistant_text(_transcript(tmp_path, "{not json")) == ""
+
+
+def test_a_polling_failure_does_not_restore_an_unbounded_read(monkeypatch):
+    """codex F4 (moved from the status-query hook's tests, 2026-10-21). When select()
+    fails the reader must fail open on what it collected, never fall back to an
+    unbounded sys.stdin.read()."""
+    calls = {"stdin_read": 0}
+
+    def exploding_select(*a, **k):
+        raise OSError("simulated polling failure")
+
+    class Boom:
+        def fileno(self): return 0
+        def read(self, *a):
+            calls["stdin_read"] += 1
+            raise AssertionError("fell back to an unbounded sys.stdin.read()")
+
+    monkeypatch.setattr(hr.select, "select", exploding_select)
+    monkeypatch.setattr(hr.sys, "stdin", Boom())
+    assert hr.read_stdin_bounded(deadline_s=0.5) == ""
+    assert calls["stdin_read"] == 0
