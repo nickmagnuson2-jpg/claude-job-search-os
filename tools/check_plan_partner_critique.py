@@ -33,7 +33,7 @@ import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from hook_runtime import read_payload  # noqa: E402
+from hook_runtime import read_write_target  # noqa: E402
 from pathlib import Path
 
 IN_SCOPE_PATTERNS = [
@@ -89,19 +89,6 @@ TIME_PATTERNS = [
 THRESHOLD_HOURS = 10
 
 
-def extract_target() -> tuple[str, str] | None:
-    p = read_payload()
-    if not p.ok:
-        return None
-    data = p.data
-    tool_input = data.get("tool_input", {}) or {}
-    file_path = tool_input.get("file_path", "") or ""
-    content = tool_input.get("content") or tool_input.get("new_string") or ""
-    if not file_path or not content:
-        return None
-    return file_path, content
-
-
 def in_scope(path: str) -> bool:
     norm = path.replace("\\", "/")
     return any(pat.search(norm) for pat in IN_SCOPE_PATTERNS)
@@ -143,7 +130,7 @@ def main():
     if os.environ.get("PARTNER_CRITIQUE_OVERRIDE") == "1":
         sys.exit(0)
 
-    result = extract_target()
+    result = read_write_target()
     if result is None:
         sys.exit(0)
     file_path, content = result

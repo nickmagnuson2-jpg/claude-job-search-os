@@ -34,7 +34,7 @@ import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from hook_runtime import read_payload  # noqa: E402
+from hook_runtime import read_write_target  # noqa: E402
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -80,20 +80,6 @@ def in_scope(path: str) -> bool:
     return any(pat.search(norm) for pat in IN_SCOPE_PATTERNS)
 
 
-def extract_target_path() -> tuple[str, str] | None:
-    """Read hook stdin and return (file_path, content) or None to fail-open."""
-    p = read_payload()
-    if not p.ok:
-        return None
-    data = p.data
-    tool_input = data.get("tool_input", {}) or {}
-    file_path = tool_input.get("file_path", "") or ""
-    content = tool_input.get("content") or tool_input.get("new_string") or ""
-    if not file_path or not content:
-        return None
-    return file_path, content
-
-
 def strip_frontmatter(content: str) -> str:
     """Remove --- frontmatter --- block from the top of the file."""
     stripped = content.lstrip()
@@ -130,7 +116,7 @@ def main():
     if os.environ.get("CONFAB_OVERRIDE") == "1":
         sys.exit(0)
 
-    result = extract_target_path()
+    result = read_write_target()
     if result is None:
         sys.exit(0)
     file_path, content = result

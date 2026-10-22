@@ -274,6 +274,20 @@ def read_payload(deadline_s: float = STDIN_DEADLINE_S,
     return Payload(ok=True, data=data, raw=raw, truncated=truncated)
 
 
+def read_write_target() -> tuple[str, str] | None:
+    """(file_path, content) of a Write/Edit payload, or None when either is missing or
+    the payload is unreadable. Content is Payload.content (Write's `content`, else Edit's
+    `new_string`).
+
+    One copy for the content hooks that judge what is being written to a path; three
+    hooks carried this body verbatim until 2026-10-22.
+    """
+    p = read_payload()
+    if not p.ok or not p.file_path or not p.content:
+        return None
+    return p.file_path, p.content
+
+
 def last_assistant_text(transcript_path: str) -> str:
     """Concatenated text of the final assistant message in a session transcript.
 

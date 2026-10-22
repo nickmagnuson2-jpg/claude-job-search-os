@@ -23,7 +23,7 @@ import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from hook_runtime import read_payload  # noqa: E402
+from hook_runtime import read_write_target  # noqa: E402
 from pathlib import Path
 
 TARGET = re.compile(r"data/projects/[^/]+\.md$")
@@ -42,19 +42,6 @@ SCOPE_HEADERS = re.compile(
 )
 
 
-def extract_target_path() -> tuple[str, str] | None:
-    p = read_payload()
-    if not p.ok:
-        return None
-    data = p.data
-    tool_input = data.get("tool_input", {}) or {}
-    file_path = tool_input.get("file_path", "") or ""
-    content = tool_input.get("content") or tool_input.get("new_string") or ""
-    if not file_path or not content:
-        return None
-    return file_path, content
-
-
 def find_key_achievements_block(content: str) -> str | None:
     """Extract the Key Achievements section (until next H2/H3 or EOF)."""
     headers = list(SCOPE_HEADERS.finditer(content))
@@ -71,7 +58,7 @@ def main():
     if os.environ.get("PROJECTS_OVERRIDE") == "1":
         sys.exit(0)
 
-    result = extract_target_path()
+    result = read_write_target()
     if result is None:
         sys.exit(0)
     file_path, content = result

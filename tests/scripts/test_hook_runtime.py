@@ -613,3 +613,32 @@ def test_a_polling_failure_does_not_restore_an_unbounded_read(monkeypatch):
     monkeypatch.setattr(hr.sys, "stdin", Boom())
     assert hr.read_stdin_bounded(deadline_s=0.5) == ""
     assert calls["stdin_read"] == 0
+
+
+# --------------------------------------------------------------------------- read_write_target
+
+def _drive_target(payload):
+    """read_write_target() in a child with `payload` on a real stdin pipe."""
+    script = textwrap.dedent(f"""
+        import sys, json
+        sys.path.insert(0, {os.path.join(REPO_ROOT, "tools")!r})
+        from hook_runtime import read_write_target
+        print(json.dumps(read_write_target()))
+    """)
+    r = subprocess.run([sys.executable, "-c", script], input=payload,
+                       capture_output=True, text=True, timeout=30)
+    return json.loads(r.stdout)
+
+
+@pytest.mark.parametrize("tool_input,expected", [
+    ({"file_path": "a.md", "content": "body"}, ["a.md", "body"]),        # Write
+    ({"file_path": "a.md", "new_string": "edit"}, ["a.md", "edit"]),     # Edit
+    ({"file_path": "a.md", "content": ""}, None),                        # nothing to judge
+    ({"content": "body"}, None),                                         # no target path
+])
+def test_read_write_target_returns_path_and_content_or_none(tool_input, expected):
+    assert _drive_target(json.dumps({"tool_name": "Write", "tool_input": tool_input})) == expected
+
+
+def test_read_write_target_is_none_for_an_unreadable_payload():
+    assert _drive_target("not json") is None

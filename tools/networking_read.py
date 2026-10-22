@@ -35,6 +35,7 @@ from pathlib import Path
 # pipeline_staleness, networking_read, outreach_pending). See stage_vocab.py.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from stage_vocab import is_terminal_stage  # noqa: E402
+from md_table import read_file  # noqa: E402
 
 STALE_THRESHOLD_DAYS = 14
 
@@ -48,13 +49,6 @@ def parse_args():
     p.add_argument("--repo-root", default=None,
                    help="Repository root. Defaults to cwd.")
     return p.parse_args()
-
-
-def read_file(path: Path) -> str:
-    try:
-        return path.read_text(encoding="utf-8")
-    except (FileNotFoundError, PermissionError, OSError):
-        return ""
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -121,3 +121,13 @@ def test_json_argument_parser_help_is_not_an_error(capsys):
     assert exc.value.code == 0
     out, _ = capsys.readouterr()
     assert out.startswith("usage: w.py") and '"status"' not in out
+
+
+def test_load_lines_strips_line_endings_and_errors_on_a_missing_file(tmp_path, capsys):
+    f = tmp_path / "t.md"
+    f.write_text("a\nb\n", encoding="utf-8")
+    assert mt.load_lines(f) == ("a\nb\n", ["a", "b"])
+    with pytest.raises(SystemExit) as exc:
+        mt.load_lines(tmp_path / "missing.md")
+    assert exc.value.code == 1
+    assert json.loads(capsys.readouterr().out)["code"] == "file_not_found"

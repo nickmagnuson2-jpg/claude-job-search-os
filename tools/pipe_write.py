@@ -27,7 +27,7 @@ import sys
 from datetime import date
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # siblings import as `tools.X` too
-from md_table import JsonArgumentParser, find_section, is_sep_row, out_error, out_ok, parse_cols, read_file, table_insert_pos, write_atomic  # noqa: E402
+from md_table import JsonArgumentParser, find_section, load_lines, is_sep_row, out_error, out_ok, parse_cols, table_insert_pos, write_atomic  # noqa: E402
 
 # Stages a row may be archived under. Must stay in sync with
 # todo_write.py TERMINAL_STAGES, which exact-matches these in ## Archived —
@@ -99,14 +99,6 @@ def compose_fit_note(existing_notes: str, fit_reason: str, fit_verdict, today: s
 # File load / save
 # ---------------------------------------------------------------------------
 
-def load_pipeline(path: Path) -> tuple:
-    content = read_file(path)
-    if not content:
-        out_error(f"File not found or empty: {path}", "file_not_found")
-    lines = [ln.rstrip("\n").rstrip("\r") for ln in content.splitlines(keepends=True)]
-    return content, lines
-
-
 def save_lines(path: Path, lines: list, original_content: str) -> None:
     content = "\n".join(lines)
     if original_content.endswith("\n"):
@@ -139,7 +131,7 @@ def cmd_add(args, pipeline_path: Path, dry_run: bool) -> None:
                dry_run=True, would_mutate=[{"file": str(pipeline_path), "row": row}])
         return
 
-    content, lines = load_pipeline(pipeline_path)
+    content, lines = load_lines(pipeline_path)
 
     act_start, act_end = find_section(lines, r"^##\s+Active")
     if act_start == -1:
@@ -216,7 +208,7 @@ def select_active_row(args, lines: list, ambiguous_msg: str, with_stage: bool) -
 def cmd_update(args, pipeline_path: Path, dry_run: bool) -> None:
     today = date.today().strftime("%Y-%m-%d")
 
-    content, lines = load_pipeline(pipeline_path)
+    content, lines = load_lines(pipeline_path)
     row_idx, cols = select_active_row(
         args, lines, f"Multiple roles found for {args.company} — use --role to specify",
         with_stage=True,
@@ -276,7 +268,7 @@ def cmd_update(args, pipeline_path: Path, dry_run: bool) -> None:
 def cmd_remove(args, pipeline_path: Path, dry_run: bool) -> None:
     today = date.today().strftime("%Y-%m-%d")
 
-    content, lines = load_pipeline(pipeline_path)
+    content, lines = load_lines(pipeline_path)
     row_idx, cols = select_active_row(
         args, lines, f"Multiple roles for {args.company} — use --role to specify",
         with_stage=False,

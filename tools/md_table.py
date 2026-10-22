@@ -40,6 +40,15 @@ def write_atomic(path: Path, content: str) -> None:
     os.replace(tmp, path)
 
 
+def load_lines(path: Path) -> tuple[str, list[str]]:
+    """(content, lines without line endings), or the file_not_found error JSON and exit 1."""
+    content = read_file(path)
+    if not content:
+        out_error(f"File not found or empty: {path}", "file_not_found")
+    lines = [ln.rstrip("\n").rstrip("\r") for ln in content.splitlines(keepends=True)]
+    return content, lines
+
+
 def out_ok(action: str, summary: str, **extra) -> None:
     d = {"status": "ok", "action": action, "summary": summary}
     d.update(extra)

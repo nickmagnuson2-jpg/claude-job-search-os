@@ -34,6 +34,7 @@ from pathlib import Path
 # Shared freeform-stage classifier (single source of truth). See stage_vocab.py.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from stage_vocab import is_terminal_stage, is_active_pursuit  # noqa: E402
+from md_table import read_file  # noqa: E402
 
 # Per-stage staleness thresholds (calendar days)
 STAGE_THRESHOLDS = {
@@ -57,13 +58,6 @@ def parse_args():
     p.add_argument("--repo-root", default=None,
                    help="Repository root. Defaults to cwd.")
     return p.parse_args()
-
-
-def read_file(path: Path) -> str:
-    try:
-        return path.read_text(encoding="utf-8")
-    except (FileNotFoundError, PermissionError, OSError):
-        return ""
 
 
 def _is_missing_action(value: str) -> bool:

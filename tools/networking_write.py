@@ -39,7 +39,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from name_dedup import find_near_duplicates  # noqa: E402
 import outreach_status  # noqa: E402
-from md_table import JsonArgumentParser, find_section, is_sep_row, out_error, out_ok, parse_cols, read_file, table_insert_pos, write_atomic  # noqa: E402
+from md_table import JsonArgumentParser, find_section, load_lines, is_sep_row, out_error, out_ok, parse_cols, read_file, table_insert_pos, write_atomic  # noqa: E402
 
 NETWORKING_FILE  = "data/networking.md"
 TODOS_FILE       = "data/job-todos.md"
@@ -146,14 +146,6 @@ def find_contact_log_section(lines: list, name: str) -> tuple:
 # ---------------------------------------------------------------------------
 # File load / save
 # ---------------------------------------------------------------------------
-
-def load_networking(path: Path) -> tuple:
-    content = read_file(path)
-    if not content:
-        out_error(f"File not found or empty: {path}", "file_not_found")
-    lines = [ln.rstrip("\n").rstrip("\r") for ln in content.splitlines(keepends=True)]
-    return content, lines
-
 
 def save_lines(path: Path, lines: list, original_content: str) -> None:
     content = "\n".join(lines)
@@ -324,7 +316,7 @@ def cmd_log(args, networking_path: Path, repo_root: Path, dry_run: bool) -> None
                would_mutate=[{"file": str(networking_path), "entry": header}])
         return
 
-    content, lines = load_networking(networking_path)
+    content, lines = load_lines(networking_path)
 
     # Verify contact exists in Contacts table
     contacts_start, contacts_end = find_section(lines, r"^##\s+Contacts")
@@ -470,7 +462,7 @@ def cmd_update(args, networking_path: Path, dry_run: bool) -> None:
                would_mutate=[{"file": str(networking_path)}])
         return
 
-    content, lines = load_networking(networking_path)
+    content, lines = load_lines(networking_path)
 
     contacts_start, contacts_end = find_section(lines, r"^##\s+Contacts")
     if contacts_start == -1:
@@ -519,7 +511,7 @@ def cmd_remove(args, networking_path: Path, dry_run: bool) -> None:
                would_mutate=[{"file": str(networking_path)}])
         return
 
-    content, lines = load_networking(networking_path)
+    content, lines = load_lines(networking_path)
 
     # Remove from Contacts table
     contacts_start, contacts_end = find_section(lines, r"^##\s+Contacts")
