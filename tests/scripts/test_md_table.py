@@ -131,3 +131,13 @@ def test_load_lines_strips_line_endings_and_errors_on_a_missing_file(tmp_path, c
         mt.load_lines(tmp_path / "missing.md")
     assert exc.value.code == 1
     assert json.loads(capsys.readouterr().out)["code"] == "file_not_found"
+
+
+@pytest.mark.parametrize("current,pre,post,expected", [
+    ("orig", "A", "B", "A orig B"),     # both ends apply (todo_write dropped A)
+    ("—", None, "B", "B"),
+    ("", "A", None, "A"),
+    ("orig", None, None, "orig"),
+])
+def test_merge_notes(current, pre, post, expected):
+    assert mt.merge_notes(current, pre, post) == expected

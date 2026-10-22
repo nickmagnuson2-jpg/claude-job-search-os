@@ -86,6 +86,20 @@ def safe_cell(s: str) -> str:
     return s.replace("|", "/") if s else s
 
 
+def merge_notes(current: str, prepend: str | None = None, append: str | None = None) -> str:
+    """A Notes cell with text added at either end. "" and "—" count as empty.
+
+    Both ends apply when both are given. todo_write's inline copy built the append from
+    the ORIGINAL notes, so `--notes-prepend A --notes-append B` silently dropped A.
+    """
+    notes = "" if current.strip() in ("", "—") else current
+    if prepend:
+        notes = f"{prepend} {notes}".strip()
+    if append:
+        notes = f"{notes} {append}".strip()
+    return notes
+
+
 def is_sep_row(line: str) -> bool:
     return bool(re.match(r"^\s*\|[-: |]+\|\s*$", line))
 

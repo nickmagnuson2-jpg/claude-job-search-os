@@ -357,3 +357,13 @@ def test_is_insertion_only_unit():
     assert not f("abc", "xyz")         # replacement
     assert not f("Ship the widget", "Ship the thing")   # partial overlap
     assert not f("abc", "cba")         # reorder is not insertion
+
+
+def test_prepend_and_append_together_keep_both(tmp_path):
+    """The append used to be built from the ORIGINAL notes, silently dropping the prepend."""
+    p = _write(tmp_path)
+    res = run_script("todo_write.py", "update", "widget", "--notes-prepend", "FIRST",
+                     "--notes-append", "LAST", "--repo-root", str(tmp_path))
+    assert res["changed"] == ["notes-prepend", "notes-append"]
+    row = _row(p, "Ship the widget")
+    assert row.index("FIRST") < row.index("original note") < row.index("LAST")

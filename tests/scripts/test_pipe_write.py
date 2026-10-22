@@ -585,3 +585,38 @@ def test_ambiguous_update_lists_role_and_stage(tmp_path):
     assert {"role": "PM", "stage": "Applied"} in result["matches"]
     result, code = run_pipe_write("--repo-root", str(tmp_path), "--dry-run", "remove", "Acme Corp")
     assert code != 0 and result["matches"] == [{"role": "Director"}, {"role": "PM"}]
+
+
+# ---------------------------------------------------------------------------
+# --notes-append / --notes-prepend (feedback_pipe_write_has_no_notes_append, 3 fires)
+# ---------------------------------------------------------------------------
+
+def _acme_notes(tmp_path):
+    content = (tmp_path / "data/job-pipeline.md").read_text(encoding="utf-8")
+    row = [l for l in content.splitlines() if l.startswith("| Acme Corp |")][0]
+    return [c.strip() for c in row.strip("|").split("|")][6]
+
+
+def test_update_notes_append_and_prepend_keep_existing_notes(tmp_path):
+    write_fixture(tmp_path, "data/job-pipeline.md",
+                  PIPELINE_WITH_ROW.replace("| — | — | — |\n\n## Archived", "| — | orig | — |\n\n## Archived"))
+    result, code = run_pipe_write("--repo-root", str(tmp_path), "update", "Acme Corp", "Applied",
+                                  "--notes-prepend", "PRE", "--notes-append", "POST")
+    assert code == 0, result
+    assert _acme_notes(tmp_path) == "PRE orig POST"
+
+
+def test_update_notes_append_onto_an_empty_cell_drops_the_dash(tmp_path):
+    write_fixture(tmp_path, "data/job-pipeline.md", PIPELINE_WITH_ROW)
+    run_pipe_write("--repo-root", str(tmp_path), "update", "Acme Corp", "Applied",
+                   "--notes-append", "a | b")
+    assert _acme_notes(tmp_path) == "a / b", "a '|' in added text must not split the row"
+
+
+def test_update_notes_with_notes_append_is_refused_without_writing(tmp_path):
+    write_fixture(tmp_path, "data/job-pipeline.md", PIPELINE_WITH_ROW)
+    before = (tmp_path / "data/job-pipeline.md").read_text(encoding="utf-8")
+    result, code = run_pipe_write("--repo-root", str(tmp_path), "update", "Acme Corp", "Applied",
+                                  "--notes", "x", "--notes-append", "y")
+    assert code == 1 and result["code"] == "conflicting_flags"
+    assert (tmp_path / "data/job-pipeline.md").read_text(encoding="utf-8") == before

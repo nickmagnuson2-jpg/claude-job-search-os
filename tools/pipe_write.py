@@ -5,7 +5,8 @@ pipe_write.py — Atomic mutations for data/job-pipeline.md.
 Subcommands:
   add <company> <role> [--url URL] [--stage STAGE]
   update <company> <new-stage> [--role ROLE] [--new-role ROLE] [--next-action TEXT]
-                               [--cv-used TEXT] [--notes TEXT]
+                               [--cv-used TEXT] [--notes TEXT | --notes-append TEXT
+                               | --notes-prepend TEXT]
   remove <company> [--role ROLE]
 
 Options (all subcommands):
@@ -27,7 +28,7 @@ import sys
 from datetime import date
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # siblings import as `tools.X` too
-from md_table import JsonArgumentParser, find_section, load_lines, is_sep_row, out_error, out_ok, parse_cols, table_insert_pos, write_atomic  # noqa: E402
+from md_table import JsonArgumentParser, find_section, load_lines, is_sep_row, merge_notes, out_error, out_ok, parse_cols, table_insert_pos, write_atomic  # noqa: E402
 
 # Stages a row may be archived under. Must stay in sync with
 # todo_write.py TERMINAL_STAGES, which exact-matches these in ## Archived —
@@ -226,6 +227,11 @@ def cmd_update(args, pipeline_path: Path, dry_run: bool) -> None:
             column_count=len(cols),
         )
 
+    adds = getattr(args, "notes_append", None) or getattr(args, "notes_prepend", None)
+    if args.notes and adds:
+        out_error("--notes replaces the Notes cell; combining it with "
+                  "--notes-append/--notes-prepend is ambiguous. Pick one.", "conflicting_flags")
+
     if dry_run:
         out_ok("update", f"Would update: {args.company} → {args.new_stage}",
                dry_run=True, role=cols[1],
@@ -235,6 +241,10 @@ def cmd_update(args, pipeline_path: Path, dry_run: bool) -> None:
     new_next_action = args.next_action if args.next_action else (cols[4] if len(cols) > 4 else "—")
     new_cv_used     = args.cv_used     if args.cv_used     else (cols[5] if len(cols) > 5 else "—")
     new_notes       = args.notes       if args.notes       else (cols[6] if len(cols) > 6 else "—")
+    if adds:
+        new_notes = merge_notes(new_notes,
+                                args.notes_prepend and sanitize_cell(args.notes_prepend),
+                                args.notes_append and sanitize_cell(args.notes_append))
     if getattr(args, "fit_reason", None):
         new_notes = compose_fit_note(new_notes, args.fit_reason, getattr(args, "fit_verdict", None), today)
     url             = cols[7] if len(cols) > 7 else "—"
@@ -372,7 +382,10 @@ def parse_args():
                             "without this the Role cell is preserved.")
     upd_p.add_argument("--next-action", dest="next_action", default=None)
     upd_p.add_argument("--cv-used",     dest="cv_used",     default=None)
-    upd_p.add_argument("--notes",                           default=None)
+    upd_p.add_argument("--notes",                           default=None,
+                       help="Replaces the Notes cell. Use --notes-append/--notes-prepend to add.")
+    upd_p.add_argument("--notes-append", dest="notes_append", default=None)
+    upd_p.add_argument("--notes-prepend", dest="notes_prepend", default=None)
     upd_p.add_argument("--fit-reason", dest="fit_reason", default=None,
                        help="One-line fit rationale for this stage change; appended to Notes as a [fit-reason ...] tag.")
     upd_p.add_argument("--fit-verdict", dest="fit_verdict", default=None, choices=list(FIT_VERDICTS),

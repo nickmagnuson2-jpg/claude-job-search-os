@@ -79,7 +79,7 @@ from stage_vocab import is_terminal_stage  # noqa: E402
 # ordinary prose -- was already solved for the PII denylist, so the classifier is imported
 # rather than reimplemented here (CLAUDE.md: consolidate duplicated domain logic).
 from gen_pii_denylist import is_distinctive_single, load_dictionary  # noqa: E402
-from md_table import out_ok, parse_cols, safe_cell, table_insert_pos, write_atomic  # noqa: E402
+from md_table import merge_notes, out_ok, parse_cols, safe_cell, table_insert_pos, write_atomic  # noqa: E402
 
 TODOS_FILE = "data/job-todos.md"
 PIPELINE_FILE = "data/job-pipeline.md"
@@ -729,14 +729,9 @@ def cmd_update(args: list[str], todos_path: Path) -> None:
         _stamp("notes", notes, fields["--notes"])
         notes = fields["--notes"]
         changed.append("notes")
-    else:
-        base = "" if notes.strip() in ("", "—") else notes
-        if "--notes-prepend" in fields:
-            notes = f"{fields['--notes-prepend']} {base}".strip()
-            changed.append("notes-prepend")
-        if "--notes-append" in fields:
-            notes = f"{base} {fields['--notes-append']}".strip()
-            changed.append("notes-append")
+    elif {"--notes-prepend", "--notes-append"} & set(fields):
+        notes = merge_notes(notes, fields.get("--notes-prepend"), fields.get("--notes-append"))
+        changed += [f[2:] for f in ("--notes-prepend", "--notes-append") if f in fields]
 
     if revs:
         notes = f"{notes} {' '.join(revs)}".strip()
