@@ -177,11 +177,6 @@ STOPWORDS = {
     # is excluded. This set exists for precisely this -- "generic terms a dictionary might
     # miss". Add only tokens MEASURED absent from the dictionary, never assumed.
     "byte", "bytes",
-    # Added 2026-10-06 on Nick's instruction ("that's something that should be added to
-    # the list of okay words"). Measured absent from the dictionary, like the two above.
-    # It is ordinary operations vocabulary and this repo has a document named for it; a
-    # pre-push scan blocked on five files that use the word, none of them in an added line.
-    "runbook", "runbooks",
 }
 # REMOVED 2026-08-19: one entry here was a REAL pipeline company (present in both
 # job-pipeline.md and networking.md). Suppressing it kept it out of BOTH the block
@@ -415,6 +410,11 @@ INDUSTRY_WORDS = {
     "healthcare", "healthtech", "fintech", "biotech", "edtech", "insurtech", "adtech",
     "medtech", "proptech", "agtech", "cleantech", "deeptech", "martech", "regtech",
     "hardware", "software", "wellness", "marketplace", "ecommerce", "workflow",
+    # Ordinary operations vocabulary the dictionary omits (Nick, 2026-10-06: "should be
+    # added to the list of okay words"). An ordinary word belongs here, not in STOPWORDS:
+    # STOPWORDS drops a token from every tier, including the pipeline-target allowlist,
+    # while this set only marks it as ordinary English. The plural rule covers the -s form.
+    "runbook",
 }
 
 
