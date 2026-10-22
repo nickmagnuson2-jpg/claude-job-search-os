@@ -3,7 +3,7 @@ name: audit-pii
 description: Pre-commit PII gate for the public repo. Regenerates the denylist, runs the deterministic scan over changed public files, then dispatches a fresh subagent for a semantic PII pass that catches real names/companies/emails the denylist misses. Run before committing or pushing public artifacts (tests, skills, framework, docs, tool code).
 argument-hint: "(no args — scans staged + unstaged changes to public files)"
 user-invocable: true
-allowed-tools: Read(*), Glob(*), Grep(*), Bash(PYTHONIOENCODING=utf-8 python3 tools/gen_pii_denylist.py:*), Bash(PYTHONIOENCODING=utf-8 python3 tools/check_public_pii.py:*), Bash(git status:*), Bash(git diff:*), Bash(git ls-files:*), Bash(git check-ignore:*), Task
+allowed-tools: Read(*), Glob(*), Grep(*), Bash(PYTHONIOENCODING=utf-8 python3 tools/gen_pii_denylist.py:*), Bash(PYTHONIOENCODING=utf-8 python3 tools/check_public_pii.py:*), Bash(PYTHONIOENCODING=utf-8 python3 tools/sweep.py:*), Bash(git status:*), Bash(git diff:*), Bash(git ls-files:*), Bash(git check-ignore:*), Task
 ---
 
 # Audit PII — Pre-Commit Public-Repo Leak Gate

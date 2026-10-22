@@ -34,3 +34,13 @@ def test_maxlen_cuts_without_leaving_a_trailing_hyphen():
 def test_fallback_when_nothing_alphanumeric_survives(text):
     assert slugify(text, fallback="untitled") == "untitled"
     assert slugify(text) == ""
+
+
+@pytest.mark.parametrize("title,expected", [
+    ("日本語のタイトル", "日本語のタイトル"),
+    ("København guide", "københavn-guide"),
+    ("Café notes", "cafe-notes"),
+])
+def test_title_mode_keeps_letters_in_any_script(title, expected):
+    """Two non-Latin titles must not both become the fallback and collide on disk."""
+    assert slugify(title, drop_punctuation=True, fallback="video") == expected
