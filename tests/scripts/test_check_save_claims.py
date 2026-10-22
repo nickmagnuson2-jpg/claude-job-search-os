@@ -12,6 +12,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[2]
 HOOK = ROOT / "tools" / "check_save_claims.py"
 
@@ -362,11 +364,12 @@ def test_unknown_first_segment_is_not_treated_as_a_peer_repo():
         assert csc.exists_anywhere("not-a-sibling/data/method.md", root) is False
 
 
-def test_peer_lookup_does_not_escape_via_dotdot():
+def test_a_dotdot_token_is_checked_only_where_it_points():
+    """'../x' is joined onto root and nowhere else: no sibling or skills candidate."""
     with tempfile.TemporaryDirectory() as tmp:
-        root, peer = _peer_layout(tmp)
-        (peer / "method.md").write_text("x", encoding="utf-8")
-        assert csc.peer_repo_hit("../mag5-advisors/data/method.md", root) is False
+        root, _ = _peer_layout(tmp)
+        tok = "../mag5-advisors/data/method.md"
+        assert csc.candidate_paths(tok, root) == [root / tok]
 
 
 def test_own_repo_name_prefix_resolves_to_the_same_real_file():
@@ -376,20 +379,20 @@ def test_own_repo_name_prefix_resolves_to_the_same_real_file():
         root, _ = _peer_layout(tmp)
         (root / "tools").mkdir()
         (root / "tools" / "real.py").write_text("x", encoding="utf-8")
-        assert csc.peer_repo_hit("job-search/tools/real.py", root) is True
+        assert csc.exists_anywhere("job-search/tools/real.py", root) is True
 
 
 def test_own_repo_name_prefix_still_fails_when_the_file_is_absent():
     with tempfile.TemporaryDirectory() as tmp:
         root, _ = _peer_layout(tmp)
-        assert csc.peer_repo_hit("job-search/tools/nope.py", root) is False
+        assert csc.exists_anywhere("job-search/tools/nope.py", root) is False
 
 
 def test_bare_basename_still_takes_the_walk_path_not_the_peer_path():
     with tempfile.TemporaryDirectory() as tmp:
         root, _ = _peer_layout(tmp)
         (root / "found.md").write_text("x", encoding="utf-8")
-        assert csc.peer_repo_hit("found.md", root) is False
+        assert root.parent / "found.md" not in csc.candidate_paths("found.md", root)
         assert csc.exists_anywhere("found.md", root) is True
 
 
@@ -399,19 +402,19 @@ def test_bare_basename_is_not_resolved_against_the_projects_dir():
     with tempfile.TemporaryDirectory() as tmp:
         root, _ = _peer_layout(tmp)
         (root.parent / "found.md").write_text("x", encoding="utf-8")
-        assert csc.peer_repo_hit("found.md", root) is False
+        assert csc.exists_anywhere("found.md", root) is False
 
 
 def test_absolute_path_is_not_reresolved_under_the_projects_dir():
     with tempfile.TemporaryDirectory() as tmp:
         root, _ = _peer_layout(tmp)
-        assert csc.peer_repo_hit("/etc/hosts", root) is False
+        assert csc.candidate_paths("/etc/hosts", root) == [Path("/etc/hosts")]
 
 
 def test_tilde_path_is_not_treated_as_a_peer_reference():
     with tempfile.TemporaryDirectory() as tmp:
         root, _ = _peer_layout(tmp)
-        assert csc.peer_repo_hit("~/Documents/x.md", root) is False
+        assert csc.candidate_paths("~/Documents/x.md", root) == [Path.home() / "Documents/x.md"]
 
 
 # --- live memory tier (outside the repo) -------------------------------------
@@ -435,21 +438,21 @@ def test_memory_tier_bare_basename_that_exists_is_found():
     with tempfile.TemporaryDirectory() as tmp:
         root, home, tier = _tier_layout(tmp)
         (tier / "feedback_x.md").write_text("x", encoding="utf-8")
-        assert csc.memory_tier_hit("feedback_x.md", root, home) is True
+        assert csc.exists_anywhere("feedback_x.md", root, home) is True
 
 
 def test_memory_tier_prefixed_form_that_exists_is_found():
     with tempfile.TemporaryDirectory() as tmp:
         root, home, tier = _tier_layout(tmp)
         (tier / "feedback_x.md").write_text("x", encoding="utf-8")
-        assert csc.memory_tier_hit("memory/feedback_x.md", root, home) is True
+        assert csc.exists_anywhere("memory/feedback_x.md", root, home) is True
 
 
 def test_memory_tier_file_that_does_not_exist_is_still_missing():
     with tempfile.TemporaryDirectory() as tmp:
         root, home, _tier = _tier_layout(tmp)
-        assert csc.memory_tier_hit("feedback_never_written.md", root, home) is False
-        assert csc.memory_tier_hit("memory/feedback_never_written.md", root, home) is False
+        assert csc.exists_anywhere("feedback_never_written.md", root, home) is False
+        assert csc.exists_anywhere("memory/feedback_never_written.md", root, home) is False
 
 
 def test_memory_tier_does_not_relax_multi_segment_tokens():
@@ -457,25 +460,25 @@ def test_memory_tier_does_not_relax_multi_segment_tokens():
     with tempfile.TemporaryDirectory() as tmp:
         root, home, tier = _tier_layout(tmp)
         (tier / "feedback_x.md").write_text("x", encoding="utf-8")
-        assert csc.memory_tier_hit("tools/feedback_x.md", root, home) is False
-        assert csc.memory_tier_hit("a/b/feedback_x.md", root, home) is False
+        assert csc.exists_anywhere("tools/feedback_x.md", root, home) is False
+        assert csc.exists_anywhere("a/b/feedback_x.md", root, home) is False
 
 
 def test_memory_tier_rejects_absolute_and_tilde_and_traversal():
     with tempfile.TemporaryDirectory() as tmp:
         root, home, tier = _tier_layout(tmp)
         (tier / "feedback_x.md").write_text("x", encoding="utf-8")
-        assert csc.memory_tier_hit("/feedback_x.md", root, home) is False
-        assert csc.memory_tier_hit("~/feedback_x.md", root, home) is False
-        assert csc.memory_tier_hit("memory/../feedback_x.md", root, home) is False
-        assert csc.memory_tier_hit("", root, home) is False
+        assert csc.exists_anywhere("/feedback_x.md", root, home) is False
+        assert csc.exists_anywhere("~/feedback_x.md", root, home) is False
+        assert csc.exists_anywhere("memory/../feedback_x.md", root, home) is False
+        assert csc.exists_anywhere("", root, home) is False
 
 
 def test_memory_tier_absent_tier_is_not_an_error():
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp) / "repo"
         root.mkdir()
-        assert csc.memory_tier_hit("feedback_x.md", root, Path(tmp) / "no-home") is False
+        assert csc.exists_anywhere("feedback_x.md", root, Path(tmp) / "no-home") is False
 
 
 def test_exists_anywhere_finds_memory_tier_file(monkeypatch):
@@ -492,52 +495,49 @@ def test_memory_tier_bare_prefix_does_not_match_the_directory_itself():
     """`memory/` alone must not resolve to the tier directory and report "exists"."""
     with tempfile.TemporaryDirectory() as tmp:
         root, home, _tier = _tier_layout(tmp)
-        assert csc.memory_tier_hit("memory/", root, home) is False
+        assert csc.exists_anywhere("memory/", root, home) is False
 
 
 def test_memory_tier_rejects_dot_and_dotdot_names():
     """`memory/..` must not resolve to the parent directory and report "exists"."""
     with tempfile.TemporaryDirectory() as tmp:
         root, home, _tier = _tier_layout(tmp)
-        assert csc.memory_tier_hit("memory/..", root, home) is False
-        assert csc.memory_tier_hit("memory/.", root, home) is False
+        assert csc.exists_anywhere("memory/..", root, home) is False
+        assert csc.exists_anywhere("memory/.", root, home) is False
 
 
 def test_memory_tier_directory_does_not_satisfy_a_file_claim():
     """A DIRECTORY named like a file must not convert MISSING to EXISTS.
 
-    Cross-model review 2026-09-07 (F1, P1): the helper used Path.exists(), which is
-    true for directories, so a claim naming a directory in the tier would pass.
+    Cross-model review 2026-09-07 (20.F1, P1): Path.exists() is true for directories,
+    so a claim naming a directory in the tier would pass.
     """
     with tempfile.TemporaryDirectory() as tmp:
         root, home, tier = _tier_layout(tmp)
         (tier / "feedback_looks_like_a_file.md").mkdir()
-        assert csc.memory_tier_hit("feedback_looks_like_a_file.md", root, home) is False
-        assert csc.memory_tier_hit("memory/feedback_looks_like_a_file.md", root, home) is False
+        assert csc.exists_anywhere("feedback_looks_like_a_file.md", root, home) is False
+        assert csc.exists_anywhere("memory/feedback_looks_like_a_file.md", root, home) is False
 
 
 def test_memory_tier_rejects_a_nested_path_even_when_that_file_really_exists():
-    """The `/`-in-name clause is load-bearing, not decorative.
-
-    This helper handles exactly two prose forms: a bare basename and a `memory/`
-    prefixed one. A deeper path must fall through to the caller's exact check, even
-    when the file genuinely exists nested inside the tier -- otherwise the helper
-    would quietly become the general suffix matcher it is documented not to be.
+    """The memory tier takes exactly two prose forms: a bare basename and a `memory/`
+    prefixed one. A deeper path is checked exactly, even when the file genuinely exists
+    nested inside the tier; otherwise the tier would become a general suffix matcher.
     """
     with tempfile.TemporaryDirectory() as tmp:
         root, home, tier = _tier_layout(tmp)
         (tier / "sub").mkdir()
         (tier / "sub" / "feedback_z.md").write_text("x", encoding="utf-8")
         assert (tier / "sub" / "feedback_z.md").is_file()
-        assert csc.memory_tier_hit("sub/feedback_z.md", root, home) is False
-        assert csc.memory_tier_hit("memory/sub/feedback_z.md", root, home) is False
+        assert csc.exists_anywhere("sub/feedback_z.md", root, home) is False
+        assert csc.exists_anywhere("memory/sub/feedback_z.md", root, home) is False
 
 
 # --- project_root canonicalization -------------------------------------------
 # Cross-model review 2026-09-07 (F1, P1): a relative CLAUDE_PROJECT_DIR produced a
 # nonsense memory-tier slug, so the hook searched a directory that cannot exist and
-# falsely blocked a real save. Fixed at the point of derivation because all four
-# resolvers consume `root` and all four are wrong for the same reason.
+# falsely blocked a real save. Fixed at the point of derivation because every
+# candidate path is built from `root` and all are wrong for the same reason.
 
 
 def test_project_root_makes_a_relative_value_absolute():
@@ -575,11 +575,11 @@ def test_relative_root_would_have_searched_the_wrong_tier():
     with tempfile.TemporaryDirectory() as tmp:
         root, home, tier = _tier_layout(tmp)
         (tier / "feedback_r.md").write_text("x", encoding="utf-8")
-        assert csc.memory_tier_hit("feedback_r.md", root, home) is True
-        # The un-canonicalized form the hook used to pass through:
-        assert csc.memory_tier_hit("feedback_r.md", Path("."), home) is False
+        assert csc.exists_anywhere("feedback_r.md", root, home) is True
+        # The un-canonicalized form the hook used to pass through names another tier:
+        assert csc.memory_tier(Path("."), home) != tier
         # ...and canonicalizing is what makes it agree with the absolute form.
-        assert csc.project_root(str(root)) == root
+        assert csc.memory_tier(csc.project_root(str(root)), home) == tier
 
 
 # ---------- 2026-10-21: short skill paths, and sentences that start with a backtick ----------
@@ -606,19 +606,17 @@ def test_a_backticked_referent_in_the_same_sentence_is_still_caught():
 # Must still block: a claim whose referent opens the NEXT sentence. Widening the cut to
 # any non-lowercase start (7497c5d) dropped all three; cross-model review found it.
 
-def test_a_referent_opening_the_next_sentence_in_backticks_is_caught():
-    text = "I saved the briefing. `output/acme/brief.md` is ready."
-    assert "output/acme/brief.md" in csc.extract_claimed_paths(text)
-
-
-def test_a_referent_after_a_period_and_newline_is_caught():
-    text = "I saved the briefing.\n`output/acme/brief.md` is ready."
-    assert "output/acme/brief.md" in csc.extract_claimed_paths(text)
-
-
-def test_a_digit_led_referent_opening_the_next_sentence_is_caught():
-    text = "Wrote the analysis. 102126-notes.md is in output/analysis/."
-    assert "102126-notes.md" in csc.extract_claimed_paths(text)
+@pytest.mark.parametrize("text, path", [
+    ("I saved the briefing. `output/acme/brief.md` is ready.", "output/acme/brief.md"),
+    ("I saved the briefing.\n`output/acme/brief.md` is ready.", "output/acme/brief.md"),
+    ("Wrote the analysis. 102126-notes.md is in output/analysis/.", "102126-notes.md"),
+])
+def test_a_missing_referent_opening_the_next_sentence_blocks(text, path, tmp_path):
+    """Run the hook, not just the extractor: 419.F1/421.F1 noted extraction alone
+    cannot fail when blocking stops."""
+    r = _run(text, str(tmp_path))
+    assert r.returncode == 2, r.stderr
+    assert path in r.stderr
 
 
 def test_a_short_skill_path_resolves_under_dot_claude_skills(tmp_path):
@@ -636,23 +634,23 @@ def test_a_short_skill_path_with_no_file_is_still_missing(tmp_path):
 def test_skill_lookup_does_not_escape_via_dotdot_or_absolute(tmp_path):
     (tmp_path / ".claude" / "skills").mkdir(parents=True)
     (tmp_path / "secret.md").write_text("x")
-    assert csc.skill_dir_hit("../../secret.md", tmp_path) is False
-    assert csc.skill_dir_hit("/etc/hosts", tmp_path) is False
+    assert csc.candidate_paths("../../secret.md", tmp_path) == [tmp_path / "../../secret.md"]
+    assert csc.candidate_paths("/etc/hosts", tmp_path) == [Path("/etc/hosts")]
 
 
 def test_skill_lookup_refuses_a_dotdot_segment_after_a_real_dir(tmp_path):
-    """foo/../../secret.md would resolve to .claude/secret.md, a real file. Only the
-    '..' segment check refuses it; the leading-character check does not apply."""
+    """Under skills, foo/../../secret.md would resolve to .claude/secret.md, a real file.
+    Only the '..' segment check refuses it; the leading-character check does not apply."""
     (tmp_path / ".claude" / "skills" / "foo").mkdir(parents=True)
     (tmp_path / ".claude" / "secret.md").write_text("x")
-    assert csc.skill_dir_hit("foo/../../secret.md", tmp_path) is False
+    assert csc.exists_anywhere("foo/../../secret.md", tmp_path) is False
 
 
 def test_skill_lookup_refuses_a_tilde_path(tmp_path):
     """A literal '~' directory under skills would otherwise satisfy '~/x'."""
     (tmp_path / ".claude" / "skills" / "~").mkdir(parents=True)
-    (tmp_path / ".claude" / "skills" / "~" / "x").write_text("x")
-    assert csc.skill_dir_hit("~/x", tmp_path) is False
+    (tmp_path / ".claude" / "skills" / "~" / "x.md").write_text("x")
+    assert csc.exists_anywhere("~/x.md", tmp_path) is False
 
 
 def test_end_to_end_short_skill_path_claim_is_clean(tmp_path):
@@ -663,3 +661,22 @@ def test_end_to_end_short_skill_path_claim_is_clean(tmp_path):
     assert "some-skill/SKILL.md" in csc.extract_claimed_paths(text)
     r = _run(text, str(tmp_path))
     assert r.returncode == 0, r.stderr
+
+
+def test_a_directory_named_like_a_file_does_not_satisfy_a_claim(tmp_path):
+    """23.F2: the direct check used exists(), so a directory named x.md passed."""
+    root = tmp_path / "projects" / "repo"
+    (root / "docs" / "x.md").mkdir(parents=True)
+    (tmp_path / "projects" / "peer" / "y.md").mkdir(parents=True)
+    assert csc.exists_anywhere("docs/x.md", root) is False
+    assert csc.exists_anywhere("peer/y.md", root) is False
+
+
+def test_a_slashed_or_tilde_token_never_walks_the_repo(tmp_path, monkeypatch):
+    """Only a bare basename is searched for by name. A token with a directory part is
+    checked exactly, and walking the repo for it would cost time and find nothing."""
+    def no_walk(*a, **k):
+        raise AssertionError("os.walk called for a token that cannot be a basename")
+    monkeypatch.setattr(csc.os, "walk", no_walk)
+    assert csc.exists_anywhere("docs/missing.md", tmp_path) is False
+    assert csc.exists_anywhere("~/missing-xyz.md", tmp_path) is False

@@ -177,7 +177,7 @@ def extract_claimed_paths(text: str):
         # The sentence cut stays [A-Z] on purpose. Widening it to any non-lowercase start
         # (2026-10-21, 7497c5d) dropped real claims whose referent opens the next sentence:
         # "I saved the briefing. `output/acme/brief.md` is ready." Cross-model review
-        # (Grok) caught it; skill_dir_hit alone clears the false positive it was meant for.
+        # (Grok) caught it; the .claude/skills candidate path alone clears the false positive.
         cut = re.search(r"(?<=[.!?])\s+[A-Z]|\n[ \t]*\n", window)
         if cut:
             window = window[:cut.start()]
@@ -205,11 +205,10 @@ def project_root(raw: str | None = None) -> Path:
     is the exact failure direction this hook's memory-tier support was added to
     remove. Found by cross-model review 2026-09-07 (F1, P1).
 
-    Fixed HERE rather than inside `memory_tier_hit`, because root is consumed by
-    four different resolvers (`resolve`, `peer_repo_hit`, `memory_tier_hit`, and the
-    `os.walk` basename search) and all four are wrong for the same reason on a
-    relative root. Normalizing at the single point of derivation fixes them together
-    and leaves nothing to remember at the call sites.
+    Fixed HERE rather than in the memory-tier lookup, because every candidate path
+    and the `os.walk` basename search are built from root, and all are wrong for the
+    same reason on a relative root. Normalizing at the single point of derivation
+    fixes them together and leaves nothing to remember at the call sites.
 
     `abspath` and not `resolve()`: it normalizes "." and ".." and makes the path
     absolute WITHOUT following symlinks. Claude Code derives the memory-tier slug
@@ -220,127 +219,64 @@ def project_root(raw: str | None = None) -> Path:
     return Path(os.path.abspath(os.path.expanduser(v)))
 
 
-def resolve(tok: str, root: Path) -> Path:
-    t = os.path.expanduser(tok)
-    p = Path(t)
-    return p if p.is_absolute() else (root / p)
+def memory_tier(root: Path, home: Path | None = None) -> Path:
+    """This project's LIVE memory tier: `~/.claude/projects/<slugified-root>/memory/`.
 
-
-def peer_repo_hit(tok: str, root: Path) -> bool:
-    """True when the token names a file in a SIBLING project that really exists.
-
-    Peer repos live beside this one (30-projects/job-search, .../mag5-advisors,
-    .../personal), and prose refers to their files repo-relatively:
-    "mag5-advisors/data/method.md". `resolve` joins that onto CLAUDE_PROJECT_DIR,
-    producing job-search/mag5-advisors/... which never exists, so a genuine
-    cross-repo write was reported as a false claim.
-
-    Fired 3x on this exact shape (2026-09-02 personal/, 2026-09-03
-    mag5-advisors/memory/README.md, 2026-09-04 mag5-advisors/data/
-    method-partner-contact-sourcing.md). The friction ladder's 3rd rung is a
-    mandatory script patch, which is this.
-
-    Only ever converts "missing" to "exists", and only when the file is on disk
-    at the sibling path, so it cannot mask a real unwritten-file claim.
-
-    A token prefixed with this repo's OWN name ("job-search/tools/x.py" written
-    from inside job-search) is deliberately allowed: parent/tok resolves to
-    root/tools/x.py, the same real file, so passing it is correct. An earlier
-    guard rejected that case and was removed after it survived mutation, which
-    is what proved it was not load-bearing. Two further guards (an explicit
-    ""/"."/".." check, and an is_dir() test on the first segment) were removed
-    for the same reason: the leading-character check already rejects the first,
-    and the final exists() subsumes the second.
+    It sits OUTSIDE the repo and is where every `feedback_*`/`reference_*` rule and
+    MEMORY.md are written, so the basename walk below can never reach it. The slug is
+    derived from the literal root, which `project_root` has already made absolute.
     """
-    if not tok or tok.startswith(("~", "/", ".")) or "/" not in tok:
-        return False
-    return (root.parent / tok).exists()
-
-
-def memory_tier_hit(tok: str, root: Path, home: Path | None = None) -> bool:
-    """True when the token names a file in this project's LIVE memory tier.
-
-    The live tier is `~/.claude/projects/<slugified-work-tree>/memory/`, which sits
-    OUTSIDE the repo. CLAUDE.md documents it as a primary write destination (all
-    `feedback_*`/`reference_*`/`project_*` rules and MEMORY.md live there), and it is
-    where the memory-writing protocol sends every new rule. `exists_anywhere` searches
-    for bare basenames with `os.walk(root)`, which structurally cannot reach it, so a
-    genuine memory write was reported as a fabricated save.
-
-    Fired 3x on this surface (2026-09-02 cross-vault `personal/`; 2026-09-07 twice,
-    the second being a rule file written to the live tier moments earlier). The
-    friction ladder's 3rd rung is a mandatory script patch, which is this.
-
-    Scope is deliberately narrow. It accepts a bare basename, or a token prefixed
-    `memory/` -- the exact two forms prose uses for these files. It does NOT relax the
-    rule that a multi-segment token is checked exactly: a wrong directory is still a
-    defect worth catching, and a general suffix match would mask it.
-
-    Only ever converts "missing" to "exists", and only when the file is really on disk
-    in that tier, so it cannot mask a real unwritten-file claim.
-    """
-    name = tok[len("memory/"):] if tok.startswith("memory/") else tok
-    # This single validation is load-bearing and is the ONLY guard here. Leading-"/",
-    # leading-"~", and multi-segment tokens all reach it carrying a "/" in `name`, and
-    # an empty or dot name is rejected outright, so the earlier guards this function was
-    # drafted with were redundant. Mutation testing showed them surviving, which is the
-    # same evidence that retired the guards documented in `peer_repo_hit`.
-    #
-    # What a reader can VERIFY here, since function and tests landed in one commit and
-    # the drafting sequence is not visible in the diff: the behavioural tests below
-    # assert the absolute, tilde, traversal, and multi-segment cases directly against
-    # the CURRENT code. They constrain this implementation on its own terms; they are
-    # not evidence about a prior draft. (Cross-model review 2026-09-07, F2.)
-    if not name or "/" in name or name in (".", ".."):
-        return False
     slug = str(root).replace("/", "-")
-    tier = (home or Path.home()) / ".claude" / "projects" / slug / "memory"
-    # is_file(), NOT exists(): a DIRECTORY whose name looks like a file would otherwise
-    # satisfy a file claim and convert MISSING to EXISTS, which is the one thing this
-    # helper must never do. Found by cross-model review 2026-09-07 (F1, P1).
-    return (tier / name).is_file()
+    return (home or Path.home()) / ".claude" / "projects" / slug / "memory"
 
 
-def skill_dir_hit(tok: str, root: Path) -> bool:
-    """True when the token is a short skill path ("generate-cv/SKILL.md") whose file
-    really exists under this repo's .claude/skills/.
+def candidate_paths(tok: str, root: Path, home: Path | None = None) -> list[Path]:
+    """Every place a claimed path may legitimately live, as written in prose.
 
-    Prose names skill files without the .claude/skills/ prefix. `resolve` joins that onto
-    the root, which never exists, and the basename search runs only for tokens with no
-    slash, so a real skill file was reported as a false claim. Fired 3x (friction ledger 2026-10-01
-    apply/SKILL.md, 2026-10-21 generate-cv/SKILL.md twice); the ladder's 3rd rung is a
-    mandatory script patch, which is this.
+    Each extra place exists because a real write was reported as a false claim:
+      - root.parent/<tok>: a sibling repo named repo-relatively
+        ("mag5-advisors/data/method.md"). Fired 3x, 2026-09-02..04.
+      - .claude/skills/<tok>: a short skill path ("generate-cv/SKILL.md"). Fired 3x,
+        2026-10-01, 2026-10-21 twice.
+      - the memory tier: a bare rule-file name or a `memory/`-prefixed one. Fired 3x,
+        2026-09-02, 2026-09-07 twice. Only those two forms: a deeper path is checked
+        exactly, because a wrong directory is itself a defect worth catching.
 
-    Only ever converts "missing" to "exists", and only when the file is on disk.
+    The extra places apply only to a plainly relative token. One that starts with "~",
+    "/" or "." or contains a ".." segment is checked where it points and nowhere else,
+    so no token can climb out of the place it is joined onto.
     """
+    # Joining an absolute path onto root yields that path unchanged, so "/x" and "~/x"
+    # come back as a single candidate from the escape check below.
+    out = [root / os.path.expanduser(tok)]
     if not tok or tok.startswith(("~", "/", ".")) or ".." in tok.split("/"):
-        return False
-    return (root / ".claude" / "skills" / tok).is_file()
+        return out
+    if "/" in tok:
+        out.append(root.parent / tok)
+    out.append(root / ".claude" / "skills" / tok)
+    name = tok[len("memory/"):] if tok.startswith("memory/") else tok
+    if name and "/" not in name:
+        out.append(memory_tier(root, home) / name)
+    return out
 
 
 PRUNE_DIRS = {".git", "node_modules", ".venv", "venv", "__pycache__", ".pytest_cache"}
 
 
-def exists_anywhere(tok: str, root: Path) -> bool:
-    """True if the claimed path exists.
+def exists_anywhere(tok: str, root: Path, home: Path | None = None) -> bool:
+    """True if the claimed file exists.
 
-    Bare basenames ("080326-deck-review-WORKFLOW.md") are extremely common in
-    prose — we refer to files by name without their directory constantly. Those
-    resolve to root/<name>, which almost never exists, so a naive check produced
-    false positives on files that were genuinely written one directory down.
-    For a token with no separator, search the repo for that basename before
-    declaring it missing. Tokens WITH a directory component are checked exactly,
-    because a wrong directory is itself a defect worth catching.
+    is_file(), never exists(): a DIRECTORY named like a file must not satisfy a file
+    claim (cross-model review 2026-09-07, 20.F1 and 23.F2). A symlink to a regular file
+    counts: the contract is existence, not authorship this turn.
+
+    Bare basenames ("080326-deck-review-WORKFLOW.md") are common in prose, so a token
+    with no separator that is not found at a candidate path is searched for by name
+    across the repo before it is declared missing.
     """
-    direct = resolve(tok, root)
-    if direct.exists():
+    if any(c.is_file() for c in candidate_paths(tok, root, home)):
         return True
-    if peer_repo_hit(tok, root):
-        return True
-    if memory_tier_hit(tok, root):
-        return True
-    if skill_dir_hit(tok, root):
-        return True
+    # No basename can contain "/", so a slashed token would walk the whole repo for nothing.
     if "/" in tok or tok.startswith("~"):
         return False
     for dirpath, dirnames, filenames in os.walk(root):

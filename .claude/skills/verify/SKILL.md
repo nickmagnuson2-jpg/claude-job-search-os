@@ -117,6 +117,12 @@ guards, its own tests, its own mutation round. Four of the six commits on that f
 are fixes to that one class. The simpler shape is one list of candidate roots, which
 would DELETE two functions rather than add a third.
 
+It was not built then, and on 2026-10-21 the next false positive added a fifth
+mechanism (`skill_dir_hit`). The same day all five became one `candidate_paths()` list
+checked with a single `is_file()`: four helpers replaced by two, 64 lines net removed, and an
+open P1 (a directory named like a file passed the direct check) fixed in the same
+place. A replay over 2,374 real messages changed no verdict.
+
 **2. What is the most upstream mechanism this defect comes from, and would fixing it
 there eliminate the downstream fixes?**
 
