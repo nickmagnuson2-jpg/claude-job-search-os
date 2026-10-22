@@ -51,3 +51,8 @@ def test_marks_on_non_latin_letters_are_kept_so_titles_do_not_collide():
     a = slugify("ガンダム", drop_punctuation=True)
     b = slugify("カンタム", drop_punctuation=True)
     assert a != b
+
+
+def test_compatibility_characters_are_not_expanded_into_collisions():
+    """NFKD turned '½' into '1⁄2', so '½ hour' and '12 hour' shared a title slug."""
+    assert slugify("½ hour", drop_punctuation=True) != slugify("12 hour", drop_punctuation=True)

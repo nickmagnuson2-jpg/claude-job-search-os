@@ -27,7 +27,7 @@ def slugify(text: str, maxlen: int | None = None, fallback: str = "",
     # Fold accents on Latin letters only ('é' -> 'e'). A mark on a non-Latin letter is part
     # of it (the dakuten in 'ガ'), so it is kept and the letter recomposed.
     kept: list[str] = []
-    for c in unicodedata.normalize("NFKD", text or ""):
+    for c in unicodedata.normalize("NFD", text or ""):  # canonical only: ½ stays ½
         if unicodedata.combining(c) and kept and kept[-1].isascii():
             continue
         kept.append(c)
