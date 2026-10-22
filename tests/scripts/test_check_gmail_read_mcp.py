@@ -17,11 +17,11 @@ READ_TOOLS = [
     "mcp__claude_ai_Gmail__search_threads",
     "mcp__claude_ai_Gmail__get_message",
     "mcp__claude_ai_Gmail__get_thread",
+    "mcp__claude_ai_Gmail__list_labels",   # gated 2026-10-22: gmail_fetch.py --list-labels
 ]
 ALLOWED_TOOLS = [
     "mcp__claude_ai_Gmail__create_draft",
     "mcp__claude_ai_Gmail__label_message",
-    "mcp__claude_ai_Gmail__list_labels",
     "mcp__claude_ai_Gmail__list_drafts",
     "Bash",
     "Read",
@@ -73,3 +73,23 @@ def test_override_bypasses_block():
         {"tool_name": "mcp__claude_ai_Gmail__search_threads", "tool_input": {}},
         env_extra={"GMAIL_MCP_OVERRIDE": "1"},
     ) == 0
+
+
+def test_list_labels_block_names_the_matching_script_command():
+    p = subprocess.run([sys.executable, HOOK], capture_output=True, text=True,
+                       input=json.dumps({"tool_name": "mcp__claude_ai_Gmail__list_labels",
+                                         "tool_input": {}}))
+    assert p.returncode == 2 and "gmail_fetch.py --list-labels" in p.stderr
+    assert "--search" not in p.stderr, "a label lookup should not be pointed at search"
+
+
+def test_every_gated_tool_is_routed_to_the_hook_by_the_wired_matcher():
+    """GATED_READ_TOOLS and the settings.json matcher are two lists of the same tools. A
+    tool added to one only (list_labels, 2026-10-22) is gated in a test and never in use."""
+    import re
+    settings = json.load(open(os.path.join(os.path.dirname(HOOK), "..", ".claude", "settings.json")))
+    matchers = [m["matcher"] for m in settings["hooks"]["PreToolUse"]
+                if any("check_gmail_read_mcp" in c["command"] for c in m["hooks"])]
+    assert matchers, "the hook is not wired"
+    unrouted = {t for t in h.GATED_READ_TOOLS if not any(re.fullmatch(m, t) for m in matchers)}
+    assert not unrouted, f"gated in the hook but never routed to it: {sorted(unrouted)}"

@@ -45,6 +45,8 @@ GATED_READ_TOOLS = {
     "mcp__claude_ai_Gmail__search_threads",
     "mcp__claude_ai_Gmail__get_message",
     "mcp__claude_ai_Gmail__get_thread",
+    # list_labels is a read too: the 5th fire (2026-09-28) used it while ungated.
+    "mcp__claude_ai_Gmail__list_labels",
 }
 
 
@@ -74,7 +76,9 @@ def main():
     short = tool_name.split("__")[-1]
     msg = (
         f"BLOCKED: {short} is a Gmail READ tool. Use the script read-path instead:\n\n"
-        "  PYTHONIOENCODING=utf-8 python3 tools/gmail_fetch.py --search \"<gmail query>\" --all-mail --body\n\n"
+        + ("  PYTHONIOENCODING=utf-8 python3 tools/gmail_fetch.py --list-labels\n\n"
+           if short == "list_labels" else
+           "  PYTHONIOENCODING=utf-8 python3 tools/gmail_fetch.py --search \"<gmail query>\" --all-mail --body\n\n") +
         "  The script reuses the OAuth token (no interactive reauth), supports full\n"
         "  Gmail search syntax, and is read-only. The Gmail MCP read tools can silently\n"
         "  go stale mid-session.\n\n"

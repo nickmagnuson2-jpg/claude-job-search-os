@@ -801,3 +801,29 @@ def test_search_distinguishes_a_draft_from_a_sent_message_in_one_result_set(caps
     assert draft_line, "draft subject missing from output"
     # The two must not render identically apart from the subject.
     assert out.count("DRAFT") >= 1 and out.count("SENT") >= 1
+
+
+def test_list_labels_returns_id_name_type_sorted_by_name():
+    """--list-labels is the script path for what the gated list_labels MCP tool did."""
+    class _Exec:
+        def __init__(self, v): self.v = v
+        def execute(self): return self.v
+
+    class _Labels:
+        def list(self, userId): 
+            assert userId == "me"
+            return _Exec({"labels": [
+                {"id": "Label_1", "name": "zeta", "type": "user"},
+                {"id": "INBOX", "name": "INBOX", "type": "system"},
+                {"id": "Label_9", "name": "Job Search", "type": "user"}]})
+
+    class _Users:
+        def labels(self): return _Labels()
+
+    class _Svc:
+        def users(self): return _Users()
+
+    assert gmail_fetch.list_labels(_Svc()) == [
+        {"id": "INBOX", "name": "INBOX", "type": "system"},
+        {"id": "Label_9", "name": "Job Search", "type": "user"},
+        {"id": "Label_1", "name": "zeta", "type": "user"}]

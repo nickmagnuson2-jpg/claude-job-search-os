@@ -57,7 +57,7 @@
         ]
       },
       {
-        "matcher": "mcp__claude_ai_Gmail__(search_threads|get_message|get_thread)",
+        "matcher": "mcp__claude_ai_Gmail__(search_threads|get_message|get_thread|list_labels)",
         "hooks": [
           {
             "type": "command",

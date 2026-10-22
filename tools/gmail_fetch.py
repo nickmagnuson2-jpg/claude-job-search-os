@@ -1052,6 +1052,13 @@ def resolve_inbox_dir(personal: bool, inbox_dir_arg, repo_root: Path) -> Path:
     return repo_root / "inbox"
 
 
+def list_labels(service) -> list[dict]:
+    """Every label as {id, name, type}, sorted by name. Read-only."""
+    labels = service.users().labels().list(userId="me").execute().get("labels", [])
+    return sorted(({"id": lb.get("id", ""), "name": lb.get("name", ""), "type": lb.get("type", "")}
+                   for lb in labels), key=lambda d: d["name"].lower())
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Incremental Gmail sync — writes sanitized emails to inbox/."
@@ -1149,6 +1156,12 @@ def main():
         ),
     )
     parser.add_argument(
+        "--list-labels",
+        action="store_true",
+        help="Print every Gmail label as JSON ({id, name, type}) and exit. Read-only; "
+             "the way to find a --label-id without the Gmail MCP connector.",
+    )
+    parser.add_argument(
         "--body",
         action="store_true",
         help="With --search: also print each message's plain-text body (truncated).",
@@ -1228,6 +1241,17 @@ def main():
         _save_state(state_path, state)
         print(f"State saved: {state_path} (historyId={history_id})")
         print("Setup complete. Schedule via launchd: bash tools/launchd/install.sh install")
+        return
+
+    # ── List-labels mode: read-only, prints JSON, writes nothing ──────────
+    if args.list_labels:
+        creds = get_or_refresh_creds(tools_dir, auth_mode=False)
+        try:
+            from googleapiclient.discovery import build
+        except ImportError:
+            print("ERROR: googleapiclient not installed.", file=sys.stderr)
+            sys.exit(1)
+        print(json.dumps(list_labels(build("gmail", "v1", credentials=creds)), indent=2))
         return
 
     # ── Search mode: free-text read-only Gmail search ─────────────────────
