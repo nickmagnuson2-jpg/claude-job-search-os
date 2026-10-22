@@ -1033,31 +1033,39 @@ def is_gitignored(root: Path, rel: str) -> bool:
         return False
 
 
-def load_denylist(root: Path) -> list[str]:
+def _load_list(root: Path, rel: str) -> list[str]:
+    """One token per line; blank lines and # comments skipped. A missing or unreadable
+    file is an empty list (fail open), the same for every tier."""
     try:
-        lines = (root / DENYLIST_REL).read_text(encoding="utf-8").splitlines()
+        lines = (root / rel).read_text(encoding="utf-8").splitlines()
     except (FileNotFoundError, PermissionError):
         return []
     return [ln.strip() for ln in lines if ln.strip() and not ln.startswith("#")]
+
+
+def load_denylist(root: Path) -> list[str]:
+    """BLOCK-tier tokens."""
+    return _load_list(root, DENYLIST_REL)
 
 
 def load_ambiguous(root: Path) -> list[str]:
-    """WARN-tier tokens. Missing file = empty list (fail open, same as the block tier)."""
-    try:
-        lines = (root / AMBIGUOUS_REL).read_text(encoding="utf-8").splitlines()
-    except (FileNotFoundError, PermissionError):
-        return []
-    return [ln.strip() for ln in lines if ln.strip() and not ln.startswith("#")]
+    """WARN-tier tokens."""
+    return _load_list(root, AMBIGUOUS_REL)
 
 
 def load_target_words(root: Path) -> list[str]:
     """Pipeline company names that are also ordinary English words, as written in the
-    pipeline's Company column. Missing file = empty list (fail open, as the other tiers)."""
-    try:
-        lines = (root / TARGET_WORDS_REL).read_text(encoding="utf-8").splitlines()
-    except (FileNotFoundError, PermissionError):
-        return []
-    return [ln.strip() for ln in lines if ln.strip() and not ln.startswith("#")]
+    pipeline's Company column."""
+    return _load_list(root, TARGET_WORDS_REL)
+
+
+def repo_root() -> Path:
+    """The repo root, from this file's location (tools/), not cwd(): the hook runs with
+    an absolute script path, so __file__ is reliable even when the session is launched
+    from outside the repo root (fable-audit 2026-07-07 #3). PII_REPO_ROOT overrides it
+    for tests, which inject a fixture repo + denylist."""
+    root_env = os.environ.get("PII_REPO_ROOT")
+    return Path(root_env).resolve() if root_env else Path(__file__).resolve().parent.parent
 
 
 _QUOTE_OPENERS = "\"'`\u201c\u2018"
@@ -1179,8 +1187,7 @@ def scan_paths(paths: list[str], accepted=frozenset()) -> int:
     nobody; this sweep is its only reader (/audit-pii Step 1), and it used to print
     the matches at exit 0 too. `accepted` holds the FILE:TOKEN verdicts for this run.
     """
-    root_env = os.environ.get("PII_REPO_ROOT")
-    root = Path(root_env).resolve() if root_env else Path(__file__).resolve().parent.parent
+    root = repo_root()
     tokens = load_denylist(root)
     ambiguous = load_ambiguous(root)
     target_words = load_target_words(root)
@@ -1741,12 +1748,7 @@ def main():
     tool_name = data.get("tool_name", "")
     tool_input = data.get("tool_input", {}) or {}
 
-    # Derive repo root from this file's location (tools/), not cwd() — the hook
-    # runs with an absolute script path, so __file__ is reliable even when the
-    # session is launched from outside the repo root. (fable-audit 2026-07-07 #3)
-    # PII_REPO_ROOT overrides for tests, which inject a fixture repo + denylist.
-    root_env = os.environ.get("PII_REPO_ROOT")
-    root = Path(root_env).resolve() if root_env else Path(__file__).resolve().parent.parent
+    root = repo_root()
 
     # What is about to land, and in which file(s)?
     #   Write/Edit -> one declared file_path; content comes from the payload.
