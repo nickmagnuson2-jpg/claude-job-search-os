@@ -32,7 +32,6 @@ subcommand; argparse rejects them after it with "unrecognized arguments"):
 """
 import argparse
 import json
-import os
 import re
 import sys
 from datetime import date
@@ -45,6 +44,7 @@ from name_dedup import find_near_duplicates  # noqa: E402
 # in any user-supplied cell silently shifts every later column of the row, and nothing
 # downstream complains. See tools/pipe_write.py:sanitize_cell.
 from pipe_write import sanitize_cell  # noqa: E402
+from md_table import find_section, is_sep_row, out_error, out_ok, parse_cols, read_file, table_insert_pos, write_atomic  # noqa: E402
 
 PIPELINE_FILE      = "data/job-pipeline.md"
 NETWORKING_FILE    = "data/networking.md"
@@ -62,39 +62,10 @@ CONTACTS_SEP    = "| --- | --- | --- | --- | --- | --- | --- |"
 # I/O helpers (self-contained)
 # ---------------------------------------------------------------------------
 
-def read_file(path: Path) -> str:
-    try:
-        return path.read_text(encoding="utf-8")
-    except (FileNotFoundError, PermissionError, OSError):
-        return ""
-
-
-def write_atomic(path: Path, content: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(content, encoding="utf-8")
-    os.replace(tmp, path)
-
-
-def out_ok(action: str, summary: str, **extra) -> None:
-    d = {"status": "ok", "action": action, "summary": summary}
-    d.update(extra)
-    print(json.dumps(d, ensure_ascii=False))
-
-
-def out_error(message: str, code: str = "error", **extra) -> None:
-    d = {"status": "error", "message": message, "code": code}
-    d.update(extra)
-    print(json.dumps(d, ensure_ascii=False))
-    sys.exit(1)
-
 
 # ---------------------------------------------------------------------------
 # Table row helpers
 # ---------------------------------------------------------------------------
-
-def is_sep_row(line: str) -> bool:
-    return bool(re.match(r"^\s*\|[-: |]+\|\s*$", line))
 
 
 def is_data_row(line: str) -> bool:
@@ -108,44 +79,9 @@ def is_data_row(line: str) -> bool:
     return True
 
 
-def parse_cols(line: str) -> list:
-    return [c.strip() for c in line.strip().strip("|").split("|")]
-
-
 # ---------------------------------------------------------------------------
 # Section helpers
 # ---------------------------------------------------------------------------
-
-def find_section(lines: list, pattern: str) -> tuple:
-    start = -1
-    for i, line in enumerate(lines):
-        if re.match(pattern, line, re.I):
-            start = i
-            break
-    if start == -1:
-        return (-1, -1)
-    end = len(lines)
-    for i in range(start + 1, len(lines)):
-        if lines[i].startswith("## "):
-            end = i
-            break
-    return (start, end)
-
-
-def table_insert_pos(lines: list, sec_start: int, sec_end: int) -> int:
-    last = -1
-    for i in range(sec_start, sec_end):
-        if is_data_row(lines[i]):
-            last = i
-    if last != -1:
-        return last + 1
-    for i in range(sec_start, sec_end):
-        if lines[i].startswith("|") and "---" in lines[i]:
-            return i + 1
-    for i in range(sec_start, sec_end):
-        if lines[i].startswith("|"):
-            return i + 1
-    return sec_end
 
 
 # ---------------------------------------------------------------------------
@@ -181,7 +117,7 @@ def cmd_pipeline_add(args, pipeline_path: Path, dry_run: bool) -> None:
     if act_start == -1:
         out_error("Could not find ## Active section in job-pipeline.md", "missing_section")
 
-    pos = table_insert_pos(lines, act_start, act_end)
+    pos = table_insert_pos(lines, act_start, act_end, is_data_row)
     lines.insert(pos, row)
 
     new_content = "\n".join(lines)
@@ -264,7 +200,7 @@ def cmd_contact_add(args, networking_path: Path, dry_run: bool) -> None:
     if contacts_start == -1:
         out_error("Could not find ## Contacts section in networking.md", "missing_section")
 
-    pos = table_insert_pos(lines, contacts_start, contacts_end)
+    pos = table_insert_pos(lines, contacts_start, contacts_end, is_data_row)
     lines.insert(pos, contact_row)
 
     # Add interaction log entry

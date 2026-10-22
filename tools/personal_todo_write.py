@@ -24,7 +24,6 @@ Usage:
   PYTHONIOENCODING=utf-8 python3 tools/personal_todo_write.py clear
 """
 import json
-import os
 import re
 import sys
 from datetime import date
@@ -32,6 +31,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from tools import vault_paths
+from md_table import out_ok, parse_cols, table_insert_pos, write_atomic  # noqa: E402
 
 DONE_HEADER = "| Task | Completed | Notes |"
 DONE_SEP = "| --- | --- | --- |"
@@ -53,18 +53,6 @@ def read_file(path: Path) -> str:
         return ""
 
 
-def write_atomic(path: Path, content: str) -> None:
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(content, encoding="utf-8")
-    os.replace(tmp, path)
-
-
-def out_ok(action: str, summary: str, **extra) -> None:
-    d = {"status": "ok", "action": action, "summary": summary}
-    d.update(extra)
-    print(json.dumps(d, ensure_ascii=False))
-
-
 def out_error(message: str) -> None:
     print(json.dumps({"status": "error", "message": message}, ensure_ascii=False))
     sys.exit(1)
@@ -82,10 +70,6 @@ def is_data_row(line: str) -> bool:
     if line.startswith("| Task"):
         return False
     return True
-
-
-def parse_cols(line: str) -> list[str]:
-    return [c.strip() for c in line.strip().strip("|").split("|")]
 
 
 def fmt_active(task: str, priority: str, due: str, status: str, notes: str) -> str:
@@ -116,22 +100,6 @@ def find_section(lines: list[str], header: str) -> tuple[int, int]:
     return (start, end)
 
 
-def table_insert_pos(lines: list[str], sec_start: int, sec_end: int) -> int:
-    last = -1
-    for i in range(sec_start, sec_end):
-        if is_data_row(lines[i]):
-            last = i
-    if last != -1:
-        return last + 1
-    for i in range(sec_start, sec_end):
-        if lines[i].startswith("|") and "---" in lines[i]:
-            return i + 1
-    for i in range(sec_start, sec_end):
-        if lines[i].startswith("|"):
-            return i + 1
-    return sec_end
-
-
 def insert_into_done(lines: list[str], row: str) -> None:
     """Append a row to the Done section, creating it if absent."""
     sec_start, sec_end = find_section(lines, "## Done")
@@ -143,7 +111,7 @@ def insert_into_done(lines: list[str], row: str) -> None:
         lines.append(DONE_SEP)
         lines.append(row)
     else:
-        pos = table_insert_pos(lines, sec_start, sec_end)
+        pos = table_insert_pos(lines, sec_start, sec_end, is_data_row)
         lines.insert(pos, row)
 
 
@@ -197,7 +165,7 @@ def cmd_add(args: list[str], todos_path: Path) -> None:
                 warning = f"Similar task already exists: {cols[0]}"
                 break
 
-    pos = table_insert_pos(lines, act_start, act_end)
+    pos = table_insert_pos(lines, act_start, act_end, is_data_row)
     lines.insert(pos, fmt_active(task, priority, due, "Pending", notes))
     save_lines(todos_path, lines, content)
 

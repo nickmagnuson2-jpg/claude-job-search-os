@@ -13,10 +13,7 @@ Usage:
 import argparse
 import sys
 from pathlib import Path
-
-
-def parse_cols(line: str) -> list[str]:
-    return [c.strip() for c in line.strip().strip("|").split("|")]
+from md_table import parse_cols  # noqa: E402
 
 
 def is_data_row(line: str) -> bool:

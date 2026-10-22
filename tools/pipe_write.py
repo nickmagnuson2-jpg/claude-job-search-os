@@ -23,12 +23,11 @@ subcommand; argparse rejects them after it with "unrecognized arguments"):
   PYTHONIOENCODING=utf-8 python3 tools/pipe_write.py --repo-root . remove "Acme"
 """
 import argparse
-import json
-import os
 import re
 import sys
 from datetime import date
 from pathlib import Path
+from md_table import find_section, is_sep_row, out_error, out_ok, parse_cols, read_file, table_insert_pos, write_atomic  # noqa: E402
 
 # Stages a row may be archived under. Must stay in sync with
 # todo_write.py TERMINAL_STAGES, which exact-matches these in ## Archived —
@@ -44,39 +43,10 @@ PIPELINE_SEP    = "| --- | --- | --- | --- | --- | --- | --- | --- |"
 # I/O helpers (self-contained — no cross-script imports)
 # ---------------------------------------------------------------------------
 
-def read_file(path: Path) -> str:
-    try:
-        return path.read_text(encoding="utf-8")
-    except (FileNotFoundError, PermissionError, OSError):
-        return ""
-
-
-def write_atomic(path: Path, content: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(content, encoding="utf-8")
-    os.replace(tmp, path)
-
-
-def out_ok(action: str, summary: str, **extra) -> None:
-    d = {"status": "ok", "action": action, "summary": summary}
-    d.update(extra)
-    print(json.dumps(d, ensure_ascii=False))
-
-
-def out_error(message: str, code: str = "error", **extra) -> None:
-    d = {"status": "error", "message": message, "code": code}
-    d.update(extra)
-    print(json.dumps(d, ensure_ascii=False))
-    sys.exit(1)
-
 
 # ---------------------------------------------------------------------------
 # Table row helpers
 # ---------------------------------------------------------------------------
-
-def is_sep_row(line: str) -> bool:
-    return bool(re.match(r"^\s*\|[-: |]+\|\s*$", line))
 
 
 def is_data_row(line: str) -> bool:
@@ -87,10 +57,6 @@ def is_data_row(line: str) -> bool:
     if re.match(r"^\|\s*Company\s*\|", line):
         return False
     return True
-
-
-def parse_cols(line: str) -> list:
-    return [c.strip() for c in line.strip().strip("|").split("|")]
 
 
 def fmt_row(company, role, stage, date_updated, next_action, cv_used, notes, url):
@@ -127,38 +93,6 @@ def compose_fit_note(existing_notes: str, fit_reason: str, fit_verdict, today: s
 # ---------------------------------------------------------------------------
 # Section navigation
 # ---------------------------------------------------------------------------
-
-def find_section(lines: list, pattern: str) -> tuple:
-    """Find section matching regex pattern. Returns (start_idx, end_idx)."""
-    start = -1
-    for i, line in enumerate(lines):
-        if re.match(pattern, line, re.I):
-            start = i
-            break
-    if start == -1:
-        return (-1, -1)
-    end = len(lines)
-    for i in range(start + 1, len(lines)):
-        if lines[i].startswith("## "):
-            end = i
-            break
-    return (start, end)
-
-
-def table_insert_pos(lines: list, sec_start: int, sec_end: int) -> int:
-    last = -1
-    for i in range(sec_start, sec_end):
-        if is_data_row(lines[i]):
-            last = i
-    if last != -1:
-        return last + 1
-    for i in range(sec_start, sec_end):
-        if lines[i].startswith("|") and "---" in lines[i]:
-            return i + 1
-    for i in range(sec_start, sec_end):
-        if lines[i].startswith("|"):
-            return i + 1
-    return sec_end
 
 
 # ---------------------------------------------------------------------------
@@ -226,7 +160,7 @@ def cmd_add(args, pipeline_path: Path, dry_run: bool) -> None:
         return
 
     row = fmt_row(args.company, args.role, stage, today, "—", "—", notes, url)
-    pos = table_insert_pos(lines, act_start, act_end)
+    pos = table_insert_pos(lines, act_start, act_end, is_data_row)
     lines.insert(pos, row)
     save_lines(pipeline_path, lines, content)
 
@@ -406,7 +340,7 @@ def cmd_remove(args, pipeline_path: Path, dry_run: bool) -> None:
         lines.append(PIPELINE_SEP)
         lines.append(archived_row)
     else:
-        pos = table_insert_pos(lines, arch_start, arch_end)
+        pos = table_insert_pos(lines, arch_start, arch_end, is_data_row)
         lines.insert(pos, archived_row)
 
     save_lines(pipeline_path, lines, content)

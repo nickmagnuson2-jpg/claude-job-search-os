@@ -37,12 +37,12 @@ Example:
 """
 import argparse
 import json
-import os
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from meeting_vocab import split_transcript_turns  # noqa: E402
+from md_table import write_atomic  # noqa: E402
 
 
 SEALED_HEADER_THERAPY = """> **SEALED.** This is sensitive personal therapy material. Per `<personal-vault>/CLAUDE.md`, contents of `personal/data/therapy/` never appear in CVs, cover letters, recruiter prep, voice exports, networking notes, or any external-facing artifact. The verbatim transcript is preserved here as source-of-truth; do not paraphrase or excerpt outside this folder."""
@@ -73,12 +73,6 @@ SEALED_FLAG = {
     "networking": "false",
     "general": "false",
 }
-
-
-def write_atomic(path: Path, content: str) -> None:
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(content, encoding="utf-8")
-    os.replace(tmp, path)
 
 
 def transcript_frontmatter(data: dict) -> str:

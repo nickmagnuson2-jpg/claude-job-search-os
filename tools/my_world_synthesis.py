@@ -21,11 +21,11 @@ Output: JSON to stdout.
 """
 import argparse
 import json
-import os
 import re
 import sys
 from datetime import date
 from pathlib import Path
+from md_table import out_error, read_file, write_atomic  # noqa: E402
 
 REFLECTIONS_DIR = "data/reflections"
 LONGITUDINAL_REL = "data/reflections/_longitudinal.md"
@@ -51,31 +51,11 @@ covered-through: {covered}
 
 # --- I/O helpers (self-contained — mirror pipe_write/person_write) ---
 
-def read_file(path: Path) -> str:
-    try:
-        return path.read_text(encoding="utf-8")
-    except (FileNotFoundError, PermissionError, OSError):
-        return ""
-
-
-def write_atomic(path: Path, content: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(content, encoding="utf-8")
-    os.replace(tmp, path)
-
 
 def out_ok(action: str, **extra) -> None:
     d = {"status": "ok", "action": action}
     d.update(extra)
     print(json.dumps(d, ensure_ascii=False))
-
-
-def out_error(message: str, code: str = "error", **extra) -> None:
-    d = {"status": "error", "message": message, "code": code}
-    d.update(extra)
-    print(json.dumps(d, ensure_ascii=False))
-    sys.exit(1)
 
 
 # --- core ---

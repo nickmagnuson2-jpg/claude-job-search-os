@@ -61,7 +61,6 @@ Usage:
   PYTHONIOENCODING=utf-8 python3 tools/todo_write.py audit
 """
 import json
-import os
 import re
 import sys
 from datetime import date
@@ -80,6 +79,7 @@ from stage_vocab import is_terminal_stage  # noqa: E402
 # ordinary prose -- was already solved for the PII denylist, so the classifier is imported
 # rather than reimplemented here (CLAUDE.md: consolidate duplicated domain logic).
 from gen_pii_denylist import is_distinctive_single, load_dictionary  # noqa: E402
+from md_table import out_ok, parse_cols, table_insert_pos, write_atomic  # noqa: E402
 
 TODOS_FILE = "data/job-todos.md"
 PIPELINE_FILE = "data/job-pipeline.md"
@@ -102,19 +102,6 @@ def read_file(path: Path) -> str:
         return path.read_text(encoding="utf-8")
     except (FileNotFoundError, PermissionError):
         return ""
-
-
-def write_atomic(path: Path, content: str) -> None:
-    """Write file atomically via a sibling temp file."""
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(content, encoding="utf-8")
-    os.replace(tmp, path)
-
-
-def out_ok(action: str, summary: str, **extra) -> None:
-    d = {"status": "ok", "action": action, "summary": summary}
-    d.update(extra)
-    print(json.dumps(d, ensure_ascii=False))
 
 
 def out_error(message: str, **extra) -> None:
@@ -190,11 +177,6 @@ def is_data_row(line: str) -> bool:
     return True
 
 
-def parse_cols(line: str) -> list[str]:
-    """Split a table row into column values."""
-    return [c.strip() for c in line.strip().strip("|").split("|")]
-
-
 def _safe_cell(s: str) -> str:
     """Neutralize literal pipe chars so a field value can't split a table row into
     extra columns on write (root cause of the 2026-07 job-todos.md column drift)."""
@@ -238,26 +220,6 @@ def find_section(lines: list[str], header: str) -> tuple[int, int]:
     return (start, end)
 
 
-def table_insert_pos(lines: list[str], sec_start: int, sec_end: int) -> int:
-    """Return the line index to insert a new row (after last data row, or after separator)."""
-    # Find last data row
-    last = -1
-    for i in range(sec_start, sec_end):
-        if is_data_row(lines[i]):
-            last = i
-    if last != -1:
-        return last + 1
-    # No data rows yet — insert after separator
-    for i in range(sec_start, sec_end):
-        if lines[i].startswith("|") and "---" in lines[i]:
-            return i + 1
-    # Fallback: after first pipe row
-    for i in range(sec_start, sec_end):
-        if lines[i].startswith("|"):
-            return i + 1
-    return sec_end
-
-
 def insert_into_completed(lines: list[str], row: str) -> None:
     """
     Append a row to the Completed section, creating the section if absent.
@@ -272,7 +234,7 @@ def insert_into_completed(lines: list[str], row: str) -> None:
         lines.append(COMPLETED_SEP)
         lines.append(row)
     else:
-        pos = table_insert_pos(lines, comp_start, comp_end)
+        pos = table_insert_pos(lines, comp_start, comp_end, is_data_row)
         lines.insert(pos, row)
 
 
@@ -418,7 +380,7 @@ def cmd_add(args: list[str], todos_path: Path) -> None:
                 warning = f"Similar task already exists: {cols[0]}"
                 break
 
-    pos = table_insert_pos(lines, act_start, act_end)
+    pos = table_insert_pos(lines, act_start, act_end, is_data_row)
     lines.insert(pos, fmt_active(task, priority, due, "Pending", notes))
     save_lines(todos_path, lines, content)
 

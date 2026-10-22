@@ -18,13 +18,13 @@ Output: JSON to stdout.
   error: {"status":"error","message":..}  (exit 1)
 """
 import json
-import os
 import re
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from tools import vault_paths
+from md_table import write_atomic  # noqa: E402
 
 # Log names only. The vault root that hosts them is private (this repo is
 # public), so paths resolve at call time via tools/vault_paths.py rather than
@@ -44,13 +44,6 @@ DATE_H2 = re.compile(r"^## \d{4}-\d{2}-\d{2}\s*$", re.M)
 def fail(msg):
     print(json.dumps({"status": "error", "message": msg}))
     sys.exit(1)
-
-
-def write_atomic(path: Path, content: str) -> None:
-    """Write file atomically via a sibling temp file."""
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(content, encoding="utf-8")
-    os.replace(tmp, path)
 
 
 def main(argv):
