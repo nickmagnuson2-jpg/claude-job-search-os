@@ -385,6 +385,20 @@ def test_a_real_traceback_beside_an_infrastructure_script_is_still_logged(hook_r
     assert r.surface == "pipe_write.py", "the crash belongs to the real script, not a frame"
 
 
+def test_an_infrastructure_crash_in_a_mixed_command_is_not_blamed_on_its_neighbor(hook_run):
+    """The frames say the traceback came from friction_log.py, so pipe_write.py (which ran
+    fine beside it) must not be logged as crashing."""
+    tb = ('Traceback (most recent call last):\n'
+          '  File "/repo/tools/friction_log.py", line 9, in <module>\n'
+          '    main()\n'
+          '  File "/usr/lib/python3/json/decoder.py", line 3, in decode\n'
+          '    raise JSONDecodeError\n'
+          'json.decoder.JSONDecodeError: Expecting value\n')
+    r = hook_run("python3 tools/pipe_write.py add x; python3 tools/friction_log.py list",
+                 stderr=tb)
+    assert not r.logged
+
+
 def test_a_traceback_in_output_with_no_python_invocation_is_not_logged(hook_run):
     """Reading a log file full of old tracebacks, or grepping for one, is not a crash.
     Firing here would file friction against a command that succeeded."""

@@ -232,6 +232,11 @@ def main() -> int:
         names = re.findall(r"tools/([A-Za-z0-9_]+)\.py", command)
         if names and all(n.lower() + ".py" in EXCLUDE_SCRIPTS for n in names):
             return 0
+        # In a mixed command, a traceback that passes through an infrastructure script
+        # came from that segment; do not blame the ordinary script beside it.
+        if any(os.path.basename(f).lower() in EXCLUDE_SCRIPTS
+               for f in TRACEBACK_FILE_RE.findall(combined)):
+            return 0
         surface = derive_traceback_surface(command, combined)
         nature = extract_traceback_nature(combined)
 
