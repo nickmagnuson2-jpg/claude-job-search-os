@@ -13,6 +13,7 @@ Usage:
 import argparse
 import sys
 from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # siblings import as `tools.X` too
 from md_table import parse_cols  # noqa: E402
 
 

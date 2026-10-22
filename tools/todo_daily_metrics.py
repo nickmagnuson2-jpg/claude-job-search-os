@@ -607,9 +607,10 @@ def scan_substantive_work(repo_root: Path, today: date) -> dict:
     )
 
     # The live memory tier. A relative --repo-root (e.g. `.`) once produced the key
-    # "-." here and silently reported memories_today: 0 instead of 23 (2026-08-19);
-    # claude_project_dir makes the root absolute itself.
-    memory_dir = claude_project_dir(repo_root) / "memory"
+    # "-." here and silently reported memories_today: 0 instead of 23 (2026-08-19).
+    # .resolve() (follow symlinks) is this tool's behaviour since then and is kept;
+    # claude_project_dir itself uses abspath, which differs only for a symlinked root.
+    memory_dir = claude_project_dir(Path(repo_root).resolve()) / "memory"
     memories_n, memories_paths = (0, [])
     if memory_dir.exists():
         memories_n, memories_paths = count_modified_after(str(memory_dir / "*.md"))

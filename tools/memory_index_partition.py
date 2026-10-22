@@ -14,7 +14,9 @@ import json
 import os
 import re
 import sys
+from pathlib import Path
 from datetime import datetime, timezone
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # siblings import as `tools.X` too
 from hook_runtime import claude_project_dir  # noqa: E402
 
 DEFAULT_DIR = str(claude_project_dir(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) / "memory")

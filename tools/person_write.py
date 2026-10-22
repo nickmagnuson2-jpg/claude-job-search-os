@@ -38,10 +38,12 @@ subcommand; argparse rejects them after it with "unrecognized arguments"):
       --section commitments --text "Will relay feedback via Jordan's process"
 """
 import argparse
+import sys
 import re
 import unicodedata
 from datetime import date
 from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # siblings import as `tools.X` too
 from md_table import out_error, out_ok, read_file, write_atomic  # noqa: E402
 
 PEOPLE_DIR = "data/people"

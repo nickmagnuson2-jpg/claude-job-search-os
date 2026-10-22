@@ -206,8 +206,10 @@ def candidate_paths(tok: str, root: Path, home: Path | None = None) -> list[Path
         exactly, because a wrong directory is itself a defect worth catching.
 
     The extra places apply only to a plainly relative token. One that starts with "~",
-    "/" or "." or contains a ".." segment is checked where it points and nowhere else,
-    so no token can climb out of the place it is joined onto.
+    "/" or "." or contains a ".." segment gets no extra places: it is checked only where
+    it points from the repo root (which may be outside the repo, as it always could).
+    This is narrower than before 2026-10-21, when the sibling-repo lookup also accepted a
+    mid-token ".." ("a/../b/x.md"); prose does not write paths that way.
     """
     # Joining an absolute path onto root yields that path unchanged, so "/x" and "~/x"
     # come back as a single candidate from the escape check below.

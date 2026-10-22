@@ -24,6 +24,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from tools import vault_paths
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # siblings import as `tools.X` too
 from md_table import write_atomic  # noqa: E402
 
 # Log names only. The vault root that hosts them is private (this repo is

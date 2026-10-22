@@ -46,6 +46,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # siblings import as `tools.X` too
 from hook_runtime import claude_project_dir  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[1]

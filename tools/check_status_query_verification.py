@@ -62,8 +62,9 @@ from __future__ import annotations
 import os
 import re
 import sys
+from pathlib import Path
 
-# No sys.path line: run as a script, Python already puts this file's folder first.
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # siblings import as `tools.X` too
 from hook_runtime import read_payload
 
 # Curly apostrophes reach here constantly: macOS smart quotes, and Wispr dictation, which is

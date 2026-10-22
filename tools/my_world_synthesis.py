@@ -25,6 +25,7 @@ import re
 import sys
 from datetime import date
 from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # siblings import as `tools.X` too
 from md_table import out_error, read_file, write_atomic  # noqa: E402
 
 REFLECTIONS_DIR = "data/reflections"

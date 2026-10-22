@@ -35,6 +35,7 @@ import subprocess
 import sys
 from datetime import date, datetime
 from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # siblings import as `tools.X` too
 from hook_runtime import claude_project_dir  # noqa: E402
 
 TOOLS = Path(__file__).resolve().parent

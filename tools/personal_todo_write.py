@@ -31,6 +31,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from tools import vault_paths
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # siblings import as `tools.X` too
 from md_table import out_ok, parse_cols, safe_cell, table_insert_pos, write_atomic  # noqa: E402
 
 DONE_HEADER = "| Task | Completed | Notes |"

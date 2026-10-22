@@ -486,9 +486,21 @@ def test_exists_anywhere_finds_memory_tier_file(monkeypatch):
     with tempfile.TemporaryDirectory() as tmp:
         root, home, tier = _tier_layout(tmp)
         (tier / "feedback_y.md").write_text("x", encoding="utf-8")
+        monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
         monkeypatch.setattr(csc.Path, "home", staticmethod(lambda: home))
         assert csc.exists_anywhere("feedback_y.md", root) is True
         assert csc.exists_anywhere("feedback_absent.md", root) is False
+
+
+def test_exists_anywhere_finds_the_tier_under_claude_config_dir(monkeypatch):
+    """With no explicit home, the hook looks where Claude Code keeps projects:
+    CLAUDE_CONFIG_DIR when set."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root, home, tier = _tier_layout(tmp)
+        (tier / "feedback_c.md").write_text("x", encoding="utf-8")
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(home / ".claude"))
+        monkeypatch.setattr(csc.Path, "home", staticmethod(lambda: Path(tmp) / "elsewhere"))
+        assert csc.exists_anywhere("feedback_c.md", root) is True
 
 
 def test_memory_tier_bare_prefix_does_not_match_the_directory_itself():

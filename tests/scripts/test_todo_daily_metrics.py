@@ -317,7 +317,9 @@ def test_upcoming_scheduled_sorted_event_before_followup(tmp_path):
 # key itself rather than importing the source, so it passed whether or not the fix
 # was present -- a tautological assertion, the shape CLAUDE.md:23 warns about. The
 # end-to-end test below is the real guard: verified to FAIL when .resolve() is
-# reverted.)
+# reverted. Since 2026-10-21 the key is built by hook_runtime.claude_project_dir,
+# which also makes a relative root absolute, so removing .resolve() alone no longer
+# breaks this test; removing the abspath in claude_project_dir does.)
 def test_relative_and_absolute_repo_root_agree_on_substantive_work():
     """End-to-end guard: the two spellings must not disagree on any count.
 
