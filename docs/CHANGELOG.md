@@ -3,6 +3,37 @@
 All notable changes to this job search system are recorded here.
 Format: newest entries at the top.
 
+## 2026-10-21: One copy of each shared mechanism
+
+**What prompted it.** A fix to `check_save_claims.py` added a fifth way to answer "does
+this claimed file exist", the question four earlier helpers already answered separately.
+Nick asked for the simpler shape, then for the same technique wherever it applied without
+losing behavior. Measured each time: identical copies only, behavior verified on real
+data, mutation-tested.
+
+- **`check_save_claims.py`**: `resolve`, `peer_repo_hit`, `memory_tier_hit` and
+  `skill_dir_hit` became one `candidate_paths()` list checked with `is_file()`. Fixes an
+  open P1: a directory named like a file passed the direct check (23.F2).
+- **`hook_runtime.py`** gained two shared functions:
+  - `last_assistant_text()` replaces identical copies in `check_save_claims` and
+    `check_stale_file_claim`. It also skips a transcript line that is JSON but not an
+    object, which crashed both copies.
+  - `claude_project_dir()` replaces seven separate derivations of the Claude project
+    folder. Three of them hard-coded one machine's folder name.
+- **`check_status_query_verification.py`** now uses `hook_runtime.read_payload` instead
+  of its own bounded reader, the one `hook_runtime` was ported from (97 lines removed).
+- **`check_public_pii.py`**: three identical list loaders are now one, and one
+  repo-root lookup replaces two copies.
+- **`md_table.py` (new)**: one copy of the markdown-table helpers that were duplicated
+  across up to eleven writers (net 285 lines removed). Two things came to light:
+  - No test checked where a new row lands, in any of the five copies of
+    `table_insert_pos`. `test_md_table.py` now pins every branch.
+  - `personal_todo_write` never got the 2026-07 fix that stops a "|" in a value from
+    splitting a row. It now uses the shared `safe_cell`.
+- **PII denylist**: an ordinary word added to `STOPWORDS` on 2026-10-06 moved to
+  `INDUSTRY_WORDS`. `STOPWORDS` also removes a pipeline target spelled the same way
+  from every tier, which `test_gen_pii_stopwords_guard` caught.
+
 ## 2026-10-21: One writer for outreach-log statuses
 
 **What prompted it.** A LinkedIn DM reply could not be marked `Replied`: `outreach_status.py
