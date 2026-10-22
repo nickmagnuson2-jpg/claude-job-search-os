@@ -376,6 +376,14 @@ def test_a_traceback_from_the_logger_itself_is_excluded(hook_run, script):
     assert not r.logged
 
 
+def test_a_real_traceback_beside_an_infrastructure_script_is_still_logged(hook_run):
+    """Only an ALL-infrastructure command is skipped; a crash of an ordinary script in the
+    same command must still reach the ledger."""
+    r = hook_run("python3 tools/friction_log.py list; python3 tools/pipe_write.py add x",
+                 stderr=TRACEBACK)
+    assert r.logged
+
+
 def test_a_traceback_in_output_with_no_python_invocation_is_not_logged(hook_run):
     """Reading a log file full of old tracebacks, or grepping for one, is not a crash.
     Firing here would file friction against a command that succeeded."""

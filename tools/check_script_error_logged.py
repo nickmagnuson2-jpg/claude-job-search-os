@@ -227,9 +227,11 @@ def main() -> int:
         # traceback: inline heredocs, skill helpers outside tools/, or a tools
         # script that crashed instead of emitting JSON. A traceback is an
         # unambiguous crash signal, so no graceful-empty carve-out applies.
-        # Exclude the friction-infrastructure scripts to avoid logging loops.
-        if any(n.lower() + ".py" in EXCLUDE_SCRIPTS
-               for n in re.findall(r"tools/([A-Za-z0-9_]+)\.py", command)):
+        # Exclude a command made only of friction-infrastructure scripts, to avoid
+        # logging loops. A real script beside one still logs (same rule as
+        # friction_surface.is_excluded_bash).
+        names = re.findall(r"tools/([A-Za-z0-9_]+)\.py", command)
+        if names and all(n.lower() + ".py" in EXCLUDE_SCRIPTS for n in names):
             return 0
         surface = derive_traceback_surface(command, combined)
         nature = extract_traceback_nature(combined)

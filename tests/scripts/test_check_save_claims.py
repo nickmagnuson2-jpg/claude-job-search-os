@@ -720,6 +720,7 @@ def test_a_capitalized_js_library_name_is_not_a_claimed_file(text):
 @pytest.mark.parametrize("text,path", [
     ("I wrote plan-hardening.js for the workflow.", "plan-hardening.js"),
     ("Saved to `.claude/workflows/Deck.js` today.", ".claude/workflows/Deck.js"),
+    ("I wrote Deck.js for the slides.", "Deck.js"),     # capitalized but not a library
 ])
 def test_a_real_js_file_is_still_a_claimed_file(text, path):
     assert path in extract(text)

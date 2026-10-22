@@ -85,9 +85,11 @@ LOOKBEHIND = 40
 SKIP_PREFIXES = ("http://", "https://", "www.", "mailto:")
 # Extensions that are almost always prose, not files (version numbers, decimals).
 NOISE = re.compile(r"^\d+\.\d+$")
-# A bare capitalized `X.js` is a library name in prose (Next.js, Node.js, D3.js), not a
-# file: real JS files here are lowercase or carry a path. Fired 3x (2026-08-31..10-21).
-LIBRARY_NAME = re.compile(r"^[A-Z][A-Za-z0-9]*\.js$")
+# A bare `Next.js` etc. is a library named in prose, not a file. An explicit list, not a
+# Capitalized.js shape, so a false claim about a real `Deck.js` still reaches the
+# existence check (Codex + Grok review). Fired 3x (2026-08-31..10-21).
+LIBRARY_NAME = re.compile(
+    r"^(?:Next|Node|Nuxt|Vue|React|Angular|Svelte|Ember|Express|D3|Three|Chart|Deno)\.js$")
 
 
 URL_RE = re.compile(r"\b(?:https?|ftp)://\S+|\bwww\.\S+", re.I)
