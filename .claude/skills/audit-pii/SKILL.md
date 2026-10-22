@@ -68,6 +68,14 @@ Before any such operation, sweep three axes (not just the file you edited):
 
 Surface every hit and triage by hand for a small set. Do not report "clean" from a changed-files-only scan when the operation touches the full history/tree.
 
+**After ANY scrub, also run the sibling sweep (mandatory, not only before history rewrites).** Once per token removed:
+
+```bash
+PYTHONIOENCODING=utf-8 python3 tools/sweep.py --pattern '<token>' -i --public --history
+```
+
+`--public` scans every file git does not ignore (tracked and untracked), so a sibling still carrying the token is a hit; exit 1 means one remains. `history_commits` lists every commit that added or removed it; check which of those are on `origin/main` to know whether the token is already public. Word-boundary matching is the default. Origin: the 4th fire of `feedback_pii_sweep_must_cover_siblings_and_history`, caught only by running this sweep by hand after the scrub.
+
 ### Step 1 — Refresh the denylist and run the deterministic scan
 
 ```bash

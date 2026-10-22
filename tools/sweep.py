@@ -48,6 +48,8 @@ Usage (CLI):
     ... --substring   # opt in to substring matching, recorded in the output
     ... --regex       # treat --pattern as a regex (no boundary wrapping)
     ... --control tok # assert a known-present token matches first
+    ... --public      # scan every file git does not ignore (post-scrub sibling sweep)
+    ... --history     # also list commits that added or removed the token
 
 Exit codes:  0 = ran, no matches · 1 = ran, matches found · 2 = empty/invalid scope
              3 = positive control failed (result untrustworthy)
@@ -174,6 +176,30 @@ def sweep(paths, pattern: str, *, substring: bool = False, regex: bool = False,
     return result
 
 
+def _git(*args: str) -> list[str]:
+    import subprocess
+    r = subprocess.run(["git", *args], capture_output=True, text=True)
+    return [ln for ln in r.stdout.splitlines() if ln.strip()] if r.returncode == 0 else []
+
+
+def public_paths() -> list[str]:
+    """Every file git does not ignore, relative to the repo root: what reaches the public
+    remote on the next `git add -A`. A post-scrub sweep over only the edited file missed
+    siblings carrying the same token (feedback_pii_sweep_must_cover_siblings_and_history)."""
+    root = (_git("rev-parse", "--show-toplevel") or [""])[0]
+    rels = _git("-C", root, "ls-files") + _git("-C", root, "ls-files", "--others", "--exclude-standard")
+    # A tracked symlink is public as a link, but reading through it would scan its
+    # target, which may be gitignored. Its content is not public; skip it.
+    paths = [os.path.join(root, r) for r in sorted(set(rels))] if root else []
+    return [p for p in paths if not os.path.islink(p)]
+
+
+def history_commits(pattern: str, *, regex: bool = False) -> list[str]:
+    """Commits on any ref whose diff added or removed `pattern` (pickaxe; case-sensitive)."""
+    flags = ["--pickaxe-regex"] if regex else []
+    return _git("log", "--all", "--format=%h %ad %s", "--date=short", *flags, "-S", pattern)
+
+
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
     ap.add_argument("--pattern", required=True, help="token (word-boundary matched by default)")
@@ -183,6 +209,12 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--control", default=None,
                     help="a token known to be present; a negative result is untrusted without it")
     ap.add_argument("--stdin-paths", action="store_true", help="read the path list from stdin")
+    ap.add_argument("--public", action="store_true",
+                    help="add every file git does not ignore (tracked + untracked-unignored):\n"
+                         "the public surface of this repo, siblings included")
+    ap.add_argument("--history", action="store_true",
+                    help="also list commits on any ref that added or removed --pattern\n"
+                         "(git log --all -S); reported, does not change the exit code")
     ap.add_argument("paths", nargs="*")
     args = ap.parse_args(argv)
 
@@ -195,6 +227,8 @@ def main(argv: list[str]) -> int:
     paths = list(args.paths)
     if args.stdin_paths:
         paths += [ln.strip() for ln in sys.stdin.read().splitlines() if ln.strip()]
+    if args.public:
+        paths += public_paths()
 
     try:
         result = sweep(paths, args.pattern, substring=args.substring, regex=args.regex,
@@ -204,6 +238,8 @@ def main(argv: list[str]) -> int:
         return 2
 
     result["status"] = "ok"
+    if args.history:
+        result["history_commits"] = history_commits(args.pattern, regex=args.regex)
     sys.stdout.write(json.dumps(result, indent=2) + "\n")
     if result.get("control_ok") is False:
         return 3

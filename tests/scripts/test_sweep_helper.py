@@ -254,3 +254,69 @@ def test_stdin_is_read_only_when_asked_for(corpus):
     """Without --stdin-paths, text waiting on stdin is not a path list."""
     rc, report = run("--pattern", "Ace", str(corpus / "b.md"), stdin=str(corpus / "a.md") + "\n")
     assert rc == 0 and report["given"] == 1 and report["matched"] == 0
+
+
+# --- --public / --history: the post-scrub sibling sweep -------------------------------
+# feedback_pii_sweep_must_cover_siblings_and_history (7 fires): a scrub checked only the
+# file just edited, and a sibling public file still carried the same token.
+
+@pytest.fixture
+def git_repo(tmp_path):
+    def git(*a):
+        subprocess.run(["git", *a], cwd=tmp_path, check=True, capture_output=True,
+                       env={"PATH": "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin",
+                            "HOME": str(tmp_path), "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+                            "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"})
+    git("init", "-q")
+    (tmp_path / ".gitignore").write_text("private/\n")
+    (tmp_path / "edited.md").write_text("scrubbed: Placeholder Co\n")
+    (tmp_path / "sibling.md").write_text("still names Zebracorp here\n")
+    (tmp_path / "private").mkdir()
+    (tmp_path / "private" / "notes.md").write_text("Zebracorp is fine in an ignored file\n")
+    git("add", "-A")
+    git("commit", "-qm", "base")
+    (tmp_path / "untracked.md").write_text("new public file naming Zebracorp\n")
+    return tmp_path
+
+
+def _run_in(cwd, *args):
+    proc = subprocess.run([sys.executable, str(SCRIPT), *args], cwd=cwd,
+                          capture_output=True, text=True)
+    return proc.returncode, json.loads(proc.stdout)
+
+
+def test_public_scope_finds_the_sibling_and_untracked_files_but_not_ignored_ones(git_repo):
+    code, out = _run_in(git_repo, "--pattern", "Zebracorp", "--public")
+    hit = sorted(Path(m["file"]).name for m in out["matches"])
+    assert code == 1 and hit == ["sibling.md", "untracked.md"]
+    assert str(git_repo / "private" / "notes.md") not in out["paths"], "a gitignored file is not public"
+    assert str(git_repo / "sibling.md") in out["paths"]
+
+
+def test_public_scope_clean_after_every_sibling_is_scrubbed(git_repo):
+    for f in ("sibling.md", "untracked.md"):
+        (git_repo / f).write_text("generic placeholder\n")
+    code, out = _run_in(git_repo, "--pattern", "Zebracorp", "--public")
+    assert code == 0 and out["scanned"] >= 3
+
+
+def test_history_covers_every_ref_not_only_the_current_branch(git_repo):
+    """The token is committed on a side branch only; `git log -S` without --all misses it."""
+    env = {"PATH": "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin", "HOME": str(git_repo),
+           "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+           "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
+    def git(*a):
+        subprocess.run(["git", *a], cwd=git_repo, check=True, capture_output=True, env=env)
+    git("checkout", "-q", "-b", "side")
+    (git_repo / "side.md").write_text("Quokkaware only on a side branch\n")
+    git("add", "side.md"); git("commit", "-qm", "side only")
+    git("checkout", "-q", "-")
+    _, out = _run_in(git_repo, "--pattern", "Quokkaware", "--public", "--history")
+    assert [c.split(" ", 2)[2] for c in out["history_commits"]] == ["side only"]
+
+
+def test_a_tracked_symlink_is_not_read_through(git_repo):
+    """Reading through a public link would scan its (possibly gitignored) target."""
+    (git_repo / "link.md").symlink_to(git_repo / "private" / "notes.md")
+    code, out = _run_in(git_repo, "--pattern", "Zebracorp", "--public")
+    assert str(git_repo / "link.md") not in out["paths"]
