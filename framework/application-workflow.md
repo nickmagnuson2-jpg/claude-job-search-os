@@ -70,7 +70,7 @@ rm -rf output/<slug>/rendercv_output/
 Do not reason about layout from the markdown alone — rendercv quirks are only visible in the actual render.
 
 1. **Render a PNG and `Read` it.** Drop `--dont-generate-png`, then open the PNG (`rendercv_output/*_1.png`) with the Read tool to visually confirm italics, line breaks, spacing, and page fill. This catches broken emphasis, stray asterisks, and awkward wraps that the markdown hides.
-2. **Count pages.** `PYTHONIOENCODING=utf-8 python3 -c "from pypdf import PdfReader; print(len(PdfReader('output/<slug>/MMDDYY-magnuson.pdf').pages))"`. For the candidate this must be 1; trim per Length & One-Page Verification if over.
+2. **Count pages.** `PYTHONIOENCODING=utf-8 python3 -c "from pypdf import PdfReader; print(len(PdfReader('output/<slug>/MMDDYY-magnuson.pdf').pages))"`. For the candidate this must be 1; trim per Length & One-Page Verification if over. **Delete the PDF before each render** (`rm -f output/<slug>/MMDDYY-magnuson.pdf`): a failed render writes no PDF, and a leftover one from the previous run then counts as a pass.
 3. **Clean up** `rm -rf rendercv_output/` once verified.
 
 **RenderCV layout gotchas (learned 2026-06-11):**

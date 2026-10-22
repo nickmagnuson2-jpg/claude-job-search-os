@@ -3,7 +3,7 @@ name: generate-cv
 description: Generate a tailored CV + interview cheat sheet for a specific role — follows the 11-step resume workflow, saves to output/, and updates the pipeline
 argument-hint: <job-url-or-jd> [context]
 user-invocable: true
-allowed-tools: Read(*), Glob(data/*), Glob(plugins/*), Glob(framework/*), Write(output/**), Write(data/job-pipeline.md), mcp__exa__web_search_exa, mcp__exa__web_fetch_exa, WebFetch, WebSearch, Bash(python3 tools/projects_to_yaml.py:*), Bash(python3 tools/cv_merge_theme.py:*), Bash(~/.local/bin/rendercv render:*), Bash(rendercv render:*), Bash(rm -rf output/**/rendercv_output)
+allowed-tools: Read(*), Glob(data/*), Glob(plugins/*), Glob(framework/*), Write(output/**), Write(data/job-pipeline.md), mcp__exa__web_search_exa, mcp__exa__web_fetch_exa, WebFetch, WebSearch, Bash(python3 tools/projects_to_yaml.py:*), Bash(python3 tools/cv_merge_theme.py:*), Bash(~/.local/bin/rendercv render:*), Bash(rendercv render:*), Bash(rm -rf output/**/rendercv_output), Bash(rm -f output/**/*-magnuson.pdf)
 ---
 
 # Generate CV — Tailored Resume + Cheat Sheet
@@ -268,6 +268,8 @@ The `.yaml` file is now complete and standalone — design + content baked toget
 
 ### Step 9b: Render PDF + Markdown + PNG
 
+**First, in its own call, delete the previous PDF:** `rm -f output/<company-slug>/MMDDYY-magnuson.pdf`. A failed render writes no PDF, so without this the last run's PDF survives and Step 9b-verify counts its pages as a pass (infrastructure-defects D5: a YAML colon in a bullet broke the render and `PAGES: 1` still printed).
+
 ```bash
 ~/.local/bin/rendercv render output/<company-slug>/MMDDYY-magnuson.yaml \
   --pdf-path       MMDDYY-magnuson.pdf \
@@ -285,7 +287,7 @@ The PDF is the artifact you send. The markdown is the rendercv-emitted version u
 Per `framework/application-workflow.md` § Render & verify. Do NOT skip — this is where the layout/length defects that otherwise force user iteration get caught.
 
 1. **`Read` the PNG** (`output/<company-slug>/rendercv_output/*_1.png`). Visually confirm: exactly one page for Nick; italics, line breaks, and spacing render cleanly (no stray asterisks, no broken emphasis, no awkward title wraps); page well-filled, not overflowing. Reasoning from the markdown alone misses these — the rendercv gotchas (bare-year → "Jan YYYY"; `\n` breaking position italics) are only visible in the render. **Bare-year fix (Nick, 2026-06-22):** for a single-year role, write the date as an UNQUOTED integer (`date: 2024`) — that renders as "2024". A quoted `date: '2024'` renders as "Jan 2024" (wrong, and it spotlights short stints / the silent gap). Multi-year ranges (`date: 2022 – 2024`) already render verbatim.
-2. **Count pages:** `PYTHONIOENCODING=utf-8 python3 -c "from pypdf import PdfReader; print(len(PdfReader('output/<company-slug>/MMDDYY-magnuson.pdf').pages))"`. For Nick this must be 1.
+2. **Count pages:** `PYTHONIOENCODING=utf-8 python3 -c "from pypdf import PdfReader; print(len(PdfReader('output/<company-slug>/MMDDYY-magnuson.pdf').pages))"`. For Nick this must be 1. Because Step 9b deleted the old PDF first, a failed render surfaces here as a missing file, never as a stale page count.
 3. **If over one page or layout is off, fix it now and re-render** — trim per § Length & One-Page Verification (tighten summary → merge/cut weakest-oldest bullets → shorten the Building entry → drop filler, before touching design). Never hand over a 2-page CV or one with mechanical layout defects for the user to "edit down."
 3b. **Fill the page — don't leave a half-empty CV (Nick, 2026-06-22).** If there is meaningful blank space at the bottom, the CV is under-filled — bump sizing in the FINAL `MMDDYY-magnuson.yaml` design block (NOT the shared theme, so other CVs are unaffected) and re-render: body `11pt` / name `20pt`, `line_spacing: 0.6em`, `sections.space_between_regular_entries: 0.5em`, and `section_titles.space_above: 0.45cm` for clear breaks between SUMMARY / EXPERIENCE / EDUCATION / ADDITIONAL INFORMATION. Re-check it still holds at one page (Step 2). The target is a full, balanced single page, not a top-heavy one.
 4. Once verified, `rm -rf output/<company-slug>/rendercv_output/`.
