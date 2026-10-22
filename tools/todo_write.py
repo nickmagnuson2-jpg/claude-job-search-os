@@ -79,7 +79,7 @@ from stage_vocab import is_terminal_stage  # noqa: E402
 # ordinary prose -- was already solved for the PII denylist, so the classifier is imported
 # rather than reimplemented here (CLAUDE.md: consolidate duplicated domain logic).
 from gen_pii_denylist import is_distinctive_single, load_dictionary  # noqa: E402
-from md_table import out_ok, parse_cols, table_insert_pos, write_atomic  # noqa: E402
+from md_table import out_ok, parse_cols, safe_cell, table_insert_pos, write_atomic  # noqa: E402
 
 TODOS_FILE = "data/job-todos.md"
 PIPELINE_FILE = "data/job-pipeline.md"
@@ -177,21 +177,15 @@ def is_data_row(line: str) -> bool:
     return True
 
 
-def _safe_cell(s: str) -> str:
-    """Neutralize literal pipe chars so a field value can't split a table row into
-    extra columns on write (root cause of the 2026-07 job-todos.md column drift)."""
-    return s.replace("|", "/") if s else s
-
-
 def fmt_active(task: str, priority: str, due: str, status: str, notes: str) -> str:
     task, priority, due, status, notes = (
-        _safe_cell(task), _safe_cell(priority), _safe_cell(due), _safe_cell(status), _safe_cell(notes))
+        safe_cell(task), safe_cell(priority), safe_cell(due), safe_cell(status), safe_cell(notes))
     return f"| {task} | {priority} | {due} | {status} | {notes} |"
 
 
 def fmt_completed(task: str, priority: str, completed: str, notes: str) -> str:
     task, priority, completed, notes = (
-        _safe_cell(task), _safe_cell(priority), _safe_cell(completed), _safe_cell(notes))
+        safe_cell(task), safe_cell(priority), safe_cell(completed), safe_cell(notes))
     return f"| {task} | {priority} | {completed} | {notes} |"
 
 

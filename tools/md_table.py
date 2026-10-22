@@ -48,6 +48,12 @@ def out_error(message: str, code: str = "error", **extra) -> None:
     sys.exit(1)
 
 
+def safe_cell(s: str) -> str:
+    """Turn a literal "|" into "/" so a value cannot split its row into extra columns
+    (the cause of the 2026-07 job-todos.md column drift)."""
+    return s.replace("|", "/") if s else s
+
+
 def is_sep_row(line: str) -> bool:
     return bool(re.match(r"^\s*\|[-: |]+\|\s*$", line))
 

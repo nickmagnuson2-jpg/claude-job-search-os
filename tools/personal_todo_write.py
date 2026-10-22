@@ -31,7 +31,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from tools import vault_paths
-from md_table import out_ok, parse_cols, table_insert_pos, write_atomic  # noqa: E402
+from md_table import out_ok, parse_cols, safe_cell, table_insert_pos, write_atomic  # noqa: E402
 
 DONE_HEADER = "| Task | Completed | Notes |"
 DONE_SEP = "| --- | --- | --- |"
@@ -73,10 +73,12 @@ def is_data_row(line: str) -> bool:
 
 
 def fmt_active(task: str, priority: str, due: str, status: str, notes: str) -> str:
+    task, priority, due, status, notes = map(safe_cell, (task, priority, due, status, notes))
     return f"| {task} | {priority} | {due} | {status} | {notes} |"
 
 
 def fmt_done(task: str, completed: str, notes: str) -> str:
+    task, completed, notes = map(safe_cell, (task, completed, notes))
     return f"| {task} | {completed} | {notes} |"
 
 
