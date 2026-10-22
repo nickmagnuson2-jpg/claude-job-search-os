@@ -71,6 +71,8 @@ import re
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from slug import slugify as _slugify  # noqa: E402
 
 # ── Optional dep: BeautifulSoup (better HTML stripping; falls back to regex) ──
 try:
@@ -341,16 +343,14 @@ def _slugify_sender(sender: str) -> str:
     m = re.search(r"<([^>]+)>", sender)
     email_addr = m.group(1) if m else sender.strip()
     local = email_addr.split("@")[0] if "@" in email_addr else email_addr
-    slug = re.sub(r"[^a-z0-9]+", "-", local.lower()).strip("-")
-    return slug[:20] if slug else ""
+    return _slugify(local, 20)
 
 
 def _slugify_subject(subject: str) -> str:
     """Convert email subject to a compact slug (max 40 chars)."""
     # Strip common reply/forward prefixes
     text = re.sub(r"^(re:|fwd?:|fw:)\s*", "", subject.strip(), flags=re.IGNORECASE)
-    slug = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
-    return slug[:40] if slug else ""
+    return _slugify(text, 40)
 
 
 def write_inbox_file(

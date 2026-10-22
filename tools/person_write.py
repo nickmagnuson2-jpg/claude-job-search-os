@@ -39,10 +39,10 @@ subcommand; argparse rejects them after it with "unrecognized arguments"):
 """
 import sys
 import re
-import unicodedata
 from datetime import date
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # siblings import as `tools.X` too
+from slug import slugify as _slugify  # noqa: E402
 from md_table import JsonArgumentParser, out_error, out_ok, read_file, write_atomic  # noqa: E402
 
 PEOPLE_DIR = "data/people"
@@ -112,13 +112,8 @@ _Freeform._
 # ---------------------------------------------------------------------------
 
 def slugify(name: str) -> str:
-    """Lowercase, accent-fold, hyphenate. 'Priya Anand Fábrega' ->
-    'priya-anand-fabrega' (matches the output/<slug> convention)."""
-    nfkd = unicodedata.normalize("NFKD", name)
-    ascii_str = "".join(c for c in nfkd if not unicodedata.combining(c))
-    ascii_str = ascii_str.lower()
-    ascii_str = re.sub(r"[^a-z0-9]+", "-", ascii_str)
-    return ascii_str.strip("-")
+    """Lowercase, accent-fold, hyphenate (the output/<slug> convention). See slug.py."""
+    return _slugify(name)
 
 
 def title_of(path: Path) -> str:

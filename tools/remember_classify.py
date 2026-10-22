@@ -42,6 +42,9 @@ import argparse
 import json
 import re
 from pathlib import Path
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from slug import slugify as _slugify  # noqa: E402
 
 # ── Keywords ──────────────────────────────────────────────────────────────────
 
@@ -107,7 +110,7 @@ def read_file(path: Path) -> str:
 
 def _slug(name: str) -> str:
     """Convert company display name to URL slug."""
-    return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+    return _slugify(name)
 
 
 def _has_url(text: str) -> bool:

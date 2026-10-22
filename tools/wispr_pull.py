@@ -33,6 +33,8 @@ import sqlite3
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from slug import slugify as _slugify  # noqa: E402
 
 WISPR_DB = Path.home() / "Library/Application Support/Wispr Flow/flow.sqlite"
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -76,9 +78,7 @@ def parse_wispr_ts(ts: str) -> datetime:
 
 
 def slugify(text: str, maxlen: int = 40) -> str:
-    text = re.sub(r"[^a-zA-Z0-9\s-]", "", text or "").strip().lower()
-    text = re.sub(r"\s+", "-", text)
-    return text[:maxlen].rstrip("-") or "untitled"
+    return _slugify(text, maxlen, "untitled", elide_apostrophes=True)
 
 
 def is_low_signal(content: str) -> tuple[bool, str]:

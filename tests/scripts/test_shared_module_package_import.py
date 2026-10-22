@@ -17,13 +17,14 @@ from pathlib import Path
 import pytest
 
 REPO = Path(__file__).resolve().parents[2]
-SHARED = re.compile(r"^from (md_table|hook_runtime) import ", re.M)
+SHARED = re.compile(r"^from (?:tools\.)?(md_table|hook_runtime|slug) import ", re.M)
 
 # Listed by name, not only discovered: mutation_check selects a test file for a tool
 # when the file names that tool, so this list is what makes the sys.path line in each
 # of these tools a mutant this test can kill. The scan below keeps the list honest.
 TOOLS = (
     "act_apply",
+    "act_classify",
     "attention",
     "backfill_transcript_failures",
     "check_banned_phrase",
@@ -61,22 +62,33 @@ TOOLS = (
     "check_voice_pure",
     "check_workflow_scriptpath",
     "check_zuora_principal_title",
+    "context_file_audit",
+    "daily_stoic",
+    "fetch_transcript",
+    "fetch_x_source",
     "frame_write",
+    "gen_pii_denylist",
+    "gmail_fetch",
+    "granola_auto_debrief",
     "granola_save",
+    "inbox_extract",
     "living_log_append",
     "memory_index_partition",
     "migrate_todos_column_drift",
     "my_world_synthesis",
     "networking_read",
     "networking_write",
+    "note_divergence",
     "person_write",
     "personal_todo_write",
     "pipe_read",
     "pipe_write",
     "remember_apply",
+    "remember_classify",
     "scan_transcript_failures",
     "todo_daily_metrics",
     "todo_write",
+    "wispr_pull",
     "workstream_probe",
 )
 

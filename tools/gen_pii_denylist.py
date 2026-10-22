@@ -29,8 +29,10 @@ to hook tier (Nick requested the hook + subagent audit).
 import argparse
 import json
 import re
-import unicodedata
 from pathlib import Path
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from slug import slugify as _slugify  # noqa: E402
 
 OUTPUT_REL = "tools/.pii-denylist.txt"
 AMBIGUOUS_REL = "tools/.pii-denylist-ambiguous.txt"
@@ -197,16 +199,9 @@ SYSTEM_DICT = Path("/usr/share/dict/words")
 
 
 def slugify(name: str) -> str:
-    """Lowercase, accent-fold, hyphenate — matches the output/<slug> convention used
-    throughout this repo (tools/person_write.py:slugify). E.g. 'Casey Doe' ->
-    'casey-doe', 'Acme Ventures' -> 'acme-ventures'. Path-embedded slug forms
-    (folder names, filenames) are a distinct denylist-evasion surface from the
-    space-separated name-forms above them, per feedback_denylist_needs_slug_forms_not_just_names."""
-    nfkd = unicodedata.normalize("NFKD", name)
-    ascii_str = "".join(c for c in nfkd if not unicodedata.combining(c))
-    ascii_str = ascii_str.lower()
-    ascii_str = re.sub(r"[^a-z0-9]+", "-", ascii_str)
-    return ascii_str.strip("-")
+    """The output/<slug> form of a name (slug.py), a distinct denylist-evasion surface from
+    the space-separated name-forms, per feedback_denylist_needs_slug_forms_not_just_names."""
+    return _slugify(name)
 
 
 def read_file(path: Path) -> str:

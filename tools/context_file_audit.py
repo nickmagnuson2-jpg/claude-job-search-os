@@ -66,6 +66,8 @@ import json
 import re
 import sys
 from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from slug import slugify as _slugify  # noqa: E402
 
 RULE_MARKERS = re.compile(
     r"\b(never|always|must|do not|don't|required|mandatory|hard rule|forbidden|"
@@ -287,8 +289,7 @@ def collect_rules(text: str) -> list[dict]:
 
 
 def _slug(name: str) -> str:
-    s = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
-    return (s or "section")[:60]
+    return _slugify(name, 60, "section")
 
 
 def build_blocks(text: str) -> list[dict]:

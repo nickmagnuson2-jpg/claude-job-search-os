@@ -9,10 +9,10 @@ import argparse
 import json
 import re
 import sys
-import unicodedata
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
+from slug import slugify as _slugify  # noqa: E402
 from gmail_fetch import (  # noqa: E402
     get_or_refresh_creds,
     _process_message,
@@ -53,14 +53,8 @@ def is_promo(subject: str, sender: str) -> tuple[bool, str]:
 
 
 def slugify_subject(subject: str, max_len: int = 60) -> str:
-    """Kebab-case a subject: fold accents, drop apostrophes/punctuation, collapse, trim, cap length."""
-    text = unicodedata.normalize("NFKD", subject or "")
-    text = text.encode("ascii", "ignore").decode("ascii")  # drop accents/smart quotes
-    text = text.replace("'", "")  # elide straight apostrophes so "wasn't" -> "wasnt"
-    text = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
-    if len(text) > max_len:
-        text = text[:max_len].rstrip("-")
-    return text or "meditation"
+    """Kebab-case a subject: fold accents, drop apostrophes, collapse, cap length."""
+    return _slugify(subject, max_len, "meditation", elide_apostrophes=True)
 
 
 def archive_filename(date_str: str, subject: str) -> str:

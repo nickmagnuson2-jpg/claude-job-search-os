@@ -61,12 +61,12 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import sys
 from datetime import date, datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from slug import slugify as _slugify  # noqa: E402
 from pipeline_staleness import parse_pipeline, read_file  # noqa: E402
 
 # Files that are never evidence of work. .DS_Store is written by Finder merely for
@@ -77,13 +77,8 @@ IGNORED_SUFFIXES = {".tmp", ".swp", ".part"}
 
 
 def slugify(name: str) -> str:
-    """Company display name -> output/<slug>/ directory name.
-
-    Same rule as act_classify._slug. Kept as one line rather than imported because
-    act_classify does heavy work at import time (it reads the inbox and the pipeline),
-    and a reporter should not pay that to lowercase a string.
-    """
-    return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+    """Company display name -> output/<slug>/ directory name (slug.py)."""
+    return _slugify(name)
 
 
 def newest_artifact(directory: Path) -> tuple[Path | None, date | None]:

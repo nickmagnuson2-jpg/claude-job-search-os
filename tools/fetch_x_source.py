@@ -53,6 +53,9 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from slug import slugify as _slugify  # noqa: E402
 
 API_BASE = "https://api.fxtwitter.com/status/"
 TIMEOUT_S = 20
@@ -158,9 +161,7 @@ def article_to_text(content):
 
 def slugify(text: str, fallback: str = "x-post") -> str:
     """lowercase-hyphens slug (repo output convention)."""
-    s = re.sub(r"[^\w\s-]", "", text.lower())
-    s = re.sub(r"[\s_-]+", "-", s).strip("-")
-    return s[:80] or fallback
+    return _slugify(text, 80, fallback, elide_apostrophes=True)
 
 
 def normalize(payload, status_id: str, url: str) -> dict:

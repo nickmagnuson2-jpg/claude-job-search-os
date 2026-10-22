@@ -87,6 +87,7 @@ except ModuleNotFoundError:  # imported as a `tools.` package module
 
 # Import sibling modules
 sys.path.insert(0, str(DEFAULT_REPO_ROOT))
+from tools.slug import slugify as _slugify  # noqa: E402
 from tools.granola_fetch import (
     fetch_new_since_last_run,
     fetch_note_full,
@@ -190,10 +191,7 @@ def vault_for_project(project: str, pconfig: dict = None) -> Path:
 
 def slugify(text: str) -> str:
     """Slugify a meeting title for filename use."""
-    import re
-    s = (text or "untitled").lower()
-    s = re.sub(r"[^a-z0-9]+", "-", s).strip("-")
-    return s[:60] or "untitled"
+    return _slugify(text, 60, "untitled")
 
 
 

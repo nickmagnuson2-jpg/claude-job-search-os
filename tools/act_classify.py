@@ -37,6 +37,8 @@ import re
 import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from slug import slugify as _slugify  # noqa: E402
 
 # ── ATS URL patterns that signal a job ad ────────────────────────────────────
 ATS_PATTERNS = [
@@ -184,7 +186,7 @@ def _extract_url(text: str) -> str:
 
 def _slug(name: str) -> str:
     """Convert company display name to URL slug."""
-    return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+    return _slugify(name)
 
 
 def _deslug(slug: str) -> str:

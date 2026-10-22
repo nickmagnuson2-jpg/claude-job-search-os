@@ -39,6 +39,8 @@ import sys
 import urllib.parse
 import urllib.request
 from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from slug import slugify as _slugify  # noqa: E402
 
 # --- deterministic helpers (unit-tested; no network) -------------------------
 
@@ -100,12 +102,7 @@ def segments_to_text(segments) -> str:
 
 def slugify(text: str, fallback: str = "video") -> str:
     """lowercase-hyphens slug from a title (repo output convention)."""
-    if not text:
-        return fallback
-    s = text.lower()
-    s = re.sub(r"[^\w\s-]", "", s)        # drop punctuation
-    s = re.sub(r"[\s_-]+", "-", s).strip("-")
-    return s[:80] or fallback
+    return _slugify(text, 80, fallback, elide_apostrophes=True)
 
 
 def to_markdown(block: dict) -> str:

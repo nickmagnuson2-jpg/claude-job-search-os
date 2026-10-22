@@ -30,6 +30,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from slug import slugify as _slugify  # noqa: E402
 
 from inbox_census import (  # noqa: E402
     BLOCK_RULES,
@@ -43,8 +44,7 @@ SLUG_STRIP = re.compile(r"[^a-z0-9]+")
 
 
 def slug(header_text: str, maxlen: int = 48) -> str:
-    s = SLUG_STRIP.sub("-", header_text.lower()).strip("-")
-    return s[:maxlen].rstrip("-") or "untitled"
+    return _slugify(header_text, maxlen, "untitled")
 
 
 def producer_of(header_line: str) -> str:
