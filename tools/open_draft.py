@@ -149,12 +149,19 @@ def copy_file_to_clipboard(file_path):
 
 
 def copy_text_to_clipboard(text):
-    """Copy plain text to the macOS clipboard via pbcopy."""
+    """Copy plain text to the macOS clipboard, then read it back.
+
+    pbcopy's exit code is not evidence: a LinkedIn draft once reported success while the
+    clipboard still held the previous email (infrastructure-defects D2). Only a pbpaste
+    that returns exactly `text` counts.
+    """
     try:
-        result = subprocess.run(["pbcopy"], input=text, text=True)
-        return result.returncode == 0
+        if subprocess.run(["pbcopy"], input=text, text=True).returncode != 0:
+            return False
+        back = subprocess.run(["pbpaste"], capture_output=True, text=True)
     except FileNotFoundError:
         return False
+    return back.returncode == 0 and back.stdout == text
 
 
 def staging_dir():
@@ -253,17 +260,16 @@ def handle_reply(to, subject, body, attachments):
     print(f"  Body:               {len(body)} characters")
     print()
 
-    if copy_text_to_clipboard(body):
-        print("Body copied to clipboard. Next steps:")
+    copied = copy_text_to_clipboard(body)
+    if copied:
+        print("Body copied to clipboard (read back and verified). Next steps:")
         print("  1. Open Gmail in your browser")
         print(f"  2. Find the original thread (search: from:{to or '<sender>'})")
         print("  3. Hit Reply on the most recent message in that thread")
         print("  4. Cmd+V to paste the body")
         print("  5. Review, then Send")
     else:
-        print("WARNING: pbcopy failed. Body is below — copy manually:")
-        print()
-        print(body)
+        print_copy_failure(body)
 
     if attachments:
         print()
@@ -272,6 +278,34 @@ def handle_reply(to, subject, body, attachments):
         for a in attachments:
             print(f"  - {a}")
         report_staging(attachments)
+    return copied
+
+
+def handle_paste_only(body, attachments):
+    """No TO, no CC and no SUBJECT: not an email (a LinkedIn message, or another channel).
+
+    Before this existed such a draft fell into compose mode, opened a Gmail window and put
+    nothing on the clipboard (infrastructure-defects D2). Now it opens nothing.
+    """
+    print("PASTE MODE: no recipient, no CC and no subject, so this is not an email.")
+    print(f"  Body: {len(body)} characters")
+    print()
+    copied = copy_text_to_clipboard(body)
+    if copied:
+        print("Body copied to clipboard (read back and verified). Paste it into LinkedIn,")
+        print("or wherever it is going. Nothing was opened.")
+    else:
+        print_copy_failure(body)
+    if attachments:
+        report_staging(attachments)
+    return copied
+
+
+def print_copy_failure(body):
+    print("WARNING: the clipboard does not hold this body (pbcopy failed or read back")
+    print("different text). The draft is NOT consumed. Body below, copy it manually:")
+    print()
+    print(body)
 
 
 def main():
@@ -289,10 +323,14 @@ def main():
 
     to, cc, subject, attachments, body = parse_draft(DRAFT_FILE)
 
-    if is_reply(subject):
-        handle_reply(to, subject, body, attachments)
-        record_draft()
-        consume_draft()
+    if is_reply(subject) or not (to or cc or subject):
+        if is_reply(subject):
+            copied = handle_reply(to, subject, body, attachments)
+        else:
+            copied = handle_paste_only(body, attachments)
+        if copied:  # a paste mode delivers nothing until the clipboard holds the body
+            record_draft()
+            consume_draft()
         return
 
     params = {"view": "cm", "fs": "1"}
