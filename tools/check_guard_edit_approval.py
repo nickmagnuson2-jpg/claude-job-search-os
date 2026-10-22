@@ -86,6 +86,8 @@ NOT_HOOK_LIBRARIES = {
     "chrome_runner": "headless Chrome wrapper used by render tools",
     "job_quiesce": "launchd job coordination, not a decision library",
     "mutation_state": "mutation_check bookkeeping, not a decision library",
+    "friction_surface": "friction-ledger surface/nature derivation shared with the "
+                        "transcript scanners; decides what gets logged, never blocks",
 }
 
 # Guard infrastructure. Repo-relative, matched against the tail of the path so an
