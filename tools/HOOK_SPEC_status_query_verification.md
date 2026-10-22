@@ -1,7 +1,9 @@
 # HOOK SPEC — status-query verification reminder (BUILT 2026-09-07)
 
-Status: **BUILT AND WIRED.** `tools/check_status_query_verification.py`, wired as the repo's first
-`UserPromptSubmit` hook in `.claude/settings.json`, committed in `9dc0d22`. Tests:
+Status: **BUILT, DELIBERATELY NOT WIRED (2026-09-07).** `tools/check_status_query_verification.py`
+was first wired as the repo's first `UserPromptSubmit` hook in `9dc0d22`, then unwired for
+trigger precision; `tools/hook-unwired-allow.json` carries the reason and what would change it,
+and `.claude/settings.json` no longer references it. Tests:
 `tests/scripts/test_check_status_query_verification.py`, 62 passing. Mutation: 22 killed, 0
 survived, 0 isolation failures, 2 allowlist entries for CLI plumbing.
 
