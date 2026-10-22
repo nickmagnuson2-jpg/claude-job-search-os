@@ -166,6 +166,13 @@ Apply all **Tailoring Rules** and **CV Quality Standards** from `framework/appli
   led it); never "developed" or "facilitated".
 - **One engagement, one bullet (added 2026-09-14).** Do not split a single client engagement across two
   bullets to fit more detail. Merge and cut. A reader scanning bullets reads them as separate achievements.
+  **Standing exception (Nick, 2026-10-21: "break the call center rule and make sure it's saved durably"):
+  the McKinsey call center pilot gets TWO bullets** - (1) the pilot, the live listening, the training built
+  from the reps' own words and the manager won over; (2) the business case built with data science,
+  presented to the client's C-suite steering committee, backed over competing pilots, modeled opportunity,
+  pilot launched. Merged into one, it ran four lines and read as a block. Scope: this engagement only; every
+  other engagement still gets one bullet. The pinned note at `data/projects/mckinsey.md` (call center line)
+  carries the same exception.
 - **ATS keyword coverage** — verify all 10 extracted keywords appear at least once in the CV text. If a keyword is missing, find a natural place to include it.
 - **Achievements over responsibilities** — lead bullets with quantified outcomes where possible (sourced from stubs, not invented).
 - **No content from `data/project-background/`** — enforce absolutely.
