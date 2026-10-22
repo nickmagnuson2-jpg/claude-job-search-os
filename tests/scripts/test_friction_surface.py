@@ -367,3 +367,23 @@ def test_usage_line_is_a_real_error():
     # shared-trailing-\b group.
     assert fs.looks_like_real_error("usage: todo_write.py [-h]") is True
     assert fs.looks_like_real_error("usage:") is True
+
+
+# --- is_excluded_bash: each exclusion on its own ------------------------------
+
+def _bash(cmd):
+    return {"input": {"command": cmd}}
+
+
+def test_a_help_call_of_an_ordinary_script_is_excluded():
+    assert fs.is_excluded_bash(_bash("python3 tools/pipe_write.py --help")) is True
+
+
+def test_an_infrastructure_script_without_help_is_excluded():
+    assert fs.is_excluded_bash(_bash("python3 tools/log_tool_failure.py x")) is True
+
+
+def test_infrastructure_plus_an_ordinary_script_is_not_excluded():
+    """Only an ALL-infrastructure command is skipped; a real script beside it still logs."""
+    cmd = "python3 tools/friction_log.py list; python3 tools/pipe_write.py add x"
+    assert fs.is_excluded_bash(_bash(cmd)) is False

@@ -277,6 +277,28 @@ def _surface_from_heredoc(command: str, error_text: str) -> str:
     return _attribute_from_body(error_text, body, "inline-python-heredoc")
 
 
+def extract_text(content) -> str:
+    """tool_result content may be a string or a list of {type:text, text:...} blocks."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return " ".join(
+            (x.get("text", "") if isinstance(x, dict) else str(x)) for x in content
+        )
+    return str(content)
+
+
+def is_excluded_bash(tool_use: dict) -> bool:
+    """Don't log Bash errors for --help calls or friction-log infrastructure scripts."""
+    command = ((tool_use or {}).get("input") or {}).get("command", "") or ""
+    if re.search(r"\s--help\b|\s-h\b", command):
+        return True
+    matches = SCRIPT_RE.findall(command)
+    if matches and all((m + ".py").lower() in EXCLUDE_SCRIPTS for m in matches):
+        return True
+    return False
+
+
 def derive_surface(tool_name: str, command: str, error_text: str = "") -> str:
     """The 'surface' is what failed. Precedence:
     1. non-Bash tool      -> tool:<name>

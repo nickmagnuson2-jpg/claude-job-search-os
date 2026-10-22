@@ -57,24 +57,10 @@ GRACEFUL_EMPTY_PATTERNS = [
 SCRIPT_RE = fs.SCRIPT_RE
 
 
-def extract_text(content) -> str:
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        return " ".join(
-            (x.get("text", "") if isinstance(x, dict) else str(x)) for x in content
-        )
-    return str(content)
+extract_text = fs.extract_text
 
 
-def is_excluded_bash(tool_use: dict) -> bool:
-    command = ((tool_use or {}).get("input") or {}).get("command", "") or ""
-    if re.search(r"\s--help\b|\s-h\b", command):
-        return True
-    matches = SCRIPT_RE.findall(command)
-    if matches and all((m + ".py").lower() in EXCLUDE_SCRIPTS for m in matches):
-        return True
-    return False
+is_excluded_bash = fs.is_excluded_bash
 
 
 def append_friction(surface: str, nature: str, dry_run: bool) -> bool:
