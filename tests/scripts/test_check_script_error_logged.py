@@ -365,10 +365,13 @@ def test_the_traceback_nature_is_the_final_exception_line(hook_run):
     assert r.nature.startswith("[auto] FileNotFoundError:")
 
 
-def test_a_traceback_from_the_logger_itself_is_excluded(hook_run):
+@pytest.mark.parametrize("script", ["friction_log.py", "log_tool_failure.py",
+                                    "scan_transcript_failures.py"])
+def test_a_traceback_from_the_logger_itself_is_excluded(hook_run, script):
     """Same infinite-loop guard as Branch A, on the branch that has no graceful-empty
-    carve-out to stop it."""
-    r = hook_run("python3 tools/friction_log.py append a b", stderr=TRACEBACK)
+    carve-out to stop it. Covers every friction-infrastructure script: a two-item copy
+    here filed 32 smoke tests of log_tool_failure.py as crashes of it."""
+    r = hook_run(f"python3 tools/{script} append a b", stderr=TRACEBACK)
     assert r.returncode == QUIET
     assert not r.logged
 
@@ -455,7 +458,7 @@ def sandbox_hook(tmp_path):
     # travels without it dies on ImportError and every assertion below reads as "the hook
     # chose not to log" rather than "the hook could not start". Copy the shared modules
     # alongside; they are pure and carry no state. (2026-09-08, hook_runtime adoption.)
-    for shared in ("hook_runtime.py", "hook_command_lint.py"):
+    for shared in ("hook_runtime.py", "hook_command_lint.py", "friction_surface.py"):
         src = HOOK.parent / shared
         if src.exists():
             shutil.copyfile(src, tools / shared)
@@ -566,6 +569,11 @@ def test_the_hook_exists_and_its_pattern_tables_are_populated():
 
     assert len(mod.GRACEFUL_EMPTY_PATTERNS) >= 5, "graceful-empty carve-out emptied"
     assert {"friction_log.py", "check_script_error_logged.py"} <= mod.EXCLUDE_SCRIPTS
+    # One exclusion set for all three capture paths. The hook's own two-item copy
+    # missed log_tool_failure.py, so smoke tests of that logger were filed as crashes.
+    import friction_surface
+    assert mod.EXCLUDE_SCRIPTS is friction_surface.EXCLUDE_SCRIPTS
+    assert "log_tool_failure.py" in mod.EXCLUDE_SCRIPTS
     assert mod.DEDUP_LOOKBACK_ROWS >= 1, "a zero window disables dedup entirely"
     assert mod.SCRIPT_RE.search("python3 tools/pipe_write.py x")
     assert mod.ERROR_MARKER_RE.search(ERROR_JSON)

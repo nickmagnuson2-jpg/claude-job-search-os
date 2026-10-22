@@ -43,8 +43,10 @@ SCRIPT_RE = re.compile(
     r"\bpython3?\b[^\n]*?\btools/([a-z0-9_]+)\.py\b", re.IGNORECASE
 )
 
-# Scripts that should never trigger logging themselves
-EXCLUDE_SCRIPTS = {"friction_log.py", "check_script_error_logged.py"}
+# Scripts that should never trigger logging themselves. Shared with the other two
+# capture paths; a local two-item copy here missed log_tool_failure.py, so smoke tests
+# of that logger were filed as 32 "crashes" of it.
+from friction_surface import EXCLUDE_SCRIPTS  # noqa: E402
 
 ERROR_MARKER_RE = re.compile(r'"status"\s*:\s*"error"')
 # JSON message field (best-effort extraction; non-greedy)
@@ -225,8 +227,9 @@ def main() -> int:
         # traceback: inline heredocs, skill helpers outside tools/, or a tools
         # script that crashed instead of emitting JSON. A traceback is an
         # unambiguous crash signal, so no graceful-empty carve-out applies.
-        # Exclude the two self-referential scripts to avoid logging loops.
-        if re.search(r"tools/(friction_log|check_script_error_logged)\.py", command):
+        # Exclude the friction-infrastructure scripts to avoid logging loops.
+        if any(n.lower() + ".py" in EXCLUDE_SCRIPTS
+               for n in re.findall(r"tools/([A-Za-z0-9_]+)\.py", command)):
             return 0
         surface = derive_traceback_surface(command, combined)
         nature = extract_traceback_nature(combined)

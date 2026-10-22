@@ -1571,3 +1571,70 @@ def test_main_refuses_while_a_mutation_run_owns_the_tree(monkeypatch, capsys):
     assert "MUTATION OWNS IT" in capsys.readouterr().err
     # --print-only dispatches nothing, so the mutation refusal does not apply
     assert cv.main(["--target", "t", "--paths", "docs/x.md", "--print-only"]) == 0
+
+
+def _real_backup(monkeypatch, tmp_path, backup_text):
+    """A real source file plus a real backup of it in an isolated backup store."""
+    import conftest_guard
+    monkeypatch.setenv("MUTATION_BACKUP_DIR", str(tmp_path / "store"))
+    src = tmp_path / "repo" / "tools" / "x.py"
+    src.parent.mkdir(parents=True)
+    src.write_text("original\n", encoding="utf-8")
+    b = conftest_guard.backup_path(src)
+    b.parent.mkdir(parents=True)
+    b.write_text(backup_text, encoding="utf-8")
+    return tmp_path / "repo"
+
+
+def test_stale_identical_backup_with_no_run_alive_does_not_refuse(monkeypatch, tmp_path, capsys):
+    """A leftover backup identical to its source blocked every dispatch until deleted
+    by hand (3 friction fires). With no run alive the source is not a mutant."""
+    import codex_verify as cv
+    repo = _real_backup(monkeypatch, tmp_path, "original\n")
+    monkeypatch.setattr(cv, "_mutation_run_alive", lambda: False)
+    assert cv.refuse_under_active_mutation(repo, ["tools/x.py"]) == ""
+    assert "stale mutation backup ignored" in capsys.readouterr().err, \
+        "an ignored backup must be named, not skipped silently"
+
+
+def test_identical_backup_still_refuses_while_a_run_is_alive(monkeypatch, tmp_path):
+    """Between mutants the source is briefly restored, so identical bytes alone prove nothing."""
+    import codex_verify as cv
+    repo = _real_backup(monkeypatch, tmp_path, "original\n")
+    monkeypatch.setattr(cv, "_mutation_run_alive", lambda: True)
+    assert "REFUSING TO DISPATCH" in cv.refuse_under_active_mutation(repo, ["tools/x.py"])
+
+
+def test_differing_backup_refuses_even_with_no_run_alive(monkeypatch, tmp_path):
+    """A source that differs from its backup may be a stranded mutant: never review it."""
+    import codex_verify as cv
+    repo = _real_backup(monkeypatch, tmp_path, "the real code\n")
+    monkeypatch.setattr(cv, "_mutation_run_alive", lambda: False)
+    assert "REFUSING TO DISPATCH" in cv.refuse_under_active_mutation(repo, ["tools/x.py"])
+
+
+def test_mutation_run_alive_fails_safe_when_pgrep_is_missing(monkeypatch):
+    import codex_verify as cv
+
+    def boom(*a, **k):
+        raise FileNotFoundError("pgrep")
+    monkeypatch.setattr(cv.subprocess, "run", boom)
+    assert cv._mutation_run_alive() is True
+
+
+@pytest.mark.parametrize("rc,alive", [(1, False), (0, True), (2, True)])
+def test_mutation_run_alive_reads_pgrep_exit_codes(monkeypatch, rc, alive):
+    """pgrep: 1 = no match, 0 = match, anything else = error, which must count as alive."""
+    import codex_verify as cv
+
+    class R:
+        returncode = rc
+    monkeypatch.setattr(cv.subprocess, "run", lambda *a, **k: R())
+    assert cv._mutation_run_alive() is alive
+
+
+def test_same_bytes_is_false_when_a_file_is_unreadable(tmp_path):
+    import codex_verify as cv
+    a = tmp_path / "a"
+    a.write_text("x")
+    assert cv._same_bytes(a, tmp_path / "missing") is False

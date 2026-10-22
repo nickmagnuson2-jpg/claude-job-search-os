@@ -768,6 +768,22 @@ def run(repo_root: Path, target: str, paths: list[str], question: str,
             "stderr_tail": proc.stderr[-500:] if proc.returncode else ""}
 
 
+def _mutation_run_alive() -> bool:
+    """True when a mutation_check process exists, or when that cannot be determined."""
+    try:
+        r = subprocess.run(["pgrep", "-f", "mutation_check.py"], capture_output=True)
+    except OSError:
+        return True
+    return r.returncode != 1  # 1 = no match; 0 = found; anything else = unknown
+
+
+def _same_bytes(a: Path, b: Path) -> bool:
+    try:
+        return a.read_bytes() == b.read_bytes()
+    except OSError:
+        return False
+
+
 def refuse_under_active_mutation(repo_root: Path, paths: list[str]) -> str:
     """Return a refusal message when the source under review is mid-mutation, else "".
 
@@ -787,10 +803,19 @@ def refuse_under_active_mutation(repo_root: Path, paths: list[str]) -> str:
     same function the pytest guard uses, so the two cannot drift.
     """
     try:
-        from conftest_guard import stranded_backups
+        from conftest_guard import source_of, stranded_backups
     except ImportError:
         return ""  # detector unavailable; do not invent a second one
     stranded = stranded_backups(repo_root)
+    if stranded and not _mutation_run_alive():
+        # A backup byte-identical to its source with no run alive is left over from a
+        # crashed run: the source is not a mutant, so reviewing it is safe. It blocked
+        # every dispatch until deleted by hand (3 friction fires, 2026-09-23..09-29).
+        stale = [b for b in stranded if _same_bytes(b, source_of(b))]
+        for b in stale:
+            print(f"codex_verify: note: stale mutation backup ignored (no run alive, "
+                  f"identical to its source): {b}", file=sys.stderr)
+        stranded = [b for b in stranded if b not in stale]
     if not stranded:
         return ""
     names = "\n".join(f"    {p}" for p in stranded)

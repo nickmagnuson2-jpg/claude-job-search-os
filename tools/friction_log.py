@@ -426,7 +426,17 @@ def cmd_resolve(args: argparse.Namespace) -> None:
     pre, header_block, data_rows, trailing = read_ledger()
     parsed = [p for p in (parse_row(r) for r in data_rows) if p]
 
-    matches = find_matches(parsed, surface, query, threshold=0.4)
+    # A verbatim excerpt of one row's nature is the most precise query there is, but a
+    # short excerpt of a long row scores under the Jaccard threshold. Take it first.
+    exact = [r for r in parsed
+             if normalize_surface(r["surface"]) == normalize_surface(surface)
+             and query.lower() in r["nature"].lower()]
+    if len(exact) > 1:
+        ok({"action": "ambiguous",
+            "reason": "the excerpt appears in several rows on this surface; quote more of one",
+            "rows": exact[:5]})
+    matches = ([(1.0, exact[0])] if exact
+               else find_matches(parsed, surface, query, threshold=0.4))
     if not matches:
         fail(f"no row matches surface={surface!r} nature~={query!r}")
     if len(matches) > 1 and (matches[0][0] - matches[1][0]) < 0.15:
