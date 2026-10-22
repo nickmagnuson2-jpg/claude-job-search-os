@@ -419,13 +419,15 @@ def test_repo_root_before_subcommand_succeeds(tmp_path):
 
 def test_repo_root_after_subcommand_rejected():
     """--repo-root AFTER the subcommand is rejected by argparse (exit 2) — the
-    old docstring form. No JSON is emitted; the error goes to stderr."""
+    old docstring form. The error goes to stderr AND to stdout as the error JSON,
+    so a caller parsing stdout sees the usage message, not a JSONDecodeError."""
     code, stdout, stderr = _run_pipe_write_raw(
         "add", "Acme", "PM", "--repo-root", ".",
     )
     assert code == 2
     assert "unrecognized arguments" in stderr
-    assert stdout.strip() == ""
+    d = json.loads(stdout)
+    assert d["code"] == "usage" and "unrecognized arguments" in d["message"]
 
 
 # ---------------------------------------------------------------------------

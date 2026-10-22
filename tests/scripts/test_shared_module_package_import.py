@@ -61,6 +61,7 @@ TOOLS = (
     "check_voice_pure",
     "check_workflow_scriptpath",
     "check_zuora_principal_title",
+    "frame_write",
     "granola_save",
     "living_log_append",
     "memory_index_partition",

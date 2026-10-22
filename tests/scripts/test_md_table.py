@@ -94,3 +94,30 @@ def test_out_ok_and_out_error_emit_json(capsys):
     assert e.value.code == 1
     assert json.loads(capsys.readouterr().out) == {"status": "error", "message": "bad",
                                                    "code": "dup", "hint": "h"}
+
+
+def test_json_argument_parser_usage_error_is_json_on_stdout(capsys):
+    """A stock argparse rejection left stdout empty, so callers parsing it got a
+    JSONDecodeError instead of the usage message. Subparsers must inherit the class."""
+    p = mt.JsonArgumentParser(prog="w.py")
+    sub = p.add_subparsers(dest="command")
+    sub.add_parser("log").add_argument("--summary", required=True)
+    for argv in (["log"], ["log", "--summary", "s", "--bogus"]):
+        with pytest.raises(SystemExit) as exc:
+            p.parse_args(argv)
+        assert exc.value.code == 2
+        out, err = capsys.readouterr()
+        d = json.loads(out)
+        assert d["status"] == "error" and d["code"] == "usage"
+        assert "usage:" in d["message"] and "w.py" in d["message"]
+        assert "error:" in err and "usage: w.py" in err, "stderr keeps the stock usage text"
+
+
+def test_json_argument_parser_help_is_not_an_error(capsys):
+    """--help exits 0 through argparse's help action, never through error()."""
+    p = mt.JsonArgumentParser(prog="w.py")
+    with pytest.raises(SystemExit) as exc:
+        p.parse_args(["--help"])
+    assert exc.value.code == 0
+    out, _ = capsys.readouterr()
+    assert out.startswith("usage: w.py") and '"status"' not in out

@@ -22,13 +22,12 @@ subcommand; argparse rejects them after it with "unrecognized arguments"):
   PYTHONIOENCODING=utf-8 python3 tools/pipe_write.py --repo-root . update "Acme" "Applied"
   PYTHONIOENCODING=utf-8 python3 tools/pipe_write.py --repo-root . remove "Acme"
 """
-import argparse
 import re
 import sys
 from datetime import date
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # siblings import as `tools.X` too
-from md_table import find_section, is_sep_row, out_error, out_ok, parse_cols, read_file, table_insert_pos, write_atomic  # noqa: E402
+from md_table import JsonArgumentParser, find_section, is_sep_row, out_error, out_ok, parse_cols, read_file, table_insert_pos, write_atomic  # noqa: E402
 
 # Stages a row may be archived under. Must stay in sync with
 # todo_write.py TERMINAL_STAGES, which exact-matches these in ## Archived —
@@ -355,7 +354,7 @@ def cmd_remove(args, pipeline_path: Path, dry_run: bool) -> None:
 # ---------------------------------------------------------------------------
 
 def parse_args():
-    p = argparse.ArgumentParser(description="Atomic mutations for data/job-pipeline.md.")
+    p = JsonArgumentParser(description="Atomic mutations for data/job-pipeline.md.")
     p.add_argument("--repo-root", default=None, help="Repository root. Defaults to cwd.")
     p.add_argument("--dry-run", action="store_true", help="Return JSON without writing.")
 

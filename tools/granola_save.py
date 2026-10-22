@@ -35,14 +35,13 @@ Example:
     --output <personal-vault>/data/therapy/2026-05-04-therapy-provider-transcript.md
   # Writes both -transcript.md AND -transcript-summary.md, with wiki-links between them.
 """
-import argparse
 import json
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from meeting_vocab import split_transcript_turns  # noqa: E402
-from md_table import write_atomic  # noqa: E402
+from md_table import JsonArgumentParser, write_atomic  # noqa: E402
 
 
 SEALED_HEADER_THERAPY = """> **SEALED.** This is sensitive personal therapy material. Per `<personal-vault>/CLAUDE.md`, contents of `personal/data/therapy/` never appear in CVs, cover letters, recruiter prep, voice exports, networking notes, or any external-facing artifact. The verbatim transcript is preserved here as source-of-truth; do not paraphrase or excerpt outside this folder."""
@@ -282,7 +281,7 @@ def load_input(path: str | None) -> dict:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = JsonArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     p_write = sub.add_parser("write", help="Create transcript + summary pair from JSON payload")

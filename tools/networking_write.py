@@ -28,7 +28,6 @@ Usage:
   PYTHONIOENCODING=utf-8 python3 tools/networking_write.py log "Jane Doe" --date 2026-02-28 --type email --summary "Replied" --repo-root .
   PYTHONIOENCODING=utf-8 python3 tools/networking_write.py remove "Jane Doe" --repo-root .
 """
-import argparse
 import os
 import re
 import subprocess
@@ -40,7 +39,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from name_dedup import find_near_duplicates  # noqa: E402
 import outreach_status  # noqa: E402
-from md_table import find_section, is_sep_row, out_error, out_ok, parse_cols, read_file, table_insert_pos, write_atomic  # noqa: E402
+from md_table import JsonArgumentParser, find_section, is_sep_row, out_error, out_ok, parse_cols, read_file, table_insert_pos, write_atomic  # noqa: E402
 
 NETWORKING_FILE  = "data/networking.md"
 TODOS_FILE       = "data/job-todos.md"
@@ -552,7 +551,7 @@ def cmd_remove(args, networking_path: Path, dry_run: bool) -> None:
 # ---------------------------------------------------------------------------
 
 def parse_args():
-    p = argparse.ArgumentParser(description="Atomic mutations for data/networking.md.")
+    p = JsonArgumentParser(description="Atomic mutations for data/networking.md.")
     p.add_argument("--repo-root", default=None)
     p.add_argument("--dry-run", action="store_true")
 

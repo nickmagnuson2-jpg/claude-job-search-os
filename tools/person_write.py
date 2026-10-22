@@ -37,14 +37,13 @@ subcommand; argparse rejects them after it with "unrecognized arguments"):
   PYTHONIOENCODING=utf-8 python3 tools/person_write.py --repo-root . add-entry priya-anand \
       --section commitments --text "Will relay feedback via Jordan's process"
 """
-import argparse
 import sys
 import re
 import unicodedata
 from datetime import date
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # siblings import as `tools.X` too
-from md_table import out_error, out_ok, read_file, write_atomic  # noqa: E402
+from md_table import JsonArgumentParser, out_error, out_ok, read_file, write_atomic  # noqa: E402
 
 PEOPLE_DIR = "data/people"
 
@@ -272,7 +271,7 @@ def cmd_list(args, people_dir: Path, dry_run: bool) -> None:
 def parse_args():
     # --repo-root and --dry-run go BEFORE the subcommand (matches the
     # pipe_write.py / networking_write.py convention documented in CLAUDE.md).
-    p = argparse.ArgumentParser(description="Scaffold + atomic append for data/people/ dossiers.")
+    p = JsonArgumentParser(description="Scaffold + atomic append for data/people/ dossiers.")
     p.add_argument("--repo-root", default=None, help="Repository root. Defaults to cwd.")
     p.add_argument("--dry-run", action="store_true", help="Return JSON without writing.")
 

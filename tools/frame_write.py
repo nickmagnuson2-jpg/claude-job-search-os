@@ -56,6 +56,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from md_table import JsonArgumentParser  # noqa: E402
 
 try:
     import yaml
@@ -707,8 +708,8 @@ def answers_metrics(answers_path: Path) -> dict:
 # ---------------------------------------------------------------- CLI
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = JsonArgumentParser(description=__doc__,
+                            formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     def mut(p):
