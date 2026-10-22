@@ -40,7 +40,14 @@ def test_fallback_when_nothing_alphanumeric_survives(text):
     ("日本語のタイトル", "日本語のタイトル"),
     ("København guide", "københavn-guide"),
     ("Café notes", "cafe-notes"),
+    ("ガンダム", "ガンダム"),       # dakuten kept: distinct from カンタム
 ])
 def test_title_mode_keeps_letters_in_any_script(title, expected):
     """Two non-Latin titles must not both become the fallback and collide on disk."""
     assert slugify(title, drop_punctuation=True, fallback="video") == expected
+
+
+def test_marks_on_non_latin_letters_are_kept_so_titles_do_not_collide():
+    a = slugify("ガンダム", drop_punctuation=True)
+    b = slugify("カンタム", drop_punctuation=True)
+    assert a != b

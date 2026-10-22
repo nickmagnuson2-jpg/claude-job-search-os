@@ -24,8 +24,14 @@ import unicodedata
 
 def slugify(text: str, maxlen: int | None = None, fallback: str = "",
             drop_punctuation: bool = False) -> str:
-    t = unicodedata.normalize("NFKD", text or "")
-    t = "".join(c for c in t if not unicodedata.combining(c))
+    # Fold accents on Latin letters only ('é' -> 'e'). A mark on a non-Latin letter is part
+    # of it (the dakuten in 'ガ'), so it is kept and the letter recomposed.
+    kept: list[str] = []
+    for c in unicodedata.normalize("NFKD", text or ""):
+        if unicodedata.combining(c) and kept and kept[-1].isascii():
+            continue
+        kept.append(c)
+    t = unicodedata.normalize("NFC", "".join(kept))
     if drop_punctuation:
         # Title mode keeps Unicode letters, as the title callers always did: a title in
         # another script must not collapse to the shared fallback and collide.
