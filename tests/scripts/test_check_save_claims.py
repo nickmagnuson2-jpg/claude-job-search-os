@@ -586,22 +586,39 @@ def test_relative_root_would_have_searched_the_wrong_tier():
 # Third fire of the abbreviated-skill-path false positive (friction ledger 2026-10-01,
 # 2026-10-21 x2). Two independent causes, each tested on its own.
 
-def test_a_sentence_starting_with_a_backtick_ends_the_previous_claim_window():
-    """The sentence cut needed [A-Z] after the period, so a following sentence that opens
-    with a code-formatted path did not cut, and the previous verb took that path as its
-    referent. Here the path is a status note, not a write claim."""
+def test_a_status_note_naming_a_real_short_skill_path_passes(tmp_path):
+    """The shape that fired 3x: a claim sentence followed by a status note that names a
+    real skill file by its short path. The path is in the claim window (the cut is [A-Z]
+    only); it passes because the file exists, not because the window was cut."""
+    (tmp_path / ".claude" / "skills" / "other-skill").mkdir(parents=True)
+    (tmp_path / ".claude" / "skills" / "other-skill" / "SKILL.md").write_text("x")
     text = ("Three portable claims added to the coaching file. "
             "`other-skill/SKILL.md` no longer shows as modified.")
-    assert "other-skill/SKILL.md" not in csc.extract_claimed_paths(text)
+    assert "other-skill/SKILL.md" in csc.extract_claimed_paths(text)
+    r = _run(text, str(tmp_path))
+    assert r.returncode == 0, r.stderr
 
 
 def test_a_backticked_referent_in_the_same_sentence_is_still_caught():
     assert "docs/notes.md" in csc.extract_claimed_paths("Saved to `docs/notes.md`. Done.")
 
 
-def test_a_lowercase_continuation_after_an_abbreviation_does_not_cut():
-    """'e.g. docs/x.md' style: a lowercase word after a period is not a new sentence."""
-    assert "docs/x.md" in csc.extract_claimed_paths("Wrote the example, e.g. docs/x.md here.")
+# Must still block: a claim whose referent opens the NEXT sentence. Widening the cut to
+# any non-lowercase start (7497c5d) dropped all three; cross-model review found it.
+
+def test_a_referent_opening_the_next_sentence_in_backticks_is_caught():
+    text = "I saved the briefing. `output/acme/brief.md` is ready."
+    assert "output/acme/brief.md" in csc.extract_claimed_paths(text)
+
+
+def test_a_referent_after_a_period_and_newline_is_caught():
+    text = "I saved the briefing.\n`output/acme/brief.md` is ready."
+    assert "output/acme/brief.md" in csc.extract_claimed_paths(text)
+
+
+def test_a_digit_led_referent_opening_the_next_sentence_is_caught():
+    text = "Wrote the analysis. 102126-notes.md is in output/analysis/."
+    assert "102126-notes.md" in csc.extract_claimed_paths(text)
 
 
 def test_a_short_skill_path_resolves_under_dot_claude_skills(tmp_path):
@@ -623,8 +640,26 @@ def test_skill_lookup_does_not_escape_via_dotdot_or_absolute(tmp_path):
     assert csc.skill_dir_hit("/etc/hosts", tmp_path) is False
 
 
+def test_skill_lookup_refuses_a_dotdot_segment_after_a_real_dir(tmp_path):
+    """foo/../../secret.md would resolve to .claude/secret.md, a real file. Only the
+    '..' segment check refuses it; the leading-character check does not apply."""
+    (tmp_path / ".claude" / "skills" / "foo").mkdir(parents=True)
+    (tmp_path / ".claude" / "secret.md").write_text("x")
+    assert csc.skill_dir_hit("foo/../../secret.md", tmp_path) is False
+
+
+def test_skill_lookup_refuses_a_tilde_path(tmp_path):
+    """A literal '~' directory under skills would otherwise satisfy '~/x'."""
+    (tmp_path / ".claude" / "skills" / "~").mkdir(parents=True)
+    (tmp_path / ".claude" / "skills" / "~" / "x").write_text("x")
+    assert csc.skill_dir_hit("~/x", tmp_path) is False
+
+
 def test_end_to_end_short_skill_path_claim_is_clean(tmp_path):
     (tmp_path / ".claude" / "skills" / "some-skill").mkdir(parents=True)
     (tmp_path / ".claude" / "skills" / "some-skill" / "SKILL.md").write_text("x")
-    r = _run("I updated and saved some-skill/SKILL.md for you.", str(tmp_path))
+    text = "I updated and saved some-skill/SKILL.md for you."
+    # Exit 0 alone would also pass if nothing were extracted; pin the extraction too.
+    assert "some-skill/SKILL.md" in csc.extract_claimed_paths(text)
+    r = _run(text, str(tmp_path))
     assert r.returncode == 0, r.stderr

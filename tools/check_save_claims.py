@@ -20,7 +20,7 @@ state require a filesystem check.
 WHAT IT DOES
   Reads the last assistant text message from the session transcript, strips
   fenced code blocks, finds PAST-TENSE completion claims ("saved to X",
-  "written to X", "wrote X", "created X", "lives at X", "rendered X"), extracts
+  "written to X", "wrote X", "created X", "rendered X"), extracts
   the file path attached to each, and checks the path exists on disk.
 
 WHAT IT DOES NOT DO
@@ -174,12 +174,11 @@ def extract_claimed_paths(text: str):
         # A claim and its referent live in the same paragraph; nothing across a blank line
         # is the referent of this verb.
         #
-        # A new sentence is anything after [.!?] + space that does NOT start lowercase,
-        # not only [A-Z]. A sentence opening with a code-formatted path ("`x/SKILL.md` no
-        # longer shows as modified") did not cut, so the previous verb took that path as
-        # its referent. Lowercase after a period ("e.g. docs/x.md") still continues.
-        # Friction ledger 2026-10-21 (3rd fire of the short-skill-path FP).
-        cut = re.search(r"(?<=[.!?])\s+(?=[^a-z\s])|\n[ \t]*\n", window)
+        # The sentence cut stays [A-Z] on purpose. Widening it to any non-lowercase start
+        # (2026-10-21, 7497c5d) dropped real claims whose referent opens the next sentence:
+        # "I saved the briefing. `output/acme/brief.md` is ready." Cross-model review
+        # (Grok) caught it; skill_dir_hit alone clears the false positive it was meant for.
+        cut = re.search(r"(?<=[.!?])\s+[A-Z]|\n[ \t]*\n", window)
         if cut:
             window = window[:cut.start()]
         for pm in PATH_TOKEN.finditer(window):
@@ -307,8 +306,8 @@ def skill_dir_hit(tok: str, root: Path) -> bool:
     really exists under this repo's .claude/skills/.
 
     Prose names skill files without the .claude/skills/ prefix. `resolve` joins that onto
-    the root, which never exists, and the basename search skips dot-directories, so a
-    real skill file was reported as a false claim. Fired 3x (friction ledger 2026-10-01
+    the root, which never exists, and the basename search runs only for tokens with no
+    slash, so a real skill file was reported as a false claim. Fired 3x (friction ledger 2026-10-01
     apply/SKILL.md, 2026-10-21 generate-cv/SKILL.md twice); the ladder's 3rd rung is a
     mandatory script patch, which is this.
 
