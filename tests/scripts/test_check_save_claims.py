@@ -580,3 +580,51 @@ def test_relative_root_would_have_searched_the_wrong_tier():
         assert csc.memory_tier_hit("feedback_r.md", Path("."), home) is False
         # ...and canonicalizing is what makes it agree with the absolute form.
         assert csc.project_root(str(root)) == root
+
+
+# ---------- 2026-10-21: short skill paths, and sentences that start with a backtick ----------
+# Third fire of the abbreviated-skill-path false positive (friction ledger 2026-10-01,
+# 2026-10-21 x2). Two independent causes, each tested on its own.
+
+def test_a_sentence_starting_with_a_backtick_ends_the_previous_claim_window():
+    """The sentence cut needed [A-Z] after the period, so a following sentence that opens
+    with a code-formatted path did not cut, and the previous verb took that path as its
+    referent. Here the path is a status note, not a write claim."""
+    text = ("Three portable claims added to the coaching file. "
+            "`other-skill/SKILL.md` no longer shows as modified.")
+    assert "other-skill/SKILL.md" not in csc.extract_claimed_paths(text)
+
+
+def test_a_backticked_referent_in_the_same_sentence_is_still_caught():
+    assert "docs/notes.md" in csc.extract_claimed_paths("Saved to `docs/notes.md`. Done.")
+
+
+def test_a_lowercase_continuation_after_an_abbreviation_does_not_cut():
+    """'e.g. docs/x.md' style: a lowercase word after a period is not a new sentence."""
+    assert "docs/x.md" in csc.extract_claimed_paths("Wrote the example, e.g. docs/x.md here.")
+
+
+def test_a_short_skill_path_resolves_under_dot_claude_skills(tmp_path):
+    (tmp_path / ".claude" / "skills" / "some-skill").mkdir(parents=True)
+    (tmp_path / ".claude" / "skills" / "some-skill" / "SKILL.md").write_text("x")
+    assert csc.exists_anywhere("some-skill/SKILL.md", tmp_path) is True
+
+
+def test_a_short_skill_path_with_no_file_is_still_missing(tmp_path):
+    (tmp_path / ".claude" / "skills" / "some-skill").mkdir(parents=True)
+    assert csc.exists_anywhere("some-skill/SKILL.md", tmp_path) is False
+    assert csc.exists_anywhere("unknown-skill/SKILL.md", tmp_path) is False
+
+
+def test_skill_lookup_does_not_escape_via_dotdot_or_absolute(tmp_path):
+    (tmp_path / ".claude" / "skills").mkdir(parents=True)
+    (tmp_path / "secret.md").write_text("x")
+    assert csc.skill_dir_hit("../../secret.md", tmp_path) is False
+    assert csc.skill_dir_hit("/etc/hosts", tmp_path) is False
+
+
+def test_end_to_end_short_skill_path_claim_is_clean(tmp_path):
+    (tmp_path / ".claude" / "skills" / "some-skill").mkdir(parents=True)
+    (tmp_path / ".claude" / "skills" / "some-skill" / "SKILL.md").write_text("x")
+    r = _run("I updated and saved some-skill/SKILL.md for you.", str(tmp_path))
+    assert r.returncode == 0, r.stderr

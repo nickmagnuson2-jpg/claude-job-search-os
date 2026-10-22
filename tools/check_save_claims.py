@@ -173,7 +173,13 @@ def extract_claimed_paths(text: str):
         # and it false-fired three times before this patch (friction ledger, 2026-09-01..02).
         # A claim and its referent live in the same paragraph; nothing across a blank line
         # is the referent of this verb.
-        cut = re.search(r"(?<=[.!?])\s+[A-Z]|\n[ \t]*\n", window)
+        #
+        # A new sentence is anything after [.!?] + space that does NOT start lowercase,
+        # not only [A-Z]. A sentence opening with a code-formatted path ("`x/SKILL.md` no
+        # longer shows as modified") did not cut, so the previous verb took that path as
+        # its referent. Lowercase after a period ("e.g. docs/x.md") still continues.
+        # Friction ledger 2026-10-21 (3rd fire of the short-skill-path FP).
+        cut = re.search(r"(?<=[.!?])\s+(?=[^a-z\s])|\n[ \t]*\n", window)
         if cut:
             window = window[:cut.start()]
         for pm in PATH_TOKEN.finditer(window):
@@ -296,6 +302,23 @@ def memory_tier_hit(tok: str, root: Path, home: Path | None = None) -> bool:
     return (tier / name).is_file()
 
 
+def skill_dir_hit(tok: str, root: Path) -> bool:
+    """True when the token is a short skill path ("generate-cv/SKILL.md") whose file
+    really exists under this repo's .claude/skills/.
+
+    Prose names skill files without the .claude/skills/ prefix. `resolve` joins that onto
+    the root, which never exists, and the basename search skips dot-directories, so a
+    real skill file was reported as a false claim. Fired 3x (friction ledger 2026-10-01
+    apply/SKILL.md, 2026-10-21 generate-cv/SKILL.md twice); the ladder's 3rd rung is a
+    mandatory script patch, which is this.
+
+    Only ever converts "missing" to "exists", and only when the file is on disk.
+    """
+    if not tok or tok.startswith(("~", "/", ".")) or ".." in tok.split("/"):
+        return False
+    return (root / ".claude" / "skills" / tok).is_file()
+
+
 PRUNE_DIRS = {".git", "node_modules", ".venv", "venv", "__pycache__", ".pytest_cache"}
 
 
@@ -316,6 +339,8 @@ def exists_anywhere(tok: str, root: Path) -> bool:
     if peer_repo_hit(tok, root):
         return True
     if memory_tier_hit(tok, root):
+        return True
+    if skill_dir_hit(tok, root):
         return True
     if "/" in tok or tok.startswith("~"):
         return False
