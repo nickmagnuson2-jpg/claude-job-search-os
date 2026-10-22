@@ -85,6 +85,9 @@ LOOKBEHIND = 40
 SKIP_PREFIXES = ("http://", "https://", "www.", "mailto:")
 # Extensions that are almost always prose, not files (version numbers, decimals).
 NOISE = re.compile(r"^\d+\.\d+$")
+# A bare capitalized `X.js` is a library name in prose (Next.js, Node.js, D3.js), not a
+# file: real JS files here are lowercase or carry a path. Fired 3x (2026-08-31..10-21).
+LIBRARY_NAME = re.compile(r"^[A-Z][A-Za-z0-9]*\.js$")
 
 
 URL_RE = re.compile(r"\b(?:https?|ftp)://\S+|\bwww\.\S+", re.I)
@@ -148,7 +151,8 @@ def extract_claimed_paths(text: str):
             window = window[:cut.start()]
         for pm in PATH_TOKEN.finditer(window):
             tok = pm.group(0).strip("`'\"()[],;:")
-            if not tok or tok.lower().startswith(SKIP_PREFIXES) or NOISE.match(tok):
+            if (not tok or tok.lower().startswith(SKIP_PREFIXES) or NOISE.match(tok)
+                    or LIBRARY_NAME.match(tok)):
                 continue
             if "/" not in tok and not tok.endswith((".py", ".md", ".html", ".pdf",
                                                     ".json", ".yaml", ".yml", ".js",

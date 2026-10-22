@@ -704,3 +704,22 @@ def test_a_mid_token_dotdot_still_reaches_a_sibling_repo_but_not_skills(tmp_path
     root.mkdir()
     assert csc.exists_anywhere("a/../b/x.md", root) is True
     assert root / ".claude" / "skills" / "a/../b/x.md" not in csc.candidate_paths("a/../b/x.md", root)
+
+
+# ---------- library names in prose (Next.js, Node.js) ----------
+
+@pytest.mark.parametrize("text", [
+    "I wrote the app on Next.js and Postgres and saved the notes.",
+    "Built it with Node.js, then committed.",
+    "I created the chart with D3.js.",
+])
+def test_a_capitalized_js_library_name_is_not_a_claimed_file(text):
+    assert extract(text) == []
+
+
+@pytest.mark.parametrize("text,path", [
+    ("I wrote plan-hardening.js for the workflow.", "plan-hardening.js"),
+    ("Saved to `.claude/workflows/Deck.js` today.", ".claude/workflows/Deck.js"),
+])
+def test_a_real_js_file_is_still_a_claimed_file(text, path):
+    assert path in extract(text)
