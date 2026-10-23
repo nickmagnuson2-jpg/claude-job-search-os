@@ -44,6 +44,7 @@ Most hooks block the tool call outright (exit code 2), and Claude sees the reaso
 | `check_module_imports.py` | PostToolUse on Write/Edit/MultiEdit | Imports a Python module right after it is edited and warns if the import raises |
 | `check_save_claims.py` | Stop | Catches a reply that says a file was written when no write happened |
 | `check_stale_file_claim.py` | Stop | Catches a reply that says a named file was not touched this session when the filesystem says it was |
+| `check_derived_ratio.py` | Stop | Blocks a reply that states a ratio or percentage worked out in chat ("12 of 40 (30%)") when no tool printed that result; the fix is to compute it in a script and quote the output |
 
 ## Friction capture
 

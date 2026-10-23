@@ -17,7 +17,7 @@ This is the 3rd-fire promotion named in the rule's own reopen_gate:
 string check, since the failure is a literal string that a grep can catch and
 prose has now failed twice."
 
-  Fire 1 (2026-06-11, the Origin): the recruiter-channel CV
+  Fire 1 (the Origin): a recruiter-channel CV
   `output/<recruiter-slug>/061126-magnuson.md` was generated off a prior-application
   baseline, which rendered "Head of Product and Technology" in 4 places
   (summary, position line, bullet 1, the AI-workflow bullet). It survived a
@@ -193,8 +193,7 @@ def judge(content: str, path: str) -> None:
         "If you are building from a prior CV baseline, re-verify EVERY title\n"
         "against data/projects/zuora.md — baselines propagate label errors.\n"
         "\n"
-        "Reference: memory/feedback_zuora_principal_title_is_cpto.md (2 fires:\n"
-        "2026-06-11 recruiter-channel CV, 2026-08-24 live interview coaching).\n",
+        "Reference: memory/feedback_zuora_principal_title_is_cpto.md (2 fires).\n",
         file=sys.stderr,
     )
     sys.exit(2)

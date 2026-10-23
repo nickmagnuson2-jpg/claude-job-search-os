@@ -423,7 +423,7 @@ Paste the returned `<!-- outreach_status: … -->` comment into the Logistics bl
 
 **Step 6a runs `tools/check_prep_doc.py` against the saved doc and blocks the PDF render on failure** — checks 4-6 enforce (a) and (b) mechanically. This instruction is what makes the doc pass on the first try.
 
-**Origin:** on 2026-08-10 a Logistics block asserted *"CV already sent 8/4, do not re-offer it."* No such row existed in the outreach log; the address had bounced on 8/4 (a fact recorded two lines above in the same block); the recipient asked for the CV again on 8/11. The suppressive half is the damaging half — it instructed Nick not to take the corrective action.
+**Origin:** a Logistics block asserted *"CV already sent, do not re-offer it."* No such row existed in the outreach log; the address had bounced (a fact recorded two lines above in the same block); the recipient later asked for the CV again. The suppressive half is the damaging half — it instructed Nick not to take the corrective action.
 
 ---
 
