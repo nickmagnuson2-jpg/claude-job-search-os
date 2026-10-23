@@ -69,7 +69,12 @@ import pytest  # noqa: E402
 
 
 @pytest.mark.parametrize("title,level", [
-    ("International Sales Manager", 5),        # not 'intern' (1)
+    ("International Partnerships", 4),         # not 'intern' (1); no other key, so mid
+    ("International Sales Manager", 5),
+    ("SVP, Engineering", 9),
+    ("EVP Operations", 9),
+    ("Directors of Product", 8),
+    ("Heads of Growth", 8),
     ("Leadership Development Partner", 4),     # not 'lead' (7); no other key, so mid
     ("Headcount Planning Analyst", 4),         # not 'head' (8)
     ("Software Engineering Intern", 1),

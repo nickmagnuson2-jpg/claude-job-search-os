@@ -34,6 +34,8 @@ SENIORITY_LEVELS: dict[str, int] = {
     "director": 8,
     "head": 8,
     "vp": 9,
+    "svp": 9,
+    "evp": 9,
     "vice president": 9,
     "chief": 10,
     "c-suite": 10,
@@ -236,10 +238,11 @@ def extract_seniority(title: str) -> int:
     """
     title_lower = title.lower()
     # Check multi-word keys first (e.g., 'vice president', 'c-suite')
-    # Whole words only: a substring test read 'International' as intern and 'Leadership'
-    # as lead (finding 40.F1).
+    # Whole words only, plural allowed: a substring test read 'International' as intern and
+    # 'Leadership' as lead (40.F1); 'SVP'/'EVP' are their own keys, since a whole-word
+    # 'vp' no longer finds them inside the abbreviation (473.F1).
     for keyword in sorted(SENIORITY_LEVELS.keys(), key=len, reverse=True):
-        if re.search(rf"(?<![a-z0-9]){re.escape(keyword)}(?![a-z0-9])", title_lower):
+        if re.search(rf"(?<![a-z0-9]){re.escape(keyword)}s?(?![a-z0-9])", title_lower):
             return SENIORITY_LEVELS[keyword]
     return 4  # default: mid
 
