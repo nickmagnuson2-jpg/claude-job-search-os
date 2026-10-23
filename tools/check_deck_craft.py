@@ -912,6 +912,22 @@ def check_b11(slides, frame_ctx):
                   "is not seen")
 
 
+def check_f15(deck_path, frame_ctx):
+    """F15 from check_frame_integrity.py, run here because this gate holds the deck.
+
+    Every distinctive number a page prints must be carried by a fact that some element
+    declaring that page cites. The rule lives in check_frame_integrity.check_F15; that
+    gate is run without a deck, so on its own F15 reported CANNOT_RUN on every real
+    build and a figure printed on slide 1 with no declaring element shipped green
+    (2026-09-21). No loadable frame is CANNOT_RUN: an unloadable one is B11's FAIL."""
+    if not frame_ctx or frame_ctx.get("problem"):
+        detail = (frame_ctx or {}).get("problem", (None, "no frame.yaml supplied"))[1]
+        return Result("F15", CANNOT_RUN, detail + "; F15 has no element register to read")
+    from check_frame_integrity import check_F15  # needs PyYAML, present once a frame loaded
+    r = check_F15(frame_ctx["frame"], deck_path)
+    return Result("F15", r.state, r.detail, r.offenders)
+
+
 # --------------------------------------------------------------------------
 # driver
 # --------------------------------------------------------------------------
@@ -968,7 +984,7 @@ def run_checks(slides, style_blocks, bold_cap=DEFAULT_BOLD_CAP, deck_path=None,
         check_c11(slides, style_blocks),
         check_c13(slides),
         check_d1(slides),
-    ]
+    ] + ([] if deck_path is None else [check_f15(deck_path, frame_ctx)])
 
 
 def main(argv=None):

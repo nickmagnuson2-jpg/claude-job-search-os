@@ -842,7 +842,8 @@ def test_the_full_coverage_deck_executes_every_in_memory_check():
 
 def test_fully_covered_is_true_only_when_nothing_was_skipped(tmp_path):
     full = _with_fresh_render(tmp_path, FULL_COVERAGE_DECK, "full.html")
-    frame = _frame_file(tmp_path / "full-frame.yaml", FULL_COVERAGE_REGISTER)
+    # A frame with no elements cannot run F15, so full coverage needs one that declares slide-1.
+    frame = _f15_frame_file(tmp_path / "full-frame.yaml", "slide-1")
     assert json.loads(_run_cli(full, "--json", "--frame", str(frame)).stdout)[
         "fully_covered"] is True
     # The same deck with no register is NOT fully covered: B11 could not run.
@@ -855,7 +856,8 @@ def test_fully_covered_is_true_only_when_nothing_was_skipped(tmp_path):
 def test_the_cannot_run_note_is_suppressed_when_every_check_ran(tmp_path):
     """Printed unconditionally the note stops carrying information."""
     full = _with_fresh_render(tmp_path, FULL_COVERAGE_DECK, "full.html")
-    frame = _frame_file(tmp_path / "full-frame.yaml", FULL_COVERAGE_REGISTER)
+    # A frame with no elements cannot run F15, so full coverage needs one that declares slide-1.
+    frame = _f15_frame_file(tmp_path / "full-frame.yaml", "slide-1")
     assert "CANNOT_RUN is not a pass" not in _run_cli(full, "--frame", str(frame)).stdout
 
 
@@ -870,7 +872,7 @@ def test_json_results_carry_the_detail_for_every_rule(tmp_path):
     deck = tmp_path / "bad.html"
     deck.write_text(DEFECTIVE_DECK, encoding="utf-8")
     payload = json.loads(_run_cli(deck, "--json").stdout)
-    assert len(payload["results"]) == 13
+    assert len(payload["results"]) == 14  # 13 rules plus F15, which runs whenever a deck file is given
     for row in payload["results"]:
         assert row["detail"].strip()
         assert set(row) == {"rule", "state", "detail", "offenders"}
@@ -1597,3 +1599,91 @@ def test_b11_sees_a_comparison_made_with_a_verb(lede, token):
     r = _b11(lede, register=[_claim("faster")] if "faster" in lede else [])
     assert r.state == cdc.FAIL, r.detail
     assert any('"' + token + '"' in o for o in r.offenders), r.offenders
+
+
+# --------------------------------------------------------------------------
+# F15: every number a page prints is carried by an element declaring that page.
+#
+# check_frame_integrity.check_F15 already implements this, but it needs the deck, and
+# the frame gate is run without one, so F15 reported CANNOT_RUN on every real build.
+# This gate holds both the deck and the frame, so it is where F15 actually executes.
+# Fixture shape follows test_check_frame_integrity.py's F15 tests (synthetic, public).
+# FULL_COVERAGE_DECK prints 1,200, 1,500 and 80.0% on slide-1.
+# --------------------------------------------------------------------------
+
+F15_FACTS = {
+    "fA": {"text": "March output was 1,200 units of 1,500 capacity", "tier": "A",
+           "source": "x"},
+    "fB": {"text": "Utilization was 80.0% in March", "tier": "A", "source": "x"},
+}
+
+
+def _f15_frame_file(path, fb_surface):
+    """slide-1 element e1 cites fA. Element e2 cites fB (the 80%) on `fb_surface`."""
+    import yaml
+    path.write_text(yaml.safe_dump({
+        "schema_version": 3, "facts": F15_FACTS,
+        "lede_claims": FULL_COVERAGE_REGISTER,
+        "elements": [
+            {"id": "e1", "name": "n1", "measure": "m1", "name_surface": "slide-1",
+             "measure_surface": "slide-1", "because": ["fA"]},
+            {"id": "e2", "name": "n2", "measure": "m2", "name_surface": fb_surface,
+             "measure_surface": fb_surface, "because": ["fB"]},
+        ]}), encoding="utf-8")
+    return path
+
+
+def _f15(results):
+    return next(r for r in results if r.rule == "F15")
+
+
+def _f15_run(deck):
+    slides, styles = _parse(deck.read_text(encoding="utf-8"))
+    return cdc.run_checks(slides, styles, deck_path=deck,
+                          frame_ctx=cdc.frame_context(deck))
+
+
+def test_f15_fails_and_the_gate_exits_2_when_a_printed_number_is_undeclared(tmp_path):
+    """THE INCIDENT SHAPE. The 80% is printed on slide-1 and the only element citing it
+    declares `workbook`. The frame sits beside the deck, so no flag is needed."""
+    deck = _with_fresh_render(tmp_path, FULL_COVERAGE_DECK, "deck.html")
+    _f15_frame_file(tmp_path / "frame.yaml", "workbook")
+    results = _f15_run(deck)
+    r = _f15(results)
+    assert r.state == cdc.FAIL, r.detail
+    assert any("80%" in o for o in r.offenders), r.offenders
+    assert [x.rule for x in results if x.state == cdc.FAIL] == ["F15"]
+    assert cdc.main([str(deck), "--json"]) == 2
+
+
+def test_f15_passes_and_the_gate_exits_0_when_the_citing_element_declares_the_page(
+        tmp_path):
+    deck = _with_fresh_render(tmp_path, FULL_COVERAGE_DECK, "deck.html")
+    _f15_frame_file(tmp_path / "frame.yaml", "slide-1")
+    r = _f15(_f15_run(deck))
+    assert r.state == cdc.PASS, (r.detail, r.offenders)
+    assert cdc.main([str(deck), "--json"]) == 0
+
+
+def test_f15_is_cannot_run_not_pass_when_no_frame_sits_beside_the_deck(tmp_path):
+    deck = _with_fresh_render(tmp_path, FULL_COVERAGE_DECK, "deck.html")
+    r = _f15(_f15_run(deck))
+    assert r.state == cdc.CANNOT_RUN
+    assert "frame.yaml" in r.detail
+
+
+def test_f15_is_cannot_run_when_the_frame_cannot_be_loaded(tmp_path):
+    """An unreadable frame is already a B11 FAIL. F15 measured nothing, so it does not
+    claim a verdict of its own."""
+    deck = _with_fresh_render(tmp_path, FULL_COVERAGE_DECK, "deck.html")
+    (tmp_path / "frame.yaml").write_text("- just\n- a list\n", encoding="utf-8")
+    results = _f15_run(deck)
+    assert _f15(results).state == cdc.CANNOT_RUN
+    assert next(r for r in results if r.rule == "B11").state == cdc.FAIL
+
+
+def test_f15_is_absent_when_no_deck_path_is_supplied():
+    """F15 reads the deck file, so like R1 it only runs when there is a file."""
+    slides, styles = _parse(FULL_COVERAGE_DECK)
+    assert "F15" not in [r.rule for r in cdc.run_checks(
+        slides, styles, frame_ctx=_full_coverage_ctx())]
