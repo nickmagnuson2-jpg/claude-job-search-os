@@ -240,7 +240,14 @@ def cmd_update(args, pipeline_path: Path, dry_run: bool) -> None:
 
     new_next_action = args.next_action if args.next_action else (cols[4] if len(cols) > 4 else "—")
     new_cv_used     = args.cv_used     if args.cv_used     else (cols[5] if len(cols) > 5 else "—")
-    new_notes       = args.notes       if args.notes       else (cols[6] if len(cols) > 6 else "—")
+    old_notes       = cols[6] if len(cols) > 6 else "—"
+    new_notes       = args.notes       if args.notes       else old_notes
+    # --notes replaces prose, never the scorer's [fit-reason ...] tags (2 fires: lost on overwrite).
+    # One level of nested [..] is allowed: a reason can quote a bracketed label.
+    tags = re.findall(r"\[fit-reason (?:[^\[\]]|\[[^\[\]]*\])*\]", old_notes)
+    lost_tags = [t for t in tags if t not in new_notes]
+    if lost_tags:
+        new_notes = merge_notes(new_notes, append=" ".join(lost_tags))
     if adds:
         new_notes = merge_notes(new_notes,
                                 args.notes_prepend and sanitize_cell(args.notes_prepend),
@@ -271,6 +278,7 @@ def cmd_update(args, pipeline_path: Path, dry_run: bool) -> None:
 
     out_ok("update", f"Updated: {args.company} → {args.new_stage}",
            company=args.company, role=new_role, stage=args.new_stage,
+           previous_notes=old_notes,
            role_renamed=bool(getattr(args, "new_role", None)),
            fit_reason_logged=bool(getattr(args, "fit_reason", None)))
 

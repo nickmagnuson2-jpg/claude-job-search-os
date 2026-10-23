@@ -606,6 +606,26 @@ def test_update_notes_append_and_prepend_keep_existing_notes(tmp_path):
     assert _acme_notes(tmp_path) == "PRE orig POST"
 
 
+def test_update_notes_replace_keeps_fit_reason_tags_and_echoes_previous(tmp_path):
+    """--notes replaces the cell but never drops scorer input (feedback_read_tool_row_before_overwrite_update)."""
+    tag, kept = "[fit-reason 2026-09-14 fit: x [label] z]", "[fit-reason 2026-09-15: y]"
+    old = f"orig {tag} {kept}"
+    write_fixture(tmp_path, "data/job-pipeline.md",
+                  PIPELINE_WITH_ROW.replace("| — | — | — |\n\n## Archived", f"| — | {old} | — |\n\n## Archived"))
+    result, code = run_pipe_write("--repo-root", str(tmp_path), "update", "Acme Corp", "Applied",
+                                  "--notes", f"new prose {kept}")
+    assert code == 0, result
+    assert _acme_notes(tmp_path) == f"new prose {kept} {tag}", "dropped tag re-appended once, kept tag not duplicated"
+    assert result["previous_notes"] == old
+
+
+def test_update_without_notes_flags_leaves_an_empty_notes_cell_as_dash(tmp_path):
+    write_fixture(tmp_path, "data/job-pipeline.md", PIPELINE_WITH_ROW)
+    result, code = run_pipe_write("--repo-root", str(tmp_path), "update", "Acme Corp", "Applied")
+    assert code == 0, result
+    assert _acme_notes(tmp_path) == "—"
+
+
 def test_update_notes_append_onto_an_empty_cell_drops_the_dash(tmp_path):
     write_fixture(tmp_path, "data/job-pipeline.md", PIPELINE_WITH_ROW)
     run_pipe_write("--repo-root", str(tmp_path), "update", "Acme Corp", "Applied",
