@@ -220,7 +220,7 @@ Six parallel agents: five cover overview, funding, people/culture, news/strategy
 /scan-jobs ashby.io operations B2B SaaS
 ```
 
-Scans a job portal for matching roles, assesses fit against your profile, skills, certifications, and project history, and outputs a ranked table. Previously evaluated ads are skipped via a cache at `.claude/skills/scan-jobs/cache.md`. Boards hosted on Greenhouse, Lever, or Ashby are read through their public APIs. Roles the script shortlists (score 7+ of 10) that are not already in the pipeline are offered for a confirmed add.
+Scans a job portal for matching roles and outputs a ranked table. Claude only fetches the listings and copies each one into a fixed format; `tools/scan_jobs.py` does the rest, using the same scorer and location rule as the nightly career scan, so the same listings always get the same verdict. Previously evaluated ads are skipped via a cache at `.claude/skills/scan-jobs/cache.md`. Boards hosted on Greenhouse, Lever, or Ashby are read through their public APIs. Roles the script shortlists (score 7+ of 10) that are not already in the pipeline are offered for a confirmed add.
 
 ### Discover new target companies
 

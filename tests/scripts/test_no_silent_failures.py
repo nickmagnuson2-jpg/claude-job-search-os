@@ -17,7 +17,10 @@ The failure class this repo actually suffers from is not "a thing crashes" -- it
                 25 hooks break at once.
 
 Each test below asserts a wiring invariant that, if violated, would otherwise fail
-silently. These are cheap structural checks -- they do not execute hook logic.
+silently. Most are cheap structural checks that do not execute hook logic. The
+exception is the dual-mode block: it runs each dual-mode checker as a subprocess, with
+an unknown flag and with its wired settings.json command, to prove neither form exits 0
+having scanned nothing.
 """
 import ast
 import json

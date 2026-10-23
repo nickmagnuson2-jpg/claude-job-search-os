@@ -5,6 +5,96 @@ Format: newest entries at the top.
 
 Forked from raphaotten/claude-interview-coach (MIT / CC BY 4.0).
 
+## 2026-10-23: Public front page, and a drain of the rule backlog
+
+**What prompted it.** The repo link was going out on LinkedIn, so the front page and every
+public doc were rewritten for a first-time reader and scrubbed of personal detail. The same
+day a second session worked down the queue of memory rules waiting for a mechanical check.
+Every guard edit below was approved by Nick and reviewed by Codex and Grok before the push.
+
+**Public docs and privacy**
+- **README rewritten** in the third person for a reader who has never used Claude Code:
+  what it does, a worked example, lessons from building it, layers, privacy, setup.
+- **`docs/hooks.md` (new)**: every hook, its trigger as wired in `.claude/settings.json`,
+  and what it blocks; warn-only hooks are marked.
+- **Private docs untracked and gitignored**: design specs, data-file conventions, the
+  self-improvement-loop history and the framework index. `CLAUDE.md` links to them as
+  "(private, local only)". Owner-specific rules moved to a gitignored `CLAUDE.local.md`.
+- **Dated interview references and real-data test fixtures removed** from skills,
+  framework docs, tool comments and tests. Fixtures copied from real pipeline rows,
+  outreach rows and CV text were replaced with fictional ones that test the same thing.
+
+**New checks**
+- **`check_derived_ratio.py` (Stop hook)**: blocks a reply that states a ratio or
+  percentage worked out in chat when no tool printed it. **`count_report.py`** is the
+  helper to use instead: one line that states the population, what was included and what
+  was excluded.
+- **`check_save_claims.py`** also checks the inverse claim: "X is missing" while a file by
+  that name is on disk blocks the stop. A line opening with `File:` ends the claim window.
+- **`check_voice_pure.py`** blocks a `## Notes` or `## Analysis` section in a dated
+  reflection. Known gap: it reads Write and Edit payloads only, so MultiEdit passes.
+- **`check_draft_voice.py`** blocks "please make sure" and "send it my way" in an outbound
+  draft.
+- **`check_prep_doc.py` check 7**: the Primary proof may not name a dated source unless the
+  doc records Nick's override with a reason.
+- **`check_deck_craft.py`** now runs frame check F15 (every number a page prints must come
+  from a cited fact), which never ran on a real build before.
+- **`check_table_integrity.py` and `check_edit_after_mutation.py`** reject an unknown flag
+  (exit 2) instead of falling through to hook mode and scanning nothing.
+- **`todo_write.py` and `networking_write.py --followup`** refuse a wrong weekday/date pair,
+  sharing the parser in `check_draft_weekday.py`. Known gap: "Wed / Mon 3/16-17" style lists
+  can false-block.
+- **`tools/mannered-phrases.txt`**: three figurative substitutes for "the role".
+
+**Fixes and smaller changes**
+- `mutation_check.py` refuses to mutate a wired hook inside a live Claude session unless
+  `--allow-live-wired` is passed; refusal messages point at `--wait` instead of a
+  process-name grep, which matches the polling shell itself.
+- `scan_jobs.py` caps an ad with a blank description at "maybe" and tags it `title_only`.
+- `pipe_write.py update --notes` re-appends a dropped `[fit-reason ...]` tag and returns the
+  previous notes.
+- `cv_merge_theme.py` deletes the previous output before any step that can fail.
+- A parity test requires the four drafting skills to draft from the matched
+  `voice-reference.md` exemplar; `/draft-email` and `/cover-letter` lost their pasteable
+  templates.
+
+## 2026-10-22: Deterministic /scan-jobs, one slugify, and a post readout tool
+
+**What prompted it.** `/scan-jobs` scored roles with a prose percentage rubric while the
+deterministic scorer sat unused (finding 45.F1). Nick asked for the skill to be as
+deterministic as possible, and the same day's reviews kept finding small tools that had
+each grown their own copy of one function.
+
+- **`/scan-jobs` is now script-scored.** Claude fetches listings and copies them into a
+  fixed format; `tools/scan_jobs.py` dedupes, applies the nightly scanner's location rule,
+  scores with the career scanner's scorer, sets status by fixed cutoffs and writes the
+  cache. A posting URL is now a role's identity, so a role in another office is no longer
+  hidden by a cached one with the same title. The cutoffs were calibrated on 72 labeled
+  roles; the scorer's AUC there is 0.61, so the gain is consistency, not accuracy.
+- **Scoring fixes** (three open P0s from 2026-09-08): a preset's own weights now override
+  the global ones; funding stage comes only from the explicit field, not from any mention in
+  a description; seniority matches whole words, so "International" no longer reads as
+  intern (plurals and SVP/EVP still match).
+- **`tools/slug.py`**: one slugify replaces fifteen copies that disagreed on accents,
+  trailing hyphens and punctuation. Accents fold on Latin letters only. Verified on live
+  data: over 340 real names, one slug changed, and that was the bug being fixed.
+- **`tools/linkedin_post_readout.py`**: turns a LinkedIn post analytics export into a
+  one-page readout, one dot per member reached, with a runbook for LinkedIn's rounded,
+  top-values-only data. Nine review rounds; one P0 in round 2.
+- **`/verify`** gained a stopping rule: fix P0s, park P1/P2 with a reason, and put the bar
+  in the first round's target.
+- **`sweep.py --public` and `--history`**: after a scrub, find every public file and every
+  commit that still carries the token. `/audit-pii` now requires it.
+- **`gmail_fetch.py --list-labels`**, and the Gmail MCP label read is gated in favor of it.
+- **`open_draft.py`** reads the clipboard back and counts only an exact match; a draft with
+  no To, Cc or Subject goes to the clipboard instead of opening an empty compose window.
+- **`/generate-cv`** deletes the old PDF before rendering, so a failed render cannot pass
+  the page check by reading the previous run's file.
+- **`pipe_write.py update --notes-append / --notes-prepend`**; a shared `merge_notes` also
+  fixed `todo_write.py` silently dropping a prepend when both flags were given.
+- **`check_script_error_logged.py`** logs a crash beside a friction-log call and blames the
+  script that actually crashed.
+
 ## 2026-10-21: One copy of each shared mechanism
 
 **What prompted it.** A fix to `check_save_claims.py` added a fifth way to answer "does

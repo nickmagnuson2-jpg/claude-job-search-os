@@ -1,8 +1,9 @@
-"""W4 — the six prep-doc checks.
+"""W4 — the seven prep-doc checks.
 
 Checks 1-3: a prep doc binds a primary AND a reserve proof, in canonically different
 domains. Checks 4-6: it may not tell Nick to withhold an artifact unless a stamp says
-that artifact actually arrived.
+that artifact actually arrived. Check 7: the Primary proof may not name a dated source
+unless the doc records Nick's override with a reason.
 
 The two cases that encode real incidents:
   * test_synonym_collapse_fails_check_3 — a "reserve" in the primary's own domain
