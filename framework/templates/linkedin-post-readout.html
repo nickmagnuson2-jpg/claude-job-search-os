@@ -1,0 +1,516 @@
+<title>/*CONFIG:page_title*/</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Instrument+Serif&family=IBM+Plex+Mono:wght@400;500&display=swap');
+:root{
+  --paper:#eef0ec; --paper-2:#e4e7e2; --ink:#15171a; --ink-2:#464b51; --ink-3:#757b81;
+  --rule:#c6cac4; --mark:#7b8288; --mark-rest:#cdd1cb; --accent:#1d3fd0; --lit:#15171a;
+  color-scheme:light;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#101214; --paper-2:#181b1e; --ink:#eaece7; --ink-2:#adb2ab; --ink-3:#7c827b;
+    --rule:#2e3236; --mark:#7f857f; --mark-rest:#2d3134; --accent:#7090ff; --lit:#eaece7;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#101214; --paper-2:#181b1e; --ink:#eaece7; --ink-2:#adb2ab; --ink-3:#7c827b;
+  --rule:#2e3236; --mark:#7f857f; --mark-rest:#2d3134; --accent:#7090ff; --lit:#eaece7;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--paper);color:var(--ink);font:400 14px/1.5 "IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;-webkit-font-smoothing:antialiased}
+.wrap{max-width:1120px;margin:0 auto;padding:36px max(16px, env(safe-area-inset-right, 0px)) 48px max(16px, env(safe-area-inset-left, 0px))}
+a{color:var(--ink);text-decoration:underline;text-underline-offset:2px;overflow-wrap:anywhere}
+a:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.meta{color:var(--ink-3);font-size:12px;letter-spacing:.02em;margin:0 0 16px}
+.top{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(0,1fr);gap:40px;align-items:start;border-bottom:1px solid var(--rule);padding-bottom:24px;margin-bottom:24px}
+@media (max-width:820px){.top{grid-template-columns:minmax(0,1fr);gap:20px}}
+h1{font-family:"Instrument Serif",Georgia,"Times New Roman",serif;font-weight:400;font-size:clamp(36px,6vw,60px);line-height:1;margin:0 0 10px;letter-spacing:-.01em}
+.sub{color:var(--ink-2);margin:0 0 10px;font-size:13px;max-width:60ch}
+.totals{font-size:12px;color:var(--ink-2);margin:0}
+.post{margin:0 0 14px;padding:2px 0 2px 14px;border-left:2px solid var(--rule);font-family:"Instrument Serif",Georgia,serif;font-size:17px;line-height:1.35;color:var(--ink-2);max-width:56ch}
+.post p{margin:0 0 6px}
+.post a{font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace;font-size:11.5px;color:var(--ink-3)}
+.totals b{font-weight:500;color:var(--ink)}
+.brev{border:1px solid var(--ink);border-radius:4px;padding:14px 16px}
+.brev h2{font-size:12px;font-weight:500;text-transform:uppercase;letter-spacing:.06em;margin:0 0 8px}
+.brev dl{margin:0;display:grid;grid-template-columns:auto minmax(0,1fr);gap:4px 12px;font-size:12px}
+.brev dt{color:var(--ink-3)}
+.brev dd{margin:0}
+.brev .clicks{margin-top:12px;display:grid;grid-template-columns:auto minmax(0,1fr);gap:12px;align-items:center}
+.brev .blank{width:112px;height:52px;border:1px dashed var(--ink-3);border-radius:3px;display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--ink-2);text-align:center;padding:4px}
+.brev p{margin:0;font-size:12px;color:var(--ink-2)}
+.controls{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 14px}
+.controls button{font:inherit;font-size:12px;background:transparent;color:var(--ink-2);border:1px solid var(--rule);border-radius:3px;padding:6px 10px;cursor:pointer}
+.controls button:hover{border-color:var(--ink-3);color:var(--ink)}
+.controls button[aria-pressed="true"]{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+.controls button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.caption{min-height:3em;margin:0 0 10px;display:flex;gap:14px;align-items:baseline;flex-wrap:wrap}
+.caption .big{font-family:"Instrument Serif",Georgia,serif;font-size:clamp(30px,4.4vw,46px);line-height:1}
+.caption .txt{color:var(--ink-2);font-size:13px;max-width:62ch}
+.legend{display:flex;flex-wrap:wrap;gap:6px 18px;font-size:12px;color:var(--ink-2);margin:0 0 14px}
+.legend i{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px;vertical-align:-1px}
+.legend i.dash{border-radius:2px;border:1px dashed var(--ink-3);background:transparent}
+.room{position:relative;width:100%}
+.room canvas{display:block;width:100%}
+.tip{position:absolute;pointer-events:none;background:var(--paper-2);border:1px solid var(--rule);color:var(--ink);font-size:12px;padding:6px 8px;border-radius:3px;white-space:nowrap;display:none;z-index:2}
+.note{font-size:11.5px;color:var(--ink-3);max-width:80ch;margin:10px 0 0}
+details{margin-top:14px;font-size:12px;color:var(--ink-2);max-width:80ch}
+details[hidden]{display:none}
+summary{cursor:pointer;color:var(--ink)}
+summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+details p{margin:8px 0 0}
+table{border-collapse:collapse;width:100%;margin-top:10px}
+td,th{text-align:left;padding:3px 8px 3px 0;border-bottom:1px solid var(--rule);font-weight:400}
+td.n,th.n{text-align:right}
+.tablewrap{overflow-x:auto}
+footer{margin-top:24px;font-size:11.5px;color:var(--ink-3);max-width:80ch}
+</style>
+
+<div class="wrap">
+<header>
+  <p class="meta" id="meta"></p>
+  <div class="top">
+    <div>
+      <h1 id="headline"></h1>
+      <blockquote class="post" id="excerpt">
+        <a id="post-snippet-link" href="#" rel="noopener" target="_blank">Read the full post on LinkedIn</a>
+      </blockquote>
+      <p class="sub" id="sub"></p>
+      <p class="totals" id="totals"></p>
+    </div>
+    <aside class="brev" aria-labelledby="h-brev">
+      <h2 id="h-brev">Links</h2>
+      <dl>
+        <dt>Post</dt><dd><a id="post-link" href="#" rel="noopener" target="_blank"></a></dd>
+      </dl>
+      <div class="clicks">
+        <div class="blank" id="analytics-box"></div>
+        <p id="clicks-text"></p>
+      </div>
+    </aside>
+  </div>
+</header>
+
+<main>
+  <nav class="controls" id="controls"></nav>
+  <div class="caption" id="caption" aria-live="polite"></div>
+  <div class="legend" id="legend"></div>
+  <div class="room" id="room">
+    <canvas id="cv" role="img"></canvas>
+    <div class="tip" id="tip"></div>
+  </div>
+  <p class="note" id="note"></p>
+
+  <details id="defs">
+    <summary>How LinkedIn defines these</summary>
+    <p>LinkedIn's ads help page defines job seniority as "the rank or level of influence of a member account's current role in their organization," and says "Member account Job Titles are mapped to Seniority using LinkedIn's proprietary taxonomy" with "no AI modeling or inference." LinkedIn does not publish which titles fall into each level, so Partner, Owner and the other levels are LinkedIn's labels for each member's current title.</p>
+    <p>Company size is LinkedIn's "estimated size of the organization" (same page).</p>
+    <p>Source: <a href="https://www.linkedin.com/help/lms/answer/a424655" rel="noopener" target="_blank">https://www.linkedin.com/help/lms/answer/a424655</a></p>
+  </details>
+
+  <details>
+    <summary>Table view of every group</summary>
+    <div class="tablewrap" id="table"></div>
+  </details>
+
+  <footer id="source"></footer>
+</main>
+</div>
+
+<script>
+/*CONFIG:START*/
+const CONFIG = {
+ "page_title": "LinkedIn Post Readout",
+ "headline": "Who saw my post?",
+ "excerpt": [
+  "First paragraph of the post, verbatim.",
+  "Second paragraph of the post, verbatim."
+ ],
+ "author": "Your Name",
+ "author_first": "Your",
+ "recipients": "Recipient Names",
+ "org": "Company",
+ "intro": "Reach and engagement for my LinkedIn post about Company.",
+ "links": [
+  {
+   "label": "Company",
+   "url": "https://example.com/landing-page"
+  }
+ ],
+ "clicks_note": "It does not count clicks on links in the first comment or on a company-page tag. Company's own analytics have that number.",
+ "analytics_box": "Company's analytics",
+ "buyer_label": "Company buyers",
+ "buyers": {
+  "seniority": [
+   "Partner",
+   "Owner",
+   "CXO",
+   "VP",
+   "Director"
+  ],
+  "company_size": [
+   "51-200 employees",
+   "201-500 employees",
+   "501-1,000 employees",
+   "1,001-5,000 employees"
+  ],
+  "job_title": [
+   "Chief of Staff"
+  ]
+ },
+ "buyer_names": {
+  "seniority": "Director and above",
+  "job_title": "Chief of Staff"
+ }
+};
+/*CONFIG:END*/
+/*DATA:START*/
+const DATA = {
+  post:{date:"2026-01-05",time:"8:00 AM",url:"https://www.linkedin.com/posts/example",downloaded_at:"2026-01-12 09:00"},
+  metrics:{impressions:2000,members_reached:1200,profile_viewers:50,followers_gained:2,social_engagements:30,reactions:20,comments:5,reposts:3,saves:2,sends:0,link_engagements:0,premium_button_engagements:0},
+  demographics:[
+    ["Job title","Product Manager",0.06,"6%"],["Job title","Chief of Staff",0.02,"2%"],["Job title","Founder",0.03,"3%"],
+    ["Location","New York City Metropolitan Area",0.18,"18%"],["Location","San Francisco Bay Area",0.15,"15%"],
+    ["Seniority","Senior",0.3,"30%"],["Seniority","Entry",0.15,"15%"],["Seniority","Director",0.15,"15%"],["Seniority","Manager",0.1,"10%"],["Seniority","VP",0.06,"6%"],["Seniority","CXO",0.04,"4%"],["Seniority","Training",null,"<1%"],
+    ["Company","Example Corp",0.02,"2%"],["Company","Sample Inc",null,"<1%"],
+    ["Industry","Software Development",0.2,"20%"],["Industry","Financial Services",0.08,"8%"],
+    ["Company size","10,001+ employees",0.2,"20%"],["Company size","51-200 employees",0.12,"12%"],["Company size","201-500 employees",0.08,"8%"],["Company size","1,001-5,000 employees",0.1,"10%"]
+  ]
+};
+/*DATA:END*/
+
+const M = DATA.metrics, N = M.members_reached;
+const fmt = n => n.toLocaleString("en-US");
+const pct = x => Math.round(x*100)+"%";
+const esc = t => String(t).replace(/&/g,"&amp;").replace(/</g,"&lt;");
+/* rows LinkedIn shows as "<X%" have no number: the most they could be is X% of members */
+const underLabel = (DATA.demographics.find(r=>r[2]==null&&/^<\s*[\d.]+%$/.test(r[3]))||[])[3];
+const UNDER = underLabel ? parseFloat(underLabel.replace(/[<%\s]/g,""))/100 : 0;
+const UNDER1 = Math.round(N*UNDER);
+
+/* ---------- dates ---------- */
+function parseLocal(date, time){
+  const [y,mo,d]=date.split("-").map(Number); let h=0, mi=0;
+  if(time){ const m=time.trim().match(/^(\d{1,2}):(\d{2})\s*(AM|PM)?$/i); if(m){ h=+m[1]; mi=+m[2]; if(m[3]){ const pm=/pm/i.test(m[3]); if(pm&&h<12)h+=12; if(!pm&&h===12)h=0; } } }
+  return new Date(y,mo-1,d,h,mi);
+}
+const postedAt = parseLocal(DATA.post.date, DATA.post.time);
+const [dlDate, dlTime] = DATA.post.downloaded_at.split(" ");
+const dataAt = parseLocal(dlDate, dlTime||"");
+const days = (dataAt-postedAt)/864e5;
+const daysTxt = (Math.round(days*10)/10).toLocaleString("en-US");
+const fmtDate = d => d.toLocaleString("en-US",{month:"short",day:"numeric",year:"numeric",hour:"numeric",minute:"2-digit"});
+
+/* ---------- groups ---------- */
+function cat(name){ return DATA.demographics.filter(r=>r[0]===name); }
+function build(name, opts){
+  const rows = cat(name), buyers = opts.buyers||[];
+  const groups = rows.filter(r=>r[2]!=null).map(r=>({label:r[1], n:Math.round(r[2]*N), s:r[2], share:r[3], kind:buyers.includes(r[1])?"buyer":"other"}));
+  if(opts.order) groups.sort((a,b)=>{const ia=opts.order.indexOf(a.label), ib=opts.order.indexOf(b.label); return (ia<0?999:ia)-(ib<0?999:ib);});
+  const unsized = rows.filter(r=>r[2]==null).map(r=>({label:r[1], n:0, s:null, share:r[3], kind:"unsized"}));
+  const used = groups.reduce((s,g)=>s+g.n,0);
+  return groups.concat(unsized, [{label:"Not broken out", n:Math.max(0,N-used), s:null, share:null, kind:"rest"}]);
+}
+const sized = a => a.groups.filter(g=>g.kind==="buyer"||g.kind==="other");
+const buyerSum = a => { const b=a.groups.filter(g=>g.kind==="buyer"); return {list:b, s:b.reduce((t,g)=>t+g.s,0), n:b.reduce((t,g)=>t+g.n,0)}; };
+const topK = (a,k) => sized(a).slice().sort((x,y)=>y.s-x.s).slice(0,k);
+const listShares = gs => gs.map(g=>`${esc(g.label)} ${g.share}`).join(", ");
+const big = (b,t) => `<span class="big">${b}</span><span class="txt">${t}</span>`;
+
+const SEN_BUY = CONFIG.buyers.seniority;
+const SIZE_BUY = CONFIG.buyers.company_size;
+const SIZE_ORDER = ["2-10 employees","11-50 employees","51-200 employees","201-500 employees","501-1,000 employees","1,001-5,000 employees","5,001-10,000 employees","10,001+ employees"];
+function sizeRangeText(list){
+  if(!list.length) return "";
+  const lo=list[0].label.split("-")[0], last=list[list.length-1].label.replace(/ employees$/,""), hi=last.includes("-")?last.split("-")[1]:last;
+  return `${lo} to ${hi} employees`;
+}
+function topTwoCaption(a){
+  const t=topK(a,2); if(!t.length) return big("","LinkedIn listed no groups.");
+  return big(pct(t.reduce((s,g)=>s+g.s,0)), t.length>1?`in the top two: ${listShares(t)}.`:`${listShares(t)}.`);
+}
+function buyerCaption(a, what){
+  const b=buyerSum(a);
+  if(!b.list.length) return topTwoCaption(a);
+  return big(pct(b.s), `${what}, &asymp;${fmt(b.n)} of ${fmt(N)}: ${listShares(b.list)}.`);
+}
+
+const pv=M.profile_viewers, se=M.social_engagements;
+const engParts=[["reactions",M.reactions],["comments",M.comments],["reposts",M.reposts],["saves",M.saves],["sends",M.sends]].filter(x=>x[1]!=null).map(([k,v])=>`${fmt(v)} ${k}`).join(", ");
+const ARR = [
+  {id:"reach", name:"Reach and response", groups:[
+     {label:`Visited ${CONFIG.author_first}'s profile`, n:pv, exact:true, kind:"lit"},
+     {label:"Engagements", n:se, exact:true, kind:"lit", detail:engParts},
+     {label:"Everyone else reached", n:Math.max(0,N-pv-se), kind:"rest", reach:true}],
+   caption:()=>big(fmt(M.impressions), `impressions across ${fmt(N)} members, about ${(M.impressions/N).toFixed(1)} per member. ${fmt(pv)} visited ${CONFIG.author_first}'s profile; ${fmt(se)} engagements (${engParts}). One person can do both, so these two groups may overlap.`)},
+  {id:"sen", name:"Seniority", groups:build("Seniority",{buyers:SEN_BUY,order:SEN_BUY.concat(["Manager","Senior","Entry","Training","Unpaid"])}),
+   caption(){return buyerCaption(this,CONFIG.buyer_names.seniority);}},
+  {id:"size", name:"Company size", groups:build("Company size",{buyers:SIZE_BUY,order:SIZE_ORDER}),
+   caption(){ const b=buyerSum(this); if(!b.list.length) return topTwoCaption(this);
+     const other=sized(this).filter(g=>g.kind!=="buyer").sort((x,y)=>y.s-x.s)[0];
+     return big(pct(b.s), `at companies of ${sizeRangeText(b.list)}, &asymp;${fmt(b.n)}.`+(other?` Largest other group: ${esc(other.label)}, ${other.share}.`:"")); }},
+  {id:"job", name:"Job title", groups:build("Job title",{buyers:CONFIG.buyers.job_title}),
+   caption(){ const b=buyerSum(this); const k=cat("Job title").length;
+     return b.list.length? big(pct(b.s), `${esc(CONFIG.buyer_names.job_title)}, &asymp;${fmt(b.n)}. LinkedIn lists only its top ${k} titles.`) : big("", `No ${esc(CONFIG.buyer_names.job_title)} in LinkedIn's top ${k} titles.`); }},
+  {id:"loc", name:"Location", groups:build("Location",{}), caption(){return topTwoCaption(this);}},
+  {id:"ind", name:"Industry", groups:build("Industry",{}), caption(){return topTwoCaption(this);}},
+  {id:"co", name:"Company", groups:build("Company",{}),
+   caption(){ const t=topK(this,1)[0], u=this.groups.filter(g=>g.kind==="unsized").length;
+     const lead = t? big(t.share, `${esc(t.label)}, &asymp;${fmt(t.n)}.`) : big("","");
+     return lead.replace(/<\/span>$/, (u?` LinkedIn names ${u} more companies at ${esc(underLabel)} each and gives no count for them.`:"")+"</span>"); }}
+];
+
+/* fixed permutation per arrangement so dots visibly reshuffle */
+function rng(seed){ return ()=>{ seed|=0; seed=seed+0x6D2B79F5|0; let t=Math.imul(seed^seed>>>15,1|seed); t=t+Math.imul(t^t>>>7,61|t)^t; return ((t^t>>>14)>>>0)/4294967296; }; }
+ARR.forEach((a,ai)=>{ const r=rng(17+ai*31); const p=[...Array(N).keys()]; for(let i=N-1;i>0;i--){const j=Math.floor(r()*(i+1)); [p[i],p[j]]=[p[j],p[i]];} a.perm=p;
+  const t=a.groups.reduce((s,g)=>s+g.n,0); if(t!==N) console.error("dot total",a.id,t); });
+
+/* ---------- static text from DATA ---------- */
+document.getElementById("meta").textContent = `For ${CONFIG.recipients}, ${CONFIG.org} · From ${CONFIG.author} · Posted ${fmtDate(postedAt)} · Data as of ${fmtDate(dataAt)}, ${daysTxt} days after posting`;
+document.getElementById("sub").textContent = `${CONFIG.intro} Each of the ${fmt(N)} dots below is one LinkedIn member the post reached.`;
+document.title = CONFIG.page_title;
+document.getElementById("headline").textContent = CONFIG.headline;
+const exEl = document.getElementById("excerpt"), exLink = document.getElementById("post-snippet-link");
+CONFIG.excerpt.forEach(t => { const p = document.createElement("p"); p.textContent = t; exEl.insertBefore(p, exLink); });
+const dl = document.querySelector(".brev dl");
+CONFIG.links.forEach(l => { const dt = document.createElement("dt"); dt.textContent = l.label; const dd = document.createElement("dd"); const a = document.createElement("a"); a.href = l.url; a.textContent = l.url; a.rel = "noopener"; a.target = "_blank"; dd.appendChild(a); dl.append(dt, dd); });
+document.getElementById("analytics-box").textContent = CONFIG.analytics_box;
+document.getElementById("totals").innerHTML = `<b>${fmt(M.impressions)}</b> impressions · <b>${fmt(N)}</b> members reached · <b>${fmt(M.followers_gained)}</b> followers gained`;
+const pl=document.getElementById("post-link"); pl.href=DATA.post.url; pl.textContent=DATA.post.url;
+document.getElementById("post-snippet-link").href=DATA.post.url;
+document.getElementById("clicks-text").textContent = `LinkedIn's export shows ${fmt(M.link_engagements)} link engagements. ${CONFIG.clicks_note}`;
+document.getElementById("note").innerHTML = `&asymp; counts are LinkedIn's percentage of ${fmt(N)}, rounded. Grey: members LinkedIn did not break out. Each view places the dots separately.`;
+document.getElementById("source").textContent = `Source: LinkedIn post analytics export, downloaded ${fmtDate(dataAt)}.`;
+document.getElementById("controls").setAttribute("aria-label",`Arrange the ${fmt(N)} members by`);
+document.getElementById("cv").setAttribute("aria-label",`${fmt(N)} dots, one per member reached, grouped by the selected category. The table view below lists every group.`);
+
+/* ---------- colors ---------- */
+let C={};
+function readTokens(){
+  const cs=getComputedStyle(document.documentElement);
+  const hex=v=>{v=cs.getPropertyValue(v).trim(); if(v.length===4)v="#"+v[1]+v[1]+v[2]+v[2]+v[3]+v[3]; return [parseInt(v.slice(1,3),16),parseInt(v.slice(3,5),16),parseInt(v.slice(5,7),16)];};
+  C={paper:hex("--paper"),ink:hex("--ink"),ink2:hex("--ink-2"),ink3:hex("--ink-3"),rule:hex("--rule"),mark:hex("--mark"),rest:hex("--mark-rest"),accent:hex("--accent"),lit:hex("--lit")};
+}
+const kindColor=k=>({buyer:C.accent,other:C.mark,rest:C.rest,lit:C.lit})[k];
+const rgb=(c,a=1)=>`rgba(${c[0]|0},${c[1]|0},${c[2]|0},${a})`;
+
+/* ---------- layout ---------- */
+const cv=document.getElementById("cv"), ctx=cv.getContext("2d"), room=document.getElementById("room");
+let W=0, H=0, geo=null;
+function geometry(w){
+  const phone=w<640;
+  const p=phone?4:6;
+  const labelW=phone?0:Math.min(300,Math.round(w*0.3));
+  const valueW=phone?0:200;
+  const stripW=w-labelW-valueW;
+  return {phone,p,labelW,stripW,cols:Math.max(10,Math.floor(stripW/p)),labelH:18,gap:12,minH:phone?0:15};
+}
+function layout(a,g){
+  const out={groups:[],pos:new Array(N)};
+  /* one row depth for every group in a view, set by the largest named group, so dots per unit of length
+     are the same everywhere; any group wider than the strip wraps onto more bands of that same depth */
+  const named=a.groups.filter(x=>x.kind!=="rest"&&x.kind!=="unsized");
+  const R=Math.min(6,Math.max(2,Math.ceil(Math.max(1,...named.map(x=>x.n))/g.cols)));
+  const per=R*g.cols, bandGap=4;
+  let y=4, k=0;
+  a.groups.forEach((gr,gi)=>{
+    if(gr.kind==="unsized"&&(gi===0||a.groups[gi-1].kind!=="unsized")){ out.groups.push({head:true,ly:y}); y+=g.labelH+6; }
+    const ly=y; if(g.phone) y+=g.labelH;
+    const gy=y;
+    const bands=Math.max(1,Math.ceil(gr.n/per));
+    for(let i=0;i<gr.n;i++){
+      const band=Math.floor(i/per), j=i%per, c=Math.floor(j/R), r=j%R;
+      out.pos[a.perm[k++]]={x:g.labelW+c*g.p+g.p/2,y:gy+band*(R*g.p+bandGap)+r*g.p+g.p/2,kind:gr.kind};
+    }
+    const lastN=gr.kind==="unsized"?UNDER1:(gr.n-(bands-1)*per);
+    const lastY=gy+(bands-1)*(R*g.p+bandGap);
+    const dotsH=bands*R*g.p+(bands-1)*bandGap;
+    const h=Math.max(dotsH,g.minH,gr.reach&&!g.phone?36:0);
+    out.groups.push({gr,ly,gy,h,R,rows:R,lastY,endX:g.labelW+Math.ceil(lastN/R)*g.p});
+    y=gy+h+(gr.kind==="unsized"?8:g.gap);
+  });
+  out.height=y+4;
+  return out;
+}
+
+/* ---------- marks + animation ---------- */
+const marks=[...Array(N)].map(()=>({x:0,y:0,sx:0,sy:0,tx:0,ty:0,c:[0,0,0],sc:[0,0,0],tc:[0,0,0],d:0}));
+let cur=Math.max(0,ARR.map(a=>a.id).indexOf((location.hash.match(/view=(\w+)/)||[])[1]||"sen")), layouts=[], anim=null, labelAlpha=1;
+const reduce=window.matchMedia("(prefers-reduced-motion: reduce)");
+
+function resize(){
+  W=room.clientWidth; geo=geometry(W);
+  layouts=ARR.map(a=>layout(a,geo));
+  setHeight(layouts[cur].height);
+  snap(cur);
+}
+function setHeight(h){
+  const dpr=window.devicePixelRatio||1;
+  H=h; cv.width=Math.round(W*dpr); cv.height=Math.round(H*dpr); cv.style.height=H+"px";
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+}
+function snap(i){
+  const L=layouts[i];
+  marks.forEach((m,j)=>{const t=L.pos[j]; m.x=m.tx=t.x; m.y=m.ty=t.y; m.c=m.tc=kindColor(t.kind).slice();});
+  anim=null; labelAlpha=1; draw();
+}
+function go(i, from){
+  const L=layouts[i];
+  if(reduce.matches){ cur=i; setHeight(L.height); snap(i); return; }
+  const prev=layouts[from]; cur=i;
+  setHeight(Math.max(prev.height,L.height));
+  marks.forEach((m,j)=>{const t=L.pos[j]; m.sx=m.x; m.sy=m.y; m.tx=t.x; m.ty=t.y; m.sc=m.c.slice(); m.tc=kindColor(t.kind).slice(); m.d=(t.y/H)*260+(j%7)*18;});
+  anim={t0:performance.now(),dur:900};
+  schedule();
+}
+const ease=t=>t<.5?4*t*t*t:1-Math.pow(-2*t+2,3)/2;
+let frameTok=0;
+function schedule(){
+  const tok=++frameTok;
+  const run=()=>{ if(tok===frameTok) tick(); };
+  requestAnimationFrame(run); setTimeout(run,34);
+}
+function tick(){
+  if(!anim) return;
+  const now=performance.now();
+  let done=true;
+  marks.forEach(m=>{
+    let t=(now-anim.t0-m.d)/anim.dur; t=Math.max(0,Math.min(1,t)); if(t<1) done=false;
+    const e=ease(t);
+    m.x=m.sx+(m.tx-m.sx)*e; m.y=m.sy+(m.ty-m.sy)*e;
+    m.c=[0,1,2].map(q=>m.sc[q]+(m.tc[q]-m.sc[q])*e);
+  });
+  labelAlpha=Math.min(1,Math.max(0,(now-anim.t0-300)/600));
+  draw();
+  if(done){anim=null;labelAlpha=1;setHeight(layouts[cur].height);draw();} else schedule();
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  const r=geo.p*0.36, L=layouts[cur];
+  for(const k of ["rest","other","lit","buyer"]){
+    if(anim){
+      marks.forEach((m,j)=>{ if(L.pos[j].kind!==k) return; ctx.fillStyle=rgb(m.c); ctx.beginPath(); ctx.arc(m.x,m.y,r,0,Math.PI*2); ctx.fill(); });
+    } else {
+      ctx.beginPath(); let col=null;
+      marks.forEach((m,j)=>{ if(L.pos[j].kind!==k) return; ctx.moveTo(m.x+r,m.y); ctx.arc(m.x,m.y,r,0,Math.PI*2); col=m.c; });
+      if(col){ ctx.fillStyle=rgb(col); ctx.fill(); }
+    }
+  }
+  drawLabels(L,labelAlpha);
+}
+const font=(w,s)=>`${w} ${s}px "IBM Plex Mono", ui-monospace, Menlo, monospace`;
+function valueText(gr){
+  if(gr.kind==="lit") return fmt(gr.n)+(gr.detail&&!geo.phone?`  (${gr.detail})`:"");
+  if(gr.kind==="unsized") return geo.phone?`${gr.share}, under ≈${fmt(UNDER1)}, counted inside Not broken out`:`${gr.share}, fewer than ≈${fmt(UNDER1)}, counted inside Not broken out`;
+  if(gr.reach) return `at least ${fmt(gr.n)}`;
+  if(gr.kind==="rest") return `≈${fmt(gr.n)}`;
+  return `≈${fmt(gr.n)}  ${gr.share}`;
+}
+function fit(txt,max){ while(ctx.measureText(txt).width>max&&txt.length>8) txt=txt.slice(0,-2)+"…"; return txt; }
+function drawBuyerBracket(L,a){
+  /* the buyer rows' total, drawn as one bracketed block so the headline share has a visible extent */
+  if(geo.phone) return;
+  const bs=L.groups.filter(G=>!G.head&&G.gr.kind==="buyer");
+  if(bs.length<2) return;
+  const y0=bs[0].gy, y1=bs[bs.length-1].gy+bs[bs.length-1].rows*geo.p, x=geo.labelW-16;
+  ctx.strokeStyle=rgb(C.accent,a); ctx.lineWidth=2; ctx.beginPath();
+  ctx.moveTo(x-6,y0); ctx.lineTo(x,y0); ctx.lineTo(x,y1); ctx.lineTo(x-6,y1); ctx.stroke();
+  const n=bs.reduce((t,G)=>t+G.gr.n,0), s=bs.reduce((t,G)=>t+G.gr.s,0), my=(y0+y1)/2;
+  ctx.textAlign="right"; ctx.fillStyle=rgb(C.ink,a);
+  ctx.font=`400 30px "Instrument Serif", Georgia, serif`; ctx.fillText(pct(s),x-12,my-8);
+  ctx.font=font(400,11); ctx.fillStyle=rgb(C.ink2,a); ctx.fillText(`\u2248${fmt(n)} of ${fmt(N)}`,x-12,my+14);
+  ctx.textAlign="left";
+}
+function drawLabels(L,a){
+  drawBuyerBracket(L,a);
+  ctx.textBaseline="middle"; ctx.textAlign="left";
+  const f=geo.phone?11:12;
+  L.groups.forEach(G=>{
+    if(G.head){ ctx.font=font(500,11); ctx.fillStyle=rgb(C.ink3,a); ctx.fillText(fit(`NAMED BY LINKEDIN AT ${underLabel} EACH, NO COUNT`,W),0,G.ly+9); return; }
+    const gr=G.gr, strong=gr.kind==="buyer"||gr.kind==="lit";
+    const nameCol=gr.kind==="rest"?C.ink3:(strong?C.ink:C.ink2);
+    if(gr.kind==="unsized"){ /* dashed outline of the most it could be */
+      const R=G.R, w=Math.ceil(UNDER1/R)*geo.p, h=Math.max(R*geo.p,10), yy=G.gy+(R*geo.p-h)/2;
+      ctx.save(); ctx.setLineDash([3,2]); ctx.strokeStyle=rgb(C.ink3,a); ctx.lineWidth=1;
+      ctx.strokeRect(geo.labelW+0.5,Math.round(yy)+0.5,w-1,h-1); ctx.restore();
+    }
+    const x0=gr.kind==="buyer"?(geo.phone?11:14):0;
+    if(geo.phone){
+      ctx.font=font(strong?500:400,f);
+      if(gr.kind==="buyer"){ctx.fillStyle=rgb(C.accent,a);ctx.beginPath();ctx.arc(3,G.ly+8,3,0,Math.PI*2);ctx.fill();}
+      if(gr.kind==="unsized"){
+        ctx.fillStyle=rgb(nameCol,a); ctx.fillText(fit(gr.label,W-x0),x0,G.ly+8);
+        ctx.font=font(400,f); ctx.fillStyle=rgb(C.ink3,a); ctx.fillText(fit(valueText(gr),W-G.endX-8),G.endX+8,G.gy+G.R*geo.p/2);
+        return;
+      }
+      ctx.fillStyle=rgb(nameCol,a); ctx.fillText(fit(gr.label+"   "+valueText(gr),W-x0),x0,G.ly+8);
+    } else {
+      const my=G.gy+G.R*geo.p/2, vy=G.lastY+G.R*geo.p/2;
+      const ty=my;
+      ctx.font=font(strong?500:400,f);
+      if(gr.kind==="buyer"){ctx.fillStyle=rgb(C.accent,a);ctx.beginPath();ctx.arc(4,ty,3.5,0,Math.PI*2);ctx.fill();}
+      ctx.fillStyle=rgb(nameCol,a); ctx.fillText(fit(gr.label,geo.labelW-x0-12),x0,ty);
+      if(gr.reach){ ctx.font=font(400,11); ctx.fillStyle=rgb(C.ink3,a); ctx.fillText("(one person can do both)",0,ty+16); }
+      ctx.font=font(strong?500:400,12); ctx.fillStyle=rgb(gr.kind==="unsized"||gr.kind==="rest"?C.ink3:strong?C.ink:C.ink2,a);
+      ctx.fillText(fit(valueText(gr),W-G.endX-10),G.endX+10,vy);
+    }
+  });
+}
+
+/* ---------- hover ---------- */
+const tip=document.getElementById("tip");
+cv.addEventListener("mousemove",e=>{
+  const b=cv.getBoundingClientRect(); const x=e.clientX-b.left, y=e.clientY-b.top;
+  const G=layouts[cur].groups.find(G=>!G.head&&y>=G.ly-2&&y<=G.gy+G.h+2);
+  if(!G){tip.style.display="none";return;}
+  const gr=G.gr;
+  let t=`<b>${esc(gr.label)}</b><br>`;
+  if(gr.kind==="lit") t+=`${fmt(gr.n)} (exact)`+(gr.detail?`<br>${gr.detail}`:"");
+  else if(gr.reach) t+=`${fmt(N)} reached, minus ${fmt(pv)} and ${fmt(se)}. At least this many, more if some people both visited and engaged.`;
+  else if(gr.kind==="unsized") t+=`LinkedIn shows ${esc(gr.share)} and no number`;
+  else if(gr.kind==="rest") t+=`&asymp;${fmt(gr.n)} LinkedIn did not break out`;
+  else t+=`${gr.share} of viewers, &asymp;${fmt(gr.n)} of ${fmt(N)}`+(gr.kind==="buyer"?`<br>${esc(CONFIG.buyer_label)}`:"");
+  tip.innerHTML=t; tip.style.display="block";
+  const tw=tip.offsetWidth; tip.style.left=Math.min(W-tw,Math.max(0,x+12))+"px"; tip.style.top=(y+14)+"px";
+});
+cv.addEventListener("mouseleave",()=>tip.style.display="none");
+
+/* ---------- controls, caption, legend ---------- */
+const ctr=document.getElementById("controls"), cap=document.getElementById("caption"), leg=document.getElementById("legend"), defs=document.getElementById("defs");
+function legendFor(a){
+  const items=[], b=buyerSum(a).list;
+  if(a.id==="reach") items.push(["--lit","Profile visits and engagements (exact counts; one person can be in both)"],["--mark-rest","Everyone else reached"]);
+  else {
+    if(b.length) items.push(["--accent", `${CONFIG.buyer_label}: ${a.id==="sen"?CONFIG.buyer_names.seniority:a.id==="size"?sizeRangeText(b):CONFIG.buyer_names.job_title}`]);
+    items.push(["--mark","Other groups LinkedIn listed"]);
+    if(a.groups.some(g=>g.kind==="unsized")) items.push(["dash","Named, no count"]);
+    items.push(["--mark-rest","Not broken out"]);
+  }
+  leg.innerHTML=items.map(([v,t])=>v==="dash"?`<span><i class="dash"></i>${t}</span>`:`<span><i style="background:var(${v})"></i>${t}</span>`).join("");
+}
+function chrome(i){
+  [...ctr.children].forEach((b,j)=>b.setAttribute("aria-pressed",j===i?"true":"false"));
+  cap.innerHTML=ARR[i].caption(); legendFor(ARR[i]);
+  defs.hidden=!(ARR[i].id==="sen"||ARR[i].id==="size");
+}
+function select(i){ const from=cur; chrome(i); if(i!==from) go(i,from); }
+ARR.forEach((a,i)=>{const b=document.createElement("button");b.type="button";b.textContent=a.name;b.onclick=()=>select(i);ctr.appendChild(b);});
+chrome(cur);
+
+/* ---------- table ---------- */
+document.getElementById("table").innerHTML=`<table><thead><tr><th>View</th><th>Group</th><th class="n">LinkedIn share</th><th class="n">Dots</th></tr></thead><tbody>`+
+  ARR.map(a=>a.groups.map(g=>`<tr><td>${a.name}</td><td>${esc(g.label)}${g.kind==="buyer"?` (${esc(CONFIG.buyer_label)})`:""}</td><td class="n">${g.share?esc(g.share):g.kind==="lit"?"exact":"rest"}</td><td class="n">${g.kind==="lit"?fmt(g.n):g.kind==="unsized"?"none, no count":"&asymp;"+fmt(g.n)}</td></tr>`).join("")).join("")+`</tbody></table>`;
+
+/* ---------- boot ---------- */
+function redrawTheme(){ readTokens(); const L=layouts[cur]; if(L){ marks.forEach((m,j)=>{m.c=m.tc=kindColor(L.pos[j].kind).slice();}); draw(); } }
+readTokens();
+if(document.fonts&&document.fonts.ready) document.fonts.ready.then(resize); else resize();
+let rt; window.addEventListener("resize",()=>{clearTimeout(rt);rt=setTimeout(()=>{if(room.clientWidth!==W) resize();},120);});
+window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change",redrawTheme);
+new MutationObserver(redrawTheme).observe(document.documentElement,{attributes:true,attributeFilter:["data-theme"]});
+reduce.addEventListener("change",()=>snap(cur));
+</script>
