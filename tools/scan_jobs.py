@@ -16,7 +16,8 @@ Ad schema (one object per listing; copy text verbatim, do not summarize):
 
 Status comes from the score with fixed cutoffs (STATUS_CUTOFFS), calibrated 2026-10-22 on
 72 labeled pipeline roles: score >= 7 had 60% precision, 5-6 61%, <= 4 38% (base rate 50%).
-`data/calibration/fit-spec.yaml` may override them under `status_cutoffs`.
+`data/calibration/fit-spec.yaml` may override them under `status_cutoffs`. An ad with a
+blank description is capped at 'maybe' and tagged `title_only`: a title is not a posting.
 
 Usage:
   ... | PYTHONIOENCODING=utf-8 python3 tools/scan_jobs.py assess [--repo-root .]
@@ -129,9 +130,15 @@ def assess(ads: list, root: Path) -> dict:
         # South Bay fails; an unknown location does not.
         located = geo_ok(ad.get("location", ""))
         status = status_for(score, cutoffs) if located else "skip"
+        reason = f"score {score}/10" if located else "location excluded"
+        # A title is not a posting: the same title names opposite jobs (the team doing the
+        # work vs the team supporting it). With no description copied, cap at 'maybe' so a
+        # title-only ad is never shortlisted or proposed for the pipeline.
+        if located and not str(ad.get("description") or "").strip():
+            status = "maybe" if status == "shortlisted" else status
+            reason += " (title_only)"
         new.append({**{f: ad.get(f, "") for f in ("title", "company", "location", "url", "ad_date")},
-                    "score": score, "status": status,
-                    "reason": f"score {score}/10" if located else "location excluded"})
+                    "score": score, "status": status, "reason": reason})
     propose = [r for r in new if r["status"] == "shortlisted"
                and not any(r["company"].lower() in c or c in r["company"].lower() for c in tracked)]
     return {"found": len(ads), "cached": cached, "new": new, "propose_for_pipeline": propose,

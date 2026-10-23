@@ -71,14 +71,14 @@ def test_the_nightly_scanners_location_rule_applies(root, monkeypatch, location,
     """Outside the Bay or on the Peninsula fails whatever the score; unknown does not."""
     monkeypatch.setattr(sj, "score_role", lambda role, ctx: 10)
     out = sj.assess([{"title": "Deployment Strategist", "company": "Beacon AI",
-                      "location": location}], root)
+                      "location": location, "description": "Lead deployments."}], root)
     assert out["new"][0]["status"] == status
 
 
 def test_only_untracked_shortlisted_companies_are_proposed(root, monkeypatch):
     monkeypatch.setattr(sj, "score_role", lambda role, ctx: 8)
-    ads = [{"title": "Strategist", "company": "Northwind Labs", "location": "San Francisco"},
-           {"title": "Strategist", "company": "Beacon AI", "location": "San Francisco"}]
+    ads = [{"title": "Strategist", "company": c, "location": "San Francisco",
+            "description": "Run strategy."} for c in ("Northwind Labs", "Beacon AI")]
     out = sj.assess(ads, root)
     assert [r["company"] for r in out["propose_for_pipeline"]] == ["Beacon AI"]
 
@@ -147,3 +147,25 @@ def test_a_url_with_parentheses_round_trips_and_dedupes(root):
                           "url": url, "ad_date": "", "reason": "score 5/10"}])
     _, out = run(root, "assess", [{"title": "Ops", "company": "Beacon AI", "url": url}])
     assert out["new"] == [], "the stored link must read back whole"
+
+
+@pytest.mark.parametrize("blank", ["", "   \n\t"])
+def test_a_title_only_ad_is_never_shortlisted_or_proposed(root, monkeypatch, blank):
+    """A title is not a posting: titles mislead about what a role is (platform vs field team),
+    so an ad with no description text is capped at 'maybe', tagged title_only, and not
+    proposed for the pipeline. The same ad with its description read stays shortlisted."""
+    monkeypatch.setattr(sj, "score_role", lambda role, ctx: 10)
+    ad = {"title": "Deployment Strategist", "company": "Beacon AI", "location": "San Francisco"}
+    out = sj.assess([{**ad, "url": "https://example.com/read", "description": "Lead deployments."},
+                     {**ad, "url": "https://example.com/blank", "description": blank}], root)
+    read, title_only = out["new"]
+    assert read["status"] == "shortlisted" and "title_only" not in read["reason"]
+    assert title_only["status"] == "maybe" and "title_only" in title_only["reason"]
+    assert [r["url"] for r in out["propose_for_pipeline"]] == ["https://example.com/read"]
+
+
+def test_a_title_only_ad_below_the_maybe_cutoff_stays_skip(root, monkeypatch):
+    """The cap only lowers a status; it never lifts a skip to maybe. The tag is still recorded."""
+    monkeypatch.setattr(sj, "score_role", lambda role, ctx: 1)
+    out = sj.assess([{"title": "Ops", "company": "Beacon AI", "location": "San Francisco"}], root)
+    assert out["new"][0]["status"] == "skip" and "title_only" in out["new"][0]["reason"]
