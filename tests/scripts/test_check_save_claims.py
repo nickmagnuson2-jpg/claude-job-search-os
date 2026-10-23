@@ -285,6 +285,13 @@ def test_a_filename_in_the_next_paragraph_is_not_the_referent():
     assert "feedback_some_proposed_rule.md" not in csc.extract_claimed_paths(text)
 
 
+def test_a_file_label_line_is_not_the_referent_of_an_earlier_claim_verb():
+    # /lessons-learned lists proposed target files as "File: <name>" lines; a claim
+    # verb earlier in the block ("I copied it") must not reach down into that label.
+    text = ('[1] NEW feedback - x\n    Source: "I copied it"\n    File: feedback_some_proposed_rule.md\n\nSave these?')
+    assert "feedback_some_proposed_rule.md" not in csc.extract_claimed_paths(text)
+
+
 def test_a_claim_still_finds_its_referent_in_the_same_paragraph():
     """The cut must not be so eager that real claims stop being caught."""
     assert "docs/notes.md" in csc.extract_claimed_paths("Saved to docs/notes.md just now.")
@@ -724,3 +731,128 @@ def test_a_capitalized_js_library_name_is_not_a_claimed_file(text):
 ])
 def test_a_real_js_file_is_still_a_claimed_file(text, path):
     assert path in extract(text)
+
+
+# ---------- absence claims contradicted by the filesystem (2026-10-22) ----------
+# The inverse of a save claim: "X is missing" when X is on disk. Origin: 2026-06-12,
+# `lessons.md` declared gone after checking only the live memory tier; it lives in the
+# repo's ./memory/. Fired 4x per feedback_two_memory_locations_check_both_before_absence.
+
+DETECTOR_CONTROL = "lessons.md is missing but cited by 9 files. How do you want to resolve it?"
+
+
+def _run_with_home(text, root, home):
+    """_run with an explicit HOME, so the live memory tier resolves under a tmp dir."""
+    tpath = Path(root) / "t.jsonl"
+    rec = {"type": "assistant",
+           "message": {"role": "assistant", "content": [{"type": "text", "text": text}]}}
+    tpath.write_text(json.dumps(rec) + "\n", encoding="utf-8")
+    return subprocess.run(
+        [sys.executable, str(HOOK)],
+        input=json.dumps({"transcript_path": str(tpath)}),
+        capture_output=True, text=True,
+        env={"PYTHONIOENCODING": "utf-8", "CLAUDE_PROJECT_DIR": str(root),
+             "HOME": str(home), "PATH": "/usr/bin:/bin"},
+    )
+
+
+def test_absence_claim_about_a_repo_memory_file_that_exists_blocks(tmp_path):
+    (tmp_path / "memory").mkdir()
+    (tmp_path / "memory" / "lessons.md").write_text("x", encoding="utf-8")
+    r = _run(DETECTOR_CONTROL, str(tmp_path))
+    assert r.returncode == 2, r.stderr
+    assert "lessons.md" in r.stderr
+    assert "does not exist" in r.stderr and "both memory roots" in r.stderr
+
+
+def test_absence_claim_about_a_file_absent_everywhere_is_clean(tmp_path):
+    r = _run(DETECTOR_CONTROL, str(tmp_path))
+    assert r.returncode == 0, r.stderr
+
+
+def test_absence_claim_about_a_live_tier_file_blocks():
+    with tempfile.TemporaryDirectory() as tmp:
+        root, home, tier = _tier_layout(tmp)
+        (tier / "feedback_x.md").write_text("x", encoding="utf-8")
+        r = _run_with_home("feedback_x.md does not exist, so I will recreate it.", root, home)
+        assert r.returncode == 2, r.stderr
+        assert "feedback_x.md" in r.stderr
+        # Same message, file nowhere: clean. Pins that the block came from the tier lookup.
+        (tier / "feedback_x.md").unlink()
+        r = _run_with_home("feedback_x.md does not exist, so I will recreate it.", root, home)
+        assert r.returncode == 0, r.stderr
+
+
+@pytest.mark.parametrize("text", [
+    "If `data/job-todos.md` doesn't exist, create it with a header.",
+    "When data/job-todos.md is missing the skill falls back to defaults.",
+    "Check whether data/job-todos.md no longer exists after the move.",
+    "Are you sure data/job-todos.md is gone?",
+    "lessons.md is missing in ./memory on that clone.",
+    "data/job-todos.md is missing from the sidecar.",
+    "data/job-todos.md was not found at that path.",
+    "Here is the check:\n```\ndata/job-todos.md does not exist\n```\n",
+    "> data/job-todos.md is missing\n\nThat quote is from your note.",
+    "lessons.md is missing, but only in the sidecar.",
+    # Restraint-replay false positives (2026-10-22): the file is not the subject, or
+    # the phrase takes an object, or it is a case label.
+    "**`data/job-todos.md`'s history is missing the 9/04 entries.**",
+    "`data/job-todos.md:28` claims a local file that doesn't exist.",
+    "`data/job-todos.md` is missing companies that appear in the pipeline.",
+    "`data/job-todos.md`, the 8th error, is absent from that list.",
+    "- **`data/job-todos.md` doesn't exist:** create it with the standard header.",
+])
+def test_absence_claim_skips_conditionals_questions_scopes_and_quotes(text, tmp_path):
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "job-todos.md").write_text("x", encoding="utf-8")
+    (tmp_path / "memory").mkdir()
+    (tmp_path / "memory" / "lessons.md").write_text("x", encoding="utf-8")
+    r = _run(text, str(tmp_path))
+    assert r.returncode == 0, r.stderr
+
+
+@pytest.mark.parametrize("text", [
+    "data/job-todos.md doesn't exist anymore.",
+    "data/job-todos.md doesn’t exist anymore.",          # curly apostrophe
+    "The pipeline file `data/job-todos.md` is gone.",
+    "Both a.md and data/job-todos.md is absent, as far as I can tell.",
+    "data/job-todos.md: not found.",
+    "If you want, I can look. data/job-todos.md is gone.",   # 'If' is another sentence
+])
+def test_absence_claim_shapes_that_block(text, tmp_path):
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "job-todos.md").write_text("x", encoding="utf-8")
+    r = _run(text, str(tmp_path))
+    assert r.returncode == 2, r.stderr
+    assert "data/job-todos.md" in r.stderr
+
+
+def test_a_false_save_claim_and_a_false_absence_claim_are_both_reported(tmp_path):
+    (tmp_path / "memory").mkdir()
+    (tmp_path / "memory" / "lessons.md").write_text("x", encoding="utf-8")
+    r = _run("Saved to output/ghost.md. Also, lessons.md is missing.", str(tmp_path))
+    assert r.returncode == 2, r.stderr
+    assert "output/ghost.md" in r.stderr
+    assert "you told the user lessons.md does not exist" in r.stderr
+
+
+def test_absence_extractor_takes_the_nearest_token():
+    assert csc.extract_absence_claims("Both a.md and b.md is absent.") == ["b.md"]
+    assert csc.extract_absence_claims("lessons.md. The other file is missing.") == []
+    assert csc.extract_absence_claims("x.md is gone. Yes, x.md is gone.") == ["x.md"]
+
+
+def test_absence_override_reuses_the_hook_override(tmp_path):
+    (tmp_path / "memory").mkdir()
+    (tmp_path / "memory" / "lessons.md").write_text("x", encoding="utf-8")
+    tpath = tmp_path / "t.jsonl"
+    rec = {"type": "assistant", "message": {"role": "assistant",
+           "content": [{"type": "text", "text": DETECTOR_CONTROL}]}}
+    tpath.write_text(json.dumps(rec) + "\n", encoding="utf-8")
+    r = subprocess.run(
+        [sys.executable, str(HOOK)], input=json.dumps({"transcript_path": str(tpath)}),
+        capture_output=True, text=True,
+        env={"PYTHONIOENCODING": "utf-8", "CLAUDE_PROJECT_DIR": str(tmp_path),
+             "SAVE_CLAIMS_OVERRIDE": "1", "PATH": "/usr/bin:/bin"},
+    )
+    assert r.returncode == 0

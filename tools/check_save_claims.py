@@ -23,6 +23,14 @@ WHAT IT DOES
   "written to X", "wrote X", "created X", "rendered X"), extracts
   the file path attached to each, and checks the path exists on disk.
 
+  It also checks the inverse claim, an ABSENCE claim ("lessons.md is missing",
+  "X does not exist"), with the same lookup: if the named file is on disk in the
+  repo, its ./memory/, a sibling repo, .claude/skills or the live memory tier,
+  the claim is false and the stop is blocked. Skipped when the sentence is a
+  conditional or a question, or when a location scope follows ("in the sidecar",
+  "in ./memory", "at that path"), since a scoped claim may be true.
+  Origin: feedback_two_memory_locations_check_both_before_absence (4 fires).
+
 WHAT IT DOES NOT DO
   - Does not fire on future/conditional phrasing ("I'll save this to X",
     "that would go in X", "drop it in X"). Only completed claims.
@@ -148,7 +156,10 @@ def extract_claimed_paths(text: str):
         # (2026-10-21, 7497c5d) dropped real claims whose referent opens the next sentence:
         # "I saved the briefing. `output/acme/brief.md` is ready." Cross-model review
         # (Grok) caught it; the .claude/skills candidate path alone clears the false positive.
-        cut = re.search(r"(?<=[.!?])\s+[A-Z]|\n[ \t]*\n", window)
+        # A line opening with a "File:" label also ends the window: /lessons-learned lists
+        # proposed target files that way, and a claim verb above it ("I copied it") is not
+        # about that file (2nd ledger fire, 2026-10-21; promotion drain build 296).
+        cut = re.search(r"(?<=[.!?])\s+[A-Z]|\n[ \t]*\n|\n[ \t]*File:", window)
         if cut:
             window = window[:cut.start()]
         for pm in PATH_TOKEN.finditer(window):
@@ -164,6 +175,46 @@ def extract_claimed_paths(text: str):
                 seen.add(tok)
                 out.append(tok)
             break  # first path after the verb is the referent
+    return out
+
+
+# The inverse claim: "X is missing" while X is on disk. Origin 2026-06-12: `lessons.md`
+# was declared gone after checking only the live memory tier; it lives in the repo's
+# ./memory/ (feedback_two_memory_locations_check_both_before_absence, 4 fires). Base is
+# that rule's detector_signature, narrowed by a replay of 14,896 real assistant messages
+# (2026-10-22): the signature's 40-char gap blocked 13 times and 10 were about something
+# other than the file ("X's history is missing the 9/04 entries", "X claims a file that
+# doesn't exist", "X is missing companies", "X is absent from that list"). So the file
+# must be the direct subject (only markup or a colon between) and the phrase must end
+# its clause. A "**X doesn't exist:**" case label ends in a colon and is not a claim.
+ABSENCE_RE = re.compile(
+    r"(?P<tok>[A-Za-z0-9_./~-]*[A-Za-z0-9_-]+\.[A-Za-z0-9]{1,6})\b[\s`*:]{0,6}"
+    r"(?:is missing|is gone|does not exist|doesn['’]t exist|no longer exists"
+    r"|is absent|not found)\b"
+    r"(?=[\s`*]*(?:[.,;!?)\n]|$|\b(?:but|and|so|yet|now|anymore)\b))", re.I)
+# A scope after the phrase makes it a claim about one location, which may be true.
+ABSENCE_SCOPED = re.compile(
+    r"[^\n.!?]{0,60}?\b(?:(?:in|from|under) (?:the sidecar|the live tier|~/\.claude|\./memory"
+    r"|the repo|that (?:dir|directory|folder|location|root))|at that path)", re.I)
+# A hypothesis or a question in the same sentence is not an assertion.
+ABSENCE_CONDITIONAL = re.compile(r"\b(?:if|when|unless|whether|in case)\b", re.I)
+SENTENCE_END = re.compile(r"[.!?](?=\s|$)|\n")
+
+
+def extract_absence_claims(text: str) -> list[str]:
+    """File tokens the message asserts are missing. Code blocks, blockquotes and URLs
+    are skipped: they quote scripts, the user, or memory files."""
+    text = strip_code_blocks(re.sub(r"^\s*>.*$", " ", text, flags=re.M))
+    out = []
+    for m in ABSENCE_RE.finditer(text):
+        tok = m.group("tok")
+        starts = [s.end() for s in SENTENCE_END.finditer(text, 0, m.start())]
+        end = SENTENCE_END.search(text, m.end())
+        if (ABSENCE_CONDITIONAL.search(text, starts[-1] if starts else 0, m.end())
+                or (end and end.group() == "?")
+                or ABSENCE_SCOPED.match(text, m.end()) or tok in out):
+            continue
+        out.append(tok)
     return out
 
 
@@ -276,23 +327,28 @@ def main() -> int:
         return 0
 
     root = project_root()
-    missing = []
-    for tok in extract_claimed_paths(text):
-        if not exists_anywhere(tok, root):
-            missing.append(tok)
+    missing = [t for t in extract_claimed_paths(text) if not exists_anywhere(t, root)]
+    present = [t for t in extract_absence_claims(text) if exists_anywhere(t, root)]
 
-    if not missing:
+    if not missing and not present:
         return 0
 
-    listing = "\n".join(f"  - {m}" for m in missing)
+    for tok in present:
+        sys.stderr.write(
+            f"BLOCKED check_save_claims (absence): you told the user {tok} does not exist, "
+            "but a file by that name is on disk (repo, its ./memory/, a sibling repo, "
+            ".claude/skills, or the live memory tier). Check both memory roots and correct "
+            "the sentence, or scope it to the location you checked.\n\n")
+    if missing:
+        listing = "\n".join(f"  - {m}" for m in missing)
+        sys.stderr.write(
+            "BLOCKED check_save_claims: you told the user these files were written, "
+            "but they do not exist on disk:\n"
+            f"{listing}\n\n"
+            "Either actually write them now, or correct the sentence so it does not "
+            "claim a write that did not happen. Do not restate the claim.\n")
     sys.stderr.write(
-        "BLOCKED check_save_claims: you told the user these files were written, "
-        "but they do not exist on disk:\n"
-        f"{listing}\n\n"
-        "Either actually write them now, or correct the sentence so it does not "
-        "claim a write that did not happen. Do not restate the claim.\n"
-        "If this is a false positive (a path you referenced but never claimed to "
-        "have written), log it:\n"
+        "If this is a false positive, log it:\n"
         "  PYTHONIOENCODING=utf-8 python3 tools/friction_log.py append "
         'check_save_claims.py "FP: <what got wrongly blocked>"\n'
         f"Override for this turn: {OVERRIDE_ENV}=1\n"
