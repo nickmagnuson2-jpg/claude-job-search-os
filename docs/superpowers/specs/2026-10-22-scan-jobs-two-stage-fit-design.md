@@ -31,9 +31,9 @@ Drops a role only on a clear violation, and records which rule fired:
 
 Chief of Staff roles are NOT cut (owner decision 2026-10-22: an area of curiosity). They go to stage 2.
 
-`goals.md` states the comp floor but, as of 2026-10-22, no maximum number of in-office days (it
-says "in-person or SF-hybrid"). Until the owner adds that number, the in-office rule never fires;
-the code reports it as disabled rather than guessing a value.
+`goals.md` states both thresholds. The in-office maximum is 5 days a week (6 is a knockout),
+added 2026-10-22. If either value is missing from `goals.md` when the tool runs, that rule reports
+itself as disabled rather than guessing.
 
 ### Stage 2: company field read (survivors only, cached per company)
 
