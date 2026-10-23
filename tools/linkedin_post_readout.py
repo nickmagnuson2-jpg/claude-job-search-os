@@ -156,9 +156,12 @@ def template_config(template_html):
 
 
 def config_problems(expected, actual, where="config"):
-    """Keys missing from `actual`, or values of a different JSON type, at every level of `expected`."""
+    """Keys missing from `actual`, or values of a different JSON type, at every level of `expected`, list items included."""
     if type(actual) is not type(expected):
         return [f"{where} should be {type(expected).__name__}, not {type(actual).__name__}"]
+    if isinstance(expected, list):
+        # every item must look like the template's first item
+        return [p for i, item in enumerate(actual) for p in config_problems(expected[0], item, f"{where}[{i}]")] if expected else []
     if not isinstance(expected, dict):
         return []
     problems = []

@@ -445,6 +445,9 @@ def test_demographic_row_with_a_missing_cell_fails(tmp_path, cells):
     (lambda c: c["buyer_names"].pop("job_title"), r"config\.buyer_names\.job_title is missing"),
     (lambda c: c.update(excerpt="one paragraph"), r"config\.excerpt should be list, not str"),
     (lambda c: c["buyers"].update(company_size="51-200 employees"), r"config\.buyers\.company_size should be list"),
+    (lambda c: c["links"][0].pop("url"), r"config\.links\[0\]\.url is missing"),
+    (lambda c: c["links"].append("https://example.com"), r"config\.links\[1\] should be dict, not str"),
+    (lambda c: c["excerpt"].append(3), r"config\.excerpt\[2\] should be str, not int"),
 ])
 def test_load_config_checks_nested_keys_and_types(tmp_path, mutate, message):
     cfg = config()
