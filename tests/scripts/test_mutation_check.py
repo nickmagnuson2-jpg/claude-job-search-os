@@ -30,7 +30,7 @@ sys.path.insert(0, str(REPO_ROOT / "tools"))
 import mutation_check as mc  # noqa: E402
 
 
-def _run(args, cwd=None):
+def _run(args, cwd=None, env_extra=None):
     """Spawn mutation_check.py in a DETERMINISTIC environment.
 
     MUTATION_CHECK_ACTIVE is stripped, never inherited. It is the flag `run_tests` sets to
@@ -55,12 +55,17 @@ def _run(args, cwd=None):
     taking the lock, so each nested run here skipped the lock it exists to exercise. Every
     call that reaches the lock passes `cwd`, and the lock is keyed per repo root, so a
     nested run takes its own throwaway tree's lock and never waits on the sweep's.
+
+    CLAUDECODE is stripped too (2026-10-22): it decides the live-wired-target refusal, and
+    is set when a Claude session runs this suite and unset under launchd. Tests that need
+    it pass `env_extra`.
     """
     env = {k: v for k, v in os.environ.items()
-           if k not in ("MUTATION_CHECK_ACTIVE", "MUTATION_SWEEP_ACTIVE")}
+           if k not in ("MUTATION_CHECK_ACTIVE", "MUTATION_SWEEP_ACTIVE", "CLAUDECODE")}
     env["PYTHONIOENCODING"] = "utf-8"
     if cwd:
         env["MUTATION_REPO_ROOT"] = str(cwd)
+    env.update(env_extra or {})
     r = subprocess.run([sys.executable, str(TOOL), *args], capture_output=True, text=True,
                        cwd=str(cwd or REPO_ROOT), env=env)
     return r
@@ -1928,3 +1933,128 @@ def test_arming_forgets_what_an_earlier_run_in_the_same_process_wrote(armed, tmp
     with pytest.raises(mc.TargetDiverged):
         mc.write_mutant(other, "y = 1\n", "y = 2\n")
     assert other.read_text(encoding="utf-8") == original
+
+
+# --- live wired targets (feedback_never_mutation_sweep_wired_hooks_in_a_live_session) ---
+# mutation_check rewrites its target in place. When the target is a WIRED hook, or a
+# module every wired hook imports, the session's own Bash/Write/Edit calls are judged by
+# whatever mutant is on disk. Fired 3x through this tool directly (2026-09-07, 10-01,
+# 10-22); mutation_sweep's CLAUDECODE skip never saw those runs. The refusal lives in the
+# tool so it holds for every caller.
+
+_HOOK_SRC = "def f(x):\n    if x > 1:\n        return True\n    return False\n"
+LIVE = {"CLAUDECODE": "1"}
+
+
+def _hook_repo(root, name="check_x.py", wire=True):
+    """A committed throwaway repo; with `wire`, its settings wire tools/<name> as a hook."""
+    (root / "tools").mkdir(parents=True)
+    (root / "tests" / "scripts").mkdir(parents=True)
+    tool = root / "tools" / name
+    tool.write_text(_HOOK_SRC, encoding="utf-8")
+    stem = Path(name).stem
+    test = root / "tests" / "scripts" / f"test_{stem}.py"
+    test.write_text("import sys\nfrom pathlib import Path\n"
+                    "sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools'))\n"
+                    f"import {stem}\n\n\ndef test_f():\n    assert {stem}.f(2) is True\n"
+                    f"    assert {stem}.f(0) is False\n", encoding="utf-8")
+    if wire:
+        (root / ".claude").mkdir()
+        (root / ".claude" / "settings.json").write_text(json.dumps({"hooks": {"PreToolUse": [
+            {"matcher": "Bash", "hooks": [{"type": "command",
+                                           "command": f"python3 tools/{name}"}]}]}}),
+            encoding="utf-8")
+    _git(root, "init", "-q")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-q", "-m", "placeholder")
+    return tool, test
+
+
+def _code(r):
+    try:
+        return json.loads(r.stdout).get("code")
+    except json.JSONDecodeError:
+        return None
+
+
+def test_a_wired_hook_is_refused_in_a_live_session_and_left_untouched(tmp_path):
+    tool, test = _hook_repo(tmp_path)
+    before = tool.read_bytes()
+    r = _run([str(tool), "--tests", str(test)], cwd=tmp_path, env_extra=LIVE)
+    assert r.returncode == 1
+    assert _code(r) == "live_wired_target_refused"
+    assert "git worktree add" in json.loads(r.stdout)["message"]
+    assert tool.read_bytes() == before
+    assert not mc.backup_path(tool).exists()
+
+
+def test_a_module_every_hook_imports_is_refused_in_a_live_session(tmp_path):
+    tool, test = _hook_repo(tmp_path, name="hook_runtime.py", wire=False)
+    before = tool.read_bytes()
+    r = _run([str(tool), "--tests", str(test)], cwd=tmp_path, env_extra=LIVE)
+    assert r.returncode == 1
+    assert _code(r) == "live_wired_target_refused"
+    assert tool.read_bytes() == before
+
+
+def test_a_wired_hook_is_measured_when_no_session_is_live(tmp_path):
+    """Unattended runs (launchd) have no exposure; refusing them would hole the baseline."""
+    tool, test = _hook_repo(tmp_path)
+    r = _run([str(tool), "--tests", str(test)], cwd=tmp_path)
+    assert _code(r) != "live_wired_target_refused"
+    assert r.returncode == 0, r.stdout + r.stderr
+
+
+def test_allow_live_wired_overrides_the_refusal(tmp_path):
+    tool, test = _hook_repo(tmp_path)
+    r = _run([str(tool), "--tests", str(test), "--allow-live-wired"], cwd=tmp_path,
+             env_extra=LIVE)
+    assert _code(r) != "live_wired_target_refused"
+    assert r.returncode == 0, r.stdout + r.stderr
+
+
+def test_a_wired_hook_is_measured_inside_a_linked_worktree(tmp_path):
+    """The documented recipe: the hook file the session runs is never the one rewritten."""
+    _hook_repo(tmp_path / "repo")
+    wt = tmp_path / "wt"
+    _git(tmp_path / "repo", "worktree", "add", "-q", "--detach", str(wt))
+    tool = wt / "tools" / "check_x.py"
+    r = _run([str(tool), "--tests", str(wt / "tests" / "scripts" / "test_check_x.py")],
+             cwd=wt, env_extra=LIVE)
+    assert _code(r) != "live_wired_target_refused"
+    assert r.returncode == 0, r.stdout + r.stderr
+
+
+def test_an_unwired_target_is_measured_in_a_live_session(tmp_path):
+    tool, test = _hook_repo(tmp_path, name="sample_tool.py")
+    other, other_test = tool.with_name("plain_tool.py"), test.with_name("test_plain_tool.py")
+    other.write_text(_HOOK_SRC, encoding="utf-8")
+    other_test.write_text(test.read_text(encoding="utf-8").replace("sample_tool", "plain_tool"),
+                          encoding="utf-8")
+    r = _run([str(other), "--tests", str(other_test)], cwd=tmp_path, env_extra=LIVE)
+    assert _code(r) != "live_wired_target_refused"
+    assert r.returncode == 0, r.stdout + r.stderr
+
+
+def test_hook_runtime_needs_scoped_tests_in_a_live_session(tmp_path):
+    """Unscoped, every hook_runtime mutant ran the full suite: 16 min each (2026-10-22)."""
+    tool, _ = _hook_repo(tmp_path, name="hook_runtime.py", wire=False)
+    before = tool.read_bytes()
+    r = _run([str(tool), "--allow-live-wired"], cwd=tmp_path, env_extra=LIVE)
+    assert r.returncode == 1
+    assert _code(r) == "tests_required"
+    assert tool.read_bytes() == before
+
+
+def test_an_unreadable_hook_registry_refuses_rather_than_reading_as_empty(tmp_path):
+    tool, test = _hook_repo(tmp_path)
+    (tmp_path / ".claude" / "settings.json").write_text("{not json", encoding="utf-8")
+    r = _run([str(tool), "--tests", str(test)], cwd=tmp_path, env_extra=LIVE)
+    assert _code(r) == "live_wired_target_refused"
+
+
+def test_listing_a_wired_hook_is_not_refused(tmp_path):
+    """--list rewrites nothing, so it carries none of the hazard."""
+    tool, _ = _hook_repo(tmp_path)
+    r = _run([str(tool), "--list"], cwd=tmp_path, env_extra=LIVE)
+    assert r.returncode == 0 and json.loads(r.stdout)["status"] == "ok"

@@ -1144,6 +1144,59 @@ def load_allowlist() -> dict:
         return {}
 
 
+# Modules every wired hook imports. Mutating one changes every live guard at once, so it
+# is refused like a wired hook. Named, not computed: two modules cover the known cases.
+LIVE_HOOK_IMPORTS = {"hook_runtime.py", "shell_tokens.py"}
+
+
+def _is_linked_worktree(root: Path) -> bool:
+    """True only when git says `root` is a LINKED worktree (git-dir != git-common-dir).
+    Any failure to ask git is False, so the refusal below fails closed."""
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    try:
+        out = subprocess.run(["git", "rev-parse", "--git-dir", "--git-common-dir"],
+                             cwd=str(root), env=env, capture_output=True, text=True,
+                             timeout=15).stdout.split()
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return len(out) == 2 and (root / out[0]).resolve() != (root / out[1]).resolve()
+
+
+def live_wired_refusal(target: Path, args) -> dict | None:
+    """Refuse to rewrite a live guard while a Claude Code session is issuing tool calls.
+
+    This tool mutates its target IN PLACE, so a wired hook (or a module wired hooks import)
+    judges the session's own Bash/Write/Edit calls with whatever mutant is on disk. Fired
+    3x through this tool directly (2026-09-07, 10-01, 10-22); mutation_sweep's own
+    CLAUDECODE skip never saw those runs. CLAUDECODE is set in every Claude Code tool call
+    and absent under launchd, so unattended runs are untouched. --list rewrites nothing.
+    """
+    if args.list or not os.environ.get("CLAUDECODE"):
+        return None
+    if target.name == "hook_runtime.py" and not args.tests:
+        return {"code": "tests_required",
+                "message": "pass --tests for hook_runtime.py: every test file maps to it, "
+                           "and an unscoped run cost 16 min per mutant on 2026-10-22."}
+    if args.allow_live_wired or _is_linked_worktree(REPO_ROOT):
+        return None
+    import mutation_sweep  # lazy: mutation_sweep imports this module at its top
+    try:
+        wired = mutation_sweep.currently_wired(REPO_ROOT)
+    except Exception:
+        wired = {target.name}   # an unreadable registry is not an empty one
+    if target.name not in wired | LIVE_HOOK_IMPORTS:
+        return None
+    return {"code": "live_wired_target_refused",
+            "message": f"{target.name} is a wired hook (or a module wired hooks import) and a "
+                       "Claude Code session is live (CLAUDECODE set): mutating it in place "
+                       "makes this session's own tool calls answer to the mutant. Run it in "
+                       "a linked worktree instead: `git worktree add --detach <scratch>/wt "
+                       "HEAD`, copy your changed files (and any gitignored inputs the tests "
+                       "read) in, run tools/mutation_check.py from inside <scratch>/wt, then "
+                       "`git worktree remove --force <scratch>/wt`. Or pass "
+                       "--allow-live-wired when no session is issuing tool calls."}
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -1164,6 +1217,9 @@ def main() -> int:
     ap.add_argument("--wait", type=float, default=DEFAULT_RUN_LOCK_WAIT,
                     help="seconds to wait for the tree lock before giving up "
                          "(0 = fail immediately, the pre-2026-09-07 behaviour)")
+    ap.add_argument("--allow-live-wired", action="store_true",
+                    help="mutate a wired hook in place even though CLAUDECODE is set. Only "
+                         "when no session is issuing tool calls; prefer a linked worktree.")
     args = ap.parse_args()
 
     target = Path(args.target)
@@ -1181,6 +1237,11 @@ def main() -> int:
                                      "happened on 2026-08-19 and corrupted two "
                                      "unrelated files. Test this tool with "
                                      "tests/scripts/test_mutation_check.py instead."}))
+        return 1
+
+    refusal = live_wired_refusal(target, args)
+    if refusal:
+        print(json.dumps({"status": "error", **refusal}))
         return 1
 
     # Refuse to start while another run owns the tree. Before prune_orphans and
