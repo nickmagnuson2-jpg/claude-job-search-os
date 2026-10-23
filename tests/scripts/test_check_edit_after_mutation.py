@@ -273,3 +273,36 @@ def test_pipeline_split_finds_a_read_in_a_later_stage(tmp_path):
     target.write_text("x", encoding="utf-8")
     got = extract_bash_read_targets(f"python3 build.py | cat {target}", tmp_path)
     assert got == [str(target.resolve())]
+
+
+# --- argv grammar (promotion drain C6, 2026-10-23) ------------------------------
+# Only the two wired forms or no arguments are accepted; anything else exits 2
+# instead of falling through to "check" on an empty stdin.
+
+def _argv_run(*args):
+    return subprocess.run([sys.executable, str(HOOK), *args], input="",
+                          capture_output=True, text=True,
+                          env={**os.environ, "PYTHONIOENCODING": "utf-8"})
+
+
+def test_no_arguments_is_hook_mode_and_exits_clean():
+    assert _argv_run().returncode == 0
+
+
+def test_no_arguments_selects_check_mode(monkeypatch):
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("eam_argv", HOOK)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    monkeypatch.setattr(sys, "argv", ["check_edit_after_mutation.py"])
+    assert mod._mode_from_argv() == "check"
+    monkeypatch.setattr(sys, "argv", ["check_edit_after_mutation.py", "--mode", "record"])
+    assert mod._mode_from_argv() == "record"
+
+
+@pytest.mark.parametrize("args", [["--mode", "bogus"], ["--mode=check"], ["--bogus"],
+                                  ["--mode"], ["--mode", "check", "extra"]])
+def test_unknown_arguments_exit_2(args):
+    r = _argv_run(*args)
+    assert r.returncode == 2, (args, r.stderr)
+    assert "unknown arguments" in r.stderr
