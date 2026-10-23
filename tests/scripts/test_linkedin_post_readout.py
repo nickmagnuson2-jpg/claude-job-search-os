@@ -438,3 +438,26 @@ def _with_raw_demographic_row(path, cells_xml):
 def test_demographic_row_with_a_missing_cell_fails(tmp_path, cells):
     with pytest.raises(lpr.ReadoutError, match="three non-empty cells"):
         lpr.parse_export(_with_raw_demographic_row(tmp_path / "e.xlsx", cells))
+
+
+@pytest.mark.parametrize("mutate, message", [
+    (lambda c: c["buyers"].pop("seniority"), r"config\.buyers\.seniority is missing"),
+    (lambda c: c["buyer_names"].pop("job_title"), r"config\.buyer_names\.job_title is missing"),
+    (lambda c: c.update(excerpt="one paragraph"), r"config\.excerpt should be list, not str"),
+    (lambda c: c["buyers"].update(company_size="51-200 employees"), r"config\.buyers\.company_size should be list"),
+])
+def test_load_config_checks_nested_keys_and_types(tmp_path, mutate, message):
+    cfg = config()
+    mutate(cfg)
+    p = tmp_path / "c.json"
+    p.write_text(json.dumps(cfg), encoding="utf-8")
+    with pytest.raises(lpr.ReadoutError, match=message):
+        lpr.load_config(p, TEMPLATE_HTML)
+
+
+def test_load_config_accepts_the_template_config_and_extra_keys(tmp_path):
+    cfg = config()
+    cfg["extra"] = 1
+    p = tmp_path / "c.json"
+    p.write_text(json.dumps(cfg), encoding="utf-8")
+    assert lpr.load_config(p, TEMPLATE_HTML) == cfg

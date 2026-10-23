@@ -155,12 +155,27 @@ def template_config(template_html):
     return json.loads(m.group(1))
 
 
+def config_problems(expected, actual, where="config"):
+    """Keys missing from `actual`, or values of a different JSON type, at every level of `expected`."""
+    if type(actual) is not type(expected):
+        return [f"{where} should be {type(expected).__name__}, not {type(actual).__name__}"]
+    if not isinstance(expected, dict):
+        return []
+    problems = []
+    for key in expected:
+        if key not in actual:
+            problems.append(f"{where}.{key} is missing")
+        else:
+            problems += config_problems(expected[key], actual[key], f"{where}.{key}")
+    return problems
+
+
 def load_config(path, template_html):
     with open(path, encoding="utf-8") as f:
         config = json.load(f)
-    missing = sorted(set(template_config(template_html)) - set(config))
-    if missing:
-        raise ReadoutError(f"Config is missing keys: {missing}")
+    problems = config_problems(template_config(template_html), config)
+    if problems:
+        raise ReadoutError("Config does not match the template's CONFIG block: " + "; ".join(problems))
     return config
 
 
