@@ -765,6 +765,17 @@ def test_absence_claim_about_a_repo_memory_file_that_exists_blocks(tmp_path):
     assert "does not exist" in r.stderr and "both memory roots" in r.stderr
 
 
+def test_an_absence_only_block_reports_only_the_absence(tmp_path):
+    """Kills two mutants: the write-claim section must not print when nothing was
+    claimed written, and the false-positive logging hint must always print."""
+    (tmp_path / "memory").mkdir()
+    (tmp_path / "memory" / "lessons.md").write_text("x", encoding="utf-8")
+    r = _run(DETECTOR_CONTROL, str(tmp_path))
+    assert r.returncode == 2, r.stderr
+    assert "were written" not in r.stderr
+    assert "friction_log.py append" in r.stderr
+
+
 def test_absence_claim_about_a_file_absent_everywhere_is_clean(tmp_path):
     r = _run(DETECTOR_CONTROL, str(tmp_path))
     assert r.returncode == 0, r.stderr
