@@ -544,7 +544,7 @@ Do NOT auto-print without Nick's confirmation. The offer is the closing beat.
 
 ### Step 7b: Advance Pipeline Stage (deterministic — only when this is a scheduled round)
 
-Prepping for a **confirmed, dated** round is a state change: the pipeline row must reflect it. This step closes the gap where `/prep-interview` (a pipeline read-consumer) left the stage stale because it never wrote back. Origin: 2026-06-09 a target company — prep ran the morning the Executive Screen was booked, created the debrief to-do, but left the pipeline reading "awaiting next-step read / nudge the recruiter by 6/13" (a stale gate against booked intel). See `memory/feedback_prep_interview_must_advance_pipeline_on_scheduled_round.md`.
+Prepping for a **confirmed, dated** round is a state change: the pipeline row must reflect it. This step closes the gap where `/prep-interview` (a pipeline read-consumer) left the stage stale because it never wrote back. Origin: prep ran the morning a later-round screen was booked and created the debrief to-do, but left the pipeline reading "awaiting next step / nudge the recruiter" (a stale gate against booked intel). See `memory/feedback_prep_interview_must_advance_pipeline_on_scheduled_round.md`.
 
 **Gate (this is the only judgment, and a date resolves it):**
 - Proceed **only if** the round has a **known/confirmed date** — a date in the context string, or a calendar invite, i.e. the interview is actually scheduled.

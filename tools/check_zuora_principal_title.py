@@ -18,7 +18,7 @@ string check, since the failure is a literal string that a grep can catch and
 prose has now failed twice."
 
   Fire 1 (the Origin): a recruiter-channel CV
-  `output/<recruiter-slug>/061126-magnuson.md` was generated off a prior-application
+  was generated off a prior-application
   baseline, which rendered "Head of Product and Technology" in 4 places
   (summary, position line, bullet 1, the AI-workflow bullet). It survived a
   full deep review. Nick caught it: "it should be Chief Product and Technology
