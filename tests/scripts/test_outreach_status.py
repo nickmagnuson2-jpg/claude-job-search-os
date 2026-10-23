@@ -90,8 +90,8 @@ def test_no_reply_still_counts_as_sent(tmp_path):
 def test_bounce_regression(tmp_path):
     """THE regression: sent is true, delivered is false. A bounce is still a transmission."""
     log = make_log(tmp_path, [
-        "| 2026-08-04 | follow-up | email | Jane Doe | Acme Corp | CV attached (080426-placeholder.pdf) | Sent |",
-        "| 2026-08-07 | follow-up | email | Jane Doe | Acme Corp | CV attached (080426-placeholder.pdf) - address bounced | Bounced |",
+        "| 2026-02-16 | follow-up | email | Jane Doe | Acme Corp | CV attached (021626-placeholder.pdf) | Sent |",
+        "| 2026-02-19 | follow-up | email | Jane Doe | Acme Corp | CV attached (021626-placeholder.pdf) - address bounced | Bounced |",
     ])
     code, out = query("--recipient", "Jane Doe", "--artifact", "cv", "--log", log)
     assert code == 0
@@ -254,12 +254,12 @@ def test_stamp_matches_the_frozen_v2_format(tmp_path):
 
 def test_set_status_round_trip(tmp_path):
     log = make_log(tmp_path, [
-        "| 2026-08-04 | follow-up | email | Jane Doe | Acme Corp | CV attached (080426-placeholder.pdf) | Sent |",
-        "| 2026-08-05 | follow-up | email | John Smith | Northwind Inc | Unrelated thread | Sent |",
+        "| 2026-02-16 | follow-up | email | Jane Doe | Acme Corp | CV attached (021626-placeholder.pdf) | Sent |",
+        "| 2026-02-17 | follow-up | email | John Smith | Northwind Inc | Unrelated thread | Sent |",
     ])
     before = log.read_text(encoding="utf-8")
 
-    code, out = query("--set-status", "--recipient", "Jane Doe", "--date", "2026-08-04",
+    code, out = query("--set-status", "--recipient", "Jane Doe", "--date", "2026-02-16",
                       "--artifact", "cv", "--status", "Bounced", "--log", log)
     assert code == 0, out
     assert out["ok"] is True and out["before"] == "Sent" and out["after"] == "Bounced"
@@ -276,12 +276,12 @@ def test_set_status_round_trip(tmp_path):
 
 def test_set_status_refuses_an_ambiguous_target(tmp_path):
     log = make_log(tmp_path, [
-        "| 2026-08-04 | follow-up | email | Jane Doe | Acme Corp | CV attached (a.pdf) | Sent |",
-        "| 2026-08-04 | follow-up | email | Jane Doe | Acme Corp | CV attached again (b.pdf) | Sent |",
+        "| 2026-02-16 | follow-up | email | Jane Doe | Acme Corp | CV attached (a.pdf) | Sent |",
+        "| 2026-02-16 | follow-up | email | Jane Doe | Acme Corp | CV attached again (b.pdf) | Sent |",
     ])
     before = log.read_bytes()
 
-    code, out = query("--set-status", "--recipient", "Jane Doe", "--date", "2026-08-04",
+    code, out = query("--set-status", "--recipient", "Jane Doe", "--date", "2026-02-16",
                       "--artifact", "cv", "--status", "Bounced", "--log", log)
     assert code == 2
     assert out["ok"] is False and len(out["candidates"]) == 2
