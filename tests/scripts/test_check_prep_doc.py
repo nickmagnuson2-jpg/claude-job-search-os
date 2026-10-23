@@ -9,7 +9,8 @@ The two cases that encode real incidents:
   * test_synonym_collapse_fails_check_3 — a "reserve" in the primary's own domain
   * test_suppressive_without_stamp_fails — the 2026-08-10 sentence itself
 
-All identities are placeholders. This file is public.
+People and companies are placeholders, except the owner's own past employers, which
+appear as proof sources because check 7 matches on one by name. This file is public.
 """
 import json
 

@@ -23,6 +23,7 @@ Every guard edit below was approved by Nick and reviewed by Codex and Grok befor
 - **Dated interview references and real-data test fixtures removed** from skills,
   framework docs, tool comments and tests. Fixtures copied from real pipeline rows,
   outreach rows and CV text were replaced with fictional ones that test the same thing.
+  The owner's past employers still appear where a test needs a real proof source.
 
 **New checks**
 - **`check_derived_ratio.py` (Stop hook)**: blocks a reply that states a ratio or
@@ -67,7 +68,7 @@ each grown their own copy of one function.
 
 - **`/scan-jobs` is now script-scored.** Claude fetches listings and copies them into a
   fixed format; `tools/scan_jobs.py` dedupes, applies the nightly scanner's location rule,
-  scores with the career scanner's scorer, sets status by fixed cutoffs and writes the
+  scores with the career scanner's scorer, sets status by cutoffs and writes the
   cache. A posting URL is now a role's identity, so a role in another office is no longer
   hidden by a cached one with the same title. The cutoffs were calibrated on 72 labeled
   roles; the scorer's AUC there is 0.61, so the gain is consistency, not accuracy.

@@ -11,7 +11,7 @@ Most hooks block the tool call outright (exit code 2), and Claude sees the reaso
 | `check_voice_pure.py` | PreToolUse on Write/Edit/MultiEdit/NotebookEdit | Blocks model-written prose in dated reflection files, which hold only the user's own words, including a `## Notes` or `## Analysis` section of Claude synthesis. Reads Write and Edit payloads only; a MultiEdit or NotebookEdit passes unchecked |
 | `check_email_via_skill.py` | PreToolUse on Write/Edit/MultiEdit/NotebookEdit | Blocks email-shaped content written outside the skill flow |
 | `check_no_confabulation.py` | PreToolUse on Write/Edit/MultiEdit/NotebookEdit | Blocks placeholder tokens in shippable artifacts |
-| `check_data_projects.py` | PreToolUse on Write/Edit/MultiEdit/NotebookEdit to `data/projects/` | Warn-only (the warning is not shown to Claude): flags verbs that claim sole credit ("single-handedly built") in a project's Key Achievements |
+| `check_data_projects.py` | PreToolUse on Write/Edit/MultiEdit/NotebookEdit to `data/projects/` | Warn-only (the warning is not shown to Claude): flags a Key Achievements bullet in a project file that opens with a solo-credit verb (Built, Led, Founded, Spearheaded, and similar) |
 | `check_living_log_purity.py` | PreToolUse on Write/Edit/MultiEdit | Blocks direct writes to append-only log files; only the dedicated append script may write them |
 | `check_draft_voice.py` | PreToolUse on Bash `open_draft.py` | Scans draft for voice anti-patterns before Gmail compose opens, including lines that tell the recipient how to do their own job ("please make sure", "send it my way") |
 | `check_todo_write_kwargs.py` | PreToolUse on Bash | Blocks kwarg-style invocation of the atomic to-do writer |
@@ -24,7 +24,7 @@ Most hooks block the tool call outright (exit code 2), and Claude sees the reaso
 | `check_changelog_currency.py` | Stop | Warns once per HEAD when commits since the last `docs/CHANGELOG.md` edit touched `tools/`, `.claude/skills/`, `framework/`, settings, or `requirements.txt` without a changelog update |
 | `check_banned_phrase.py` | PreToolUse on Write/Edit/MultiEdit | Blocks the phrases enumerated in `tools/mannered-phrases.txt`. A listed-phrase gate, not a prose-quality detector |
 | `check_zuora_principal_title.py` | PreToolUse on Write/Edit/MultiEdit/NotebookEdit/Bash | Blocks an outdated version of a former manager's job title |
-| `check_handoff_producer.py` | PreToolUse on Write/Edit/MultiEdit/NotebookEdit/Bash | Blocks creating a new handoff-shaped file under `output/`; cross-session state goes to the workstreams registry |
+| `check_handoff_producer.py` | PreToolUse on Write/Edit/MultiEdit/NotebookEdit/Bash | Blocks creating a new handoff-shaped file in `output/analysis/` or directly in `output/` (company folders are not checked); cross-session state goes to the workstreams registry |
 | `check_guard_edit_approval.py` | PreToolUse on Write/Edit/MultiEdit and Bash | Blocks edits to guard infrastructure (`tools/check_*.py`, the hook libraries, `.claude/settings.json`) unless approved. A Python script that names a guard is judged by where its writes go, so reading, hashing or running a guard is not blocked |
 | `check_new_toplevel_dir_protected.py` | PreToolUse on Write | Blocks a file under a new top-level directory that is neither gitignored nor covered by the data backup |
 | `check_sealed_read.py` | PreToolUse on Read/Grep/Glob/Bash | Blocks reads of a private notes directory kept outside the repo |
