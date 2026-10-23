@@ -120,7 +120,7 @@ def test_freeform_round_stage_is_active_pursuit(tmp_path):
         ## Active
         | Company | Role | Stage | Date Updated | Next Action | CV Used | Notes | URL |
         |---------|------|-------|--------------|-------------|---------|-------|-----|
-        | Lumen | Product Ops | Strategic Thinking round complete (6/8); awaiting next-step | 2026-02-10 | — | — | — | — |
+        | Lumen | Product Ops | Case round complete (3/14); awaiting next-step | 2026-02-10 | — | — | — | — |
     """)
 
     result = run_script("pipeline_staleness.py",

@@ -1,6 +1,6 @@
 # Deck Rubric — the enumerated gate
 
-**Promoted 2026-08-13** from the 2026-08-03 engagement-specific rubric in `output/`, with the
+**Promoted 2026-08-13** from an engagement-specific rubric in `output/`, with the
 `Status in v1` column stripped and the worked conflicts generalized. Section F is new.
 
 ## Where this sits
@@ -148,17 +148,18 @@ none get bulk-replaced.**
 
 ### The C13 rule, and the two ways it fails
 
-**Both observed on one artifact, 2026-09-17.**
+**Both have been observed on a single artifact.** The figures below are illustrative.
 
-*Rounding a derived figure.* "$65,979 per customer per month" against a $461,856 headline: 7 x
-65,979 = 461,853, a $3 gap, because 461,856 / 7 = 65,979.43 and neither the dollar nor the
-booking count divides evenly. The fix is not more decimals, it is not printing a derived figure
-that invites the multiplication.
+*Rounding a derived figure.* "$58,333 per customer per month" against a $350,000 headline: 6 x
+58,333 = 349,998, a $2 gap, because 350,000 / 6 = 58,333.33 and the dollar total does not
+divide evenly by the customer count. The fix is not more decimals, it is not printing a derived
+figure that invites the multiplication.
 
-*Subtracting ratios.* "32.4% against 1.6%, a 20.8x gap... the other 19x" fails twice over: 32.4
-/ 1.6 = 20.25 from the printed values, not 20.8, and 20.8 minus 1.7 is not a meaningful
-operation on two ratios. The ratio of ratios is 12.2x. **When a ratio is hard to print honestly,
-print the four underlying rates and let the reader see the gap.**
+*Subtracting ratios.* "24.6% against 1.3%, a 19.4x gap, of which a 2.1x baseline gap explains
+part and the rest is the other 17x" fails twice over: 24.6 / 1.3 = 18.9 from the printed values,
+not 19.4 (the 19.4 came from unrounded inputs), and 19.4 minus 2.1 is not a meaningful operation
+on two ratios. The ratio of ratios is 9.2x. **When a ratio is hard to print honestly, print the
+four underlying rates and let the reader see the gap.**
 
 ### The C11 rule, and how to keep a visual grammar anyway
 
@@ -211,11 +212,11 @@ Each is feedback you are guaranteed to get, so the fix goes in up front.
 **E1 reads the LEDES in order. E7 reads the WHOLE PAGE cold.** They catch different defects and
 neither substitutes for the other.
 
-A deck can route around its own defect in delivery while the page keeps doing the damage. At
-the 2026-08 engagement the talk tracks were already instructed to stay silent on a row, so no talk-track pass
-ever quoted the sentence that was causing the harm: *"the delivery was already routing around
-the problem while the page kept doing the damage, which is why this was a read-surface defect,
-invisible to every talk-track pass"* (`output/<engagement>/080426-deck-v3-DECISIONS.md:988`).
+A deck can route around its own defect in delivery while the page keeps doing the damage. In
+one observed case the talk tracks were already instructed to stay silent on a row, so no
+talk-track pass ever quoted the sentence that was causing the harm. The delivery was routing
+around the problem while the page kept doing the damage, which made it a read-surface defect,
+invisible to every talk-track pass.
 
 **For a SENT artifact this is the primary gate, not a supplementary one**, because there is no
 delivery to route around anything.
@@ -227,7 +228,7 @@ page is a conclusion stated wider than the scope that produced it. Run both, and
 
 ### E8, the cut pass
 
-**Two tests, and the second is the one that cuts** (`output/<engagement>/080426-deck-v3-PLANNING-SESSION-PROMPT.md:26-38`):
+**Two tests, and the second is the one that cuts:**
 
 1. **Defensibility.** Is it true, sourced, and ours?
 2. **Function.** Why is it here, and how does it progress the argument?
@@ -239,18 +240,18 @@ page is a conclusion stated wider than the scope that produced it. Run both, and
 **Name what is protected before the pass begins**, not during it. Everything not named is
 genuinely on the table.
 
-**Ranking the survivors by impact on the headline number inverts the result.** Measured
-2026-09-17: the block that moved the number most was the one three independent readers cut as
+**Ranking the survivors by impact on the headline number inverts the result.** In one measured
+case, the block that moved the number most was the one three independent readers cut as
 irreproducible, while the blocks that moved it by zero were the ones answering the reader's
 strongest objections. **Rank by which objection a block closes, and whether a cold reader
 actually raised it** — which is what E7 produces.
 
 ### E10, and the defect it exists to catch
 
-**A fix creates new surface, and the check usually points at the old surface.** Observed
-2026-09-17: a breakdown whose "other" row was 40% of the total was fixed by regrouping, and the
-same edit introduced a new column that named 555 of 622. Fixed and reintroduced, same table,
-same session, same defect class.
+**A fix creates new surface, and the check usually points at the old surface.** Observed case:
+a breakdown whose "other" row was 40% of the total was fixed by regrouping, and the same edit
+introduced a new column that named only 410 of 468 items without labelling itself partial.
+Fixed and reintroduced, same table, same session, same defect class.
 
 **So the check runs on what the edit just CREATED, not on what it was sent to repair.** Did this
 edit make a list, a column, a breakdown, a ratio? Does it conserve, or is it labelled partial?
@@ -260,8 +261,8 @@ edit make a list, a column, a breakdown, a ratio? Does it conserve, or is it lab
 ## F. Frame integrity
 
 **Why this section exists.** A-E score craft. A deck can pass craft and lose on frame. Five
-independent instruments in the 2026-08-05 engagement (review lanes, the planning packet's test 1,
-Stage 0 triage, a 13-panel, and Sections A-E of this rubric) were all built to catch **untrue** things
+independent instruments applied to one past deck (review lanes, the planning packet's test 1,
+Stage 0 triage, a multi-reviewer panel, and Sections A-E of this rubric) were all built to catch **untrue** things
 and were structurally unable to catch **unanswerable** ones. F is that missing audit.
 
 **F.1 and F.3 run against `frame.yaml`, not against the pages.** F.2 is the exception and always
@@ -287,7 +288,6 @@ a whiteboard, a memo or a spoken answer. Where a rule says
 holding the artifact rationalises overlap as emphasis.
 
 **Where to aim F3 and F4: probe the BOUNDARIES between adjacent elements, not the elements.**
-Recovered 2026-09-17 from `coaching/progress/2026-08-04-<engagement>-whiteboard.md:61`.
 The observed failure is never a forgotten item; it is two adjacent concepts fusing into one. An
 agent asked "is element 3 sound" finds nothing. An agent asked "state the line between element
 3 and element 4 in one sentence" finds the fusion.
@@ -314,40 +314,39 @@ only instrument here that finds decoration rather than error.
 
 | # | Rule | Enforced by |
 |---|---|---|
-| **F6** | **The answer to the most likely probe sits on the surface carrying the claim it defends**, never downstream. Every placement names the delivery model it assumes and answers: *what happens to this if I lose the floor here?* | **blind agent given the ARTIFACT ONLY, run ONE PAGE AT A TIME**: for each page, list the probes its claims invite and where each is answered. A probe answered only on a later page, or not at all, fails F6. Run on the whole artifact at once, the agent tests only whether an answer exists somewhere, not whether it sits beside its claim. Nick disposes what it returns |
-| **F7** | **Spoken vocabulary matches printed vocabulary for every metric.** Read the frame aloud against the artifact | **token diff against the rehearsal transcript is the instrument**; Nick disposes the diff |
+| **F6** | **The answer to the most likely probe sits on the surface carrying the claim it defends**, never downstream. Every placement names the delivery model it assumes and answers: *what happens to this if I lose the floor here?* | **blind agent given the ARTIFACT ONLY, run ONE PAGE AT A TIME**: for each page, list the probes its claims invite and where each is answered. A probe answered only on a later page, or not at all, fails F6. Run on the whole artifact at once, the agent tests only whether an answer exists somewhere, not whether it sits beside its claim. The author disposes what it returns |
+| **F7** | **Spoken vocabulary matches printed vocabulary for every metric.** Read the frame aloud against the artifact | **token diff against the rehearsal transcript is the instrument**; the author disposes the diff |
+| **F8** | **Every element traces back to the locked problem statement.** If the problem statement assigned a metric a role (guardrail, target, constraint), no element may reassign it | checker (every `because` fact appears in the D1 fact base) + blind agent |
 
-### Why F6 and F7 are not Nick's to run, corrected 2026-09-17
+### Why F6 and F7 are not the author's to run
 
-**These two were assigned to "Nick" and that contradicted this section's own premise.** F exists
+**Assigning these two to the author would contradict this section's own premise.** F exists
 because five instruments could catch *untrue* things and none could catch *unanswerable* ones.
-The the 2026-08 engagement outcome debrief states the mechanism that makes F necessary:
+The mechanism that makes F necessary:
 
-> "A frame defect is not introspectable, because the frame feels coherent from the inside...
-> the instrument for the second kind has to be external and mechanical."
-> — `coaching/progress/2026-08-13-<engagement>-outcome.md:72-79`
+> A frame defect is not introspectable, because the frame feels coherent from the inside. The
+> instrument for that kind of defect has to be external and mechanical.
 
 Assigning F6 and F7 to introspection, on exactly the failure class introspection provably
 cannot reach, is the defect this section was built to prevent, reproduced inside it.
 
 **The human element does not leave; it moves to the right place.** The agent produces the
-finding, Nick disposes it. That is the same split as every other row: the enforcer surfaces,
-the human decides. What changed is that Nick is no longer the *detector* for a defect he
-cannot see from inside.
+finding, the author disposes it. That is the same split as every other row: the enforcer
+surfaces, the human decides. What changed is that the author is no longer the *detector* for a
+defect they cannot see from inside.
 
-**Demonstrated 2026-09-17 on a 2026-09 client take-home.** Four blind reads, artifact only, no
-frame. A self-run of the same headline test had PASSED and the blind run FAILED, on the same
-pair of sentences, the same day. The self-read supplied the missing bridge from memory, which
-is what a frame defect looks like from the inside.
-| **F8** | **Every element traces back to the locked problem statement.** If the problem statement assigned a metric a role (guardrail, target, constraint), no element may reassign it | checker (every `because` fact appears in the D1 fact base) + blind agent |
+**Demonstrated on a take-home exercise.** Four blind reads, artifact only, no frame. A self-run
+of the same headline test had PASSED and the blind run FAILED, on the same pair of sentences,
+the same day. The self-read supplied the missing bridge from memory, which is what a frame
+defect looks like from the inside.
 
 ### F.3 Discipline — what the process must record
 
 | # | Rule | Enforced by |
 |---|---|---|
 | **F9** | **Compression ledger.** Every collapse, rename or cut records what the element was, what its definition was, and where that definition now lives. "Nowhere on the surface carrying the element" is a defect. **Frame elements are PROTECTED by default** | checker (diff current against the `locked:` version, fail on a dropped `measure` for a protected element) |
-| **F10** | **Every unknown is dispositioned: assumption / question / data request.** Assumption is unknowable in the timebox and carries a label, a basis and a sensitivity note. Question needs a named human's judgment. Data request exists in a system and carries an owner and a date. **The disposition changes by mode; the item does not** | checker (structure) + Nick (which disposition) |
-| **F11** | **Where the frame requires data that does not exist and forbids sourcing it, the output is the named empty slot**, never a laundered characterization. *"We do not know how our own headline number is computed"* is a finding, and usually the strongest one available | Nick |
+| **F10** | **Every unknown is dispositioned: assumption / question / data request.** Assumption is unknowable in the timebox and carries a label, a basis and a sensitivity note. Question needs a named human's judgment. Data request exists in a system and carries an owner and a date. **The disposition changes by mode; the item does not** | checker (structure) + the author (which disposition) |
+| **F11** | **Where the frame requires data that does not exist and forbids sourcing it, the output is the named empty slot**, never a laundered characterization. *"We do not know how our own headline number is computed"* is a finding, and usually the strongest one available | the author |
 | **F12** | **Every recommendation carries a confidence and a next action.** Confidence is stated, not implied. The next action names who disposes it | checker |
 
 ### The F gate
@@ -355,7 +354,7 @@ is what a frame defect looks like from the inside.
 **F fails if any of F1-F12 fails.** On failure the artifact does not ship, exactly as E1 governs the
 ledes test.
 
-**Blocking condition, so the gate can demonstrably fail:** the 2026-08-05 deck fails **nine of twelve**
+**Blocking condition, so the gate can demonstrably fail:** the past deck this section was built against fails **nine of twelve**
 (F1, F2, F3, F4, F5, F6, F7, F8, F9). The deterministic subset of those nine is **six** (F1, F2, F3,
 F5, F8, F9), and that six is the acceptance test for `check_frame_integrity.py`. F4 and **F6** are
 blind-agent tests; **F7** is the token diff. **No rule in F is detected by unaided introspection**,

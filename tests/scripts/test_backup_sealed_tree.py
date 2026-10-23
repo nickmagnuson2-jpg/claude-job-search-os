@@ -160,8 +160,12 @@ def test_a_complete_tree_backs_up_without_a_warning(world):
 def test_a_tree_where_nothing_can_be_staged_commits_nothing(world):
     work, overlay, tmp = world
     for child in work.iterdir():
-        if child.name != "tools":
+        if child.name == "tools":
+            continue
+        if child.is_dir():
             shutil.rmtree(child)
+        else:
+            child.unlink()
     for f in (work / "tools").iterdir():
         if f.name not in ("backup-data.sh", ".private-backup.conf"):
             f.unlink()

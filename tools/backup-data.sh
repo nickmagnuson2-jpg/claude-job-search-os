@@ -86,7 +86,7 @@ if [ -d "$GLOBAL_CLAUDE" ]; then
   else
     echo "WARNING: $GLOBAL_CLAUDE/settings.json not found -- hooks would restore unwired" >&2
   fi
-  # Every OTHER project's auto-memory (peer repos such as dailyidea and mag5-advisors keep
+  # Every OTHER project's auto-memory (other project repos keep
   # theirs here, outside any repo, and nothing else backs them up). All of them, not a named
   # list: a new peer repo must not need an edit here to be covered. This repo's own memory is
   # already mirrored as canonical-sidecar above, so it is skipped rather than copied twice.
@@ -129,6 +129,13 @@ STAGE_PATHS=(
   "$WORK_TREE/framework/outreach-guide.md"
   "$WORK_TREE/framework/content-rules.md"
   "$WORK_TREE/framework/content-rules.yaml"
+  "$WORK_TREE/framework/answering-strategies/case-flow-2022-mbb-to-ai-native.md"
+  "$WORK_TREE/docs/superpowers/"
+  "$WORK_TREE/docs/data-file-conventions.md"
+  "$WORK_TREE/docs/self-improvement-loop.md"
+  "$WORK_TREE/docs/framework-index.md"
+  "$WORK_TREE/tools/granola_split_existing.py"
+  "$WORK_TREE/CLAUDE.local.md"
   "$WORK_TREE/.claude/skills/scan-jobs/cache.md"
   "$WORK_TREE/tools/generate_sidebiz_pitch.py"
   "$WORK_TREE/tools/generate_sidebiz_model.py"

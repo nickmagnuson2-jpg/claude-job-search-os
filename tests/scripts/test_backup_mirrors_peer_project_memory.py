@@ -1,6 +1,6 @@
 """2026-10-21: every other project's auto-memory is in the nightly backup.
 
-Peer repos (dailyidea, mag5-advisors, ...) keep their Claude Code memory under
+Other project repos keep their Claude Code memory under
 ~/.claude/projects/<slug>/memory, outside any repo, and until this loop existed nothing
 backed them up. The test runs the loop itself from the script against fake directories.
 """

@@ -36,7 +36,7 @@ Examples:
 - `/cold-outreach "Sarah Chen" Stripe "Head of Ops"`
 - `/cold-outreach "Sam Carter" "Lumen" channel:linkedin`
 - `/cold-outreach "Priya Anand" "Acme AI" "VP Operations" channel:email "interested in CoS role"`
-- `/cold-outreach "Tom Rivera" Notion "saw his talk on scaling ops"`
+- `/cold-outreach "Tom Rivera" Acme "saw his talk on scaling ops"`
 
 If no arguments provided, display usage:
 ```

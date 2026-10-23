@@ -150,7 +150,7 @@ The framework ships with four regional CV formats in `framework/style-guidelines
 
 ### Coached answers
 
-[coaching/coached-answers/](../coaching/coached-answers/) stores refined phrasings that evolve across sessions, one file per question type. You can edit these files directly to:
+`coaching/coached-answers/` (gitignored; created as you run coaching sessions) stores refined phrasings that evolve across sessions, one file per question type. You can edit these files directly to:
 - Pre-load answers for questions you expect
 - Refine phrasings the coaching sessions generated
 - Remove answers that no longer reflect your current positioning
@@ -159,11 +159,11 @@ These answers are used as evaluation benchmarks during debriefs, not as scripts.
 
 ### Pressure points
 
-[coaching/pressure-points.md](../coaching/pressure-points.md) lists specific areas that tough-mode sessions target. Adding entries here makes future tough-mode sessions probe those topics harder. Removing entries makes sessions stop targeting them.
+`coaching/pressure-points.md` (gitignored; created as you run coaching sessions) lists specific areas that tough-mode sessions target. Adding entries here makes future tough-mode sessions probe those topics harder. Removing entries makes sessions stop targeting them.
 
 ### Anti-pattern tracker
 
-[coaching/anti-pattern-tracker.md](../coaching/anti-pattern-tracker.md) tracks your anti-pattern trends over time. You generally shouldn't need to edit this manually (sessions update it automatically), but you can:
+`coaching/anti-pattern-tracker.md` (gitignored; created as you run coaching sessions) tracks your anti-pattern trends over time. You generally shouldn't need to edit this manually (sessions update it automatically), but you can:
 - Mark patterns as resolved if you've fixed them outside of sessions
 - Add notes about context that triggered a pattern
 - Reset counts if you want a fresh baseline

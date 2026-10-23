@@ -153,17 +153,16 @@ Apply all **Tailoring Rules** and **CV Quality Standards** from `framework/appli
   engineering audience their technical problem does not exist. **"The HARDER constraint is behavioral, not
   technical"** concedes both and ranks them. Prefer the comparative in any X-not-Y construction.
 - **Never downgrade a source verb (added 2026-09-14).** If `data/projects/*.md` says "Defined", write
-  "Defined". A weaker verb is justified ONLY by a dated correction comment that demands it (e.g. "Supported"
-  for the GenAI workshop per `mckinsey.md`, "Facilitated" not "stood up" per lesson #17). Silent conservatism
-  reads as hedging and Nick will catch it: "Advised is not a strong word."
+  "Defined". A weaker verb is justified ONLY by a dated correction comment in the source file that demands it.
+  Silent conservatism reads as hedging and Nick will catch it: "Advised is not a strong word."
 - **"Production" requires external users (added 2026-09-14, Nick's call).** The AI app named in `data/profile.md` is production
   (live, real users, a user-reported bug). The job-search OS is a personal system in daily use and is NOT.
   Do not write "two production AI applications". Write "two AI applications".
 - **Lane A enterprise-deployment targets get the GenAI workshop bullet (added 2026-09-14, Nick's standing
   instruction).** For any company whose customers are large enterprises adopting AI, include the McKinsey
   GenAI-workshop bullet from `mckinsey.md` "Other Studies". It is the closest thing in the corpus to coaching
-  an enterprise executive team on AI adoption. Verb is **"Supported"** per the 2026-07-20 correction (the EM
-  led it); never "developed" or "facilitated".
+  an enterprise executive team on AI adoption. Verb is **"Supported"**, per the dated correction pinned in
+  `mckinsey.md`; never "developed" or "facilitated".
 - **One engagement, one bullet (added 2026-09-14).** Do not split a single client engagement across two
   bullets to fit more detail. Merge and cut. A reader scanning bullets reads them as separate achievements.
   **Standing exception (Nick, 2026-10-21: "break the call center rule and make sure it's saved durably"):
@@ -183,24 +182,15 @@ Apply all **Tailoring Rules** and **CV Quality Standards** from `framework/appli
 **Generate every bullet from the Step 5 stubs and `data/projects/*.md`. A previous CV is a reference for
 SHAPE ONLY (section order, roughly how many bullets, how long a line runs). Never copy its bullet text.**
 
-Why this outranks the individual content rules below: on 2026-09-14 a CV was built by copying the most
-recent prior CV and editing it. Four separate defects rode across intact, and **every single one had a
-rule already written that would have caught it**:
+Why this outranks the individual content rules below: a CV built by copying a prior CV and editing it
+carries that CV's defects forward intact, and **each such defect is one an existing rule would have caught**
+(a section placed outside ADDITIONAL INFORMATION, a source verb upgraded into ownership, Learnings material
+presented as an achievement, a source verb silently downgraded).
 
-| Defect that propagated | The rule it violated, which already existed |
-|---|---|
-| Top-level `BUILDING:` section | This file, Skills section: "Building entry lives in ADDITIONAL INFORMATION and NEVER in EXPERIENCE (Nick, 2026-08-25)" |
-| "drove the move to an outcome-based roadmap" | `zuora.md:28`: source verb is "worked with stakeholders"; the pinned comment bans upgrading it into roadmap ownership |
-| "making sponsor-level metrics legible to an org built to ship features" | `zuora.md:60`: "The Key Achievements above are what goes on paper" - that clause is Learnings material describing an UNRESOLVED struggle |
-| "Advised the AI-in-the-development-lifecycle strategy" | `zuora.md:40`: source verb is "Defined". "Advised" was a silent downgrade with no correction behind it |
-
-**The diagnosis that matters:** no rule was missing. The copy path bypassed all four at once, because a
-carried-over sentence never gets checked against the source the way a freshly-written one does. Two of the
-four had ALSO shipped in the prior CV, to a live application, two weeks earlier - so copying propagated
-defects forward rather than merely repeating them.
-
-**Falsifiable check on this rule:** two other CVs generated in the same period put Building in ADDITIONAL
-INFORMATION correctly. Only the one that was copied got it wrong.
+**The diagnosis that matters:** no rule is missing. The copy path bypasses every content rule at once,
+because a carried-over sentence never gets checked against the source the way a freshly written one does.
+Defects that already shipped in the prior CV get propagated, not merely repeated. Owner-specific examples:
+`framework/interview-prep-discipline.md` (private; skip if absent).
 
 **Operationally:** open `data/projects/<slug>.md` for every bullet you write, every time. If you catch
 yourself pasting a sentence from `output/<other-company>/*.content.yaml`, stop and rewrite it from source.
@@ -213,20 +203,17 @@ Run this against every source project file you drew bullets from in Step 5/6:
 PYTHONIOENCODING=utf-8 python3 tools/source_corrections.py data/projects/<file>.md [more...]
 ```
 
-Source files carry their honesty history in HTML comments pinned to the bullet they correct. Those comments are invisible while you are reading the claim text you're paraphrasing — which is exactly how this has failed **twice**, both times with the file already read in full in the same session:
-
-- **2026-07-08:** "Ran the operating cadence" / "stood up from scratch" reintroduced the `"facilitated" not "stood up"` overclaim that `zuora.md` had carried a dated correction for since 2026-05-12.
-- **2026-08-07:** "built the POC portfolio with our head of engineering" reintroduced an overstatement the same file corrects to "partnered with."
+Source files carry their honesty history in HTML comments pinned to the bullet they correct. Those comments are invisible while you are reading the claim text you're paraphrasing, which is exactly how this has failed more than once, each time with the source file already read in full in the same session: a drafted bullet reintroduced an overclaimed verb that the source file had carried a dated correction against for months. Owner-specific examples: `framework/interview-prep-discipline.md` (private; skip if absent).
 
 For each correction returned, check the drafted line against the **corrected** wording, not the original claim. A correction that says "keep this wording, but the underlying fact is X" (there is one live example) means the CV line stands and the *cheat sheet* must carry the real fact — do not silently rewrite the bullet.
 
-Also grep the drafted content YAML for `—` before first render. No em dashes, ever (hard project rule). Both fires shipped 3-4 of them in the Summary section.
+Also grep the drafted content YAML for `—` before first render. No em dashes, ever (hard project rule). Past fires shipped several of them in the Summary section.
 
 **Why here and not Step 10b:** both failures were caught only by the 6-agent deep review, after the render. This check costs one command and runs before the expensive pass. Origin: `memory/feedback_cv_em_dash_and_source_verb_regression.md`.
 
 ### Step 6b: Inline Quality Review (mandatory — do NOT skip)
 
-Before generating the cheat sheet, run all 18 checks from `framework/application-workflow.md` § CV Quality Checks against the CV you just produced. Fix any issues found **in place** — rewrite the CV, don't just flag problems.
+Before generating the cheat sheet, run all 20 checks from `framework/application-workflow.md` § CV Quality Checks against the CV you just produced. Fix any issues found **in place** — rewrite the CV, don't just flag problems.
 
 After all fixes, record a QC summary using the template in `framework/application-workflow.md` § QC Summary Template.
 

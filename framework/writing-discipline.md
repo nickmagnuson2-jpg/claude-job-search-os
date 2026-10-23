@@ -113,8 +113,8 @@ The minimal-diff rule in `voice-pure-dictation.md` constrains what may be ADDED.
 
 | Pair | Score | Detail |
 |---|---|---|
-| `driving-org-change` | **DRIFT** | Nick's stated point was the post-acquisition change and the 600-person scale. The first note reads "Opener buries the user - start with the exec problem, not the org-chart framing," instructing removal of exactly that framing. Scale and change-context appear in none of the seven notes. |
-| `why-did-you-leave` | **PARTIAL** | Every beat survives and Nick's ordering is preserved. Weighting inverts on one beat: Nick called AI skill-building "the added benefit"; the annotation calls the structure "the central move" and invests further in that beat. |
+| `driving-org-change` | **DRIFT** | Answer A's stated point was the change context and the size of the organization involved. The first polish note redirected the opener to a different framing, instructing removal of exactly that context. Scale and change-context appear in none of the seven notes. |
+| `why-did-you-leave` | **PARTIAL** | Every beat survives and the original ordering is preserved. Weighting inverts on one beat: the raw answer framed one beat as a secondary benefit; the annotation called it "the central move" and invested further in that beat. |
 
 **The mechanism, restated more precisely than the compression theory above.** The tell in the DRIFT case is grammatical. "Opener buries the user" is phrased as a **defect**, not as "you lead with context, I would lead with the problem, which do you want?" An emphasis *choice* entered the record as a *correction*. That is cheaper to fix than compression loss: annotation proposing a different emphasis must be marked as a choice, not stated as a defect.
 

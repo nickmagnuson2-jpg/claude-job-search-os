@@ -3,6 +3,8 @@
 All notable changes to this job search system are recorded here.
 Format: newest entries at the top.
 
+Forked from raphaotten/claude-interview-coach (MIT / CC BY 4.0).
+
 ## 2026-10-21: One copy of each shared mechanism
 
 **What prompted it.** A fix to `check_save_claims.py` added a fifth way to answer "does
@@ -249,14 +251,14 @@ wiring did.
 **Five `tools/check_*.py` were built, tested, and wired to nothing (`6bde792`).** Each declared
 itself a PreToolUse hook in its own docstring and carried a passing suite. A gate wired to nothing
 is worse than an absent one, because the rule it enforces reads as promoted while nothing runs.
-`check_zuora_principal_title` and `check_workflow_scriptpath` are now wired;
+A role-title guard and `check_workflow_scriptpath` are now wired;
 `check_plan_partner_critique` is declared CLI-only in `tools/hook-unwired-allow.json`, because it
 cannot exit 2 and duplicates coverage `cross_model_gate.py:60-62` already enforces at push. Ground
 truth now: 41 gates on disk, 33 wired, 8 unwired and all 8 declared with written reasons.
 
 **Restraint was measured by replaying real history, not by guessing.** 12,990 historical tool
 calls extracted from 101 transcripts, fed through each gate as hook payloads.
-`check_zuora_principal_title` would have blocked **1 of 12,990** (0.008%), a true positive -- a
+The role-title guard would have blocked **1 of 12,990** (0.008%), a true positive -- a
 stale title in a prep doc. `check_workflow_scriptpath` would have blocked **21 of 37** Workflow
 calls, every one a true positive: 20 launches by `name` (which silently runs a cached snapshot
 rather than the file on disk) plus one `scriptPath` into a snapshot directory. A high rate on a
@@ -272,7 +274,7 @@ conversion law this project applies to rules, now applied to preconditions and w
 `CLAUDE.md` and `tools/HOOK_AUTHORING.md`.
 
 **The 2026-08-25 survivor counts those gates carried were artifacts.** "56 survivors across five"
-predated `8efb8d3`. Remeasured: `check_workflow_scriptpath` 47/0, `check_zuora_principal_title`
+predated `8efb8d3`. Remeasured: `check_workflow_scriptpath` 47/0, the role-title guard
 54/1, `check_pipeline_exit_status` 44/0, `check_scanner_examined_something` 61/0 with 4
 allowlisted, `check_banned_phrase` 74/5. The scanner result answers the original worry directly --
 18 survivors with 9 inside `_verdict` became 4 with one, and that one is a redundant fast-path the
@@ -1221,7 +1223,7 @@ Moved verbatim to `docs/data-file-conventions.md` (3,710 bytes, two contiguous s
 **Decisions & Accomplishments Logs** and **Personal Exploration — Four Kinds**. A pointer block
 stays behind carrying explicit triggers ("read before writing to data/decisions.md or
 data/accomplishments.md, routing a /remember capture between them, or creating a reflection,
-workbook, therapy doc, or identity file") rather than a bare see-also.
+workbook, private notes doc, or identity file") rather than a bare see-also.
 
 **What deliberately did NOT move**, confirming the 2026-08-13 entry's warning about this exact
 section: `### Write-Only Files` stayed resident. The audit script scores it reference-shaped,
@@ -1436,7 +1438,7 @@ is now tracked in `tools/hooks/` with an installer, closing a gap where a fresh 
 **no push-time gate at all**. And the internal-only naming rule, cited by reflections for
 months, is finally written into `framework/style-guidelines.md`.
 
-**Known and deliberate:** `output/deployment-strategist/071626-magnuson.*` carries a
+**Known and deliberate:** one previously sent CV carries a
 GenAI-workshop overclaim corrected on 2026-07-08. Decision 2026-08-12: **leave as is**, it
 is the record of what was sent. The canonical reference CV was fixed so it stops
 propagating.
@@ -1498,7 +1500,7 @@ truncates `f` before `cmd` runs.
 **Personal-vault path swept.** The vault root was hardcoded in 17 places across 7 public
 files, so scrubbing any one was cosmetic. Now resolved solely via `tools/vault_paths.py`
 (env var or gitignored `tools/.personal-vault.conf`). No fallback by design — the vault holds
-sealed therapy routing, so a guessed destination is worse than stopping. Accessors are
+private-meeting routing, so a guessed destination is worse than stopping. Accessors are
 functions, not constants, so an unconfigured vault fails at *use* rather than making the
 module unimportable. Regression test greps tracked public files and fails if the root returns.
 
@@ -1591,19 +1593,19 @@ Also: `backup-data.sh` now backs up the newly-private config files, and derives 
 
 ---
 
-## 2026-06-13: Fail-closed Granola meeting classifier (sealed-therapy leak fix) + replace_all substring-collision hook
+## 2026-06-13: Fail-closed Granola meeting classifier (private-meetings leak fix) + replace_all substring-collision hook
 
 ### Added
 - **`tools/check_replace_all_safety.py`** (+ `tests/scripts/test_check_replace_all_safety.py`, 14 tests): a PreToolUse hook on `Edit`/`MultiEdit` that BLOCKs (exit 2) a `replace_all: true` call when `old_string` is a short single token (no whitespace, ≤12 chars) that appears glued inside a longer word in the target file — the substring-corruption class where `"Ann"` → `"Anne"` silently expands an existing `"Anne"` to `"Annee"` everywhere. Word-char (`\w`) adjacency is the only danger signal, so punctuation-bounded matches (`color` inside `background-color`) don't fire; the block message surfaces the exact longer words it would alter. Fail-open on unreadable target / bad stdin / internal error; `REPLACE_ALL_OVERRIDE=1` bypasses for confirmed-intentional cases. Wired into the `PreToolUse` array in `.claude/settings.json`. Hook-tier promotion of the Edit-`replace_all` surface of `feedback_replace_all_substring_check` from behavioral to enforced — **supersedes the 2026-06-04 parked note** that flagged this as the one genuinely hook-able should-promote held back from the memory restructure. Commit `37cfb41`.
 
 ### Fixed
-- **Closed the sealed-therapy-to-inbox leak in the Granola cron.** A name-less / mis-titled therapy session (no attendees, innocuous title) previously defaulted to `"networking"` and got posted to `data/inbox.md` + the voice corpus. The title-keyword-only classifier is replaced by **`classify_meeting(meeting, config)`**, a three-way, fail-closed classifier returning `therapy | networking | unknown`: an attendee on the therapist allowlist or a generic therapy title keyword → `therapy` (sealed to the personal vault, never inbox); the no-attendee branch with a therapist name in the transcript → `therapy`; an external (non-Nick, non-therapist) attendee → `networking` (the only class that reaches inbox + voice corpus); everything else → **`unknown`, which FAILS CLOSED — persisted nowhere and flagged for manual `/granola-pull`**. The orchestrator fetches the full note for attendees and classifies once, threading the resolved type into persistence so routing and storage can't disagree; the transcript-name scan is confined to the no-attendee branch so a real call that merely mentions a therapist's name is never mis-sealed. Wired into both the cron (`granola_auto_debrief.py`) and the manual path (`granola_cli.py`, which now exits 2 on `unknown` asking for an explicit `--type`). 14 new tests (`tests/scripts/test_granola_classify.py`); full suite 471 passing. Commit `6dcf357`.
+- **Closed a private-meetings-to-inbox leak in the Granola cron.** A mis-titled private meeting with no attendees previously defaulted to `"networking"` and was posted to `data/inbox.md` and the voice corpus. The title-keyword-only classifier is replaced by **`classify_meeting(meeting, config)`**, a three-way, fail-closed classifier: a meeting matching the private allowlist or private title keywords is routed to the personal vault and never to the inbox; a meeting with an external attendee is classified `networking` (the only class that reaches the inbox and voice corpus); everything else is **`unknown`, which fails closed: persisted nowhere and flagged for a manual pull**. The orchestrator fetches the full note for attendees and classifies once, passing the resolved type into persistence so routing and storage cannot disagree. Wired into both the cron (`granola_auto_debrief.py`) and the manual path (`granola_cli.py`, which now exits 2 on `unknown` and asks for an explicit `--type`). 14 new tests (`tests/scripts/test_granola_classify.py`); full suite 471 passing. Commit `6dcf357`.
 
 ### Changed
-- **Therapist PII scrubbed from public code.** Real therapist identities (names + emails) moved to the gitignored `tools/.therapy-classifier.txt` (new `.gitignore` entry, loaded at runtime); public code carries only generic keywords. Genericized stray therapist names in `granola_split_existing.py` and `granola_save.py` example paths/docstrings. Commit `6dcf357`.
+- **Private-meeting PII scrubbed from public code.** Real names and emails used by the classifier moved to a gitignored config file loaded at runtime; public code carries only generic keywords. Stray real names in example paths and docstrings were replaced with generic ones. Commit `6dcf357`.
 
 ### Origin
-- The leak case is the exact mis-titled, attendee-less in-person therapy session that `feedback_granola_autotitle_unreliable_for_classification` warned about — auto-titles can't be trusted for meeting-type classification, so the cron now classifies by attendee/transcript signal and fails closed when it can't. The hook closes the REOPEN gate parked in the 2026-06-04 memory-restructure entry (`feedback_replace_all_substring_check`, the `Smit`→`Smith`→`Smithh` corruption class).
+- The leak case was a mis-titled, attendee-less private meeting, the case `feedback_granola_autotitle_unreliable_for_classification` warned about: auto-titles cannot be trusted for meeting-type classification, so the cron now classifies by attendee and transcript signal and fails closed when it cannot. The hook closes the REOPEN gate parked in the 2026-06-04 memory-restructure entry (`feedback_replace_all_substring_check`, the `Smit`→`Smith`→`Smithh` corruption class).
 
 ---
 
@@ -1651,7 +1653,7 @@ Also: `backup-data.sh` now backs up the newly-private config files, and derives 
 - **`.claude/skills/generate-cv/SKILL.md`**: Step 9b now renders a PNG; new **Step 9b-verify** (mandatory PNG layout + page-count check before presenting); Step 10b now **auto-applies the deep review's high-confidence objective fixes** (filler, skills, layout, one-page) and re-verifies, leaving the user only voice/judgment calls.
 
 ### Origin
-- 2026-06-11 a recruiter-channel deployment CV took ~10+ user rounds, almost all mechanical cleanup the deep review had already flagged (IBM filler, skills grouping/case, redundant summary location line, two-page length) plus layout guessed from markdown instead of a render. Nick: "put it into the system so we don't have to do that again." Memories: `feedback_cv_first_draft_quality_defaults`, `feedback_cv_summary_must_be_standable`, `reference_rendercv_layout_tricks`, `feedback_zuora_principal_title_is_cpto` (CPTO title fix + source canonicalization).
+- 2026-06-11 a recruiter-channel deployment CV took ~10+ user rounds, almost all mechanical cleanup the deep review had already flagged (IBM filler, skills grouping/case, redundant summary location line, two-page length) plus layout guessed from markdown instead of a render. Nick: "put it into the system so we don't have to do that again." Memories: `feedback_cv_first_draft_quality_defaults`, `feedback_cv_summary_must_be_standable`, `reference_rendercv_layout_tricks`, a role-title guard (title fix + source canonicalization).
 
 ---
 
@@ -1739,7 +1741,6 @@ Also: `backup-data.sh` now backs up the newly-private config files, and derives 
 - **Diataxis docs reorg**: added value / flows / getting-started / FAQ docs and reorganized `docs/` navigation around the Diataxis model. Commit `dd7e0d5`.
 
 ### Changed
-- **`/scan-jobs` cache**: updated a target company's comp to the $200-320K EM band per recruiter. Commit `ab4c1ef`.
 
 ---
 
@@ -1841,7 +1842,7 @@ Also: `backup-data.sh` now backs up the newly-private config files, and derives 
 
 ### Added
 - **Verification hook stack** (`tools/check_*.py`) — `check_edit_safety.py`, `check_email_via_skill.py`, `check_draft_voice.py`, and others — PreToolUse hooks that block bad writes structurally instead of relying on behavioral discipline. Commit `6503a59`.
-- **Granola REST integration** — `tools/granola_cli.py` + `tools/granola_fetch.py` + `tools/granola_save.py` + launchd `granola-auto-debrief` plist (every 3 hrs). Auto-persists transcripts AND posts `<!-- voice: cloud-generated -->` debrief snippets to `data/inbox.md`. Therapy-classified calls skipped. Commit `2c365a4`.
+- **Granola REST integration** — `tools/granola_cli.py` + `tools/granola_fetch.py` + `tools/granola_save.py` + launchd `granola-auto-debrief` plist (every 3 hrs). Auto-persists transcripts AND posts `<!-- voice: cloud-generated -->` debrief snippets to `data/inbox.md`. Calls classified as private are skipped. Commit `2c365a4`.
 - **`/research-company` Agent 6 (Exa neural search)** — sixth research agent dedicated to Exa neural search, separate from the five Haiku agents (early pattern that became the 5/19 promotion). Commit `51cc569`.
 - **`/wispr` skill (project-local override)** — Wispr Flow voice-dictation ingestion with the four-step date+framing anchor check (Step 4.5) for dated reflection files. Commit `7951114`.
 - **Framework architecture docs** — `framework/personal-vs-job-os-architecture.md` (the personal vault relocation decision from 2026-05-04), `framework/two-tier-capture.md` (voice-pure tier + synthesis tier), `framework/overnight-queue-design.md` (sealed-aware background processing). Commit `7951114`.

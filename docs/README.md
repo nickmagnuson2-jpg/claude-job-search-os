@@ -7,9 +7,9 @@ Navigation for all project documentation. The reader-facing docs are organized b
 | File | Purpose |
 |------|---------|
 | [CLAUDE.md](../CLAUDE.md) | Project instructions, loaded every session |
-| [memory/MEMORY.md](../memory/MEMORY.md) | Loaded every session — critical context + a router to the topic shards below |
-| memory/index-\<topic\>.md | Full memory index, split into 11 topic shards (outreach, coaching, research, tools, hooks, repo-ops, agents, verification, system, personal, projects); loaded on demand per the router. Was 7 until the 2026-08-13 split, when `tools` and `system` went 1.7x and 1.5x over the ~24KB read budget. |
-| [memory/lessons.md](../memory/lessons.md) | Correction tracking, reviewed before skill edits, data ops, CV generation |
+| `MEMORY.md` (Claude Code's auto-memory folder, outside the repo) | Loaded every session: critical context and pointers to the memory rule files |
+| `memory/index-<topic>.md` (private, outside the repo) | Memory index split into topic shards (outreach, coaching, research, tools, and so on), loaded on demand. Lives in Claude Code's auto-memory folder, not in the public repo |
+| `memory/lessons.md` (gitignored, created on first use) | Correction tracking, reviewed before skill edits, data ops, CV generation |
 
 ---
 
@@ -37,10 +37,9 @@ Look-it-up material. Precise, scannable, not meant to be read front to back.
 
 | File | Purpose |
 |------|---------|
-| [usage.md](usage.md) | Every skill with argument syntax, worked examples, the PDF pipeline, hook override flags |
-| [tools-reference.md](tools-reference.md) | Tool tables: atomic write scripts, launchd background jobs, private local config, multi-agent workflow templates. Read before invoking any `tools/*.py` script (argument order, flag placement, `--repo-root` position). Moved out of CLAUDE.md 2026-08-13. |
-| [data-file-conventions.md](data-file-conventions.md) | The decisions/accomplishments append-only logs and their boundaries; the four kinds of personal exploration and which take a `YYYY-MM-DD-` prefix; the therapy two-tier and reflections two-voice patterns. Moved out of CLAUDE.md 2026-08-14. |
-| [framework-index.md](framework-index.md) | What the method inside each framework doc actually is, not just that it exists: the McKinsey 7-step method and MECE issue trees, SMB decision analysis for irreversible calls, slide craft (ledes, 30-second test, page anatomy), resume standards and the 16-point checklist, interview workflow, and the six answering strategies. Read before applying one of those methods, tailoring a CV, or prepping an interview. Moved out of CLAUDE.md 2026-09-14; both sections measured rule density 0.00. |
+| [usage.md](usage.md) | Every skill with argument syntax, worked examples, and the PDF pipeline |
+| [hooks.md](hooks.md) | The complete list of hooks: what each one blocks or warns on, and when it runs |
+| [tools-reference.md](tools-reference.md) | Tool tables: atomic write scripts, launchd background jobs, private local config, multi-agent workflow templates. Read before invoking any `tools/*.py` script (argument order, flag placement, `--repo-root` position). |
 | [faq.md](faq.md) | Quick answers: setup, privacy, day-to-day, voice, forking, troubleshooting |
 
 ## Explanation (understanding)
@@ -61,15 +60,15 @@ Discursive background. Read these to understand why the system is shaped the way
 
 The methodology docs skills reference instead of embedding rules inline.
 
-> **Note for forks:** a few framework docs are author-private and gitignored in the source repo, so they are not in your clone. They ship as copy-into-place **starter stubs** under [`examples/framework/`](../examples/framework/) — copy them into `framework/` (gitignored) and adapt. Any skill that references a missing framework doc degrades gracefully.
+> **Note for forks:** a few framework docs are author-private and gitignored in the source repo, so they are not in your clone. They ship as copy-into-place **starter stubs** under [`examples/framework/`](../examples/framework/). Copy them into `framework/` under the same filename (those filenames are gitignored; the rest of `framework/` is public) and adapt. Any skill that references a missing framework doc degrades gracefully.
 
 ### Application & CV
 
 | File | Purpose |
 |------|---------|
-| [application-workflow.md](../framework/application-workflow.md) | Tailoring rules, 16-point quality checklist, cheat sheet generation |
-| [style-guidelines.md](../framework/style-guidelines.md) | Tone, language conventions, CV format options, Nick's Voice patterns |
-| [voice-reference.md](../examples/framework/voice-reference.md) _(starter stub → copy to `framework/`)_ | Voice rules + verbatim exemplars for the email-drafting skills; fill from your own sent-email corpus |
+| [application-workflow.md](../framework/application-workflow.md) | Tailoring rules, 20-point quality checklist, cheat sheet generation |
+| [style-guidelines.md](../framework/style-guidelines.md) | Tone, language conventions, CV format options, the author's voice patterns |
+| [voice-reference.md](../examples/framework/voice-reference.md) _(starter stub, copy to `framework/`)_ | Voice rules + verbatim exemplars for the email-drafting skills; fill from your own sent-email corpus |
 
 ### Interview & Coaching
 
@@ -80,20 +79,20 @@ The methodology docs skills reference instead of embedding rules inline.
 
 ### Problem Solving & Communication Craft
 
-The McKinsey-derived problem-solving (7-step method) and slide-craft methodology docs are author-private and not shipped in the public repo. The skills that reference them (`/prep-interview`, `/debrief`, `/research-company`, `/research-industry`) degrade gracefully without them; the underlying methods are widely-documented public knowledge you can bring your own version of.
+The author's personal notes on the seven-step problem-solving method and slide craft are not shipped. The skills that reference them (`/prep-interview`, `/debrief`, `/research-company`, `/research-industry`) degrade gracefully without them; the underlying methods are widely-documented public knowledge you can bring your own version of.
 
 ### Data & Voice Preservation
 
 | File | Purpose |
 |------|---------|
-| [two-tier-capture.md](../examples/framework/two-tier-capture.md) _(starter stub → copy to `framework/`)_ | Principle for preserving raw voice separately from synthesized artifacts; referenced by `/debrief`, `/follow-up`, `/cold-outreach`, `/generate-cv`, `/cover-letter`, `/draft-email` |
-| [voice-pure-dictation.md](../examples/framework/voice-pure-dictation.md) _(starter stub → copy to `framework/`)_ | The dictation discipline rules |
+| [two-tier-capture.md](../examples/framework/two-tier-capture.md) _(starter stub, copy to `framework/`)_ | Principle for preserving raw voice separately from synthesized artifacts; referenced by `/debrief`, `/follow-up`, `/cold-outreach`, `/generate-cv`, `/cover-letter`, `/draft-email` |
+| [voice-pure-dictation.md](../examples/framework/voice-pure-dictation.md) _(starter stub, copy to `framework/`)_ | The dictation discipline rules |
 
 ### Outreach & Networking
 
 | File | Purpose |
 |------|---------|
-| [outreach-guide.md](../examples/framework/outreach-guide.md) _(starter stub → copy to `framework/`)_ | Email frameworks, personalization logic, channel constraints, anti-patterns |
+| [outreach-guide.md](../examples/framework/outreach-guide.md) _(starter stub, copy to `framework/`)_ | Email frameworks, personalization logic, channel constraints, anti-patterns |
 
 ### Templates
 
@@ -105,4 +104,4 @@ The McKinsey-derived problem-solving (7-step method) and slide-craft methodology
 
 ## Archived
 
-Superseded docs and completed session working-notes live in [archive/](archive/). This includes the dated lessons-audits, build queues, and handoff docs from past development sessions, kept for history but out of the active index.
+Superseded docs, completed session working notes, and a few internal reference docs (data-file conventions, the self-improvement loop history, the framework index, design specs) are private and not in the public repo.

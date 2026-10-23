@@ -1,6 +1,7 @@
 <!-- This file is the orchestration brain — Claude reads it on every session.
      Personal details live in data/profile.md (gitignored).
-     Everything else works as-is. -->
+     Owner-specific paths and details live in CLAUDE.local.md (private).
+     A fork should rewrite the rules that name the owner. -->
 
 # AI Job Search System
 
@@ -15,12 +16,12 @@ End-to-end job search OS. See [README.md](README.md) for description, `docs/usag
 - **Profile guard.** Before any generative or research skill, verify `data/profile.md` and `data/goals.md` exist with real content (not TODOs). If either is missing or all TODOs, stop and tell the user to run `/import-cv` (profile) or fill `data/goals.md` from `framework/templates/goals.md`. Never fall back to generic candidate context.
 - **No em dashes** (—) in any output Nick will send. Use commas, periods, or hyphens.
 - **Never draft email bodies inline in chat.** Any outgoing email — subject + greeting + body + signoff, or any subset that constitutes a draftable message — MUST go through `/draft-email`, `/cold-outreach`, or `/follow-up`. The hook stack (`check_email_via_skill.py` + `check_draft_voice.py` + `.pending-draft.source` marker) gates the *tool-call* surface (Write/Edit/Bash on draft files); inline chat drafts bypass that surface entirely. Skill-tier voice anchoring (matched exemplar from `framework/voice-reference.md`) cannot fire when no skill runs. If Nick says "draft something quickly" or "send a quick note," the answer is to invoke the skill — not to skip it. Origin: 2026-05-20 inline-draft incident; tier escalation per `memory/feedback_llm_self_policing_fails.md`.
-- **`data/project-background/` is sealed, and lives OUTSIDE this repo** in `../job-search-sealed/` (2026-10-13; never copy it back into the tree). Contents never appear in CVs, cover letters, recruiter prep, voice exports, networking notes, or any external-facing artifact.
+- **`data/project-background/` is sealed, and lives OUTSIDE this repo** in a sibling `-sealed` directory (path in `CLAUDE.local.md`; never copy it back into the tree). Contents never appear in CVs, cover letters, recruiter prep, voice exports, networking notes, or any external-facing artifact.
 - **Personal facts** live in gitignored files (`data/profile.md`, `data/goals.md`, `data/professional-identity.md`). Public-fork-safe.
-- **Never infer or upgrade Nick's role titles or scope from thin context.** His McKinsey title was **Associate**, which is the management-consultant role at McKinsey (marketplace + customer-engagement transformations). Nick's own framing, 2026-09-21: *"I was an associate, which is a management consultant at McKinsey."* **Both are correct and the choice is audience-dependent** - "Associate" is the literal title and the sourced fact (`data/projects/mckinsey.md`, 10/2022-02/2024), "management consultant" describes the work and reads better to a non-consulting audience. Stating "Associate" is never an upgrade. What is banned is **"Engagement Manager"** or any implied seniority level. His ESPN role was **digital analytics manager/analyst within product analytics** (product + social/content performance) — NOT "SEO." Cite what he DID, never a level or function he didn't hold. Fired 3x on the same shape (2026-06-22 at a target company: "ran SEO at ESPN"; 2026-06-25 at another + 2026-07-07 fit-assess: both "I am not an EM") before this rule existed — one bad inference propagates into a dossier, a prep doc, and a live interview opener before Nick catches it. See `memory/reference_nick_mckinsey_role.md` and `memory/reference_nick_espn_role_is_product_analytics.md`.
+- **Never infer or upgrade the owner's role titles or scope from thin context.** Use the exact titles in `data/profile.md` and `data/projects/*.md`. Describe what the person did, never a level or function they did not hold. One wrong inference spreads into a dossier, a prep doc, and an interview opener before anyone catches it. Owner-specific detail: `CLAUDE.local.md` (private).
 - **Never assert absence without running the check this session and naming the scope.** "X doesn't exist" / "Y didn't happen" / "not found" / "no result" claims about codebase state, file contents, data records, or memory entries MUST be backed by a grep/ls/Read in the current session AND the assertion must state what was checked (e.g., "no `check_skill_shadow.py` in `tools/` per `ls`" — not bare "the hook doesn't exist"). Memory and prior-session knowledge are not sufficient — they decay. Asserting absence from memory creates ghost facts: a future audit cycle treats Claude's "not built" as authoritative and skips the verification, compounding the original error. Origin: `feedback_llm_verification_system` Rule #1 + Rule #13 (scope-limited query). **Naming the scope is not sufficient: state why that scope would have contained the thing if it existed.** Fired 2x on 2026-08-20, both WITH a named scope: a 4-file grep that omitted the file holding the rule, and an `output/` sweep for a phrase the real instrument never used (it was in `memory/lessons.md`). Family-N extends to data-state absence claims (e.g., "you haven't applied yet" — see `feedback_pipeline_applied_status_must_be_user_confirmed`, 5/28 ghost-row incident).
 - **Never make a durability, backup, sync, version-control, coverage, or RETRIEVAL-CAPABILITY claim without running the function-first tooling sweep and naming it as the scope.** **"I cannot retrieve X" / "I could not verify X" / "X is not obtainable from here" is the same claim shape and is governed identically** — added 2026-09-15 after the 7th fire, which walked past this bullet precisely because the surface list did not name it: a JS-rendered Ashby page defeated one `WebFetch`, that single failure was reported as a capability limit, and a JD was then characterized from a subagent's paraphrase, while `tools/career_scanner/ashby.py` wrapped the public posting API that returns the full text and `data/job-pipeline.md` recorded the technique in prose. **One failed method is not a scope, and a hedge is not verification** — "treat this as unconfirmed" reads as rigor and is indistinguishable from the inside from having checked. Required before any retrieval claim: `ls tools/ | grep -iE "<function>"` AND `grep -rl "<vendor/technique>" tools/ .claude/skills/ data/ output/` (**prior art lives in data, not only in code**). No git command answers "is this data backed up." `git rev-parse`, `git remote -v`, `git check-ignore`, and `find -name .git` are **repo-shape** checks; they answer "what does git see from here," and the real mechanism here is an **overlay `GIT_DIR` outside the working tree** that is invisible to every one of them. Required before any such claim: `ls tools/ | grep -iE "backup|sync|push|mirror|archive"` and `grep -rl "git push\|rsync\|remote add" tools/ .claude/skills/`. `/data/` and `/output/` are gitignored **by design** (public repo) and are backed up by `tools/backup-data.sh` to a **private** repo, run nightly by `/checkout`; a retired decoy clone elsewhere on disk looks like evidence of absence and is not. **The concrete repo name, account, overlay path, decoy path, and the `gh api ... --jq '{pushed_at}'` verification command live in the gitignored `memory/reference_private_data_backup_mechanism.md`** — read it before making the claim; it is deliberately not in this public file. **Fired 3x on the same shape** (7/8, 7/30, 7/31 — the last two asserted false absence and the 7/31 fire also misdirected Nick to verify Obsidian Sync instead of surfacing that the real backup was a day stale). See `memory/feedback_prefer_extending_existing_infra_over_new_build.md` and `memory/reference_private_data_backup_mechanism.md`.
-- **`grep` here skips gitignored trees. Name `data/` and `output/` explicitly, or the search is blind.** The shell's `grep` resolves to a ripgrep-backed wrapper that honors `.gitignore`. `/data/` and `/output/` are gitignored by design (public repo) and hold nearly all the real content: dossiers, reflections, generated CVs, pipeline artifacts. **A repo-root `grep -ri "<term>" .` cannot see any of it and returns an empty result indistinguishable from a true negative.** Adding `--exclude-dir=.git` makes it look deliberately scoped while changing nothing. Any search establishing presence or absence must either name the trees (`grep -ri "<term>" data/ output/`) or bypass the wrapper entirely: `find . -path ./.git -prune -o -path ./memory/canonical-sidecar -prune -o -path ./memory/global-claude-mirror -prune -o -name '*.md' -print | xargs /usr/bin/grep -l "<term>"`. **Both prunes are mandatory, not optional:** those two trees are rsync backup copies of the live memory tier (see Repository Structure above), so omitting them silently doubles every hit and makes a one-location result look like corroboration from two. **Fired 2x** (2026-08-07: a contact search returned nothing while a dossier and three output dirs existed; 2026-08-12: a sweep for a corrected-away CV overclaim returned nothing while **43 files** carried it, on a PII-relevant back-propagation task). This is the concrete meaning of "name the scope" in the absence-assertion rule above. See `memory/feedback_grep_is_ripgrep_gitignore_blindspot.md`.
+- **`grep` here skips gitignored trees. Name `data/` and `output/` explicitly, or the search is blind.** The shell's `grep` resolves to a ripgrep-backed wrapper that honors `.gitignore`. `/data/` and `/output/` are gitignored by design (public repo) and hold nearly all the real content: dossiers, reflections, generated CVs, pipeline artifacts. **A repo-root `grep -ri "<term>" .` cannot see any of it and returns an empty result indistinguishable from a true negative.** Adding `--exclude-dir=.git` makes it look deliberately scoped while changing nothing. Any search establishing presence or absence must either name the trees (`grep -ri "<term>" data/ output/`) or bypass the wrapper entirely: `find . -path ./.git -prune -o -path ./memory/canonical-sidecar -prune -o -path ./memory/global-claude-mirror -prune -o -name '*.md' -print | xargs /usr/bin/grep -l "<term>"`. **Both prunes are mandatory, not optional:** those two trees are rsync backup copies of the live memory tier (see Repository Structure above), so omitting them silently doubles every hit and makes a one-location result look like corroboration from two. **Fired 2x** (2026-08-07: a contact search returned nothing while a dossier and three output dirs existed; 2026-08-12: a sweep for a corrected phrase returned nothing while **43 files** carried it). This is the concrete meaning of "name the scope" in the absence-assertion rule above. See `memory/feedback_grep_is_ripgrep_gitignore_blindspot.md`.
 - **Name the scope in the same sentence as the conclusion, or do not state the conclusion.** Every ratio, percentage, or "N of M" is reported with its denominator AND how that denominator was obtained. Three shapes, one defect: (1) **scope narrower than the claim** — scanning 64 of 883 transcript files and reporting a corpus-wide percentage; (2) **premise never checked** — asserting the mechanism ("recall injection is how the corpus is consulted") then reasoning confidently from it, when it measured 2 against 290; (3) **cause inferred from a count** — "promoted rules are read 69% vs 38%," true and almost entirely an artifact of having read those files *in order to* promote them the same day (controlled: 11% vs 5%). This is worse than being obviously wrong: the number is real and the sentence is confident, so it propagates into files a future session trusts. Before any ratio, check the glob's own coverage (`find | wc -l` against the directory you believe you searched). **When a new number contradicts a number you already have, the contradiction IS the finding — reconcile before reporting either.** **Fired 5x on 2026-08-13 alone**, the last two hours after three sibling rules about it were written and still sitting `promoted: no`. See `memory/feedback_name_the_scope_before_stating_the_conclusion.md`.
 - **A green test is not evidence. Mutation survival is.** Before claiming a test protects a behavior — in a commit message, a completion report, or to Nick — break that behavior on purpose and confirm a test dies: `PYTHONIOENCODING=utf-8 python3 tools/mutation_check.py <file> --isolation`. Exit 2 means the suite is decorative at that spot. **A surviving mutant is acceptable ONLY with a written reason in `tools/mutation-allow.json`**; an empty reason fails the run, because an allowlist without justification is how this decays back into "green means done." Run the `--isolation` half too: a test file must pass ALONE, not only inside the suite. **Fired 4x in one session (2026-08-19), every shape green at the time:** a flag deciding whether PRIVATE mail lands in this PUBLIC repo could be made a no-op with zero failures; two PII-denylist parsers could `return set()` with 20/20 passing; a guard test went vacuous when its own inputs died; and four tests failed when run alone while 2000 passed together, hiding a live `ImportError`. **A check also inherits the tolerance of its instrument.** 2026-08-20: malformed YAML was written, verified with the lenient in-house parser, and reported clean; a stricter reader caught it 20 min later. Verify with the strictest reader downstream, never the most convenient one. Writing tests that pass is not the goal — writing tests that would FAIL if the code broke is. Those are different properties and only the second is worth having.
 - **Investigate before answering when factual claims about code, files, or data are involved.** Never speculate about a file, function, configuration, or data record you have not opened in this session. If the user references a specific file/skill/hook/data row, read it before answering. Memory and prior-session knowledge can be stale — the source is canonical, memory is a pointer. Composes with the absence-assertion rule above: stating "X exists" and "X doesn't exist" both require this-session evidence. Origin: Anthropic prompting guide (2026-05-28) + 13+ verify-* family rules. See [[verification-umbrella]] (`framework/verification-umbrella.md`, the Family L composite, built 2026-06-01).
@@ -42,7 +43,7 @@ After any user correction, run the **full tiered protocol** — not just a lesso
 
 ### Step 1 — Capture at memory tier (always)
 
-1. **Create** `~/.claude/projects/-Users-mag-Documents-Obsidian-30-projects-job-search/memory/feedback_<kebab-case-slug>.md`. **All six `metadata` keys are mandatory for `type: feedback`:**
+1. **Create** `<memory-dir>/feedback_<kebab-case-slug>.md` (the auto-memory folder, `~/.claude/projects/<project-slug>/memory/`; exact path in `CLAUDE.local.md`). **All six `metadata` keys are mandatory for `type: feedback`:**
 
    ```yaml
    ---
@@ -101,9 +102,9 @@ Record `promoted_date` + `exit_path`, or the promotion is unobservable and the d
 
 ### Step 4 — Scan on relevant sessions
 
-Scan `memory/MEMORY.md` (auto-loaded every session — Critical Context + the Topic Shards router) at the start of relevant work, and `memory/lessons.md` on skill-edit / data-ops / CV-gen sessions. For anything beyond Critical Context, load the relevant `memory/index-<topic>.md` shard(s) named in the router table — that is where the actual index entries live, not in MEMORY.md itself. Full memory files load on demand via recall.
+Scan `memory/MEMORY.md` (auto-loaded every session — Critical Context + the Topic Shards router) at the start of relevant work, and `memory/lessons.md` on skill-edit / data-ops / CV-gen sessions. For anything beyond Critical Context, find rule files with `grep` over the memory folder; the `index-<topic>.md` shards are frozen archives. Full memory files load on demand via recall.
 
-**Origin incidents behind these steps, plus the anti-pattern list** → `docs/self-improvement-loop.md`. Read it when you want the incident a step came from, when deciding whether a step applies to an edge case, or when auditing whether this loop is working. **That file contains no directives and does not restate this protocol** — the procedure lives here and only here, so there is nothing to keep in sync. The pre-2026-08-18 verbatim text is in git (`git show 67e0ada:CLAUDE.md`).
+**Origin incidents behind these steps, plus the anti-pattern list** → `docs/self-improvement-loop.md` (private, local only). Read it when you want the incident a step came from, when deciding whether a step applies to an edge case, or when auditing whether this loop is working. **That file contains no directives and does not restate this protocol** — the procedure lives here and only here, so there is nothing to keep in sync.
 ## Repository Structure
 
 ```
@@ -112,16 +113,16 @@ coaching/          coached-answers/, pressure-points/, anti-pattern-tracker.md, 
 data/              Owner data (profile.md, goals.md, professional-identity.md gitignored)
   ├─ company-notes/, industry-notes/, projects/
   ├─ people/               Per-person relationship dossiers (active relationships only; no date prefix)
-  ├─ (project-background/ is NOT here: sealed, in ../job-search-sealed/data/)
+  ├─ (project-background/ is NOT here: sealed, in a sibling directory outside the repo)
   ├─ reflections/          Snapshots of Nick's processing (date-prefixed)
   └─ workbooks/            Reusable frameworks (no date prefix)
 .claude/skills/    40 slash-command skill definitions
 memory/            ⚠️ THREE PHYSICAL ROOTS, not one. Resolve before asserting any file is absent.
-  ├─ ~/.claude/projects/-Users-mag-Documents-Obsidian-30-projects-job-search/memory/
+  ├─ ~/.claude/projects/<project-slug>/memory/
   │                    THE LIVE TIER (910 files, measured 2026-09-15). MEMORY.md (router + Critical
   │                    Context), index-<topic>.md shards (11), all feedback_/reference_/
   │                    project_/user_ files, archive-*.md. Does NOT hold lessons.md.
-  ├─ <repo>/memory/    Every relative `memory/...` path in CLAUDE.md and skills resolves HERE.
+  ├─ <repo>/memory/    `memory/lessons.md` and `memory/friction-log.md` resolve HERE; `memory/feedback_*` and `memory/reference_*` resolve to the auto-memory folder above.
   │                    Holds lessons.md, friction-log.md, archive-2026-04-orphans.md. Gitignored.
   └─ <repo>/memory/canonical-sidecar/ + global-claude-mirror/
                        BACKUP DESTINATIONS ONLY, rsync'd by tools/backup-data.sh so the
@@ -164,20 +165,20 @@ PostToolUse hook warns when Edit hits an affected file.
 
 ### Decisions, accomplishments, and personal-exploration files
 
-> **Moved 2026-08-14 → [`docs/data-file-conventions.md`](docs/data-file-conventions.md)**
+> **Moved 2026-08-14 → `docs/data-file-conventions.md`** (private, local only)
 > (verbatim; relocated to hold this file under its 40 KB always-loaded budget).
 >
 > **Read it before:** writing to `data/decisions.md` or `data/accomplishments.md` ·
 > routing a `/remember` capture between those logs · creating a reflection, workbook,
-> therapy doc, or identity file · deciding whether a new file takes a `YYYY-MM-DD-` prefix.
+> personal processing doc, or identity file · deciding whether a new file takes a `YYYY-MM-DD-` prefix.
 >
 > **It covers:** the two append-only logs and their boundaries; the four kinds of personal
-> exploration and which get date prefixes; the therapy two-tier pattern; the reflections
+> exploration and which get date prefixes; the two-tier pattern for sensitive captures; the reflections
 > two-voice pattern.
 
 ### Identity docs, workbook destinations, and the project schema
 
-> **Moved 2026-09-03 → [`docs/data-file-conventions.md`](docs/data-file-conventions.md)**
+> **Moved 2026-09-03 → `docs/data-file-conventions.md`** (private, local only)
 > (verbatim; relocated to hold this file under its 40 KB always-loaded budget).
 >
 > **Read it before:** writing to `data/profile.md`, `data/professional-identity.md`, or
@@ -214,12 +215,12 @@ Never use a CV bullet as an interview answer or a spoken story as a CV bullet.
 
 ## Frameworks, Resume Standards & Interview Workflow
 
-> **Moved 2026-09-14 → [`docs/framework-index.md`](docs/framework-index.md)** (verbatim, by
+> **Moved 2026-09-14 → `docs/framework-index.md`** (private, local only) (verbatim, by
 > `/trim-context-file`; both sections measured rule density 0.00).
 >
 > **Read it before:** applying the McKinsey 7-step method or building an issue tree · running an
 > irreversible SMB decision (takeover, lease, capital) · producing any artifact an audience will
-> scan first (prep PDF, dossier, cover letter) · tailoring a CV or running the 16-point checklist ·
+> scan first (prep PDF, dossier, cover letter) · tailoring a CV or running the 20-point checklist ·
 > prepping or debriefing an interview.
 >
 > **It covers:** `framework/problem-solving-mckinsey.md`, `framework/smb-decision-analysis.md`,

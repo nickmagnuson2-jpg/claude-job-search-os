@@ -69,7 +69,7 @@ def test_known_company_routes_to_company_note(tmp_path):
 def test_profile_update_detected(tmp_path):
     """Note with compensation keyword (no entity match) → profile_update destination."""
     result = run_script("remember_classify.py",
-                        "--note", "compensation floor is $130K, ceiling $180K",
+                        "--note", "compensation floor is $95K, ceiling $120K",
                         "--repo-root", str(tmp_path))
     assert _types(result) == ["profile_update"]
     assert result["ambiguous"] is False

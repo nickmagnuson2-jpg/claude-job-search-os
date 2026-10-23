@@ -170,3 +170,14 @@ frames/
 .coverage
 # Names private trees; the mechanism is public, the list is not.
 tools/.sealed-paths.conf
+
+# Private working docs, untracked 2026-10-23 before the public link went out
+/docs/superpowers/
+/docs/data-file-conventions.md
+/docs/self-improvement-loop.md
+/docs/framework-index.md
+/framework/answering-strategies/case-flow-2022-mbb-to-ai-native.md
+/tools/granola_split_existing.py
+/tools/.session-mutations*.json
+/CLAUDE.local.md
+/tests/skills/SCAN_CONTACTS_TESTING.md

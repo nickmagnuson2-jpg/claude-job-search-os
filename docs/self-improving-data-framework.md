@@ -11,8 +11,8 @@ How the 11 behavioral patterns in the global CLAUDE.md snippet map to this proje
 **Global rule:** Additive-only updates, approval-gated, no fabrication.
 
 **Project implementation:**
-- `framework/data-enrichment.md` (lines 40-42) — "Wait for the candidate to confirm before writing anything"
-- `.claude/skills/import-cv/SKILL.md` (lines 17-21) — merge logic for repeated imports
+- `framework/data-enrichment.md` — "Wait for the candidate to confirm before writing anything"
+- `.claude/skills/import-cv/SKILL.md` — merge logic for repeated imports
 - Every skill that writes to `data/` files follows this pattern inline
 
 ### 2. Post-Session Enrichment
@@ -20,18 +20,18 @@ How the 11 behavioral patterns in the global CLAUDE.md snippet map to this proje
 **Global rule:** Scan for new information after working sessions, present for approval.
 
 **Project implementation:**
-- `framework/data-enrichment.md` — full 64-line procedure with 6 scan categories
-- `framework/interview-workflow.md` (line 18) — "Follow the procedure in `framework/data-enrichment.md`"
-- `.claude/skills/debrief/SKILL.md` (line 193) — enrichment pass after voice simulation debriefs
+- `framework/data-enrichment.md` — full procedure with 6 scan categories
+- `framework/interview-workflow.md` — "Follow the procedure in `framework/data-enrichment.md`"
+- `.claude/skills/debrief/SKILL.md` — enrichment pass after voice simulation debriefs
 
 ### 3. Research Freshness
 
 **Global rule:** Staleness checks with `Last updated:` headers, refresh deltas.
 
 **Project implementation:**
-- `.claude/skills/research-company/SKILL.md` (lines 82-91) — 14-day freshness check, auto-refresh, "What Changed" section
-- `.claude/skills/act/SKILL.md` (lines 26-29) — builds fresh dossier map from `Last updated:` headers
-- `.claude/skills/weekly-review/SKILL.md` (lines 74-78) — freshness reporting in weekly retrospectives
+- `.claude/skills/research-company/SKILL.md` — 14-day freshness check, auto-refresh, "What Changed" section
+- `.claude/skills/act/SKILL.md` — builds fresh dossier map from `Last updated:` headers
+- `.claude/skills/weekly-review/SKILL.md` — freshness reporting in weekly retrospectives
 
 ### 4. Longitudinal Logging
 
@@ -66,7 +66,7 @@ How the 11 behavioral patterns in the global CLAUDE.md snippet map to this proje
 **Global rule:** Voice matching, quality gates, outreach anti-patterns.
 
 **Project implementation:**
-- `framework/outreach-guide.md` — comprehensive outreach reference (frameworks, quality gates, metrics, anti-patterns, tone matching)
+- `framework/outreach-guide.md` (private; start from the stub at [`examples/framework/outreach-guide.md`](../examples/framework/outreach-guide.md)) — comprehensive outreach reference (frameworks, quality gates, metrics, anti-patterns, tone matching)
 - `.claude/skills/cold-outreach/SKILL.md` — 9-step process with waterfall personalization and three-question quality gate
 - `.claude/skills/follow-up/SKILL.md` — sequence-aware follow-ups with value-add logic
 - `.claude/skills/draft-email/SKILL.md` — type-detected email drafting with channel constraints
@@ -77,7 +77,7 @@ How the 11 behavioral patterns in the global CLAUDE.md snippet map to this proje
 **Global rule:** Handle missing data, first-run scenarios.
 
 **Project implementation:**
-- `CLAUDE.md` Profile Guard (lines 42-49) — stops generative skills if profile/goals are missing, with specific remediation instructions
+- `CLAUDE.md` Profile guard rule (Hard Rules) — stops generative skills if profile/goals are missing, with specific remediation instructions
 - `.claude/skills/standup/SKILL.md` — works with whatever data exists, notes gaps
 - `.claude/skills/weekly-review/SKILL.md` — generates baseline metrics on first run
 

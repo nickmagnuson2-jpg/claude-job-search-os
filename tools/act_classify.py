@@ -380,7 +380,7 @@ def classify_todo(row: dict, today: date, dossier_map: dict) -> tuple[str, dict]
 def _extract_company_slug_from_task(task: str) -> str | None:
     """
     Try to extract a company slug from task text like:
-    'Research Acme AI' or 'Deep-dive research Ebb Carbon'
+    'Research Acme AI' or 'Deep-dive research Globex Labs'
     """
     m = re.search(
         r"(?:research|deep-dive research)\s+([A-Z][A-Za-z0-9\s&]+?)(?:\s*—|\s*\(|\s*;|$)",

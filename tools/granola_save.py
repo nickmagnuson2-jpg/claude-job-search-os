@@ -20,8 +20,8 @@ Subcommands:
 JSON shape (passed via --input file or stdin):
   {
     "meeting_id": "uuid",
-    "title": "Provider - Couples Therapy",
-    "captured": "2026-05-01 23:05",
+    "title": "Provider - Weekly Session",
+    "captured": "2026-01-01 09:00",
     "transcript": "...",                    // verbatim (Me:/Them: or Speaker A/B)
     "summary": "...",                       // Granola's AI summary, markdown
     "private_notes": "..." (optional),       // Notes Nick typed in Granola (his voice)
@@ -32,7 +32,7 @@ JSON shape (passed via --input file or stdin):
 
 Example:
   echo '{...}' | PYTHONIOENCODING=utf-8 python3 tools/granola_save.py write \\
-    --output <personal-vault>/data/therapy/2026-05-04-therapy-provider-transcript.md
+    --output <personal-vault>/data/therapy/2026-01-01-private-session-transcript.md
   # Writes both -transcript.md AND -transcript-summary.md, with wiki-links between them.
 """
 import json

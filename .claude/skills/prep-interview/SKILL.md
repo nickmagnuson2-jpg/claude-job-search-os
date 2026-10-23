@@ -269,7 +269,7 @@ This is the highest-EV move and the #1 recurring miss. Produce all four:
 
 **In-call governor (read this line in the call):** *"Every time it comes back to me, FIRST name what they just said they needed. Then answer. One specific bridge sentence + 'that's why I want this' → then stop. No default story. No generic affirm."*
 
-**Why the governor is unconditional, not triggered (do not 'improve' this back into a cue).** Sorted by how the need was delivered, the H4 log splits 7-for-7 on needs asked DIRECTLY at Nick and **0-for-10 on needs embedded in the interviewer's own narration** (as of 2026-08-26). The old wording — "when they *name* the live need" — only fires on the direct shape, because an embedded need is never named. Two cue-shaped mitigations have been tested and failed (proof-binding 8/05 half-failed; trigger-detector 8/11 never built), and the sibling three-gesture close failed the same way on 2026-09-04 with the cue fired exactly as prescribed. What works in this corpus is the filler reset: an unconditional rehearsed action, never a live detection. This governor fires on EVERY handoff so there is nothing to notice. Full reasoning: `framework/answering-strategies/bridge-to-stated-need.md`, "The delivery-shape split".
+**Why the governor is unconditional, not triggered (do not 'improve' this back into a cue).** Sorted by how the need was delivered, the H4 log shows needs asked DIRECTLY at the candidate are bridged, while **needs embedded in the interviewer's own narration are missed**. A cue such as "when they *name* the live need" only fires on the direct shape, because an embedded need is never named. Cue-shaped mitigations have been tested and failed, including one where the cue fired exactly as prescribed. What works is an unconditional rehearsed action (the filler reset), never a live detection. This governor fires on EVERY handoff so there is nothing to notice. Full reasoning: `framework/answering-strategies/bridge-to-stated-need.md`, "The delivery-shape split". Owner-specific examples: `framework/interview-prep-discipline.md` (private; skip if absent).
 
 **Embedded-need rehearsal (aloud, once, in the T-minus-2 block):** [one sentence Nick says out loud before dialing, in the shape he would use if the need arrived buried in the interviewer's narration rather than as a question — e.g. *"So what you're describing is <their need in their words> — that's exactly what <one owned proof> was."* Modeled on the filler reset, which is the only mitigation in this corpus with a winning record: rehearse the shape cold so it is warm, rather than trusting live detection.]
 
@@ -278,7 +278,7 @@ The bridge and any story draft use ONLY details Nick explicitly provided: his ve
 
 ## Opener & Bridge Authorship (B2b — components, never a finished line)
 
-**Never write a finished opener or seam sentence into the prep doc and mark it as "the line to land."** Nick does not recite well; a line he did not generate reads as someone else's framing and he will either reject it live or deliver it flat. He thinks by reacting.
+**Never write a finished opener or seam sentence into the prep doc and mark it as "the line to land."** A memorized line the candidate did not generate reads as someone else's framing; it gets rejected live or delivered flat. Build from the candidate's reactions instead.
 
 **What the doc supplies instead:** the raw components — his current role, what the work *actually* was (per the role-title rules in CLAUDE.md Hard Rules), and the seam to the target role. Frame it as a question: *"the bridge is X + Y — what does that sound like in your words?"* Then refine from his language.
 
@@ -310,7 +310,7 @@ Add this pre-call checklist item: "Count my clarifying questions before my first
 
 **Orthogonality line (one sentence, also required):** name the pair of criteria most likely to be accused of overlap, and the one-sentence distinction. If an input appears under two criteria, that is a MECE defect and it must be resolved before the round, not defended in it. Full gate: `framework/adversarial-analysis-pipeline.md` §7.4.
 
-**Origin:** an onsite at a target company. Eight turns to establish what a named scoring criterion actually meant, and the interviewer found a real MECE violation (one metric load-bearing in two different criteria) that six days of review had never checked. Same defect fired in the other block on an integration primitive. See [[feedback_audit_frame_structure_not_only_claim_truth]] and the tracker's "Supplies a rationale when asked for a definition".
+**Origin:** a live round where the interviewer spent several turns establishing what a named criterion meant, then found a MECE violation (one metric counted under two criteria) that prior review had not checked. Owner-specific examples: `framework/interview-prep-discipline.md` (private; skip if absent). See [[feedback_audit_frame_structure_not_only_claim_truth]] and the tracker's "Supplies a rationale when asked for a definition".
 
 ## Grounded Decision Panel (B4b — whenever Nick brings a deliverable, NOT a generic critic)
 
@@ -331,17 +331,17 @@ Add this pre-call checklist item: "Count my clarifying questions before my first
 
 **One rep, five minutes, before any round where Nick presents slides.** The counterpart halts him on the frame page and refuses to let him advance; he delivers the rest of the argument with no visual aid.
 
-Every delivery rehearsal assumes the deck advances. **The likeliest real failure is being stopped on the page that carries the frame and never regaining the narrative** — in that room, slides 6 through 13 were never delivered as designed. Add to the checklist: *"If they take the floor at the frame page, I still owe them the argument. Know which three sentences carry it without the slides."*
+Every delivery rehearsal assumes the deck advances. **The likeliest real failure is being stopped on the page that carries the frame and never regaining the narrative**. When this happens, most of the deck after the frame page is never delivered as designed. Add to the checklist: *"If they take the floor at the frame page, I still owe them the argument. Know which three sentences carry it without the slides."*
 
 ## Reset-Carrier Rule (B6 — MANDATORY on every prep doc, no exceptions)
 
-**The problem this solves:** a prep doc that is correct and never read is worth zero. On one founder screen the doc was generated that morning, carried a same-day dossier refresh, and Nick did not open it. Consequence: **zero of six prepared questions asked**, the strongest unfakeable proof unused, the company's own role framing unused — and he led with five enterprise-scale signals at a small-business-motion company, which was the founder's stated reason for passing. The role mismatch was real; the doc had already corrected the frame that made it look bigger.
+**The problem this solves:** a prep doc that is correct and never read is worth zero. When a prep doc is generated but not opened before the call, **none of the prepared questions get asked**, the strongest proof goes unused, and framing corrections already in the doc (for example, matching proof scale to the company's customers) never reach the room. Owner-specific examples: `framework/interview-prep-discipline.md` (private; skip if absent).
 
 This is a **different and upstream** defect from the known read-but-not-retrieved failure (2026-07-22: the governor line was read back aloud and still did not fire live). Here the artifact never entered the loop, so every prep-doc-resident behavior-change clause — H4's live-need bridge and governor, B3's clarifying-question count, B4's bare definitions, the NN probe questions — silently did not run. **Any debrief of such a call will misattribute the resulting misses to skill rather than to non-consumption.**
 
 **The rule: bind the doc to the reset, because the reset is the only pre-call ritual with a proven execution record.**
 
-The filler reset runs reliably as the literal last action before dialing (confirmed 2026-08-06: full protocol compliance produced the corpus's best real-call filler density, 2.8%). The prep doc has no such carrier. So attach it to the one that works rather than hoping it gets read on its own:
+The filler reset runs reliably as the literal last action before dialing (it has the strongest execution record of any pre-call ritual in the coaching log). The prep doc has no such carrier. So attach it to the one that works rather than hoping it gets read on its own:
 
 **T-minus-2 → scan · T-minus-1 → reset · dial.** Nothing substantive in between.
 
@@ -353,8 +353,8 @@ The scan is exactly three things, and the prep doc must be structured so all thr
 **Generation-side requirements (enforce when writing any prep doc):**
 - The mandatory checklist item 1 above is emitted verbatim, before any tailored items.
 - **THE ONE THING**, the Live-Need Bridge block, and the questions list must each be reachable without scrolling past a wall of context — put them in the first third of the doc, or repeat them in a scan block at the top.
-- **Whose-customers line (REQUIRED, one sentence, inside THE ONE THING):** *"Their customers are ___, so the proof of mine shaped like their customer is ___."* Enterprise-scale proofs at a small-business-motion company read as mismatch even when the underlying skill transfers — and vice versa. This line is what was missing on 8/06.
-- If a late addition or dossier refresh lands after the doc is written, **fold its consequences into THE ONE THING**, do not only append a section at the bottom. On 8/06 the 09:45 refresh was appended below a 215-line doc and was never reached.
+- **Whose-customers line (REQUIRED, one sentence, inside THE ONE THING):** *"Their customers are ___, so the proof of mine shaped like their customer is ___."* Enterprise-scale proofs at a small-business-motion company read as mismatch even when the underlying skill transfers — and vice versa.
+- If a late addition or dossier refresh lands after the doc is written, **fold its consequences into THE ONE THING**, do not only append a section at the bottom. On one call a late refresh was appended below a long doc and was never reached.
 - **Primary AND reserve proof (REQUIRED, two lines, inside THE ONE THING — no new section, no new heading).** Emit exactly this shape:
 
   ```
@@ -370,7 +370,7 @@ The scan is exactly three things, and the prep doc must be structured so all thr
 
 **Debrief-side requirement:** `/debrief` must ask whether the prep doc was read before scoring any bridge or question-quality miss. A miss under non-consumption is logged against **prep artifact not consumed**, not against the skill it appears to be.
 
-**Origin:** 2026-08-06 founder screen. See `coaching/anti-pattern-tracker.md` § "Prep artifact not consumed" and that date's file in `coaching/progress/`.
+**Origin:** a founder screen. See `coaching/anti-pattern-tracker.md` § "Prep artifact not consumed" (private).
 
 ## Opening Strategy (first 60 seconds)
 [How to open the call — tone, the one thing to establish immediately, what NOT to do in opening]
@@ -441,13 +441,13 @@ If any source is missing or empty, skip that section in output (graceful degrada
 
 ### Step 4c: Expected Self-Doubt Firings (inline, mandatory; D1)
 
-Per `framework/interview-prep-discipline.md` D1. REQUIRED in every prep doc (not agent-generated, since the belief catalog is Nick-specific). Read `data/professional-identity.md` for growth edges. Seed beliefs (use the ones that fit this call): not-smart-enough, don't-deserve-the-room, can't-ask-for-help, fraud, must-be-polished-before-sharing, disagree-pays-social-cost, too-generalist.
+Per `framework/interview-prep-discipline.md` D1. REQUIRED in every prep doc (not agent-generated, since the belief catalog is candidate-specific). Read `data/professional-identity.md` for growth edges. Seed beliefs: take the candidate's belief catalog from D1 and use the ones that fit this call. If no catalog exists, ask the user which beliefs tend to fire before high-stakes calls. Owner-specific examples: `framework/interview-prep-discipline.md` (private; skip if absent).
 
 Build a table for 3-5 beliefs likely to fire in THIS call:
 
 | Belief (verbatim) | Likely trigger in this call | Rehearsed counter-move (if-then) | Somatic signal |
 
-Counter-moves must be if-then implementation intentions ("If the BCG-pedigree interviewer pushes twice, then I restate my position once before conceding"), not a vague "stay calm." Tie each belief to a professional-identity growth edge. Add one in-call reframe line: name the arousal as readiness, do not suppress it (suppression costs working memory).
+Counter-moves must be if-then implementation intentions ("If the interviewer pushes back twice, then I restate my position once before conceding"), not a vague "stay calm." Tie each belief to a professional-identity growth edge. Add one in-call reframe line: name the arousal as readiness, do not suppress it (suppression costs working memory).
 
 ### Step 4d: Drill Plan (inline, A1-A3; when pei-round OR 2+ gaps exist)
 
@@ -473,8 +473,7 @@ After all 3 agents return, compile their outputs into a single document. Do not 
 
 **Staging gates:** If the interview type is `recruiter`, add explicit staging labels throughout:
 - Mark any content that references personal experience, deeper disclosure, or operational insights with `[HM-STAGE ONLY]` or move to a separate "If You Advance" section at the bottom.
-- Recruiter-stage answer frameworks should use the most guarded framing of personal motivation (e.g., "X is personal to me" not "going through X myself").
-- For healthcare/behavioral health companies specifically: recruiters in the clinical space can infer program types from specific language. Heighten disclosure awareness in anti-patterns.
+- When the company's mission touches a personal topic, recruiter-stage answer frameworks should use the most guarded framing of personal motivation (e.g., "X is personal to me" not "going through X myself").
 
 **Self-reported metrics:** When citing company-reported outcomes (readmission rates, NPS, adherence, cost savings) in answer frameworks or company context, qualify with "they report" or "self-reported." Presenting unverified metrics as fact undermines credibility with knowledgeable interviewers.
 

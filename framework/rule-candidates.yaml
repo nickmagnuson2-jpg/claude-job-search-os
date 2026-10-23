@@ -54,12 +54,12 @@ candidates:
       window resets and the delivery date moves, or the change does not ship.
     source: post_hoc
     source_detail: >
-      Outcome debrief 2026-08-13 (private debrief record; see coaching/progress/ for the
-      dated file). Operator, unprompted: "I think I had all the building blocks, but with
-      my pivot, I just didn't have enough time to practice what I needed to say to defend it."
-      Independently corroborated: deck v1 on 8/3, v3-lean on 8/4, delivered 8/5; the blind
-      reconstruction found a criterion reworded between v1 and the delivered artifact; the
-      8/4 debrief already carried a zero-rehearsal note.
+      Outcome debrief (private debrief record in coaching/progress/). The operator,
+      unprompted, attributed the loss to a late structural change that left too little time
+      to rehearse defending the frame. Independently corroborated: several deck versions in
+      the final days before delivery; the blind reconstruction found a criterion reworded
+      between the first version and the delivered artifact; an earlier debrief already
+      carried a zero-rehearsal note.
     why_it_matters: >
       Reframes the fix. Rehearsal was not skipped through negligence, it was crowded out by
       a late structural change to the thing being rehearsed. "Rehearse more" is a discipline
@@ -201,13 +201,13 @@ candidates:
       by one and not the other as under-disclosed until reconciled.
     source: in_flight
     source_detail: >
-      2026-08-16, first live run of tools/blind_view.py against the reconstructed 2026-08-05
-      frame. The deterministic F3 finds i_csat load-bearing in e1 and e3 by set intersection.
-      A blind agent seeing names and measures only (inputs withheld) could NOT find it, and
-      the reason is in the frame, not the agent: e1's measure states "CSAT held at or above
-      3.7", while e3's measure ("how far a mistake travels: what the journey writes, and
-      whether the error is recoverable") never mentions CSAT at all, though e3 declares
-      i_csat as an input. Verified directly against the frame.
+      2026-08-16, first live run of tools/blind_view.py against a reconstructed past frame.
+      The deterministic F3 finds a quality-metric input (i_quality) load-bearing in e1 and
+      e3 by set intersection. A blind agent seeing names and measures only (inputs withheld)
+      could NOT find it, and the reason is in the frame, not the agent: e1's measure states a
+      threshold on the quality metric, while e3's measure (the impact of an error and whether
+      it is recoverable) never mentions the quality metric at all, though e3 declares
+      i_quality as an input. Verified directly against the frame.
     occurrences: 1
     first_seen: 2026-08-16
     last_seen: 2026-08-16
@@ -220,23 +220,21 @@ candidates:
     promoted: no
     rejected: no
     worked_example:
-      element: "Blast radius (e3), 2026-08-05 delivered frame"
-      declared_inputs: [i_write_surface, i_csat]
+      element: "Error impact (e3), a past delivered frame (generalized)"
+      declared_inputs: [i_error_scope, i_quality]
       measure_as_delivered: >
-        How far a mistake travels: what the journey writes, and whether the error is
-        recoverable inside the conversation or leaves your control.
+        The impact of an error: what it changes, and whether it is recoverable.
       defect: >
-        The measure declares i_csat as an input and never mentions CSAT. The room read
-        CSAT on the criterion anyway (it was on the page), so the omission was in the
-        MEASURE LINE, not in the thinking.
+        The element declares i_quality as an input and its measure never mentions the
+        quality metric. The audience read the quality metric on the criterion anyway (it
+        was on the page), so the omission was in the MEASURE LINE, not in the thinking.
       measure_disclosed: >
-        How far a mistake travels: what the journey writes, whether the error is
-        recoverable inside the conversation or leaves your control, and the DISPERSION of
-        CSAT on the affected intents. (Criterion 1 reads CSAT as an outcome LEVEL; this
-        reads its VARIABILITY, which is the known way this journey disappoints.)
+        The impact of an error: what it changes, whether it is recoverable, and the
+        DISPERSION of the quality metric on the affected cases. (Criterion 1 reads the
+        quality metric as an outcome LEVEL; this reads its VARIABILITY.)
       why_it_would_have_worked: >
         The distinction between level and dispersion is the exact answer that already
-        existed elsewhere in the artifact and never came out of his mouth. Writing the
+        existed elsewhere in the artifact and was never said aloud. Writing the
         measure to disclose its own
         input FORCES that distinction onto the criterion, where the room reads it, instead
         of leaving it in a warn box three slides away. This rule does not merely flag a
@@ -244,8 +242,8 @@ candidates:
         failure.
 
     note: >
-      EVIDENCE, from the delivery debrief. The interviewer asked, in substance, how the two
-      criteria differed when both of them named the same quality metric. So i_csat on e3 is
+      EVIDENCE, from the delivery debrief. The audience asked, in substance, how the two
+      criteria differed when both of them named the same quality metric. So i_quality on e3 is
       an ACCURATE record of what was delivered, not a transcription error, and the debrief
       calls it "a genuine MECE violation." The operator's initial read was that the metric
       had been wrongly attached; the transcript overruled it. FIX IS (a) FIX THE MEASURE,
@@ -255,7 +253,7 @@ candidates:
 
       DO NOT EDIT THE LOCKED FRAME TO APPLY THIS. Considered and rejected 2026-08-16. The
       reconstruction records what went in the room, and what went in the room is a measure
-      that did not disclose CSAT -- that omission IS the finding. Editing it would make the
+      that did not disclose the quality metric -- that omission IS the finding. Editing it would make the
       frame claim a delivery that never happened and would delete this rule's only evidence.
       Writing a second "corrected" frame was also rejected: locked: true means "this went in
       a room", so a corrected locked frame fabricates a lock, and it would have tested F9's
@@ -270,7 +268,7 @@ candidates:
       the agent re-derive, expensively and worse, what set intersection already does exactly.
 
       TWO READINGS OF THE e3 CASE, and they need different fixes. Either (a) e3 really does
-      use CSAT and its measure under-discloses -- fix the measure -- or (b) i_csat does not
+      use the quality metric and its measure under-discloses -- fix the measure -- or (b) i_quality does not
       belong on e3 and the declaration is wrong -- fix the inputs, which would also retire
       the documented F3 failure. NOT YET RECONCILED. Deciding it needs the operator, because
       only he knows what e3 was actually meant to weigh.

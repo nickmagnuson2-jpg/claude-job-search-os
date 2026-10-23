@@ -18,7 +18,7 @@ Examples:
 - `/remember "Jordan mentioned Acme is building a new site in a new metro"` → appended to Jordan Lee's contact entry in networking.md
 - `/remember "Jordan Lee replied to my email"` → updates outreach-log.md Status to Replied on Jordan Lee's newest open (Drafted/Sent) row
 - `/remember "heard back from Sarah Chen, she's happy to connect"` → updates outreach-log.md Status to Replied + logs contact note
-- `/remember "comp floor is $130K in practice, not $140K"` → appended to profile.md compensation section
+- `/remember "comp floor is $95K in practice, not $100K"` → appended to profile.md compensation section
 - `/remember "decided not to pursue Lumen — too similar to what I want to leave"` → `data/decisions.md` (prompts for what drove it / what changes if wrong)
 - `/remember "shipped the Lane B dossier"` → `data/accomplishments.md` (prompts for why it matters)
 - `/remember "Acme Series B was pre-empted by a growth fund, not a standard raise"` → appended to company research dossier or pipeline notes
@@ -129,7 +129,7 @@ Display a one-line confirmation:
 Examples:
 ```
 ✓ Remembered → data/networking.md (Jordan Lee): "Jordan mentioned Acme is building a new a new metro clinic"
-✓ Remembered → data/profile.md (Compensation): "comp floor is $130K in practice"
+✓ Remembered → data/profile.md (Compensation): "comp floor is $95K in practice"
 ✓ Remembered → data/notes.md (Decisions): "decided not to pursue Lumen"
 ✓ Remembered → data/job-pipeline.md (Acme AI) + data/networking.md (Jordan Lee): "Acme Series B was pre-empted by a growth fund"
 ✓ Remembered → inbox/20260224-143012-northwind.md: "check out Northwind" — run /act to route when ready

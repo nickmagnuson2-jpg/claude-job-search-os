@@ -9,8 +9,9 @@ This directory contains a complete, fictional candidate profile so you can try t
 Copy the example data into the repo's working directories:
 
 ```bash
-cp -r examples/data/* data/
-cp -r examples/output/* output/
+mkdir -p data output
+cp -r examples/data/. data/
+cp -r examples/output/. output/
 ```
 
 Then try any of the features below.

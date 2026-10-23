@@ -169,7 +169,7 @@ This gates attribution, not scoring. If the doc was **not read**, every prep-doc
 
 Record the answer in the per-call file's metadata block as `prep-doc: read | skimmed | unread`.
 
-Origin: 2026-08-06 founder screen — a correct, same-day prep doc went unopened; zero of six prepared questions were asked and the positioning frame the doc had already corrected is what drew the pass. Distinct from the 2026-07-22 read-but-not-retrieved failure. See `/prep-interview` § B6 Reset-Carrier Rule.
+Origin: a founder screen where a correct, same-day prep doc went unopened before the call. Distinct from a read-but-not-retrieved failure. Owner-specific examples: `framework/interview-prep-discipline.md` (private; skip if absent). See `/prep-interview` § B6 Reset-Carrier Rule.
 
 Save Nick's scores to the per-call file under `## Nick's Cold Score`.
 
@@ -205,12 +205,13 @@ Quote the `citable_claim` field verbatim. It is pre-formatted as *"N% filler, ra
 3. **Never cite a row flagged `[UNRELIABLE ATTRIBUTION]`** as a comparator. In-person captures
    put the room on the owner channel; the number is real and means nothing.
 
-**Origin, 2026-08-24.** A debrief reported *"lowest filler density in the corpus, on the highest
-Nick-word count in the corpus."* It was rank 9 of 42. The splitter had been validated correctly
-against three logged files, and that validation was treated as licence for a corpus-wide
-superlative built from a hand-picked five-row table. 25 label-corrupted transcripts were
-meanwhile parsing to zero turns and dropping out silently, hiding seven real calls that beat
-the claimed best. 13th fire of `feedback_name_the_scope_before_stating_the_conclusion`.
+**Origin, 2026-08-24.** A debrief stated a corpus-wide superlative for filler density that the
+computed ranking did not support. The splitter had been validated correctly against a few
+logged files, and that validation was treated as licence for a corpus-wide superlative built
+from a hand-picked five-row table. Label-corrupted transcripts were meanwhile parsing to zero
+turns and dropping out of the comparison without any warning. 13th fire of
+`feedback_name_the_scope_before_stating_the_conclusion`. Owner-specific examples:
+`framework/interview-prep-discipline.md` (private; skip if absent).
 **Validating the instrument is not computing the denominator.** This step exists so the correct
 move is also the cheapest one.
 
@@ -234,7 +235,7 @@ Record final scores under `## Final Scores`:
   - *Did the interviewer state a live need?* (a constraint they're under, OR a role/value description that echoes something Nick said) — Yes/No.
   - *If yes: **DELIVERY SHAPE** — was the need asked **DIRECTLY at Nick** (a question addressed to him) or **EMBEDDED in the interviewer's own narration** (surfaced while they described their problem, their week, or the role)?* — Direct / Embedded. Required whenever the first answer is Yes.
   - *If yes: did Nick bridge to it within one turn* (one specific proof + "that's why I want this", not a generic affirm or a contradicting default story)? — Yes/No, with valence (positive-match / negative-constraint).
-  - This binary is canonical input to Step 7's H4 test-log row. Track it every call; **the rate is the metric, and it is now reported STRATIFIED BY DELIVERY SHAPE**, not pooled. Pooled, H4 reads 23 Support of 24 and looks healthy; split, it is 7-for-7 direct and **0-for-10 embedded** (as of 2026-08-26). A pooled rate hid a total failure inside a strong hypothesis for ten calls.
+  - This binary is canonical input to Step 7's H4 test-log row. Track it every call; **the rate is the metric, and it is now reported STRATIFIED BY DELIVERY SHAPE**, not pooled. Pooled, the bridge hypothesis can look healthy while one delivery shape fails every time. A pooled rate hid a total failure inside a strong hypothesis for ten calls.
   - **When the shape is Embedded, also record whether the unconditional governor ran** (did Nick name what they just said they needed at the handoff, before answering?) — Yes/No. This is the 2026-09-06 mitigation and this field is how it gets tested rather than assumed. Two prior cue-shaped mitigations failed; if this one produces no movement in the embedded rate by the 5th embedded observation after 2026-09-06, it is refuted and the next escalation must not be another prep-doc line.
 
 ### Step 6: Anti-pattern check
@@ -345,7 +346,7 @@ PYTHONIOENCODING=utf-8 python3 tools/pipe_write.py --repo-root . update "<Compan
 
 3. Parse the JSON: `status: ok` → report inline `✓ Pipeline advanced: <Company> → <stage>`. `Multiple matches` or any error → show the result and ask Nick which row; never guess the company row.
 
-Origin: 2026-06-08 a target company. The Strategic Thinking round happened and `/debrief` closed every prep todo, but no step advanced the pipeline row, so it stayed "Strategic Thinking round scheduled (Mon 6/8)" and the next `/standup` surfaced it as prep-needed. Same structural lesson as Step 11's origin: a skill that consumes the trigger for an event must also advance every piece of state that event changes, not just the todos.
+Origin: an interview round at a target company happened and `/debrief` closed every prep todo, but no step advanced the pipeline row, so it stayed "round scheduled" and the next `/standup` surfaced it as prep-needed. Same structural lesson as Step 11's origin: a skill that consumes the trigger for an event must also advance every piece of state that event changes, not just the todos.
 
 ### Step 10: Predictions for next call
 

@@ -194,7 +194,7 @@ Origin: an external personal-OS system's `/eod` cascade (E3, build queue 2026-05
    ```
    Parse the JSON array (each entry has `id`, `title`, `created_at`, `local_time`).
 
-2. **Exclude therapy-classified calls silently.** A meeting whose title matches the therapy keywords in `tools/granola_auto_debrief.py` (`THERAPY_TITLE_KEYWORDS`: therapy, couples, psychiatrist, and the recurring therapist first names) is sealed personal context. Drop it from the cascade without listing it. Do not name it, count it, or hint at it in the checkout summary.
+2. **Exclude private meetings silently.** A meeting whose title matches the private-meeting keyword list in `tools/granola_auto_debrief.py` (`THERAPY_TITLE_KEYWORDS`) is sealed personal context. Drop it from the cascade without listing it. Do not name it, count it, or hint at it in the checkout summary.
 
 3. **Cross-reference each remaining meeting against existing debrief artifacts.** A meeting is "debriefed" if either:
    - a debrief file exists in `coaching/progress/` whose date matches the meeting's local date AND whose filename slug fuzzy-matches the meeting title (e.g. "recruiter screen" matches `2026-06-01-recruiter-acme.md`), OR
@@ -204,7 +204,7 @@ Origin: an external personal-OS system's `/eod` cascade (E3, build queue 2026-05
 
 4. **Surface un-debriefed meetings** under a `#### Granola Debrief Cascade` section in the checkout summary (Step 6). For each: `[local_time] — [title]` plus the exact next-step command. Do not run the command.
 
-5. If every non-therapy meeting is already debriefed, or none were found, **omit the section entirely.**
+5. If every non-private meeting is already debriefed, or none were found, **omit the section entirely.**
 
 **Graceful degradation:** if `granola_cli.py` errors (no auth, network, Granola unavailable), skip the cascade and note one line in the summary: `Granola cascade skipped (unavailable).` Do not block checkout on it.
 
@@ -326,7 +326,7 @@ If all five rows are zero, show: "> No substantive artifacts today — light day
 
 #### Granola Debrief Cascade
 - [local_time] — [meeting title] → `/debrief` (or `tools/granola_cli.py pull <id>`)
-(Un-debriefed non-therapy calls from the last 24h, per Step 4d. Propose only. Omit section entirely if all debriefed or none found.)
+(Un-debriefed non-private calls from the last 24h, per Step 4d. Propose only. Omit section entirely if all debriefed or none found.)
 
 #### Progress
 Streak: **N days** | This week: **N** | Velocity: **N.N/day** | Overdue: **↑/→/↓**

@@ -183,7 +183,7 @@ changelog already recorded and cut.
 ## 2026-08-16 | The blind view becomes a mechanism; first live run finds a frame defect | v1.5, NO standing change
 
 **Source:** in-flight. Built `tools/blind_view.py` and ran it against the reconstructed
-2026-08-05 frame, the only frame on disk with known ground truth.
+reference frame, the only frame on disk with known ground truth.
 
 **What changed, and why it is not a doc edit.** `frame-schema.yaml` says `interaction` must be
 filled by a blind agent that has "seen element names and one-line definitions only, never the
@@ -203,11 +203,11 @@ whitelist upstream means its trigger condition never occurs in production. Extra
 die. This is the "a guard whose trigger has never occurred is not yet evidence of anything"
 shape, caught only because the saboteur pass was actually run rather than assumed.
 
-**THE FINDING, which is about the frame and not the tool.** The deterministic F3 finds `i_csat`
+**THE FINDING, which is about the frame and not the tool.** The deterministic F3 finds `i_quality`
 load-bearing in e1 and e3 by set intersection. **The blind agent could not find it, and the reason
-is in the frame:** e1's measure states "CSAT held at or above the floor"; **e3's measure never mentions
-CSAT at all, though e3 declares `i_csat` as an input.** Verified directly against the frame file.
-So either e3 genuinely uses CSAT and its measure under-discloses, or `i_csat` does not belong on
+is in the frame:** e1's measure states "the quality metric held at or above the floor"; **e3's measure never mentions
+the quality metric at all, though e3 declares `i_quality` as an input.** Verified directly against the frame file.
+So either e3 genuinely uses the quality metric and its measure under-discloses, or `i_quality` does not belong on
 e3 and the declaration is wrong. **Unreconciled: it needs the operator, because only he knows what
 e3 was meant to weigh.** Raised as C006 in `rule-candidates.yaml`.
 
@@ -426,14 +426,14 @@ enforcement surface is.**
   **Operator's call, and he is right** — the objection that surfaced it was "if I'm prepared I should
   not have any gaps."
 - **The field's justification was amended, not just its shape.** It rested on "cold self-reads
-  documented as near-perfectly calibrated across five consecutive instances." The 2026-08-13 outcome
+  documented as near-perfectly calibrated across five consecutive instances." The outcome
   debrief had already corrected that — measured against an annotation, not an outcome, and graded
   against reality the self-read splits by block. The correction had never propagated here. The field
   now stands on the opposite reasoning: introspection demonstrably does not reach frame defects, so the
   informative quantity is the DIVERGENCE between this prediction and a blind agent's.
 - **`limits.required_is_documentation`** added, stating plainly that every other `required: true` in
   the schema is still unenforced and that `checks:` is the only real signal.
-- Acceptance test re-measured: **FAIL 7, was 6.** F13 fails the real 2026-08-05 reconstruction.
+- Acceptance test re-measured: **FAIL 7, was 6.** F13 fails the real reference reconstruction.
 
 **Measured, not predicted.** F13 was run against the real reconstruction after being written, not
 before: `proposals: []` and `prediction: null`, both offenders named in the output. 67 tests pass
@@ -540,14 +540,14 @@ Verified: the v1 reconstruction still returns 6 fail / 4 cannot-run / 1 pass, un
 ## 2026-08-13 | Checker built and run; acceptance test MEASURED | v1.1 -> v1.2
 
 **Source:** in-flight. First execution of `tools/check_frame_integrity.py` against the blind
-reconstruction of the 2026-08-05 frame.
+reconstruction of the reference frame.
 
 **Result: 6 FAIL, 4 CANNOT_RUN, 1 PASS.** The gate independently reproduced the known failure with
 no contamination in the chain: a blind agent transcribed the artifact without access to Section F,
 and the checks were written from the schema rather than from the artifact.
 
-**The headline is F3.** `i_csat` is load-bearing in two elements. That is verbatim the question that
-broke the room, recovered by set intersection. **The instrument works.**
+**The headline is F3.** `i_quality` is a required input to two elements. That is the question that was
+pressed hardest in the room, recovered by set intersection. **The instrument works.**
 
 **F10struct was not on the original nine-rule assessment and found two real defects** that a year of
 review had not: one assumption with no basis, another with neither basis nor sensitivity. A rule
@@ -568,7 +568,7 @@ coverage — which is "artifacts of rigor without the rigor" rebuilt inside the 
 
 ## 2026-08-13 | Acceptance test falsified the spec, pre-release | v1 -> v1.1
 
-**Source:** in-flight. A blind agent reconstructed a real 2026-08-05 frame into the schema, having
+**Source:** in-flight. A blind agent reconstructed a real past frame into the schema, having
 been explicitly barred from reading Section F so it could not shape the transcription to fail.
 
 **This is the loop working before a single run.** Three defects in the schema, found by the test
@@ -601,7 +601,7 @@ the canonical F2 failure. **The blind agent is load-bearing for F2, not a supple
 
 ## 2026-08-13 | Method created | — -> v1
 
-**Source:** post-hoc. A rejection outcome plus a recruiter feedback call, and a full audit of the
+**Source:** post-hoc. An outcome review of a past interview loop, and a full audit of the
 engagement corpus behind it.
 
 **Changed:** everything. v1 is the initial encoding.

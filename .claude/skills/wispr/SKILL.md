@@ -52,7 +52,7 @@ If `Found: 0`:
 Look at the last 5–10 turns of conversation. Two cases:
 
 **Case A — Active task waiting on this content.** Examples:
-- Drafting Zuora thank-yous and Nick said he'd dictate context per person
+- Drafting thank-you notes after a call and Nick said he'd dictate context per person
 - Building a CV angle and Nick said he'd dictate his own framing
 - Post-call debrief workflow and Nick is dictating takeaways
 - Cover letter problem-statement work and Nick is dictating "their problem"
@@ -91,7 +91,7 @@ For long transcripts (>500 chars per chunk), still show the full text — voice 
 
 Before writing ANY file whose name encodes a date (`YYYY-MM-DD-*.md` in `data/reflections/` or `<personal-vault>/data/reflections/`), perform this check and surface the result to Nick. Do NOT write the file until Nick has confirmed the date and framing.
 
-**Origin:** 2026-05-27. A 5/26 post-onsite target-company anxiety rumble (captured by Wispr at 5/27 13:48) was routed as `2026-05-27-targetco-anxiety-pre-onsite.md` — wrong on both axes. Filename date used the Wispr capture timestamp instead of the event date Nick stated in the rumble ("Reflections, May 26, 10:50"). Pre/post framing contradicted MEMORY.md, which already had the target-company onsite on Mon 5/25 — so by Tuesday 5/26 the rumble was post-onsite, not pre. See [[feedback_reflection_event_date_not_capture_date]]. This is the same gap-filling failure mode as [[feedback_silent_gap_filling_on_screenshot_parsing]] and [[feedback_cross_context_name_conflation]] — third documented occurrence, hence structural enforcement here.
+**Origin:** 2026-05-27. A post-interview voice note recorded on 5/26 (captured by Wispr at 5/27 13:48) was routed as `2026-05-27-pre-interview-notes.md`, which was wrong on both axes; the correct name was `2026-05-26-post-interview-notes.md`. The filename date used the Wispr capture timestamp instead of the event date stated in the note ("Reflections, May 26, 10:50"). The pre/post framing contradicted MEMORY.md, which already had the interview on Mon 5/25, so by Tuesday 5/26 the note was post-interview, not pre. See [[feedback_reflection_event_date_not_capture_date]]. This is the same gap-filling failure mode as [[feedback_silent_gap_filling_on_screenshot_parsing]] and [[feedback_cross_context_name_conflation]] — third documented occurrence, hence structural enforcement here.
 
 **The check (4 sub-steps, all four required):**
 
@@ -198,9 +198,9 @@ Confirm one line: "Saved N dictation(s) to data/inbox.md."
 **Synthesis-destination test — pick which `reflections/` folder.** Per `framework/personal-vs-job-os-architecture.md` (architecture decision 2026-05-04), there are two reflection homes:
 
 - `data/reflections/` (job-search project) — when the rumble's *synthesis destination* is job-search work: conviction-workbook, professional-identity, projects/zuora, goals, company-notes, networking, interview prep, AI-fluency narrative, recruiter conversations.
-- `<personal-vault>/data/reflections/` — when the synthesis destination is personal-OS: practice-log, garden-log, gratitude practice, fatherhood prep, relationship, household, finances, identity work that is purely personal (not feeding professional-identity).
+- `<personal-vault>/data/reflections/` — when the synthesis destination is personal-OS: practice-log, garden-log, gratitude practice, family, relationship, household, finances, identity work that is purely personal (not feeding professional-identity).
 
-The test is *destination, not topic*. A rumble that processes job-search ideas through a personal frame (e.g., "habits / asking for help → I can do outreach") is job-search because the routing destination is job-search action. A rumble about gratitude / fatherhood with no professional throughline is personal.
+The test is *destination, not topic*. A rumble that processes job-search ideas through a personal frame (e.g., "habits / asking for help → I can do outreach") is job-search because the routing destination is job-search action. A rumble about gratitude or personal life with no professional throughline is personal.
 
 When in doubt, default to job-search/data/reflections/ and flag the question. Cross-reflection wiki-links work both ways since basenames are unique within the vault.
 
@@ -217,7 +217,7 @@ captured: YYYY-MM-DD HH:MM
 `voice: pure-voice` is non-negotiable — the file is Nick's verbatim dictation, no agent rewriting. The same label MUST be set on any new file written by this skill: dictation chunks routed verbatim to `data/inbox.md` are also `pure-voice` (no separate frontmatter needed for inbox entries since `data/inbox.md` is one file; if substantive enough to break out into its own file, frontmatter applies).
 
 The new reflection file MUST also include `[[wiki-links]]` to:
-- Related prior reflections (e.g., `[[2026-04-27-zuora-closure]]`)
+- Related prior reflections (e.g., `[[2026-04-27-role-closure]]`)
 - Synthesis destinations the content informs (e.g., `[[projects/zuora]]`, `[[conviction-workbook]]`)
 - The two-tier capture principle itself: `[[two-tier-capture]]`
 - Style rule reference if sensitive names are mentioned: `[[style-guidelines]]`
@@ -275,7 +275,7 @@ The principle: the moment a Wispr capture leaves the 00-voice-corpus-archive arc
 ### Example 1: Mid-task dictation (Case A)
 
 ```
-Nick: I'll dictate context for the Zuora thank-yous, give me a few minutes.
+Nick: I'll dictate context for the thank-you notes after that call, give me a few minutes.
 [Nick steps away, dictates into Wispr Flow]
 Nick: I'm back / I'm done
 

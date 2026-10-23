@@ -126,6 +126,11 @@ def test_selection_gate_is_marked_unbuilt():
 
 YAML = REPO_ROOT / "framework" / "content-rules.yaml"
 
+# content-rules.yaml is private (gitignored). In a public clone it is absent, so skip the
+# module instead of failing collection for the whole suite.
+if not YAML.exists():
+    pytest.skip("framework/content-rules.yaml is private and not present", allow_module_level=True)
+
 
 def _yaml_text():
     assert YAML.exists(), f"missing {YAML}"

@@ -1,4 +1,4 @@
-Last updated: 2026-06-14
+Last updated: 2026-10-23
 
 # Workflows
 
@@ -6,7 +6,7 @@ This is the how-to layer: the system's skills chained into the end-to-end journe
 
 A note on naming: these flows are organized around what you are trying to accomplish, not around how the skills are filed. A skill can appear in more than one flow.
 
-**If you just cloned the repo,** these flows assume you have already done first-time setup. Start with [getting-started.md](getting-started.md) (import your CV, identity, and goals), then come back here — the daily loop below is where you end up *after* setup, not where you begin.
+**If you just cloned the repo,** these flows assume you have already done first-time setup. Start with [getting-started.md](getting-started.md) (import your CV, identity, and goals), then come back here. The daily loop below is where you end up *after* setup, not where you begin.
 
 ## Contents
 
@@ -23,7 +23,7 @@ A note on naming: these flows are organized around what you are trying to accomp
 
 > **When I sit down at the start of the day,** I want to know the three things that actually move my search, and at the end of it I want today's progress and tomorrow's priorities captured, so I am running the search instead of reacting to my inbox.
 
-This is the spine of the system. These are the skills a search touches most days, because a search is mostly a daily rhythm rather than a sequence of big events.
+This is the core of the system: the skills a search touches most days, because a search is mostly a daily rhythm rather than a sequence of big events.
 
 ### Morning
 
@@ -42,7 +42,7 @@ Reads your goals, pipeline, todos, outreach log, and networking contacts in para
 /remember <note>       # route a typed note to the right file
 ```
 
-Context arrives all day: a recruiter mentions a second open role, you have a thought on the commute, a call goes well. Capture it the moment it happens. `/wispr` pulls your voice dictations into the session; `/remember` routes a note to its correct home (a contact note to networking, a company note to its dossier, a strategic decision to `data/decisions.md`). You are not filing; you are dropping, and the system routes. You do not have to watch your inbox either: a background fetch pulls job-tagged email every fifteen minutes and sends one batched desktop notification when new ones land, prompting you to run `/act` to triage them.
+Context arrives all day: a recruiter mentions a second open role, you have a thought on the commute, a call goes well. Capture it the moment it happens. `/wispr` pulls your voice dictations into the session; `/remember` routes a note to its correct home (a contact note to networking, a company note to `data/company-notes/<slug>.md`, a strategic decision to `data/decisions.md`). You are not filing; you are dropping, and the system routes. You do not have to watch your inbox either: a background fetch pulls job-tagged email every fifteen minutes and sends one batched desktop notification when new ones land, prompting you to run `/act` to triage them.
 
 > **You should see:** notes landing in the right files automatically, so nothing you learned today is lost by tomorrow.
 
@@ -80,34 +80,34 @@ The bookend to standup. Builds today's progress snapshot (completed count, strea
 /scan-companies
 ```
 
-Most of the time you start this flow from a role you already found. When you need fresh targets, `/discover-companies` uses the Exa Agent API to surface companies you are not yet tracking, scores them against your thesis (geography as a hard gate, then stage, sector, and lane-keyword fit), and proposes the survivors to your inbox; `/scan-companies` then checks the career pages of your configured targets for live roles. (`/discover-companies` needs an Exa Pro key — see [getting-started.md](getting-started.md#optional-integrations); `/scan-companies` works on the standard setup.) Discovery finds the company, the scan finds the role.
+Most of the time you start this flow from a role you already found. When you need fresh targets, `/discover-companies` uses the Exa Agent API to surface companies you are not yet tracking, scores them against your thesis (geography as a hard gate, then stage, sector, and lane-keyword fit), and proposes the survivors to your inbox; `/scan-companies` then checks the career pages of your configured targets for live roles. (`/discover-companies` needs an Exa Pro key; see [getting-started.md](getting-started.md#optional-integrations); `/scan-companies` works on the standard setup.) Discovery finds the company, the scan finds the role.
 
 > **You should see:** new, thesis-fit companies and roles waiting in `data/inbox.md` to triage, instead of a blank page when you go looking for where to apply next.
 
 ### Step 1: Know the ground (optional but recommended)
 
 ```
-/research-company "Meridian Health" "https://meridian.com" "CoS role, applying this week"
+/research-company "Bluefin Health" "https://bluefin.example.com" "CoS role, applying this week"
 ```
 
-Six parallel agents produce a dossier: overview, funding, people and culture, news and strategy, competitive landscape, plus an independent web cross-check. Output includes a ranked list of similar companies, which is often a better source of next targets than the role you started from.
+Six parallel agents produce a dossier: overview, funding, people and culture, news and strategy, competitive landscape, plus an independent web cross-check. Output includes a ranked list of similar companies, which is often a better source of next targets than the role you started from. Five of the six agents use the Exa MCP server, so connect it first (see [getting-started.md](getting-started.md#optional-integrations)).
 
-> **You should see:** `output/meridian-health/meridian-health.md`, plus conversation starters calibrated to your context.
+> **You should see:** `output/bluefin-health/bluefin-health.md`, plus conversation starters calibrated to your context.
 
 ### Step 2: Generate the application bundle
 
 ```
-/apply https://jobs.lever.co/meridian/cos-role-id "context notes"
+/apply https://jobs.lever.co/bluefin/cos-role-id "context notes"
 ```
 
-One command researches the company (pass `--skip-research` to reuse a dossier under 14 days old), finds the hiring manager and a contact route, produces a cold-outreach brief and stops for you to state the spine, then generates a CV seeded with all of it, and updates your pipeline. A cover letter is written only if you pass `--cover-letter`. Use `/generate-cv` alone if you want just the CV.
+One command researches the company through `/research-company`, so it needs Exa too (pass `--skip-research` to reuse a dossier under 14 days old), finds the hiring manager and a contact route, produces a cold-outreach brief and stops for you to state the spine, then generates a CV seeded with all of it, and updates your pipeline. A cover letter is written only if you pass `--cover-letter`. Use `/generate-cv` alone if you want just the CV.
 
-> **You should see:** a dossier, an outreach brief for a named person, and a tailored CV with a companion cheat sheet, all under `output/meridian-health/`, plus a pipeline row. If you have not submitted yet, the row is set to "To Apply," not "Applied." It only flips to Applied when you confirm you actually submitted.
+> **You should see:** a dossier, an outreach brief for a named person, and a tailored CV with a companion cheat sheet, all under `output/bluefin-health/`, plus a pipeline row. If you have not submitted yet, the row is set to "To Apply," not "Applied." It only flips to Applied when you confirm you actually submitted.
 
 ### Step 3: Quality-gate before you send
 
 ```
-/review-cv meridian-health/MMDDYY-<lastname>.md https://jobs.lever.co/meridian/cos-role-id
+/review-cv bluefin-health/MMDDYY-<lastname>.md https://jobs.lever.co/bluefin/cos-role-id
 ```
 
 A fast check on keyword coverage, claim integrity, formatting, and self-sabotage language. For a high-stakes application, `/review-cv-deep` runs six reviewers (recruiter, hiring manager, competitor, skeptic, copy editor, source-data auditor) and surfaces the top ten probing questions the CV would trigger, which doubles as interview prep.
@@ -119,7 +119,7 @@ A fast check on keyword coverage, claim integrity, formatting, and self-sabotage
 After you actually submit, mark it:
 
 ```
-/pipe update "Meridian Health" Applied
+/pipe update "Bluefin Health" Applied
 ```
 
 > **You should see:** an accurate pipeline. The system never marks something Applied on your behalf, because a phantom Applied row corrupts every downstream view of where your search really stands.
@@ -133,17 +133,17 @@ After you actually submit, mark it:
 ### Step 1: One-command prep package
 
 ```
-/prep-interview "Meridian Health" "Chief of Staff" "coffee chat with Jamie Torres, MBA alum"
+/prep-interview "Bluefin Health" "Chief of Staff" "coffee chat with Jamie Torres, MBA alum"
 ```
 
 Three parallel agents produce a single document: ten to twelve likely questions mapped to your coached answers with gaps flagged, a company context digest, and tactics plus logistics including questions to ask them.
 
-> **You should see:** `output/meridian-health/MMDDYY-prep.md` and an automatically created debrief to-do. Keep the prep doc open during the call.
+> **You should see:** `output/bluefin-health/MMDDYY-prep.md` and an automatically created debrief to-do. Keep the prep doc open during the call.
 
 ### Step 2: Rehearse out loud (optional)
 
 ```
-/voice-export output/meridian-health/MMDDYY-cos.md https://jobs.lever.co/meridian/cos-role-id
+/voice-export output/bluefin-health/MMDDYY-<lastname>.md https://jobs.lever.co/bluefin/cos-role-id
 ```
 
 Produces a self-contained recruiter-simulation prompt you paste into a voice-capable Claude app, then practice a realistic fifteen-to-twenty-minute screen by speaking, no typing, no coaching mid-call.
@@ -153,7 +153,7 @@ Produces a self-contained recruiter-simulation prompt you paste into a voice-cap
 ### Step 3: Debrief the real thing
 
 ```
-/debrief "Meridian Health hiring-manager call"
+/debrief "Bluefin Health hiring-manager call"
 ```
 
 Save the transcript first (from the real call or the voice rehearsal). The debrief asks you to score the call on five dimensions, then Claude scores it independently from the transcript and the two reads are reconciled where they differ by a point or more. It flags every anti-pattern you triggered, screens the call against your non-negotiables, logs evidence against your active hypotheses, and writes the session to your progress tracker.
@@ -162,7 +162,7 @@ Save the transcript first (from the real call or the voice rehearsal). The debri
 
 **Why this is a loop, not a line:** the anti-pattern scorecard and hypotheses that Step 1 reads are exactly what Step 3 updates. Coached answers are not written by `/debrief`; they are updated by hand. Five interviews in, prep is drawing on five debriefs' worth of calibration.
 
-**Then close the loop outward:** after a real interview, the debrief offers to hand off to `/follow-up`, which pulls the same call transcript to ground the thank-you in what was actually said: the specific callback, the moment that resonated, a concern you can now answer. It sources content from the transcript only, never tone, so the note still reads in your email voice. The full chain is `/granola-pull → /debrief → /follow-up`.
+**Then close the loop outward:** after a real interview, the debrief offers to hand off to `/follow-up`, which pulls the same call transcript to ground the thank-you in what was actually said: the specific callback, the moment that resonated, a concern you can now answer. It sources content from the transcript only, never tone, so the note still reads in your email voice. The full chain is `/granola-pull → /debrief → /follow-up`. (`/granola-pull` is an optional global skill that is not in this repo; without it, paste the transcript.)
 
 ---
 
@@ -173,10 +173,10 @@ Save the transcript first (from the real call or the voice rehearsal). The debri
 ### Step 1: Reach out, informed
 
 ```
-/cold-outreach "Jordan Kim" "Verdant Foods" "CoS role, MBA alum connection"
+/cold-outreach "Jordan Kim" "Verdant Foods" "Chief of Staff" email "MBA alum connection"
 ```
 
-Selects the right framework for the context, respects channel limits (200 to 300 words for a cold email, under 300 characters for a LinkedIn connect), and runs a four-question quality gate: why you, why now, why me, why this class of role. It first hands you an Outreach Brief and stops until you state the spine. It auto-logs to your networking file, creates a follow-up to-do, and archives the message.
+Selects the right framework for the context, respects channel limits (200 to 300 words for a cold email, under 300 characters for a LinkedIn connect), and runs a four-question quality gate: why you, why now, why me, why this class of role. It first hands you an Outreach Brief and stops until you state the spine. After you approve, it logs to your networking file, creates a follow-up to-do, and archives the message.
 
 > **You should see:** first an Outreach Brief and a request for your spine; after you give it, a draft that passes the gate, with the relationship recorded and the next touch scheduled as a to-do once you approve logging. Every outgoing message also runs the Substance-Provenance Audit, so a model-generated self-positioning line stops the draft and asks you for the real one.
 
@@ -201,7 +201,7 @@ Logging an interaction with reply-signal keywords automatically updates the outr
 
 > **You should see:** the handful of relationships actually driving your search getting a dedicated, synthesized record, while the long tail stays in the lightweight roster. The dossier is read by `/follow-up`, `/cold-outreach`, `/draft-email`, and `/prep-interview` whenever that person is involved.
 
-**General drafts** (thank-you notes, status updates, intro requests) go through `/draft-email`, which auto-detects the message type and matches the tone of your prior messages to that recipient. All outbound email runs through these skills on purpose: writing email by hand bypasses the voice and provenance guards.
+**General drafts** (thank-you notes, status updates, intro requests) go through `/draft-email`, which auto-detects the message type and matches the tone of your prior messages to that recipient. Draft outbound email through these skills; email written by hand skips the voice and provenance checks.
 
 ---
 
@@ -220,7 +220,7 @@ This one is not a search journey. It is the tool for everything adjacent to the 
 
 > **You should see:** `output/analysis/MMDDYY-<slug>.md` plus a chat summary, with any build or capture it suggests proposed for your call, never written for you.
 
-When you need to *understand* a topic rather than triage one artifact someone handed you, `/learn <topic>` produces a validated briefing: it fans out parallel live-web research, synthesizes a BLUF-and-bullets document with a comprehension and interview quiz, then runs an adversarial pass that independently refutes each load-bearing claim against live sources, auto-corrects what is wrong, and attaches real source URLs. It is the sibling of `/analyze` (triage what you were handed) and `/deep-research` (a full cited report) for going into an interview able to speak on a subject with confidence.
+When you need to *understand* a topic rather than triage one artifact someone handed you, `/learn <topic>` produces a validated briefing: it fans out parallel live-web research, synthesizes a BLUF-and-bullets document with a comprehension and interview quiz, then runs an adversarial pass that independently tries to refute each central claim against live sources, auto-corrects what is wrong, and attaches real source URLs. It is the sibling of `/analyze` (triage what you were handed) and `/deep-research` (a full cited report; an optional global skill, not in this repo) for going into an interview able to speak on a subject with confidence.
 
 ---
 
@@ -233,6 +233,6 @@ Every flow above is only as good as the data underneath it, and that data comes 
 /remember <note>       # typed, anytime
 ```
 
-A recruiter mentions a second role, a call reshapes your read on a company, you have a strategic realization on a walk. Drop it. `/remember` routes each note to its correct destination (contact, company dossier, pipeline, decisions log, accomplishments log, or the inbox for later sorting), and `/wispr` pulls your dictations in and applies or routes them based on what you are working on.
+A recruiter mentions a second role, a call reshapes your read on a company, you have a strategic realization on a walk. Drop it. `/remember` routes each note to its correct destination (contact, `data/company-notes/<slug>.md`, pipeline, decisions log, accomplishments log, or the inbox for later sorting), and `/wispr` pulls your dictations in and applies or routes them based on what you are working on.
 
-This is the flywheel. The research you ran, the calls you logged, the decisions you captured all become the substrate the next CV, the next prep package, and the next outreach read from automatically. Skip the capture and every flow falls back to generic. Keep it, and the search compounds.
+This is why capture matters. The research you ran, the calls you logged, and the decisions you captured become the input that the next CV, the next prep package, and the next outreach read automatically. Skip the capture and every flow falls back to generic output. Keep it, and each new output has more of your real context to draw on.

@@ -319,7 +319,7 @@ fields:
 
       name_surface / measure_surface ADDED v1.1, changed to IDENTIFIERS in v3.
       F1 says the level below sits "on the surface that names it," and a bare `measure`
-      string cannot express WHERE it sits. In the 2026-08-05 reconstruction the criteria
+      string cannot express WHERE it sits. In the reference reconstruction the criteria
       surface carried no measures at all; three of four were recoverable only from
       surfaces five to seven pages downstream, and the fourth nowhere. That is the
       reachability failure appearing inside F1, and it was invisible until surfaces
@@ -369,7 +369,7 @@ fields:
     required: false
     class: derived
     note: >
-      The guard on any standing designation. The documented root error in the 2026-08-05
+      The guard on any standing designation. The documented root error in the reference
       engagement was promoting a per-engagement judgment to standing by fiat and then
       shielding the reasoning underneath it. A standing claim carries the attempt that
       justified it.
@@ -505,7 +505,7 @@ fields:
 
       JUSTIFICATION AMENDED 2026-08-14. This field previously rested on "cold
       self-reads in this corpus are documented as near-perfectly calibrated across
-      five consecutive instances". The 2026-08-13 outcome debrief corrected that: the
+      five consecutive instances". The outcome debrief corrected that: the
       calibration was measured against an annotation, not against an outcome, and
       graded against reality the self-read SPLITS BY BLOCK -- the operator identified
       a knowledge gap himself and did not identify a frame defect, because a knowledge
@@ -516,7 +516,7 @@ fields:
       the two is a live candidate, not built.
 
 # ---------------------------------------------------------------------------
-# VALIDATION the checker implements. Six of these fail the 2026-08-05 frame,
+# VALIDATION the checker implements. Six of these fail the reference frame,
 # which is the acceptance test for tools/check_frame_integrity.py.
 # ---------------------------------------------------------------------------
 validation:
@@ -598,7 +598,7 @@ limits:
     below fails seven.
   F2_vocabulary: >
     The deterministic F2 catches a MISSING citation. It cannot catch a citation to a fact
-    that is itself provenance rather than derivation. In the 2026-08-05 reconstruction the
+    that is itself provenance rather than derivation. In the reference reconstruction the
     top criterion cited a fact amounting to "<term> is the word the brief uses" - it
     resolves cleanly and PASSES, and it is the canonical F2 failure. The blind agent is
     load-bearing for F2, not a supplement to it.
@@ -609,12 +609,12 @@ limits:
     F9 requires a prior `locked: true` version. It cannot run on a single-version frame.
   acceptance_test: >
     MEASURED 2026-08-13 by running tools/check_frame_integrity.py against the blind
-    reconstruction of the 2026-08-05 frame. Not predicted - the prediction was wrong
+    reconstruction of the reference frame. Not predicted - the prediction was wrong
     three times and is not recorded here.
     FAIL (7): F1a, F2a, F3, F5, F10struct, F12, F13.
     F13 was added 2026-08-14 and re-measured against the same frame the same day; it
     FAILS. That is substantive, not an artifact of the frame being retrospective: the
-    2026-08-05 delivery really did go in the room with `proposals: []` and
+    reference delivery really did go in the room with `proposals: []` and
     `prediction: null`. Unlike F2b, whose inputs are unknowable after the fact, these
     two are knowably absent -- the run lost them, and a reconstruction cannot and
     should not be able to manufacture either.
@@ -622,7 +622,7 @@ limits:
     metric_roles fields; F2b because a finished artifact carries no version history;
     F9 because compression needs two locked versions.
     PASS (1): F8a.
-    The headline is F3: i_csat is load-bearing in two elements, which is the exact
+    The headline is F3: i_quality is load-bearing in two elements, which is the exact
     double-count the room interrogated, recovered by set intersection from a frame
     transcribed by an agent that had never read Section F.
     F10struct was NOT on the original nine-rule assessment and found two real defects

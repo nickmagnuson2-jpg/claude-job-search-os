@@ -119,12 +119,12 @@ Display the full categorized plan. **Do not execute anything yet.** Show all sec
 
 | # | Type | Task | URL / Source |
 |---|------|------|-------------|
-| 1 | Careers check | Check Playlist-EGYM careers — S&O/Ops roles | playlist.com/careers |
-| 2 | Company research | Deep-dive Northwind — #2 BH target | 5 agents + dossier (~5 min) |
-| 3 | Company research | Deep-dive Northwind — #3 BH target | 5 agents + dossier (~5 min) |
-| 4 | Company research | Deep-dive Contoso — #4 BH target | 5 agents + dossier (~5 min) |
+| 1 | Careers check | Check Globex careers, S&O/Ops roles | globex.example.com/careers |
+| 2 | Company research | Deep-dive Northwind, #2 target | 5 agents + dossier (~5 min) |
+| 3 | Company research | Deep-dive Fabrikam, #3 target | 5 agents + dossier (~5 min) |
+| 4 | Company research | Deep-dive Contoso, #4 target | 5 agents + dossier (~5 min) |
 | 5 | Company research | Deep-dive Lumen | 5 agents + dossier (~5 min) |
-| 6 | Article read | Jordan Lee — care-retention white paper | industry-pub.example.com |
+| 6 | Article read | Jordan Lee — operations white paper | industry-pub.example.com |
 | 7 | Article read | (inbox) an industry publication article on care delivery | industry-pub.example.com |
 | 8 | Company research | (inbox) Northwind | 5 agents + dossier |
 
@@ -140,16 +140,16 @@ Display the full categorized plan. **Do not execute anything yet.** Show all sec
 - **Acme AI** — dossier from 2026-02-18 (`output/acme-ai/acme-ai.md`)
 
 ### Skipped — Careers Page Checked Recently
-- **Wellhub** — Checked 2026-02-22 — re-check after 2026-03-01
+- **Initech**: checked 2026-02-22, re-check after 2026-03-01
 
 ### Requires Your Action
 
 | # | Task | Direct Link |
 |---|------|-------------|
-| 9 | Subscribe to BHT Newsletter, Out-Of-Pocket, BHB, Rock Health Weekly | [BHT signup] · [Out-of-Pocket] · [BHB] · [Rock Health] |
+| 9 | Subscribe to Industry Newsletter A, Newsletter B, Newsletter C | [Newsletter A] · [Newsletter B] · [Newsletter C] |
 | 10 | Follow Jordan Lee, Alex Rivera on LinkedIn | LinkedIn search |
-| 11 | Identify 3–5 Tuck alumni in fitness/wellness | MyTuck network — manual |
-| 12 | ~~Check Wellhub careers~~ (Previously blocked — check manually) | wellhub.com/en-us/careers |
+| 11 | Identify 3-5 school alumni in the target industry | alumni network, manual |
+| 12 | ~~Check Initech careers~~ (Previously blocked, check manually) | initech.example.com/careers |
 
 ### 📧 Gmail Emails — Needs Your Approval
 Each email requires explicit confirmation before routing. You'll be prompted after `run` completes.
@@ -355,7 +355,7 @@ One Task agent per article. Prompt:
 Fetch and summarize this article for a job seeker:
 
 URL: [URL from notes]
-Article context: [task text — e.g., "Jordan Lee's white paper on care delivery and care-retention"]
+Article context: [task text — e.g., "Jordan Lee's white paper on operations at scale"]
 
 Instructions:
 
@@ -382,7 +382,7 @@ Instructions:
    - If primary_company is set: output/[slug]/[MMDDYY]-article-[article-slug].md
      where [slug] = company name lowercased, hyphens for spaces (e.g., "acme-ai")
    - If primary_company is null: output/[MMDDYY]-article-[article-slug].md
-   - [article-slug] = article title lowercased, spaces to hyphens, max 5 words (e.g., "oud-treatment-digital-health")
+   - [article-slug] = article title lowercased, spaces to hyphens, max 5 words (e.g., "ops-metrics-weekly-review")
    - [MMDDYY] = today's date formatted as MMDDYY (e.g., 022426 for Feb 24, 2026)
 
    File format:
@@ -411,7 +411,7 @@ One Task agent per task. Prompt:
 Browse this platform and return results matching the specified filter:
 
 Platform URL: [URL from notes]
-Filter criteria: [criteria extracted from task text — e.g., "active SF yoga studio listings for sale"]
+Filter criteria: [criteria extracted from task text — e.g., "active small-business listings for sale in the target metro"]
 
 Return:
 - Top 3-5 results matching the filter
@@ -449,13 +449,13 @@ Write the updated `data/job-todos.md`.
 
 ### Careers Checks
 
-**Playlist-EGYM** (playlist.com/careers) — 3 relevant roles found
+**Globex** (globex.example.com/careers): 3 relevant roles found
 - Head of Strategy & Operations — San Francisco — [Apply](url)
 - Director of Business Operations — Remote-friendly — [Apply](url)
 - Senior Program Manager — San Francisco — [Apply](url)
 > 47 total open roles on page.
 
-**Wellhub** (wellhub.com/en-us/careers) — No relevant roles found
+**Initech** (initech.example.com/careers): No relevant roles found
 > 89 total open roles — none matched CoS/S&O/Operations profile.
 
 ---
@@ -463,36 +463,36 @@ Write the updated `data/job-todos.md`.
 ### Company Research
 
 **Northwind** — dossier saved: `output/northwind/northwind.md`
-> $210M Series D (Feb 2026), 600+ psychiatrists on platform, telehealth-first SMI focus.
+> $XM Series C (Jan 2026), N customers on platform, example-sector focus.
 > Strategy & Ops team actively hiring. Strong fit for S&O background.
 > Run `/research-company "Northwind"` for deeper refresh, or `/prep-interview "Northwind"` when applying.
 
-**Northwind** — dossier saved: `output/northwind/northwind.md`
+**Fabrikam**: dossier saved: `output/fabrikam/fabrikam.md`
 > ...
 
 ---
 
 ### Articles Read
 
-**Jordan Lee — Care Delivery and care-retention Treatment** (an industry publication)
-- Digital health interventions reduce care-retention dropout by 40% in pilot studies
-- Insurance parity laws are expanding reimbursement for digital therapeutics
+**Jordan Lee — Operations at Scale** (an industry publication)
+- Teams that review metrics weekly catch problems sooner in pilot studies
+- Shared dashboards are replacing status meetings at growth-stage companies
 - [3 more key insights]
 - Why it matters: Provides credibility talking points for the Acme AI coffee chat with Jordan.
-> Summary saved: `output/acme-ai/022426-article-oud-treatment-digital-health.md`
+> Summary saved: `output/acme-ai/022426-article-care-delivery.md`
 
 ---
 
 ### Resource Browse
 
-**BizBuySell — SF Yoga Studios for Sale**
-- Yoga Flow SF (3 locations) — asking $850K — [link]
+**example.com business listings: studios for sale**
+- Example Studio (3 locations), asking $X, [link]
 - [2 more listings]
 
 ---
 
 ### Failed / Blocked
-- Xponential Fitness careers page — returned 403 (blocked) — to-do remains Pending, labeled "access blocked" in notes
+- Umbrella Corp careers page: returned 403 (blocked), to-do remains Pending, labeled "access blocked" in notes
 
 ---
 
@@ -522,13 +522,13 @@ These require your action — links provided for speed:
 
 | Task | Direct Link |
 |------|-------------|
-| Subscribe to BHT Newsletter | [url] |
-| Subscribe to Out-Of-Pocket | [url] |
+| Subscribe to Industry Newsletter A | [url] |
+| Subscribe to Industry Newsletter B | [url] |
 | Follow Jordan Lee on LinkedIn | [linkedin.com/in/...] |
 | Follow Alex Rivera on LinkedIn | [linkedin.com/in/...] |
-| Join Mental Health Startup Community Slack | [url] |
-| Identify Tuck alumni in fitness/wellness | [MyTuck network](https://my.tuck.dartmouth.edu) |
-| ~~Check Wellhub careers~~ (Previously blocked — check manually) | wellhub.com/en-us/careers |
+| Join an industry community Slack | [url] |
+| Identify school alumni in the target industry | [alumni network](https://alumni.example.edu) |
+| ~~Check Initech careers~~ (Previously blocked, check manually) | initech.example.com/careers |
 
 ---
 
@@ -536,7 +536,7 @@ These require your action — links provided for speed:
 **N items marked Done** in `data/job-todos.md` · Run `/todo` to see updated list.
 
 ### Suggested Next Steps
-[Based on what was found — e.g., if Playlist-EGYM has strong roles: "Consider `/pipe add 'Playlist-EGYM' 'Head of Strategy & Operations'` and `/generate-cv [JD url]`"]
+[Based on what was found — e.g., if Globex has strong roles: "Consider `/pipe add 'Globex' 'Head of Strategy & Operations'` and `/generate-cv [JD url]`"]
 ```
 
 ## Edge Cases

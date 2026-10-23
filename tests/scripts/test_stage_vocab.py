@@ -59,7 +59,7 @@ def test_terminal_stages(stage):
     "Outreach",
     "Outreach Sent",
     "Deprioritized",          # paused, NOT over
-    "Strategic Thinking round complete (6/8)",
+    "Case round complete (3/14)",
     "passed the screen",      # mid-string "passed" is NOT terminal (still active)
     "They passed on me",      # bare "passed" without a closed/rejected co-signal
     "Passed",
@@ -91,7 +91,7 @@ def test_none_is_not_terminal():
     "Recruiter screen",
     "Final round",
     "Onsite loop",
-    "Strategic Thinking round complete (6/8)",
+    "Case round complete (3/14)",
 ])
 def test_active_pursuits(stage):
     assert is_active_pursuit(stage) is True

@@ -305,14 +305,14 @@ def test_profile_update_appends_to_session_notes(tmp_path):
     write_fixture(tmp_path, "data/profile.md", PROFILE_MD)
     result, code = run_apply(
         "--repo-root", str(tmp_path),
-        "--note", "Comp floor is $130K not $140K",
+        "--note", "Comp floor is $95K not $100K",
         "--destinations", dest_json(
             {"type": "profile_update", "file": "data/profile.md"}
         ),
     )
     assert code == 0
     content = (tmp_path / "data/profile.md").read_text(encoding="utf-8")
-    assert "Comp floor is $130K not $140K" in content
+    assert "Comp floor is $95K not $100K" in content
     assert "## Session Notes" in content
 
 

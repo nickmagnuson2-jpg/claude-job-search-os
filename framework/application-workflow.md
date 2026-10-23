@@ -217,7 +217,7 @@ Run all 20 checks against the CV. Fix any issues found **in place** — rewrite 
 
 **13. Metric specificity:**
 - Percentage-based claims must include the underlying metric being measured (e.g., "daily active user engagement by 25%" not just "engagement by 25%"). Include a timeframe or baseline where available from source data. Bare percentages without context are vague and invite skepticism.
-- Dollar figures over $1M must specify what the number represents (opex, revenue, ARR, budget, contract value, TCV). Bare "$130M+" without a qualifier is ambiguous and invites the "$130M of what?" probe.
+- Dollar figures over $1M must specify what the number represents (opex, revenue, ARR, budget, contract value, TCV). Bare "$50M+" without a qualifier is ambiguous and invites the "$50M of what?" probe.
 
 **14. Client engagement disambiguation (consulting firms):**
 - At consulting firms or agencies, bullets from different client engagements must be clearly attributed to separate clients. Do not bundle bullets from 3 different clients under one employer header without distinguishing which client each bullet refers to. Use descriptors like "for an ecommerce marketplace" vs "for an online retailer" to disambiguate.
@@ -249,7 +249,7 @@ Run all 20 checks against the CV. Fix any issues found **in place** — rewrite 
 
 ### QC Summary Template
 
-After all fixes are applied, record a QC summary. **For each of the 18 checks, cite the specific CV line(s) or section inspected and the outcome.** A bare "clean" without line citations is not acceptable — it means the check was not actually run.
+After all fixes are applied, record a QC summary. **For each of the 20 checks, cite the specific CV line(s) or section inspected and the outcome.** A bare "clean" without line citations is not acceptable, because it means the check was not actually run.
 
 Template:
 

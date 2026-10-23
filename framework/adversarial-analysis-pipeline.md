@@ -1,8 +1,8 @@
 # The Adversarial Analysis Pipeline
 
-Last updated: 2026-08-05
+Last updated: 2026-10-23
 **What this is:** a reusable multi-agent method for producing analysis you can actually stake a decision on.
-**Where it came from:** built over three rounds on a real multi-option strategy analysis (2026-07-30 → 07-31). Worked example and full artifact trail live in the gitignored `output/<company>/` directory for that engagement. Companion: `framework/multi-agent-workflows.md`.
+**Where it came from:** built over three rounds on a real multi-option strategy analysis. Worked example and full artifact trail live in the gitignored `output/<company>/` directory for that engagement. Companion: `framework/multi-agent-workflows.md`.
 
 ---
 
@@ -206,7 +206,7 @@ A dispatch doc should be **executable cold in a fresh context.** Sections:
 
 ---
 
-## 7. Round 4 — the room (2026-08-05). What survived contact, and what the pipeline never checked
+## 7. Round 4 — the room. What survived contact, and what the pipeline never checked
 
 The analysis this pipeline produced was presented and defended live. Per §0, the room is just the
 next round: read the failures, ask whether they were local or caused by the instructions, and
@@ -216,7 +216,7 @@ promote the answer into the structure.
 
 ### 7.1 What held
 
-Zero fabricated figures. All arithmetic footed. Zero never-say violations across ~80 minutes under
+Zero fabricated figures. All arithmetic footed. Zero never-say violations across a long session under
 pressure. No claim from the refuted list resurfaced. An independent clean-room reviewer, given only
 the assignment and the artifact, found no unmet instruction. **The anti-laundering discipline of §2
 and the tag hygiene of §4 did their job** — under live interrogation there was nothing to walk back.
@@ -225,10 +225,10 @@ and the tag hygiene of §4 did their job** — under live interrogation there wa
 
 | The room pressed on | Pipeline stage that covered it |
 |---|---|
-| The operational definition of the frame's own top criterion (**8 turns** to establish it) | none |
+| The operational definition of the frame's own top criterion (**many turns** to establish it) | none |
 | Whether the criteria were **mutually exclusive** (one input was load-bearing in two of four) | none |
-| Holding the argument when **interrupted at the frame slide** and never allowed to advance | none |
-| Naming a **primitive** under pressure (a service endpoint vs raw data access) | none |
+| Holding the argument when **stopped on the frame page** | none |
+| Naming the **underlying building block** of a proposal under pressure | none |
 
 **Not thin coverage. No coverage.** Every stage in §1 asks a version of *"is this true, consistent,
 and adequately caveated?"* The room asked *"what do your words mean, and are they the same words
@@ -239,10 +239,10 @@ twice?"* Those are different audits and the pipeline only contains the first.
 - **Undefined terms.** Every reviewer received a finished artifact and evaluated its claims. **No
   stage ever required the author to write down, in one line, what each criterion IS.** A term that
   survives four review passes without being defined *feels* defined. The first person to ask found
-  out otherwise in ninety seconds.
+  out otherwise almost immediately.
 - **Non-orthogonal criteria.** The two frame audits that could have caught it were scoped to the
-  evidence base and the caveat stack. When the frame was then **simplified** (606 lines/17 caveats →
-  ~200/7 rules — the right call), **nobody re-audited structure after the rewrite.** The
+  evidence base and the caveat stack. When the frame was then **simplified** (cut to roughly a third of its
+  length, with far fewer caveats, which was the right call), **nobody re-audited structure after the rewrite.** The
   simplification silently deleted the only stage where this defect class was checkable. Generalise:
   **a simplification pass must re-run every audit the thing it simplified had passed.**
 - **Lost frame custody.** Every rehearsal was a *delivery* rehearsal — timings, verbatim lines,
@@ -256,7 +256,7 @@ Cheap, mechanical, and it closes all three. Run it on the frame ALONE, never on 
 **(a) Definitions pass.** For every named term in your own frame — each criterion, metric,
 threshold, rung — write a one-line operational definition **in under eight words.** Then check each
 one is either printed on the page or rehearsed aloud. **If a term cannot be defined in one line, it
-is not yet a criterion**; it is a mood, and it will cost you eight turns to discover that in the
+is not yet a criterion**; it is a mood, and it will cost you several turns to discover that in the
 room.
 
 **(b) Orthogonality audit.** Give a fresh agent **only** the criterion names plus those one-line
@@ -278,12 +278,12 @@ allocated almost inversely to what got tested.**
 
 | Investment | Cost | Yield in the room |
 |---|---|---|
-| Exhaustive claim refutation + evidence inventory (49 entities enumerated, 14 relabels catalogued) | very high | **never invoked.** No published stat was challenged. |
-| Multi-round option selection (3 matrix rounds, 12 judges) | very high | **the chosen option was never contested.** The interviewer accepted it and attacked the criteria. |
-| Frame audits on the caveat stack (2 rounds, both BLOCKING) | high | **no caveat was raised.** |
+| Exhaustive claim refutation + evidence inventory | very high | **never invoked.** No published stat was challenged. |
+| Multi-round option selection (several scoring rounds, many judges) | very high | **the chosen option was never contested.** Questioning went to the criteria instead. |
+| Frame audits on the caveat stack | high | **no caveat was raised.** |
 | The never-say list | low | **zero violations.** Highest yield per minute in the process. |
-| Night-before drilling of ~3 specific coached lines | low | **all three deployed near-verbatim under pressure.** |
-| Concession-then-trade structure on the summary page | low | accepted explicitly. |
+| Night-before drilling of a few specific coached lines | low | **all deployed near-verbatim under pressure.** |
+| Concession-then-trade structure on the summary page | low | held up. |
 | Frame hygiene (§7.4) | **~20 min** | **not done — and it is what the room spent its time on.** |
 
 **The transferable rule: protective work is bounded, definitional work is not optional.** Refuting

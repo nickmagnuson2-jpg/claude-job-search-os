@@ -9,7 +9,7 @@ An open-source framework that turns Claude Code into an **end-to-end job search 
 3. **Application materials** — tailored CVs, cover letters, and cheat sheets generated for specific roles
 4. **Interview coaching & preparation** — recruiter screenings, hiring manager interviews, and one-command prep packages
 5. **Voice simulation** — realistic spoken practice with transcript debrief and anti-pattern tracking
-6. **Structured record-keeping** — all experience data lives in versioned markdown, git-tracked and portable
+6. **Structured record-keeping** — all experience data lives in plain markdown files that are portable; `data/` is gitignored in the public repo and backed up to a private repo
 
 ## Table of Contents
 
@@ -523,7 +523,7 @@ output/
 ```
 
 **Naming rules:**
-- Subfolder = slug (lowercase, spaces→hyphens): `beacon`, `behavioral-health-tech`
+- Subfolder = slug (lowercase, spaces→hyphens): `beacon`, `logistics-software`
 - The research dossier file name matches the folder: `output/<slug>/<slug>.md`
 - **No date prefix on the dossier** — it is the single canonical file for that entity, versioned in place. Attaching a date would create stale duplicates instead of one authoritative source.
 - All other files inside the folder **must include a date prefix** (`MMDDYY`)
@@ -536,7 +536,7 @@ output/beacon/022526-chief-of-staff-cheatsheet.md
 output/beacon/022526-cover-letter.md
 output/beacon/022526-prep.md
 output/beacon/022526-cold-outreach-sarah-chen.md
-output/behavioral-health-tech/behavioral-health-tech.md  ← industry dossier
+output/logistics-software/logistics-software.md  ← industry dossier
 ```
 
 The subfolder is created on first write — no pre-creation step needed.
@@ -552,7 +552,7 @@ framework/                       ← Methodology (reusable, no personal data)
   ├── recruiter-screening.md      ← Recruiter coaching methodology
   ├── mock-interview.md           ← Hiring manager coaching methodology
   ├── full-simulation.md          ← Uninterrupted simulation + debrief
-  ├── application-workflow.md     ← Shared application standards: context loading, tailoring rules, 16-point CV checklist, cheat sheet structure
+  ├── application-workflow.md     ← Shared application standards: context loading, tailoring rules, 20-point CV checklist, cheat sheet structure
   ├── style-guidelines.md         ← Tone, language, format conventions
   ├── voice-export.md             ← Voice prompt generation rules
   ├── outreach-guide.md           ← Outreach frameworks, channel limits, quality gates, anti-patterns
@@ -658,7 +658,7 @@ tools/                           ← Python utilities
   ├── my_world_synthesis.py       ← Longitudinal reflection synthesis (used by /my-world)
   ├── granola_auto_debrief.py     ← Granola transcript auto-debrief (launchd, sealed-aware)
   ├── md_to_pdf_doc.py            ← Prep-doc PDFs via weasyprint (cheat sheets, dossiers)
-  ├── check_*.py                  ← Hook stack — 13 PreToolUse/Stop hooks (edit-safety, draft-voice, email-gating)
+  ├── check_*.py                  ← Hook stack (edit-safety, draft-voice, email-gating); full list in docs/hooks.md
   └── launchd/                    ← macOS launchd plists + install.sh (background schedules)
 output/                          ← All generated output — company-first hierarchy
   └── <company-slug>/
@@ -678,7 +678,7 @@ Every data file mutation (pipeline, networking, notes, todos) goes through a ded
 | `remember_apply.py` | 12 destinations (pipeline, networking, notes, profile, decisions, accomplishments, personal-vault, etc.) | route-and-write |
 | `act_apply.py` | pipeline, networking, notes, company-notes (via inbox routing) | pipeline-add, contact-add, notes-add, company-note-add |
 
-**Why scripts instead of inline LLM writes?** Three reasons: (1) markdown table format is brittle — slight variations break parsing in subsequent skill reads; (2) write logic appears in 5+ skills — a format change would require updating every skill; (3) scripts are testable in isolation — 520 unit tests cover all mutation paths, which LLM-inline writes cannot have. The LLM focuses on judgment (what to write); the script handles mechanics (how to write it correctly every time).
+**Why scripts instead of inline LLM writes?** Three reasons: (1) markdown table format is brittle — slight variations break parsing in subsequent skill reads; (2) write logic appears in 5+ skills — a format change would require updating every skill; (3) scripts are testable in isolation, with unit tests covering the mutation paths, which LLM-inline writes cannot have. The LLM focuses on judgment (what to write); the script handles mechanics (how to write it correctly every time).
 
 ### Background Automation (launchd)
 
@@ -689,7 +689,7 @@ Scheduled jobs run independently of Claude sessions via macOS-native `launchd` (
 | `gmail-fetch` | Every 15 min | `inbox/` markdown files from the job-search Gmail label |
 | `gmail-fetch-personal` | Every 15 min | personal Gmail label → the personal vault's `inbox/` |
 | `career-scan` | Daily | scans target-company career pages for new matches |
-| `alirohde-triage` | Daily 9:15 | triage file when a new "Ali Rohde Jobs" edition lands |
+| job-newsletter triage | Daily 9:15 | triage file when a new edition of a job newsletter lands |
 | `granola-auto-debrief` | Every 3 hrs | persists Granola transcripts + posts a debrief snippet to `data/inbox.md` (sealed-aware) |
 | `memory-promotion-scan` | Weekly (Mon 07:00) | `scan_promotion_candidates.py` — surfaces memory rules due for promotion |
 
@@ -760,9 +760,9 @@ A first-person learning log of every major capability added since the system was
 
 ---
 
-### Core Interview Prep System *(foundation — not built by me)*
+### Core Interview Prep System *(foundation: Raphael Otten's claude-interview-coach)*
 
-The original system — structured experience management, three coaching modes (recruiter screening, hiring manager mock, full simulation), six answering strategy files, the voice simulation pipeline, and progress tracking scorecards — was the foundation I started with, not something I built. Everything in the rest of this changelog is what I added on top of it.
+The original system — structured experience management, three coaching modes (recruiter screening, hiring manager mock, full simulation), six answering strategy files, the voice simulation pipeline, and progress tracking scorecards — comes from Raphael Otten's [claude-interview-coach](https://github.com/raphaotten/claude-interview-coach), the project this repo was forked from, not something I built. Everything in the rest of this changelog is what I added on top of it.
 
 The foundation gave me: a way to store professional experience as structured markdown, a coaching loop with anti-pattern tracking, and a voice simulation pipeline for spoken practice. What it didn't have was anything for managing the search itself — no pipeline tracking, no outreach system, no research tools, no daily operations layer. That's the gap everything below fills.
 
