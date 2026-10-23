@@ -3,7 +3,7 @@
 check_prep_doc_format.py — PreToolUse hook. Blocks the two prep-doc defects that are
 mechanically decidable from the text alone.
 
-SCOPE IS THE WHOLE DESIGN. `check_prep_doc.py` runs six checks; only two of them belong
+SCOPE IS THE WHOLE DESIGN. `check_prep_doc.py` runs seven checks; only two of them belong
 at hook tier, and getting that boundary wrong is how a hook becomes something everyone
 routes around:
 

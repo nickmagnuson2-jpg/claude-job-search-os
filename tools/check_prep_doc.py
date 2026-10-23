@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-check_prep_doc.py — Six mechanical checks on a /prep-interview prep doc.
+check_prep_doc.py — Seven mechanical checks on a /prep-interview prep doc.
 
 Checks 1-3 enforce W4: a prep doc must bind a PRIMARY and a RESERVE proof, and the two
 must sit in genuinely different domains (canonicalized, so `customer-experience` and
@@ -9,6 +9,10 @@ must sit in genuinely different domains (canonicalized, so `customer-experience`
 Checks 4-6 enforce W1 at the artifact level: a doc may not tell Nick to withhold
 something unless the outreach log says it actually arrived. This is where the suppressive-claim
 defect gets caught mechanically rather than by anyone remembering the rule.
+
+Check 7: the Primary proof may not name a dated source (DATED_PROOF_SOURCES) unless the
+doc records that Nick chose it, as `<!-- proof_override: nick <reason> -->`. The Reserve
+slot is exempt by design: a dated proof is an acceptable fallback, not a lead.
 
 Deliberately NOT a hook. The suppressive-phrasing boundary is contextual and a regex
 hook over it would over-fire; this runs on demand against a specific doc.
@@ -70,6 +74,15 @@ _LOGISTICS_HEADING_RE = re.compile(r"^(#{1,6})\s*Logistics\b", re.I)
 _ANY_HEADING_RE = re.compile(r"^(#{1,6})\s")
 
 _DOC_DATE_RE = re.compile(r"^(\d{2})(\d{2})(\d{2})-")
+
+# Check 7. Sources Nick has called too old to lead with. Extend by adding a pattern AND a
+# test. Origin: a reviewer ranked the 2017-2020 proof first on strength alone; Nick: "I
+# just felt like it was a dated reference."
+DATED_PROOF_SOURCES = [r"\bESPN\b"]
+_DATED_RE = re.compile("|".join(f"(?:{p})" for p in DATED_PROOF_SOURCES), re.I)
+# The override must carry a reason after "nick": an unexplained override cannot be told
+# apart from a skipped gate.
+_PROOF_OVERRIDE_RE = re.compile(r"<!--\s*proof_override:\s*nick\s+\S.*?-->", re.I | re.S)
 
 
 def doc_date(path: Path, fallback: str | None) -> str | None:
@@ -175,6 +188,19 @@ def check_doc(path: Path, as_of: str | None = None) -> tuple[int, dict]:
                     f"'{proofs['reserve']['tag']}' both canonicalize to "
                     f"'{canon['primary']}' — that is one domain wearing two labels, not a "
                     f"fallback. One exclusion sentence takes out both proofs."
+                ),
+            })
+
+    # --- check 7: a dated source never fills the Primary slot without Nick's override
+    if proofs["primary"]:
+        dated = _DATED_RE.search(proofs["primary"]["proof"])
+        if dated and not _PROOF_OVERRIDE_RE.search(text):
+            failures.append({
+                "check": 7,
+                "message": (
+                    f"Primary proof leads with a dated source ('{dated.group(0)}'). Lead "
+                    f"with the last two roles or a recent build and move it to Reserve, or "
+                    f"record Nick's choice as `<!-- proof_override: nick <reason> -->`."
                 ),
             })
 

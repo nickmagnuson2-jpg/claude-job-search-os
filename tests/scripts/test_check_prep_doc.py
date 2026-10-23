@@ -176,3 +176,60 @@ def test_validate_local_with_a_case_runs_it_instead_of_reporting_no_cases(tmp_pa
     code, payload = _validate_local_in(tmp_path)
     assert payload["status"] == "FAIL" and code == 1, payload
     assert len(payload["results"]) == 1 and payload["results"][0]["pass"] is False
+
+
+# --- Check 7: a dated source never fills the Primary proof slot ---------------
+# Two fires: a reviewer ranked an old proof first on strength alone, and the
+# candidate had already rejected it as dated. The Reserve slot is exempt by design.
+
+_RECENT = "rebuilt the onboarding path at Acme and cut client ramp time by half."
+_DATED = "ESPN, sized an ad-delivery gap against in-season traffic."
+
+
+def _proof_doc(tmp_path, primary: str, reserve: str, extra: str = "") -> tuple[int, dict]:
+    doc = tmp_path / "acme-prep.md"
+    doc.write_text(
+        "# Acme Corp prep\n\n## THE ONE THING\n\n"
+        f"**Primary proof** (domain: customer-ops): {primary}\n"
+        f"**Reserve proof** (domain: product-analytics): {reserve}\n"
+        f"{extra}\n## Logistics\n\n- Camera on.\n",
+        encoding="utf-8",
+    )
+    proc = run_script_raw("check_prep_doc.py", str(doc))
+    return proc.returncode, json.loads(proc.stdout)
+
+
+def test_dated_source_as_primary_proof_fails_check_7(tmp_path):
+    code, report = _proof_doc(tmp_path, _DATED, _RECENT)
+    assert code == 1
+    assert 7 in failed_checks(report)
+    assert "proof_override" in "".join(f["message"] for f in report["failures"])
+
+
+def test_dated_source_in_reserve_only_passes(tmp_path):
+    code, report = _proof_doc(tmp_path, _RECENT, _DATED)
+    assert code == 0, report["failures"]
+
+
+def test_dated_primary_with_recorded_override_passes(tmp_path):
+    marker = "<!-- proof_override: nick 2026-10-22 asked to lead with this one -->"
+    code, report = _proof_doc(tmp_path, _DATED, _RECENT, extra=marker)
+    assert code == 0, report["failures"]
+
+
+def test_override_with_no_reason_is_not_an_override(tmp_path):
+    code, report = _proof_doc(tmp_path, _DATED, _RECENT, extra="<!-- proof_override: nick -->")
+    assert code == 1 and 7 in failed_checks(report)
+
+
+def test_recent_primary_is_clean(tmp_path):
+    code, report = _proof_doc(
+        tmp_path, "Zuora, chief of staff, led the AI adoption with one measurable use case.",
+        "McKinsey contact-center pilot, built the business case off tracking data.")
+    assert code == 0, report["failures"]
+
+
+def test_dated_source_match_is_word_bounded(tmp_path):
+    """'espnet' or 'respnse' must not read as the dated source."""
+    code, report = _proof_doc(tmp_path, "trained an ESPnet speech model at Acme.", _RECENT)
+    assert 7 not in failed_checks(report)
