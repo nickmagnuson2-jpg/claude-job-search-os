@@ -104,6 +104,7 @@ def test_bad_input_is_refused(root, payload, code):
 
 def test_dedupe_key_handles_unicode_and_keeps_title_and_company_apart():
     assert sj.key("Caf\u00e9 Lead", "X") == sj.key("Cafe\u0301 Lead", "X")   # NFC vs NFD
+    assert sj.key("Caf\u00e9 Lead", "X") == sj.key("Cafe Lead", "X")        # Latin accent folds
     assert sj.key("\u65e5\u672c", "X") != sj.key("\u97d3\u56fd", "X")      # letters kept
     assert sj.key("Ops Lead", "Beacon") != sj.key("Ops", "Lead Beacon")
 
@@ -120,4 +121,21 @@ def test_a_pipe_in_a_url_cannot_split_the_cache_row(root):
              "url": "https://example.com/a|b", "ad_date": "", "reason": "score 5/10"}]
     run(root, "record", rows)
     row = [l for l in (root / ".claude/skills/scan-jobs/cache.md").read_text().splitlines() if "Beacon" in l][0]
-    assert row.count("|") == 8
+    assert row.count("|") == 8 and "(https://example.com/a%7Cb)" in row, "encoded, not rewritten"
+    _, out = run(root, "assess", [{"title": "Ops", "company": "Beacon AI", "url": "https://example.com/a|b"}])
+    assert out["new"] == [], "the raw URL matches its encoded cache entry"
+
+
+def test_one_title_at_one_company_in_two_offices_is_two_roles(root):
+    """URL is the identity when present: a skipped NY posting must not hide the SF one."""
+    run(root, "record", [{"title": "Strategist", "company": "Beacon AI", "score": 5, "status": "skip",
+                          "url": "https://example.com/ny", "ad_date": "", "reason": "location excluded"}])
+    _, out = run(root, "assess", [{"title": "Strategist", "company": "Beacon AI",
+                                   "url": "https://example.com/sf", "location": "San Francisco"}])
+    assert len(out["new"]) == 1
+
+
+def test_a_url_less_cache_row_still_dedupes_by_title_and_company(root):
+    _, out = run(root, "assess", [{"title": "Senior Engineer / Backend", "company": "Acme Corp",
+                                   "url": "https://example.com/new"}])
+    assert out["new"] == []

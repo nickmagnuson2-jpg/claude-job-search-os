@@ -25,13 +25,13 @@ Usage:
 import json
 import re
 import sys
-import unicodedata
 from datetime import date
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from md_table import JsonArgumentParser, out_error, out_ok, parse_cols, read_file, safe_cell, write_atomic  # noqa: E402
+from slug import slugify  # noqa: E402
 from tools.career_scanner.scanner import geo_ok  # noqa: E402
 from tools.career_scanner.scorer import load_scoring_context, score_role  # noqa: E402
 
@@ -42,9 +42,9 @@ REQUIRED = ("title", "company")
 
 
 def _norm(text: str) -> str:
-    """NFKC + casefold, then every run of non-letters/digits removed. Unicode-aware, so a
-    title in any script keeps its letters and two encodings of 'Café' compare equal."""
-    return re.sub(r"[\W_]+", "", unicodedata.normalize("NFKC", text or "").casefold())
+    """slug.py title mode with the hyphens removed: Latin accents folded ('Café' == 'Cafe'),
+    letters in any script kept, punctuation and spacing ignored."""
+    return slugify(text, drop_punctuation=True).replace("-", "")
 
 
 def key(title: str, company: str) -> str:
@@ -54,15 +54,40 @@ def key(title: str, company: str) -> str:
     return f"{_norm(title)}|{_norm(company)}"
 
 
-def cached_keys(cache_text: str) -> set:
-    keys = set()
+def cell_url(url) -> str:
+    """A URL as stored in the cache: '|' percent-encoded, since a literal one would split the
+    row and rewriting it to '/' would change the link. Lookups use the same form."""
+    return (url or "").strip().replace("|", "%7C")
+
+
+URL_IN_CELL = re.compile(r"\]\(([^)]+)\)")
+
+
+def cached_index(cache_text: str) -> tuple[set, set, set]:
+    """(keys of all rows, keys of rows with no URL, URLs). A posting URL is a role's
+    identity, as in the nightly scanner; title+company is the fallback for URL-less rows."""
+    keys, keys_no_url, urls = set(), set(), set()
     for line in cache_text.splitlines():
         if not line.startswith("|") or re.match(r"^\|[-: |]+\|$", line):
             continue
         cols = parse_cols(line)
         if len(cols) >= 2 and cols[0] != "Title":
-            keys.add(key(cols[0], cols[1]))
-    return keys
+            k = key(cols[0], cols[1])
+            keys.add(k)
+            m = URL_IN_CELL.search(cols[5]) if len(cols) > 5 else None
+            if m:
+                urls.add(m.group(1).strip())
+            else:
+                keys_no_url.add(k)
+    return keys, keys_no_url, urls
+
+
+def is_cached(ad: dict, keys: set, keys_no_url: set, urls: set) -> bool:
+    """With a URL: that URL is cached, or a URL-less row has this title+company. Without
+    one: title+company. So one title at one company in two offices is two roles."""
+    k = key(ad["title"], ad["company"])
+    url = cell_url(ad.get("url"))
+    return (url in urls or k in keys_no_url) if url else k in keys
 
 
 def status_for(score: int, cutoffs: dict) -> str:
@@ -84,15 +109,18 @@ def pipeline_companies(text: str) -> list:
 def assess(ads: list, root: Path) -> dict:
     ctx = load_scoring_context(root)
     cutoffs = {**STATUS_CUTOFFS, **((ctx.get("fit_spec") or {}).get("status_cutoffs") or {})}
-    seen = cached_keys(read_file(root / CACHE))
+    keys, keys_no_url, urls = cached_index(read_file(root / CACHE))
     tracked = pipeline_companies(read_file(root / PIPELINE))
     cached, new = [], []
     for ad in ads:
-        k = key(ad["title"], ad["company"])
-        if k in seen:
+        if is_cached(ad, keys, keys_no_url, urls):
             cached.append({"title": ad["title"], "company": ad["company"]})
             continue
-        seen.add(k)  # a listing repeated within one scan is assessed once
+        # a listing repeated within one scan is assessed once
+        if cell_url(ad.get("url")):
+            urls.add(cell_url(ad.get("url")))
+        else:
+            keys.add(key(ad["title"], ad["company"]))
         role = {f: ad.get(f, "") for f in ("title", "company", "location", "description",
                                            "department", "team")}
         score = score_role(role, ctx)
@@ -114,13 +142,13 @@ def record(rows: list, root: Path) -> dict:
     text = read_file(path)
     if not text:
         out_error(f"cache not found or empty: {path}", "file_not_found")
-    seen = cached_keys(text)
-    dupes = [r["title"] for r in rows if key(r["title"], r["company"]) in seen]
+    keys, keys_no_url, urls = cached_index(text)
+    dupes = [r["title"] for r in rows if is_cached(r, keys, keys_no_url, urls)]
     if dupes:
         out_error(f"already in the cache: {dupes}", "duplicate")
     lines = text.rstrip("\n").split("\n")
     for r in rows:
-        url = f"[Listing]({safe_cell(r['url'])})" if r.get("url") else "—"
+        url = f"[Listing]({cell_url(r['url'])})" if cell_url(r.get("url")) else "—"
         lines.append(f"| {safe_cell(r['title'])} | {safe_cell(r['company'])} | {r['score']}/10 | "
                      f"{r['status']} | {r.get('ad_date') or '—'} | {url} | "
                      f"{safe_cell(r['reason'])} (scan_jobs.py) |")
