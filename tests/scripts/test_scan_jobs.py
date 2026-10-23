@@ -139,3 +139,11 @@ def test_a_url_less_cache_row_still_dedupes_by_title_and_company(root):
     _, out = run(root, "assess", [{"title": "Senior Engineer / Backend", "company": "Acme Corp",
                                    "url": "https://example.com/new"}])
     assert out["new"] == []
+
+
+def test_a_url_with_parentheses_round_trips_and_dedupes(root):
+    url = "https://example.com/jobs/ops-(sf)"
+    run(root, "record", [{"title": "Ops", "company": "Beacon AI", "score": 5, "status": "maybe",
+                          "url": url, "ad_date": "", "reason": "score 5/10"}])
+    _, out = run(root, "assess", [{"title": "Ops", "company": "Beacon AI", "url": url}])
+    assert out["new"] == [], "the stored link must read back whole"

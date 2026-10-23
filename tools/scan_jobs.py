@@ -55,9 +55,10 @@ def key(title: str, company: str) -> str:
 
 
 def cell_url(url) -> str:
-    """A URL as stored in the cache: '|' percent-encoded, since a literal one would split the
-    row and rewriting it to '/' would change the link. Lookups use the same form."""
-    return (url or "").strip().replace("|", "%7C")
+    """A URL as stored in the cache: '|', '(' and ')' percent-encoded, since a literal '|'
+    splits the row and a ')' ends the markdown link early. Encoding changes no link, and
+    lookups use the same form."""
+    return (url or "").strip().replace("|", "%7C").replace("(", "%28").replace(")", "%29")
 
 
 URL_IN_CELL = re.compile(r"\]\(([^)]+)\)")
