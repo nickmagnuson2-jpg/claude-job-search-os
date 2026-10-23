@@ -90,12 +90,15 @@ SHAPES = [
     ("of-or", re.compile(
         rf"{LEFT}(?P<n>{INT})\s+(?:of|out of)\s+(?P<m>{INT}){NOUNS},?\s+or\s+{APPROX}"
         rf"(?P<c>{NUM})(?P<pct>\s*%)")),
-    # N of M, which is C%   (also ", that's", ", that is", ", or", "i.e.", a dash).
+    # N of M, which is C%   (also ", that's", ", that is", ", or", "i.e.", a dash, and
+    # the plain copula or equals: "7 of 22 is C%", "7/22 is C%", "7 of 22 = C%").
     # At most ONE noun after M, and the percent sign is required: a dash followed by a
-    # bare number ("12 of 40 done - 5 left") is not a ratio. Final review 546.F3/547.F5.
+    # bare number ("12 of 40 done - 5 left") is not a ratio, and "Step 7 of 22 is done"
+    # has no percent. Final review 546.F3/547.F5; plain copula 548.F1/549.F3.
     ("of-copula", re.compile(
-        rf"{LEFT}(?P<n>{INT})\s+(?:of|out of)\s+(?P<m>{INT})(?:\s+[A-Za-z][\w'-]*)?"
-        rf"(?:\s*,\s*(?:(?:which|that)(?:'s|’s|\s+is|\s+was)|or)|,?\s+i\.e\.,?|\s+[-–—]{{1,2}})"
+        rf"{LEFT}(?P<n>{INT})(?:\s+(?:of|out of)\s+|\s*/\s*)(?P<m>{INT})(?:\s+[A-Za-z][\w'-]*)?"
+        rf"(?:\s*,\s*(?:(?:which|that)(?:'s|’s|\s+is|\s+was)|or)|,?\s+i\.e\.,?|\s+[-–—]{{1,2}}"
+        rf"|\s+(?:is|was)|\s*=)"
         rf"\s+{APPROX}(?P<c>{NUM})(?P<pct>\s*%)")),
     # C% (N of M)   C% (N/M)
     ("pct-paren", re.compile(

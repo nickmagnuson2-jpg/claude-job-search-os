@@ -60,6 +60,13 @@ def test_shape_caught(text, value):
     "It fired 7 of 22 times - 31.8%.",
     "It fired 7 of 22 times – 31.8%.",
     "It fired 7 out of 22, which was 31.8%.",
+    # Plain copula and equals, final review round 3 (548.F1 / 549.F3).
+    "It fired 7 of 22 is 31.8%.",
+    "So 7 of 22 times is 31.8%.",
+    "So 7/22 is 31.8%.",
+    "So 7 / 22 was 31.8%.",
+    "It fired 7 of 22 = 31.8%.",
+    "It fired 7 out of 22 times = 31.8%.",
 ])
 def test_copular_shape_caught(text):
     hits = cdr.find_derived(text)
@@ -74,6 +81,8 @@ def test_copular_shape_caught(text):
     "It fired 7 of 22 times, which is fine. Budget use is 31.8%.",
     "We closed 12 of 40 tickets - 5 remain open.",          # dash, no percent
     "It fired 7 of 22 big noisy times, which is 31.8%.",    # more than one noun
+    "Step 7 of 22 is done.",                                # copula, no percent
+    "So 7 of 22 is a lot, and 31.8% of the budget went too.",  # percent not adjacent
 ])
 def test_copular_shape_negatives(text):
     assert values(text) == []

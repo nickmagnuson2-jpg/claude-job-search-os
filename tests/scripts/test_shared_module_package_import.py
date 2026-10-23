@@ -32,6 +32,7 @@ TOOLS = (
     "check_bare_python",
     "check_changelog_currency",
     "check_data_projects",
+    "check_derived_ratio",
     "check_draft_voice",
     "check_edit_after_mutation",
     "check_edit_safety",
