@@ -533,3 +533,53 @@ def test_shipped_table_parses_and_carries_both_scopes():
     assert scopes == {"all", "authored"}, f"shipped table scopes are {scopes}"
     assert any(pat.search("this is load-bearing") for pat, scope, _ in TABLE if scope == "all"), \
         "the load/bearing row is gone from the shipped table"
+
+
+# =============================================================================
+# Figurative role-substitutions (feedback_no_shape_of_role_phrasing), 2026-10-22.
+#
+# Three table rows, scope=authored. The "shape of the role" band was already
+# BLOCKed by check_draft_voice.py, but only on tools/.pending-draft.txt; the 2nd
+# fire ("the role rhymes with chief-of-staff") landed in a company note, which no
+# gate judged. These rows extend the existing table to every authored surface.
+# Permitted literal and adjectival forms are pinned as clean so a widened regex
+# that starts eating them fails here.
+# =============================================================================
+
+@pytest.mark.parametrize("path, content, replacement", [
+    ("data/company-notes/acme.md", "The role rhymes with chief-of-staff.\n",
+     "is essentially a X role"),
+    ("output/acme/102226-prep.md", "Honestly the shape of the role lines up.\n",
+     "the role / the seat / what you described"),
+    ("output/acme/102226-prep.md", "It is the shape I like most.\n",
+     "name the attribute: scope, team, stage"),
+])
+def test_figurative_role_substitution_blocks(path, content, replacement):
+    code, err = _write(path, content)
+    assert code == 2, f"expected BLOCK, got exit {code}; stderr={err!r}"
+    assert replacement in err, f"replacement missing: {err!r}"
+
+
+@pytest.mark.parametrize("content", [
+    "It is the same shape as the work I did at Acme.\n",
+    "This is a CoS-shaped role.\n",
+    "## What is the role shape?\n",
+    "The first-month shape is a listening tour.\n",
+    "The role is essentially a chief-of-staff role.\n",
+    # Hyphenated compound: the noun is "role-title error", not "role". Replay
+    # 2026-10-22 found this form in two real dossiers; `\b` alone matched it.
+    "This is the exact shape of the role-title error from last week.\n",
+    # "work" and "job" were dropped from row 1 (Nick's call, 2026-10-23): here they name
+    # the form of the work, not a stand-in for the role.
+    "The shape of the work is mostly async writing.\n",
+    "The shape of this job changes after the first quarter.\n",
+])
+def test_permitted_role_comparisons_stay_clean(content):
+    code, err = _write("output/acme/102226-prep.md", content)
+    assert code == 0, f"permitted form blocked; exit {code}; stderr={err!r}"
+
+
+def test_figurative_role_substitution_is_exempt_in_interaction_log():
+    """networking.md quotes other people's words; scope=authored stands down there."""
+    code, err = _write("data/networking.md", "The role rhymes with chief-of-staff.\n")
+    assert code == 0, f"interaction log was gated; exit {code}; stderr={err!r}"

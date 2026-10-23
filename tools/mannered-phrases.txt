@@ -61,3 +61,13 @@ cornerstone	authored	the basis / the foundation
 delve into	authored	look at / examine
 stark contrast	authored	a clear difference
 held hostage	authored	blocked by
+#
+# Figurative substitutes for the role noun (memory: feedback_no_shape_of_role_phrasing).
+# Permitted and deliberately NOT matched: "same shape as", "X-shaped role", a "role shape?"
+# heading. mirrors / parallels / echoes / contours stay out: too much innocent use.
+# "work" and "job" stay out of row 1: "the shape of the work" usually means the form of
+# the work, not a stand-in for the role (6 such lines in the 2026-10-22 replay).
+# (?!-) on the first row: "the shape of the role-title error" names an error, not the role.
+shape\s+of\s+(?:the|this|that|your|our|my|a|an)\s+(?:role|seat|gig|position|opportunity)(?!-)	authored	the role / the seat / what you described
+the\s+shape\s+(?:I|that\s+I|I'd)\s+(?:like|want|prefer|enjoy)	authored	name the attribute: scope, team, stage
+(?:role|seat|job|position)\s+rhymes\s+with	authored	is essentially a X role
