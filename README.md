@@ -33,7 +33,7 @@ A **G** sentence about who the user is, what they bring, or what they have done 
 2. `/cold-outreach "Jamie Torres" "Acme Corp"` (fictional contact) reads that dossier, the user's profile, and any prior notes on the contact, then writes an Outreach Brief: why now, facts about the recipient with a source for each, which of the user's experiences are relevant, and what not to say.
 3. The skill stops. The user states the main point of the message in their own words.
 4. Claude drafts from that point, labels each sentence by source, and hooks check the draft for known style problems (em dashes, filler phrases) before a Gmail compose window opens with the draft. Nothing is sent automatically.
-5. The message is saved to the user's private notes (`data/networking.md`), and a follow-up to-do is created.
+5. After the user approves, the message is saved to the user's private notes (`data/networking.md`), and a follow-up to-do is created.
 
 A sample CV generated from the fictional demo profile: [`sample-cv-priya-anand.pdf`](examples/output/sample-cv-priya-anand.pdf).
 
@@ -52,7 +52,7 @@ A sample CV generated from the fictional demo profile: [`sample-cv-priya-anand.p
 | Layer | Where | What it holds |
 |---|---|---|
 | Data | `data/` (private, kept out of this public repo) | The user's profile, goals, pipeline, contacts, decisions, and per-project records that CVs are built from |
-| Skills | [`.claude/skills/`](.claude/skills/) | 40 slash commands, each a markdown file listing its steps and which data files it reads |
+| Skills | [`.claude/skills/`](.claude/skills/) | 40 slash commands, each a markdown file listing its steps and, for most, which data files it reads |
 | Hooks | `tools/check_*.py`, wired in [`.claude/settings.json`](.claude/settings.json) | Checks that run on tool calls and block known failures ([full list](docs/hooks.md)) |
 | Framework | [`framework/`](framework/) | Methodology the skills follow: the CV workflow and 20-point checklist, interview coaching protocol, recruiter-call answering strategies, style guide |
 
@@ -64,7 +64,7 @@ Skills reference framework docs by path, so a rule changed in one framework file
 
 The user's data is gitignored, so git leaves it out of this public repo: `data/`, `output/`, `coaching/`, and `memory/`. An end-of-day step in `/checkout` commits that data to a separate private repository instead, so the search history is still versioned.
 
-The public repo also has leak checks. A hook (`tools/check_public_pii.py`) blocks known real names and target-company names from being written into any tracked file, and the `/audit-pii` skill, run before a commit, checks more broadly for names the list does not cover. Details: [docs/privacy.md](docs/privacy.md).
+The public repo also has leak checks. A hook (`tools/check_public_pii.py`) blocks Claude from writing names on a private denylist (known contacts and target companies) into any tracked file. It does not check commits made by hand. The `/audit-pii` skill, run before a commit, checks more broadly for names the list does not cover. Details: [docs/privacy.md](docs/privacy.md).
 
 ---
 

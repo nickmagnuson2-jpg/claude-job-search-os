@@ -136,6 +136,7 @@ STAGE_PATHS=(
   "$WORK_TREE/docs/framework-index.md"
   "$WORK_TREE/tools/granola_split_existing.py"
   "$WORK_TREE/CLAUDE.local.md"
+  "$WORK_TREE/tests/skills/SCAN_CONTACTS_TESTING.md"
   "$WORK_TREE/.claude/skills/scan-jobs/cache.md"
   "$WORK_TREE/tools/generate_sidebiz_pitch.py"
   "$WORK_TREE/tools/generate_sidebiz_model.py"

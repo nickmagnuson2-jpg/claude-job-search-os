@@ -24,10 +24,9 @@ prose has now failed twice."
   full deep review. Nick caught it: "it should be Chief Product and Technology
   officer."
 
-  Fire 2 (2026-08-24): the stale variant was sitting in MEMORY.md Critical
-  Context — the always-loaded file — so ~35 min before a live interview loop
-  Claude told Nick his own CORRECT answer was wrong, twice, and he had to
-  correct Claude from the sidewalk.
+  Fire 2: the stale variant was sitting in MEMORY.md Critical Context, the
+  always-loaded file, so Claude corrected the owner's own correct answer to
+  the wrong one, twice.
 
 Prose failed both times. The failure is a literal string, so a string check is
 the enforcement tier that actually converts (CLAUDE.md: "a check a gate reads").

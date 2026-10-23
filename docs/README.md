@@ -75,7 +75,7 @@ The methodology docs skills reference instead of embedding rules inline.
 | File | Purpose |
 |------|---------|
 | [interview-workflow.md](../framework/interview-workflow.md) | Session workflow, coaching rules, progress logging |
-| [framework/answering-strategies/](../framework/answering-strategies/) | Six files covering recruiter call techniques (blank mind, gap reframing, pressure defense, etc.) |
+| [framework/answering-strategies/](../framework/answering-strategies/) | Seven files covering recruiter call techniques (blank mind, gap reframing, pressure defense, etc.) |
 
 ### Problem Solving & Communication Craft
 

@@ -50,7 +50,7 @@ The em-dash and spaced-hyphen rule applies to **CVs and cover letters** (formal 
 
 ### Sensitive names — internal-only
 
-Some real people appear throughout the private corpus (reflections, therapy notes,
+Some real people appear throughout the private corpus (reflections, private notes,
 company notes, interaction logs). They are **internal-only**: they may appear in
 gitignored files (`data/`, `output/`, `memory/`, `coaching/`) and must **never** appear
 in a public artifact or in anything sent outside.

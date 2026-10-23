@@ -474,6 +474,7 @@ After all 3 agents return, compile their outputs into a single document. Do not 
 **Staging gates:** If the interview type is `recruiter`, add explicit staging labels throughout:
 - Mark any content that references personal experience, deeper disclosure, or operational insights with `[HM-STAGE ONLY]` or move to a separate "If You Advance" section at the bottom.
 - When the company's mission touches a personal topic, recruiter-stage answer frameworks should use the most guarded framing of personal motivation (e.g., "X is personal to me" not "going through X myself").
+- If the company works in a sensitive field such as healthcare, recruiters can infer personal details from specific language. Heighten disclosure awareness in anti-patterns.
 
 **Self-reported metrics:** When citing company-reported outcomes (readmission rates, NPS, adherence, cost savings) in answer frameworks or company context, qualify with "they report" or "self-reported." Presenting unverified metrics as fact undermines credibility with knowledgeable interviewers.
 

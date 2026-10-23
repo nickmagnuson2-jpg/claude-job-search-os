@@ -91,7 +91,7 @@ For long transcripts (>500 chars per chunk), still show the full text — voice 
 
 Before writing ANY file whose name encodes a date (`YYYY-MM-DD-*.md` in `data/reflections/` or `<personal-vault>/data/reflections/`), perform this check and surface the result to Nick. Do NOT write the file until Nick has confirmed the date and framing.
 
-**Origin:** 2026-05-27. A post-interview voice note recorded on 5/26 (captured by Wispr at 5/27 13:48) was routed as `2026-05-27-pre-interview-notes.md`, which was wrong on both axes; the correct name was `2026-05-26-post-interview-notes.md`. The filename date used the Wispr capture timestamp instead of the event date stated in the note ("Reflections, May 26, 10:50"). The pre/post framing contradicted MEMORY.md, which already had the interview on Mon 5/25, so by Tuesday 5/26 the note was post-interview, not pre. See [[feedback_reflection_event_date_not_capture_date]]. This is the same gap-filling failure mode as [[feedback_silent_gap_filling_on_screenshot_parsing]] and [[feedback_cross_context_name_conflation]] — third documented occurrence, hence structural enforcement here.
+**Origin:** A post-interview voice note was routed to a filename that used the Wispr capture date instead of the event date stated in the note, and was labeled pre-interview when the calendar already showed the interview had happened. See [[feedback_reflection_event_date_not_capture_date]]. This is the same gap-filling failure mode as [[feedback_silent_gap_filling_on_screenshot_parsing]] and [[feedback_cross_context_name_conflation]], third documented occurrence, hence structural enforcement here.
 
 **The check (4 sub-steps, all four required):**
 

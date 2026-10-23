@@ -11,7 +11,7 @@ Most hooks block the tool call outright (exit code 2), and Claude sees the reaso
 | `check_voice_pure.py` | PreToolUse on Write/Edit | Blocks model-written prose in dated reflection files, which hold only the user's own words |
 | `check_email_via_skill.py` | PreToolUse on Write/Edit | Blocks email-shaped content written outside the skill flow |
 | `check_no_confabulation.py` | PreToolUse on Write/Edit | Blocks placeholder tokens in shippable artifacts |
-| `check_data_projects.py` | PreToolUse on Write/Edit to `data/projects/` | Warn-only: flags verbs that claim sole credit ("single-handedly built") in a project's Key Achievements |
+| `check_data_projects.py` | PreToolUse on Write/Edit to `data/projects/` | Warn-only (the warning is not shown to Claude): flags verbs that claim sole credit ("single-handedly built") in a project's Key Achievements |
 | `check_living_log_purity.py` | PreToolUse on Write/Edit/MultiEdit | Blocks direct writes to append-only log files; only the dedicated append script may write them |
 | `check_draft_voice.py` | PreToolUse on Bash `open_draft.py` | Scans draft for voice anti-patterns before Gmail compose opens |
 | `check_todo_write_kwargs.py` | PreToolUse on Bash | Blocks kwarg-style invocation of the atomic to-do writer |

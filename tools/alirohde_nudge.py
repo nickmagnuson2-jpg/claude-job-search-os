@@ -4,7 +4,7 @@ alirohde_nudge.py — Write an inbox triage nudge when a new Ali Rohde Jobs
 edition has landed (deterministic detect + extract; no scoring).
 
 "Ali Rohde Jobs" is a weekly Substack jobs newsletter (alirohdejobs@substack.com)
-heavy on Chief of Staff / Strategic Operations roles — Nick's target shape.
+heavy on Chief of Staff / Strategic Operations roles.
 gmail_fetch.py already drops each edition into inbox/. This script runs daily
 (cheap-check): it no-ops unless a NEW edition number is present, then writes a
 review-gated nudge pointing at /scan-jobs (which does profile-fit scoring and
