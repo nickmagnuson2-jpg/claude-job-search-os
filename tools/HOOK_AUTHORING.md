@@ -182,6 +182,15 @@ between them. Three rules would have cut most of it:
       tightening to `is False` — the two look identical and take opposite fixes. Mechanical test,
       cheaper than reasoning: delete the guard, run the test, confirm it dies. Per
       `feedback_a_test_whose_input_fails_twice_cannot_see_its_target`.
+- [ ] **Tests written in the same sitting as the code cover what you were thinking about, not
+      what is risky. Test every return value and every error path, and assert on the error
+      MESSAGE, not only the exception type.** When a guard raises and deleting it would still
+      raise by a different route, a test that checks only the exception type passes either
+      way. This is not the input-blindness case above: there the input never reaches the guard
+      and needs a new input; here the guard is reached, so the assertion must say which raise
+      happened. Treat a surviving mutant as a missing test before treating it as an allowlist
+      entry. (2026-09-06/07: 12 survivors in a 20-test suite and 12 of 26 in a 49-test suite,
+      all in dispatch, return values or messages. `feedback_guard_tests_must_cover_shipped_surface.md`)
 - [ ] **BLOCK (exit 2) only for unambiguous, single-correction violations** (per `feedback_warn_vs_block_hook_design.md`). PreToolUse WARN-via-exit-0+stderr is NOT surfaced by Claude Code — a true "warn" is invisible, so a real warning must be exit 2 with a corrective message, reserved for cases that always fail anyway. **The exception, and it is a real one: on `UserPromptSubmit`, stdout IS the injection channel, so exit 0 DELIVERS.** That is the correct home for a reminder that must not block — the surface did not exist in this repo until `check_status_query_verification.py` (2026-09-07), and it is now the fourth option alongside Stop, pre-commit and a skill step. Do not generalise it backwards: on PreToolUse, exit 0 plus stderr still reaches nobody.
 - [ ] **Distinguishable block message** — make the BLOCKED line specific enough that a transcript scan can tell a true catch from a false-positive.
 - [ ] **Log false-positives manually — this is the ONLY telemetry path for them.** Auto-capture cannot see or classify a hook block: a block is intent-ambiguous (a correct catch vs a wrong block look identical, and only the agent in-context knows which). The PostToolUse auto-logger is blind to PreToolUse blocks entirely; the transcript-scan backfill miscounts a false-positive as another occurrence of the thing being blocked. So if a hook blocks work you believe is legitimate, log it *at that moment*: `PYTHONIOENCODING=utf-8 python3 tools/friction_log.py append <hook>.py "FP: <what got wrongly blocked>"`. A distinct nature keeps it separate from the true-positive row. Origin: 2026-06-02 #4 investigation. **PARKED — auto-logger PreToolUse-block blindness. REOPEN gate: if a buggy hook is discovered late because its false-positives were invisible/miscounted in the ledger, build a stderr FP-logging hint for BLOCK-tier hooks.**

@@ -23,7 +23,7 @@ Examples:
 - `/draft-email "Sarah Chen" "thank you for coffee chat"`
 - `/draft-email "Pat" "update on my job search"`
 - `/draft-email "Jordan Lee" "ask for intro to Acme AI CEO"`
-- `/draft-email "Lisa Park" "interested in the CoS role at Notion"`
+- `/draft-email "Lisa Park" "interested in the CoS role at Acme AI"`
 - `/draft-email "James Liu" "informational interview about PM at Stripe"`
 
 If no arguments provided, display usage:
@@ -152,7 +152,7 @@ Mid-session, Nick's profile and identity context is usually already in the conve
 **Rule:** The polished output's diff from the guide must be **mechanical only**:
 - Grammar errors → fix
 - Punctuation → add/correct
-- Wispr homophones with context-obvious meaning → silent-correct + note inline (per `memory/feedback_dont_speculatively_change_voice_transcript_names.md` Extension 2026-05-13)
+- Wispr homophones with context-obvious meaning → silent-correct + note inline (per `memory/feedback_default_to_canonical_spelling_when_memory_flags_wispr_rendering.md`, section "Merged 2026-10-23", Category B)
 - Sentence-boundary cleanup → fix
 
 **Banned during voice-pure polish:**
