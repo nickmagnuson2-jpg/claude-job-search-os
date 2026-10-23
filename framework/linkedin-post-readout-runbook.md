@@ -13,7 +13,7 @@
 | Tool (parse the export, build the page, write the Vercel folder) | `tools/linkedin_post_readout.py` |
 | Page template; edit its CONFIG block through a per-post config file | `framework/templates/linkedin-post-readout.html` |
 | Password gate for Vercel | `framework/templates/linkedin-post-readout-middleware.js` |
-| Tests: 42, including a Node test that runs the generated password gate. Mutation check on 2026-10-22: 100 of 100 mutants killed, no isolation failures (result saved as `output/analysis/102226-mutation-linkedin-post-readout.json`, gitignored). To rerun: `python3 tools/mutation_check.py tools/linkedin_post_readout.py --tests tests/scripts/test_linkedin_post_readout.py --isolation` | `tests/scripts/test_linkedin_post_readout.py` |
+| Tests: 45, including a Node test that runs the generated password gate. Mutation check on 2026-10-22: 99 of 99 mutants killed, no isolation failures (result saved as `output/analysis/102226-mutation-linkedin-post-readout.json`, gitignored). To rerun: `python3 tools/mutation_check.py tools/linkedin_post_readout.py --tests tests/scripts/test_linkedin_post_readout.py --isolation` | `tests/scripts/test_linkedin_post_readout.py` |
 | Per-post config, with real names (gitignored) | `output/<company>/readout-config.json` |
 
 The page is always generated from the template. Change the design in the template, never in a generated page, and every past and future readout picks the change up on its next build.
@@ -47,7 +47,7 @@ The page is always generated from the template. Change the design in the templat
    For a refresh of an existing readout, reuse its config unchanged.
 3. **Build.** Run `python3 -I tools/linkedin_post_readout.py build output/<company>/readout-config.json <export.xlsx> output/<company>/MMDDYY-linkedin-post-readout.html --vercel-dir output/<company>/<vercel-folder>`.
    - It reads the xlsx with the standard library, because openpyxl is not installed, and shared strings must be read by cell position.
-   - It fails loudly if a metric or post field is missing or empty, if a demographic row has an empty cell, if any of the six demographic categories is missing, or if the config lacks a key that the template's CONFIG block defines (the template is the only list of keys).
+   - It fails loudly if a metric or post field is missing or empty, if a demographic row has an empty or missing cell, if any of the six demographic categories is missing, or if the config lacks a key that the template's CONFIG block defines (the template is the only list of keys).
    - The Vercel folder name must be lowercase letters, digits and hyphens, because it becomes the cookie salt and the package name.
    - Every analytics number on the page is computed at runtime from the DATA block it writes.
    - `refresh <export.xlsx> <page.html>` replaces only the DATA block of an existing page. `data <export.xlsx>` prints the parsed export.

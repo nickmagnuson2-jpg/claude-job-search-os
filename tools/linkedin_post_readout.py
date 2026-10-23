@@ -76,8 +76,12 @@ def read_rows(xlsx_path):
         m = re.fullmatch(r"([A-Z]+)(\d+)", c.get("r") or "")
         if not m:
             raise ReadoutError(f"Cell without a valid reference: {c.get('r')!r}")
-        rows.setdefault(int(m.group(2)), []).append((len(m.group(1)), m.group(1), val.strip()))
-    return [[v for *_, v in sorted(rows[k])] for k in sorted(rows)]
+        col = 0
+        for ch in m.group(1):
+            col = col * 26 + ord(ch) - 64
+        rows.setdefault(int(m.group(2)), {})[col] = val.strip()
+    # place each cell at its column, so a missing cell is "" rather than shifting the row left
+    return [[cells.get(c, "") for c in range(1, max(cells) + 1)] for _, cells in sorted(rows.items())]
 
 
 def to_int(s):
@@ -104,9 +108,9 @@ def parse_export(xlsx_path):
         if r == ["Category", "Value", "%"]:
             in_demo = True
             continue
-        if in_demo and len(r) == 3:
-            if not all(r):
-                raise ReadoutError(f"Export has a demographic row with an empty cell: {r}")
+        if in_demo:
+            if len(r) != 3 or not all(r):
+                raise ReadoutError(f"Export has a demographic row without three non-empty cells: {r}")
             label = r[2].replace("< ", "<")
             share = None if "<" in label else int(label.rstrip("%")) / 100
             demographics.append([r[0], r[1], share, label])

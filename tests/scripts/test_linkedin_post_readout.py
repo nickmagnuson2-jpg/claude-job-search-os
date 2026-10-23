@@ -1,6 +1,7 @@
 """Tests for tools/linkedin_post_readout.py"""
 import importlib.util
 import json
+import re
 import zipfile
 from xml.sax.saxutils import escape
 from pathlib import Path
@@ -359,7 +360,7 @@ def test_empty_post_field_fails(tmp_path, field):
 @pytest.mark.parametrize("row", [["Industry", "", "20%"], ["", "Software Development", "20%"], ["Industry", "Software Development", ""]])
 def test_demographic_row_with_empty_cell_fails(tmp_path, row):
     rows = [row if r == ["Industry", "Software Development", "20%"] else r for r in ROWS]
-    with pytest.raises(lpr.ReadoutError, match="empty cell"):
+    with pytest.raises(lpr.ReadoutError, match="three non-empty cells"):
         lpr.parse_export(write_export(tmp_path / "e.xlsx", rows))
 
 
@@ -374,7 +375,7 @@ def test_read_rows_orders_cells_by_column_letter(tmp_path):
         (1, '<c r="B1"><v>2800</v></c><c r="A1" t="inlineStr"><is><t>Impressions</t></is></c>'),
         (2, '<c r="AA2"><v>3</v></c><c r="B2"><v>2</v></c><c r="A2"><v>1</v></c>'),
     ])
-    assert lpr.read_rows(path) == [["Impressions", "2800"], ["1", "2", "3"]]
+    assert lpr.read_rows(path) == [["Impressions", "2800"], ["1", "2"] + [""] * 24 + ["3"]]
 
 
 def test_cell_without_reference_fails(tmp_path):
@@ -391,3 +392,33 @@ def test_broken_sheet_is_an_error_not_a_traceback(tmp_path, capsys, sheet):
         z.writestr("xl/worksheets/sheet1.xml", sheet)
     assert lpr.main(["data", str(path)]) == 1
     assert "Error:" in capsys.readouterr().err
+
+
+def test_read_rows_keeps_a_missing_cell_in_its_column(tmp_path):
+    path = write_raw_sheet(tmp_path / "e.xlsx", [
+        (1, '<c r="A1"><v>1</v></c><c r="C1"><v>3</v></c>'),
+        (2, '<c r="B2"><v>2</v></c>'),
+    ])
+    assert lpr.read_rows(path) == [["1", "", "3"], ["", "2"]]
+
+
+def _with_raw_demographic_row(path, cells_xml):
+    """The fixture export with Industry's row replaced by hand-written cell XML (inline strings)."""
+    write_export(path)
+    with zipfile.ZipFile(path) as z:
+        sst, sheet = z.read("xl/sharedStrings.xml").decode(), z.read("xl/worksheets/sheet1.xml").decode()
+    r = next(i for i, row in enumerate(ROWS, start=1) if row[0] == "Industry")
+    sheet = re.sub(rf'<row r="{r}">.*?</row>', f'<row r="{r}">{cells_xml.format(r=r)}</row>', sheet)
+    with zipfile.ZipFile(path, "w") as z:
+        z.writestr("xl/sharedStrings.xml", sst)
+        z.writestr("xl/worksheets/sheet1.xml", sheet)
+    return path
+
+
+@pytest.mark.parametrize("cells", [
+    '<c r="A{r}" t="inlineStr"><is><t>Industry</t></is></c><c r="C{r}" t="inlineStr"><is><t>20%</t></is></c>',
+    '<c r="B{r}" t="inlineStr"><is><t>Industry</t></is></c><c r="C{r}" t="inlineStr"><is><t>Software Development</t></is></c><c r="D{r}" t="inlineStr"><is><t>20%</t></is></c>',
+])
+def test_demographic_row_with_a_missing_cell_fails(tmp_path, cells):
+    with pytest.raises(lpr.ReadoutError, match="three non-empty cells"):
+        lpr.parse_export(_with_raw_demographic_row(tmp_path / "e.xlsx", cells))
