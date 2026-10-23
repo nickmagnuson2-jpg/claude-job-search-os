@@ -155,6 +155,47 @@ def test_cross_reference_networking_reply(tmp_path):
     assert result["recent_outreach"]["replied"] == 1
 
 
+def test_cross_reference_tolerates_name_and_company_drift(tmp_path):
+    """Surname-suffix and company-parenthetical drift between the two files still
+    reconciles; a same-first-name contact at a different company does not.
+
+    Pins both halves of reconcile_key (first name + first company token): an
+    exact-match key leaves the drifted contact stuck in awaiting_response, and a
+    first-name-only key wrongly clears the other contact.
+    """
+    write_fixture(tmp_path, "data/outreach-log.md", """\
+        # Outreach Log
+
+        | Date | Type | Channel | Name | Company | Subject | Status |
+        |------|------|---------|------|---------|---------|--------|
+        | 2026-03-03 | cold-outreach | email | Casey Doe | Acme (BrandX) | Coffee ask | Sent |
+        | 2026-03-03 | cold-outreach | email | Casey Roe | OtherCo | Coffee ask | Sent |
+    """)
+
+    write_fixture(tmp_path, "data/networking.md", """\
+        ## Interaction Log
+
+        ### Casey Doe-Smith — Acme
+
+        #### 2026-03-10 | email | Casey replied. Call scheduled.
+
+        **Follow-up:** —
+    """)
+
+    result = run_script("outreach_pending.py",
+                        "--target-date", "2026-03-12",
+                        "--days-threshold-overdue", "5",
+                        "--repo-root", str(tmp_path))
+
+    all_awaiting = (
+        [e["name"] for e in result["awaiting_response"]] +
+        [e["name"] for e in result["awaiting_response_overdue"]]
+    )
+    assert "Casey Doe" not in all_awaiting
+    assert "Casey Roe" in all_awaiting
+    assert result["recent_outreach"]["replied"] == 1
+
+
 def test_cross_reference_no_later_interaction(tmp_path):
     """Outreach-log 'Sent' is NOT treated as replied when networking.md interaction is same day or earlier."""
     write_fixture(tmp_path, "data/outreach-log.md", """\
