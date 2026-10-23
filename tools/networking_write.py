@@ -296,6 +296,11 @@ def cmd_add(args, networking_path: Path, dry_run: bool) -> None:
 
 
 def cmd_log(args, networking_path: Path, repo_root: Path, dry_run: bool) -> None:
+    # The follow-up becomes a todo through todo_write.py, which refuses a wrong weekday.
+    # Refuse here first: below, the old follow-up is superseded before the add, and the
+    # add's exit code is ignored, so a refused add would silently lose the follow-up.
+    from todo_write import refuse_wrong_weekdays
+    refuse_wrong_weekdays(args.followup or "")
     today = date.today().strftime("%Y-%m-%d")
     log_date = args.date if args.date else today
 

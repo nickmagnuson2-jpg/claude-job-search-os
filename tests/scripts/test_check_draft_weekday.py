@@ -73,6 +73,7 @@ def test_allows_each_shape_when_correct(text):
     "Mon 13/40",                       # impossible numeric date
     "Monday, Feb 30",                  # impossible named date
     "Mon 3/16/2027x",                  # trailing junk is not a date end
+    "Wed/Mon 3/16-17",                 # a weekday list over a date range
     "",
 ])
 def test_allows_non_pairs(text):

@@ -80,6 +80,8 @@ from stage_vocab import is_terminal_stage  # noqa: E402
 # rather than reimplemented here (CLAUDE.md: consolidate duplicated domain logic).
 from gen_pii_denylist import is_distinctive_single, load_dictionary  # noqa: E402
 from md_table import merge_notes, out_ok, parse_cols, safe_cell, table_insert_pos, write_atomic  # noqa: E402
+# Shared weekday/date parser (single source of truth with the outbound-draft hook).
+from check_draft_weekday import find_mismatches  # noqa: E402
 
 TODOS_FILE = "data/job-todos.md"
 PIPELINE_FILE = "data/job-pipeline.md"
@@ -109,6 +111,26 @@ def out_error(message: str, **extra) -> None:
     d.update(extra)
     print(json.dumps(d, ensure_ascii=False))
     sys.exit(1)
+
+
+def refuse_wrong_weekdays(*texts: str) -> None:
+    """Refuse the write when a weekday contradicts its date ("Fri 8/15" on a Saturday).
+
+    Checks only the text the caller is writing now, never the rest of the row: an
+    `update --task` that corrects a bad label stamps the old one into a rev marker,
+    and checking that marker would block the correction itself.
+    Origin: memory/feedback_run_date_dont_infer_local_time.md (a week of mislabelled
+    daily reps, 2026-08-14).
+    """
+    hits = [hit for text in texts if text for hit in find_mismatches(text, date.today())]
+    if hits:
+        listed = "; ".join(f'"{phrase}" is a {fix}' for phrase, fix in hits)
+        out_error(
+            f"Weekday/date mismatch, row not written: {listed}. Compute the weekday "
+            f"from the date (`date -j -f %Y-%m-%d YYYY-MM-DD +%A`), never infer it. "
+            f"To record an old wrong label, describe it without the pair.",
+            reason="weekday_mismatch",
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -358,6 +380,7 @@ def cmd_add(args: list[str], todos_path: Path) -> None:
     if priority not in ("High", "Med", "Low"):
         priority = "Med"
 
+    refuse_wrong_weekdays(task, notes)
     content, lines = load_todos(todos_path)
 
     act_start, act_end = find_section(lines, "## Active")
@@ -648,6 +671,7 @@ def cmd_update(args: list[str], todos_path: Path) -> None:
     the edit only INSERTED text, which loses nothing. See is_insertion_only.
     """
     fragment_raw, fields = _parse_update_flags(args)
+    refuse_wrong_weekdays(*fields.values())
     fragment = fragment_raw.lower()
     content, lines = load_todos(todos_path)
 

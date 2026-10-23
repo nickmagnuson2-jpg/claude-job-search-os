@@ -81,7 +81,9 @@ _NUMERIC = r"(?P<nmon>\d{1,2})/(?P<nday>\d{1,2})(?:/(?P<nyear>(?:19|20)\d{2}|\d{
 _DATE = rf"(?:{_NAMED}|{_NUMERIC})"
 
 WD_THEN_DATE = re.compile(
-    rf"\b(?P<wd>{_WD_ALT})\b(?P<dot>\.)?,?[ \t]+(?:the[ \t]+)?{_DATE}(?![\w/])", re.IGNORECASE
+    # (?<!/): the second weekday of a list such as "Thu/Fri 10/22-23" heads a date range,
+    # not a pair (promotion drain C10, 2026-10-23).
+    rf"(?<!/)\b(?P<wd>{_WD_ALT})\b(?P<dot>\.)?,?[ \t]+(?:the[ \t]+)?{_DATE}(?![\w/])", re.IGNORECASE
 )
 DATE_THEN_WD = re.compile(
     rf"\b{_DATE}(?![\w/])[ \t]*\([ \t]*(?P<wd>{_WD_ALT})\.?[ \t]*\)", re.IGNORECASE
