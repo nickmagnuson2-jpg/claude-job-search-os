@@ -234,7 +234,7 @@ See `memory/feedback_voice_pure_diff_minimal.md` and `memory/feedback_minimize_p
 4. **Reciprocal offer or specific ask** (1 sentence) — not vague "keep me in mind"
 5. **Close**
 
-**Subject line:** "Quick update — [your name]" or "[Name], job search update"
+**Subject line:** Plain per the Step 5 subject rule (`voice-reference.md` subject canon) - not a fill-in template.
 
 **Follow-up to-do:** Created with 30-day due date to send next update.
 
@@ -255,9 +255,9 @@ See `memory/feedback_voice_pure_diff_minimal.md` and `memory/feedback_minimize_p
    - Why this company/person specifically (1 sentence — shows research)
    - What you're looking for (1 sentence — specific ask)
    - LinkedIn URL
-   - Low-pressure closing ("Happy to share more context if helpful")
+   - Low-pressure close per the matched exemplar
 
-**Subject line:** "Would you intro me to [target name]?" or "Quick ask — [target company]"
+**Subject line:** Plain per the Step 5 subject rule (`voice-reference.md` subject canon) - not a fill-in template.
 
 **Follow-up to-do:** Created with 7-day due date to check if connector responded.
 

@@ -99,7 +99,7 @@ Write four sections following the **Problem-Solution** structure. Total target: 
 Open with something specific to this company. Options (pick the strongest for this situation):
 - **Company challenge opener:** Name a specific challenge the company faces (from JD language, dossier, or news). Show you understand their world.
 - **Recent event opener:** Reference something the company recently did (funding round, product launch, expansion, leadership hire).
-- **Personal connection opener:** If you have a contact at this company, lead with that warmth — "After speaking with [Name] about [topic]..."
+- **Personal connection opener:** If you have a contact at this company, lead with that warmth: name the contact (first name only) and what you discussed, in the voice of the matched exemplar.
 
 Rules:
 - Name the company in the first sentence. Always.
@@ -308,6 +308,6 @@ Do NOT auto-open without Nick's confirmation.
 - **Missing profile.md contact details**: Leave name/contact fields as placeholders in output.
 - **No company dossier or recent news available**: Use JD language alone to identify the challenge. The Problem-Solution format still works — the "problem" comes from the JD's description of the role's mandate.
 - **Cover letter > 400 words after quality gates**: Force-trim to 350 by reducing section 2 to one proof point and section 3 to 2 sentences.
-- **Personal connection found in networking.md**: Use the personal connection opener in section 1 — "After speaking with [First Name]..." or "Through my conversation with [First Name]...". Use first name only unless instructed otherwise.
+- **Personal connection found in networking.md**: Use the personal connection opener in section 1. Use first name only unless instructed otherwise.
 - **Context says "no cover letter header"**: Write the body sections only, no salutation/sign-off.
 - **Multiple proof points equally strong**: Pick the one most analogous to the company's challenge, not the most impressive in isolation. Relevance beats magnitude.

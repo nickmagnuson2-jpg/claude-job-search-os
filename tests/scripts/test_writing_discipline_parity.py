@@ -214,6 +214,64 @@ def test_selection_rules_are_tagged_in_the_yaml():
         )
 
 
+# --------------------------------------------------------------------------
+# Voice asset as generative spine (added 2026-10-23)
+#
+# Rule: memory feedback_voice_asset_must_be_generative_spine. A drafting skill
+# that loads framework/voice-reference.md must make the matched exemplar the
+# generative spine; its per-type structure is a constraint check, never a
+# fill-in template. Two regressions are checkable as text:
+#   (a) the spine instruction is missing (the /cover-letter shape found
+#       2026-08-13: voice-reference loaded as ambient "reference" only);
+#   (b) a subject/opener/close template line carries a quoted phrasing with a
+#       bracketed placeholder, i.e. a sentence to paste with blanks filled in.
+# Neither test can judge tone. That stays with the in-skill tonal self-check.
+# --------------------------------------------------------------------------
+
+VOICE_REF = "framework/voice-reference.md"
+DRAFTING_SKILLS = ("cold-outreach", "cover-letter", "draft-email", "follow-up")
+
+# A quoted string that contains a [placeholder].
+_QUOTED_PLACEHOLDER = re.compile(r'"[^"\n]*\[[^\]"\n]+\][^"\n]*"')
+# Template lines that set a subject, opener, or close. "Subject line" is
+# case-sensitive on purpose: the lowercase output-format slot in /follow-up
+# ("use "Re: [original subject]"") is a format instruction, not a phrasing.
+_TEMPLATE_LINE = re.compile(r"Subject line|(?i:\bopener\b|\bclos(?:e|ing)\b)")
+# Inline code is a command or argument literal (`"mention coffee chat with
+# [name]"` in /cover-letter), not prose to paste, so it is removed first.
+_CODE_SPAN = re.compile(r"`[^`\n]*`")
+
+
+@pytest.mark.parametrize("skill", DRAFTING_SKILLS)
+def test_drafting_skill_makes_voice_exemplar_the_generative_spine(skill):
+    text = (SKILLS_DIR / skill / "SKILL.md").read_text(encoding="utf-8")
+    assert VOICE_REF in text, (
+        f"/{skill} no longer loads {VOICE_REF}; a drafting skill without the voice "
+        f"asset drafts from its own structure"
+    )
+    assert "generative spine" in text, (
+        f"/{skill} loads {VOICE_REF} but never makes the matched exemplar the "
+        f"'generative spine'; loaded as ambient reference, the asset loses to the "
+        f"in-skill structure"
+    )
+
+
+@pytest.mark.parametrize("skill", DRAFTING_SKILLS)
+def test_drafting_skill_has_no_pasteable_fill_in_templates(skill):
+    lines = (SKILLS_DIR / skill / "SKILL.md").read_text(encoding="utf-8").splitlines()
+    offenders = [
+        f"{skill}/SKILL.md:{n}: {line.strip()[:120]}"
+        for n, line in enumerate(lines, 1)
+        if _TEMPLATE_LINE.search(line)
+        and _QUOTED_PLACEHOLDER.search(_CODE_SPAN.sub("", line))
+        and "banned" not in line
+    ]
+    assert not offenders, (
+        "quoted fill-in templates on subject/opener/close lines (anchor-poison; "
+        "point at the voice-reference.md canon instead):\n" + "\n".join(offenders)
+    )
+
+
 @pytest.mark.parametrize("rule_id", sorted(selection_rule_ids()))
 def test_every_tagged_selection_rule_is_actually_wired(rule_id):
     """The anti-shortfall test.
