@@ -51,6 +51,9 @@ def load_preset(presets_path: str, name: str):
     if name not in presets:
         raise KeyError(f"preset '{name}' not in {presets_path}")
     weights = data.get("scoring_weights", {"stage": 0.50, "sector": 0.30, "keyword": 0.20})
+    # A preset's own scoring_weights override the global ones (lane-b declares them; they
+    # were silently ignored until 2026-10-22, finding 38.F1).
+    weights = {**weights, **(presets[name].get("scoring_weights") or {})}
     return presets[name], weights
 
 

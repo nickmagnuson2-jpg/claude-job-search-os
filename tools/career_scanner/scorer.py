@@ -236,8 +236,10 @@ def extract_seniority(title: str) -> int:
     """
     title_lower = title.lower()
     # Check multi-word keys first (e.g., 'vice president', 'c-suite')
+    # Whole words only: a substring test read 'International' as intern and 'Leadership'
+    # as lead (finding 40.F1).
     for keyword in sorted(SENIORITY_LEVELS.keys(), key=len, reverse=True):
-        if keyword in title_lower:
+        if re.search(rf"(?<![a-z0-9]){re.escape(keyword)}(?![a-z0-9])", title_lower):
             return SENIORITY_LEVELS[keyword]
     return 4  # default: mid
 

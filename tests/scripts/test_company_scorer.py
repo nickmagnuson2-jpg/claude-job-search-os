@@ -245,3 +245,17 @@ def test_geo_gate_reports_which_band_not_just_that_a_flag_fired():
     assert geo_gate("San Mateo, CA")["band"] == "peninsula"
     assert geo_gate("")["band"] == "unknown"
     assert geo_gate("Austin, TX")["band"] == "excluded"
+
+
+def test_a_stage_named_only_in_the_description_does_not_set_the_stage():
+    """'Our customers include Series D firms' is not the company's stage (finding 38.F2)."""
+    r = score_company({"location": "San Francisco",
+                       "description": "Our customers include Series D firms."},
+                      {"target_industries": []})
+    assert r["breakdown"]["stage"] == 5.0
+
+
+def test_an_explicit_stage_field_still_sets_the_stage():
+    blurb = {"location": "San Francisco", "description": "Our customers include Series D firms."}
+    with_stage = score_company({**blurb, "stage_text": "Series B"}, {"target_industries": []})
+    assert with_stage["breakdown"]["stage"] != 5.0

@@ -190,7 +190,10 @@ def score_company(candidate: dict, context: dict,
         candidate.get("industry", ""),
         candidate.get("about", ""),
     ]))
-    stage_text = candidate.get("stage_text") or desc
+    # Stage comes only from the explicit stage field. Parsing the description let a
+    # customer's or competitor's stage stand in for the company's (finding 38.F2);
+    # unknown scores neutral.
+    stage_text = candidate.get("stage_text") or ""
 
     d_stage = _score_stage(parse_stage(stage_text))
     d_sector = _score_sector(desc, context.get("target_industries", []))

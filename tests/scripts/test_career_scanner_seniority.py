@@ -63,3 +63,19 @@ def test_seniority_dimension_is_live_not_neutral():
 def test_neutral_when_level_unresolved():
     # target_seniority_level None and no keyword -> neutral 5.0 preserved.
     assert _score_seniority_match({"title": "Program Manager"}, {}) == 5.0
+
+
+import pytest  # noqa: E402
+
+
+@pytest.mark.parametrize("title,level", [
+    ("International Sales Manager", 5),        # not 'intern' (1)
+    ("Leadership Development Partner", 4),     # not 'lead' (7); no other key, so mid
+    ("Headcount Planning Analyst", 4),         # not 'head' (8)
+    ("Software Engineering Intern", 1),
+    ("Tech Lead", 7),
+    ("VP, Product", 9),
+])
+def test_seniority_matches_whole_words_only(title, level):
+    """A substring test read International as intern and Leadership as lead (finding 40.F1)."""
+    assert extract_seniority(title) == level

@@ -138,3 +138,14 @@ def test_load_known_names_reads_yaml_and_md(tmp_path):
 def test_load_known_names_missing_files_skip_silently(tmp_path):
     names = load_known_names([str(tmp_path / "nope.yaml")])
     assert names == set()
+
+
+def test_a_presets_own_scoring_weights_override_the_global_ones(tmp_path):
+    """lane-b declares its own weights; the loader returned the global ones (finding 38.F1)."""
+    f = tmp_path / "presets.yaml"
+    f.write_text("scoring_weights: {stage: 0.5, sector: 0.3, keyword: 0.2}\n"
+                 "presets:\n"
+                 "  plain: {query: x}\n"
+                 "  lane: {query: y, scoring_weights: {stage: 0.2, keyword: 0.5}}\n", encoding="utf-8")
+    assert load_preset(str(f), "plain")[1] == {"stage": 0.5, "sector": 0.3, "keyword": 0.2}
+    assert load_preset(str(f), "lane")[1] == {"stage": 0.2, "sector": 0.3, "keyword": 0.5}
