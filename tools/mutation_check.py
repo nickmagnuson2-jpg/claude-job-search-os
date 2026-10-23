@@ -1256,7 +1256,8 @@ def main() -> int:
             "message": f"another mutation run owns the tree ({holder}); gave up after "
                        f"{args.wait:.0f}s. "
                        f"Two runs rewrite the same tools/*.py and restore from each other's "
-                       f"backups. Wait for it, or check `ps aux | grep mutation_`."}))
+                       f"backups. To wait for it, rerun with `--wait <seconds>`, which blocks on "
+                       f"the tree lock itself rather than on a process-name grep."}))
         return 1
 
     # --list READS THE TREE. It holds the lock above, because the target is unstable while

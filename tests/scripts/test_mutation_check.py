@@ -15,6 +15,7 @@ The properties worth protecting, in order:
 """
 import json
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -1312,7 +1313,13 @@ def test_list_still_waits_its_turn_behind_a_run_that_owns_the_tree(tmp_path, mon
     try:
         assert holder.stdout.readline().strip() == "True"
         r = _run([str(tool), "--list", "--wait", "0"], cwd=tmp_path)
-        assert json.loads(r.stdout).get("code") == "run_in_flight"
+        out = json.loads(r.stdout)
+        assert out.get("code") == "run_in_flight"
+        # The refusal is where a session decides how to wait. A process-name poll matches
+        # the poller's own shell whenever its loop body names the tool, and never exits
+        # (memory feedback_a_poller_must_not_match_itself, 2 fires). Point at the lock wait.
+        assert not re.search(r"ps aux \| grep|pgrep", out["message"])
+        assert "--wait" in out["message"]
     finally:
         holder.kill()
         holder.wait()

@@ -329,7 +329,10 @@ against whatever the file holds, so clearing it buys nothing and is the only ope
 system that can destroy banked measurement. The snapshot above is belt-and-braces, not a licence
 to clear.
 
-**Do NOT arm while a sweep is in flight** (`pgrep -f mutation_check`).
+**Do NOT arm while a sweep is in flight.** Check the state the run leaves, not a process name:
+`PYTHONIOENCODING=utf-8 python3 -c "import sys; sys.path.insert(0,'tools'); import conftest_guard as g; print(g.stranded_backups())"`
+must print `[]`. A `pgrep`/`ps aux | grep` poll matches the polling shell whenever its loop body
+names the tool, and never exits (per [[feedback_a_poller_must_not_match_itself]]).
 
 ### Step 1b: Read Manifest (mandatory before synthesis)
 

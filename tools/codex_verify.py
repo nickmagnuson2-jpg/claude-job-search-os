@@ -828,7 +828,9 @@ def refuse_under_active_mutation(repo_root: Path, paths: list[str]) -> str:
         "result would be indistinguishable from a real verification and would land in\n"
         "tools/.cross-model-ledger.jsonl as one.\n\n"
         f"Paths this run covers: {targets}\n\n"
-        "Wait for the run to finish (`ps aux | grep \"[m]utation_check\"`), then re-dispatch.\n"
+        "Wait until conftest_guard.stranded_backups() returns [] (the backup is removed when\n"
+        "the run ends), then re-dispatch. Do not poll a process-name grep: it matches the\n"
+        "polling shell whenever its loop body names the tool, and never exits.\n"
         "Do NOT delete the backup: while a run is in flight it is the only unmutated copy."
     )
 

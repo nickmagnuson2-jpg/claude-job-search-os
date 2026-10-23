@@ -14,6 +14,7 @@ Two failure modes have already cost real work and are pinned here.
    back to being something a human has to remember, which is where it failed before.
 """
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -1407,6 +1408,11 @@ def test_stranded_backup_refuses_and_says_why(monkeypatch, tmp_path):
     assert "MUTANT" in msg
     assert "tools/x.py" in msg, "the refusal must name the paths it was about to cover"
     assert "Do NOT delete the backup" in msg
+    # The refusal is where a session decides how to wait. A process-name poll matches the
+    # poller's own shell whenever its loop body names the tool, and never exits (memory
+    # feedback_a_poller_must_not_match_itself, 2 fires). Point at the state the run leaves.
+    assert not re.search(r"ps aux \| grep|pgrep", msg)
+    assert "stranded_backups" in msg
 
 
 def test_refusal_names_the_backup_file():
