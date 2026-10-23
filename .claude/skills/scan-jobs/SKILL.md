@@ -3,7 +3,7 @@ name: scan-jobs
 description: Scan a job portal for matching roles. The model fetches and copies listings; tools/scan_jobs.py dedupes, gates, scores and records them deterministically
 argument-hint: <portal-url-or-name> [search query]
 user-invocable: true
-allowed-tools: WebFetch(*), mcp__exa__web_fetch_exa, mcp__exa__web_search_exa, Read(*), Edit(.claude/skills/scan-jobs/cache.md), Write(.claude/skills/scan-jobs/cache.md), Read(data/job-pipeline.md), Bash(PYTHONIOENCODING=utf-8 python3 tools/scan_jobs.py:*), Bash(PYTHONIOENCODING=utf-8 python3 tools/pipe_write.py:*)
+allowed-tools: WebFetch(*), mcp__exa__web_fetch_exa, mcp__exa__web_search_exa, Read(*), Edit(.claude/skills/scan-jobs/cache.md), Write(.claude/skills/scan-jobs/cache.md), Read(data/job-pipeline.md), Write(output/scan-jobs/**), Bash(PYTHONIOENCODING=utf-8 python3 tools/scan_jobs.py:*), Bash(PYTHONIOENCODING=utf-8 python3 tools/pipe_write.py:*)
 ---
 
 # Scan Job Portal
@@ -141,18 +141,18 @@ If a detail URL was not extracted from the search results, skip that ad's detail
 One JSON object per listing. **Copy, never summarize or judge**: `description` is the full listing text from Step 3a or 4b, verbatim.
 
 ```json
-[{"title": "...", "company": "...", "location": "...", "description": "...", "url": "...", "ad_date": "YYYY-MM-DD"}]
+[{"title": "...", "company": "...", "location": "...", "description": "...", "url": "...", "ad_date": "YYYY-MM-DD", "department": "", "team": ""}]
 ```
 
-`title` and `company` are required; leave any other field `""` if the page does not show it. Write the array to a scratchpad file.
+`title` and `company` are required; leave any other field `""` if the page does not show it (the ATS parsers return `department` and `team`; copy them). Write the array to `output/scan-jobs/ads.json` (gitignored).
 
 ### Step 6: Assess (deterministic)
 
 ```bash
-PYTHONIOENCODING=utf-8 python3 tools/scan_jobs.py assess < <scratchpad>/ads.json
+PYTHONIOENCODING=utf-8 python3 tools/scan_jobs.py assess < output/scan-jobs/ads.json
 ```
 
-It returns `found`, `cached` (already evaluated, skipped), `new` (each with `score` 1-10, `status`, `reason`), `propose_for_pipeline`, and the `cutoffs` it used. Status cutoffs: **shortlisted at 7+, maybe at 5-6, skip at 4 and below**, calibrated 2026-10-22 on 72 labeled pipeline roles (see the script's docstring for the numbers and their limits). A role whose location fails the San Francisco gate is `skip` whatever its score. Report the numbers exactly as returned. If `new` is empty, say so and stop.
+It returns `found`, `cached` (already evaluated, skipped), `new` (each with `score` 1-10, `status`, `reason`), `propose_for_pipeline`, and the `cutoffs` it used. Status cutoffs: **shortlisted at 7+, maybe at 5-6, skip at 4 and below**, calibrated 2026-10-22 on 72 labeled pipeline roles (see the script's docstring for the numbers and their limits). A role whose location fails the nightly scanner's location rule (outside the Bay, or on the Peninsula / South Bay) is `skip` whatever its score; an unknown location is not. Report the numbers exactly as returned. If `new` is empty, say so and stop.
 
 ### Step 7: Output
 
@@ -170,10 +170,10 @@ One row per `new` entry, sorted by score, highest first. Every value comes from 
 ### Step 8: Record
 
 ```bash
-PYTHONIOENCODING=utf-8 python3 tools/scan_jobs.py record < <scratchpad>/new.json
+PYTHONIOENCODING=utf-8 python3 tools/scan_jobs.py record < output/scan-jobs/new.json
 ```
 
-where `new.json` is the `new` array from Step 6. It appends the rows and stamps `Last updated`; it refuses an ad that is already cached. A status change Nick asks for later ("mark X as applied") is the one hand edit of the cache this skill makes.
+where `output/scan-jobs/new.json` holds the `new` array from Step 6. It appends the rows and stamps `Last updated`; it refuses an ad that is already cached. A status change Nick asks for later ("mark X as applied") is the one hand edit of the cache this skill makes.
 
 ### Step 9: Pipeline proposals
 

@@ -31,6 +31,7 @@ SENIORITY_LEVELS: dict[str, int] = {
     "staff": 6,
     "principal": 7,
     "lead": 7,
+    "leader": 7,
     "director": 8,
     "head": 8,
     "vp": 9,

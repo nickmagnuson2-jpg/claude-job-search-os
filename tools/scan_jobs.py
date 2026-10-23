@@ -11,7 +11,8 @@ schema below. Everything after that is here, so the same ads always get the same
            stamps "Last updated". Refuses an ad already in the cache.
 
 Ad schema (one object per listing; copy text verbatim, do not summarize):
-  {"title", "company", "location", "description", "url", "ad_date"}
+  {"title", "company", "location", "description", "url", "ad_date", "department", "team"}
+  title and company are required; the rest may be "" when the listing does not show them.
 
 Status comes from the score with fixed cutoffs (STATUS_CUTOFFS), calibrated 2026-10-22 on
 72 labeled pipeline roles: score >= 7 had 60% precision, 5-6 61%, <= 4 38% (base rate 50%).
@@ -24,13 +25,14 @@ Usage:
 import json
 import re
 import sys
+import unicodedata
 from datetime import date
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from md_table import JsonArgumentParser, out_error, out_ok, parse_cols, read_file, safe_cell, write_atomic  # noqa: E402
-from tools.career_scanner.company_scorer import geo_gate  # noqa: E402
+from tools.career_scanner.scanner import geo_ok  # noqa: E402
 from tools.career_scanner.scorer import load_scoring_context, score_role  # noqa: E402
 
 CACHE = Path(".claude/skills/scan-jobs/cache.md")
@@ -39,10 +41,17 @@ STATUS_CUTOFFS = {"shortlisted": 7, "maybe": 5}
 REQUIRED = ("title", "company")
 
 
+def _norm(text: str) -> str:
+    """NFKC + casefold, then every run of non-letters/digits removed. Unicode-aware, so a
+    title in any script keeps its letters and two encodings of 'Café' compare equal."""
+    return re.sub(r"[\W_]+", "", unicodedata.normalize("NFKC", text or "").casefold())
+
+
 def key(title: str, company: str) -> str:
-    """Dedup key: title + company, lowercased, every non-alphanumeric run removed, so
-    'Senior Engineer / Backend' and 'Senior Engineer/Backend' are the same ad."""
-    return re.sub(r"[^a-z0-9]+", "", f"{title}|{company}".lower())
+    """Dedup key: normalized title and company, kept apart by a separator, so
+    'Senior Engineer / Backend' and 'Senior Engineer/Backend' are the same ad and a
+    different title/company split cannot hash to the same key."""
+    return f"{_norm(title)}|{_norm(company)}"
 
 
 def cached_keys(cache_text: str) -> set:
@@ -84,14 +93,16 @@ def assess(ads: list, root: Path) -> dict:
             cached.append({"title": ad["title"], "company": ad["company"]})
             continue
         seen.add(k)  # a listing repeated within one scan is assessed once
-        role = {"title": ad["title"], "company": ad["company"],
-                "location": ad.get("location", ""), "description": ad.get("description", "")}
+        role = {f: ad.get(f, "") for f in ("title", "company", "location", "description",
+                                           "department", "team")}
         score = score_role(role, ctx)
-        gate = geo_gate(ad.get("location", ""))
-        status = "skip" if gate["excluded"] else status_for(score, cutoffs)
+        # The nightly scanner's own location rule: outside the Bay or on the Peninsula /
+        # South Bay fails; an unknown location does not.
+        located = geo_ok(ad.get("location", ""))
+        status = status_for(score, cutoffs) if located else "skip"
         new.append({**{f: ad.get(f, "") for f in ("title", "company", "location", "url", "ad_date")},
                     "score": score, "status": status,
-                    "reason": "location excluded" if gate["excluded"] else f"score {score}/10"})
+                    "reason": f"score {score}/10" if located else "location excluded"})
     propose = [r for r in new if r["status"] == "shortlisted"
                and not any(r["company"].lower() in c or c in r["company"].lower() for c in tracked)]
     return {"found": len(ads), "cached": cached, "new": new, "propose_for_pipeline": propose,
@@ -109,7 +120,7 @@ def record(rows: list, root: Path) -> dict:
         out_error(f"already in the cache: {dupes}", "duplicate")
     lines = text.rstrip("\n").split("\n")
     for r in rows:
-        url = f"[Listing]({r['url']})" if r.get("url") else "—"
+        url = f"[Listing]({safe_cell(r['url'])})" if r.get("url") else "—"
         lines.append(f"| {safe_cell(r['title'])} | {safe_cell(r['company'])} | {r['score']}/10 | "
                      f"{r['status']} | {r.get('ad_date') or '—'} | {url} | "
                      f"{safe_cell(r['reason'])} (scan_jobs.py) |")

@@ -64,11 +64,15 @@ def test_status_cutoffs(score, status):
     assert sj.status_for(score, sj.STATUS_CUTOFFS) == status
 
 
-def test_an_excluded_location_is_skipped_whatever_the_score(root, monkeypatch):
+@pytest.mark.parametrize("location,status", [("New York, NY", "skip"), ("San Mateo, CA", "skip"),
+                                             ("Palo Alto", "skip"), ("San Francisco, CA", "shortlisted"),
+                                             ("", "shortlisted")])
+def test_the_nightly_scanners_location_rule_applies(root, monkeypatch, location, status):
+    """Outside the Bay or on the Peninsula fails whatever the score; unknown does not."""
     monkeypatch.setattr(sj, "score_role", lambda role, ctx: 10)
     out = sj.assess([{"title": "Deployment Strategist", "company": "Beacon AI",
-                      "location": "New York, NY"}], root)
-    assert out["new"][0]["status"] == "skip" and out["new"][0]["reason"] == "location excluded"
+                      "location": location}], root)
+    assert out["new"][0]["status"] == status
 
 
 def test_only_untracked_shortlisted_companies_are_proposed(root, monkeypatch):
@@ -96,3 +100,24 @@ def test_record_appends_rows_and_stamps_the_date(root):
 def test_bad_input_is_refused(root, payload, code):
     rc, out = run(root, "assess", payload)
     assert rc == 1 and out["code"] == code
+
+
+def test_dedupe_key_handles_unicode_and_keeps_title_and_company_apart():
+    assert sj.key("Caf\u00e9 Lead", "X") == sj.key("Cafe\u0301 Lead", "X")   # NFC vs NFD
+    assert sj.key("\u65e5\u672c", "X") != sj.key("\u97d3\u56fd", "X")      # letters kept
+    assert sj.key("Ops Lead", "Beacon") != sj.key("Ops", "Lead Beacon")
+
+
+def test_department_and_team_reach_the_scorer(root, monkeypatch):
+    seen = {}
+    monkeypatch.setattr(sj, "score_role", lambda role, ctx: seen.update(role) or 5)
+    sj.assess([{"title": "Ops", "company": "Beacon AI", "department": "Health", "team": "Care"}], root)
+    assert seen["department"] == "Health" and seen["team"] == "Care"
+
+
+def test_a_pipe_in_a_url_cannot_split_the_cache_row(root):
+    rows = [{"title": "Ops", "company": "Beacon AI", "score": 5, "status": "maybe",
+             "url": "https://example.com/a|b", "ad_date": "", "reason": "score 5/10"}]
+    run(root, "record", rows)
+    row = [l for l in (root / ".claude/skills/scan-jobs/cache.md").read_text().splitlines() if "Beacon" in l][0]
+    assert row.count("|") == 8

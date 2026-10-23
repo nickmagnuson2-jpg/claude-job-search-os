@@ -79,6 +79,7 @@ import pytest  # noqa: E402
     ("Headcount Planning Analyst", 4),         # not 'head' (8)
     ("Software Engineering Intern", 1),
     ("Tech Lead", 7),
+    ("Engineering Team Leader", 7),
     ("VP, Product", 9),
 ])
 def test_seniority_matches_whole_words_only(title, level):
