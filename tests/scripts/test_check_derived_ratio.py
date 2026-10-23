@@ -49,6 +49,36 @@ def test_shape_caught(text, value):
     assert value in values(text)
 
 
+@pytest.mark.parametrize("text", [
+    "It fired 7 of 22, which is 31.8%.",
+    "It fired 7 of 22 times, which is 31.8%.",
+    "It fired 7 of 22 times, that's 31.8%.",
+    "It fired 7 of 22 times, that is 31.8%.",
+    "It fired 7 of 22 times, or 31.8%.",
+    "It fired 7 of 22 times, i.e. 31.8%.",
+    "It fired 7 of 22 times i.e. 31.8%.",
+    "It fired 7 of 22 times - 31.8%.",
+    "It fired 7 of 22 times – 31.8%.",
+    "It fired 7 out of 22, which was 31.8%.",
+])
+def test_copular_shape_caught(text):
+    hits = cdr.find_derived(text)
+    assert [h["value"] for h in hits] == ["31.8"]
+    assert hits[0]["operands"] == ["7", "22"]
+    assert hits[0]["pct"] is True
+
+
+@pytest.mark.parametrize("text", [
+    "It fired 7 of 22 times, and later 31.8% of the budget went to ads.",
+    "It fired 7 of 22 times; the error rate is 31.8%.",
+    "It fired 7 of 22 times, which is fine. Budget use is 31.8%.",
+    "We closed 12 of 40 tickets - 5 remain open.",          # dash, no percent
+    "It fired 7 of 22 big noisy times, which is 31.8%.",    # more than one noun
+])
+def test_copular_shape_negatives(text):
+    assert values(text) == []
+
+
 def test_pct_flag_recorded():
     hits = cdr.find_derived("It fired 7 of 22 (31.8%).")
     assert hits[0]["pct"] is True
@@ -140,68 +170,72 @@ def test_strip_noise_keeps_ordinary_prose():
 
 # ---------- was_printed: formatting variants ----------
 
-@pytest.mark.parametrize("value, printed", [
-    ("10", {"10"}),
-    ("10", {"10.0"}),
-    ("10.00", {"10"}),         # same number, more zeros in chat
-    ("10", {"0.10"}),          # decimal for a percent
-    ("10", {"10%"}),           # percent sign or not
-    ("0.10", {"10%"}),         # percent-marked token for a decimal
-    ("31.8", {"31.82"}),       # rounds to the chat precision
-    ("31.8", {"0.3182"}),      # decimal, rounds
-    ("32", {"31.82"}),         # chat coarser than print
-    ("24.7", {"24.68"}),
-    ("100", {"1.0"}),          # boundary: a printed fraction of exactly 1
-    ("1", {"100%"}),           # boundary: a chat fraction of exactly 1
+@pytest.mark.parametrize("value, pct, printed", [
+    ("10", False, {"10"}),
+    ("10", False, {"10.0"}),
+    ("10.00", False, {"10"}),        # same number, more zeros in chat
+    ("10", True, {"0.10"}),          # decimal fraction for a percent
+    ("10", True, {"10%"}),           # percent for a percent
+    ("0.10", False, {"10%"}),        # percent-marked token for a decimal
+    ("31.8", True, {"31.82%"}),      # rounds to the chat precision
+    ("31.8", True, {"0.3182"}),      # decimal fraction, rounds
+    ("32", True, {"31.82%"}),        # chat coarser than print
+    ("24.7", False, {"24.68"}),
+    ("100", True, {"1.0"}),          # boundary: a printed fraction of exactly 1
+    ("1", False, {"100%"}),          # boundary: a chat fraction of exactly 1
+    ("30", False, {"0.3"}),          # x100 from a fraction also serves a plain value
 ])
-def test_printed_variants_count(value, printed):
-    assert cdr.was_printed(value, printed) is True
+def test_printed_variants_count(value, pct, printed):
+    assert cdr.was_printed(value, printed, pct) is True
 
 
-@pytest.mark.parametrize("value, printed", [
-    ("31.8", {"31.7"}),        # different number
-    ("31.82", {"31.8"}),       # print less precise than chat: does not vouch
-    ("31.8", {"32"}),          # print less precise than chat
-    ("10", set()),
-    ("30", {"3"}),             # 3 is not 30 under any variant
-    ("31.8", {"3.18"}),        # x10 is not an allowed variant
+@pytest.mark.parametrize("value, pct, printed", [
+    ("31.8", True, {"31.7%"}),       # different number
+    ("31.82", True, {"31.8%"}),      # print less precise than chat: does not vouch
+    ("31.8", True, {"32%"}),         # print less precise than chat
+    ("10", True, set()),
+    ("30", True, {"3"}),             # 3 is not 30 under any variant
+    ("31.8", True, {"3.18"}),        # x10 is not an allowed variant
     # Round-1 replay coincidences: a large count must not vouch through /100.
-    ("39", {"3892"}),
-    ("10", {"962"}),
-    ("9.8", {"985"}),
-    ("3", {"300"}),
-    ("10.2", {"1022"}),
+    ("39", True, {"3892"}),
+    ("10", True, {"962"}),
+    ("9.8", True, {"985"}),
+    ("3", True, {"300"}),
+    ("10.2", False, {"1022"}),
     # x100 applies only to a printed fraction (<= 1).
-    ("150", {"1.5"}),
-    ("101", {"1.01"}),
+    ("150", True, {"1.5"}),
+    ("101", True, {"1.01"}),
     # /100 applies only when the chat value is a fraction (<= 1).
-    ("1.3", {"130"}),
+    ("1.3", False, {"130"}),
     # Codex F1: /100 needs a percent-marked token, x100 a fraction-form token.
-    ("0.3", {"30"}),           # a bare count of 30 is not 30%
-    ("0.10", {"10"}),
-    ("1", {"100"}),
-    ("100", {"1"}),            # an integer 1 is not the fraction 1.0
-    ("30", {"0.3%"}),          # x100 never from a percent-marked token
+    ("0.3", False, {"30"}),          # a bare count of 30 is not 30%
+    ("0.10", False, {"10"}),
+    ("1", False, {"100"}),
+    ("100", True, {"1"}),            # an integer 1 is not the fraction 1.0
+    ("30", True, {"0.3%"}),          # x100 never from a percent-marked token
+    # Final review (546.F2 / 547.F1): the unit must match on a direct match too.
+    ("30", True, {"30"}),            # a bare count of 30 is not 30%
+    ("30", False, {"30%"}),          # 30% is not the plain value 30
 ])
-def test_printed_mismatch_does_not_count(value, printed):
-    assert cdr.was_printed(value, printed) is False
+def test_printed_mismatch_does_not_count(value, pct, printed):
+    assert cdr.was_printed(value, printed, pct) is False
 
 
 def test_was_printed_handles_thousands_separator():
-    assert cdr.was_printed("1234", {"1,234"}) is True
+    assert cdr.was_printed("1234", {"1,234"}, False) is True
 
 
 def test_unsourced_filters_by_printed_values():
     text = "A was 3 of 9 (33.3%). B was 4/16 = 25%."
-    left = cdr.unsourced(text, [{"3", "9", "33.33"}])
+    left = cdr.unsourced(text, [{"3", "9", "33.33%"}])
     assert [h["value"] for h in left] == ["25"]
 
 
 def test_unsourced_needs_one_text_with_c_n_and_m():
     text = "A was 3 of 9 (33.3%)."
     # C, N and M are all printed, but never in the same text: does not vouch.
-    assert [h["value"] for h in cdr.unsourced(text, [{"33.3"}, {"3", "9"}])] == ["33.3"]
-    assert cdr.unsourced(text, [{"33.3"}, {"3", "9", "33.3"}]) == []
+    assert [h["value"] for h in cdr.unsourced(text, [{"33.3%"}, {"3", "9"}])] == ["33.3"]
+    assert cdr.unsourced(text, [{"33.3%"}, {"3", "9", "33.3%"}]) == []
     assert [h["value"] for h in cdr.unsourced(text, [])] == ["33.3"]
 
 
@@ -251,13 +285,14 @@ def test_no_match_starts_inside_a_separated_number():
 
 
 def test_was_printed_accepts_comma_value():
-    assert cdr.was_printed("17,636.57", {"17636.57143"}) is True
-    assert cdr.was_printed("17,636.57", {"17,636.6"}) is False
+    assert cdr.was_printed("17,636.57", {"17636.57143"}, False) is True
+    assert cdr.was_printed("17,636.57", {"17,636.6"}, False) is False
 
 
 @pytest.mark.parametrize("nums, ok", [
-    ({"7", "22", "31.8"}, True),
-    ({"7.0", "22", "31.82"}, True),        # operands compared as numbers
+    ({"7", "22", "31.8%"}, True),
+    ({"7.0", "22", "31.82%"}, True),       # operands compared as numbers
+    ({"7", "22", "31.8"}, False),          # unit: a bare 31.8 is not 31.8%
     ({"22", "31.8"}, False),               # N missing
     ({"7", "31.8"}, False),                # M missing
     ({"7", "22"}, False),                  # C missing
@@ -269,9 +304,9 @@ def test_vouches_requires_c_n_and_m(nums, ok):
 
 
 @pytest.mark.parametrize("nums, ok", [
-    ({"22", "7", "31.8"}, True),
-    ({"22", "31.8"}, False),               # no other sentence number printed
-    ({"7", "31.8"}, False),                # M missing
+    ({"22", "7", "31.8%"}, True),
+    ({"22", "31.8%"}, False),              # no other sentence number printed
+    ({"7", "31.8%"}, False),               # M missing
 ])
 def test_vouches_thats_of_shape(nums, ok):
     h = cdr.find_derived("It fired 7 times, that's 31.8% of 22 sessions.")[0]
@@ -396,7 +431,7 @@ def test_clean_when_tool_printed_decimal_form():
 def test_clean_when_tool_printed_value_in_list_content():
     with tempfile.TemporaryDirectory() as td:
         rec = {"type": "user", "message": {"content": [
-            {"type": "tool_result", "content": [{"type": "text", "text": "7 22 31.8"}]}]}}
+            {"type": "tool_result", "content": [{"type": "text", "text": "7 22 31.8%"}]}]}}
         r = _run("It fired 7 of 22 times (31.8%).", td, prior=[rec])
         assert r.returncode == 0, r.stderr
 
@@ -433,6 +468,22 @@ def test_unrelated_count_does_not_vouch_through_percent_scale():
                  prior=[_tool("12 hits, 40 total, 30 errors")])
         assert r.returncode == 2
         assert "0.3  in: 12/40 = 0.3" in r.stderr
+
+
+def test_bare_count_does_not_vouch_for_a_percent():
+    """Final review 547.F1: three counts printed, the division done in chat."""
+    with tempfile.TemporaryDirectory() as td:
+        r = _run("That gives 12/40 = 30% overall.", td,
+                 prior=[_tool("12 hits, 40 total, 30 errors")])
+        assert r.returncode == 2
+        assert "30%  in: 12/40 = 30%" in r.stderr
+
+
+def test_percent_printed_with_counts_clears_percent():
+    with tempfile.TemporaryDirectory() as td:
+        r = _run("That gives 12/40 = 30% overall.", td,
+                 prior=[_tool("12 hits, 40 total, 30% hit rate")])
+        assert r.returncode == 0, r.stderr
 
 
 def test_percent_printed_with_counts_clears_decimal():
@@ -479,22 +530,22 @@ def test_assistant_earlier_text_is_not_evidence():
 
 def test_read_line_numbers_are_not_evidence():
     with tempfile.TemporaryDirectory() as td:
-        r = _run("So 8/25 = 32%.", td, prior=[_tool("8 of 25 rows\n    32\tsome line\n    33\tmore")])
+        r = _run("So 800/25 = 32.", td, prior=[_tool("800 of 25 rows\n    32\tsome line\n    33\tmore")])
         assert r.returncode == 2
 
 
 def test_sidechain_and_compact_summary_are_not_evidence():
     with tempfile.TemporaryDirectory() as td:
-        side = {"type": "user", "isSidechain": True, "message": {"content": "7 22 31.8"}}
+        side = {"type": "user", "isSidechain": True, "message": {"content": "7 22 31.8%"}}
         comp = {"type": "user", "isCompactSummary": True,
-                "message": {"content": "7 22 31.8"}}
+                "message": {"content": "7 22 31.8%"}}
         r = _run("It fired 7 of 22 (31.8%).", td, prior=[side, comp])
         assert r.returncode == 2
 
 
 def test_malformed_transcript_lines_are_skipped():
     with tempfile.TemporaryDirectory() as td:
-        r = _run("It fired 7 of 22 (31.8%).", td, prior=[_tool("7 22 31.8")],
+        r = _run("It fired 7 of 22 (31.8%).", td, prior=[_tool("7 22 31.8%")],
                  raw_lines=["{not json", "[1, 2]"])
         assert r.returncode == 0, r.stderr
 

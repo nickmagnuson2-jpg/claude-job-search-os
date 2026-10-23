@@ -17,6 +17,7 @@ WHAT IT CATCHES (narrow by design)
   blockquote lines, double-quoted spans and URLs:
     A / B = C%          A/B = C
     N of M (C%)         N/M (C%)          N of M, or C%
+    N of M, which is C% (also ", that's", "i.e.", a dash; one noun after M allowed)
     C% (N of M)         C% (N/M)
     that's C% of M      only when another number (N) is in the same sentence
   Up to three words may sit between M and the parenthesis ("7 of 22 turns (31.8%)").
@@ -27,10 +28,11 @@ WHAT IT CATCHES (narrow by design)
   quote cleared "12 / 122 = 10%"); see the round-3 replay in
   output/learning-loop/102326-derived-ratio-replay.md. For "that's C% of M", N is any
   other number in the sentence. Printing C allows formatting variants: 10 = 10.0 = 10.00,
-  with or without "%", the decimal 0.10 for 10% (and 10% for 0.10), and a printed
-  value that rounds to C at C's own precision (tool printed 31.82, chat says 31.8%).
-  A printed value with LESS precision than C does not count: 31.8 does not vouch for
-  31.82.
+  with the same unit (a percent only from a printed percent, a plain value only from a
+  plain number), the decimal 0.10 for 10% (and 10% for 0.10), and a printed
+  value that rounds to C at C's own precision (tool printed 31.82%, chat says 31.8%).
+  A printed value with LESS precision than C does not count: 31.8% does not vouch for
+  31.82%.
 
 WHAT IT DOES NOT CATCH (deliberately out of scope)
   Bare percentages, targets ("from 12% to 30%"), hypotheticals ("if 3 of 10 ..."),
@@ -88,6 +90,13 @@ SHAPES = [
     ("of-or", re.compile(
         rf"{LEFT}(?P<n>{INT})\s+(?:of|out of)\s+(?P<m>{INT}){NOUNS},?\s+or\s+{APPROX}"
         rf"(?P<c>{NUM})(?P<pct>\s*%)")),
+    # N of M, which is C%   (also ", that's", ", that is", ", or", "i.e.", a dash).
+    # At most ONE noun after M, and the percent sign is required: a dash followed by a
+    # bare number ("12 of 40 done - 5 left") is not a ratio. Final review 546.F3/547.F5.
+    ("of-copula", re.compile(
+        rf"{LEFT}(?P<n>{INT})\s+(?:of|out of)\s+(?P<m>{INT})(?:\s+[A-Za-z][\w'-]*)?"
+        rf"(?:\s*,\s*(?:(?:which|that)(?:'s|’s|\s+is|\s+was)|or)|,?\s+i\.e\.,?|\s+[-–—]{{1,2}})"
+        rf"\s+{APPROX}(?P<c>{NUM})(?P<pct>\s*%)")),
     # C% (N of M)   C% (N/M)
     ("pct-paren", re.compile(
         rf"{LEFT}(?P<c>{NUM})(?P<pct>\s*%)\s*\(\s*(?P<n>{INT})\s*(?:of|out of|/)\s*(?P<m>{INT})")),
@@ -265,11 +274,14 @@ def _decimals(s: str) -> int:
     return len(s.split(".", 1)[1]) if "." in s else 0
 
 
-def was_printed(value: str, numbers) -> bool:
+def was_printed(value: str, numbers, pct: bool) -> bool:
     """True if some printed number equals `value` up to formatting and rounding.
 
     A printed number e vouches for C when e rounds to C at C's own number of decimals.
-    A percent sign on the printed token does not matter for a direct match. Two scale
+    `pct` says whether the chat value carried a percent sign. A direct match needs the
+    same unit: a percent C only from a percent-marked token, a plain C only from an
+    unmarked one. Before that, a tool printing the counts 12, 40 and 30 vouched for an
+    unprinted "12/40 = 30%" (final review 546.F2 / 547.F1, 2026-10-23). Two scale
     variants cover 0.10 vs 10%, and each needs the printed token's form to support it:
       - e * 100, only from a fraction-form token: a decimal point, value <= 1, no
         percent sign (tool printed 0.318, chat says 31.8%);
@@ -282,12 +294,12 @@ def was_printed(value: str, numbers) -> bool:
     tol = 0.5 * 10 ** -_decimals(value) + 1e-9
     for s in numbers:
         e = _num(s)
-        pct = s.endswith("%")
-        if abs(e - c) <= tol:
+        marked = s.endswith("%")
+        if marked == pct and abs(e - c) <= tol:
             return True
-        if not pct and "." in s and e <= 1 and abs(e * 100 - c) <= tol:
+        if not marked and "." in s and e <= 1 and abs(e * 100 - c) <= tol:
             return True
-        if pct and c <= 1 and abs(e / 100 - c) <= tol:
+        if marked and c <= 1 and abs(e / 100 - c) <= tol:
             return True
     return False
 
@@ -306,7 +318,7 @@ def vouches(hit: dict, nums) -> bool:
         return False
     if hit["alternates"] and not any(_num(o) in printed for o in hit["alternates"]):
         return False
-    return was_printed(hit["value"], nums)
+    return was_printed(hit["value"], nums, hit["pct"])
 
 
 def unvouched(hits: list[dict], evidence) -> list[dict]:
