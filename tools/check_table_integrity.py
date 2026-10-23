@@ -149,6 +149,15 @@ def main() -> None:
     try:
         argv = sys.argv[1:]
 
+        # Only the documented forms. Anything else (a mistyped flag) used to fall through
+        # into hook mode, read an empty stdin and exit 0 -- a clean scan of nothing.
+        if argv not in ([], ["--scan"]) and not (
+                len(argv) == 3 and argv[:2] == ["--scan", "--repo-root"]):
+            print(f"unknown arguments {argv!r}. Usage: check_table_integrity.py --scan "
+                  "[--repo-root DIR]; with no arguments it is a hook reading stdin.",
+                  file=sys.stderr)
+            sys.exit(2)
+
         if "--scan" in argv:
             root = Path.cwd()
             if "--repo-root" in argv:

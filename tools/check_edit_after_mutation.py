@@ -212,11 +212,16 @@ def _split_segments(command: str) -> list[str]:
 
 
 def _mode_from_argv() -> str:
-    if "--mode" in sys.argv:
-        i = sys.argv.index("--mode")
-        if i + 1 < len(sys.argv):
-            return sys.argv[i + 1]
-    return "check"
+    # Exactly the two wired forms, or nothing. Anything else (a typo, `--mode=check`,
+    # an unknown mode) used to fall through to "check", read an empty stdin and exit 0.
+    argv = sys.argv[1:]
+    if not argv:
+        return "check"
+    if len(argv) == 2 and argv[0] == "--mode" and argv[1] in ("check", "record"):
+        return argv[1]
+    print(f"unknown arguments {argv!r}. Usage: check_edit_after_mutation.py "
+          "[--mode check|record], hook payload on stdin.", file=sys.stderr)
+    sys.exit(2)
 
 
 def main() -> None:

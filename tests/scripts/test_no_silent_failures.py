@@ -19,6 +19,7 @@ The failure class this repo actually suffers from is not "a thing crashes" -- it
 Each test below asserts a wiring invariant that, if violated, would otherwise fail
 silently. These are cheap structural checks -- they do not execute hook logic.
 """
+import ast
 import json
 import os
 import plistlib
@@ -325,6 +326,132 @@ def test_every_checker_is_registered_or_explicitly_exempt():
         "(wire them, or add to NON_HOOK_CHECKERS with a reason):\n"
         + "\n".join(f"  {n}" for n in orphans)
     )
+
+
+# --------------------------------------------------------------------------
+# a mistyped flag must not fall through into the stdin/hook path
+# --------------------------------------------------------------------------
+#
+# Origin 2026-09-02 / 2026-09-06: `check_public_pii.py --scan-file <path>` and
+# `--paths <files>` are not flags. The script ignored them, dropped into hook mode,
+# read an empty stdin and exited 0 -- reported as a clean PII scan of four files it
+# never opened. Measured 2026-10-22: check_table_integrity.py and
+# check_edit_after_mutation.py still did exactly this (exit 0, empty stderr).
+#
+# SCOPE: checkers with BOTH a CLI (argv) mode and a hook (stdin) mode, the class the
+# rule's reopen gate names. A hook-only checker that never reads argv is out of scope
+# here (36 of 46 on 2026-10-22); check_scanner_examined_something.py is the sibling
+# guard for that shape. The selector reads the AST, not the text, because several
+# checkers mention `sys.argv` or `argparse` inside strings and comments.
+
+_STDIN_READERS = {"read_payload", "read_stdin_bounded", "read_stdin_bounded_ex",
+                  "read_write_target"}
+
+# The floor. If the selector stops finding one of these, the test below loses that
+# script silently; this set makes that loud instead. check_public_pii.py is the
+# positive control: it already rejected unknown argv before this test existed.
+KNOWN_DUAL_MODE_CHECKERS = {"check_public_pii.py", "check_table_integrity.py",
+                            "check_edit_after_mutation.py"}
+
+
+def _all_checkers() -> list[Path]:
+    return sorted((REPO / "tools").glob("check_*.py"))
+
+
+def _reads_argv_and_stdin(path: Path) -> bool:
+    argv = stdin = False
+    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        if isinstance(node, ast.Attribute):
+            if isinstance(node.value, ast.Name) and node.value.id == "sys":
+                argv = argv or node.attr == "argv"
+                stdin = stdin or node.attr == "stdin"
+            stdin = stdin or node.attr in _STDIN_READERS
+        elif isinstance(node, ast.Name):
+            stdin = stdin or node.id in _STDIN_READERS
+        elif isinstance(node, ast.Import):
+            argv = argv or any(a.name == "argparse" for a in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            argv = argv or node.module == "argparse"
+    return argv and stdin
+
+
+def _dual_mode_checkers() -> list[Path]:
+    return [p for p in _all_checkers() if _reads_argv_and_stdin(p)]
+
+
+def test_dual_mode_selector_is_not_vacuous():
+    """The parametrized test below is only as good as the list it iterates."""
+    listed = sorted(n for n in os.listdir(REPO / "tools")
+                    if n.startswith("check_") and n.endswith(".py"))
+    globbed = [p.name for p in _all_checkers()]
+    assert listed and globbed == listed, (len(globbed), len(listed))
+    selected = {p.name for p in _dual_mode_checkers()}
+    missing = KNOWN_DUAL_MODE_CHECKERS - selected
+    assert not missing, (f"selector no longer sees {sorted(missing)}; fix the selector or, "
+                         "if the CLI mode was removed, update KNOWN_DUAL_MODE_CHECKERS")
+
+
+@pytest.mark.parametrize("src,expected", [
+    ("import sys\nfrom hook_runtime import read_payload\nsys.argv\nread_payload()", True),
+    ("import sys\nsys.argv\nsys.stdin.read()", True),
+    ("import argparse\nimport sys\nsys.stdin.read()", True),
+    ("from argparse import ArgumentParser\nimport hook_runtime\nhook_runtime.read_payload()",
+     True),
+    ("import sys\nx = 'sys.argv argparse'\nsys.stdin.read()", False),  # only a mention
+    ("import sys\nsys.argv", False),                                   # CLI-only
+])
+def test_dual_mode_selector_controls(tmp_path, src, expected):
+    script = tmp_path / "check_x.py"
+    script.write_text(src, encoding="utf-8")
+    assert _reads_argv_and_stdin(script) is expected
+
+
+def _run_with_unknown_flag(script: Path) -> subprocess.CompletedProcess:
+    env = {**os.environ, "CLAUDE_PROJECT_DIR": str(REPO), "PYTHONIOENCODING": "utf-8"}
+    return subprocess.run([sys.executable, str(script), "--definitely-not-a-flag"],
+                          stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                          timeout=20, env=env, cwd=REPO)
+
+
+def _loud_rejection(proc: subprocess.CompletedProcess) -> bool:
+    return proc.returncode != 0 and bool(proc.stderr.strip())
+
+
+@pytest.mark.parametrize("body,expected", [
+    ("import sys; sys.exit(0)", False),                                 # the silent pass
+    ("import sys; sys.exit(2)", False),                                 # fails, says nothing
+    ("import sys; print('note', file=sys.stderr); sys.exit(0)", False), # warns, still passes
+    ("import sys; print('unknown flag', file=sys.stderr); sys.exit(2)", True),
+])
+def test_rejection_oracle_controls(tmp_path, body, expected):
+    script = tmp_path / "check_x.py"
+    script.write_text(body, encoding="utf-8")
+    assert _loud_rejection(_run_with_unknown_flag(script)) is expected
+
+
+@pytest.mark.parametrize("name", [p.name for p in _dual_mode_checkers()])
+def test_dual_mode_checker_rejects_an_unknown_argument(name):
+    """A flag the script does not recognise must exit nonzero and say why on stderr."""
+    proc = _run_with_unknown_flag(REPO / "tools" / name)
+    assert _loud_rejection(proc), (
+        f"{name} accepted an unknown flag (rc={proc.returncode}, "
+        f"stderr={proc.stderr!r}); it fell through into hook mode and read an empty stdin")
+
+
+def test_wired_argv_of_dual_mode_checkers_is_still_accepted(tmp_path):
+    """The other side of the rejection above: every argv settings.json actually passes
+    must still run clean. A PreToolUse hook that rejects its own wired argv exits 2 and
+    blocks every matching tool call."""
+    names = {p.name for p in _dual_mode_checkers()}
+    cmds = [c for c in _hook_commands() if any(p.name in names for p in _scripts_in(c))]
+    assert cmds, "expected settings.json to wire at least one dual-mode checker"
+    payload = json.dumps({"tool_name": "Glob", "tool_input": {},
+                          "cwd": str(tmp_path), "session_id": "test"})
+    env = {**os.environ, "CLAUDE_PROJECT_DIR": str(REPO), "PYTHONIOENCODING": "utf-8"}
+    for cmd in cmds:
+        proc = subprocess.run(["bash", "-c", cmd], input=payload, capture_output=True,
+                              text=True, timeout=20, env=env, cwd=tmp_path)
+        assert proc.returncode == 0, f"{cmd}\nrc={proc.returncode}\nstderr={proc.stderr}"
 
 
 # --------------------------------------------------------------------------
