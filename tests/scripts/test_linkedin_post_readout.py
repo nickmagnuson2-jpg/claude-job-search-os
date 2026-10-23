@@ -177,7 +177,7 @@ def test_read_rows_handles_number_inline_and_empty_cells(tmp_path):
         (1, f'<c r="A1" t="s"><v>0</v></c><c r="B1"><v>2800</v></c>'),
         (2, f'<c r="A2" t="inlineStr"><is><t>Reach</t></is></c><c r="B2"/>'),
     ], shared=["Impressions"])
-    assert lpr.read_rows(path) == [["Impressions", "2800"], ["Reach", ""]]
+    assert lpr.read_rows(path) == [["Impressions", "2800"], ["Reach"]]
 
 
 def test_read_rows_without_shared_strings_part(tmp_path):
@@ -400,6 +400,22 @@ def test_read_rows_keeps_a_missing_cell_in_its_column(tmp_path):
         (2, '<c r="B2"><v>2</v></c>'),
     ])
     assert lpr.read_rows(path) == [["1", "", "3"], ["", "2"]]
+
+
+def test_read_rows_drops_trailing_empty_cells(tmp_path):
+    path = write_raw_sheet(tmp_path / "e.xlsx", [
+        (1, '<c r="A1" t="inlineStr"><is><t>Impressions</t></is></c><c r="B1"><v>2000</v></c><c r="C1"/><c r="D1"><v></v></c>'),
+        (2, '<c r="A2"/>'),
+    ])
+    assert lpr.read_rows(path) == [["Impressions", "2000"], []]
+
+
+def test_more_profile_viewers_than_members_reached_fails(tmp_path):
+    rows = [["Profile viewers from this post", "1201"] if r[0] == "Profile viewers from this post" else r for r in ROWS]
+    with pytest.raises(lpr.ReadoutError, match="profile viewers"):
+        lpr.parse_export(write_export(tmp_path / "e.xlsx", rows))
+    rows = [["Profile viewers from this post", "1200"] if r[0] == "Profile viewers from this post" else r for r in ROWS]
+    assert lpr.parse_export(write_export(tmp_path / "f.xlsx", rows))["metrics"]["profile_viewers"] == 1200
 
 
 def _with_raw_demographic_row(path, cells_xml):

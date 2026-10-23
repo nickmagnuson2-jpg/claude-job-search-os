@@ -80,8 +80,15 @@ def read_rows(xlsx_path):
         for ch in m.group(1):
             col = col * 26 + ord(ch) - 64
         rows.setdefault(int(m.group(2)), {})[col] = val.strip()
-    # place each cell at its column, so a missing cell is "" rather than shifting the row left
-    return [[cells.get(c, "") for c in range(1, max(cells) + 1)] for _, cells in sorted(rows.items())]
+    # place each cell at its column, so a missing cell is "" rather than shifting the row left;
+    # trailing empty cells carry nothing and are dropped
+    out = []
+    for _, cells in sorted(rows.items()):
+        row = [cells.get(c, "") for c in range(1, max(cells) + 1)]
+        while row and not row[-1]:
+            row.pop()
+        out.append(row)
+    return out
 
 
 def to_int(s):
@@ -102,6 +109,8 @@ def parse_export(xlsx_path):
         "downloaded_at": dt.datetime.fromtimestamp(os.path.getmtime(xlsx_path)).strftime("%Y-%m-%d %H:%M"),
     }
     metrics = {key: to_int(pairs[label]) for label, key in METRICS.items()}
+    if metrics["profile_viewers"] > metrics["members_reached"]:
+        raise ReadoutError("Export has more profile viewers than members reached; the reach view cannot draw that")
 
     demographics, in_demo = [], False
     for r in rows:
