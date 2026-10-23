@@ -1,9 +1,9 @@
 ---
 name: scan-jobs
-description: Scan a job portal for matching projects/roles, assess fit against profile, track evaluated ads
+description: Scan a job portal for matching roles. The model fetches and copies listings; tools/scan_jobs.py dedupes, gates, scores and records them deterministically
 argument-hint: <portal-url-or-name> [search query]
 user-invocable: true
-allowed-tools: WebFetch(*), mcp__exa__web_fetch_exa, mcp__exa__web_search_exa, Read(*), Edit(.claude/skills/scan-jobs/cache.md), Write(.claude/skills/scan-jobs/cache.md), Read(data/job-pipeline.md), Write(data/job-pipeline.md)
+allowed-tools: WebFetch(*), mcp__exa__web_fetch_exa, mcp__exa__web_search_exa, Read(*), Edit(.claude/skills/scan-jobs/cache.md), Write(.claude/skills/scan-jobs/cache.md), Read(data/job-pipeline.md), Bash(PYTHONIOENCODING=utf-8 python3 tools/scan_jobs.py:*), Bash(PYTHONIOENCODING=utf-8 python3 tools/pipe_write.py:*)
 ---
 
 # Scan Job Portal
@@ -24,39 +24,17 @@ Examples:
 
 ## Instructions
 
-### Step 1: Load Profile
+## Who decides what
 
-Read the candidate's profile to build a matching baseline. Read in parallel:
-- `data/project-index.md` — project overview for matching
-- `data/skills.md` — skill inventory with experience levels
-- `data/certifications.md` — active certifications
-- `data/profile.md` — languages, location, availability, rates
+**You fetch and copy. `tools/scan_jobs.py` decides.** Dedupe, the location gate, the fit score, the status, the cache write and the pipeline proposals are all in that script, so the same listings always get the same verdict. Do not score, rank, or re-label a role yourself, and do not edit the cache by hand during a scan. The score is the career scanner's own scorer (`tools/career_scanner/scorer.py`), the same one the nightly scan uses. Origin: finding 45.F1 (2026-09-14) and Nick's 2026-10-22 decision to make this skill as deterministic as possible.
 
-**Build a mental profile summary** from these files:
-- Core technologies (Expert + Advanced rated skills)
-- Active certifications
-- Domain experience (from project industries)
-- Languages spoken
-- Location and availability constraints
-- Contract type preferences (if stated in profile)
+### Step 1: Query
 
-**Derive disqualifiers** from the profile:
-- Languages not spoken by the candidate
-- Technologies marked as absent or not listed at all
-- Contract types not matching (e.g., if profile says "freelance only", skip permanent positions)
+If no search query was given, build one from the target titles in `data/scan-targets.yaml` (its `x-lane-filters`), joined with OR.
 
-If no search query was provided, **derive a default query** from the top 2-3 Expert-rated skills, joined with OR.
+### Step 2: Lookback window
 
-### Step 2: Read Cache & Calculate Lookback Window
-
-Read the evaluated ads cache:
-```
-.claude/skills/scan-jobs/cache.md
-```
-
-**Parse two things:**
-1. **Already-evaluated ads:** Build a list from the table. The dedup key is the **Title + Company** combination (case-insensitive, fuzzy — e.g. "Senior Software Engineer / Backend" matches "Senior Software Engineer/Backend").
-2. **Lookback window:** Read the "Last updated" date from the top of the cache file. Calculate the number of days between that date and today, then **add 1 day as buffer**. Use this for any date-based filter the portal supports. Minimum: 1 day. Maximum: 14 days. If the cache has no date or is unparseable, default to 7 days.
+Read `Last updated:` at the top of `.claude/skills/scan-jobs/cache.md`. Lookback = days since then + 1, clamped to 1-14; 7 if missing. Use it for any date filter the portal supports. (Reading the cache for dedupe is the script's job, not yours.)
 
 ### Step 3: Navigate the Portal
 
@@ -145,14 +123,6 @@ Number each listing. Extract every single one on the page.
 
 If WebFetch returns a 403, an empty result, or a bot-gate/login wall (common on job boards), retry the same URL with `mcp__exa__web_fetch_exa` before giving up; Exa's fetch gets past gates that block WebFetch (per the Exa A/B verdict, 2026-05-19, reconfirmed 2026-06-01). If the portal still cannot be parsed or requires authentication even via Exa, inform the user and suggest they provide a direct search URL with results visible.
 
-### Step 4: Deduplicate Against Cache
-
-Compare each ad from the search results against the cache (match by Title + Company, case-insensitive, fuzzy). If already evaluated, skip it entirely.
-
-Report: "Found X total, Z already in cache, **N new ads to evaluate**."
-
-If there are zero new ads, report that and stop — do not re-evaluate cached ads.
-
 ### Step 4b: Fetch Detail Pages
 
 **Skip this step for any listing already retrieved via Step 3a** — the ATS parsers return the complete description, so there is nothing further to fetch and a second call would only re-render the same content worse.
@@ -166,103 +136,53 @@ Extract the COMPLETE listing text in the original language. Include every sectio
 
 If a detail URL was not extracted from the search results, skip that ad's detail fetch — assess it from search results only (note this limitation in the assessment).
 
-### Step 5: Assess Fit for New Ads
+### Step 5: Copy each listing into the ad schema
 
-For each new (uncached) ad, assess fit against the candidate's profile **using the detail page text from Step 4b**:
+One JSON object per listing. **Copy, never summarize or judge**: `description` is the full listing text from Step 3a or 4b, verbatim.
 
-**Fit scoring guidelines:**
-- **80-100%:** Core stack match, relevant domain, matching contract type → **shortlisted**
-- **60-79%:** Strong partial match, one gap is learnable or minor → **maybe** (leaning yes)
-- **40-59%:** Some overlap but significant gaps or wrong emphasis → **maybe** (leaning no)
-- **20-39%:** Marginal overlap, mostly wrong stack/domain → **skip**
-- **0-19%:** No meaningful overlap → **skip**
+```json
+[{"title": "...", "company": "...", "location": "...", "description": "...", "url": "...", "ad_date": "YYYY-MM-DD"}]
+```
 
-**Automatic disqualifiers (mark as skip regardless of tech match):**
-- Requires languages the candidate doesn't speak
-- Contract type mismatch (permanent when freelance-only, employee leasing, etc.)
-- Primary stack is a technology the candidate has no experience with
-- Requires deep expertise in tools the candidate doesn't know
+`title` and `company` are required; leave any other field `""` if the page does not show it. Write the array to a scratchpad file.
 
-**Status values:**
-- `applied` — application sent
-- `shortlisted` — worth applying, high fit
-- `maybe` — borderline, worth exploring
-- `skip` — not a match
-- `dead` — was a match but disqualified (e.g. requirement discovered later)
+### Step 6: Assess (deterministic)
 
-### Step 6: Output Results Table
+```bash
+PYTHONIOENCODING=utf-8 python3 tools/scan_jobs.py assess < <scratchpad>/ads.json
+```
 
-Present results as a markdown table:
+It returns `found`, `cached` (already evaluated, skipped), `new` (each with `score` 1-10, `status`, `reason`), `propose_for_pipeline`, and the `cutoffs` it used. Status cutoffs: **shortlisted at 7+, maybe at 5-6, skip at 4 and below**, calibrated 2026-10-22 on 72 labeled pipeline roles (see the script's docstring for the numbers and their limits). A role whose location fails the San Francisco gate is `skip` whatever its score. Report the numbers exactly as returned. If `new` is empty, say so and stop.
+
+### Step 7: Output
 
 ```markdown
 ## Job Scan — [portal] — [date]
+Query: [query] | Period: last N days
+Found: X | Already evaluated: Z | **New: N**
 
-Query: [query] | Period: last N days | Filter: [filters applied]
-Found: X total | Z cached | **N new**
-
-### New Listings
-
-| # | Role | Company | Start | Duration | Key Skills | Fit | Status | Link |
-|---|------|---------|-------|----------|------------|-----|--------|------|
-| 1 | ... | ... | ... | ... | ... | 80% | shortlisted | [Details](URL) |
-
-### Shortlist (including previously cached high-fit ads)
-
-| Priority | Role | Company | Fit | Status | Link |
-|----------|------|---------|-----|--------|------|
-| 1 | ... | ... | 80% | shortlisted | [Details](URL) |
+| # | Role | Company | Location | Score | Status | Reason | Link |
+|---|------|---------|----------|-------|--------|--------|------|
 ```
 
-The **Shortlist** section should include ALL ads with status `shortlisted` or `applied` from both new evaluations AND the cache — this gives a running view of actionable opportunities.
+One row per `new` entry, sorted by score, highest first. Every value comes from the script's output.
 
-### Step 7: Update Cache
+### Step 8: Record
 
-Append all newly evaluated ads to the cache file. Use the Edit tool to add rows to the table in `cache.md`.
+```bash
+PYTHONIOENCODING=utf-8 python3 tools/scan_jobs.py record < <scratchpad>/new.json
+```
 
-**Important:**
-- Preserve all existing cache entries
-- Add new entries at the bottom of the table
-- Update the "Last updated" date at the top
-- Use the **ad's posting date** (from the listing) for the "Ad Date" column, not the scan date
-- Store the **detail page URL** in the "URL" column as a markdown link. Use `—` if no URL was extracted.
-- If an existing cached ad needs a status change (e.g., user says "I applied to this one"), update that row
+where `new.json` is the `new` array from Step 6. It appends the rows and stamps `Last updated`; it refuses an ad that is already cached. A status change Nick asks for later ("mark X as applied") is the one hand edit of the cache this skill makes.
 
-### Step 7b: Pipeline Auto-Propose
+### Step 9: Pipeline proposals
 
-After updating the cache, collect all **newly-evaluated** roles (scored in this run) with fit ≥80%.
+For each entry in `propose_for_pipeline`, ask: `[Company] — [Role] (score N/10) — add to pipeline? (Y/N)`. On Y:
 
-1. Read `data/job-pipeline.md` (skip silently if it doesn't exist).
-2. Filter shortlisted roles to those NOT already in the pipeline:
-   - Match by company name substring (case-insensitive) — if the role's company appears anywhere in the pipeline's Company column, it's already tracked.
-3. If no untracked shortlisted roles remain, skip silently.
-4. If any untracked shortlisted roles remain, display a prompt **before** the Summary section:
+```bash
+PYTHONIOENCODING=utf-8 python3 tools/pipe_write.py --repo-root . add "<Company>" "<Role>" --url "<url>" --stage Researching
+```
 
-   ```
-   📋 [N] shortlisted role(s) not yet in pipeline:
-   1. [Company] — [Role] (fit: N%) — Add to pipeline? (Y/N)
-   2. [Company] — [Role] (fit: N%) — Add to pipeline? (Y/N)
-   ```
+### Step 10: Summary
 
-5. For each role where user answers Y:
-   - Append a new row to the Active section of `data/job-pipeline.md`:
-     - **Company**: company name from the listing
-     - **Role**: role title from the listing
-     - **Stage**: `Researching`
-     - **Date Added**: today (YYYY-MM-DD)
-     - **Date Updated**: today
-     - **CV Used**: `—`
-     - **URL**: listing URL if available
-     - **Notes**: `Added by /scan-jobs on [today's date]`
-   - Write the updated `data/job-pipeline.md`.
-   - Confirm: "✅ [Company] — [Role] added to pipeline [Researching]."
-
-6. For roles where user answers N: skip, no changes.
-7. If `data/job-pipeline.md` doesn't exist and user answers Y: create it with the standard header before adding the first entry.
-
-### Step 8: Summary
-
-End with a brief summary:
-- How many new ads found
-- How many worth applying to
-- Any notable trends, but only if the lookback window covers multiple days (e.g., "strong demand for [skill] this week", "thin market for [technology]-only roles"). Skip trend observations for short lookback windows where the sample is too small.
-- Remind user they can update ad status with: "mark [title] as applied"
+New ads found, how many shortlisted, and which were added to the pipeline. No trend commentary unless the lookback spans several days and N is large enough to mean something.

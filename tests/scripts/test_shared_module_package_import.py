@@ -88,6 +88,7 @@ TOOLS = (
     "reader_review",
     "remember_apply",
     "remember_classify",
+    "scan_jobs",
     "scan_transcript_failures",
     "todo_daily_metrics",
     "todo_write",
