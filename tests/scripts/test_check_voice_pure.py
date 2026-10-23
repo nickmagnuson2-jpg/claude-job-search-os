@@ -148,3 +148,56 @@ def test_write_requires_frontmatter():
 def test_write_with_correct_frontmatter_and_quoted_body_is_clean():
     content = f"---\nvoice: pure-voice\n---\n\n> {LONG}"
     assert not violations(content, check_frontmatter=True)
+
+
+# --- Claude synthesis headings (## Notes / ## Analysis) --------------------
+# The 2026-05-18 failure: a dated reflection carrying a "## Notes" section of
+# short Claude bullets. Headings and bullets are each exempt from the 100-char
+# block, so the synthesis passed. The heading itself is the tell.
+
+def _run_hook(payload):
+    import json
+    import os
+    import subprocess
+    import sys
+    return subprocess.run(
+        [sys.executable, str(SCRIPT)],
+        input=json.dumps(payload),
+        capture_output=True,
+        text=True,
+        env={**os.environ, "PYTHONIOENCODING": "utf-8"},
+    )
+
+
+def test_blocks_notes_heading_with_bulleted_synthesis():
+    content = (
+        "---\nvoice: pure-voice\n---\n\n"
+        f"> {LONG}\n\n"
+        "## Notes\n\n- short bullet"
+    )
+    assert any("synthesis heading" in e for e in violations(content, check_frontmatter=True))
+    r = _run_hook({
+        "tool_name": "Write",
+        "tool_input": {
+            "file_path": "/vault/data/reflections/2026-01-02-acme-call.md",
+            "content": content,
+        },
+    })
+    assert r.returncode == 2
+    assert "synthesis heading" in r.stderr
+
+
+def test_blocks_analysis_heading_on_edit():
+    new_string = "> end of quote\n\n### Analysis\n\n- Casey Doe pattern"
+    assert any("synthesis heading" in e for e in violations(new_string))
+
+
+def test_allows_related_heading():
+    content = "> end of quote\n\n## Related\n\n- [[casey-doe]]\n- [[acme]]"
+    assert not violations(content)
+
+
+def test_notes_word_inside_a_heading_is_not_flagged():
+    # Anchored to the whole heading: "## Notes from the walk" is a title, not
+    # the synthesis-section tell.
+    assert not violations("## Notes from the walk with Casey Doe")

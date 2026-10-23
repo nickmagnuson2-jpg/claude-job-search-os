@@ -21,6 +21,10 @@ from pathlib import Path
 
 DATED_REFLECTION = re.compile(r"data/reflections/\d{4}-\d{2}-\d{2}[^/]*\.md$")
 LONG_PARA_THRESHOLD = 100
+# A "## Notes" / "## Analysis" section is the tell for Claude synthesis: its
+# heading and short bullets are each exempt from the long-paragraph check, so
+# it is caught by name. Same pattern as the rule's detector_signature.
+SYNTHESIS_HEADING = re.compile(r"(?m)^[ ]{0,3}#{2,3}[ ]+(Notes|Analysis)[ ]*$")
 
 
 def is_voice_pure_target(file_path: str) -> bool:
@@ -46,6 +50,12 @@ def find_violations(content: str, check_frontmatter: bool) -> list[str]:
         parts = content.lstrip().split("---", 2)
         if len(parts) >= 3:
             body = parts[2]
+
+    for m in SYNTHESIS_HEADING.finditer(body):
+        errors.append(
+            f"Claude synthesis heading in voice-pure reflection ('{m.group(0).strip()}'): "
+            "move meta to the header > blockquote, synthesis to _themes.md"
+        )
 
     prev_was_blockquote = False
     for para in body.split("\n\n"):
@@ -146,7 +156,7 @@ def main():
         "",
         "Allowed paragraph shapes:",
         "  - Blockquotes ('> ...') containing Nick's verbatim text",
-        "  - Headings (#)",
+        "  - Headings (#), except '## Notes' / '## Analysis' (Claude synthesis sections)",
         "  - Wiki-link or bullet lists",
         "  - Short context notes (<=100 chars)",
         "",
