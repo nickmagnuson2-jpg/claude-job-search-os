@@ -315,6 +315,19 @@ PATTERNS = [
         'can ignore instead of a logistic they can act on (4th fire; voice-reference.md)',
         'name the logistic instead: "on your calendar", "if your calendar allows"',
     ),
+    # --- Recipient directive in a thread reply (content-rules C6, 2 fires). A judgment
+    # gate passed the origin draft untouched, hence a BLOCK. Narrow on purpose: a bare
+    # "make sure" is self-directed in Nick's own sent mail ("wanted to make sure ...").
+    (
+        re.compile(r"\bplease\s+make\s+sure\b", re.IGNORECASE),
+        '"please make sure" — instructs a competent recipient in their own job (content-rules C6)',
+        "cut it; the recipient does this already, state the fact or filter once",
+    ),
+    (
+        re.compile(r"\bsend\s+(?:it|them|those|any|that|these)\s+my\s+way\b", re.IGNORECASE),
+        '"send it my way" — restates as an instruction what the stated filter already implies (content-rules C6)',
+        "cut it; the recipient does this already, state the fact or filter once",
+    ),
 ]
 
 # Body-only checks (count-based). Run after isolating the BODY section.

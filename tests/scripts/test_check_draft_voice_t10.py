@@ -127,3 +127,87 @@ def test_resonance_frame_sibling_fires(text):
 def test_resonance_frame_no_false_positive(text):
     hits = [d for d in matched(text) if "resonance frame" in d]
     assert hits == [], f"should be clean: {text!r} -> {hits}"
+
+
+# --- recipient directive in a live-thread reply (content-rules C6) ----------
+#
+# Origin: a /follow-up reply to a recruiter told him to "make sure that version
+# goes through with the submission" and to send similar roles "my way". Both
+# instruct a competent recipient in his own job. The draft passed the full
+# judgment-based quality gate, so the check has to be mechanical. The two
+# patterns are deliberately narrow: "please make sure" (aimed at the recipient),
+# never a bare "make sure", because "I wanted to make sure ..." is Nick's own
+# sent phrasing and is self-directed.
+
+C6_KEY = "C6"
+
+
+@pytest.mark.parametrize("text", [
+    "Please make sure that version goes through with the submission.",
+    "please  make sure the tailored resume is the one attached",
+    "If you see that shape elsewhere, send it my way.",
+    "Happy to look at more like this, send them my way.",
+    "If anything else comes up, send any my way.",
+])
+def test_recipient_directive_fires(text):
+    assert fires(text, C6_KEY), f"should block: {text!r}"
+
+
+@pytest.mark.parametrize("text", [
+    # The sent close that replaced the directive in the origin incident.
+    "Thanks for letting me know what Acme says.",
+    # Self-directed "make sure" is Nick's own corpus phrasing.
+    "I wanted to make sure I left no stone unturned.",
+    "Want to make sure it's a real fit on both sides.",
+    # "my way" without a send directive.
+    "I'd love to keep you updated with anything else that comes my way.",
+    "Applied this morning, including a resume.",
+])
+def test_recipient_directive_no_false_positive(text):
+    hits = [d for d in matched(text) if C6_KEY in d]
+    assert hits == [], f"should be clean: {text!r} -> {hits}"
+
+
+def _run_hook(monkeypatch, tmp_path, capsys, body, override=False):
+    """Run main() end to end on a draft body: open_draft.py invocation, fresh
+    provenance marker, so only the content checks decide the exit code."""
+    draft = tmp_path / ".pending-draft.txt"
+    draft.write_text(
+        "TO: casey.doe@example.com\nSUBJECT: Re: Acme\nBODY:\n" + body + "\n",
+        encoding="utf-8",
+    )
+    source = tmp_path / ".pending-draft.source"
+    source.write_text("follow-up\n", encoding="utf-8")
+    monkeypatch.setattr(cdv, "DRAFT_FILE", draft)
+    monkeypatch.setattr(cdv, "SOURCE_FILE", source)
+    monkeypatch.setattr(cdv, "read_hook_command",
+                        lambda: "PYTHONIOENCODING=utf-8 python3 tools/open_draft.py")
+    if override:
+        monkeypatch.setenv("DRAFT_OVERRIDE", "1")
+    else:
+        monkeypatch.delenv("DRAFT_OVERRIDE", raising=False)
+    with pytest.raises(SystemExit) as exc:
+        cdv.main()
+    return exc.value.code, capsys.readouterr().err
+
+
+@pytest.mark.parametrize("body", [
+    "Hi Casey, applied this morning. Please make sure that version goes through with the submission.",
+    "Hi Casey, passed on the second one. If you see that shape elsewhere, send it my way.",
+])
+def test_recipient_directive_blocks_end_to_end(monkeypatch, tmp_path, capsys, body):
+    code, err = _run_hook(monkeypatch, tmp_path, capsys, body)
+    assert code == 2
+    assert C6_KEY in err
+
+
+def test_recipient_directive_clean_reply_passes_end_to_end(monkeypatch, tmp_path, capsys):
+    code, err = _run_hook(monkeypatch, tmp_path, capsys,
+                          "Thanks for letting me know what Acme says.")
+    assert code == 0, err
+
+
+def test_recipient_directive_override_still_bypasses(monkeypatch, tmp_path, capsys):
+    code, _err = _run_hook(monkeypatch, tmp_path, capsys,
+                           "Please make sure that version goes through.", override=True)
+    assert code == 0
