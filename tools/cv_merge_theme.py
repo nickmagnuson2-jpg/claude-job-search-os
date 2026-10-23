@@ -129,6 +129,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = ap.parse_args(argv)
 
+    # Clear the previous run's output before any step that can fail. Otherwise a failed
+    # merge leaves it in place and the `rendercv render` that follows renders stale
+    # content with every success signal intact (2026-08-25). Never delete an input.
+    if args.out and args.out.exists() and args.out.resolve() != args.content.resolve():
+        args.out.unlink()
+
     if not args.content.exists():
         print(json.dumps({"status": "error", "message": f"Content YAML not found: {args.content}"}))
         return 1
