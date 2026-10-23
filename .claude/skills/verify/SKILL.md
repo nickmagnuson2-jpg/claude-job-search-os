@@ -198,6 +198,17 @@ it. This section holds only what the gate cannot know.
    Nick to push, run the gate's dry run (`cross_model_gate.py --since <newest commit's
    epoch> --numstat <file>`); exit 0 means clear.
 
+0b. **State the stopping rule before round 1, and tie it to what the gate blocks.** The gate
+   blocks on an open P0 and on missing reviews after the newest commit. It does not block on
+   P1 or P2. Every fix is a commit, and every commit makes the reviews stale, so fixing each
+   P1 buys a full new round. Default: fix P0s; park P1/P2 with a reason
+   (`finding_write.py set <addr> --disposition parked --why ...`) unless the fix is worth
+   another round, and say so when you choose it. Put the bar (what counts as a finding, when to
+   stop) in `--target` from round 1. Give every run its own `--report` path: two same-day runs
+   of one model with the same target prefix write to one file. Origin: 2026-10-22, nine rounds on
+   a small tool; one P0 in round 2, then one P1 per round from Codex while Grok was clean from
+   round 5.
+
 1. **Run `/audit-pii` before the last verification round, not after.** The audit commits
    nothing, but a scrub it finds needs a commit, and a commit makes the earlier reviews
    stale: the gate counts a review only if it was recorded at or after the newest commit
