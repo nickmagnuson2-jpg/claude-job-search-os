@@ -211,9 +211,11 @@ function build(name, opts){
   const groups = rows.filter(r=>r[2]!=null).map(r=>({label:r[1], n:Math.round(r[2]*N), s:r[2], share:r[3], kind:buyers.includes(r[1])?"buyer":"other"}));
   if(opts.order) groups.sort((a,b)=>{const ia=opts.order.indexOf(a.label), ib=opts.order.indexOf(b.label); return (ia<0?999:ia)-(ib<0?999:ib);});
   const unsized = rows.filter(r=>r[2]==null).map(r=>({label:r[1], n:0, s:null, share:r[3], kind:"unsized"}));
-  /* rounding each share on its own can add up past N: take the excess from the groups rounded up most */
-  let over = groups.reduce((s,g)=>s+g.n,0)-N;
-  groups.slice().sort((a,b)=>(b.n-b.s*N)-(a.n-a.s*N)).forEach(g=>{ if(over>0&&g.n>0){ g.n--; over--; } });
+  /* rounded shares can add up past N (LinkedIn's own percentages can total over 100%):
+     take dots one at a time from the group furthest above its share until they fit */
+  for(let over=groups.reduce((s,g)=>s+g.n,0)-N; over>0; over--){
+    const g=groups.filter(x=>x.n>0).reduce((a,b)=>(b.n-b.s*N)>(a.n-a.s*N)?b:a); g.n--;
+  }
   const used = groups.reduce((s,g)=>s+g.n,0);
   return groups.concat(unsized, [{label:"Not broken out", n:Math.max(0,N-used), s:null, share:null, kind:"rest"}]);
 }
