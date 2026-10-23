@@ -164,10 +164,10 @@ def test_regression_the_actual_incident():
     """The exact sentence from 2026-08-04 that started this."""
     with tempfile.TemporaryDirectory() as td:
         r = _run(
-            "Saved to `output/acme/080426-casey-whiteboard-sim-prompt.md`. "
+            "Saved to `output/acme/010526-casey-sim-prompt.md`. "
             "Paste this into the Claude App and switch to voice:", td)
         assert r.returncode == 2
-        assert "080426-casey-whiteboard-sim-prompt.md" in r.stderr
+        assert "010526-casey-sim-prompt.md" in r.stderr
 
 
 if __name__ == "__main__":

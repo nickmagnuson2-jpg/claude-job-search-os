@@ -137,7 +137,8 @@ def main():
 
     # Imminent scheduled events (interviews/screens/calls) live in the pipeline
     # Next-Action free text, not in dated todos — parse them so standup can pin
-    # them atop Today's Top 3. Origin 2026-06-11 scheduled-interview miss.
+    # them atop Today's Top 3. Origin: a scheduled interview
+    # that standup missed.
     pipeline_content = read_file(root / "data" / "job-pipeline.md")
     upcoming_scheduled = parse_upcoming_scheduled(pipeline_content, today)
 

@@ -98,10 +98,10 @@ Then, for each candidate, add a one-line fit read the deterministic score cannot
   - `bench: unknown` — public data too sparse to say. **This is a real and common answer. Say it.**
 
   **Sort `thin` and `unknown` down; do NOT drop them.** Two reasons this is not a filter: public
-  data is stale often enough to matter (2026-08-26: Exa reported a target's commercial lead at
-  7 months tenure, he said two on the call), and the part that actually decides it — whether the
+  data is stale often enough to matter (in one case Exa's tenure figure for a target's commercial
+  lead was contradicted by what he said on the call), and the part that actually decides it — whether the
   guidance is real, whether there is any structure — is not visible from outside and needs the
-  conversation. Per the `goals.md` non-negotiable added 2026-08-26. Worked example (2026-08-26): a target
+  conversation. Per the `goals.md` non-negotiable added 2026-08-26. Worked example: a target
   company would have tagged `bench: thin` and sorted down; it still would have been worth the cold
   email, and the call is what settled it.
 - Recommend or hold.

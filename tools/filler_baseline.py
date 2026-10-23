@@ -3,7 +3,7 @@
 
 WHY THIS EXISTS
 ---------------
-2026-08-24: a debrief reported "lowest filler density in the corpus, on the highest
+A debrief once reported "lowest filler density in the corpus, on the highest
 Nick-word count in the corpus." Measured over the actual corpus it was 8th of 37 real
 calls. The splitter had been validated -- correctly, against three already-logged files --
 and that validation was then treated as licence for a corpus-wide superlative assembled

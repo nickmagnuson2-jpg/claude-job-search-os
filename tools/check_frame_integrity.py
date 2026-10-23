@@ -229,7 +229,7 @@ def validate_enums(frame, schema):
     _shape_of maps `enum` to `str`, so ANY string passed, and the vocabulary printed
     beside the field was decoration.
 
-    FOUND ON THE LIVE FRAME, 2026-09-21. `status: submitted` had been sitting in a
+    FOUND ON THE LIVE FRAME. `status: submitted` had been sitting in a
     field whose declared vocabulary is in_progress | awaiting_outcome | complete |
     abandoned. It passed every gate for a day, and `submitted` is not a synonym --
     the state it names is `awaiting_outcome`, which is the value the run protocol
@@ -296,7 +296,7 @@ def validate_fact_stamps(frame):
     reach, and from any comparison against a recorded `delivery.version`, which is the
     only thing separating post-delivery authoring from backfill.
 
-    MEASURED 2026-09-21: 15 of 61 facts on a live frame carried no stamp, all of them
+    MEASURED: 15 of 61 facts on a live frame carried no stamp, all of them
     among the most recent, so "which facts existed when the artifact shipped" could only
     be inferred from absence rather than asserted. Recovered from the snapshots and
     stamped; this stops the next one.
@@ -1007,13 +1007,13 @@ def check_F14(frame, frame_path=None):
 #
 # F2a asks whether every ELEMENT traces to a real fact. Nothing asked the reverse:
 # whether every CLAIM PRINTED ON A SURFACE is carried by an element declaring that
-# surface. The gap shipped. On 2026-09-21 a deck went to a client with a
+# surface. The gap shipped. A deck went to a client with a
 # concurrency figure printed on slide 1 while the only element citing that fact
 # declared `measure_surface: workbook`, and every gate stayed green, because F1b only
 # checks that a measure sits on the surface that NAMES it -- never that a surface
 # names only what some element accounts for.
 #
-# THE UNIT IS THE PRINTED NUMBER, NOT THE FACT. Measured 2026-09-21 by replaying both
+# THE UNIT IS THE PRINTED NUMBER, NOT THE FACT. Measured by replaying both
 # candidates across all 53 historical versions of one engagement's frame against the deck
 # that actually shipped:
 #   fact-anchored   ("is this fact cited on this surface?")   47 fires at v52, 1 real -> 2.1%

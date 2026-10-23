@@ -143,7 +143,7 @@ Display closures under `#### System Changes` in the checkout summary as: `Auto-c
 
 If `status: error, "Multiple matches"` is returned by any sweep, surface the matches and ask Nick before closing. Don't guess.
 
-Origin: 2026-05-14 audit (a 5/13 phantom-overdue prep todo). Skill workflows can fail to close their trigger todos; `/checkout` is the daily safety net.
+Origin: an audit that found a phantom-overdue prep todo. Skill workflows can fail to close their trigger todos; `/checkout` is the daily safety net.
 
 ### Step 4c: Audit unexpected state — diagnose, don't close (mandatory)
 
@@ -274,7 +274,7 @@ already written). Promoted to skill tier on the 2nd fire.
 
 From the current Active to-dos in `data/job-todos.md`, rank tomorrow's top 3:
 
-**Step 5a — Pin imminent scheduled events FIRST (mandatory).** Before ranking todos, read `upcoming_scheduled[]` from the Step 1 metrics output. These are interviews/screens/calls parsed from the pipeline **Next-Action** column within the next 3 days — they live in free text, not dated todos, so the todo ranker is blind to them. **Any entry with `is_event: true` is a fixed commitment and outranks every todo: it takes Top-3 slot #1 (earliest date first).** Show it as `[Company] [role] — [event] ([date], [days_until]d)`. A `false` entry (a dated follow-up) is a strong candidate but doesn't auto-pin. If `upcoming_scheduled` is empty, skip and rank from todos only. Origin 2026-06-11: a next-day interview sat in the pipeline Next-Action and was invisible to both /standup and /checkout — see `memory/feedback_surface_scheduled_events_in_ranking.md`.
+**Step 5a — Pin imminent scheduled events FIRST (mandatory).** Before ranking todos, read `upcoming_scheduled[]` from the Step 1 metrics output. These are interviews/screens/calls parsed from the pipeline **Next-Action** column within the next 3 days — they live in free text, not dated todos, so the todo ranker is blind to them. **Any entry with `is_event: true` is a fixed commitment and outranks every todo: it takes Top-3 slot #1 (earliest date first).** Show it as `[Company] [role] — [event] ([date], [days_until]d)`. A `false` entry (a dated follow-up) is a strong candidate but doesn't auto-pin. If `upcoming_scheduled` is empty, skip and rank from todos only. Origin: a next-day interview sat in the pipeline Next-Action and was invisible to both /standup and /checkout — see `memory/feedback_surface_scheduled_events_in_ranking.md`.
 
 **Step 5b — Reconcile against recent intel before surfacing any "reach out / apply / warm-intro" todo.** If a candidate todo is an outbound action toward a named entity, check `networking_activity[]` (and the pipeline Next-Action) for that entity's most recent touch. If a touch within ~the last few days already covers it (e.g. the warm-intro message was already sent), DO NOT surface the redundant action — surface the actual next move (await reply / nudge on its gate date) or drop it. Generic-stale pipeline stage ("To Apply") must not override specific-recent networking reality. This is the `[[feedback_reconcile_stale_gate_against_specific_intel]]` pattern at the Top-3 surface. Origin 2026-06-11: surfaced a "reach out to [contact] re [company]" warm-intro action when that reach-out had been logged the day before.
 

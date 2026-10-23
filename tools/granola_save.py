@@ -195,7 +195,7 @@ def attribution_warning(transcript: str) -> str | None:
     on the mic and the whole conversation is attributed to the owner. The transcript is still
     good CONTENT; it is only per-speaker COUNTING that becomes meaningless.
 
-    WHY HERE AND NOT ONLY IN ANALYSIS (2026-08-25): a 2026-06-24 call sat in the corpus for
+    WHY HERE AND NOT ONLY IN ANALYSIS (2026-08-25): a recorded call sat in the corpus for
     two months with every word attributed to Nick, and was ranked 4th on a filler-density
     table before anyone noticed. Nothing about the file looked wrong. Surfacing it at capture
     is the difference between "your mic setup collapsed that call, fix it before the next one"

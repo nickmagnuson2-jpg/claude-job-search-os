@@ -4,9 +4,9 @@
 Structure mirrors tests/scripts/test_check_bare_python.py: every case pipes a real
 hook JSON payload through the script as a subprocess and asserts the exit code.
 
-The load-bearing case is `test_blocks_origin_input`: the verbatim shape of the
-2026-06-11 recruiter-channel CV that created the rule, and the corrected version of the
-same file that must stay clean.
+The key case is `test_blocks_origin_input`: a CV content file in the shape
+that created the rule (the stale title rendered in several places), and the corrected
+version of the same file that must stay clean.
 """
 import importlib.util
 import json
@@ -98,28 +98,27 @@ def test_write_branch_blocks_and_passes_with_named_outcomes():
 
 
 # --------------------------------------------------------------------------
-# ORIGIN INPUT — 2026-06-11 recruiter-channel CV, built on a prior-application
-# baseline, which rendered the stale title in 4 places. The clean variant is the
-# file's current on-disk text, with "Chief Product and Technology Officer".
+# ORIGIN INPUT: a fictional CV content file built on a stale baseline, which
+# renders the stale title in 4 places. The clean variant is the same text with
+# "Chief Product and Technology Officer".
 # --------------------------------------------------------------------------
-ORIGIN_PATH = "output/acme-corp/061126-magnuson.content.yaml"
+ORIGIN_PATH = "output/acme-corp/010126-sample.content.yaml"
 
 ORIGIN_INPUT = """\
 sections:
   SUMMARY:
-    - "McKinsey-trained operator who brings structure and clarity to ambiguous, \
-cross-functional work. Most recently Chief of Staff to the Head of Product and \
-Technology at Zuora, owning cross-functional execution and the operating rhythm \
-across a 600-person organization."
+    - "Operator who keeps planning and follow-through on track for busy teams. \
+Most recently Chief of Staff to the Head of Product and \
+Technology at Zuora, running weekly reviews and the team calendar \
+for a mid-sized group."
   EXPERIENCE:
     - company: ZUORA
       position: Chief of Staff to the Head of Product and Technology
       highlights:
-        - Acted as primary execution partner to the Head of Product and Technology \
-for a 600-person organization, running discovery across engineering, finance, and \
-go-to-market.
-        - Prototyped an AI-assisted executive-intelligence workflow (Gemini, \
-NotebookLM, Glean Agents), beta-tested with the Head of Product and Technology.
+        - Supported the Head of Product and Technology \
+on quarterly planning, collecting inputs from several teams.
+        - Built a shared status tracker, \
+reviewed weekly with the Head of Product and Technology.
 """
 
 CLEAN_VARIANT = ORIGIN_INPUT.replace(

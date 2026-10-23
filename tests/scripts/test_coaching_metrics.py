@@ -350,7 +350,7 @@ def test_ledger_narrow_row_reads_verdict_from_the_right_and_format_from_the_left
 def test_ledger_narrow_row_missing_its_format_cell_is_unclassified_not_guessed():
     """The Format cell itself is the missing one, so index 2 holds the Drill state
     text. Reading it by index would file a real call as a drill."""
-    r = ("| 2026-01-05 | Acme onsite | evening-before drill ran, reset unconfirmed "
+    r = ("| 2026-01-05 | Acme onsite | drill ran the night before, reset unconfirmed "
          "| elevated | dim2 = 3 | **Inconclusive** | x |")
     content, at = ledger_doc(("## H9: Invented", H_A, [r]))
     out = cm.compute_ledger(content)

@@ -69,12 +69,12 @@ def test_target_role_parser_reads_top_ranked_role(tmp_path):
     goals.write_text(
         "## Target Criteria\n\n"
         "**Role types** (ranked, most to least preferred):\n"
-        "1. Deployment Strategist / Engagement Lead at an AI-native company (the judgment seat)\n"
-        "2. Business Operations / Strategy & Operations on a strong team\n",
+        "1. Operations Manager / Program Lead at a logistics company (the planning seat)\n"
+        "2. Strategy & Planning on a strong team\n",
         encoding="utf-8",
     )
     assert llm._load_target_role(str(goals)) == \
-        "Deployment Strategist / Engagement Lead at an AI-native company"
+        "Operations Manager / Program Lead at a logistics company"
 
 
 def test_target_role_falls_back_when_goals_absent(tmp_path):

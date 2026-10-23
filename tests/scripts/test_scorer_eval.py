@@ -33,11 +33,11 @@ def test_engagement_recovered_from_notes_when_stage_is_terminal():
 def test_notes_product_description_is_not_engagement():
     # Bare description words must NOT count as a process event.
     assert se.classify_company_outcome(
-        "Considered - passed (self)", "B2B deal-pricing CPQ; we offer a use case tool") == se.NICK_DECLINED
+        "Considered - passed (self)", "Inventory forecasting SaaS; we offer a use case tool") == se.NICK_DECLINED
 
 
 def test_nick_self_pass_is_excluded_not_negative():
-    assert se.classify_company_outcome("Considered - passed (self, 7/7)") == se.NICK_DECLINED
+    assert se.classify_company_outcome("Considered - passed (self, 3/2)") == se.NICK_DECLINED
     assert se.classify_company_outcome("Withdrawn", "Applied via Ashby; GTM role") == se.NICK_DECLINED
 
 
@@ -49,12 +49,12 @@ def test_terminal_without_engagement_is_negative():
 def test_backlog_and_pending_are_unlabeled():
     assert se.classify_company_outcome("Researching") == se.UNLABELED
     assert se.classify_company_outcome("To Evaluate") == se.UNLABELED
-    assert se.classify_company_outcome("Applied 2026-07-08 via Paraform") == se.UNLABELED
+    assert se.classify_company_outcome("Applied 2026-03-04 via a job board") == se.UNLABELED
 
 
 def test_engaged_then_nick_withdrew_stays_positive():
     # Priority: mutual engagement wins over a later self-withdrawal.
-    assert se.classify_company_outcome("Withdrawn", "Executive screen scheduled 6/15") == se.POSITIVE
+    assert se.classify_company_outcome("Withdrawn", "Executive screen scheduled 3/12") == se.POSITIVE
 
 
 # --- contact outcome taxonomy ----------------------------------------------

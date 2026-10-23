@@ -8,10 +8,10 @@ absence claim about *edits*, and it has no tool call behind it, so no PreToolUse
 or PostToolUse hook can see it. The only surface that can is the Stop hook,
 which reads the finished assistant message.
 
-Origin: 2026-07-31, a late-round interview-prep session. Twice I told Nick that
-`073126-prep-evidence.md` "hasn't had a pass this session" and was
+Origin: an interview-prep session. Twice I told Nick that
+`<MMDDYY>-prep-evidence.md` "hasn't had a pass this session" and was
 "untouched today." I never ran `ls -la`, never checked git, never opened the
-file. Nick: "I created that whiteboard evidence today, so that's a little
+file. Nick: "I created that [file] today, so that's a little
 wrong." He had built it that day. The false premise then produced a second,
 worse error: I used it to tell him a workstream was under-served, devaluing
 work he had just done.
@@ -19,7 +19,7 @@ work he had just done.
 Why a hook and not another rule: the absence-assertion rule was already a
 CLAUDE.md Hard Rule when this fired — the highest behavioral tier short of a
 hook — and it did not hold. Per `memory/feedback_llm_verification_system.md`
-(Rule #1, 2026-07-31 supplement) and the ladder in
+(Rule #1 and its later supplement) and the ladder in
 `memory/feedback_llm_self_policing_fails.md`: memory < skill < hook <
 independent reviewer.
 

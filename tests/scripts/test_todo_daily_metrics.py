@@ -209,15 +209,15 @@ def _pipeline(tmp_path, *rows):
 def test_upcoming_scheduled_surfaces_event_in_window(tmp_path):
     """A dated interview in Next-Action within 3 days surfaces, flagged is_event."""
     _pipeline(tmp_path,
-        "| ActiveCo | Deployment Strategist | Next round | 2026-06-11 | "
-        "Interview w/ Casey Doe Fri 6/12 12:30pm PT (30 min) | — | — | — |")
+        "| ActiveCo | Deployment Strategist | Next round | 2026-03-04 | "
+        "Interview w/ Casey Doe Thu 3/5 2pm PT (30 min) | — | — | — |")
     result = run_script("todo_daily_metrics.py",
-                        "--target-date", "2026-06-11",
+                        "--target-date", "2026-03-04",
                         "--repo-root", str(tmp_path))
     up = result["upcoming_scheduled"]
     assert len(up) == 1
     assert up[0]["company"] == "ActiveCo"
-    assert up[0]["date"] == "2026-06-12"
+    assert up[0]["date"] == "2026-03-05"
     assert up[0]["days_until"] == 1
     assert up[0]["is_event"] is True
 

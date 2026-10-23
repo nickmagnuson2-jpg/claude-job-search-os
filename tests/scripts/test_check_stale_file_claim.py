@@ -7,9 +7,8 @@ false-positive classes measured in the 2026-08-13 smoke run over 4,085 real
 assistant messages. Those classes are why the hook checks mtime rather than
 asking whether a check was run — see the module docstring.
 
-Canonical case: the 2026-07-31 late-round prep incident, where
-`073126-prep-evidence.md` was called "untouched today" on the day Nick
-created it.
+Canonical case: a prep incident where a dated `prep-evidence.md` file was
+called "untouched today" on the day Nick created it.
 """
 import importlib.util
 import json
@@ -39,8 +38,8 @@ def scoped(text):
 # ---------- extraction: should CATCH ----------
 
 def test_catches_the_origin_incident():
-    text = "output/acme/073126-prep-evidence.md hasn't had a pass this session."
-    assert claims(text) == ["output/acme/073126-prep-evidence.md"]
+    text = "output/acme/010526-prep-evidence.md hasn't had a pass this session."
+    assert claims(text) == ["output/acme/010526-prep-evidence.md"]
 
 
 def test_catches_untouched_today():

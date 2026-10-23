@@ -35,9 +35,9 @@ broken" on day one, which is false and is how an instrument trains people to ign
 things missed through one hole is one hole. The question the ladder answers is "did the fix
 hold," so the fix has to be recorded before a later fire can mean anything.
 
-ORIGIN. 2026-09-17. Three instruments re-derived in one afternoon on a 2026-09 client take-home:
+ORIGIN. Three instruments re-derived in one afternoon on a client take-home:
 per-number provenance tagging, the function test for cutting, and the read-surface audit.
-All three existed in the 2026-08 engagement corpus. `framework/deck-rubric.md` had named its own consumer
+All three existed in an earlier engagement corpus. `framework/deck-rubric.md` had named its own consumer
 for five weeks while nothing pointed back at it. Nick's framing, the same day: archaeology
 that does not land is waste, and half-closed strands cost twice.
 
@@ -76,8 +76,8 @@ HEADER = """# Re-derivation Log
 > pointer. N things missed through one hole is one hole; the rung tracks whether the fix held.
 > Wirings are recorded in the `## Retrieval wired` section below the table.
 >
-> Origin: 2026-09-17, three instruments re-derived in one afternoon that all existed in the
-> the 2026-08 engagement corpus. See `output/analysis/091726-deck-rubric-gap-register.md`.
+> Origin: three instruments re-derived in one afternoon that all existed in
+> an earlier engagement corpus. See `output/analysis/091726-deck-rubric-gap-register.md`.
 
 | surface | rebuilt | already existed | why missed | count | first..last | owes |
 |---|---|---|---|---|---|---|

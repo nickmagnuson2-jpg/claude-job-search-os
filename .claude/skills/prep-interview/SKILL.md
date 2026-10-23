@@ -68,7 +68,7 @@ Read the following in parallel — skip any that don't exist:
 2b. Interviewer dossier — `data/people/<slug>.md` (if the interviewer is known; slug = interviewer name lowercased, accents folded, spaces→hyphens) — synthesized relationship context (what they care about, pressure points, prior touchpoints, what Nick owes them). Feeds the audience-fluency read (Step 1b C1) and the Agent 3 Live-Need Bridge block. Example: `data/people/jane-doe.md`.
 3. `data/profile.md`
 4. `data/professional-identity.md`
-5. **`coaching/coached-answers/`** — the directory, ALL of it. Glob `coaching/coached-answers/*.md` and read every match, plus `_backlog.md` to see what is NOT coached yet. These are the validated SPOKEN answers and they outrank `data/projects/*.md` for anything said out loud: they carry the reconciled numbers, the framing that survived a live rep, and a delivery note naming what already went wrong. **Read them BEFORE writing any proof into the doc, and carry a matched answer's delivery note into the prep verbatim.** The legacy single file `coaching/coached-answers.md` was merged into this directory on 2026-09-21 and no longer exists. Origin: 2026-09-21, a prep shipped a proof framed from the project file while a validated coached version said the opposite, per `memory/feedback_coached_answers_has_two_surfaces.md`.
+5. **`coaching/coached-answers/`** — the directory, ALL of it. Glob `coaching/coached-answers/*.md` and read every match, plus `_backlog.md` to see what is NOT coached yet. These are the validated SPOKEN answers and they outrank `data/projects/*.md` for anything said out loud: they carry the reconciled numbers, the framing that survived a live rep, and a delivery note naming what already went wrong. **Read them BEFORE writing any proof into the doc, and carry a matched answer's delivery note into the prep verbatim.** The legacy single file `coaching/coached-answers.md` was merged into this directory on 2026-09-21 and no longer exists. Origin: a prep doc shipped a proof framed from the project file while a validated coached version said the opposite, per `memory/feedback_coached_answers_has_two_surfaces.md`.
 6. `coaching/anti-pattern-tracker.md`
 7. `coaching/pressure-points.md`
 8. `framework/answering-strategies/anti-patterns.md`
@@ -287,7 +287,7 @@ Two refinements, both learned the hard way:
 1. **Lead with a concrete ownable fact, not an abstraction.** "Operator at the intersection of strategy and implementation" is the tracked generic-self-description anti-pattern — Nick's own verdict was "too not very unique." A concrete opener leads with a number or a named thing he actually did, then bridges. "Intersection of X and Y" buries the one differentiator only he can claim.
 2. **When he is BLOCKED generating** ("I don't know how to do a concrete first sentence"), give **2-3 concrete, disposable options to react to** — never one line to memorize. Plural options unblock without anchoring; he assembled a strong opener immediately after seeing three. The unlock is optionality plus a model of the shape, not a script.
 
-This is B2 (above) applied to authorship rather than content: B2 bans importing the *interviewer's* framing into Nick's story; this bans importing *Claude's*. Same test — could he say this cold, without the doc? Origin: 2026-06-16 and 2026-06-22 drills. See `memory/feedback_interview_opener_components_not_finished_line.md`.
+This is B2 (above) applied to authorship rather than content: B2 bans importing the *interviewer's* framing into Nick's story; this bans importing *Claude's*. Same test — could he say this cold, without the doc? Origin: two interview-prep drills. See `memory/feedback_interview_opener_components_not_finished_line.md`.
 
 ## Polished-Arc Guard (B3)
 Add this pre-call checklist item: "Count my clarifying questions before my first action verb; zero means the polished-arc reversion fired." The tell is a smooth problem-to-goal-to-action answer in under two minutes with no clarifying questions (it looks collaborative, so the "did a framework fire" check misses it). In case/behavioral drills, require 3+ self-generated clarifying questions before proposing any action.
@@ -323,9 +323,9 @@ Add this pre-call checklist item: "Count my clarifying questions before my first
 1. **Prep pressure-test** — before drafting, to find the shape.
 2. **Pre-send QC on the FINISHED artifact** — give each seat the verbatim prompt *plus* the actual built deliverable, isolated from each other (anti-anchoring, per the global multi-agent rule), and ask for **concrete corrections** ("the brief claims X but…"), never approval.
 
-**Cross-seat convergence is the signal.** When independent seats name the *same* hole, that is must-fix. Single-seat hits are triage. On one deliverable, all four seats independently named the same methodological hole (a recalibration read from rejected-only data — selective-labels censoring), caught with ~2 hours left to fix it.
+**Cross-seat convergence is the signal.** When independent seats name the *same* hole, that is must-fix. Single-seat hits are triage. On one deliverable, all four seats independently named the same methodological hole (a recalibration read from rejected-only data — selective-labels censoring), caught with time left to fix it.
 
-**Origin:** 2026-06-27 + 2026-06-29, two fires. See `memory/feedback_ground_pressure_test_in_decision_panel_not_generic_partner.md`. Composes with B4 above (bare definitions) and the frame hygiene gate at `framework/adversarial-analysis-pipeline.md` §7.4 — B4 tests whether the terms are defined, this tests whether the *decision* lands.
+**Origin:** two fires on authored deliverables. See `memory/feedback_ground_pressure_test_in_decision_panel_not_generic_partner.md`. Composes with B4 above (bare definitions) and the frame hygiene gate at `framework/adversarial-analysis-pipeline.md` §7.4 — B4 tests whether the terms are defined, this tests whether the *decision* lands.
 
 ## Custody Rehearsal (B5 — presentation-defense rounds only)
 
@@ -337,7 +337,7 @@ Every delivery rehearsal assumes the deck advances. **The likeliest real failure
 
 **The problem this solves:** a prep doc that is correct and never read is worth zero. When a prep doc is generated but not opened before the call, **none of the prepared questions get asked**, the strongest proof goes unused, and framing corrections already in the doc (for example, matching proof scale to the company's customers) never reach the room. Owner-specific examples: `framework/interview-prep-discipline.md` (private; skip if absent).
 
-This is a **different and upstream** defect from the known read-but-not-retrieved failure (2026-07-22: the governor line was read back aloud and still did not fire live). Here the artifact never entered the loop, so every prep-doc-resident behavior-change clause — H4's live-need bridge and governor, B3's clarifying-question count, B4's bare definitions, the NN probe questions — silently did not run. **Any debrief of such a call will misattribute the resulting misses to skill rather than to non-consumption.**
+This is a **different and upstream** defect from the known read-but-not-retrieved failure (a live call where the governor line was read back aloud and still did not fire). Here the artifact never entered the loop, so every prep-doc-resident behavior-change clause — H4's live-need bridge and governor, B3's clarifying-question count, B4's bare definitions, the NN probe questions — silently did not run. **Any debrief of such a call will misattribute the resulting misses to skill rather than to non-consumption.**
 
 **The rule: bind the doc to the reset, because the reset is the only pre-call ritual with a proven execution record.**
 
@@ -556,7 +556,7 @@ When the gate passes, advance the row via `pipe_write.py` (atomic; never Edit `j
 PYTHONIOENCODING=utf-8 python3 tools/pipe_write.py --repo-root . update "<Company>" "<interview-type> booked (<interviewer if known>, <date>)" --next-action "Prep complete; run /debrief after <date>. Hold geography + comp discipline."
 ```
 
-- Build `<new stage>` from what this run already knows (Step 1 stage + Step 1b round type + interviewer + date). Example: `Executive Screen booked (Jane Doe, Mon 6/15 9:30 AM PDT)`.
+- Build `<new stage>` from what this run already knows (Step 1 stage + Step 1b round type + interviewer + date). Example: `Executive Screen booked (Jane Doe, Mon 3/2 10:00 AM PST)`.
 - Do NOT overwrite a richer existing next-action with judgment in it unless it's the now-stale gate this round supersedes; prefer advancing the stage + replacing only the superseded gate. When unsure which of multiple roles for the company, use the same match resolved in Step 1.
 - Report the before→after stage in Step 8.
 
@@ -636,13 +636,13 @@ Format: "[Who you are] with [key credential/experience]. Most relevant: [2 proje
 
 Example output:
 ```
-1. **Filler hedging** (11 occurrences, last seen 2026-05-05).
+1. **Filler hedging** (N occurrences, last seen 2026-03-03).
    Defense: cold drill 5 min pre-call to "0 fillers" target.
 
-2. **Proper noun error under pressure** (4 occurrences, last seen 2026-05-05).
+2. **Proper noun error under pressure** (N occurrences, last seen 2026-03-03).
    Defense: write target proper nouns out longhand before every call.
 
-3. **Chronological career walkthrough** (4 occurrences, last seen 2026-04-20).
+3. **Chronological career walkthrough** (N occurrences, last seen 2026-02-24).
    Defense: McKinsey-first descending-size opening.
 ```
 
@@ -665,7 +665,7 @@ Example output:
 
 Example output:
 ```
-From 2026-05-06 Acme AI / hiring-manager debrief:
+From 2026-03-04 Acme AI / hiring-manager debrief:
 - Sharpen "what's not on your resume" — replace generic expertise framing
   with a named anecdote.
 - Tighten "dream job in 4-6 years" answer — name a specific outcome.

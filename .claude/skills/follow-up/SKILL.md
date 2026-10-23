@@ -184,7 +184,7 @@ Analyze the interaction history to determine the follow-up type:
 
 **Fires when:** the follow-up is a *reply* to a specific message the contact sent (email thread, recruiter note, intro) — i.e. there's a verbatim inbound to respond to. Detect via reply-mode (subject starts "Re:") or because the trigger was "reply to their email." Skip for cold nudges with no inbound to ground against.
 
-**This step exists because:** the highest-frequency cause of multi-spin reply churn is drafting from a *self-summary* of the inbound (including the paraphrase passed into this skill's context arg) instead of the verbatim source — which silently carries mis-assigned attributes (which thing they said about which entity) and invented positioning claims. "Quick / ASAP" makes this MORE important, not skippable. Origin: 2026-06-15 recruiter-reply incident, 7 versions. See `memory/feedback_ground_email_draft_in_verbatim_source_not_paraphrase.md`.
+**This step exists because:** the highest-frequency cause of multi-spin reply churn is drafting from a *self-summary* of the inbound (including the paraphrase passed into this skill's context arg) instead of the verbatim source — which silently carries mis-assigned attributes (which thing they said about which entity) and invented positioning claims. "Quick / ASAP" makes this MORE important, not skippable. Origin: a recruiter-reply incident that took several versions. See `memory/feedback_ground_email_draft_in_verbatim_source_not_paraphrase.md`.
 
 1. **Pull the verbatim inbound.** If not already in context, fetch it: `tools/gmail_fetch.py --all-mail --search "<query>" --body`. **Check the `Mailbox:` line on each hit** — `--all-mail` includes DRAFTS, and a draft is shaped exactly like a sent message, so an unsent draft can be mistaken for a real inbound or a real send (2026-09-02). Read it line by line — do NOT work from a summary. **`<query>` must be a real non-empty query** (`from:`, `subject:`, a name). An empty one exits 2 by design since 2026-08-19: there is no empty-query listing mode, and before the guard it fell through to a SYNC that wrote to `inbox/`. To browse rather than search, use `--backfill --label-id <ID> --max N --dry-run`.
 2. **Build a claim→source map (working notes, not the email).** For every substantive sentence the draft will make about the contact's message — per entity / per role / per offer — quote the verbatim line it grounds in:
@@ -201,7 +201,7 @@ Analyze the interaction history to determine the follow-up type:
    PYTHONIOENCODING=utf-8 python3 tools/outreach_status.py --set-status \
      --recipient "<name>" --date YYYY-MM-DD --artifact <token> --status <Bounced|Delivered>
    ```
-   The `--date` is the date of the row being corrected, not today. An **unrecorded bounce is what produced the 2026-08-10 suppressive-claim defect**: the log still read `Sent`, so a later prep doc concluded the CV had arrived and told Nick not to re-offer it.
+   The `--date` is the date of the row being corrected, not today. An **unrecorded bounce is what produced an earlier suppressive-claim defect**: the log still read `Sent`, so a later prep doc concluded the CV had arrived and told Nick not to re-offer it.
 
 **Pre-stage voice scan (do before open_draft, every draft):** scan for banned tokens yourself — "genuinely"/"truly", semicolons, em-dashes, "exactly the kind of" — rather than relying on the `check_draft_voice.py` hook to catch them. Each hook trip is a wasted spin.
 

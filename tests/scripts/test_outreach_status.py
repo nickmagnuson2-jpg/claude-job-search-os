@@ -1,6 +1,6 @@
 """W1 — send-state derives from data/outreach-log.md, split sent/delivered, per-artifact.
 
-The defect these lock down (2026-08-10): a prep doc asserted "CV already sent 8/4, do
+The defect these lock down: a prep doc asserted "CV already sent, do
 not re-offer it" on the sole basis that a draft file existed under output/. The CV had
 bounced and was never delivered. The suppressive half is the damaging half — it told
 Nick not to fix it.
@@ -201,8 +201,8 @@ def test_named_but_not_sent_is_not_receipt_evidence(tmp_path):
     two negative markers ("offered", "promised") that do the actual work.
     """
     log = make_log(tmp_path, [
-        "| 2026-07-28 | cold-outreach | email | Jane Doe | Acme Corp | Intro call scheduling; offered to send a CV if useful | Replied |",
-        "| 2026-08-06 | follow-up | email | John Smith | Acme Corp | Answers to her questions; CV promised for next week | Replied |",
+        "| 2026-02-03 | cold-outreach | email | Jane Doe | Acme Corp | Intro call scheduling; offered to send a CV if useful | Replied |",
+        "| 2026-02-11 | follow-up | email | John Smith | Acme Corp | Notes from the call; CV promised once the role is posted | Replied |",
     ])
     for name in ("Jane Doe", "John Smith"):
         code, out = query("--recipient", name, "--artifact", "cv", "--log", log)

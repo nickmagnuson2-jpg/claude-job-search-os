@@ -7,7 +7,7 @@ it was the original thread, and it advised leading with a different role that tu
 to be the same seat under another name. Both errors were refutable from
 `data/networking.md` in about ten seconds. The line that settled it looked like this:
 
-    "<introducer> resurfaced 7/19 with <Company> CoS role, redirected to Strategist 7/21"
+    "<introducer> resurfaced 3/2 with <Company> <role A>, redirected to <role B> 3/4"
 
 and had been sitting in the file the whole time. What happened is a SCOPE choice: the
 externally-checkable question ("is the role posted?") got a live web search, and the

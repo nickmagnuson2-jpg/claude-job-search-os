@@ -601,7 +601,7 @@ def build_ambiguous_list(companies: set[str], dictionary: set[str],
     These are deliberately excluded from the BLOCK denylist: matching them would
     false-positive on ordinary prose (a "summit" in a sentence, a "patch" in a code
     comment). But excluding them entirely is what let a live pipeline company reach
-    six public files on 2026-08-10 while all three of its interviewers were correctly
+    six public files while every one of its contacts was correctly
     denylisted.
 
     So they get a second tier: WARN, not BLOCK.
@@ -870,7 +870,7 @@ def main():
 
     # Second tier: single-word company names that are ordinary English words.
     # WARN-only. Excluding them entirely is what let a live pipeline company reach six
-    # public files on 2026-08-10 while all three of its interviewers were denylisted.
+    # public files while every one of its contacts was denylisted.
     amb_path = root / AMBIGUOUS_REL
     amb_header = (
         "# AMBIGUOUS PII tier — GITIGNORED, do not commit.\n"

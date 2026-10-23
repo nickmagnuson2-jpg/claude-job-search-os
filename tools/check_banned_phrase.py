@@ -84,7 +84,7 @@ Exit codes:
   0 — clean, unparseable payload, non-text target, no content, or exempt
   2 — banned phrase in new content, OR the table could not be loaded
 
-Origin: 2026-05-25 ~9:30am pre-case. Nick, reading his own prep docs, found the
+Origin: the morning of a case interview. Nick, reading his own prep docs, found the
 phrase ~35 times across active files. 2nd fire 2026-08-20. Generalized to a table
 and wired 2026-09-03.
 """

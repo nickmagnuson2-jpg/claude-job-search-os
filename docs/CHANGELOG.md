@@ -808,7 +808,7 @@ negative — ~69 hand-maintained entries encoding a judgement the AST can rank b
 would read as coverage). Both carry REOPEN gates. `tools-reference.md` gained rows for all three
 tools, none of which had one.
 
-## 2026-08-19 (later): a flag that silently changed mode, and the article that filled a prep gap
+## 2026-08-19 (later): a flag that silently changed mode, and an article analysis
 
 Suite **2034 passed / 0 failed**.
 
@@ -841,12 +841,11 @@ pointing there before invoking any tool), `/draft-email` and `/follow-up` (both 
 carry the no-empty-query constraint and the listing recipe. The listing recipe was verified live
 before shipping: it lists, writes zero files, and leaves `historyId` untouched.
 
-**Prep, unrelated to the above.** `/analyze` on Michel Tricot's "Designing Agent State Machines
-for Long-Running Business Workflows" → `output/analysis/081926-designing-agent-state-machines.md`.
-A grep of the active target's `output/<company>/` prep tree returned **zero** hits for "state machine" and "long-running", which
-located an empty axis in the eight-concept drill card: all eight assume the process is alive at
-the moment it acts, none asks what holds a workflow between Monday and Friday. Added as concept
-9. The off-lens finding from the same run: **every REOPEN gate in the memory corpus is a waiting
+**An article analysis, unrelated to the above.** `/analyze` on Michel Tricot's "Designing Agent
+State Machines for Long-Running Business Workflows" → `output/analysis/<MMDDYY>-designing-agent-state-machines.md`.
+It located an empty axis in an existing concept list: every concept assumed the process is alive
+at the moment it acts, and none asked what holds a workflow between Monday and Friday. Added as a
+new concept. The off-lens finding from the same run: **every REOPEN gate in the memory corpus is a waiting
 state with no clock and no destination**, which is what 40 of 432 parked rules look like from
 the outside.
 
@@ -1341,11 +1340,11 @@ the CLAUDE.md tools table entirely, and both `/plan-hardening` descriptions (CLA
 
 ## 2026-08-12: Drafting-integrity hardening — send-state, reserve proofs, exclusion scans
 
-Four workstreams closing defects from the 8/10-8/11 sessions. Each is independently
+Four workstreams closing defects from recent sessions. Each is independently
 landable; build order W1 → W4 → W3 → W2.
 
 **A prep doc can no longer tell you to withhold something that never arrived.** The old
-chain was "a draft file exists under `output/`" → *"CV already sent 8/4, do not re-offer
+chain was "a draft file exists under `output/`" → *"CV already sent, do not re-offer
 it."* The CV had bounced. `outreach_status.py` derives send-state from
 `data/outreach-log.md` and splits *transmission* from *receipt*: only `delivered=true`,
 for the named artifact, unlocks suppressive phrasing. A recipient-level query can never
@@ -1364,7 +1363,7 @@ asymmetric: a missed send is harmless, a false send unlocks suppression.
 
 **Prep docs bind a primary AND a reserve proof, in canonically different domains.**
 Binding one proof is a single point of failure — an interviewer excluded that domain
-20 minutes into a call and there was no fallback. `proof_domains.py` is a closed enum, so
+partway into a call and there was no fallback. `proof_domains.py` is a closed enum, so
 `customer-experience` and `customer-ops` cannot pose as a fallback for each other.
 `check_prep_doc.py` runs six checks and now gates `/prep-interview` Step 6a, **before**
 the PDF render: the PDF is what gets read on paper, so a defect that reaches it has
@@ -1642,7 +1641,7 @@ Also: `backup-data.sh` now backs up the newly-private config files, and derives 
 - **Housekeeping for the public tree** (no PII): moved stale/internal dev artifacts and doc snapshots out of the public repo into the private archive (`docs/archive/`, `framework/archive/resume-workflow.md`); genericized the LinkedIn-scanner fallback profile + rubric examples in `tools/linkedin-scanner/` (real profile still loads from gitignored `data/profile.md`); and dropped retired `notion_write.py` references from `CLAUDE.md`, `docs/CHANGELOG.md`, `docs/methodology.md`. Commits `4e0bb02`, `25ad7e0`.
 
 ### Origin
-- 2026-06-11: a next-day interview sat in the pipeline Next-Action and was missed by both `/standup` and `/checkout` (`feedback_surface_scheduled_events_in_ranking`); a separate reach-out was re-surfaced after it had already been logged the day prior (`feedback_reconcile_stale_gate_against_specific_intel`). The backup auto-wire follows the 2026-06-11 private-repo reconcile making the overlay git-dir canonical; the tidy/genericize commits were prep for the public git-history sanitization pass.
+- Origin: a next-day interview sat in the pipeline Next-Action and was missed by both `/standup` and `/checkout` (`feedback_surface_scheduled_events_in_ranking`); a separate reach-out was re-surfaced after it had already been logged the day prior (`feedback_reconcile_stale_gate_against_specific_intel`). The backup auto-wire follows the 2026-06-11 private-repo reconcile making the overlay git-dir canonical; the tidy/genericize commits were prep for the public git-history sanitization pass.
 
 ---
 
@@ -1653,7 +1652,7 @@ Also: `backup-data.sh` now backs up the newly-private config files, and derives 
 - **`.claude/skills/generate-cv/SKILL.md`**: Step 9b now renders a PNG; new **Step 9b-verify** (mandatory PNG layout + page-count check before presenting); Step 10b now **auto-applies the deep review's high-confidence objective fixes** (filler, skills, layout, one-page) and re-verifies, leaving the user only voice/judgment calls.
 
 ### Origin
-- 2026-06-11 a recruiter-channel deployment CV took ~10+ user rounds, almost all mechanical cleanup the deep review had already flagged (IBM filler, skills grouping/case, redundant summary location line, two-page length) plus layout guessed from markdown instead of a render. Nick: "put it into the system so we don't have to do that again." Memories: `feedback_cv_first_draft_quality_defaults`, `feedback_cv_summary_must_be_standable`, `reference_rendercv_layout_tricks`, a role-title guard (title fix + source canonicalization).
+- Origin: a CV for a recruiter-sourced role took ~10+ user rounds, almost all mechanical cleanup the deep review had already flagged (IBM filler, skills grouping/case, redundant summary location line, two-page length) plus layout guessed from markdown instead of a render. Nick: "put it into the system so we don't have to do that again." Memories: `feedback_cv_first_draft_quality_defaults`, `feedback_cv_summary_must_be_standable`, `reference_rendercv_layout_tricks`, a role-title guard (title fix + source canonicalization).
 
 ---
 
@@ -1664,7 +1663,7 @@ Also: `backup-data.sh` now backs up the newly-private config files, and derives 
 
 ### Changed
 - **`/analyze`**: the `video` source type is now live, wired to `fetch_transcript.py` (previously a documented stub).
-- **`/prep-interview`**: on a confirmed, dated round it now advances the `data/job-pipeline.md` stage via `pipe_write.py` (new Step 7b), closing the gap where a pipeline read-consumer left the stage stale after prep. Origin: 2026-06-09 executive screen with a target company.
+- **`/prep-interview`**: on a confirmed, dated round it now advances the `data/job-pipeline.md` stage via `pipe_write.py` (new Step 7b), closing the gap where a pipeline read-consumer left the stage stale after prep. Origin: an executive screen with a target company.
 - **Example data** (`examples/`): replaced the original DevOps-consultant demo persona ("Alex Chen", Berlin) with a San Francisco product-to-sales pivot persona ("Priya Anand"); regenerated the sample CV with the current RenderCV pipeline (`examples/output/sample-cv-priya-anand.yaml` + rendered PDF).
 
 ### Docs
@@ -1796,7 +1795,7 @@ Also: `backup-data.sh` now backs up the newly-private config files, and derives 
 - **Hook hardenings**: `check_todo_write_kwargs.py` PreToolUse hook blocks kwarg-style invocation of the atomic to-do writer (`718f5e1`); `check_email_via_skill.py` allowlist extended to `/follow-up`, `/cold-outreach`, `/cover-letter` (`f5f15a6`); friction-log chokepoint drops test-output false positives plus voice-anchor BLOCK patterns (`bc9e5fb`).
 
 ### Fixed
-- **Voice reference**: added 5/21 phrasings from a founder and a 6/1 Exemplar 5 rule. Commit `e5c3a3d`.
+- **Voice reference**: added phrasings from a founder exchange and an Exemplar 5 rule. Commit `e5c3a3d`.
 
 ---
 
@@ -1834,7 +1833,7 @@ Also: `backup-data.sh` now backs up the newly-private config files, and derives 
 - **`/debrief` H4 binary** — Live-Need Bridge is now a binary scored field in every debrief, feeding the cross-call interview knowledge system M layer. Commit `755b8e7`.
 - **`tools/check_living_log_purity.py` + PreToolUse hook** — blocks Write/Edit/MultiEdit on `data/garden-log.md`, `data/practice-log.md`, `data/coffee-log.md`, `data/farmers-market-log.md`. The sanctioned writer is `tools/living_log_append.py` only — preserves verbatim voice-purity, no agent paraphrasing. Commit `9ece82c`.
 - **`tools/alirohde_nudge.py` + state file `tools/.alirohde_state.json` + launchd schedule** — daily 9:15 AM cheap-check on "Ali Rohde Jobs" Substack inbox; emits review-gated triage prompt when a new edition lands (otherwise no-op). Commit `0657c5a`.
-- **`framework/voice-reference.md` Exemplar 5 — CEO/founder post-call thank-you** — canonical exemplar with 5 encoded anti-patterns (never grade their strategy back to them; no AI abstraction-preamble; peer-not-student callback; deferential close ≠ hedgy; subject = plain-warm not clever-hook). Sourced from 5 Nick-directed passes on a founder thank-you 5/18. Commit `545924e`.
+- **`framework/voice-reference.md` Exemplar 5 — CEO/founder post-call thank-you** — canonical exemplar with 5 encoded anti-patterns (never grade their strategy back to them; no AI abstraction-preamble; peer-not-student callback; deferential close ≠ hedgy; subject = plain-warm not clever-hook). Sourced from 5 Nick-directed passes on a founder thank-you note. Commit `545924e`.
 
 ---
 

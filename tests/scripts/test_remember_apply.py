@@ -261,7 +261,7 @@ def test_pipeline_note_appends_to_notes_cell(tmp_path):
 def test_company_note_creates_file_if_absent(tmp_path):
     result, code = run_apply(
         "--repo-root", str(tmp_path),
-        "--note", "Office in SF Dogpatch area",
+        "--note", "Office near the downtown transit hub",
         "--destinations", dest_json(
             {"type": "company_note", "entity": "Acme Corp", "slug": "acme-corp"}
         ),
@@ -270,7 +270,7 @@ def test_company_note_creates_file_if_absent(tmp_path):
     note_path = tmp_path / "data/company-notes/acme-corp.md"
     assert note_path.exists()
     content = note_path.read_text(encoding="utf-8")
-    assert "Office in SF Dogpatch area" in content
+    assert "Office near the downtown transit hub" in content
 
 
 def test_company_note_prepends_to_existing(tmp_path):

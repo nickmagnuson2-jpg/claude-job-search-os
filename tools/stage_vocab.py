@@ -4,7 +4,7 @@ stage_vocab.py — Single source of truth for classifying freeform pipeline stag
 
 data/job-pipeline.md stores stages as free text, not a fixed enum: "Closed - they
 passed", "Considered - passed (self, 7/7)", "Founder intro complete (...) - declined,
-no current fit", "To Evaluate", "Applied 2026-07-08 via ...", etc. Four consumers
+no current fit", "To Evaluate", "Applied <date> via ...", etc. Four consumers
 (pipe_read, pipeline_staleness, networking_read, outreach_pending) each need to answer
 two questions about a stage, and they used to answer them inconsistently — a 4-value
 exact set here, a prefix list there — which produced the fable-audit Theme 2 bugs:

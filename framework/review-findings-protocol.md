@@ -213,7 +213,7 @@ record-keeping, not the judgment.** When landing this protocol on `review-cv-dee
 Lands `feedback_verify_and_present_review_findings` (occurrences 2, previously `promoted: no`,
 verdict NOT_ENFORCED — nothing anywhere enforced it).
 
-- **2026-08-05, a client-facing deck review.** Three fixes applied before surfacing them. Nick: *"I want you to
+- **A client-facing deck review.** Three fixes applied before surfacing them. Nick: *"I want you to
   discuss this with me instead of making changes on your own."* Later the same night, verifying a
   second reviewer caught an understated severity and two findings that were simply wrong.
 - **2026-08-10, `/meeting` four-agent review.** Signature three: a PII leak reported as "already in

@@ -7,8 +7,8 @@ actually happened. That claim has no tool call behind it, so no PreToolUse or
 PostToolUse hook can see it. The only surface that can is the Stop hook, which
 reads the finished assistant message.
 
-Origin: 2026-08-04, onsite prep for a target company. Claude printed a voice-sim prompt to the
-chat and wrote "Saved to output/acme/080426-casey-whiteboard-sim-prompt.md".
+Origin: interview prep for a target company. Claude printed a voice-sim prompt to the
+chat and wrote "Saved to output/acme/<MMDDYY>-casey-sim-prompt.md".
 No Write call was ever made. Nick discovered it when he went to use the file.
 Everything else that session (deck, transcripts, workflow files) was genuinely
 written and verified — this one was asserted without checking.
@@ -241,7 +241,7 @@ def exists_anywhere(tok: str, root: Path, home: Path | None = None) -> bool:
     claim (cross-model review 2026-09-07, 20.F1 and 23.F2). A symlink to a regular file
     counts: the contract is existence, not authorship this turn.
 
-    Bare basenames ("080326-deck-review-WORKFLOW.md") are common in prose, so a token
+    Bare basenames ("010526-deck-review-WORKFLOW.md") are common in prose, so a token
     with no separator that is not found at a candidate path is searched for by name
     across the repo before it is declared missing.
     """

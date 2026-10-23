@@ -1,6 +1,6 @@
 """source_corrections.py must surface every dated correction attached to a source bullet.
 
-WHY. Twice (2026-07-08 CVs, 2026-08-07 application answer) external-facing prose reintroduced
+WHY. Twice (once in CVs, once in an application answer) external-facing prose reintroduced
 a claim that the source project file carried a dated, commented correction for. Both times the
 correction comment was sitting on the very bullet being paraphrased, and both times it was
 caught only by an expensive after-the-fact review agent.
@@ -22,12 +22,12 @@ SAMPLE = """# Acme
 
 ## Key Achievements
 
-<!-- HONESTY CORRECTIONS (2026-05-12): Verbs recalibrated per lesson #17. -->
+<!-- HONESTY CORRECTIONS (2026-01-12): Verbs recalibrated per lesson #17. -->
 
-- Facilitated rhythm-of-business for a 600-person org <!-- "Facilitated" not "Stood up": the processes existed. Lesson #17. -->
-- Defined the AI strategy at the December offsite <!-- SCOPE FLAG (2026-07-24): strategy-level, not hands-on. -->
+- Facilitated weekly team syncs for a 40-person group <!-- "Facilitated" not "Stood up": the processes existed. Lesson #17. -->
+- Defined the onboarding plan at the spring planning day <!-- SCOPE FLAG (2026-02-24): plan-level, not hands-on. -->
 - A bullet with no annotation at all
-- Supported partner ecosystem strategy <!-- CORRECTED 2026-07-08: driven by the partner team, not led. -->
+- Supported vendor selection <!-- CORRECTED 2026-02-08: driven by the ops team, not led. -->
 """
 
 CLEAN = """# Clean Project
@@ -191,7 +191,7 @@ def test_text_mode_prints_the_count_the_location_the_claim_and_the_correction(tm
     assert "acme.md:5 [HONESTY CORRECTION] " in out
     assert "    CLAIM     (section-level" in out
     assert "acme.md:7 [Lesson #] " in out
-    assert "    CLAIM     Facilitated rhythm-of-business for a 600-person org" in out
+    assert "    CLAIM     Facilitated weekly team syncs for a 40-person group" in out
     assert "acme.md:12 \n" in out, "a comment with no known marker prints no tag"
     p.write_text(SAMPLE, encoding="utf-8")
     assert _text(str(p)).stdout.startswith("4 correction(s) across 1 file(s).\n")

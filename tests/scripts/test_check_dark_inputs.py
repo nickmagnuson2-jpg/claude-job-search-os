@@ -49,8 +49,8 @@ def test_near_identical_but_distinct_outputs_are_ok():
 def test_all_long_terms_are_dark():
     """The real _extract_skills shape: 9-word prose bullets that matched zero JDs."""
     r = classify_terms([
-        "Strategic operations and planning (FY planning, OKRs, budget management)",
-        "Executive-level communication and stakeholder management (board-level deliverables)",
+        "Cross-functional program planning (quarterly roadmaps, KPIs, vendor management)",
+        "Written and verbal communication with senior leaders (weekly review packets)",
     ])
     assert r.verdict == "DARK"
 

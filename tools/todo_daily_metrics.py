@@ -450,14 +450,14 @@ def parse_upcoming_scheduled(pipeline_content: str, today: date,
     fall within [today, today + window_days].
 
     Interviews/screens/calls are routinely written into the Next-Action free
-    text (e.g. "Interview w/ Casey Doe Fri 6/12 12:30pm PT") rather than as dated
+    text (e.g. "Interview w/ Casey Doe Thu 3/5 2pm PT") rather than as dated
     todos, so the Top-3 ranker never sees them. This parses those dates out so
     /checkout and /standup can pin imminent events above undated todos.
 
     Returns a list sorted by date ascending, then events before follow-ups:
       [{ company, role, date: "YYYY-MM-DD", days_until, is_event, next_action }]
 
-    Origin: 2026-06-11 — a next-day interview written into the pipeline
+    Origin: a next-day interview written into the pipeline
     Next-Action was invisible to /standup and /checkout because both rank only
     from todo due-dates + pipeline stage. See
     feedback_surface_scheduled_events_in_ranking.

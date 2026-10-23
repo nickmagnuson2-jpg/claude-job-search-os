@@ -4,10 +4,10 @@ outreach_status.py — Derive send-state for a recipient from data/outreach-log.
 
 WHY THIS EXISTS (read before changing the semantics)
 ----------------------------------------------------
-On 2026-08-10 a prep doc's Logistics block asserted: "CV already sent 8/4, do not
+An interview prep doc's Logistics block once asserted: "CV already sent, do not
 re-offer it." The sole basis was that a draft file existed under output/. The CV had
-never been delivered — the address bounced on 8/7 and the recipient asked for it again
-on 8/11. Three false facts, and the damaging one was SUPPRESSIVE: it instructed Nick not
+never been delivered: the address bounced and the recipient later asked for it
+again. Three false facts, and the damaging one was SUPPRESSIVE: it instructed Nick not
 to take the corrective action.
 
 Two corrections to the naive fix are load-bearing, and both are easy to undo by
@@ -26,7 +26,7 @@ accident:
      --artifact can never report delivered:true.
 
 Everything else is bookkeeping. If a future edit collapses sent/delivered or drops the
-artifact scope, the 8/10 defect is live again.
+artifact scope, the suppressive-claim defect is live again.
 
 Exit codes: 0 clean (including not_found) | 1 unreadable/malformed log or a failed
 write-back assertion | 2 ambiguous recipient or ambiguous --set-status target |

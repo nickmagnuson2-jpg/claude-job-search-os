@@ -205,7 +205,7 @@ Quote the `citable_claim` field verbatim. It is pre-formatted as *"N% filler, ra
 3. **Never cite a row flagged `[UNRELIABLE ATTRIBUTION]`** as a comparator. In-person captures
    put the room on the owner channel; the number is real and means nothing.
 
-**Origin, 2026-08-24.** A debrief stated a corpus-wide superlative for filler density that the
+**Origin:** a debrief stated a corpus-wide superlative for filler density that the
 computed ranking did not support. The splitter had been validated correctly against a few
 logged files, and that validation was treated as licence for a corpus-wide superlative built
 from a hand-picked five-row table. Label-corrupted transcripts were meanwhile parsing to zero
@@ -287,13 +287,13 @@ The rubric scores **how Nick delivered**. Step 6b scores **what the call REVEALE
 [One line: which way does the call shift Nick's fit-confidence — strongly toward fit, weak signal but encouraging, neutral, weak red flag, or strong red flag? Distinct from interviewer signal (low/med/high) — that's about THEIR read; this is Nick's read of the ROLE.]
 ```
 
-**Why this exists:** 2026-05-22 a target-company debrief surfaced that `/debrief` was scoring delivery (rubric) without scoring **what Nick learned about role-fit**. The fit-signal screen is a distinct dimension; without it, Nick has no structured way to integrate "this call went well delivery-wise but the culture didn't match NN-X" across calls. The "Untested" list also drives next-call planning (specific NN probes go in `/prep-interview` next time).
+**Why this exists:** a target-company debrief surfaced that `/debrief` was scoring delivery (rubric) without scoring **what Nick learned about role-fit**. The fit-signal screen is a distinct dimension; without it, Nick has no structured way to integrate "this call went well delivery-wise but the culture didn't match NN-X" across calls. The "Untested" list also drives next-call planning (specific NN probes go in `/prep-interview` next time).
 
 **Composes with:**
 - Step 5 interviewer signal (low/med/high) — that captures THEIR read; Step 6b captures NICK's read of the role
 - Step 7 hypothesis log — pattern of "Untested → probed → FAIL" across calls may seed a new H<N> on role-shape hypotheses
 - `/prep-interview` Family V update (Phase E M3) — the "Untested" list from prior debrief flows into next prep
-- `[[feedback_debrief_add_signal_analysis_step]]` (the rule this step implements, REOPEN gate met Mon 5/25)
+- `[[feedback_debrief_add_signal_analysis_step]]` (the rule this step implements, REOPEN gate met)
 
 **Gap-surface behavior:** if all 7 NN are NOT TESTED, surface a stronger note in the Net read: "no fit-signal extracted from this call — was the format wrong, or did Nick not probe?" This is a Step 6b → Nick coaching loop.
 
@@ -379,7 +379,7 @@ Parse each JSON result (both 11a and 11b):
 
 Also sweep for related follow-up patterns the same call may have triggered: `Print [Company] [doc] PDF before [Person] call` style todos, anything explicitly named with the call as its trigger. Close each.
 
-Origin: 2026-05-14 audit (a recruiter screen) found the prep todo orphaned → added 11a. 2026-05-19 standup (a target-company round) found the debrief-reminder todo orphaned by the same structural defect on the other side of the workflow → added 11b. Pattern: skill workflows that consume *any* trigger todo must close *every* trigger todo, not just the primary one.
+Origin: an audit after a recruiter screen found the prep todo orphaned → added 11a. A later standup, after a target-company round, found the debrief-reminder todo orphaned by the same structural defect on the other side of the workflow → added 11b. Pattern: skill workflows that consume *any* trigger todo must close *every* trigger todo, not just the primary one.
 
 ### Step 12: Hand off to /follow-up (transcript-aware) — for real interviews
 
@@ -387,7 +387,7 @@ A debrief means a real conversation just happened and its transcript is on disk 
 
 > "Want me to draft the follow-up? `/follow-up \"<Name>\"` will pull this transcript for the specific callback (content only — your email voice still comes from the corpus)."
 
-Do NOT auto-invoke — offer and let Nick choose. The transcript-aware branch lives in `/follow-up` Step 3b (content-not-tone, auto-detect from granola, graceful degradation); this hand-off is the link in the chain `/granola-pull → /debrief → /follow-up`. Skip for drills (no real counterpart to follow up with). Origin: 2026-06-12 — Nick asked to ground post-interview follow-ups in the actual transcript and to link the two skills.
+Do NOT auto-invoke — offer and let Nick choose. The transcript-aware branch lives in `/follow-up` Step 3b (content-not-tone, auto-detect from granola, graceful degradation); this hand-off is the link in the chain `/granola-pull → /debrief → /follow-up`. Skip for drills (no real counterpart to follow up with). Origin: Nick asked to ground post-interview follow-ups in the actual transcript and to link the two skills.
 
 ## Anti-patterns this skill is designed against
 

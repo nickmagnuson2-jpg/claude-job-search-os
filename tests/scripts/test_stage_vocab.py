@@ -22,25 +22,25 @@ from stage_vocab import is_terminal_stage, is_active_pursuit  # noqa: E402
     "Closed - they passed",
     "Closed - they passed (door open)",
     "Closed - no response",
-    "Closed - not a fit (CS-shaped, not deployment lane)",
+    "Closed - not a fit (role too sales-heavy)",
     "Rejected",
     "Withdrawn",
     "Declined",
     "Skipped",
     "Accepted",
     "Archived",
-    "Considered - passed (self, 7/7)",
-    "Considered - passed (self, 7/7; re-surfaced by a contact 7/14)",
+    "Considered - passed (self, 3/2)",
+    "Considered - passed (self, 3/2; re-surfaced by a contact 3/9)",
     "Accepted offer",
     "offer accepted",
     # the mid-string case a prefix-only matcher missed (the closed-signal is buried
     # after a "Founder intro complete (...)" narrative — the real regression):
-    "Founder intro complete (a founder, CEO, 6/29) - declined FA/CoS, no current fit",
+    "Founder intro complete (a founder, CEO, 2/11) - declined the role, no current fit",
     "Rejected post-onsite",
     "Closed - lost in final round",
     # long real-shaped stage that contains active keywords ("screen") but is closed —
     # must stay terminal:
-    "Closed - rejected (7/14): a contact passed after 7/7 HM screen; nearing end of process",
+    "Closed - rejected (3/9): a contact passed after 3/2 HM screen; went another way",
 ])
 def test_terminal_stages(stage):
     assert is_terminal_stage(stage) is True
@@ -52,7 +52,7 @@ def test_terminal_stages(stage):
     "To Apply (warm-intro path)",
     "Researching",
     "Applied",
-    "Applied 2026-07-08 via a recruiter - CV emailed",
+    "Applied 2026-03-04 via a recruiter - resume sent",
     "Phone Screen",
     "Interviewing",
     "Offer",

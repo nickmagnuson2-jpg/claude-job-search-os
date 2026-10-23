@@ -117,7 +117,7 @@ def test_cross_reference_networking_reply(tmp_path):
 
         | Date | Type | Channel | Name | Company | Subject | Status |
         |------|------|---------|------|---------|---------|--------|
-        | 2026-03-03 | cold-outreach | text | Sam Carter | Meridian Cheese | Coffee ask | Sent |
+        | 2026-04-07 | cold-outreach | text | Sam Carter | Harbor Bikes | Coffee ask | Sent |
     """)
 
     write_fixture(tmp_path, "data/networking.md", """\
@@ -125,27 +125,27 @@ def test_cross_reference_networking_reply(tmp_path):
 
         | Name | Company | Role | Relationship | Added | Last Interaction | Email |
         | --- | --- | --- | --- | --- | --- | --- |
-        | Sam Carter | Meridian Cheese | Owner | personal | 2026-03-03 | 2026-03-10 | — |
+        | Sam Carter | Harbor Bikes | Owner | personal | 2026-04-07 | 2026-04-14 | — |
 
         ## Interaction Log
 
-        ### Sam Carter — Meridian Cheese
+        ### Sam Carter — Harbor Bikes
 
-        #### 2026-03-10 | text | Sam replied. Call scheduled Friday 2026-03-13 at 11am.
+        #### 2026-04-14 | text | Sam replied. Call set for Friday 2026-04-17 at 2pm.
 
-        **Follow-up:** 2026-03-13
+        **Follow-up:** 2026-04-17
 
-        #### 2026-03-03 | text | Sent cold text via a mutual contact's intro
+        #### 2026-04-07 | text | Sent a first text after a friend shared the number
 
         **Follow-up:** —
     """)
 
     result = run_script("outreach_pending.py",
-                        "--target-date", "2026-03-10",
+                        "--target-date", "2026-04-14",
                         "--days-threshold-overdue", "5",
                         "--repo-root", str(tmp_path))
 
-    # Sam should NOT appear in awaiting lists — networking.md shows he replied on 2026-03-10
+    # Sam should NOT appear in awaiting lists — networking.md shows he replied on 2026-04-14
     all_awaiting = (
         [e["name"] for e in result["awaiting_response"]] +
         [e["name"] for e in result["awaiting_response_overdue"]]
@@ -168,8 +168,8 @@ def test_cross_reference_tolerates_name_and_company_drift(tmp_path):
 
         | Date | Type | Channel | Name | Company | Subject | Status |
         |------|------|---------|------|---------|---------|--------|
-        | 2026-03-03 | cold-outreach | email | Casey Doe | Acme (BrandX) | Coffee ask | Sent |
-        | 2026-03-03 | cold-outreach | email | Casey Roe | OtherCo | Coffee ask | Sent |
+        | 2026-04-07 | cold-outreach | email | Casey Doe | Acme (BrandX) | Coffee ask | Sent |
+        | 2026-04-07 | cold-outreach | email | Casey Roe | OtherCo | Coffee ask | Sent |
     """)
 
     write_fixture(tmp_path, "data/networking.md", """\
@@ -177,13 +177,13 @@ def test_cross_reference_tolerates_name_and_company_drift(tmp_path):
 
         ### Casey Doe-Smith — Acme
 
-        #### 2026-03-10 | email | Casey replied. Call scheduled.
+        #### 2026-04-14 | email | Casey replied. Call scheduled.
 
         **Follow-up:** —
     """)
 
     result = run_script("outreach_pending.py",
-                        "--target-date", "2026-03-12",
+                        "--target-date", "2026-04-16",
                         "--days-threshold-overdue", "5",
                         "--repo-root", str(tmp_path))
 
@@ -203,7 +203,7 @@ def test_cross_reference_no_later_interaction(tmp_path):
 
         | Date | Type | Channel | Name | Company | Subject | Status |
         |------|------|---------|------|---------|---------|--------|
-        | 2026-03-03 | cold-outreach | text | Sam Carter | Meridian Cheese | Coffee ask | Sent |
+        | 2026-04-07 | cold-outreach | text | Sam Carter | Harbor Bikes | Coffee ask | Sent |
     """)
 
     write_fixture(tmp_path, "data/networking.md", """\
@@ -211,19 +211,19 @@ def test_cross_reference_no_later_interaction(tmp_path):
 
         | Name | Company | Role | Relationship | Added | Last Interaction | Email |
         | --- | --- | --- | --- | --- | --- | --- |
-        | Sam Carter | Meridian Cheese | Owner | personal | 2026-03-03 | 2026-03-03 | — |
+        | Sam Carter | Harbor Bikes | Owner | personal | 2026-04-07 | 2026-04-07 | — |
 
         ## Interaction Log
 
-        ### Sam Carter — Meridian Cheese
+        ### Sam Carter — Harbor Bikes
 
-        #### 2026-03-03 | text | Sent cold text via a mutual contact's intro
+        #### 2026-04-07 | text | Sent a first text after a friend shared the number
 
         **Follow-up:** —
     """)
 
     result = run_script("outreach_pending.py",
-                        "--target-date", "2026-03-10",
+                        "--target-date", "2026-04-14",
                         "--days-threshold-overdue", "5",
                         "--repo-root", str(tmp_path))
 
@@ -399,11 +399,11 @@ def test_cross_reference_no_networking_file(tmp_path):
 
         | Date | Type | Channel | Name | Company | Subject | Status |
         |------|------|---------|------|---------|---------|--------|
-        | 2026-03-03 | cold-outreach | text | Sam Carter | Meridian Cheese | Coffee ask | Sent |
+        | 2026-04-07 | cold-outreach | text | Sam Carter | Harbor Bikes | Coffee ask | Sent |
     """)
 
     result = run_script("outreach_pending.py",
-                        "--target-date", "2026-03-10",
+                        "--target-date", "2026-04-14",
                         "--days-threshold-overdue", "5",
                         "--repo-root", str(tmp_path))
 

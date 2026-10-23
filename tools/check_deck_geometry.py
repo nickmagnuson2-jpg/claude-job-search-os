@@ -770,7 +770,7 @@ def check_g6(pages) -> Result:
     is drawing that falls outside it and is therefore clipped. The test was
     `if slack[side] > SVG_SLACK_TOL`, so every negative value passed in silence.
 
-    On 2026-09-21 this rule certified a shipped deck "CLEAN and FULLY COVERED -- 9 pass,
+    This rule once certified a shipped deck "CLEAN and FULLY COVERED -- 9 pass,
     0 fail" while a chart's right slack sat at -8.43: a label reading "billin", because the
     final "g" of "billing" was outside the box. The number that proves it was computed here,
     on that run, and compared in one direction. Nick found it by looking at the page.

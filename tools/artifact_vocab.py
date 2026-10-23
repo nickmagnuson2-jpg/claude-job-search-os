@@ -4,12 +4,12 @@ artifact_vocab.py — Single source of truth for the artifacts Nick sends people
 
 Why this exists (the same reason stage_vocab.py exists). `data/outreach-log.md` has no
 artifact column: the only signal that a CV rode along with a message is free text in the
-Summary cell ("... , CV attached", "resume attached (080426-placeholder.pdf)", "sent
-tailored resume (071526-placeholder.pdf)"). Two consumers need to answer "does this
+Summary cell ("... , CV attached", "resume attached (010526-placeholder.pdf)", "sent
+tailored resume (010226-placeholder.pdf)"). Two consumers need to answer "does this
 sentence name artifact X?" — outreach_status.py (scoping `delivered` to an artifact) and
 check_prep_doc.py (extracting the artifact out of a suppressive sentence). If they
 answered it with two private regexes they would drift, and a drift here is not cosmetic:
-it re-opens the 2026-08-10 defect, where a prep doc asserted "CV already sent 8/4, do not
+it re-opens the suppressive-claim defect, where a prep doc asserted "CV already sent, do not
 re-offer it" about a CV that had never been delivered.
 
 Stdlib only (re, unicodedata) — safe to import anywhere in tools/.
@@ -125,7 +125,7 @@ def find_in_text(text: str) -> list[str]:
 # transmission marker and the closest non-transmission marker; the artifact counts as
 # transmitted only if a positive marker exists and is strictly closer than any negative.
 # Proximity (not mere presence) is what separates "request for a current resume,
-# attached 071526-placeholder.pdf" (sent) from "a CV could follow" (not sent).
+# attached 010226-placeholder.pdf" (sent) from "a CV could follow" (not sent).
 #
 # The failure mode is deliberately asymmetric: a missed send yields `delivered: unknown`,
 # which renders as "offer it again if asked" -- harmless. A false send yields

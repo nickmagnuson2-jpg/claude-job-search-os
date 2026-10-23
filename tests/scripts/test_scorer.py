@@ -449,9 +449,9 @@ def test_real_fit_spec_loads_and_screens():
 # blockquote line in goals.md for a seniority keyword, and matched "head" inside a
 # blockquoted FILE PATH ("> Origin and full working: data/workbooks/..."). Target level
 # resolved to 8. Because `extract_seniority` defaults an unkeyworded title to 4, the
-# owner's own target title "Deployment Strategist" then scored 10 - |4-8|*2 = 2.0 on
-# 25% of the weight, while "Regional Director, Forward Deployed Engineering" scored
-# 10.0. The ranking was inverted against his lane.
+# IC target title such as "Deployment Strategist" then scored 10 - |4-8|*2 = 2.0 on
+# 25% of the weight, while a "Regional Director" title scored 10.0. The ranking
+# was inverted against the target lane.
 # ---------------------------------------------------------------------------
 
 def test_a_seniority_word_inside_a_blockquoted_path_is_not_a_target_level():
@@ -459,10 +459,10 @@ def test_a_seniority_word_inside_a_blockquoted_path_is_not_a_target_level():
     from tools.career_scanner.scorer import _extract_target_seniority
     goals = (
         "## Search Thesis\n"
-        "A deployment-strategist seat at an AI-native company.\n"
+        "An operations seat at a growing company.\n"
         "\n"
-        "> Origin and full working: data/workbooks/head-of-lane-value-prop.md. Written\n"
-        "> because the cold email took nine rounds and the argument was being invented.\n"
+        "> Origin and full working: data/workbooks/head-of-plan-notes.md. Written\n"
+        "> after a long planning session and kept for later reference.\n"
     )
     assert _extract_target_seniority(goals) == "", (
         "a seniority keyword appearing inside blockquoted prose or a file path was "
@@ -496,8 +496,8 @@ def test_target_level_falls_back_to_titles_not_to_prose():
 # A dimension whose comparison terms are unusable must go NEUTRAL, not zero.
 #
 # Origin 2026-09-02. `_extract_skills` pulls whole human-readable bullets out of
-# profile.md ("Strategic operations and planning (FY planning, OKRs, budget
-# management)"). Those can never appear as a substring in a job posting, so
+# profile.md (e.g. "Cross-functional program planning (quarterly roadmaps, KPIs,
+# vendor management)"). Those can never appear as a substring in a job posting, so
 # `_score_keyword_overlap` matched nothing and returned 0.0 -- while a role with NO
 # description at all returned 3.0. Having a job description actively lowered the score,
 # on 20% of the total weight.
@@ -510,8 +510,8 @@ def test_a_real_description_never_scores_worse_than_a_missing_one():
     """The perverse asymmetry, stated as an invariant."""
     from tools.career_scanner.scorer import _score_keyword_overlap
     ctx = {"skills": [
-        "Strategic operations and planning (FY planning, OKRs, budget management)",
-        "Executive-level communication and stakeholder management (board-level deliverables)",
+        "Cross-functional program planning (quarterly roadmaps, KPIs, vendor management)",
+        "Written and verbal communication with senior leaders (weekly review packets)",
     ]}
     real_jd = (
         "6+ years in customer-facing roles. Strong technical acumen: workflows, APIs, "
@@ -528,7 +528,7 @@ def test_a_real_description_never_scores_worse_than_a_missing_one():
 def test_unusable_skill_terms_score_neutral_not_zero():
     """Long prose terms are unusable input, not evidence of a bad match."""
     from tools.career_scanner.scorer import _score_keyword_overlap
-    ctx = {"skills": ["Strategic operations and planning (FY planning, OKRs, budget management)"]}
+    ctx = {"skills": ["Cross-functional program planning (quarterly roadmaps, KPIs, vendor management)"]}
     score = _score_keyword_overlap({"description_plain": "Deployment Strategist, SQL, APIs"}, ctx)
     assert score >= 3.0, (
         f"unusable comparison terms produced a hard {score}; an input problem must not "

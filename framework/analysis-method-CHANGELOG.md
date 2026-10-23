@@ -15,7 +15,7 @@ build `analysis-method.js` from the logged ad hoc runs.
 
 **What was missing.** F2a checks that every ELEMENT traces to a real fact. Nothing checked the
 reverse: that every CLAIM PRINTED ON A SURFACE is carried by an element declaring that surface.
-The gap shipped. A deck went to a client with a concurrency figure printed on slide 1
+The gap shipped. A deck went out with a concurrency figure printed on one slide
 while the only element citing that fact declared `measure_surface: workbook`, and every gate
 stayed green — F1b only asks whether a measure sits on the surface that NAMES it, never whether
 a surface names only what some element accounts for.
@@ -57,8 +57,8 @@ survivor count fell from 128 to 126 against its pre-change baseline.
 
 **Also landed the same day.** `deck_pages()` in `tools/slide_check.py` keeps the page boundary
 that `deck_text()` used to discard, and `bind_deck` now binds to its own page. Before this a
-slide-1 label bound successfully against a token only slide 2 printed — measured on a shipped
-deck, where slide 1 stated the rate in words and never as the figure the label named.
+label on one slide bound successfully against a token only the next slide printed — measured on a
+shipped deck, where the first slide stated the rate in words and never as the figure the label named.
 Cross-model review 2026-09-19, F3.
 
 ---
@@ -126,10 +126,10 @@ Format:
 
 ## 2026-08-16 (later) | First live run on a real subject | v1.5, NO standing change, ONE candidate parked
 
-**Source:** in-flight. The <target-company> demo-breakdown session ran early (pulled from 8/18) as the method's
+**Source:** in-flight. The <target-company> demo-breakdown session ran early as the method's
 first run against a real subject rather than a reconstruction. Frame: `frames/<target-company>-demo/frame.yaml`,
 engagement `<target-company>-demo-breakdown`. Working file:
-`output/<target-company>/081626-demo-breakdown-working.md`.
+`output/<target-company>/<MMDDYY>-demo-breakdown-working.md`.
 
 **What ran:** Segment A complete (problem statement, `problem_type: system_design`, metric roles, both
 mode parameters, scope-out, deliverable). Segment B partial: 8 facts, 1 unknown. Four agent stages:
@@ -154,7 +154,7 @@ types. The operator proposed that the unnamed exemplar outcomes lead was <Person
 nobody, and the circumstantial evidence points to <Person B>. **A first run that refutes both of its authors is
 better evidence that the machinery works than a clean one would have been.**
 
-**A prediction from the 8/13 plan was confirmed.** The plan asserted a contradiction pass would find at
+**A prediction from the session plan was confirmed.** The plan asserted a contradiction pass would find at
 least one case of two modules recommending opposing actions on the same object, on paid social. It did.
 
 **Candidate:** an **operator-first reaction stage**, run BEFORE any agent, in which the operator looks
@@ -437,7 +437,7 @@ enforcement surface is.**
 
 **Measured, not predicted.** F13 was run against the real reconstruction after being written, not
 before: `proposals: []` and `prediction: null`, both offenders named in the output. 67 tests pass
-(11 new). The 8/5 delivery really did lose both, and unlike F2b — whose inputs are unknowable after
+(11 new). The reference delivery really did lose both, and unlike F2b — whose inputs are unknowable after
 the fact — these are knowably absent, so FAIL is the honest verdict rather than CANNOT_RUN.
 
 **Not changed, and why:**

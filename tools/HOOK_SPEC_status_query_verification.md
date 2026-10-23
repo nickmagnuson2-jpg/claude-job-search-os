@@ -95,7 +95,7 @@ Also review for pattern/scaffold: `tools/check_edit_safety.py`, `tools/check_bar
 ## 7. Test plan (per HOOK_AUTHORING.md)
 
 - **Clean cases** (must NOT fire): ordinary work requests, code questions, prompts containing "missing" in a non-status sense ("the file is missing a header").
-- **Trigger cases** (must fire): each regex in §4, plus the two verbatim instances from 2026-07-31 — *"whats taking so long?"* should NOT fire; *"Is there anything else I'm missing before I clear?"* MUST fire.
+- **Trigger cases** (must fire): each regex in §4, plus the two verbatim instances from the origin session — *"whats taking so long?"* should NOT fire; *"Is there anything else I'm missing before I clear?"* MUST fire.
 - **Mandatory live smoke test.** Hook regexes have a documented history in this repo of passing unit tests and failing live. Run it in a real session before considering it done.
 - Confirm `exit 0` on every path, including the regex-match path.
 
@@ -112,7 +112,7 @@ Also review for pattern/scaffold: `tools/check_edit_safety.py`, `tools/check_bar
 
 ## 10. Source memories
 
-- `feedback_llm_verification_system.md` — Rules #1 and #13, plus the 2026-07-31 supplement documenting this recurrence
+- `feedback_llm_verification_system.md` — Rules #1 and #13, plus the later supplement documenting this recurrence
 - `feedback_dont_call_work_unstarted_for_wrong_form.md` — the second-order failure this prevents
 - `feedback_bash_confirm_must_chain_to_operation.md` — same-session sibling failure
 - `feedback_warn_vs_block_hook_design.md` — why this is WARN-tier

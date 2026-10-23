@@ -141,14 +141,14 @@ def test_load_role_tokens(tmp_path):
     goals = tmp_path / "goals.md"
     goals.write_text(
         "## Target Criteria\n\n**Role types** (ranked):\n"
-        "1. Deployment Strategist / Engagement Lead at an AI-native company (the seat)\n"
-        "2. Business Operations on a strong team\n",
+        "1. Operations Manager / Program Lead at a logistics company (the seat)\n"
+        "2. Strategy & Planning on a strong team\n",
         encoding="utf-8",
     )
     got = cf.load_role_tokens(goals)
-    assert "Deployment Strategist" in got
-    assert "Engagement Lead" in got
-    assert "AI-native" not in got  # cut at "at an"
+    assert "Operations Manager" in got
+    assert "Program Lead" in got
+    assert "logistics" not in got  # cut at "at a"
     assert "(" not in got
 
 

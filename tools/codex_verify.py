@@ -419,7 +419,7 @@ def image_prompt_block(model: str, images: list[Path]) -> str:
             "file-reading tool and LOOK at it before writing anything. Layout defects -- "
             "overlap, clipping, a label colliding with an axis, a box running past the "
             "page edge -- are invisible in the source and obvious in the render, and four "
-            "were shipped that way on 2026-09-17. If you cannot open a file, SAY SO in "
+            "once shipped that way. If you cannot open a file, SAY SO in "
             "your report rather than reviewing the source alone and presenting it as a "
             "review of the page.\n" + listed)
 

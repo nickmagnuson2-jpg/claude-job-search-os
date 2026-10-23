@@ -309,7 +309,7 @@ carries the fixed capture shape; follow it so entries are countable against each
 
 **Write it in the session that observed the run.** Do NOT reconstruct a past application from its output
 files: edits and judgments are not recoverable from artifacts days later, and plausible-but-unverifiable
-loop data is worse than a smaller sample. Two runs from 2026-08-27 are listed in that file as "Not
+loop data is worse than a smaller sample. Two earlier runs are listed in that file as "Not
 captured" for exactly this reason, and their absence is what makes Run 1's four-for-four on answer length
 a hypothesis rather than a finding.
 

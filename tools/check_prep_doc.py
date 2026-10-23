@@ -7,7 +7,7 @@ must sit in genuinely different domains (canonicalized, so `customer-experience`
 `customer-ops` cannot pose as a fallback for one another).
 
 Checks 4-6 enforce W1 at the artifact level: a doc may not tell Nick to withhold
-something unless the outreach log says it actually arrived. This is where the 2026-08-10
+something unless the outreach log says it actually arrived. This is where the suppressive-claim
 defect gets caught mechanically rather than by anyone remembering the rule.
 
 Deliberately NOT a hook. The suppressive-phrasing boundary is contextual and a regex
@@ -62,10 +62,10 @@ SUPPRESSIVE_PATTERNS = [
 ]
 _SUPPRESSIVE_RE = re.compile("|".join(f"(?:{p})" for p in SUPPRESSIVE_PATTERNS), re.I)
 
-# The live 081026 prep doc writes `# Logistics` (h1) while the /prep-interview output
+# The live prep doc writes `# Logistics` (h1) while the /prep-interview output
 # template writes `## Logistics`. Both are real, so the block is located at ANY heading
 # level; pinning it to `##` would have made check 4 silently never fire on the very doc
-# that motivated this tool. Verified against output/<slug>/<MMDDYY>-prep.md on 2026-08-12.
+# that motivated this tool. Verified against the live output/<slug>/<MMDDYY>-prep.md.
 _LOGISTICS_HEADING_RE = re.compile(r"^(#{1,6})\s*Logistics\b", re.I)
 _ANY_HEADING_RE = re.compile(r"^(#{1,6})\s")
 

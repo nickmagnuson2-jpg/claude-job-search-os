@@ -1640,8 +1640,8 @@ def judge(content: str, public_targets: list[str], root: Path) -> None:
     # WARN tier (added 2026-08-10). Single-token company names that are also ordinary
     # English words are excluded from the BLOCK list above, because matching them would
     # false-positive on prose. Excluding them entirely is what let a live pipeline
-    # company reach six public files on 2026-08-10 while all three of its interviewers
-    # were correctly blocked. So: surface, never block. Per feedback_warn_vs_block_hook_design.
+    # company reach six public files while every one of its contacts
+    # was correctly blocked. So: surface, never block. Per feedback_warn_vs_block_hook_design.
     amb_hits = find_pii(content, load_ambiguous(root))
     if amb_hits and not hits:
         uniq_amb = sorted(set(amb_hits))

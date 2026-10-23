@@ -737,7 +737,7 @@ def auto_debrief_new_calls(dry_run: bool = False, hours: int = None,
         # Persist raw transcript+summary pair via granola_save.py (voice-tier-separated, idempotent).
         # --dry-run must not touch disk. It used to persist anyway, which made a
         # "safe" preview run silently create a second copy of a transcript that had
-        # already been saved by hand under a different slug (2026-08-06).
+        # already been saved by hand under a different slug.
         if dry_run:
             print(f"  [dry-run] would persist '{title}' as {meeting_type}"
                   + (f" [{project}]" if project else ""), file=sys.stderr)

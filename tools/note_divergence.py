@@ -12,7 +12,7 @@ written 2026-09-20 is a row describing a superseded state.
 Those two questions fail in opposite directions and only this one can send Nick back to
 work he already finished.
 
-ORIGIN (2026-09-20). Asked "what should I do", Claude answered from a client engagement's todo note,
+ORIGIN. Asked "what should I do", Claude answered from a client engagement's todo note,
 which read `NOTHING IS BUILT - no slide exists`, written days earlier. By then the frame had
 moved on by many versions, several cross-model verification rounds had run, and the work had
 already been sent to the client ahead of its deadline. The note was never wrong. It aged, and it aged fastest *because* the work
@@ -30,7 +30,7 @@ different questions. When a row diverges, check the sent folder too. That check 
 automated here on purpose: it needs network and credentials, and a reporter that can fail for
 network reasons is a reporter people stop trusting.
 
-IT DOES NOT COVER ITS OWN ORIGIN CASE, AND THAT IS STATED RATHER THAN HIDDEN. The 2026-09-20
+IT DOES NOT COVER ITS OWN ORIGIN CASE, AND THAT IS STATED RATHER THAN HIDDEN. The origin
 divergence lived in `data/job-todos.md`, not in the pipeline: that engagement's pipeline row was
 current (it recorded the submission) while the todo note still read
 `NOTHING IS BUILT`. Verified against live data the day this was written — this scanner reports

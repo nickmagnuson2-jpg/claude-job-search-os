@@ -368,7 +368,7 @@ Origin: [[feedback_no_confabulation_in_corpus_synthesis]] (Conviction Workbook P
 - `metrics.total_active` — total active entries
 
 **From `todos_summary.py` output:**
-- `upcoming_scheduled[]` — **pin these FIRST, before any todo ranking.** Interviews/screens/calls parsed from the pipeline Next-Action column within the next 3 days; they live in free text, not dated todos, so `top_n` is blind to them. **Any entry with `is_event: true` is a fixed commitment that takes Today's Top 3 slot #1** (earliest date first), even ahead of the morning-starter chain when it falls today. Show as `[Company] [role] — [event] ([date], [days_until]d)`. Empty list → skip. Origin 2026-06-11: a next-day interview in the pipeline Next-Action was missed by standup — see `memory/feedback_surface_scheduled_events_in_ranking.md`.
+- `upcoming_scheduled[]` — **pin these FIRST, before any todo ranking.** Interviews/screens/calls parsed from the pipeline Next-Action column within the next 3 days; they live in free text, not dated todos, so `top_n` is blind to them. **Any entry with `is_event: true` is a fixed commitment that takes Today's Top 3 slot #1** (earliest date first), even ahead of the morning-starter chain when it falls today. Show as `[Company] [role] — [event] ([date], [days_until]d)`. Empty list → skip. Origin: a next-day interview in the pipeline Next-Action was missed by standup — see `memory/feedback_surface_scheduled_events_in_ranking.md`.
 - `top_n[]` is already sorted by (priority asc, distance-from-today asc, overdue-tiebreak). Use it directly, **below any `upcoming_scheduled` pins.**
 - If `morning_starter.exists` → Read the file in full and use its Sequence section as Today's Top 3 (the chain is the source of truth). The `top_n` items are supporting context shown below the chain. (An `is_event: true` item dated today still pins above the chain — a real interview beats the planned chain.)
 - Else → take the first 3 entries of `top_n` for "Today's Top 3"
@@ -399,8 +399,8 @@ Origin: [[feedback_no_confabulation_in_corpus_synthesis]] (Conviction Workbook P
   **A contact touched *after* the close is never suppressed** — that touch is deliberate
   relationship work (the "close the loop, buy you a beer" text) and outlives the
   opportunity. Origin: 2026-05-13 (4 ghost rows in one standup, parked 3 months) and
-  2026-08-14, when a recruiting coordinator surfaced as due-today with prep
-  instructions for a loop whose company had closed four days earlier.
+  a later case where a recruiting coordinator surfaced as due-today with prep
+  instructions for a loop that had already closed.
 
 **From inbox/:**
 

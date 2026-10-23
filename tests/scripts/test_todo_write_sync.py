@@ -161,7 +161,7 @@ FREEFORM_PIPELINE = """\
 | Company | Role | Stage | Date Updated | Next Action | CV Used | Notes | URL |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | Initech | Deployment Strategist | Closed - they passed | 2025-03-01 | — | - | - | - |
-| Vandelay | BizOps | Considered - passed (self, 7/7) | 2025-03-02 | — | - | - | - |
+| Vandelay | BizOps | Considered - passed (self, 3/2) | 2025-03-02 | — | - | - | - |
 | Hooli | Ops Manager | Onsite loop scheduled (founder screen PASSED) | 2025-03-03 | Prep | - | - | - |
 
 ## Archived

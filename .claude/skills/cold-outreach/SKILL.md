@@ -264,7 +264,7 @@ Follow channel constraints from `framework/outreach-guide.md`:
   4. **Low-pressure ask** (1 sentence) — coffee, 15–20 min chat, specific question
   5. **Gracious close** — warm sign-off, first name
 
-- Under 300 characters total (Nick's account is on LinkedIn Premium, reactivated 2026-10-21; Nick confirmed 300-character notes work). If Premium lapses, the limit drops to 200 and free accounts can only send a few notes a day, which was measured on 2026-10-20
+- Under 300 characters total (the 300 limit assumes a LinkedIn Premium account, where 300-character notes are confirmed to work). If Premium lapses, the limit drops to 200 and free accounts can only send a few notes a day (measured).
 - Under 300 characters total (hard limit)
 - Plain text, no formatting
 - 2–3 sentences maximum

@@ -139,7 +139,7 @@ def test_the_learn_from_filter_specifically_is_represented():
     spec = _load_fit_spec()
     registry = spec.get("non_negotiables") or {}
     assert "learn_from" in registry, (
-        "goals.md: 'the next role must include someone beside me who is good, whose "
-        "judgment I respect, and who has time for me.' That non-negotiable has no "
-        "entry in fit-spec.yaml non_negotiables."
+        "goals.md names a learn-from non-negotiable (someone senior to learn from in "
+        "the next role). That non-negotiable has no entry in fit-spec.yaml "
+        "non_negotiables."
     )

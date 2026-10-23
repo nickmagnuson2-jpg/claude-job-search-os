@@ -29,12 +29,11 @@ The fixture is deliberately sized to match a real single-page CV. If you shrink
 it, this test stops testing anything, because a short fixture fits on one page no
 matter how loose the theme gets.
 
-ON THE FIXTURE'S PROVENANCE, stated precisely because the earlier wording overclaimed:
-every NAME and COMPANY here is a placeholder, but the SHAPE is a real CV - real titles,
-real date ranges, real bullet structure. That is deliberate and necessary, since the
-thing under test is whether a full-length CV overflows a page. It is not a leak: every
-masked label resolves to a past employer or school, which this repo's PII boundary
-treats as public-safe. Do not describe this fixture as fully anonymized.
+ON THE FIXTURE'S PROVENANCE: every name, company, title, and bullet here is fictional.
+Only the SHAPE follows a real single-page CV: the same sections, the same number of
+entries and bullets, and bullet text written to roughly the same length line for line.
+That is deliberate, since the thing under test is whether a full-length CV overflows a
+page. If you edit the text, keep each line about as long as it is now.
 """
 import re
 import shutil
@@ -70,60 +69,60 @@ cv:
       username: casey-doe
   sections:
     SUMMARY:
-      - "The model is rarely the hard part. Deployments break on the people whose job changes, on records that lose their identity moving between systems, and on proving it worked when most measurement is decorative until you break it on purpose. I have worked all three: on site with a customer's support organization through the redesign, the training and the launch, and inside a sponsor-owned product organization sequencing use cases by what could be measured. That runs through consulting implementation, chief of staff to the technology lead of a large organization, and an application of my own in production."
+      - "Operations generalist who turns loose plans into schedules that teams actually keep. Most of my work sits between the people who set goals and the people who carry them out: writing the plan, setting the review cadence, tracking the numbers, and noticing early when a project is drifting. I have done this inside a consulting practice, as chief of staff to a senior executive at a mid-sized software company, and in small ventures of my own. I like short feedback loops, plain documents, and meetings that end with a named owner and a date for every open item on the list, plus a check-in date on the shared calendar."
     EXPERIENCE:
       - company: ACME CORP
-        position: Chief of Staff to the Chief Product and Technology Officer
+        position: Chief of Staff to the Senior Vice President of Operations
         date: 2025 - 2026
         location: Example City, CA
         highlights:
-          - Worked directly with the sponsor's operating partner and the finance lead on how a large technology organization set and measured its priorities.
-          - Built the goal tree and worked with stakeholders across product, engineering, and operations on the transition to an outcome-based roadmap.
-          - "Defined the strategy and objectives, sequencing use cases by what the organization could measure: a velocity target first, harder-to-attribute revenue use cases second; partnered with the head of engineering on the proof-of-concept portfolio."
-          - Prototyped an assisted executive digest with the technology lead, pulling each team's material into a synthesis rather than manual recaps; beta-tested with leadership.
+          - Worked with the finance and operations leads on a quarterly planning calendar used by every department in the company, from intake to final review.
+          - Ran the weekly leadership review, keeping the agenda, decision log, and follow-up list current for a group of department heads and their staff.
+          - "Drafted the annual plan and its quarterly goals, ordering projects by what the team could actually staff: two hiring goals first, longer process projects second; worked with the head of engineering on a small set of trial projects for the year."
+          - Built a shared weekly status page with the executive team, collecting each group's updates in one place instead of separate email threads; piloted it for a quarter.
       - company: LIVECO
-        position: Director, Business Intelligence
+        position: Manager, Business Reporting
         date: 2024
         location: Example City, CA
         highlights:
-          - Led cross-team analytics initiatives that improved engagement 25%, and cut operational inefficiency 20% with a new dashboard.
+          - Led reporting projects across three teams that raised survey response 25%, and cut manual data entry 20% with a new tracker.
       - company: CONSULTCO
         position: Associate
         date: 2022 - 2024
         location: Example City, CA
         highlights:
-          - "Spearheaded a support pilot for a marketplace client, shifting staff from inbound handling to outbound calls: on site with the client team, reviewed the recordings, built the training materials, and built the business case off their tracking data, with analytics verifying the platform could measure a case type that did not yet exist. Won the client's steering committee against competing pilots; the pilot launched."
-          - Designed and executed change management initiatives across the pod structure and quarterly review cadence of a retailer's operating model transformation, resulting in 50% reduction in client onboarding time.
-          - Supported a workshop at a large telecommunications client, coaching a cross-organizational executive team on vision development, prioritization of use cases, and the industry landscape.
+          - "Ran a scheduling pilot for a regional clinic network, moving front-desk staff from walk-in handling to booked appointments: on site with the clinic managers, sat in on shifts, wrote the training guides, and built the cost model from their visit logs, with the data team confirming the booking system could report a visit type it did not yet track. Presented to the client steering group alongside other proposals; the pilot went ahead."
+          - Planned and delivered training sessions across the regional teams and monthly review meetings of a distributor's reorganization program, resulting in a 50% reduction in new-account setup time.
+          - Supported a planning workshop at a large insurance client, helping a mixed group of department leaders agree on goals, rank candidate projects, and review what peer companies were doing.
       - company: MEDIACO
-        position: Growth Manager, Platform Analytics (2018 - 2020); Analyst, Product Analytics (2017 - 2018)
+        position: Senior Analyst, Audience Insights (2018 - 2020); Analyst, Reporting and Research (2017 - 2018)
         date: 2017 - 2020
         location: Sample Borough, CT
         highlights:
-          - Delivered revenue improvement by finding in SQL that video ads were not delivering on high-traffic pages, then repricing the defect against in-season impression volume instead of the near-zero offseason traffic that had kept it out of the engineering queue.
-          - Built and led a team of 2 direct reports, establishing and scaling the off-platform content rights management process for a very large social following.
+          - Recovered lost revenue by finding in a weekly report that sponsor placements were missing from the busiest pages, then sizing the gap against peak-season traffic instead of the quiet months that had kept it low on the fix list for the product team.
+          - Hired and managed a team of 2 direct reports, setting up and growing the licensing request process for photos and video shared by partner publishers.
       - company: ENTERPRISECO
-        position: Business Analytics and Strategy Consultant
+        position: Business Operations and Reporting Consultant
         date: 2015 - 2016
         location: Example Harbor, NY
     EDUCATION:
       - institution: EXAMPLE SCHOOL OF BUSINESS
-        area: Management Science and Quantitative Methods (STEM)
+        area: Operations Research and Applied Statistics (STEM)
         degree: MBA
         date: 2020 - 2022
         location: Example Village, NH
       - institution: EXAMPLE UNIVERSITY
-        area: Public Policy, Markets and Management Certificate
+        area: Economics, with a Statistics and Data Science Minor
         degree: BA
         date: 2011 - 2015
         location: Example Park, NC
     ADDITIONAL INFORMATION:
       - label: Skills
-        details: "Building: agent workflows, application frameworks, relational databases. Data analysis and modeling: SQL, R, dashboards, spreadsheets. Executive decks: presentation software."
+        details: "Tools: workflow automation, project trackers, shared databases. Data analysis and reporting: SQL, Python, dashboards, spreadsheets. Writing: plans, memos, slide decks."
       - label: Building
-        details: "A sample application built and run solo in production: a six-stage generation pipeline with two model stages around a deterministic core, telemetry to a database, and a north star metric measured against an empirical ceiling. Also an agentic operating system that runs a job search end to end."
+        details: "A small scheduling app built and run solo for a local club: a booking form, a waitlist that fills open slots in order, reminder emails, and a weekly attendance report checked against the sign-up sheet. Also a set of scripts that keep a personal budget and its monthly reports up to date."
       - label: Hobbies
-        details: Mountain biking, skiing, yoga, learning to woodwork.
+        details: Trail running, cooking, chess, learning to garden.
 locale:
   language: english
 settings:

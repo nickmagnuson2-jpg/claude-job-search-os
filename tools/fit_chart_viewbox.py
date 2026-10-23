@@ -127,7 +127,7 @@ def main(argv: list[str] | None = None) -> int:
         # THE HORIZONTAL MEASUREMENT IS FREE AND WAS BEING DISCARDED. getBBox() returns x and
         # width in the same call as y and height. This tool does not TOUCH x or width -- the
         # scale-1 construction depends on them -- but not touching them is not a reason to
-        # throw away what they say. On 2026-09-21 a shipped deck's sankey measured 588.37
+        # throw away what they say. Once, a shipped deck's sankey measured 588.37
         # units of ink inside a 579.94-unit viewBox: the last label read "billin" because the
         # "g" of "billing" was outside the box. This function measured 588.37 that day and
         # dropped it, and the deck gate's G6 computed the same overshoot and tested only the

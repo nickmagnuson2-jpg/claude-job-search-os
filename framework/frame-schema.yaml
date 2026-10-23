@@ -117,8 +117,8 @@ fields:
       version and demands `--will-be-probed`, and this schema is explicit that a
       prediction is "contaminated the instant feedback arrives, so it cannot be added
       later". An engagement whose artifact already shipped without a lock therefore has
-      no honest way to claim one -- which is exactly what happened: 53 versions, a deck
-      delivered on 2026-09-20, and `locked: false` throughout. The absence was not
+      no honest way to claim one -- which is exactly what happened: 53 versions, a
+      delivered deck, and `locked: false` throughout. The absence was not
       negligence; the mechanism had no retrospective form.
 
       `retrospective: true` says the record was written AFTER delivery, and then `basis`
@@ -333,8 +333,8 @@ fields:
 
       also_printed_on ADDED 2026-09-21, optional, a list of identifiers. The surfaces an
       element's evidence ALSO reaches without the element being made there. Found by
-      running F15 on a real deck: an element whose name and measure both sit on slide 2
-      had the counts it rests on printed on slide 1, and F15 correctly reported them as
+      running F15 on a real deck: an element whose name and measure both sit on one slide
+      had the counts it rests on printed on the slide before it, and F15 correctly reported them as
       unaccounted because one element could name exactly one surface.
 
       IT IS NOT A SECOND HOME, AND F1b DOES NOT READ IT. name_surface remains the single
@@ -571,7 +571,7 @@ limits:
 
     THE UNIT IS THE PRINTED NUMBER, NOT THE FACT, and that was measured rather than
     reasoned. Replaying both candidates across all 53 historical versions of the
-    2026-09-21 engagement frame against the deck that actually shipped:
+    reference engagement frame against the deck that actually shipped:
       fact-anchored   ("is this fact cited on this surface?")   47 fires at v52, 1 real
       number-anchored ("is this printed number carried here?")  29 fires at v52
     The fact-anchored form fires for every fact that merely MENTIONS a number the page

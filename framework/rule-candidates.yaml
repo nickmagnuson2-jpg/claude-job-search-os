@@ -32,10 +32,10 @@ schema_version: 1
 # - id: C001
 #   rule: "<the candidate rule, stated plainly>"
 #   source: post_hoc | in_flight
-#   source_detail: "debrief 2026-08-20 / override in <slug> frame v4 / check F6 waved through"
+#   source_detail: "debrief YYYY-MM-DD / override in <slug> frame v4 / check F6 waved through"
 #   occurrences: 1
-#   first_seen: 2026-08-20
-#   last_seen: 2026-08-20
+#   first_seen: YYYY-MM-DD
+#   last_seen: YYYY-MM-DD
 #   target_tier: analysis-method | frame-schema | method-moves | deck-rubric | workflow
 #   falsification:
 #     attempted: no
@@ -150,8 +150,8 @@ candidates:
       does not move. Silently delivering a frame you believe is broken is never permitted.
     source: post_hoc
     source_detail: >
-      Same origin event as C001 (outcome debrief 2026-08-13; see coaching/progress/ for the
-      dated file). DERIVED 2026-08-14 by falsifying C001 -- this is the kernel that survived
+      Same origin event as C001 (an interview-loop outcome debrief; see coaching/progress/
+      for the dated file). DERIVED 2026-08-14 by falsifying C001 -- this is the kernel that survived
       three independent blind attacks, not a new observation. Operator disposition the same
       day: reject C001, replace with this.
     why_it_matters: >
@@ -434,8 +434,8 @@ candidates:
       rule from the analysis-method side; the deck-rubric half is the missing
       SCHEDULING requirement, not the rule itself.
     why_it_matters: >
-      A field a gate reads but never demands is enforcement theatre. Measured on the
-      2026-09 take-home: `frame.locked` is read by no script in tools/ or the
+      A field a gate reads but never demands is enforcement theatre. Measured on a
+      take-home: `frame.locked` is read by no script in tools/ or the
       engagement's own scripts/, so it buys a rollback point and prevents nothing.
     occurrences: 1
     first_seen: 2026-09-17
@@ -554,7 +554,7 @@ candidates:
   - id: C012
     rule: "Render check at the DELIVERY aspect ratio, not the authoring one."
     source: post_hoc
-    source_detail: "Gap register 2026-09-17, tier 3 item 17. Two AV failures cost a live opening."
+    source_detail: "Gap register 2026-09-17, tier 3 item 17. AV failures during a live delivery."
     occurrences: 1
     first_seen: 2026-09-17
     last_seen: 2026-09-17
@@ -837,7 +837,7 @@ candidates:
       CDN load.
     source: post_hoc
     source_detail: >
-      Gap register 2026-09-17, tier 3 item 39. Live example the same day: the 2026-09
+      Gap register 2026-09-17, tier 3 item 39. Live example the same day: a
       take-home deck loads Source Sans 3 from fonts.googleapis.com, so it renders
       differently on a machine with no network.
     occurrences: 1
@@ -867,7 +867,7 @@ candidates:
     source: post_hoc
     source_detail: >
       Gap register 2026-09-17, tier 3 item 41. Independently re-derived the same day
-      on the 2026-09 take-home, where sampling a brand palette from live assets
+      on a take-home, where sampling a brand palette from live assets
       surfaced that white numerals on the accent fill sit at 1.92:1 and are
       illegible. The rule earned a second sighting; whether that counts as
       occurrences 2 is a judgment for the gate, not something to self-award.
