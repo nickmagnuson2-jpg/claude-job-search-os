@@ -73,9 +73,11 @@ def read_rows(xlsx_path):
             val = "".join(t.text or "" for t in inline.iter(NS + "t"))
         else:
             val = ""
-        row = int(re.match(r"[A-Z]+(\d+)", c.get("r")).group(1))
-        rows.setdefault(row, []).append(val.strip())
-    return [rows[k] for k in sorted(rows)]
+        m = re.fullmatch(r"([A-Z]+)(\d+)", c.get("r") or "")
+        if not m:
+            raise ReadoutError(f"Cell without a valid reference: {c.get('r')!r}")
+        rows.setdefault(int(m.group(2)), []).append((len(m.group(1)), m.group(1), val.strip()))
+    return [[v for *_, v in sorted(rows[k])] for k in sorted(rows)]
 
 
 def to_int(s):
@@ -103,6 +105,8 @@ def parse_export(xlsx_path):
             in_demo = True
             continue
         if in_demo and len(r) == 3:
+            if not all(r):
+                raise ReadoutError(f"Export has a demographic row with an empty cell: {r}")
             label = r[2].replace("< ", "<")
             share = None if "<" in label else int(label.rstrip("%")) / 100
             demographics.append([r[0], r[1], share, label])
@@ -122,8 +126,8 @@ def replace_block(html, name, body):
 
 
 def script_json(value):
-    """JSON safe to place inside an HTML <script>: '</' cannot close the element."""
-    return json.dumps(value, ensure_ascii=False, indent=1).replace("</", "<\\/")
+    """JSON safe to place inside an HTML <script>: no '<' at all, so no spelling of </script> can close it."""
+    return json.dumps(value, ensure_ascii=False, indent=1).replace("<", "\\u003c")
 
 
 def data_block(data):
@@ -172,6 +176,9 @@ def wrap_for_vercel(page_html):
 def write_vercel_dir(out_dir, page_html, config, middleware_template):
     os.makedirs(out_dir, exist_ok=True)
     salt = os.path.basename(os.path.abspath(out_dir))
+    # the name is the cookie salt in a JavaScript string and the npm package name
+    if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", salt):
+        raise ReadoutError(f"Vercel folder name must be lowercase letters, digits and hyphens: {salt!r}")
     # the headline lands in HTML inside a JavaScript template literal: escape both
     headline = (config["headline"].replace("\\", "\\\\").replace("`", "\\`").replace("${", "\\${")
                 .replace("&", "&amp;").replace("<", "&lt;"))
@@ -234,7 +241,7 @@ def main(argv):
         else:
             print(__doc__)
             return 2
-    except (ReadoutError, OSError, KeyError, ValueError, zipfile.BadZipFile) as e:
+    except (ReadoutError, OSError, KeyError, ValueError, IndexError, zipfile.BadZipFile, ET.ParseError) as e:
         print(f"Error: {e}", file=sys.stderr)
         return 1
     return 0

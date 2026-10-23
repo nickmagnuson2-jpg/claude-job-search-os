@@ -242,10 +242,9 @@ const pv=M.profile_viewers, se=M.social_engagements;
 const engParts=[["reactions",M.reactions],["comments",M.comments],["reposts",M.reposts],["saves",M.saves],["sends",M.sends]].filter(x=>x[1]!=null).map(([k,v])=>`${fmt(v)} ${k}`).join(", ");
 const ARR = [
   {id:"reach", name:"Reach and response", groups:[
-     {label:`Visited ${CONFIG.author_first}'s profile`, n:pv, exact:true, kind:"lit"},
-     {label:"Engagements", n:se, exact:true, kind:"lit", detail:engParts},
-     {label:"Everyone else reached", n:Math.max(0,N-pv-se), kind:"rest", reach:true}],
-   caption:()=>big(fmt(M.impressions), `impressions across ${fmt(N)} members, about ${(M.impressions/N).toFixed(1)} per member. ${fmt(pv)} visited ${CONFIG.author_first}'s profile; ${fmt(se)} engagements (${engParts}). One person can do both, so these two groups may overlap.`)},
+     {label:`Visited ${CONFIG.author_first}'s profile`, n:pv, kind:"lit"},
+     {label:"Everyone else reached", n:Math.max(0,N-pv), kind:"rest", reach:true}],
+   caption:()=>big(fmt(M.impressions), `impressions across ${fmt(N)} members, about ${(M.impressions/N).toFixed(1)} per member. ${fmt(pv)} visited ${CONFIG.author_first}'s profile. The ${fmt(se)} engagements (${engParts}) are actions, not people: one person can react and comment, so they get no dots.`)},
   {id:"sen", name:"Seniority", groups:build("Seniority",{buyers:SEN_BUY,order:SEN_BUY.concat(["Manager","Senior","Entry","Training","Unpaid"])}),
    caption(){return buyerCaption(this,CONFIG.buyer_names.seniority);}},
   {id:"size", name:"Company size", groups:build("Company size",{buyers:SIZE_BUY,order:SIZE_ORDER}),
@@ -328,7 +327,7 @@ function layout(a,g){
     const lastN=gr.kind==="unsized"?UNDER1:(gr.n-(bands-1)*per);
     const lastY=gy+(bands-1)*(R*g.p+bandGap);
     const dotsH=bands*R*g.p+(bands-1)*bandGap;
-    const h=Math.max(dotsH,g.minH,gr.reach&&!g.phone?36:0);
+    const h=Math.max(dotsH,g.minH);
     out.groups.push({gr,ly,gy,h,R,rows:R,lastY,endX:g.labelW+Math.ceil(lastN/R)*g.p});
     y=gy+h+(gr.kind==="unsized"?8:g.gap);
   });
@@ -404,9 +403,9 @@ function draw(){
 }
 const font=(w,s)=>`${w} ${s}px "IBM Plex Mono", ui-monospace, Menlo, monospace`;
 function valueText(gr){
-  if(gr.kind==="lit") return fmt(gr.n)+(gr.detail&&!geo.phone?`  (${gr.detail})`:"");
+  if(gr.kind==="lit") return fmt(gr.n);
   if(gr.kind==="unsized") return geo.phone?`${gr.share}, under ≈${fmt(UNDER1)}, counted inside Not broken out`:`${gr.share}, fewer than ≈${fmt(UNDER1)}, counted inside Not broken out`;
-  if(gr.reach) return `at least ${fmt(gr.n)}`;
+  if(gr.reach) return fmt(gr.n);
   if(gr.kind==="rest") return `≈${fmt(gr.n)}`;
   return `≈${fmt(gr.n)}  ${gr.share}`;
 }
@@ -454,7 +453,6 @@ function drawLabels(L,a){
       ctx.font=font(strong?500:400,f);
       if(gr.kind==="buyer"){ctx.fillStyle=rgb(C.accent,a);ctx.beginPath();ctx.arc(4,ty,3.5,0,Math.PI*2);ctx.fill();}
       ctx.fillStyle=rgb(nameCol,a); ctx.fillText(fit(gr.label,geo.labelW-x0-12),x0,ty);
-      if(gr.reach){ ctx.font=font(400,11); ctx.fillStyle=rgb(C.ink3,a); ctx.fillText("(one person can do both)",0,ty+16); }
       ctx.font=font(strong?500:400,12); ctx.fillStyle=rgb(gr.kind==="unsized"||gr.kind==="rest"?C.ink3:strong?C.ink:C.ink2,a);
       ctx.fillText(fit(valueText(gr),W-G.endX-10),G.endX+10,vy);
     }
@@ -469,8 +467,8 @@ cv.addEventListener("mousemove",e=>{
   if(!G){tip.style.display="none";return;}
   const gr=G.gr;
   let t=`<b>${esc(gr.label)}</b><br>`;
-  if(gr.kind==="lit") t+=`${fmt(gr.n)} (exact)`+(gr.detail?`<br>${gr.detail}`:"");
-  else if(gr.reach) t+=`${fmt(N)} reached, minus ${fmt(pv)} and ${fmt(se)}. At least this many, more if some people both visited and engaged.`;
+  if(gr.kind==="lit") t+=`${fmt(gr.n)} (exact)`;
+  else if(gr.reach) t+=`${fmt(N)} reached, minus the ${fmt(pv)} who visited the profile.`;
   else if(gr.kind==="unsized") t+=`LinkedIn shows ${esc(gr.share)} and no number`;
   else if(gr.kind==="rest") t+=`&asymp;${fmt(gr.n)} LinkedIn did not break out`;
   else t+=`${gr.share} of viewers, &asymp;${fmt(gr.n)} of ${fmt(N)}`+(gr.kind==="buyer"?`<br>${esc(CONFIG.buyer_label)}`:"");
@@ -483,7 +481,7 @@ cv.addEventListener("mouseleave",()=>tip.style.display="none");
 const ctr=document.getElementById("controls"), cap=document.getElementById("caption"), leg=document.getElementById("legend"), defs=document.getElementById("defs");
 function legendFor(a){
   const items=[], b=buyerSum(a).list;
-  if(a.id==="reach") items.push(["--lit","Profile visits and engagements (exact counts; one person can be in both)"],["--mark-rest","Everyone else reached"]);
+  if(a.id==="reach") items.push(["--lit","Visited the profile (exact)"],["--mark-rest","Everyone else reached"]);
   else {
     if(b.length) items.push(["--accent", `${CONFIG.buyer_label}: ${a.id==="sen"?CONFIG.buyer_names.seniority:a.id==="size"?sizeRangeText(b):CONFIG.buyer_names.job_title}`]);
     items.push(["--mark","Other groups LinkedIn listed"]);
@@ -503,7 +501,7 @@ chrome(cur);
 
 /* ---------- table ---------- */
 document.getElementById("table").innerHTML=`<table><thead><tr><th>View</th><th>Group</th><th class="n">LinkedIn share</th><th class="n">Dots</th></tr></thead><tbody>`+
-  ARR.map(a=>a.groups.map(g=>`<tr><td>${a.name}</td><td>${esc(g.label)}${g.kind==="buyer"?` (${esc(CONFIG.buyer_label)})`:""}</td><td class="n">${g.share?esc(g.share):g.kind==="lit"?"exact":"rest"}</td><td class="n">${g.kind==="lit"?fmt(g.n):g.kind==="unsized"?"none, no count":"&asymp;"+fmt(g.n)}</td></tr>`).join("")).join("")+`</tbody></table>`;
+  ARR.map(a=>a.groups.map(g=>`<tr><td>${a.name}</td><td>${esc(g.label)}${g.kind==="buyer"?` (${esc(CONFIG.buyer_label)})`:""}</td><td class="n">${g.share?esc(g.share):g.kind==="lit"||g.reach?"exact":"rest"}</td><td class="n">${g.kind==="lit"||g.reach?fmt(g.n):g.kind==="unsized"?"none, no count":"&asymp;"+fmt(g.n)}</td></tr>`).join("")).join("")+`</tbody></table>`;
 
 /* ---------- boot ---------- */
 function redrawTheme(){ readTokens(); const L=layouts[cur]; if(L){ marks.forEach((m,j)=>{m.c=m.tc=kindColor(L.pos[j].kind).slice();}); draw(); } }

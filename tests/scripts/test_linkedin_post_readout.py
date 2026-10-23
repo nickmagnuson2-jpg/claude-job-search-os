@@ -338,3 +338,56 @@ def test_generated_middleware_gates_on_password(tmp_path):
 def test_headline_with_js_syntax_stays_literal(tmp_path):
     out = _run_node(tmp_path, _middleware_for(tmp_path, "Odd `tick` ${1+1} \\ <b>"))
     assert out["title"] == "Odd `tick` ${1+1} \\ &lt;b>"
+
+
+def test_script_json_has_no_angle_bracket_in_any_case(tmp_path):
+    cfg = config()
+    cfg["intro"] = "Ends </SCRIPT><script>x</Script > here"
+    page = lpr.render_page(TEMPLATE_HTML, cfg, lpr.parse_export(write_export(tmp_path / "e.xlsx")))
+    assert page.lower().count("</script") == TEMPLATE_HTML.lower().count("</script")
+    assert "<" not in lpr.script_json({"a": "<b>"})
+    assert json.loads(lpr.script_json({"a": "</SCRIPT>"})) == {"a": "</SCRIPT>"}
+
+
+@pytest.mark.parametrize("field", ["Post Date", "Post Publish Time", "Post URL"])
+def test_empty_post_field_fails(tmp_path, field):
+    rows = [[field, ""] if r[0] == field else r for r in ROWS]
+    with pytest.raises(lpr.ReadoutError, match=field):
+        lpr.parse_export(write_export(tmp_path / "e.xlsx", rows))
+
+
+@pytest.mark.parametrize("row", [["Industry", "", "20%"], ["", "Software Development", "20%"], ["Industry", "Software Development", ""]])
+def test_demographic_row_with_empty_cell_fails(tmp_path, row):
+    rows = [row if r == ["Industry", "Software Development", "20%"] else r for r in ROWS]
+    with pytest.raises(lpr.ReadoutError, match="empty cell"):
+        lpr.parse_export(write_export(tmp_path / "e.xlsx", rows))
+
+
+@pytest.mark.parametrize("name", ["client's-site", "Site", "my site", "-site", "a\\b"])
+def test_vercel_folder_name_must_be_safe(tmp_path, name):
+    with pytest.raises(lpr.ReadoutError, match="folder name"):
+        lpr.write_vercel_dir(tmp_path / name, "<title>t</title><style></style><p>x</p>", config(), "__COOKIE_SALT__")
+
+
+def test_read_rows_orders_cells_by_column_letter(tmp_path):
+    path = write_raw_sheet(tmp_path / "e.xlsx", [
+        (1, '<c r="B1"><v>2800</v></c><c r="A1" t="inlineStr"><is><t>Impressions</t></is></c>'),
+        (2, '<c r="AA2"><v>3</v></c><c r="B2"><v>2</v></c><c r="A2"><v>1</v></c>'),
+    ])
+    assert lpr.read_rows(path) == [["Impressions", "2800"], ["1", "2", "3"]]
+
+
+def test_cell_without_reference_fails(tmp_path):
+    path = write_raw_sheet(tmp_path / "e.xlsx", [(1, '<c><v>1</v></c>')])
+    with pytest.raises(lpr.ReadoutError, match="reference"):
+        lpr.read_rows(path)
+
+
+@pytest.mark.parametrize("sheet", ["<worksheet", f'<worksheet xmlns="{NS}"><sheetData><row r="1"><c r="A1" t="s"><v>5</v></c></row></sheetData></worksheet>'])
+def test_broken_sheet_is_an_error_not_a_traceback(tmp_path, capsys, sheet):
+    path = tmp_path / "e.xlsx"
+    with zipfile.ZipFile(path, "w") as z:
+        z.writestr("xl/sharedStrings.xml", f'<sst xmlns="{NS}"><si><t>x</t></si></sst>')
+        z.writestr("xl/worksheets/sheet1.xml", sheet)
+    assert lpr.main(["data", str(path)]) == 1
+    assert "Error:" in capsys.readouterr().err
