@@ -443,3 +443,11 @@ def test_parse_pipeline_stages_maps_lowercased_company_to_its_last_row_stage():
                         "| Beta | PM | To Evaluate |")
     assert _op.parse_pipeline_stages(content) == {"acme": "Closed - rejected", "beta": "To Evaluate"}
     assert _op.parse_pipeline_stages("") == {}
+
+
+def test_parse_pipeline_stages_skips_a_header_row_written_without_spaces():
+    """BEHAVIOR CHANGE 2026-10-24 (moved onto pipe_read): '|Company|Role|Stage|...'
+    used to come back as a company named 'company'."""
+    content = ("## Active\n|Company|Role|Stage|Date Updated|Next Action|CV Used|Notes|URL|\n"
+               "|---|---|---|---|---|---|---|---|\n| Acme | PM | Applied | 2026-02-01 | x | | | |\n")
+    assert _op.parse_pipeline_stages(content) == {"acme": "Applied"}

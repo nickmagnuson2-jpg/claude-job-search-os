@@ -125,3 +125,13 @@ def test_load_pipeline_companies_keeps_live_rows_in_file_order():
                         "| Took | PM | Accepted | 2026-02-01 | — | — | — | — |",
                         archived=("| Old | PM | Archived | 2026-01-01 | — | — | — | — |",))
     assert _rc.load_pipeline_companies(content) == ["Acme", "Beta"]
+
+
+def test_load_pipeline_companies_uses_the_shared_terminal_rule():
+    """BEHAVIOR CHANGE 2026-10-24 (moved onto pipe_read + stage_vocab). The old exact
+    set {Withdrawn, Rejected, Accepted, Archived} kept these closed rows as live."""
+    content = _pipe_doc("| Acme | PM | Applied | 2026-02-01 | x | — | — | — |",
+                        "| Passed | PM | Closed - they passed | 2026-02-01 | — | — | — | — |",
+                        "| Decl | PM | Intro done - declined, no current fit | 2026-02-01 | — | — | — | — |",
+                        "| Lower | PM | accepted | 2026-02-01 | — | — | — | — |")
+    assert _rc.load_pipeline_companies(content) == ["Acme"]

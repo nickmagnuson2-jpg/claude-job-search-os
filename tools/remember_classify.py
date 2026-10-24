@@ -41,10 +41,12 @@ Usage:
 import argparse
 import json
 import re
+from datetime import date
 from pathlib import Path
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from slug import slugify as _slugify  # noqa: E402
+from pipe_read import parse_all_rows  # noqa: E402
 
 # ── Keywords ──────────────────────────────────────────────────────────────────
 
@@ -157,31 +159,13 @@ def load_contacts(content: str) -> list[str]:
 
 
 def load_pipeline_companies(content: str) -> list[str]:
-    """Extract active company names from job-pipeline.md."""
-    companies = []
-    terminal_stages = {"Withdrawn", "Rejected", "Accepted", "Archived"}
-    in_archived = False
+    """Active company names from job-pipeline.md, in file order.
 
-    for line in content.splitlines():
-        if re.match(r"^##\s+", line):
-            section = line.strip("# ").strip().lower()
-            in_archived = any(t in section for t in ("archived", "withdrawn", "rejected"))
-            continue
-        if not line.startswith("|"):
-            continue
-        if re.match(r"\|\s*(Company|---)", line):
-            continue
-
-        cols = [c.strip() for c in line.strip("|").split("|")]
-        if len(cols) < 3 or cols[0] == "---" or not cols[0]:
-            continue
-
-        stage = cols[2] if len(cols) > 2 else ""
-        if stage in terminal_stages or in_archived:
-            continue
-        companies.append(cols[0])
-
-    return companies
+    Rows come from pipe_read.parse_all_rows, so "active" means what /pipe means:
+    not under an Archived/Withdrawn/Rejected heading and not a terminal stage per
+    stage_vocab (which also catches "Closed - they passed", "Declined", ...).
+    """
+    return [r["company"] for r in parse_all_rows(content, date.today()) if not r["archived"]]
 
 
 def load_dossier_slugs(output_dir: Path) -> list[tuple[str, str]]:

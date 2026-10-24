@@ -181,6 +181,14 @@ def test_pipeline_rows_yield_company_stage_and_notes_for_every_row():
         ("Acme", "Applied", "had a screen"), ("Gone", "Closed - rejected", "—"), ("Bare", "To Evaluate", "")]
 
 
+def test_pipeline_rows_ignore_indented_rows():
+    """BEHAVIOR CHANGE 2026-10-24 (moved onto pipe_read): an indented row is not a
+    pipeline row for /pipe, so the scorer no longer labels it."""
+    content = _pipe_doc("| Acme | PM | Applied | 2026-02-01 | x | — | — | — |",
+                        " | Indented | PM | Applied | 2026-02-01 | x | — | — | — |")
+    assert [c for c, _s, _n in se._pipeline_rows(content)] == ["Acme"]
+
+
 def test_resolve_contact_outcomes_reads_every_seven_cell_row_with_a_recipient(tmp_path):
     """Pinned 2026-10-24 before the outreach-log readers share one parser."""
     (tmp_path / "data").mkdir()

@@ -374,3 +374,13 @@ def test_load_pipeline_companies_returns_every_row_with_a_lowercased_stage(tmp_p
         "| Gone | PM | Closed - rejected | 2026-02-01 | — | — | — | — |"), encoding="utf-8")
     assert _ac.load_pipeline_companies(tmp_path) == [("Acme", "applied"), ("Gone", "closed - rejected")]
     assert _ac.load_pipeline_companies(tmp_path / "missing") == []
+
+
+def test_load_pipeline_companies_ignores_indented_rows(tmp_path):
+    """BEHAVIOR CHANGE 2026-10-24 (moved onto pipe_read): an indented row is not a
+    pipeline row for /pipe, so it no longer dedupes a gmail notification either."""
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "job-pipeline.md").write_text(_pipe_doc(
+        "| Acme | PM | Applied | 2026-02-01 | x | — | — | — |",
+        " | Indented | PM | Applied | 2026-02-01 | x | — | — | — |"), encoding="utf-8")
+    assert _ac.load_pipeline_companies(tmp_path) == [("Acme", "applied")]

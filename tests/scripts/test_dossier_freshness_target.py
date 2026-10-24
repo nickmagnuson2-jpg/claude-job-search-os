@@ -149,3 +149,19 @@ def test_load_pipeline_targets_slugs_live_companies_only(tmp_path):
         "| Nope | PM | Declined | 2026-02-01 | — | — | — | — |"), encoding="utf-8")
     assert _df.load_pipeline_targets(tmp_path) == {"acme-labs", "beta"}
     assert _df.load_pipeline_targets(tmp_path / "missing") == set()
+
+
+def test_load_pipeline_targets_uses_the_shared_rules(tmp_path):
+    """BEHAVIOR CHANGE 2026-10-24 (moved onto pipe_read + stage_vocab). Before: a live
+    stage under an Archived heading, lowercase 'accepted' and an indented row counted
+    as targets, while 'deadline', 'lost' and 'Passed the screen' matched the old
+    substring keywords and dropped live leads."""
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "job-pipeline.md").write_text(_pipe_doc(
+        "| Dl | PM | Applied, deadline Friday | 2026-02-01 | x | — | — | — |",
+        "| Lo | PM | Interview, almost lost the slot | 2026-02-01 | x | — | — | — |",
+        "| Pa | PM | Passed the screen | 2026-02-01 | x | — | — | — |",
+        "| Lower | PM | accepted | 2026-02-01 | — | — | — | — |",
+        " | Indented | PM | Applied | 2026-02-01 | x | — | — | — |",
+        archived=("| Shelved | PM | Applied | 2026-02-01 | x | — | — | — |",)), encoding="utf-8")
+    assert _df.load_pipeline_targets(tmp_path) == {"dl", "lo", "pa"}

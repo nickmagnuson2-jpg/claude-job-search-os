@@ -39,10 +39,12 @@ Usage:
 import argparse
 import json
 import sys
+from datetime import date
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import stage_vocab  # single source of truth for stage classification
+from pipe_read import parse_all_rows  # noqa: E402
 
 # Engagement in the STAGE field is reliable (the stage names the process state), so
 # the full keyword set applies there. Excludes "applied"/"researching" (contact made,
@@ -135,27 +137,10 @@ def classify_company_outcome(stage: str, notes: str = "") -> str:
 def _pipeline_rows(content: str):
     """Yield (company, stage, notes) for every real table row (incl. closed).
 
-    Mechanical split matching the documented column order
-    (0=Company,1=Role,2=Stage,...,6=Notes). Classification lives in stage_vocab.
+    Rows come from pipe_read.parse_all_rows. Classification lives in stage_vocab.
     """
-    for line in content.splitlines():
-        line = line.strip()
-        if not line.startswith("|"):
-            continue
-        # Skip header + separator rows.
-        if re.match(r"\|\s*(Company|:?-{2,})", line):
-            continue
-        if re.match(r"\|\s*-{2,}", line):
-            continue
-        cols = [c.strip() for c in line.strip("|").split("|")]
-        if len(cols) < 3:
-            continue
-        company = cols[0]
-        stage = cols[2]
-        notes = cols[6] if len(cols) > 6 else ""
-        if not company or company == "---":
-            continue
-        yield company, stage, notes
+    for r in parse_all_rows(content, date.today()):
+        yield r["company"], r["stage"], r["notes"]
 
 
 # The verified ledger (data/calibration/company-outcomes.json) is produced by the

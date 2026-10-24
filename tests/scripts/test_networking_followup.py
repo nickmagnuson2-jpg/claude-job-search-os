@@ -584,3 +584,11 @@ def test_closed_company_index_keeps_the_latest_close_and_drops_any_company_still
                         "| Nodate | PM | Closed | — | — | — | — | — |",
                         *_SKIPPED_ROWS)
     assert _nf.build_closed_company_index(content) == {"acme": "2026-02-01"}
+
+
+def test_a_live_row_without_a_date_column_still_keeps_its_company_open():
+    """BEHAVIOR CHANGE 2026-10-24 (moved onto pipe_read): a three-column live row
+    used to be skipped (it needed four columns), so the company's closed row won."""
+    content = _pipe_doc("| Acme | PM | Applied |",
+                        "| Acme | CoS | Closed | 2026-02-01 | — | — | — | — |")
+    assert _nf.build_closed_company_index(content) == {}

@@ -39,6 +39,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from slug import slugify as _slugify  # noqa: E402
+from pipe_read import parse_all_rows  # noqa: E402
 
 # ── ATS URL patterns that signal a job ad ────────────────────────────────────
 ATS_PATTERNS = [
@@ -210,27 +211,16 @@ def load_pipeline_companies(repo_root: Path) -> list[tuple[str, str]]:
     """Return [(company_name, stage_lower)] for each pipeline row. [] on error.
 
     Used to dedupe gmail notifications about companies already being tracked.
+    Every row counts, closed ones included; rows come from pipe_read.parse_all_rows.
     """
     pipeline = repo_root / "data" / "job-pipeline.md"
     if not pipeline.exists():
         return []
-    out = []
     try:
-        for line in pipeline.read_text(encoding="utf-8").splitlines():
-            if not line.lstrip().startswith("|"):
-                continue
-            cells = [c.strip() for c in line.strip().strip("|").split("|")]
-            if len(cells) < 3:
-                continue
-            company = cells[0]
-            # skip header + separator rows
-            if (not company or company.lower() == "company"
-                    or set(company) <= set("-: ")):
-                continue
-            out.append((company, cells[2].lower()))
+        rows = parse_all_rows(pipeline.read_text(encoding="utf-8"), date.today())
     except Exception:
         return []
-    return out
+    return [(r["company"], r["stage"].lower()) for r in rows]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
