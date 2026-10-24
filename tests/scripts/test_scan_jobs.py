@@ -252,3 +252,37 @@ def test_the_script_imports_its_libraries_from_any_working_directory(tmp_path):
                         f"import runpy; runpy.run_path({str(SCRIPT)!r}, run_name='x')"],
                        cwd=str(tmp_path), capture_output=True, text=True)
     assert p.returncode == 0, p.stderr
+
+
+@pytest.mark.parametrize("company,proposed,mark", [
+    ("Northwind Labs", False, None),                 # tracked exactly (case and spacing fold)
+    ("NORTHWIND  labs", False, None),
+    ("Northwindtech", True, None),                    # 613.F1: substring is not a match
+    ("Northwind Labs Europe", True, "northwind labs"),  # whole-word overlap is marked, not dropped
+    ("Beacon AI", True, None),
+])
+def test_proposals_drop_only_an_exact_pipeline_company(root, monkeypatch, company, proposed, mark):
+    monkeypatch.setattr(sj, "score_role", lambda role, ctx: 8)
+    out = sj.assess([{"title": "Strategist", "company": company, "location": "San Francisco",
+                      "description": "Run strategy."}], root)
+    got = out["propose_for_pipeline"]
+    assert bool(got) is proposed
+    if proposed:
+        assert got[0].get("possible_match") == mark
+
+
+@pytest.mark.parametrize("company", ["Job Pipeline", "Active", "Company"])
+def test_pipeline_headings_and_header_row_are_not_tracked_companies(root, monkeypatch, company):
+    """Only table data rows name tracked companies: not the '# Job Pipeline' or '## Active'
+    headings, and not the header row."""
+    monkeypatch.setattr(sj, "score_role", lambda role, ctx: 8)
+    out = sj.assess([{"title": "Strategist", "company": company, "location": "San Francisco",
+                      "description": "Run strategy."}], root)
+    assert [r["company"] for r in out["propose_for_pipeline"]] == [company]
+    assert "possible_match" not in out["propose_for_pipeline"][0]
+
+
+def test_a_placeholder_pipeline_name_matches_nothing():
+    """A row whose company normalizes to nothing (an em dash placeholder) must not mark
+    every candidate as a possible match."""
+    assert sj.tracked_match("Beacon AI", ["—"]) == ""

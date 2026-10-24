@@ -32,6 +32,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from md_table import JsonArgumentParser, out_error, out_ok, parse_cols, read_file, safe_cell, write_atomic  # noqa: E402
+from name_dedup import normalize_name  # noqa: E402
 from slug import slugify  # noqa: E402
 from tools.career_scanner.scanner import geo_ok  # noqa: E402
 from tools.career_scanner.scorer import load_scoring_context, score_role  # noqa: E402
@@ -120,6 +121,25 @@ def pipeline_companies(text: str) -> list:
     return out
 
 
+def tracked_match(company: str, tracked: list) -> str:
+    """"tracked" when the company's normalized name equals a pipeline company's; the
+    pipeline name when one is a whole-word part of the other ("Acme" / "Acme AI");
+    "" otherwise. Bidirectional substring matching silently dropped a distinct company
+    whose name merely contained a tracked one's (613.F1)."""
+    name = normalize_name(company)
+    near = ""
+    for c in tracked:
+        other = normalize_name(c)
+        if not name or not other:
+            continue
+        if name == other:
+            return "tracked"
+        if not near and (re.search(rf"\b{re.escape(other)}\b", name)
+                         or re.search(rf"\b{re.escape(name)}\b", other)):
+            near = c
+    return near
+
+
 def assess(ads: list, root: Path) -> dict:
     ctx = load_scoring_context(root)
     cutoffs = {**STATUS_CUTOFFS, **((ctx.get("fit_spec") or {}).get("status_cutoffs") or {})}
@@ -147,8 +167,16 @@ def assess(ads: list, root: Path) -> dict:
             reason += " (title_only)"
         new.append({**{f: ad.get(f, "") for f in ("title", "company", "location", "url", "ad_date")},
                     "score": score, "status": status, "reason": reason})
-    propose = [r for r in new if r["status"] == "shortlisted"
-               and not any(r["company"].lower() in c or c in r["company"].lower() for c in tracked)]
+    propose = []
+    for r in new:
+        if r["status"] != "shortlisted":
+            continue
+        verdict = tracked_match(r["company"], tracked)
+        if verdict == "tracked":
+            continue
+        if verdict:
+            r["possible_match"] = verdict   # whole-word overlap: Nick decides, never dropped
+        propose.append(r)
     return {"found": len(ads), "cached": cached, "new": new, "propose_for_pipeline": propose,
             "cutoffs": cutoffs}
 

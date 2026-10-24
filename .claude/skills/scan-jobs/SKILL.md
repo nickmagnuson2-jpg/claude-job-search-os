@@ -177,7 +177,7 @@ where `output/scan-jobs/new.json` holds the `new` array from Step 6. It appends 
 
 ### Step 9: Pipeline proposals
 
-For each entry in `propose_for_pipeline`, ask: `[Company] — [Role] (score N/10) — add to pipeline? (Y/N)`. On Y:
+For each entry in `propose_for_pipeline`, ask: `[Company] — [Role] (score N/10) — add to pipeline? (Y/N)`. If the entry has `possible_match`, say so first: `([Company] may be [possible_match], already in the pipeline)`. On Y:
 
 ```bash
 PYTHONIOENCODING=utf-8 python3 tools/pipe_write.py --repo-root . add "<Company>" "<Role>" --url "<url>" --stage Researching
