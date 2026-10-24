@@ -723,6 +723,26 @@ def parse_findings(report: Path) -> list[dict]:
     return out
 
 
+_MODEL_BINARIES = {Path(m.argv[0]).name for m in MODELS.values()}
+_REAL_SUBPROCESS_RUN = subprocess.run   # a test that fakes subprocess.run starts nothing
+_REAL_APPEND_ROW = gate.append_row      # a test that fakes append_row writes nothing
+
+
+def refuse_dispatch_inside_tests(argv: list[str]) -> None:
+    """Never start a real verifier while pytest is running.
+
+    2026-10-24: a mutation run disabled run()'s missing-image refusal, and the test that
+    checks it called the real model, spent API time, and wrote two rows ("target": "t")
+    into the REAL ledger, which the gate and /standup read. One interlock at the only
+    dispatch point stops every such escape, whichever earlier refusal a mutant removes.
+    A test that replaced subprocess.run starts nothing real, so it is not refused.
+    """
+    if (os.environ.get("PYTEST_CURRENT_TEST") and subprocess.run is _REAL_SUBPROCESS_RUN
+            and any(Path(a).name in _MODEL_BINARIES for a in argv)):
+        raise SystemExit("codex_verify: refusing to start a real verifier inside a test run; "
+                         "stub jailed_argv or run() in the test.")
+
+
 def run(repo_root: Path, target: str, paths: list[str], question: str,
         report: Path, prior: str | None, print_only: bool,
         mode: str = "verify", claims: list[str] | None = None,
@@ -756,6 +776,7 @@ def run(repo_root: Path, target: str, paths: list[str], question: str,
     policy_file.write_text(sandbox_policy(repo_root, extra_writable=[report.parent]),
                            encoding="utf-8")
     argv = jailed_argv(repo_root, policy_file, model, images=images)
+    refuse_dispatch_inside_tests(argv)
     try:
         if spec.prompt_via == "argv":
             proc = subprocess.run(argv + [prompt], capture_output=True, text=True,
@@ -803,6 +824,12 @@ def run(repo_root: Path, target: str, paths: list[str], question: str,
         "report_fresh": report_fresh,
         "verified": verified,
     }
+    if (os.environ.get("PYTEST_CURRENT_TEST") and gate.append_row is _REAL_APPEND_ROW
+            and Path(repo_root).resolve() == REPO_ROOT.resolve()):
+        # The second half of the test interlock: between 2026-09-18 and 10-24 every mutation
+        # run of this file let a test write rows into the real ledger (22 of them).
+        raise SystemExit("codex_verify: refusing to write the real ledger inside a test run; "
+                         "pass a tmp repo_root or stub gate.append_row.")
     gate.append_row(repo_root, row)
     status = "ok" if verified else (
         "no_report_written" if not report_fresh else "run_failed")

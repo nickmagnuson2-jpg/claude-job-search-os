@@ -63,6 +63,9 @@ Every guard edit below was approved by Nick and reviewed by Codex and Grok befor
   made through export/local/declare, judges printf, and leaves `--name=$X`, `[[ ]]` and
   `case` alone; `standup_collect.py` reports a script that exited nonzero but printed data
   as partial, not failed.
+- **`codex_verify.py` test interlocks**: inside pytest it refuses to start a real verifier
+  or write the real ledger. Every mutation run of the file since 2026-09-18 had let a test
+  call the real model and leave rows in the ledger the push gate reads (22 rows).
 
 **Fixes and smaller changes**
 - `mutation_check.py` refuses to mutate a wired hook inside a live Claude session unless

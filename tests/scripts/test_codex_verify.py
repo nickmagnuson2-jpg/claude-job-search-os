@@ -1301,7 +1301,11 @@ def test_the_ledger_records_what_the_verifier_could_see(tmp_path, monkeypatch):
     assert rows and rows[0]["images"] == [str(img)]
 
 
-def test_a_missing_image_fails_before_the_model_is_dispatched(tmp_path):
+def test_a_missing_image_fails_before_the_model_is_dispatched(tmp_path, monkeypatch):
+    # Offline even under a mutant: on 2026-10-24 a mutant that skipped this check sent the
+    # call to the real model and wrote into the real ledger.
+    monkeypatch.setattr(cv, "jailed_argv", lambda *a, **k: ["true"])
+    monkeypatch.setattr(cv.gate, "append_row", lambda *a, **k: None)
     with pytest.raises(SystemExit) as exc:
         cv.run(REPO_ROOT, "t", [], "", tmp_path / "r.md", None, False,
                model="codex", images=[tmp_path / "nope.png"])
@@ -1724,3 +1728,49 @@ def test_mutation_run_alive_says_alive_when_the_lock_check_cannot_load(monkeypat
     import codex_verify as cv
     monkeypatch.setitem(sys.modules, "mutation_check", None)    # import now raises ImportError
     assert cv._mutation_run_alive(tmp_path) is True
+
+
+
+def test_no_real_verifier_starts_inside_a_test_run():
+    """The interlock behind every refusal: pytest sets PYTEST_CURRENT_TEST, and a model
+    binary anywhere in the argv is refused before subprocess runs."""
+    import os
+    assert os.environ.get("PYTEST_CURRENT_TEST")
+    for argv in (["sandbox-exec", "-f", "p.sb", "/opt/bin/codex", "exec"],
+                 ["sandbox-exec", "/Users/x/.local/bin/cursor-agent", "-p"]):
+        with pytest.raises(SystemExit) as exc:
+            cv.refuse_dispatch_inside_tests(argv)
+        assert "inside a test run" in str(exc.value)
+    cv.refuse_dispatch_inside_tests(["true"])          # a stub is fine
+
+
+def test_the_interlock_is_off_outside_pytest(monkeypatch):
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+    assert cv.refuse_dispatch_inside_tests(["/opt/bin/codex", "exec"]) is None
+
+
+def test_run_calls_the_interlock_before_dispatch(tmp_path, monkeypatch):
+    """With the REAL subprocess.run in place, a model binary never starts: the interlock
+    raises first (without it, this argv would fail on a missing binary instead)."""
+    monkeypatch.setattr(cv, "jailed_argv", lambda *a, **k: ["/opt/bin/codex", "exec"])
+    monkeypatch.setattr(cv, "gather_env_facts", lambda root: "")
+    monkeypatch.setattr(cv.gate, "append_row", lambda *a, **k: None)
+    with pytest.raises(SystemExit) as exc:
+        cv.run(tmp_path, "t", [], "", tmp_path / "r.md", None, False, model="codex")
+    assert "inside a test run" in str(exc.value)
+
+
+def test_a_faked_subprocess_is_not_refused(monkeypatch):
+    monkeypatch.setattr(cv.subprocess, "run", lambda *a, **k: None)
+    assert cv.refuse_dispatch_inside_tests(["/opt/bin/codex", "exec"]) is None
+
+
+
+def test_a_test_run_never_writes_the_real_ledger(tmp_path, monkeypatch):
+    """run() refuses the real repo's ledger under pytest, so no mutant can leave rows that
+    the gate and /standup would then read as reviews (22 such rows, 2026-09-18..10-24)."""
+    monkeypatch.setattr(cv, "jailed_argv", lambda *a, **k: ["true"])
+    monkeypatch.setattr(cv, "gather_env_facts", lambda root: "")
+    with pytest.raises(SystemExit) as exc:
+        cv.run(REPO_ROOT, "t", [], "", tmp_path / "r.md", None, False, model="codex")
+    assert "real ledger" in str(exc.value)
