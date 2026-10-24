@@ -363,6 +363,33 @@ def test_upcoming_scheduled_next_action_date_wins_over_stage_log_date(tmp_path):
     assert up[0]["date"] == "2026-10-23"
 
 
+def _upcoming(tmp_path, target, *rows):
+    _pipeline(tmp_path, *rows)
+    return run_script("todo_daily_metrics.py", "--target-date", target,
+                      "--repo-root", str(tmp_path))["upcoming_scheduled"]
+
+
+def test_a_stage_log_date_alone_is_not_an_upcoming_event(tmp_path):
+    """Final review 584/585/586: a logged action in Stage ("Emailed ... 10/23") is
+    not scheduled, so with no Next-Action date the row must not surface."""
+    assert _upcoming(tmp_path, "2026-10-22",
+        "| AcmeCo | Role | Emailed Casey Doe 10/23 | 2026-10-22 | Await reply | — | — | — |") == []
+
+
+def test_a_closed_row_stage_date_is_not_upcoming(tmp_path):
+    assert _upcoming(tmp_path, "2026-10-22",
+        "| AcmeCo | Role | Rejected after interview 10/23 | 2026-10-22 | — | — | — | — |") == []
+
+
+def test_a_stage_interview_beats_a_generic_next_action_date(tmp_path):
+    """A follow-up date in Next-Action must not hide an interview recorded in Stage."""
+    up = _upcoming(tmp_path, "2026-10-22",
+        "| AcmeCo | Role | Interviewing - onsite Fri 10/24 | 2026-10-22 | "
+        "Send prep notes by 10/23 | — | — | — |")
+    assert len(up) == 1
+    assert up[0]["date"] == "2026-10-24" and up[0]["is_event"] is True
+
+
 # ===========================================================================
 # repo_root must be resolved before building the memory-dir key (2026-08-19)
 #

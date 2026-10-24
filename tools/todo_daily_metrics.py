@@ -43,6 +43,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from schema_guard import assert_schema, find_header_line, SchemaDriftError  # noqa: E402
 from hook_runtime import claude_project_dir  # noqa: E402
+from stage_vocab import is_terminal_stage  # noqa: E402
 
 # Canonical schemas (see the writers: tools/todo_write.py, tools/pipe_write.py). The
 # cols[N] indices throughout this file's parsers assume these exact column orders.
@@ -117,7 +118,7 @@ def is_closed_status(status: str) -> bool:
 
     Prefix match, not equality: real rows carry a date and reason after the word
     ("Withdrawn 2026-05-20 (role dropped)"), and an exact-string test let those
-    rows count as overdue forever. Shared with tools/duet_snapshot.py.
+    rows count as overdue forever.
     """
     return (status or "").strip().lower().startswith(CLOSED_STATUS_PREFIXES)
 
@@ -473,8 +474,8 @@ def parse_upcoming_scheduled(pipeline_content: str, today: date,
       [{ company, role, date: "YYYY-MM-DD", days_until, is_event, stage,
          next_action }]
 
-    Next-Action is read first; Stage is the fallback when Next-Action has no
-    date in the window. Scheduling detail moves between the two when rows are
+    Next-Action is read first. Stage is read only when it names a scheduled event
+    on an open row, and an event in either column beats a generic follow-up date. Scheduling detail moves between the two when rows are
     edited by hand (2026-08-23: a next-day loop lived only in Stage,
     "Interviewing - full loop confirmed Mon 8/24 ...", while Next-Action held a
     past prep date, so it never surfaced). Stage is not merged into the scan
@@ -506,15 +507,22 @@ def parse_upcoming_scheduled(pipeline_content: str, today: date,
         if _is_separator_row(cols[0]):
             continue
         stage, next_action = cols[2], cols[4]
-        source, dates = None, []
-        for text in (next_action, stage):
-            dates = [d for d in _extract_dates(text, today)
-                     if today <= d <= window_end]
-            if dates:
-                source = text
-                break
-        if not dates:
+        # Stage counts only when it describes a scheduled event on an open row: it
+        # also logs past actions ("Emailed X 10/22") and closed-row history, which
+        # are not upcoming (final review 584/585/586). An event beats a generic
+        # follow-up date, so a Next-Action date cannot hide a Stage interview.
+        stage_is_event = (not is_terminal_stage(stage)
+                          and bool(SCHEDULED_EVENT_RE.search(stage)))
+        candidates = []
+        for text in (next_action, stage if stage_is_event else ""):
+            in_window = [d for d in _extract_dates(text, today)
+                         if today <= d <= window_end]
+            if in_window:
+                candidates.append((text, in_window))
+        if not candidates:
             continue
+        source, dates = next(((t, d) for t, d in candidates
+                              if SCHEDULED_EVENT_RE.search(t)), candidates[0])
         event_date = min(dates)
         results.append({
             "company": cols[0],
