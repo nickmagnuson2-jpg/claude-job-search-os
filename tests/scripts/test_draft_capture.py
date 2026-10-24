@@ -640,3 +640,42 @@ def test_unlearned_skips_clean_sends_and_catches_pre_gate_chat_revisions(store):
     assert [m["id"] for m in dc.unlearned()] == [pre_gate]
     assert old != pre_gate
 
+
+# --- the diff Claude shows for an edited send comes from the script, not from recall ---
+# 2026-09-23 and 2026-10-21: a draft-vs-sent diff was described by eye, once only after Nick
+# asked for it. The edits are now computed here, so a recalled diff has nothing to replace.
+
+EDIT_DRAFT = ("TO: casey@example.com\nSUBJECT: Re: Intro\nBODY:\nHi Casey,\n\n"
+              "At this stage, I am focused on product roles.\n\nThanks!\nNick\n")
+EDIT_SENT = ("Hi Casey,\n\nAt the seed stage (where I am looking), I am focused on "
+             "product roles.\n\nThanks!\nNick\n")
+EDIT = {"op": "replace", "draft": "this stage,", "sent": "the seed stage (where I am looking),"}
+
+
+def test_edited_confirm_reports_word_level_edits(store):
+    cid = dc.capture(EDIT_DRAFT)
+    meta = dc.confirm(cid, "edited", sent_text=EDIT_SENT, no_lesson="test")
+    assert meta["edits"] == [EDIT]
+    assert dc.read_meta(cid)["edits"] == [EDIT]
+    assert dc.word_edits("a b c", "a c d") == [{"op": "delete", "draft": "b", "sent": ""},
+                                                {"op": "insert", "draft": "", "sent": "d"}]
+
+
+def test_lesson_refusal_names_the_edits(store):
+    cid = dc.capture(EDIT_DRAFT)
+    with pytest.raises(dc.CaptureError) as exc:
+        dc.confirm(cid, "edited", sent_text=EDIT_SENT)
+    assert json.dumps([EDIT], ensure_ascii=False) in str(exc.value)
+
+
+def test_layout_only_edit_has_no_edits(store):
+    cid = dc.capture(EDIT_DRAFT)
+    reflowed = dc.body_of(EDIT_DRAFT).replace("\n\n", "\n").replace(" I am", "\nI am") + "\n\n"
+    assert dc.confirm(cid, "edited", sent_text=reflowed)["edits"] == []
+
+
+def test_a_confirmation_that_is_not_an_edit_carries_no_edits(store):
+    cid = dc.capture(EDIT_DRAFT)
+    dc.confirm(cid, "edited", sent_text=EDIT_SENT, no_lesson="test")
+    assert "edits" not in dc.confirm(cid, "not-sent", force=True)
+

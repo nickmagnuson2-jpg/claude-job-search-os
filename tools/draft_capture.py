@@ -21,8 +21,9 @@ in the nightly backup):
 
     <id>/draft-v0.txt   the pending draft, byte for byte, as it was when compose opened
     <id>/meta.json      id, kind, skill, recipient, subject, opened_at, status, and after
-                        confirmation: confirmed_at, how the sent text was obtained, and
-                        how much of the draft changed
+                        confirmation: confirmed_at, how the sent text was obtained, how
+                        much of the draft changed, and for `edited` the word-level edits
+                        ([{op, draft, sent}]) that are the diff to show Nick
     <id>/sent.txt       the text Nick sent, only when it differs from the draft
 
 STATUS. `opened` means compose was opened and nothing else is known. It is NOT evidence of a
@@ -199,9 +200,25 @@ def changed_word_ratio(draft: str, sent: str) -> float:
     a, b = _words(draft), _words(sent)
     if not a and not b:
         return 0.0
-    kept = sum(block.size for block in
-               difflib.SequenceMatcher(None, a, b, autojunk=False).get_matching_blocks())
+    kept = sum(block.size for block in _matcher(a, b).get_matching_blocks())
     return round(1.0 - kept / max(len(a), len(b)), 4)
+
+
+def _matcher(a: list[str], b: list[str]) -> difflib.SequenceMatcher:
+    return difflib.SequenceMatcher(None, a, b, autojunk=False)
+
+
+def word_edits(draft: str, sent: str) -> list[dict]:
+    """Each change between the draft and what was sent, as {op, draft, sent}, in order.
+
+    This is the draft-vs-sent diff Claude presents and logs on a sent confirmation. It is
+    computed here so that it is never described from memory, which once missed an edit and
+    once was offered only after Nick asked (feedback_show_computed_draft_vs_sent_diff).
+    `op` is replace, delete or insert. Whitespace and line breaks are not edits.
+    """
+    a, b = _words(draft), _words(sent)
+    return [{"op": op, "draft": " ".join(a[i1:i2]), "sent": " ".join(b[j1:j2])}
+            for op, i1, i2, j1, j2 in _matcher(a, b).get_opcodes() if op != "equal"]
 
 
 def _thread_subject(subject: str) -> str:
@@ -278,13 +295,14 @@ def confirm(capture_id: str, outcome: str, sent_text: str | None = None,
 
     draft_body = body_of((directory / DRAFT_NAME).read_text(encoding="utf-8"))
     sent_file = directory / SENT_NAME
+    edits = word_edits(draft_body, body_of(sent_text)) if outcome == "edited" else []
     revised = 0
     if meta.get("kind") in LESSON_KINDS and outcome in ("edited", "unchanged"):
         revised = len(earlier_versions(meta))
         edit = (changed_word_ratio(draft_body, body_of(sent_text))
                 if outcome == "edited" else 0.0)
         if revised or edit > 0:
-            _check_lesson(revised, edit, lesson_ref, no_lesson)
+            _check_lesson(revised, edit, lesson_ref, no_lesson, edits)
             if lesson_ref is not None:
                 meta["lesson_ref"] = lesson_ref
             else:
@@ -293,11 +311,13 @@ def confirm(capture_id: str, outcome: str, sent_text: str | None = None,
         sent_file.write_text(sent_text, encoding="utf-8")
         ratio = changed_word_ratio(draft_body, body_of(sent_text))
         meta["sent_words"] = len(_words(body_of(sent_text)))
+        meta["edits"] = edits
     else:
         # A replaced confirmation must not leave an older sent.txt beside a record that
         # now says unchanged or not sent.
         sent_file.unlink(missing_ok=True)
         meta.pop("sent_words", None)
+        meta.pop("edits", None)
         ratio = 0.0 if outcome == "unchanged" else None
     meta.update({
         "status": outcome,
@@ -316,7 +336,7 @@ def confirm(capture_id: str, outcome: str, sent_text: str | None = None,
 
 
 def _check_lesson(revised: int, edit: float, lesson_ref: str | None,
-                  no_lesson: str | None) -> None:
+                  no_lesson: str | None, edits: list[dict]) -> None:
     """Refuse a revised send that names no lesson, a lesson that is not in the log, or an
     empty reason for having none. Raised before anything is written."""
     if lesson_ref is not None:
@@ -338,7 +358,8 @@ def _check_lesson(revised: int, edit: float, lesson_ref: str | None,
     raise CaptureError(
         "this email was revised (" + "; ".join(why) + "). Add the edits to "
         "memory/lessons.md Section 2 and pass --lesson \"<text from that row>\", "
-        "or pass --no-lesson \"<why there is nothing to learn>\"")
+        "or pass --no-lesson \"<why there is nothing to learn>\""
+        + (". Edits: " + json.dumps(edits, ensure_ascii=False) if edits else ""))
 
 
 def unlearned() -> list[dict]:
