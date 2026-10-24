@@ -93,7 +93,9 @@ def parse_all_rows(content: str, today: date) -> list[dict]:
             continue
 
         cols = [c.strip() for c in line.strip("|").split("|")]
-        if len(cols) < 3 or not cols[0] or cols[0] == "---":
+        # An empty first cell, or a separator cell made only of '-', ':' and spaces
+        # ("---", ":---", "---:"), is not a company.
+        if len(cols) < 3 or set(cols[0]) <= set("-: "):
             continue
 
         def col(i: int) -> str:
@@ -158,7 +160,7 @@ def parse_pipeline(content: str, today: date) -> dict:
             continue
 
         cols = [c.strip() for c in line.strip("|").split("|")]
-        if len(cols) < 3 or not cols[0]:
+        if len(cols) < 3 or set(cols[0]) <= set("-: "):
             continue
 
         # Column mapping (8-column format):
@@ -172,10 +174,6 @@ def parse_pipeline(content: str, today: date) -> dict:
         cv_used      = cols[5] if len(cols) > 5 else ""
         notes        = cols[6] if len(cols) > 6 else ""
         url          = cols[7] if len(cols) > 7 else ""
-
-        # Skip separator rows (e.g. "---")
-        if company == "---":
-            continue
 
         # Count archived/closed entries separately. Uses the shared freeform-stage
         # classifier, not a 4-value exact set — otherwise descriptive closed stages

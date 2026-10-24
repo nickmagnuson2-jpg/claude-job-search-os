@@ -251,3 +251,16 @@ def test_parse_all_rows_flags_stale_only_past_the_threshold_and_with_a_date():
     )
     stale = {r["company"]: r["stale"] for r in pipe_read.parse_all_rows(content, TODAY)}
     assert stale == {"AtFive": True, "AtFour": False, "NoDate": False}
+
+
+@pytest.mark.parametrize("parse", ["all_rows", "pipeline"])
+def test_alignment_separator_rows_are_not_companies(parse):
+    """BEHAVIOR CHANGE 2026-10-24: a '| :--- | ---: |' separator used to come back as a
+    company named ':---'. Three readers that moved onto parse_all_rows skipped it."""
+    content = ("## Active\n| Company | Role | Stage | Date Updated | Next Action | CV Used | Notes | URL |\n"
+               "| :--- | :--- | ---: | --- | --- | --- | --- | --- |\n" + FULL_ROW + "\n")
+    if parse == "all_rows":
+        rows = pipe_read.parse_all_rows(content, TODAY)
+    else:
+        rows = pipe_read.parse_pipeline(content, TODAY)["active_entries"]
+    assert [r["company"] for r in rows] == ["Acme"]
