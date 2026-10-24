@@ -30,6 +30,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from stage_vocab import is_terminal_stage  # noqa: E402
 from pipe_read import parse_all_rows  # noqa: E402
 from md_table import read_file_narrow as read_file  # noqa: E402
+from outreach_read import parse_rows as parse_outreach_rows  # noqa: E402
 
 
 def parse_args():
@@ -172,21 +173,9 @@ def parse_outreach_log(content: str, today: date, lookback_days: int,
     awaiting = []
     awaiting_overdue = []
 
-    for line in content.splitlines():
-        if not line.startswith("|") or line.startswith("| Date") or line.startswith("|---"):
-            continue
-
-        cols = [c.strip() for c in line.strip("|").split("|")]
-        if len(cols) < 6:
-            continue
-
-        date_str = cols[0]
-        outreach_type = cols[1]
-        channel = cols[2]
-        name = cols[3]
-        company = cols[4]
-        subject = cols[5]
-        status = cols[6] if len(cols) > 6 else "Drafted"
+    for row in parse_outreach_rows(content):
+        date_str, channel, name = row["date"], row["channel"], row["recipient"]
+        company, subject, status = row["company"], row["subject"], row["status"]
 
         try:
             sent_date = datetime.strptime(date_str, "%Y-%m-%d").date()

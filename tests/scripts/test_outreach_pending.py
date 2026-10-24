@@ -451,3 +451,13 @@ def test_parse_pipeline_stages_skips_a_header_row_written_without_spaces():
     content = ("## Active\n|Company|Role|Stage|Date Updated|Next Action|CV Used|Notes|URL|\n"
                "|---|---|---|---|---|---|---|---|\n| Acme | PM | Applied | 2026-02-01 | x | | | |\n")
     assert _op.parse_pipeline_stages(content) == {"acme": "Applied"}
+
+
+def test_a_six_cell_row_without_status_is_not_read():
+    """BEHAVIOR CHANGE 2026-10-24 (now read through outreach_read, which needs all
+    seven cells): a row missing its Status cell used to be read as 'Drafted'."""
+    from datetime import date
+    content = ("| Date | Skill | Channel | Recipient | Company | Subject | Status |\n|---|---|---|---|---|---|---|\n"
+               "| 2026-02-01 | cold | email | Ann Example | Acme | Hi |\n")
+    out = _op.parse_outreach_log(content, date(2026, 2, 28), 30, 7)
+    assert out["awaiting_response_overdue"] == [] and out["awaiting_response"] == []

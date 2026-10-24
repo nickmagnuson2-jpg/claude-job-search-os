@@ -205,3 +205,13 @@ def test_resolve_contact_outcomes_reads_every_seven_cell_row_with_a_recipient(tm
     assert [r["label"] for r in out] == [se.classify_contact_outcome("Replied"),
                                          se.classify_contact_outcome("Sent")]
     assert se.resolve_contact_outcomes(tmp_path / "missing") == []
+
+
+def test_resolve_contact_outcomes_ignores_indented_rows(tmp_path):
+    """BEHAVIOR CHANGE 2026-10-24 (now read through outreach_read): an indented row
+    used to be read because the line was stripped first."""
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "outreach-log.md").write_text(
+        "| Date | Skill | Channel | Recipient | Company | Subject | Status |\n|---|---|---|---|---|---|---|\n"
+        " | 2026-02-01 | cold | email | Ann Example | Acme | Hi | Replied |\n", encoding="utf-8")
+    assert se.resolve_contact_outcomes(tmp_path) == []

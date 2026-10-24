@@ -45,6 +45,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import stage_vocab  # single source of truth for stage classification
 from pipe_read import parse_all_rows  # noqa: E402
+from outreach_read import parse_rows as parse_outreach_rows  # noqa: E402
 
 # Engagement in the STAGE field is reliable (the stage names the process state), so
 # the full keyword set applies there. Excludes "applied"/"researching" (contact made,
@@ -247,24 +248,9 @@ def resolve_contact_outcomes(repo_root: Path) -> list:
     path = repo_root / "data" / "outreach-log.md"
     if not path.exists():
         return []
-    content = path.read_text(encoding="utf-8")
-    out = []
-    for line in content.splitlines():
-        line = line.strip()
-        if not line.startswith("|"):
-            continue
-        cols = [c.strip() for c in line.strip("|").split("|")]
-        # Columns: Date | Skill | Channel | Recipient | Company | Subject | Status
-        if len(cols) < 7:
-            continue
-        if cols[0] in ("Date", "") or set(cols[0]) <= set("-: "):
-            continue
-        recipient, status = cols[3], cols[6]
-        if not recipient:
-            continue
-        out.append({"entity": recipient, "company": cols[4], "status": status,
-                    "label": classify_contact_outcome(status)})
-    return out
+    return [{"entity": r["recipient"], "company": r["company"], "status": r["status"],
+             "label": classify_contact_outcome(r["status"])}
+            for r in parse_outreach_rows(path.read_text(encoding="utf-8")) if r["recipient"]]
 
 
 # ---------------------------------------------------------------------------

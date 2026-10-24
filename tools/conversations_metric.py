@@ -26,6 +26,9 @@ import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from outreach_read import parse_rows as parse_outreach_rows  # noqa: E402
+
 WINDOWS = (7, 30, 90)
 
 # --- interaction-type vocabulary -------------------------------------------------
@@ -186,22 +189,15 @@ def count_outreach(path: Path, today: date) -> dict:
         out["error"] = "file not found"
         return out
     try:
-        lines = path.read_text(encoding="utf-8").splitlines()
+        content = path.read_text(encoding="utf-8")
     except OSError as e:
         out["error"] = f"unreadable: {e}"
         return out
     counts = _empty_windows()
     sent_states = {"sent", "replied", "delivered", "no reply", "delivery unknown", "bounced"}
-    for line in lines:
-        if not line.startswith("|") or line.startswith("| ---"):
-            continue
-        cells = [c.strip() for c in line.strip().strip("|").split("|")]
-        if len(cells) < 7:
-            continue
-        d = _parse_date(cells[0])
-        if d is None:
-            continue
-        if cells[-1].casefold() in sent_states:
+    for row in parse_outreach_rows(content):
+        d = _parse_date(row["date"])
+        if d is not None and row["status"].casefold() in sent_states:
             _add(counts, d, today)
     out.update(readable=True, counts=counts)
     return out
