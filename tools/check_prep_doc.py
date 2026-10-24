@@ -11,7 +11,8 @@ something unless the outreach log says it actually arrived. This is where the su
 defect gets caught mechanically rather than by anyone remembering the rule.
 
 Check 7: the Primary proof may not name a dated source (DATED_PROOF_SOURCES) unless the
-doc records that Nick chose it, as `<!-- proof_override: nick <reason> -->`. The Reserve
+doc records that Nick chose it, as `<!-- proof_override: nick <reason> -->` on the Primary
+proof line or the line right after it. The Reserve
 slot is exempt by design: a dated proof is an acceptable fallback, not a lead.
 
 Deliberately NOT a hook. The suppressive-phrasing boundary is contextual and a regex
@@ -83,6 +84,19 @@ _DATED_RE = re.compile("|".join(f"(?:{p})" for p in DATED_PROOF_SOURCES), re.I)
 # The override must carry a reason after "nick": an unexplained override cannot be told
 # apart from a skipped gate.
 _PROOF_OVERRIDE_RE = re.compile(r"<!--\s*proof_override:\s*nick\s+\S.*?-->", re.I | re.S)
+_PRIMARY_LINE_RE = re.compile(r"^.*\*\*Primary proof\*\*.*$", re.M)
+
+
+def _override_beside_primary(text: str) -> bool:
+    """The override counts only on the Primary proof line or the line right after it,
+    so a stale or unrelated marker elsewhere in the doc cannot excuse a dated lead
+    (final review 554.F1)."""
+    m = _PRIMARY_LINE_RE.search(text)
+    if not m:
+        return False
+    nxt = text.find("\n", m.end() + 1)
+    window = text[m.start(): nxt if nxt != -1 else len(text)]
+    return bool(_PROOF_OVERRIDE_RE.search(window))
 
 
 def doc_date(path: Path, fallback: str | None) -> str | None:
@@ -194,7 +208,7 @@ def check_doc(path: Path, as_of: str | None = None) -> tuple[int, dict]:
     # --- check 7: a dated source never fills the Primary slot without Nick's override
     if proofs["primary"]:
         dated = _DATED_RE.search(proofs["primary"]["proof"])
-        if dated and not _PROOF_OVERRIDE_RE.search(text):
+        if dated and not _override_beside_primary(text):
             failures.append({
                 "check": 7,
                 "message": (

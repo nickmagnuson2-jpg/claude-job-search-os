@@ -2,8 +2,8 @@
 
 Checks 1-3: a prep doc binds a primary AND a reserve proof, in canonically different
 domains. Checks 4-6: it may not tell Nick to withhold an artifact unless a stamp says
-that artifact actually arrived. Check 7: the Primary proof may not name a dated source
-unless the doc records Nick's override with a reason.
+that artifact actually arrived. Check 7: the Primary proof may not name a source listed in
+DATED_PROOF_SOURCES unless the doc records Nick's override with a reason.
 
 The two cases that encode real incidents:
   * test_synonym_collapse_fails_check_3 — a "reserve" in the primary's own domain
@@ -188,17 +188,25 @@ _RECENT = "rebuilt the onboarding path at Acme and cut client ramp time by half.
 _DATED = "ESPN, sized an ad-delivery gap against in-season traffic."
 
 
-def _proof_doc(tmp_path, primary: str, reserve: str, extra: str = "") -> tuple[int, dict]:
+def _proof_doc(tmp_path, primary: str, reserve: str, extra: str = "",
+               after_primary: str = "") -> tuple[int, dict]:
     doc = tmp_path / "acme-prep.md"
     doc.write_text(
         "# Acme Corp prep\n\n## THE ONE THING\n\n"
         f"**Primary proof** (domain: customer-ops): {primary}\n"
-        f"**Reserve proof** (domain: product-analytics): {reserve}\n"
+        + (f"{after_primary}\n" if after_primary else "")
+        + f"**Reserve proof** (domain: product-analytics): {reserve}\n"
         f"{extra}\n## Logistics\n\n- Camera on.\n",
         encoding="utf-8",
     )
     proc = run_script_raw("check_prep_doc.py", str(doc))
     return proc.returncode, json.loads(proc.stdout)
+
+
+_MARKER = "<!-- proof_override: nick 2026-10-22 asked to lead with this one -->"
+
+# Every passing case below is paired with the same doc changed in exactly one way that
+# must FAIL check 7, so each test dies if check 7 is removed (final review 564.F3).
 
 
 def test_dated_source_as_primary_proof_fails_check_7(tmp_path):
@@ -211,27 +219,39 @@ def test_dated_source_as_primary_proof_fails_check_7(tmp_path):
 def test_dated_source_in_reserve_only_passes(tmp_path):
     code, report = _proof_doc(tmp_path, _RECENT, _DATED)
     assert code == 0, report["failures"]
+    assert 7 in failed_checks(_proof_doc(tmp_path, _DATED, _RECENT)[1])
 
 
-def test_dated_primary_with_recorded_override_passes(tmp_path):
-    marker = "<!-- proof_override: nick 2026-10-22 asked to lead with this one -->"
-    code, report = _proof_doc(tmp_path, _DATED, _RECENT, extra=marker)
+def test_dated_primary_with_override_on_the_primary_line_passes(tmp_path):
+    code, report = _proof_doc(tmp_path, _DATED, _RECENT, after_primary=_MARKER)
     assert code == 0, report["failures"]
+    assert 7 in failed_checks(_proof_doc(tmp_path, _DATED, _RECENT)[1])
+
+
+def test_an_override_elsewhere_in_the_doc_does_not_count(tmp_path):
+    """554.F1: the override must sit with the Primary proof it excuses, not anywhere."""
+    code, report = _proof_doc(tmp_path, _DATED, _RECENT, extra=_MARKER)
+    assert code == 1 and 7 in failed_checks(report)
 
 
 def test_override_with_no_reason_is_not_an_override(tmp_path):
-    code, report = _proof_doc(tmp_path, _DATED, _RECENT, extra="<!-- proof_override: nick -->")
+    code, report = _proof_doc(tmp_path, _DATED, _RECENT,
+                              after_primary="<!-- proof_override: nick -->")
     assert code == 1 and 7 in failed_checks(report)
 
 
 def test_recent_primary_is_clean(tmp_path):
+    reserve = "McKinsey contact-center pilot, built the business case off tracking data."
     code, report = _proof_doc(
         tmp_path, "Zuora, chief of staff, led the AI adoption with one measurable use case.",
-        "McKinsey contact-center pilot, built the business case off tracking data.")
+        reserve)
     assert code == 0, report["failures"]
+    assert 7 in failed_checks(_proof_doc(tmp_path, _DATED, reserve)[1])
 
 
 def test_dated_source_match_is_word_bounded(tmp_path):
     """'espnet' or 'respnse' must not read as the dated source."""
     code, report = _proof_doc(tmp_path, "trained an ESPnet speech model at Acme.", _RECENT)
     assert 7 not in failed_checks(report)
+    assert 7 in failed_checks(
+        _proof_doc(tmp_path, "trained an ESPN speech model at Acme.", _RECENT)[1])
