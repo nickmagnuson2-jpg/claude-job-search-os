@@ -16,8 +16,8 @@ The failure class this repo actually suffers from is not "a thing crashes" -- it
                 path to $CLAUDE_PROJECT_DIR. If that variable does not expand, all
                 25 hooks break at once.
 
-Each test below asserts a wiring invariant that, if violated, would otherwise fail
-silently. Most are cheap structural checks that do not execute hook logic. A few do
+Each test below guards something that, if broken, would otherwise fail silently: mostly
+wiring, plus a few integrity ratchets. Most are cheap structural checks that do not execute hook logic. A few do
 run code: one representative hook end to end, each dual-mode checker as a subprocess
 (with an unknown flag and with its wired settings.json command, to prove neither form
 exits 0 having scanned nothing), and the ratchets that parse every tools file.

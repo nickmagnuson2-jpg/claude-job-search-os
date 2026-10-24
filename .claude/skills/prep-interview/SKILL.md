@@ -442,7 +442,7 @@ If any source is missing or empty, skip that section in output (graceful degrada
 
 ### Step 4c: Expected Self-Doubt Firings (inline, mandatory; D1)
 
-Per `framework/interview-prep-discipline.md` D1. REQUIRED in every prep doc (not agent-generated, since the belief catalog is candidate-specific). Read `data/professional-identity.md` for growth edges. Seed beliefs: take the candidate's belief catalog from D1 and use the ones that fit this call. If no catalog exists, ask the user which beliefs tend to fire before high-stakes calls. Owner-specific examples: `framework/interview-prep-discipline.md` (private; skip if absent).
+Per `framework/interview-prep-discipline.md` D1. REQUIRED in every prep doc (not agent-generated, since the belief catalog is candidate-specific). Read `data/professional-identity.md` for growth edges. Seed beliefs: take the candidate's belief catalog from D1 and use the ones that fit this call. If no catalog exists, do not stop to ask: seed from common ones and keep the 3-5 that fit this call and the growth edges, for example "they will find out I'm less capable than I seem", "my results were mostly luck", "it has to be polished before I show it", "pushing back will cost me the room". Then add one line to the doc suggesting the candidate record their own catalog in `data/professional-identity.md`. Owner-specific examples: `framework/interview-prep-discipline.md` (private; skip if absent).
 
 Build a table for 3-5 beliefs likely to fire in THIS call:
 
