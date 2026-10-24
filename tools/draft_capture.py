@@ -35,6 +35,21 @@ USAGE
     PYTHONIOENCODING=utf-8 python3 tools/draft_capture.py confirm <id> not-sent
     PYTHONIOENCODING=utf-8 python3 tools/draft_capture.py cv output/<slug>/MMDDYY-magnuson.content.yaml
 
+A REVISED EMAIL IS NOT RECORDED AS SENT UNTIL ITS EDITS ARE LEARNED FROM (2026-10-22). An email
+is revised when the sent text differs from the draft, or when earlier drafts to the same
+recipient and subject were replaced the same day (the edits Nick asked for in chat before
+compose opened). `confirm` then refuses unless it is given one of:
+
+    --lesson "<text that appears in a memory/lessons.md table row>"   checked, not trusted
+    --no-lesson "<why there is nothing to learn>"                     recorded in meta
+
+The audit that produced this found 5 of last week's sends with real edits and no lessons
+row; the only session that wrote one did so because Nick asked. `unlearned` lists revised
+sends confirmed without either flag (all of them, from before this gate existed).
+
+    PYTHONIOENCODING=utf-8 python3 tools/draft_capture.py confirm <id> edited --body-file sent.txt --lesson "Casey Doe / Acme, 2026-10-22"
+    PYTHONIOENCODING=utf-8 python3 tools/draft_capture.py unlearned
+
 `--screenshot` records where the sent text came from. Nick's habit is to screenshot the sent
 mail; the body file is then a transcription of that image, and the record says so, because
 a transcription is weaker evidence than a paste.
@@ -57,6 +72,11 @@ DRAFT_NAME = "draft-v0.txt"
 SENT_NAME = "sent.txt"
 META_NAME = "meta.json"
 OUTCOMES = ("unchanged", "edited", "not-sent")
+# Kinds whose revisions must reach the lessons log. A CV is corrected in place by review
+# passes, so its edits are not Nick's voice corrections and are not held here.
+LESSON_KINDS = ("email",)
+# A reference shorter than this matches too many rows to mean one of them.
+MIN_LESSON_REF = 8
 
 
 def store_dir() -> Path:
@@ -64,6 +84,13 @@ def store_dir() -> Path:
     the real store."""
     override = os.environ.get("DRAFT_CAPTURE_DIR")
     return Path(override) if override else REPO_ROOT / "output" / "draft-captures"
+
+
+def lessons_path() -> Path:
+    """The lessons log a --lesson reference is checked against. LESSONS_PATH overrides it,
+    so a test never reads the real one."""
+    override = os.environ.get("LESSONS_PATH")
+    return Path(override) if override else REPO_ROOT / "memory" / "lessons.md"
 
 
 def _write_meta(directory: Path, meta: dict) -> None:
@@ -177,6 +204,43 @@ def changed_word_ratio(draft: str, sent: str) -> float:
     return round(1.0 - kept / max(len(a), len(b)), 4)
 
 
+def _thread_subject(subject: str) -> str:
+    return re.sub(r"^\s*(re|fwd?):\s*", "", subject or "", flags=re.I).strip().lower()
+
+
+def earlier_versions(meta: dict) -> list[dict]:
+    """Drafts replaced before this one: same kind, recipient and thread, opened earlier the
+    same day, never sent, and worded differently. Each is a revision Nick asked for before
+    compose opened. Re-opening the same text (to copy it again) is not a revision."""
+    if not meta.get("to"):
+        return []
+    day = (meta.get("opened_at") or "")[:10]
+    return [m for m in captures()
+            if m.get("id") != meta.get("id") and m.get("kind") == meta.get("kind")
+            and m.get("to") == meta.get("to")
+            and _thread_subject(m.get("subject", "")) == _thread_subject(meta.get("subject", ""))
+            and (m.get("opened_at") or "")[:10] == day
+            and (m.get("opened_at") or "") < (meta.get("opened_at") or "")
+            and m.get("status") in ("opened", "not-sent")
+            and _body_of_capture(m["id"]) != _body_of_capture(meta["id"])]
+
+
+def _body_of_capture(capture_id: str) -> str:
+    try:
+        return body_of((store_dir() / capture_id / DRAFT_NAME).read_text(encoding="utf-8"))
+    except OSError:
+        return ""
+
+
+def _lesson_row_exists(ref: str) -> bool:
+    """True when `ref` appears inside a table row of the lessons log, not just anywhere."""
+    try:
+        text = lessons_path().read_text(encoding="utf-8")
+    except OSError:
+        return False
+    return any(line.startswith("| ") and ref in line for line in text.split("\n"))
+
+
 class CaptureError(Exception):
     """A confirmation that cannot be recorded as asked."""
 
@@ -195,7 +259,8 @@ def resolve(capture_id: str) -> str:
 
 def confirm(capture_id: str, outcome: str, sent_text: str | None = None,
             screenshots: list[str] | None = None, force: bool = False,
-            now: float | None = None) -> dict:
+            now: float | None = None, lesson_ref: str | None = None,
+            no_lesson: str | None = None) -> dict:
     """Record what happened to a draft. Returns the updated meta."""
     if outcome not in OUTCOMES:
         raise CaptureError(f"outcome must be one of {', '.join(OUTCOMES)}")
@@ -213,6 +278,17 @@ def confirm(capture_id: str, outcome: str, sent_text: str | None = None,
 
     draft_body = body_of((directory / DRAFT_NAME).read_text(encoding="utf-8"))
     sent_file = directory / SENT_NAME
+    revised = 0
+    if meta.get("kind") in LESSON_KINDS and outcome in ("edited", "unchanged"):
+        revised = len(earlier_versions(meta))
+        edit = (changed_word_ratio(draft_body, body_of(sent_text))
+                if outcome == "edited" else 0.0)
+        if revised or edit > 0:
+            _check_lesson(revised, edit, lesson_ref, no_lesson)
+            if lesson_ref is not None:
+                meta["lesson_ref"] = lesson_ref
+            else:
+                meta["no_lesson_reason"] = no_lesson.strip()
     if outcome == "edited":
         sent_file.write_text(sent_text, encoding="utf-8")
         ratio = changed_word_ratio(draft_body, body_of(sent_text))
@@ -225,6 +301,7 @@ def confirm(capture_id: str, outcome: str, sent_text: str | None = None,
         ratio = 0.0 if outcome == "unchanged" else None
     meta.update({
         "status": outcome,
+        "revised_versions": revised,
         "confirmed_at": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(now)),
         "draft_words": len(_words(draft_body)),
         "changed_word_ratio": ratio,
@@ -236,6 +313,42 @@ def confirm(capture_id: str, outcome: str, sent_text: str | None = None,
     })
     _write_meta(directory, meta)
     return meta
+
+
+def _check_lesson(revised: int, edit: float, lesson_ref: str | None,
+                  no_lesson: str | None) -> None:
+    """Refuse a revised send that names no lesson, a lesson that is not in the log, or an
+    empty reason for having none. Raised before anything is written."""
+    if lesson_ref is not None:
+        if len(lesson_ref.strip()) < MIN_LESSON_REF:
+            raise CaptureError(f"--lesson must be at least {MIN_LESSON_REF} characters "
+                               f"of text from one lessons row")
+        if not _lesson_row_exists(lesson_ref):
+            raise CaptureError(f"--lesson {lesson_ref!r} not found in a table row of "
+                               f"{lessons_path()}; write the row first")
+        return
+    if no_lesson is not None and no_lesson.strip():
+        return
+    why = []
+    if revised:
+        why.append(f"{revised} earlier draft{'s' if revised != 1 else ''} to this thread "
+                   f"were replaced")
+    if edit > 0:
+        why.append(f"{edit:.0%} of the words changed at send")
+    raise CaptureError(
+        "this email was revised (" + "; ".join(why) + "). Add the edits to "
+        "memory/lessons.md Section 2 and pass --lesson \"<text from that row>\", "
+        "or pass --no-lesson \"<why there is nothing to learn>\"")
+
+
+def unlearned() -> list[dict]:
+    """Revised sends confirmed with neither a lesson nor a reason for having none."""
+    return [m for m in captures()
+            if m.get("kind") in LESSON_KINDS and m.get("status") in ("edited", "unchanged")
+            and ((m.get("changed_word_ratio") or 0) > 0 or (m.get("revised_versions") or 0) > 0
+                 or (m.get("status") == "unchanged" and "revised_versions" not in m
+                     and earlier_versions(m)))
+            and not m.get("lesson_ref") and not m.get("no_lesson_reason")]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -250,6 +363,9 @@ def main(argv: list[str] | None = None) -> int:
     c.add_argument("--screenshot", action="append", default=[],
                    help="image the sent text was transcribed from; repeatable")
     c.add_argument("--force", action="store_true", help="replace an existing confirmation")
+    c.add_argument("--lesson", help="text from the memory/lessons.md row these edits produced")
+    c.add_argument("--no-lesson", help="why a revised email taught nothing")
+    sub.add_parser("unlearned", help="list revised sends confirmed without a lesson")
     v = sub.add_parser("cv", help="capture the first generated version of a CV")
     v.add_argument("path", type=Path)
     args = ap.parse_args(argv)
@@ -257,6 +373,9 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.cmd == "pending":
             print(json.dumps({"status": "ok", "pending": pending()}, indent=2))
+            return 0
+        if args.cmd == "unlearned":
+            print(json.dumps({"status": "ok", "unlearned": unlearned()}, indent=2))
             return 0
         if args.cmd == "cv":
             cid, was_new = capture_file_once(args.path, kind="cv", skill="generate-cv")
@@ -266,7 +385,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.body_file is not None:
             sent = args.body_file.read_text(encoding="utf-8")
         meta = confirm(args.id, args.outcome, sent_text=sent,
-                       screenshots=args.screenshot, force=args.force)
+                       screenshots=args.screenshot, force=args.force,
+                       lesson_ref=args.lesson, no_lesson=args.no_lesson)
         print(json.dumps({"status": "ok", **meta}, indent=2))
         return 0
     except (CaptureError, OSError) as exc:

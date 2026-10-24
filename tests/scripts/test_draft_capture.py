@@ -26,6 +26,7 @@ def store(tmp_path, monkeypatch):
     """Every test writes to a throwaway store, never to output/draft-captures/."""
     d = tmp_path / "captures"
     monkeypatch.setenv("DRAFT_CAPTURE_DIR", str(d))
+    monkeypatch.setenv("LESSONS_PATH", str(tmp_path / "lessons.md"))
     return d
 
 
@@ -87,7 +88,7 @@ def test_unchanged_and_not_sent_are_recorded_without_a_sent_text(store, outcome,
 def test_an_edited_send_keeps_the_sent_text_and_measures_the_change(store):
     cid = dc.capture(DRAFT)
     sent = "Hi Casey,\n\nFollowing up on the role we discussed last week.\n\nBest,\nNick\n"
-    meta = dc.confirm(cid, "edited", sent_text=sent)
+    meta = dc.confirm(cid, "edited", sent_text=sent, no_lesson="test: wording only")
     assert (store / cid / "sent.txt").read_text(encoding="utf-8") == sent
     assert (store / cid / "draft-v0.txt").read_text(encoding="utf-8") == DRAFT
     assert meta["status"] == "edited" and meta["sent_source"] == "pasted"
@@ -100,7 +101,7 @@ def test_a_screenshot_marks_the_sent_text_as_a_transcription(store):
     """A transcription of an image is weaker evidence than a paste; the record must say."""
     cid = dc.capture(DRAFT)
     meta = dc.confirm(cid, "edited", sent_text="Hi Casey,\n\nShort note.\n",
-                      screenshots=["/shots/a.png", "/shots/b.png"])
+                      screenshots=["/shots/a.png", "/shots/b.png"], no_lesson="test")
     assert meta["sent_source"] == "screenshot-transcription"
     assert meta["screenshots"] == ["/shots/a.png", "/shots/b.png"]
 
@@ -123,7 +124,7 @@ def test_a_confirmation_that_contradicts_itself_is_refused_and_changes_nothing(
 
 def test_a_confirmed_draft_is_not_silently_reconfirmed(store):
     cid = dc.capture(DRAFT)
-    dc.confirm(cid, "edited", sent_text="Hi Casey,\n\nRewritten entirely.\n")
+    dc.confirm(cid, "edited", sent_text="Hi Casey,\n\nRewritten entirely.\n", no_lesson="test")
     with pytest.raises(dc.CaptureError) as exc:
         dc.confirm(cid, "unchanged")
     assert "already confirmed" in str(exc.value)
@@ -132,7 +133,7 @@ def test_a_confirmed_draft_is_not_silently_reconfirmed(store):
 
 def test_forcing_a_new_outcome_removes_the_sent_text_it_contradicts(store):
     cid = dc.capture(DRAFT)
-    dc.confirm(cid, "edited", sent_text="Hi Casey,\n\nRewritten entirely.\n")
+    dc.confirm(cid, "edited", sent_text="Hi Casey,\n\nRewritten entirely.\n", no_lesson="test")
     meta = dc.confirm(cid, "not-sent", force=True)
     assert meta["status"] == "not-sent" and "sent_words" not in meta
     assert not (store / cid / "sent.txt").exists()
@@ -196,7 +197,7 @@ def test_the_command_line_confirms_from_a_file_and_reports_errors_by_exit_code(
     sent = tmp_path / "sent.txt"
     sent.write_text("Hi Casey,\n\nRewritten entirely.\n", encoding="utf-8")
     assert dc.main(["confirm", cid, "edited", "--body-file", str(sent),
-                    "--screenshot", "/shots/a.png"]) == 0
+                    "--screenshot", "/shots/a.png", "--no-lesson", "test"]) == 0
     out = json.loads(capsys.readouterr().out)
     assert out["status"] == "edited" and out["sent_source"] == "screenshot-transcription"
 
@@ -290,6 +291,7 @@ def test_building_a_cv_without_json_output_says_how_to_confirm_it(store, tmp_pat
 def test_the_suite_never_points_at_the_real_store():
     """Set once in tests/conftest.py for every test and every process a test starts."""
     assert os.environ.get("DRAFT_CAPTURE_DIR"), "a tool started by a test would write real records"
+    assert os.environ.get("LESSONS_PATH"), "a test would read the real lessons log"
     assert dc.store_dir() != dc.REPO_ROOT / "output" / "draft-captures"
 
 
@@ -467,4 +469,174 @@ def test_a_reply_puts_the_body_on_the_clipboard_and_not_in_a_new_compose(opener,
     opener.main()
     capsys.readouterr()
     assert copied == ["Reply text"] and opener.opened_urls == []
+
+
+# --- a revised email is not recorded as sent until its edits are learned from ---------
+# 2026-10-22 audit: of last week's sends, 5 with real edits had no row in lessons.md, and the
+# only session that wrote one did so because Nick asked. These tests hold the gate.
+
+SENT_EDIT = "Hi Casey,\n\nFollowing up on the role we discussed last week.\n\nThanks!\nNick\n"
+ROW = ("| Claude signed a recruiter note with Best; Nick sent Thanks! **Casey Doe / Acme, "
+       "2026-10-22.** | Sign an information ask with Thanks. | 1 | No | 2026-10-22 |")
+
+
+def _lessons(store, text=ROW):
+    path = Path(os.environ["LESSONS_PATH"])
+    path.write_text("## Section 2\n\n| Pattern | Rule | Occurrences | Promoted | Date |\n"
+                    "|---|---|---|---|---|\n" + text + "\n", encoding="utf-8")
+
+
+def test_an_edited_email_with_no_lesson_is_refused_and_changes_nothing(store):
+    cid = dc.capture(DRAFT)
+    before = dc.read_meta(cid)
+    with pytest.raises(dc.CaptureError) as exc:
+        dc.confirm(cid, "edited", sent_text=SENT_EDIT)
+    assert "--lesson" in str(exc.value) and "--no-lesson" in str(exc.value)
+    assert dc.read_meta(cid) == before and not (store / cid / "sent.txt").exists()
+
+
+def test_a_lesson_reference_must_be_a_real_row(store):
+    _lessons(store)
+    cid = dc.capture(DRAFT)
+    with pytest.raises(dc.CaptureError) as exc:
+        dc.confirm(cid, "edited", sent_text=SENT_EDIT, lesson_ref="Jordan Sample / Nowhere")
+    assert "not found" in str(exc.value)
+    meta = dc.confirm(cid, "edited", sent_text=SENT_EDIT, lesson_ref="Casey Doe / Acme")
+    assert meta["lesson_ref"] == "Casey Doe / Acme" and "no_lesson_reason" not in meta
+
+
+def test_a_lesson_reference_must_be_long_enough_to_mean_one_row(store):
+    _lessons(store)
+    cid = dc.capture(DRAFT)
+    with pytest.raises(dc.CaptureError):
+        dc.confirm(cid, "edited", sent_text=SENT_EDIT, lesson_ref="| ")
+
+
+def test_the_lesson_must_be_a_table_row_not_text_elsewhere(store):
+    _lessons(store, "Casey Doe / Acme is mentioned in prose, not in a row")
+    cid = dc.capture(DRAFT)
+    with pytest.raises(dc.CaptureError):
+        dc.confirm(cid, "edited", sent_text=SENT_EDIT, lesson_ref="Casey Doe / Acme")
+
+
+def test_a_blank_no_lesson_reason_is_not_a_reason(store):
+    cid = dc.capture(DRAFT)
+    with pytest.raises(dc.CaptureError):
+        dc.confirm(cid, "edited", sent_text=SENT_EDIT, no_lesson="   ")
+    meta = dc.confirm(cid, "edited", sent_text=SENT_EDIT, no_lesson="sign-off only, already a rule")
+    assert meta["no_lesson_reason"] == "sign-off only, already a rule"
+
+
+def test_an_unchanged_send_after_replaced_drafts_was_still_revised(store):
+    """Edits made in chat before compose opened leave earlier drafts to the same thread."""
+    first = dc.capture(DRAFT, now=1_800_000_000)
+    dc.confirm(first, "not-sent")
+    second = dc.capture(DRAFT.replace("SUBJECT: Following up", "SUBJECT: Re: Following up")
+                        .replace("last week", "on Tuesday"), now=1_800_000_600)
+    with pytest.raises(dc.CaptureError) as exc:
+        dc.confirm(second, "unchanged")
+    assert "1 earlier draft" in str(exc.value)
+    assert dc.confirm(second, "unchanged", no_lesson="date fix only")["revised_versions"] == 1
+
+
+def test_an_unchanged_single_draft_needs_nothing(store):
+    cid = dc.capture(DRAFT)
+    other = dc.capture(DRAFT.replace("casey@example.com", "jordan@example.com"))
+    meta = dc.confirm(cid, "unchanged")
+    assert meta["revised_versions"] == 0 and "lesson_ref" not in meta
+    assert other != cid
+
+
+def test_a_layout_only_edit_needs_nothing(store):
+    cid = dc.capture(DRAFT)
+    assert dc.confirm(cid, "edited", sent_text=dc.body_of(DRAFT) + "\n\n")["changed_word_ratio"] == 0.0
+
+
+def test_a_cv_is_not_held_by_the_lessons_gate(store):
+    cid = dc.capture("cv:\n  name: x\n", kind="cv")
+    assert dc.confirm(cid, "edited", sent_text="cv:\n  name: y\n")["status"] == "edited"
+
+
+def test_unlearned_lists_revised_sends_with_no_lesson(store, capsys):
+    a = dc.capture(DRAFT, now=1_800_000_000)
+    dc.confirm(a, "edited", sent_text=SENT_EDIT, no_lesson="x")
+    b = dc.capture(DRAFT.replace("casey", "jordan"), now=1_800_000_100)
+    meta = dc.read_meta(b)
+    meta.update({"status": "edited", "changed_word_ratio": 0.3})   # confirmed before the gate
+    (store / b / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
+    assert [m["id"] for m in dc.unlearned()] == [b]
+    assert dc.main(["unlearned"]) == 0
+    assert [m["id"] for m in json.loads(capsys.readouterr().out)["unlearned"]] == [b]
+
+
+def test_the_command_line_carries_the_lesson_flags(store, tmp_path, capsys):
+    _lessons(store)
+    cid = dc.capture(DRAFT)
+    sent = tmp_path / "sent.txt"
+    sent.write_text(SENT_EDIT, encoding="utf-8")
+    assert dc.main(["confirm", cid, "edited", "--body-file", str(sent)]) == 1
+    assert "--lesson" in json.loads(capsys.readouterr().out)["message"]
+    assert dc.main(["confirm", cid, "edited", "--body-file", str(sent),
+                    "--lesson", "Casey Doe / Acme"]) == 0
+    assert json.loads(capsys.readouterr().out)["lesson_ref"] == "Casey Doe / Acme"
+
+
+def test_reopening_the_same_text_is_not_a_revision(store):
+    first = dc.capture(DRAFT, now=1_800_000_000)
+    again = dc.capture(DRAFT, now=1_800_000_060)
+    assert dc.confirm(again, "unchanged")["revised_versions"] == 0
+    assert dc.read_meta(first)["status"] == "opened"
+
+
+def test_a_replaced_draft_from_another_day_or_thread_is_not_counted(store):
+    other_thread = dc.capture(DRAFT.replace("Following up", "Something else")
+                              .replace("last week", "today"), now=1_800_000_000)
+    other_day = dc.capture(DRAFT.replace("last week", "today"), now=1_800_000_000 - 86_400)
+    cid = dc.capture(DRAFT, now=1_800_000_600)
+    assert dc.confirm(cid, "unchanged")["revised_versions"] == 0
+    assert {other_thread, other_day}.isdisjoint({cid})
+
+
+def test_the_refusal_says_what_was_revised_and_nothing_else(store):
+    a = dc.capture(DRAFT, now=1_800_000_000)
+    b = dc.capture(DRAFT.replace("last week", "Tuesday"), now=1_800_000_060)
+    c = dc.capture(DRAFT.replace("last week", "Monday"), now=1_800_000_120)
+    with pytest.raises(dc.CaptureError) as exc:
+        dc.confirm(c, "unchanged")
+    msg = str(exc.value)
+    assert "2 earlier drafts to this thread" in msg and "words changed" not in msg
+    d = dc.capture(DRAFT.replace("casey@", "jordan@"), now=1_800_000_180)
+    with pytest.raises(dc.CaptureError) as exc:
+        dc.confirm(d, "edited", sent_text=SENT_EDIT)
+    msg = str(exc.value)
+    assert "of the words changed at send" in msg and "earlier draft" not in msg
+    assert {a, b}.isdisjoint({c})
+
+
+def test_drafts_with_no_recipient_are_never_matched_as_one_thread(store):
+    dc.capture(DRAFT.replace("casey@example.com", ""), now=1_800_000_000)
+    cid = dc.capture(DRAFT.replace("casey@example.com", "").replace("last week", "today"),
+                     now=1_800_000_060)
+    assert dc.confirm(cid, "unchanged")["revised_versions"] == 0
+
+
+def test_an_earlier_draft_whose_text_is_lost_is_not_counted(store):
+    old = dc.capture(DRAFT.replace("last week", "today"), now=1_800_000_000)
+    (store / old / "draft-v0.txt").unlink()
+    cid = dc.capture(DRAFT, now=1_800_000_060)
+    (store / cid / "draft-v0.txt").write_text("", encoding="utf-8")
+    assert dc.confirm(cid, "unchanged")["revised_versions"] == 0
+
+
+def test_unlearned_skips_clean_sends_and_catches_pre_gate_chat_revisions(store):
+    clean = dc.capture(DRAFT, now=1_800_000_000)
+    dc.confirm(clean, "unchanged")
+    old = dc.capture(DRAFT.replace("casey", "jordan").replace("last week", "today"),
+                     now=1_800_000_100)
+    pre_gate = dc.capture(DRAFT.replace("casey", "jordan"), now=1_800_000_200)
+    meta = dc.read_meta(pre_gate)
+    meta.update({"status": "unchanged", "changed_word_ratio": 0.0})  # no revised_versions key
+    (store / pre_gate / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
+    assert [m["id"] for m in dc.unlearned()] == [pre_gate]
+    assert old != pre_gate
 

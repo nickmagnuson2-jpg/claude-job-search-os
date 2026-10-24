@@ -78,6 +78,9 @@ def record_draft():
     print(f"  PYTHONIOENCODING=utf-8 python3 tools/draft_capture.py confirm {capture_id} not-sent")
     print("If he shares a screenshot of the sent mail, transcribe its body to a file exactly, "
           "then use `edited` with --screenshot.")
+    print("If the email was revised (edited at send, or earlier drafts replaced in chat), "
+          "confirm refuses until you add the edits to memory/lessons.md Section 2 and pass "
+          "--lesson \"<text from that row>\", or pass --no-lesson \"<why nothing was learned>\".")
     if waiting > 1:
         print(f"NOTE: {waiting - 1} earlier draft(s) are still unconfirmed "
               f"(`draft_capture.py pending`). Ask Nick what happened to them.")
