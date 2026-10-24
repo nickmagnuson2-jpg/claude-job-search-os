@@ -179,3 +179,21 @@ def test_pipeline_rows_yield_company_stage_and_notes_for_every_row():
                         "| Bare | PM | To Evaluate |")
     assert list(se._pipeline_rows(content)) == [
         ("Acme", "Applied", "had a screen"), ("Gone", "Closed - rejected", "—"), ("Bare", "To Evaluate", "")]
+
+
+def test_resolve_contact_outcomes_reads_every_seven_cell_row_with_a_recipient(tmp_path):
+    """Pinned 2026-10-24 before the outreach-log readers share one parser."""
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "outreach-log.md").write_text(
+        "| Date | Skill | Channel | Recipient | Company | Subject | Status |\n"
+        "|---|---|---|---|---|---|---|\n"
+        "| 2026-02-01 | cold | email | Ann Example | Acme | Hi | Replied |\n"
+        "| 2026-02-02 | cold | email |  | Acme | Hi | Sent |\n"
+        "| 2026-02-03 | Sent |\n"
+        "| 2026-02-04 | cold | email | Bo Sample | Beta | Hi | Sent |\n", encoding="utf-8")
+    out = se.resolve_contact_outcomes(tmp_path)
+    assert [(r["entity"], r["company"], r["status"]) for r in out] == [
+        ("Ann Example", "Acme", "Replied"), ("Bo Sample", "Beta", "Sent")]
+    assert [r["label"] for r in out] == [se.classify_contact_outcome("Replied"),
+                                         se.classify_contact_outcome("Sent")]
+    assert se.resolve_contact_outcomes(tmp_path / "missing") == []
