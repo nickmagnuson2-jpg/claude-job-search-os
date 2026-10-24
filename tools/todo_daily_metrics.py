@@ -109,6 +109,19 @@ def section_row_counts(content: str) -> tuple[int, int]:
     return out[0], out[1]
 
 
+CLOSED_STATUS_PREFIXES = ("done", "withdrawn")
+
+
+def is_closed_status(status: str) -> bool:
+    """True when an Active-section Status cell means the todo is closed.
+
+    Prefix match, not equality: real rows carry a date and reason after the word
+    ("Withdrawn 2026-05-20 (role dropped)"), and an exact-string test let those
+    rows count as overdue forever. Shared with tools/duet_snapshot.py.
+    """
+    return (status or "").strip().lower().startswith(CLOSED_STATUS_PREFIXES)
+
+
 def parse_todos(content: str, today: date) -> tuple[list, list, list]:
     """Parse job-todos.md into completed_today, active, overdue lists. Strips '---' separator rows."""
     # Fail loudly (not silently) if the live file's Active-section header has
@@ -151,7 +164,7 @@ def parse_todos(content: str, today: date) -> tuple[list, list, list]:
             if due and due != "—" and due != "-":
                 try:
                     due_date = datetime.strptime(due, "%Y-%m-%d").date()
-                    if due_date < today and status not in ("Done", "Withdrawn"):
+                    if due_date < today and not is_closed_status(status):
                         overdue.append(item)
                 except ValueError:
                     pass

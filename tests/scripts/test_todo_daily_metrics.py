@@ -109,6 +109,33 @@ def test_overdue_active_tasks(tmp_path):
     assert len(result["active_remaining"]) == 3
 
 
+def test_overdue_excludes_closed_status_with_date_suffix(tmp_path):
+    """A Status of "Withdrawn 2026-01-05 (reason)" or "Done 2026-01-02" is closed.
+
+    The old check was exact-string ("Done"/"Withdrawn"), so dated closed rows sat in
+    overdue forever. Live data had four such rows on 2026-10-22."""
+    write_fixture(tmp_path, "data/job-todos.md", """\
+        # Job Search To-Dos
+
+        ## Active
+        | Task | Priority | Due | Status | Notes |
+        |------|----------|-----|--------|-------|
+        | Open task | High | 2026-01-01 | Pending | — |
+        | Dropped task | High | 2026-01-01 | Withdrawn 2026-01-05 (role dropped) | — |
+        | Finished task | High | 2026-01-01 | Done 2026-01-02 | — |
+        | Bare done | High | 2026-01-01 | Done | — |
+
+        ## Completed
+        | Task | Priority | Completed | Notes |
+        |------|----------|-----------|-------|
+    """)
+
+    result = run_script("todo_daily_metrics.py",
+                        "--target-date", "2026-02-26",
+                        "--repo-root", str(tmp_path))
+    assert [t["task"] for t in result["overdue"]] == ["Open task"]
+
+
 def test_outreach_today(tmp_path):
     """Outreach entries for today are extracted."""
     write_fixture(tmp_path, "data/outreach-log.md", """\
