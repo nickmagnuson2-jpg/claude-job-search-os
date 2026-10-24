@@ -679,3 +679,10 @@ def test_a_confirmation_that_is_not_an_edit_carries_no_edits(store):
     dc.confirm(cid, "edited", sent_text=EDIT_SENT, no_lesson="test")
     assert "edits" not in dc.confirm(cid, "not-sent", force=True)
 
+
+
+@pytest.mark.parametrize("subject", ["Re: Re: Intro", "RE: Fwd: Intro", "Fw: re:  Intro", "Intro"])
+def test_thread_subject_strips_every_reply_prefix(subject):
+    """Final review 596.F3: "Re: Re:" kept one prefix, so a revised reply looked like a
+    different thread and escaped the lesson requirement."""
+    assert dc._thread_subject(subject) == "intro"

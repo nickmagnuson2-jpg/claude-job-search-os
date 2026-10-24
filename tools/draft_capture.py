@@ -222,7 +222,9 @@ def word_edits(draft: str, sent: str) -> list[dict]:
 
 
 def _thread_subject(subject: str) -> str:
-    return re.sub(r"^\s*(re|fwd?):\s*", "", subject or "", flags=re.I).strip().lower()
+    # Every leading Re:/Fw:/Fwd:, not just the first: "Re: Re: Intro" is the same thread
+    # (final review 596.F3).
+    return re.sub(r"^\s*(?:(?:re|fwd?):\s*)+", "", subject or "", flags=re.I).strip().lower()
 
 
 def earlier_versions(meta: dict) -> list[dict]:
