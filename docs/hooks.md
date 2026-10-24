@@ -39,13 +39,13 @@ Most hooks block the tool call outright (exit code 2), and Claude sees the reaso
 | `check_scanner_examined_something.py` | PreToolUse on Bash | Blocks invoking a two-interface checker through the wrong entry point, where it exits 0 having scanned nothing |
 | `check_heredoc_quoting.py` | PreToolUse on Bash | Fires on an unquoted heredoc whose body contains a backtick, which the shell would execute |
 | `check_unquoted_glob.py` | PreToolUse on Bash | Fires on an unquoted glob passed to `--include=`/`--exclude=`, which zsh expands before the command runs |
-| `check_zsh_word_split.py` | PreToolUse on Bash | Blocks an unquoted `$VAR` that zsh will not split: a variable set in the same command to a value with spaces (or from `$(...)`) and then passed as arguments or looped over, where zsh hands over one argument or runs the loop once, with no error. Arrays, `${=VAR}`, quoted uses and `echo`/`printf` are left alone |
+| `check_zsh_word_split.py` | PreToolUse on Bash | Blocks an unquoted `$VAR` that zsh will not split, where a bash habit passes a list as one argument or runs a loop once, with no error: a variable set in the same command (directly or via export/local/declare) to a value with spaces and then passed whole as an argument, a loop over such a variable or over a `$(...)` result, and a loop item with spaces used in a command. Arrays, `${=VAR}`, quoted uses, `echo`/`print`, and `[[`/`test`/`case` operands are left alone |
 | `check_screenshot_path.py` | PreToolUse on Bash | Fires on a hand-typed macOS screenshot filename with a regular space before AM/PM (the real name uses U+202F) |
 | `check_workflow_scriptpath.py` | PreToolUse on Workflow | Guards against running a cached snapshot of a workflow script instead of the file on disk |
 | `check_module_imports.py` | PostToolUse on Write/Edit/MultiEdit | Imports a Python module right after it is edited and warns if the import raises |
 | `check_save_claims.py` | Stop | Catches a reply that says a file was written when no write happened, and a reply that says a file is missing or does not exist when a file by that name is on disk (in the repo, a sibling repo, `.claude/skills/`, or the memory folders). Conditionals and questions are skipped |
 | `check_stale_file_claim.py` | Stop | Catches a reply that says a named file was not touched this session when the filesystem says it was |
-| `check_derived_ratio.py` | Stop | Blocks a reply that states a ratio or percentage worked out in chat ("12 of 40 (30%)") when no tool printed that result; the fix is to compute it in a script and quote the output |
+| `check_derived_ratio.py` | Stop | Blocks a reply that states a ratio or percentage worked out in chat, in one of the shapes it lists ("12 of 40 (30%)", "7 of the 22, or 31.8%"), when neither a tool's output nor the user's message carries it. Quoted ratios and stated targets pass. The fix is to compute it in a script and quote the output |
 
 ## Friction capture
 

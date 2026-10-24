@@ -12,11 +12,15 @@ Usage:
   PYTHONIOENCODING=utf-8 python3 tools/standup_collect.py [--repo-root .] [--target-date YYYY-MM-DD]
 
 Output (stdout, one JSON object):
-  {"target_date": "...", "ok": [names], "failed": [names],
+  {"target_date": "...", "ok": [names], "partial": [names], "failed": [names],
    "results": {name: {"rc": int, "data": <parsed JSON> | null, "text": <stdout if not JSON>,
                       "stderr": <last 2000 chars, only when rc != 0>}}}
 
-Exit codes: 0 every script ran and exited 0; 1 at least one failed (its entry says why).
+`partial` is a script that exited nonzero but printed parseable JSON (workstream_state exits 1
+when one of its probes errored): use its data and say what its stderr reports. `failed` is a
+script with no usable output.
+
+Exit codes: 0 nothing failed; 1 at least one script produced no usable output.
 A failed script never stops the others: /standup degrades per source, it does not abort.
 """
 from __future__ import annotations
@@ -77,9 +81,13 @@ def collect(root: Path, target_date: str) -> dict:
     with ThreadPoolExecutor(max_workers=len(cmds)) as pool:
         futures = {name: pool.submit(run_one, argv, root) for name, argv in cmds.items()}
         results = {name: f.result() for name, f in futures.items()}
-    failed = [n for n, r in results.items() if r["rc"] != 0]
-    return {"target_date": target_date, "ok": [n for n in results if n not in failed],
-            "failed": failed, "results": results}
+    # A nonzero exit WITH parsed output is not a dead script: workstream_state exits 1
+    # when a probe errored, and its JSON says which (588.F5). Only no usable output fails.
+    failed = [n for n, r in results.items() if r["rc"] != 0 and r["data"] is None]
+    partial = [n for n, r in results.items() if r["rc"] != 0 and r["data"] is not None]
+    return {"target_date": target_date,
+            "ok": [n for n in results if n not in failed and n not in partial],
+            "partial": partial, "failed": failed, "results": results}
 
 
 def main(argv=None) -> int:

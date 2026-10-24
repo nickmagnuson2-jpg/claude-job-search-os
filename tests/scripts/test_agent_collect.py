@@ -165,6 +165,12 @@ PIPE = """# Job Pipeline
 |---|---|---|---|---|---|---|---|
 | Acme AI | Ops Lead | Applied | 2026-01-10 | follow up | — | — | — |
 | Northwind Labs | Strategist | Researching | 2026-01-10 | — | — | — | — |
+
+## Archived
+
+| Company | Role | Stage | Date Updated | Next Action | CV Used | Notes | URL |
+|---|---|---|---|---|---|---|---|
+| Globex | Chief of Staff | Rejected | 2026-01-03 | — | — | — | — |
 """
 
 
@@ -173,11 +179,13 @@ def test_reconcile_drops_a_pipeline_company_and_marks_a_near_match(tmp_path):
     from tools.agent_collect import reconcile_candidates
     pipe = tmp_path / "job-pipeline.md"
     pipe.write_text(PIPE, encoding="utf-8")
-    cands = [{"name": "Northwind Labs"}, {"name": "Acme"}, {"name": "Beacon"}]
+    cands = [{"name": "Northwind Labs"}, {"name": "Acme"}, {"name": "Beacon"}, {"name": "Globex"}]
     out = reconcile_candidates(cands, pipe)
-    assert [c["name"] for c in out] == ["Acme", "Beacon"], "an exact pipeline company is known"
+    assert [c["name"] for c in out] == ["Acme", "Beacon", "Globex"], "an ACTIVE pipeline company is known"
     assert out[0]["possible_match"] == "Acme AI"
-    assert "possible_match" not in out[1]
+    assert "possible_match" not in out[1] and "pipeline_history" not in out[1]
+    # 585.F2: closed history is reported, never suppressed
+    assert out[2]["pipeline_history"] == "Globex (Rejected)"
 
 
 def test_reconcile_passes_candidates_through_when_it_cannot_run(tmp_path, monkeypatch):
@@ -197,6 +205,10 @@ def test_a_possible_match_is_printed_in_the_inbox_line():
                                [{"name": "Acme", "description": "d", "score": 7,
                                  "geo_band": "sf", "possible_match": "Acme AI"}], "2026-01-02")
     assert "**Acme**" in block and "[possible match: Acme AI in pipeline]" in block
+    closed = render_inbox_block({"preset": "p", "entity": "company"},
+                                [{"name": "Globex", "description": "d", "score": 7, "geo_band": "sf",
+                                  "pipeline_history": "Globex (Rejected)"}], "2026-01-02")
+    assert "[closed in pipeline before: Globex (Rejected)]" in closed
 
 
 def _collect_env(tmp_path, monkeypatch, presets_yaml, agent_result):
@@ -267,7 +279,13 @@ def test_a_failed_inbox_write_is_reported_on_stderr(tmp_path, monkeypatch, capsy
         raise ac.inbox_lock.LockTimeout("inbox locked")
     monkeypatch.setattr(ac.inbox_lock, "prepend_entries", locked)
     ac.main()
-    assert "proposals NOT written" in capsys.readouterr().err
+    captured = capsys.readouterr()
+    assert "proposals NOT written" in captured.err
+    # 582-588.F2: unwritten proposals are not marked seen, so the next run retries them
+    import json
+    seen = tmp_path / ".agent_seen.json"
+    assert not seen.exists() or "live" not in json.loads(seen.read_text(encoding="utf-8"))
+    assert json.loads(captured.out)["summary"]["live"]["unwritten"] == 1
 
 
 def test_the_script_imports_and_runs_main_only_as_a_script(tmp_path):

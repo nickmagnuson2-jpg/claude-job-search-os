@@ -92,3 +92,17 @@ def test_a_script_that_cannot_start_is_reported_not_raised(tmp_path, monkeypatch
     monkeypatch.setattr(sc.subprocess, "run", cannot)
     r = sc.run_one(["tools/x.py"], tmp_path)
     assert r == {"rc": -1, "data": None, "text": "", "stderr": "could not start: not executable"}
+
+
+def test_a_nonzero_exit_with_data_is_partial_not_failed(tmp_path, monkeypatch):
+    """588.F5: workstream_state exits 1 when a probe errored but still prints its JSON.
+    Calling that failed told /standup to drop a source it actually had."""
+    root = _fake_repo(tmp_path, {
+        "probes.py": "import json, sys; print(json.dumps({'error': 1})); sys.stderr.write('probe x failed'); sys.exit(1)",
+        "dead.py": "import sys; sys.exit(1)",
+    })
+    monkeypatch.setattr(sc, "commands", lambda d: {"probes": ["tools/probes.py"], "dead": ["tools/dead.py"]})
+    out = sc.collect(root, "2026-01-02")
+    assert out["partial"] == ["probes"] and out["failed"] == ["dead"] and out["ok"] == []
+    assert out["results"]["probes"]["data"] == {"error": 1}
+    assert out["results"]["probes"]["stderr"] == "probe x failed"

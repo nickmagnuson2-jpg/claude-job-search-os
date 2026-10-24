@@ -779,3 +779,13 @@ def test_the_reader_emits_what_standup_renders(tmp_path):
     got = read_queue(tmp_path)["roles"][0]
     for field in ("title", "company", "url", "score", "published_at"):
         assert field in got, f"/standup renders {field} and the reader dropped it"
+
+
+def test_the_closed_row_tag_survives_the_queue(tmp_path):
+    """586.F2: the scanner tags a role that matches a closed pipeline row, and /standup reads
+    roles through this queue, so the tag must survive the reader's field filter."""
+    from tools.career_scanner.scanner import write_role_queue
+    role = {"company": "Acme", "title": "Deployment Strategist", "url": "https://boards.example/2",
+            "score": 7, "previously_closed": "Rejected, 2026-01-05"}
+    write_role_queue(tmp_path, [role], [], [])
+    assert read_queue(tmp_path)["roles"][0]["previously_closed"] == "Rejected, 2026-01-05"

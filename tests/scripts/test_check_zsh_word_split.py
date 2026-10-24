@@ -70,7 +70,7 @@ def test_loop_over_a_scalar_is_blocked(command, var):
     'P="a b"; git add ${=P}',                                                       # explicit split
     'P="a b"; for f in ${=P}; do echo "$f"; done',
     'P="a b"; git commit -m "$P"',                                                  # quoted
-    'P="a b"; echo $P; printf "%s\\n" $P; print $P',                                # printers
+    'P="a b"; echo $P; print $P',                                                   # printers
     'P="python3 x.py --flag"; eval $P',                                             # eval re-splits
     'D=$(date +%F); python3 tools/x.py --target-date $D',                           # one word
     'A=abc; B=def; for f in $A $B; do echo "$f"; done',                             # one-word loop
@@ -145,3 +145,56 @@ def test_the_hook_imports_its_libraries_without_the_caller_setting_the_path(tmp_
                         f"import runpy; runpy.run_path({str(SCRIPT)!r}, run_name='x')"],
                        cwd=str(tmp_path), capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
+
+
+# --- round-8 review findings (582-589), 2026-10-24 -----------------------------------------
+
+@pytest.mark.parametrize("command,needle", [
+    ('export P="a b"; git add $P', "$P"),                              # 583.F3/584.F6
+    ('local P="a b"; git add $P', "$P"),
+    ('declare -r P="a b"; git add $P', "$P"),
+    ('P="a b"; Q=$P; git add $Q', "$Q"),                               # 589.F1: a copy keeps the kind
+    ('P="a b"; Q="${P}"; git add $Q', "$Q"),
+    ('P="a b"; printf "%s\\n" $P', "$P"),                              # 586.F6: printf output differs
+    ('P="a b"; command git add $P', "$P"),                             # wrappers read through
+    ('P="a b"; git add $P; setopt shwordsplit', "$P"),                 # 582.F2: setopt AFTER the use
+])
+def test_round_8_misses_are_blocked(command, needle):
+    code, err = _run(command)
+    assert code == 2, err
+    assert needle in err
+
+
+@pytest.mark.parametrize("command", [
+    'P="a b"; tool --name=$P',                                         # 585.F4: one argument wanted
+    'P="hello world"; [[ $P == "hello world" ]] && echo ok',           # 589.F2
+    'P="a b"; [ $P = "a b" ]; test $P = "a b"',
+    'P="a b"; case $P in *) echo;; esac',
+    'P="a b"; command echo $P; builtin print $P',                      # 582.F3/587.F6
+    'declare -a P=(a b); git add $P',                                  # an array, by flag
+    'setopt shwordsplit; P="a b"; git add $P',                         # splitting on BEFORE the use
+])
+def test_round_8_false_blocks_are_clean(command):
+    code, err = _run(command)
+    assert code == 0, err
+
+
+def test_a_spaced_loop_item_is_still_caught_inside_a_word():
+    v = hook.find_violations('for c in "x.py --flag"; do python3 tools/$c; done')
+    assert len(v) == 1 and "tools/$c" in v[0]
+
+
+@pytest.mark.parametrize("command", [
+    'P="a b"; ssh host bash; git add $P',          # "bash" as an argument is not `emulate bash`
+    'setopt extendedglob; P="a b"; git add $P',    # another option does not turn splitting on
+])
+def test_only_a_real_split_switch_stops_judging(command):
+    assert _run(command)[0] == 2
+
+
+def test_an_assignment_builtin_ends_at_its_operator():
+    assert hook.find_violations('export P="a b"; echo $P') == []
+
+
+def test_an_assignment_builtin_without_a_value_is_ignored():
+    assert hook.find_violations('export P; local Q; git add $P') == []

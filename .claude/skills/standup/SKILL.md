@@ -3,7 +3,7 @@ name: standup
 description: Morning briefing — pipeline health, today's top 3 actions, pending outreach, corpus state, and a momentum read of the search state
 argument-hint: [none]
 user-invocable: true
-allowed-tools: Read(*), Glob(inbox/*), Glob(data/reflections/*), Glob(data/workbooks/*), Bash(PYTHONIOENCODING=utf-8 python3 tools/pipeline_staleness.py:*), Bash(PYTHONIOENCODING=utf-8 python3 tools/outreach_pending.py:*), Bash(PYTHONIOENCODING=utf-8 python3 tools/networking_followup.py:*), Bash(PYTHONIOENCODING=utf-8 python3 tools/todos_summary.py:*), Bash(PYTHONIOENCODING=utf-8 python3 tools/check_automation_health.py:*), Bash(PYTHONIOENCODING=utf-8 python3 tools/attention.py:*), Bash(PYTHONIOENCODING=utf-8 python3 tools/conversations_metric.py:*), Bash(PYTHONIOENCODING=utf-8 python3 tools/fetch_source_email.py:*), Bash(ls:*), Bash(stat:*)
+allowed-tools: Read(*), Glob(inbox/*), Glob(data/reflections/*), Glob(data/workbooks/*), Bash(PYTHONIOENCODING=utf-8 python3 tools/standup_collect.py:*), Bash(PYTHONIOENCODING=utf-8 python3 tools/pipeline_staleness.py:*), Bash(PYTHONIOENCODING=utf-8 python3 tools/outreach_pending.py:*), Bash(PYTHONIOENCODING=utf-8 python3 tools/networking_followup.py:*), Bash(PYTHONIOENCODING=utf-8 python3 tools/todos_summary.py:*), Bash(PYTHONIOENCODING=utf-8 python3 tools/check_automation_health.py:*), Bash(PYTHONIOENCODING=utf-8 python3 tools/attention.py:*), Bash(PYTHONIOENCODING=utf-8 python3 tools/conversations_metric.py:*), Bash(PYTHONIOENCODING=utf-8 python3 tools/fetch_source_email.py:*), Bash(ls:*), Bash(stat:*)
 ---
 
 # Standup — Morning Briefing
@@ -22,7 +22,7 @@ It runs the ten Step 1 scripts in parallel (pipeline_staleness, outreach_pending
 networking_followup, todos_summary `--top-n 6`, check_automation_health, attention,
 conversations_metric, source_check due, workstream_state `--render`, role_queue_read
 `--top 5`) and prints one JSON: `results.<name>.data` is each script's parsed output,
-`failed` names any that did not exit 0, with its stderr. **Do not start these scripts
+`failed` names any that produced no usable output, with its stderr; `partial` names any that exited nonzero but still printed data (workstream_state does this when a probe errors), which you use while saying what failed. **Do not start these scripts
 yourself in a shell loop.** zsh passes `"x.py --flag"` as one argument, which failed every
 script on five mornings before this collector existed. A name in `failed` is a source to
 degrade on (say which one is missing in the brief), never a reason to stop.
@@ -97,7 +97,7 @@ Render, newest-posted first, only when `new_count` is non-zero:
 - [7/10] Deployment Strategist — Acme AI (SF) · posted 6d ago · `/apply <url>`
 ```
 
-Four rules, all mandatory:
+Five rules, all mandatory:
 
 - **`exists: false` is NOT zero.** A missing queue means the scan has not run; render
   `⚠️ career scan has not produced a queue — check the job`, never "0 new roles". The
@@ -114,6 +114,9 @@ Four rules, all mandatory:
 - **`pending_overflow: true` is surfaced** as `⚠️ [N] roles pending acknowledgement`.
   It means the queue is accumulating faster than it is being read, i.e. this step has
   been skipped or failing.
+- **A role with `previously_closed` says so on its line**, as `(previously: Rejected,
+  2026-07-01)`. It matches a closed pipeline row at that company: worth a look if it
+  was relisted, never new to Nick.
 
 **ACKNOWLEDGE, and only AFTER the roles are rendered above.** The queue is a pending
 log: reading does not consume it. If this step is skipped the same roles re-appear

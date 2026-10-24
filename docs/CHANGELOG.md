@@ -56,6 +56,13 @@ Every guard edit below was approved by Nick and reviewed by Codex and Grok befor
   past Bash calls blocked 46; read by hand, 45 were clear mistakes and 1 likely. **`codex_verify.py`** now refuses
   (exit 5) a `--paths` entry that is neither on disk nor in the diff base, so a review can
   no longer be recorded for files the reviewer never saw.
+- **Overnight review fixes**: `codex_verify.py` also refuses an untracked or unchanged
+  path (each still had no diff); `agent_collect.py` no longer marks proposals seen when the
+  inbox write failed, which lost them for good, and keeps companies found only in closed
+  pipeline history, labelled, instead of dropping them; the zsh hook reads assignments
+  made through export/local/declare, judges printf, and leaves `--name=$X`, `[[ ]]` and
+  `case` alone; `standup_collect.py` reports a script that exited nonzero but printed data
+  as partial, not failed.
 
 **Fixes and smaller changes**
 - `mutation_check.py` refuses to mutate a wired hook inside a live Claude session unless

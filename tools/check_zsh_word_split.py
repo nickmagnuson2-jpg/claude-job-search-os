@@ -29,9 +29,16 @@ replay's 144 such commands showed no failure caused by it.
 Scope, on purpose. Only variables ASSIGNED IN THE SAME COMMAND are judged: a variable set
 in an earlier Bash call does not survive to this one, and one set by the environment has
 an unknown value. An array (`X=(a b)`) splits correctly in zsh and is never flagged; nor is
-`${=X}`, `"${X[@]}"`, or anything inside quotes. Arguments to echo, printf, print and eval
-are not judged: the first three print the same text either way, and eval re-splits. A
-command that turns splitting on (`setopt shwordsplit`, `emulate sh|bash|ksh`) is clean.
+`${=X}`, `"${X[@]}"`, or anything inside quotes. Not judged: arguments to echo, print and
+eval (the first two print the same text either way; eval re-splits), and operands of `[[`,
+`[`, `test` and `case`, where one operand is what the command wants. printf IS judged:
+`printf '%s\n' $P` prints one line in zsh and one per item in bash. Wrappers (`command`,
+`builtin`, `noglob`, `nocorrect`, `exec`, `nohup`) are read through to the real command.
+Assignments through export, local, declare, typeset, readonly and integer are recorded
+(`-a`/`-A` makes an array), and `Q=$P` copies P's kind. A scalar is flagged only when
+`$P` is the whole word: `--name=$X` wants one argument and gets one. A loop item is
+flagged inside any word (`tools/$c`). Once `setopt shwordsplit` or `emulate sh|bash|ksh`
+runs, what follows it is not judged; what came before it still is.
 Shape 1 also covers a scalar from `$(...)`; shapes 2-3 need a literal value with a space,
 because `D=$(date +%F); tool --date $D` is ordinary and correct.
 
@@ -56,10 +63,12 @@ from hook_runtime import read_payload  # noqa: E402
 from shell_tokens import tokenize  # noqa: E402
 
 _ASSIGN = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)=")
-_SPLIT_ON = re.compile(r"\bsetopt\s+(?:sh_?word_?split)\b|\bemulate\s+(?:-\w+\s+)*(?:sh|bash|ksh)\b",
-                       re.IGNORECASE)
-_NO_JUDGE = {"echo", "printf", "print", "eval"}
-_CMD_START_WORDS = {"do", "then", "else", "elif", "!", "{", "time"}
+_SPLIT_WORD = re.compile(r"^(?:sh_?word_?split|sh|bash|ksh)$", re.IGNORECASE)
+_NO_JUDGE = {"echo", "print", "eval", "[[", "[", "test", "case"}
+_CMD_START_WORDS = {"do", "then", "else", "elif", "!", "{", "time",
+                    "command", "builtin", "noglob", "nocorrect", "exec", "nohup"}
+_ASSIGN_BUILTINS = {"export", "local", "declare", "typeset", "readonly", "integer"}
+_COPY = re.compile(r"^\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?$")
 
 
 def _ref(name: str) -> re.Pattern:
@@ -68,9 +77,16 @@ def _ref(name: str) -> re.Pattern:
     return re.compile(r"\$(?:\{" + re.escape(name) + r"\}|" + re.escape(name) + r"(?![A-Za-z0-9_]))")
 
 
+def _classify(raw: str, value: str, scalars: dict) -> str:
+    copied = _COPY.match(value)
+    if copied:
+        return scalars.get(copied.group(1), "plain")      # Q=$P is whatever P is
+    if "$(" in raw or "`" in raw:
+        return "subst"
+    return "spaced" if any(c.isspace() for c in value) else "plain"
+
+
 def find_violations(command: str) -> list[str]:
-    if not command or _SPLIT_ON.search(command):
-        return []
     try:
         tokens = tokenize(command)
     except Exception:  # noqa: BLE001 — fail open on anything the tokenizer cannot read
@@ -97,15 +113,19 @@ def find_violations(command: str) -> list[str]:
             if m:
                 # An array assignment (`X=(a b)`) has an empty value here, so it lands
                 # in "plain" and is never judged: zsh splits arrays correctly.
-                name, value = m.group(1), t.text[m.end():]
-                if "$(" in raw or "`" in raw:
-                    scalars[name] = "subst"
-                elif any(c.isspace() for c in value):
-                    scalars[name] = "spaced"
-                else:
-                    scalars[name] = "plain"
+                scalars[m.group(1)] = _classify(raw, t.text[m.end():], scalars)
                 i += 1
                 continue     # still in command position after an assignment
+            if raw in ("setopt", "emulate"):
+                j = i + 1
+                while j < len(words) and words[j].kind == "word":
+                    if _SPLIT_WORD.match(words[j].text):
+                        return found          # splitting is on from here: nothing after counts
+                    j += 1
+            if raw in _ASSIGN_BUILTINS:
+                i = _read_assign_builtin(words, i + 1, src, scalars)
+                at_start, cmd_word = True, None
+                continue
             if raw in _CMD_START_WORDS:
                 i += 1
                 continue
@@ -118,11 +138,15 @@ def find_violations(command: str) -> list[str]:
             i += 1
             continue
 
-        # --- shapes 2 and 3: a spaced scalar or loop item used unquoted as an argument
+        # --- shapes 2 and 3: a spaced scalar (the whole word) or a spaced loop item
+        # (anywhere in the word) used unquoted as an argument
         if cmd_word not in _NO_JUDGE and not t.quoted:
             for name in list(scalars) + list(loop_spaced):
-                spaced = scalars.get(name) == "spaced" or name in loop_spaced
-                if spaced and _ref(name).search(raw):
+                if name in loop_spaced:
+                    hit = _ref(name).search(raw)
+                else:
+                    hit = scalars.get(name) == "spaced" and re.fullmatch(_ref(name).pattern, raw)
+                if hit:
                     found.append(
                         f"`{raw}` passes ${name} unquoted, and ${name} holds a value with "
                         f"spaces. zsh does not split it, so `{cmd_word}` gets ONE argument. "
@@ -131,6 +155,19 @@ def find_violations(command: str) -> list[str]:
         i += 1
 
     return found
+
+
+def _read_assign_builtin(words, j, src, scalars) -> int:
+    """Read the words after export/local/declare/... up to the next operator, recording
+    each NAME=value. Flags (-a, -r) never match NAME=, and an array assignment
+    (`declare -a X=(a b)`) has an empty value here, so it lands in "plain" either way."""
+    while j < len(words) and words[j].kind == "word":
+        w = words[j]
+        m = _ASSIGN.match(w.text)
+        if m:
+            scalars[m.group(1)] = _classify(src[w.start:w.end], w.text[m.end():], scalars)
+        j += 1
+    return j
 
 
 def _read_for(words, i, src, scalars, loop_spaced, found) -> int:
@@ -149,7 +186,7 @@ def _read_for(words, i, src, scalars, loop_spaced, found) -> int:
         if it.quoted and any(c.isspace() for c in it.text):
             loop_spaced.add(var)
         for name, kind in scalars.items():   # a quoted "$X" fails the fullmatch on raw
-            if kind != "plain" and re.fullmatch(_ref(name).pattern, raw):
+            if kind in ("spaced", "subst") and re.fullmatch(_ref(name).pattern, raw):
                 found.append(
                     f"`for {var} in {raw}` loops over the scalar ${name}. zsh runs the "
                     f"loop ONCE, over the whole value. Use an array "

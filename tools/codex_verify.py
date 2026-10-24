@@ -504,34 +504,45 @@ def gather_diff(repo_root: Path, paths: list[str], cap: int = MAX_DIFF_LINES) ->
     return truncate_diff(proc.stdout, cap) if proc.stdout.strip() else ""
 
 
-def refuse_unknown_paths(repo_root: Path, paths: list[str]) -> str:
-    """Refusal text when a named path is neither on disk nor in the diff base, else "".
+def _git(repo_root: Path, *args: str) -> subprocess.CompletedProcess | None:
+    try:
+        return subprocess.run(["git", *args], capture_output=True, text=True,
+                              cwd=str(repo_root), timeout=60)
+    except (subprocess.SubprocessError, OSError):
+        return None
 
-    `git diff -- <path>` prints nothing for a path that does not exist, so the reviewer got
-    no diff while the ledger recorded the path as reviewed. 2026-10-23: a zsh `$P` holding
-    six paths is not word-split, so all six arrived as ONE argument; two review rounds ran
-    blind before the gate's coverage check noticed. A path deleted by the change is valid:
-    it exists at the diff base.
+
+def refuse_unknown_paths(repo_root: Path, paths: list[str]) -> str:
+    """Refusal text when a named path would reach the reviewer with no diff, else "".
+
+    The ledger records every --paths entry as reviewed, so a path the diff cannot show is
+    coverage for something nobody saw. Three ways that happens, each refused with its fix:
+      missing    -- not on disk and not in the diff base. 2026-10-23: a zsh `$P` holding six
+                    paths arrived as ONE argument, and two review rounds ran blind.
+      untracked  -- on disk, but `git diff` never shows an untracked file (582-588.F1).
+      unchanged  -- tracked and identical to the diff base: there is no change to review.
+    A path the change deletes has a diff, so it passes.
     """
     base = diff_base(repo_root)
     bad = []
     for p in paths or []:
-        if (repo_root / p).exists():
+        diff = _git(repo_root, "diff", "--name-only", base, "--", p)
+        if diff is not None and diff.returncode == 0 and diff.stdout.strip():
             continue
-        try:
-            proc = subprocess.run(["git", "cat-file", "-e", f"{base}:{p}"],
-                                  capture_output=True, cwd=str(repo_root), timeout=60)
-            if proc.returncode == 0:
-                continue
-        except (subprocess.SubprocessError, OSError):
-            pass
-        bad.append(p)
+        if not (repo_root / p).exists():
+            bad.append((p, "missing: neither on disk nor in the diff base"))
+        else:
+            tracked = _git(repo_root, "ls-files", "--error-unmatch", "--", p)
+            if tracked is None or tracked.returncode != 0:
+                bad.append((p, "untracked: git diff cannot show it; commit it or `git add -N` it"))
+            else:
+                bad.append((p, "unchanged since the diff base: there is nothing to review"))
     if not bad:
         return ""
-    lines = ["REFUSING TO DISPATCH: these --paths are neither on disk nor in the diff base, "
-             "so the reviewer would get no diff for them:"]
-    lines += [f"  {p!r}" for p in bad]
-    if any(any(c.isspace() for c in p) for p in bad):
+    lines = ["REFUSING TO DISPATCH: these --paths would reach the reviewer with no diff, "
+             "while the ledger recorded them as reviewed:"]
+    lines += [f"  {p!r}  ({why})" for p, why in bad]
+    if any(any(c.isspace() for c in p) for p, _ in bad):
         lines.append("A path containing spaces is usually several paths passed as one "
                      "argument. In zsh an unquoted $VAR is not word-split: use ${=VAR}, "
                      "a bash array (\"${ARR[@]}\"), or list the paths literally.")
@@ -973,7 +984,8 @@ def main(argv=None) -> int:
             return 3
         # A path the diff cannot see would be recorded as reviewed while the reviewer
         # saw nothing of it.
-        refusal = refuse_unknown_paths(Path(args.repo_root).resolve(), args.paths)
+        refusal = (refuse_unknown_paths(Path(args.repo_root).resolve(), args.paths)
+                   if args.mode == "verify" else "")
         if refusal:
             print(refusal, file=sys.stderr)
             return 5

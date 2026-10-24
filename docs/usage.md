@@ -155,11 +155,11 @@ Entries with no update in >7 days are flagged automatically. The pipeline CV Use
 ### Scan company career pages
 
 ```
-/scan-companies            # Scan all active targets, write new matches to inbox
-/scan-companies --dry-run  # Preview scores without writing to inbox
+/scan-companies            # Scan all active targets, queue new matches for /standup
+/scan-companies --dry-run  # Preview scores without writing the queue
 ```
 
-Fetches open roles from every company listed in `data/scan-targets.yaml`, scores each role against your profile and goals on four dimensions, deduplicates against the pipeline, and writes new matches to `data/inbox.md`. ATS types supported: Greenhouse, Lever, Ashby, and a Playwright generic fallback for all others.
+Fetches open roles from every company listed in `data/scan-targets.yaml`, scores each role against your profile and goals on four dimensions, deduplicates against the pipeline, and writes new matches to the role queue that `/standup` reads. A role is marked new only the first time it is seen, and one matching a closed pipeline row is tagged with that row's stage. ATS types supported: Greenhouse, Lever, Ashby, and a Playwright generic fallback for all others.
 
 To configure targets, edit `data/scan-targets.yaml`:
 

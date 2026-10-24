@@ -1682,11 +1682,42 @@ def test_main_refuses_an_unknown_path_before_dispatch(monkeypatch, capsys, tmp_p
                     "--model", "codex"]) == 0
 
 
-def test_a_new_untracked_file_on_disk_is_a_valid_path(tmp_path):
-    """A file the change adds is on disk but not yet in the diff base."""
+def test_an_untracked_file_is_refused_because_git_diff_cannot_show_it(tmp_path):
+    """583.F1/584.F2: an untracked file passed the old on-disk check and reached the
+    reviewer with no diff while the ledger recorded it as reviewed."""
     repo = _tiny_repo(tmp_path)
     (repo / "new.py").write_text("x\n", encoding="utf-8")
+    msg = cv.refuse_unknown_paths(repo, ["new.py"])
+    assert "'new.py'" in msg and "untracked" in msg and "git add -N" in msg
+
+
+def test_an_intent_to_add_file_has_a_diff_and_passes(tmp_path):
+    import subprocess
+    repo = _tiny_repo(tmp_path)
+    (repo / "new.py").write_text("x\n", encoding="utf-8")
+    subprocess.run(["git", "add", "-N", "new.py"], cwd=str(repo), capture_output=True)
     assert cv.refuse_unknown_paths(repo, ["new.py"]) == ""
+
+
+def test_an_unchanged_tracked_file_is_refused(tmp_path):
+    repo = _tiny_repo(tmp_path)
+    (repo / "a.py").write_text("original\n", encoding="utf-8")      # back to the base content
+    msg = cv.refuse_unknown_paths(repo, ["a.py"])
+    assert "'a.py'" in msg and "unchanged" in msg
+
+
+def test_a_missing_path_says_missing(tmp_path):
+    msg = cv.refuse_unknown_paths(_tiny_repo(tmp_path), ["gone.py"])
+    assert "'gone.py'" in msg and "missing" in msg and "untracked" not in msg
+
+
+def test_diverge_mode_never_refuses_on_paths(monkeypatch, capsys, tmp_path):
+    """Diverge withholds the diff by design, so a no-diff path is not a blind review there."""
+    repo = _tiny_repo(tmp_path)
+    monkeypatch.setattr(cv, "refuse_under_active_mutation", lambda root, paths: "")
+    monkeypatch.setattr(cv, "run", lambda *a, **k: {"status": "ok"})
+    assert cv.main(["--target", "t", "--repo-root", str(repo), "--paths", "gone.py",
+                    "--mode", "diverge", "--model", "codex"]) == 0
 
 
 def test_mutation_run_alive_says_alive_when_the_lock_check_cannot_load(monkeypatch, tmp_path):
