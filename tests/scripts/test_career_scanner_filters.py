@@ -429,3 +429,90 @@ def test_a_missing_seen_file_is_an_empty_set_not_a_crash(tmp_path):
     """First run on a fresh machine, and the nightly job must not die on it."""
     from tools.career_scanner.dedup import load_seen
     assert load_seen(tmp_path / "nonexistent") == {}
+
+
+def test_each_role_says_explicitly_whether_it_is_new(tmp_path):
+    """362.F3: /scan-companies showed `new_roles` (every open role not in the pipeline) as
+    "New roles". The per-role flag is what tells new from standing; first_seen == today
+    cannot, since a role seen by an earlier scan today also carries today's date."""
+    from tools.career_scanner.dedup import split_new_and_standing, load_seen, save_seen
+    seen = load_seen(tmp_path)
+    new, _ = split_new_and_standing([_role()], seen)
+    assert new[0]["new"] is True
+    save_seen(tmp_path, seen)
+    _, standing = split_new_and_standing([_role()], load_seen(tmp_path))
+    assert standing[0]["new"] is False
+
+
+def test_the_cli_passes_the_new_flag_and_first_seen_through(monkeypatch, capsys):
+    import json
+    import tools.career_scanner.scanner as scanner
+    from tools.career_scanner import cli
+    roles = [{"title": "A", "company": "X", "score": 8, "url": "u1", "new": True,
+              "first_seen": "2026-01-02"},
+             {"title": "B", "company": "Y", "score": 7, "url": "u2", "new": False,
+              "first_seen": "2025-12-01", "previously_closed": "Rejected, 2025-11-01"}]
+    monkeypatch.setattr(scanner, "scan_all_targets",
+                        lambda root, dry_run=False: {"new_roles": 2, "new_since_last_scan": 1,
+                                                     "roles": roles})
+    monkeypatch.setattr("sys.argv", ["cli.py", "--repo-root", ".", "--dry-run"])
+    cli.main()
+    out = json.loads(capsys.readouterr().out)
+    assert [(r["new"], r["first_seen"], r["previously_closed"]) for r in out["top_roles"]] == [
+        (True, "2026-01-02", ""), (False, "2025-12-01", "Rejected, 2025-11-01")]
+    assert out["new_since_last_scan"] == 1 and "roles" not in out
+
+
+PIPELINE_WITH_CLOSED = """# Job Pipeline
+
+## Active Pipeline
+
+| Company | Role | Stage | Date Updated | Next Action | CV Used | Notes | URL |
+|---|---|---|---|---|---|---|---|
+| Acme | Chief of Staff | Applied | 2026-01-10 | follow up | — | — | — |
+
+## Archived
+
+| Company | Role | Stage | Date Updated | Next Action | CV Used | Notes | URL |
+|---|---|---|---|---|---|---|---|
+| Acme | Deployment Strategist | Rejected | 2026-01-05 | — | — | — | — |
+| Northwind | Ops Lead | Withdrawn | 2026-01-03 | — | — | — | — |
+"""
+
+
+def _pipeline_repo(tmp_path, text=PIPELINE_WITH_CLOSED):
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "job-pipeline.md").write_text(text, encoding="utf-8")
+    return tmp_path
+
+
+def test_closed_entries_are_the_archived_rows_only(tmp_path):
+    from tools.career_scanner.dedup import load_closed_entries
+    got = load_closed_entries(_pipeline_repo(tmp_path))
+    assert [(e["company"], e["role"], e["stage"]) for e in got] == [
+        ("Acme", "Deployment Strategist", "Rejected"), ("Northwind", "Ops Lead", "Withdrawn")]
+
+
+def test_closed_entries_degrade_to_empty_without_a_pipeline(tmp_path):
+    from tools.career_scanner.dedup import load_closed_entries
+    assert load_closed_entries(tmp_path) == []
+
+
+def test_a_role_matching_a_closed_row_is_tagged_not_dropped(tmp_path):
+    """362.F4: a role Nick already rejected came back with no sign it had been closed."""
+    from tools.career_scanner.dedup import load_closed_entries, tag_previously_closed
+    roles = [_role(title="Deployment Strategist"), _role(title="Chief of Staff"),
+             _role(company="Beacon", title="Ops Lead")]
+    n = tag_previously_closed(roles, load_closed_entries(_pipeline_repo(tmp_path)))
+    assert n == 1 and len(roles) == 3
+    assert roles[0]["previously_closed"] == "Rejected, 2026-01-05"
+    assert "previously_closed" not in roles[1], "an ACTIVE row is not a closed one"
+    assert "previously_closed" not in roles[2], "same title at another company is not a match"
+
+
+def test_is_duplicate_still_uses_company_plus_fuzzy_title():
+    from tools.career_scanner.dedup import is_duplicate
+    entries = [{"company": "Acme", "role": "Deployment Strategist"}]
+    assert is_duplicate("Deployment Strategist II", "ACME", entries) is True
+    assert is_duplicate("Account Executive", "Acme", entries) is False
+    assert is_duplicate("Deployment Strategist", "", entries) is False

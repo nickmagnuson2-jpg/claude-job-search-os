@@ -93,6 +93,11 @@ def main():
             "company": r.get("company", ""),
             "score": r.get("score", 0),
             "url": r.get("url", ""),
+            # 362.F3: `new_roles` counts every open role not in the pipeline. Whether a
+            # role is new since the last scan is this flag, never that count.
+            "new": r.get("new", False),
+            "first_seen": r.get("first_seen", ""),
+            "previously_closed": r.get("previously_closed", ""),
         }
         for r in result.get("roles", [])[:10]
     ]

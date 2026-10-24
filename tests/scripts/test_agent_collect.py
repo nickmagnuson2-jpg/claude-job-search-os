@@ -33,6 +33,7 @@ def test_collect_main_scores_companies_and_writes_inbox(tmp_path, monkeypatch):
     inbox_file = tmp_path / "inbox.md"
     monkeypatch.setattr(ac, "SEEN_PATH", seen_file)
     monkeypatch.setattr(ac, "INBOX", inbox_file)
+    monkeypatch.setattr(ac, "PIPELINE", tmp_path / "no-pipeline.md")
     monkeypatch.setattr(ac, "load_dotenv", lambda: None)
     monkeypatch.setattr(ac, "make_client", lambda: object())
     monkeypatch.setattr(ac, "load_known_names", lambda paths: set())
@@ -70,6 +71,7 @@ def test_collect_main_skips_unmonitored_and_non_completed(tmp_path, monkeypatch)
     inbox_file = tmp_path / "inbox.md"
     monkeypatch.setattr(ac, "SEEN_PATH", seen_file)
     monkeypatch.setattr(ac, "INBOX", inbox_file)
+    monkeypatch.setattr(ac, "PIPELINE", tmp_path / "no-pipeline.md")
     monkeypatch.setattr(ac, "load_dotenv", lambda: None)
     monkeypatch.setattr(ac, "make_client", lambda: object())
     monkeypatch.setattr(ac, "load_known_names", lambda paths: set())
@@ -153,3 +155,45 @@ def test_unknown_band_still_says_unverified():
           "geo_flag": True, "geo_band": "unknown"}],
         "2026-09-14")
     assert "unverified" in block.lower()
+
+
+PIPE = """# Job Pipeline
+
+## Active Pipeline
+
+| Company | Role | Stage | Date Updated | Next Action | CV Used | Notes | URL |
+|---|---|---|---|---|---|---|---|
+| Acme AI | Ops Lead | Applied | 2026-01-10 | follow up | — | — | — |
+| Northwind Labs | Strategist | Researching | 2026-01-10 | — | — | — | — |
+"""
+
+
+def test_reconcile_drops_a_pipeline_company_and_marks_a_near_match(tmp_path):
+    """362.F5: exact-name filtering let `Acme` through while `Acme AI` was in the pipeline."""
+    from tools.agent_collect import reconcile_candidates
+    pipe = tmp_path / "job-pipeline.md"
+    pipe.write_text(PIPE, encoding="utf-8")
+    cands = [{"name": "Northwind Labs"}, {"name": "Acme"}, {"name": "Beacon"}]
+    out = reconcile_candidates(cands, pipe)
+    assert [c["name"] for c in out] == ["Acme", "Beacon"], "an exact pipeline company is known"
+    assert out[0]["possible_match"] == "Acme AI"
+    assert "possible_match" not in out[1]
+
+
+def test_reconcile_passes_candidates_through_when_it_cannot_run(tmp_path, monkeypatch):
+    import pipeline_reconcile as pr
+    from tools.agent_collect import reconcile_candidates
+
+    def broken(*a, **k):
+        raise OSError("unreadable")
+    monkeypatch.setattr(pr, "resolve", broken)
+    cands = [{"name": "Acme"}]
+    assert reconcile_candidates(cands, tmp_path / "x.md") == cands
+
+
+def test_a_possible_match_is_printed_in_the_inbox_line():
+    from tools.agent_collect import render_inbox_block
+    block = render_inbox_block({"preset": "p", "entity": "company"},
+                               [{"name": "Acme", "description": "d", "score": 7,
+                                 "geo_band": "sf", "possible_match": "Acme AI"}], "2026-01-02")
+    assert "**Acme**" in block and "[possible match: Acme AI in pipeline]" in block

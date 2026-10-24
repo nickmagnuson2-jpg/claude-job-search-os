@@ -45,7 +45,9 @@ If the user passed `--dry-run`, add that flag:
 PYTHONIOENCODING=utf-8 python3 tools/career_scanner/cli.py --repo-root . --dry-run
 ```
 
-The CLI outputs JSON to stdout with keys: `total_fetched`, `new_roles`, `skipped_dupes`, `companies_scanned`, `top_roles`.
+The CLI outputs JSON to stdout with keys: `total_fetched`, `new_roles`, `new_since_last_scan`, `standing`, `skipped_dupes`, `companies_scanned`, `fetch_failures`, `top_roles`.
+
+**Two different counts, never confused.** `new_since_last_scan` is the roles never shown before. `new_roles` is every open role at a target that is not in the pipeline, most of which were shown on earlier days. Each entry in `top_roles` carries `new` (true only for a role first seen this scan) and `first_seen`.
 
 Status messages appear on stderr (scanning progress per company).
 
@@ -56,18 +58,20 @@ Parse the JSON output. Present results as a formatted table sorted by score desc
 ```markdown
 ## Scan Results - [date]
 
-**Companies scanned:** N | **Total roles fetched:** N | **Duplicates skipped:** N | **New roles:** N
+**Companies scanned:** N | **Total roles fetched:** N | **New since last scan:** N (`new_since_last_scan`) | **Open, not in pipeline:** N (`new_roles`) | **Duplicates skipped:** N
 
-| Score | Role | Company | Location | Link |
-|-------|------|---------|----------|------|
-| 8/10  | Strategy & Ops Manager | Northwind | New York, NY | [View](url) |
-| 7/10  | Business Operations Lead | Notion | San Francisco | [View](url) |
-| ...   | ... | ... | ... | ... |
+| Score | Role | Company | Location | First seen | Link |
+|-------|------|---------|----------|------------|------|
+| 8/10  | Strategy & Ops Manager | Northwind | New York, NY | NEW | [View](url) |
+| 7/10  | Business Operations Lead | Notion | San Francisco | 2026-01-05 | [View](url) |
+| ...   | ... | ... | ... | ... | ... |
 ```
+
+Write `NEW` in First seen when the role's `new` is true, otherwise its `first_seen` date. When a role has `previously_closed` (a pipeline row at that company with a matching title is closed, for example "Rejected, 2026-07-01"), append `(previously: <value>)` to its Role cell: a relisting can be worth a second look, but it is not new to Nick. If `fetch_failures` is above zero, say how many companies could not be read, before the table.
 
 Show all roles per D-05 (no filtering threshold). If `--dry-run` was used, note that results were not written to inbox.
 
-If zero new roles were found, report that clearly and suggest the user review their `role_filters` in scan-targets.yaml or add more target companies.
+If `new_since_last_scan` is zero, say so plainly ("nothing new since the last scan") even when the table has standing roles. If `new_roles` is also zero, report that clearly and suggest the user review their `role_filters` in scan-targets.yaml or add more target companies.
 
 ### Step 4: Offer Next Actions
 

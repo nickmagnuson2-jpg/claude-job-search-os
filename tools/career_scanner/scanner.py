@@ -213,7 +213,8 @@ def scan_all_targets(repo_root: Path, dry_run: bool = False) -> dict:
     from tools.career_scanner.scorer import score_role, load_scoring_context
     from tools.career_scanner.dedup import (
         load_seen, save_seen, split_new_and_standing)
-    from tools.career_scanner.dedup import load_pipeline_entries, filter_duplicates
+    from tools.career_scanner.dedup import (load_pipeline_entries, filter_duplicates,
+                                            load_closed_entries, tag_previously_closed)
 
     targets = load_targets(repo_root)
     if not targets:
@@ -226,7 +227,7 @@ def scan_all_targets(repo_root: Path, dry_run: bool = False) -> dict:
         summary = {"total_fetched": 0, "new_roles": 0, "skipped_dupes": 0,
                    "companies_scanned": 0, "fetch_failures": len(errors),
                    "fetch_failure_detail": errors, "new_since_last_scan": 0,
-                   "standing": 0, "roles": []}
+                   "standing": 0, "previously_closed": 0, "roles": []}
         if not dry_run:
             write_role_queue(repo_root, [], [], errors)
         return summary
@@ -256,6 +257,7 @@ def scan_all_targets(repo_root: Path, dry_run: bool = False) -> dict:
 
     # Dedup against pipeline
     new_roles, skipped = filter_duplicates(all_roles, pipeline_entries)
+    previously_closed = tag_previously_closed(new_roles, load_closed_entries(repo_root))
 
     # Sort by score descending (D-05)
     new_roles.sort(key=lambda r: r.get("score", 0), reverse=True)
@@ -276,6 +278,7 @@ def scan_all_targets(repo_root: Path, dry_run: bool = False) -> dict:
         "fetch_failure_detail": errors,
         "new_since_last_scan": len(truly_new),
         "standing": len(standing),
+        "previously_closed": previously_closed,
         "roles": new_roles,
     }
 

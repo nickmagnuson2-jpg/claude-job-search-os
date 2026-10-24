@@ -50,6 +50,53 @@ def load_pipeline_entries(repo_root: Path) -> list[dict]:
         return []
 
 
+def load_closed_entries(repo_root: Path) -> list[dict]:
+    """Pipeline rows that are closed (terminal stage or under an Archived heading).
+
+    The active-only dedup above lets a role Nick already rejected or withdrew from come
+    back as if it were new (362.F4). Such a role is TAGGED, not dropped: a relisting can
+    be worth a second look, but it must never read as unseen. Reads the rows through
+    pipe_read.parse_all_rows, the one parser for "all rows". [] when anything fails.
+    """
+    from datetime import date
+    try:
+        from tools.pipe_read import parse_all_rows
+        text = (Path(repo_root) / "data" / "job-pipeline.md").read_text(encoding="utf-8")
+        rows = parse_all_rows(text, date.today())
+    except (ImportError, OSError, UnicodeDecodeError):
+        return []
+    return [{"company": r["company"], "role": r["role"], "stage": r["stage"],
+             "date_updated": r["date_updated"]}
+            for r in rows if r["archived"] and r["company"]]
+
+
+def find_match(role_title: str, role_company: str,
+               pipeline_entries: list[dict]) -> dict | None:
+    """The first entry at the same company (case-insensitive) whose role title is a fuzzy
+    match (SequenceMatcher ratio >= 0.80, D-10), else None."""
+    company_lower = role_company.lower().strip()
+    if not company_lower:
+        return None
+    for entry in pipeline_entries:
+        if entry["company"].lower().strip() != company_lower:
+            continue
+        if SequenceMatcher(None, role_title.lower(), entry["role"].lower()).ratio() >= _FUZZY_THRESHOLD:
+            return entry
+    return None
+
+
+def tag_previously_closed(roles: list[dict], closed_entries: list[dict]) -> int:
+    """Set `previously_closed` ("<stage>, <date>") on each role matching a closed pipeline
+    row, and return how many were tagged."""
+    tagged = 0
+    for role in roles:
+        hit = find_match(role.get("title", ""), role.get("company", ""), closed_entries)
+        if hit:
+            role["previously_closed"] = ", ".join(x for x in (hit["stage"], hit["date_updated"]) if x)
+            tagged += 1
+    return tagged
+
+
 def is_duplicate(role_title: str, role_company: str,
                  pipeline_entries: list[dict]) -> bool:
     """Check if a role is already in the pipeline.
@@ -65,21 +112,7 @@ def is_duplicate(role_title: str, role_company: str,
     Returns:
         True if duplicate (should skip)
     """
-    company_lower = role_company.lower().strip()
-    if not company_lower:
-        return False
-
-    for entry in pipeline_entries:
-        if entry["company"].lower().strip() != company_lower:
-            continue
-        ratio = SequenceMatcher(
-            None,
-            role_title.lower(),
-            entry["role"].lower()
-        ).ratio()
-        if ratio >= _FUZZY_THRESHOLD:
-            return True
-    return False
+    return find_match(role_title, role_company, pipeline_entries) is not None
 
 
 def filter_duplicates(roles: list[dict],
@@ -176,9 +209,11 @@ def split_new_and_standing(roles: list[dict], seen: dict) -> tuple[list[dict], l
         key = role_key(role)
         if key in seen:
             role["first_seen"] = seen[key].get("first_seen", "") if isinstance(seen[key], dict) else ""
+            role["new"] = False
             standing.append(role)
         else:
             role["first_seen"] = today
+            role["new"] = True     # explicit: first_seen == today is also true of a role seen earlier today
             seen[key] = {"first_seen": today,
                          "company": role.get("company", ""),
                          "title": role.get("title", "")}
