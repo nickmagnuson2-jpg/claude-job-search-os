@@ -126,3 +126,43 @@ def test_the_scan_actually_found_hooks():
         "A low count means the scan broke, not that hooks were removed -- every other "
         "assertion in this module passes vacuously when this list is short.")
     assert TESTS.is_dir(), f"tests dir not found at {TESTS}"
+
+
+HOOKS_DOC = REPO_ROOT / "docs" / "hooks.md"
+
+
+def missing_from_doc(stems, text: str) -> list[str]:
+    """Stems named in `text` neither as `<stem>` nor as `<stem>.py`, backticks included."""
+    return sorted(s for s in stems if f"`{s}`" not in text and f"`{s}.py`" not in text)
+
+
+def test_every_wired_hook_has_a_row_in_the_hooks_doc():
+    """docs/hooks.md must name every wired hook, backticked.
+
+    The hook table moved out of README.md on 2026-10-23; README now links to docs/hooks.md
+    as the full list, so that is the surface a reader is sent to. Backticks are required
+    because a bare substring match passes on prose: on 2026-10-22 `check_public_pii`
+    appeared in README only as `tools/check_public_pii.py` inside a paragraph while the
+    table had no row for it. Four wired hooks had no row that day, and the
+    changelog-currency hook had nothing to say because the changelog was current.
+    (`feedback_ship_isnt_done_until_doc_surfaces_swept`.) An empty stem set is already
+    caught by `test_the_scan_actually_found_hooks`.
+    """
+    assert HOOKS_DOC.exists(), f"hook list not found at {HOOKS_DOC}"
+    missing = missing_from_doc(wired_hook_stems(), HOOKS_DOC.read_text(encoding="utf-8"))
+    assert not missing, (
+        f"wired hook(s) with no `<name>.py` row in docs/hooks.md: {missing}. Add a row "
+        "stating what the hook blocks or flags, and on which tool event.")
+
+
+def test_the_hooks_doc_check_can_actually_fail():
+    """The live doc is complete, so the assertion above passes whatever the helper does.
+    Asserted against synthetic text so a no-op helper dies here."""
+    assert missing_from_doc({"check_a"}, "| `check_a.py` | Stop |") == []
+    assert missing_from_doc({"check_a"}, "see `check_a` above") == []
+    assert missing_from_doc({"check_a"}, "") == ["check_a"]
+    assert missing_from_doc({"check_a"}, "prose naming tools/check_a.py only") == ["check_a"]
+    assert missing_from_doc({"check_a"}, "the `tools/check_a.py` hook") == ["check_a"]
+    assert missing_from_doc({"check_a"}, "| `check_ab.py` |") == ["check_a"]
+    assert missing_from_doc({"check_b", "check_a"}, "| `check_b.py` |") == ["check_a"]
+    assert missing_from_doc({"check_b", "check_a"}, "") == ["check_a", "check_b"]
