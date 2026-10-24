@@ -86,6 +86,10 @@
           },
           {
             "type": "command",
+            "command": "PYTHONIOENCODING=utf-8 python3 $CLAUDE_PROJECT_DIR/tools/check_zsh_word_split.py"
+          },
+          {
+            "type": "command",
             "command": "PYTHONIOENCODING=utf-8 python3 $CLAUDE_PROJECT_DIR/tools/check_pipe_close_via_update.py"
           },
           {

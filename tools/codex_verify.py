@@ -504,6 +504,40 @@ def gather_diff(repo_root: Path, paths: list[str], cap: int = MAX_DIFF_LINES) ->
     return truncate_diff(proc.stdout, cap) if proc.stdout.strip() else ""
 
 
+def refuse_unknown_paths(repo_root: Path, paths: list[str]) -> str:
+    """Refusal text when a named path is neither on disk nor in the diff base, else "".
+
+    `git diff -- <path>` prints nothing for a path that does not exist, so the reviewer got
+    no diff while the ledger recorded the path as reviewed. 2026-10-23: a zsh `$P` holding
+    six paths is not word-split, so all six arrived as ONE argument; two review rounds ran
+    blind before the gate's coverage check noticed. A path deleted by the change is valid:
+    it exists at the diff base.
+    """
+    base = diff_base(repo_root)
+    bad = []
+    for p in paths or []:
+        if (repo_root / p).exists():
+            continue
+        try:
+            proc = subprocess.run(["git", "cat-file", "-e", f"{base}:{p}"],
+                                  capture_output=True, cwd=str(repo_root), timeout=60)
+            if proc.returncode == 0:
+                continue
+        except (subprocess.SubprocessError, OSError):
+            pass
+        bad.append(p)
+    if not bad:
+        return ""
+    lines = ["REFUSING TO DISPATCH: these --paths are neither on disk nor in the diff base, "
+             "so the reviewer would get no diff for them:"]
+    lines += [f"  {p!r}" for p in bad]
+    if any(any(c.isspace() for c in p) for p in bad):
+        lines.append("A path containing spaces is usually several paths passed as one "
+                     "argument. In zsh an unquoted $VAR is not word-split: use ${=VAR}, "
+                     "a bash array (\"${ARR[@]}\"), or list the paths literally.")
+    return "\n".join(lines)
+
+
 def build_prompt(repo_root: Path, target: str, question: str, report: Path,
                  prior: str | None, mode: str = "verify",
                  paths: list[str] | None = None,
@@ -768,13 +802,17 @@ def run(repo_root: Path, target: str, paths: list[str], question: str,
             "stderr_tail": proc.stderr[-500:] if proc.returncode else ""}
 
 
-def _mutation_run_alive() -> bool:
-    """True when a mutation_check process exists, or when that cannot be determined."""
+def _mutation_run_alive(repo_root: Path) -> bool:
+    """True when a mutation run holds this repo's run lock, or when that cannot be told.
+
+    Asks mutation_check's own flock rather than `pgrep -f mutation_check.py`, which also
+    matched this process whenever the review named that file in --paths (556.F3).
+    """
     try:
-        r = subprocess.run(["pgrep", "-f", "mutation_check.py"], capture_output=True)
-    except OSError:
+        from mutation_check import run_lock_held
+    except ImportError:
         return True
-    return r.returncode != 1  # 1 = no match; 0 = found; anything else = unknown
+    return run_lock_held(repo_root)
 
 
 def _same_bytes(a: Path, b: Path) -> bool:
@@ -807,7 +845,7 @@ def refuse_under_active_mutation(repo_root: Path, paths: list[str]) -> str:
     except ImportError:
         return ""  # detector unavailable; do not invent a second one
     stranded = stranded_backups(repo_root)
-    if stranded and not _mutation_run_alive():
+    if stranded and not _mutation_run_alive(repo_root):
         # A backup byte-identical to its source with no run alive is left over from a
         # crashed run: the source is not a mutant, so reviewing it is safe. It blocked
         # every dispatch until deleted by hand (3 friction fires, 2026-09-23..09-29).
@@ -933,6 +971,12 @@ def main(argv=None) -> int:
         if refusal:
             print(refusal, file=sys.stderr)
             return 3
+        # A path the diff cannot see would be recorded as reviewed while the reviewer
+        # saw nothing of it.
+        refusal = refuse_unknown_paths(Path(args.repo_root).resolve(), args.paths)
+        if refusal:
+            print(refusal, file=sys.stderr)
+            return 5
 
     root = Path(args.repo_root)
     if args.report:

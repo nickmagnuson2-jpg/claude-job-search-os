@@ -27,31 +27,51 @@ Every guard edit below was approved by Nick and reviewed by Codex and Grok befor
 
 **New checks**
 - **`check_derived_ratio.py` (Stop hook)**: blocks a reply that states a ratio or
-  percentage worked out in chat when no tool printed it. **`count_report.py`** is the
-  helper to use instead: one line that states the population, what was included and what
-  was excluded.
+  percentage in one of the shapes it lists ("7 of 22 is 31.8%", "7 of the 22, or 31.8%")
+  when no tool output or user message carries it. A quoted ratio and a stated target are
+  not blocked. **`count_report.py`** is the helper to use instead: one line that states the
+  population, what was included and what was excluded.
 - **`check_save_claims.py`** also checks the inverse claim: "X is missing" while a file by
-  that name is on disk blocks the stop. A line opening with `File:` ends the claim window.
+  that name is on disk blocks the stop. For write claims, a line opening with `File:` ends
+  the claim window.
 - **`check_voice_pure.py`** blocks a `## Notes` or `## Analysis` section in a dated
-  reflection. Known gap: it reads Write and Edit payloads only, so MultiEdit passes.
+  reflection. Content hooks now also read MultiEdit text, through one shared
+  `hook_runtime` property.
 - **`check_draft_voice.py`** blocks "please make sure" and "send it my way" in an outbound
   draft.
-- **`check_prep_doc.py` check 7**: the Primary proof may not name a dated source unless the
-  doc records Nick's override with a reason.
+- **`check_prep_doc.py` check 7**: the Primary proof may not name a source the owner has
+  called too dated to lead with (`DATED_PROOF_SOURCES`) unless the doc records Nick's override
+  with a reason, on the Primary line or the line after it.
 - **`check_deck_craft.py`** now runs frame check F15 (every number a page prints must come
   from a cited fact), which never ran on a real build before.
 - **`check_table_integrity.py` and `check_edit_after_mutation.py`** reject an unknown flag
   (exit 2) instead of falling through to hook mode and scanning nothing.
 - **`todo_write.py` and `networking_write.py --followup`** refuse a wrong weekday/date pair,
-  sharing the parser in `check_draft_weekday.py`. Known gap: "Wed / Mon 3/16-17" style lists
-  can false-block.
+  sharing the parser in `check_draft_weekday.py`. A weekday list heading a date range
+  (slash, comma, hyphen, "or", "to") is not read as a pair.
 - **`tools/mannered-phrases.txt`**: three figurative substitutes for "the role".
+- **`check_zsh_word_split.py` (new, PreToolUse on Bash)**: blocks an unquoted `$VAR` that
+  zsh passes as one argument or loops over once. It fired 11 times before this hook; the
+  last sent two review rounds a joined path, so they ran with no diff. A replay of 24,014
+  past Bash calls blocked 46; read by hand, 45 were clear mistakes and 1 likely. **`codex_verify.py`** now refuses
+  (exit 5) a `--paths` entry that is neither on disk nor in the diff base, so a review can
+  no longer be recorded for files the reviewer never saw.
 
 **Fixes and smaller changes**
 - `mutation_check.py` refuses to mutate a wired hook inside a live Claude session unless
-  `--allow-live-wired` is passed; refusal messages point at `--wait` instead of a
-  process-name grep, which matches the polling shell itself.
-- `scan_jobs.py` caps an ad with a blank description at "maybe" and tags it `title_only`.
+  `--allow-live-wired` is passed or the run is in a linked worktree. Separately, the
+  refusals for a run already in progress point at `--wait` and `stranded_backups()` instead
+  of a process-name grep, which matches the polling shell itself.
+- `scan_jobs.py` caps an ad with a blank description at "maybe" and tags it `title_only`,
+  and `record` now also refuses the same role twice within one call.
+- **`standup_collect.py` (new)**: `/standup` Step 1 runs its ten preprocessing scripts in one
+  call from argv lists, with stderr kept apart from the JSON. Closes a to-do approved
+  2026-09-30.
+- `codex_verify.py` asks `mutation_check`'s run lock whether a run is live (new
+  `run_lock_held`), instead of `pgrep -f mutation_check.py`, which matched any process that
+  merely named the file.
+- `/prep-interview` seeds the self-doubt table from common beliefs when the candidate has no
+  catalog, instead of stopping to ask (a public-fork regression from the privacy scrub).
 - `pipe_write.py update --notes` re-appends a dropped `[fit-reason ...]` tag and returns the
   previous notes.
 - `cv_merge_theme.py` deletes the previous output before any step that can fail.

@@ -2065,3 +2065,55 @@ def test_listing_a_wired_hook_is_not_refused(tmp_path):
     tool, _ = _hook_repo(tmp_path)
     r = _run([str(tool), "--list"], cwd=tmp_path, env_extra=LIVE)
     assert r.returncode == 0 and json.loads(r.stdout)["status"] == "ok"
+
+
+# run_lock_held answers "is a run alive for this repo" from the flock itself, for callers
+# that used to grep process names (codex_verify, 556.F3).
+def test_run_lock_held_is_true_only_while_a_process_holds_the_lock(tmp_path, monkeypatch):
+    import fcntl
+    store = tmp_path / "store"
+    store.mkdir()
+    monkeypatch.setenv("MUTATION_BACKUP_DIR", str(store))
+    repo = (tmp_path / "repo").resolve()
+    repo.mkdir()
+    assert mc.run_lock_held(repo) is False, "no lock file yet: no run has started"
+    lock = _lock_file_for(store, repo)
+    assert mc.run_lock_held(repo) is False, "a released lock file is not a live run"
+    fd = os.open(lock, os.O_RDWR)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        assert mc.run_lock_held(repo) is True
+    finally:
+        os.close(fd)
+    assert mc.run_lock_held(repo) is False, "the probe must not leave the lock taken"
+    assert lock.exists(), "probing never deletes the lock file"
+
+
+def test_run_lock_held_is_scoped_to_its_own_repo(tmp_path, monkeypatch):
+    import fcntl
+    store = tmp_path / "store"
+    store.mkdir()
+    monkeypatch.setenv("MUTATION_BACKUP_DIR", str(store))
+    a, b = (tmp_path / "a").resolve(), (tmp_path / "b").resolve()
+    a.mkdir(); b.mkdir()
+    fd = os.open(_lock_file_for(store, a), os.O_RDWR)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        assert mc.run_lock_held(a) is True
+        assert mc.run_lock_held(b) is False
+    finally:
+        os.close(fd)
+
+
+def test_run_lock_held_says_alive_when_the_lock_cannot_be_opened(tmp_path, monkeypatch):
+    store = tmp_path / "store"
+    store.mkdir()
+    monkeypatch.setenv("MUTATION_BACKUP_DIR", str(store))
+    repo = (tmp_path / "repo").resolve()
+    repo.mkdir()
+    _lock_file_for(store, repo)
+
+    def denied(*a, **k):
+        raise PermissionError("denied")
+    monkeypatch.setattr(mc.os, "open", denied)
+    assert mc.run_lock_held(repo) is True

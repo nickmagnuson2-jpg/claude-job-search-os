@@ -1597,7 +1597,7 @@ def test_stale_identical_backup_with_no_run_alive_does_not_refuse(monkeypatch, t
     by hand (3 friction fires). With no run alive the source is not a mutant."""
     import codex_verify as cv
     repo = _real_backup(monkeypatch, tmp_path, "original\n")
-    monkeypatch.setattr(cv, "_mutation_run_alive", lambda: False)
+    monkeypatch.setattr(cv, "_mutation_run_alive", lambda root: False)
     assert cv.refuse_under_active_mutation(repo, ["tools/x.py"]) == ""
     assert "stale mutation backup ignored" in capsys.readouterr().err, \
         "an ignored backup must be named, not skipped silently"
@@ -1607,7 +1607,7 @@ def test_identical_backup_still_refuses_while_a_run_is_alive(monkeypatch, tmp_pa
     """Between mutants the source is briefly restored, so identical bytes alone prove nothing."""
     import codex_verify as cv
     repo = _real_backup(monkeypatch, tmp_path, "original\n")
-    monkeypatch.setattr(cv, "_mutation_run_alive", lambda: True)
+    monkeypatch.setattr(cv, "_mutation_run_alive", lambda root: True)
     assert "REFUSING TO DISPATCH" in cv.refuse_under_active_mutation(repo, ["tools/x.py"])
 
 
@@ -1615,28 +1615,31 @@ def test_differing_backup_refuses_even_with_no_run_alive(monkeypatch, tmp_path):
     """A source that differs from its backup may be a stranded mutant: never review it."""
     import codex_verify as cv
     repo = _real_backup(monkeypatch, tmp_path, "the real code\n")
-    monkeypatch.setattr(cv, "_mutation_run_alive", lambda: False)
+    monkeypatch.setattr(cv, "_mutation_run_alive", lambda root: False)
     assert "REFUSING TO DISPATCH" in cv.refuse_under_active_mutation(repo, ["tools/x.py"])
 
 
-def test_mutation_run_alive_fails_safe_when_pgrep_is_missing(monkeypatch):
+def test_mutation_run_alive_asks_the_run_lock_for_this_repo(monkeypatch, tmp_path):
+    """556.F3: the old `pgrep -f mutation_check.py` matched this very process whenever a
+    review named that file. The answer now comes from mutation_check's run lock."""
     import codex_verify as cv
+    import mutation_check as mc
+    seen = []
+    monkeypatch.setattr(mc, "run_lock_held", lambda root: seen.append(root) or True)
+    assert cv._mutation_run_alive(tmp_path) is True and seen == [tmp_path]
+    monkeypatch.setattr(mc, "run_lock_held", lambda root: False)
+    assert cv._mutation_run_alive(tmp_path) is False
+
+
+def test_mutation_run_alive_never_greps_process_names(monkeypatch, tmp_path):
+    import codex_verify as cv
+    import mutation_check as mc
+    monkeypatch.setattr(mc, "run_lock_held", lambda root: False)
 
     def boom(*a, **k):
-        raise FileNotFoundError("pgrep")
+        raise AssertionError("no subprocess: a process-name grep can match its caller")
     monkeypatch.setattr(cv.subprocess, "run", boom)
-    assert cv._mutation_run_alive() is True
-
-
-@pytest.mark.parametrize("rc,alive", [(1, False), (0, True), (2, True)])
-def test_mutation_run_alive_reads_pgrep_exit_codes(monkeypatch, rc, alive):
-    """pgrep: 1 = no match, 0 = match, anything else = error, which must count as alive."""
-    import codex_verify as cv
-
-    class R:
-        returncode = rc
-    monkeypatch.setattr(cv.subprocess, "run", lambda *a, **k: R())
-    assert cv._mutation_run_alive() is alive
+    assert cv._mutation_run_alive(tmp_path) is False
 
 
 def test_same_bytes_is_false_when_a_file_is_unreadable(tmp_path):
@@ -1644,3 +1647,49 @@ def test_same_bytes_is_false_when_a_file_is_unreadable(tmp_path):
     a = tmp_path / "a"
     a.write_text("x")
     assert cv._same_bytes(a, tmp_path / "missing") is False
+
+
+# A path the diff cannot see is refused before dispatch (2026-10-23: six paths passed as
+# one zsh argument; two review rounds ran with no diff while the ledger recorded them).
+def test_a_joined_path_string_is_refused_with_the_word_split_hint(tmp_path):
+    repo = _tiny_repo(tmp_path)
+    msg = cv.refuse_unknown_paths(repo, ["a.py b.py"])
+    assert msg.startswith("REFUSING TO DISPATCH") and "'a.py b.py'" in msg
+    assert "${=VAR}" in msg
+
+
+def test_real_paths_and_a_path_deleted_by_the_change_pass(tmp_path):
+    repo = _tiny_repo(tmp_path)
+    (repo / "b.py").unlink()                      # deleted by the change, still in HEAD
+    assert cv.refuse_unknown_paths(repo, ["a.py", "b.py"]) == ""
+    assert cv.refuse_unknown_paths(repo, []) == ""
+
+
+def test_a_missing_path_without_spaces_is_refused_without_the_hint(tmp_path):
+    msg = cv.refuse_unknown_paths(_tiny_repo(tmp_path), ["a.py", "nope.py"])
+    assert "'nope.py'" in msg and "'a.py'" not in msg and "${=VAR}" not in msg
+
+
+def test_main_refuses_an_unknown_path_before_dispatch(monkeypatch, capsys, tmp_path):
+    repo = _tiny_repo(tmp_path)
+    monkeypatch.setattr(cv, "refuse_under_active_mutation", lambda root, paths: "")
+    # Never dispatch for real: a mutant that skips the refusal must fail here, offline.
+    monkeypatch.setattr(cv, "run", lambda *a, **k: {"status": "ok"})
+    rc = cv.main(["--target", "t", "--repo-root", str(repo), "--paths", "a.py b.py",
+                  "--model", "codex"])
+    assert rc == 5 and "'a.py b.py'" in capsys.readouterr().err
+    assert cv.main(["--target", "t", "--repo-root", str(repo), "--paths", "a.py", "b.py",
+                    "--model", "codex"]) == 0
+
+
+def test_a_new_untracked_file_on_disk_is_a_valid_path(tmp_path):
+    """A file the change adds is on disk but not yet in the diff base."""
+    repo = _tiny_repo(tmp_path)
+    (repo / "new.py").write_text("x\n", encoding="utf-8")
+    assert cv.refuse_unknown_paths(repo, ["new.py"]) == ""
+
+
+def test_mutation_run_alive_says_alive_when_the_lock_check_cannot_load(monkeypatch, tmp_path):
+    import codex_verify as cv
+    monkeypatch.setitem(sys.modules, "mutation_check", None)    # import now raises ImportError
+    assert cv._mutation_run_alive(tmp_path) is True

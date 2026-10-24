@@ -455,7 +455,7 @@ SWEEP_ENV = "MUTATION_SWEEP_ACTIVE"
 LOCK_HELD_ENV = "MUTATION_TREE_LOCK_HELD"
 
 
-def _run_lock_path() -> Path:
+def _run_lock_path(root: Path | None = None) -> Path:
     """One lock per REPO, keyed the way backups are.
 
     NOT one global lock: two different checkouts are independent trees and must not block
@@ -463,8 +463,37 @@ def _run_lock_path() -> Path:
     matches on that suffix, so a lock file named that way would itself read as a stranded
     mutation and refuse the entire test suite.
     """
-    enc = str(REPO_ROOT).replace("%", "%25").replace("/", "%2F")
+    enc = str(root or REPO_ROOT).replace("%", "%25").replace("/", "%2F")
     return backup_dir() / (enc + LOCK_SUFFIX)
+
+
+def run_lock_held(root: Path) -> bool:
+    """True when a mutation run holds the lock for `root`, or when that cannot be told.
+
+    The question callers used to answer with `pgrep -f mutation_check.py`, which also
+    matches any process whose arguments merely NAME this file (a review of it, an editor),
+    so it could report a run that did not exist. The flock is held for exactly the life of
+    a run and released by the OS when the run dies, so trying it without waiting answers
+    the question directly.
+    """
+    lock = _run_lock_path(Path(root).resolve())
+    try:
+        fd = os.open(lock, os.O_RDWR)
+    except FileNotFoundError:
+        return False                    # no run has ever taken this repo's lock
+    except OSError:
+        return True                     # cannot tell: say alive, so callers stay careful
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return True
+    except OSError:
+        return True
+    else:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        return False
+    finally:
+        os.close(fd)
 
 
 LOCK_SUFFIX = ".mutation-run.lock"

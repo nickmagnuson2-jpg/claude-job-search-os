@@ -63,6 +63,7 @@ TOOLS = (
     "check_unquoted_glob",
     "check_voice_pure",
     "check_workflow_scriptpath",
+    "check_zsh_word_split",
     "check_zuora_principal_title",
     "context_file_audit",
     "daily_stoic",
