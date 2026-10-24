@@ -255,3 +255,18 @@ def test_dated_source_match_is_word_bounded(tmp_path):
     assert 7 not in failed_checks(report)
     assert 7 in failed_checks(
         _proof_doc(tmp_path, "trained an ESPN speech model at Acme.", _RECENT)[1])
+
+
+def test_override_helper_is_false_without_a_primary_line():
+    """check_doc reaches the helper only when a Primary proof exists, so the
+    no-Primary branch is pinned directly: it must return False, not crash."""
+    import importlib.util
+    from pathlib import Path
+    spec = importlib.util.spec_from_file_location(
+        "cpd_override", Path(__file__).resolve().parents[2] / "tools" / "check_prep_doc.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    assert mod._override_beside_primary(
+        "# Prep\n<!-- proof_override: nick a reason -->\n") is False
+    assert mod._override_beside_primary(
+        "**Primary proof** (d): x <!-- proof_override: nick a reason -->") is True
