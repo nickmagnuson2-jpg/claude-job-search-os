@@ -243,7 +243,9 @@ PATTERNS = [
         "give a reason every time you reach out",
     ),
     (
-        re.compile(r"\bshape\s+of\s+(?:the|this|that|your|our|my|a|an)\s+(role|seat|work|job|gig|position|opportunity)\b", re.IGNORECASE),
+        # Same row as tools/mannered-phrases.txt: "work" and "job" are too broad, and a
+        # hyphenated compound ("role-title error") names something else (556.F1).
+        re.compile(r"\bshape\s+of\s+(?:the|this|that|your|our|my|a|an)\s+(role|seat|gig|position|opportunity)\b(?!-)", re.IGNORECASE),
         '"shape of the role/seat/work" — hard-banned euphemism (memory/feedback_no_shape_of_role_phrasing)',
         'use direct noun ("the role," "the seat," "what you described"); permitted: "same shape as," "X-shaped" adjectival',
     ),

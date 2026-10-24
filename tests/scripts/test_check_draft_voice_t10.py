@@ -211,3 +211,22 @@ def test_recipient_directive_override_still_bypasses(monkeypatch, tmp_path, caps
     code, _err = _run_hook(monkeypatch, tmp_path, capsys,
                            "Please make sure that version goes through.", override=True)
     assert code == 0
+
+
+# --- shape-of-role parity with tools/mannered-phrases.txt (final review 556.F1) ------
+def test_draft_voice_shape_pattern_matches_the_banned_phrase_row():
+    """The draft gate and the banned-phrase list must agree: "work" and "job" were
+    dropped as too broad on 2026-10-23, and a hyphenated compound names something
+    else ("the shape of the role-title error")."""
+    import re as _re
+    import importlib.util
+    from pathlib import Path as _P
+    hook = _P(__file__).resolve().parents[2] / "tools" / "check_draft_voice.py"
+    spec = importlib.util.spec_from_file_location("cdv_shape", hook)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    shape = [rx for rx, *_ in mod.PATTERNS if "shape" in rx.pattern and "of" in rx.pattern][0]
+    assert shape.search("I like the shape of the role you described")
+    assert not shape.search("the shape of the work changed this quarter")
+    assert not shape.search("the shape of the job market")
+    assert not shape.search("the shape of the role-title error")
