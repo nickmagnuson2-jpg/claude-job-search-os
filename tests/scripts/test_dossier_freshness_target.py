@@ -165,3 +165,9 @@ def test_load_pipeline_targets_uses_the_shared_rules(tmp_path):
         " | Indented | PM | Applied | 2026-02-01 | x | — | — | — |",
         archived=("| Shelved | PM | Applied | 2026-02-01 | x | — | — | — |",)), encoding="utf-8")
     assert _df.load_pipeline_targets(tmp_path) == {"dl", "lo", "pa"}
+
+
+def test_an_unreadable_pipeline_gives_no_targets_rather_than_none(tmp_path):
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "job-pipeline.md").write_bytes(b"| Company |\n| \xff\xfe bad bytes |\n")
+    assert _df.load_pipeline_targets(tmp_path) == set()
