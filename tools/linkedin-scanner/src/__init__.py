@@ -1,1 +1,0 @@
-# LinkedIn scanner package

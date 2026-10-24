@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """contact_finder.py - deterministic contact discovery via Exa search.
 
-Retires the Selenium LinkedIn scraper (tools/linkedin-scanner/). Given a company,
+Replaced the Selenium LinkedIn scraper (deleted 2026-10-24). Given a company,
 fan out a few Exa /search calls restricted to linkedin.com, keep only real
 /in/ profile pages, extract each person's name from the RESULT TITLE ONLY
 (never from body text), canonicalize + dedup URLs, and emit UNRANKED candidate

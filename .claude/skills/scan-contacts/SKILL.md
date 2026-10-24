@@ -165,7 +165,5 @@ Run /research-company "[Company]" first if you haven't — outreach lands better
 
 ## Notes
 
-- The Selenium scanner (`tools/linkedin-scanner/`) is retired/dormant; see its
-  `DEPRECATED.md`. Do not use it.
 - Public-repo PII gate: examples here are placeholders; real names appear only at
   runtime. Run `/audit-pii` before committing any change to this skill or tool.
