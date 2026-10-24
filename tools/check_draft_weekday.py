@@ -81,10 +81,22 @@ _NUMERIC = r"(?P<nmon>\d{1,2})/(?P<nday>\d{1,2})(?:/(?P<nyear>(?:19|20)\d{2}|\d{
 _DATE = rf"(?:{_NAMED}|{_NUMERIC})"
 
 WD_THEN_DATE = re.compile(
-    # (?<!/): the second weekday of a list such as "Thu/Fri 10/22-23" heads a date range,
-    # not a pair (promotion drain C10, 2026-10-23).
-    rf"(?<!/)\b(?P<wd>{_WD_ALT})\b(?P<dot>\.)?,?[ \t]+(?:the[ \t]+)?{_DATE}(?![\w/])", re.IGNORECASE
+    rf"\b(?P<wd>{_WD_ALT})\b(?P<dot>\.)?,?[ \t]+(?:the[ \t]+)?{_DATE}(?![\w/])", re.IGNORECASE
 )
+# A weekday that closes a list of weekdays heads a date RANGE, not a pair: "Thu/Fri
+# 10/22-23", "Wed / Mon", "Wed, Mon", "Mon-Wed", "Tue or Wed". One check on the text
+# before the match replaces the single-slash lookbehind (promotion drain C10; final
+# review 552.F1, 555.F3, 556.F2). The earlier word must itself be a weekday, so
+# "Thanks, Mon 3/16" is still a pair.
+_LIST_TAIL = re.compile(
+    rf"\b(?:{_WD_ALT})\.?[ \t]*(?:/|,|-|–|—|&|\band\b|\bor\b|\bto\b|\bthrough\b|\bthru\b)[ \t]*$",
+    re.IGNORECASE)
+
+
+def _closes_weekday_list(text: str, start: int) -> bool:
+    return bool(_LIST_TAIL.search(text, max(0, start - 30), start))
+
+
 DATE_THEN_WD = re.compile(
     rf"\b{_DATE}(?![\w/])[ \t]*\([ \t]*(?P<wd>{_WD_ALT})\.?[ \t]*\)", re.IGNORECASE
 )
@@ -140,6 +152,8 @@ def find_mismatches(text: str, today: date) -> "list[tuple[str, str]]":
     for pattern in (WD_THEN_DATE, DATE_THEN_WD):
         for m in pattern.finditer(text):
             if _ends_sentence(m):
+                continue
+            if pattern is WD_THEN_DATE and _closes_weekday_list(text, m.start()):
                 continue
             actual = _date_from_match(m, today)
             if actual is None:

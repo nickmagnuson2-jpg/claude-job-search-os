@@ -48,6 +48,8 @@ def test_matching_weekdays_clean():
     "Mar 16 (Mon)",
     "3/16 (Monday)",
     "Thurs Mar 16",
+    "Thanks, Mon 3/16 works",          # a comma after a non-weekday word is not a list
+    "Back Tuesday, then Mon 3/16",     # a weekday earlier in the sentence, not a list
 ])
 def test_blocks_each_shape(text):
     assert len(h.find_mismatches(text, TODAY)) == 1
@@ -74,6 +76,11 @@ def test_allows_each_shape_when_correct(text):
     "Monday, Feb 30",                  # impossible named date
     "Mon 3/16/2027x",                  # trailing junk is not a date end
     "Wed/Mon 3/16-17",                 # a weekday list over a date range
+    "Wed / Mon 3/16-17",               # spaced list (final review 552.F1)
+    "Wed, Mon 3/16-17",                # comma list (555.F3)
+    "Mon-Wed 3/16-17",                 # hyphenated range (556.F2)
+    "Mon–Wed 3/16",                    # en-dash range
+    "Tue or Wed 3/16",                 # either-or list
     "",
 ])
 def test_allows_non_pairs(text):
