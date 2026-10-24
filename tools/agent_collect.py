@@ -5,8 +5,7 @@ _sys.path.insert(0, str(Path(__file__).resolve().parent))
 import inbox_lock
 import sys
 _REPO_ROOT = Path(__file__).resolve().parent.parent
-if str(_REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(_REPO_ROOT))
+sys.path.insert(0, str(_REPO_ROOT))   # a duplicate entry is harmless; no guard needed
 from tools.agent_core import (load_dotenv, make_client, run_agent, _norm_name,
                               filter_known, load_known_names)
 from tools.agent_discover import struct_to_candidates, load_preset, score_company_candidates

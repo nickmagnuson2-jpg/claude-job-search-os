@@ -516,3 +516,54 @@ def test_is_duplicate_still_uses_company_plus_fuzzy_title():
     assert is_duplicate("Deployment Strategist II", "ACME", entries) is True
     assert is_duplicate("Account Executive", "Acme", entries) is False
     assert is_duplicate("Deployment Strategist", "", entries) is False
+
+
+def test_a_role_with_no_company_never_matches_even_a_blank_company_row():
+    """find_match refuses an empty company outright: a blank company is unknown, not a
+    company called "", so a row that also lost its company must not claim the role."""
+    from tools.career_scanner.dedup import find_match
+    assert find_match("Deployment Strategist", "  ",
+                      [{"company": "", "role": "Deployment Strategist"}]) is None
+
+
+# load_pipeline_entries had no direct test: every branch survived mutation (2026-10-23).
+# Each test drops a stub pipe_read.py into a throwaway repo, so the subprocess path is real.
+def _stub_pipe_read(tmp_path, body):
+    (tmp_path / "tools").mkdir(exist_ok=True)
+    (tmp_path / "tools" / "pipe_read.py").write_text(body, encoding="utf-8")
+    return tmp_path
+
+
+def test_pipeline_entries_are_the_active_rows_with_a_company(tmp_path):
+    from tools.career_scanner.dedup import load_pipeline_entries
+    root = _stub_pipe_read(tmp_path, (
+        "import json\nprint(json.dumps({'active_entries': ["
+        "{'company': ' Acme ', 'role': ' Ops Lead '}, {'company': '', 'role': 'Orphan'}]}))\n"))
+    assert load_pipeline_entries(root) == [{"company": "Acme", "role": "Ops Lead"}]
+
+
+@pytest.mark.parametrize("body", [
+    None,                                                        # no pipe_read.py at all
+    "import sys\nsys.exit(1)\n",                                 # pipe_read failed
+    "print('not json')\n",                                       # unreadable output
+    "import json, sys\nprint(json.dumps({'active_entries': [{'company': 'A', 'role': 'B'}]}))\n"
+    "sys.exit(1)\n",                                             # failed, even with valid output
+])
+def test_pipeline_entries_degrade_to_empty(tmp_path, body):
+    from tools.career_scanner.dedup import load_pipeline_entries
+    root = tmp_path if body is None else _stub_pipe_read(tmp_path, body)
+    assert load_pipeline_entries(root) == []
+
+
+def test_two_url_less_roles_at_one_company_are_two_roles(tmp_path):
+    from tools.career_scanner.dedup import split_new_and_standing, load_seen
+    new, _ = split_new_and_standing([_role(title="Ops Lead", url=""),
+                                     _role(title="Chief of Staff", url="")], load_seen(tmp_path))
+    assert len(new) == 2
+
+
+def test_a_corrupt_seen_file_reads_as_empty(tmp_path):
+    from tools.career_scanner.dedup import load_seen, SEEN_FILENAME
+    (tmp_path / "tools").mkdir()
+    (tmp_path / "tools" / SEEN_FILENAME).write_text("{not json", encoding="utf-8")
+    assert load_seen(tmp_path) == {}

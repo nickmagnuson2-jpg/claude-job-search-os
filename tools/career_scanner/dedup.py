@@ -22,10 +22,9 @@ def load_pipeline_entries(repo_root: Path) -> list[dict]:
     Returns list of {"company": str, "role": str} dicts.
     Returns empty list on any failure (graceful degradation).
     """
+    # No exists() check first: a missing script fails the subprocess, which returns []
+    # below anyway (the check was a mutation survivor that nothing could tell apart).
     pipe_read_path = repo_root / "tools" / "pipe_read.py"
-    if not pipe_read_path.exists():
-        return []
-
     try:
         result = subprocess.run(
             [sys.executable, str(pipe_read_path), "--repo-root", str(repo_root)],

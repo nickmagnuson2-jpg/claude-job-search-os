@@ -197,3 +197,88 @@ def test_a_possible_match_is_printed_in_the_inbox_line():
                                [{"name": "Acme", "description": "d", "score": 7,
                                  "geo_band": "sf", "possible_match": "Acme AI"}], "2026-01-02")
     assert "**Acme**" in block and "[possible match: Acme AI in pipeline]" in block
+
+
+def _collect_env(tmp_path, monkeypatch, presets_yaml, agent_result):
+    import tools.agent_collect as ac
+    presets = tmp_path / "presets.yaml"
+    presets.write_text(presets_yaml, encoding="utf-8")
+    monkeypatch.setattr(ac, "SEEN_PATH", tmp_path / ".agent_seen.json")
+    monkeypatch.setattr(ac, "INBOX", tmp_path / "inbox.md")
+    monkeypatch.setattr(ac, "PIPELINE", tmp_path / "no-pipeline.md")
+    calls = []
+    monkeypatch.setattr(ac, "load_dotenv", lambda: calls.append("dotenv"))
+    monkeypatch.setattr(ac, "make_client", lambda: object())
+    monkeypatch.setattr(ac, "load_known_names", lambda paths: set())
+    monkeypatch.setattr(ac, "run_agent", lambda client, query, *a, **k: calls.append(query) or agent_result)
+    monkeypatch.setattr("sys.argv", ["agent_collect.py", "--today", "2026-07-24",
+                                     "--presets-file", str(presets)])
+    return ac, calls
+
+
+def test_an_unmonitored_preset_never_reaches_the_agent(tmp_path, monkeypatch, capsys):
+    """The older test could not see this: a skipped preset and a failed one both leave no
+    inbox file. Counting agent calls can."""
+    import json
+    ac, calls = _collect_env(tmp_path, monkeypatch,
+                             "presets:\n  quiet: {entity_type: company, query: q-quiet}\n"
+                             "  live: {entity_type: company, query: q-live, monitor: {cadence: weekly}}\n",
+                             {"status": "failed", "run_id": "r1"})
+    ac.main()
+    assert calls == ["dotenv", "q-live"], "the API key loads before the first agent call"
+    assert json.loads(capsys.readouterr().out) == {"summary": {"live": {"status": "failed"}}}
+
+
+def test_a_person_preset_is_neither_reconciled_nor_scored_as_companies(tmp_path, monkeypatch):
+    ac, _ = _collect_env(tmp_path, monkeypatch,
+                         "presets:\n  people: {entity_type: person, query: q, monitor: {cadence: weekly}}\n",
+                         {"status": "completed",
+                          "structured": {"people": [{"name": "Casey Doe", "title": "Ops",
+                                                     "company": "Acme", "location": "SF"}]}})
+
+    def company_only(*a, **k):
+        raise AssertionError("a company step ran on a person preset")
+    monkeypatch.setattr(ac, "reconcile_candidates", company_only)
+    monkeypatch.setattr(ac, "score_company_candidates", company_only)
+    ac.main()
+    assert "Casey Doe" in (tmp_path / "inbox.md").read_text(encoding="utf-8")
+
+
+def test_a_run_whose_candidates_were_all_seen_writes_no_inbox_block(tmp_path, monkeypatch):
+    import json
+    ac, _ = _collect_env(tmp_path, monkeypatch,
+                         "presets:\n  live: {entity_type: company, query: q, monitor: {cadence: weekly}}\n",
+                         {"status": "completed",
+                          "structured": {"companies": [{"name": "Acme", "description": "d"}]}})
+    (tmp_path / ".agent_seen.json").write_text(json.dumps({"live": ["acme"]}), encoding="utf-8")
+    monkeypatch.setattr(ac, "score_company_candidates", lambda c, w, k: c)
+    ac.main()
+    assert not (tmp_path / "inbox.md").exists()
+
+
+def test_a_failed_inbox_write_is_reported_on_stderr(tmp_path, monkeypatch, capsys):
+    ac, _ = _collect_env(tmp_path, monkeypatch,
+                         "presets:\n  live: {entity_type: company, query: q, monitor: {cadence: weekly}}\n",
+                         {"status": "completed",
+                          "structured": {"companies": [{"name": "Acme", "description": "d"}]}})
+    monkeypatch.setattr(ac, "score_company_candidates", lambda c, w, k: c)
+
+    def locked(*a, **k):
+        raise ac.inbox_lock.LockTimeout("inbox locked")
+    monkeypatch.setattr(ac.inbox_lock, "prepend_entries", locked)
+    ac.main()
+    assert "proposals NOT written" in capsys.readouterr().err
+
+
+def test_the_script_imports_and_runs_main_only_as_a_script(tmp_path):
+    import subprocess
+    import sys
+    from pathlib import Path
+    script = Path(__file__).resolve().parents[2] / "tools" / "agent_collect.py"
+    imported = subprocess.run([sys.executable, "-c",
+                               f"import runpy; runpy.run_path({str(script)!r}, run_name='x')"],
+                              cwd=str(tmp_path), capture_output=True, text=True)
+    assert imported.returncode == 0, imported.stderr
+    as_script = subprocess.run([sys.executable, str(script), "--no-such-flag"],
+                               cwd=str(tmp_path), capture_output=True, text=True)
+    assert as_script.returncode != 0, "run as a script, main() must parse its arguments"
