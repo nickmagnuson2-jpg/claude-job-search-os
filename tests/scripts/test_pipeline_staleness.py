@@ -300,3 +300,19 @@ def test_schema_drift_exits_1_with_an_error_json(tmp_path):
     assert out["status"] == "error" and out["code"] == "schema_drift"
     assert "active_entries" not in out
     assert proc.stderr == "", "a clean refusal, not a crash after the error JSON"
+
+
+@pytest.mark.parametrize("bad_row", [
+    "|Company|Role|Stage|Date Updated|Next Action|CV Used|Notes|URL|",   # header, no spaces
+    "|  Company | Role | Stage | x | x | x | x | x |",                    # header, two spaces
+    "| ---- | ---- | ---- | ---- | ---- | ---- | ---- | ---- |",           # four-dash separator
+    "| ---Co | PM | Applied | 2026-02-20 | — | — | — | — |",               # first cell starts with ---
+])
+def test_header_and_separator_variants_are_not_active_rows(tmp_path, bad_row):
+    """BEHAVIOR CHANGE 2026-10-24 (rows now come from pipe_read.parse_all_rows): each of
+    these used to be counted as an active company ("Company", "----", "---Co")."""
+    write_fixture(tmp_path, "data/job-pipeline.md", "# Job Pipeline\n\n## Active\n" + HEADER
+                  + bad_row + "\n| Live | PM | Applied | 2026-02-20 | — | — | — | — |\n")
+    result = run_script("pipeline_staleness.py", "--target-date", "2026-02-26",
+                        "--repo-root", str(tmp_path))
+    assert [e["company"] for e in result["active_entries"]] == ["Live"]
