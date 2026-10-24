@@ -328,6 +328,41 @@ def test_upcoming_scheduled_sorted_event_before_followup(tmp_path):
     assert [e["company"] for e in up] == ["EventCo", "FollowCo"]
 
 
+def test_upcoming_scheduled_reads_date_from_stage(tmp_path):
+    """The event date can live in the Stage string while Next-Action holds a
+    past prep date. Both columns are scanned; the Stage event surfaces.
+    Origin 2026-08-23: a next-day full loop was missing from upcoming_scheduled
+    because only Next-Action was read. feedback_surface_scheduled_events_in_ranking."""
+    _pipeline(tmp_path,
+        "| LoopCo | Role | Interviewing - full loop confirmed Mon 8/24 "
+        "(11:00-12:00 PT) | 2026-08-20 | Final prep by Fri 8/21 EOD | — | — | — |")
+    result = run_script("todo_daily_metrics.py",
+                        "--target-date", "2026-08-23",
+                        "--repo-root", str(tmp_path))
+    up = result["upcoming_scheduled"]
+    assert len(up) == 1
+    assert up[0]["company"] == "LoopCo"
+    assert up[0]["date"] == "2026-08-24"
+    assert up[0]["is_event"] is True
+    assert up[0]["stage"].startswith("Interviewing - full loop")
+    assert up[0]["next_action"] == "Final prep by Fri 8/21 EOD"
+
+
+def test_upcoming_scheduled_next_action_date_wins_over_stage_log_date(tmp_path):
+    """Stage often logs a same-day action ("emailed Casey Doe 10/22"). That
+    date must not displace the row's real upcoming Next-Action date.
+    Found replaying the live pipeline 2026-10-22."""
+    _pipeline(tmp_path,
+        "| AcmeCo | Role | Emailed Casey Doe 10/22 | 2026-10-22 | "
+        "Await times (offered Fri 10/23) | — | — | — |")
+    result = run_script("todo_daily_metrics.py",
+                        "--target-date", "2026-10-22",
+                        "--repo-root", str(tmp_path))
+    up = result["upcoming_scheduled"]
+    assert len(up) == 1
+    assert up[0]["date"] == "2026-10-23"
+
+
 # ===========================================================================
 # repo_root must be resolved before building the memory-dir key (2026-08-19)
 #

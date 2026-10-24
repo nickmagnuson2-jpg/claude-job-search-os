@@ -418,11 +418,13 @@ def parse_pipeline(content: str) -> dict:
     return buckets
 
 
-# Keywords that mark a Next-Action as a true time-anchored event (interview,
-# screen, call, etc.) versus a generic dated follow-up. Used to set is_event so
-# the Top-3 ranker can pin real events above routine follow-ups.
+# Keywords that mark a pipeline row's Stage/Next-Action text as a true
+# time-anchored event (interview, screen, call, etc.) versus a generic dated
+# follow-up. Used to set is_event so the Top-3 ranker can pin real events above
+# routine follow-ups. "interviewing" covers the Stage value itself.
 SCHEDULED_EVENT_RE = re.compile(
-    r"\b(interview|screen|call|onsite|debrief|panel|meet|meeting)\b", re.IGNORECASE
+    r"\b(interview(?:ing|s)?|screen|call|onsite|debrief|panel|meet|meeting)\b",
+    re.IGNORECASE,
 )
 
 _ISO_DATE_RE = re.compile(r"\b(\d{4})-(\d{2})-(\d{2})\b")
@@ -459,8 +461,8 @@ def _extract_dates(text: str, today: date) -> list:
 
 def parse_upcoming_scheduled(pipeline_content: str, today: date,
                              window_days: int = 3) -> list:
-    """Surface time-anchored events from the pipeline Next-Action column that
-    fall within [today, today + window_days].
+    """Surface time-anchored events from the pipeline Stage and Next-Action
+    columns that fall within [today, today + window_days].
 
     Interviews/screens/calls are routinely written into the Next-Action free
     text (e.g. "Interview w/ Casey Doe Thu 3/5 2pm PT") rather than as dated
@@ -468,7 +470,16 @@ def parse_upcoming_scheduled(pipeline_content: str, today: date,
     /checkout and /standup can pin imminent events above undated todos.
 
     Returns a list sorted by date ascending, then events before follow-ups:
-      [{ company, role, date: "YYYY-MM-DD", days_until, is_event, next_action }]
+      [{ company, role, date: "YYYY-MM-DD", days_until, is_event, stage,
+         next_action }]
+
+    Next-Action is read first; Stage is the fallback when Next-Action has no
+    date in the window. Scheduling detail moves between the two when rows are
+    edited by hand (2026-08-23: a next-day loop lived only in Stage,
+    "Interviewing - full loop confirmed Mon 8/24 ...", while Next-Action held a
+    past prep date, so it never surfaced). Stage is not merged into the scan
+    because it also logs same-day actions ("emailed X 10/22"), and that date
+    would displace the row's real upcoming Next-Action date.
 
     Origin: a next-day interview written into the pipeline
     Next-Action was invisible to /standup and /checkout because both rank only
@@ -494,11 +505,14 @@ def parse_upcoming_scheduled(pipeline_content: str, today: date,
             continue
         if _is_separator_row(cols[0]):
             continue
-        next_action = cols[4]
-        if not next_action or next_action.lower() in ("none", "—", "-"):
-            continue
-        dates = [d for d in _extract_dates(next_action, today)
-                 if today <= d <= window_end]
+        stage, next_action = cols[2], cols[4]
+        source, dates = None, []
+        for text in (next_action, stage):
+            dates = [d for d in _extract_dates(text, today)
+                     if today <= d <= window_end]
+            if dates:
+                source = text
+                break
         if not dates:
             continue
         event_date = min(dates)
@@ -507,7 +521,8 @@ def parse_upcoming_scheduled(pipeline_content: str, today: date,
             "role": cols[1] if len(cols) > 1 else "",
             "date": event_date.strftime("%Y-%m-%d"),
             "days_until": (event_date - today).days,
-            "is_event": bool(SCHEDULED_EVENT_RE.search(next_action)),
+            "is_event": bool(SCHEDULED_EVENT_RE.search(source)),
+            "stage": stage,
             "next_action": next_action,
         })
 
