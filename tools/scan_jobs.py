@@ -92,6 +92,18 @@ def is_cached(ad: dict, keys: set, keys_no_url: set, urls: set) -> bool:
     return (url in urls or k in keys_no_url) if url else k in keys
 
 
+def index_add(row: dict, keys: set, keys_no_url: set, urls: set) -> None:
+    """Add a row to the index the way cached_index reads a stored row, so a later row in
+    the same call is judged against it exactly as if it were already in the cache."""
+    k = key(row["title"], row["company"])
+    keys.add(k)
+    url = cell_url(row.get("url"))
+    if url:
+        urls.add(url)
+    else:
+        keys_no_url.add(k)
+
+
 def status_for(score: int, cutoffs: dict) -> str:
     if score >= cutoffs["shortlisted"]:
         return "shortlisted"
@@ -118,11 +130,7 @@ def assess(ads: list, root: Path) -> dict:
         if is_cached(ad, keys, keys_no_url, urls):
             cached.append({"title": ad["title"], "company": ad["company"]})
             continue
-        # a listing repeated within one scan is assessed once
-        if cell_url(ad.get("url")):
-            urls.add(cell_url(ad.get("url")))
-        else:
-            keys.add(key(ad["title"], ad["company"]))
+        index_add(ad, keys, keys_no_url, urls)   # a listing repeated within one scan is assessed once
         role = {f: ad.get(f, "") for f in ("title", "company", "location", "description",
                                            "department", "team")}
         score = score_role(role, ctx)
@@ -151,7 +159,14 @@ def record(rows: list, root: Path) -> dict:
     if not text:
         out_error(f"cache not found or empty: {path}", "file_not_found")
     keys, keys_no_url, urls = cached_index(text)
-    dupes = [r["title"] for r in rows if is_cached(r, keys, keys_no_url, urls)]
+    # Each accepted row joins the index, so the same role twice in ONE call is refused
+    # like a role already in the cache (565.F3).
+    dupes = []
+    for r in rows:
+        if is_cached(r, keys, keys_no_url, urls):
+            dupes.append(r["title"])
+        else:
+            index_add(r, keys, keys_no_url, urls)
     if dupes:
         out_error(f"already in the cache: {dupes}", "duplicate")
     lines = text.rstrip("\n").split("\n")

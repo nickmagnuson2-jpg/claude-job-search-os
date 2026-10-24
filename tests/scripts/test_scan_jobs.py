@@ -169,3 +169,86 @@ def test_a_title_only_ad_below_the_maybe_cutoff_stays_skip(root, monkeypatch):
     monkeypatch.setattr(sj, "score_role", lambda role, ctx: 1)
     out = sj.assess([{"title": "Ops", "company": "Beacon AI", "location": "San Francisco"}], root)
     assert out["new"][0]["status"] == "skip" and "title_only" in out["new"][0]["reason"]
+
+
+@pytest.mark.parametrize("second", [
+    {"url": "https://example.com/1"},                                  # same posting URL
+    {"url": ""},                                                       # both without a URL
+])
+def test_record_refuses_the_same_role_twice_in_one_call(root, second):
+    """565.F3: the cache index was built once, so two identical rows in one call both
+    landed. Nothing is written when any row is a duplicate."""
+    base = {"title": "Ops Lead", "company": "Beacon AI", "score": 7, "status": "shortlisted",
+            "ad_date": "2026-10-20", "reason": "score 7/10"}
+    first = {**base, "url": second["url"]}
+    before = (root / ".claude/skills/scan-jobs/cache.md").read_text(encoding="utf-8")
+    code, out = run(root, "record", [first, {**base, **second}])
+    assert code == 1 and out["code"] == "duplicate"
+    assert (root / ".claude/skills/scan-jobs/cache.md").read_text(encoding="utf-8") == before
+
+
+def test_record_keeps_one_title_at_two_offices_apart(root):
+    rows = [{"title": "Ops Lead", "company": "Beacon AI", "score": 7, "status": "shortlisted",
+             "url": f"https://example.com/{n}", "ad_date": "2026-10-20", "reason": "r"}
+            for n in (1, 2)]
+    code, out = run(root, "record", rows)
+    assert code == 0 and out["appended"] == 2
+
+
+def test_a_listing_with_a_url_repeated_in_one_scan_is_assessed_once(root):
+    ad = {"title": "Deployment Strategist", "company": "Beacon AI", "location": "San Francisco",
+          "url": "https://example.com/role/9"}
+    _, out = run(root, "assess", [ad, dict(ad)])
+    assert len(out["new"]) == 1 and out["cached"] == [{"title": ad["title"], "company": ad["company"]}]
+
+
+def test_record_treats_a_url_less_row_as_covering_the_same_role_with_a_url(root):
+    """The cache rule (cached_index): a URL-less row hides the same title+company with a URL.
+    Within one call the same rule applies."""
+    base = {"title": "Ops Lead", "company": "Beacon AI", "score": 7, "status": "shortlisted",
+            "ad_date": "2026-10-20", "reason": "r"}
+    code, out = run(root, "record", [{**base, "url": ""}, {**base, "url": "https://example.com/5"}])
+    assert code == 1 and out["code"] == "duplicate"
+
+
+def test_table_header_and_separator_rows_are_not_cache_entries(root):
+    """An ad whose fields reduce to the same key as the header or separator row must not read
+    as already evaluated."""
+    _, out = run(root, "assess", [{"title": "Title", "company": "Company"},
+                                  {"title": "--", "company": "--"}])
+    assert out["cached"] == [] and len(out["new"]) == 2
+
+
+def test_the_pipeline_header_is_not_read_as_a_tracked_company(root, monkeypatch):
+    monkeypatch.setattr(sj, "score_role", lambda role, ctx: 8)
+    ads = [{"title": "Strategist", "company": "Beacon Company", "location": "San Francisco",
+            "description": "Run strategy."}]
+    out = sj.assess(ads, root)
+    assert [r["company"] for r in out["propose_for_pipeline"]] == ["Beacon Company"]
+
+
+def test_record_refuses_an_empty_cache(root):
+    (root / ".claude/skills/scan-jobs/cache.md").write_text("", encoding="utf-8")
+    code, out = run(root, "record", [{"title": "x", "company": "y", "score": 1, "status": "skip",
+                                      "reason": "r"}])
+    assert code == 1 and out["code"] == "file_not_found"
+
+
+def test_stdin_that_is_not_json_is_refused(root):
+    p = subprocess.run([sys.executable, str(SCRIPT), "assess", "--repo-root", str(root)],
+                       input="not json", capture_output=True, text=True)
+    assert p.returncode == 1 and json.loads(p.stdout)["code"] == "bad_json"
+
+
+def test_main_returns_0_on_success(root, monkeypatch, capsys):
+    import io
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps([{"title": "A", "company": "B"}])))
+    assert sj.main(["assess", "--repo-root", str(root)]) == 0
+    assert json.loads(capsys.readouterr().out)["status"] == "ok"
+
+
+def test_the_script_imports_its_libraries_from_any_working_directory(tmp_path):
+    p = subprocess.run([sys.executable, "-c",
+                        f"import runpy; runpy.run_path({str(SCRIPT)!r}, run_name='x')"],
+                       cwd=str(tmp_path), capture_output=True, text=True)
+    assert p.returncode == 0, p.stderr
