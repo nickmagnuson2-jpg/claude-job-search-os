@@ -168,14 +168,20 @@ class Payload:
 
     @property
     def content(self) -> str:
-        """Write `content` or Edit `new_string`, whichever this call carries.
+        """Write `content`, Edit `new_string`, or every MultiEdit `new_string` joined by a
+        blank line, whichever this call carries.
 
         This exact `or` chain appeared independently in 5 hooks. It is here so the next
-        one does not have to rediscover that an Edit has no `content` key.
+        one does not have to rediscover that an Edit has no `content` key, or that a
+        MultiEdit carries its text in `edits` (final review 553.F1/555.F1/555.F2).
         """
         # No _require_ok() here: this reads through `tool_input`, which gates.
         # A second call is unreachable and mutation-invisible (survivors, 2026-09-07).
         ti = self.tool_input
+        edits = ti.get("edits")
+        if isinstance(edits, list):
+            return "\n\n".join(e.get("new_string") or "" for e in edits
+                                 if isinstance(e, dict) and e.get("new_string"))
         return ti.get("content") or ti.get("new_string") or ""
 
     @property

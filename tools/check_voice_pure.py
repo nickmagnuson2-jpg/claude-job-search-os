@@ -138,9 +138,9 @@ def main():
     if tool_name == "Write":
         content = tool_input.get("content", "")
         errs = find_violations(content, check_frontmatter=True)
-    elif tool_name == "Edit":
-        new_string = tool_input.get("new_string", "")
-        errs = find_violations(new_string, check_frontmatter=False)
+    elif tool_name in ("Edit", "MultiEdit"):
+        # p.content joins every MultiEdit new_string; an Edit gives its new_string.
+        errs = find_violations(p.content, check_frontmatter=False)
     else:
         return
 

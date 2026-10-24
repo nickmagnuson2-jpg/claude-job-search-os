@@ -142,7 +142,8 @@ def main() -> int:
         # An Edit carries a FRAGMENT, not the whole doc. Both checks stay correct on a
         # fragment: a malformed stamp is malformed in isolation, and the domain check
         # only fires when both proof lines are present in the same payload.
-        text = tool_input.get("new_string", "")
+        # p.content joins every MultiEdit new_string (a MultiEdit has no top-level one).
+        text = p.content
     else:
         return 0
 

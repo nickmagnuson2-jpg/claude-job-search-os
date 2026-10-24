@@ -82,6 +82,14 @@ def test_blocks_on_an_edit_fragment_carrying_both_proof_lines():
     assert proc.returncode == 2
 
 
+def test_blocks_on_a_multiedit_carrying_both_proof_lines():
+    """A MultiEdit has no top-level new_string; its text is in `edits` (final review
+    555.F2)."""
+    proc = run("MultiEdit", PREP_PATH,
+               edits=[{"old_string": "x", "new_string": PROOFS_COLLAPSE}])
+    assert proc.returncode == 2
+
+
 def test_block_message_names_the_hook_and_the_fp_log_path():
     proc = write(f"# Prep\n\n{PROOFS_COLLAPSE}\n")
     assert "check_prep_doc_format.py" in proc.stderr

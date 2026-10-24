@@ -69,6 +69,21 @@ def test_a_well_formed_payload_parses_and_exposes_its_fields():
     assert got["content"] == "hello"
 
 
+def test_a_multiedit_exposes_every_new_string_as_content():
+    """A MultiEdit carries a list of edits and no top-level new_string, so a content
+    hook wired on MultiEdit used to see an empty string and pass (final review
+    553.F1, 555.F1, 555.F2)."""
+    rc, out, _ = _drive(json.dumps({
+        "tool_name": "MultiEdit",
+        "tool_input": {"file_path": "/x/y.md", "edits": [
+            {"old_string": "a", "new_string": "first"},
+            {"old_string": "b", "new_string": "second"},
+            {"old_string": "c"},
+        ]},
+    }))
+    assert json.loads(out)["content"] == "first\n\nsecond"
+
+
 def test_an_edit_exposes_new_string_as_content():
     """The `content or new_string` chain appeared independently in 5 hooks.
 

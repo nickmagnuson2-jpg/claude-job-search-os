@@ -201,3 +201,16 @@ def test_notes_word_inside_a_heading_is_not_flagged():
     # Anchored to the whole heading: "## Notes from the walk" is a title, not
     # the synthesis-section tell.
     assert not violations("## Notes from the walk with Casey Doe")
+
+
+def test_blocks_a_synthesis_heading_added_by_multiedit():
+    """MultiEdit is wired for this hook; its text is in `edits` (final review 553.F1)."""
+    r = _run_hook({
+        "tool_name": "MultiEdit",
+        "tool_input": {
+            "file_path": "/vault/data/reflections/2026-01-02-acme-call.md",
+            "edits": [{"old_string": "x", "new_string": "> end of quote\n\n## Notes\n\n- short"}],
+        },
+    })
+    assert r.returncode == 2
+    assert "synthesis heading" in r.stderr

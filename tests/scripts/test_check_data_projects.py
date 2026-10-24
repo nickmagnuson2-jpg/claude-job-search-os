@@ -325,16 +325,16 @@ def test_incomplete_payloads_are_ignored_rather_than_guessed_at(payload):
     assert r.stderr == ""
 
 
-def test_a_multiedit_payload_produces_no_warning():
-    """DOCUMENTS A REAL GAP, not a desired behaviour. The hook is wired on MultiEdit, but
-    MultiEdit sends an `edits` list -- no `content`, no `new_string` -- so the hook reads
-    nothing and exits. Locking the current behaviour in means a future fix has to come
-    here and change this test deliberately."""
+def test_a_multiedit_payload_is_examined():
+    """The gap this test used to pin is closed. MultiEdit sends an `edits` list with no
+    `content` or `new_string`; hook_runtime's Payload.content now joins every edit's
+    new_string (2026-10-23, final review 553.F1/555.F1/555.F2), so a MultiEdit that adds
+    an overclaim is warned on like a Write or an Edit."""
     payload = {"tool_input": {"file_path": PROJECT_PATH,
                               "edits": [{"old_string": "x", "new_string": DIRTY}]}}
     r = run("", payload=payload)
     assert r.returncode == PROCEED
-    assert r.stderr == ""
+    assert warned(r)
 
 
 def test_only_the_first_scoped_header_in_a_file_is_examined():
