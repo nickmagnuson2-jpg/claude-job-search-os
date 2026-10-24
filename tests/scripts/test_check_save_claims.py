@@ -847,6 +847,19 @@ def test_a_false_save_claim_and_a_false_absence_claim_are_both_reported(tmp_path
     assert "you told the user lessons.md does not exist" in r.stderr
 
 
+def test_an_inline_quoted_diagnostic_is_not_an_absence_claim():
+    """Final review 552.F2 / 555.F4: a quoted error message is the tool's words."""
+    assert csc.extract_absence_claims(
+        "The error says `data/job-todos.md is missing`.") == []
+    assert csc.extract_absence_claims(
+        "It printed `ERROR: lessons.md does not exist` and stopped.") == []
+
+
+def test_a_backticked_file_name_is_still_an_absence_claim():
+    """The canonical claim puts only the NAME in backticks, so it must still count."""
+    assert csc.extract_absence_claims("`lessons.md` is missing.") == ["lessons.md"]
+
+
 def test_absence_extractor_takes_the_nearest_token():
     assert csc.extract_absence_claims("Both a.md and b.md is absent.") == ["b.md"]
     assert csc.extract_absence_claims("lessons.md. The other file is missing.") == []

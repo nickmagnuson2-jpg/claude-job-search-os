@@ -199,12 +199,19 @@ ABSENCE_SCOPED = re.compile(
 # A hypothesis or a question in the same sentence is not an assertion.
 ABSENCE_CONDITIONAL = re.compile(r"\b(?:if|when|unless|whether|in case)\b", re.I)
 SENTENCE_END = re.compile(r"[.!?](?=\s|$)|\n")
+# An inline-code span that holds the absence phrase itself quotes a tool's message
+# ("The error says `x.md is missing`"), so it is not the assistant's claim. A span
+# holding only the file name ("`x.md` is missing") is untouched. Final review 552.F2.
+QUOTED_DIAGNOSTIC = re.compile(
+    r"`[^`\n]*(?:is missing|is gone|does not exist|doesn['’]t exist|no longer exists"
+    r"|is absent|not found)[^`\n]*`", re.I)
 
 
 def extract_absence_claims(text: str) -> list[str]:
     """File tokens the message asserts are missing. Code blocks, blockquotes and URLs
     are skipped: they quote scripts, the user, or memory files."""
     text = strip_code_blocks(re.sub(r"^\s*>.*$", " ", text, flags=re.M))
+    text = QUOTED_DIAGNOSTIC.sub(" ", text)
     out = []
     for m in ABSENCE_RE.finditer(text):
         tok = m.group("tok")
