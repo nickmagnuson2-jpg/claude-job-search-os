@@ -141,3 +141,20 @@ def test_load_lines_strips_line_endings_and_errors_on_a_missing_file(tmp_path, c
 ])
 def test_merge_notes(current, pre, post, expected):
     assert mt.merge_notes(current, pre, post) == expected
+
+
+def test_read_file_narrow_reads_only_missing_files_as_empty(tmp_path):
+    """The narrow variant behind pipeline_staleness, networking_followup and
+    outreach_pending: a missing file is "", but a folder raises instead of reading
+    as an empty file (read_file above returns "" for both)."""
+    assert mt.read_file_narrow(tmp_path / "missing.md") == ""
+    (tmp_path / "f.md").write_text("x", encoding="utf-8")
+    assert mt.read_file_narrow(tmp_path / "f.md") == "x"
+    with pytest.raises(IsADirectoryError):
+        mt.read_file_narrow(tmp_path)
+
+
+def test_three_readers_share_the_narrow_reader():
+    import networking_followup, outreach_pending, pipeline_staleness  # noqa: E401
+    for mod in (networking_followup, outreach_pending, pipeline_staleness):
+        assert mod.read_file is mt.read_file_narrow, mod.__name__

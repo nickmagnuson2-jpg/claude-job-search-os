@@ -36,6 +36,7 @@ PIPELINE_EXPECTED_COLUMNS = [
 # Staleness thresholds by stage (days): one table shared with /pipe, so /standup
 # and /pipe cannot disagree about what is stale.
 from pipe_read import STAGE_THRESHOLDS, DEFAULT_THRESHOLD  # noqa: E402
+from md_table import read_file_narrow as read_file  # noqa: E402
 
 
 def parse_args():
@@ -47,13 +48,6 @@ def parse_args():
     p.add_argument("--repo-root", default=None,
                    help="Repository root path. Defaults to cwd.")
     return p.parse_args()
-
-
-def read_file(path: Path) -> str:
-    try:
-        return path.read_text(encoding="utf-8")
-    except (FileNotFoundError, PermissionError):
-        return ""
 
 
 def parse_pipeline(content: str, today: date, global_threshold: int | None) -> dict:

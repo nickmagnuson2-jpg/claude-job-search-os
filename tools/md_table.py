@@ -32,6 +32,17 @@ def read_file(path: Path) -> str:
         return ""
 
 
+def read_file_narrow(path: Path) -> str:
+    """File contents, or "" when the file is missing or not permitted.
+
+    Narrower than read_file on purpose: any other OSError (the path is a folder,
+    a device error) raises instead of reading as an empty file."""
+    try:
+        return path.read_text(encoding="utf-8")
+    except (FileNotFoundError, PermissionError):
+        return ""
+
+
 def write_atomic(path: Path, content: str) -> None:
     """Write via a sibling temp file and an atomic rename, creating the folder if needed."""
     path.parent.mkdir(parents=True, exist_ok=True)

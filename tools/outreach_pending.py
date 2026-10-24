@@ -28,6 +28,7 @@ from pathlib import Path
 # Shared freeform-stage classifier (single source of truth). See stage_vocab.py.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from stage_vocab import is_terminal_stage  # noqa: E402
+from md_table import read_file_narrow as read_file  # noqa: E402
 
 
 def parse_args():
@@ -41,13 +42,6 @@ def parse_args():
     p.add_argument("--repo-root", default=None,
                    help="Repository root path. Defaults to cwd.")
     return p.parse_args()
-
-
-def read_file(path: Path) -> str:
-    try:
-        return path.read_text(encoding="utf-8")
-    except (FileNotFoundError, PermissionError):
-        return ""
 
 
 def reconcile_key(name: str, company: str) -> str:

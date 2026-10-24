@@ -34,6 +34,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 # Shared freeform-stage classifier (single source of truth). See stage_vocab.py.
 from stage_vocab import is_terminal_stage  # noqa: E402
+from md_table import read_file_narrow as read_file  # noqa: E402
 
 
 def build_closed_company_index(pipeline_content: str) -> dict[str, str]:
@@ -79,13 +80,6 @@ def parse_args():
     p.add_argument("--repo-root", default=None,
                    help="Repository root path. Defaults to cwd.")
     return p.parse_args()
-
-
-def read_file(path: Path) -> str:
-    try:
-        return path.read_text(encoding="utf-8")
-    except (FileNotFoundError, PermissionError):
-        return ""
 
 
 def infer_followup_date(last_date: date, notes: str) -> date | None:
