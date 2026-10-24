@@ -41,9 +41,11 @@ WHAT IT DOES NOT DO
     is a different failure and out of scope.
 
 EXIT CODES
-  0 — no claims, or every claimed path exists.
-  2 — at least one claimed path is missing. Blocks the stop and returns the
-      list to Claude so the claim gets corrected or the file gets written.
+  0 — no claims; every path claimed as written exists; and no file claimed
+      missing is on disk.
+  2 — a path claimed as written is missing (fix: write it, or correct the
+      sentence), or a file claimed missing is on disk (fix: correct or scope the
+      absence sentence; never write anything). Blocks the stop and says which.
       Per tools/HOOK_AUTHORING.md, exit-0 warnings are invisible in Claude Code,
       so a real warning must be exit 2. This is an unambiguous, single-correction
       violation: either write the file or fix the sentence.
