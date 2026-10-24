@@ -384,3 +384,9 @@ def test_load_pipeline_companies_ignores_indented_rows(tmp_path):
         "| Acme | PM | Applied | 2026-02-01 | x | — | — | — |",
         " | Indented | PM | Applied | 2026-02-01 | x | — | — | — |"), encoding="utf-8")
     assert _ac.load_pipeline_companies(tmp_path) == [("Acme", "applied")]
+
+
+def test_load_pipeline_companies_unreadable_file_gives_an_empty_list(tmp_path):
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "job-pipeline.md").write_bytes(b"| Company |\n| \xff\xfe bad bytes |\n")
+    assert _ac.load_pipeline_companies(tmp_path) == []
