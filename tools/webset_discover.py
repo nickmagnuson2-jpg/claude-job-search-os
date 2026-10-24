@@ -17,11 +17,11 @@ Exit codes: 0 ok, 1 config/runtime error (JSON error body still printed).
 import argparse
 import json
 import os
-import re
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from slug import slugify as _slugify  # noqa: E402
+# Dedup helpers live in agent_core (shared with agent_discover and agent_collect).
+from agent_core import _norm_name, filter_known, guess_slug, load_known_names  # noqa: E402,F401
 
 # Repo root on sys.path so `tools.career_scanner.*` imports resolve when this
 # script is invoked directly (python3 tools/webset_discover.py).
@@ -108,20 +108,6 @@ def normalize_item(item) -> dict:
     }
 
 
-def _norm_name(name: str) -> str:
-    return re.sub(r"[^a-z0-9]+", " ", (name or "").lower()).strip()
-
-
-def filter_known(candidates: list, known_names: set) -> list:
-    """Drop candidates whose normalized name is in known_names (already normalized)."""
-    return [c for c in candidates if _norm_name(c.get("name", "")) not in known_names]
-
-
-def guess_slug(name: str) -> str:
-    """Lowercase-hyphenate a company name into a best-effort ATS slug."""
-    return _slugify(name)
-
-
 def run_webset(client, payload, timeout: int = 1800):
     """Create a webset, wait until idle, return (candidates, partial).
 
@@ -137,34 +123,6 @@ def run_webset(client, payload, timeout: int = 1800):
         partial = True
     items = list(client.websets.items.list_all(webset.id))
     return [normalize_item(it) for it in items], partial
-
-
-def load_known_names(paths: list) -> set:
-    """Collect normalized company names to exclude, from scan-targets.yaml
-    (companies[].name) and job-pipeline.md (best-effort). Missing files skipped."""
-    import yaml
-    known = set()
-    for path in paths or []:
-        p = Path(path)
-        if not p.is_file():
-            continue
-        text = p.read_text(encoding="utf-8")
-        if p.suffix in (".yaml", ".yml"):
-            try:
-                data = yaml.safe_load(text) or {}
-            except yaml.YAMLError:
-                continue
-            for c in (data.get("companies") or []):
-                if isinstance(c, dict) and c.get("name"):
-                    known.add(_norm_name(c["name"]))
-        else:
-            # Markdown table: take the first cell of each row as a candidate name.
-            for line in text.splitlines():
-                if line.strip().startswith("|"):
-                    cells = [x.strip() for x in line.strip().strip("|").split("|")]
-                    if cells and cells[0] and cells[0].lower() not in ("company", "---"):
-                        known.add(_norm_name(cells[0]))
-    return known
 
 
 def _fail(msg: str) -> None:

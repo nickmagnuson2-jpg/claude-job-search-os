@@ -98,7 +98,6 @@ TOOLS = (
     "todo_daily_metrics",
     "todo_write",
     "voice_extract",
-    "webset_discover",
     "wispr_pull",
     "workstream_probe",
 )

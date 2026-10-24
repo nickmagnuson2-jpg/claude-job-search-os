@@ -149,3 +149,13 @@ def test_a_presets_own_scoring_weights_override_the_global_ones(tmp_path):
                  "  lane: {query: y, scoring_weights: {stage: 0.2, keyword: 0.5}}\n", encoding="utf-8")
     assert load_preset(str(f), "plain")[1] == {"stage": 0.5, "sector": 0.3, "keyword": 0.2}
     assert load_preset(str(f), "lane")[1] == {"stage": 0.2, "sector": 0.3, "keyword": 0.5}
+
+
+def test_load_known_names_also_excludes_rejected_companies(tmp_path):
+    """BEHAVIOR CHANGE 2026-10-24: webset_discover now uses agent_core's helpers, so a
+    company under `rejected:` in scan-targets.yaml is known and is not re-proposed.
+    The private copy read only `companies:`."""
+    targets = tmp_path / "scan-targets.yaml"
+    targets.write_text("companies:\n  - name: Acme Corp\nrejected:\n  - name: Turned Down Inc\n",
+                       encoding="utf-8")
+    assert load_known_names([str(targets)]) == {"acme corp", "turned down inc"}
