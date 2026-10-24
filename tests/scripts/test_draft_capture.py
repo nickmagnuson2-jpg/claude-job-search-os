@@ -686,3 +686,17 @@ def test_thread_subject_strips_every_reply_prefix(subject):
     """Final review 596.F3: "Re: Re:" kept one prefix, so a revised reply looked like a
     different thread and escaped the lesson requirement."""
     assert dc._thread_subject(subject) == "intro"
+
+
+def test_a_forced_reconfirmation_clears_the_old_lesson_provenance(store):
+    """Final review 615.F2: a --force replacement kept the superseded outcome's
+    lesson_ref / no_lesson_reason, so the record claimed provenance it no longer had."""
+    cid = dc.capture(DRAFT)
+    dc.confirm(cid, "edited", sent_text="Hi Casey,\n\nRewritten entirely.\n",
+               no_lesson="first outcome")
+    meta = dc.confirm(cid, "not-sent", force=True)
+    assert "no_lesson_reason" not in meta and "lesson_ref" not in meta
+    meta = dc.confirm(cid, "edited", sent_text="Hi Casey,\n\nRewritten again.\n",
+                      no_lesson="second outcome", force=True)
+    assert meta["no_lesson_reason"] == "second outcome"
+    assert "lesson_ref" not in meta

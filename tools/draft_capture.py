@@ -299,6 +299,10 @@ def confirm(capture_id: str, outcome: str, sent_text: str | None = None,
     sent_file = directory / SENT_NAME
     edits = word_edits(draft_body, body_of(sent_text)) if outcome == "edited" else []
     revised = 0
+    # A forced replacement starts from no lesson provenance: the superseded outcome's
+    # lesson_ref / no_lesson_reason no longer describes this record (615.F2).
+    meta.pop("lesson_ref", None)
+    meta.pop("no_lesson_reason", None)
     if meta.get("kind") in LESSON_KINDS and outcome in ("edited", "unchanged"):
         revised = len(earlier_versions(meta))
         edit = (changed_word_ratio(draft_body, body_of(sent_text))
