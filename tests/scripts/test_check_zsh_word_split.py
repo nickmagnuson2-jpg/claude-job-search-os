@@ -198,3 +198,17 @@ def test_an_assignment_builtin_ends_at_its_operator():
 
 def test_an_assignment_builtin_without_a_value_is_ignored():
     assert hook.find_violations('export P; local Q; git add $P') == []
+
+
+@pytest.mark.parametrize("command", [
+    'P="a b"; if [[ $P == "a b" ]]; then echo ok; fi',             # 596.F2/597.F1
+    'P="a b"; while test $P = x; do break; done',
+    'P="a b" git add $P',                                          # 591.F2: prefix assignment
+])
+def test_round_9_false_blocks_are_clean(command):
+    code, err = _run(command)
+    assert code == 0, err
+
+
+def test_a_prefix_assignment_does_not_hide_a_later_real_one():
+    assert hook.find_violations('P="a b" true; P="c d"; git add $P') != []

@@ -65,7 +65,7 @@ from shell_tokens import tokenize  # noqa: E402
 _ASSIGN = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)=")
 _SPLIT_WORD = re.compile(r"^(?:sh_?word_?split|sh|bash|ksh)$", re.IGNORECASE)
 _NO_JUDGE = {"echo", "print", "eval", "[[", "[", "test", "case"}
-_CMD_START_WORDS = {"do", "then", "else", "elif", "!", "{", "time",
+_CMD_START_WORDS = {"do", "then", "else", "elif", "if", "while", "until", "!", "{", "time",
                     "command", "builtin", "noglob", "nocorrect", "exec", "nohup"}
 _ASSIGN_BUILTINS = {"export", "local", "declare", "typeset", "readonly", "integer"}
 _COPY = re.compile(r"^\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?$")
@@ -113,7 +113,12 @@ def find_violations(command: str) -> list[str]:
             if m:
                 # An array assignment (`X=(a b)`) has an empty value here, so it lands
                 # in "plain" and is never judged: zsh splits arrays correctly.
-                scalars[m.group(1)] = _classify(raw, t.text[m.end():], scalars)
+                # `NAME=v cmd $NAME` is a prefix assignment: it sets NAME in cmd's
+                # environment, not for the expansion of cmd's own arguments (591.F2).
+                nxt = words[i + 1] if i + 1 < len(words) else None
+                prefix = nxt is not None and nxt.kind == "word" and not _ASSIGN.match(nxt.text)
+                if not prefix:
+                    scalars[m.group(1)] = _classify(raw, t.text[m.end():], scalars)
                 i += 1
                 continue     # still in command position after an assignment
             if raw in ("setopt", "emulate"):

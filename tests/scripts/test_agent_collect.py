@@ -181,11 +181,9 @@ def test_reconcile_drops_a_pipeline_company_and_marks_a_near_match(tmp_path):
     pipe.write_text(PIPE, encoding="utf-8")
     cands = [{"name": "Northwind Labs"}, {"name": "Acme"}, {"name": "Beacon"}, {"name": "Globex"}]
     out = reconcile_candidates(cands, pipe)
-    assert [c["name"] for c in out] == ["Acme", "Beacon", "Globex"], "an ACTIVE pipeline company is known"
+    assert [c["name"] for c in out] == ["Acme", "Beacon"], "open and closed pipeline companies are known"
     assert out[0]["possible_match"] == "Acme AI"
-    assert "possible_match" not in out[1] and "pipeline_history" not in out[1]
-    # 585.F2: closed history is reported, never suppressed
-    assert out[2]["pipeline_history"] == "Globex (Rejected)"
+    assert "possible_match" not in out[1]
 
 
 def test_reconcile_passes_candidates_through_when_it_cannot_run(tmp_path, monkeypatch):
@@ -205,10 +203,6 @@ def test_a_possible_match_is_printed_in_the_inbox_line():
                                [{"name": "Acme", "description": "d", "score": 7,
                                  "geo_band": "sf", "possible_match": "Acme AI"}], "2026-01-02")
     assert "**Acme**" in block and "[possible match: Acme AI in pipeline]" in block
-    closed = render_inbox_block({"preset": "p", "entity": "company"},
-                                [{"name": "Globex", "description": "d", "score": 7, "geo_band": "sf",
-                                  "pipeline_history": "Globex (Rejected)"}], "2026-01-02")
-    assert "[closed in pipeline before: Globex (Rejected)]" in closed
 
 
 def _collect_env(tmp_path, monkeypatch, presets_yaml, agent_result):

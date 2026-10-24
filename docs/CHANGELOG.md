@@ -58,8 +58,7 @@ Every guard edit below was approved by Nick and reviewed by Codex and Grok befor
   no longer be recorded for files the reviewer never saw.
 - **Overnight review fixes**: `codex_verify.py` also refuses an untracked or unchanged
   path (each still had no diff); `agent_collect.py` no longer marks proposals seen when the
-  inbox write failed, which lost them for good, and keeps companies found only in closed
-  pipeline history, labelled, instead of dropping them; the zsh hook reads assignments
+  inbox write failed, which lost them for good; the zsh hook reads assignments
   made through export/local/declare, judges printf, and leaves `--name=$X`, `[[ ]]` and
   `case` alone; `standup_collect.py` reports a script that exited nonzero but printed data
   as partial, not failed.

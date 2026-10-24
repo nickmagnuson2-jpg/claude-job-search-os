@@ -106,3 +106,10 @@ def test_a_nonzero_exit_with_data_is_partial_not_failed(tmp_path, monkeypatch):
     assert out["partial"] == ["probes"] and out["failed"] == ["dead"] and out["ok"] == []
     assert out["results"]["probes"]["data"] == {"error": 1}
     assert out["results"]["probes"]["stderr"] == "probe x failed"
+
+
+def test_exit_0_with_no_output_is_a_failure(tmp_path, monkeypatch):
+    """591.F3: a script that exits 0 and prints nothing has no usable output."""
+    root = _fake_repo(tmp_path, {"silent.py": "pass"})
+    monkeypatch.setattr(sc, "commands", lambda d: {"silent": ["tools/silent.py"]})
+    assert sc.collect(root, "2026-01-02")["failed"] == ["silent"]

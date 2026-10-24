@@ -83,7 +83,8 @@ def collect(root: Path, target_date: str) -> dict:
         results = {name: f.result() for name, f in futures.items()}
     # A nonzero exit WITH parsed output is not a dead script: workstream_state exits 1
     # when a probe errored, and its JSON says which (588.F5). Only no usable output fails.
-    failed = [n for n, r in results.items() if r["rc"] != 0 and r["data"] is None]
+    failed = [n for n, r in results.items()
+              if r["data"] is None and (r["rc"] != 0 or not r["text"].strip())]
     partial = [n for n, r in results.items() if r["rc"] != 0 and r["data"] is not None]
     return {"target_date": target_date,
             "ok": [n for n in results if n not in failed and n not in partial],

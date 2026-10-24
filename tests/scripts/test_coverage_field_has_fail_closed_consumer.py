@@ -330,6 +330,8 @@ REGISTRY: dict[tuple[str, str, str | None], object] = {
         Text(STANDUP, r"`complete: false` is surfaced, always")],
     ("attention.py", "partial", None): [
         Text(STANDUP, r"`partial` is called out separately")],
+    ("standup_collect.py", "partial", None): [
+        Text(STANDUP, r"`partial` names any that exited nonzero but still printed data")],
     ("conversations_metric.py", "complete", None): [
         Text(STANDUP, r"If `complete: false`, append")],
     ("conversations_metric.py", "unreadable_sources", None): [

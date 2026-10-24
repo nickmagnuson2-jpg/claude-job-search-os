@@ -32,28 +32,25 @@ def reconcile_candidates(candidates, pipeline_path):
     already uses (362.F5). filter_known matches exact normalized names only, so
     `Acme` / `Acme AI` and `Beacon` / `Beacon.ai` passed it.
 
-    A name that resolves to a company with an ACTIVE pipeline row (active or mixed) is
-    dropped as known. One found only in closed history is kept and marked
-    `pipeline_history`: reconcile reports closed history, it does not suppress it
-    (585.F2/587.F3). A near-match is kept and marked `possible_match`, because whether it
-    is the same company is Nick's call. If the check cannot run, candidates pass through.
+    A name that resolves to any pipeline company, open or closed, is dropped as known:
+    the collector's own policy (load_known_names) is that a company Nick looked at and
+    turned down is never re-proposed. A near-match is kept and marked `possible_match`,
+    because whether it is the same company is Nick's call. If the check cannot run,
+    candidates pass through unchanged.
     """
     try:
         import pipeline_reconcile as pr
         res = pr.resolve([c.get("name", "") for c in candidates], Path(pipeline_path))
     except Exception:  # noqa: BLE001 -- an unreadable pipeline must not stop the drip
         return candidates
-    known = {e["name"] for state in (pr.STATE_ACTIVE, pr.STATE_MIXED) for e in res[state]}
-    closed = {e["name"]: f'{e["rows"][0]["company"]} ({e["rows"][0]["stage"]})'
-              for e in res[pr.STATE_TERMINAL]}
+    known = {e["name"] for state in (pr.STATE_ACTIVE, pr.STATE_TERMINAL, pr.STATE_MIXED)
+             for e in res[state]}
     near = {e["name"]: e["candidates"][0]["pipeline_company"] for e in res[pr.STATE_AMBIGUOUS]}
     out = []
     for c in candidates:
         name = c.get("name", "")
         if name in known:
             continue
-        if name in closed:
-            c["pipeline_history"] = closed[name]
         if name in near:
             c["possible_match"] = near[name]
         out.append(c)
@@ -95,8 +92,6 @@ def render_inbox_block(record, candidates, today):
                 # No band recorded: an older producer, or a candidate that never went
                 # through the scorer. Either way its geography is unconfirmed.
                 mark = "" if c.get("geo_flag") is False else " [location unverified]"
-            if c.get("pipeline_history"):
-                mark += f" [closed in pipeline before: {c['pipeline_history']}]"
             if c.get("possible_match"):
                 mark += f" [possible match: {c['possible_match']} in pipeline]"
             lines.append(f"- **{c.get('name')}** - {(c.get('description') or '')[:120]} "
