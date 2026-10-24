@@ -113,3 +113,39 @@ def test_the_filter_never_destroys_data(report):
 
 def test_all_stale_restores_the_pre_filter_behaviour(repo):
     assert STALE <= {a["slug"] for a in _run(repo, all_stale=True)["staleness_alerts"]}
+
+
+# ---------------------------------------------------------------------------
+# Direct pins of the pipeline-table reader (added 2026-10-24, before moving it onto
+# pipe_read.parse_all_rows). Only cases where this reader and the shared rule agree.
+# ---------------------------------------------------------------------------
+_PIPE_HEADER = ("| Company | Role | Stage | Date Updated | Next Action | CV Used | Notes | URL |\n"
+                "|---|---|---|---|---|---|---|---|\n")
+
+
+def _pipe_doc(*rows, archived=()):
+    text = "# Job Pipeline\n\n## Active\n" + _PIPE_HEADER + "".join(r + "\n" for r in rows)
+    if archived:
+        text += "\n## Archived\n" + _PIPE_HEADER + "".join(r + "\n" for r in archived)
+    return text
+
+
+_SKIPPED_ROWS = (
+    "|  | PM | Applied | 2026-02-01 | x | — | — | — |",
+    "| Short | PM |",
+)
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
+import dossier_freshness as _df  # noqa: E402
+
+
+def test_load_pipeline_targets_slugs_live_companies_only(tmp_path):
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "job-pipeline.md").write_text(_pipe_doc(
+        "| Acme Labs | PM | Applied | 2026-02-01 | x | — | — | — |", *_SKIPPED_ROWS,
+        "| Beta | CoS | To Evaluate | 2026-02-01 | x | — | — | — |",
+        "| Gone | PM | Closed - rejected | 2026-02-01 | — | — | — | — |",
+        "| Paused | PM | Deprioritized | 2026-02-01 | — | — | — | — |",
+        "| Nope | PM | Declined | 2026-02-01 | — | — | — | — |"), encoding="utf-8")
+    assert _df.load_pipeline_targets(tmp_path) == {"acme-labs", "beta"}
+    assert _df.load_pipeline_targets(tmp_path / "missing") == set()

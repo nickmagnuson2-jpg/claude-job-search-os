@@ -410,3 +410,36 @@ def test_cross_reference_no_networking_file(tmp_path):
     # Without networking.md, Sam stays as Sent → overdue (7 days > 5 threshold)
     overdue_names = [e["name"] for e in result["awaiting_response_overdue"]]
     assert "Sam Carter" in overdue_names
+
+
+# ---------------------------------------------------------------------------
+# Direct pins of the pipeline-table reader (added 2026-10-24, before moving it onto
+# pipe_read.parse_all_rows). Only cases where this reader and the shared rule agree.
+# ---------------------------------------------------------------------------
+_PIPE_HEADER = ("| Company | Role | Stage | Date Updated | Next Action | CV Used | Notes | URL |\n"
+                "|---|---|---|---|---|---|---|---|\n")
+
+
+def _pipe_doc(*rows, archived=()):
+    text = "# Job Pipeline\n\n## Active\n" + _PIPE_HEADER + "".join(r + "\n" for r in rows)
+    if archived:
+        text += "\n## Archived\n" + _PIPE_HEADER + "".join(r + "\n" for r in archived)
+    return text
+
+
+_SKIPPED_ROWS = (
+    "|  | PM | Applied | 2026-02-01 | x | — | — | — |",
+    "| Short | PM |",
+)
+
+import sys as _sys
+_sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
+import outreach_pending as _op  # noqa: E402
+
+
+def test_parse_pipeline_stages_maps_lowercased_company_to_its_last_row_stage():
+    content = _pipe_doc("| Acme | PM | Applied | 2026-02-01 | x | — | — | — |", *_SKIPPED_ROWS,
+                        "| ACME | CoS | Closed - rejected | 2026-02-03 | — | — | — | — |",
+                        "| Beta | PM | To Evaluate |")
+    assert _op.parse_pipeline_stages(content) == {"acme": "Closed - rejected", "beta": "To Evaluate"}
+    assert _op.parse_pipeline_stages("") == {}

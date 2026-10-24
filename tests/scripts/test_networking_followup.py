@@ -548,3 +548,39 @@ def test_a_bad_year_in_a_month_name_does_not_stop_the_scan():
     """
     note = "opened mid-Oct 0000 per the old record; real trigger mid-Nov 2026"
     assert _nf.infer_followup_date(_date(2026, 8, 18), note) == _date(2026, 11, 15)
+
+
+# ---------------------------------------------------------------------------
+# Direct pins of the pipeline-table reader (added 2026-10-24, before moving it onto
+# pipe_read.parse_all_rows). Only cases where this reader and the shared rule agree.
+# ---------------------------------------------------------------------------
+_PIPE_HEADER = ("| Company | Role | Stage | Date Updated | Next Action | CV Used | Notes | URL |\n"
+                "|---|---|---|---|---|---|---|---|\n")
+
+
+def _pipe_doc(*rows, archived=()):
+    text = "# Job Pipeline\n\n## Active\n" + _PIPE_HEADER + "".join(r + "\n" for r in rows)
+    if archived:
+        text += "\n## Archived\n" + _PIPE_HEADER + "".join(r + "\n" for r in archived)
+    return text
+
+
+_SKIPPED_ROWS = (
+    "|  | PM | Applied | 2026-02-01 | x | — | — | — |",
+    "| Short | PM |",
+)
+
+import sys as _sys
+_sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
+import networking_followup as _nf  # noqa: E402
+
+
+def test_closed_company_index_keeps_the_latest_close_and_drops_any_company_still_live():
+    content = _pipe_doc("| Acme | PM | Withdrawn | 2026-01-05 | — | — | — | — |",
+                        "| ACME | CoS | Closed - rejected | 2026-02-01 | — | — | — | — |",
+                        "| Acme | Ops | Rejected | 2026-01-20 | — | — | — | — |",
+                        "| Beta | PM | Closed | 2026-02-01 | — | — | — | — |",
+                        "| Beta | CoS | Applied | 2026-02-02 | x | — | — | — |",
+                        "| Nodate | PM | Closed | — | — | — | — | — |",
+                        *_SKIPPED_ROWS)
+    assert _nf.build_closed_company_index(content) == {"acme": "2026-02-01"}

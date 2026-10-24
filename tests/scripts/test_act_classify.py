@@ -340,3 +340,37 @@ def test_quoted_attribution_alone_marks_a_reply(tmp_path):
     assert item.get("stale") is not True, (
         f"reply detected only by quoted attribution; got {item.get('stale_reason')}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Direct pins of the pipeline-table reader (added 2026-10-24, before moving it onto
+# pipe_read.parse_all_rows). Only cases where this reader and the shared rule agree.
+# ---------------------------------------------------------------------------
+_PIPE_HEADER = ("| Company | Role | Stage | Date Updated | Next Action | CV Used | Notes | URL |\n"
+                "|---|---|---|---|---|---|---|---|\n")
+
+
+def _pipe_doc(*rows, archived=()):
+    text = "# Job Pipeline\n\n## Active\n" + _PIPE_HEADER + "".join(r + "\n" for r in rows)
+    if archived:
+        text += "\n## Archived\n" + _PIPE_HEADER + "".join(r + "\n" for r in archived)
+    return text
+
+
+_SKIPPED_ROWS = (
+    "|  | PM | Applied | 2026-02-01 | x | — | — | — |",
+    "| Short | PM |",
+)
+
+import sys as _sys
+_sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
+import act_classify as _ac  # noqa: E402
+
+
+def test_load_pipeline_companies_returns_every_row_with_a_lowercased_stage(tmp_path):
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "job-pipeline.md").write_text(_pipe_doc(
+        "| Acme | PM | Applied | 2026-02-01 | x | — | — | — |", *_SKIPPED_ROWS,
+        "| Gone | PM | Closed - rejected | 2026-02-01 | — | — | — | — |"), encoding="utf-8")
+    assert _ac.load_pipeline_companies(tmp_path) == [("Acme", "applied"), ("Gone", "closed - rejected")]
+    assert _ac.load_pipeline_companies(tmp_path / "missing") == []

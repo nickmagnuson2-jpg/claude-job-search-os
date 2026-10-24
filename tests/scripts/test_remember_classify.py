@@ -91,3 +91,37 @@ def test_unknown_falls_back_to_general_note(tmp_path):
                         "--repo-root", str(tmp_path))
     assert _types(result) == ["general_note"]
     assert result["ambiguous"] is True
+
+
+# ---------------------------------------------------------------------------
+# Direct pins of the pipeline-table reader (added 2026-10-24, before moving it onto
+# pipe_read.parse_all_rows). Only cases where this reader and the shared rule agree.
+# ---------------------------------------------------------------------------
+_PIPE_HEADER = ("| Company | Role | Stage | Date Updated | Next Action | CV Used | Notes | URL |\n"
+                "|---|---|---|---|---|---|---|---|\n")
+
+
+def _pipe_doc(*rows, archived=()):
+    text = "# Job Pipeline\n\n## Active\n" + _PIPE_HEADER + "".join(r + "\n" for r in rows)
+    if archived:
+        text += "\n## Archived\n" + _PIPE_HEADER + "".join(r + "\n" for r in archived)
+    return text
+
+
+_SKIPPED_ROWS = (
+    "|  | PM | Applied | 2026-02-01 | x | — | — | — |",
+    "| Short | PM |",
+)
+
+import sys as _sys
+_sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
+import remember_classify as _rc  # noqa: E402
+
+
+def test_load_pipeline_companies_keeps_live_rows_in_file_order():
+    content = _pipe_doc("| Acme | PM | Applied | 2026-02-01 | x | — | — | — |", *_SKIPPED_ROWS,
+                        "| Beta | CoS | To Evaluate | 2026-02-01 | x | — | — | — |",
+                        "| Gone | PM | Withdrawn | 2026-02-01 | — | — | — | — |",
+                        "| Took | PM | Accepted | 2026-02-01 | — | — | — | — |",
+                        archived=("| Old | PM | Archived | 2026-01-01 | — | — | — | — |",))
+    assert _rc.load_pipeline_companies(content) == ["Acme", "Beta"]

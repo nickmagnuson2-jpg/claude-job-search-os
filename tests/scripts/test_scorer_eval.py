@@ -150,3 +150,32 @@ def test_pipeline_row_split_parity_with_pipe_read():
         1 for _c, s, _n in se._pipeline_rows(content) if not stage_vocab.is_terminal_stage(s)
     )
     assert my_nonterminal == pr_active, (my_nonterminal, pr_active)
+
+
+# ---------------------------------------------------------------------------
+# Direct pins of the pipeline-table reader (added 2026-10-24, before moving it onto
+# pipe_read.parse_all_rows). Only cases where this reader and the shared rule agree.
+# ---------------------------------------------------------------------------
+_PIPE_HEADER = ("| Company | Role | Stage | Date Updated | Next Action | CV Used | Notes | URL |\n"
+                "|---|---|---|---|---|---|---|---|\n")
+
+
+def _pipe_doc(*rows, archived=()):
+    text = "# Job Pipeline\n\n## Active\n" + _PIPE_HEADER + "".join(r + "\n" for r in rows)
+    if archived:
+        text += "\n## Archived\n" + _PIPE_HEADER + "".join(r + "\n" for r in archived)
+    return text
+
+
+_SKIPPED_ROWS = (
+    "|  | PM | Applied | 2026-02-01 | x | — | — | — |",
+    "| Short | PM |",
+)
+
+
+def test_pipeline_rows_yield_company_stage_and_notes_for_every_row():
+    content = _pipe_doc("| Acme | PM | Applied | 2026-02-01 | x | — | had a screen | — |", *_SKIPPED_ROWS,
+                        "| Gone | PM | Closed - rejected | 2026-02-01 | — | — | — | — |",
+                        "| Bare | PM | To Evaluate |")
+    assert list(se._pipeline_rows(content)) == [
+        ("Acme", "Applied", "had a screen"), ("Gone", "Closed - rejected", "—"), ("Bare", "To Evaluate", "")]
