@@ -33,17 +33,9 @@ PIPELINE_EXPECTED_COLUMNS = [
     "Next Action", "CV Used", "Notes", "URL",
 ]
 
-# Staleness thresholds by stage (days)
-STAGE_THRESHOLDS = {
-    "Researching": 7,
-    "Applied": 5,
-    "Phone Screen": 5,
-    "Screening": 5,
-    "Interview": 7,
-    "Interviewing": 7,
-    "Offer": 3,
-}
-DEFAULT_THRESHOLD = 7
+# Staleness thresholds by stage (days): one table shared with /pipe, so /standup
+# and /pipe cannot disagree about what is stale.
+from pipe_read import STAGE_THRESHOLDS, DEFAULT_THRESHOLD  # noqa: E402
 
 
 def parse_args():
