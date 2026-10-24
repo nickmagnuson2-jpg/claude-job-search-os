@@ -40,7 +40,7 @@ tools/.cross-model-ledger.jsonl
 # one `git add -A` from a public push. Same shape as the 2026-08-18 settings.json.bak.
 tools/.cross-model-ledger.jsonl*
 tools/.role-queue.json
-tools/.career_seen.json
+tools/.career_seen.json*
 tools/.session-mutations.json
 tools/.transcript-scan-cursor.json
 tools/.transcript-scan-cursor.json.tmp

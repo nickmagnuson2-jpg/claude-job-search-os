@@ -562,8 +562,33 @@ def test_two_url_less_roles_at_one_company_are_two_roles(tmp_path):
     assert len(new) == 2
 
 
-def test_a_corrupt_seen_file_reads_as_empty(tmp_path):
+@pytest.mark.parametrize("body", ["{not json", "[1, 2]"])
+def test_a_corrupt_seen_file_is_kept_aside_not_overwritten(tmp_path, capsys, body):
+    """601.F2: reading a corrupt file as empty in place let the next save destroy the
+    only copy of the history."""
     from tools.career_scanner.dedup import load_seen, SEEN_FILENAME
     (tmp_path / "tools").mkdir()
-    (tmp_path / "tools" / SEEN_FILENAME).write_text("{not json", encoding="utf-8")
+    (tmp_path / "tools" / SEEN_FILENAME).write_text(body, encoding="utf-8")
     assert load_seen(tmp_path) == {}
+    kept = list((tmp_path / "tools").glob(SEEN_FILENAME + ".corrupt-*"))
+    assert len(kept) == 1 and kept[0].read_text(encoding="utf-8") == body
+    assert not (tmp_path / "tools" / SEEN_FILENAME).exists()
+    assert "moved to" in capsys.readouterr().err
+
+
+def test_a_missing_seen_file_is_silent(tmp_path, capsys):
+    from tools.career_scanner.dedup import load_seen
+    assert load_seen(tmp_path) == {} and capsys.readouterr().err == ""
+
+
+def test_a_corrupt_seen_file_that_cannot_be_moved_is_still_reported(tmp_path, capsys, monkeypatch):
+    from pathlib import Path
+    from tools.career_scanner.dedup import load_seen, SEEN_FILENAME
+    (tmp_path / "tools").mkdir()
+    (tmp_path / "tools" / SEEN_FILENAME).write_text("{bad", encoding="utf-8")
+
+    def stuck(self, target):
+        raise PermissionError("read-only")
+    monkeypatch.setattr(Path, "replace", stuck)
+    assert load_seen(tmp_path) == {}
+    assert "could not be moved aside" in capsys.readouterr().err

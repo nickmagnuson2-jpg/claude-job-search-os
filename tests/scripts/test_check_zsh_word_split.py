@@ -212,3 +212,21 @@ def test_round_9_false_blocks_are_clean(command):
 
 def test_a_prefix_assignment_does_not_hide_a_later_real_one():
     assert hook.find_violations('P="a b" true; P="c d"; git add $P') != []
+
+
+@pytest.mark.parametrize("command", [
+    'P="out file.txt"; python3 x.py > $P',          # 604.F1/610.F1: redirect targets
+    'P="a b"; grep a <<< $P',
+    'P="a b"; sort < $P 2> $P',
+])
+def test_a_redirect_target_is_not_an_argument(command):
+    code, err = _run(command)
+    assert code == 0, err
+
+
+def test_the_word_after_a_redirect_target_is_still_judged():
+    assert hook.find_violations('P="a b"; python3 x.py > out.txt $P') != []
+
+
+def test_a_heredoc_body_is_not_judged_as_an_argument():
+    assert hook.find_violations('for c in "a b"; do cat <<EOF\ntools/$c\nEOF\ndone') == []

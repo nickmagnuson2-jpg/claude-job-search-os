@@ -175,7 +175,7 @@ To configure targets, edit `data/scan-targets.yaml`:
 
 To find a company's ATS slug: visit their careers page and check the URL. If it redirects to `boards.greenhouse.io/`, `jobs.lever.co/`, or `jobs.ashbyhq.com/`, the slug is the path segment after the domain. Use `ats: generic` with `careers_url:` for anything else.
 
-A daily launchd schedule (`career-scan`) runs this automatically, so new matches land in `data/inbox.md` without manual invocation. Run `/scan-companies` manually to trigger on demand or debug results.
+A daily launchd schedule (`career-scan`) runs this automatically, so new matches reach the role queue that `/standup` shows without manual invocation. Run `/scan-companies` manually to trigger on demand or debug results.
 
 For roles scoring 7+, the skill suggests: `/research-company`, `/generate-cv`, or `/pipe add`.
 
@@ -497,7 +497,7 @@ Full list of all 40 skills in `.claude/skills/`:
 | `/dashboard` | *(none)* | Terminal UI: pipeline by stage, staleness, conversion funnel, search |
 | `/todo` | `[add/done/clear + args]` | Task manager with pipeline/contact cross-references and a confirm-first pipeline sync |
 | `/personal-todo` | `[add/done/clear + args]` | Personal life to-do list (household, admin, errands), sibling of `/todo`, vault-scoped |
-| `/scan-companies` | `[--dry-run]` | Scan configured career pages, score vs. profile, write new matches to `data/inbox.md` |
+| `/scan-companies` | `[--dry-run]` | Scan configured career pages, score vs. profile, queue new matches for `/standup` |
 | `/discover-companies` | `[preset-name \| --query "..."]` | Exa Agent API discovery of new target companies (or people), scored vs. thesis, proposed to `data/inbox.md` |
 | `/analyze` | `<url> [focus]` | Teardown of a paper/repo/article/video vs. your systems and wisdom -> `output/analysis/MMDDYY-<slug>.md` |
 | `/learn` | `<topic> [--focused\|--comprehensive] [--repos <paths>] [--no-quiz] [--no-pdf] [--neutral] [--audience "..."]` | Validated deep briefing: parallel research, BLUF synthesis, comprehension and interview quiz, adversarial claim-check that auto-fixes and cites → `output/MMDDYY-<topic-slug>-briefing.md` (+ PDF) and `-validation.md` |

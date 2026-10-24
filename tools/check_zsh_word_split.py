@@ -92,7 +92,16 @@ def find_violations(command: str) -> list[str]:
     except Exception:  # noqa: BLE001 — fail open on anything the tokenizer cannot read
         return []
     src = command
-    words = [t for t in tokens if t.kind in ("word", "op")]
+    # A redirect's target (`> $P`, `<<< $P`) is one word in zsh, which is what a redirect
+    # wants, so it is dropped here rather than judged as an argument (604.F1/610.F1).
+    words, after_redir = [], False
+    for t in tokens:
+        if t.kind == "redir":
+            after_redir = True
+        elif t.kind == "word" and after_redir:
+            after_redir = False
+        elif t.kind in ("word", "op"):
+            words.append(t)
 
     scalars: dict[str, str] = {}   # name -> "spaced" | "subst" | "plain"
     loop_spaced: set[str] = set()

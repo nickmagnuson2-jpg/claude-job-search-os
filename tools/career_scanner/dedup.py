@@ -173,13 +173,30 @@ def role_key(role: dict) -> str:
 def load_seen(repo_root: Path) -> dict:
     """Read the seen-set. A missing file is an empty set, never an error.
 
-    The nightly job must survive a first run on a fresh machine.
+    The nightly job must survive a first run on a fresh machine. An unreadable file is
+    moved aside (`.corrupt-<time>`) and named on stderr before the run starts empty:
+    starting empty in place re-announced every role as new and the next save overwrote
+    the only copy of the first_seen history (601.F2).
     """
     path = _seen_path(repo_root)
-    try:
-        return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
-    except (OSError, json.JSONDecodeError):
+    if not path.is_file():
         return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            return data
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        pass
+    from datetime import datetime
+    aside = path.with_name(f"{path.name}.corrupt-{datetime.now().strftime('%Y%m%d-%H%M%S')}")
+    try:
+        path.replace(aside)
+        print(f"career_scanner: seen-state unreadable; moved to {aside}, starting empty",
+              file=sys.stderr)
+    except OSError as e:
+        print(f"career_scanner: seen-state unreadable and could not be moved aside ({e})",
+              file=sys.stderr)
+    return {}
 
 
 def save_seen(repo_root: Path, seen: dict) -> None:

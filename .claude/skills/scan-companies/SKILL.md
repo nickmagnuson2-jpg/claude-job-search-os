@@ -1,18 +1,18 @@
 ---
 name: scan-companies
-description: Scan target company career pages for matching roles, score against profile, write new matches to inbox
+description: Scan target company career pages for matching roles, score against profile, queue new matches for /standup
 argument-hint: [--dry-run]
 user-invocable: true
-allowed-tools: Bash(*), Read(*), Write(data/inbox.md), Write(data/scan-targets.yaml)
+allowed-tools: Bash(*), Read(*), Write(data/scan-targets.yaml)
 ---
 
 # Scan Target Company Career Pages
 
-Scan all active companies in `data/scan-targets.yaml`, fetch open roles from their career pages (via ATS APIs or Playwright), score each role against `data/profile.md` and `data/goals.md`, deduplicate against `data/job-pipeline.md`, and write new matches to `data/inbox.md`.
+Scan all active companies in `data/scan-targets.yaml`, fetch open roles from their career pages (via ATS APIs or Playwright), score each role against `data/profile.md` and `data/goals.md`, deduplicate against `data/job-pipeline.md`, and write new matches to the role queue that `/standup` reads.
 
 ## Arguments
 
-`$ARGUMENTS` accepts an optional `--dry-run` flag. When passed, the scanner fetches and scores roles but does not write to inbox. Useful for previewing results or calibrating scores.
+`$ARGUMENTS` accepts an optional `--dry-run` flag. When passed, the scanner fetches and scores roles but does not write the role queue. Useful for previewing results or calibrating scores.
 
 ## Instructions
 
@@ -69,7 +69,7 @@ Parse the JSON output. Present results as a formatted table sorted by score desc
 
 Write `NEW` in First seen when the role's `new` is true, otherwise its `first_seen` date. When a role has `previously_closed` (a pipeline row at that company with a matching title is closed, for example "Rejected, 2026-07-01"), append `(previously: <value>)` to its Role cell: a relisting can be worth a second look, but it is not new to Nick. If `fetch_failures` is above zero, say how many companies could not be read, before the table.
 
-Show all roles per D-05 (no filtering threshold). If `--dry-run` was used, note that results were not written to inbox.
+Show all roles per D-05 (no filtering threshold). If `--dry-run` was used, note that results were not written to the role queue.
 
 If `new_since_last_scan` is zero, say so plainly ("nothing new since the last scan") even when the table has standing roles. If `new_roles` is also zero, report that clearly and suggest the user review their `role_filters` in scan-targets.yaml or add more target companies.
 
@@ -81,7 +81,7 @@ For roles scoring 7 or higher, suggest next actions:
 - "Run `/generate-cv [company] [role]` to tailor your resume"
 - "Run `/pipe add [company] [role]` to add to your pipeline"
 
-For lower-scoring roles, no specific suggestions needed, but remind the user they can review all roles in `data/inbox.md`.
+For lower-scoring roles, no specific suggestions needed, but remind the user that `/standup` lists queued roles until they are acknowledged.
 
 ### Step 5: Managing Targets
 
