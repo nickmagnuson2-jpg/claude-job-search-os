@@ -21,7 +21,7 @@ Quick answers to questions that come up in real use. For step-by-step setup see 
 It is recommended, not required. The parallel-agent research skills and the deep CV reviews fan out into many sub-agents and are token-intensive. On a smaller plan they still run, you will just hit usage limits faster.
 
 **Do I have to install Python?**
-Yes. Python 3.10+ runs the atomic write scripts, the CV pipeline, and the hooks. Run `python3 -m pip install -r requirements.txt`: `pyyaml` is required, and the other packages (PDF rendering, Gmail, the dashboard, Exa) are optional. All scripts use `python3`.
+Yes. Python 3.10+ runs the atomic write scripts, the CV pipeline, and the hooks. Run `python3 -m pip install -r requirements.txt`: `pyyaml` is required, and the other packages (PDF rendering, Gmail, Exa) are optional. All scripts use `python3`.
 
 **Can I try it before importing my own CV?**
 Yes. Copy the demo profile (`mkdir -p data output`, then `cp -r examples/data/. data/` and `cp -r examples/output/. output/`) and run skills against a complete fictional candidate. See [Step 2 of Getting Started](getting-started.md#step-2-see-it-work-on-the-demo-profile-first).

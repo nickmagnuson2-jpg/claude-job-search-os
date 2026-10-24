@@ -179,16 +179,6 @@ A daily launchd schedule (`career-scan`) runs this automatically, so new matches
 
 For roles scoring 7+, the skill suggests: `/research-company`, `/generate-cv`, or `/pipe add`.
 
-### Pipeline dashboard
-
-```
-/dashboard
-```
-
-Opens an interactive terminal UI (Textual) showing the pipeline grouped by stage, with staleness highlighting, a conversion funnel, and company search. Read-only; use `/pipe` to make changes. Requires the optional `textual` package (`textual>=8.0.0` in `requirements.txt`).
-
-Key bindings: `arrow keys` navigate rows, `Tab` moves between stage groups, `/` searches by company name, `s` toggles sort (stale-first vs. date-first), `q` quits.
-
 ---
 
 ## Research & Analysis
@@ -479,7 +469,7 @@ Saved to `output/<company-slug>/MMDDYY-prep.md`. A debrief to-do is created auto
 
 ## Skills Reference
 
-Full list of all 40 skills in `.claude/skills/`:
+Full list of all 39 skills in `.claude/skills/`:
 
 | Skill | Arguments | What it does |
 |---|---|---|
@@ -494,7 +484,6 @@ Full list of all 40 skills in `.claude/skills/`:
 | `/scan-jobs` | `<portal> [search terms]` | Scan a job portal, score fit, deduplicate |
 | `/scan-contacts` | `"Company Name" [count]` | Exa-based contact finder (no LinkedIn login): drops anyone without quotable evidence of current employment, then ranks by role proximity, warm tie, reachability, and personalization surface; offers to add picks to `data/networking.md` |
 | `/pipe` | `[add/update/remove + args]` | Application pipeline with staleness alerts; `remove` closes a row |
-| `/dashboard` | *(none)* | Terminal UI: pipeline by stage, staleness, conversion funnel, search |
 | `/todo` | `[add/done/clear + args]` | Task manager with pipeline/contact cross-references and a confirm-first pipeline sync |
 | `/personal-todo` | `[add/done/clear + args]` | Personal life to-do list (household, admin, errands), sibling of `/todo`, vault-scoped |
 | `/scan-companies` | `[--dry-run]` | Scan configured career pages, score vs. profile, write new matches to `data/inbox.md` |

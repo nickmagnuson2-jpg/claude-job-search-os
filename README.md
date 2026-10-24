@@ -41,7 +41,7 @@ A sample CV generated from the fictional demo profile: [`sample-cv-priya-anand.p
 
 ## Lessons from building it
 
-**Measure what gets used.** An April-May 2026 review of how often each command ran showed that a handful carried most of the daily work: `/wispr` (pulls in notes dictated with the Wispr Flow app), `/remember` (route a note to the right file), `/draft-email`, `/standup` (morning briefing), and `/checkout` (end-of-day close-out). Several commands that made sense on paper were rarely used, such as `/act` (an autonomous task runner) and `/dashboard` (a terminal dashboard). They are kept for occasional use.
+**Measure what gets used.** An April-May 2026 review of how often each command ran showed that a handful carried most of the daily work: `/wispr` (pulls in notes dictated with the Wispr Flow app), `/remember` (route a note to the right file), `/draft-email`, `/standup` (morning briefing), and `/checkout` (end-of-day close-out). Several commands that made sense on paper were rarely used, such as `/act` (an autonomous task runner), which is kept for occasional use. A terminal `/dashboard` was rarely used and was deleted in October 2026.
 
 **Instructions are not enough; checks are.** Rules written only as instructions to Claude were skipped in long or busy sessions. Rules written as hooks that block the tool call hold on every call they cover. Recurring failures are logged to a friction ledger, and a failure that keeps recurring is turned into a hook. The full list of hooks and what each one blocks is in [docs/hooks.md](docs/hooks.md).
 
@@ -52,7 +52,7 @@ A sample CV generated from the fictional demo profile: [`sample-cv-priya-anand.p
 | Layer | Where | What it holds |
 |---|---|---|
 | Data | `data/` (private, kept out of this public repo) | The user's profile, goals, pipeline, contacts, decisions, and per-project records that CVs are built from |
-| Skills | [`.claude/skills/`](.claude/skills/) | 40 slash commands, each a markdown file listing its steps and, for most, which data files it reads |
+| Skills | [`.claude/skills/`](.claude/skills/) | 39 slash commands, each a markdown file listing its steps and, for most, which data files it reads |
 | Hooks | `tools/check_*.py`, wired in [`.claude/settings.json`](.claude/settings.json) | Checks that run on tool calls and block known failures ([full list](docs/hooks.md)) |
 | Framework | [`framework/`](framework/) | Methodology the skills follow: the CV workflow and 20-point checklist, interview coaching protocol, recruiter-call answering strategies, style guide |
 
@@ -79,7 +79,7 @@ For a full walkthrough with the demo profile, see [docs/getting-started.md](docs
 ```bash
 git clone https://github.com/nickmagnuson2-jpg/claude-job-search-os.git
 cd claude-job-search-os
-python3 -m pip install -r requirements.txt  # pyyaml is required; the rest are optional (PDF, Gmail, dashboard)
+python3 -m pip install -r requirements.txt  # pyyaml is required; the rest are optional (PDF, Gmail, Exa)
 ```
 
 Open the folder in Claude Code.
@@ -114,13 +114,13 @@ If you tried the demo, delete the demo files from `data/` and `output/` first, o
 
 ---
 
-## All 40 skills
+## All 39 skills
 
 Argument syntax and worked examples for each: [docs/usage.md](docs/usage.md).
 
 | Area | Skills |
 |---|---|
-| Planning and tracking | `/standup` `/checkout` `/todo` `/personal-todo` `/weekly-review` `/act` `/pipe` `/dashboard` |
+| Planning and tracking | `/standup` `/checkout` `/todo` `/personal-todo` `/weekly-review` `/act` `/pipe` |
 | Capture | `/wispr` `/remember` |
 | Research | `/research-industry` `/research-company` `/discover-companies` `/scan-companies` `/scan-jobs` `/analyze` `/analyze-stream` `/learn` |
 | Applications | `/generate-cv` `/apply` `/cover-letter` `/review-cv` `/review-cv-deep` |
@@ -135,7 +135,7 @@ Argument syntax and worked examples for each: [docs/usage.md](docs/usage.md).
 
 ```
 CLAUDE.md          Project instructions, loaded every Claude Code session
-.claude/skills/    The 40 skill definitions
+.claude/skills/    The 39 skill definitions
 framework/         Methodology docs and templates
 tools/             Python scripts and hooks
 tests/             pytest suite for the tools and hooks
