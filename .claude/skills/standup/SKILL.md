@@ -14,19 +14,18 @@ Reads five data files and generates a focused daily brief. Output is in-chat onl
 
 ### Step 1: Load Data
 
-**Run preprocessing scripts (parallel):**
+**Run all preprocessing in ONE call:**
 ```bash
-PYTHONIOENCODING=utf-8 python3 tools/pipeline_staleness.py --target-date $(date +%Y-%m-%d)
-PYTHONIOENCODING=utf-8 python3 tools/outreach_pending.py --target-date $(date +%Y-%m-%d)
-PYTHONIOENCODING=utf-8 python3 tools/networking_followup.py --target-date $(date +%Y-%m-%d)
-PYTHONIOENCODING=utf-8 python3 tools/todos_summary.py --target-date $(date +%Y-%m-%d) --top-n 6
-PYTHONIOENCODING=utf-8 python3 tools/check_automation_health.py --repo-root .
-PYTHONIOENCODING=utf-8 python3 tools/attention.py --repo-root . --json
-PYTHONIOENCODING=utf-8 python3 tools/conversations_metric.py --repo-root . --target-date $(date +%Y-%m-%d)
-PYTHONIOENCODING=utf-8 python3 tools/source_check.py due --repo-root . --target-date $(date +%Y-%m-%d) --json
-PYTHONIOENCODING=utf-8 python3 tools/workstream_state.py --render --json
+PYTHONIOENCODING=utf-8 python3 tools/standup_collect.py --repo-root .
 ```
-Parse JSON output from each script. If a script returns empty results (missing data file), continue — never fail.
+It runs the ten Step 1 scripts in parallel (pipeline_staleness, outreach_pending,
+networking_followup, todos_summary `--top-n 6`, check_automation_health, attention,
+conversations_metric, source_check due, workstream_state `--render`, role_queue_read
+`--top 5`) and prints one JSON: `results.<name>.data` is each script's parsed output,
+`failed` names any that did not exit 0, with its stderr. **Do not start these scripts
+yourself in a shell loop.** zsh passes `"x.py --flag"` as one argument, which failed every
+script on five mornings before this collector existed. A name in `failed` is a source to
+degrade on (say which one is missing in the brief), never a reason to stop.
 
 **On `workstream_state.py` — the registry, and the one rule that makes it honest.**
 
@@ -83,9 +82,7 @@ Four rules, all mandatory:
 
 **New roles (from `role_queue_read.py`) — surface directly under the outcome metric.**
 
-```bash
-PYTHONIOENCODING=utf-8 python3 tools/role_queue_read.py --repo-root . --top 5
-```
+Already run by `standup_collect.py`: read `results.role_queue.data`.
 
 This is THE drain for the nightly career scan. From 2026-08-11 to 2026-09-02 the
 scanner ran daily, scored ~30 roles a night, and **nobody ever saw one**: it wrote
