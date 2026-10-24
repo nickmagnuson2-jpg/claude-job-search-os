@@ -662,3 +662,35 @@ def test_main_unsourced_ratio_returns_two(monkeypatch, tmp_path, capsys):
     t = _transcript(tmp_path, "It fired 7 of 22 (31.8%).", prior=[_tool("7 22")])
     assert _main_with(monkeypatch, Payload(ok=True, data={"transcript_path": t})) == 2
     assert "BLOCKED check_derived_ratio" in capsys.readouterr().err
+
+
+# ---------- final review follow-ups (2026-10-23) ----------
+
+@pytest.mark.parametrize("text", [
+    "It fired 7 of the 22 (31.8%).",            # 551.F4: determiner after "of"
+    "It fired 7 of the 22 times, or 31.8%.",    # 550.F1
+    "It fired 7 out of the 22 runs, which is 31.8%.",
+])
+def test_determiner_after_of_is_found(text):
+    assert values(text) == ["31.8"]
+
+
+@pytest.mark.parametrize("text", [
+    "Casey Doe said 'we close 7 of 22 (31.8%) of trials' on the call.",   # 545.F4
+    "The memo reads ‘7 of 22 (31.8%) renewed’ for Q3.",
+    "Our target is 7 of 22 (31.8%) by March.",                             # 545.F5
+    "The goal for Q4 is 7 of 22, which is 31.8%.",
+    "We are aiming for 7 of 22 (31.8%).",
+])
+def test_quotes_and_targets_are_not_derived(text):
+    assert values(text) == []
+
+
+def test_an_apostrophe_does_not_start_a_quote():
+    """Contractions must not swallow a real derived ratio."""
+    assert values("It's 7 of 22 (31.8%), and that's the rate.") == ["31.8"]
+
+
+def test_target_word_far_from_the_ratio_does_not_veto():
+    assert values("The target moved last week. We hit 7 of 22 (31.8%).") == ["31.8"]
+    assert values("Against a 40% target we hit 7 of 22 (31.8%).") == ["31.8"]

@@ -77,6 +77,9 @@ LEFT = r"(?<![\w.,/])"
 APPROX = r"(?:~|≈|about\s+|roughly\s+)?"
 # Up to three words between M and what follows: "7 of 22 turns (31.8%)".
 NOUNS = r"(?:\s+[A-Za-z][\w'-]*){0,3}"
+# "of", "out of", optionally followed by "the": "7 of the 22 (31.8%)". Final review
+# 550.F1 / 551.F4.
+OF = r"(?:\bof|\bout of)(?:\s+the)?\b"
 
 SHAPES = [
     # A / B = C%   or   A/B = C
@@ -84,11 +87,11 @@ SHAPES = [
         rf"{LEFT}(?P<n>{NUM})\s*/\s*(?P<m>{NUM})\s*(?:=|≈|~=)\s*{APPROX}(?P<c>{NUM})(?P<pct>\s*%)?")),
     # N of M (C%)   N/M (C%)
     ("of-paren", re.compile(
-        rf"{LEFT}(?P<n>{INT})\s*(?:\bof\b|\bout of\b|/)\s*(?P<m>{INT}){NOUNS}\s*"
+        rf"{LEFT}(?P<n>{INT})\s*(?:{OF}|/)\s*(?P<m>{INT}){NOUNS}\s*"
         rf"\(\s*{APPROX}(?P<c>{NUM})(?P<pct>\s*%)")),
     # N of M, or C%
     ("of-or", re.compile(
-        rf"{LEFT}(?P<n>{INT})\s+(?:of|out of)\s+(?P<m>{INT}){NOUNS},?\s+or\s+{APPROX}"
+        rf"{LEFT}(?P<n>{INT})\s+{OF}\s+(?P<m>{INT}){NOUNS},?\s+or\s+{APPROX}"
         rf"(?P<c>{NUM})(?P<pct>\s*%)")),
     # N of M, which is C%   (also ", that's", ", that is", ", or", "i.e.", a dash, and
     # the plain copula or equals: "7 of 22 is C%", "7/22 is C%", "7 of 22 = C%").
@@ -96,13 +99,13 @@ SHAPES = [
     # bare number ("12 of 40 done - 5 left") is not a ratio, and "Step 7 of 22 is done"
     # has no percent. Final review 546.F3/547.F5; plain copula 548.F1/549.F3.
     ("of-copula", re.compile(
-        rf"{LEFT}(?P<n>{INT})(?:\s+(?:of|out of)\s+|\s*/\s*)(?P<m>{INT})(?:\s+[A-Za-z][\w'-]*)?"
+        rf"{LEFT}(?P<n>{INT})(?:\s+{OF}\s+|\s*/\s*)(?P<m>{INT})(?:\s+[A-Za-z][\w'-]*)?"
         rf"(?:\s*,\s*(?:(?:which|that)(?:'s|’s|\s+is|\s+was)|or)|,?\s+i\.e\.,?|\s+[-–—]{{1,2}}"
         rf"|\s+(?:is|was)|\s*=)"
         rf"\s+{APPROX}(?P<c>{NUM})(?P<pct>\s*%)")),
     # C% (N of M)   C% (N/M)
     ("pct-paren", re.compile(
-        rf"{LEFT}(?P<c>{NUM})(?P<pct>\s*%)\s*\(\s*(?P<n>{INT})\s*(?:of|out of|/)\s*(?P<m>{INT})")),
+        rf"{LEFT}(?P<c>{NUM})(?P<pct>\s*%)\s*\(\s*(?P<n>{INT})\s*(?:{OF}|/)\s*(?P<m>{INT})")),
 ]
 
 # that's C% of M -- needs N elsewhere in the same sentence.
@@ -123,7 +126,16 @@ HYPOTHETICAL = re.compile(
 FENCE_RE = re.compile(r"```.*?(?:```|\Z)|~~~.*?(?:~~~|\Z)", re.S)
 INLINE_CODE_RE = re.compile(r"`[^`\n]*`")
 BLOCKQUOTE_RE = re.compile(r"^[ \t]*>.*$", re.M)
-QUOTED_RE = re.compile(r"\"[^\"\n]{1,400}\"|“[^”\n]{1,400}”")
+# Quoted text is someone else's words. Single quotes count only when the opening mark
+# is not inside a word, so "It's" and "that's" never open a quote (545.F4).
+QUOTED_RE = re.compile(r"\"[^\"\n]{1,400}\"|“[^”\n]{1,400}”|‘[^’\n]{1,400}’"
+                       r"|(?<![\w])'[^'\n]{1,400}'(?![\w])")
+# A ratio stated as a target is a goal, not arithmetic: "Our target is 7 of 22 (31.8%)".
+# Only the words just before the ratio count, so a target mentioned earlier in the
+# sentence does not veto a measured result (545.F5).
+TARGET_BEFORE = re.compile(
+    r"(?:\b(?:target|goal|aim|threshold|benchmark)s?\b[^.!?]{0,20}?\b(?:is|was|are|of|be)\s+"
+    r"|\b(?:aiming for|aim for|at least|no more than|up to)\s+)$", re.I)
 URL_RE = re.compile(r"\b(?:https?|ftp)://\S+|\bwww\.\S+", re.I)
 SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+(?=[A-Z*_(\[])|\n")
 
@@ -171,6 +183,8 @@ def find_derived(text: str) -> list[dict]:
         found = []
         for shape, rx in SHAPES:
             for m in rx.finditer(sent):
+                if TARGET_BEFORE.search(sent, 0, m.start()):
+                    continue
                 found.append((shape, m))
         thats_others = {}
         for m in THATS.finditer(sent):
