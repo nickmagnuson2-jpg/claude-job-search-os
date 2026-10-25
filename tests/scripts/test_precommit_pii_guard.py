@@ -70,18 +70,15 @@ def test_an_ordinary_word_on_an_untouched_line_does_not_block(repo):
     """The friction this design exists to avoid: old text needs no new verdict."""
     r = _commit(repo, "docs/a.md", "The Harbor line was here first.\nsecond line, edited\n")
     assert r.returncode == 0, r.stderr
+    assert "Harbor" not in r.stderr
 
 
-def test_an_ordinary_word_on_an_added_line_needs_a_per_file_accept(repo):
-    text = "The Harbor line was here first.\nsecond line\nWe met Harbor again.\n"
-    r = _commit(repo, "docs/a.md", text)
-    assert r.returncode != 0 and "docs/a.md:Harbor" in r.stderr
-    wrong = _git(repo, "commit", "-q", "-m", "x", check=False,
-                 env={"PII_COMMIT_ACCEPT": "docs/other.md:Harbor"})
-    assert wrong.returncode != 0
-    right = _git(repo, "commit", "-q", "-m", "x", check=False,
-                 env={"PII_COMMIT_ACCEPT": "docs/a.md:Harbor"})
-    assert right.returncode == 0, right.stderr
+def test_an_ambiguous_word_on_an_added_line_warns_and_commits(repo):
+    """The ambiguous tier warns: blocking it refused 12 ordinary words for no catch the
+    denylist did not already make (400-commit replay, 2026-10-25)."""
+    r = _commit(repo, "docs/a.md", "The Harbor line was here first.\nsecond line\nWe met Harbor again.\n")
+    assert r.returncode == 0, r.stderr
+    assert "docs/a.md:Harbor" in r.stderr
 
 
 def test_the_pathspec_commit_form_is_still_checked(repo):
@@ -141,10 +138,3 @@ def test_a_force_added_ignored_path_is_judged(repo):
     # A force-added file is TRACKED, so git no longer treats it as ignored: it ships and
     # is judged. That is the safe direction.
     assert r.returncode != 0 and "private/x.md" in r.stderr
-
-
-def test_an_ambiguous_word_that_opens_a_sentence_or_is_lowercase_only_warns(repo):
-    (repo / "tools" / ".pii-denylist-ambiguous.txt").write_text("Harbor\nvoice\n")
-    r = _commit(repo, "docs/b.md", "Harbor views are nice.\nThe voice is clear.\n")
-    assert r.returncode == 0, r.stderr
-    assert "docs/b.md:Harbor" in r.stderr and "docs/b.md:voice" in r.stderr

@@ -14,7 +14,6 @@
 # 2. PII gate on the lines this commit adds to public files (2026-10-25). The scan used
 #    to be a step the committer ran, and a commit went through twice while its scan
 #    had failed. Here its verdict is the exit code.
-#    Accept an ordinary word:  PII_COMMIT_ACCEPT="FILE:TOKEN ..." git commit ...
 #    Override (recorded):      PII_COMMIT_OVERRIDE="why" git commit ...
 #
 # Logic lives in tools/concurrent_commit_guard.py and tools/precommit_pii_guard.py

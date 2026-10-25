@@ -50,7 +50,7 @@ Most hooks block the tool call outright (exit code 2), and Claude sees the reaso
 
 ## Git hooks
 
-Two more gates are git hooks, tracked in `tools/hooks/` and installed with `bash tools/hooks/install.sh` (`--check` reports drift). `pre-commit` runs `tools/concurrent_commit_guard.py` (refuses staged paths no tool call of the committing session named) and `tools/precommit_pii_guard.py` (refuses a known real name on a line the commit adds to a public file; an ordinary word that is also a pipeline company name is refused when used as a name, accepted per file with `PII_COMMIT_ACCEPT=FILE:TOKEN`, and only warned about otherwise). `pre-push` runs the PII scan against the public remote and the cross-model verification gate.
+Two more gates are git hooks, tracked in `tools/hooks/` and installed with `bash tools/hooks/install.sh` (`--check` reports drift). `pre-commit` runs `tools/concurrent_commit_guard.py` (refuses staged paths no tool call of the committing session named) and `tools/precommit_pii_guard.py` (refuses a known real name on a line the commit adds to a public file, and prints a warning for an ordinary word that is also a pipeline company name). `pre-push` runs the PII scan against the public remote and the cross-model verification gate.
 
 ## Friction capture
 

@@ -19,16 +19,16 @@ adds. Text already committed is the push guard's and /audit-pii's job.
 
 What blocks:
   * a BLOCK-tier denylist token, or a target word used as a name, on an added line;
-  * a capitalized ambiguous-tier word (a pipeline company that is also an ordinary word)
-    used as a name on an added line, that is, not opening a sentence, unless accepted
-    for that file: PII_COMMIT_ACCEPT="FILE:TOKEN FILE:TOKEN";
   * a denylist file that exists but is empty, or a staged public file git cannot show.
 
-What only warns (printed; git shows a hook's output, so the committer sees it): the rest
-of the ambiguous tier, meaning lowercase entries and words that open a sentence. Replayed
-over the last 400 commits on 2026-10-25: blocking the whole tier would have stopped 68 of
-them, almost all on two common words; blocking only capitalized names
-stops 14, among them two real company names on the ambiguous tier (both since scrubbed).
+What only warns (printed; git shows a hook's output, so the committer sees it): the
+ambiguous tier, pipeline company names that are also ordinary words. Replayed over the
+last 400 commits on 2026-10-25: blocking the whole tier would have refused 68 commits,
+mostly on two common words. Blocking only capitalized words used as
+names would have refused 14: 12 ordinary words or placeholders (a table
+column label, a fictional company name) and 2 real company names, and both of those
+commits were already refused by the denylist tier. So blocking this tier bought no
+catch the denylist did not make, at one false refusal in about 33 commits.
 
 What passes: gitignored, binary and deleted paths; a checkout with no denylist file at
 all (a fork without private data has nothing to match against; the hook says so).
@@ -50,7 +50,6 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import check_public_pii as pii  # noqa: E402
 
-ACCEPT_ENV = "PII_COMMIT_ACCEPT"
 OVERRIDE_ENV = "PII_COMMIT_OVERRIDE"
 OVERRIDE_LOG = "pii-commit-overrides.jsonl"
 
@@ -75,13 +74,12 @@ def added_text(root: Path, rel: str) -> str:
                      if ln.startswith("+") and not ln.startswith("+++"))
 
 
-def judge(root: Path, paths: list[str], accepted: set[str]) -> dict:
-    """{'blocked', 'ambiguous' (blocks), 'warned' (prints only), 'errors', 'scanned'}"""
+def judge(root: Path, paths: list[str]) -> dict:
+    """{'blocked', 'warned' (prints only), 'errors', 'scanned'}"""
     tokens = pii.load_denylist(root)
     ambiguous = pii.load_ambiguous(root)
     target_words = pii.load_target_words(root)
-    named = [a for a in ambiguous if a[:1].isupper()]
-    result = {"blocked": [], "ambiguous": [], "warned": [], "errors": [], "scanned": 0}
+    result = {"blocked": [], "warned": [], "errors": [], "scanned": 0}
     for rel in paths:
         if not pii.is_public_path(rel, root) or pii.is_gitignored(root, rel) \
                 or pii.is_binary(rel):
@@ -95,10 +93,8 @@ def judge(root: Path, paths: list[str], accepted: set[str]) -> dict:
         hits = pii.find_pii(text, tokens) + pii.find_target_words(text, target_words)
         if hits:
             result["blocked"].append({"file": rel, "tokens": hits})
-        as_name = pii.find_target_words(text, named)
-        result["ambiguous"] += [f"{rel}:{t}" for t in as_name if f"{rel}:{t}" not in accepted]
         rest = [t for t in pii.find_pii(text, ambiguous) + pii.find_pii(text, target_words)
-                if t not in hits and t not in as_name]
+                if t not in hits]
         result["warned"] += [f"{rel}:{t}" for t in dict.fromkeys(rest)]
     return result
 
@@ -108,7 +104,7 @@ def record_override(root: Path, reason: str, result: dict) -> Path:
     # worktree; joining an absolute path onto root leaves it unchanged.
     log = Path(root) / _git(root, "rev-parse", "--git-path", OVERRIDE_LOG).strip()
     row = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "reason": reason,
-           "blocked": result["blocked"], "ambiguous": result["ambiguous"]}
+           "blocked": result["blocked"]}
     with open(log, "a", encoding="utf-8") as fh:
         fh.write(json.dumps(row, ensure_ascii=False) + "\n")
     return log
@@ -119,11 +115,6 @@ def _message(result: dict) -> str:
     for h in result["blocked"]:
         lines.append(f"  - {h['file']}: real name(s) {', '.join(h['tokens'])}. "
                      "Replace with a placeholder (Acme, Casey Doe) and restage.")
-    if result["ambiguous"]:
-        lines.append("  Words used as a NAME that are also a pipeline company name, on added lines:")
-        lines += [f"    {e}" for e in result["ambiguous"]]
-        lines.append("  Open each one. A real reference: replace it. The ordinary word: commit with")
-        lines.append(f"    {ACCEPT_ENV}=\"{' '.join(result['ambiguous'])}\" git commit ...")
     for e in result["errors"]:
         lines.append(f"  - could not read the staged change, so it was not checked: {e}")
     lines.append(f"  Override with a reason (recorded): {OVERRIDE_ENV}='<why>' git commit ...")
@@ -146,9 +137,8 @@ def main(argv=None) -> int:
               "tools/gen_pii_denylist.py --repo-root .", file=sys.stderr)
         return 1
 
-    accepted = set(os.environ.get(ACCEPT_ENV, "").split())
     try:
-        result = judge(root, staged_paths(root), accepted)
+        result = judge(root, staged_paths(root))
     except RuntimeError as exc:
         print(f"BLOCKED: precommit PII gate could not list the staged paths: {exc}",
               file=sys.stderr)
@@ -157,7 +147,7 @@ def main(argv=None) -> int:
         print("precommit PII gate: ordinary words that are also a pipeline company name, on "
               "added lines. Check each is the ordinary word:\n"
               + "\n".join(f"    {w}" for w in result["warned"]), file=sys.stderr)
-    if not (result["blocked"] or result["ambiguous"] or result["errors"]):
+    if not (result["blocked"] or result["errors"]):
         return 0
 
     reason = os.environ.get(OVERRIDE_ENV, "").strip()
