@@ -110,7 +110,9 @@ def section_row_counts(content: str) -> tuple[int, int]:
     return out[0], out[1]
 
 
-CLOSED_STATUS_PREFIXES = ("done", "withdrawn")
+# The word, then nothing, a date, or punctuation. A following word keeps the row
+# open: "Done tomorrow" and "Withdrawn pending appeal" are plans, not closures (444.F4).
+CLOSED_STATUS_RE = re.compile(r"(?:done|withdrawn)(?:$|\s*[(\-\u2013\u2014:,;]|\s+\d)", re.I)
 
 
 def is_closed_status(status: str) -> bool:
@@ -120,7 +122,7 @@ def is_closed_status(status: str) -> bool:
     ("Withdrawn 2026-05-20 (role dropped)"), and an exact-string test let those
     rows count as overdue forever.
     """
-    return (status or "").strip().lower().startswith(CLOSED_STATUS_PREFIXES)
+    return bool(CLOSED_STATUS_RE.match((status or "").strip()))
 
 
 def parse_todos(content: str, today: date) -> tuple[list, list, list]:
@@ -422,9 +424,9 @@ def parse_pipeline(content: str) -> dict:
 # Keywords that mark a pipeline row's Stage/Next-Action text as a true
 # time-anchored event (interview, screen, call, etc.) versus a generic dated
 # follow-up. Used to set is_event so the Top-3 ranker can pin real events above
-# routine follow-ups. "interviewing" covers the Stage value itself.
+# routine follow-ups. "interviewing" and "screening" cover Stage values (627.F1).
 SCHEDULED_EVENT_RE = re.compile(
-    r"\b(interview(?:ing|s)?|screen|call|onsite|debrief|panel|meet|meeting)\b",
+    r"\b(interview(?:ing|s)?|screen(?:ing|s)?|call|onsite|debrief|panel|meet|meeting)\b",
     re.IGNORECASE,
 )
 

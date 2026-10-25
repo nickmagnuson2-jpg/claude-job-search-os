@@ -381,6 +381,13 @@ def test_a_closed_row_stage_date_is_not_upcoming(tmp_path):
         "| AcmeCo | Role | Rejected after interview 10/23 | 2026-10-22 | — | — | — | — |") == []
 
 
+def test_a_screening_stage_date_is_upcoming(tmp_path):
+    """"screen" stems to "screening" the way "interview" stems to "interviewing" (627.F1)."""
+    up = _upcoming(tmp_path, "2026-10-22",
+        "| AcmeCo | Role | Screening 10/24 | 2026-10-22 | — | — | — | — |")
+    assert [u["date"] for u in up] == ["2026-10-24"]
+
+
 def test_a_stage_interview_beats_a_generic_next_action_date(tmp_path):
     """A follow-up date in Next-Action must not hide an interview recorded in Stage."""
     up = _upcoming(tmp_path, "2026-10-22",
@@ -425,3 +432,15 @@ def test_relative_and_absolute_repo_root_agree_on_substantive_work():
     )
     assert rel["substantive_work"] == absolute["substantive_work"], \
         "relative vs absolute --repo-root disagree on substantive_work"
+
+
+@pytest.mark.parametrize("status,closed", [
+    ("Done", True), ("Withdrawn 2026-01-05 (role dropped)", True),
+    ("Withdrawn 2026-05-20 \u2014 pitch dropped", True), ("done (moved)", True),
+    ("Done tomorrow", False), ("Withdrawn pending appeal", False), ("Pending", False),
+])
+def test_is_closed_status_needs_a_date_or_punctuation_after_the_word(status, closed):
+    """A following word is a plan, not a closure (444.F4)."""
+    import importlib, sys
+    sys.path.insert(0, str(REPO_ROOT / "tools"))
+    assert importlib.import_module("todo_daily_metrics").is_closed_status(status) is closed
