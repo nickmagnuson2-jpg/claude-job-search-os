@@ -18,17 +18,20 @@ untouched line needs a fresh verdict on every commit to that file
 adds. Text already committed is the push guard's and /audit-pii's job.
 
 What blocks:
-  * a BLOCK-tier denylist token, or a target word used as a name, on an added line;
+  * a BLOCK-tier denylist token on an added line;
   * a denylist file that exists but is empty, or a staged public file git cannot show.
 
 What only warns (printed; git shows a hook's output, so the committer sees it): the
-ambiguous tier, pipeline company names that are also ordinary words. Replayed over the
-last 400 commits on 2026-10-25: blocking the whole tier would have refused 68 commits,
-mostly on two common words. Blocking only capitalized words used as
-names would have refused 14: 12 ordinary words or placeholders (a table
-column label, a fictional company name) and 2 real company names, and both of those
-commits were already refused by the denylist tier. So blocking this tier bought no
-catch the denylist did not make, at one false refusal in about 33 commits.
+ambiguous tier and the target-word tier, pipeline company names that are also ordinary
+words. Replayed over the last 400 commits on 2026-10-25, the denylist tier refuses 4
+commits, all real names. Blocking the ambiguous tier would have added 68 refusals
+(mostly two common words), or 14 if only capitalized words used as names; 12 of those
+14 were ordinary words or placeholders (a table column label, a fictional company name),
+and the 2 real names were in commits the denylist already refused. Blocking target words
+used as names would have added 4 refusals, none of them a leak (a JavaScript class name
+in code, a product named in passing, a section label used twice).
+Neither tier caught anything the denylist did not, so both warn here. The write hook and
+the push gate still apply their own rules to target words.
 
 What passes: gitignored, binary and deleted paths; a checkout with no denylist file at
 all (a fork without private data has nothing to match against; the hook says so).
@@ -90,7 +93,7 @@ def judge(root: Path, paths: list[str]) -> dict:
             result["errors"].append(f"{rel}: {exc}")
             continue
         result["scanned"] += 1
-        hits = pii.find_pii(text, tokens) + pii.find_target_words(text, target_words)
+        hits = pii.find_pii(text, tokens)
         if hits:
             result["blocked"].append({"file": rel, "tokens": hits})
         rest = [t for t in pii.find_pii(text, ambiguous) + pii.find_pii(text, target_words)

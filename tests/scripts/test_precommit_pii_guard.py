@@ -138,3 +138,11 @@ def test_a_force_added_ignored_path_is_judged(repo):
     # A force-added file is TRACKED, so git no longer treats it as ignored: it ships and
     # is judged. That is the safe direction.
     assert r.returncode != 0 and "private/x.md" in r.stderr
+
+
+def test_a_target_word_used_as_a_name_warns_and_commits(repo):
+    """Blocking target words at commit refused 4 commits in the replay, none a leak."""
+    (repo / "tools" / ".pii-denylist-targetwords.txt").write_text("Lantern\n")
+    r = _commit(repo, "docs/b.md", "We spoke to Lantern about the role.\n")
+    assert r.returncode == 0, r.stderr
+    assert "docs/b.md:Lantern" in r.stderr
