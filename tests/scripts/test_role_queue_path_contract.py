@@ -789,3 +789,20 @@ def test_the_closed_row_tag_survives_the_queue(tmp_path):
             "score": 7, "previously_closed": "Rejected, 2026-01-05"}
     write_role_queue(tmp_path, [role], [], [])
     assert read_queue(tmp_path)["roles"][0]["previously_closed"] == "Rejected, 2026-01-05"
+
+
+def test_a_later_closed_row_tag_reaches_a_role_already_pending(tmp_path):
+    """615.F1: a role queued untagged, then closed in the pipeline, comes back as standing
+    with the tag. /standup reads only the pending log, so the tag must land there."""
+    from tools.career_scanner.scanner import write_role_queue
+    role = {"company": "Acme", "title": "Deployment Strategist", "url": "https://boards.example/3",
+            "score": 7}
+    other = dict(role, url="https://boards.example/4")
+    write_role_queue(tmp_path, [role, other], [], [])
+    assert "previously_closed" not in read_queue(tmp_path)["roles"][0]
+    write_role_queue(tmp_path, [], [dict(role, previously_closed="Rejected, 2026-02-01"), other], [])
+    by_url = {r["url"]: r for r in read_queue(tmp_path)["roles"]}
+    assert len(by_url) == 2
+    assert by_url[role["url"]]["previously_closed"] == "Rejected, 2026-02-01"
+    # An untagged pending role stays untagged.
+    assert "previously_closed" not in by_url[other["url"]]

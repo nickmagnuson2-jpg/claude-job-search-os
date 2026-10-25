@@ -518,6 +518,15 @@ def _write_role_queue_locked(repo_root: Path, new_roles: list[dict],
     from tools.career_scanner.dedup import role_key
 
     pending = read_pending(repo_root)
+    # A pending role keeps its first-seen object, but a closed-row tag found by a LATER
+    # scan must still reach it: the role is then standing, not new, and /standup reads
+    # only the pending log (615.F1).
+    tagged_now = {role_key(r): r["previously_closed"]
+                  for r in [*new_roles, *standing] if r.get("previously_closed")}
+    for role in pending:
+        tag = tagged_now.get(role_key(role))
+        if tag:
+            role["previously_closed"] = tag
     have = {role_key(r) for r in pending}
     for role in new_roles:
         key = role_key(role)
