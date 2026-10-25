@@ -1,7 +1,7 @@
 #!/bin/bash
-# Pre-commit gate for this repo: one check.
+# Pre-commit gates for this repo: two checks.
 #
-# Concurrent-session guard. More than one Claude Code session works in this tree at
+# 1. Concurrent-session guard. More than one Claude Code session works in this tree at
 # once. `git add -A`, `git add .`, `git commit -a`, or a plain `git commit` over an
 # index another session already staged into, puts that session's uncommitted work in
 # a commit whose message does not describe it. On this PUBLIC repo that work has
@@ -11,18 +11,24 @@
 # The form that passes by construction:   git commit -m "..." -- <paths>
 # Override (recorded in the git dir):      CONCURRENT_COMMIT_WAIVE="why" git commit ...
 #
-# Logic lives in tools/concurrent_commit_guard.py (tracked, tested). This file is
-# installed by:  bash tools/hooks/install.sh     (--check reports drift)
+# 2. PII gate on the lines this commit adds to public files (2026-10-25). The scan used
+#    to be a step the committer ran, and a commit went through twice while its scan
+#    had failed. Here its verdict is the exit code.
+#    Accept an ordinary word:  PII_COMMIT_ACCEPT="FILE:TOKEN ..." git commit ...
+#    Override (recorded):      PII_COMMIT_OVERRIDE="why" git commit ...
+#
+# Logic lives in tools/concurrent_commit_guard.py and tools/precommit_pii_guard.py
+# (tracked, tested). This file is installed by:  bash tools/hooks/install.sh
+# (--check reports drift)
 #
 # git exports GIT_INDEX_FILE to this hook. For `git commit -- <paths>` that is a
 # temporary index holding only the named paths, which is why that form passes even
 # when the real index holds another session's staged work.
 root="$(git rev-parse --show-toplevel)"
-guard="$root/tools/concurrent_commit_guard.py"
-
-# A checkout that predates the guard (bisect, an old branch) has no script to run.
+# A checkout that predates a guard (bisect, an old branch) has no script to run.
 # Skipping there is deliberate; failing would block every commit on such a checkout.
-[ -f "$guard" ] || exit 0
-
-PYTHONIOENCODING=utf-8 python3 "$guard" --repo-root "$root" || exit 1
+for guard in concurrent_commit_guard.py precommit_pii_guard.py; do
+  [ -f "$root/tools/$guard" ] || continue
+  PYTHONIOENCODING=utf-8 python3 "$root/tools/$guard" --repo-root "$root" || exit 1
+done
 exit 0
