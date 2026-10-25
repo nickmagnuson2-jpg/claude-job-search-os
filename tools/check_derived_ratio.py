@@ -132,9 +132,13 @@ QUOTED_RE = re.compile(r"\"[^\"\n]{1,400}\"|“[^”\n]{1,400}”|‘[^’\n]{1,
                        r"|(?<![\w])'[^'\n]{1,400}'(?![\w])")
 # A ratio stated as a target is a goal, not arithmetic: "Our target is 7 of 22 (31.8%)".
 # Only the words just before the ratio count, so a target mentioned earlier in the
-# sentence does not veto a measured result (545.F5).
+# sentence does not veto a measured result (545.F5), and the gap between the target
+# word and the copula may not name a result ("target vs actual is", "goal; current
+# result is"), which would otherwise exempt the measured ratio (614.F1, 625.F2).
+RESULT_WORD = r"(?:vs\.?|versus|actual(?:ly)?|current|result|measured|achieved|hit|got|reached|came in)"
 TARGET_BEFORE = re.compile(
-    r"(?:\b(?:target|goal|aim|threshold|benchmark)s?\b[^.!?]{0,20}?\b(?:is|was|are|of|be)\s+"
+    r"(?:\b(?:target|goal|aim|threshold|benchmark)s?\b"
+    rf"(?:(?!\b{RESULT_WORD}\b)[^.!?]){{0,20}}?\b(?:is|was|are|of|be)\s+"
     r"|\b(?:aiming for|aim for|at least|no more than|up to)\s+)$", re.I)
 URL_RE = re.compile(r"\b(?:https?|ftp)://\S+|\bwww\.\S+", re.I)
 SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+(?=[A-Z*_(\[])|\n")

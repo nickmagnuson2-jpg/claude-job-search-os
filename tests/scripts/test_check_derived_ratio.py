@@ -694,3 +694,12 @@ def test_an_apostrophe_does_not_start_a_quote():
 def test_target_word_far_from_the_ratio_does_not_veto():
     assert values("The target moved last week. We hit 7 of 22 (31.8%).") == ["31.8"]
     assert values("Against a 40% target we hit 7 of 22 (31.8%).") == ["31.8"]
+
+
+@pytest.mark.parametrize("text", [
+    "Target vs actual is 7 of 22 (31.8%).",                    # 625.F2
+    "The target is set; actual is 7 of 22 (31.8%).",           # 614.F1
+    "Goal versus current result is 7 of 22 (31.8%).",
+])
+def test_a_result_word_after_the_target_word_does_not_veto(text):
+    assert values(text) == ["31.8"]
