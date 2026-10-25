@@ -19,6 +19,10 @@ Two questions:
                               active pursuit — they count in distributions but are never
                               nagged as stale.
 
+Also, separately: is_closed_todo_status(status) — the TODO table's Status column.
+That is a different vocabulary from pipeline stages; it lives here only so the todo
+writer and the todo reader share one definition.
+
 Stdlib only (re) — safe to import anywhere in tools/.
 """
 import re
@@ -71,6 +75,23 @@ def is_terminal_stage(stage: str) -> bool:
     if any(re.search(rf"\b{re.escape(k)}\b", s) for k in TERMINAL_KEYWORDS_ANYWHERE):
         return True
     return _TERMINAL_PREFIX_RE.match(s) is not None
+
+
+# The word, then nothing, a date, or punctuation: "Withdrawn 2026-05-20 (role dropped)",
+# "Done". A following word keeps the row open: "Done tomorrow" and "Withdrawn pending
+# appeal" are plans, not closures (444.F4).
+_CLOSED_TODO_RE = re.compile(r"(done|withdrawn)(?:$|\s*[(\-\u2013\u2014:,;]|\s+\d)", re.I)
+
+
+def closed_todo_word(status: str) -> str:
+    """"done", "withdrawn", or "" when a todo Status cell is not closed."""
+    m = _CLOSED_TODO_RE.match((status or "").strip())
+    return m.group(1).lower() if m else ""
+
+
+def is_closed_todo_status(status: str) -> bool:
+    """True when a todo Status cell means the row is finished."""
+    return bool(closed_todo_word(status))
 
 
 def is_active_pursuit(stage: str) -> bool:

@@ -43,7 +43,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from schema_guard import assert_schema, find_header_line, SchemaDriftError  # noqa: E402
 from hook_runtime import claude_project_dir  # noqa: E402
-from stage_vocab import is_terminal_stage  # noqa: E402
+from stage_vocab import is_closed_todo_status, is_terminal_stage  # noqa: E402
 
 # Canonical schemas (see the writers: tools/todo_write.py, tools/pipe_write.py). The
 # cols[N] indices throughout this file's parsers assume these exact column orders.
@@ -110,19 +110,14 @@ def section_row_counts(content: str) -> tuple[int, int]:
     return out[0], out[1]
 
 
-# The word, then nothing, a date, or punctuation. A following word keeps the row
-# open: "Done tomorrow" and "Withdrawn pending appeal" are plans, not closures (444.F4).
-CLOSED_STATUS_RE = re.compile(r"(?:done|withdrawn)(?:$|\s*[(\-\u2013\u2014:,;]|\s+\d)", re.I)
-
-
 def is_closed_status(status: str) -> bool:
     """True when an Active-section Status cell means the todo is closed.
 
-    Prefix match, not equality: real rows carry a date and reason after the word
-    ("Withdrawn 2026-05-20 (role dropped)"), and an exact-string test let those
-    rows count as overdue forever.
+    Not equality: real rows carry a date and reason after the word ("Withdrawn
+    2026-05-20 (role dropped)"), and an exact-string test let those rows count as
+    overdue forever. The rule is stage_vocab's, shared with todo_write.
     """
-    return bool(CLOSED_STATUS_RE.match((status or "").strip()))
+    return is_closed_todo_status(status)
 
 
 def parse_todos(content: str, today: date) -> tuple[list, list, list]:

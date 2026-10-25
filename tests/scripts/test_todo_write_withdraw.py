@@ -138,3 +138,20 @@ def test_supersede_no_match_is_noop(tmp_path):
     assert code == 0
     assert res["superseded"] == 0
     assert p.read_text(encoding="utf-8") == before  # file untouched
+
+
+def test_clear_moves_dated_closures_and_keeps_a_planned_one(tmp_path):
+    """clear matched only the bare words, so "Withdrawn 2026-06-01 (dropped)" stayed in
+    Active (444.F6). A following word ("Done tomorrow") is a plan and stays."""
+    p = _write(tmp_path, FIXTURE.replace(
+        "| Apply to Acme | Med | 2026-06-10 | Pending | warm intro |",
+        "| Apply to Acme | Med | 2026-06-10 | Withdrawn 2026-06-01 (dropped) | warm intro |\n"
+        "| Write the memo | Med | — | Done 2026-06-02 | — |\n"
+        "| Call the bank | Low | — | Done tomorrow | — |"))
+    res = run_script("todo_write.py", "clear", "--repo-root", str(tmp_path))
+    assert (res["archived"], res["done"], res["withdrawn"]) == (2, 1, 1)
+    active, completed = p.read_text(encoding="utf-8").split("## Completed")
+    assert "Apply to Acme" not in active and "Write the memo" not in active
+    assert "Call the bank" in active
+    acme = next(l for l in completed.splitlines() if "Apply to Acme" in l)
+    assert "Withdrawn" in acme

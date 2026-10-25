@@ -72,7 +72,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 # Enrolled 2026-08-14: this module previously carried its own exact-match
 # TERMINAL_STAGES = {"Withdrawn","Rejected","Accepted"}, which made `sync` blind to
 # every descriptive close ("Closed - they passed", "Declined", "Considered - passed").
-from stage_vocab import is_terminal_stage  # noqa: E402
+from stage_vocab import closed_todo_word, is_closed_todo_status, is_terminal_stage  # noqa: E402
 
 # Shared ordinary-English-vs-brand-token classifier (single source of truth). The same
 # problem this module hit in `sync` -- a company whose name is an everyday word matching
@@ -88,10 +88,6 @@ PIPELINE_FILE = "data/job-pipeline.md"
 COMPLETED_HEADER = "| Task | Priority | Completed | Notes |"
 COMPLETED_SEP = "| --- | --- | --- | --- |"
 
-# Statuses in the TODO table's Status column that mean the row is finished. This is a
-# different vocabulary from pipeline stages and must not be conflated with them: the
-# writer only ever emits Pending / In Progress / Done / Withdrawn for a todo.
-TERMINAL_TODO_STATUSES = {"Done", "Withdrawn"}
 
 
 # ---------------------------------------------------------------------------
@@ -790,7 +786,7 @@ def cmd_supersede(args: list[str], todos_path: Path) -> None:
             cols = parse_cols(lines[i])
             status = cols[3] if len(cols) > 3 else ""
             if (cols and cols[0] and cols[0].lower().startswith(prefix)
-                    and status not in TERMINAL_TODO_STATUSES):
+                    and not is_closed_todo_status(status)):
                 matches.append((i, cols))
 
     if not matches:
@@ -826,24 +822,26 @@ def cmd_clear(todos_path: Path) -> None:
         if not is_data_row(lines[i]):
             continue
         cols = parse_cols(lines[i])
-        if len(cols) >= 4 and cols[3] in ("Done", "Withdrawn"):
+        # Dated closures ("Withdrawn 2026-05-20 (reason)") count too; an exact match left
+        # them stranded in Active (444.F6).
+        if len(cols) >= 4 and is_closed_todo_status(cols[3]):
             to_move.append((i, cols))
 
     if not to_move:
         out_ok("clear", "No Done or Withdrawn items to archive", archived=0, done=0, withdrawn=0)
         return
 
-    done_count = sum(1 for _, c in to_move if c[3] == "Done")
-    withdrawn_count = sum(1 for _, c in to_move if c[3] == "Withdrawn")
+    done_count = sum(1 for _, c in to_move if closed_todo_word(c[3]) == "done")
+    withdrawn_count = len(to_move) - done_count
 
     # Build completed rows before mutating lines
     completed_rows = []
     for _, cols in to_move:
         task = cols[0]
         priority = cols[1] if len(cols) > 1 else "Med"
-        status = cols[3] if len(cols) > 3 else "Done"
         notes = " | ".join(cols[4:]) if len(cols) > 4 else "—"
-        completed_date = today_str if status == "Done" else f"Withdrawn {today_str}"
+        completed_date = (today_str if closed_todo_word(cols[3]) == "done"
+                          else f"Withdrawn {today_str}")
         completed_rows.append(fmt_completed(task, priority, completed_date, notes))
 
     # Remove from Active in reverse order so earlier indices stay valid
@@ -1039,7 +1037,7 @@ def cmd_sync(todos_path: Path, pipeline_path: Path, apply: bool = False) -> None
         if not cols:
             continue
         # Skip rows already marked terminal
-        if len(cols) >= 4 and cols[3] in ("Done", "Withdrawn"):
+        if len(cols) >= 4 and is_closed_todo_status(cols[3]):
             continue
         # Match the SUBJECT of the TASK column only, on a word boundary. Matching the
         # joined row meant a todo that merely name-dropped the company in its Notes
