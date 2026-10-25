@@ -48,6 +48,7 @@ TOOLS = (
     "check_pipe_close_via_update",
     "check_pipeline_exit_status",
     "check_plan_partner_critique",
+    "check_poller_self_match",
     "check_prep_doc_format",
     "check_public_pii",
     "check_replace_all_safety",
