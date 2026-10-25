@@ -539,6 +539,16 @@ def test_an_unchanged_send_after_replaced_drafts_was_still_revised(store):
     assert dc.confirm(second, "unchanged", no_lesson="date fix only")["revised_versions"] == 1
 
 
+def test_a_revision_captured_in_the_same_second_is_still_earlier(store):
+    """opened_at is to the second; opened_ns orders inside it (619.F2/625.F1)."""
+    first = dc.capture(DRAFT, now=1_800_000_000.1)
+    dc.confirm(first, "not-sent")
+    second = dc.capture(DRAFT.replace("last week", "on Tuesday"), now=1_800_000_000.7)
+    with pytest.raises(dc.CaptureError):
+        dc.confirm(second, "unchanged")
+    assert dc.confirm(second, "unchanged", no_lesson="date fix only")["revised_versions"] == 1
+
+
 def test_an_unchanged_single_draft_needs_nothing(store):
     cid = dc.capture(DRAFT)
     other = dc.capture(DRAFT.replace("casey@example.com", "jordan@example.com"))

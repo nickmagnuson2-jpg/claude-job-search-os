@@ -127,6 +127,8 @@ def body_of(draft_text: str) -> str:
 def capture(draft_text: str, kind: str = "email", skill: str = "", source: str = "",
             now: float | None = None) -> str:
     """Record a draft exactly as given and return its ID. Never overwrites a capture."""
+    if now is None:
+        now = time.time()
     stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime(now))
     digest = hashlib.sha1(draft_text.encode("utf-8")).hexdigest()[:6]
     base = f"{stamp}-{digest}"
@@ -145,6 +147,8 @@ def capture(draft_text: str, kind: str = "email", skill: str = "", source: str =
         "id": capture_id, "kind": kind, "skill": skill, "source": source,
         "to": _header(draft_text, "TO"), "subject": _header(draft_text, "SUBJECT"),
         "opened_at": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(now)),
+        # opened_at is to the second; this orders two captures inside one second.
+        "opened_ns": int(now * 1e9),
         "status": "opened",
     })
     return capture_id
@@ -239,9 +243,14 @@ def earlier_versions(meta: dict) -> list[dict]:
             and m.get("to") == meta.get("to")
             and _thread_subject(m.get("subject", "")) == _thread_subject(meta.get("subject", ""))
             and (m.get("opened_at") or "")[:10] == day
-            and (m.get("opened_at") or "") < (meta.get("opened_at") or "")
+            and _opened_key(m) < _opened_key(meta)
             and m.get("status") in ("opened", "not-sent")
             and _body_of_capture(m["id"]) != _body_of_capture(meta["id"])]
+
+
+def _opened_key(meta: dict) -> tuple[str, int]:
+    """Open order. A capture made before opened_ns existed sorts first in its second."""
+    return (meta.get("opened_at") or "", meta.get("opened_ns") or 0)
 
 
 def _body_of_capture(capture_id: str) -> str:
