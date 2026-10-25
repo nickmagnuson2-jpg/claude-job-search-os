@@ -230,3 +230,26 @@ def test_the_word_after_a_redirect_target_is_still_judged():
 
 def test_a_heredoc_body_is_not_judged_as_an_argument():
     assert hook.find_violations('for c in "a b"; do cat <<EOF\ntools/$c\nEOF\ndone') == []
+
+
+@pytest.mark.parametrize("command", [
+    'P="a b"; command -p echo $P',                                     # 612.F1/624.F1
+    'P="a b"; time -p echo $P',
+    'P="a b"; exec -a name echo $P',
+    'P="a b"; nohup -- echo $P',
+    'P="a b" PYTHONIOENCODING=utf-8 git add $P',                       # 625.F4: prefix chain
+])
+def test_wrapper_options_and_prefix_chains_are_clean(command):
+    code, err = _run(command)
+    assert code == 0, err
+
+
+@pytest.mark.parametrize("command", [
+    'P="a b"; command -p git add $P',
+    'P="a b"; exec -a name git add $P',
+    'P="a b"; nohup -- git add $P',
+    'P="a b" X=1; git add $P',                                         # a chain with no command
+])
+def test_wrapper_options_still_reach_the_real_command(command):
+    code, err = _run(command)
+    assert code == 2, err

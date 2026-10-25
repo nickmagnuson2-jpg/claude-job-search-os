@@ -33,7 +33,8 @@ an unknown value. An array (`X=(a b)`) splits correctly in zsh and is never flag
 eval (the first two print the same text either way; eval re-splits), and operands of `[[`,
 `[`, `test` and `case`, where one operand is what the command wants. printf IS judged:
 `printf '%s\n' $P` prints one line in zsh and one per item in bash. Wrappers (`command`,
-`builtin`, `noglob`, `nocorrect`, `exec`, `nohup`) are read through to the real command.
+`builtin`, `noglob`, `nocorrect`, `exec`, `nohup`, `time`) and their options (`command -p`,
+`exec -a NAME`, `nohup --`) are read through to the real command.
 Assignments through export, local, declare, typeset, readonly and integer are recorded
 (`-a`/`-A` makes an array), and `Q=$P` copies P's kind. A scalar is flagged only when
 `$P` is the whole word: `--name=$X` wants one argument and gets one. A loop item is
@@ -65,8 +66,8 @@ from shell_tokens import tokenize  # noqa: E402
 _ASSIGN = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)=")
 _SPLIT_WORD = re.compile(r"^(?:sh_?word_?split|sh|bash|ksh)$", re.IGNORECASE)
 _NO_JUDGE = {"echo", "print", "eval", "[[", "[", "test", "case"}
-_CMD_START_WORDS = {"do", "then", "else", "elif", "if", "while", "until", "!", "{", "time",
-                    "command", "builtin", "noglob", "nocorrect", "exec", "nohup"}
+_WRAPPERS = {"time", "command", "builtin", "noglob", "nocorrect", "exec", "nohup"}
+_CMD_START_WORDS = {"do", "then", "else", "elif", "if", "while", "until", "!", "{"} | _WRAPPERS
 _ASSIGN_BUILTINS = {"export", "local", "declare", "typeset", "readonly", "integer"}
 _COPY = re.compile(r"^\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?$")
 
@@ -108,11 +109,12 @@ def find_violations(command: str) -> list[str]:
     found: list[str] = []
     at_start = True          # is the next word in command position?
     cmd_word = None          # the command name of the current simple command
+    wrapper = None           # the wrapper just read, whose options come before the command
     i = 0
     while i < len(words):
         t = words[i]
         if t.kind == "op":
-            at_start, cmd_word = True, None
+            at_start, cmd_word, wrapper = True, None, None
             i += 1
             continue
         raw = src[t.start:t.end]
@@ -124,8 +126,12 @@ def find_violations(command: str) -> list[str]:
                 # in "plain" and is never judged: zsh splits arrays correctly.
                 # `NAME=v cmd $NAME` is a prefix assignment: it sets NAME in cmd's
                 # environment, not for the expansion of cmd's own arguments (591.F2).
-                nxt = words[i + 1] if i + 1 < len(words) else None
-                prefix = nxt is not None and nxt.kind == "word" and not _ASSIGN.match(nxt.text)
+                # A chain (`P="a b" X=1 cmd $P`) is prefix too: look past every
+                # assignment to the first word that is not one (625.F4).
+                j = i + 1
+                while j < len(words) and words[j].kind == "word" and _ASSIGN.match(words[j].text):
+                    j += 1
+                prefix = j < len(words) and words[j].kind == "word"
                 if not prefix:
                     scalars[m.group(1)] = _classify(raw, t.text[m.end():], scalars)
                 i += 1
@@ -140,7 +146,13 @@ def find_violations(command: str) -> list[str]:
                 i = _read_assign_builtin(words, i + 1, src, scalars)
                 at_start, cmd_word = True, None
                 continue
+            if wrapper and raw.startswith("-"):
+                # A wrapper's own options are not the command: `command -p`, `time -p`,
+                # `nohup --`, and `exec -a NAME`, whose NAME is skipped too (612.F1/624.F1).
+                i += 2 if (wrapper == "exec" and raw == "-a") else 1
+                continue
             if raw in _CMD_START_WORDS:
+                wrapper = raw if raw in _WRAPPERS else None
                 i += 1
                 continue
             if raw == "for":
@@ -148,7 +160,7 @@ def find_violations(command: str) -> list[str]:
                 at_start, cmd_word = True, None
                 continue
             cmd_word = os.path.basename(t.text)
-            at_start = False
+            at_start, wrapper = False, None
             i += 1
             continue
 
