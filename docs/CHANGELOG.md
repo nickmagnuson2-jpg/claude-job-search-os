@@ -5,6 +5,34 @@ Format: newest entries at the top.
 
 Forked from raphaotten/claude-interview-coach (MIT / CC BY 4.0).
 
+## 2026-10-25: Review findings fixed, and two recurring mistakes turned into gates
+
+**What prompted it.** The 10/23 push left a set of parked review findings. They were
+fixed on one branch, and two mistakes from the same night that had recurred (a commit
+made while its PII scan had failed, and a wait loop that could never end) became checks
+that run without anyone remembering them. Guard edits were approved by Nick.
+
+**New gates**
+- **`tools/precommit_pii_guard.py` (new, run by `tools/hooks/pre-commit`)**: refuses a
+  commit that adds a known real name to a public file. It reads only the lines the
+  commit adds, so old text needs no new verdict. Replayed over the last 400 commits.
+- **`check_poller_self_match.py` (new, PreToolUse on Bash)**: blocks a wait loop whose
+  `pgrep -f` or `ps | grep` pattern matches its own command. Replayed over 28,265 real
+  Bash commands: 5 blocks, each a loop that could not end.
+
+**Fixes**
+- `check_derived_ratio.py`: a result word ("actual", "vs") between a target word and
+  the ratio ends the target exemption.
+- `check_voice_pure.py`: each MultiEdit edit is judged on its own.
+- `check_zsh_word_split.py`: wrapper options (`command -p`, `exec -a NAME`, `nohup --`)
+  and prefix-assignment chains are no longer read as the command.
+- `draft_capture.py`: a revision captured in the same second still counts as later.
+- To-do tools: one closed-status rule in `stage_vocab.py` for the writer and the
+  metrics reader; `todo_write clear` now moves dated Done/Withdrawn rows, and "Done
+  tomorrow" no longer counts as closed. "Screening" counts as a scheduled event.
+- Career scanner CLI lists every role instead of the first ten; three docs that still
+  said scanned roles go to the inbox now say role queue.
+
 ## 2026-10-23: Public front page, and a drain of the rule backlog
 
 **What prompted it.** The repo link was going out on LinkedIn, so the front page and every
