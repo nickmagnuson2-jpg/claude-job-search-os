@@ -138,9 +138,16 @@ def main():
     if tool_name == "Write":
         content = tool_input.get("content", "")
         errs = find_violations(content, check_frontmatter=True)
-    elif tool_name in ("Edit", "MultiEdit"):
-        # p.content joins every MultiEdit new_string; an Edit gives its new_string.
+    elif tool_name == "Edit":
         errs = find_violations(p.content, check_frontmatter=False)
+    elif tool_name == "MultiEdit":
+        # Judge each edit on its own. Joined text would let a blockquote that ends one
+        # edit lend lazy continuation to unquoted prose that opens the next, even
+        # though the two land in different places in the file (605.F3/610.F3/611.F3).
+        errs = [e for edit in (tool_input.get("edits") or [])
+                if isinstance(edit, dict)
+                for e in find_violations(edit.get("new_string") or "",
+                                         check_frontmatter=False)]
     else:
         return
 

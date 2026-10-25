@@ -214,3 +214,30 @@ def test_blocks_a_synthesis_heading_added_by_multiedit():
     })
     assert r.returncode == 2
     assert "synthesis heading" in r.stderr
+
+
+def test_multiedit_edits_are_judged_separately():
+    """A quote ending one edit does not lend lazy continuation to the next (605.F3)."""
+    r = _run_hook({
+        "tool_name": "MultiEdit",
+        "tool_input": {
+            "file_path": "/vault/data/reflections/2026-01-02-acme-call.md",
+            "edits": [
+                {"old_string": "a", "new_string": "> " + LONG},
+                {"old_string": "b", "new_string": LONG},
+            ],
+        },
+    })
+    assert r.returncode == 2
+    assert "outside blockquote" in r.stderr
+
+
+def test_multiedit_lazy_continuation_inside_one_edit_is_still_allowed():
+    r = _run_hook({
+        "tool_name": "MultiEdit",
+        "tool_input": {
+            "file_path": "/vault/data/reflections/2026-01-02-acme-call.md",
+            "edits": [{"old_string": "a", "new_string": "> " + LONG + "\n\n" + LONG}],
+        },
+    })
+    assert r.returncode == 0
