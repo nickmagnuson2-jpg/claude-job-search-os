@@ -29,7 +29,7 @@ def main():
     p.add_argument(
         "--dry-run",
         action="store_true",
-        help="Fetch and score but don't write to inbox",
+        help="Fetch and score but don't write to the role queue",
     )
     p.add_argument(
         "--repo-root",
@@ -99,7 +99,9 @@ def main():
             "first_seen": r.get("first_seen", ""),
             "previously_closed": r.get("previously_closed", ""),
         }
-        for r in result.get("roles", [])[:10]
+        # Every role, not the first ten: /scan-companies shows all roles (D-05;
+        # 614.F2/625.F5).
+        for r in result.get("roles", [])
     ]
     print(json.dumps(output, indent=2, ensure_ascii=False))
 

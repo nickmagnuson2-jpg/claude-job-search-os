@@ -463,6 +463,19 @@ def test_the_cli_passes_the_new_flag_and_first_seen_through(monkeypatch, capsys)
     assert out["new_since_last_scan"] == 1 and "roles" not in out
 
 
+def test_the_cli_lists_every_role_not_the_first_ten(monkeypatch, capsys):
+    """/scan-companies shows all roles (D-05); the CLI cut the list at ten (614.F2)."""
+    import json
+    import tools.career_scanner.scanner as scanner
+    from tools.career_scanner import cli
+    roles = [{"title": f"R{i}", "company": "X", "score": 5, "url": f"u{i}"} for i in range(12)]
+    monkeypatch.setattr(scanner, "scan_all_targets",
+                        lambda root, dry_run=False: {"new_roles": 12, "roles": roles})
+    monkeypatch.setattr("sys.argv", ["cli.py", "--repo-root", ".", "--dry-run"])
+    cli.main()
+    assert len(json.loads(capsys.readouterr().out)["top_roles"]) == 12
+
+
 PIPELINE_WITH_CLOSED = """# Job Pipeline
 
 ## Active Pipeline

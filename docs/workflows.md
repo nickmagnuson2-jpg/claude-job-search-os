@@ -82,7 +82,7 @@ The bookend to standup. Builds today's progress snapshot (completed count, strea
 
 Most of the time you start this flow from a role you already found. When you need fresh targets, `/discover-companies` uses the Exa Agent API to surface companies you are not yet tracking, scores them against your thesis (geography as a hard gate, then stage, sector, and lane-keyword fit), and proposes the survivors to your inbox; `/scan-companies` then checks the career pages of your configured targets for live roles. (`/discover-companies` needs an Exa Pro key; see [getting-started.md](getting-started.md#optional-integrations); `/scan-companies` works on the standard setup.) Discovery finds the company, the scan finds the role.
 
-> **You should see:** new, thesis-fit companies and roles waiting in `data/inbox.md` to triage, instead of a blank page when you go looking for where to apply next.
+> **You should see:** new, thesis-fit companies waiting in `data/inbox.md` and new roles in the role queue that `/standup` shows, instead of a blank page when you go looking for where to apply next.
 
 ### Step 1: Know the ground (optional but recommended)
 

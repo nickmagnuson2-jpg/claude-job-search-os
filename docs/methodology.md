@@ -607,7 +607,7 @@ memory/                          ← Persistent session context (auto-memory sys
   ├── review-cv-deep/             ← /review-cv-deep — 6-perspective deep review
   ├── scan-jobs/                  ← /scan-jobs — job portal scanner with fit scoring
   ├── scan-contacts/              ← /scan-contacts — Exa-based contact finder + evidence gate + ranker
-  ├── scan-companies/             ← /scan-companies — career-page scanner → inbox matches
+  ├── scan-companies/             ← /scan-companies — career-page scanner → role queue
   ├── discover-companies/         ← /discover-companies — Exa Agent API company discovery
   ├── pipe/                       ← /pipe — application pipeline tracking
   ├── dashboard/                  ← /dashboard — Textual TUI pipeline view
