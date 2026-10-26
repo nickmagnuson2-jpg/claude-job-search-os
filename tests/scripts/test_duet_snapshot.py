@@ -276,6 +276,13 @@ def test_no_emails_money_phones_urls_paths_or_em_dashes(snap):
     ("see private/notes/today ok", "see ok"),
     ("notes/drafts stays", "notes/drafts stays"),
     ("rooms 12 34 56 booked", "rooms 12 34 56 booked"),
+    ("logs in /tmp now", "logs in now"),
+    ("see /etc ok", "see ok"),
+    ("bonus 9K noted", "bonus noted"),
+    ("bonus 1.5K noted", "bonus noted"),
+    ("fee usd 950 ok", "fee ok"),
+    ("open 24/7 ok", "open 24/7 ok"),
+    ("reach out via /cold-outreach or /follow-up", "reach out via /cold-outreach or /follow-up"),
     ("call Thu 3/12 w/ Casey", "call Thu 3/12 w/ Casey"),
     ("and/or later", "and/or later"),
 ])

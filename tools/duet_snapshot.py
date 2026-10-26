@@ -25,12 +25,15 @@ Reused, not copied (one source of truth each):
                                              and Last Interaction (the "since" date)
 
 Privacy: sanitize() strips, from every free-text cell: email addresses; phone numbers of
-any country (9+ digits, ISO dates kept); money (any Unicode currency sign, a three-letter
-code beside a figure, "95K", comma-grouped or 5+ digit figures); URLs of any scheme and
+any country (9+ digits, ISO dates kept); money (any Unicode currency sign; a common
+ISO 4217 code beside any amount, upper case or the seven commonest in lower case; any
+other three capitals only beside a figure of four or more digits, so "PST 2pm" stays;
+K-shorthand like "9K" or "1.5K"; comma-grouped or 5+ digit figures); URLs of any scheme and
 domains with a path; and file paths (a known repo directory, a file extension, three or
-more segments, Unix absolute, Windows, UNC). It is a pattern list, not a proof: a token in
-none of those shapes passes. A two-segment word pair ("and/or", "notes/drafts") is kept
-on purpose, because it cannot be told from a path by its shape.
+more segments, Unix absolute with two or more segments or a bare system root like /tmp,
+Windows, UNC). It is a pattern list, not a proof: a token in none of those shapes passes.
+Kept on purpose, because each cannot be told from a path by its shape: a two-segment word
+pair ("and/or", "notes/drafts") and a one-segment slash command ("/follow-up").
 
 Usage:
   PYTHONIOENCODING=utf-8 python3 tools/duet_snapshot.py [--date YYYY-MM-DD]
@@ -91,16 +94,21 @@ _SCRUB = [
     re.compile(r"\b[\w./-]+\.(?:md|py|json|pdf|txt|sh|ya?ml|docx|csv)\b"),  # file / path
     re.compile(r"\b[A-Za-z]:\\\S*|\\\\\S+"),                             # Windows / UNC path
     re.compile(r"(?<![\w/])/[\w.-]+(?:/[\w.-]*)+"),                      # absolute path, 2+ segments
+    # One segment is shaped like a slash command ("/follow-up"), so only system roots go.
+    re.compile(r"(?<![\w/])/(?:etc|tmp|var|usr|opt|home|Users|private|Volumes|bin|sbin|dev"
+               r"|mnt|root|srv|Library|Applications|System)\b/?"),
     re.compile(r"\b[\w.-]+(?:/[\w.-]+){2,}/?"),                          # relative path, 3+ segments
     re.compile(_CUR + r"\s?\d[\d,.']*\s?[kKmM]?(?:\s?-\s?" + _CUR
                + r"?\d[\d,.']*\s?[kKmM]?)?\b|" + _CUR),                 # any currency sign, or a range
     re.compile(r"\b(?:" + _CODES + r")\s?\d[\d,.']*\s?[kKmM]?\b"
                r"|\b\d[\d,.']*\s?[kKmM]?\s?(?:" + _CODES + r")\b"),       # "USD 950", "950 EUR"
+    re.compile(r"\b(?:usd|eur|gbp|cad|aud|chf|inr)\s?\d[\d,.']*\s?[kKmM]?\b"
+               r"|\b\d[\d,.']*\s?[kKmM]?\s?(?:usd|eur|gbp|cad|aud|chf|inr)\b"),  # lowercase
     re.compile(r"\b[A-Z]{3}\s?(?:\d{1,3}(?:[,.']\d{3})+|\d{4,}(?![-/]\d)|\d+(?:\.\d+)?\s?[kKmM])\b"
                r"|\b(?:\d{1,3}(?:[,.']\d{3})+|\d{4,}|\d+(?:\.\d+)?\s?[kKmM])\s?[A-Z]{3}\b"),
                                                                         # "CHF 95000", "150,000 USD"
     re.compile(r"\b\d{2,3}(?:\.\d)?[kK]?\s?-\s?\d{2,3}(?:\.\d)?[kK]\b"),   # "150-180k" range
-    re.compile(r"\b\d{2,3}(?:\.\d)?[kK]\b"),                            # "95K" comp shorthand
+    re.compile(r"\b\d{1,3}(?:\.\d+)?[kK]\b"),                           # "9K", "1.5K", "95K"
     re.compile(r"\b\d{1,3}(?:,\d{3})+(?:\.\d+)?\b"),                    # "150,000" grouped figure
     re.compile(r"\b\d{5,}\b"),                                          # long figure or id
 ]
