@@ -222,6 +222,15 @@ def test_a_copy_into_an_existing_dotted_folder_is_gated(repo):
     assert cbl.decide("Bash", {"command": cmd}, root=repo)
 
 
+def test_a_folder_copied_into_a_company_folder_is_gated(repo, tmp_path):
+    site = tmp_path / "site"
+    site.mkdir()
+    (site / "page.html").write_text("x", encoding="utf-8")
+    cmd = f"rsync -a {site}/ {repo}/output/acme/"
+    msg = cbl.decide("Bash", {"command": cmd}, root=repo)
+    assert msg and "page.html" in msg
+
+
 def test_bash_write_passes_once_the_log_exists(repo):
     put(repo, "output/acme/BUILD-LOG.md", FILLED)
     assert cbl.decide("Bash", {"command": "echo x > output/acme/page.html"}, root=repo) is None

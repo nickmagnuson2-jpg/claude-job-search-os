@@ -399,6 +399,63 @@ def test_a_copy_into_the_analysis_folder_is_seen(repo):
     assert msg and "creates a NEW handoff-shaped file" in msg
 
 
+@pytest.fixture
+def site(tmp_path: Path) -> Path:
+    """A source folder holding a page at the top and a script one level down."""
+    d = tmp_path / "site"
+    (d / "sub").mkdir(parents=True)
+    (d / "page.html").write_text("x", encoding="utf-8")
+    (d / "sub" / "app.js").write_text("x", encoding="utf-8")
+    return d
+
+
+def test_a_source_folder_lands_its_files_both_ways(site):
+    """`rsync -a site/ out/` lands out/page.html; `cp -r site out/` lands out/site/page.html.
+    Both shapes are reported for any folder source (codex round 10)."""
+    got = hp.copy_destinations(f"rsync -a {site}/ out/")
+    for path in ("out/page.html", "out/sub/app.js", "out/site/page.html",
+                 "out/site/sub/app.js"):
+        assert path in got
+
+
+def test_a_folder_source_makes_a_dotted_new_destination_a_folder(site):
+    assert "out/v2.0/page.html" in hp.copy_destinations(f"cp -r {site} out/v2.0")
+
+
+def test_a_folder_source_past_the_file_cap_falls_back_to_its_name(site, monkeypatch):
+    monkeypatch.setattr(hp, "WALK_MAX_FILES", 1)
+    assert hp.copy_destinations(f"cp -r {site} out/") == ["out/", "out/site"]
+
+
+def test_a_folder_source_past_the_depth_cap_falls_back_to_its_name(site, monkeypatch):
+    monkeypatch.setattr(hp, "WALK_MAX_DEPTH", 0)
+    assert hp.copy_destinations(f"cp -r {site} out/") == ["out/", "out/site"]
+
+
+def test_a_flat_folder_is_within_a_depth_cap_of_zero(tmp_path, monkeypatch):
+    flat = tmp_path / "flat"
+    flat.mkdir()
+    (flat / "page.html").write_text("x", encoding="utf-8")
+    monkeypatch.setattr(hp, "WALK_MAX_DEPTH", 0)
+    assert hp._files_under(str(flat)) == ["page.html"]
+
+
+def test_a_file_source_walks_to_nothing(tmp_path):
+    f = tmp_path / "page.html"
+    f.write_text("x", encoding="utf-8")
+    assert hp.copy_destinations(f"cp {f} out/") == ["out/", "out/page.html"]
+
+
+def test_files_under_lists_files_at_the_depth_cap(site, monkeypatch):
+    monkeypatch.setattr(hp, "WALK_MAX_DEPTH", 1)
+    assert sorted(hp._files_under(str(site))) == ["page.html", "sub/app.js"]
+
+
+def test_files_under_lists_exactly_the_file_cap(site, monkeypatch):
+    monkeypatch.setattr(hp, "WALK_MAX_FILES", 2)
+    assert sorted(hp._files_under(str(site))) == ["page.html", "sub/app.js"]
+
+
 def test_an_existing_dotted_directory_is_a_folder_destination(tmp_path):
     """`cp page.html <dir>/v1.0` lands v1.0/page.html when v1.0 is a directory (codex round 9)."""
     d = tmp_path / "v1.0"

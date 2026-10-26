@@ -48,7 +48,11 @@ SCOPE IS THE INFRASTRUCTURE CLASS ONLY -- `output/analysis/` and flat `output/`.
 
 RESIDUAL, STATED RATHER THAN BURIED: a programmatic writer (`python -c`, a script that opens a
 path) is not intercepted, and renaming a file to dodge the basename pattern evades this. Both
-are deliberate evasions rather than default paths, which is the bar. The enumerating test
+are deliberate evasions rather than default paths, which is the bar. `copy_destinations` also
+works from the command text plus what already exists on disk, so it cannot see: a glob or a
+variable (`cp *.md out/`, `cp $X out/`), a source that does not exist yet when the hook runs
+(made earlier in the same command), and the contents of a source folder past the walk cap
+(WALK_MAX_DEPTH, WALK_MAX_FILES), where it falls back to the folder's own name. The enumerating test
 `tests/scripts/test_handoff_disposition.py` is the defence-in-depth that catches what lands
 anyway; it imports `is_handoff_shaped` from here so the two scopes cannot drift (F4).
 """
@@ -108,6 +112,11 @@ OPTION_ARGS = {
               "--log-file", "--out-format", "-B", "--block-size", "-M", "--remote-option",
               "--password-file"},
 }
+
+# How far `copy_destinations` walks a source FOLDER to list the files it lands. Past either
+# cap the walk is abandoned and only the folder's own name is reported, as before.
+WALK_MAX_DEPTH = 6
+WALK_MAX_FILES = 500
 
 # Commands where `-t DIR` / `--target-directory` names the destination folder. Not rsync,
 # whose `-t` means --times and takes no argument (grok round 9).
@@ -230,6 +239,22 @@ def _shell_words(segment: str) -> list[str]:
         return segment.split()
 
 
+def _files_under(folder: str) -> list[str] | None:
+    """Paths of the files under `folder`, relative to it, or None when a cap is passed."""
+    base = folder.rstrip("/")
+    out: list[str] = []
+    for root, dirs, files in os.walk(base):
+        rel_root = os.path.relpath(root, base)
+        depth = 0 if rel_root == "." else rel_root.count(os.sep) + 1
+        if depth > WALK_MAX_DEPTH:
+            return None
+        for f in files:
+            out.append(f if rel_root == "." else f"{rel_root}/{f}")
+            if len(out) > WALK_MAX_FILES:
+                return None
+    return out
+
+
 def _expandable(tok: str) -> bool:
     """A token with a variable or command substitution anywhere in it is unresolvable."""
     return "$" in tok or "`" in tok
@@ -288,16 +313,26 @@ def copy_destinations(command: str) -> list[str]:
         if not dest:
             continue
         out.append(dest)
+        srcs = [_unquote(s) for s in sources if not _expandable(s)]
+        folder_srcs = [s for s in srcs if os.path.isdir(s)]
         last = dest.rstrip("/").rsplit("/", 1)[-1]
         if not (target_dir is not None or dest.endswith("/") or "." not in last
-                or len(sources) > 1 or os.path.isdir(dest)):
+                or len(sources) > 1 or os.path.isdir(dest) or folder_srcs):
             continue
-        for src in sources:
-            if _expandable(src):
+        base = dest.rstrip("/")
+        for src in srcs:
+            name = src.rstrip("/").rsplit("/", 1)[-1]
+            if not name:
                 continue
-            name = _unquote(src).rstrip("/").rsplit("/", 1)[-1]
-            if name:
-                out.append(dest.rstrip("/") + "/" + name)
+            out.append(base + "/" + name)
+            # A source FOLDER lands its files (codex round 10). Whether they land under the
+            # folder's name or straight into the destination depends on the command, the
+            # trailing slash and whether the destination exists (rsync `src/` vs `src`, BSD
+            # vs GNU cp), so both are reported: an extra path to judge is the safe direction.
+            # A source that is a file, or does not exist, walks to nothing.
+            for rel in _files_under(src) or []:
+                out.append(f"{base}/{name}/{rel}")
+                out.append(f"{base}/{rel}")
     return out
 
 

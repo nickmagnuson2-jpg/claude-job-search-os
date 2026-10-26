@@ -26,6 +26,10 @@ WHAT IT DOES NOT SEE, stated rather than buried:
     `scripts/` or `data/` subfolder, which are exempt by the spec.
   * A relative Bash target after `cd output/x &&` resolves against the repo root, the same
     limitation `check_handoff_producer.py` has, whose target parser this reuses.
+  * In a Bash copy, a glob or variable (`cp *.html output/acme/`, `cp $X output/acme/`), a
+    source that does not exist yet when the hook runs, and the contents of a source folder
+    past the parser's walk cap (`check_handoff_producer.WALK_MAX_DEPTH`, `WALK_MAX_FILES`).
+    The parser reads the command text plus what is already on disk, nothing more.
   * It is a tripwire, not proof: Claude can write the log, or the waiver line, itself. It
     stops a build that runs with no log at all; whether the log is any good is a review.
 
