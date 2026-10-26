@@ -17,13 +17,13 @@ import argparse
 import json
 import re
 import sys
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from schema_guard import assert_schema, find_header_line, SchemaDriftError  # noqa: E402
 # Shared freeform-stage classifier (single source of truth). See stage_vocab.py.
-from stage_vocab import is_terminal_stage, is_active_pursuit  # noqa: E402
+from stage_vocab import is_active_pursuit  # noqa: E402
 
 # Canonical schema (tools/pipe_write.py PIPELINE_HEADER) — the parser's cols[N]
 # indices below assume this exact column order. See schema_guard.py docstring for
@@ -33,17 +33,10 @@ PIPELINE_EXPECTED_COLUMNS = [
     "Next Action", "CV Used", "Notes", "URL",
 ]
 
-# Staleness thresholds by stage (days)
-STAGE_THRESHOLDS = {
-    "Researching": 7,
-    "Applied": 5,
-    "Phone Screen": 5,
-    "Screening": 5,
-    "Interview": 7,
-    "Interviewing": 7,
-    "Offer": 3,
-}
-DEFAULT_THRESHOLD = 7
+# Staleness thresholds by stage (days): one table shared with /pipe, so /standup
+# and /pipe cannot disagree about what is stale.
+from pipe_read import STAGE_THRESHOLDS, DEFAULT_THRESHOLD, parse_all_rows  # noqa: E402
+from md_table import read_file_narrow as read_file  # noqa: E402
 
 
 def parse_args():
@@ -57,98 +50,53 @@ def parse_args():
     return p.parse_args()
 
 
-def read_file(path: Path) -> str:
-    try:
-        return path.read_text(encoding="utf-8")
-    except (FileNotFoundError, PermissionError):
-        return ""
+def _without_terminal_sections(content: str) -> str:
+    """content minus the table rows under a "## ... Terminal ..." heading.
+
+    pipe_read already drops rows under Archived/Withdrawn/Rejected headings; this
+    tool has also treated a Terminal heading as closed, so that rule stays here."""
+    kept, in_terminal = [], False
+    for line in content.splitlines():
+        if re.match(r"^##\s+", line):
+            in_terminal = "terminal" in line.lower()
+        if not (in_terminal and line.startswith("|")):
+            kept.append(line)
+    return "\n".join(kept)
 
 
 def parse_pipeline(content: str, today: date, global_threshold: int | None) -> dict:
     # Fail loudly (not silently) if the live file's header has drifted from what
-    # the cols[N] indices below assume — see schema_guard.py.
+    # the column order assumes — see schema_guard.py.
     assert_schema(find_header_line(content, "| Company |"), PIPELINE_EXPECTED_COLUMNS)
 
     active_entries = []
-    stalled_entries = []
     stage_distribution = {}
-
-    # Look for rows in any section — exclude rows from Archived/Terminal sections
-    in_terminal_section = False
-
-    for line in content.splitlines():
-        # Track which section we're in
-        if re.match(r"^##\s+", line):
-            section_name = line.strip("# ").strip()
-            in_terminal_section = any(t.lower() in section_name.lower()
-                                     for t in ("archived", "terminal", "withdrawn", "rejected"))
+    # Rows, the closed rule (stage_vocab) and the closed headings come from pipe_read,
+    # the same reader /pipe uses, so /standup and /pipe count the same live rows.
+    for row in parse_all_rows(_without_terminal_sections(content), today):
+        if row["archived"]:
             continue
-
-        if not line.startswith("|") or line.startswith("| Company") or line.startswith("|---"):
-            continue
-
-        cols = [c.strip() for c in line.strip("|").split("|")]
-        if len(cols) < 3 or not cols[0]:
-            continue
-        # Skip separator rows written as "| --- | --- | ... |" (space after the pipe,
-        # so the "|---" prefix check above misses them). Without this they were parsed
-        # as a company="---" entry and inflated total_active — the 1-row divergence
-        # from pipe_read (which already has this guard). fable-audit Theme 2.
-        if cols[0] == "---":
-            continue
-
-        company = cols[0]
-        role = cols[1] if len(cols) > 1 else ""
-        stage = cols[2] if len(cols) > 2 else ""
-        # Canonical schema (tools/pipe_write.py): Date Updated | Next Action | CV Used | Notes | URL
-        date_updated = cols[3] if len(cols) > 3 else ""
-        next_action = cols[4] if len(cols) > 4 else ""
-        cv_used = cols[5] if len(cols) > 5 else ""
-        notes = cols[6] if len(cols) > 6 else ""
-        url = cols[7] if len(cols) > 7 else ""
-        date_added = date_updated  # no separate Date Added column; mirror for back-compat
-
-        # Skip terminal entries. Uses the shared freeform-stage classifier, not a
-        # 4-value exact set — descriptive closed stages ("Closed - they passed",
-        # "Declined", "Considered - passed") must not count as active (fable-audit
-        # Theme 2). Keeps /standup's active count consistent with /pipe (pipe_read).
-        if is_terminal_stage(stage) or in_terminal_section:
-            continue
-
-        # Calculate days since update
-        days_since_update = None
-        update_date_str = date_updated
-        if update_date_str and update_date_str != "—":
-            try:
-                update_date = datetime.strptime(update_date_str, "%Y-%m-%d").date()
-                days_since_update = (today - update_date).days
-            except ValueError:
-                pass
-
-        # Update stage distribution
+        stage, days_since_update = row["stage"], row["days_since_update"]
         stage_distribution[stage] = stage_distribution.get(stage, 0) + 1
-
-        threshold = global_threshold if global_threshold is not None else STAGE_THRESHOLDS.get(stage, DEFAULT_THRESHOLD)
-
-        entry = {
-            "company": company,
-            "role": role,
+        threshold = (global_threshold if global_threshold is not None
+                     else STAGE_THRESHOLDS.get(stage, DEFAULT_THRESHOLD))
+        active_entries.append({
+            "company": row["company"],
+            "role": row["role"],
             "stage": stage,
-            "date_added": date_added,
-            "date_updated": date_updated or date_added,
+            "date_added": row["date_updated"],  # no separate Date Added column; mirrored for back-compat
+            "date_updated": row["date_updated"],
             "days_since_update": days_since_update,
             "threshold": threshold,
-            "stalled": is_active_pursuit(stage) and days_since_update is not None and days_since_update >= threshold,
-            "url": url,
-            "notes": notes,
-        }
-
-        active_entries.append(entry)
-        if entry["stalled"]:
-            stalled_entries.append(entry)
+            "stalled": (is_active_pursuit(stage) and days_since_update is not None
+                        and days_since_update >= threshold),
+            "url": row["url"],
+            "notes": row["notes"],
+        })
 
     # Sort stalled by most overdue first
-    stalled_entries.sort(key=lambda e: -(e["days_since_update"] or 0))
+    stalled_entries = sorted((e for e in active_entries if e["stalled"]),
+                             key=lambda e: -(e["days_since_update"] or 0))
 
     return {
         "active_entries": active_entries,

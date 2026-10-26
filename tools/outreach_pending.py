@@ -28,6 +28,9 @@ from pathlib import Path
 # Shared freeform-stage classifier (single source of truth). See stage_vocab.py.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from stage_vocab import is_terminal_stage  # noqa: E402
+from pipe_read import parse_all_rows  # noqa: E402
+from md_table import read_file_narrow as read_file  # noqa: E402
+from outreach_read import parse_rows as parse_outreach_rows  # noqa: E402
 
 
 def parse_args():
@@ -41,13 +44,6 @@ def parse_args():
     p.add_argument("--repo-root", default=None,
                    help="Repository root path. Defaults to cwd.")
     return p.parse_args()
-
-
-def read_file(path: Path) -> str:
-    try:
-        return path.read_text(encoding="utf-8")
-    except (FileNotFoundError, PermissionError):
-        return ""
 
 
 def reconcile_key(name: str, company: str) -> str:
@@ -114,24 +110,13 @@ _NO_REPLY_EXPECTED_MARKERS = (
 
 
 def parse_pipeline_stages(content: str) -> dict[str, str]:
-    """Parse job-pipeline.md table rows → {lowercase_company: stage}.
+    """Parse job-pipeline.md table rows (pipe_read.parse_all_rows) -> {lowercase_company: stage}.
 
     On duplicate company rows, the last (most recent toward bottom) wins; callers
     only use this to test closed-ness, so any closed row marking the company closed
     is the intent. Returns {} for empty/missing content.
     """
-    stages: dict[str, str] = {}
-    for line in content.splitlines():
-        if not line.startswith("|") or line.startswith("| Company") or line.startswith("|---"):
-            continue
-        cols = [c.strip() for c in line.strip("|").split("|")]
-        if len(cols) < 3:
-            continue
-        company = cols[0].lower()
-        stage = cols[2]
-        if company and company != "---":
-            stages[company] = stage
-    return stages
+    return {r["company"].lower(): r["stage"] for r in parse_all_rows(content, date.today())}
 
 
 def is_closed_stage(stage: str) -> bool:
@@ -188,21 +173,9 @@ def parse_outreach_log(content: str, today: date, lookback_days: int,
     awaiting = []
     awaiting_overdue = []
 
-    for line in content.splitlines():
-        if not line.startswith("|") or line.startswith("| Date") or line.startswith("|---"):
-            continue
-
-        cols = [c.strip() for c in line.strip("|").split("|")]
-        if len(cols) < 6:
-            continue
-
-        date_str = cols[0]
-        outreach_type = cols[1]
-        channel = cols[2]
-        name = cols[3]
-        company = cols[4]
-        subject = cols[5]
-        status = cols[6] if len(cols) > 6 else "Drafted"
+    for row in parse_outreach_rows(content):
+        date_str, channel, name = row["date"], row["channel"], row["recipient"]
+        company, subject, status = row["company"], row["subject"], row["status"]
 
         try:
             sent_date = datetime.strptime(date_str, "%Y-%m-%d").date()

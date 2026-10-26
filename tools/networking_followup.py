@@ -34,6 +34,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 # Shared freeform-stage classifier (single source of truth). See stage_vocab.py.
 from stage_vocab import is_terminal_stage  # noqa: E402
+from pipe_read import parse_all_rows  # noqa: E402
+from md_table import read_file_narrow as read_file  # noqa: E402
 
 
 def build_closed_company_index(pipeline_content: str) -> dict[str, str]:
@@ -50,15 +52,8 @@ def build_closed_company_index(pipeline_content: str) -> dict[str, str]:
     latest: dict[str, str] = {}
     live: set[str] = set()
 
-    for line in pipeline_content.splitlines():
-        if (not line.startswith("|")
-                or line.startswith("| Company")
-                or re.match(r"^\|\s*:?-+", line)):
-            continue
-        cols = [c.strip() for c in line.strip().strip("|").split("|")]
-        if len(cols) < 4 or not cols[0]:
-            continue
-        company, stage, updated = cols[0].lower(), cols[2], cols[3]
+    for r in parse_all_rows(pipeline_content, date.today()):
+        company, stage, updated = r["company"].lower(), r["stage"], r["date_updated"]
         if not is_terminal_stage(stage):
             live.add(company)
             continue
@@ -79,13 +74,6 @@ def parse_args():
     p.add_argument("--repo-root", default=None,
                    help="Repository root path. Defaults to cwd.")
     return p.parse_args()
-
-
-def read_file(path: Path) -> str:
-    try:
-        return path.read_text(encoding="utf-8")
-    except (FileNotFoundError, PermissionError):
-        return ""
 
 
 def infer_followup_date(last_date: date, notes: str) -> date | None:

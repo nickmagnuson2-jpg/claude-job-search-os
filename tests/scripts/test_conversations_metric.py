@@ -201,6 +201,12 @@ class TestCountOutreachOnFixtures:
         f = self._log(tmp_path, "| 2026-08-30 | Sent |\n")
         assert cm.count_outreach(f, self.TODAY)["counts"]["7d"] == 0
 
+    def test_status_is_the_seventh_cell_not_the_last(self, tmp_path):
+        """BEHAVIOR CHANGE 2026-10-24 (now read through outreach_read): the status used
+        to be the LAST cell, so an eighth cell hid a sent row."""
+        f = self._log(tmp_path, "| 2026-08-30 | cold | email | A | B | s | Sent | extra |\n")
+        assert cm.count_outreach(f, self.TODAY)["counts"]["7d"] == 1
+
     def test_status_match_is_case_insensitive(self, tmp_path):
         f = self._log(tmp_path, "| 2026-08-30 | cold | email | A | B | s | SENT |\n")
         assert cm.count_outreach(f, self.TODAY)["counts"]["7d"] == 1

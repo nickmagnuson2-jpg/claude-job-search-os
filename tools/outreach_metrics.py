@@ -35,6 +35,7 @@ from outreach_pending import (  # noqa: E402
     read_file,
 )
 from pipe_read import parse_all_rows  # noqa: E402
+from outreach_read import parse_rows  # noqa: E402,F401  (the outreach-log reader; company_dim imports it from here)
 
 COLD_SKILLS = {"cold-outreach"}
 FOLLOWUP_SKILLS = {"follow-up"}
@@ -46,25 +47,6 @@ def norm_company(s: str) -> str:
     s = (s or "").lower().strip()
     s = re.sub(r"\b(inc|llc|ltd|corp|co)\b", "", s)
     return re.sub(r"[^a-z0-9]", "", s)
-
-
-def parse_rows(content: str) -> list[dict]:
-    """Every outreach-log row as a record. Header/separator/short rows are skipped."""
-    rows = []
-    for line in content.splitlines():
-        if not line.startswith("|"):
-            continue
-        cols = [c.strip() for c in line.strip("|").split("|")]
-        if len(cols) < 7:
-            continue
-        if cols[0] in ("Date", "---") or set(cols[0]) <= set("- "):
-            continue
-        rows.append({
-            "date": cols[0], "skill": cols[1], "channel": cols[2],
-            "recipient": cols[3], "company": cols[4],
-            "subject": cols[5], "status": cols[6],
-        })
-    return rows
 
 
 def replied(row: dict, interactions: dict) -> bool:

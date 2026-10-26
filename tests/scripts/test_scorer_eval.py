@@ -150,3 +150,68 @@ def test_pipeline_row_split_parity_with_pipe_read():
         1 for _c, s, _n in se._pipeline_rows(content) if not stage_vocab.is_terminal_stage(s)
     )
     assert my_nonterminal == pr_active, (my_nonterminal, pr_active)
+
+
+# ---------------------------------------------------------------------------
+# Direct pins of the pipeline-table reader (added 2026-10-24, before moving it onto
+# pipe_read.parse_all_rows). Only cases where this reader and the shared rule agree.
+# ---------------------------------------------------------------------------
+_PIPE_HEADER = ("| Company | Role | Stage | Date Updated | Next Action | CV Used | Notes | URL |\n"
+                "|---|---|---|---|---|---|---|---|\n")
+
+
+def _pipe_doc(*rows, archived=()):
+    text = "# Job Pipeline\n\n## Active\n" + _PIPE_HEADER + "".join(r + "\n" for r in rows)
+    if archived:
+        text += "\n## Archived\n" + _PIPE_HEADER + "".join(r + "\n" for r in archived)
+    return text
+
+
+_SKIPPED_ROWS = (
+    "|  | PM | Applied | 2026-02-01 | x | — | — | — |",
+    "| Short | PM |",
+)
+
+
+def test_pipeline_rows_yield_company_stage_and_notes_for_every_row():
+    content = _pipe_doc("| Acme | PM | Applied | 2026-02-01 | x | — | had a screen | — |", *_SKIPPED_ROWS,
+                        "| Gone | PM | Closed - rejected | 2026-02-01 | — | — | — | — |",
+                        "| Bare | PM | To Evaluate |")
+    assert list(se._pipeline_rows(content)) == [
+        ("Acme", "Applied", "had a screen"), ("Gone", "Closed - rejected", "—"), ("Bare", "To Evaluate", "")]
+
+
+def test_pipeline_rows_ignore_indented_rows():
+    """BEHAVIOR CHANGE 2026-10-24 (moved onto pipe_read): an indented row is not a
+    pipeline row for /pipe, so the scorer no longer labels it."""
+    content = _pipe_doc("| Acme | PM | Applied | 2026-02-01 | x | — | — | — |",
+                        " | Indented | PM | Applied | 2026-02-01 | x | — | — | — |")
+    assert [c for c, _s, _n in se._pipeline_rows(content)] == ["Acme"]
+
+
+def test_resolve_contact_outcomes_reads_every_seven_cell_row_with_a_recipient(tmp_path):
+    """Pinned 2026-10-24 before the outreach-log readers share one parser."""
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "outreach-log.md").write_text(
+        "| Date | Skill | Channel | Recipient | Company | Subject | Status |\n"
+        "|---|---|---|---|---|---|---|\n"
+        "| 2026-02-01 | cold | email | Ann Example | Acme | Hi | Replied |\n"
+        "| 2026-02-02 | cold | email |  | Acme | Hi | Sent |\n"
+        "| 2026-02-03 | Sent |\n"
+        "| 2026-02-04 | cold | email | Bo Sample | Beta | Hi | Sent |\n", encoding="utf-8")
+    out = se.resolve_contact_outcomes(tmp_path)
+    assert [(r["entity"], r["company"], r["status"]) for r in out] == [
+        ("Ann Example", "Acme", "Replied"), ("Bo Sample", "Beta", "Sent")]
+    assert [r["label"] for r in out] == [se.classify_contact_outcome("Replied"),
+                                         se.classify_contact_outcome("Sent")]
+    assert se.resolve_contact_outcomes(tmp_path / "missing") == []
+
+
+def test_resolve_contact_outcomes_ignores_indented_rows(tmp_path):
+    """BEHAVIOR CHANGE 2026-10-24 (now read through outreach_read): an indented row
+    used to be read because the line was stripped first."""
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "outreach-log.md").write_text(
+        "| Date | Skill | Channel | Recipient | Company | Subject | Status |\n|---|---|---|---|---|---|---|\n"
+        " | 2026-02-01 | cold | email | Ann Example | Acme | Hi | Replied |\n", encoding="utf-8")
+    assert se.resolve_contact_outcomes(tmp_path) == []

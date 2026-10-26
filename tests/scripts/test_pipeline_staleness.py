@@ -7,6 +7,7 @@ version of these fixtures encoded an obsolete "Date Added | Date Updated | CV Us
 URL | Notes" layout that the live file never used, which masked a column-index bug
 in the parser (it read the date from "Next Action"). Fixtures below match the live schema.
 """
+import json
 import textwrap
 from pathlib import Path
 
@@ -234,3 +235,84 @@ def test_separator_row_not_counted_active(tmp_path):
     companies = {e["company"] for e in result["active_entries"]}
     assert "---" not in companies
     assert result["metrics"]["total_active"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Added 2026-10-24 to kill mutation survivors (11 of 52 lived): the heading rule
+# was only ever exercised with an already-terminal stage, no fixture had a row to
+# skip, Role was never read, the stalled list never had two rows to order, and the
+# schema-drift exit code was unobserved.
+# ---------------------------------------------------------------------------
+from conftest import run_script_raw
+
+HEADER = """\
+| Company | Role | Stage | Date Updated | Next Action | CV Used | Notes | URL |
+|---------|------|-------|--------------|-------------|---------|-------|-----|
+"""
+
+
+@pytest.mark.parametrize("heading", ["## Archived", "## Terminal", "## Withdrawn", "## Rejected"])
+def test_a_live_stage_under_a_closed_heading_is_not_active(tmp_path, heading):
+    """The heading alone excludes the row: its stage ("Applied") is live."""
+    write_fixture(tmp_path, "data/job-pipeline.md", "# Job Pipeline\n\n## Active\n" + HEADER
+                  + "| Live | PM | Applied | 2026-02-20 | — | — | — | — |\n\n"
+                  + f"{heading}\n" + HEADER
+                  + "| Old | PM | Applied | 2026-02-20 | — | — | — | — |\n")
+    result = run_script("pipeline_staleness.py", "--target-date", "2026-02-26",
+                        "--repo-root", str(tmp_path))
+    assert [e["company"] for e in result["active_entries"]] == ["Live"]
+
+
+def test_blank_company_and_short_rows_are_skipped_and_role_is_read(tmp_path):
+    write_fixture(tmp_path, "data/job-pipeline.md", "# Job Pipeline\n\n## Active\n" + HEADER
+                  + "| Acme | Product Ops | Researching | 2026-02-25 | — | — | — | — |\n"
+                  + "|  | PM | Applied | 2026-02-20 | — | — | — | — |\n"
+                  + "| Short | PM |\n")
+    result = run_script("pipeline_staleness.py", "--target-date", "2026-02-26",
+                        "--repo-root", str(tmp_path))
+    assert [(e["company"], e["role"]) for e in result["active_entries"]] == [("Acme", "Product Ops")]
+
+
+def test_stalled_entries_are_ordered_most_overdue_first(tmp_path):
+    write_fixture(tmp_path, "data/job-pipeline.md", "# Job Pipeline\n\n## Active\n" + HEADER
+                  + "| Less | PM | Applied | 2026-02-16 | — | — | — | — |\n"
+                  + "| Most | PM | Applied | 2026-01-01 | — | — | — | — |\n"
+                  + "| Mid | PM | Applied | 2026-02-01 | — | — | — | — |\n")
+    result = run_script("pipeline_staleness.py", "--target-date", "2026-02-26",
+                        "--repo-root", str(tmp_path))
+    assert [e["company"] for e in result["stalled_entries"]] == ["Most", "Mid", "Less"]
+
+
+def test_schema_drift_exits_1_with_an_error_json(tmp_path):
+    """A header whose columns moved must stop the run, not be parsed by position."""
+    write_fixture(tmp_path, "data/job-pipeline.md", """\
+        # Job Pipeline
+
+        ## Active
+        | Company | Stage | Role | Date Updated | Next Action | CV Used | Notes | URL |
+        |---------|-------|------|--------------|-------------|---------|-------|-----|
+        | Acme | Applied | PM | 2026-02-16 | — | — | — | — |
+    """)
+    proc = run_script_raw("pipeline_staleness.py", "--target-date", "2026-02-26",
+                          "--repo-root", str(tmp_path))
+    assert proc.returncode == 1
+    out = json.loads(proc.stdout)
+    assert out["status"] == "error" and out["code"] == "schema_drift"
+    assert "active_entries" not in out
+    assert proc.stderr == "", "a clean refusal, not a crash after the error JSON"
+
+
+@pytest.mark.parametrize("bad_row", [
+    "|Company|Role|Stage|Date Updated|Next Action|CV Used|Notes|URL|",   # header, no spaces
+    "|  Company | Role | Stage | x | x | x | x | x |",                    # header, two spaces
+    "| ---- | ---- | ---- | ---- | ---- | ---- | ---- | ---- |",           # four-dash separator
+    "| ---Co | PM | Applied | 2026-02-20 | — | — | — | — |",               # first cell starts with ---
+])
+def test_header_and_separator_variants_are_not_active_rows(tmp_path, bad_row):
+    """BEHAVIOR CHANGE 2026-10-24 (rows now come from pipe_read.parse_all_rows): each of
+    these used to be counted as an active company ("Company", "----", "---Co")."""
+    write_fixture(tmp_path, "data/job-pipeline.md", "# Job Pipeline\n\n## Active\n" + HEADER
+                  + bad_row + "\n| Live | PM | Applied | 2026-02-20 | — | — | — | — |\n")
+    result = run_script("pipeline_staleness.py", "--target-date", "2026-02-26",
+                        "--repo-root", str(tmp_path))
+    assert [e["company"] for e in result["active_entries"]] == ["Live"]

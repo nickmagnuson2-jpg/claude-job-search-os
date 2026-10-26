@@ -20,6 +20,7 @@ from pathlib import Path
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from slug import slugify as _slugify  # noqa: E402
+from pipe_read import parse_all_rows  # noqa: E402
 
 
 def parse_args():
@@ -37,46 +38,31 @@ def parse_args():
     return p.parse_args()
 
 
-# Pipeline stages that mean the lead is dead — a stale dossier for these
-# shouldn't generate a freshness nudge.
-TERMINAL_STAGE_KEYWORDS = (
-    "withdrawn", "closed", "rejected", "deprioritized", "skipped",
-    "dead", "passed", "declined", "lost",
-)
+# "Deprioritized" is paused, not over, so stage_vocab keeps it live; a paused lead's
+# dossier still should not generate a freshness nudge. Local policy, kept here.
+PAUSED_STAGE_KEYWORD = "deprioritized"
 
 
 def load_pipeline_targets(repo_root: Path) -> set:
-    """Return the set of pipeline company slugs at a non-terminal (active) stage.
+    """Return the set of pipeline company slugs at a live, non-paused stage.
 
     A dossier is a freshness 'target' only if its company is being actively
-    pursued. Terminal-stage leads (Withdrawn/Closed/Rejected/...) and dead-lane
-    dossiers (abandoned food/climate/early-BH phases never pipelined) stop
-    nagging. Matched by EXACT company-slug equality — no substring fallback,
-    which previously mis-matched 'exa' -> 'exact' and notes mentions.
-    Origin: 2026-06-02 — daily nudge flagged 54 stale dossiers, ~all dead-lane.
+    pursued. Rows come from pipe_read.parse_all_rows, so closed means what /pipe
+    means (a terminal stage per stage_vocab, or an Archived/Withdrawn/Rejected
+    heading); Deprioritized rows are dropped too. Matched by EXACT company-slug
+    equality - no substring fallback, which previously mis-matched 'exa' ->
+    'exact' and notes mentions.
+    Origin: 2026-06-02 - daily nudge flagged 54 stale dossiers, ~all dead-lane.
     """
     pipeline = repo_root / "data" / "job-pipeline.md"
     if not pipeline.exists():
         return set()
     try:
-        lines = pipeline.read_text(encoding="utf-8").splitlines()
+        content = pipeline.read_text(encoding="utf-8")
     except (IOError, UnicodeDecodeError):
         return set()
-    slugs = set()
-    for line in lines:
-        if not line.lstrip().startswith("|"):
-            continue
-        cells = [c.strip() for c in line.strip().strip("|").split("|")]
-        if len(cells) < 3:
-            continue
-        company, stage = cells[0], cells[2].lower()
-        if (not company or company.lower() == "company"
-                or set(company) <= set("-: ")):
-            continue
-        if any(k in stage for k in TERMINAL_STAGE_KEYWORDS):
-            continue  # dead lead — not a target
-        slugs.add(_slugify(company))
-    return slugs
+    return {_slugify(r["company"]) for r in parse_all_rows(content, date.today())
+            if not r["archived"] and PAUSED_STAGE_KEYWORD not in r["stage"].lower()}
 
 
 def is_target_dossier(slug: str, pipe_slugs: set) -> bool:
