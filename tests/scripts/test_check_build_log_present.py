@@ -214,6 +214,12 @@ def test_a_build_target_after_a_waived_folder_is_still_seen(repo):
     assert cbl.decide("Bash", {"command": cmd}, root=repo)
 
 
+def test_a_copy_into_an_existing_dotted_folder_is_gated(repo):
+    (repo / "output" / "acme" / "v1.0").mkdir()
+    cmd = f"cp /tmp/page.html {repo}/output/acme/v1.0"
+    assert cbl.decide("Bash", {"command": cmd}, root=repo)
+
+
 def test_bash_write_passes_once_the_log_exists(repo):
     put(repo, "output/acme/BUILD-LOG.md", FILLED)
     assert cbl.decide("Bash", {"command": "echo x > output/acme/page.html"}, root=repo) is None

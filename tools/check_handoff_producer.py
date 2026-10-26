@@ -234,8 +234,11 @@ def copy_destinations(command: str) -> list[str]:
     output/acme/` reported only `output/acme/` and a gate judging the landed file saw no
     file (codex and grok F1, 2026-10-26). The destination is read as a directory when it
     ends in `/`, has no extension in its last segment, follows `-t`/`--target-directory`,
-    or receives more than one source. Decided from the text alone, never the filesystem,
-    so the answer does not depend on the hook's working directory.
+    or receives more than one source, or is an existing directory. The text tests come
+    first; the directory check exists for a dotted folder named without a trailing slash
+    (`cp page.html output/acme/v1.0`, codex round 9). It is resolved against the hook's
+    working directory and can only ADD landed paths, so a wrong working directory falls
+    back to the text-only answer and never drops a path.
     """
     out = []
     for m in COPY_FAMILY.finditer(mask_heredoc_bodies(command)):
@@ -274,7 +277,7 @@ def copy_destinations(command: str) -> list[str]:
         out.append(dest)
         last = dest.rstrip("/").rsplit("/", 1)[-1]
         if not (target_dir is not None or dest.endswith("/") or "." not in last
-                or len(sources) > 1):
+                or len(sources) > 1 or os.path.isdir(dest)):
             continue
         for src in sources:
             if _expandable(src):

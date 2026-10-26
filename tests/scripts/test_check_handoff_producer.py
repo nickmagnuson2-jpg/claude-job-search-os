@@ -399,6 +399,18 @@ def test_a_copy_into_the_analysis_folder_is_seen(repo):
     assert msg and "creates a NEW handoff-shaped file" in msg
 
 
+def test_an_existing_dotted_directory_is_a_folder_destination(tmp_path):
+    """`cp page.html <dir>/v1.0` lands v1.0/page.html when v1.0 is a directory (codex round 9)."""
+    d = tmp_path / "v1.0"
+    d.mkdir()
+    assert hp.copy_destinations(f"cp /tmp/page.html {d}") == [str(d), f"{d}/page.html"]
+
+
+def test_a_dotted_name_that_is_not_a_directory_stays_a_file_destination(tmp_path):
+    f = tmp_path / "v1.0"
+    assert hp.copy_destinations(f"cp /tmp/page.html {f}") == [str(f)]
+
+
 @pytest.mark.parametrize("command, landed", [
     ("cp /tmp/page.html output/acme/", ["output/acme/", "output/acme/page.html"]),
     ("cp /tmp/page.html output/acme", ["output/acme", "output/acme/page.html"]),
