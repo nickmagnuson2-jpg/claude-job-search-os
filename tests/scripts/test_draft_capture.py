@@ -710,3 +710,12 @@ def test_a_forced_reconfirmation_clears_the_old_lesson_provenance(store):
                       no_lesson="second outcome", force=True)
     assert meta["no_lesson_reason"] == "second outcome"
     assert "lesson_ref" not in meta
+
+
+def test_a_forced_reconfirmation_clears_an_old_lesson_ref_too(store):
+    """The mirror of the case above: the superseded outcome recorded a lesson_ref."""
+    _lessons(store)
+    cid = dc.capture(DRAFT)
+    dc.confirm(cid, "edited", sent_text=SENT_EDIT, lesson_ref="Casey Doe / Acme")
+    meta = dc.confirm(cid, "not-sent", force=True)
+    assert "lesson_ref" not in meta and "no_lesson_reason" not in meta

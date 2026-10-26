@@ -241,3 +241,62 @@ def test_multiedit_lazy_continuation_inside_one_edit_is_still_allowed():
         },
     })
     assert r.returncode == 0
+
+
+# --- exact verdicts for each branch (mutation survivors, 2026-10-25) ----------------
+
+REFLECTION = "/vault/data/reflections/2026-01-02-acme-call.md"
+QUOTED = "> " + LONG
+
+
+def test_each_frontmatter_defect_has_its_own_message():
+    assert violations("> ok", check_frontmatter=True) == [
+        "Missing frontmatter — voice-pure files must declare 'voice: pure-voice'"]
+    assert violations("---\nvoice: pure-voice\n", check_frontmatter=True) == [
+        "Malformed frontmatter (no closing ---)"]
+    assert violations("---\nvoice: other\n---\n> ok", check_frontmatter=True) == [
+        "Frontmatter must contain 'voice: pure-voice' (no other voice labels permitted "
+        "on dated reflections)"]
+    assert violations("---\nvoice: pure-voice\n---\n> ok", check_frontmatter=True) == []
+
+
+def test_frontmatter_is_not_judged_as_body_prose():
+    long_field = "summary: " + "y" * 120
+    content = f"---\nvoice: pure-voice\n{long_field}\n---\n\n{QUOTED}"
+    assert violations(content, check_frontmatter=True) == []
+
+
+def test_a_horizontal_rule_in_a_fragment_does_not_hide_the_prose_before_it():
+    """Only a LEADING '---' opens frontmatter; rules later in the text are body."""
+    assert violations(LONG + "\n\n---\n\n> q\n\n---\n\n> r")
+
+
+def test_a_long_table_or_code_block_is_not_prose():
+    assert violations("| " + "x" * 120 + " |") == []
+    assert violations("```\n" + "x" * 120 + "\n```") == []
+
+
+def test_edit_through_the_hook_blocks_unquoted_prose():
+    r = _run_hook({"tool_name": "Edit",
+                   "tool_input": {"file_path": REFLECTION, "old_string": "a", "new_string": LONG}})
+    assert r.returncode == 2 and "outside blockquote" in r.stderr
+
+
+def test_a_path_that_is_not_a_dated_reflection_is_not_judged():
+    r = _run_hook({"tool_name": "Edit",
+                   "tool_input": {"file_path": "/vault/data/reflections/_themes.md",
+                                  "old_string": "a", "new_string": LONG}})
+    assert r.returncode == 0 and r.stderr == ""
+
+
+def test_an_unreadable_payload_passes_silently():
+    import subprocess
+    import sys
+    r = subprocess.run([sys.executable, str(SCRIPT)], input="not json",
+                       capture_output=True, text=True)
+    assert r.returncode == 0 and r.stderr == ""
+
+
+def test_an_unexpected_error_fails_open_and_says_so():
+    r = _run_hook({"tool_name": "Write", "tool_input": "not a dict"})
+    assert r.returncode == 0 and "error (allowing through)" in r.stderr
