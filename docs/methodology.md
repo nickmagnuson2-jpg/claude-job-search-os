@@ -610,7 +610,6 @@ memory/                          ← Persistent session context (auto-memory sys
   ├── scan-companies/             ← /scan-companies — career-page scanner → role queue
   ├── discover-companies/         ← /discover-companies — Exa Agent API company discovery
   ├── pipe/                       ← /pipe — application pipeline tracking
-  ├── dashboard/                  ← /dashboard — Textual TUI pipeline view
   ├── todo/                       ← /todo — task manager with cross-references
   ├── personal-todo/              ← /personal-todo — personal-life to-do list (sibling of /todo)
   ├── standup/                    ← /standup — morning briefing

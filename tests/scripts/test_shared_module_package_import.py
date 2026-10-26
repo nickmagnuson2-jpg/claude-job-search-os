@@ -78,8 +78,6 @@ TOOLS = (
     "granola_save",
     "inbox_extract",
     "living_log_append",
-    "memory_index_partition",
-    "migrate_todos_column_drift",
     "my_world_synthesis",
     "networking_read",
     "networking_write",

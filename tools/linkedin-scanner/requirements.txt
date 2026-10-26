@@ -1,8 +1,0 @@
-anthropic
-beautifulsoup4
-python-dotenv
-selenium
-termcolor
-webdriver-manager
-pandas
-tqdm
