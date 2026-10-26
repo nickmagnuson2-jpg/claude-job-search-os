@@ -116,7 +116,7 @@ data/              Owner data (profile.md, goals.md, professional-identity.md gi
   ├─ (project-background/ is NOT here: sealed, in a sibling directory outside the repo)
   ├─ reflections/          Snapshots of Nick's processing (date-prefixed)
   └─ workbooks/            Reusable frameworks (no date prefix)
-.claude/skills/    40 slash-command skill definitions
+.claude/skills/    39 slash-command skill definitions
 memory/            ⚠️ THREE PHYSICAL ROOTS, not one. Resolve before asserting any file is absent.
   ├─ ~/.claude/projects/<project-slug>/memory/
   │                    THE LIVE TIER (910 files, measured 2026-09-15). MEMORY.md (router + Critical
