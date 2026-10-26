@@ -96,7 +96,7 @@ def test_the_message_names_the_tool_and_pattern():
 
 @pytest.mark.parametrize("command", [
     # a poll in the loop BODY is not the condition: the condition ends at `do`
-    'while true; do pgrep -f abc >/dev/null || break; sleep 1; done; run abc',
+    'while true; do sleep 1; pgrep -f abc >/dev/null || break; done; run abc',
     # an ordinary word before a one-off poll does not start a loop
     'echo start; pgrep -f abc; run abc',
     # a condition made only of skipped words has no command to read
@@ -110,6 +110,12 @@ def test_a_condition_with_no_do_still_reads_its_last_command():
     """A truncated loop has no `do`, so the last command in the condition is not
     followed by an operator; it must still be read."""
     assert hook.find_violations('X=abc; while pgrep -f abc')
+
+
+def test_a_heredoc_body_is_not_read_as_the_pattern():
+    """Only words and operators are read; a heredoc body after the poll must not become
+    pgrep's pattern and hide the real one."""
+    assert hook.find_violations("while pgrep -f abc <<EOF\nabc\nEOF\ndo sleep 1; done")
 
 
 def test_each_tool_gets_its_own_reason():
