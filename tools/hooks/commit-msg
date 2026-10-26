@@ -1,0 +1,10 @@
+#!/bin/bash
+# commit-msg gate: refuse a commit whose message names a known real entity
+# (tools/commit_msg_pii_guard.py, tracked and tested). Commit messages are public with
+# every push, and the pre-commit and pre-push gates read files, not messages.
+# Override (recorded):  PII_COMMIT_OVERRIDE="why" git commit ...
+# Installed by:  bash tools/hooks/install.sh  (--check reports drift)
+root="$(git rev-parse --show-toplevel)"
+# A checkout that predates this guard has no script to run; skip there, as pre-commit does.
+[ -f "$root/tools/commit_msg_pii_guard.py" ] || exit 0
+PYTHONIOENCODING=utf-8 exec python3 "$root/tools/commit_msg_pii_guard.py" --repo-root "$root" "$1"
