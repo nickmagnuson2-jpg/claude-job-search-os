@@ -52,6 +52,7 @@
   "tools/detector_probe.py": "pre-existing at 2026-10-23, convert when next touched",
   "tools/detector_run.py": "pre-existing at 2026-10-23, convert when next touched",
   "tools/draft_capture.py": "pre-existing at 2026-10-23, convert when next touched",
+  "tools/duet_snapshot.py": "pre-existing at 2026-10-23, convert when next touched",
   "tools/engagement_runs.py": "pre-existing at 2026-10-23, convert when next touched",
   "tools/exa_search.py": "pre-existing at 2026-10-23, convert when next touched",
   "tools/extract_decisions.py": "pre-existing at 2026-10-23, convert when next touched",
