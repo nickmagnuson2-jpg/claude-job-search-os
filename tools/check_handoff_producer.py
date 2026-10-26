@@ -91,15 +91,27 @@ COPY_FAMILY = re.compile(
 # file (codex round 8). Per command because a letter means different things: rsync `-o`
 # and `-g` take no argument, install `-o` and `-g` do. The `--opt=value` form needs no entry,
 # since any word starting with `-` is already dropped.
+#
+# THE SAFE DIRECTION. Skipping a word that is really a source hides a landed file (a silent
+# allow); not skipping an option's argument only adds a path to judge (at worst a block that
+# names the wrong file). So a flag goes in this table only when it takes an argument in every
+# variant of the command this repo can meet, GNU and the macOS BSD tools alike. Checked
+# 2026-10-26: BSD `install -S` takes no argument (GNU's takes a suffix), so `-S` is not listed
+# for install; BSD `install -B` takes a suffix and GNU has no `-B`, so it is.
 OPTION_ARGS = {
     "cp": {"-S", "--suffix"},
     "mv": {"-S", "--suffix"},
-    "install": {"-m", "--mode", "-o", "--owner", "-g", "--group", "-S", "--suffix"},
+    "install": {"-m", "--mode", "-o", "--owner", "-g", "--group", "-B", "--suffix"},
     "rsync": {"--exclude", "--include", "--filter", "-f", "--exclude-from", "--include-from",
               "--files-from", "-e", "--rsh", "--backup-dir", "--suffix", "-T", "--temp-dir",
               "--partial-dir", "--compare-dest", "--copy-dest", "--link-dest", "--chmod",
-              "--log-file", "--out-format"},
+              "--log-file", "--out-format", "-B", "--block-size", "-M", "--remote-option",
+              "--password-file"},
 }
+
+# Commands where `-t DIR` / `--target-directory` names the destination folder. Not rsync,
+# whose `-t` means --times and takes no argument (grok round 9).
+TARGET_DIR_COMMANDS = {"cp", "mv", "install"}
 
 # A redirection is not an argument, and it must be removed from the SEGMENT rather than
 # filtered out token-by-token: `cp src dst 2>&1` splits to a last token of "2>&1", and
@@ -244,15 +256,16 @@ def copy_destinations(command: str) -> list[str]:
     for m in COPY_FAMILY.finditer(mask_heredoc_bodies(command)):
         words = _shell_words(REDIRECTION.sub("", m.group(2)))
         takes_arg = OPTION_ARGS[m.group(1)]
+        has_target_dir = m.group(1) in TARGET_DIR_COMMANDS
         target_dir = None
         toks = []
         skip = False
         for i, w in enumerate(words):
             if skip:
                 skip = False
-            elif w in ("-t", "--target-directory") and i + 1 < len(words):
+            elif has_target_dir and w in ("-t", "--target-directory") and i + 1 < len(words):
                 target_dir, skip = words[i + 1], True
-            elif w.startswith("--target-directory="):
+            elif has_target_dir and w.startswith("--target-directory="):
                 target_dir = w.split("=", 1)[1]
             elif w in takes_arg:
                 skip = True

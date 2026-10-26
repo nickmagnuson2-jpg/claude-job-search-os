@@ -183,6 +183,8 @@ def test_other_tools_are_ignored(repo):
     'cp "/tmp/my page.html" output/acme/',           # quoted name with a space (codex round 8)
     "cp '/tmp/my page.html' output/acme/",
     'rsync "/tmp/my page.html" output/acme/',
+    "rsync -t /tmp/page.html output/acme/",          # rsync -t is --times (grok round 9)
+    "rsync -av -t /tmp/page.html output/acme/",
 ])
 def test_bash_writes_are_gated(repo, command):
     msg = cbl.decide("Bash", {"command": command}, root=repo)

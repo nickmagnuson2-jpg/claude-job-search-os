@@ -428,6 +428,14 @@ def test_a_dotted_name_that_is_not_a_directory_stays_a_file_destination(tmp_path
     ("rsync -e ssh /tmp/a.html out/", ["out/", "out/a.html"]),
     ("install -m 644 -o root -g wheel /tmp/a.html out/", ["out/", "out/a.html"]),
     ("mv -S .bak /tmp/a.js out/", ["out/", "out/a.js"]),
+    # rsync -t is --times, not a target folder (grok round 9)
+    ("rsync -t /tmp/a.html out/", ["out/", "out/a.html"]),
+    ("rsync -avt /tmp/a.html out/", ["out/", "out/a.html"]),
+    ("rsync -av -t /tmp/a.html /tmp/b.js out/", ["out/", "out/a.html", "out/b.js"]),
+    # BSD install -S takes no argument, so the next word is still a source
+    ("install -S /tmp/a.html out/", ["out/", "out/a.html"]),
+    ("install -B .bak /tmp/a.html out/", ["out/", "out/a.html"]),
+    ("rsync -B 1024 /tmp/a.html out/", ["out/", "out/a.html"]),
     # rsync -o and -g take no argument, so the next word is still a source
     ("rsync -o -g /tmp/a.html out/", ["out/", "out/a.html"]),
     # unbalanced quotes fall back to whitespace words rather than dropping the command
