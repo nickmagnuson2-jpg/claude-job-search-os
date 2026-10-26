@@ -57,6 +57,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 import sys
 from pathlib import Path
 
@@ -83,7 +84,22 @@ VALID_KIND = {"work-landed", "replaced-by-doc"}
 # `cp`/`mv`/`rsync`/`install` in COMMAND POSITION -- start of line or after a separator, with
 # optional leading VAR=val. Never a bare substring: `grep -r "cp " docs/` must stay clean.
 COPY_FAMILY = re.compile(
-    r"(?:^|[\n;&|(])\s*(?:\w+=\S+\s+)*(?:cp|mv|rsync|install)(?![\w.\-])([^|;&\n]*)")
+    r"(?:^|[\n;&|(])\s*(?:\w+=\S+\s+)*(cp|mv|rsync|install)(?![\w.\-])([^|;&\n]*)")
+
+# Options whose NEXT word is their argument, per command, so that word is neither a source
+# nor the destination: `rsync --exclude page.html src/ dst/` must not read page.html as a
+# file (codex round 8). Per command because a letter means different things: rsync `-o`
+# and `-g` take no argument, install `-o` and `-g` do. The `--opt=value` form needs no entry,
+# since any word starting with `-` is already dropped.
+OPTION_ARGS = {
+    "cp": {"-S", "--suffix"},
+    "mv": {"-S", "--suffix"},
+    "install": {"-m", "--mode", "-o", "--owner", "-g", "--group", "-S", "--suffix"},
+    "rsync": {"--exclude", "--include", "--filter", "-f", "--exclude-from", "--include-from",
+              "--files-from", "-e", "--rsh", "--backup-dir", "--suffix", "-T", "--temp-dir",
+              "--partial-dir", "--compare-dest", "--copy-dest", "--link-dest", "--chmod",
+              "--log-file", "--out-format"},
+}
 
 # A redirection is not an argument, and it must be removed from the SEGMENT rather than
 # filtered out token-by-token: `cp src dst 2>&1` splits to a last token of "2>&1", and
@@ -190,6 +206,18 @@ def apply_edits(text: str, tool_input: dict) -> str:
     return text
 
 
+def _shell_words(segment: str) -> list[str]:
+    """Shell words with quotes resolved, so `"/tmp/my page.html"` is one word (codex round 8).
+
+    Falls back to whitespace splitting when the quoting does not balance, which happens when
+    a segment is cut at a `|` or `;` inside a quoted string.
+    """
+    try:
+        return shlex.split(segment, posix=True)
+    except ValueError:
+        return segment.split()
+
+
 def _expandable(tok: str) -> bool:
     """A token with a variable or command substitution anywhere in it is unresolvable."""
     return "$" in tok or "`" in tok
@@ -211,14 +239,22 @@ def copy_destinations(command: str) -> list[str]:
     """
     out = []
     for m in COPY_FAMILY.finditer(mask_heredoc_bodies(command)):
-        words = REDIRECTION.sub("", m.group(1)).split()
+        words = _shell_words(REDIRECTION.sub("", m.group(2)))
+        takes_arg = OPTION_ARGS[m.group(1)]
         target_dir = None
+        toks = []
+        skip = False
         for i, w in enumerate(words):
-            if w in ("-t", "--target-directory") and i + 1 < len(words):
-                target_dir = words[i + 1]
+            if skip:
+                skip = False
+            elif w in ("-t", "--target-directory") and i + 1 < len(words):
+                target_dir, skip = words[i + 1], True
             elif w.startswith("--target-directory="):
                 target_dir = w.split("=", 1)[1]
-        toks = [t for t in words if not t.startswith("-") and t != target_dir]
+            elif w in takes_arg:
+                skip = True
+            elif not w.startswith("-"):
+                toks.append(w)
         if target_dir is not None:
             raw, sources = target_dir, toks
         elif len(toks) >= 2:  # a source AND a destination; a lone token is not a copy

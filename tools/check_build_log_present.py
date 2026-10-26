@@ -51,7 +51,7 @@ BUILD_EXT = {".html", ".js", ".jsx", ".ts", ".tsx", ".css", ".py", ".ipynb",
 
 # Folders under output/ that hold analysis or infrastructure work, not a company or person.
 WORK_FOLDERS = {"analysis", "draft-captures", "artifact-gate", "application-workflow",
-                "table-audit", "mutation-state"}
+                "table-audit", "mutation-state", "rendercv_output"}
 WORK_PREFIXES = ("codify-",)
 
 # The field that names the target file, per tool.

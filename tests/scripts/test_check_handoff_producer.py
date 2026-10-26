@@ -385,6 +385,12 @@ def test_a_truncated_payload_fails_CLOSED():
 
 # --- a copy into a folder lands the file under its own name (2026-10-26) -----
 
+def test_a_quoted_handoff_name_with_a_space_is_seen(repo):
+    msg = hp.decide("Bash", {"command": 'cp "/tmp/session handoff.md" output/analysis/'},
+                    root=repo)
+    assert msg and "creates a NEW handoff-shaped file" in msg
+
+
 def test_a_copy_into_the_analysis_folder_is_seen(repo):
     """`cp x-handoff.md output/analysis/` named only the folder until copy_destinations
     returned landed paths; the handoff gate saw no handoff-shaped target and allowed it."""
@@ -402,6 +408,18 @@ def test_a_copy_into_the_analysis_folder_is_seen(repo):
     ("cp /tmp/x.html out/y.html", ["out/y.html"]),
     ("cp $SRC out/", ["out/"]),
     ("cp / out/", ["out/"]),                      # a source with no basename adds nothing
+    # quotes are resolved, so a name with a space is one word (codex round 8)
+    ('cp "/tmp/my page.html" out/', ["out/", "out/my page.html"]),
+    ("cp '/tmp/my page.html' out/", ["out/", "out/my page.html"]),
+    # an option's argument is neither a source nor the destination (codex round 8)
+    ("rsync --exclude page.html /tmp/notes.md out/", ["out/", "out/notes.md"]),
+    ("rsync -e ssh /tmp/a.html out/", ["out/", "out/a.html"]),
+    ("install -m 644 -o root -g wheel /tmp/a.html out/", ["out/", "out/a.html"]),
+    ("mv -S .bak /tmp/a.js out/", ["out/", "out/a.js"]),
+    # rsync -o and -g take no argument, so the next word is still a source
+    ("rsync -o -g /tmp/a.html out/", ["out/", "out/a.html"]),
+    # unbalanced quotes fall back to whitespace words rather than dropping the command
+    ('cp "x out/', ["out/", 'out/"x']),
     ("cp a.md `echo x`", []),
 ])
 def test_copy_destinations_returns_landed_paths(command, landed):

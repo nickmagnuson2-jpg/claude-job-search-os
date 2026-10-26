@@ -146,6 +146,7 @@ def test_a_log_in_another_folder_does_not_clear_this_one(repo):
     "output/codify-102326/page.html",             # the prefix, not the .py carve-out
     "output/table-audit/table_audit.py",          # live work folders (grok F2)
     "output/mutation-state/x.py",
+    "output/rendercv_output/CV.html",             # the CV renderer's folder (grok round 8)
     "output/flat-one-off.html",                   # flat output/, no slug folder
     "tools/check_x.py",                           # outside output/
 ])
@@ -179,6 +180,9 @@ def test_other_tools_are_ignored(repo):
     "cp -t output/acme /tmp/page.html",
     "cp --target-directory=output/acme /tmp/page.html",
     "install -m 644 /tmp/page.html output/acme/",
+    'cp "/tmp/my page.html" output/acme/',           # quoted name with a space (codex round 8)
+    "cp '/tmp/my page.html' output/acme/",
+    'rsync "/tmp/my page.html" output/acme/',
 ])
 def test_bash_writes_are_gated(repo, command):
     msg = cbl.decide("Bash", {"command": command}, root=repo)
@@ -193,6 +197,7 @@ def test_bash_writes_are_gated(repo, command):
     "cp /tmp/notes.md output/acme/",
     "cp /tmp/a.md /tmp/b.pdf output/acme/",
     "cp $SRC output/acme/",
+    "rsync --exclude page.html /tmp/notes.md output/acme/",   # an option's argument (round 8)
 ])
 def test_bash_reads_and_non_build_writes_pass(repo, command):
     assert cbl.decide("Bash", {"command": command}, root=repo) is None
