@@ -381,3 +381,28 @@ def test_a_truncated_payload_fails_CLOSED():
     r = _run(huge)
     assert r.returncode == 2
     assert "truncated" in r.stderr.lower()
+
+
+# --- a copy into a folder lands the file under its own name (2026-10-26) -----
+
+def test_a_copy_into_the_analysis_folder_is_seen(repo):
+    """`cp x-handoff.md output/analysis/` named only the folder until copy_destinations
+    returned landed paths; the handoff gate saw no handoff-shaped target and allowed it."""
+    msg = hp.decide("Bash", {"command": "cp /tmp/091526-session-handoff.md output/analysis/"},
+                    root=repo)
+    assert msg and "creates a NEW handoff-shaped file" in msg
+
+
+@pytest.mark.parametrize("command, landed", [
+    ("cp /tmp/page.html output/acme/", ["output/acme/", "output/acme/page.html"]),
+    ("cp /tmp/page.html output/acme", ["output/acme", "output/acme/page.html"]),
+    ("cp a.js b.js out/", ["out/", "out/a.js", "out/b.js"]),
+    ("cp -t out a.html", ["out", "out/a.html"]),
+    ("cp --target-directory=out a.html", ["out", "out/a.html"]),
+    ("cp /tmp/x.html out/y.html", ["out/y.html"]),
+    ("cp $SRC out/", ["out/"]),
+    ("cp / out/", ["out/"]),                      # a source with no basename adds nothing
+    ("cp a.md `echo x`", []),
+])
+def test_copy_destinations_returns_landed_paths(command, landed):
+    assert hp.copy_destinations(command) == landed

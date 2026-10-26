@@ -190,28 +190,62 @@ def apply_edits(text: str, tool_input: dict) -> str:
     return text
 
 
+def _expandable(tok: str) -> bool:
+    """A token with a variable or command substitution anywhere in it is unresolvable."""
+    return "$" in tok or "`" in tok
+
+
 def copy_destinations(command: str) -> list[str]:
-    """Destinations of `cp`/`mv`/`rsync`/`install`, which the PII extractor omits BY DESIGN.
+    """Where `cp`/`mv`/`rsync`/`install` land files; the PII extractor omits these BY DESIGN.
 
     Target-only: we never need the SOURCE bytes, only where they land. That is exactly why
     the PII gate's documented reason for omitting this family does not transfer here.
+
+    A DIRECTORY destination lands each source under its own basename, so those landed paths
+    are returned too, alongside the destination itself. Without them `cp /tmp/page.html
+    output/acme/` reported only `output/acme/` and a gate judging the landed file saw no
+    file (codex and grok F1, 2026-10-26). The destination is read as a directory when it
+    ends in `/`, has no extension in its last segment, follows `-t`/`--target-directory`,
+    or receives more than one source. Decided from the text alone, never the filesystem,
+    so the answer does not depend on the hook's working directory.
     """
     out = []
     for m in COPY_FAMILY.finditer(mask_heredoc_bodies(command)):
-        segment = REDIRECTION.sub("", m.group(1))
-        toks = [t for t in segment.split() if not t.startswith("-")]
-        if len(toks) >= 2:  # a source AND a destination; a lone token is not a copy
-            raw = toks[-1]
-            # Test the RAW token for shell expansion ANYWHERE in it, not just at the start,
-            # and before unquoting. `cp a.md `echo x`` splits to a final token of "x`" --
-            # the backtick trails, `_unquote` does not remove it, and the result is the
-            # plausible-looking path "x`". Command substitution and variables are
-            # unresolvable at hook time, so a destination containing either is not a target.
-            if "$" in raw or "`" in raw:
+        words = REDIRECTION.sub("", m.group(1)).split()
+        target_dir = None
+        for i, w in enumerate(words):
+            if w in ("-t", "--target-directory") and i + 1 < len(words):
+                target_dir = words[i + 1]
+            elif w.startswith("--target-directory="):
+                target_dir = w.split("=", 1)[1]
+        toks = [t for t in words if not t.startswith("-") and t != target_dir]
+        if target_dir is not None:
+            raw, sources = target_dir, toks
+        elif len(toks) >= 2:  # a source AND a destination; a lone token is not a copy
+            raw, sources = toks[-1], toks[:-1]
+        else:
+            continue
+        # Test the RAW token for shell expansion ANYWHERE in it, not just at the start,
+        # and before unquoting. `cp a.md `echo x`` splits to a final token of "x`" --
+        # the backtick trails, `_unquote` does not remove it, and the result is the
+        # plausible-looking path "x`". Command substitution and variables are
+        # unresolvable at hook time, so a destination containing either is not a target.
+        if _expandable(raw):
+            continue
+        dest = _unquote(raw)
+        if not dest:
+            continue
+        out.append(dest)
+        last = dest.rstrip("/").rsplit("/", 1)[-1]
+        if not (target_dir is not None or dest.endswith("/") or "." not in last
+                or len(sources) > 1):
+            continue
+        for src in sources:
+            if _expandable(src):
                 continue
-            dest = _unquote(raw)
-            if dest:
-                out.append(dest)
+            name = _unquote(src).rstrip("/").rsplit("/", 1)[-1]
+            if name:
+                out.append(dest.rstrip("/") + "/" + name)
     return out
 
 

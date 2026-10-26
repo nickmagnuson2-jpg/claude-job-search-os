@@ -30,6 +30,7 @@ TOOLS = (
     "backfill_transcript_failures",
     "check_banned_phrase",
     "check_bare_python",
+    "check_build_log_present",
     "check_changelog_currency",
     "check_data_projects",
     "check_derived_ratio",
