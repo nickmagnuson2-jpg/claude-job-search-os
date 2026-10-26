@@ -954,7 +954,7 @@ def test_cron_backlog_carries_the_schema_violations_section(tmp_path):
         encoding="utf-8")
     out = subprocess.run(
         [_s.executable, str(Path(spc.__file__)), "--memory-dir", str(mem),
-         "--repo-root", ".", "--mode", "cron"],
+         "--repo-root", str(tmp_path), "--mode", "cron"],
         capture_output=True, text=True)
     backlog = mem / "promotion-backlog.md"
     assert backlog.exists(), out.stdout[-800:]
@@ -978,8 +978,41 @@ def test_schema_violation_list_is_truncated_with_a_count(tmp_path):
             "  last_cited: 2026-09-01\n---\n\nbody\n", encoding="utf-8")
     subprocess.run(
         [_s.executable, str(Path(spc.__file__)), "--memory-dir", str(mem),
-         "--repo-root", ".", "--mode", "cron"], capture_output=True, text=True)
+         "--repo-root", str(tmp_path), "--mode", "cron"], capture_output=True, text=True)
     text = (mem / "promotion-backlog.md").read_text(encoding="utf-8")
     assert "## Schema violations" in text
     assert "...and" in text and "more" in text, "the hidden count must be stated"
     assert text.count("  - feedback_v") == 40, "the cap must actually cap"
+
+
+def _fake_todo_write(tmp_path, open_tasks):
+    """A todo_write.py stand-in: `list` answers with `open_tasks`, `add` is recorded."""
+    (tmp_path / "tools").mkdir(exist_ok=True)
+    added = tmp_path / "added.txt"
+    entries = [{"section": "Active", "task": t, "status": "Pending"} for t in open_tasks]
+    (tmp_path / "tools" / "todo_write.py").write_text(
+        "import json, sys, pathlib\n"
+        "if 'list' in sys.argv:\n"
+        f"    print(json.dumps({{'status': 'ok', 'entries': {entries!r}}}))\n"
+        "elif 'add' in sys.argv:\n"
+        f"    p = pathlib.Path({str(added)!r})\n"
+        "    p.write_text((p.read_text() if p.exists() else '') + 'add\\n')\n",
+        encoding="utf-8")
+    return added
+
+
+def test_an_open_refresh_todo_is_not_added_again(tmp_path):
+    """2026-10-25: one row per run grew to 2,009 rows. One open reminder is enough."""
+    mem = tmp_path / "memory"; mem.mkdir()
+    _write(mem, "feedback_a.md", fm(occurrences=3, promoted="no"))
+    added = _fake_todo_write(tmp_path, ["Memory refresh: 1 rules due -- run /memory-refresh"])
+    _cron(mem, tmp_path)
+    assert not added.exists()
+
+
+def test_a_refresh_todo_is_added_when_none_is_open(tmp_path):
+    mem = tmp_path / "memory"; mem.mkdir()
+    _write(mem, "feedback_a.md", fm(occurrences=3, promoted="no"))
+    added = _fake_todo_write(tmp_path, ["Call the bank", "Memory refreshments for the party"])
+    _cron(mem, tmp_path)
+    assert added.read_text() == "add\n"

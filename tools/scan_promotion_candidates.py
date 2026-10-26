@@ -464,6 +464,29 @@ def gate_state(reopen_gate: str, occurrences: int) -> str:
     return "due" if occurrences >= int(m.group(1)) else "not_due"
 
 
+REFRESH_PREFIX = "Memory refresh:"
+
+
+def _open_refresh_todo(todo_script: Path, repo_root: Path) -> bool:
+    """True when an open "Memory refresh:" to-do already exists, read through the writer.
+
+    WHY (2026-10-25). Each run added a new row, and two tests ran this job in cron mode
+    against the real repo, so every test and mutation run added one: 358 such rows in
+    the 2026-10-22 backup, 2,009 three days later. The open row already says "run
+    /memory-refresh", and the current numbers are in the backlog file, so one is enough.
+    An unreadable list counts as "none open": a missing reminder is worse than a second.
+    """
+    r = subprocess.run(["python3", str(todo_script), "--repo-root", str(repo_root), "list",
+                        "--status", "Pending", "--grep", REFRESH_PREFIX.lower()],
+                       capture_output=True, text=True)
+    try:
+        entries = json.loads(r.stdout).get("entries", [])
+    except (json.JSONDecodeError, AttributeError):
+        return False
+    return any(e.get("section") == "Active" and e.get("task", "").startswith(REFRESH_PREFIX)
+               for e in entries)
+
+
 def main(argv: list[str]) -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
     ap.add_argument("--memory-dir", required=True, help="path to the auto-memory directory")
@@ -733,10 +756,10 @@ def main(argv: list[str]) -> None:
                  + len(crossing) + len(registry_defects))
     if new_total and not args.dry_run:
         todo_script = repo_root / "tools" / "todo_write.py"
-        if todo_script.exists():
+        if todo_script.exists() and not _open_refresh_todo(todo_script, repo_root):
             subprocess.run(
                 ["python3", str(todo_script), "--repo-root", str(repo_root), "add",
-                 (f"Memory refresh: {len(by_gate['due'])} rules due for promotion + "
+                 (f"{REFRESH_PREFIX} {len(by_gate['due'])} rules due for promotion + "
                   f"{len(by_gate['no_number'])} with a gate that names no number + "
                   f"{len(demotion_candidates)} demotion candidates"
                   + (f" + {len(crossing)} rule FAMILY crossing its threshold" if crossing else "")

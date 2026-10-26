@@ -42,6 +42,45 @@ def _draft_captures_go_to_a_throwaway_store(tmp_path_factory):
         os.environ["DRAFT_CAPTURE_DIR"] = previous
 
 
+# The owner's real tables. `data/` is gitignored and holds live state; in a scratch
+# worktree it is often a symlink to the real folder, so a test there writes the real file.
+REAL_TABLES = ("job-todos.md", "job-pipeline.md", "outreach-log.md", "networking.md")
+
+
+def _fingerprints() -> dict:
+    out = {}
+    for name in REAL_TABLES:
+        try:
+            st = (REPO_ROOT / "data" / name).stat()          # follows a symlinked data/
+        except OSError:
+            continue
+        out[name] = (st.st_mtime_ns, st.st_size)
+    return out
+
+
+@pytest.fixture(autouse=True)
+def _no_test_writes_the_real_tables(request):
+    """Fail the test that changes one of the owner's real data tables.
+
+    WHY (2026-10-25). Two tests ran tools/scan_promotion_candidates.py in cron mode with
+    `--repo-root .`, so every suite and mutation run added a "Memory refresh" row to the
+    real data/job-todos.md: 358 such rows in the 2026-10-22 backup, 2,009 three days
+    later. The 2026-10-06 draft-capture leak above was the same class, fixed for one
+    folder. This covers the class: a test that writes a real table fails, by name.
+
+    Mutation runs are checked too: most of those 2,009 rows came from them, and a mutant
+    that makes a tool write the real file should fail.
+    """
+    before = _fingerprints()
+    yield
+    changed = [n for n, fp in _fingerprints().items() if before.get(n) != fp]
+    if changed:
+        pytest.fail(f"{request.node.nodeid} changed the real data/{', data/'.join(changed)}. "
+                    "Point the tool at tmp_path (--repo-root, or the tool's path override) "
+                    "instead of the repo. If another process wrote the file at the same "
+                    "moment, rerun this test alone to confirm.", pytrace=False)
+
+
 def _show(backup: Path) -> str:
     """Render a backup as the SOURCE file it protects, repo-relative where possible.
 
