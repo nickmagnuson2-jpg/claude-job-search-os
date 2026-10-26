@@ -2117,3 +2117,59 @@ def test_run_lock_held_says_alive_when_the_lock_cannot_be_opened(tmp_path, monke
         raise PermissionError("denied")
     monkeypatch.setattr(mc.os, "open", denied)
     assert mc.run_lock_held(repo) is True
+
+
+# --- the execution probe and the two-tier run (2026-10-25) ----------------------------
+
+def test_instrumented_runs_the_marker_after_the_docstring_and_future_imports(tmp_path):
+    marker = tmp_path / "ran"
+    src = '"""Doc."""\nfrom __future__ import annotations\nimport os\nX = 1\n'
+    text = mc.instrumented(src, marker)
+    lines = text.splitlines()
+    assert lines[:2] == ['"""Doc."""', "from __future__ import annotations"]
+    assert "touch()" in lines[2] and lines[3] == "import os"
+    exec(compile(text, "t", "exec"), {})
+    assert marker.exists()
+
+
+def test_instrumented_handles_a_decorated_first_statement_and_an_empty_module(tmp_path):
+    marker = tmp_path / "ran"
+    text = mc.instrumented("@staticmethod\ndef f():\n    pass\n", marker)
+    assert text.splitlines()[0].endswith("touch()") and text.splitlines()[1] == "@staticmethod"
+    assert "touch()" in mc.instrumented('"""only a docstring"""', marker)
+
+
+def test_instrumented_refuses_a_statement_sharing_a_line_with_the_previous_one(tmp_path):
+    assert mc.instrumented("from __future__ import annotations; import os\n", tmp_path / "m") is None
+
+
+def test_a_file_that_never_runs_the_target_is_left_out_of_the_fast_tier(tmp_path):
+    """And a mutant only it can see is still killed: survivors are rechecked in full."""
+    src, runs = _fixture_pair(tmp_path, """
+        import sys; sys.path.insert(0, r'%s')
+        from subject import classify
+        def test_pos(): assert classify(1) == 'pos'
+    """ % (tmp_path / "tools"))
+    reads = tmp_path / "test_reads_source.py"
+    reads.write_text(textwrap.dedent("""
+        from pathlib import Path
+        def test_neg_branch_is_written():
+            assert "return 'neg'" in Path(r'%s').read_text()
+    """ % src), encoding="utf-8")
+    r = _run([str(src), "--tests", str(runs), str(reads)], cwd=tmp_path)
+    d = json.loads(r.stdout)
+    assert d["fast_tests"] == [str(runs)]
+    assert d["full_reruns"] >= 1
+    assert not [s for s in d["survivors"] if "'neg'" in s["source"]], d["survivors"]
+    assert src.read_text().startswith("def classify")      # restored, marker gone
+
+
+def test_with_no_file_left_out_there_is_one_tier(tmp_path):
+    src, t = _fixture_pair(tmp_path, """
+        import sys; sys.path.insert(0, r'%s')
+        from subject import classify
+        def test_pos(): assert classify(1) == 'pos'
+        def test_neg(): assert classify(-1) == 'neg'
+    """ % (tmp_path / "tools"))
+    d = json.loads(_run([str(src), "--tests", str(t)], cwd=tmp_path).stdout)
+    assert d["fast_tests"] == [str(t)] and d["full_reruns"] == 0

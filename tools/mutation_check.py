@@ -67,6 +67,7 @@ import re
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -944,6 +945,71 @@ def _shout(text: str) -> None:
         pass
 
 
+def instrumented(original: str, marker: Path) -> str | None:
+    """`original` with one line that touches `marker` whenever the module runs.
+
+    Placed after the docstring and any `from __future__` imports, which must stay first.
+    None when no safe place exists (a statement sharing a line with the one before it).
+    """
+    try:
+        body = ast.parse(original).body
+    except SyntaxError:
+        return None
+    i = 0
+    if (body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant)
+            and isinstance(body[0].value.value, str)):
+        i = 1
+    while i < len(body) and isinstance(body[i], ast.ImportFrom) and body[i].module == "__future__":
+        i += 1
+    lines = original.splitlines(keepends=True)
+    line = f"__import__('pathlib').Path({str(marker)!r}).touch()\n"
+    if i < len(body):
+        node = body[i]
+        if node.col_offset != 0:
+            return None
+        at = min([node.lineno] + [d.lineno for d in getattr(node, "decorator_list", [])]) - 1
+    else:
+        at = len(lines)
+        if lines and not lines[-1].endswith("\n"):
+            lines[-1] += "\n"
+    text = "".join(lines[:at] + [line] + lines[at:])
+    try:
+        compile(text, "<instrumented>", "exec")
+    except SyntaxError:
+        return None
+    return text
+
+
+def files_that_run(target: Path, original: str, test_files: list[Path],
+                   timeout: int) -> list[Path] | None:
+    """The test files that execute `target` at all, found by running each once against a
+    copy that touches a marker file. None when the target cannot be instrumented.
+
+    WHY (2026-10-25). Selection is deliberately broad: a test that runs a script as a
+    subprocess names it only in a string, so any mention of the path selects the file.
+    That made each todo_daily_metrics mutant rerun 30 files and 1,918 tests in about 50s.
+    The two biggest, a PII-hook suite and a guard-edit suite, mention the path only in
+    example commands and never run it. A file that never runs the target can still catch a
+    mutant by READING its source, so this list only orders the work; see main().
+
+    The instrumented copy goes through write_mutant like any mutant, so the restore that
+    protects every mutant protects it too.
+    """
+    with tempfile.TemporaryDirectory(prefix="mutation-probe-") as d:
+        marker = Path(d) / "ran"
+        text = instrumented(original, marker)
+        if text is None:
+            return None
+        write_mutant(target, original, text)
+        kept = []
+        for f in test_files:
+            marker.unlink(missing_ok=True)
+            run_tests([f], timeout)
+            if marker.exists():
+                kept.append(f)
+        return kept
+
+
 def matches_head(target: Path, text: str, root: Path | None = None) -> bool | None:
     """Is `text` identical to the committed version of `target`? None when unknown.
 
@@ -1371,8 +1437,20 @@ def main() -> int:
     survived, killed, allowed, weak = [], 0, [], []
     unclassified, timed_out = [], []
     diverged = False
+    fast, probe_seconds, full_reruns = None, 0.0, 0
     try:
-        for entry in catalog:
+        # Two tiers. Each mutant runs first against the files that execute the target;
+        # only a mutant that survives them is run against every mapped file. A kill in
+        # the first tier is a kill in the full set, and a survivor is only reported after
+        # the full set has had its chance, so the verdicts match a full run.
+        probe_started = time.monotonic()
+        try:
+            fast = files_that_run(target, original, test_files, args.timeout)
+        except TargetDiverged:
+            diverged = True
+        probe_seconds = round(time.monotonic() - probe_started, 1)
+        tiered = bool(fast) and len(fast) < len(test_files)
+        for entry in ([] if diverged else catalog):
             key = entry["key"]
             mut = _Mutator((entry["line"], entry["col"], entry["op"]))
             new_tree = mut.visit(ast.parse(original))
@@ -1396,7 +1474,10 @@ def main() -> int:
             # `target` is passed ONLY here, never on the baseline run above: at baseline
             # the file is unmutated, so a ratchet firing on it means real corruption and
             # must still turn the run baseline_red.
-            passed, kind = run_tests(test_files, args.timeout, target)
+            passed, kind = run_tests(fast if tiered else test_files, args.timeout, target)
+            if passed and tiered:
+                full_reruns += 1
+                passed, kind = run_tests(test_files, args.timeout, target)
             if passed:
                 if key in allow and str(allow[key]).strip():
                     allowed.append({**entry, "reason": allow[key]})
@@ -1463,6 +1544,11 @@ def main() -> int:
         # The unmutated suite's own duration: the margin every mutant run has under the
         # same limit, and the only measurement of how much slower a night run is.
         "baseline_seconds": baseline_seconds,
+        # The first tier (see files_that_run). null when the target could not be
+        # instrumented, in which case every mutant ran against every mapped file.
+        "fast_tests": None if fast is None else [str(t) for t in fast],
+        "probe_seconds": probe_seconds,
+        "full_reruns": full_reruns,
         "allowlisted": len(allowed),
         "survivors": survived,
         "allowlisted_detail": allowed,
