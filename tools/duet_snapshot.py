@@ -27,8 +27,10 @@ Reused, not copied (one source of truth each):
 Privacy: sanitize() strips, from every free-text cell: email addresses; phone numbers of
 any country (9+ digits, ISO dates kept); money (any Unicode currency sign, a three-letter
 code beside a figure, "95K", comma-grouped or 5+ digit figures); URLs of any scheme and
-domains with a path; and file paths (relative, Unix absolute, Windows, UNC). It is a
-pattern list, not a proof: a token in none of those shapes passes.
+domains with a path; and file paths (a known repo directory, a file extension, three or
+more segments, Unix absolute, Windows, UNC). It is a pattern list, not a proof: a token in
+none of those shapes passes. A two-segment word pair ("and/or", "notes/drafts") is kept
+on purpose, because it cannot be told from a path by its shape.
 
 Usage:
   PYTHONIOENCODING=utf-8 python3 tools/duet_snapshot.py [--date YYYY-MM-DD]
@@ -73,7 +75,11 @@ LOOP_CLOSED_RE = re.compile(r"\bloop closed\b", re.IGNORECASE)
 _CURRENCY = "".join(chr(c) for c in range(0x110000)
                     if unicodedata.category(chr(c)) == "Sc")
 _CUR = "[" + re.escape(_CURRENCY) + "]"
-_ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
+_ISO_DATE = re.compile(r"(\b\d{4}-\d{2}-\d{2}\b)")
+# ISO 4217 codes in ordinary use. A code from this list takes any amount ("USD 950"); any
+# other three capitals take only a figure that cannot be a time or count ("XYZ 95000").
+_CODES = ("USD|EUR|GBP|CAD|AUD|NZD|CHF|JPY|CNY|INR|SGD|HKD|SEK|NOK|DKK|MXN|BRL|ZAR|RUB"
+          "|KRW|ILS|AED|PLN|CZK|TRY")
 
 _SCRUB = [
     re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+"),                       # email
@@ -85,11 +91,15 @@ _SCRUB = [
     re.compile(r"\b[\w./-]+\.(?:md|py|json|pdf|txt|sh|ya?ml|docx|csv)\b"),  # file / path
     re.compile(r"\b[A-Za-z]:\\\S*|\\\\\S+"),                             # Windows / UNC path
     re.compile(r"(?<![\w/])/[\w.-]+(?:/[\w.-]*)+"),                      # absolute path, 2+ segments
+    re.compile(r"\b[\w.-]+(?:/[\w.-]+){2,}/?"),                          # relative path, 3+ segments
     re.compile(_CUR + r"\s?\d[\d,.']*\s?[kKmM]?(?:\s?-\s?" + _CUR
                + r"?\d[\d,.']*\s?[kKmM]?)?\b|" + _CUR),                 # any currency sign, or a range
+    re.compile(r"\b(?:" + _CODES + r")\s?\d[\d,.']*\s?[kKmM]?\b"
+               r"|\b\d[\d,.']*\s?[kKmM]?\s?(?:" + _CODES + r")\b"),       # "USD 950", "950 EUR"
     re.compile(r"\b[A-Z]{3}\s?(?:\d{1,3}(?:[,.']\d{3})+|\d{4,}(?![-/]\d)|\d+(?:\.\d+)?\s?[kKmM])\b"
                r"|\b(?:\d{1,3}(?:[,.']\d{3})+|\d{4,}|\d+(?:\.\d+)?\s?[kKmM])\s?[A-Z]{3}\b"),
                                                                         # "CHF 95000", "150,000 USD"
+    re.compile(r"\b\d{2,3}(?:\.\d)?[kK]?\s?-\s?\d{2,3}(?:\.\d)?[kK]\b"),   # "150-180k" range
     re.compile(r"\b\d{2,3}(?:\.\d)?[kK]\b"),                            # "95K" comp shorthand
     re.compile(r"\b\d{1,3}(?:,\d{3})+(?:\.\d+)?\b"),                    # "150,000" grouped figure
     re.compile(r"\b\d{5,}\b"),                                          # long figure or id
@@ -100,14 +110,19 @@ _PHONE = re.compile(r"\+?\(?\d[\d\s().-]{6,}\d")
 
 def _drop_phone(m: re.Match) -> str:
     t = m.group(0)
-    keep = bool(_ISO_DATE.search(t)) or sum(ch.isdigit() for ch in t) < 9
-    return t if keep else ""
+    return t if sum(ch.isdigit() for ch in t) < 9 else ""
+
+
+def _strip_phones(s: str) -> str:
+    """Phones are judged between ISO dates, so a date beside a number cannot shield it."""
+    return "".join(part if _ISO_DATE.fullmatch(part) else _PHONE.sub(_drop_phone, part)
+                   for part in _ISO_DATE.split(s))
 
 
 def sanitize(text: str, limit: int = MAX_ACTION_CHARS) -> str:
     """Strip private tokens, replace dashes, collapse whitespace, truncate on a word."""
     s = (text or "").replace("—", "-").replace("–", "-")
-    s = _PHONE.sub(_drop_phone, s)
+    s = _strip_phones(s)
     for rx in _SCRUB:
         s = rx.sub("", s)
     s = re.sub(r"[\s,;-]+\)", ")", s)
