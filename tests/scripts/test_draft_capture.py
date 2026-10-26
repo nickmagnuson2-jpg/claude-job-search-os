@@ -719,3 +719,15 @@ def test_a_forced_reconfirmation_clears_an_old_lesson_ref_too(store):
     dc.confirm(cid, "edited", sent_text=SENT_EDIT, lesson_ref="Casey Doe / Acme")
     meta = dc.confirm(cid, "not-sent", force=True)
     assert "lesson_ref" not in meta and "no_lesson_reason" not in meta
+
+
+def test_latest_is_the_last_opened_even_when_its_id_sorts_first(store):
+    """650.F4: ids in one second differ only by a content hash, so directory-name order is
+    not open order. `latest` and pending() follow opened_ns."""
+    texts = [DRAFT.replace("last week", f"on day {i}") for i in range(20)]
+    ids = []
+    for i, t in enumerate(texts):
+        ids.append(dc.capture(t, now=1_800_000_000.0 + i / 100))
+    assert sorted(ids) != ids               # some later capture sorts before an earlier one
+    assert dc.resolve("latest") == ids[-1]
+    assert [m["id"] for m in dc.pending()] == ids

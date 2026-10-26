@@ -428,3 +428,17 @@ def test_company_name_with_no_word_characters_is_skipped_not_crashed(tmp_path):
     res = _sync(tmp_path, pipeline=pipeline, todos=WEAK_TODOS, apply=False)
     assert res["status"] == "ok"
     assert "***" in res["skipped_companies"]
+
+
+def test_an_already_closed_row_is_not_a_sync_candidate(tmp_path):
+    """A row whose Status is already Done or Withdrawn is skipped, even when its task
+    names a terminal company: sync withdraws open work, it does not re-close closed work."""
+    todos = FREEFORM_TODOS.replace(
+        "| Apply to Initech Deployment Strategist | High | — | Pending | — |",
+        "| Apply to Initech Deployment Strategist | High | — | Done 2025-03-01 | — |\n"
+        "| Email Initech recruiter | Med | — | Withdrawn 2025-03-01 | — |")
+    _setup(tmp_path, pipeline=FREEFORM_PIPELINE, todos=todos)
+    res = _sync(tmp_path, apply=False)
+    tasks = [c["task"] for c in res["candidates"]]
+    assert not any("Initech" in t for t in tasks)
+    assert "Research Vandelay BizOps team" in tasks          # an open row still matches

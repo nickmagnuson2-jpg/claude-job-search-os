@@ -171,7 +171,11 @@ def capture_file_once(path: Path, kind: str, skill: str) -> tuple[str, bool]:
 
 
 def captures() -> list[dict]:
-    """Every capture's meta, oldest first. A directory with no readable meta is skipped."""
+    """Every capture's meta, oldest first. A directory with no readable meta is skipped.
+
+    Ordered by when compose opened, not by directory name: ids inside one second differ
+    only by a content hash, so name order put `latest` on the wrong draft (650.F4).
+    """
     found = []
     root = store_dir()
     if not root.is_dir():
@@ -181,7 +185,7 @@ def captures() -> list[dict]:
             found.append(json.loads((d / META_NAME).read_text(encoding="utf-8")))
         except (OSError, ValueError):
             pass
-    return found
+    return sorted(found, key=_opened_key)       # stable: name order breaks a full tie
 
 
 def pending(kind: str | None = None) -> list[dict]:

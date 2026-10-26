@@ -155,3 +155,15 @@ def test_clear_moves_dated_closures_and_keeps_a_planned_one(tmp_path):
     assert "Call the bank" in active
     acme = next(l for l in completed.splitlines() if "Apply to Acme" in l)
     assert "Withdrawn" in acme
+
+
+def test_clear_counts_done_and_withdrawn_separately(tmp_path):
+    """Unequal counts, so swapping the two (or counting every row as one kind) fails."""
+    _write(tmp_path, FIXTURE.replace(
+        "| Apply to Acme | Med | 2026-06-10 | Pending | warm intro |",
+        "| Apply to Acme | Med | 2026-06-10 | Withdrawn 2026-06-01 (dropped) | warm intro |\n"
+        "| Write the memo | Med | — | Done 2026-06-02 | — |\n"
+        "| File the form | Low | — | Done | — |"))
+    res = run_script("todo_write.py", "clear", "--repo-root", str(tmp_path))
+    assert (res["archived"], res["done"], res["withdrawn"]) == (3, 2, 1)
+    assert res["summary"] == "Archived: 2 Done + 1 Withdrawn"

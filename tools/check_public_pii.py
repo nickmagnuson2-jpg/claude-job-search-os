@@ -1202,24 +1202,28 @@ def scan_paths(paths: list[str], accepted=frozenset()) -> int:
 
     for raw in paths:
         try:
-            rel = os.path.relpath(os.path.abspath(raw), root).replace(os.sep, "/")
+            where = locate(os.path.abspath(raw), root)
         except Exception:
             result["skipped"].append({"path": raw, "why": "unresolvable"})
             continue
-        if rel.startswith(".."):
-            result["skipped"].append({"path": rel, "why": "outside repo"})
+        if where is None:
+            result["skipped"].append({"path": raw, "why": "outside repo"})
             continue
-        if not is_public_path(rel, root):
+        checkout, rel = where
+        if not is_public_path(rel, checkout):
             result["skipped"].append({"path": rel, "why": "not a public artifact"})
             continue
-        if is_gitignored(root, rel):
+        source = checkout / rel
+        if os.path.realpath(checkout) != os.path.realpath(root):
+            rel = str(source)        # a worktree file: the same rel in root is another file
+        if is_gitignored(checkout, str(source.relative_to(checkout))):
             result["skipped"].append({"path": rel, "why": "gitignored"})
             continue
         if is_binary(rel):
             result["skipped"].append({"path": rel, "why": "binary"})
             continue
         try:
-            content = (root / rel).read_text(encoding="utf-8")
+            content = source.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError) as exc:
             # A public file that could not be read is not a skip: it ships, and it was
             # not checked. Until 2026-10-13 it sat in skipped[] beside the gitignored
@@ -1579,6 +1583,45 @@ def start_cwds(typed: list[str]) -> list[str]:
     return list(dict.fromkeys(out))
 
 
+def checkout_roots(root: Path) -> list[str]:
+    """Real paths of this repo's checkouts: the root and every linked worktree, deepest
+    first, so a worktree nested inside the root claims its own files.
+
+    A linked worktree commits to the same public repo, but its files sit outside the
+    root this hook derives from its own location. Until 2026-10-26 every path there was
+    skipped as "outside the repo", so a leak written in a worktree reached a commit
+    unchecked (friction log 2026-10-25). Fails toward the root alone if git cannot answer.
+    """
+    key = os.path.realpath(root)
+    if key not in _CHECKOUTS:
+        found = [key]
+        try:
+            r = subprocess.run(["git", "-C", key, "worktree", "list", "--porcelain"],
+                               capture_output=True, text=True, timeout=5)
+            if r.returncode == 0:
+                found += [os.path.realpath(ln[len("worktree "):])
+                          for ln in r.stdout.splitlines() if ln.startswith("worktree ")]
+        except Exception:
+            pass
+        _CHECKOUTS[key] = sorted(dict.fromkeys(found), key=len, reverse=True)
+    return _CHECKOUTS[key]
+
+
+_CHECKOUTS: dict[str, list[str]] = {}
+
+
+def locate(path: str, root: Path):
+    """(checkout root, repo-relative path) for `path`, or None when it is in no checkout
+    of this repo. The checkout is what gitignore is asked about; the denylist still
+    comes from `root`, since a worktree has no copy of the gitignored lists."""
+    real = os.path.realpath(path)
+    for checkout in checkout_roots(root):
+        rel = os.path.relpath(real, checkout)
+        if not rel.startswith(".."):
+            return Path(checkout), rel.replace(os.sep, "/")
+    return None
+
+
 def resolve_public_targets(candidates: list[str], root: Path,
                            skip_binary: bool = True,
                            cwds: list[str] | None = None) -> list[str]:
@@ -1602,13 +1645,13 @@ def resolve_public_targets(candidates: list[str], root: Path,
             try:
                 # realpath, not abspath: a repo reached through a symlink resolved to a
                 # path 'outside the repo' and failed open (2026-08-19).
-                rel = os.path.relpath(os.path.realpath(path), os.path.realpath(root))
+                where = locate(path, root)
             except Exception:
                 continue
-            if rel.startswith(".."):  # outside the repo
+            if where is None:  # in no checkout of this repo
                 continue
-            rel = rel.replace(os.sep, "/")
-            if not is_public_path(rel, root) or is_gitignored(root, rel):
+            checkout, rel = where
+            if not is_public_path(rel, checkout) or is_gitignored(checkout, rel):
                 continue
             # The binary skip exists because a PDF's BYTE STREAM false-positives. On the
             # Bash path the scanned text is the COMMAND, not the file, so the extension is
@@ -1616,8 +1659,12 @@ def resolve_public_targets(candidates: list[str], root: Path,
             # name into a tracked file unchecked (2026-08-19).
             if skip_binary and is_binary(rel):
                 continue
-            if rel not in out:
-                out.append(rel)
+            # A worktree file is named by its absolute path: the same rel in the root
+            # would be a different file.
+            shown = rel if os.path.realpath(checkout) == os.path.realpath(root) else str(
+                Path(checkout) / rel)
+            if shown not in out:
+                out.append(shown)
     return out
 
 

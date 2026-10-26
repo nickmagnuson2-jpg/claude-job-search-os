@@ -141,6 +141,42 @@ def test_a_force_added_ignored_path_is_judged(repo):
     assert r.returncode != 0 and "private/x.md" in r.stderr
 
 
+def _seed_private(repo, rel, text):
+    """A tracked file outside the public tree, committed without the hook."""
+    p = repo / rel
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(text)
+    _git(repo, "add", "-f", "--", rel)
+    _git(repo, "commit", "-q", "-m", "seed private", "--no-verify")
+
+
+def test_an_unchanged_rename_from_a_private_path_is_judged(repo):
+    """644.F1/648.F1/650.F1: a 100% rename adds no lines, so the guard read nothing."""
+    _seed_private(repo, "data/x.md", "We met with Zorpcorp today.\n")
+    _git(repo, "mv", "data/x.md", "docs/x.md")
+    r = _git(repo, "commit", "-q", "-m", "x", check=False)
+    assert r.returncode != 0 and "docs/x.md" in r.stderr and "Zorpcorp" in r.stderr
+
+
+def test_a_copy_from_a_private_path_is_judged(repo):
+    _seed_private(repo, "data/x.md", "We met with Zorpcorp today.\nmore text here\n")
+    (repo / "docs" / "x.md").write_text("We met with Zorpcorp today.\nmore text here\n")
+    _git(repo, "add", "--", "docs/x.md")
+    r = _git(repo, "commit", "-q", "-m", "x", check=False)
+    assert r.returncode != 0 and "Zorpcorp" in r.stderr
+
+
+def test_a_rename_between_public_paths_is_read_whole(repo):
+    """The pathspec in added_text hides a rename's source, so git shows the whole file
+    as added. That is what catches the private-path rename above; this pins it."""
+    (repo / "docs" / "old.md").write_text("We met with Zorpcorp today.\nline two\n")
+    _git(repo, "add", "--", "docs/old.md")
+    _git(repo, "commit", "-q", "-m", "seed", "--no-verify")
+    _git(repo, "mv", "docs/old.md", "docs/new.md")
+    r = _git(repo, "commit", "-q", "-m", "x", check=False)
+    assert r.returncode != 0 and "docs/new.md" in r.stderr
+
+
 def test_a_target_word_used_as_a_name_warns_and_commits(repo):
     """Blocking target words at commit refused 4 commits in the replay, none a leak."""
     (repo / "tools" / ".pii-denylist-targetwords.txt").write_text("Lantern\n")

@@ -806,3 +806,38 @@ def test_a_later_closed_row_tag_reaches_a_role_already_pending(tmp_path):
     assert by_url[role["url"]]["previously_closed"] == "Rejected, 2026-02-01"
     # An untagged pending role stays untagged.
     assert "previously_closed" not in by_url[other["url"]]
+
+
+def test_a_held_queue_lock_stops_the_write_instead_of_racing(tmp_path, monkeypatch):
+    """647.F4/649.F3: a lock timeout means another scan holds the lock. Writing anyway
+    is the race the lock exists to stop, so the scan fails and marks nothing seen; the
+    roles re-surface on the next scan."""
+    import contextlib
+    from tools.career_scanner import scanner as sc
+    from tools.career_scanner.dedup import load_seen
+
+    @contextlib.contextmanager
+    def held(*a, **k):
+        raise sc.inbox_lock.LockTimeout("held by another scan")
+        yield
+
+    monkeypatch.setattr(sc.inbox_lock, "file_lock", held)
+    with pytest.raises(sc.inbox_lock.LockTimeout):
+        _run_scan(tmp_path, monkeypatch, [_r("https://b/1")])
+    assert load_seen(tmp_path) == {}
+
+
+def test_an_unwritable_lock_dir_still_fails_open(tmp_path, monkeypatch):
+    """The documented fail-open stays for the case it was written for: no lock dir."""
+    import contextlib
+    from tools.career_scanner import scanner as sc
+    from tools.role_queue_read import read_queue
+
+    @contextlib.contextmanager
+    def unwritable(*a, **k):
+        raise OSError("read-only cache dir")
+        yield
+
+    monkeypatch.setattr(sc.inbox_lock, "file_lock", unwritable)
+    _run_scan(tmp_path, monkeypatch, [_r("https://b/1")])
+    assert read_queue(tmp_path)["exists"] is True

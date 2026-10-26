@@ -138,3 +138,61 @@ def test_main_return_codes_in_process(monkeypatch, capsys):
     assert hook.main() == 2
     err = capsys.readouterr().err
     assert "can never end" in err and "friction_log.py append check_poller_self_match.py" in err
+
+
+# --- round 6 (2026-10-26): polarity and inverted filters
+
+@pytest.mark.parametrize("command", [
+    # 647.F2: `until pgrep` waits for the process to APPEAR; a self-match ends it early,
+    # it cannot keep it waiting
+    'until pgrep -f "tools/x.py" >/dev/null; do sleep 2; done; python3 tools/x.py',
+    'while ! pgrep -f "tools/x.py" >/dev/null; do sleep 2; done; python3 tools/x.py',
+    'until ps aux | grep -q myjob; do sleep 2; done',
+    # 648.F2/650.F2/651.F1: `grep -v grep` drops every line holding "grep", the waiting
+    # shell's own line included
+    'while ps aux | grep -v grep | grep -q mutation_check; do sleep 5; done; '
+    'python3 tools/mutation_check.py x',
+    'until ! ps aux | grep -v grep | grep -q "myjob"; do sleep 2; done',
+])
+def test_shapes_that_end(command):
+    code, err = _run(command)
+    assert code == 0, err
+
+
+@pytest.mark.parametrize("command", [
+    # an inverted filter that does not match this command leaves the waiter's line in
+    'while ps aux | grep -v zzqq | grep -q myjob; do sleep 2; done',
+    # the inverted grep must read ps, not a different producer
+    'while ps aux | grep -q myjob | grep -v grep; do sleep 2; done',
+])
+def test_an_inverted_filter_that_keeps_the_waiter_still_blocks(command):
+    code, err = _run(command)
+    assert code == 2, err
+
+
+def test_the_pgrep_message_names_the_second_copy_condition():
+    msgs = hook.find_violations('while pgrep -f "abc" >/dev/null; do sleep 1; done; run abc')
+    assert len(msgs) == 1 and "second" in msgs[0] and "cannot end" not in msgs[0]
+
+
+def test_a_mutation_check_waiter_is_told_to_drop_the_loop():
+    """mutation_check queues on its own run lock, so the loop is not needed at all."""
+    msgs = hook.find_violations('while pgrep -f "mutation_check.py" >/dev/null; do sleep 15; '
+                                'done; python3 tools/mutation_check.py tools/a.py')
+    assert len(msgs) == 1 and "--wait" in msgs[0] and "run lock" in msgs[0]
+    other = hook.find_violations('while pgrep -f "abc" >/dev/null; do sleep 1; done; run abc')
+    assert "--wait" not in other[0]
+
+
+def test_a_negation_does_not_carry_into_the_next_pipeline():
+    # `!` belongs to `test`; the pgrep after && is not negated, so this while loop holds
+    # while abc runs, and abc is in its body.
+    code, err = _run('while ! test -f done.txt && pgrep -f abc >/dev/null; do sleep 1; done; '
+                     'run abc')
+    assert code == 2, err
+
+
+def test_a_negated_poll_under_if_is_not_a_loop():
+    # Only while/until open a condition; `if ! pgrep` returns at once.
+    code, err = _run('if ! pgrep -f abc >/dev/null; then run abc; fi')
+    assert code == 0, err

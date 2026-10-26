@@ -31,10 +31,12 @@ in an earlier Bash call does not survive to this one, and one set by the environ
 an unknown value. An array (`X=(a b)`) splits correctly in zsh and is never flagged; nor is
 `${=X}`, `"${X[@]}"`, or anything inside quotes. Not judged: arguments to echo, print and
 eval (the first two print the same text either way; eval re-splits), and operands of `[[`,
-`[`, `test` and `case`, where one operand is what the command wants. printf IS judged:
-`printf '%s\n' $P` prints one line in zsh and one per item in bash. Wrappers (`command`,
-`builtin`, `noglob`, `nocorrect`, `exec`, `nohup`, `time`) and their options (`command -p`,
-`exec -a NAME`, `nohup --`) are read through to the real command.
+`[`, `test` and `case`, where one operand is what the command wants. printf IS judged
+when its format separates records: `printf '%s\n' $P` prints one line in zsh and one per
+item in bash. A format with no whitespace or \n/\t (`'%s'`) is not, since bash would glue
+the items together. Wrappers (`command`, `builtin`, `noglob`, `nocorrect`, `exec`, `nohup`,
+`time`, `env`) and their options (`command -p`, `exec -a NAME`, `env -u NAME`, `nohup --`)
+are read through to the real command, as are `env`'s NAME=value words.
 Assignments through export, local, declare, typeset, readonly and integer are recorded
 (`-a`/`-A` makes an array), and `Q=$P` copies P's kind. A scalar is flagged only when
 `$P` is the whole word: `--name=$X` wants one argument and gets one. A loop item is
@@ -66,7 +68,14 @@ from shell_tokens import tokenize  # noqa: E402
 _ASSIGN = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)=")
 _SPLIT_WORD = re.compile(r"^(?:sh_?word_?split|sh|bash|ksh)$", re.IGNORECASE)
 _NO_JUDGE = {"echo", "print", "eval", "[[", "[", "test", "case"}
-_WRAPPERS = {"time", "command", "builtin", "noglob", "nocorrect", "exec", "nohup"}
+_WRAPPERS = {"time", "command", "builtin", "noglob", "nocorrect", "exec", "nohup", "env"}
+# Wrapper options that take the next word as their value: `exec -a NAME`, `env -u NAME`.
+_WRAPPER_ARG_OPTS = {("exec", "-a"), ("env", "-u"), ("env", "-C")}
+# A printf format with whitespace or a \n/\t escape writes one record per argument, so
+# bash's split and zsh's single argument print different things. Without one ('%s',
+# '[%s]'), bash glues the split items together and zsh's one argument is what the writer
+# meant (finding 646.F2).
+_PRINTF_SEP = re.compile(r"\\[nt]|\s")
 _CMD_START_WORDS = {"do", "then", "else", "elif", "if", "while", "until", "!", "{"} | _WRAPPERS
 _ASSIGN_BUILTINS = {"export", "local", "declare", "typeset", "readonly", "integer"}
 _COPY = re.compile(r"^\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?$")
@@ -149,7 +158,7 @@ def find_violations(command: str) -> list[str]:
             if wrapper and raw.startswith("-"):
                 # A wrapper's own options are not the command: `command -p`, `time -p`,
                 # `nohup --`, and `exec -a NAME`, whose NAME is skipped too (612.F1/624.F1).
-                i += 2 if (wrapper == "exec" and raw == "-a") else 1
+                i += 2 if (wrapper, raw) in _WRAPPER_ARG_OPTS else 1
                 continue
             if raw in _CMD_START_WORDS:
                 wrapper = raw if raw in _WRAPPERS else None
@@ -159,28 +168,61 @@ def find_violations(command: str) -> list[str]:
                 i = _read_for(words, i, src, scalars, loop_spaced, found)
                 at_start, cmd_word = True, None
                 continue
+            if wrapper == "env" and not t.quoted and _spaced_refs(raw, scalars, loop_spaced):
+                # env's NAME=value words come before the command. A spaced one arrives
+                # as ONE word, so env sets a single variable to the rest (replay
+                # 2026-10-26: `env -u X $envset python3 ...` inside a loop).
+                for name in _spaced_refs(raw, scalars, loop_spaced):
+                    found.append(_split_message(raw, name, "env"))
+                i += 1
+                continue
             cmd_word = os.path.basename(t.text)
             at_start, wrapper = False, None
+            if cmd_word == "printf" and not _printf_separates(words, i + 1):
+                cmd_word = "printf-glued"
             i += 1
             continue
 
         # --- shapes 2 and 3: a spaced scalar (the whole word) or a spaced loop item
         # (anywhere in the word) used unquoted as an argument
-        if cmd_word not in _NO_JUDGE and not t.quoted:
-            for name in list(scalars) + list(loop_spaced):
-                if name in loop_spaced:
-                    hit = _ref(name).search(raw)
-                else:
-                    hit = scalars.get(name) == "spaced" and re.fullmatch(_ref(name).pattern, raw)
-                if hit:
-                    found.append(
-                        f"`{raw}` passes ${name} unquoted, and ${name} holds a value with "
-                        f"spaces. zsh does not split it, so `{cmd_word}` gets ONE argument. "
-                        f"Use an array ({name}=(a b); \"${{{name}[@]}}\"), ${{={name}}}, or "
-                        f"write the arguments out.")
+        if cmd_word not in _NO_JUDGE and cmd_word != "printf-glued" and not t.quoted:
+            for name in _spaced_refs(raw, scalars, loop_spaced):
+                found.append(_split_message(raw, name, cmd_word))
         i += 1
 
     return found
+
+
+def _spaced_refs(raw: str, scalars: dict, loop_spaced: set) -> list[str]:
+    """Names whose spaced value this unquoted word passes: a spaced scalar as the whole
+    word, or a spaced loop item anywhere in it."""
+    out = []
+    for name in list(scalars) + list(loop_spaced):
+        if name in loop_spaced:
+            hit = _ref(name).search(raw)
+        else:
+            hit = scalars.get(name) == "spaced" and re.fullmatch(_ref(name).pattern, raw)
+        if hit:
+            out.append(name)
+    return out
+
+
+def _split_message(raw: str, name: str, cmd_word: str) -> str:
+    return (f"`{raw}` passes ${name} unquoted, and ${name} holds a value with "
+            f"spaces. zsh does not split it, so `{cmd_word}` gets ONE argument. "
+            f"Use an array ({name}=(a b); \"${{{name}[@]}}\"), ${{={name}}}, or "
+            f"write the arguments out.")
+
+
+def _printf_separates(words, j) -> bool:
+    """Does the printf format starting at words[j] write a separator per argument?
+    `--` is skipped. An unreadable or missing format counts as separating, so the
+    arguments are still judged."""
+    while j < len(words) and words[j].kind == "word" and words[j].text == "--":
+        j += 1
+    if j >= len(words) or words[j].kind != "word":
+        return True
+    return bool(_PRINTF_SEP.search(words[j].text))
 
 
 def _read_assign_builtin(words, j, src, scalars) -> int:

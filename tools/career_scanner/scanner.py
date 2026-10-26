@@ -200,11 +200,11 @@ def fetch_company_roles(target: dict, errors: list | None = None) -> list[dict]:
 
 
 def scan_all_targets(repo_root: Path, dry_run: bool = False) -> dict:
-    """Full pipeline: load targets -> fetch -> score -> dedup -> write inbox.
+    """Full pipeline: load targets -> fetch -> score -> dedup -> write the role queue.
 
     Args:
         repo_root: Path to repository root.
-        dry_run: If True, skip writing to inbox.
+        dry_run: If True, skip writing the role queue and the seen-set.
 
     Returns:
         Summary dict with keys: total_fetched, new_roles, skipped_dupes,
@@ -392,12 +392,17 @@ def _queue_lock(repo_root: Path, timeout: float = 30.0):
     second competing scheme. Honest scope, per that module: a writer that does not
     take this lock (a hand edit, an editor save) is not excluded.
 
-    FAILS OPEN, deliberately. The sidecar lives in ~/.cache/jobsearch-locks, outside
-    the repo, so it can be unwritable in a restricted environment (a sandbox, a
-    container, a read-only home). Locking is an optimisation against a race that needs
-    two simultaneous scans; losing the whole nightly run because a cache directory was
-    unwritable would be a far larger failure than the race it prevents. A guard must
-    never break the thing it guards.
+    FAILS OPEN when the lock cannot be MADE, deliberately. The sidecar lives in
+    ~/.cache/jobsearch-locks, outside the repo, so it can be unwritable in a restricted
+    environment (a sandbox, a container, a read-only home). Locking is an optimisation
+    against a race that needs two simultaneous scans; losing the whole nightly run
+    because a cache directory was unwritable would be a far larger failure than the race
+    it prevents. A guard must never break the thing it guards.
+
+    FAILS CLOSED when the lock is HELD (LockTimeout). That is the second scan this lock
+    exists for, and writing anyway lets one scan's roles be replaced by the other's
+    (647.F4, 649.F3). The scan raises before save_seen, so nothing is marked seen and
+    its roles come back on the next scan.
 
     Set JOBSEARCH_LOCK_DIR to relocate the sidecar.
     """
@@ -409,7 +414,9 @@ def _queue_lock(repo_root: Path, timeout: float = 30.0):
         try:
             stack.enter_context(
                 inbox_lock.file_lock(role_queue_path(repo_root), timeout=timeout))
-        except (OSError, inbox_lock.LockTimeout) as exc:
+        except inbox_lock.LockTimeout:
+            raise                    # a subclass of OSError: held, not unmakeable
+        except OSError as exc:
             print(f"  WARNING: proceeding without the queue lock ({exc}); "
                   f"a concurrent scan could race", file=sys.stderr)
         yield

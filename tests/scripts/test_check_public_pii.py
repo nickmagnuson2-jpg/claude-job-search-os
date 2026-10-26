@@ -2501,3 +2501,112 @@ def test_bash_separate_cd_dotdot_after_a_symlink_keeps_the_physical_directory_to
     os.symlink("../tools/sub", tmp_path / "output" / "link")
     code, err = _run_bash(tmp_path, 'cd output/link; cd ..; echo "Pat Zorp" > x.py')
     assert code == 2, err
+
+
+# --- A linked worktree is the same public repo (2026-10-26) --------------------------
+# A path in a `git worktree add` checkout resolved outside the root this hook derives
+# from its own location, and was skipped as "outside the repo": a leak written there
+# reached a commit unchecked (friction log 2026-10-25).
+
+def _repo_with_worktree(tmp_path):
+    root = tmp_path / "repo"
+    (root / "tools").mkdir(parents=True)
+    (root / "docs").mkdir()
+    (root / ".gitignore").write_text("data/\ntools/.pii-denylist*.txt\n", encoding="utf-8")
+    (root / "docs" / "seed.md").write_text("seed\n", encoding="utf-8")
+    git = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.invalid",
+           "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.invalid"}
+    for args in (["init", "-q", "-b", "main"], ["add", "-A"],
+                 ["commit", "-q", "-m", "seed", "--no-verify"],
+                 ["worktree", "add", "-q", "--detach", str(tmp_path / "wt"), "HEAD"]):
+        subprocess.run(["git", *args], cwd=root, env=git, check=True, capture_output=True)
+    (root / "tools" / ".pii-denylist.txt").write_text(FIXTURE_DENYLIST, encoding="utf-8")
+    return root, tmp_path / "wt"
+
+
+def _hook(root, tool_name, tool_input, cwd):
+    r = subprocess.run([sys.executable, str(SCRIPT)],
+                       input=json.dumps({"tool_name": tool_name, "tool_input": tool_input}),
+                       capture_output=True, text=True, cwd=str(cwd), timeout=20,
+                       env={**os.environ, "PII_REPO_ROOT": str(root)})
+    return r.returncode, r.stderr
+
+
+def test_a_write_into_a_linked_worktree_is_judged(tmp_path):
+    root, wt = _repo_with_worktree(tmp_path)
+    code, err = _hook(root, "Write", {"file_path": str(wt / "docs" / "x.md"),
+                                      "content": "met Zorptech"}, root)
+    assert code == 2 and "Zorptech" in err
+
+
+def test_a_bash_write_inside_a_linked_worktree_is_judged(tmp_path):
+    root, wt = _repo_with_worktree(tmp_path)
+    code, err = _hook(root, "Bash", {"command": "echo Zorptech > docs/x.md"}, wt)
+    assert code == 2 and "Zorptech" in err
+
+
+def test_a_gitignored_path_in_a_linked_worktree_is_not_judged(tmp_path):
+    root, wt = _repo_with_worktree(tmp_path)
+    code, err = _hook(root, "Write", {"file_path": str(wt / "data" / "x.md"),
+                                      "content": "met Zorptech"}, root)
+    assert code == 0, err
+
+
+def test_a_path_in_no_checkout_is_still_outside(tmp_path):
+    root, _ = _repo_with_worktree(tmp_path)
+    (tmp_path / "elsewhere").mkdir()
+    code, err = _hook(root, "Write", {"file_path": str(tmp_path / "elsewhere" / "x.md"),
+                                      "content": "met Zorptech"}, root)
+    assert code == 0, err
+
+
+def test_the_sweep_reads_a_file_in_a_linked_worktree(tmp_path):
+    root, wt = _repo_with_worktree(tmp_path)
+    (wt / "docs" / "x.md").write_text("met Zorptech\n", encoding="utf-8")
+    r = subprocess.run([sys.executable, str(SCRIPT), "--scan", str(wt / "docs" / "x.md")],
+                       capture_output=True, text=True, cwd=str(root), timeout=20,
+                       env={**os.environ, "PII_REPO_ROOT": str(root)})
+    out = json.loads(r.stdout)
+    assert r.returncode == 2 and out["scanned"] == 1, out
+    # The worktree's own file was read (root has no docs/x.md), and it is named by its
+    # absolute path, since docs/x.md in the root would be a different file.
+    assert out["hits"] == [{"file": str(wt / "docs" / "x.md"), "tokens": ["Zorptech"]}], out
+
+
+def test_a_worktree_target_is_named_by_its_absolute_path(tmp_path):
+    # The same rel in the root is a different file, so the two must not collapse.
+    root, wt = _repo_with_worktree(tmp_path)
+    got = cpp.resolve_public_targets([str(wt / "docs" / "x.md"), str(root / "docs" / "x.md")],
+                                     root)
+    assert got == [os.path.join(os.path.realpath(wt), "docs", "x.md"), "docs/x.md"], got
+
+
+def test_a_path_only_the_worktree_ignores_is_not_judged(tmp_path):
+    # gitignore is asked of the checkout the file is in, not of the root.
+    root, wt = _repo_with_worktree(tmp_path)
+    (wt / ".gitignore").write_text("data/\ntools/.pii-denylist*.txt\ndocs/local/\n",
+                                   encoding="utf-8")
+    target = wt / "docs" / "local" / "x.md"
+    code, err = _hook(root, "Write", {"file_path": str(target), "content": "met Zorptech"},
+                      root)
+    assert code == 0, err
+    target.parent.mkdir(parents=True)
+    target.write_text("met Zorptech\n", encoding="utf-8")
+    r = subprocess.run([sys.executable, str(SCRIPT), "--scan", str(target)],
+                       capture_output=True, text=True, cwd=str(root), timeout=20,
+                       env={**os.environ, "PII_REPO_ROOT": str(root)})
+    out = json.loads(r.stdout)
+    assert out["hits"] == [] and out["skipped"][0]["why"] == "gitignored", out
+
+
+def test_a_worktree_nested_in_the_root_claims_its_own_files(tmp_path):
+    # The root ignores the nested worktree's directory; the worktree's own file is still
+    # public in that worktree, so the deepest checkout must answer.
+    root, _ = _repo_with_worktree(tmp_path)
+    (root / ".gitignore").write_text("data/\ntools/.pii-denylist*.txt\nnested/\n",
+                                     encoding="utf-8")
+    subprocess.run(["git", "worktree", "add", "-q", "--detach", str(root / "nested"), "HEAD"],
+                   cwd=root, check=True, capture_output=True)
+    code, err = _hook(root, "Write", {"file_path": str(root / "nested" / "docs" / "x.md"),
+                                      "content": "met Zorptech"}, root)
+    assert code == 2 and "Zorptech" in err, err

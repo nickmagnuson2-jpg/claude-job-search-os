@@ -136,8 +136,13 @@ QUOTED_RE = re.compile(r"\"[^\"\n]{1,400}\"|“[^”\n]{1,400}”|‘[^’\n]{1,
 # word and the copula may not name a result ("target vs actual is", "goal; current
 # result is"), which would otherwise exempt the measured ratio (614.F1, 625.F2).
 RESULT_WORD = r"(?:vs\.?|versus|actual(?:ly)?|current|result|measured|achieved|hit|got|reached|came in)"
+# The target word must not follow a comparison word ("Actual vs target is", "measured
+# against the goal is"): that sentence compares a result to the target, and the ratio is
+# the result (648.F3, 650.F3).
 TARGET_BEFORE = re.compile(
-    r"(?:\b(?:target|goal|aim|threshold|benchmark)s?\b"
+    r"(?:(?<!\bvs )(?<!\bvs\. )(?<!\bversus )(?<!\bagainst )(?<!\bagainst the )"
+    r"(?<!\bversus the )(?<!\bvs the )"
+    r"\b(?:target|goal|aim|threshold|benchmark)s?\b"
     rf"(?:(?!\b{RESULT_WORD}\b)[^.!?]){{0,20}}?\b(?:is|was|are|of|be)\s+"
     r"|\b(?:aiming for|aim for|at least|no more than|up to)\s+)$", re.I)
 URL_RE = re.compile(r"\b(?:https?|ftp)://\S+|\bwww\.\S+", re.I)

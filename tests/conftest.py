@@ -43,7 +43,7 @@ def _draft_captures_go_to_a_throwaway_store(tmp_path_factory):
 
 
 # The owner's real tables. `data/` is gitignored and holds live state; in a scratch
-# worktree it is often a symlink to the real folder, so a test there writes the real file.
+# worktree whose data/ is a symlink to the real folder, a test there writes the real file.
 REAL_TABLES = ("job-todos.md", "job-pipeline.md", "outreach-log.md", "networking.md")
 
 
@@ -56,6 +56,15 @@ def _fingerprints() -> dict:
             continue
         out[name] = (st.st_mtime_ns, st.st_size)
     return out
+
+
+def _changed_tables(before: dict, after: dict) -> list:
+    """Tables whose fingerprint differs, including ones created or deleted.
+
+    Over the union of both key sets: comparing over the after-keys only let a test that
+    deleted a real table pass (cross-model finding 647.F1, 2026-10-26).
+    """
+    return sorted(n for n in set(before) | set(after) if before.get(n) != after.get(n))
 
 
 @pytest.fixture(autouse=True)
@@ -73,7 +82,7 @@ def _no_test_writes_the_real_tables(request):
     """
     before = _fingerprints()
     yield
-    changed = [n for n, fp in _fingerprints().items() if before.get(n) != fp]
+    changed = _changed_tables(before, _fingerprints())
     if changed:
         pytest.fail(f"{request.node.nodeid} changed the real data/{', data/'.join(changed)}. "
                     "Point the tool at tmp_path (--repo-root, or the tool's path override) "

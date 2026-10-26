@@ -703,3 +703,17 @@ def test_target_word_far_from_the_ratio_does_not_veto():
 ])
 def test_a_result_word_after_the_target_word_does_not_veto(text):
     assert values(text) == ["31.8"]
+
+
+@pytest.mark.parametrize("text", [
+    "Actual vs target is 7 of 22 (31.8%).",                    # 648.F3/650.F3
+    "Measured against the goal is 7 of 22 (31.8%).",
+    "Current versus benchmark was 7 of 22 (31.8%).",
+])
+def test_a_comparison_word_just_before_the_target_word_does_not_veto(text):
+    assert values(text) == ["31.8"]
+
+
+def test_a_target_after_a_comparison_elsewhere_still_vetoes():
+    # the comparison word must sit right before the target word
+    assert values("We compared notes vs last week; our target is 7 of 22 (31.8%).") == []

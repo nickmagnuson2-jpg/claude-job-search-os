@@ -24,7 +24,9 @@ How each poll sees the command, measured 2026-10-25 on macOS:
     being waited for) is what a second copy exposes.
 
 Only the condition of a `while` or `until` loop is judged, since that is where a wrong
-answer never ends. A one-off `pgrep` returns at once. Not judged: commands built at
+answer never ends, and only when the loop waits while the process is PRESENT (`while
+pgrep`, `until ! pgrep`): a loop waiting for it to appear is ended early by a self-match,
+never held. A one-off `pgrep` returns at once. Not judged: commands built at
 run time (eval, variables), and loops inside a script file this command runs.
 
 BLOCK tier (exit 2): the loop cannot end in the states measured above, and the fix is
@@ -80,24 +82,40 @@ def _simple_commands(cond: list) -> list:
 
 
 def _polls(cond: list) -> list:
-    """(tool, pattern token) for each `pgrep -f` or `ps | grep` poll in a loop condition."""
-    found, prev_cmd = [], None
+    """(tool, pattern token, negated, inverted patterns) for each `pgrep -f` or
+    `ps | grep` poll in a loop condition.
+
+    `negated` is a leading `!` on the pipeline. `inverted` holds the patterns of the
+    `grep -v` filters between ps and the poll, and `own` is the poll grep's own command
+    as ps lists it. ps shows two lines that can self-match: the waiting shell's, which
+    holds the whole command and so every `-v` pattern, and the poll grep's own. A filter
+    that drops the grep's line drops both, which is why `ps aux | grep -v grep | grep -q
+    PAT` cannot see itself (findings 648.F2, 650.F2, 651.F1), and `grep -v zzqq` can.
+    """
+    found, in_ps, negated, inverted = [], False, False, []
     for words, op_before in _simple_commands(cond):
+        if op_before != "|":                      # a new pipeline starts here
+            in_ps, negated, inverted = False, False, []
         k = 0
         while k < len(words) and words[k].text in _SKIP and not words[k].quoted:
+            negated = negated or (words[k].text == "!" and op_before != "|")
             k += 1
         if k >= len(words):
-            prev_cmd = None
+            in_ps = False
             continue
         cmd, args = os.path.basename(words[k].text), words[k + 1:]
         operands = [a for a in args if a.quoted or not a.text.startswith("-")]
         flags = "".join(a.text[1:] for a in args
                         if not a.quoted and a.text.startswith("-") and not a.text.startswith("--"))
         if cmd == "pgrep" and "f" in flags and operands:
-            found.append(("pgrep", operands[-1]))
-        elif cmd == "grep" and op_before == "|" and prev_cmd == "ps" and operands:
-            found.append(("ps|grep", operands[0]))
-        prev_cmd = cmd
+            found.append(("pgrep", operands[-1], negated, [], ""))
+        elif cmd == "grep" and op_before == "|" and in_ps and operands:
+            if "v" in flags:
+                inverted.append(operands[0].text)
+            else:
+                own = " ".join(w.text for w in words[k:])
+                found.append(("ps|grep", operands[0], negated, list(inverted), own))
+        in_ps = cmd == "ps" or (in_ps and cmd == "grep" and "v" in flags)
     return found
 
 
@@ -120,7 +138,14 @@ def find_violations(command: str) -> list[str]:
     for i, t in enumerate(words):
         if t.kind != "word" or t.quoted or t.text not in _LOOP:
             continue
-        for tool, tok in _polls(_condition(words, i)):
+        for tool, tok, negated, inverted, own in _polls(_condition(words, i)):
+            # Only a loop that keeps waiting while the process is PRESENT can hang on a
+            # self-match. `until pgrep` waits for it to appear, and a self-match ends
+            # that loop early rather than never (finding 647.F2).
+            if (t.text == "while") == negated:
+                continue
+            if any(_matches(x, own) for x in inverted):
+                continue
             pat = tok.text
             # pgrep never sees its own ancestors, so the pattern's own spelling is blanked
             # (by position, so the same text elsewhere in the command still counts).
@@ -128,17 +153,22 @@ def find_violations(command: str) -> list[str]:
                     else command[:tok.start] + " " * (tok.end - tok.start) + command[tok.end:])
             if not _matches(pat, text):
                 continue
-            why = ("ps also lists this waiting shell, so the poll matches the waiter"
+            why = ("ps also lists this waiting shell, so the poll matches the waiter and "
+                   "the loop cannot end"
                    if tool == "ps|grep" else
-                   "pgrep skips this shell, but a second command carrying the same text "
-                   "(another queued waiter) matches it, and each then waits on the other")
+                   "pgrep skips this shell, so one copy ends. A second command carrying the "
+                   "same text (another queued waiter, the 2026-10-25 case) matches it, and "
+                   "the two then wait on each other")
             found.append(
                 f"The `{t.text}` loop polls `{tool}` for {pat!r}, and that pattern matches "
-                f"this command's own text. {why}, so the loop cannot end. Fix: put the "
+                f"this command's own text. {why}. Fix: put the "
                 f"loop in a script file and run that, so the body is not on the waiting "
                 f"command line, or poll for text that appears nowhere else in this "
                 f"command. Bracketing one letter ('[m]ytool') hides only the pattern's "
-                f"own spelling, not the same text in the loop body.")
+                f"own spelling, not the same text in the loop body."
+                + (" For mutation_check, drop the loop: it queues on its own run lock, "
+                   "waiting up to `--wait` seconds (default 600) for a running copy, so "
+                   "run it directly." if "mutation_check" in command else ""))
     return found
 
 

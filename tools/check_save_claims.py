@@ -134,7 +134,8 @@ def extract_claimed_paths(text: str):
     # nowhere on disk, while the real file had been written correctly.
     # Fired 2026-09-02 (friction ledger). Same class as the mid-word bug documented at
     # CLAIM_RE, which the \b fix only half-solved.
-    path_spans = [pm.span() for pm in PATH_TOKEN.finditer(text)]
+    path_tokens = list(PATH_TOKEN.finditer(text))
+    path_spans = [pm.span() for pm in path_tokens]
     for m in CLAIM_RE.finditer(text):
         if any(s <= m.start() and m.end() <= e for s, e in path_spans):
             continue
@@ -164,7 +165,13 @@ def extract_claimed_paths(text: str):
         cut = re.search(r"(?<=[.!?])\s+[A-Z]|\n[ \t]*\n|\n[ \t]*File:", window)
         if cut:
             window = window[:cut.start()]
-        for pm in PATH_TOKEN.finditer(window):
+        # Tokens come from the FULL text and must lie wholly inside the window. Matching
+        # inside the window read a filename the 140-char limit cut in half as a whole token
+        # ("job-todos.p"), and an existing file was reported missing (2026-10-26). A path the
+        # limit cuts is out of reach, not a fragment: taking it whole instead added two false
+        # blocks in a replay of 15,146 real messages, both paths in the next bullet.
+        lo, hi = m.end(), m.end() + len(window)
+        for pm in (pm for pm in path_tokens if lo <= pm.start() and pm.end() <= hi):
             tok = pm.group(0).strip("`'\"()[],;:")
             if (not tok or tok.lower().startswith(SKIP_PREFIXES) or NOISE.match(tok)
                     or LIBRARY_NAME.match(tok)):

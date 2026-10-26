@@ -253,3 +253,49 @@ def test_wrapper_options_and_prefix_chains_are_clean(command):
 def test_wrapper_options_still_reach_the_real_command(command):
     code, err = _run(command)
     assert code == 2, err
+
+
+# --- round 6 of the overnight review (646.F2, 647.F3, 649.F2), 2026-10-26 ------------------
+
+@pytest.mark.parametrize("command", [
+    'P="a b"; env echo $P',                      # env reads through to echo, which is exempt
+    'P="a b"; env -i echo $P',
+    'P="a b"; env -u HOME echo $P',
+    'P="a b"; env X=1 echo $P',
+    # a format with no separator glues bash's split items together; zsh's one argument
+    # is what the writer wants
+    "P='hello world'; printf '%s' $P",
+    'P="a b"; printf "[%s]" $P',
+])
+def test_round_6_false_blocks_are_clean(command):
+    code, err = _run(command)
+    assert code == 0, err
+
+
+@pytest.mark.parametrize("command,needle", [
+    ('P="a b"; env git add $P', "$P"),
+    ('P="a b"; env -u HOME git add $P', "$P"),
+    ('P="a b"; env X=1 git add $P', "$P"),
+    ("P='a b'; printf '%s\\n' $P", "$P"),         # one line per item in bash, one in zsh
+    ("P='a b'; printf '%s ' $P", "$P"),
+    ("P='a b'; printf -- '%s\\n' $P", "$P"),
+    # env reads NAME=value words before the command; a spaced one arrives as ONE word,
+    # so env sets a single variable to the rest (real command, replay 2026-10-26)
+    ('for e in "A=1 B=1" "C=1 D=1"; do env -u HOME $e python3 x.py; done', "$e"),
+    ('E="A=1 B=1"; env $E python3 x.py', "$E"),
+])
+def test_round_6_shapes_still_blocked(command, needle):
+    code, err = _run(command)
+    assert code == 2, err
+    assert needle in err
+
+
+def test_a_bare_printf_at_the_end_does_not_hide_an_earlier_block():
+    code, err = _run('P="a b"; git add $P; printf')
+    assert code == 2 and "$P" in err
+
+
+def test_after_a_spaced_env_word_the_real_command_is_still_read():
+    # $E is flagged; echo is then the command, and echo's arguments are exempt.
+    msgs = hook.find_violations('E="A=1 B=1"; P="x y"; env $E echo $P')
+    assert len(msgs) == 1 and "$E" in msgs[0]

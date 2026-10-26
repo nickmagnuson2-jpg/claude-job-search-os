@@ -17,6 +17,12 @@ untouched line needs a fresh verdict on every commit to that file
 (friction log, 2026-10-25). A commit can only create new exposure through the lines it
 adds. Text already committed is the push guard's and /audit-pii's job.
 
+A RENAMED OR COPIED FILE IS READ WHOLE. added_text() limits the diff to one path, so git
+cannot pair it with its source and shows every line as added. A file moved from a private
+tracked path into the public tree is therefore judged in full (cross-model findings
+644.F1, 648.F1 and 650.F1 said otherwise; the tests that would show it pass,
+2026-10-26). A rename between two public paths is read whole too, which errs safe.
+
 What blocks:
   * a BLOCK-tier denylist token on an added line;
   * a denylist file that exists but is empty, or a staged public file git cannot show.

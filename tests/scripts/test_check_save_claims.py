@@ -880,3 +880,27 @@ def test_absence_override_reuses_the_hook_override(tmp_path):
              "SAVE_CLAIMS_OVERRIDE": "1", "PATH": "/usr/bin:/bin"},
     )
     assert r.returncode == 0
+
+
+def test_a_path_cut_by_the_lookahead_limit_is_not_claimed():
+    # The lookahead window can end mid-filename. The token was then a fragment
+    # ("job-todos.p") that exists nowhere, so an existing file was reported missing
+    # (2026-10-26). A path the window cuts is out of reach: neither fragment nor whole.
+    path = "output/table-audit/job-todos.pre-cleanup-102526.md"
+    head, prose, bullet = "a flag was saved", " as the task, more prose", "\n- the copy is at `"
+    keep = len("output/table-audit/job-todos.p")   # where the window must end
+    pad = "x" * (csc.LOOKAHEAD - len(prose) - len(bullet) - keep)
+    text = f"{head}{prose}{pad}{bullet}{path}`, fine."
+    window = text[len(head):len(head) + csc.LOOKAHEAD]
+    assert window.endswith("job-todos.p")  # the old window held only the fragment
+    assert extract(text) == []
+    # Move the path back so it ends exactly at the limit, and it is the claim.
+    fits = f"{head}{prose}{pad[:-(len(path) - keep)]}{bullet}{path}`, fine."
+    assert extract(fits) == [path]
+
+
+def test_a_verb_inside_a_filename_does_not_claim_the_next_path():
+    # The verb sits inside the first filename, so it claims nothing, including a
+    # second path that follows inside the window.
+    text = "Compare `tide.SAVED-noaa.html` with `notes/other.md` before deciding."
+    assert extract(text) == []
