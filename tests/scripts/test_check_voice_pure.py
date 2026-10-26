@@ -298,5 +298,11 @@ def test_an_unreadable_payload_passes_silently():
 
 
 def test_an_unexpected_error_fails_open_and_says_so():
-    r = _run_hook({"tool_name": "Write", "tool_input": "not a dict"})
+    r = _run_hook({"tool_name": "Write", "tool_input": {"file_path": REFLECTION, "content": 5}})
     assert r.returncode == 0 and "error (allowing through)" in r.stderr
+
+
+def test_blank_paragraphs_are_skipped_not_read():
+    """A run of blank lines yields empty paragraphs, which have no first line to read."""
+    assert violations("> a\n\n\n\n\n\n> b") == []
+    assert violations("> a\n\n   \n\n" + LONG + "\n\n" + LONG)   # the second one is not lazy

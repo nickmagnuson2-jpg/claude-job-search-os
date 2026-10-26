@@ -61,20 +61,17 @@ def find_violations(content: str, check_frontmatter: bool) -> list[str]:
     for para in body.split("\n\n"):
         para = para.strip()
         if not para:
-            continue
+            continue          # every branch below reads lines[0], which a blank one lacks
         if len(para) <= LONG_PARA_THRESHOLD:
             # Still track blockquote-continuation state through short paragraphs
             # (e.g. a short quoted aside between two long quoted paragraphs)
             # so a later long paragraph doesn't lose its "lazy continuation"
             # context just because a short one sat between them.
             lines = [ln for ln in para.splitlines() if ln.strip()]
-            if lines:
-                prev_was_blockquote = lines[0].lstrip().startswith(">")
+            prev_was_blockquote = lines[0].lstrip().startswith(">")
             continue
 
         lines = [ln for ln in para.splitlines() if ln.strip()]
-        if not lines:
-            continue
 
         first = lines[0].lstrip()
         if first.startswith(">"):
@@ -126,11 +123,11 @@ def main():
     p = read_payload()
     if not p.ok:
         return
-    data = p.data
-
-    tool_name = data.get("tool_name", "")
-    tool_input = data.get("tool_input", {}) or {}
-    file_path = tool_input.get("file_path", "")
+    # The typed fields, not p.data: they raise on an unreadable payload, which is what
+    # makes the `.ok` check above observable (tools/HOOK_AUTHORING.md).
+    tool_name = p.tool_name
+    tool_input = p.tool_input
+    file_path = p.file_path
 
     if not file_path or not is_voice_pure_target(file_path):
         return
