@@ -90,3 +90,45 @@ def test_the_message_names_the_tool_and_pattern():
     assert len(msgs) == 1 and "`pgrep`" in msgs[0] and "'abc'" in msgs[0]
     msgs = hook.find_violations('while ps aux | grep -q abc; do sleep 1; done')
     assert len(msgs) == 1 and "`ps|grep`" in msgs[0]
+
+
+# --- shapes that pin each step of the reading
+
+@pytest.mark.parametrize("command", [
+    # a poll in the loop BODY is not the condition: the condition ends at `do`
+    'while true; do pgrep -f abc >/dev/null || break; sleep 1; done; run abc',
+    # an ordinary word before a one-off poll does not start a loop
+    'echo start; pgrep -f abc; run abc',
+    # a condition made only of skipped words has no command to read
+    'while command; do sleep 1; done',
+])
+def test_more_clean_shapes(command):
+    assert hook.find_violations(command) == []
+
+
+def test_a_condition_with_no_do_still_reads_its_last_command():
+    """A truncated loop has no `do`, so the last command in the condition is not
+    followed by an operator; it must still be read."""
+    assert hook.find_violations('X=abc; while pgrep -f abc')
+
+
+def test_each_tool_gets_its_own_reason():
+    pg = hook.find_violations('while pgrep -f "abc" >/dev/null; do sleep 1; done; run abc')[0]
+    ps = hook.find_violations('while ps aux | grep -q abc; do sleep 1; done')[0]
+    assert "second command carrying the same text" in pg and "lists this waiting shell" not in pg
+    assert "lists this waiting shell" in ps and "second command" not in ps
+
+
+def test_main_return_codes_in_process(monkeypatch, capsys):
+    class P:
+        def __init__(self, ok, command=""):
+            self.ok, self.command = ok, command
+    monkeypatch.setattr(hook, "read_payload", lambda: P(False))
+    assert hook.main() == 0
+    monkeypatch.setattr(hook, "read_payload", lambda: P(True, "echo hi"))
+    assert hook.main() == 0
+    monkeypatch.setattr(hook, "read_payload",
+                        lambda: P(True, "while ps aux | grep -q abc; do sleep 1; done"))
+    assert hook.main() == 2
+    err = capsys.readouterr().err
+    assert "can never end" in err and "friction_log.py append check_poller_self_match.py" in err

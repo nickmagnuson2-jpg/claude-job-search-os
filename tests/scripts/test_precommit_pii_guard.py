@@ -6,6 +6,7 @@ commits. The tokens are invented (Zorpcorp, Harbor); none is a real entity.
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -146,3 +147,78 @@ def test_a_target_word_used_as_a_name_warns_and_commits(repo):
     r = _commit(repo, "docs/b.md", "We spoke to Lantern about the role.\n")
     assert r.returncode == 0, r.stderr
     assert "docs/b.md:Lantern" in r.stderr
+
+
+# --- in process: return codes, messages and error paths the hook run cannot tell apart
+
+sys.path.insert(0, str(TOOLS))
+import precommit_pii_guard as guard  # noqa: E402
+
+
+@pytest.fixture
+def clean_env(monkeypatch):
+    for k in list(os.environ):
+        if k.startswith("GIT_") or k.startswith("PII_"):
+            monkeypatch.delenv(k, raising=False)
+
+
+def _stage(repo, rel, text):
+    p = repo / rel
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(text)
+    _git(repo, "add", "-f", "--", rel)
+
+
+def test_main_returns_0_on_clean_staged_text_and_prints_nothing(repo, clean_env, capsys):
+    _stage(repo, "docs/b.md", "Acme only.\n")
+    assert guard.main(["--repo-root", str(repo)]) == 0
+    assert capsys.readouterr().err == ""
+
+
+def test_main_returns_1_and_names_the_token_and_the_override(repo, clean_env, capsys):
+    _stage(repo, "docs/b.md", "Zorpcorp\n")
+    assert guard.main(["--repo-root", str(repo)]) == 1
+    err = capsys.readouterr().err
+    assert "docs/b.md: real name(s) Zorpcorp" in err and "PII_COMMIT_OVERRIDE" in err
+
+
+def test_main_returns_0_with_no_denylist_file(repo, clean_env, capsys):
+    (repo / "tools" / ".pii-denylist.txt").unlink()
+    _stage(repo, "docs/b.md", "Zorpcorp\n")
+    assert guard.main(["--repo-root", str(repo)]) == 0
+
+
+def test_an_override_returns_0_and_names_the_log(repo, clean_env, capsys, monkeypatch):
+    monkeypatch.setenv("PII_COMMIT_OVERRIDE", "why")
+    _stage(repo, "docs/b.md", "Zorpcorp\n")
+    assert guard.main(["--repo-root", str(repo)]) == 0
+    err = capsys.readouterr().err
+    assert "OVERRIDDEN: why" in err and "pii-commit-overrides.jsonl" in err
+
+
+def test_a_git_failure_listing_the_index_refuses(repo, clean_env, capsys, monkeypatch):
+    def broken(_root):
+        raise RuntimeError("git diff: fatal")
+    monkeypatch.setattr(guard, "staged_paths", broken)
+    assert guard.main(["--repo-root", str(repo)]) == 1
+    assert "could not list the staged paths" in capsys.readouterr().err
+
+
+def test_a_staged_change_git_cannot_show_refuses_and_says_so(repo, clean_env, capsys, monkeypatch):
+    _stage(repo, "docs/b.md", "Acme\n")
+    def broken(_root, _rel):
+        raise RuntimeError("git diff: bad object")
+    monkeypatch.setattr(guard, "added_text", broken)
+    assert guard.main(["--repo-root", str(repo)]) == 1
+    assert "could not read the staged change, so it was not checked: docs/b.md" in capsys.readouterr().err
+
+
+def test_git_errors_raise_rather_than_return_empty_text(repo):
+    with pytest.raises(RuntimeError):
+        guard._git(repo, "show", "no-such-ref-xyz")
+
+
+def test_a_private_path_is_not_judged(repo, clean_env):
+    """data/ is never public, even force-added; only public files are judged."""
+    _stage(repo, "data/notes.md", "Zorpcorp\n")
+    assert guard.main(["--repo-root", str(repo)]) == 0
