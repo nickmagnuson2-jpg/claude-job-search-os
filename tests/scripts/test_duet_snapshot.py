@@ -252,6 +252,21 @@ def test_no_emails_money_phones_urls_paths_or_em_dashes(snap):
     ("asked 150,000 USD floor", "asked floor"),
     ("asked USD 150k floor", "asked floor"),
     ("band 140,000 to 160,000 noted", "band to noted"),
+    ("ring +44 20 7946 0958 today", "ring today"),
+    ("ring +1 (415) 555 0134 today", "ring today"),
+    ("ring 020 7946 0958 today", "ring today"),
+    ("CV at C:\\Users\\casey\\cv.pdf ok", "CV at ok"),
+    ("share \\\\host\\share\\x ok", "share ok"),
+    ("get ftp://x.example/a ok", "get ok"),
+    ("join zoom.us/j/123456789 now", "join now"),
+    ("join meet.example.us now", "join now"),
+    ("offer ₽100000 base", "offer base"),
+    ("offer ₹12,00,000 base", "offer base"),
+    ("offer CHF 95000 base", "offer base"),
+    ("offer 95000 CHF base", "offer base"),
+    ("ref 4815162342 noted", "ref noted"),
+    ("loop 2026-03-11 then 2026-03-12", "loop 2026-03-11 then 2026-03-12"),
+    ("PST 2pm call", "PST 2pm call"),
     ("call Thu 3/12 w/ Casey", "call Thu 3/12 w/ Casey"),
     ("and/or later", "and/or later"),
 ])
@@ -289,6 +304,20 @@ def test_closed_row_with_a_dated_next_action_is_not_upcoming(tmp_path):
     out = ds.build_snapshot(tmp_path, TODAY)
     assert "Call recruiter" not in out and "Umbrella" not in out
     assert "Panel interview" in out          # an open row's event still shows
+
+
+def test_a_closed_duplicate_of_a_live_key_is_not_upcoming(tmp_path):
+    d = tmp_path / "data"
+    d.mkdir()
+    pipe = PIPELINE.replace(
+        "| Globex | Ops Manager | Applied | 2026-03-01 | — |",
+        "| Globex | Ops Manager | Applied | 2026-03-01 | — | cv.pdf | n | u |\n"
+        "| Globex | Ops Manager | Rejected | 2026-03-09 | Closed screen 2026-03-11 |")
+    assert "Closed screen 2026-03-11" in pipe
+    (d / "job-pipeline.md").write_text(pipe, encoding="utf-8")
+    (d / "job-todos.md").write_text(textwrap.dedent(TODOS), encoding="utf-8")
+    (d / "networking.md").write_text(textwrap.dedent(NETWORKING), encoding="utf-8")
+    assert "Closed screen" not in ds.build_snapshot(tmp_path, TODAY)
 
 
 def test_an_archived_duplicate_does_not_replace_the_active_next_action():

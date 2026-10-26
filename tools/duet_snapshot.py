@@ -24,9 +24,11 @@ Reused, not copied (one source of truth each):
   networking_read.parse_contacts           - name -> company (when the todo omits it)
                                              and Last Interaction (the "since" date)
 
-Privacy: the body never carries email addresses, phone numbers, money figures (any
-currency sign or code, "95K", comma-grouped figures), URLs, or file paths (relative or
-absolute); sanitize() strips them from every free-text cell.
+Privacy: sanitize() strips, from every free-text cell: email addresses; phone numbers of
+any country (9+ digits, ISO dates kept); money (any Unicode currency sign, a three-letter
+code beside a figure, "95K", comma-grouped or 5+ digit figures); URLs of any scheme and
+domains with a path; and file paths (relative, Unix absolute, Windows, UNC). It is a
+pattern list, not a proof: a token in none of those shapes passes.
 
 Usage:
   PYTHONIOENCODING=utf-8 python3 tools/duet_snapshot.py [--date YYYY-MM-DD]
@@ -37,6 +39,7 @@ from __future__ import annotations
 import argparse
 import re
 import sys
+import unicodedata
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -66,27 +69,45 @@ WAITING_RE = re.compile(
 )
 LOOP_CLOSED_RE = re.compile(r"\bloop closed\b", re.IGNORECASE)
 
+# Every currency sign Unicode knows (category Sc), not a hand list of four (review 662/663).
+_CURRENCY = "".join(chr(c) for c in range(0x110000)
+                    if unicodedata.category(chr(c)) == "Sc")
+_CUR = "[" + re.escape(_CURRENCY) + "]"
+_ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
+
 _SCRUB = [
     re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+"),                       # email
-    re.compile(r"https?://[^\s)]+"),                                    # url
-    re.compile(r"\b[\w-]+(?:\.[\w-]+)*\.(?:com|ai|io|co|org|net|dev|app|so)\b(?:/\S*)?",
-               re.IGNORECASE),                                          # bare domain
+    re.compile(r"\b[a-zA-Z][\w+.-]*://[^\s)]+"),                        # url, any scheme
+    re.compile(r"\b[\w-]+(?:\.[\w-]+)+/[^\s)]*"),                       # domain with a path
+    re.compile(r"\b[\w-]+(?:\.[\w-]+)*\.(?:com|ai|io|co|org|net|dev|app|so|us|me|ly|gg|tv|fm"
+               r"|xyz|info|biz|uk|ca|de|fr|eu)\b", re.IGNORECASE),     # bare domain
     re.compile(r"~/\S*|\b(?:output|data|tools|coaching|framework|memory|docs|tests)/\S*"),
     re.compile(r"\b[\w./-]+\.(?:md|py|json|pdf|txt|sh|ya?ml|docx|csv)\b"),  # file / path
-    re.compile(r"\+?\(?\d{3}\)?[-. ]\d{3}[-. ]\d{4}\b"),                # phone
-    re.compile(r"\$\s?\d[\d,.]*\s?[kKmM]?(?:\s?-\s?\$?\d[\d,.]*\s?[kKmM]?)?\b|\$"),  # money
-    re.compile(r"\b(?:USD|EUR|GBP|CAD)\s?\d[\d,.]*\s?[kKmM]?\b"
-               r"|\b\d[\d,.]*\s?[kKmM]?\s?(?:USD|EUR|GBP|CAD)\b"),         # "150,000 USD", before "95K"
-    re.compile(r"\b\d{2,3}(?:\.\d)?[kK]\b"),                            # "95K" comp shorthand
-    re.compile(r"[€£¥]\s?\d[\d,.]*\s?[kKmM]?\b|[€£¥]"),                 # other currency signs
-    re.compile(r"\b\d{1,3}(?:,\d{3})+(?:\.\d+)?\b"),                    # "150,000" grouped figure
+    re.compile(r"\b[A-Za-z]:\\\S*|\\\\\S+"),                             # Windows / UNC path
     re.compile(r"(?<![\w/])/[\w.-]+(?:/[\w.-]*)+"),                      # absolute path, 2+ segments
+    re.compile(_CUR + r"\s?\d[\d,.']*\s?[kKmM]?(?:\s?-\s?" + _CUR
+               + r"?\d[\d,.']*\s?[kKmM]?)?\b|" + _CUR),                 # any currency sign, or a range
+    re.compile(r"\b[A-Z]{3}\s?(?:\d{1,3}(?:[,.']\d{3})+|\d{4,}(?![-/]\d)|\d+(?:\.\d+)?\s?[kKmM])\b"
+               r"|\b(?:\d{1,3}(?:[,.']\d{3})+|\d{4,}|\d+(?:\.\d+)?\s?[kKmM])\s?[A-Z]{3}\b"),
+                                                                        # "CHF 95000", "150,000 USD"
+    re.compile(r"\b\d{2,3}(?:\.\d)?[kK]\b"),                            # "95K" comp shorthand
+    re.compile(r"\b\d{1,3}(?:,\d{3})+(?:\.\d+)?\b"),                    # "150,000" grouped figure
+    re.compile(r"\b\d{5,}\b"),                                          # long figure or id
 ]
+# Any phone shape: 9+ digits joined by spaces, dots, dashes or brackets, optional +.
+_PHONE = re.compile(r"\+?\(?\d[\d\s().-]{6,}\d")
+
+
+def _drop_phone(m: re.Match) -> str:
+    t = m.group(0)
+    keep = bool(_ISO_DATE.search(t)) or sum(ch.isdigit() for ch in t) < 9
+    return t if keep else ""
 
 
 def sanitize(text: str, limit: int = MAX_ACTION_CHARS) -> str:
     """Strip private tokens, replace dashes, collapse whitespace, truncate on a word."""
     s = (text or "").replace("—", "-").replace("–", "-")
+    s = _PHONE.sub(_drop_phone, s)
     for rx in _SCRUB:
         s = rx.sub("", s)
     s = re.sub(r"[\s,;-]+\)", ")", s)
@@ -295,10 +316,12 @@ def build_snapshot(repo_root: Path, today: date) -> str:
     todos = classify_todos(active, today, contacts)
     # parse_upcoming_scheduled gates only the Stage column on terminal stages, so a
     # closed row's dated Next-Action would still come back; keep open rows only (444.F1).
+    # The row's own stage decides, so a closed duplicate of a live key stays out (662.F2).
     open_rows = {(e["company"], e["role"]) for e in in_process + on_radar}
     upcoming = [u for u in parse_upcoming_scheduled(pipeline_content, today,
                                                     window_days=DUE_AHEAD_DAYS)
-                if (u["company"], u["role"]) in open_rows]
+                if (u["company"], u["role"]) in open_rows
+                and not is_terminal_stage(u["stage"])]
     return render(today, in_process, on_radar, todos, upcoming)
 
 
