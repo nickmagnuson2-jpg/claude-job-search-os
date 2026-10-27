@@ -287,6 +287,12 @@ def test_no_emails_money_phones_urls_paths_or_em_dashes(snap):
     ("file C:\\Users\\casey\\My Docs\\plan now", "file now"),
     ("open budget.xlsx and deck.pptx now", "open and now"),
     ("see photo.JPG ok", "see ok"),
+    ("offer 950€ base", "offer base"),
+    ("offer 120 000 € base", "offer base"),
+    ("offer 95k€ base", "offer base"),
+    ("ref urn:isbn:0451450523 ok", "ref ok"),
+    ("img data:image/png;base64,AAAA ok", "img ok"),
+    ("call tel:+14155550134 ok", "call ok"),
     ("call Thu 3/12 w/ Casey", "call Thu 3/12 w/ Casey"),
     ("and/or later", "and/or later"),
 ])

@@ -25,11 +25,12 @@ Reused, not copied (one source of truth each):
                                              and Last Interaction (the "since" date)
 
 Privacy: sanitize() strips, from every free-text cell: email addresses; phone numbers of
-any country (9+ digits, ISO dates kept); money (any Unicode currency sign; a common ISO
-4217 code beside any amount, upper case or the seven commonest in lower case; any other
-three capitals only beside a figure of four or more digits, so "PST 2pm" stays;
-K-shorthand like "9K" or "1.5K"; comma-grouped or 5+ digit figures); URLs of any scheme
-and domains with a path; and file paths (a known repo directory, a document, image,
+any country (9+ digits, ISO dates kept); money (any Unicode currency sign, with the
+amount on either side; a common ISO 4217 code beside any amount, upper case or the seven
+commonest in lower case; any other three capitals only beside a figure of four or more
+digits, so "PST 2pm" stays; K-shorthand like "9K" or "1.5K"; comma-grouped or 5+ digit
+figures); URLs of any scheme with "://" or a mailto, tel, sms, data, urn, geo or magnet
+URI, and domains with a path; and file paths (a known repo directory, a document, image,
 media or archive extension, three or more segments, Unix absolute with two or more
 segments or a bare system root like /tmp, Windows, UNC; an absolute path's inner
 segments may hold spaces, "My Drive/notes", but its last segment ends at the first
@@ -103,6 +104,7 @@ _SCRUB = [
     re.compile(r"(?<![\w/])/(?:etc|tmp|var|usr|opt|home|Users|private|Volumes|bin|sbin|dev"
                r"|mnt|root|srv|Library|Applications|System)\b/?"),
     re.compile(r"\b[\w.-]+(?:/[\w.-]+){2,}/?"),                          # relative path, 3+ segments
+    re.compile(r"\b\d[\d,.']*(?: \d{3})*\s?[kKmM]?\s?" + _CUR),          # amount, sign after: 950€
     re.compile(_CUR + r"\s?\d[\d,.']*\s?[kKmM]?(?:\s?-\s?" + _CUR
                + r"?\d[\d,.']*\s?[kKmM]?)?\b|" + _CUR),                 # any currency sign, or a range
     re.compile(r"\b(?:" + _CODES + r")\s?\d[\d,.']*\s?[kKmM]?\b"
@@ -117,6 +119,8 @@ _SCRUB = [
     re.compile(r"\b\d{1,3}(?:,\d{3})+(?:\.\d+)?\b"),                    # "150,000" grouped figure
     re.compile(r"\b\d{5,}\b"),                                          # long figure or id
 ]
+# A URI without "//" goes first, before the phone pass can empty "tel:+1415...".
+_URI = re.compile(r"\b(?:mailto|tel|sms|data|urn|geo|magnet):[^\s)]+", re.IGNORECASE)
 # Any phone shape: 9+ digits joined by spaces, dots, dashes or brackets, optional +.
 _PHONE = re.compile(r"\+?\(?\d[\d\s().-]{6,}\d")
 
@@ -135,7 +139,7 @@ def _strip_phones(s: str) -> str:
 def sanitize(text: str, limit: int = MAX_ACTION_CHARS) -> str:
     """Strip private tokens, replace dashes, collapse whitespace, truncate on a word."""
     s = (text or "").replace("—", "-").replace("–", "-")
-    s = _strip_phones(s)
+    s = _strip_phones(_URI.sub("", s))
     for rx in _SCRUB:
         s = rx.sub("", s)
     s = re.sub(r"[\s,;-]+\)", ")", s)
