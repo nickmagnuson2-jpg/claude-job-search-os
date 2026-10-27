@@ -25,6 +25,11 @@ Usage:
       --source-dir output/<slug>/research
   --dry-run prints the prompt, each model's evidence scope and the planned commands
   without dispatching.
+  --gate output/<slug>/BUILD-LOG.md reads Phase 0 `reader:` into --reader, `value_item:` into
+  --purpose and the log's sibling sources/ folder into --source-dir, refuses (exit 2) a log
+  whose reader or value_item is blank, and after a real run appends the report paths and
+  the last Entry id to the log's Ship block. An explicit flag wins over the log's value.
+  The log is parsed by tools/build_check.parse_log, the one parser for the template.
 
 EVIDENCE SCOPE (added 2026-10-12)
 ---------------------------------
@@ -56,6 +61,8 @@ from tools.slug import slugify as _slugify  # noqa: E402
 # Imported, not copied: the denied trees and the findings parser are the facts the scope
 # block reports, and a second copy here could disagree with the sandbox that enforces them.
 from tools import codex_verify  # noqa: E402
+from tools import build_check  # noqa: E402
+from tools.md_table import find_section, write_atomic  # noqa: E402
 
 DEFAULT_MODELS = ("codex", "fable", "grok")
 TEXT_ONLY_MODELS = {"grok"}
@@ -399,11 +406,48 @@ def run_one(argv: list[str], repo_root: Path) -> dict:
             "report": data.get("report"), "stderr": proc.stderr[-400:]}
 
 
+def gate_values(log_path: Path, repo: Path) -> dict:
+    """reader, purpose and source_dir from a BUILD-LOG's Phase 0. Raises ValueError when blank."""
+    log = build_check.read_log(log_path)
+    f = log["fields"]
+    blank = [k for k in ("reader", "value_item") if build_check.is_blank(f.get(k))]
+    if blank:
+        raise ValueError(f"{log_path}: Phase 0 {' and '.join(blank)} blank; fill it before review")
+    sources = Path(log_path).resolve().parent / "sources"
+    try:
+        source_dir = sources.relative_to(repo).as_posix() if sources.is_dir() else ""
+    except ValueError:          # a log outside the repo has no repo-relative sources
+        source_dir = ""
+    entry = log["entries"][-1] if log["entries"] else None
+    return {"reader": f["reader"], "purpose": f["value_item"], "source_dir": source_dir,
+            "entry": f"{entry['date']} {entry['time']}".strip() if entry else "none"}
+
+
+def record_in_ship(log_path: Path, reports, entry: str, today: str) -> str:
+    """Append one `reader_review:` line at the end of the log's Ship block (made if absent)."""
+    lines = Path(log_path).read_text(encoding="utf-8").splitlines()
+    line = (f"reader_review: {', '.join(reports) or 'no report written'}   "
+            f"reviewed_entry: {entry}   date: {today}")
+    start, end = find_section(lines, r"^## Ship\b")
+    if start == -1:
+        lines += ["", "## Ship", line]
+    else:
+        at = end
+        while at > start + 1 and not lines[at - 1].strip():
+            at -= 1
+        lines.insert(at, line)
+    write_atomic(Path(log_path), "\n".join(lines) + "\n")
+    return line
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("document", help="HTML or Markdown file the reader will see")
-    ap.add_argument("--reader", required=True, help="who reads it: role, company, situation")
-    ap.add_argument("--purpose", required=True, help="what the reader needs from it")
+    ap.add_argument("--reader", default="", help="who reads it: role, company, situation")
+    ap.add_argument("--purpose", default="", help="what the reader needs from it")
+    ap.add_argument("--gate", default="", metavar="BUILD_LOG",
+                    help="output/<slug>/BUILD-LOG.md: Phase 0 supplies --reader, --purpose and"
+                         " --source-dir; a blank reader or value_item refuses the run")
     ap.add_argument("--protect", default="",
                     help="what must not leak (e.g. 'internal figures from past employers'); "
                          "omitted -> Q3 is skipped and the report says so")
@@ -419,6 +463,24 @@ def main(argv=None) -> int:
     doc = Path(a.document).expanduser()
     if not doc.exists():
         print(f"reader_review: no such document: {doc}", file=sys.stderr)
+        return 2
+    gate = None
+    if a.gate:
+        log_path = Path(a.gate) if Path(a.gate).is_absolute() else repo / a.gate
+        if not log_path.is_file():
+            print(f"reader_review: no such BUILD-LOG: {log_path}", file=sys.stderr)
+            return 2
+        try:
+            gate = gate_values(log_path, repo)
+        except ValueError as e:
+            print(f"reader_review: refused: {e}", file=sys.stderr)
+            return 2
+        a.reader = a.reader or gate["reader"]
+        a.purpose = a.purpose or gate["purpose"]
+        a.source_dir = a.source_dir or gate["source_dir"]
+    if not a.reader.strip() or not a.purpose.strip():
+        print("reader_review: --reader and --purpose are required (or --gate a filled BUILD-LOG)",
+              file=sys.stderr)
         return 2
     models = [m.strip() for m in a.models.split(",") if m.strip()]
     slug = a.slug or _slugify(doc.stem)
@@ -447,6 +509,9 @@ def main(argv=None) -> int:
     for m, r in results.items():
         # None = no report on disk to annotate, which is different from "nothing labeled".
         r["outside_scope"] = annotate_report(repo / report_for(m), scopes[m], repo, source_paths)
+    if gate:
+        written = [report_for(m) for m in models if (repo / report_for(m)).is_file()]
+        record_in_ship(log_path, written, gate["entry"], dt.date.today().isoformat())
     print(json.dumps({"inputs": rel(out_dir), "images": len(images), "results": results}, indent=2))
     return 0 if all(r["rc"] == 0 for r in results.values()) else 1
 

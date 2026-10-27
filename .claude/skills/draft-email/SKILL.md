@@ -403,9 +403,12 @@ If any check fails, revise before presenting.
 TO:
 SUBJECT: [subject line]
 ATTACH: [optional absolute path — omit line entirely if no attachment]
+ARTIFACT: [none (<reason>) | output/<slug>/BUILD-LOG.md — required when the draft has an ATTACH: line or a link other than the bio links; omit otherwise]
 BODY:
 [full message text]
 ```
+
+`ARTIFACT:` is read by `tools/check_draft_artifact.py`, which blocks `open_draft.py` on a draft carrying an attachment or a link other than the bio links without it, and is never sent. Write `ARTIFACT: none (<reason>)` for a plain link such as a job posting or a calendar link, and `ARTIFACT: output/<slug>/BUILD-LOG.md` for a page, demo or file built for this reader (`framework/artifact-workflow.md`). A rendered CV passes without it.
 
 `ATTACH:` is optional. Include it only when the email genuinely needs a file (CV, cover letter PDF, portfolio doc) and the recipient asked for it or it is the main artifact of the message. Default behavior remains: do NOT attach a resume on cold outreach unless the recipient asked. When included, `open_draft.py` copies the file to the macOS clipboard so Cmd+V in the Gmail compose window attaches it.
 
@@ -483,11 +486,15 @@ Archive file format:
 
 **Append to `data/outreach-log.md`:**
 
-Read `data/outreach-log.md` (create with the standard header if it doesn't exist). Append a new row to the table:
+Write the row with the one row writer (never by hand: it validates the status and the Artifact cell, inserts in date order, and writes atomically):
 
+```bash
+PYTHONIOENCODING=utf-8 python3 tools/outreach_status.py --append --date [YYYY-MM-DD] --skill draft-email \
+  --channel email --recipient "[Name]" --company "[Company or —]" \
+  --summary "[subject line or 1-line summary]" --status Drafted --artifact [none | <type>:<ref>]
 ```
-| [YYYY-MM-DD] | draft-email | email | [Name] | [Company or "—"] | [subject line or 1-line summary] | Drafted |
-```
+
+`--artifact` is the Brief record line's `artifact` key: `none` when nothing rode along, otherwise a type (`cv`, `page`, `demo`, `deck`, `takehome`, `note`, ...; `tools/artifact_vocab.py`) and a ref, e.g. `cv:output/acme/102626-magnuson.pdf` or `page:output/acme/BUILD-LOG.md`. The writer prints `pointer: data/outreach-log.md:<line>`; for a build, that pointer is the BUILD-LOG's `sent:` line (`framework/artifact-workflow.md` step 7).
 
 Confirm:
 ```

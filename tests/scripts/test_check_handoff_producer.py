@@ -409,13 +409,39 @@ def site(tmp_path: Path) -> Path:
     return d
 
 
-def test_a_source_folder_lands_its_files_both_ways(site):
-    """`rsync -a site/ out/` lands out/page.html; `cp -r site out/` lands out/site/page.html.
-    Both shapes are reported for any folder source (codex round 10)."""
+def test_rsync_with_a_trailing_slash_lands_the_contents(site):
     got = hp.copy_destinations(f"rsync -a {site}/ out/")
-    for path in ("out/page.html", "out/sub/app.js", "out/site/page.html",
-                 "out/site/sub/app.js"):
-        assert path in got
+    assert "out/page.html" in got and "out/sub/app.js" in got
+    assert "out/site/page.html" not in got
+
+
+def test_rsync_without_a_slash_lands_the_folder(site):
+    got = hp.copy_destinations(f"rsync -a {site} out/")
+    assert "out/site/page.html" in got and "out/page.html" not in got
+
+
+def test_cp_into_an_existing_folder_lands_under_the_source_name(site, tmp_path):
+    """grok round 11, 663.F1: `cp -r sources output/acme/` lands acme/sources/jd.html only,
+    so acme/jd.html must not be judged (it would block a copy whose real landing is exempt)."""
+    dest = tmp_path / "dest"
+    dest.mkdir()
+    got = hp.copy_destinations(f"cp -r {site} {dest}/")
+    assert f"{dest}/site/page.html" in got and f"{dest}/page.html" not in got
+
+
+def test_cp_to_a_new_folder_becomes_that_folder(site, tmp_path):
+    """When the destination does not exist, cp -r makes it: the contents land straight in."""
+    dest = tmp_path / "newdir"
+    got = hp.copy_destinations(f"cp -r {site} {dest}")
+    assert f"{dest}/page.html" in got and f"{dest}/site/page.html" not in got
+
+
+def test_cp_with_a_trailing_slash_source_keeps_both_placements(site, tmp_path):
+    """BSD cp copies the contents and GNU cp copies the folder, so both are judged."""
+    dest = tmp_path / "dest"
+    dest.mkdir()
+    got = hp.copy_destinations(f"cp -r {site}/ {dest}/")
+    assert f"{dest}/page.html" in got and f"{dest}/site/page.html" in got
 
 
 def test_a_folder_source_makes_a_dotted_new_destination_a_folder(site):
@@ -501,3 +527,12 @@ def test_a_dotted_name_that_is_not_a_directory_stays_a_file_destination(tmp_path
 ])
 def test_copy_destinations_returns_landed_paths(command, landed):
     assert hp.copy_destinations(command) == landed
+
+
+def test_mv_with_a_trailing_slash_source_into_an_existing_folder_lands_under_its_name(site, tmp_path):
+    """codex, 2026-10-26: the BSD/GNU both-placements rule is cp's alone."""
+    dest = tmp_path / "dest"
+    dest.mkdir()
+    got = hp.copy_destinations(f"mv {site}/ {dest}/")
+    assert f"{dest}/site/page.html" in got and f"{dest}/page.html" not in got
+

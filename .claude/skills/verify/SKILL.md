@@ -60,6 +60,11 @@ clear the gate (`cross_model_gate.py` counts model families), so Fable alone doe
 
 ## Reader review: a finished document someone will read
 
+For anything built for a reader, read `output/<slug>/BUILD-LOG.md` Phase 0 first and pass
+`--gate <path>`: it fills `--reader` and `--purpose` from the log and refuses a log whose
+`reader` or `value_item` is blank. If no log exists, that is the first finding
+(`framework/artifact-workflow.md` step 6).
+
 For a page, brief, prep pack or take-home written FOR A NAMED READER, do not hand-build the
 prompt. `tools/reader_review.py` renders the document (HTML: the rendered text with hidden and
 collapsed content included, plus light-mode screenshots at the page's measured height; Markdown:

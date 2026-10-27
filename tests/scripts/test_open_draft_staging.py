@@ -348,3 +348,13 @@ def test_a_missing_file_whose_path_mentions_finder_is_not_read_as_a_finder_failu
     assert "Open that folder yourself" not in out
     assert "file not found, not staged" in out
 
+
+def test_an_artifact_header_never_reaches_the_subject_or_body(tmp_path):
+    """The ARTIFACT: line is for tools/check_draft_artifact.py only; Gmail never sees it."""
+    draft = tmp_path / "draft.txt"
+    draft.write_text("TO: casey@example.com\nSUBJECT: Quick note\n"
+                     "ARTIFACT: none (a job posting link)\nBODY:\nHi Casey,\n", encoding="utf-8")
+    to, cc, subject, attachments, body = od.parse_draft(str(draft))
+    assert subject == "Quick note" and attachments == []
+    assert "ARTIFACT" not in body and body == "Hi Casey,"
+

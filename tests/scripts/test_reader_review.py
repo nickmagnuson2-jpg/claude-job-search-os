@@ -524,3 +524,181 @@ def test_dry_run_separates_each_scope_block_with_a_blank_line(monkeypatch, tmp_p
              "--slug", "demo", "--models", "codex,grok", "--dry-run"])
     out = capsys.readouterr().out
     assert out.count("\n\n" + rr.SCOPE_BEGIN) == 2
+
+
+# --- --gate <BUILD-LOG> ---------------------------------------------------------------------
+
+import datetime as _datetime
+
+GATE_LOG = """# Build log: ops page for Acme
+
+Variant: V3   adapted_from: none
+
+## Phase 0
+reader: Casey Doe, VP Operations at Acme; theirs to act on: yes   channel: email
+value_item: A one-page template for the monthly review.   proof_purpose: rigor
+
+## Entries
+### 2026-03-01 09:00 | Step 1: brief | duration 0:30 | who: claude
+### 2026-03-02 14:15 | Step 4: draft | duration 1:00 | who: nick
+
+## Ship
+recipient_equals_reader: yes
+
+## After send
+opened: unknown
+"""
+
+GATE_TEMPLATE = """# Build log: <artifact>
+
+Variant: V<n> | new   adapted_from: <x>
+
+## Phase 0
+reader: <name, role, owns; theirs to act on: yes/no>   channel: <reader-named>
+value_item: <one sentence the reader can use even if they never reply>   proof_purpose: <x>
+
+## Ship
+sent: data/outreach-log.md:<line>
+"""
+
+GATE_OLD = """# Build log: an earlier playbook
+
+## Entries
+### 2026-02-01 12:16 | Step 0: read the framework
+"""
+
+GATE_ENTRIES = ("### 2026-03-01 09:00 | Step 1: brief | duration 0:30 | who: claude\n"
+                "### 2026-03-02 14:15 | Step 4: draft | duration 1:00 | who: nick\n")
+
+
+def _today():
+    return _datetime.date.today().isoformat()
+
+
+def _gate_repo(tmp_path, monkeypatch, log=GATE_LOG, sources=True):
+    repo, doc = _repo_with_doc(tmp_path, monkeypatch)
+    slug = repo / "output" / "acme"
+    slug.mkdir(parents=True)
+    if sources:
+        (slug / "sources").mkdir()
+        (slug / "sources" / "ask.md").write_text("the ask", encoding="utf-8")
+    (slug / "BUILD-LOG.md").write_text(log, encoding="utf-8")
+    return repo, doc, slug / "BUILD-LOG.md"
+
+
+def _dispatch(monkeypatch, write_report=True):
+    seen = []
+
+    def fake(argv, r):
+        seen.append(argv)
+        if write_report:
+            rep = Path(r) / argv[argv.index("--report") + 1]
+            rep.parent.mkdir(parents=True, exist_ok=True)
+            rep.write_text(REPORT, encoding="utf-8")
+        return {"rc": 0, "findings": 0, "report": "", "stderr": ""}
+
+    monkeypatch.setattr(rr, "run_one", fake)
+    return seen
+
+
+def test_gate_supplies_reader_purpose_and_source_dir(monkeypatch, tmp_path, capsys):
+    repo, doc, log = _gate_repo(tmp_path, monkeypatch)
+    seen = _dispatch(monkeypatch)
+    rc = rr.main([str(doc), "--gate", "output/acme/BUILD-LOG.md", "--repo-root", str(repo),
+                  "--models", "codex", "--slug", "demo"])
+    assert rc == 0
+    target = seen[0][seen[0].index("--target") + 1]
+    assert "THE READER: Casey Doe, VP Operations at Acme; theirs to act on: yes." in target
+    assert "WHAT THE READER NEEDS FROM IT: A one-page template for the monthly review.." in target
+    assert "output/acme/sources" in target and "output/acme/sources/ask.md" in seen[0]
+
+
+def test_gate_writes_the_report_path_and_entry_into_the_ship_block(monkeypatch, tmp_path, capsys):
+    repo, doc, log = _gate_repo(tmp_path, monkeypatch)
+    _dispatch(monkeypatch)
+    rr.main([str(doc), "--gate", str(log), "--repo-root", str(repo), "--models", "codex,grok",
+             "--slug", "demo"])
+    lines = log.read_text(encoding="utf-8").splitlines()
+    ship = lines.index("## Ship")
+    line = lines[ship + 2]
+    assert line.startswith("reader_review: output/analysis/") and "-codex-demo-reader-review.md, " in line
+    assert "-grok-demo-reader-review.md" in line
+    assert "reviewed_entry: 2026-03-02 14:15" in line and f"date: {_today()}" in line
+    assert lines[ship + 1] == "recipient_equals_reader: yes" and lines[ship + 3] == ""
+    assert lines[ship + 4] == "## After send"
+
+
+def test_gate_records_when_no_report_was_written_and_adds_a_missing_ship_block(monkeypatch, tmp_path, capsys):
+    log_text = GATE_LOG.split("## Ship")[0].rstrip() + "\n"
+    repo, doc, log = _gate_repo(tmp_path, monkeypatch, log=log_text, sources=False)
+    seen = _dispatch(monkeypatch, write_report=False)
+    rr.main([str(doc), "--gate", str(log), "--repo-root", str(repo), "--models", "codex"])
+    text = log.read_text(encoding="utf-8")
+    assert text.endswith("\n\n## Ship\nreader_review: no report written   reviewed_entry: 2026-03-02 14:15"
+                         f"   date: {_today()}\n")
+    assert "No source files were supplied" in seen[0][seen[0].index("--target") + 1]
+
+
+def test_explicit_flags_win_over_the_gate(monkeypatch, tmp_path, capsys):
+    repo, doc, log = _gate_repo(tmp_path, monkeypatch)
+    seen = _dispatch(monkeypatch)
+    rr.main([str(doc), "--gate", str(log), "--repo-root", str(repo), "--models", "codex",
+             "--reader", "a CFO", "--purpose", "a budget", "--source-dir", "research"])
+    target = seen[0][seen[0].index("--target") + 1]
+    assert "THE READER: a CFO." in target and "NEEDS FROM IT: a budget." in target
+    assert "research/a.md" in seen[0] and "output/acme/sources/ask.md" not in seen[0]
+
+
+@pytest.mark.parametrize("log_text,blank", [
+    (GATE_TEMPLATE, "reader and value_item"),
+    (GATE_OLD, "reader and value_item"),
+    (GATE_LOG.replace("value_item: A one-page template for the monthly review.", "value_item: "),
+     "value_item"),
+    (GATE_LOG.replace("reader: Casey Doe, VP Operations at Acme; theirs to act on: yes", "reader: <x>"),
+     "reader"),
+])
+def test_gate_refuses_a_log_with_a_blank_reader_or_value_item(monkeypatch, tmp_path, capsys, log_text, blank):
+    repo, doc, log = _gate_repo(tmp_path, monkeypatch, log=log_text)
+    monkeypatch.setattr(rr, "run_one", lambda *a, **k: pytest.fail("refused gate dispatched"))
+    rc = rr.main([str(doc), "--gate", str(log), "--repo-root", str(repo),
+                  "--reader", "a CFO", "--purpose", "a budget"])
+    err = capsys.readouterr().err
+    assert rc == 2 and f"Phase 0 {blank} blank" in err and "refused" in err
+    assert log.read_text(encoding="utf-8") == log_text
+
+
+def test_gate_on_a_missing_log_exits_2(monkeypatch, tmp_path, capsys):
+    repo, doc = _repo_with_doc(tmp_path, monkeypatch)
+    assert rr.main([str(doc), "--gate", "output/none/BUILD-LOG.md", "--repo-root", str(repo)]) == 2
+    assert "no such BUILD-LOG" in capsys.readouterr().err
+
+
+def test_without_gate_reader_and_purpose_are_required(monkeypatch, tmp_path, capsys):
+    repo, doc = _repo_with_doc(tmp_path, monkeypatch)
+    monkeypatch.setattr(rr, "run_one", lambda *a, **k: pytest.fail("dispatched without a reader"))
+    assert rr.main([str(doc), "--purpose", "p", "--repo-root", str(repo)]) == 2
+    assert "--reader and --purpose are required" in capsys.readouterr().err
+    assert rr.main([str(doc), "--reader", "r", "--purpose", "  ", "--repo-root", str(repo)]) == 2
+
+
+def test_a_dry_run_gate_does_not_write_the_log(monkeypatch, tmp_path, capsys):
+    repo, doc, log = _gate_repo(tmp_path, monkeypatch)
+    rc = rr.main([str(doc), "--gate", str(log), "--repo-root", str(repo), "--dry-run"])
+    assert rc == 0 and "THE READER: Casey Doe" in capsys.readouterr().out
+    assert log.read_text(encoding="utf-8") == GATE_LOG
+
+
+def test_record_in_ship_returns_the_line_it_wrote(tmp_path):
+    log = tmp_path / "BUILD-LOG.md"
+    log.write_text(GATE_LOG, encoding="utf-8")
+    line = rr.record_in_ship(log, ["r1.md", "r2.md"], "2026-03-02 14:15", "2026-03-04")
+    assert line == "reader_review: r1.md, r2.md   reviewed_entry: 2026-03-02 14:15   date: 2026-03-04"
+    assert line in log.read_text(encoding="utf-8").splitlines()
+
+
+def test_gate_values_from_a_log_outside_the_repo_has_no_source_dir(tmp_path):
+    out = tmp_path / "elsewhere"
+    (out / "sources").mkdir(parents=True)
+    (out / "BUILD-LOG.md").write_text(GATE_LOG.replace(GATE_ENTRIES, ""), encoding="utf-8")
+    g = rr.gate_values(out / "BUILD-LOG.md", tmp_path / "repo")
+    assert g["source_dir"] == "" and g["entry"] == "none" and g["reader"].startswith("Casey Doe")

@@ -88,6 +88,17 @@ NOT_HOOK_LIBRARIES = {
     "mutation_state": "mutation_check bookkeeping, not a decision library",
     "friction_surface": "friction-ledger surface/nature derivation shared with the "
                         "transcript scanners; decides what gets logged, never blocks",
+    "build_check": "BUILD-LOG parser and /standup report; its ask_state() is read by "
+                   "check_build_log_present and check_draft_artifact, but it is domain "
+                   "logic edited with the artifact workflow (2026-10-26)",
+    "sent_artifact_check": "Sent-mail scan; check_draft_artifact imports its URL, bio "
+                           "and CV rules so the two agree; domain logic (2026-10-26)",
+    "gmail_fetch": "Gmail OAuth and fetch tooling, imported via sent_artifact_check",
+    "gmail_attachments": "Gmail MIME part walker, imported via sent_artifact_check",
+    "slug": "slug helper, imported via the Gmail tooling",
+    "vault_paths": "vault path helper, imported via the Gmail tooling",
+    "count_report": "reach-line formatter for counted output, imported via build_check "
+                    "and sent_artifact_check; formatting, never a decision",
 }
 
 # Guard infrastructure. Repo-relative, matched against the tail of the path so an

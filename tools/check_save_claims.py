@@ -104,6 +104,15 @@ LIBRARY_NAME = re.compile(
 
 URL_RE = re.compile(r"\b(?:https?|ftp)://\S+|\bwww\.\S+", re.I)
 
+# An inline-code span holding whitespace is a quoted COMMAND (`cp a.md out/`), and a file
+# named inside it is what the command would touch, not a file the message says was written.
+# Two false blocks in one session (2026-10-26, friction ledger): `cp x-handoff.md
+# output/analysis/` and a copy-folder example were read as claimed writes. A bare
+# `notes.md` span has no whitespace and still counts.
+# Spans are found in order and then filtered: matching only spans WITH whitespace would
+# pair a closing backtick with the next opening one ("`a.md` and `b.md`").
+CODE_SPAN = re.compile(r"`[^`\n]+`")
+
 
 def strip_code_blocks(text: str) -> str:
     """Remove fenced code blocks and URLs.
@@ -115,6 +124,14 @@ def strip_code_blocks(text: str) -> str:
     text = re.sub(r"```.*?```", " ", text, flags=re.S)
     return URL_RE.sub(" ", text)
 
+
+
+def _is_command(span: str) -> bool:
+    """A code span reads as a command when its first word is a bare program name (no `/`,
+    no `.`) followed by more words. `cp a.md out/` is one; `output/acme/my brief.md`, a
+    real file whose name has a space, is not (codex review, 2026-10-26)."""
+    words = span.strip("`").split()
+    return len(words) >= 2 and re.fullmatch(r"[A-Za-z][\w-]*", words[0]) is not None
 
 
 def extract_claimed_paths(text: str):
@@ -134,8 +151,11 @@ def extract_claimed_paths(text: str):
     # nowhere on disk, while the real file had been written correctly.
     # Fired 2026-09-02 (friction ledger). Same class as the mid-word bug documented at
     # CLAIM_RE, which the \b fix only half-solved.
-    path_tokens = list(PATH_TOKEN.finditer(text))
-    path_spans = [pm.span() for pm in path_tokens]
+    command_spans = [cm.span() for cm in CODE_SPAN.finditer(text) if _is_command(cm.group(0))]
+    all_tokens = list(PATH_TOKEN.finditer(text))
+    path_spans = [pm.span() for pm in all_tokens]
+    path_tokens = [pm for pm in all_tokens
+                   if not any(s <= pm.start() and pm.end() <= e for s, e in command_spans)]
     for m in CLAIM_RE.finditer(text):
         if any(s <= m.start() and m.end() <= e for s, e in path_spans):
             continue
@@ -333,14 +353,14 @@ def main() -> int:
         return 0
     payload = p.data
 
-    # Recursion guard — never re-enter our own stop chain.
-    if payload.get("stop_hook_active"):
+    # Recursion guard — never re-enter our own stop chain. Read through the accessor, which
+    # raises on an unread payload, so the `.ok` check above is observable (HOOK_AUTHORING.md);
+    # `.data` is silently empty there and made that check an equivalent mutant.
+    if p.stop_hook_active:
         return 0
 
     transcript = payload.get("transcript_path") or ""
-    text = last_assistant_text(transcript)
-    if not text:
-        return 0
+    text = last_assistant_text(transcript)  # "" when there is nothing to read: no claims
 
     root = project_root()
     missing = [t for t in extract_claimed_paths(text) if not exists_anywhere(t, root)]

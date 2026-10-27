@@ -280,7 +280,8 @@ def copy_destinations(command: str) -> list[str]:
     out = []
     for m in COPY_FAMILY.finditer(mask_heredoc_bodies(command)):
         words = _shell_words(REDIRECTION.sub("", m.group(2)))
-        takes_arg = OPTION_ARGS[m.group(1)]
+        command = m.group(1)
+        takes_arg = OPTION_ARGS[command]
         has_target_dir = m.group(1) in TARGET_DIR_COMMANDS
         target_dir = None
         toks = []
@@ -325,14 +326,28 @@ def copy_destinations(command: str) -> list[str]:
             if not name:
                 continue
             out.append(base + "/" + name)
-            # A source FOLDER lands its files (codex round 10). Whether they land under the
-            # folder's name or straight into the destination depends on the command, the
-            # trailing slash and whether the destination exists (rsync `src/` vs `src`, BSD
-            # vs GNU cp), so both are reported: an extra path to judge is the safe direction.
-            # A source that is a file, or does not exist, walks to nothing.
+            # A source FOLDER lands its files (codex round 10). Where depends on the command:
+            #   rsync `src/` copies the contents into dest; rsync `src` copies the folder.
+            #   cp/mv/install `src` copies the folder into dest when dest already exists,
+            #   and becomes dest when it does not.
+            #   cp `src/` differs between BSD (contents) and GNU (the folder), so both;
+            #   mv and install with `src/` move the folder itself, as without the slash.
+            # Reporting a path the files cannot land on blocks correct work (grok round 11,
+            # 663.F1); missing one they do land on is a silent allow, so the one ambiguous
+            # case keeps both. A source that is a file, or does not exist, walks to nothing.
+            slash = src.endswith("/")
+            if command == "rsync":
+                under_name, into_dest = not slash, slash
+            elif slash and command == "cp":
+                under_name = into_dest = True
+            else:
+                under_name = os.path.isdir(dest)
+                into_dest = not under_name
             for rel in _files_under(src) or []:
-                out.append(f"{base}/{name}/{rel}")
-                out.append(f"{base}/{rel}")
+                if under_name:
+                    out.append(f"{base}/{name}/{rel}")
+                if into_dest:
+                    out.append(f"{base}/{rel}")
     return out
 
 

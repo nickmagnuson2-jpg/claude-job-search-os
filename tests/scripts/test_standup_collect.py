@@ -19,7 +19,7 @@ import standup_collect as sc  # noqa: E402
 
 def test_every_command_is_an_argv_list_naming_a_script_that_exists():
     cmds = sc.commands("2026-01-02")
-    assert len(cmds) == 10
+    assert len(cmds) == 12
     for name, argv in cmds.items():
         assert isinstance(argv, list) and all(isinstance(a, str) and " " not in a for a in argv), name
         assert (REPO_ROOT / argv[0]).is_file(), f"{name}: {argv[0]} does not exist"
@@ -31,6 +31,11 @@ def test_the_target_date_reaches_every_dated_script():
                  "todos_summary", "conversations_metric", "source_check"):
         argv = cmds[name]
         assert argv[argv.index("--target-date") + 1] == "2026-01-02", name
+
+
+def test_build_check_runs_over_the_repo_as_json():
+    assert sc.commands("2026-01-02")["build_check"] == [
+        "tools/build_check.py", "--repo-root", ".", "--json"]
 
 
 def _fake_repo(tmp_path, scripts: dict) -> Path:
@@ -83,7 +88,7 @@ def test_the_cli_exits_1_when_any_script_failed(tmp_path):
                         "--repo-root", str(root), "--target-date", "2026-01-02"],
                        capture_output=True, text=True, timeout=120)
     out = json.loads(r.stdout)
-    assert r.returncode == 1 and len(out["failed"]) == 10, "a repo with no scripts fails all ten"
+    assert r.returncode == 1 and len(out["failed"]) == 12, "a repo with no scripts fails all twelve"
 
 
 def test_a_script_that_cannot_start_is_reported_not_raised(tmp_path, monkeypatch):

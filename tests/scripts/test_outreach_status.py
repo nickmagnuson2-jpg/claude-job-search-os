@@ -590,3 +590,387 @@ def test_validate_local_with_a_case_runs_it_instead_of_reporting_no_cases(tmp_pa
     code, payload = _validate_local_in(tmp_path)
     assert payload["status"] == "FAIL" and code == 1, payload
     assert len(payload["results"]) == 1 and payload["results"][0]["pass"] is False
+
+
+# --- The eighth column, Artifact (2026-10-26) ---------------------------------
+
+WIDE_HEADER = """\
+# Outreach Log
+
+> Manual edits are fine. Status values: `Drafted` | `Sent` | `Replied` | `No reply` | `Bounced` | `Delivered` | `Delivery unknown`
+
+| Date | Skill | Channel | Recipient | Company | Subject / Summary | Status | Artifact |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+"""
+
+NARROW_ROWS = [
+    "| 2026-10-01 | cold-outreach | email | Casey Doe | Acme | Cold intro | Sent |",
+    "| 2026-10-03 | follow-up | email | Casey Doe | Acme | Re: intro, CV attached (100326-placeholder.pdf) | Replied |",
+    "| 2026-10-04 | cold-outreach | linkedin | Jane Doe | Northwind Inc | DM | No reply |",
+    "| 2026-10-05 | draft-email | email | John Smith | Northwind Inc | Draft only | Drafted |",
+]
+
+
+def widen(row: str, artifact: str = "") -> str:
+    return row + f" {artifact} |" if artifact else row + " |"
+
+
+def make_wide_log(tmp_path: Path, rows: list[str], name: str = "wide.md") -> Path:
+    return write_fixture(tmp_path, name, WIDE_HEADER + "".join(r.rstrip() + "\n" for r in rows))
+
+
+def _parse(text: str):
+    return _writer().parse_text(text)
+
+
+def test_eight_column_log_parses_and_reads_the_artifact_cell():
+    rows = _parse(WIDE_HEADER + widen(NARROW_ROWS[0], "page:acme.example.com") + "\n"
+                  + widen(NARROW_ROWS[1]) + "\n" + widen(NARROW_ROWS[2], "none") + "\n")
+    assert [r["artifact"] for r in rows] == ["page:acme.example.com", "", "none"]
+    assert [r["status"] for r in rows] == ["Sent", "Replied", "No reply"]
+    assert rows[0]["_line"] == 7
+
+
+def test_seven_column_log_reads_an_empty_artifact():
+    rows = _parse(HEADER + "".join(r + "\n" for r in NARROW_ROWS))
+    assert [r["artifact"] for r in rows] == ["", "", "", ""]
+    assert rows[-1]["status"] == "Drafted"
+
+
+def test_header_and_separator_are_skipped_before_the_artifact_cell_is_checked():
+    """`Artifact` and `---` are not tokens; validating them first raised on every parse."""
+    rows = _parse(WIDE_HEADER + widen(NARROW_ROWS[0]) + "\n")
+    assert len(rows) == 1
+
+
+@pytest.mark.parametrize("cell,needle", [
+    ("banana:x", "unknown artifact type 'banana'"),
+    ("page", "needs a ref"),
+])
+def test_bad_artifact_cell_is_a_log_error_naming_the_line(cell, needle):
+    os_ = _writer()
+    with pytest.raises(os_.LogError, match=r"bad Artifact cell at line 7: .*" + re.escape(needle)):
+        os_.parse_text(WIDE_HEADER + widen(NARROW_ROWS[0], cell) + "\n")
+
+
+@pytest.mark.parametrize("cells", [6, 9])
+def test_any_other_width_is_malformed(cells):
+    row = "| " + " | ".join(["2026-10-01"] + ["x"] * (cells - 1)) + " |"
+    os_ = _writer()
+    with pytest.raises(os_.LogError, match=f"{cells} columns, expected 7 or 8"):
+        os_.parse_text(row + "\n")
+
+
+def test_a_half_migrated_log_is_malformed():
+    """Header widened, one row not: fail loudly instead of a mix of recorded and not."""
+    os_ = _writer()
+    text = WIDE_HEADER + widen(NARROW_ROWS[0]) + "\n" + NARROW_ROWS[1] + "\n"
+    with pytest.raises(os_.LogError, match="line 8: 7 columns, the header has 8"):
+        os_.parse_text(text)
+
+
+def test_cli_query_reads_an_eight_column_log(tmp_path):
+    log = make_wide_log(tmp_path, [widen(r) for r in NARROW_ROWS])
+    code, out = query("--recipient", "Casey Doe", "--artifact", "cv", "--log", log)
+    assert code == 0 and out["delivered"] is True and out["sent"] is True
+
+
+def test_set_status_on_an_eight_column_log_writes_the_status_cell_not_the_artifact(tmp_path):
+    log = make_wide_log(tmp_path, [widen(NARROW_ROWS[0], "page:acme.example.com")])
+    code, out = query("--set-status", "--latest", "--recipient", "Casey Doe",
+                      "--status", "Replied", "--log", log)
+    assert code == 0 and out["before"] == "Sent"
+    assert log.read_text(encoding="utf-8").splitlines()[-1] == (
+        "| 2026-10-01 | cold-outreach | email | Casey Doe | Acme | Cold intro | Replied "
+        "| page:acme.example.com |")
+
+
+def test_seven_and_eight_column_logs_give_the_same_metric_counts(tmp_path):
+    """Parity: the migration adds a cell and must not move a single count."""
+    sys.path.insert(0, str(TOOLS))
+    import conversations_metric as cm
+    import outreach_metrics as om
+    from datetime import date
+    narrow = make_log(tmp_path, NARROW_ROWS, name="narrow.md")
+    wide = make_wide_log(tmp_path, [widen(r, "none") for r in NARROW_ROWS])
+    today = date(2026, 10, 6)
+    n, w = cm.count_outreach(narrow, today), cm.count_outreach(wide, today)
+    assert n["counts"] == w["counts"]
+    assert n["counts"]["7d"] == 3, n  # Drafted is not a send
+    n_rows = om.parse_rows(narrow.read_text(encoding="utf-8"))
+    w_rows = om.parse_rows(wide.read_text(encoding="utf-8"))
+    assert n_rows == w_rows and len(n_rows) == 4
+    os_ = _writer()
+    assert ([{k: r[k] for k in os_.COLUMNS} for r in os_.parse_log(narrow)]
+            == [{k: r[k] for k in os_.COLUMNS} for r in os_.parse_log(wide)])
+
+
+# --- --append, the one row writer ---------------------------------------------
+
+APPEND_ARGS = {
+    "--date": "2026-10-06", "--skill": "cold-outreach", "--channel": "email",
+    "--recipient": "Casey Doe", "--company": "Acme", "--summary": "Playbook page link",
+    "--status": "Sent", "--artifact": "page:acme-playbook.example.com",
+}
+
+
+def append(log, **overrides):
+    args = dict(APPEND_ARGS)
+    for key, value in overrides.items():
+        flag = "--" + key
+        if value is None:
+            args.pop(flag)
+        else:
+            args[flag] = value
+    flat = [x for kv in args.items() for x in kv]
+    return query("--append", *flat, "--log", log)
+
+
+def test_append_writes_one_row_at_the_end_and_prints_its_pointer(tmp_path):
+    log = make_wide_log(tmp_path, [widen(r) for r in NARROW_ROWS])
+    before = log.read_text(encoding="utf-8")
+    code, out = append(log)
+    assert code == 0 and out["ok"] is True
+    lines = log.read_text(encoding="utf-8").splitlines()
+    assert lines[-1] == ("| 2026-10-06 | cold-outreach | email | Casey Doe | Acme "
+                         "| Playbook page link | Sent | page:acme-playbook.example.com |")
+    assert out["line"] == len(lines) == 11
+    assert out["pointer"] == f"{log}:11"
+    assert out["row"]["artifact"] == "page:acme-playbook.example.com"
+    assert log.read_text(encoding="utf-8").startswith(before)
+    assert list(tmp_path.glob("*.tmp")) == []
+    rows = _writer().parse_log(log)
+    assert rows[-1]["_line"] == 11 and rows[-1]["recipient"] == "Casey Doe"
+
+
+def test_append_inserts_a_backdated_row_in_date_order(tmp_path):
+    log = make_wide_log(tmp_path, [widen(r) for r in NARROW_ROWS])
+    code, out = append(log, date="2026-10-03", recipient="Robin")
+    assert code == 0 and out["line"] == 9
+    lines = log.read_text(encoding="utf-8").splitlines()
+    assert lines[7].startswith("| 2026-10-03 | follow-up |"), "same day: after the earlier row"
+    assert lines[8].startswith("| 2026-10-03 | cold-outreach | email | Robin |")
+    assert lines[9].startswith("| 2026-10-04 |")
+
+
+def test_append_before_every_row_lands_under_the_separator(tmp_path):
+    log = make_wide_log(tmp_path, [widen(r) for r in NARROW_ROWS])
+    code, out = append(log, date="2026-01-01")
+    assert code == 0 and out["line"] == 7
+    lines = log.read_text(encoding="utf-8").splitlines()
+    assert lines[5] == "| --- | --- | --- | --- | --- | --- | --- | --- |"
+    assert lines[6].startswith("| 2026-01-01 |") and lines[7].startswith("| 2026-10-01 |")
+
+
+def test_append_to_a_file_with_no_final_newline_keeps_rows_apart(tmp_path):
+    log = make_wide_log(tmp_path, [widen(r) for r in NARROW_ROWS])
+    log.write_text(log.read_text(encoding="utf-8").rstrip("\n"), encoding="utf-8")
+    code, _ = append(log)
+    assert code == 0
+    lines = log.read_text(encoding="utf-8").splitlines()
+    assert lines[-2].endswith("| Drafted | |") and lines[-1].startswith("| 2026-10-06 |")
+
+
+def test_append_cleans_a_pipe_and_a_newline_out_of_a_value(tmp_path):
+    log = make_wide_log(tmp_path, [widen(NARROW_ROWS[0])])
+    code, out = append(log, summary="Re: intro | part two\nsecond line")
+    assert code == 0 and out["row"]["summary"] == "Re: intro / part two second line"
+    assert _writer().parse_log(log)[-1]["summary"] == "Re: intro / part two second line"
+
+
+@pytest.mark.parametrize("missing", ["date", "skill", "channel", "recipient", "company",
+                                     "summary", "status", "artifact"])
+def test_append_refuses_a_missing_value_and_writes_nothing(tmp_path, missing):
+    log = make_wide_log(tmp_path, [widen(NARROW_ROWS[0])])
+    before = log.read_text(encoding="utf-8")
+    code, out = append(log, **{missing: None})
+    assert code == 2 and out["ok"] is False
+    assert f"--{missing}" in out["reason"] and "--artifact none" in out["reason"]
+    assert log.read_text(encoding="utf-8") == before
+
+
+def test_append_refuses_a_blank_value(tmp_path):
+    log = make_wide_log(tmp_path, [widen(NARROW_ROWS[0])])
+    code, out = append(log, summary="   ")
+    assert code == 2 and out["reason"].startswith("--append requires: --summary")
+
+
+def test_append_refuses_a_bad_date(tmp_path):
+    log = make_wide_log(tmp_path, [widen(NARROW_ROWS[0])])
+    code, out = append(log, date="10/06/2026")
+    assert code == 2 and "YYYY-MM-DD" in out["reason"]
+    code, out = append(log, date="2026-10-06x")
+    assert code == 2
+
+
+def test_append_refuses_an_unknown_status(tmp_path):
+    log = make_wide_log(tmp_path, [widen(NARROW_ROWS[0])])
+    before = log.read_text(encoding="utf-8")
+    code, out = append(log, status="sent")
+    assert code == 3 and out["valid_statuses"] == sorted(_writer().KNOWN_STATUSES)
+    assert log.read_text(encoding="utf-8") == before
+
+
+@pytest.mark.parametrize("artifact", ["banana:x", "resume:cv.pdf", "page"])
+def test_append_refuses_an_unknown_artifact_token(tmp_path, artifact):
+    log = make_wide_log(tmp_path, [widen(NARROW_ROWS[0])])
+    before = log.read_text(encoding="utf-8")
+    code, out = append(log, artifact=artifact)
+    assert code == 4 and out["ok"] is False and "takehome" in out["valid_tokens"]
+    assert log.read_text(encoding="utf-8") == before
+
+
+def test_append_accepts_none(tmp_path):
+    log = make_wide_log(tmp_path, [widen(NARROW_ROWS[0])])
+    code, out = append(log, artifact="none")
+    assert code == 0 and log.read_text(encoding="utf-8").splitlines()[-1].endswith("| Sent | none |")
+
+
+def test_append_refuses_a_seven_column_log(tmp_path):
+    log = make_log(tmp_path, NARROW_ROWS)
+    before = log.read_text(encoding="utf-8")
+    code, out = append(log)
+    assert code == 1 and "run the Artifact migration first" in out["reason"]
+    assert log.read_text(encoding="utf-8") == before
+
+
+def test_append_and_set_status_are_mutually_exclusive(tmp_path):
+    log = make_wide_log(tmp_path, [widen(NARROW_ROWS[0])])
+    code, out = query("--append", "--set-status", "--log", log)
+    assert code == 2 and "mutually exclusive" in out["error"]
+
+
+def test_append_redoes_from_a_concurrent_write(tmp_path, monkeypatch):
+    os_ = _writer()
+    log = make_wide_log(tmp_path, [widen(NARROW_ROWS[0])])
+    real = os_.insert_row
+    calls = {"n": 0}
+
+    def insert_then_someone_writes(text, values):
+        result = real(text, values)
+        if calls["n"] == 0:
+            calls["n"] += 1
+            with log.open("a", encoding="utf-8") as fh:
+                fh.write(widen(NARROW_ROWS[2]) + "\n")
+        return result
+
+    monkeypatch.setattr(os_, "insert_row", insert_then_someone_writes)
+    code, out = os_.append_row(log, {k[2:]: v for k, v in APPEND_ARGS.items()})
+    assert code == 0, out
+    text = log.read_text(encoding="utf-8")
+    assert "| Jane Doe |" in text, "the other write is kept"
+    assert out["line"] == 9 and text.splitlines()[-1].startswith("| 2026-10-06 |")
+
+
+def test_append_gives_up_when_the_log_keeps_changing(tmp_path, monkeypatch):
+    os_ = _writer()
+    log = make_wide_log(tmp_path, [widen(NARROW_ROWS[0])])
+    real = os_.insert_row
+
+    def always_someone_writes(text, values):
+        result = real(text, values)
+        with log.open("a", encoding="utf-8") as fh:
+            fh.write(widen(NARROW_ROWS[2]) + "\n")
+        return result
+
+    monkeypatch.setattr(os_, "insert_row", always_someone_writes)
+    code, out = os_.append_row(log, {k[2:]: v for k, v in APPEND_ARGS.items()})
+    assert code == 1 and "changed" in out["reason"]
+    assert "Casey Doe | Acme | Playbook" not in log.read_text(encoding="utf-8")
+
+
+# --- Survivors of the 2026-10-26 mutation run, killed -------------------------
+
+
+def test_a_table_with_no_data_rows_is_a_log_error():
+    os_ = _writer()
+    with pytest.raises(os_.LogError, match="no data rows"):
+        os_.parse_text(WIDE_HEADER)
+
+
+def test_table_width_reads_the_first_table_row():
+    os_ = _writer()
+    assert os_._table_width(WIDE_HEADER) == 10
+    assert os_._table_width(HEADER) == 9
+    assert os_._table_width("# no table\n") == 0
+
+
+def test_company_filter_excludes_another_company(tmp_path):
+    log = make_log(tmp_path, ["| 2026-01-05 | cold-outreach | email | Jane Doe | Acme Corp | Cold intro | Sent |"])
+    code, out = query("--recipient", "Jane Doe", "--company", "Northwind", "--log", log)
+    assert code == 0 and out["resolution"] == "not_found"
+
+
+def test_an_empty_candidate_never_matches_an_empty_query():
+    os_ = _writer()
+    rows = os_.parse_text(HEADER + "| 2026-01-05 | cold-outreach | email | Jane Doe + . | Acme | x | Sent |\n")
+    assert os_.resolve_recipient(rows, ".", None)[0] == "not_found"
+
+
+@pytest.mark.parametrize("cell,q", [("Jane Doe", "Jane"), ("Jane", "Jane Smith")])
+def test_a_first_name_alone_does_not_resolve_a_different_person(cell, q):
+    os_ = _writer()
+    rows = os_.parse_text(HEADER + f"| 2026-01-05 | cold-outreach | email | {cell} | Acme | x | Sent |\n")
+    assert os_.resolve_recipient(rows, q, None)[0] == "not_found"
+
+
+def test_a_row_naming_the_person_twice_is_matched_once():
+    os_ = _writer()
+    rows = os_.parse_text(HEADER + "| 2026-01-05 | cold-outreach | email | Jane Doe + Jane Doe | Acme | x | Sent |\n")
+    resolution, matched, _ = os_.resolve_recipient(rows, "Jane Doe", None)
+    assert resolution == "exact" and len(matched) == 1
+
+
+def test_set_status_refuses_an_unknown_status_and_writes_nothing(tmp_path):
+    log = make_log(tmp_path, ["| 2026-01-05 | cold-outreach | email | Jane Doe | Acme | x | Sent |"])
+    before = log.read_text(encoding="utf-8")
+    code, out = query("--set-status", "--latest", "--recipient", "Jane Doe",
+                      "--status", "Ghosted", "--log", log)
+    assert code == 3 and out["error"] == "unrecognized status: Ghosted"
+    assert out["valid_statuses"] == sorted(_writer().KNOWN_STATUSES)
+    assert log.read_text(encoding="utf-8") == before
+
+
+def test_a_query_without_a_recipient_is_exit_2(tmp_path):
+    log = make_log(tmp_path, ["| 2026-01-05 | cold-outreach | email | Jane Doe | Acme | x | Sent |"])
+    code, out = query("--log", log)
+    assert code == 2 and "--recipient is required" in out["error"]
+
+
+def test_a_query_on_a_malformed_log_is_exit_1(tmp_path):
+    log = write_fixture(tmp_path, "bad.md", "| a | b |\n")
+    code, out = query("--recipient", "Jane Doe", "--log", log)
+    assert code == 1 and "malformed table row at line 1" in out["error"]
+
+
+# --- the Artifact cell is the record for artifact-scoped queries (review, 2026-10-26) ---
+
+def _eight_col_log(tmp_path, rows):
+    p = tmp_path / "outreach-log.md"
+    p.write_text("| Date | Skill | Channel | Recipient | Company | Subject / Summary | Status | Artifact |\n"
+                 "| --- | --- | --- | --- | --- | --- | --- | --- |\n" + "".join(rows), encoding="utf-8")
+    return p
+
+
+def test_a_page_send_is_found_through_the_artifact_cell(tmp_path):
+    log = _eight_col_log(tmp_path, [
+        "| 2026-03-02 | cold-outreach | email | Casey Doe | Acme | a short note | Delivered | page:output/acme/BUILD-LOG.md |\n"])
+    code, out = _writer().query_status(log, "Casey Doe", None, "page", None)
+    assert out["delivered"] is True and len(out["artifact_rows"]) == 1
+    assert out["artifact_rows"][0]["artifact"] == "page:output/acme/BUILD-LOG.md"
+
+
+def test_a_filled_cell_wins_over_the_summary_text(tmp_path):
+    """The Summary mentions a deck; the cell says a CV went. A deck query finds nothing."""
+    log = _eight_col_log(tmp_path, [
+        "| 2026-03-02 | cold-outreach | email | Casey Doe | Acme | sent my deck | Delivered | cv:output/acme/x.pdf |\n"])
+    _, out = _writer().query_status(log, "Casey Doe", None, "deck", None)
+    assert out["artifact_rows"] == [] and out["delivered"] == "unknown"
+
+
+def test_an_empty_cell_falls_back_to_the_summary(tmp_path):
+    log = _eight_col_log(tmp_path, [
+        "| 2026-03-02 | cold-outreach | email | Casey Doe | Acme | sent my CV | Delivered | |\n"])
+    _, out = _writer().query_status(log, "Casey Doe", None, "cv", None)
+    assert len(out["artifact_rows"]) == 1
+

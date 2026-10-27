@@ -14,8 +14,9 @@ A note on naming: these flows are organized around what you are trying to accomp
 - [Flow 2: Apply to a role, end to end](#flow-2-apply-to-a-role-end-to-end)
 - [Flow 3: Win the interview: research to debrief](#flow-3-win-the-interview-research-to-debrief)
 - [Flow 4: The outreach and networking ladder](#flow-4-the-outreach-and-networking-ladder)
+- [Flow 5: Build something a reader will open](#flow-5-build-something-a-reader-will-open)
 - [Evaluating what to adopt](#evaluating-what-to-adopt)
-- [The capture habit that feeds all four](#the-capture-habit-that-feeds-all-four)
+- [The capture habit that feeds all five](#the-capture-habit-that-feeds-all-five)
 
 ---
 
@@ -205,6 +206,18 @@ Logging an interaction with reply-signal keywords automatically updates the outr
 
 ---
 
+## Flow 5: Build something a reader will open
+
+> **When a specific person has told me what they need,** I want to answer it with something they can use, record what happened, and let the next build start from that record.
+
+If the reader has not spoken (a posting, a press quote or a company page is the company's words, not a stated need), this is Flow 4: a text first touch through `/cold-outreach`, whose Brief records the value item, the prediction, the send date and `artifact: none`.
+
+Otherwise the workflow is `framework/artifact-workflow.md`: answer Q0-Q4 (section 1), open `output/<slug>/BUILD-LOG.md` from `framework/templates/build-log.md` before any build file, run the eight steps, and drain the lessons into `memory/lessons.md` Section 2 as `[artifact]` rows. `/standup` shows open builds and their flags; `/verify` reads the log's Phase 0 first.
+
+> **You should see:** a one-screen log header that says who this is for, what they asked in their own words, and when it stops mattering. If you cannot fill `reader_ask`, you are in Flow 4.
+
+---
+
 ## Evaluating what to adopt
 
 > **When I come across a research paper, a GitHub repo, or a sharp article,** I want to know fast whether it actually helps me, and how, instead of bookmarking it to never read again.
@@ -224,7 +237,7 @@ When you need to *understand* a topic rather than triage one artifact someone ha
 
 ---
 
-## The capture habit that feeds all four
+## The capture habit that feeds all five
 
 Every flow above is only as good as the data underneath it, and that data comes from a single cheap habit: capture context the moment it arrives.
 

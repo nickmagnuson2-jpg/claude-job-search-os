@@ -405,9 +405,12 @@ Want me to log this and update your follow-up to-do? (Y/N)
 TO:
 SUBJECT: [subject line, or blank for LinkedIn]
 ATTACH: [optional absolute path — omit line entirely if no attachment]
+ARTIFACT: [none (<reason>) | output/<slug>/BUILD-LOG.md — required when the draft has an ATTACH: line or a link other than the bio links; omit otherwise]
 BODY:
 [full message text]
 ```
+
+`ARTIFACT:` is read by `tools/check_draft_artifact.py`, which blocks `open_draft.py` on a draft carrying an attachment or a link other than the bio links without it, and is never sent. Write `ARTIFACT: none (<reason>)` for a plain link such as a job posting or a calendar link, and `ARTIFACT: output/<slug>/BUILD-LOG.md` for a page, demo or file built for this reader (`framework/artifact-workflow.md`). A rendered CV passes without it.
 
 `ATTACH:` is optional. Include it when the follow-up genuinely needs a file (the recipient asked for a CV, or you're sending the artifact you previously offered). When included, `open_draft.py` copies the file to the macOS clipboard so Cmd+V in Gmail compose attaches it.
 
@@ -471,11 +474,15 @@ Update the contact's Last Interaction date in the Contacts table.
 
 **3. Append to `data/outreach-log.md`:**
 
-Read `data/outreach-log.md` (create with the standard header if it doesn't exist). Append a new row to the table:
+Write the row with the one row writer (never by hand: it validates the status and the Artifact cell, inserts in date order, and writes atomically):
 
+```bash
+PYTHONIOENCODING=utf-8 python3 tools/outreach_status.py --append --date [YYYY-MM-DD] --skill follow-up \
+  --channel [channel] --recipient "[Name]" --company "[Company]" \
+  --summary "[subject line or 1-line summary]" --status Drafted --artifact [none | <type>:<ref>]
 ```
-| [YYYY-MM-DD] | follow-up | [channel] | [Name] | [Company] | [subject line or 1-line summary] | Drafted |
-```
+
+`--artifact` is the Brief record line's `artifact` key: `none` when nothing rode along, otherwise a type (`cv`, `page`, `demo`, `deck`, `takehome`, `note`, ...; `tools/artifact_vocab.py`) and a ref, e.g. `cv:output/acme/102626-magnuson.pdf` or `page:output/acme/BUILD-LOG.md`. The writer prints `pointer: data/outreach-log.md:<line>`; for a build, that pointer is the BUILD-LOG's `sent:` line (`framework/artifact-workflow.md` step 7).
 
 Confirm:
 ```

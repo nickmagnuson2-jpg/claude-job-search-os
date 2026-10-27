@@ -29,8 +29,12 @@ Everything else is bookkeeping. If a future edit collapses sent/delivered or dro
 artifact scope, the suppressive-claim defect is live again.
 
 Exit codes: 0 clean (including not_found) | 1 unreadable/malformed log or a failed
-write-back assertion | 2 ambiguous recipient or ambiguous --set-status target |
-3 unrecognized status | 4 unknown artifact token.
+write-back assertion | 2 ambiguous recipient, ambiguous --set-status target, or a missing
+or malformed --append value | 3 unrecognized status | 4 unknown artifact token.
+
+`--append` is the one writer of a NEW row (the three outreach skills call it instead of
+editing the table by hand). It refuses an unknown status or artifact token and prints the
+row's pointer, `<log>:<line>`, for a BUILD-LOG `sent:` line.
 """
 import argparse
 import json
@@ -43,6 +47,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import artifact_vocab  # noqa: E402
+import md_table  # noqa: E402
 
 DEFAULT_LOG = "data/outreach-log.md"
 LOCAL_VALIDATORS = "tools/.local-validators.json"
@@ -122,17 +127,33 @@ def _read(path: Path) -> str:
 
 def parse_text(text: str) -> list[dict]:
     rows = []
+    width = None
     for lineno, line in enumerate(text.splitlines(), start=1):
         if not line.lstrip().startswith("|"):
             continue
         cells = [c.strip() for c in line.split("|")]
-        # A well-formed row splits into ['', 7 cells, ''] == 9 parts.
-        if len(cells) != 9:
-            raise LogError(f"malformed table row at line {lineno}: {len(cells) - 2} columns, expected 7")
-        values = cells[1:8]
+        # A well-formed row splits into ['', 7 or 8 cells, ''] == 9 or 10 parts. The
+        # eighth cell is Artifact (added 2026-10-26); a 7-cell log is the pre-migration
+        # shape and reads as an empty Artifact on every row.
+        if len(cells) not in (9, 10):
+            raise LogError(f"malformed table row at line {lineno}: {len(cells) - 2} columns, expected 7 or 8")
+        # Every row has the width of the first table row (the header), so a half-done
+        # migration fails loudly instead of reading as a mix of recorded and unrecorded.
+        if width is None:
+            width = len(cells)
+        elif len(cells) != width:
+            raise LogError(f"malformed table row at line {lineno}: {len(cells) - 2} columns, "
+                           f"the header has {width - 2}")
+        values = cells[1:-1]
+        # Skip the header and the separator BEFORE validating the Artifact cell: the
+        # header cell reads `Artifact` and the separator `---`, and neither is a token.
         if values[0].lower() == "date" or set("".join(values)) <= set("- "):
             continue  # header row or the |---| separator
         row = dict(zip(COLUMNS, values))
+        row["artifact"] = values[7] if len(values) == 8 else ""
+        problem = artifact_vocab.check_cell(row["artifact"])
+        if problem:
+            raise LogError(f"bad Artifact cell at line {lineno}: {problem}")
         row["_line"] = lineno
         rows.append(row)
     if not rows:
@@ -211,11 +232,16 @@ def derive_state(matched: list[dict], artifact: str | None) -> dict:
     # `Replied`, so scoping
     # on mentions returns delivered:true for a CV that was never sent. That is the
     # 2026-08-10 defect wearing a different hat. See artifact_vocab.find_transmitted_in_text.
+    # A filled Artifact cell is the record and wins over the Summary text; a row with an
+    # empty cell (not recorded, the pre-column history) falls back to the Summary reading.
+    # Without the cell the new types (page, takehome, note) were invisible to this query,
+    # which reads only words like "CV" or "deck" out of the Summary (review, 2026-10-26).
     artifact_rows = []
     if artifact:
         artifact_rows = [
             r for r in known
-            if artifact in artifact_vocab.find_transmitted_in_text(r["summary"])
+            if (r.get("artifact", "").split(":", 1)[0] == artifact if r.get("artifact")
+                else artifact in artifact_vocab.find_transmitted_in_text(r["summary"]))
         ]
 
     sent = any(r["status"] in SENT_STATUSES for r in known)
@@ -251,7 +277,7 @@ def _latest(rows: list[dict]) -> dict:
 
 
 def _public(row: dict) -> dict:
-    return {k: row[k] for k in COLUMNS}
+    return {**{k: row[k] for k in COLUMNS}, "artifact": row.get("artifact", "")}
 
 
 # ---------------------------------------------------------------- writer
@@ -347,6 +373,88 @@ def write_status(path: Path, select, new_status: str) -> tuple[int, dict]:
             if os.path.exists(tmp):
                 os.unlink(tmp)
     return 1, {"action": "set-status", "ok": False,
+               "reason": f"the log changed during each of {WRITE_ATTEMPTS} attempts; re-run"}
+
+
+# ---------------------------------------------------------------- row writer
+
+
+# Cell order of a migrated (8-column) log. `--append` takes each as a flag of the same name.
+APPEND_FIELDS = ("date", "skill", "channel", "recipient", "company", "summary", "status",
+                 "artifact")
+WIDE_LOG_PARTS = 10  # ['', 8 cells, '']
+
+
+def _table_width(text: str) -> int:
+    """Split-part count of the first table row (the header), 0 if there is no table."""
+    first = next((ln for ln in text.splitlines() if ln.lstrip().startswith("|")), "")
+    return len(first.split("|")) if first else 0
+
+
+def _clean(value: str) -> str:
+    """One line, no stray '|': a value can neither break its row nor add a column."""
+    return md_table.safe_cell(" ".join(value.split()))
+
+
+def check_append(values: dict) -> tuple[int, dict] | None:
+    """None if `values` can be written as a row, else the (code, payload) refusal."""
+    missing = [f for f in APPEND_FIELDS if not _clean(values.get(f) or "")]
+    if missing:
+        return 2, {"action": "append", "ok": False,
+                   "reason": f"--append requires: {', '.join('--' + m for m in missing)}"
+                             " (pass --artifact none when nothing rode along)"}
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", values["date"]):
+        return 2, {"action": "append", "ok": False,
+                   "reason": f"--date must be YYYY-MM-DD, got {values['date']!r}"}
+    if values["status"] not in KNOWN_STATUSES:
+        return 3, {"action": "append", "ok": False,
+                   "reason": f"unrecognized status: {values['status']}",
+                   "valid_statuses": sorted(KNOWN_STATUSES)}
+    problem = artifact_vocab.check_cell(_clean(values["artifact"]))
+    if problem:
+        return 4, {"action": "append", "ok": False, "reason": problem,
+                   "valid_tokens": artifact_vocab.valid_tokens()}
+    return None
+
+
+def insert_row(text: str, values: dict) -> tuple[str, int]:
+    """The log text with one row inserted in date order, and that row's 1-based line.
+
+    The row goes after the last row dated on or before it, so a same-day send lands
+    after the day's earlier ones and a backdated send lands among its own dates. Raises
+    LogError on a malformed log, or on a 7-column log (run the Artifact migration first).
+    """
+    rows = parse_text(text)
+    if _table_width(text) != WIDE_LOG_PARTS:
+        raise LogError("the log has no Artifact column; run the Artifact migration first")
+    lines = text.splitlines(keepends=True)
+    earlier = [r["_line"] for r in rows if r["date"] <= values["date"]]
+    idx = max(earlier) if earlier else rows[0]["_line"] - 1
+    if not lines[idx - 1].endswith("\n"):
+        lines[idx - 1] += "\n"
+    lines.insert(idx, "| " + " | ".join(_clean(values[f]) for f in APPEND_FIELDS) + " |\n")
+    return "".join(lines), idx + 1
+
+
+def append_row(path: Path, values: dict) -> tuple[int, dict]:
+    """Validate, insert and write one row atomically. Payload carries `pointer`.
+
+    The file is re-read just before the write; if it changed since the insert was
+    computed, the attempt is redone from the fresh read, as write_status does.
+    """
+    refusal = check_append(values)
+    if refusal:
+        return refusal
+    for _ in range(WRITE_ATTEMPTS):
+        text = _read(path)
+        new_text, line = insert_row(text, values)
+        if _read(path) != text:
+            continue  # someone else wrote; redo from their version
+        md_table.write_atomic(path, new_text)
+        row = {f: _clean(values[f]) for f in APPEND_FIELDS}
+        return 0, {"action": "append", "ok": True, "row": row, "line": line,
+                   "pointer": f"{path}:{line}"}
+    return 1, {"action": "append", "ok": False,
                "reason": f"the log changed during each of {WRITE_ATTEMPTS} attempts; re-run"}
 
 
@@ -462,12 +570,30 @@ def main() -> int:
     parser.add_argument("--date", help="required with --set-status")
     parser.add_argument("--status", help="required with --set-status")
     parser.add_argument("--validate-local", action="store_true", dest="validate_local")
+    parser.add_argument("--append", action="store_true",
+                        help="write one new row; needs --date --skill --channel --recipient "
+                             "--company --summary --status --artifact (cell order), where "
+                             "--artifact is <type>:<ref> or none")
+    parser.add_argument("--skill")
+    parser.add_argument("--channel")
+    parser.add_argument("--summary")
     args = parser.parse_args()
 
     log_path = Path(args.log)
 
     if args.validate_local:
         code, payload = validate_local(log_path)
+        print(json.dumps(payload, ensure_ascii=False))
+        return code
+
+    if args.append:
+        if args.set_status:
+            print(json.dumps({"error": "--append and --set-status are mutually exclusive"}))
+            return 2
+        try:
+            code, payload = append_row(log_path, {f: getattr(args, f) for f in APPEND_FIELDS})
+        except LogError as exc:
+            code, payload = 1, {"action": "append", "ok": False, "reason": str(exc)}
         print(json.dumps(payload, ensure_ascii=False))
         return code
 

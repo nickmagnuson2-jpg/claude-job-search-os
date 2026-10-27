@@ -40,11 +40,11 @@ it is added there: the safe direction, since the other way lets a real build thr
 from __future__ import annotations
 
 import os
-import re
 import sys
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from build_check import ask_state  # noqa: E402
 from check_handoff_producer import all_write_targets, relativize  # noqa: E402
 from hook_runtime import read_payload  # noqa: E402
 
@@ -61,11 +61,6 @@ WORK_PREFIXES = ("codify-",)
 # The field that names the target file, per tool.
 TARGET_FIELD = {"Write": "file_path", "Edit": "file_path", "MultiEdit": "file_path",
                 "NotebookEdit": "notebook_path"}
-
-# Filled means a quoted value that is not the template placeholder.
-READER_ASK = re.compile(r'^\s*reader_ask:\s*"(?!<verbatim>)[^"\s][^"]*"', re.M)
-WAIVED = re.compile(r"^\s*waived:\s*nick\s+\d{4}-\d{2}-\d{2}", re.M)
-
 
 def build_slug(rel: str) -> str | None:
     """The `<slug>` whose folder must hold a BUILD-LOG, or None when the path is not gated."""
@@ -85,17 +80,29 @@ def build_slug(rel: str) -> str | None:
     return slug
 
 
-def log_state(slug_dir: Path) -> str:
-    """`waived`, `filled` or `missing`, read from every BUILD-LOG.md under the folder."""
+def log_state(target_dir: Path, slug_dir: Path) -> str:
+    """`waived`, `filled` or `missing`, from the BUILD-LOG.md files on the path from the
+    target file's folder up to `output/<slug>/`.
+
+    Only that path counts: a log in a sibling folder belongs to another build, and taking
+    every log under the slug let an earlier build's log clear a new one (codex and grok
+    review, 2026-10-26). Each file is read by build_check.ask_state, the one reader of
+    `reader_ask` and `waived:`, so this hook and the /standup report cannot disagree."""
     state = "missing"
-    for log in slug_dir.rglob("BUILD-LOG.md"):
+    chain = []
+    for d in [target_dir, *target_dir.parents]:  # finite: parents end at the root
+        if d != slug_dir and slug_dir not in d.parents:
+            break  # left output/<slug>/
+        chain.append(d / "BUILD-LOG.md")
+    for log in chain:  # a missing log, or a folder named BUILD-LOG.md, raises OSError: skipped
         try:
             text = log.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
-        if WAIVED.search(text):
+        one = ask_state(text)
+        if one == "waived":
             return "waived"
-        if READER_ASK.search(text):
+        if one == "filled":
             state = "filled"
     return state
 
@@ -108,10 +115,10 @@ If this is not a build for a reader (scratch work, a tool for yourself), ask Nic
 writes `waived: nick YYYY-MM-DD (<reason>)` into a BUILD-LOG, which clears both."""
 
 NO_LOG = """
-No BUILD-LOG with reader_ask filled. Write output/{slug}/BUILD-LOG.md first, using the header
-in output/codify-102326/v2/03-artifact-workflow.md section 5, with reader_ask filled: the
-reader's own words, quoted, with where they said it (a transcript line, a saved message, a JD
-under sources/). That is the line this check reads.
+No BUILD-LOG with reader_ask filled. Write output/{slug}/BUILD-LOG.md first, from
+framework/templates/build-log.md (rules: framework/artifact-workflow.md), with reader_ask
+filled: the reader's own words, quoted, with where they said it (a transcript line, a saved
+message, a JD under sources/). That is the line this check reads.
 """
 
 NO_DOSSIER = """
@@ -136,7 +143,7 @@ def decide(tool_name: str, tool_input: dict, *, root: Path = REPO_ROOT) -> str |
         if not slug:
             continue
         folder = root / "output" / slug
-        state = log_state(folder)
+        state = log_state((root / rel).parent, folder)
         if state == "waived":
             continue
         missing = []

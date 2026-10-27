@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  sent-artifact-check: scan Gmail Sent daily for an attachment or link that left with no
+  BUILD-LOG, CV source or ack line (proposal 1c-D, output/codify-102326/v2/06-proposals.md).
+
+  WHY LAUNCHD AS WELL AS THE /standup PROBE. /standup does not run every day, and a scan
+  that only runs when Nick remembers is not a check. This job runs the same command daily
+  and advances tools/.sent-artifact-state.json, so the next /standup scans from that date
+  (or from the oldest unresolved flag).
+
+  READ-ONLY on Gmail: the token scope is gmail.readonly (tools/gmail_fetch.py SCOPES).
+
+  LOG FILES: never create, touch, or truncate anything in tools/launchd/logs/ from a Claude
+  Code Bash call - files created that way inherit a com.apple.provenance xattr that launchd
+  cannot open, and the job dies at EX_CONFIG (78) before the script runs, logging nothing.
+  Rotation must DELETE and let launchd recreate. See reference_launchd_ex_config_provenance_xattr.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.nickmagnuson.jobsearch.sent-artifact-check</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>-lc</string>
+        <string>cd "$HOME/Documents/Obsidian/30-projects/job-search" &amp;&amp; PYTHONIOENCODING=utf-8 /opt/homebrew/bin/python3 tools/sent_artifact_check.py --repo-root . --json</string>
+    </array>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key><integer>6</integer>
+        <key>Minute</key><integer>40</integer>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>/Users/mag/Documents/Obsidian/30-projects/job-search/tools/launchd/logs/sent-artifact-check.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/mag/Documents/Obsidian/30-projects/job-search/tools/launchd/logs/sent-artifact-check.err</string>
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>

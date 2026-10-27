@@ -22,6 +22,10 @@ Every ATTACH: file is also copied into a staging folder (~/Documents/to-send
 by default, OPEN_DRAFT_STAGING_DIR to override) after the folder is emptied,
 and Finder opens with the staged copy selected. The folder then holds only
 the file(s) for this draft, so the one to drag in is the only one there.
+
+An ARTIFACT: line (`ARTIFACT: output/<slug>/BUILD-LOG.md` or `ARTIFACT: none (<reason>)`)
+is read by tools/check_draft_artifact.py before this script runs and is never sent: like
+any header line this parser does not name, it is dropped.
 """
 
 import os

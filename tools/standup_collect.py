@@ -54,6 +54,8 @@ def commands(target_date: str) -> dict[str, list[str]]:
         "source_check": ["tools/source_check.py", "due", *r, *d, "--json"],
         "workstream_state": ["tools/workstream_state.py", "--render", "--json"],
         "role_queue": ["tools/role_queue_read.py", *r, "--top", "5"],
+        "sent_artifacts": ["tools/sent_artifact_check.py", *r, "--json"],
+        "build_check": ["tools/build_check.py", *r, "--json"],
     }
 
 

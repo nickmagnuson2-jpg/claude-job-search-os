@@ -2,8 +2,9 @@
 """
 artifact_vocab.py — Single source of truth for the artifacts Nick sends people.
 
-Why this exists (the same reason stage_vocab.py exists). `data/outreach-log.md` has no
-artifact column: the only signal that a CV rode along with a message is free text in the
+Why this exists (the same reason stage_vocab.py exists). Until 2026-10-26
+`data/outreach-log.md` had no artifact column, and rows written before then still have an
+empty one: for them the only signal that a CV rode along with a message is free text in the
 Summary cell ("... , CV attached", "resume attached (010526-placeholder.pdf)", "sent
 tailored resume (010226-placeholder.pdf)"). Two consumers need to answer "does this
 sentence name artifact X?" — outreach_status.py (scoping `delivered` to an artifact) and
@@ -19,7 +20,16 @@ import unicodedata
 
 # Canonical tokens, in canonical order. find_in_text() returns hits in this order so its
 # output is deterministic regardless of where the words appear in the sentence.
-CANONICAL = ("cv", "cover-letter", "deck", "portfolio", "writeup", "link")
+#
+# The last five (2026-10-26) exist for the outreach-log Artifact cell (`<type>:<ref>`):
+# page = a hosted single page or playbook; demo = an app or tool built on the reader's
+# product or domain; takehome = an assigned exercise deliverable; note = a research note,
+# planner or doc answering a stated problem; none = nothing rode along (an EMPTY cell
+# means "not recorded", which is a different claim). They are CANONICAL only, with no
+# free-text alias: "playbook", "use case" and "thank-you note" are plain English in a
+# Summary cell, and an alias would make find_in_text() report them as artifacts.
+CANONICAL = ("cv", "cover-letter", "deck", "portfolio", "writeup", "link",
+             "page", "demo", "takehome", "note", "none")
 
 # Surface forms -> canonical token. Matched case-insensitively and \b-anchored as
 # PHRASES (so "cover letter" matches without the hyphen). Keep every alias here rather
@@ -41,7 +51,7 @@ ALIASES = {
     "one-pager": "writeup",
     "link": "link",
     "github": "link",
-    "demo": "link",
+    "demo": "demo",
 }
 
 
@@ -86,6 +96,24 @@ def canonicalize(token: str) -> str | None:
     if folded in CANONICAL:
         return folded
     return ALIASES.get(folded) or ALIASES.get(re.sub(r"[\s\-]+", " ", folded))
+
+
+def check_cell(cell: str) -> str | None:
+    """Validate one outreach-log Artifact cell. None if valid, else the reason it is not.
+
+    Valid: empty (not recorded), exactly `none`, or `<type>:<ref>` where `type` is a
+    CANONICAL token spelled canonically (an alias such as `resume:` is refused, so the
+    column holds one spelling per type) and `ref` is non-empty. Both outreach_status.py's
+    parser and its row writer call this, so the reader and the writer cannot disagree.
+    """
+    if cell == "" or cell == "none":
+        return None
+    kind, _, ref = cell.partition(":")
+    if kind not in CANONICAL or kind == "none":
+        return f"unknown artifact type {kind!r}; valid: {valid_tokens()}"
+    if not ref.strip():
+        return f"artifact {cell!r} needs a ref: write {kind}:<url, path or label>"
+    return None
 
 
 def find_in_text(text: str) -> list[str]:

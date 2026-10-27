@@ -132,7 +132,9 @@ Write all Briefs, and later the drafts, to `output/outreach-queue/MMDDYY-<compan
 
 **Provenance audit:** identity → C · credibility → C · personalization → I (<source URL>) · ask → N/C
 **Quality gate:** Why you? "<quoted sentence>" · Why now? "<…>" · Why me? "<…>" · Why this class of role? "<…>"
-**To send:** write this subject+body to `tools/.pending-draft.txt` (TO blank), write
+**To send:** write this subject+body to `tools/.pending-draft.txt` (TO blank), plus an
+`ARTIFACT: none (<reason>)` line above `BODY:` when the body carries a link other than the bio
+links (`tools/check_draft_artifact.py` blocks `open_draft.py` without it), write
 `tools/.pending-draft.source` (`outreach-batch` + timestamp), run `python3 tools/open_draft.py`.
 
 ---

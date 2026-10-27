@@ -55,7 +55,7 @@ Examples:
 Before drafting, surface any accumulated voice patterns ready to be canonized:
 
 1. Read `memory/lessons.md`.
-2. Scan Section 2 for rows where **Occurrences ≥ 2** AND **Promoted = No**.
+2. Scan Section 2 for rows where **Occurrences ≥ 2** AND **Promoted = No** AND the Pattern cell does not begin with `**[artifact]`. Artifact rows drain to `framework/artifact-workflow.md` step 8, never to the voice guidelines; count them and print `[artifact] rows due: N` on one line, no prompt.
 3. If none found, skip silently and proceed to Step 1.
 4. If any found, surface them before proceeding:
    ```
@@ -211,6 +211,7 @@ sentences to edit. Anything Nick could paste is a violation of this step.
 6. **The hook** — a real, cited research fact. The company's own words, never a headline alone.
 7. **Hard don'ts** — the falsifiable traps for this specific recipient (bad-overlap dates, claims Nick
    cannot make, a framing the company has moved off).
+8. **Record line (four keys, every send):** `value_item: <a beat, not a sentence for the body> | prediction: <reply yes/no by date> | send_date: <date> | artifact: none | <output/<slug>/BUILD-LOG.md>`. `none` is the default for a first touch (Q0 of `framework/artifact-workflow.md` section 1); a page, demo or tool waits for a reply that names a need. For a cold first touch also name the matching proof used (`proof: <named> | none`); the default proof and its count live in the private appendix (`output/artifact-workflow/appendix.md` 8.3). A Brief missing any of the four keys stops before the draft step.
 
 Then stop and ask Nick for the spine (the four items above). When he gives it, go to Step 6.
 
@@ -417,9 +418,12 @@ Want me to log this contact and create a follow-up to-do? (Y/N)
 TO:
 SUBJECT: [subject line, or blank for LinkedIn]
 ATTACH: [optional absolute path — omit line entirely if no attachment]
+ARTIFACT: [none (<reason>) | output/<slug>/BUILD-LOG.md — required when the draft has an ATTACH: line or a link other than the bio links; omit otherwise]
 BODY:
 [full message text]
 ```
+
+`ARTIFACT:` is read by `tools/check_draft_artifact.py`, which blocks `open_draft.py` on a draft carrying an attachment or a non-bio link without it, and is never sent. It follows the Brief record line's `artifact` key, with one difference: the header's `none` needs a reason in parentheses, so a Brief's `artifact: none` becomes `ARTIFACT: none (<reason>)`, e.g. `ARTIFACT: none (job posting link)`. For a page, demo or file built for this reader it is the BUILD-LOG path. A rendered CV passes without it.
 
 `ATTACH:` is optional and almost always omitted for cold outreach. Default behavior: do NOT attach a resume on first contact — offer to send if interested. Only include `ATTACH:` when the recipient has already asked for a CV/portfolio. When included, `open_draft.py` copies the file to the macOS clipboard so Cmd+V in Gmail compose attaches it.
 
@@ -493,11 +497,15 @@ Read `data/job-todos.md`, then add:
 
 **4. Append to `data/outreach-log.md`:**
 
-Read `data/outreach-log.md` (create with the standard header if it doesn't exist). Append a new row to the table:
+Write the row with the one row writer (never by hand: it validates the status and the Artifact cell, inserts in date order, and writes atomically):
 
+```bash
+PYTHONIOENCODING=utf-8 python3 tools/outreach_status.py --append --date [YYYY-MM-DD] --skill cold-outreach \
+  --channel [channel] --recipient "[Name]" --company "[Company]" \
+  --summary "[subject line or 1-line summary]" --status Drafted --artifact [none | <type>:<ref>]
 ```
-| [YYYY-MM-DD] | cold-outreach | [channel] | [Name] | [Company] | [subject line or 1-line summary] | Drafted |
-```
+
+`--artifact` is the Brief record line's `artifact` key: `none` when nothing rode along, otherwise a type (`cv`, `page`, `demo`, `deck`, `takehome`, `note`, ...; `tools/artifact_vocab.py`) and a ref, e.g. `cv:output/acme/102626-magnuson.pdf` or `page:output/acme/BUILD-LOG.md`. The writer prints `pointer: data/outreach-log.md:<line>`; for a build, that pointer is the BUILD-LOG's `sent:` line (`framework/artifact-workflow.md` step 7).
 
 Confirm:
 ```

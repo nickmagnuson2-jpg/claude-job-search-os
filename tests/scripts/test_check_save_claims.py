@@ -28,6 +28,54 @@ def extract(text):
 
 # ---------- extraction: should CATCH ----------
 
+def test_a_bare_name_with_an_unlisted_extension_is_not_a_claim():
+    """No slash and an extension outside the list (config.toml, v1.2): not a file claim."""
+    assert extract("I saved config.toml for later.") == []
+
+
+def test_a_path_with_an_unlisted_extension_is_still_a_claim():
+    """A slash makes it a path whatever the extension."""
+    assert extract("I saved output/acme/config.toml for later.") == ["output/acme/config.toml"]
+
+
+def test_a_bare_name_with_a_listed_extension_is_a_claim():
+    assert extract("I saved notes.md for later.") == ["notes.md"]
+
+
+def test_an_unlisted_bare_name_does_not_hide_the_next_real_path():
+    """The skip moves on to the next token; it does not end the search."""
+    assert extract("I saved config.toml and output/acme/brief.md today.") == [
+        "output/acme/brief.md"]
+
+
+def test_a_file_named_inside_a_quoted_command_is_not_a_claim():
+    """2026-10-26, two false blocks: the file a command would touch is not a written file."""
+    assert extract("I wrote the test for `cp /tmp/x-handoff.md output/analysis/` today.") == []
+
+
+def test_a_quoted_path_with_a_space_is_still_a_claim():
+    """codex, 2026-10-26: a real file whose name holds a space is not a command."""
+    # The path matcher stops at the space, so the claim is read as its tail; what matters
+    # is that the span is not dropped as a command.
+    assert extract("I saved `output/acme/my brief.md` today.") == ["brief.md"]
+
+
+def test_a_bare_code_span_after_a_command_span_is_still_a_claim():
+    assert extract("I wrote `cp a.md b/` and then saved `output/acme/brief.md`.") == [
+        "output/acme/brief.md"]
+
+
+def test_code_spans_pair_in_order_so_text_between_them_is_not_a_command():
+    """Spans found WITH whitespace only would pair `a.md`'s closing tick with `b.md`'s
+    opening one and hide b.md; finding every span in order keeps the pairing right."""
+    assert extract("I wrote `a.md` and `output/b.md` today.") == ["a.md"]
+    assert extract("I wrote `x` then `output/acme/b.md` here.") == ["output/acme/b.md"]
+
+
+def test_a_claim_verb_inside_a_filename_in_a_command_span_opens_no_window():
+    assert extract("Run `cp tools/foo.SAVED-bar.py out/` then check data/x.md.") == []
+
+
 def test_catches_saved_to():
     assert "output/acme/foo.md" in extract("Saved to `output/acme/foo.md` — done.")
 

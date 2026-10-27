@@ -28,6 +28,7 @@ TOOLS = (
     "agent_core",
     "attention",
     "backfill_transcript_failures",
+    "build_check",
     "check_banned_phrase",
     "check_bare_python",
     "check_build_log_present",

@@ -12,16 +12,22 @@ Reads five data files and generates a focused daily brief. Output is in-chat onl
 
 ## Instructions
 
+### Step 0: Route the day's work (summary, not a gate)
+
+Read `framework/decision-tree.md`. If Nick has named something to make or send today, state the branch in one line, as a field in the brief: `Branch: <number> <name>. Entry: <skill>. Build log: <path or none>.` If nothing is named, write `Branch: none named` and continue. This step never blocks the briefing and does not prevent a build: the checks that can stop one are the hooks named in `framework/artifact-workflow.md` section 6.
+
+For branch 6, open `framework/artifact-workflow.md` section 1 (Q0-Q4) and render the `Builds:` line from the `build_check` probe (Step 1).
+
 ### Step 1: Load Data
 
 **Run all preprocessing in ONE call:**
 ```bash
 PYTHONIOENCODING=utf-8 python3 tools/standup_collect.py --repo-root .
 ```
-It runs the ten Step 1 scripts in parallel (pipeline_staleness, outreach_pending,
+It runs the Step 1 scripts in parallel (pipeline_staleness, outreach_pending,
 networking_followup, todos_summary `--top-n 6`, check_automation_health, attention,
 conversations_metric, source_check due, workstream_state `--render`, role_queue_read
-`--top 5`) and prints one JSON: `results.<name>.data` is each script's parsed output,
+`--top 5`, build_check, sent_artifacts) and prints one JSON: `results.<name>.data` is each script's parsed output,
 `failed` names any that produced no usable output, with its stderr; `partial` names any that exited nonzero but still printed data (workstream_state does this when a probe errors), which you use while saying what failed. **Do not start these scripts
 yourself in a shell loop.** zsh passes `"x.py --flag"` as one argument, which failed every
 script on five mornings before this collector existed. A name in `failed` is a source to
@@ -79,6 +85,18 @@ Four rules, all mandatory:
   `(N progress file(s) have no stage: tag and were not counted)`. Uncounted is not zero.
 - **`outcome_counts` are NOT conversations.** They are loop results (offer/rejection news). Mention
   them only if non-zero in 7d, as a separate clause.
+
+**Builds and sent artifacts (from `build_check` and `sent_artifacts`, i.e. `tools/sent_artifact_check.py`) — one line each, under the outcome metric, only when there is something to say.**
+
+`results.build_check.data` lists every `output/**/BUILD-LOG.md` and its flags. Render
+`Builds: [N] open · <slug> (V<n>, step <n>, sent [N]d ago, opened: [N | unknown], flags: <...>)`
+when it returns a build or a warning. Zero logs is a warning line, never `0 builds`.
+
+`results.sent_artifacts.data` lists Gmail Sent messages carrying an attachment or a link
+that no BUILD-LOG `sent:` line, rendered CV, or `data/sent-artifact-ack.md` line explains.
+Render `Sent artifacts unexplained: [N] · <date> <to> <subject>` per flag. Each one is a real
+send with no record: name it, and Nick either opens its BUILD-LOG after the fact or writes one
+ack line with a reason. An auth error is a failed source, never `0 flags`.
 
 **New roles (from `role_queue_read.py`) — surface directly under the outcome metric.**
 

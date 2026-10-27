@@ -272,11 +272,22 @@ def test_the_waiver_clears_a_missing_dossier_too(repo):
     assert write(repo, "output/acme/page.html") is None
 
 
-def test_a_waiver_in_a_second_log_wins_over_a_filled_first(repo):
+def test_a_waiver_above_wins_over_a_filled_log_below(repo):
     (repo / "output" / "acme" / "acme.md").unlink()
     put(repo, "output/acme/a/BUILD-LOG.md", FILLED)
-    put(repo, "output/acme/b/BUILD-LOG.md", "waived: nick 2026-10-26 (x)\n")
-    assert write(repo, "output/acme/page.html") is None
+    put(repo, "output/acme/BUILD-LOG.md", "waived: nick 2026-10-26 (x)\n")
+    assert write(repo, "output/acme/a/page.html") is None
+
+
+def test_a_sibling_builds_log_does_not_clear_a_new_build(repo):
+    """codex and grok, 2026-10-26: an earlier build's log must not unlock a different one."""
+    put(repo, "output/acme/v1/BUILD-LOG.md", FILLED)
+    assert write(repo, "output/acme/v2/page.html")
+
+
+def test_a_log_in_a_subfolder_does_not_clear_a_file_above_it(repo):
+    put(repo, "output/acme/v1/BUILD-LOG.md", FILLED)
+    assert write(repo, "output/acme/page.html")
 
 
 # --- build_slug, directly -----------------------------------------------------
@@ -321,3 +332,10 @@ def test_main_blocks_a_truncated_payload(tmp_path):
     r = _run(huge, tmp_path)
     assert r.returncode == 2
     assert "payload was truncated" in r.stderr
+
+
+def test_a_log_above_the_company_folder_does_not_count(repo):
+    put(repo, "output/BUILD-LOG.md", FILLED)
+    put(repo, "BUILD-LOG.md", FILLED)
+    assert write(repo, "output/acme/page.html")
+
