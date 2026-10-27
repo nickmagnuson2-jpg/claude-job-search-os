@@ -28,7 +28,8 @@ Privacy: sanitize() strips, from every free-text cell: email addresses; phone nu
 any country (9+ digits, ISO dates kept); money (any Unicode currency sign, with the
 amount on either side; a common ISO 4217 code beside any amount, upper case or the seven
 commonest in lower case; any other three capitals only beside a figure of four or more
-digits, so "PST 2pm" stays; K-shorthand like "9K" or "1.5K"; comma-grouped or 5+ digit
+digits, so "PST 2pm" stays; K-shorthand like "9K" or "1.5K"; thousands grouped by comma,
+dot, apostrophe or any space, and ranges of any of these; comma-grouped or 5+ digit
 figures); URLs of any scheme with "://" or a mailto, tel, sms, data, urn, geo or magnet
 URI, and domains with a path; and file paths (a known repo directory, an extension from
 a fixed list of common document, image, media, archive and calendar types, three or more
@@ -82,6 +83,13 @@ LOOP_CLOSED_RE = re.compile(r"\bloop closed\b", re.IGNORECASE)
 _CURRENCY = "".join(chr(c) for c in range(0x110000)
                     if unicodedata.category(chr(c)) == "Sc")
 _CUR = "[" + re.escape(_CURRENCY) + "]"
+# ONE definition of an amount, shared by every money rule below, so a grouping form fixed
+# in one rule cannot be missed by another (rounds 17-19 found it rule by rule). Thousands
+# may be grouped by comma, dot, apostrophe, space, no-break or narrow no-break space.
+_SEP = "[,.'\u00a0\u202f ]"
+_NUM = r"(?:\d{1,3}(?:" + _SEP + r"\d{2,3})+|\d+)(?:[.,]\d+)?"   # 2-digit groups: 12,00,000
+_AMT = _NUM + r"\s?[kKmM]?"
+_RANGE = _AMT + r"(?:\s?-\s?(?:" + _CUR + r")?\s?" + _AMT + r")?"
 # A fixed list of common file types; a file named with any other extension passes.
 _EXTENSIONS = ("md|py|json|pdf|txt|sh|ya?ml|docx?|odt|rtf|pages|csv|xlsx?|ods|numbers|pptx?"
                "|odp|key|html?|xml|epub|png|jpe?g|gif|heic|webp|svg|tiff?|bmp|mov|mp4|m4v|avi"
@@ -107,13 +115,12 @@ _SCRUB = [
     re.compile(r"(?<![\w/])/(?:etc|tmp|var|usr|opt|home|Users|private|Volumes|bin|sbin|dev"
                r"|mnt|root|srv|Library|Applications|System)\b/?"),
     re.compile(r"\b[\w.-]+(?:/[\w.-]+){2,}/?"),                          # relative path, 3+ segments
-    re.compile(r"\b\d[\d,.']*(?: \d{3})*\s?[kKmM]?\s?" + _CUR),          # amount, sign after: 950€
-    re.compile(_CUR + r"\s?\d[\d,.']*(?: \d{3})*\s?[kKmM]?(?:\s?-\s?" + _CUR
-               + r"?\d[\d,.']*\s?[kKmM]?)?\b|" + _CUR),                 # any currency sign, or a range
-    re.compile(r"\b(?:" + _CODES + r")\s?\d[\d,.']*\s?[kKmM]?\b"
-               r"|\b\d[\d,.']*\s?[kKmM]?\s?(?:" + _CODES + r")\b"),       # "USD 950", "950 EUR"
-    re.compile(r"\b(?:usd|eur|gbp|cad|aud|chf|inr)\s?\d[\d,.']*\s?[kKmM]?\b"
-               r"|\b\d[\d,.']*\s?[kKmM]?\s?(?:usd|eur|gbp|cad|aud|chf|inr)\b"),  # lowercase
+    re.compile(r"\b" + _RANGE + r"\s?" + _CUR),                             # sign after: 950€
+    re.compile(_CUR + r"\s?" + _RANGE + r"\b|" + _CUR),                     # sign before, or a lone sign
+    re.compile(r"\b(?:" + _CODES + r")\s?" + _RANGE + r"\b"
+               r"|\b" + _RANGE + r"\s?(?:" + _CODES + r")\b"),                # "USD 950", "120 000 EUR"
+    re.compile(r"\b(?:usd|eur|gbp|cad|aud|chf|inr)\s?" + _RANGE + r"\b"
+               r"|\b" + _RANGE + r"\s?(?:usd|eur|gbp|cad|aud|chf|inr)\b"),    # lowercase
     re.compile(r"\b[A-Z]{3}\s?(?:\d{1,3}(?:[,.']\d{3})+|\d{4,}(?![-/]\d)|\d+(?:\.\d+)?\s?[kKmM])\b"
                r"|\b(?:\d{1,3}(?:[,.']\d{3})+|\d{4,}|\d+(?:\.\d+)?\s?[kKmM])\s?[A-Z]{3}\b"),
                                                                         # "CHF 95000", "150,000 USD"
