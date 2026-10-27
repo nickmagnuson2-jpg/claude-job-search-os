@@ -283,6 +283,8 @@ def test_no_emails_money_phones_urls_paths_or_em_dashes(snap):
     ("fee usd 950 ok", "fee ok"),
     ("open 24/7 ok", "open 24/7 ok"),
     ("reach out via /cold-outreach or /follow-up", "reach out via /cold-outreach or /follow-up"),
+    ("file /Users/casey/My Drive/Job Notes/plan now", "file now"),
+    ("file C:\\Users\\casey\\My Docs\\plan now", "file now"),
     ("call Thu 3/12 w/ Casey", "call Thu 3/12 w/ Casey"),
     ("and/or later", "and/or later"),
 ])

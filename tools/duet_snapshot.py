@@ -31,7 +31,7 @@ other three capitals only beside a figure of four or more digits, so "PST 2pm" s
 K-shorthand like "9K" or "1.5K"; comma-grouped or 5+ digit figures); URLs of any scheme and
 domains with a path; and file paths (a known repo directory, a file extension, three or
 more segments, Unix absolute with two or more segments or a bare system root like /tmp,
-Windows, UNC). It is a pattern list, not a proof: a token in none of those shapes passes.
+Windows, UNC; an absolute path's inner segments may hold spaces, "My Drive/notes"). It is a pattern list, not a proof: a token in none of those shapes passes.
 Kept on purpose, because each cannot be told from a path by its shape: a two-segment word
 pair ("and/or", "notes/drafts") and a one-segment slash command ("/follow-up").
 
@@ -92,8 +92,9 @@ _SCRUB = [
                r"|xyz|info|biz|uk|ca|de|fr|eu)\b", re.IGNORECASE),     # bare domain
     re.compile(r"~/\S*|\b(?:output|data|tools|coaching|framework|memory|docs|tests)/\S*"),
     re.compile(r"\b[\w./-]+\.(?:md|py|json|pdf|txt|sh|ya?ml|docx|csv)\b"),  # file / path
-    re.compile(r"\b[A-Za-z]:\\\S*|\\\\\S+"),                             # Windows / UNC path
-    re.compile(r"(?<![\w/])/[\w.-]+(?:/[\w.-]*)+"),                      # absolute path, 2+ segments
+    # A segment may hold spaces when a later separator follows ("My Drive/notes").
+    re.compile(r"\b[A-Za-z]:\\(?:[^\\\n]*\\)*\S*|\\\\(?:[^\\\n]*\\)*\S*"),     # Windows / UNC path
+    re.compile(r"(?<![\w/])/[\w.-]+(?:(?: [\w.-]+)*/[\w.-]*)+"),           # absolute path, 2+ segments
     # One segment is shaped like a slash command ("/follow-up"), so only system roots go.
     re.compile(r"(?<![\w/])/(?:etc|tmp|var|usr|opt|home|Users|private|Volumes|bin|sbin|dev"
                r"|mnt|root|srv|Library|Applications|System)\b/?"),
