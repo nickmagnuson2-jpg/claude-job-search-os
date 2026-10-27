@@ -315,6 +315,8 @@ def test_no_emails_money_phones_urls_paths_or_em_dashes(snap):
     ("asked 1.200.000 floor", "asked floor"),
     ("asked 120'000 floor", "asked floor"),
     ("call at 10.30 ok", "call at 10.30 ok"),
+    ("asked 120\u2009000 floor", "asked floor"),
+    ("asked €120\u2007000 floor", "asked floor"),
     ("send resume.odt and logo.svg ok", "send and ok"),
     ("note memo.mp3 and backup.tar.gz ok", "note and ok"),
     ("call Thu 3/12 w/ Casey", "call Thu 3/12 w/ Casey"),
@@ -380,6 +382,19 @@ def test_an_archived_only_file_shows_nothing_in_process():
         """)
     in_process, on_radar = ds.build_pipeline(pipe, TODAY)
     assert in_process == [] and on_radar == []
+
+
+def test_a_closed_duplicate_of_a_live_key_is_not_in_process():
+    pipe = textwrap.dedent("""\
+        ## Active Pipeline
+
+        | Company | Role | Stage | Date Updated | Next Action | CV Used | Notes | URL |
+        |---------|------|-------|--------------|-------------|---------|-------|-----|
+        | Acme AI | Lead | Applied | 2026-03-08 | Live step | — | n | u |
+        | Acme AI | Lead | Closed - they passed | 2026-03-01 | — | — | n | u |
+        """)
+    in_process, _ = ds.build_pipeline(pipe, TODAY)
+    assert [e["stage"] for e in in_process] == ["Applied"]
 
 
 def test_stage_decides_when_pipe_read_has_no_matching_row(monkeypatch):

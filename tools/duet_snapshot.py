@@ -87,7 +87,7 @@ _CUR = "[" + re.escape(_CURRENCY) + "]"
 # ONE definition of an amount, shared by every money rule below, so a grouping form fixed
 # in one rule cannot be missed by another (rounds 17-19 found it rule by rule). Thousands
 # may be grouped by comma, dot, apostrophe, space, no-break or narrow no-break space.
-_SEP = "[,.'\u00a0\u202f ]"
+_SEP = "[,.'\u00a0\u202f\u2009\u2007 ]"
 _NUM = r"(?:\d{1,3}(?:" + _SEP + r"\d{2,3})+|\d+)(?:[.,]\d+)?"   # 2-digit groups: 12,00,000
 _AMT = _NUM + r"\s?[kKmM]?"
 _BIG = (r"(?:\d{1,3}(?:" + _SEP + r"\d{2,3})+(?:[.,]\d+)?|\d{4,}(?![-/]\d)|"
@@ -133,7 +133,7 @@ _SCRUB = [
     re.compile(r"\b" + _NUM + r"[kK]?\s?-\s?" + _NUM + r"\s?[kK]\b"),      # "150-180k" range
     re.compile(r"\b" + _NUM + r"\s?[kK]\b"),                               # "9K", "1.5K", "1000K"
     re.compile(r"\b\d{1,3}(?:,\d{3})+(?:\.\d+)?\b"),                    # "150,000" grouped figure
-    re.compile(r"\b\d{1,3}(?:[.'\u00a0\u202f ]\d{3})+\b"),               # "120 000", "1.000.000", "120'000"
+    re.compile(r"\b\d{1,3}(?:[.'\u00a0\u202f\u2009\u2007 ]\d{3})+\b"),               # "120 000", "1.000.000", "120'000"
     re.compile(r"\b\d{5,}\b"),                                          # long figure or id
 ]
 # A URI without "//" goes first, before the phone pass can empty "tel:+1415...".
@@ -273,10 +273,11 @@ def build_pipeline(pipeline_content: str, today: date) -> tuple[list, list]:
     in_process, seen = [], set()
     for e in parse_pipeline(pipeline_content)["active_process"]:
         row = by_key.get((e["company"], e["role"]), {})
-        # pipe_read's flag covers a terminal stage AND an Archived section, which the
-        # bucket misses when a file has no Active heading (678.F1). The stage alone
-        # decides only if pipe_read has no such row.
-        if row.get("archived", is_terminal_stage(e["stage"])):
+        # The row's own stage, because by_key holds one row per key and a closed
+        # duplicate would read its live twin (688.F1); and pipe_read's archived flag,
+        # because the bucket misses an Archived section when a file has no Active heading
+        # (678.F1).
+        if is_terminal_stage(e["stage"]) or row.get("archived"):
             continue
         in_process.append({**e, "next_action": row.get("next_action", "")})
         seen.add((e["company"], e["role"]))
