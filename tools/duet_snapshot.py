@@ -156,6 +156,9 @@ def _strip_phones(s: str) -> str:
 def sanitize(text: str, limit: int = MAX_ACTION_CHARS) -> str:
     """Strip private tokens, replace dashes, collapse whitespace, truncate on a word."""
     s = (text or "").replace("—", "-").replace("–", "-")
+    # Collapse every whitespace run first, so no rule has to allow "USD  950" or a tab
+    # (round 24). No-break spaces survive: they are thousands separators, not runs.
+    s = re.sub(r"[^\S\u00a0\u202f\u2009\u2007]+", " ", s)
     s = _strip_phones(_URI.sub("", s))
     for rx in _SCRUB:
         s = rx.sub("", s)
