@@ -25,15 +25,18 @@ Reused, not copied (one source of truth each):
                                              and Last Interaction (the "since" date)
 
 Privacy: sanitize() strips, from every free-text cell: email addresses; phone numbers of
-any country (9+ digits, ISO dates kept); money (any Unicode currency sign; a common
-ISO 4217 code beside any amount, upper case or the seven commonest in lower case; any
-other three capitals only beside a figure of four or more digits, so "PST 2pm" stays;
-K-shorthand like "9K" or "1.5K"; comma-grouped or 5+ digit figures); URLs of any scheme and
-domains with a path; and file paths (a known repo directory, a file extension, three or
-more segments, Unix absolute with two or more segments or a bare system root like /tmp,
-Windows, UNC; an absolute path's inner segments may hold spaces, "My Drive/notes"). It is a pattern list, not a proof: a token in none of those shapes passes.
-Kept on purpose, because each cannot be told from a path by its shape: a two-segment word
-pair ("and/or", "notes/drafts") and a one-segment slash command ("/follow-up").
+any country (9+ digits, ISO dates kept); money (any Unicode currency sign; a common ISO
+4217 code beside any amount, upper case or the seven commonest in lower case; any other
+three capitals only beside a figure of four or more digits, so "PST 2pm" stays;
+K-shorthand like "9K" or "1.5K"; comma-grouped or 5+ digit figures); URLs of any scheme
+and domains with a path; and file paths (a known repo directory, a document, image,
+media or archive extension, three or more segments, Unix absolute with two or more
+segments or a bare system root like /tmp, Windows, UNC; an absolute path's inner
+segments may hold spaces, "My Drive/notes", but its last segment ends at the first
+space, since what follows cannot be told from prose). It is a pattern list, not a proof:
+a token in none of those shapes passes. Kept on purpose, because each cannot be told
+from a path by its shape: a two-segment word pair ("and/or", "notes/drafts") and a
+one-segment slash command ("/follow-up").
 
 Usage:
   PYTHONIOENCODING=utf-8 python3 tools/duet_snapshot.py [--date YYYY-MM-DD]
@@ -91,7 +94,8 @@ _SCRUB = [
     re.compile(r"\b[\w-]+(?:\.[\w-]+)*\.(?:com|ai|io|co|org|net|dev|app|so|us|me|ly|gg|tv|fm"
                r"|xyz|info|biz|uk|ca|de|fr|eu)\b", re.IGNORECASE),     # bare domain
     re.compile(r"~/\S*|\b(?:output|data|tools|coaching|framework|memory|docs|tests)/\S*"),
-    re.compile(r"\b[\w./-]+\.(?:md|py|json|pdf|txt|sh|ya?ml|docx|csv)\b"),  # file / path
+    re.compile(r"\b[\w./-]+\.(?:md|py|json|pdf|txt|sh|ya?ml|docx?|csv|xlsx?|pptx?|key|pages"
+               r"|numbers|rtf|html?|zip|png|jpe?g|gif|heic|mov|mp4)\b", re.IGNORECASE),  # file
     # A segment may hold spaces when a later separator follows ("My Drive/notes").
     re.compile(r"\b[A-Za-z]:\\(?:[^\\\n]*\\)*\S*|\\\\(?:[^\\\n]*\\)*\S*"),     # Windows / UNC path
     re.compile(r"(?<![\w/])/[\w.-]+(?:(?: [\w.-]+)*/[\w.-]*)+"),           # absolute path, 2+ segments

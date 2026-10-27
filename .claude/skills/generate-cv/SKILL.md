@@ -345,9 +345,8 @@ the decisions instead of the artifact.
   block, put the same decisions in AskUserQuestion: four per call, each question naming the current
   state, the recommended option first, the pre-named alternative as the second. Keep the written block
   as the record. Do this before moving to any other task in the session. **Why:** a prose decisions
-  list inside a message that carries anything else goes unanswered. Measured on four recent
-  applications; on the most recent, the CV was submitted unchanged with all six decisions open. Every time the same decisions were offered as options, they were answered in one
-  reply. See `memory/feedback_blocking_decisions_go_through_the_question_tool.md`.
+  list inside a message that carries anything else goes unanswered, while the same decisions
+  offered as options are answered in one reply. See `memory/feedback_blocking_decisions_go_through_the_question_tool.md`.
 - Then, and only then, print the file paths and the rest of the summary below.
 
 ```markdown
