@@ -24,22 +24,23 @@ Reused, not copied (one source of truth each):
   networking_read.parse_contacts           - name -> company (when the todo omits it)
                                              and Last Interaction (the "since" date)
 
-Privacy: sanitize() strips, from every free-text cell: email addresses; phone numbers of
-any country (9+ digits, ISO dates kept); money (any Unicode currency sign, with the
-amount on either side; a common ISO 4217 code beside any amount, upper case or the seven
-commonest in lower case; any other three capitals only beside a figure of four or more
-digits, so "PST 2pm" stays; K-shorthand like "9K" or "1.5K"; thousands grouped by comma,
-dot, apostrophe or any space, and ranges of any of these; a bare figure grouped in
-threes by any of those separators, or of 5+ digits); URLs of any scheme with "://" or a
-mailto, tel, sms, data, urn, geo or magnet URI, and domains with a path; and file paths
-(a known repo directory, an extension from a fixed list of common document, image,
-media, archive and calendar types, three or more segments, Unix absolute with two or
-more segments or a bare system root like /tmp, Windows, UNC; an absolute path's inner
-segments may hold spaces, "My Drive/notes", but its last segment ends at the first
-space, since what follows cannot be told from prose). It is a pattern list, not a proof:
-a token in none of those shapes passes. Kept on purpose, because each cannot be told
-from a path by its shape: a two-segment word pair ("and/or", "notes/drafts") and a
-one-segment slash command ("/follow-up").
+Privacy: sanitize() strips, from every free-text cell: email addresses (any local part,
+dotted, dotless or bracketed host); phone numbers of any country (9+ digits joined by
+spaces, dots, dashes, slashes, middle dots or brackets; dates kept); money (any Unicode
+currency sign, with the amount on either side; a common ISO 4217 code beside any amount,
+upper case or the seven commonest in lower case; any other three capitals only beside a
+figure of four or more digits, so "PST 2pm" stays; K-shorthand like "9K" or "1.5K";
+thousands grouped by comma, dot, apostrophe or any space, and ranges of any of these; a
+bare figure grouped in threes by any of those separators, or of 5+ digits); URLs of any
+scheme with "://" or a mailto, tel, sms, data, urn, geo or magnet URI, and domains with
+a path; and file paths (a known repo directory, an extension from a fixed list of common
+document, image, media, archive and calendar types, three or more segments, Unix
+absolute with two or more segments or a bare system root like /tmp, Windows, UNC; an
+absolute path's inner segments may hold spaces, "My Drive/notes", but its last segment
+ends at the first space, since what follows cannot be told from prose). It is a pattern
+list, not a proof: a token in none of those shapes passes. Kept on purpose, because each
+cannot be told from a path by its shape: a two-segment word pair ("and/or",
+"notes/drafts") and a one-segment slash command ("/follow-up").
 
 Usage:
   PYTHONIOENCODING=utf-8 python3 tools/duet_snapshot.py [--date YYYY-MM-DD]
@@ -105,7 +106,7 @@ _CODES = ("USD|EUR|GBP|CAD|AUD|NZD|CHF|JPY|CNY|INR|SGD|HKD|SEK|NOK|DKK|MXN|BRL|Z
           "|KRW|ILS|AED|PLN|CZK|TRY")
 
 _SCRUB = [
-    re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+"),                       # email
+    re.compile(r"[\w.+'-]+@(?:\[[^\]\s]+\]|[\w-]+(?:\.[\w-]+)*)"),         # email, any host form
     re.compile(r"\b[a-zA-Z][\w+.-]*://[^\s)]+"),                        # url, any scheme
     re.compile(r"\b[\w-]+(?:\.[\w-]+)+/[^\s)]*"),                       # domain with a path
     re.compile(r"\b[\w-]+(?:\.[\w-]+)*\.(?:com|ai|io|co|org|net|dev|app|so|us|me|ly|gg|tv|fm"
@@ -139,7 +140,7 @@ _SCRUB = [
 # A URI without "//" goes first, before the phone pass can empty "tel:+1415...".
 _URI = re.compile(r"\b(?:mailto|tel|sms|data|urn|geo|magnet):[^\s)]+", re.IGNORECASE)
 # Any phone shape: 9+ digits joined by spaces, dots, dashes or brackets, optional +.
-_PHONE = re.compile(r"\+?\(?\d[\d\s().-]{6,}\d")
+_PHONE = re.compile(r"\+?\(?\d[\d\s()./\u00b7-]{6,}\d")    # space . - / or middle dot
 
 
 def _drop_phone(m: re.Match) -> str:

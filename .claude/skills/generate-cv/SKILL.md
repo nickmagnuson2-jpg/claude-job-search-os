@@ -3,7 +3,7 @@ name: generate-cv
 description: Generate a tailored CV + interview cheat sheet for a specific role — follows the 11-step resume workflow, saves to output/, and updates the pipeline
 argument-hint: <job-url-or-jd> [context]
 user-invocable: true
-allowed-tools: Read(*), Glob(data/*), Glob(plugins/*), Glob(framework/*), Write(output/**), Write(data/job-pipeline.md), mcp__exa__web_search_exa, mcp__exa__web_fetch_exa, WebFetch, WebSearch, Bash(python3 tools/projects_to_yaml.py:*), Bash(python3 tools/cv_merge_theme.py:*), Bash(~/.local/bin/rendercv render:*), Bash(rendercv render:*), Bash(rm -rf output/**/rendercv_output), Bash(rm -f output/**/*-magnuson.pdf)
+allowed-tools: AskUserQuestion, Read(*), Glob(data/*), Glob(plugins/*), Glob(framework/*), Write(output/**), Write(data/job-pipeline.md), mcp__exa__web_search_exa, mcp__exa__web_fetch_exa, WebFetch, WebSearch, Bash(python3 tools/projects_to_yaml.py:*), Bash(python3 tools/cv_merge_theme.py:*), Bash(~/.local/bin/rendercv render:*), Bash(rendercv render:*), Bash(rm -rf output/**/rendercv_output), Bash(rm -f output/**/*-magnuson.pdf)
 ---
 
 # Generate CV — Tailored Resume + Cheat Sheet
