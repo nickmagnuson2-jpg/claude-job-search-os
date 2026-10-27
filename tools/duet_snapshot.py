@@ -94,7 +94,8 @@ _RANGE = _AMT + r"(?:\s?-\s?(?:" + _CUR + r")?\s?" + _AMT + r")?"
 _EXTENSIONS = ("md|py|json|pdf|txt|sh|ya?ml|docx?|odt|rtf|pages|csv|xlsx?|ods|numbers|pptx?"
                "|odp|key|html?|xml|epub|png|jpe?g|gif|heic|webp|svg|tiff?|bmp|mov|mp4|m4v|avi"
                "|mkv|mp3|m4a|wav|aac|flac|ogg|zip|tar(?:\\.gz)?|tgz|gz|7z|rar|dmg|ics|vcf|eml")
-_ISO_DATE = re.compile(r"(\b\d{4}-\d{2}-\d{2}\b)")
+# Dates split the phone pass, so a date beside a number neither shields it nor is eaten.
+_ISO_DATE = re.compile(r"(\b\d{4}-\d{2}-\d{2}\b|\b\d{1,2}/\d{1,2}(?:/\d{2,4})?\b)")
 # ISO 4217 codes in ordinary use. A code from this list takes any amount ("USD 950"); any
 # other three capitals take only a figure that cannot be a time or count ("XYZ 95000").
 _CODES = ("USD|EUR|GBP|CAD|AUD|NZD|CHF|JPY|CNY|INR|SGD|HKD|SEK|NOK|DKK|MXN|BRL|ZAR|RUB"
@@ -106,7 +107,8 @@ _SCRUB = [
     re.compile(r"\b[\w-]+(?:\.[\w-]+)+/[^\s)]*"),                       # domain with a path
     re.compile(r"\b[\w-]+(?:\.[\w-]+)*\.(?:com|ai|io|co|org|net|dev|app|so|us|me|ly|gg|tv|fm"
                r"|xyz|info|biz|uk|ca|de|fr|eu)\b", re.IGNORECASE),     # bare domain
-    re.compile(r"~/\S*|\b(?:output|data|tools|coaching|framework|memory|docs|tests)/\S*"),
+    re.compile(r"(?:~|\b(?:output|data|tools|coaching|framework|memory|docs|tests))"
+               r"(?:(?: [\w.-]+)*/[\w.-]*)+"),                          # repo or ~ path, spaced segments
     re.compile(r"\b[\w./-]+\.(?:" + _EXTENSIONS + r")\b", re.IGNORECASE),     # file name
     # A segment may hold spaces when a later separator follows ("My Drive/notes").
     re.compile(r"\b[A-Za-z]:\\(?:[^\\\n]*\\)*\S*|\\\\(?:[^\\\n]*\\)*\S*"),     # Windows / UNC path
@@ -124,8 +126,8 @@ _SCRUB = [
     re.compile(r"\b[A-Z]{3}\s?(?:\d{1,3}(?:[,.']\d{3})+|\d{4,}(?![-/]\d)|\d+(?:\.\d+)?\s?[kKmM])\b"
                r"|\b(?:\d{1,3}(?:[,.']\d{3})+|\d{4,}|\d+(?:\.\d+)?\s?[kKmM])\s?[A-Z]{3}\b"),
                                                                         # "CHF 95000", "150,000 USD"
-    re.compile(r"\b\d{2,3}(?:\.\d)?[kK]?\s?-\s?\d{2,3}(?:\.\d)?[kK]\b"),   # "150-180k" range
-    re.compile(r"\b\d{1,3}(?:\.\d+)?[kK]\b"),                           # "9K", "1.5K", "95K"
+    re.compile(r"\b" + _NUM + r"[kK]?\s?-\s?" + _NUM + r"\s?[kK]\b"),      # "150-180k" range
+    re.compile(r"\b" + _NUM + r"\s?[kK]\b"),                               # "9K", "1.5K", "1000K"
     re.compile(r"\b\d{1,3}(?:,\d{3})+(?:\.\d+)?\b"),                    # "150,000" grouped figure
     re.compile(r"\b\d{5,}\b"),                                          # long figure or id
 ]
