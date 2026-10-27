@@ -521,7 +521,10 @@ def refuse_unknown_paths(repo_root: Path, paths: list[str]) -> str:
                     paths arrived as ONE argument, and two review rounds ran blind.
       untracked  -- on disk, but `git diff` never shows an untracked file (582-588.F1).
       unchanged  -- tracked and identical to the diff base: there is no change to review.
-    A path the change deletes has a diff, so it passes.
+    A path the change deletes has a diff, so it passes. So does a gitignored file on disk:
+    it can never be pushed, so the gate never reads it as coverage, and the reviewer reads
+    it from disk. tools/reader_review.py sends only such files (output/), and refusing them
+    broke every reader review (2026-10-26).
     """
     base = diff_base(repo_root)
     bad = []
@@ -532,6 +535,9 @@ def refuse_unknown_paths(repo_root: Path, paths: list[str]) -> str:
         if not (repo_root / p).exists():
             bad.append((p, "missing: neither on disk nor in the diff base"))
         else:
+            ignored = _git(repo_root, "check-ignore", "-q", "--", p)
+            if ignored is not None and ignored.returncode == 0:
+                continue
             tracked = _git(repo_root, "ls-files", "--error-unmatch", "--", p)
             if tracked is None or tracked.returncode != 0:
                 bad.append((p, "untracked: git diff cannot show it; commit it or `git add -N` it"))

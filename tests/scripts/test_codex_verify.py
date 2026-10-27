@@ -1695,6 +1695,21 @@ def test_an_untracked_file_is_refused_because_git_diff_cannot_show_it(tmp_path):
     assert "'new.py'" in msg and "untracked" in msg and "git add -N" in msg
 
 
+def test_a_gitignored_file_passes_because_it_can_never_be_pushed(tmp_path):
+    """2026-10-26: reader_review.py sends only gitignored output/ files, and refusing them
+    broke every reader review. An untracked file that is NOT ignored is still refused."""
+    repo = _tiny_repo(tmp_path)
+    (repo / ".gitignore").write_text("out/\n", encoding="utf-8")
+    (repo / "out").mkdir()
+    (repo / "out" / "doc.md").write_text("x\n", encoding="utf-8")
+    (repo / "loose.md").write_text("x\n", encoding="utf-8")
+    assert cv.refuse_unknown_paths(repo, ["out/doc.md"]) == ""
+    msg = cv.refuse_unknown_paths(repo, ["out/doc.md", "loose.md"])
+    assert "'loose.md'" in msg and "'out/doc.md'" not in msg
+    # Ignored but absent is still missing: there is nothing on disk to read.
+    assert "'out/gone.md'" in cv.refuse_unknown_paths(repo, ["out/gone.md"])
+
+
 def test_an_intent_to_add_file_has_a_diff_and_passes(tmp_path):
     import subprocess
     repo = _tiny_repo(tmp_path)
