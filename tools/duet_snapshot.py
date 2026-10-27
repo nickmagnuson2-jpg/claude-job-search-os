@@ -29,16 +29,17 @@ any country (9+ digits, ISO dates kept); money (any Unicode currency sign, with 
 amount on either side; a common ISO 4217 code beside any amount, upper case or the seven
 commonest in lower case; any other three capitals only beside a figure of four or more
 digits, so "PST 2pm" stays; K-shorthand like "9K" or "1.5K"; thousands grouped by comma,
-dot, apostrophe or any space, and ranges of any of these; comma-grouped or 5+ digit
-figures); URLs of any scheme with "://" or a mailto, tel, sms, data, urn, geo or magnet
-URI, and domains with a path; and file paths (a known repo directory, an extension from
-a fixed list of common document, image, media, archive and calendar types, three or more
-segments, Unix absolute with two or more segments or a bare system root like /tmp,
-Windows, UNC; an absolute path's inner segments may hold spaces, "My Drive/notes", but
-its last segment ends at the first space, since what follows cannot be told from prose).
-It is a pattern list, not a proof: a token in none of those shapes passes. Kept on
-purpose, because each cannot be told from a path by its shape: a two-segment word pair
-("and/or", "notes/drafts") and a one-segment slash command ("/follow-up").
+dot, apostrophe or any space, and ranges of any of these; a bare figure grouped in
+threes by any of those separators, or of 5+ digits); URLs of any scheme with "://" or a
+mailto, tel, sms, data, urn, geo or magnet URI, and domains with a path; and file paths
+(a known repo directory, an extension from a fixed list of common document, image,
+media, archive and calendar types, three or more segments, Unix absolute with two or
+more segments or a bare system root like /tmp, Windows, UNC; an absolute path's inner
+segments may hold spaces, "My Drive/notes", but its last segment ends at the first
+space, since what follows cannot be told from prose). It is a pattern list, not a proof:
+a token in none of those shapes passes. Kept on purpose, because each cannot be told
+from a path by its shape: a two-segment word pair ("and/or", "notes/drafts") and a
+one-segment slash command ("/follow-up").
 
 Usage:
   PYTHONIOENCODING=utf-8 python3 tools/duet_snapshot.py [--date YYYY-MM-DD]
@@ -132,6 +133,7 @@ _SCRUB = [
     re.compile(r"\b" + _NUM + r"[kK]?\s?-\s?" + _NUM + r"\s?[kK]\b"),      # "150-180k" range
     re.compile(r"\b" + _NUM + r"\s?[kK]\b"),                               # "9K", "1.5K", "1000K"
     re.compile(r"\b\d{1,3}(?:,\d{3})+(?:\.\d+)?\b"),                    # "150,000" grouped figure
+    re.compile(r"\b\d{1,3}(?:[.'\u00a0\u202f ]\d{3})+\b"),               # "120 000", "1.000.000", "120'000"
     re.compile(r"\b\d{5,}\b"),                                          # long figure or id
 ]
 # A URI without "//" goes first, before the phone pass can empty "tel:+1415...".
