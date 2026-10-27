@@ -62,7 +62,15 @@ def test_the_bio_line_passes(repo):
 def test_a_rendered_cv_attachment_passes(repo):
     (repo / "output" / "acme" / "102626-magnuson.pdf").write_bytes(b"%PDF")
     (repo / "output" / "acme" / "102626-magnuson.yaml").write_text("cv: {}")
-    assert cda.decide(draft(attach=["/Users/x/to-send/102626-magnuson.pdf"]), repo) is None
+    cv = repo / "output" / "acme" / "102626-magnuson.pdf"
+    assert cda.decide(draft(attach=[str(cv)]), repo) is None
+
+
+def test_a_file_that_only_shares_the_cv_name_blocks(repo):
+    """699.F1: the CV pass checks the attached file, not just its name."""
+    (repo / "output" / "acme" / "102626-magnuson.pdf").write_bytes(b"%PDF")
+    (repo / "output" / "acme" / "102626-magnuson.yaml").write_text("cv: {}")
+    assert cda.decide(draft(attach=["/tmp/other/102626-magnuson.pdf"]), repo)
 
 
 # --- what needs a header ----------------------------------------------------------------
@@ -274,5 +282,20 @@ def test_the_last_name_also_matches(repo):
     rel = log(repo, 'reader: Michael Example, CEO\nreader_ask: "x y" (s)\n')
     text = draft("Hi Mike,\n", attach=["/tmp/p.pdf"], artifact=rel).replace(
         "TO: casey@acme.example", "TO: m.example@acme.example")
+    assert cda.decide(text, repo) is None
+
+
+def test_none_does_not_clear_an_attached_file(repo):
+    """Round 12, 2026-10-26: `none (<reason>)` is for plain links; a file needs its log."""
+    msg = cda.decide(draft(attach=["/tmp/planner.pdf"], artifact="none (job posting link)"), repo)
+    assert msg and "covers links only" in msg
+
+
+def test_none_still_clears_a_link_next_to_a_rendered_cv(repo):
+    (repo / "output" / "acme" / "102626-magnuson.pdf").write_bytes(b"%PDF")
+    (repo / "output" / "acme" / "102626-magnuson.yaml").write_text("cv: {}")
+    text = draft("Posting: https://jobs.acme.example/1\n",
+                 attach=[str(repo / "output" / "acme" / "102626-magnuson.pdf")],
+                 artifact="none (job posting link)")
     assert cda.decide(text, repo) is None
 

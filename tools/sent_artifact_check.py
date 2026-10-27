@@ -251,7 +251,7 @@ def unexplained(items: list[str], recips, msg_date: str, sent_texts, key=str.low
     logs = [whole for sent, whole in sent_texts
             if msg_date in sent and any((a and a.lower() in sent) or (n and n.lower() in sent)
                                         for n, a in recips)]
-    return [i for i in items if not any(key(i) in whole for whole in logs)]
+    return [i for i in items if not any(key(i).lower() in whole for whole in logs)]  # logs lowered
 
 
 def msg_local_date(msg: dict) -> str:

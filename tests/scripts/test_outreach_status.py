@@ -974,3 +974,23 @@ def test_an_empty_cell_falls_back_to_the_summary(tmp_path):
     _, out = _writer().query_status(log, "Casey Doe", None, "cv", None)
     assert len(out["artifact_rows"]) == 1
 
+
+# --- review round 12 (2026-10-26) ------------------------------------------------------
+
+@pytest.mark.parametrize("bad", ["2026-13-40", "2026-02-30", "2026-1-05"])
+def test_append_refuses_a_date_that_does_not_exist(tmp_path, bad):
+    log = _eight_col_log(tmp_path, [])
+    code, out = _writer().append_row(log, {"date": bad, "skill": "cold-outreach", "channel": "email",
+                                           "recipient": "Casey Doe", "company": "Acme",
+                                           "summary": "x", "status": "Sent", "artifact": "none"})
+    assert code == 2 and "date" in out["reason"]
+
+
+def test_set_status_finds_a_row_by_its_artifact_cell(tmp_path):
+    """An --append row whose Summary is a bare subject is still addressable by --artifact."""
+    log = _eight_col_log(tmp_path, [
+        "| 2026-03-02 | cold-outreach | email | Casey Doe | Acme | Quick note | Sent | page:output/acme/BUILD-LOG.md |\n"])
+    code, _ = _writer().set_status(log, "Casey Doe", "2026-03-02", "page", "Bounced")
+    assert code == 0
+    assert "| Bounced |" in log.read_text(encoding="utf-8")
+

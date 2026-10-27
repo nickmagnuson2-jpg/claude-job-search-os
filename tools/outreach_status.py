@@ -276,6 +276,27 @@ def _latest(rows: list[dict]) -> dict:
     return max(rows, key=lambda r: (r["date"], r["_line"]))
 
 
+def _real_date(value: str) -> bool:
+    """YYYY-MM-DD and a date that exists: 2026-13-40 and 2026-02-30 are refused (694.F1)."""
+    import datetime as _dt
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+        return False
+    try:
+        _dt.date.fromisoformat(value)
+    except ValueError:
+        return False
+    return True
+
+
+def _row_has_artifact(row: dict, artifact: str) -> bool:
+    """The Artifact cell names this type; an empty cell (pre-column history) falls back to
+    the Summary text. One rule for set-status and the queries (review round 12, 705.F2)."""
+    cell = row.get("artifact", "")
+    if cell:
+        return cell.split(":", 1)[0] == artifact
+    return artifact in artifact_vocab.find_in_text(row["summary"])
+
+
 def _public(row: dict) -> dict:
     return {**{k: row[k] for k in COLUMNS}, "artifact": row.get("artifact", "")}
 
@@ -299,7 +320,7 @@ def set_status(path: Path, recipient: str, date: str, artifact: str | None,
         targets = [
             r for r in matched
             if r["date"] == date
-            and (artifact is None or artifact in artifact_vocab.find_in_text(r["summary"]))
+            and (artifact is None or _row_has_artifact(r, artifact))
         ]
         if len(targets) != 1:
             reason = f"expected exactly 1 matching row, found {len(targets)}"
@@ -403,7 +424,7 @@ def check_append(values: dict) -> tuple[int, dict] | None:
         return 2, {"action": "append", "ok": False,
                    "reason": f"--append requires: {', '.join('--' + m for m in missing)}"
                              " (pass --artifact none when nothing rode along)"}
-    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", values["date"]):
+    if not _real_date(values["date"]):
         return 2, {"action": "append", "ok": False,
                    "reason": f"--date must be YYYY-MM-DD, got {values['date']!r}"}
     if values["status"] not in KNOWN_STATUSES:

@@ -642,3 +642,24 @@ def test_the_brief_line_counts_failed_checks():
          "flags": [], "failed_checks": ["x", "y"], "drained": False}
     assert "failed checks: 2" in bc.brief_line([b], "")
 
+
+def test_the_reader_first_name_must_be_a_whole_word_in_the_row(tmp_path):
+    """Round 12 (701.F3): reader Dan must not match a row for Jordan."""
+    repo = _repo(tmp_path, {})
+    (repo / "data" / "outreach-log.md").write_text(
+        "| 2026-03-01 | x | email | Casey Doe | Acme | a | Sent | |\n"
+        "| 2026-03-02 | x | email | Jordan Roe | Beta | b | Sent | |\n", encoding="utf-8")
+    log = _edit(FILLED, "reader: Casey Doe,", "reader: Dan Lee,")
+    assert any("does not name the reader" in c for c in _check(log, repo)["failed_checks"])
+
+
+def test_a_template_log_reads_reader_ask_from_phase_0_only():
+    """703.F1: an Entry quoting an ask must not stand in for a placeholder in Phase 0."""
+    text = ('# Build log\n\nVariant: V1\n\n## Phase 0\nreader_ask: "<verbatim>" (<s>)\n\n'
+            '## Entries\n### 2026-03-01 | Step 1\nreader_ask: "she asked for the intake" (s)\n')
+    assert bc.ask_state(text) == "missing"
+
+
+def test_a_pre_template_log_is_read_whole():
+    assert bc.ask_state('# old\nnotes\nreader_ask: "the intake" (s)\n') == "filled"
+

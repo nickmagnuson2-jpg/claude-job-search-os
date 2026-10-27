@@ -558,3 +558,9 @@ def test_a_non_image_part_is_never_inline():
     assert sac.is_inline_image({"mimeType": "application/pdf",
                                 "headers": [{"name": "Content-ID", "value": "<x>"}]}, {"x"}) is False
 
+
+def test_a_logged_url_matches_whatever_its_letter_case(repo):
+    """Round 12 (702.F4): the log names the link in lower case, the message in mixed case."""
+    build_log(repo, f"sent: {DAY} Casey Doe\n")
+    assert check(repo, message(leaf("text/plain", "https://Acme-Demo.app/X"))) is None
+

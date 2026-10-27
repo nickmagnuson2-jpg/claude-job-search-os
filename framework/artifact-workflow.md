@@ -125,7 +125,7 @@ Design has its own budget (D2). Render the ugly page and look at it before any c
 Run `tools/reader_review.py --gate output/<slug>/BUILD-LOG.md` on the rendered artifact; `--gate` reads `reader` and `value_item` from Phase 0 and refuses a log with either blank. Add `--protect` and `--source-dir output/<slug>/sources`. The terminal run sees only the brief and the artifact, never a claim list. Attachments go through the same review.
 
 - **Open P0 = 0 is not enough to send.** Every P0 dispositioned as accepted-risk or won't-fix, and any reviewer verdict of 'do not send', needs a dated `signoff: nick YYYY-MM-DD` line a script can read; a written waiver without that line is not a sign-off. `tools/build_check.py` reports an open P0 or an undated sign-off as a failed check on the `/standup` `Builds:` line; nothing stops the send itself, so read that line before sending (B09:98, B07:95).
-- **If the review tool refuses to run** (`tools/codex_verify.py` refuses unknown or gitignored paths), log the refusal as an Entry; the send waits for one completed review or a Nick sign-off line (B13:149).
+- **If the review tool refuses to run** (`tools/codex_verify.py` refuses a path it cannot show the reviewer), log the refusal as an Entry; the send waits for one completed review or a Nick sign-off line (B13:149).
 - **V2 brief-term coverage:** pull the product and reader nouns from the saved brief, grep the artifact's visible text, list the misses for disposition before the send (B07:89, B07:198).
 - SCRIPT (`tools/build_check.py`): review Entry after the last edit Entry; every P0 disposition either fixed or signed off; loop count <= D3.
 - Why: AR11, AR8 (B11:95, B10:62, B12:51).

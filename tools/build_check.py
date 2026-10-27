@@ -84,8 +84,8 @@ SKIPPED_CHECKS = [
     "brief file's saved: timestamp precedes the first draft Entry (the template has no saved: field;"
     " checked instead as the Step 1 Entry preceding the first Step 4 Entry)",
     "timed V2 under two hours fills four fields only (the template does not say a V2 is timed)",
-    "per-default outcomes joined to the outreach-log row (the outreach-log Artifact column is"
-    " unbuilt; run counts per default are reported)",
+    "per-default outcomes joined to the outreach-log row (not joined yet; run counts per "
+    "default are reported)",
 ]
 
 # A key starts a line or follows two or more spaces: `reader: ...   channel: ...`.
@@ -177,10 +177,15 @@ def _kv_block(block) -> dict[str, str]:
 
 
 def ask_state(text: str) -> str:
-    """`waived`, `filled` or `missing` for one BUILD-LOG's text. A waiver wins."""
+    """`waived`, `filled` or `missing` for one BUILD-LOG's text. A waiver wins.
+
+    A log on the template is read from its Phase 0 block only, so a filled-looking line
+    elsewhere (an Entry quoting an ask) cannot stand in for a placeholder in Phase 0
+    (round-12 review, 703.F1). A pre-template log has no Phase 0 block and is read whole."""
     if WAIVED.search(text):
         return "waived"
-    return "filled" if READER_ASK.search(text) else "missing"
+    m = re.search(r"^## Phase 0\b.*?(?=^## |\Z)", text, re.M | re.S)
+    return "filled" if READER_ASK.search(m.group(0) if m else text) else "missing"
 
 
 def parse_log(text: str) -> dict:
@@ -255,7 +260,8 @@ def _row_names_reader(repo: Path, value: str, reader: str) -> bool:
     row = read_file(repo / "data" / "outreach-log.md").splitlines()[n - 1]
     first = re.split(r"[\s,;(]+", reader.strip())[0] if reader.strip() else ""
     return bool(re.match(r"^\|\s*\d{4}-\d{2}-\d{2}\s*\|", row)) and (
-        not first or first.lower() in row.lower())
+        not first or re.search(rf"(?<![a-z]){re.escape(first.lower())}(?![a-z])", row.lower())
+        is not None)
 
 
 def check_log(log: dict, today: dt.date, repo: Path) -> dict:

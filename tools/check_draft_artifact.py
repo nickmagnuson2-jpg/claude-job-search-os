@@ -61,12 +61,19 @@ def headers(content: str) -> tuple[list[str], list[str], str]:
     return attach, artifact, subject
 
 
+def _is_rendered_cv(path: str, cvs: set[str]) -> bool:
+    """The attached file itself is a rendered CV: the exact CV name AND its RenderCV .yaml
+    beside it. A different file that only shares the name does not pass (699.F1)."""
+    p = Path(path)
+    return p.name in cvs and p.with_suffix(".yaml").is_file()
+
+
 def artifact_items(content: str, root: Path) -> list[str]:
     """Attachments that are not a rendered CV, and links that are not a bio link."""
     attach, _, subject = headers(content)
     cvs = cv_index(root)
     bio, _err = load_bio(root / "tools")
-    files = [a for a in attach if os.path.basename(a) not in cvs]
+    files = [a for a in attach if not _is_rendered_cv(a, cvs)]
     text = subject + "\n" + extract_body(content)
     links = []
     for u in URL_RE.findall(text):
@@ -94,6 +101,12 @@ def header_problem(values: list[str], root: Path, content: str = "") -> str | No
         return "no ARTIFACT: header"
     value = values[-1]
     if NONE_RE.match(value):
+        # `none` covers plain links only: a file attached to the draft is a built thing
+        # and needs its log (round-12 review, 692.F1 and six duplicates).
+        attached = [a for a in artifact_items(content, root) if a in headers(content)[0]]
+        if attached:
+            return ("ARTIFACT: none covers links only; the attached file needs "
+                    "output/<slug>/BUILD-LOG.md")
         return None
     if LOG_RE.match(value):
         path = root / value

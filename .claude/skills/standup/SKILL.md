@@ -89,7 +89,7 @@ Four rules, all mandatory:
 **Builds and sent artifacts (from `build_check` and `sent_artifacts`, i.e. `tools/sent_artifact_check.py`) — one line each, under the outcome metric, only when there is something to say.**
 
 `results.build_check.data` lists every `output/**/BUILD-LOG.md` and its flags. Render
-`Builds: [N] open · <slug> (V<n>, step <n>, sent [N]d ago, opened: [N | unknown], flags: <...>)`
+`Builds: [N] open · <slug> (V<n>, step <n>, sent [N]d ago, opened: [N | unknown], flags: <...>, failed checks: [N])`. Name each failed check under a build that has any: a log can show `flags: none` and still have failed a check
 when it returns a build or a warning. Zero logs is a warning line, never `0 builds`.
 
 `results.sent_artifacts.data` lists Gmail Sent messages carrying an attachment or a link

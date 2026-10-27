@@ -12,7 +12,8 @@ is blocked until the log exists. Proposal 1c-W of the 2026-10-23 codify run, app
 WHAT IT BLOCKS. A Write, Edit, MultiEdit or NotebookEdit, or a Bash write (redirect, tee,
 sed -i, dd, cp/mv/rsync/install, including a copy into a folder, which lands the file under
 its own name), whose target is a build file (BUILD_EXT) under
-`output/<slug>/`, unless some `BUILD-LOG.md` at any depth under `output/<slug>/` carries a
+`output/<slug>/`, unless a `BUILD-LOG.md` in the file's own folder or a folder above it, up
+to `output/<slug>/`, carries a
 filled `reader_ask:` line, AND the company has its dossier at `output/<slug>/<slug>.md`.
 A `waived: nick YYYY-MM-DD` line in a BUILD-LOG clears both: it is Nick saying the build is
 not for a reader, so neither the ask nor the dossier applies. Creates and edits alike: an
