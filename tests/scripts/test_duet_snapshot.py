@@ -293,6 +293,9 @@ def test_no_emails_money_phones_urls_paths_or_em_dashes(snap):
     ("ref urn:isbn:0451450523 ok", "ref ok"),
     ("img data:image/png;base64,AAAA ok", "img ok"),
     ("call tel:+14155550134 ok", "call ok"),
+    ("offer €120 000 base", "offer base"),
+    ("send resume.odt and logo.svg ok", "send and ok"),
+    ("note memo.mp3 and backup.tar.gz ok", "note and ok"),
     ("call Thu 3/12 w/ Casey", "call Thu 3/12 w/ Casey"),
     ("and/or later", "and/or later"),
 ])
@@ -344,6 +347,25 @@ def test_a_closed_duplicate_of_a_live_key_is_not_upcoming(tmp_path):
     (d / "job-todos.md").write_text(textwrap.dedent(TODOS), encoding="utf-8")
     (d / "networking.md").write_text(textwrap.dedent(NETWORKING), encoding="utf-8")
     assert "Closed screen" not in ds.build_snapshot(tmp_path, TODAY)
+
+
+def test_an_archived_only_file_shows_nothing_in_process():
+    pipe = textwrap.dedent("""\
+        ## Archived
+
+        | Company | Role | Stage | Date Updated | Next Action | CV Used | Notes | URL |
+        |---------|------|-------|--------------|-------------|---------|-------|-----|
+        | Acme AI | Lead | Interviewing | 2025-01-01 | Old step | — | n | u |
+        """)
+    in_process, on_radar = ds.build_pipeline(pipe, TODAY)
+    assert in_process == [] and on_radar == []
+
+
+def test_stage_decides_when_pipe_read_has_no_matching_row(monkeypatch):
+    monkeypatch.setattr(ds, "parse_all_rows", lambda content, today: [])
+    content = textwrap.dedent(PIPELINE).replace("Interviewing", "Dead lead")
+    in_process, _ = ds.build_pipeline(content, TODAY)
+    assert [e["company"] for e in in_process] == ["Globex"]
 
 
 def test_an_archived_duplicate_does_not_replace_the_active_next_action():

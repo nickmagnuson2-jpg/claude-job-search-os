@@ -30,14 +30,14 @@ amount on either side; a common ISO 4217 code beside any amount, upper case or t
 commonest in lower case; any other three capitals only beside a figure of four or more
 digits, so "PST 2pm" stays; K-shorthand like "9K" or "1.5K"; comma-grouped or 5+ digit
 figures); URLs of any scheme with "://" or a mailto, tel, sms, data, urn, geo or magnet
-URI, and domains with a path; and file paths (a known repo directory, a document, image,
-media or archive extension, three or more segments, Unix absolute with two or more
-segments or a bare system root like /tmp, Windows, UNC; an absolute path's inner
-segments may hold spaces, "My Drive/notes", but its last segment ends at the first
-space, since what follows cannot be told from prose). It is a pattern list, not a proof:
-a token in none of those shapes passes. Kept on purpose, because each cannot be told
-from a path by its shape: a two-segment word pair ("and/or", "notes/drafts") and a
-one-segment slash command ("/follow-up").
+URI, and domains with a path; and file paths (a known repo directory, an extension from
+a fixed list of common document, image, media, archive and calendar types, three or more
+segments, Unix absolute with two or more segments or a bare system root like /tmp,
+Windows, UNC; an absolute path's inner segments may hold spaces, "My Drive/notes", but
+its last segment ends at the first space, since what follows cannot be told from prose).
+It is a pattern list, not a proof: a token in none of those shapes passes. Kept on
+purpose, because each cannot be told from a path by its shape: a two-segment word pair
+("and/or", "notes/drafts") and a one-segment slash command ("/follow-up").
 
 Usage:
   PYTHONIOENCODING=utf-8 python3 tools/duet_snapshot.py [--date YYYY-MM-DD]
@@ -82,6 +82,10 @@ LOOP_CLOSED_RE = re.compile(r"\bloop closed\b", re.IGNORECASE)
 _CURRENCY = "".join(chr(c) for c in range(0x110000)
                     if unicodedata.category(chr(c)) == "Sc")
 _CUR = "[" + re.escape(_CURRENCY) + "]"
+# A fixed list of common file types; a file named with any other extension passes.
+_EXTENSIONS = ("md|py|json|pdf|txt|sh|ya?ml|docx?|odt|rtf|pages|csv|xlsx?|ods|numbers|pptx?"
+               "|odp|key|html?|xml|epub|png|jpe?g|gif|heic|webp|svg|tiff?|bmp|mov|mp4|m4v|avi"
+               "|mkv|mp3|m4a|wav|aac|flac|ogg|zip|tar(?:\\.gz)?|tgz|gz|7z|rar|dmg|ics|vcf|eml")
 _ISO_DATE = re.compile(r"(\b\d{4}-\d{2}-\d{2}\b)")
 # ISO 4217 codes in ordinary use. A code from this list takes any amount ("USD 950"); any
 # other three capitals take only a figure that cannot be a time or count ("XYZ 95000").
@@ -95,8 +99,7 @@ _SCRUB = [
     re.compile(r"\b[\w-]+(?:\.[\w-]+)*\.(?:com|ai|io|co|org|net|dev|app|so|us|me|ly|gg|tv|fm"
                r"|xyz|info|biz|uk|ca|de|fr|eu)\b", re.IGNORECASE),     # bare domain
     re.compile(r"~/\S*|\b(?:output|data|tools|coaching|framework|memory|docs|tests)/\S*"),
-    re.compile(r"\b[\w./-]+\.(?:md|py|json|pdf|txt|sh|ya?ml|docx?|csv|xlsx?|pptx?|key|pages"
-               r"|numbers|rtf|html?|zip|png|jpe?g|gif|heic|mov|mp4)\b", re.IGNORECASE),  # file
+    re.compile(r"\b[\w./-]+\.(?:" + _EXTENSIONS + r")\b", re.IGNORECASE),     # file name
     # A segment may hold spaces when a later separator follows ("My Drive/notes").
     re.compile(r"\b[A-Za-z]:\\(?:[^\\\n]*\\)*\S*|\\\\(?:[^\\\n]*\\)*\S*"),     # Windows / UNC path
     re.compile(r"(?<![\w/])/[\w.-]+(?:(?: [\w.-]+)*/[\w.-]*)+"),           # absolute path, 2+ segments
@@ -105,7 +108,7 @@ _SCRUB = [
                r"|mnt|root|srv|Library|Applications|System)\b/?"),
     re.compile(r"\b[\w.-]+(?:/[\w.-]+){2,}/?"),                          # relative path, 3+ segments
     re.compile(r"\b\d[\d,.']*(?: \d{3})*\s?[kKmM]?\s?" + _CUR),          # amount, sign after: 950€
-    re.compile(_CUR + r"\s?\d[\d,.']*\s?[kKmM]?(?:\s?-\s?" + _CUR
+    re.compile(_CUR + r"\s?\d[\d,.']*(?: \d{3})*\s?[kKmM]?(?:\s?-\s?" + _CUR
                + r"?\d[\d,.']*\s?[kKmM]?)?\b|" + _CUR),                 # any currency sign, or a range
     re.compile(r"\b(?:" + _CODES + r")\s?\d[\d,.']*\s?[kKmM]?\b"
                r"|\b\d[\d,.']*\s?[kKmM]?\s?(?:" + _CODES + r")\b"),       # "USD 950", "950 EUR"
@@ -255,9 +258,12 @@ def build_pipeline(pipeline_content: str, today: date) -> tuple[list, list]:
     by_key.update({(r["company"], r["role"]): r for r in rows if not r["archived"]})
     in_process, seen = [], set()
     for e in parse_pipeline(pipeline_content)["active_process"]:
-        if is_terminal_stage(e["stage"]):
-            continue
         row = by_key.get((e["company"], e["role"]), {})
+        # pipe_read's flag covers a terminal stage AND an Archived section, which the
+        # bucket misses when a file has no Active heading (678.F1). The stage alone
+        # decides only if pipe_read has no such row.
+        if row.get("archived", is_terminal_stage(e["stage"])):
+            continue
         in_process.append({**e, "next_action": row.get("next_action", "")})
         seen.add((e["company"], e["role"]))
     on_radar = [r for r in rows
