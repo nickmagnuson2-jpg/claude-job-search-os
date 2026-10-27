@@ -89,6 +89,8 @@ _CUR = "[" + re.escape(_CURRENCY) + "]"
 _SEP = "[,.'\u00a0\u202f ]"
 _NUM = r"(?:\d{1,3}(?:" + _SEP + r"\d{2,3})+|\d+)(?:[.,]\d+)?"   # 2-digit groups: 12,00,000
 _AMT = _NUM + r"\s?[kKmM]?"
+_BIG = (r"(?:\d{1,3}(?:" + _SEP + r"\d{2,3})+(?:[.,]\d+)?|\d{4,}(?![-/]\d)|"
+        + _NUM + r"\s?[kKmM])")
 _RANGE = _AMT + r"(?:\s?-\s?(?:" + _CUR + r")?\s?" + _AMT + r")?"
 # A fixed list of common file types; a file named with any other extension passes.
 _EXTENSIONS = ("md|py|json|pdf|txt|sh|ya?ml|docx?|odt|rtf|pages|csv|xlsx?|ods|numbers|pptx?"
@@ -123,8 +125,9 @@ _SCRUB = [
                r"|\b" + _RANGE + r"\s?(?:" + _CODES + r")\b"),                # "USD 950", "120 000 EUR"
     re.compile(r"\b(?:usd|eur|gbp|cad|aud|chf|inr)\s?" + _RANGE + r"\b"
                r"|\b" + _RANGE + r"\s?(?:usd|eur|gbp|cad|aud|chf|inr)\b"),    # lowercase
-    re.compile(r"\b[A-Z]{3}\s?(?:\d{1,3}(?:[,.']\d{3})+|\d{4,}(?![-/]\d)|\d+(?:\.\d+)?\s?[kKmM])\b"
-               r"|\b(?:\d{1,3}(?:[,.']\d{3})+|\d{4,}|\d+(?:\.\d+)?\s?[kKmM])\s?[A-Z]{3}\b"),
+    # Unlisted code: a figure of 4+ digits only (grouped by the shared separators, plain, or
+    # K/M), so "PST 2pm" stays.
+    re.compile(r"\b[A-Z]{3}\s?" + _BIG + r"\b|\b" + _BIG + r"\s?[A-Z]{3}\b"),
                                                                         # "CHF 95000", "150,000 USD"
     re.compile(r"\b" + _NUM + r"[kK]?\s?-\s?" + _NUM + r"\s?[kK]\b"),      # "150-180k" range
     re.compile(r"\b" + _NUM + r"\s?[kK]\b"),                               # "9K", "1.5K", "1000K"
