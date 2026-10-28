@@ -47,6 +47,7 @@ def is_frozen(path: Path) -> bool:
     return stat.S_ISREG(st.st_mode) and not (st.st_mode & stat.S_IWUSR)
 
 
+TOO_LARGE = "<target past the stdin cap>"
 RAW_TOOL_RE = re.compile(r'"tool_name"\s*:\s*"([^"\\]+)"')
 RAW_PATH_RE = re.compile(r'"(?:file_path|notebook_path)"\s*:\s*"((?:[^"\\]|\\.)*)"')
 
@@ -61,6 +62,11 @@ def target_of(p) -> tuple[str, str]:
     if not p.truncated:
         return "", ""
     tool, path = RAW_TOOL_RE.search(p.raw), RAW_PATH_RE.search(p.raw)
+    if tool and not path:
+        # The path lies past the cap, so the target cannot be seen. A write this large is
+        # rare; blocking it costs one Bash write, waving it through could rewrite a frozen
+        # file (review 736.F2 / 737.F2).
+        return tool.group(1), TOO_LARGE
     if not (tool and path):
         return "", ""
     try:
@@ -74,6 +80,11 @@ def main() -> None:
     tool, path = target_of(p)
     if tool not in WRITE_TOOLS or not path:
         sys.exit(0)  # fail open: a malformed payload or no target is not evidence of a freeze
+    if path == TOO_LARGE:
+        print(f"BLOCKED check_frozen_file: this {tool} payload is too large to read its target, "
+              "so it cannot be checked against a freeze. Write the file through Bash "
+              "(python3 or cat), which the OS blocks on a read-only file.", file=sys.stderr)
+        sys.exit(2)
     target = Path(path)
     if not target.is_absolute():
         target = Path((p.cwd if p.ok else "") or os.getcwd()) / target

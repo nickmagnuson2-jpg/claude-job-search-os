@@ -171,16 +171,24 @@ def test_a_malformed_payload_that_was_not_cut_off_fails_open(tmp_path):
     assert r.returncode == 0
 
 
-def test_a_cut_off_payload_whose_path_is_past_the_cap_fails_open(tmp_path):
+def test_a_cut_off_write_whose_path_is_past_the_cap_blocks(tmp_path):
+    """736.F2 / 737.F2: a write the guard cannot see the target of is not waved through."""
     p = frozen(tmp_path)
     raw = '{"tool_name": "Write", "tool_input": {"content": "' + "x" * (2 * 1024 * 1024) + \
           '", "file_path": "%s"}}' % p
     r = run(raw)
-    assert r.returncode == 0, r.stderr
+    assert r.returncode == 2 and "too large" in r.stderr
 
 
 def test_a_cut_off_payload_with_an_unreadable_path_fails_open(tmp_path):
     raw = '{"tool_name": "Write", "tool_input": {"file_path": "/tmp/a\\qb", "content": "' + \
           "x" * (2 * 1024 * 1024)
+    r = run(raw)
+    assert r.returncode == 0, r.stderr
+
+
+def test_a_cut_off_payload_with_no_tool_name_fails_open(tmp_path):
+    p = frozen(tmp_path)
+    raw = '{"tool_input": {"file_path": "%s", "content": "' % p + "x" * (2 * 1024 * 1024)
     r = run(raw)
     assert r.returncode == 0, r.stderr

@@ -97,6 +97,12 @@ def reader_tokens(log_text: str) -> list[str]:
     return [n for n in m.groups() if n] if m else []
 
 
+def headers_only(content: str) -> list[str]:
+    """The header lines of a staged draft: everything before the BODY: line."""
+    lines = content.split("\n")
+    return lines[:lines.index("BODY:")] if "BODY:" in lines else lines
+
+
 def _carries(text: str, tokens: list[str]) -> bool:
     """A name token appears as a whole word: "dan" must not match "jordan@" (grok review)."""
     low = text.lower()
@@ -108,9 +114,12 @@ def reader_named(log_text: str, content: str) -> bool:
     clear a draft to another (codex review, 2026-10-26). Each comma-separated TO entry
     (display name and address) must carry a name; a single entry whose address carries
     none, such as a shared inbox, may instead be named in the greeting. A named reader
-    plus an outsider blocks (review 734.F1 / 735.F2). The TO: label is not read."""
+    plus an outsider blocks (review 734.F1 / 735.F2). The TO: label is not read.
+    Residual: an outsider who shares a listed first or last name still matches."""
     tokens = reader_tokens(log_text)
-    to_value = " , ".join(l[len("TO:"):] for l in content.split("\n") if l.startswith("TO:"))
+    # CC and BCC recipients are recipients too (review 737.F4).
+    to_value = " , ".join(l.split(":", 1)[1] for l in headers_only(content)
+                          if re.match(r"(?:B?CC|TO):", l))
     recipients = [r.strip() for r in re.split(r"[,;]", to_value) if r.strip()]
     if recipients and all(_carries(r, tokens) for r in recipients):
         return True

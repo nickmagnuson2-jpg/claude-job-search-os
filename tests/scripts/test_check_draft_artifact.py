@@ -383,3 +383,25 @@ def test_a_display_name_in_the_to_line_counts(repo):
     text = draft("Hello,\n", attach=["/tmp/p.pdf"], artifact=rel).replace(
         "TO: casey@acme.example", "TO: Jordan Roe <jr@acme.example>, Riley Poe <rp@acme.example>")
     assert cda.decide(text, repo) is None
+
+
+def test_an_outsider_on_cc_blocks(repo):
+    """737.F4: CC recipients are recipients."""
+    rel = log(repo, GROUP)
+    text = draft("Hi Jordan,\n", attach=["/tmp/p.pdf"], artifact=rel).replace(
+        "TO: casey@acme.example", "TO: jordan@acme.example\nCC: sam@other.example")
+    assert cda.decide(text, repo)
+
+
+def test_a_named_reader_on_cc_passes(repo):
+    rel = log(repo, GROUP)
+    text = draft("Hi Jordan,\n", attach=["/tmp/p.pdf"], artifact=rel).replace(
+        "TO: casey@acme.example", "TO: jordan@acme.example\nCC: riley@acme.example")
+    assert cda.decide(text, repo) is None
+
+
+def test_a_cc_line_in_the_body_is_not_a_recipient(repo):
+    rel = log(repo, GROUP)
+    text = draft("Hi Jordan,\nCC: sam@other.example\n", attach=["/tmp/p.pdf"], artifact=rel).replace(
+        "TO: casey@acme.example", "TO: jordan@acme.example")
+    assert cda.decide(text, repo) is None
