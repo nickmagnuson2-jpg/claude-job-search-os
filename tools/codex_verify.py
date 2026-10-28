@@ -479,16 +479,22 @@ def diff_base(repo_root: Path) -> str:
     path the pre-push gate drives it attached NO diff, while the ledger row still recorded
     the paths as covered (cross-model 2026-09-23, Grok F3). Diffing from the upstream
     merge-base covers committed-but-unpushed work plus anything uncommitted on top.
-    No upstream (a fresh branch, a bare test repo): fall back to HEAD, as before.
+    No upstream: the merge-base with origin's default branch, so a fresh local branch
+    reviews its own commits (2026-10-27: a review branch with no upstream fell back to
+    HEAD, and after its first commit every review refused as "unchanged"). No origin
+    either (a bare test repo): HEAD, as before.
     """
-    try:
-        proc = subprocess.run(["git", "merge-base", "HEAD", "@{upstream}"],
-                              capture_output=True, text=True,
-                              cwd=str(repo_root), timeout=60)
-    except (subprocess.SubprocessError, OSError):
-        return "HEAD"
-    base = proc.stdout.strip()
-    return base if proc.returncode == 0 and base else "HEAD"
+    for ref in ("@{upstream}", "origin/HEAD", "origin/main"):
+        try:
+            proc = subprocess.run(["git", "merge-base", "HEAD", ref],
+                                  capture_output=True, text=True,
+                                  cwd=str(repo_root), timeout=60)
+        except (subprocess.SubprocessError, OSError):
+            return "HEAD"
+        base = proc.stdout.strip()
+        if proc.returncode == 0 and base:
+            return base
+    return "HEAD"
 
 
 def gather_diff(repo_root: Path, paths: list[str], cap: int = MAX_DIFF_LINES) -> str:

@@ -64,6 +64,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -1257,6 +1258,56 @@ def _is_linked_worktree(root: Path) -> bool:
     return len(out) == 2 and (root / out[0]).resolve() != (root / out[1]).resolve()
 
 
+LIVE_WIRED_MESSAGE = (
+    "{name} is a wired hook (or a module wired hooks import) and a Claude Code session is "
+    "live (CLAUDECODE set): mutating it in place makes this session's own tool calls answer "
+    "to the mutant. Commit the change, then rerun with --in-worktree: the run happens in a "
+    "throwaway linked worktree made from HEAD and removed afterwards (by hand: `git worktree "
+    "add --detach <scratch>/wt HEAD`, run from inside it, `git worktree remove --force "
+    "<scratch>/wt`). Or pass "
+    "--allow-live-wired when no session is issuing tool calls.")
+
+
+def worktree_argv(argv: list[str]) -> list[str]:
+    """This run's arguments for the copy inside the worktree: everything but the flag."""
+    return [a for a in argv if a != "--in-worktree"]
+
+
+def uncommitted_inputs(root: Path) -> list[str]:
+    """Changed or untracked paths under tools/ and tests/. A worktree is made from HEAD,
+    so any of these would be missing from it and the run would test the wrong code."""
+    proc = subprocess.run(["git", "status", "--porcelain", "--untracked-files=all", "--",
+                           "tools", "tests"], capture_output=True, text=True, cwd=str(root))
+    return [line[3:].split(" -> ")[-1] for line in proc.stdout.splitlines() if line.strip()]
+
+
+def run_in_worktree(argv: list[str]) -> int:
+    """Run this tool in a throwaway linked worktree from HEAD, then remove it (2026-10-27:
+    the refusal used to print these steps for the caller to do by hand)."""
+    dirty = uncommitted_inputs(REPO_ROOT)
+    if dirty:
+        print(json.dumps({"status": "error", "code": "uncommitted_inputs",
+                          "message": "commit first: a worktree is made from HEAD, so these "
+                                     "changes would be missing from it",
+                          "paths": dirty}))
+        return 1
+    scratch = Path(tempfile.mkdtemp(prefix="mutation-wt-"))
+    wt = scratch / "wt"
+    add = subprocess.run(["git", "worktree", "add", "--detach", str(wt), "HEAD"],
+                         capture_output=True, text=True, cwd=str(REPO_ROOT))
+    if add.returncode != 0:
+        print(json.dumps({"status": "error", "code": "worktree_add_failed",
+                          "message": add.stderr.strip()}))
+        return 1
+    try:
+        return subprocess.run([sys.executable, str(wt / "tools" / "mutation_check.py")]
+                              + worktree_argv(argv), cwd=str(wt)).returncode
+    finally:
+        subprocess.run(["git", "worktree", "remove", "--force", str(wt)],
+                       capture_output=True, cwd=str(REPO_ROOT))
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
 def live_wired_refusal(target: Path, args) -> dict | None:
     """Refuse to rewrite a live guard while a Claude Code session is issuing tool calls.
 
@@ -1282,14 +1333,7 @@ def live_wired_refusal(target: Path, args) -> dict | None:
     if target.name not in wired | LIVE_HOOK_IMPORTS:
         return None
     return {"code": "live_wired_target_refused",
-            "message": f"{target.name} is a wired hook (or a module wired hooks import) and a "
-                       "Claude Code session is live (CLAUDECODE set): mutating it in place "
-                       "makes this session's own tool calls answer to the mutant. Run it in "
-                       "a linked worktree instead: `git worktree add --detach <scratch>/wt "
-                       "HEAD`, copy your changed files (and any gitignored inputs the tests "
-                       "read) in, run tools/mutation_check.py from inside <scratch>/wt, then "
-                       "`git worktree remove --force <scratch>/wt`. Or pass "
-                       "--allow-live-wired when no session is issuing tool calls."}
+            "message": LIVE_WIRED_MESSAGE.format(name=target.name)}
 
 
 def main() -> int:
@@ -1315,7 +1359,13 @@ def main() -> int:
     ap.add_argument("--allow-live-wired", action="store_true",
                     help="mutate a wired hook in place even though CLAUDECODE is set. Only "
                          "when no session is issuing tool calls; prefer a linked worktree.")
+    ap.add_argument("--in-worktree", action="store_true",
+                    help="run in a throwaway linked worktree made from HEAD and removed "
+                         "afterwards; the way to test a wired hook during a live session. "
+                         "Refuses if tools/ or tests/ has uncommitted changes.")
     args = ap.parse_args()
+    if args.in_worktree and not _is_linked_worktree(REPO_ROOT):
+        return run_in_worktree(sys.argv[1:])
 
     target = Path(args.target)
     if not target.is_absolute():

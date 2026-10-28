@@ -1789,3 +1789,21 @@ def test_a_test_run_never_writes_the_real_ledger(tmp_path, monkeypatch):
     with pytest.raises(SystemExit) as exc:
         cv.run(REPO_ROOT, "t", [], "", tmp_path / "r.md", None, False, model="codex")
     assert "real ledger" in str(exc.value)
+
+
+def test_diff_base_falls_back_to_origin_main_without_an_upstream(tmp_path):
+    """2026-10-27: a review branch with no upstream fell back to HEAD, so after a commit the
+    reviewer saw no diff and refused. origin/main's merge-base is the work under review."""
+    import subprocess
+    repo = _tiny_repo(tmp_path)
+    env = {"PATH": "/usr/bin:/bin:/usr/local/bin", "HOME": str(tmp_path),
+           "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+           "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
+    def git(*a):
+        return subprocess.run(["git"] + list(a), cwd=str(repo), env=env,
+                              capture_output=True, text=True).stdout.strip()
+    base = git("rev-parse", "HEAD")
+    git("update-ref", "refs/remotes/origin/main", base)
+    git("switch", "-q", "-c", "feature")
+    git("commit", "-qam", "work on the branch")
+    assert cv.diff_base(repo) == base

@@ -2173,3 +2173,46 @@ def test_with_no_file_left_out_there_is_one_tier(tmp_path):
     """ % (tmp_path / "tools"))
     d = json.loads(_run([str(src), "--tests", str(t)], cwd=tmp_path).stdout)
     assert d["fast_tests"] == [str(t)] and d["full_reruns"] == 0
+
+
+# --- --in-worktree (2026-10-27) -----------------------------------------------------------
+
+def test_worktree_argv_drops_only_the_flag():
+    assert mc.worktree_argv(["tools/x.py", "--in-worktree", "--isolation", "--timeout", "9"]) == \
+        ["tools/x.py", "--isolation", "--timeout", "9"]
+
+
+def _git_repo(tmp_path):
+    env = {"PATH": "/usr/bin:/bin:/usr/local/bin", "HOME": str(tmp_path),
+           "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+           "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
+    def git(*a):
+        subprocess.run(["git"] + list(a), cwd=str(tmp_path), env=env, capture_output=True)
+    git("init", "-q")
+    for d in ("tools", "tests", "docs"):
+        (tmp_path / d).mkdir()
+        (tmp_path / d / "f.py").write_text("x = 1\n")
+    git("add", "-A"); git("commit", "-qm", "base")
+    return tmp_path
+
+
+def test_a_clean_tree_has_no_uncommitted_inputs(tmp_path):
+    assert mc.uncommitted_inputs(_git_repo(tmp_path)) == []
+
+
+def test_an_edited_tool_or_test_is_an_uncommitted_input(tmp_path):
+    repo = _git_repo(tmp_path)
+    (repo / "tools" / "f.py").write_text("x = 2\n")
+    (repo / "tests" / "new_test.py").write_text("y = 1\n")
+    assert sorted(mc.uncommitted_inputs(repo)) == ["tests/new_test.py", "tools/f.py"]
+
+
+def test_an_edit_outside_tools_and_tests_does_not_count(tmp_path):
+    repo = _git_repo(tmp_path)
+    (repo / "docs" / "f.py").write_text("x = 2\n")
+    assert mc.uncommitted_inputs(repo) == []
+
+
+def test_the_live_refusal_names_the_in_worktree_flag():
+    msg = mc.LIVE_WIRED_MESSAGE.format(name="check_x.py")
+    assert "--in-worktree" in msg and "commit" in msg.lower()
