@@ -2247,6 +2247,23 @@ def test_an_absolute_path_outside_the_repo_is_refused():
 
 
 def test_explicit_tests_are_inputs():
+    import argparse
     """744.F2: --tests paths are checked for uncommitted changes like mapped ones."""
-    assert mc.run_inputs(["tools/x.py", "--tests", "tests/a.py", "tests/b.py", "--isolation"]) \
+    assert mc.run_inputs(argparse.Namespace(target="tools/x.py", tests=["tests/a.py", "tests/b.py"])) \
         >= {"tests/a.py", "tests/b.py"}
+
+
+# --- review round 5 (2026-10-27, runs 747/749) -------------------------------------------
+
+def test_inputs_come_from_parsed_args_so_option_order_does_not_matter():
+    """747.F1 / 749.F1: '--isolation tools/x.py' used to hide the target."""
+    import argparse
+    ns = argparse.Namespace(target=str(mc.REPO_ROOT / "tools" / "x.py"), tests=["tests/a.py"])
+    assert {"tools/x.py", "tests/a.py"} <= mc.run_inputs(ns)
+
+
+def test_a_dirty_input_outside_tools_and_tests_counts(tmp_path):
+    """747.F2: the status check is not limited to tools/ and tests/."""
+    repo = _git_repo(tmp_path)
+    (repo / "docs" / "f.py").write_text("x = 2\n")
+    assert mc.uncommitted_inputs(repo, only={"docs/f.py"}) == ["docs/f.py"]

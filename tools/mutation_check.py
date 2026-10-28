@@ -1285,23 +1285,17 @@ def worktree_argv(argv: list[str]) -> list[str]:
     return [_in_repo(a) for a in argv if a != "--in-worktree"]
 
 
-def run_inputs(argv: list[str]) -> set[str]:
-    """The files a run reads: the target, its mapped tests, and any --tests paths (review
-    744.F2), as repo-relative paths."""
-    args = worktree_argv(argv)
-    inputs: set[str] = set()
-    target = args[0] if args and not args[0].startswith("-") else None
-    if target:
-        inputs.add(target)
-        full = REPO_ROOT / target
-        if full.exists():
-            inputs |= {str(x.resolve().relative_to(REPO_ROOT.resolve()))
-                       for x in map_tests(full, REPO_ROOT)}
-    if "--tests" in args:
-        for a in args[args.index("--tests") + 1:]:
-            if a.startswith("-"):
-                break
-            inputs.add(a)
+def run_inputs(args) -> set[str]:
+    """The files a run reads, as repo-relative paths: the target, its mapped tests and any
+    --tests paths. Read from argparse's own result, so option order cannot hide the
+    target (review 747.F1 / 749.F1)."""
+    def rel(a: str) -> str:
+        return _in_repo(a if Path(a).is_absolute() else str(REPO_ROOT / a))
+
+    inputs = {rel(a) for a in [args.target, *(args.tests or [])]}
+    target = REPO_ROOT / rel(args.target)
+    if not args.tests and target.exists():   # explicit --tests replace the mapping
+        inputs |= {rel(str(x)) for x in map_tests(target, REPO_ROOT)}
     return inputs
 
 
@@ -1310,17 +1304,19 @@ def uncommitted_inputs(root: Path, only: set[str] | None = None) -> list[str]:
     worktree is made from HEAD, so any of these would be missing from it and the run would
     test the wrong code. Scoped to the run's own inputs, because another session's
     uncommitted work elsewhere in tools/ is not this run's business (2026-10-27)."""
-    proc = subprocess.run(["git", "status", "--porcelain", "--untracked-files=all", "--",
-                           "tools", "tests"], capture_output=True, text=True, cwd=str(root))
+    # Scoped runs check their own inputs wherever they live (review 747.F2).
+    spec = ["--", "tools", "tests"] if only is None else []
+    proc = subprocess.run(["git", "status", "--porcelain", "--untracked-files=all"] + spec,
+                          capture_output=True, text=True, cwd=str(root))
     paths = [line[3:].split(" -> ")[-1] for line in proc.stdout.splitlines() if line.strip()]
     return [q for q in paths if only is None or q in only]
 
 
-def run_in_worktree(argv: list[str]) -> int:
+def run_in_worktree(argv: list[str], args) -> int:
     """Run this tool in a throwaway linked worktree from HEAD, then remove it (2026-10-27:
     the refusal used to print these steps for the caller to do by hand)."""
     try:
-        child_argv, inputs = worktree_argv(argv), run_inputs(argv)
+        child_argv, inputs = worktree_argv(argv), run_inputs(args)
     except ValueError as e:
         print(json.dumps({"status": "error", "code": "path_outside_repo", "message": str(e)}))
         return 1
@@ -1343,12 +1339,17 @@ def run_in_worktree(argv: list[str]) -> int:
         return subprocess.run([sys.executable, str(wt / "tools" / "mutation_check.py")]
                               + child_argv, cwd=str(wt)).returncode
     finally:
-        subprocess.run(["git", "worktree", "remove", "--force", str(wt)],
-                       capture_output=True, cwd=str(REPO_ROOT))
+        rm = subprocess.run(["git", "worktree", "remove", "--force", str(wt)],
+                            capture_output=True, text=True, cwd=str(REPO_ROOT))
         shutil.rmtree(scratch, ignore_errors=True)
         # If remove failed, the directory is gone now; prune drops git's record of it
-        # (review 744.F4).
-        subprocess.run(["git", "worktree", "prune"], capture_output=True, cwd=str(REPO_ROOT))
+        # (review 744.F4), and a failure of either is reported, not swallowed (747.F4).
+        pr = subprocess.run(["git", "worktree", "prune"], capture_output=True, text=True,
+                            cwd=str(REPO_ROOT))
+        for step, res in (("worktree remove", rm), ("worktree prune", pr)):
+            if res.returncode != 0:
+                print(f"mutation_check: {step} failed for {wt}: {res.stderr.strip()}",
+                      file=sys.stderr)
 
 
 def live_wired_refusal(target: Path, args) -> dict | None:
@@ -1408,7 +1409,7 @@ def main() -> int:
                          "Refuses if the target or its mapped tests have uncommitted changes.")
     args = ap.parse_args()
     if args.in_worktree and not _is_linked_worktree(REPO_ROOT):
-        return run_in_worktree(sys.argv[1:])
+        return run_in_worktree(sys.argv[1:], args)
 
     target = Path(args.target)
     if not target.is_absolute():

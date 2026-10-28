@@ -1824,3 +1824,24 @@ def test_diff_base_falls_back_to_origin_master(tmp_path):
     git("switch", "-q", "-c", "feature")
     git("commit", "-qam", "work on the branch")
     assert cv.diff_base(repo) == base
+
+
+def test_diff_base_picks_the_nearest_default_branch(tmp_path):
+    """747.F3: with origin/main AND origin/master and no origin/HEAD, use the newer base."""
+    import subprocess
+    repo = _tiny_repo(tmp_path)
+    env = {"PATH": "/usr/bin:/bin:/usr/local/bin", "HOME": str(tmp_path),
+           "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+           "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
+    def git(*a):
+        return subprocess.run(["git"] + list(a), cwd=str(repo), env=env,
+                              capture_output=True, text=True).stdout.strip()
+    old = git("rev-parse", "HEAD")
+    git("update-ref", "refs/remotes/origin/main", old)
+    git("commit", "-qam", "newer default")
+    new = git("rev-parse", "HEAD")
+    git("update-ref", "refs/remotes/origin/master", new)
+    git("switch", "-q", "-c", "feature")
+    (repo / "a.py").write_text("feature\n")
+    git("commit", "-qam", "work on the branch")
+    assert cv.diff_base(repo) == new

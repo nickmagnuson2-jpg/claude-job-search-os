@@ -484,17 +484,29 @@ def diff_base(repo_root: Path) -> str:
     HEAD, and after its first commit every review refused as "unchanged"). No origin
     either (a bare test repo): HEAD, as before.
     """
-    for ref in ("@{upstream}", "origin/HEAD", "origin/main", "origin/master"):
-        try:
-            proc = subprocess.run(["git", "merge-base", "HEAD", ref],
-                                  capture_output=True, text=True,
-                                  cwd=str(repo_root), timeout=60)
-        except (subprocess.SubprocessError, OSError):
-            return "HEAD"
-        base = proc.stdout.strip()
-        if proc.returncode == 0 and base:
-            return base
-    return "HEAD"
+    def git(*a):
+        return subprocess.run(["git"] + list(a), capture_output=True, text=True,
+                              cwd=str(repo_root), timeout=60)
+
+    def merge_base(ref: str) -> str:
+        proc = git("merge-base", "HEAD", ref)
+        return proc.stdout.strip() if proc.returncode == 0 else ""
+
+    try:
+        for ref in ("@{upstream}", "origin/HEAD"):
+            base = merge_base(ref)
+            if base:
+                return base
+        # No upstream and no origin/HEAD: take the nearest of the usual default branches,
+        # since a remote may carry both main and master (review 747.F3).
+        bases = [b for b in (merge_base("origin/main"), merge_base("origin/master")) if b]
+        for b in bases:
+            if all(o == b or git("merge-base", "--is-ancestor", o, b).returncode == 0
+                   for o in bases):
+                return b
+        return bases[0] if bases else "HEAD"
+    except (subprocess.SubprocessError, OSError):
+        return "HEAD"
 
 
 def gather_diff(repo_root: Path, paths: list[str], cap: int = MAX_DIFF_LINES) -> str:
