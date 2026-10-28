@@ -484,7 +484,7 @@ def diff_base(repo_root: Path) -> str:
     HEAD, and after its first commit every review refused as "unchanged"). No origin
     either (a bare test repo): HEAD, as before.
     """
-    for ref in ("@{upstream}", "origin/HEAD", "origin/main"):
+    for ref in ("@{upstream}", "origin/HEAD", "origin/main", "origin/master"):
         try:
             proc = subprocess.run(["git", "merge-base", "HEAD", ref],
                                   capture_output=True, text=True,

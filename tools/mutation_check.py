@@ -1268,9 +1268,41 @@ LIVE_WIRED_MESSAGE = (
     "--allow-live-wired when no session is issuing tool calls.")
 
 
+def _in_repo(arg: str) -> str:
+    """An absolute path inside the repo, made relative so the worktree child resolves it in
+    its own checkout, not back in the live tree (review 744.F1). Outside the repo: refuse."""
+    if arg.startswith("-") or not Path(arg).is_absolute():
+        return arg
+    try:
+        return str(Path(arg).resolve().relative_to(REPO_ROOT.resolve()))
+    except ValueError:
+        raise ValueError(f"{arg} is outside the repository; a worktree run cannot reach it")
+
+
 def worktree_argv(argv: list[str]) -> list[str]:
-    """This run's arguments for the copy inside the worktree: everything but the flag."""
-    return [a for a in argv if a != "--in-worktree"]
+    """This run's arguments for the copy inside the worktree: everything but the flag, with
+    absolute in-repo paths made relative."""
+    return [_in_repo(a) for a in argv if a != "--in-worktree"]
+
+
+def run_inputs(argv: list[str]) -> set[str]:
+    """The files a run reads: the target, its mapped tests, and any --tests paths (review
+    744.F2), as repo-relative paths."""
+    args = worktree_argv(argv)
+    inputs: set[str] = set()
+    target = args[0] if args and not args[0].startswith("-") else None
+    if target:
+        inputs.add(target)
+        full = REPO_ROOT / target
+        if full.exists():
+            inputs |= {str(x.resolve().relative_to(REPO_ROOT.resolve()))
+                       for x in map_tests(full, REPO_ROOT)}
+    if "--tests" in args:
+        for a in args[args.index("--tests") + 1:]:
+            if a.startswith("-"):
+                break
+            inputs.add(a)
+    return inputs
 
 
 def uncommitted_inputs(root: Path, only: set[str] | None = None) -> list[str]:
@@ -1287,12 +1319,11 @@ def uncommitted_inputs(root: Path, only: set[str] | None = None) -> list[str]:
 def run_in_worktree(argv: list[str]) -> int:
     """Run this tool in a throwaway linked worktree from HEAD, then remove it (2026-10-27:
     the refusal used to print these steps for the caller to do by hand)."""
-    target = Path(argv[0]) if argv and not argv[0].startswith("-") else None
-    inputs = None
-    if target is not None:
-        target = target if target.is_absolute() else REPO_ROOT / target
-        tests = map_tests(target, REPO_ROOT) if target.exists() else []
-        inputs = {str(x.resolve().relative_to(REPO_ROOT)) for x in [target, *tests]}
+    try:
+        child_argv, inputs = worktree_argv(argv), run_inputs(argv)
+    except ValueError as e:
+        print(json.dumps({"status": "error", "code": "path_outside_repo", "message": str(e)}))
+        return 1
     dirty = uncommitted_inputs(REPO_ROOT, only=inputs)
     if dirty:
         print(json.dumps({"status": "error", "code": "uncommitted_inputs",
@@ -1310,11 +1341,14 @@ def run_in_worktree(argv: list[str]) -> int:
         return 1
     try:
         return subprocess.run([sys.executable, str(wt / "tools" / "mutation_check.py")]
-                              + worktree_argv(argv), cwd=str(wt)).returncode
+                              + child_argv, cwd=str(wt)).returncode
     finally:
         subprocess.run(["git", "worktree", "remove", "--force", str(wt)],
                        capture_output=True, cwd=str(REPO_ROOT))
         shutil.rmtree(scratch, ignore_errors=True)
+        # If remove failed, the directory is gone now; prune drops git's record of it
+        # (review 744.F4).
+        subprocess.run(["git", "worktree", "prune"], capture_output=True, cwd=str(REPO_ROOT))
 
 
 def live_wired_refusal(target: Path, args) -> dict | None:

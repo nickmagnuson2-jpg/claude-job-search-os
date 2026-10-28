@@ -2225,3 +2225,28 @@ def test_only_the_runs_own_inputs_block_when_scoped(tmp_path):
     (repo / "tools" / "other.py").write_text("y = 1\n")
     assert mc.uncommitted_inputs(repo, only={"tools/f.py"}) == ["tools/f.py"]
     assert mc.uncommitted_inputs(repo, only={"tools/g.py"}) == []
+
+
+# --- review round 4 (2026-10-27, runs 744/746) -------------------------------------------
+
+def test_an_absolute_target_inside_the_repo_is_made_relative():
+    """744.F1: an absolute path would send the worktree child back to the live file."""
+    absolute = str(mc.REPO_ROOT / "tools" / "x.py")
+    assert mc.worktree_argv([absolute, "--in-worktree"]) == ["tools/x.py"]
+
+
+def test_absolute_tests_paths_are_made_relative_too():
+    t = str(mc.REPO_ROOT / "tests" / "scripts" / "test_x.py")
+    assert mc.worktree_argv(["tools/x.py", "--tests", t]) == \
+        ["tools/x.py", "--tests", "tests/scripts/test_x.py"]
+
+
+def test_an_absolute_path_outside_the_repo_is_refused():
+    with pytest.raises(ValueError):
+        mc.worktree_argv(["/tmp/elsewhere.py", "--in-worktree"])
+
+
+def test_explicit_tests_are_inputs():
+    """744.F2: --tests paths are checked for uncommitted changes like mapped ones."""
+    assert mc.run_inputs(["tools/x.py", "--tests", "tests/a.py", "tests/b.py", "--isolation"]) \
+        >= {"tests/a.py", "tests/b.py"}

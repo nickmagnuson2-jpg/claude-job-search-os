@@ -1807,3 +1807,20 @@ def test_diff_base_falls_back_to_origin_main_without_an_upstream(tmp_path):
     git("switch", "-q", "-c", "feature")
     git("commit", "-qam", "work on the branch")
     assert cv.diff_base(repo) == base
+
+
+def test_diff_base_falls_back_to_origin_master(tmp_path):
+    """744.F3 / 746.F1: a default branch named master is a default branch too."""
+    import subprocess
+    repo = _tiny_repo(tmp_path)
+    env = {"PATH": "/usr/bin:/bin:/usr/local/bin", "HOME": str(tmp_path),
+           "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+           "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
+    def git(*a):
+        return subprocess.run(["git"] + list(a), cwd=str(repo), env=env,
+                              capture_output=True, text=True).stdout.strip()
+    base = git("rev-parse", "HEAD")
+    git("update-ref", "refs/remotes/origin/master", base)
+    git("switch", "-q", "-c", "feature")
+    git("commit", "-qam", "work on the branch")
+    assert cv.diff_base(repo) == base
