@@ -289,7 +289,7 @@ def test_nature_traceback_strips_harness_footer():
         "Traceback (most recent call last):\n"
         '  File "<string>", line 3, in <module>\n'
         "TypeError: append_entry() got an unexpected keyword argument 'event'\n"
-        "Shell cwd was reset to /Users/mag/Documents/Obsidian/30-projects/job-search"
+        "Shell cwd was reset to /Users/someone/projects/example-repo"
     )
     out = fs.derive_nature(err, "auto-stop")
     assert out.startswith("[auto-stop] TypeError: append_entry()")

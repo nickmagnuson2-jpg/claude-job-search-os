@@ -76,6 +76,9 @@ from pathlib import Path
 # SESSION_REPO_ROOT / GMAIL_LABELS_CONF_PATH seams elsewhere in tools/. Without
 # it this tool cannot be exercised against a fixture repo, which would leave the
 # gate that demands mutation evidence with none of its own.
+# Tests set it. Floored at 1: 0 would divide by zero after the first mutant (Codex
+# commit-3 round 2 F3).
+PROGRESS_EVERY = max(1, int(os.environ.get("MUTATION_PROGRESS_EVERY", "25")))
 REPO_ROOT = Path(os.environ.get("MUTATION_REPO_ROOT",
                                 str(Path(__file__).resolve().parent.parent)))
 ALLOW_FILE = REPO_ROOT / "tools" / "mutation-allow.json"
@@ -641,6 +644,72 @@ def _kill_process_group(proc: subprocess.Popen) -> None:
             pass
 
 
+def _status(survived, unfinished, timed_out) -> str:
+    """The run's headline status. "incomplete" outranks "survivors": a run stopped by
+    --max-hours has not looked at every mutant, so its survivor list is a lower bound
+    (Codex commit-3 review F2). "ok" claims every mutant got a verdict, so timeouts with no
+    survivors are their own status."""
+    if unfinished:
+        return "incomplete"
+    if survived:
+        return "survivors"
+    return "mutants_timed_out" if timed_out else "ok"
+
+
+def _main_checkout(root: Path) -> Path | None:
+    """The main checkout's root when `root` is a linked git worktree, else None. A linked
+    worktree has a `.git` FILE naming `gitdir: <main>/.git/worktrees/<name>`."""
+    dotgit = root / ".git"
+    if not dotgit.is_file():
+        return None
+    try:
+        line = dotgit.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    if not line.startswith("gitdir:"):
+        return None
+    gitdir = Path(line.split(":", 1)[1].strip())
+    gitdir = gitdir if gitdir.is_absolute() else (root / gitdir)
+    # <main>/.git/worktrees/<name> -> <main>
+    parts = gitdir.resolve().parts
+    if "worktrees" in parts:
+        i = len(parts) - 1 - parts[::-1].index("worktrees")
+        if i >= 1 and parts[i - 1] == ".git":
+            return Path(*parts[:i - 1])
+    return None
+
+
+def _test_env_base(environ=None, root: Path | None = None) -> dict:
+    """The environment the test subprocesses inherit.
+
+    In a linked worktree (plan A3, output/mutation-parallel-102826/plan.md), any variable
+    whose value is a path inside the MAIN checkout is dropped. `CLAUDE_PROJECT_DIR` is the
+    known case: hooks and tools resolve the repo from it, so a worker mutating its own copy
+    would otherwise test the live checkout. Dropping by value, not by name, also covers the
+    tool-specific overrides (SEAL_REPO_ROOT, PII_REPO_ROOT, FRICTION_LEDGER, ...) that a
+    session may have set. In the main checkout nothing is dropped.
+    """
+    environ = dict(os.environ if environ is None else environ)
+    main = _main_checkout(root or REPO_ROOT)
+    if main is None:
+        return environ
+    main = main.resolve()
+
+    def points_home(value: str) -> bool:
+        for piece in value.split(os.pathsep):
+            if not piece.startswith(("/", "~")):
+                continue
+            try:
+                q = Path(piece).expanduser().resolve()
+            except (OSError, RuntimeError):
+                continue
+            if q == main or main in q.parents:
+                return True
+        return False
+
+    return {k: v for k, v in environ.items() if not points_home(v)}
+
+
 def _run_reaping_descendants(cmd: list[str], env: dict[str, str], timeout: int,
                              cwd: str | Path | None = None) -> subprocess.CompletedProcess:
     """subprocess.run, except a timeout kills the whole PROCESS GROUP.
@@ -731,7 +800,7 @@ def run_tests(test_files: list[Path], timeout: int,
     # caller these tests start must be told its own ancestor has it. Without it a test
     # that starts `mutation_sweep --targets` is refused by the run executing it
     # (2026-10-06: this turned mutation_sweep.py's own baseline red in 15s).
-    env = {**os.environ, "MUTATION_CHECK_ACTIVE": "1",
+    env = {**_test_env_base(), "MUTATION_CHECK_ACTIVE": "1",
            "PYTHONDONTWRITEBYTECODE": "1", LOCK_HELD_ENV: "1"}
     # MUTATION_CHECK_TARGET names the ONE file this run is deliberately rewriting.
     # A guard that detects corrupted source cannot tell an intended mutant from real
@@ -1397,6 +1466,9 @@ def main() -> int:
                          "default: some code legitimately signals by raising, and a noisy "
                          "gate gets disabled, which is worse than no gate.")
     ap.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
+    ap.add_argument("--max-hours", type=float, default=None,
+                    help="stop starting new mutants after this many hours; the rest are "
+                         "reported as unfinished (status 'incomplete'), never as killed")
     ap.add_argument("--wait", type=float, default=DEFAULT_RUN_LOCK_WAIT,
                     help="seconds to wait for the tree lock before giving up "
                          "(0 = fail immediately, the pre-2026-09-07 behaviour)")
@@ -1532,6 +1604,10 @@ def main() -> int:
     unclassified, timed_out = [], []
     diverged = False
     fast, probe_seconds, full_reruns = None, 0.0, 0
+    # A5 (plan, output/mutation-parallel-102826/plan.md): two runs went 8+ hours with no
+    # output (2026-10-25, 2026-10-27). A progress line every PROGRESS_EVERY mutants, a
+    # --max-hours stop, and the total wall time in the result.
+    run_started, done, unfinished = time.monotonic(), 0, []
     try:
         # Two tiers. Each mutant runs first against the files that execute the target;
         # only a mutant that survives them is run against every mapped file. A kill in
@@ -1544,7 +1620,16 @@ def main() -> int:
             diverged = True
         probe_seconds = round(time.monotonic() - probe_started, 1)
         tiered = bool(fast) and len(fast) < len(test_files)
-        for entry in ([] if diverged else catalog):
+        for n, entry in enumerate([] if diverged else catalog):
+            if args.max_hours is not None and \
+                    time.monotonic() - run_started > args.max_hours * 3600:
+                unfinished = catalog[n:]
+                break
+            if done and done % PROGRESS_EVERY == 0:
+                print(f"mutation_check: {done}/{len(catalog)} mutants run, {killed} killed, "
+                      f"{len(survived)} survived, {len(timed_out)} timed out, "
+                      f"{round(time.monotonic() - run_started)}s", file=sys.stderr, flush=True)
+            done += 1
             key = entry["key"]
             mut = _Mutator((entry["line"], entry["col"], entry["op"]))
             new_tree = mut.visit(ast.parse(original))
@@ -1623,8 +1708,7 @@ def main() -> int:
         "recovered_stranded_file": recovered,
         # "ok" claims every mutant got a verdict. One that timed out did not, so a run
         # with timeouts and no survivors is its own status rather than a clean one.
-        "status": ("survivors" if survived
-                   else "mutants_timed_out" if timed_out else "ok"),
+        "status": _status(survived, unfinished, timed_out),
         "target": rel,
         # True means: put back to the pre-run content AND read back. Not inferred.
         "target_restored": True,
@@ -1638,6 +1722,10 @@ def main() -> int:
         # The unmutated suite's own duration: the margin every mutant run has under the
         # same limit, and the only measurement of how much slower a night run is.
         "baseline_seconds": baseline_seconds,
+        "run_seconds": round(time.monotonic() - run_started, 1),
+        "max_hours": args.max_hours,
+        "unfinished": len(unfinished),
+        "unfinished_mutants": [e["key"] for e in unfinished],
         # The first tier (see files_that_run). null when the target could not be
         # instrumented, in which case every mutant ran against every mapped file.
         "fast_tests": None if fast is None else [str(t) for t in fast],
@@ -1669,7 +1757,9 @@ def main() -> int:
             # would have orphaned whatever pytest had started (the 2026-09-06 class).
             try:
                 r = _run_reaping_descendants(
-                    cmd, {**os.environ, "PYTHONDONTWRITEBYTECODE": "1", LOCK_HELD_ENV: "1"},
+                    # _test_env_base, not os.environ: the same worktree scrub as the
+                    # mutation runs (Codex commit-3 review F1).
+                    cmd, {**_test_env_base(), "PYTHONDONTWRITEBYTECODE": "1", LOCK_HELD_ENV: "1"},
                     args.timeout)
             except subprocess.TimeoutExpired:
                 # Nothing was learned about this file. Unmeasured, never "fails alone".
@@ -1693,14 +1783,21 @@ def main() -> int:
             result["status"] = "isolation_unmeasured"
         if lonely:
             result["status"] = "isolation_failed"
+        if unfinished:
+            # Codex commit-3 round 2 F1: isolation findings must not hide that the run
+            # stopped early; they stay in their own fields.
+            result["status"] = "incomplete"
 
-    print(json.dumps(result, indent=2))
-    hard_fail = bool(survived) or bool(result.get("isolation_failures"))
+    # An unfinished run is not a pass: exit 2 so nothing reads it as green.
+    hard_fail = bool(survived) or bool(result.get("isolation_failures")) or bool(unfinished)
     if args.strict:
         hard_fail = hard_fail or bool(weak) or bool(audit["assertion_free"]) \
             or bool(audit["tautological"])
+        # Set BEFORE printing. It was set after the print, so a strict failure printed
+        # "status": "ok" while exiting 2 (simplify.md #8, found 2026-10-28).
         if hard_fail and result["status"] == "ok":
             result["status"] = "strict_failed"
+    print(json.dumps(result, indent=2))
     return 2 if hard_fail else 0
 
 

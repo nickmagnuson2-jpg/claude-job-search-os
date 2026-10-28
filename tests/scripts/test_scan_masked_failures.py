@@ -69,7 +69,7 @@ def test_non_bash_tool_not_masked():
 
 def test_today_case_with_harness_footer_is_crash():
     # Real shape: TypeError, then the harness "Shell cwd was reset" footer.
-    text = TB + "\nShell cwd was reset to /Users/mag/Documents/Obsidian/30-projects/job-search"
+    text = TB + "\nShell cwd was reset to /Users/someone/projects/example-repo"
     cmd = 'cd ~/x && python3 -c "import ss_log_append as s; s.append_entry(event=1)" 2>&1 | head -20'
     assert st.looks_like_python_crash(text) is True
     assert st.is_masked_python_failure("Bash", cmd, text, None) is True
