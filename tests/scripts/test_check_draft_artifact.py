@@ -285,6 +285,41 @@ def test_the_last_name_also_matches(repo):
     assert cda.decide(text, repo) is None
 
 
+GROUP = ('reader: Northwind interviewers (Casey Doe, VP Ops; two role-players)\n'
+         'reader_names: Casey Doe, Jordan Roe, Riley Poe\n'
+         'reader_ask: "x y" (s)\n')
+
+
+def test_a_group_log_clears_a_draft_to_any_named_reader(repo):
+    """2026-10-27: a group reader line starts with the company name, so the first two words
+    never matched a person and every follow-up to the other readers was blocked."""
+    rel = log(repo, GROUP)
+    text = draft("Hi Jordan and Riley,\n", attach=["/tmp/p.pdf"], artifact=rel).replace(
+        "TO: casey@acme.example", "TO: jordan@acme.example, riley@acme.example")
+    assert cda.decide(text, repo) is None
+
+
+def test_a_group_log_still_blocks_a_reader_it_does_not_name(repo):
+    rel = log(repo, GROUP)
+    text = draft("Hi Sam,\n", attach=["/tmp/p.pdf"], artifact=rel).replace(
+        "TO: casey@acme.example", "TO: sam@acme.example")
+    msg = cda.decide(text, repo)
+    assert msg and "whose reader is not the person" in msg
+
+
+def test_reader_names_replaces_the_first_two_words(repo):
+    """The company words at the start of a group reader line are not names."""
+    rel = log(repo, GROUP)
+    text = draft("Hi team,\n", attach=["/tmp/p.pdf"], artifact=rel).replace(
+        "TO: casey@acme.example", "TO: interviewers@acme.example")
+    assert cda.decide(text, repo)
+
+
+def test_an_empty_reader_names_line_falls_back_to_the_reader_line(repo):
+    rel = log(repo, FILLED + "reader_names:\n")
+    assert cda.decide(draft(attach=["/tmp/p.pdf"], artifact=rel), repo) is None
+
+
 def test_none_does_not_clear_an_attached_file(repo):
     """Round 12, 2026-10-26: `none (<reason>)` is for plain links; a file needs its log."""
     msg = cda.decide(draft(attach=["/tmp/planner.pdf"], artifact="none (job posting link)"), repo)
@@ -299,3 +334,52 @@ def test_none_still_clears_a_link_next_to_a_rendered_cv(repo):
                  artifact="none (job posting link)")
     assert cda.decide(text, repo) is None
 
+
+
+# --- review round 1 (2026-10-27, runs 734/735) -------------------------------------------
+
+def test_an_unfilled_reader_names_placeholder_falls_back_to_the_reader_line(repo):
+    """735.F1: the template's placeholder words ('may go to') matched the TO: label."""
+    rel = log(repo, FILLED + "reader_names: <First Last, First Last; every person a send from "
+                             "this build may go to; omit for one reader>\n")
+    text = draft("Hi Sam,\n", attach=["/tmp/p.pdf"], artifact=rel).replace(
+        "TO: casey@acme.example", "TO: sam@other.example")
+    assert cda.decide(text, repo)
+    assert cda.decide(draft(attach=["/tmp/p.pdf"], artifact=rel), repo) is None
+
+
+def test_the_to_label_itself_never_counts_as_a_name(repo):
+    rel = log(repo, 'reader: To Whom, CEO\nreader_ask: "x y" (s)\n')
+    text = draft("Hi Sam,\n", attach=["/tmp/p.pdf"], artifact=rel).replace(
+        "TO: casey@acme.example", "TO: sam@other.example")
+    assert cda.decide(text, repo)
+
+
+def test_a_named_reader_plus_an_outsider_blocks(repo):
+    """734.F1 / 735.F2: every recipient must be a named reader."""
+    rel = log(repo, GROUP)
+    text = draft("Hi Jordan and Sam,\n", attach=["/tmp/p.pdf"], artifact=rel).replace(
+        "TO: casey@acme.example", "TO: jordan@acme.example, sam@other.example")
+    msg = cda.decide(text, repo)
+    assert msg and "whose reader is not the person" in msg
+
+
+def test_a_single_unnamed_address_still_clears_on_the_greeting(repo):
+    rel = log(repo, GROUP)
+    text = draft("Hi Riley,\n", attach=["/tmp/p.pdf"], artifact=rel).replace(
+        "TO: casey@acme.example", "TO: team-inbox@acme.example")
+    assert cda.decide(text, repo) is None
+
+
+def test_two_unnamed_addresses_do_not_clear_on_the_greeting(repo):
+    rel = log(repo, GROUP)
+    text = draft("Hi Riley,\n", attach=["/tmp/p.pdf"], artifact=rel).replace(
+        "TO: casey@acme.example", "TO: team-inbox@acme.example, sam@other.example")
+    assert cda.decide(text, repo)
+
+
+def test_a_display_name_in_the_to_line_counts(repo):
+    rel = log(repo, GROUP)
+    text = draft("Hello,\n", attach=["/tmp/p.pdf"], artifact=rel).replace(
+        "TO: casey@acme.example", "TO: Jordan Roe <jr@acme.example>, Riley Poe <rp@acme.example>")
+    assert cda.decide(text, repo) is None

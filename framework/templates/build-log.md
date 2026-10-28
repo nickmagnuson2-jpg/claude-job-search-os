@@ -17,6 +17,7 @@ Variant: V<n> | new   adapted_from: <output/<slug>/BUILD-LOG.md or appendix row 
 ## Phase 0 (required for this variant's tier; blank = no verdict)
 filled_by: nick | claude   route: Q0 yes (<source:line>) · Q1 <yes/no> · Q2 <yes/no: why not in text> · Q3 <yes/no, count> · Q4 <adapt/blank>
 reader: <name, role, owns; theirs to act on: yes/no>   channel: <reader-named>   address_source: <inbound | verified record | guess: <how delivery is confirmed>>
+reader_names: <First Last, First Last; every person a send from this build may go to; omit for one reader>
 reader_ask: "<verbatim>" (<transcript file:line | sources/<snapshot> | gmail id, date>)   answers_ask: yes/no (re-answered at ship)
 external_stake: <the real thing touched | none (then this is a demo)>
 time_box: signal "<quoted>" | need_expires YYYY-MM-DD | research <h> | design <h> | review loops <n> | send_date YYYY-MM-DD
@@ -38,6 +39,7 @@ review_dispositions: <N fixed, N signed off: nick YYYY-MM-DD | refusal logged, E
 phone_check: <screenshots>   deploy_verify: <curl results>   analytics: on/off   access: <steps before first useful sentence; password reason | none>
 message: <capture id>   finding: "<...>"   question: "<...>"   proof: <named | n/a (warm)>   meeting_ask: <one | none>   cost_of_yes: <minutes | data | access>
 recipient_equals_reader: yes   defaults_applied: <D ids>
+freeze (V2 presented): <YYYY-MM-DD HH:MM>   reps_after: <N, transcript paths>   reopened: <Entry ids | none>   cheat_sheet: <path; opens with governor + say-back line: yes/no>
 sent: data/outreach-log.md:<line>
 
 ## After send

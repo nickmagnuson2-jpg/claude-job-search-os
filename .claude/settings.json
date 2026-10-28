@@ -15,6 +15,10 @@
         "hooks": [
           {
             "type": "command",
+            "command": "PYTHONIOENCODING=utf-8 python3 $CLAUDE_PROJECT_DIR/tools/check_frozen_file.py"
+          },
+          {
+            "type": "command",
             "command": "PYTHONIOENCODING=utf-8 python3 $CLAUDE_PROJECT_DIR/tools/check_voice_pure.py"
           },
           {

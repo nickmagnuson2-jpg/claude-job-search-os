@@ -83,16 +83,39 @@ def artifact_items(content: str, root: Path) -> list[str]:
     return files + links
 
 
-def reader_named(log_text: str, content: str) -> bool:
-    """The log's `reader:` first name appears in the draft's TO line or opening lines, so a
-    filled log for one person does not clear a draft to another (codex review, 2026-10-26)."""
+def reader_tokens(log_text: str) -> list[str]:
+    """The name words a draft must carry. A `reader_names:` line (comma-separated people,
+    for a build with several readers) wins; otherwise the first two words of `reader:`.
+    2026-10-27: a group reader line opens with the company ("Acme interviewers (...)"), so
+    its first two words never named the person a follow-up went to."""
+    names = re.search(r"^\s*reader_names:[ \t]*(\S.*)$", log_text, re.M)
+    # An unfilled template placeholder ("<First Last, ...>") is not a list of names; its
+    # filler words matched ordinary text, including the TO: label (review 735.F1).
+    if names and not names.group(1).lstrip().startswith("<"):
+        return [w for n in names.group(1).split(",") for w in re.findall(r"[A-Za-z][\w'-]*", n)]
     m = re.search(r"^\s*reader:\s*([A-Za-z][\w'-]*)(?:\s+([A-Za-z][\w'-]*))?", log_text, re.M)
-    head = "\n".join(l for l in content.split("\n") if l.startswith("TO:"))
+    return [n for n in m.groups() if n] if m else []
+
+
+def _carries(text: str, tokens: list[str]) -> bool:
+    """A name token appears as a whole word: "dan" must not match "jordan@" (grok review)."""
+    low = text.lower()
+    return any(re.search(rf"(?<![a-z]){re.escape(n.lower())}(?![a-z])", low) for n in tokens)
+
+
+def reader_named(log_text: str, content: str) -> bool:
+    """Every recipient is a reader the log names, so a filled log for one person does not
+    clear a draft to another (codex review, 2026-10-26). Each comma-separated TO entry
+    (display name and address) must carry a name; a single entry whose address carries
+    none, such as a shared inbox, may instead be named in the greeting. A named reader
+    plus an outsider blocks (review 734.F1 / 735.F2). The TO: label is not read."""
+    tokens = reader_tokens(log_text)
+    to_value = " , ".join(l[len("TO:"):] for l in content.split("\n") if l.startswith("TO:"))
+    recipients = [r.strip() for r in re.split(r"[,;]", to_value) if r.strip()]
+    if recipients and all(_carries(r, tokens) for r in recipients):
+        return True
     opening = "\n".join(extract_body(content).split("\n")[:3])
-    where = (head + "\n" + opening).lower()
-    # Whole words, first or last name: "dan" must not match "jordan@" (grok review).
-    return bool(m) and any(n and re.search(rf"(?<![a-z]){re.escape(n.lower())}(?![a-z])", where)
-                           for n in m.groups())
+    return len(recipients) <= 1 and _carries(opening, tokens)
 
 
 def header_problem(values: list[str], root: Path, content: str = "") -> str | None:
