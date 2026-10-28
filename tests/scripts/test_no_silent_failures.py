@@ -728,6 +728,7 @@ KNOWN_DARK_PROBES = {
 }
 
 
+@pytest.mark.live_data
 def test_dark_input_debt_does_not_grow():
     """A new dark probe is a new prose->machine boundary that went inert."""
     import json

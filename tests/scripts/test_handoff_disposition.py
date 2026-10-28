@@ -96,6 +96,7 @@ def test_every_named_successor_exists():
         + "\n".join(f"  {k} -> {v}" for k, v in sorted(missing.items())))
 
 
+@pytest.mark.live_data
 def test_the_corpus_is_actually_being_read():
     """Every assertion above is satisfied by an empty list. If the predicate stops matching
     or the path moves, this fails instead of reporting a clean corpus that was never read."""

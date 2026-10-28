@@ -17,6 +17,32 @@ from conftest_guard import (  # noqa: E402
     CONFTEST_REFUSAL, orphan_backups, source_of, stranded_backups,
 )
 
+# Tests that check a tool against the owner's REAL data (the "verified on real data, not
+# fixtures" rule) cannot pass in a linked git worktree, which never has the gitignored
+# files. Before 2026-10-28 they failed there, so every mutation run in a worktree stopped
+# at baseline_red (plan A1, output/mutation-parallel-102826/plan.md). Marked
+# `@pytest.mark.live_data`, they now SKIP in a linked worktree with a reason that starts
+# LIVE_DATA_SKIP, and still RUN in the main checkout, where missing data is a real failure.
+LIVE_DATA_SKIP = "LIVE-DATA-ABSENT"
+
+
+def _is_linked_worktree(root: Path) -> bool:
+    """A linked worktree has a `.git` FILE pointing at the main repo; the main checkout has
+    a `.git` directory."""
+    return (root / ".git").is_file()
+
+
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers", "live_data: reads the owner's gitignored data; skipped in a linked worktree")
+
+
+def pytest_runtest_setup(item):
+    if item.get_closest_marker("live_data") and _is_linked_worktree(REPO_ROOT):
+        pytest.skip(f"{LIVE_DATA_SKIP}: needs the owner's gitignored data, which a linked "
+                    "worktree does not have")
+
+
 # Set by tools/mutation_check.py in the env of the pytest subprocesses it spawns.
 # Those runs are SUPPOSED to see a mutated tree -- that is the whole mechanism.
 MUTATION_ENV = "MUTATION_CHECK_ACTIVE"

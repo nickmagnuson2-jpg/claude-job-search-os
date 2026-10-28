@@ -18,6 +18,7 @@ The network helpers are monkeypatched throughout — these tests never touch the
 live Granola API. All names/emails here are placeholders; this repo is public.
 """
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -28,6 +29,17 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 
 from tools import granola_auto_debrief as gad
+
+
+# The personal-vault root comes from the gitignored tools/.personal-vault.conf, so these
+# tests failed in any fresh worktree (plan A1, output/mutation-parallel-102826/plan.md).
+# PERSONAL_VAULT_ROOT outranks that file, and a temp vault keeps the tests off the real one.
+@pytest.fixture(autouse=True)
+def _temp_vault(monkeypatch, tmp_path):
+    vault = tmp_path / "personal-vault"
+    vault.mkdir()
+    monkeypatch.setenv("PERSONAL_VAULT_ROOT", str(vault))
+    return vault
 
 NOT_ID = "not_EXAMPLEabc123"
 UUID_ID = "3f2504e0-4f89-11d3-9a0c-0305e82c3301"
@@ -270,7 +282,9 @@ def _run_cli(args, stub_module: str):
         "gad.main()\n"
     )
     return subprocess.run([sys.executable, "-c", driver], capture_output=True, text=True,
-                          env={"PYTHONIOENCODING": "utf-8", "PATH": "/usr/bin:/bin"})
+                          env={"PYTHONIOENCODING": "utf-8", "PATH": "/usr/bin:/bin",
+                               # the temp vault from _temp_vault, not the gitignored config
+                               "PERSONAL_VAULT_ROOT": os.environ["PERSONAL_VAULT_ROOT"]})
 
 
 CLI_STUBS_OK = (

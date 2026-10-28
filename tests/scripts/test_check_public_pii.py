@@ -10,6 +10,7 @@ PII themselves.
 """
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -1063,9 +1064,18 @@ def test_no_arguments_still_reads_the_hook_payload():
     assert proc.returncode == 0
 
 
-def test_scan_mode_is_untouched():
-    proc = _run_argv("--scan", "tools/finding_write.py")
-    assert proc.returncode == 0
+def test_scan_mode_is_untouched(tmp_path):
+    # A fixture repo with its own denylist: the real tools/.pii-denylist.txt is gitignored,
+    # so this failed in any fresh worktree (plan A1). The scan refuses an EMPTY denylist on
+    # purpose, so the fixture carries one token the scanned file does not contain.
+    (tmp_path / "tools").mkdir()
+    (tmp_path / "tools" / ".pii-denylist.txt").write_text("fixturetokenqzx\n", encoding="utf-8")
+    shutil.copy(SCRIPT.parent / "finding_write.py", tmp_path / "tools" / "finding_write.py")
+    proc = subprocess.run([sys.executable, str(SCRIPT), "--scan", "tools/finding_write.py"],
+                          capture_output=True, text=True, timeout=20, cwd=tmp_path,
+                          env={**os.environ, "PYTHONIOENCODING": "utf-8",
+                               "PII_REPO_ROOT": str(tmp_path)})
+    assert proc.returncode == 0, proc.stdout + proc.stderr
 
 
 @pytest.mark.parametrize("cmd,expected", [
