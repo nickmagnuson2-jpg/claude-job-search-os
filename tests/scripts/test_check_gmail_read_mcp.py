@@ -93,3 +93,21 @@ def test_every_gated_tool_is_routed_to_the_hook_by_the_wired_matcher():
     assert matchers, "the hook is not wired"
     unrouted = {t for t in h.GATED_READ_TOOLS if not any(re.fullmatch(m, t) for m in matchers)}
     assert not unrouted, f"gated in the hook but never routed to it: {sorted(unrouted)}"
+
+
+def test_a_calendar_call_routed_here_by_a_stale_session_is_blocked():
+    """Hooks may be read at session start, so a session that started before the
+    2026-10-28 split still sends calendar tools here. Neither override lets one through."""
+    for t in ("create_event", "list_events", "some_future_tool"):
+        payload = {"tool_name": "mcp__claude_ai_Google_Calendar__" + t, "tool_input": {}}
+        assert _run(payload, {"CALENDAR_MCP_OVERRIDE": "1"}) == 2, t
+        assert _run(payload, {"GMAIL_MCP_OVERRIDE": "1"}) == 2, t
+    assert _run({"tool_name": "mcp__claude_ai_Google_Calendar", "tool_input": {}}) == 0
+
+
+def test_the_stale_session_block_says_why_and_how_to_fix_it():
+    p = subprocess.run([sys.executable, HOOK], capture_output=True, text=True,
+                       input=json.dumps({"tool_name": "mcp__claude_ai_Google_Calendar__create_event",
+                                         "tool_input": {}}))
+    assert p.returncode == 2
+    assert "check_calendar_mcp.py" in p.stderr and "Restart the session" in p.stderr

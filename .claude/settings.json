@@ -74,6 +74,16 @@
         ]
       },
       {
+        "matcher": "mcp__claude_ai_Google_Calendar__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "PYTHONIOENCODING=utf-8 python3 $CLAUDE_PROJECT_DIR/tools/check_calendar_mcp.py",
+            "timeout": 240
+          }
+        ]
+      },
+      {
         "matcher": "Bash",
         "hooks": [
           {

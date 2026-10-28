@@ -39,6 +39,7 @@ TOOLS = (
     "check_edit_safety",
     "check_email_via_skill",
     "check_frozen_file",
+    "check_calendar_mcp",
     "check_gmail_read_mcp",
     "check_guard_edit_approval",
     "check_handoff_producer",

@@ -65,11 +65,23 @@ def should_block(tool_name: "str | None") -> bool:
     return tool_name in GATED_READ_TOOLS
 
 
+# Calendar tools are gated by tools/check_calendar_mcp.py (Touch ID for writes, 2026-10-28).
+# A session that started before that split may still route them here, from the matcher it
+# read at startup, so this hook refuses them rather than letting them through ungated.
+STALE_CALENDAR_PREFIX = "mcp__claude_ai_Google_Calendar__"
+
+
 def main():
+    tool_name = read_tool_name()
+    if isinstance(tool_name, str) and tool_name.startswith(STALE_CALENDAR_PREFIX):
+        print("BLOCKED: Google Calendar tools are gated by tools/check_calendar_mcp.py, which "
+              "this session has not loaded. Restart the session to pick up the hook.",
+              file=sys.stderr)
+        sys.exit(2)
+
     if os.environ.get("GMAIL_MCP_OVERRIDE") == "1":
         sys.exit(0)
 
-    tool_name = read_tool_name()
     if not should_block(tool_name):
         sys.exit(0)  # write/label/draft tools + unknowns + bad input: allow
 
