@@ -54,7 +54,7 @@ COVERAGE_KEY_RE = re.compile(
 STATE_KEYS = frozenset({"status", "state", "verdict"})
 MIDDLE_VALUE_RE = re.compile(
     r"skip|partial|cannot_run|unmeasured|unaudited|timed?_?out|^typed$|parse_error"
-    r"|no_pattern|unreadable|unknown|truncat|degrad", re.IGNORECASE)
+    r"|no_pattern|unreadable|unknown|truncat|degrad|^incomplete$", re.IGNORECASE)
 
 
 def _string_arms(node: ast.AST) -> list[str]:
@@ -366,6 +366,11 @@ REGISTRY: dict[tuple[str, str, str | None], object] = {
     ("mutation_check.py", "status", "mutants_timed_out"): [
         Branch("mutation_sweep.py", "partially_measured_tools", reads="status",
                literal="mutants_timed_out")],
+    # --max-hours stopped the run early (2026-10-28); flagged by both Codex and Grok in
+    # review when the status shipped without a registry row.
+    ("mutation_check.py", "status", "incomplete"): [
+        Branch("mutation_sweep.py", "partially_measured_tools", reads="status",
+               literal="incomplete")],
     ("mutation_sweep.py", "status", "UNAUDITED_ERROR"): [
         Branch("mutation_state.py", "is_engine_failure", reads="status",
                literal="UNAUDITED", closes="exit")],

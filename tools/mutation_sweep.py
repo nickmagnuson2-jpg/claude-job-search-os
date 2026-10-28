@@ -248,8 +248,11 @@ def partially_measured_tools(rows: list[dict]) -> list[str]:
     return sorted(
         r["tool"] for r in mutation_state.latest_per_tool(rows)
         if not is_engine_failure(r)
-        and (r.get("timed_out") or r.get("status") in ("mutants_timed_out",
-                                                       "isolation_unmeasured")))
+        # "incomplete" and `unfinished` (mutation_check --max-hours, 2026-10-28): a run
+        # stopped early has verdicts for only some mutants, so it must not pass as clean.
+        and (r.get("timed_out") or r.get("unfinished")
+             or r.get("status") in ("mutants_timed_out", "isolation_unmeasured",
+                                    "incomplete")))
 
 
 def completed_tools(rows: list[dict], targets: list[dict] | None = None) -> set:
@@ -738,6 +741,8 @@ def _run_sweep_inner(targets, out: Path, only_mode: bool = False,
                        # saying which file or how many mutants.
                        "isolation_timed_out": d.get("isolation_timed_out"),
                        "timed_out": d.get("timed_out"),
+                       # Carried so a --max-hours stop stays visible after banking.
+                       "unfinished": d.get("unfinished"),
                        # How long the unmutated suite took, against the limit it ran
                        # under. "Night runs are about twice as slow" was inferred from
                        # two leftover backups; this makes it a number per tool per night.

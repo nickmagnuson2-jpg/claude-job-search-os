@@ -642,18 +642,6 @@ def _kill_process_group(proc: subprocess.Popen) -> None:
             pass
 
 
-def _status(survived, unfinished, timed_out) -> str:
-    """The run's headline status. "incomplete" outranks "survivors": a run stopped by
-    --max-hours has not looked at every mutant, so its survivor list is a lower bound
-    (Codex commit-3 review F2). "ok" claims every mutant got a verdict, so timeouts with no
-    survivors are their own status."""
-    if unfinished:
-        return "incomplete"
-    if survived:
-        return "survivors"
-    return "mutants_timed_out" if timed_out else "ok"
-
-
 def _main_checkout(root: Path) -> Path | None:
     """The main checkout's root when `root` is a linked git worktree, else None. A linked
     worktree has a `.git` FILE naming `gitdir: <main>/.git/worktrees/<name>`."""
@@ -1703,7 +1691,14 @@ def main() -> int:
         "recovered_stranded_file": recovered,
         # "ok" claims every mutant got a verdict. One that timed out did not, so a run
         # with timeouts and no survivors is its own status rather than a clean one.
-        "status": _status(survived, unfinished, timed_out),
+        # Inline, not behind a helper: tests/scripts/test_coverage_field_has_fail_closed_
+        # consumer.py reads the string arms of "status" here to know what this tool emits.
+        # "incomplete" outranks "survivors": a run stopped by --max-hours has not looked at
+        # every mutant, so its survivor list is a lower bound (Codex commit-3 review F2).
+        # "ok" claims every mutant got a verdict, so timeouts are their own status.
+        "status": ("incomplete" if unfinished
+                   else "survivors" if survived
+                   else "mutants_timed_out" if timed_out else "ok"),
         "target": rel,
         # True means: put back to the pre-run content AND read back. Not inferred.
         "target_restored": True,

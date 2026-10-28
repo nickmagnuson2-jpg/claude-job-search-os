@@ -235,13 +235,6 @@ def test_the_isolation_pass_also_tests_the_worktree_copy(tmp_path):
     assert d["killed"] >= 2 and d["survived"] == 0
 
 
-def test_status_order():
-    assert mc._status([], [], []) == "ok"
-    assert mc._status([], [], ["t"]) == "mutants_timed_out"
-    assert mc._status(["s"], [], ["t"]) == "survivors"
-    assert mc._status(["s"], ["u"], ["t"]) == "incomplete"
-    assert mc._status([], ["u"], []) == "incomplete"
-
 
 def test_progress_interval_is_floored_at_one(tmp_path):
     # Codex commit-3 round 2 F3: 0 must not divide by zero and abort without a result.
@@ -258,3 +251,11 @@ def test_incomplete_survives_the_isolation_pass(tmp_path):
     d = json.loads(r.stdout)
     assert d["status"] == "incomplete" and "isolation_failures" in d
     assert r.returncode == 2
+
+
+def test_the_sweep_never_counts_an_incomplete_run_as_measured():
+    import mutation_sweep as ms
+    rows = [{"tool": "tools/a.py", "status": "incomplete", "unfinished": 4},
+            {"tool": "tools/b.py", "status": "survivors", "unfinished": 2},
+            {"tool": "tools/c.py", "status": "ok", "unfinished": 0}]
+    assert ms.partially_measured_tools(rows) == ["tools/a.py", "tools/b.py"]
