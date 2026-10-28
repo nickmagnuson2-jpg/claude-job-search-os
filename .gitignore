@@ -184,3 +184,6 @@ tools/.sealed-paths.conf
 /tools/.session-mutations*.json
 /CLAUDE.local.md
 /tests/skills/SCAN_CONTACTS_TESTING.md
+
+# Read-only Google Calendar token (calendar_fetch.py), separate from the Gmail token
+tools/calendar_token.json

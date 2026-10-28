@@ -214,22 +214,27 @@ def sanitize_body(raw_body: str, max_chars: int = MAX_BODY_CHARS) -> str:
     else:
         text = raw_body
 
-    # 2. Remove invisible unicode
-    text = INVISIBLE_UNICODE_REGEX.sub("", text)
-
-    # 3. Redact injection phrases
-    text = INJECTION_REGEX.sub("[REDACTED - potential injection]", text)
-
-    # 4. Collapse excessive whitespace (preserve paragraph breaks)
-    text = re.sub(r"\n{3,}", "\n\n", text.strip())
-    text = re.sub(r"[ \t]{2,}", " ", text)
-
-    # 5. Truncate
-    if len(text) > max_chars:
-        text = text[:max_chars] + "\n\n[...truncated]"
+    # 2-5. The channel-independent steps, shared with every other untrusted source
+    text = sanitize_text(text, max_chars)
 
     # 6. Wrap in XML delimiter
     return f"{XML_OPEN}\n{text}\n{XML_CLOSE}"
+
+
+def sanitize_text(text: str, max_chars: int) -> str:
+    """
+    Steps 2-5 of sanitize_body, for any untrusted plain text: remove invisible unicode,
+    redact injection phrases, collapse whitespace, truncate. One copy, imported by every
+    other inbound channel (calendar_fetch.py: event titles and locations come from
+    whoever sent the invite), so a new injection phrase lands everywhere at once.
+    """
+    text = INVISIBLE_UNICODE_REGEX.sub("", text)
+    text = INJECTION_REGEX.sub("[REDACTED - potential injection]", text)
+    text = re.sub(r"\n{3,}", "\n\n", text.strip())
+    text = re.sub(r"[ \t]{2,}", " ", text)
+    if len(text) > max_chars:
+        text = text[:max_chars] + "\n\n[...truncated]"
+    return text
 
 
 def extract_plain_text(mime_parts: list) -> str:
