@@ -2216,3 +2216,12 @@ def test_an_edit_outside_tools_and_tests_does_not_count(tmp_path):
 def test_the_live_refusal_names_the_in_worktree_flag():
     msg = mc.LIVE_WIRED_MESSAGE.format(name="check_x.py")
     assert "--in-worktree" in msg and "commit" in msg.lower()
+
+
+def test_only_the_runs_own_inputs_block_when_scoped(tmp_path):
+    """Another session's uncommitted tool must not block a run on an unrelated target."""
+    repo = _git_repo(tmp_path)
+    (repo / "tools" / "f.py").write_text("x = 2\n")
+    (repo / "tools" / "other.py").write_text("y = 1\n")
+    assert mc.uncommitted_inputs(repo, only={"tools/f.py"}) == ["tools/f.py"]
+    assert mc.uncommitted_inputs(repo, only={"tools/g.py"}) == []

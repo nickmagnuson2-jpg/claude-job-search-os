@@ -1273,18 +1273,27 @@ def worktree_argv(argv: list[str]) -> list[str]:
     return [a for a in argv if a != "--in-worktree"]
 
 
-def uncommitted_inputs(root: Path) -> list[str]:
-    """Changed or untracked paths under tools/ and tests/. A worktree is made from HEAD,
-    so any of these would be missing from it and the run would test the wrong code."""
+def uncommitted_inputs(root: Path, only: set[str] | None = None) -> list[str]:
+    """Changed or untracked paths under tools/ and tests/, limited to `only` when given. A
+    worktree is made from HEAD, so any of these would be missing from it and the run would
+    test the wrong code. Scoped to the run's own inputs, because another session's
+    uncommitted work elsewhere in tools/ is not this run's business (2026-10-27)."""
     proc = subprocess.run(["git", "status", "--porcelain", "--untracked-files=all", "--",
                            "tools", "tests"], capture_output=True, text=True, cwd=str(root))
-    return [line[3:].split(" -> ")[-1] for line in proc.stdout.splitlines() if line.strip()]
+    paths = [line[3:].split(" -> ")[-1] for line in proc.stdout.splitlines() if line.strip()]
+    return [q for q in paths if only is None or q in only]
 
 
 def run_in_worktree(argv: list[str]) -> int:
     """Run this tool in a throwaway linked worktree from HEAD, then remove it (2026-10-27:
     the refusal used to print these steps for the caller to do by hand)."""
-    dirty = uncommitted_inputs(REPO_ROOT)
+    target = Path(argv[0]) if argv and not argv[0].startswith("-") else None
+    inputs = None
+    if target is not None:
+        target = target if target.is_absolute() else REPO_ROOT / target
+        tests = map_tests(target, REPO_ROOT) if target.exists() else []
+        inputs = {str(x.resolve().relative_to(REPO_ROOT)) for x in [target, *tests]}
+    dirty = uncommitted_inputs(REPO_ROOT, only=inputs)
     if dirty:
         print(json.dumps({"status": "error", "code": "uncommitted_inputs",
                           "message": "commit first: a worktree is made from HEAD, so these "
@@ -1362,7 +1371,7 @@ def main() -> int:
     ap.add_argument("--in-worktree", action="store_true",
                     help="run in a throwaway linked worktree made from HEAD and removed "
                          "afterwards; the way to test a wired hook during a live session. "
-                         "Refuses if tools/ or tests/ has uncommitted changes.")
+                         "Refuses if the target or its mapped tests have uncommitted changes.")
     args = ap.parse_args()
     if args.in_worktree and not _is_linked_worktree(REPO_ROOT):
         return run_in_worktree(sys.argv[1:])
