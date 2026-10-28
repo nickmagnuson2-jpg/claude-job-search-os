@@ -36,7 +36,6 @@ TOOLS = (
     "check_data_projects",
     "check_derived_ratio",
     "check_draft_voice",
-    "check_edit_after_mutation",
     "check_edit_safety",
     "check_email_via_skill",
     "check_frozen_file",

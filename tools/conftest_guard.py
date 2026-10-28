@@ -80,8 +80,12 @@ def all_backups(root: Path | None = None) -> list[Path]:
     found = sorted(d.glob("*" + SUFFIX))
     if root is None:
         return found
-    r = str(Path(root).resolve())
-    return [b for b in found if str(source_of(b)).startswith(r)]
+    # By whole path components. A bare string prefix let a root `.../wt1` claim the
+    # backups of `.../wt10` (and `.../wt` those of `.../wt2`), which a parallel run with
+    # one worktree per worker would hit on every pass. Codex F4, 2026-10-06; fixed
+    # 2026-10-28, approved by Nick.
+    r = Path(root).resolve()
+    return [b for b in found if source_of(b) == r or r in source_of(b).parents]
 
 
 def _implied_source(backup: Path) -> Path:

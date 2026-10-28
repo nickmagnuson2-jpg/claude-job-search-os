@@ -15,7 +15,6 @@ Most hooks block the tool call outright (exit code 2), and Claude sees the reaso
 | `check_living_log_purity.py` | PreToolUse on Write/Edit/MultiEdit | Blocks direct writes to append-only log files; only the dedicated append script may write them |
 | `check_draft_voice.py` | PreToolUse on Bash `open_draft.py` | Scans draft for voice anti-patterns before Gmail compose opens, including lines that tell the recipient how to do their own job ("please make sure", "send it my way") |
 | `check_todo_write_kwargs.py` | PreToolUse on Bash | Blocks kwarg-style invocation of the atomic to-do writer |
-| `check_edit_after_mutation.py` | PreToolUse on Edit/MultiEdit (PostToolUse on Read/Write/Edit/MultiEdit/Bash records what was read) | Warn-only: flags an edit to a file that changed on disk since it was last read, or was never read this session |
 | `check_edit_safety.py` | PostToolUse on Edit | Warns after an Edit on long-row markdown tables, and more strongly on files that must be rewritten whole (`job-todos.md`, `job-pipeline.md`) |
 | `check_plan_partner_critique.py` | Not currently wired in `.claude/settings.json` (script present) | Reminds to run a McKinsey-critical-advisor critique on large plan docs |
 | `check_script_error_logged.py` | PostToolUse on Bash | Auto-appends to friction log when a script returns a JSON error, or when any `python3` invocation crashes with a traceback |
