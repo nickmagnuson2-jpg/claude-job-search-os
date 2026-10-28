@@ -88,10 +88,6 @@ def all_backups(root: Path | None = None) -> list[Path]:
     return [b for b in found if source_of(b) == r or r in source_of(b).parents]
 
 
-def _implied_source(backup: Path) -> Path:
-    return source_of(backup)
-
-
 def stranded_backups(root: Path | None = None) -> list[Path]:
     """Backups that mean a mutation run really does own the tree.
 
@@ -100,7 +96,7 @@ def stranded_backups(root: Path | None = None) -> list[Path]:
     sitting next to an orphan must still be returned here, or the fix would invert into a
     silent pass while the tree is genuinely mutated.
     """
-    return [b for b in all_backups(root) if _implied_source(b).exists()]
+    return [b for b in all_backups(root) if source_of(b).exists()]
 
 
 def orphan_backups(root: Path | None = None) -> list[Path]:
@@ -117,7 +113,7 @@ def orphan_backups(root: Path | None = None) -> list[Path]:
     backup beside a file it is rewriting. So it must not halt anything -- but it is still
     junk that should be deleted, so it is reported rather than ignored.
     """
-    return [b for b in all_backups(root) if not _implied_source(b).exists()]
+    return [b for b in all_backups(root) if not source_of(b).exists()]
 
 
 def prune_orphans(root: Path | None = None) -> list[Path]:
@@ -133,11 +129,10 @@ def prune_orphans(root: Path | None = None) -> list[Path]:
     still exists is never touched, so a concurrent run's live backup is never at risk.
     """
     removed = []
-    for b in all_backups(root):
-        if not source_of(b).exists():
-            try:
-                b.unlink()
-                removed.append(b)
-            except OSError:
-                pass
+    for b in orphan_backups(root):
+        try:
+            b.unlink()
+            removed.append(b)
+        except OSError:
+            pass
     return removed

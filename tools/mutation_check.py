@@ -490,9 +490,7 @@ def run_lock_held(root: Path) -> bool:
         return True                     # cannot tell: say alive, so callers stay careful
     try:
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError:
-        return True
-    except OSError:
+    except OSError:                     # BlockingIOError included: someone holds it
         return True
     else:
         fcntl.flock(fd, fcntl.LOCK_UN)
@@ -1292,10 +1290,7 @@ def arm_restore(target: Path, original: str, head_matched: bool | None = None) -
     _HEAD_MATCHED = head_matched
     _RESTORE_OUTCOME = None
     atexit.register(_restore_in_flight)
-    for name in ("SIGTERM", "SIGINT", "SIGHUP"):
-        sig = getattr(signal, name, None)
-        if sig is None:
-            continue
+    for sig in _HELD_SIGNALS:
         try:
             signal.signal(sig, _on_signal)
         except (ValueError, OSError):

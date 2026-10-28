@@ -24,27 +24,17 @@ import json
 import sys
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
 import mutation_state  # noqa: E402
 DEFAULT_STATE = mutation_state.state_dir()
-TREND_NAME = "survival-trend.jsonl"
+TREND_NAME = mutation_state.TREND_NAME
 
 
-# summarise / read_rows / latest_per_tool now live in mutation_state, because
-# mutation_report.py had its own inline copy of the same domain rule and the two had
-# already diverged. Re-exported here so this module's public surface is unchanged.
-def load_trend(path: Path) -> list[dict]:
-    """The recorded series. Trend-specific: the store module owns the BASELINE, this owns
-    the trend file. Deleted by accident when the duplicated aggregation was lifted out, and
-    restored from git rather than retyped."""
-    if not path.exists():
-        return []
-    return [json.loads(l) for l in path.read_text(encoding="utf-8").splitlines() if l.strip()]
-
-
+# The aggregation lives in mutation_state, because mutation_report.py had its own inline
+# copy of the same domain rule and the two had already diverged. `summarise` is
+# re-exported because callers and tests use it from here. The trend file is read with the
+# same JSONL reader as the baseline (mutation_state.read_rows), which is what the deleted
+# load_trend duplicated line for line.
 summarise = mutation_state.summarise
-read_rows = mutation_state.read_rows
-latest_per_tool = mutation_state.latest_per_tool
 
 
 def cmd_record(state_dir: Path, note: str) -> int:
@@ -54,15 +44,15 @@ def cmd_record(state_dir: Path, note: str) -> int:
         return 1
     trend_path = state_dir / TREND_NAME
     stamp = dt.datetime.fromtimestamp(baseline.stat().st_mtime).isoformat(timespec="seconds")
-    existing = load_trend(trend_path)
+    existing = mutation_state.read_rows(trend_path)
     if any(e.get("baseline_mtime") == stamp for e in existing):
         print(json.dumps({"status": "skipped",
                           "message": "this baseline is already recorded; nothing appended",
                           "baseline_mtime": stamp}))
         return 0
     entry = {"recorded": dt.date.today().isoformat(), "baseline_mtime": stamp}
-    rows = read_rows(baseline)
-    deduped = latest_per_tool(rows)
+    rows = mutation_state.read_rows(baseline)
+    deduped = mutation_state.latest_per_tool(rows)
     entry |= summarise(deduped)
     # Recorded so a future reader can see the append-only file was collapsed, and by how
     # much. A silent dedupe would make the 175-vs-123 discrepancy invisible again.
@@ -77,7 +67,7 @@ def cmd_record(state_dir: Path, note: str) -> int:
 
 
 def cmd_show(state_dir: Path) -> int:
-    entries = load_trend(state_dir / TREND_NAME)
+    entries = mutation_state.read_rows(state_dir / TREND_NAME)
     if not entries:
         print("no trend recorded yet — run: python3 tools/mutation_trend.py record")
         return 0
