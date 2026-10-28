@@ -200,8 +200,14 @@ def cohort_id(destination: str, confidence: str) -> str:
     return f"ind:{destination}:{confidence}"
 
 
-def cmd_approve(root: Path, rule_ids: list[str], approver: str, note: str) -> None:
-    """Record Nick's approval of one or more bulk rules.
+def cmd_approve(root: Path, rule_ids: list[str], note: str, sign=None) -> None:
+    """Record Nick's approval of one or more bulk rules, each signed with his Touch ID key.
+
+    S16 (2026-10-27): the approver used to be a free argument any caller could pass, so a
+    row saying "nick" proved nothing. Now every row carries a signature from
+    approval_signing.sign (Secretive, Touch ID per use), and inbox_drain_apply.py ignores
+    a row whose signature does not verify. All rows are signed BEFORE any is written, so a
+    declined Touch ID prompt writes nothing. `sign` is injectable for tests only.
 
     Approvals are a SEPARATE append-only stream. The decision log is never
     rewritten - a row says what was proposed and when, and rewriting it in place
@@ -224,20 +230,30 @@ def cmd_approve(root: Path, rule_ids: list[str], approver: str, note: str) -> No
         fail(f"unknown rule id(s): {unknown}", "unknown_rule",
              known=sorted(by_rule))
 
+    import approval_signing
+    sign = sign or approval_signing.sign
     stamp = datetime.now().isoformat(timespec="seconds")
+    rows = []
+    for rid in rule_ids:
+        row = {
+            "rule_id": rid,
+            "approved_at": stamp,
+            "approved_by": approval_signing.PRINCIPAL,
+            "blocks": len(by_rule[rid]),
+            "block_ids": by_rule[rid],
+            "note": note,
+            "executed": False,
+        }
+        try:
+            row["signature"] = sign(approval_signing.payload(row))
+        except RuntimeError as e:
+            fail(f"approval not signed, nothing written: {e}", "not_signed")
+        rows.append(row)
     path = root / APPROVALS_REL
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as fh:
-        for rid in rule_ids:
-            fh.write(json.dumps({
-                "rule_id": rid,
-                "approved_at": stamp,
-                "approved_by": approver,
-                "blocks": len(by_rule[rid]),
-                "block_ids": by_rule[rid],
-                "note": note,
-                "executed": False,
-            }, ensure_ascii=False) + "\n")
+        for row in rows:
+            fh.write(json.dumps(row, ensure_ascii=False) + "\n")
 
     print(json.dumps({"status": "ok", "approved": rule_ids,
                       "blocks_covered": sum(len(by_rule[r]) for r in rule_ids)},
@@ -271,7 +287,13 @@ def cmd_status(root: Path) -> None:
     ind = sum(1 for r in log if r["mode"] == "individual")
     residual = [r["block_id"] for r in log if r["residual_flag"]]
 
-    approvals = load_approvals(root)
+    # Only a signed approval counts (S16), the same test inbox_drain_apply applies, so
+    # status never reports as approved a rule the applier will refuse.
+    import approval_signing
+    approvals = {rid: a for rid, a in load_approvals(root).items()
+                 if approval_signing.verify(approval_signing.payload(a), a.get("signature"),
+                                            approval_signing.ALLOWED_SIGNERS)}
+    unsigned = sorted(set(load_approvals(root)) - set(approvals))
     rules, cohorts = {}, {}
     for r in log:
         if r["mode"] == "bulk":
@@ -319,6 +341,7 @@ def cmd_status(root: Path) -> None:
         "bulk_rules": sorted(rules.values(), key=lambda e: -e["blocks"]),
         "individual_cohorts": sorted(cohorts.values(), key=lambda e: -e["blocks"]),
         "blocks_under_approved_rules": approved_blocks,
+        "unsigned_approvals_ignored": unsigned,
         "blocks_awaiting_a_decision": len(log) - approved_blocks,
         "executed_any": any(e["executed"] for e in rules.values()),
     }, ensure_ascii=False, indent=2))
@@ -331,7 +354,6 @@ def main() -> None:
     ap.add_argument("--rows-file", default=None)
     ap.add_argument("--rule", action="append", default=[],
                     help="bulk rule id to approve; repeatable")
-    ap.add_argument("--approver", default="nick")
     ap.add_argument("--note", default="")
     ap.add_argument("--supersede", action="store_true",
                     help="record a revised decision for a block already logged")
@@ -348,7 +370,7 @@ def main() -> None:
     elif args.command == "approve":
         if not args.rule:
             fail("approve needs at least one --rule", "missing_arg")
-        cmd_approve(root, args.rule, args.approver, args.note)
+        cmd_approve(root, args.rule, args.note)
     else:
         cmd_status(root)
 
