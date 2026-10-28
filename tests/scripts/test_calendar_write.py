@@ -111,8 +111,8 @@ def test_create_sends_exactly_the_signed_request_and_invites_nobody(env, capsys)
     assert code == 0
     assert s.calls == [("insert", {"calendarId": "primary", "sendUpdates": "none", "body": {
         "summary": "Coffee with A. Person", "location": "Cafe",
-        "start": {"dateTime": "2026-11-02T10:00", "timeZone": "America/Los_Angeles"},
-        "end": {"dateTime": "2026-11-02T10:30", "timeZone": "America/Los_Angeles"}}})]
+        "start": {"dateTime": "2026-11-02T10:00:00", "timeZone": "America/Los_Angeles"},
+        "end": {"dateTime": "2026-11-02T10:30:00", "timeZone": "America/Los_Angeles"}}})]
     assert s.creds == "creds"
     assert json.loads(capsys.readouterr().out) == {"status": "created", "id": "new-id",
                                                     "htmlLink": "https://cal/x"}
@@ -136,8 +136,8 @@ def test_the_dialog_shows_the_event_in_plain_fields(env):
     lines = d.texts[0].splitlines()
     assert "Location: Cafe" in lines
     assert lines[0] == "A Claude session wants to: CREATE EVENT (calendar_write.py)"
-    for want in ("Title: Coffee with A. Person", "Start: 2026-11-02T10:00 (America/Los_Angeles)",
-                 "End: 2026-11-02T10:30 (America/Los_Angeles)", "Calendar: work", "INVITEES: none",
+    for want in ("Title: Coffee with A. Person", "Start: 2026-11-02T10:00:00 (America/Los_Angeles)",
+                 "End: 2026-11-02T10:30:00 (America/Los_Angeles)", "Calendar: work", "INVITEES: none",
                  "  sendUpdates: none"):
         assert want in lines
 
@@ -381,7 +381,7 @@ def test_a_dialog_without_a_note_ends_at_the_invitee_line():
 
 def test_the_dialog_shows_the_time_zone_that_decides_the_instant(env):
     _, d, _ = _run(env, CREATE + ["--timezone", "Asia/Tokyo"])
-    assert "Start: 2026-11-02T10:00 (Asia/Tokyo)" in d.texts[0].splitlines()
+    assert "Start: 2026-11-02T10:00:00 (Asia/Tokyo)" in d.texts[0].splitlines()
     _, d, _ = _run(env, ["create", "--title", "Off", "--start", "2026-11-02", "--end", "2026-11-03"])
     assert "Start: 2026-11-02 (all day)" in d.texts[-1].splitlines()
 
@@ -420,7 +420,17 @@ def test_the_longest_accepted_time_line_is_shown_whole(env):
     tz = "Z" * cw.MAX_TZ_CHARS
     _, d, _ = _run(env, ["create", "--title", "T", "--start", start, "--end", start,
                          "--timezone", tz])
-    assert f"Start: {start} ({tz})" in d.texts[0].splitlines()
+    # Sent, and shown, as RFC 3339 to the second: the sub-second part is dropped.
+    assert f"Start: 2026-11-02T10:00:00+00:00 ({tz})" in d.texts[0].splitlines()
+
+
+def test_a_time_without_seconds_is_sent_with_them(env):
+    """Google refuses "2026-10-29T09:00" with HTTP 400 (first live create, 2026-10-28)."""
+    _, d, s = _run(env, ["create", "--title", "T", "--start", "2026-10-29T09:00",
+                         "--end", "2026-10-29T09:15-07:00"])
+    body = s.calls[0][1]["body"]
+    assert body["start"]["dateTime"] == "2026-10-29T09:00:00"
+    assert body["end"]["dateTime"] == "2026-10-29T09:15:00-07:00"
 
 
 def test_the_setup_command_appends_to_the_signer_file():

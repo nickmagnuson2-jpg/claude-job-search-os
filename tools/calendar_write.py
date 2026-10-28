@@ -72,10 +72,13 @@ def _when(value: str, tz: str) -> dict:
     except ValueError:
         pass
     try:
-        datetime.fromisoformat(value)
+        when = datetime.fromisoformat(value)
     except ValueError:
         _usage(f"not an ISO 8601 date or time: {value!r}")
-    return {"dateTime": value, "timeZone": tz}
+    # Google wants RFC 3339, which requires seconds: "2026-10-29T09:00" got HTTP 400 on the
+    # first live create (2026-10-28) while the fake service in the tests accepted it.
+    # Normalized here, before the dialog, so Nick signs and sees the value that is sent.
+    return {"dateTime": when.isoformat(timespec="seconds"), "timeZone": tz}
 
 
 def _shown_in_full(name: str, value: str, limit: int = ca.FIELD_CHARS) -> None:

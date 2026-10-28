@@ -397,6 +397,16 @@ def test_long_reason_is_capped():
     assert msg.endswith("x" * 300) and "x" * 301 not in msg
 
 
+def test_a_bare_reason_gets_googles_detail_appended():
+    """"Bad Request" alone did not say which field (first live create, 2026-10-28)."""
+    e = HttpError(400, "Bad Request")
+    e.error_details = [{"message": "Invalid start time."}, "not a dict", {"reason": "x"}]
+    assert cf._api_error(e).endswith("(HTTP 400): Bad Request: Invalid start time.")
+    e = HttpError(400, "Invalid start time.")
+    e.error_details = [{"message": "Invalid start time."}]
+    assert cf._api_error(e).endswith("(HTTP 400): Invalid start time.")
+
+
 def test_another_tool_can_keep_its_own_token_and_scope(tmp_path, fake_google, capsys):
     """tools/calendar_write.py reuses get_creds with its own file and one scope."""
     (tmp_path / "gmail_credentials.json").write_text("{}")

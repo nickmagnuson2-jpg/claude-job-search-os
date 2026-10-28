@@ -196,7 +196,13 @@ def _api_error(e: BaseException) -> str | None:
     mod = type(e).__module__ or ""
     if kind == "HttpError":
         status = getattr(getattr(e, "resp", None), "status", "?")
-        reason = " ".join(str(getattr(e, "reason", "") or "").split())[:300]
+        reason = str(getattr(e, "reason", "") or "")
+        # The reason alone is often just "Bad Request"; the detail says which field.
+        details = getattr(e, "error_details", None) or []
+        msgs = [d.get("message", "") for d in details if isinstance(d, dict)]
+        if any(msgs) and " ".join(msgs) not in reason:
+            reason += ": " + "; ".join(m for m in msgs if m)
+        reason = " ".join(reason.split())[:300]
         return f"ERROR: Google Calendar API refused the request (HTTP {status}): {reason}"
     if mod.startswith("google.auth") or kind == "RefreshError":
         return (f"ERROR: calendar login failed ({kind}: {' '.join(str(e).split())[:200]}). "
