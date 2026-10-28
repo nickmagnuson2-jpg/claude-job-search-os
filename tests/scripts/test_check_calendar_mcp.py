@@ -57,11 +57,24 @@ def _signer(k, namespace=sig.CALENDAR_NAMESPACE):
 
 class Dialog:
     def __init__(self, answer=True):
-        self.answer, self.texts = answer, []
+        self.answer = {True: "approved", False: "declined"}.get(answer, answer)
+        self.texts = []
 
     def __call__(self, text):
         self.texts.append(text)
         return self.answer
+
+
+@pytest.fixture(autouse=True)
+def _log(tmp_path, monkeypatch):
+    """Every test logs to its own file, never to Nick's real decision log."""
+    log = tmp_path / "gate-log" / "calendar-gate.jsonl"
+    monkeypatch.setenv("CALENDAR_GATE_LOG", str(log))
+    return log
+
+
+def _lines(log):
+    return [json.loads(l) for l in log.read_text().splitlines()] if log.exists() else []
 
 
 def _never(*a):
@@ -77,7 +90,8 @@ def _main(monkeypatch, capsys, tool, tool_input=None, **kw):
 
 def _run(payload, tmp_path, env_extra=None):
     env = {k: v for k, v in os.environ.items() if k != "CALENDAR_MCP_OVERRIDE"}
-    env.update(HOME=str(tmp_path), **(env_extra or {}))
+    env.update(HOME=str(tmp_path), CALENDAR_GATE_LOG=str(tmp_path / "sub-log.jsonl"),
+               **(env_extra or {}))
     p = subprocess.run([sys.executable, str(HOOK)], capture_output=True, text=True, env=env,
                        input=payload if isinstance(payload, str) else json.dumps(payload))
     return p.returncode, p.stderr
@@ -310,11 +324,11 @@ class _R:
 
 
 @pytest.mark.parametrize("code,out,want", [
-    (0, "button returned:Approve with Touch ID, gave up:false\n", True),
-    (1, "", False),                                              # Decline is the cancel button
-    (0, "button returned:, gave up:true\n", False),
-    (0, "button returned:Approve with Touch ID, gave up:true\n", False),
-    (0, "button returned:Decline, gave up:false\n", False),
+    (0, "button returned:Approve with Touch ID, gave up:false\n", "approved"),
+    (1, "", "declined"),                                         # Decline is the cancel button
+    (0, "button returned:, gave up:true\n", "timed_out"),
+    (0, "button returned:Approve with Touch ID, gave up:true\n", "timed_out"),
+    (0, "button returned:Decline, gave up:false\n", "declined"),
 ])
 def test_osascript_dialog_reads_only_an_approve_click(monkeypatch, code, out, want):
     seen = {}
@@ -323,7 +337,7 @@ def test_osascript_dialog_reads_only_an_approve_click(monkeypatch, code, out, wa
         seen.update(args=args, kw=kw)
         return _R(code, out)
     monkeypatch.setattr(h.subprocess, "run", fake_run)
-    assert h.osascript_dialog('quote " and backslash \\ here') is want
+    assert h.osascript_dialog('quote " and backslash \\ here') == want
     args = seen["args"]
     assert args[0] == "osascript" and args[-2:] == ["--", 'quote " and backslash \\ here']
     script = " ".join(args[1:-2])
@@ -396,3 +410,106 @@ def test_the_invitee_block_is_set_off_by_a_blank_line():
         lines = h.dialog_text(P + "create_event", ti).splitlines()
         first = next(i for i, l in enumerate(lines) if l.startswith(("THIS SENDS", "INVITEES")))
         assert lines[first - 1] == ""
+
+
+# ── decision log (Nick, 2026-10-28: "yes I touched it, add the log") ─────────
+
+def _decide(monkeypatch, capsys, keys, tool=None, **kw):
+    kw.setdefault("allowed", keys["allowed"])
+    kw.setdefault("sign", _signer(keys["nick"]))
+    return _main(monkeypatch, capsys, tool or WRITES[0], **kw)[0]
+
+
+@pytest.mark.parametrize("case,want_code,want", [
+    ({"dialog": Dialog(True)}, 0, "approved"),
+    ({"dialog": Dialog(False)}, 2, "declined"),
+    ({"dialog": Dialog("timed_out")}, 2, "timed_out"),
+    ({"dialog": Dialog("something else")}, 2, "declined"),
+    ({"dialog": Dialog(True), "sign": lambda d: (_ for _ in ()).throw(RuntimeError("no"))},
+     2, "sign_failed"),
+    ({"dialog": Dialog(True), "verify": lambda d, s: False}, 2, "verify_failed"),
+    ({"dialog": lambda text: (_ for _ in ()).throw(OSError("osascript"))}, 2, "error"),
+])
+def test_every_write_decision_is_logged_with_its_code(case, want_code, want, keys,
+                                                      monkeypatch, capsys, _log):
+    assert _decide(monkeypatch, capsys, keys, **case) == want_code
+    (line,) = _lines(_log)
+    assert line["decision"] == want and line["tool_name"] == WRITES[0]
+    assert line["sha256"] == __import__("hashlib").sha256(h.canonical(WRITES[0], EVENT)).hexdigest()
+    assert set(line) == {"ts", "tool_name", "decision", "sha256"}
+    assert line["ts"].endswith("+00:00")
+
+
+def test_no_signer_is_logged(tmp_path, monkeypatch, capsys, _log):
+    assert _main(monkeypatch, capsys, WRITES[0], dialog=_never, allowed=tmp_path / "none")[0] == 2
+    assert [l["decision"] for l in _lines(_log)] == ["no_signer"]
+
+
+def test_reads_are_logged_both_ways(monkeypatch, capsys, _log):
+    assert _main(monkeypatch, capsys, READS[0], {})[0] == 2
+    monkeypatch.setenv("CALENDAR_MCP_OVERRIDE", "1")
+    assert _main(monkeypatch, capsys, READS[0], {})[0] == 0
+    assert [l["decision"] for l in _lines(_log)] == ["read_blocked", "read_override"]
+
+
+def test_non_calendar_tools_are_not_logged(monkeypatch, capsys, _log):
+    assert _main(monkeypatch, capsys, "Bash", {})[0] == 0
+    assert not _log.exists()
+
+
+def test_an_unreadable_payload_blocks_but_is_not_logged(tmp_path):
+    """Repo-wide hook tests send junk stdin to every wired hook without CALENDAR_GATE_LOG;
+    logging it put test noise in Nick's real log (2026-10-28)."""
+    assert _run("not json", tmp_path)[0] == 2
+    assert not (tmp_path / "sub-log.jsonl").exists()
+
+
+def test_the_log_holds_no_event_content(keys, monkeypatch, capsys, _log):
+    _decide(monkeypatch, capsys, keys, dialog=Dialog(True))
+    _decide(monkeypatch, capsys, keys, dialog=Dialog(False))
+    text = _log.read_text()
+    for value in ("Coffee", "person@example.com", "A. Person", "2026-10-30T10"):
+        assert value not in text
+
+
+def test_lines_are_appended_not_overwritten(keys, monkeypatch, capsys, _log):
+    for _ in range(3):
+        _decide(monkeypatch, capsys, keys, dialog=Dialog(False))
+    assert len(_lines(_log)) == 3
+
+
+@pytest.mark.parametrize("answer,want", [(True, 0), (False, 2)])
+def test_a_log_that_cannot_be_written_changes_no_decision(answer, want, keys, tmp_path,
+                                                          monkeypatch, capsys):
+    blocker = tmp_path / "a-file"
+    blocker.write_text("x")
+    monkeypatch.setenv("CALENDAR_GATE_LOG", str(blocker / "sub" / "log.jsonl"))  # parent is a file
+    assert _decide(monkeypatch, capsys, keys, dialog=Dialog(answer)) == want
+    monkeypatch.setattr(h, "canonical", lambda *a: (_ for _ in ()).throw(TypeError("x")))
+    h.log_decision(WRITES[0], EVENT, "declined")           # never raises
+
+
+def test_a_failing_log_never_flips_a_block_to_allow(keys, monkeypatch, capsys):
+    def explode(*a):
+        raise RuntimeError("disk full")
+    monkeypatch.setattr(h.json, "dumps", explode)            # every log line fails
+    assert _decide(monkeypatch, capsys, keys, dialog=Dialog(False)) == 2
+    assert _main(monkeypatch, capsys, READS[0], {})[0] == 2
+
+
+def test_the_default_log_is_outside_the_repo(monkeypatch):
+    monkeypatch.delenv("CALENDAR_GATE_LOG")
+    assert h.DECISION_LOG == Path.home() / "Library" / "Logs" / "job-search" / "calendar-gate.jsonl"
+    assert TOOLS.parent not in h.DECISION_LOG.parents
+
+
+def test_the_default_log_path_is_used_without_the_override(monkeypatch, tmp_path):
+    monkeypatch.delenv("CALENDAR_GATE_LOG")
+    monkeypatch.setattr(h, "DECISION_LOG", tmp_path / "d" / "log.jsonl")
+    h.log_decision(READS[0], {}, "read_blocked")
+    assert [l["decision"] for l in _lines(tmp_path / "d" / "log.jsonl")] == ["read_blocked"]
+
+
+def test_a_refusal_reads_as_its_reason():
+    r = h._Refused("declined", "Nick declined")
+    assert (str(r), r.decision, r.reason) == ("Nick declined", "declined", "Nick declined")

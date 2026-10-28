@@ -38,16 +38,27 @@ Timing: the dialog gives up after DIALOG_SECONDS and signing after SIGN_SECONDS;
 payload read and the verify bound the worst case is 162 s, inside the 240 s hook timeout in
 .claude/settings.json, so the hook reaches its own verdict instead of being cut off.
 
+Decision log (Nick, 2026-10-28, after the first live approval: "yes I touched it, add the
+log"): one JSON line per calendar decision, appended to DECISION_LOG outside the repo
+({ts, tool_name, decision, sha256}). The hash is of the canonical call, so a line can be
+matched to a call without holding any of it: never the title, times, invitees or any other
+event text. Writing the log can never change a decision; a failure to write is swallowed.
+Decisions: approved, declined, timed_out, no_signer, sign_failed, verify_failed, error,
+read_blocked, read_override.
+
 Split from tools/check_gmail_read_mcp.py on 2026-10-28: that hook is Gmail-only again, and
 only this one needs the long timeout.
 
 Exit codes: 0 allow, 2 block.
 """
+import hashlib
 import json
 import os
 import re
 import subprocess
 import sys
+from datetime import datetime, timezone
+from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from hook_runtime import read_payload  # noqa: E402
@@ -64,6 +75,9 @@ DIALOG_SECONDS = 60
 SIGN_SECONDS = 60
 FIELD_CHARS = 160
 APPROVE = "Approve with Touch ID"
+# Outside the repo (this repo is public) and outside iCloud-synced ~/Documents.
+# CALENDAR_GATE_LOG overrides it, for tests.
+DECISION_LOG = Path.home() / "Library" / "Logs" / "job-search" / "calendar-gate.jsonl"
 SETUP = ("PYTHONIOENCODING=utf-8 python3 tools/approval_signing.py signer-line"
          " > ~/.ssh/allowed_signers")
 
@@ -149,8 +163,9 @@ def dialog_text(tool_name: str, tool_input: dict) -> str:
     return "\n".join(lines)
 
 
-def osascript_dialog(text: str) -> bool:
-    """True only when Nick clicked Approve before the dialog gave up."""
+def osascript_dialog(text: str) -> str:
+    """"approved" only when Nick clicked Approve before the dialog gave up; "timed_out"
+    when it gave up; "declined" for anything else."""
     script = [
         "on run argv",
         # Joined with +, not implicit concatenation: the AppleScript word "of" inside an
@@ -165,21 +180,55 @@ def osascript_dialog(text: str) -> bool:
         args += ["-e", line]
     r = subprocess.run(args + ["--", text], capture_output=True, text=True,
                        timeout=DIALOG_SECONDS + 10)
-    return (r.returncode == 0 and f"button returned:{APPROVE}" in r.stdout
-            and "gave up:true" not in r.stdout)
+    if "gave up:true" in r.stdout:
+        return "timed_out"
+    if r.returncode == 0 and f"button returned:{APPROVE}" in r.stdout:
+        return "approved"
+    return "declined"
+
+
+class _Refused(Exception):
+    """A refusal with its decision code, raised so that main() logs and blocks it."""
+
+    def __init__(self, decision: str, reason: str):
+        super().__init__(reason)
+        self.decision, self.reason = decision, reason
 
 
 def approve_write(tool_name, tool_input, dialog, sign, verify, allowed) -> tuple[bool, str]:
-    """(allowed, reason). Every failure is a refusal."""
+    """(allowed, reason), or _Refused with a decision code. Every failure is a refusal."""
     if not signer_allows_calendar(allowed):
-        return False, (f"no signer line allows calendar approvals in {allowed}. "
-                       f"Nick runs once: {SETUP}")
-    if not dialog(dialog_text(tool_name, tool_input)):
-        return False, "Nick declined, or the approval dialog timed out"
+        raise _Refused("no_signer", f"no signer line allows calendar approvals in {allowed}. "
+                                    f"Nick runs once: {SETUP}")
+    answer = dialog(dialog_text(tool_name, tool_input))
+    if answer == "timed_out":
+        raise _Refused("timed_out", "the approval dialog timed out")
+    if answer != "approved":
+        raise _Refused("declined", "Nick declined")
     data = canonical(tool_name, tool_input)
-    if verify(data, sign(data)) is not True:
-        return False, "the Touch ID signature did not verify"
+    try:
+        sig = sign(data)
+    except Exception as e:  # noqa: BLE001 -- Touch ID declined, agent unreachable, ...
+        raise _Refused("sign_failed", f"{type(e).__name__}: {_one_line(str(e))}") from e
+    if verify(data, sig) is not True:
+        raise _Refused("verify_failed", "the Touch ID signature did not verify")
     return True, "approved with Touch ID"
+
+
+def log_decision(tool_name: str, tool_input, decision: str) -> None:
+    """Append one line to the decision log. Never raises: the log cannot change a verdict."""
+    try:
+        path = Path(os.environ.get("CALENDAR_GATE_LOG") or DECISION_LOG)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        line = json.dumps({
+            "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "tool_name": tool_name, "decision": decision,
+            "sha256": hashlib.sha256(canonical(tool_name, tool_input)).hexdigest(),
+        }, sort_keys=True)
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+    except Exception:  # noqa: BLE001 -- logging must never decide anything
+        pass
 
 
 def _sign(data: bytes, allowed) -> str:
@@ -209,7 +258,8 @@ def main(dialog=osascript_dialog, sign=None, verify=None, allowed=None) -> int:
     p = read_payload()
     if not p.ok:
         # Only calendar tools are routed here, so an unreadable payload is a calendar
-        # call that cannot be inspected. Fail closed.
+        # call that cannot be inspected. Fail closed. Not logged: repo-wide hook tests feed
+        # junk stdin to every wired hook, and those lines would land in the real log.
         print(f"BLOCKED: calendar connector call with an unreadable payload ({p.error}).",
               file=sys.stderr)
         return 2
@@ -219,14 +269,20 @@ def main(dialog=osascript_dialog, sign=None, verify=None, allowed=None) -> int:
     short = tool_name[len(PREFIX):]
     if not is_write(tool_name):
         if os.environ.get("CALENDAR_MCP_OVERRIDE") == "1":
+            log_decision(tool_name, p.tool_input, "read_override")
             return 0
+        log_decision(tool_name, p.tool_input, "read_blocked")
         print(read_message(short), file=sys.stderr)
         return 2
     try:
         ok, reason = approve_write(tool_name, p.tool_input, dialog, sign, verify, allowed)
+        decision = "approved" if ok is True else "error"
+    except _Refused as r:
+        ok, reason, decision = False, r.reason, r.decision
     except Exception as e:  # noqa: BLE001 -- fail closed on anything
-        ok, reason = False, f"{type(e).__name__}: {_one_line(str(e))}"
-    if ok:
+        ok, reason, decision = False, f"{type(e).__name__}: {_one_line(str(e))}", "error"
+    log_decision(tool_name, p.tool_input, decision)
+    if ok is True:
         return 0
     print(f"BLOCKED: calendar {short} needs Nick's Touch ID approval: {reason}.",
           file=sys.stderr)
