@@ -3,7 +3,7 @@
 
 BLOCKS an edit to guard infrastructure — `tools/check_*.py`, the hook libraries they
 decide with (HOOK_LIBRARIES: shell_tokens, hook_runtime, hook_command_lint,
-approval_signing), and
+approval_signing, calendar_approval), and
 `.claude/settings.json` — so that changing a
 guard is always a deliberate, approved act rather than something that happens in
 the same motion as being blocked by one.
@@ -75,9 +75,11 @@ from hook_runtime import read_payload  # noqa: E402
 # is guarded like the guards (Nick, 2026-10-01: shell_tokens.py was edited unapproved
 # because it was not listed). tests/.../test_every_tools_module_a_guard_imports_is_
 # classified fails when a check_*.py imports a tools module in neither set.
-# approval_signing (2026-10-28): check_calendar_mcp allows a calendar write only when its
-# verify() passes, so a change to it changes a guard verdict.
-HOOK_LIBRARIES = ("shell_tokens", "hook_runtime", "hook_command_lint", "approval_signing")
+# approval_signing and calendar_approval (2026-10-28): check_calendar_mcp allows a calendar
+# write only when calendar_approval.approve() returns, which needs approval_signing.verify()
+# to pass, so a change to either changes a guard verdict.
+HOOK_LIBRARIES = ("shell_tokens", "hook_runtime", "hook_command_lint", "approval_signing",
+                  "calendar_approval")
 # Imported by a guard but deliberately NOT guarded (Nick's call, 2026-10-01: "just the
 # hook libraries"). Each is domain logic or tooling that ordinary work edits.
 NOT_HOOK_LIBRARIES = {

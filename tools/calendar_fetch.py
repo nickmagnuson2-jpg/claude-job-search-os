@@ -134,19 +134,21 @@ def normalize(items_by_calendar: dict[str, list[dict]]) -> list[dict]:
     return sorted(out, key=lambda e: e["start"] or "")
 
 
-def get_creds(tools_dir: Path, auth_mode: bool = False):
-    """Load or create the calendar token. Never touches the Gmail token."""
+def get_creds(tools_dir: Path, auth_mode: bool = False, token_file: str = TOKEN_FILE,
+              scopes: list = SCOPES, tool: str = "calendar_fetch.py"):
+    """Load or create a calendar token. Never touches the Gmail token. token_file, scopes
+    and tool let tools/calendar_write.py keep its own token with its own single scope."""
     from google.oauth2.credentials import Credentials
     from google.auth.transport.requests import Request
     from google_auth_oauthlib.flow import InstalledAppFlow
 
     creds_path = tools_dir / CREDENTIALS_FILE
-    token_path = tools_dir / TOKEN_FILE
+    token_path = tools_dir / token_file
 
     if auth_mode:
         if not creds_path.exists():
             sys.exit(f"ERROR: {creds_path} is missing (the Gmail OAuth client; see gmail_fetch.py setup).")
-        flow = InstalledAppFlow.from_client_secrets_file(str(creds_path), SCOPES)
+        flow = InstalledAppFlow.from_client_secrets_file(str(creds_path), scopes)
         creds = flow.run_local_server(port=0)
         _write_token_atomic(token_path, creds.to_json())
         token_path.chmod(0o600)
@@ -154,8 +156,8 @@ def get_creds(tools_dir: Path, auth_mode: bool = False):
         return creds
 
     if not token_path.exists():
-        sys.exit("ERROR: no calendar token. Run: PYTHONIOENCODING=utf-8 python3 tools/calendar_fetch.py --auth")
-    creds = Credentials.from_authorized_user_file(str(token_path), SCOPES)
+        sys.exit(f"ERROR: no calendar token. Run: PYTHONIOENCODING=utf-8 python3 tools/{tool} --auth")
+    creds = Credentials.from_authorized_user_file(str(token_path), scopes)
     if not creds.valid:
         if creds.expired and creds.refresh_token:
             creds.refresh(Request())

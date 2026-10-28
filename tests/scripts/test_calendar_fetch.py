@@ -395,3 +395,17 @@ def test_a_bug_keeps_its_traceback(monkeypatch):
 def test_long_reason_is_capped():
     msg = cf._api_error(HttpError(500, "x" * 1000))
     assert msg.endswith("x" * 300) and "x" * 301 not in msg
+
+
+def test_another_tool_can_keep_its_own_token_and_scope(tmp_path, fake_google, capsys):
+    """tools/calendar_write.py reuses get_creds with its own file and one scope."""
+    (tmp_path / "gmail_credentials.json").write_text("{}")
+    cf.get_creds(tmp_path, auth_mode=True, token_file="w.json", scopes=["s-write"])
+    assert fake_google["flow_scopes"] == ["s-write"]
+    assert (tmp_path / "w.json").stat().st_mode & 0o777 == 0o600
+    assert not (tmp_path / "calendar_token.json").exists()
+    cf.get_creds(tmp_path, token_file="w.json", scopes=["s-write"])
+    assert fake_google["load_scopes"] == ["s-write"]
+    with pytest.raises(SystemExit) as e:
+        cf.get_creds(tmp_path, token_file="absent.json", tool="calendar_write.py")
+    assert "tools/calendar_write.py --auth" in str(e.value)

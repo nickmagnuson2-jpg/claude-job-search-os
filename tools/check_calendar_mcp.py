@@ -46,40 +46,32 @@ event text. Writing the log can never change a decision; a failure to write is s
 Decisions: approved, declined, timed_out, no_signer, sign_failed, verify_failed, error,
 read_blocked, read_override.
 
+The approval mechanism (dialog, signing, decision log) lives in tools/calendar_approval.py,
+shared with tools/calendar_write.py, the local writer that replaces this connector's writes.
+This hook stays as the guard for the connector in case it is ever reconnected.
+
 Split from tools/check_gmail_read_mcp.py on 2026-10-28: that hook is Gmail-only again, and
 only this one needs the long timeout.
 
 Exit codes: 0 allow, 2 block.
 """
-import hashlib
-import json
+
 import os
-import re
-import subprocess
 import sys
-from datetime import datetime, timezone
-from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from hook_runtime import read_payload  # noqa: E402
 import approval_signing  # noqa: E402
+import calendar_approval as ca  # noqa: E402
+from calendar_approval import (  # noqa: E402,F401 -- re-exported for callers and tests
+    DIALOG_SECONDS, FIELD_CHARS, LABELS, SETUP, SIGN_SECONDS, canonical, invitees,
+    log_decision, osascript_dialog, signer_allows_calendar)
 
 PREFIX = "mcp__claude_ai_Google_Calendar__"
 READ_TOOLS = {PREFIX + t for t in (
     "list_events", "get_event", "search_events", "list_calendars", "suggest_time")}
-# Worst case, in sequence: payload read 2 s, dialog DIALOG_SECONDS + 10, signing
-# SIGN_SECONDS, verify 30 (approval_signing.verify): 162 s, leaving 78 s of the 240 s hook
-# timeout for interpreter start and subprocess overhead. Codex calendar-gate r1 F2: the first
-# bounds (90 + 15 + 90 + 30) left 13 s.
-DIALOG_SECONDS = 60
-SIGN_SECONDS = 60
-FIELD_CHARS = 160
-APPROVE = "Approve with Touch ID"
-# Outside the repo (this repo is public) and outside iCloud-synced ~/Documents.
-# CALENDAR_GATE_LOG overrides it, for tests.
-DECISION_LOG = Path.home() / "Library" / "Logs" / "job-search" / "calendar-gate.jsonl"
-SETUP = ("PYTHONIOENCODING=utf-8 python3 tools/approval_signing.py signer-line"
-         " > ~/.ssh/allowed_signers")
+_Refused = ca.Refused
+_one_line = ca.one_line
 
 
 def is_calendar_tool(tool_name) -> bool:
@@ -91,154 +83,24 @@ def is_write(tool_name) -> bool:
     return is_calendar_tool(tool_name) and tool_name not in READ_TOOLS
 
 
-def canonical(tool_name: str, tool_input) -> bytes:
-    """The exact bytes signed: the tool and every argument it was called with."""
-    return json.dumps({"tool_name": tool_name, "tool_input": tool_input}, sort_keys=True,
-                      ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+def _action(tool_name: str) -> str:
+    return tool_name[len(PREFIX):].replace("_", " ").upper()
 
 
-def signer_allows_calendar(path) -> bool:
-    """True when Nick's allowed_signers line has a key and permits the calendar namespace."""
-    if approval_signing.principal_key(path) is None:
-        return False
-    for line in path.read_text(encoding="utf-8").splitlines():
-        parts = line.split()
-        if line.lstrip().startswith("#") or not parts:
-            continue
-        if approval_signing.PRINCIPAL not in parts[0].split(","):
-            continue
-        m = re.search(r'namespaces="([^"]*)"', line)
-        if m is None or approval_signing.CALENDAR_NAMESPACE in m.group(1).split(","):
-            return True
-    return False
-
-
-def _one_line(value) -> str:
-    """A field on one line, capped, control characters gone."""
-    if not isinstance(value, str):
-        value = json.dumps(value, ensure_ascii=False, sort_keys=True)
-    text = " ".join("".join(c if c.isprintable() else " " for c in value).split())
-    return text if len(text) <= FIELD_CHARS else text[:FIELD_CHARS - 3] + "..."
-
-
-def invitees(tool_input: dict) -> list[str]:
-    """Everyone this call adds: attendees and the deprecated email lists."""
-    out = []
-    for key in ("attendees", "addedAttendees"):
-        for a in tool_input.get(key) or []:
-            if isinstance(a, dict):
-                name = a.get("displayName")
-                out.append(f"{name} <{a.get('email')}>" if name else str(a.get("email")))
-            else:
-                out.append(str(a))
-    for key in ("attendeeEmails", "addedAttendeeEmails"):
-        out += [str(e) for e in tool_input.get(key) or []]
-    return [_one_line(x) for x in out]
-
-
-LABELS = {"summary": "Title", "startTime": "Start", "endTime": "End", "allDay": "All day",
-          "calendarId": "Calendar", "eventId": "Event id", "responseStatus": "Response",
-          "location": "Location", "recurrenceData": "Repeats",
-          "notificationLevel": "Notifications"}
-INVITEE_KEYS = ("attendees", "addedAttendees", "attendeeEmails", "addedAttendeeEmails")
+def _note(tool_name: str) -> str:
+    return ("Your response is sent to the organizer."
+            if tool_name == PREFIX + "respond_to_event" else "")
 
 
 def dialog_text(tool_name: str, tool_input: dict) -> str:
-    action = tool_name[len(PREFIX):].replace("_", " ").upper()
-    lines = [f"A Claude session wants to: {action}", ""]
-    shown = {"calendarId": "primary (default)", **tool_input}
-    lines += [f"{label}: {_one_line(shown[k])}" for k, label in LABELS.items() if k in shown]
-    who = invitees(tool_input)
-    lines.append("")
-    if who:
-        lines += ["THIS SENDS INVITATIONS.", "INVITEES (each gets an email from you):"]
-        lines += [f"  - {w}" for w in who]
-    else:
-        lines.append("INVITEES: none")
-    if tool_name == PREFIX + "respond_to_event":
-        lines.append("Your response is sent to the organizer.")
-    rest = sorted(k for k in tool_input if k not in LABELS and k not in INVITEE_KEYS)
-    if rest:
-        lines += ["", "Other fields:"] + [f"  {k}: {_one_line(tool_input[k])}" for k in rest]
-    return "\n".join(lines)
-
-
-def osascript_dialog(text: str) -> str:
-    """"approved" only when Nick clicked Approve before the dialog gave up; "timed_out"
-    when it gave up; "declined" for anything else."""
-    script = [
-        "on run argv",
-        # Joined with +, not implicit concatenation: the AppleScript word "of" inside an
-        # f-string reads as a printed count to tests/scripts/test_tools_announce_reach.py.
-        'display dialog (item 1 of argv) with title "Calendar write" ' +
-        f'buttons {{"Decline", "{APPROVE}"}} default button "Decline" '
-        f'cancel button "Decline" with icon caution giving up after {DIALOG_SECONDS}',
-        "end run",
-    ]
-    args = ["osascript"]
-    for line in script:
-        args += ["-e", line]
-    r = subprocess.run(args + ["--", text], capture_output=True, text=True,
-                       timeout=DIALOG_SECONDS + 10)
-    if "gave up:true" in r.stdout:
-        return "timed_out"
-    if r.returncode == 0 and f"button returned:{APPROVE}" in r.stdout:
-        return "approved"
-    return "declined"
-
-
-class _Refused(Exception):
-    """A refusal with its decision code, raised so that main() logs and blocks it."""
-
-    def __init__(self, decision: str, reason: str):
-        super().__init__(reason)
-        self.decision, self.reason = decision, reason
+    return ca.dialog_text(_action(tool_name), tool_input, _note(tool_name))
 
 
 def approve_write(tool_name, tool_input, dialog, sign, verify, allowed) -> tuple[bool, str]:
-    """(allowed, reason), or _Refused with a decision code. Every failure is a refusal."""
-    if not signer_allows_calendar(allowed):
-        raise _Refused("no_signer", f"no signer line allows calendar approvals in {allowed}. "
-                                    f"Nick runs once: {SETUP}")
-    answer = dialog(dialog_text(tool_name, tool_input))
-    if answer == "timed_out":
-        raise _Refused("timed_out", "the approval dialog timed out")
-    if answer != "approved":
-        raise _Refused("declined", "Nick declined")
-    data = canonical(tool_name, tool_input)
-    try:
-        sig = sign(data)
-    except Exception as e:  # noqa: BLE001 -- Touch ID declined, agent unreachable, ...
-        raise _Refused("sign_failed", f"{type(e).__name__}: {_one_line(str(e))}") from e
-    if verify(data, sig) is not True:
-        raise _Refused("verify_failed", "the Touch ID signature did not verify")
+    """(True, reason), or _Refused with a decision code. Every failure is a refusal."""
+    ca.approve(tool_name, tool_input, _action(tool_name), dialog, sign, verify, allowed,
+               _note(tool_name))
     return True, "approved with Touch ID"
-
-
-def log_decision(tool_name: str, tool_input, decision: str) -> None:
-    """Append one line to the decision log. Never raises: the log cannot change a verdict."""
-    try:
-        path = Path(os.environ.get("CALENDAR_GATE_LOG") or DECISION_LOG)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        line = json.dumps({
-            "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-            "tool_name": tool_name, "decision": decision,
-            "sha256": hashlib.sha256(canonical(tool_name, tool_input)).hexdigest(),
-        }, sort_keys=True)
-        with open(path, "a", encoding="utf-8") as f:
-            f.write(line + "\n")
-    except Exception:  # noqa: BLE001 -- logging must never decide anything
-        pass
-
-
-def _sign(data: bytes, allowed) -> str:
-    return approval_signing.sign(data, allowed_signers=allowed, timeout=SIGN_SECONDS,
-                                 namespace=approval_signing.CALENDAR_NAMESPACE)
-
-
-def _verify(data: bytes, sig: str, allowed) -> bool:
-    return approval_signing.verify(data, sig, allowed,
-                                   namespace=approval_signing.CALENDAR_NAMESPACE)
 
 
 def read_message(short: str) -> str:
@@ -253,8 +115,8 @@ def read_message(short: str) -> str:
 
 def main(dialog=osascript_dialog, sign=None, verify=None, allowed=None) -> int:
     allowed = approval_signing.ALLOWED_SIGNERS if allowed is None else allowed
-    sign = sign or (lambda data: _sign(data, allowed))
-    verify = verify or (lambda data, sig: _verify(data, sig, allowed))
+    sign = sign or (lambda data: ca.sign(data, allowed))
+    verify = verify or (lambda data, sig: ca.verify(data, sig, allowed))
     p = read_payload()
     if not p.ok:
         # Only calendar tools are routed here, so an unreadable payload is a calendar

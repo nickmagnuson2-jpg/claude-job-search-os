@@ -187,3 +187,5 @@ tools/.sealed-paths.conf
 
 # Read-only Google Calendar token (calendar_fetch.py), separate from the Gmail token
 tools/calendar_token.json
+# Calendar write token (calendar_write.py, events.owned only), its own file
+tools/calendar_write_token.json

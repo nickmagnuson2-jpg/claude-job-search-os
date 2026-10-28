@@ -20,6 +20,7 @@ import pytest
 TOOLS = Path(__file__).resolve().parents[2] / "tools"
 sys.path.insert(0, str(TOOLS))
 import approval_signing as sig  # noqa: E402
+import calendar_approval as ca  # noqa: E402
 import check_calendar_mcp as h  # noqa: E402
 import hook_runtime as hr  # noqa: E402
 
@@ -336,7 +337,7 @@ def test_osascript_dialog_reads_only_an_approve_click(monkeypatch, code, out, wa
     def fake_run(args, **kw):
         seen.update(args=args, kw=kw)
         return _R(code, out)
-    monkeypatch.setattr(h.subprocess, "run", fake_run)
+    monkeypatch.setattr(ca.subprocess, "run", fake_run)
     assert h.osascript_dialog('quote " and backslash \\ here') == want
     args = seen["args"]
     assert args[0] == "osascript" and args[-2:] == ["--", 'quote " and backslash \\ here']
@@ -485,27 +486,27 @@ def test_a_log_that_cannot_be_written_changes_no_decision(answer, want, keys, tm
     blocker.write_text("x")
     monkeypatch.setenv("CALENDAR_GATE_LOG", str(blocker / "sub" / "log.jsonl"))  # parent is a file
     assert _decide(monkeypatch, capsys, keys, dialog=Dialog(answer)) == want
-    monkeypatch.setattr(h, "canonical", lambda *a: (_ for _ in ()).throw(TypeError("x")))
+    monkeypatch.setattr(ca, "canonical", lambda *a: (_ for _ in ()).throw(TypeError("x")))
     h.log_decision(WRITES[0], EVENT, "declined")           # never raises
 
 
 def test_a_failing_log_never_flips_a_block_to_allow(keys, monkeypatch, capsys):
     def explode(*a):
         raise RuntimeError("disk full")
-    monkeypatch.setattr(h.json, "dumps", explode)            # every log line fails
+    monkeypatch.setattr(ca.json, "dumps", explode)            # every log line fails
     assert _decide(monkeypatch, capsys, keys, dialog=Dialog(False)) == 2
     assert _main(monkeypatch, capsys, READS[0], {})[0] == 2
 
 
 def test_the_default_log_is_outside_the_repo(monkeypatch):
     monkeypatch.delenv("CALENDAR_GATE_LOG")
-    assert h.DECISION_LOG == Path.home() / "Library" / "Logs" / "job-search" / "calendar-gate.jsonl"
-    assert TOOLS.parent not in h.DECISION_LOG.parents
+    assert ca.DECISION_LOG == Path.home() / "Library" / "Logs" / "job-search" / "calendar-gate.jsonl"
+    assert TOOLS.parent not in ca.DECISION_LOG.parents
 
 
 def test_the_default_log_path_is_used_without_the_override(monkeypatch, tmp_path):
     monkeypatch.delenv("CALENDAR_GATE_LOG")
-    monkeypatch.setattr(h, "DECISION_LOG", tmp_path / "d" / "log.jsonl")
+    monkeypatch.setattr(ca, "DECISION_LOG", tmp_path / "d" / "log.jsonl")
     h.log_decision(READS[0], {}, "read_blocked")
     assert [l["decision"] for l in _lines(tmp_path / "d" / "log.jsonl")] == ["read_blocked"]
 
