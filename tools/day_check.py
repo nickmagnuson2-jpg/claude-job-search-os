@@ -14,13 +14,17 @@ Six counts, each for the target date and for the week so far (Monday to the targ
                   replied", OUTBOUND, a follow-up or cold outreach). A person counts once
                   per day across both logs ("First" and "First Last" are one person).
   replies         networking.md interactions that record an inbound message: type
-                  "email (inbound)", or a summary starting "REPLY from", "Inbound", or
-                  "<someone other than Nick> replied".
+                  "email (inbound)"; a summary starting "REPLY from" or "Inbound", or
+                  holding the word INBOUND; "<someone other than Nick> replied/responded"
+                  anywhere; or networking_write's inbound markers ("heard back", ...).
   calls           networking.md interactions of a live type (conversations_metric.LIVE:
                   call, video, in-person, interview, and so on).
   applications    pipeline rows whose text says "Applied <date>" (or "applied on <date>").
-                  Stage alone is not used: a follow-up also moves Date Updated on an
-                  Applied row, which would count an old application again.
+                  Stage alone is not counted: a follow-up also moves Date Updated on an
+                  Applied row, which would count an old application again. Rows moved to
+                  Stage "Applied" that day with no applied date anywhere (what
+                  `pipe_write.py update <co> Applied` writes) are reported apart as
+                  applications_unconfirmed, for Nick to confirm.
   pipeline_moves  pipeline rows whose Date Updated is the date.
   todos_closed    job-todos.md Completed rows for the date (todo_daily_metrics.parse_todos,
                   withdrawn rows excluded).
@@ -29,7 +33,8 @@ Targets come from the Success Metrics table in data/goals.md. Only weekly target
 written there today, so each target is shown with its period, against the week so far.
 No per-day target is invented.
 
-A source that cannot be read reports null for its counts, never 0, and names the error.
+A source that cannot be read reports null for its counts, never 0, and names the error. A
+pipeline whose header drifted from the expected columns counts as unreadable.
 
 Usage:
   PYTHONIOENCODING=utf-8 python3 tools/day_check.py [--repo-root .] [--target-date YYYY-MM-DD]
@@ -47,11 +52,17 @@ import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
+# Read-only means no __pycache__ either: the sibling imports below would write bytecode.
+sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from conversations_metric import LIVE, SENT_STATES  # noqa: E402
+from networking_write import INBOUND_SUBJECT_MARKERS  # noqa: E402
+from schema_guard import SchemaDriftError, assert_schema, find_header_line  # noqa: E402
 from outreach_read import parse_rows as parse_outreach_rows  # noqa: E402
 
 COUNTS = ("sends", "replies", "calls", "applications", "pipeline_moves", "todos_closed")
+# Shown beside applications, never added to it (see unconfirmed_applied).
+EXTRA = ("applications_unconfirmed",)
 
 CONTACT_RE = re.compile(r"^###\s+(.+?)(?:\s+[—–-]\s+(.+))?\s*$")
 INTERACTION_RE = re.compile(r"^####\s+(\d{4}-\d{2}-\d{2})\s*\|\s*([^|]+?)\s*\|\s*(.*)$")
@@ -61,7 +72,10 @@ OUTBOUND_UPPER = re.compile(r"\bSENT\b")
 OUTBOUND_START = re.compile(r"^(nick (replied|sent)\b|outbound\b|follow-up #\d+|cold outreach)",
                             re.I)
 INBOUND_START = re.compile(r"^(reply from\b|inbound\b)", re.I)
-OTHER_REPLIED = re.compile(r"^(\S+) replied\b", re.I)
+INBOUND_UPPER = re.compile(r"\bINBOUND\b")
+OTHER_REPLIED = re.compile(r"\b([A-Za-z][\w'-]*) (replied|responded)\b")
+PIPELINE_COLUMNS = ["Company", "Role", "Stage", "Date Updated", "Next Action", "CV Used",
+                    "Notes", "URL"]
 
 TARGET_ROWS = {
     # goals.md Success Metrics label -> (count it is compared with, period)
@@ -81,7 +95,7 @@ def _read(path: Path) -> tuple[str | None, str | None]:
         return path.read_text(encoding="utf-8"), None
     except FileNotFoundError:
         return None, "file not found"
-    except OSError as e:
+    except (OSError, ValueError) as e:  # ValueError: UnicodeDecodeError on a non-UTF-8 file
         return None, f"unreadable: {e}"
 
 
@@ -89,10 +103,13 @@ def classify_summary(kind: str, summary: str) -> str | None:
     """-> 'reply' | 'send' | None for one networking.md interaction."""
     k = kind.strip().casefold()
     s = summary.strip()
-    if k == "email (inbound)" or INBOUND_START.match(s):
+    if k == "email (inbound)" or INBOUND_START.match(s) or INBOUND_UPPER.search(s):
         return "reply"
-    m = OTHER_REPLIED.match(s)
-    if m and m.group(1).casefold() != "nick":
+    if any(m.group(1).casefold() not in ("nick", "i") for m in OTHER_REPLIED.finditer(s)):
+        return "reply"
+    # networking_write's own inbound vocabulary ("heard back", "wrote back", ...), so the
+    # writer and this reader agree on what a reply is.
+    if any(marker in s.casefold() for marker in INBOUND_SUBJECT_MARKERS):
         return "reply"
     if OUTBOUND_UPPER.search(s) or OUTBOUND_START.match(s):
         return "send"
@@ -132,6 +149,18 @@ def applied_on(cols: list[str], d: date) -> bool:
     Date Updated cell as "Applied <date>", which is the false positive this rule avoids."""
     pat = re.compile(rf"\bapplied (on )?{d.isoformat()}\b", re.I)
     return any(pat.search(c) for c in cols)
+
+
+def unconfirmed_applied(cols: list[str], d: date) -> bool:
+    """A row moved to Stage "Applied" on this date with no "Applied <date>" cell anywhere.
+
+    `pipe_write.py update <co> Applied` sets the Stage and Date Updated and writes no
+    date text, so it is invisible to applied_on. But a follow-up on an older Applied row
+    also moves Date Updated, so this cannot be counted as an application: it is shown
+    apart, as rows to confirm."""
+    return (cols[2].strip().casefold() == "applied" and _date(cols[3]) == d
+            and not any(re.search(r"\bapplied (on )?\d{4}-\d{2}-\d{2}\b", c, re.I)
+                        for c in cols))
 
 
 def same_person(a: str, b: str) -> bool:
@@ -177,7 +206,7 @@ def _todos_closed(content: str, d: date) -> int:
 def collect(root: Path, target: date) -> dict:
     week_start = target - timedelta(days=target.weekday())
     days = [week_start + timedelta(days=i) for i in range((target - week_start).days + 1)]
-    per_day = {d: {k: None for k in COUNTS} for d in days}
+    per_day = {d: {k: None for k in COUNTS + EXTRA} for d in days}
     sources = {}
 
     outreach, err_o = _read(root / "data" / "outreach-log.md")
@@ -189,6 +218,12 @@ def collect(root: Path, target: date) -> dict:
                       ("job-todos", err_t), ("goals", err_g)):
         sources[name] = {"readable": err is None, **({"error": err} if err else {})}
 
+    if pipeline is not None:
+        try:
+            assert_schema(find_header_line(pipeline, "| Company |"), PIPELINE_COLUMNS)
+        except SchemaDriftError as e:
+            sources["pipeline"] = {"readable": False, "error": f"schema drift: {e}"}
+            pipeline = None
     events = networking_events(networking) if networking is not None else []
     o_rows = parse_outreach_rows(outreach) if outreach is not None else []
     p_rows = pipeline_rows(pipeline) if pipeline is not None else []
@@ -207,6 +242,8 @@ def collect(root: Path, target: date) -> dict:
             c["calls"] = sum(1 for e in events if e["date"] == d and e["kind"] in LIVE)
         if pipeline is not None:
             c["applications"] = sum(1 for cols in p_rows if applied_on(cols, d))
+            c["applications_unconfirmed"] = sum(1 for cols in p_rows
+                                                if unconfirmed_applied(cols, d))
             c["pipeline_moves"] = sum(1 for cols in p_rows if _date(cols[3]) == d)
         if todos is not None:
             try:
@@ -219,7 +256,7 @@ def collect(root: Path, target: date) -> dict:
         vals = [per_day[d][k] for d in days]
         return None if any(v is None for v in vals) else sum(vals)
 
-    counts = {k: {"today": per_day[target][k], "week": week(k)} for k in COUNTS}
+    counts = {k: {"today": per_day[target][k], "week": week(k)} for k in COUNTS + EXTRA}
     return {
         "target_date": target.isoformat(),
         "week_start": week_start.isoformat(),
@@ -244,6 +281,11 @@ def render_text(out: dict) -> str:
         week = "unknown" if c["week"] is None else str(c["week"])
         tail = f"  (target {t['target']} a {t['period']})" if t else ""
         lines.append(f"  {LABELS[k]:16} today {today:>7}   week {week:>7}{tail}")
+        if k == "applications":
+            u = out["counts"]["applications_unconfirmed"]["today"]
+            if u:
+                lines.append(f"  {'':16} plus {u} row(s) moved to Applied today with no "
+                             "applied date: confirm")
     bad = [f"{n}: {s['error']}" for n, s in out["sources"].items() if not s["readable"]]
     if bad:
         lines += ["", "Unreadable sources: " + "; ".join(bad)]

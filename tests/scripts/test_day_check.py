@@ -255,3 +255,67 @@ def test_a_bad_target_date_says_why_on_stderr():
     r = subprocess.run([sys.executable, str(REPO_ROOT / "tools" / "day_check.py"),
                         "--target-date", "01/07/2026"], capture_output=True, text=True, timeout=60)
     assert r.returncode == 2 and "must be YYYY-MM-DD" in r.stderr
+
+
+# --- D8 review round 1 -------------------------------------------------------------------
+
+@pytest.mark.parametrize("summary", [
+    "IMMEDIATE RESPONSE: Sam replied minutes after the cold email.",
+    "Heard back from Sam: not hiring.",
+    "Shannon responded to the comment.",
+    "Backfilled. INBOUND 2:06 PM from the thread.",
+])
+def test_more_reply_shapes(summary):
+    assert dc.classify_summary("email", summary) == "reply"
+
+
+@pytest.mark.parametrize("summary", [
+    "Nick replied 2:00 PM.", "I replied with times.", "No reply yet.",
+    "Follow-up #2 SENT, reply in the old thread.",
+])
+def test_not_replies(summary):
+    assert dc.classify_summary("email", summary) != "reply"
+
+
+def test_a_non_utf8_file_is_unreadable_not_a_crash(tmp_path):
+    root = _repo(tmp_path)
+    (root / "data" / "networking.md").write_bytes(b"\xff\xfe\x00bad")
+    out = dc.collect(root, D)
+    assert out["sources"]["networking"]["error"].startswith("unreadable:")
+    assert out["counts"]["replies"]["today"] is None
+
+
+def test_a_drifted_pipeline_header_is_unreadable(tmp_path):
+    pipe = PIPELINE.replace("| Company | Role | Stage | Date Updated |", "| Company | Stage | Role | Date Updated |")
+    out = dc.collect(_repo(tmp_path, **{"job-pipeline.md": pipe}), D)
+    assert out["sources"]["pipeline"]["readable"] is False
+    assert "schema drift" in out["sources"]["pipeline"]["error"]
+    assert out["counts"]["pipeline_moves"]["today"] is None
+
+
+def test_a_stage_move_to_applied_without_a_date_is_unconfirmed(tmp_path):
+    pipe = PIPELINE.replace("## Archived",
+        "| Zeta Co | Ops | Applied | 2026-01-07 | — | cv.pdf | via the tool | |\n\n## Archived")
+    out = dc.collect(_repo(tmp_path, **{"job-pipeline.md": pipe}), D)
+    # Zeta counts as unconfirmed; Acme (Applied, but "Applied 2026-01-02" in Notes) and
+    # Beta (confirmed by its own text) do not.
+    assert out["counts"]["applications"]["today"] == 1
+    assert out["counts"]["applications_unconfirmed"] == {"today": 1, "week": 1}
+    text = dc.render_text(out).splitlines()
+    plus = [i for i, l in enumerate(text) if "plus 1 row(s) moved to Applied today" in l]
+    assert len(plus) == 1 and "Applications" in text[plus[0] - 1]
+    (tmp_path / "b").mkdir()
+    assert "plus" not in dc.render_text(dc.collect(_repo(tmp_path / "b"), D))
+
+
+def test_running_writes_no_bytecode(tmp_path):
+    import shutil
+    tools = tmp_path / "tools"
+    shutil.copytree(REPO_ROOT / "tools", tools, ignore=shutil.ignore_patterns("__pycache__"))
+    (tmp_path / "r").mkdir()
+    root = _repo(tmp_path / "r")
+    r = subprocess.run([sys.executable, str(tools / "day_check.py"), "--repo-root", str(root),
+                        "--target-date", "2026-01-07"], capture_output=True, text=True,
+                       timeout=60, env={"PATH": "/usr/bin:/bin", "PYTHONIOENCODING": "utf-8"})
+    assert r.returncode == 0, r.stderr
+    assert not list(tools.rglob("__pycache__")), "day_check wrote bytecode"
