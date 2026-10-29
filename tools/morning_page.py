@@ -133,12 +133,25 @@ def claude_read(root: Path, today: date) -> dict:
 # the calendar block already (D5 review 838.F3, 842.F1).
 # "<Name> will reply" needs a named other person: "Will follow up Monday" and "I will send"
 # are Nick's own moves (D5 review 836.F1).
-THEIRS = re.compile(
+THEIRS_CI = re.compile(
     r"^(await|wait\b|waiting\b|ball (is )?on\b|pending (their|his|her)\b|their move)"
-    r"|\b(?!(?:I|Nick|We)\b)[A-Z][\w'-]* (will (reply|respond|send|call|follow up|let)"
-    r"|to (reply|respond) by|is to reply)\b"
     r"|\bawaiting\b|\bshe calls\b|\bhe calls\b|\bthey call\b",
     re.I)
+# Case-SENSITIVE on purpose: under re.I, [A-Z] matched "team", "they" and "Need" as names
+# (848.F2, 852.F2). A capitalised name other than I/Nick/We/Need, then the verb.
+THEIRS_NAMED = re.compile(
+    r"\b(?!(?:I|Nick|We|Need|Must|Should|Then|Also)\b)[A-Z][\w'-]* "
+    r"(?:will (?:reply|respond|send|call|follow up|let)|to (?:reply|respond) by|is to reply)\b")
+
+
+class _Theirs:
+    """THEIRS.search(text): the other side's move, by either pattern."""
+    @staticmethod
+    def search(text):
+        return THEIRS_CI.search(text) or THEIRS_NAMED.search(text)
+
+
+THEIRS = _Theirs()
 
 
 def waiting_on_them(root: Path) -> dict:
@@ -314,9 +327,6 @@ CSS = """
 *{box-sizing:border-box}html,body{margin:0;height:100%}
 body{background:var(--bg);color:var(--ink);font:20px/1.35 -apple-system,"Helvetica Neue",
 Helvetica,Arial,sans-serif;overflow:hidden;display:flex;flex-direction:column}
-/* A short window must not clip content (D5 review 830.F1): below 760px of height the page
-   scrolls and the cards size to their content instead of to the screen. */
-@media (max-height:760px){body{overflow:auto}main{grid-template-rows:none}section{overflow:visible}}
 .band{font-weight:700;letter-spacing:.08em;text-align:center;padding:4px;color:#fff}
 .band.live{background:var(--live)}.band.demo{background:var(--demo)}
 #stale{display:none;background:var(--stale);color:#000;text-align:center;font-weight:700;padding:6px}
@@ -335,6 +345,10 @@ td{padding:3px 0;vertical-align:top}td.n{text-align:right;font-weight:700;white-
 .ok{color:var(--ok)}.warn{color:var(--warn)}
 @media (max-width:900px){body{overflow:auto}main{grid-template-columns:1fr;grid-template-rows:none;padding:0 16px 16px}
 header{padding:10px 16px 4px}.read{margin:0 16px 8px}}
+/* A short window must not clip content (D5 review 830.F1). LAST, so it
+   overrides the base main/section rules above (848.F1, 852.F1): below 760px of height the page
+   scrolls and the cards size to their content instead of to the screen. */
+@media (max-height:760px){body{overflow:auto}main{grid-template-rows:none}section{overflow:visible}}
 """
 
 STALE_JS = """

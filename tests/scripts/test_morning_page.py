@@ -399,10 +399,15 @@ def test_the_page_shows_waiting_on_them_in_block_3():
     ("Will follow up Monday", False), ("I will send the deck", False), ("Nick will call back", False),
     ("Emily will reply by Thu", True), ("Emily to reply by EOD", True), ("Await Sam's times", True),
     ("Call to be scheduled", False), ("Intro scheduled once Nick sends times", False),
+    ("team will reply soon", False), ("Need to reply by Fri", False), ("they will send it", False),
 ])
 def test_will_needs_a_named_other_person(nxt, theirs):
     assert bool(mp.THEIRS.search(nxt)) is theirs
 
 
 def test_a_short_window_scrolls_instead_of_clipping():
+    css = mp.CSS
+    i = css.index("@media (max-height:760px)")
     assert "@media (max-height:760px){body{overflow:auto}" in demo_html()
+    # last rule block, so the base main/section rules cannot override it
+    assert "main{" not in css[i + 60:] and "section{" not in css[i + 60:].replace("section{overflow:visible}", "")
