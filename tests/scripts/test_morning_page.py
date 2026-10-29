@@ -218,3 +218,170 @@ def test_machine_room_shows_the_learning_ledger_due_count():
     v = mp.build_view(mp.gather_demo(), NOW)
     assert v["machine"]["learning_due"] == 6
     assert "Learning lanes due" in _section(demo_html(), "b4")
+
+
+# --- the sources, each failure shape -------------------------------------------------------
+
+class _P:
+    def __init__(self, rc, out="", err=""):
+        self.returncode, self.stdout, self.stderr = rc, out, err
+
+
+def test_calendar_events_shapes(tmp_path, monkeypatch):
+    calls = []
+
+    def run(argv, **k):
+        calls.append((argv, k["env"].get("PYTHONDONTWRITEBYTECODE")))
+        return result
+    monkeypatch.setattr(mp.subprocess, "run", run)
+    result = _P(0, '{"events": []}')
+    assert mp.calendar_events(tmp_path) == {"events": []}
+    assert calls[0][0][1:] == ["tools/calendar_fetch.py", "--days", "4"] and calls[0][1] == "1"
+    result = _P(1, "", "Traceback\nERROR: token expired\n")
+    assert mp.calendar_events(tmp_path) == {"error": "ERROR: token expired"}
+    result = _P(1, "", "")
+    assert mp.calendar_events(tmp_path) == {"error": "calendar_fetch failed"}
+    result = _P(0, "not json")
+    assert mp.calendar_events(tmp_path) == {"error": "calendar_fetch printed no JSON"}
+
+    def boom(*a, **k):
+        raise OSError("no python")
+    monkeypatch.setattr(mp.subprocess, "run", boom)
+    assert mp.calendar_events(tmp_path)["error"].startswith("calendar_fetch could not run")
+
+
+def test_commonplace_skips_missing_dirs_and_unreadable_files(tmp_path):
+    d = tmp_path / "data" / "source-emails"
+    d.mkdir(parents=True)
+    (d / "a.md").write_text("# A\n\n## My take\n\n")
+    (d / "bad.md").write_bytes(b"\xff\xfe# not utf8")
+    out = mp.commonplace(tmp_path, NOW.date())
+    assert out == {"waiting": 1, "pick": {"title": "A", "path": "data/source-emails/a.md"}}
+    (d / "notitle.md").write_text("## My take\n\n")
+    titles = {mp.commonplace(tmp_path, datetime(2026, 1, x).date())["pick"]["title"] for x in (1, 2)}
+    assert titles == {"A", "notitle"}
+
+
+def test_open_findings_counts_or_says_unknown(tmp_path, monkeypatch):
+    import finding_write
+    monkeypatch.setattr(finding_write, "collect", lambda root, only_open: [1, 2, 3])
+    assert mp.open_findings(tmp_path) == 3
+
+    def boom(*a, **k):
+        raise ValueError("bad ledger")
+    monkeypatch.setattr(finding_write, "collect", boom)
+    assert mp.open_findings(tmp_path) is None
+
+
+def test_gather_live_uses_the_read_only_collector(tmp_path, monkeypatch):
+    seen = {}
+    monkeypatch.setattr(mp.standup_collect, "collect",
+                        lambda root, d, read_only: seen.setdefault("ro", read_only) and {"results": {}})
+    monkeypatch.setattr(mp.day_check, "collect", lambda root, d: {"day": d.isoformat()})
+    monkeypatch.setattr(mp, "calendar_events", lambda root: {"events": []})
+    monkeypatch.setattr(mp, "open_findings", lambda root: 4)
+    monkeypatch.setattr(mp, "waiting_on_them", lambda root: {"error": None, "rows": []})
+    src = mp.gather_live(tmp_path, NOW)
+    assert seen["ro"] is True
+    assert src["day"] == {"day": "2026-01-07"} and src["open_findings"] == 4
+    assert set(src) == {"collector", "day", "calendar", "commonplace", "claude_read", "open_findings",
+                        "waiting_on_them"}
+
+
+def test_event_day_parses_dates_and_datetimes():
+    assert mp._event_day({"start": "2026-01-07"}) == NOW.date()
+    assert mp._event_day({"start": "2026-01-07T10:00:00-08:00"}) == NOW.date()
+    assert mp._event_day({"start": "nope"}) is None
+
+
+# --- the view and the render, each branch ----------------------------------------------------
+
+def test_m4_is_unknown_without_both_windows():
+    src = mp.gather_demo()
+    src["collector"]["results"]["conversations_metric"]["data"]["outreach_sent"]["counts"] = {"7d": 3}
+    v = mp.build_view(src, NOW)
+    assert v["machine"]["m4"] is None
+    page = mp.render(v, NOW, demo=True)
+    assert "M4 sends vs floor</td><td class=\"n\">unknown" in page
+
+
+def test_a_read_without_digits_is_shown():
+    v = mp.build_view(mp.gather_demo(), NOW)
+    assert v["claude_read"]["text"].startswith("Outreach is ahead")
+    assert "Outreach is ahead" in _section(mp.render(v, NOW, demo=True), "claude-read")
+
+
+def test_list_states():
+    assert mp._list(None, "why") == '<p class="muted">why</p>'
+    assert mp._list([], "x") == '<p class="muted">Nothing.</p>'
+    assert mp._list(["a", "b"], "x") == "<ul><li>a</li><li>b</li></ul>"
+
+
+def test_render_branches_without_optional_content():
+    src = mp.gather_demo()
+    src["collector"]["results"]["networking_followup"]["data"]["followup_overdue"] = []
+    src["commonplace"] = {"waiting": 0, "pick": None}
+    page = mp.render(mp.build_view(src, NOW), NOW, demo=True)
+    assert "Oldest follow-ups" not in page
+    assert "No saved article is waiting for a take." in page
+    assert "Sources failed" not in page
+    assert "Calendar unavailable" not in page
+    full = demo_html()
+    assert "Oldest follow-ups" in full and "Blair Sample" in full
+
+
+def test_write_page_creates_the_folder(tmp_path):
+    out = tmp_path / "a" / "b" / "index.html"
+    mp.write_page("x", out)
+    assert out.read_text() == "x" and not (out.parent / "index.tmp").exists()
+
+
+def test_main_prints_the_path_and_the_script_runs(tmp_path, capsys):
+    out = tmp_path / "d.html"
+    assert mp.main(["--demo", "--out", str(out), "--now", "2026-01-07T09:00"]) == 0
+    assert capsys.readouterr().out.strip() == str(out)
+    r = subprocess.run([sys.executable, str(TOOLS / "morning_page.py"), "--demo", "--out",
+                        str(tmp_path / "e.html"), "--now", "bad"], capture_output=True, text=True,
+                       timeout=60)
+    assert r.returncode == 2
+
+
+# --- 9e: waiting on them ----------------------------------------------------------------
+
+PIPE = """# Job Application Pipeline
+
+## Active Pipeline
+
+| Company | Role | Stage | Date Updated | Next Action | CV Used | Notes | URL |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Acme Corp | Ops | Applied | 2026-01-05 | Await their reply; nudge Fri | — | | |
+| Beta Inc | BizOps | Take-home presented; awaiting read | 2026-01-06 | Send deck to the panel | — | | |
+| Gamma LLC | Strategy | Interview done, awaiting decision | 2026-01-04 | — | — | | |
+| Delta Co | Ops | Recruiter call | 2026-01-07 | Call Thu 1:30pm (she calls) | — | | |
+| Epsilon | Ops | Rejected | 2026-01-03 | Await nothing | — | | |
+| Zeta | Ops | Researching | 2026-01-02 | Research the team | — | | |
+"""
+
+
+def test_waiting_on_them_reads_the_next_action_first(tmp_path):
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "job-pipeline.md").write_text(PIPE)
+    got = mp.waiting_on_them(tmp_path)
+    assert got["error"] is None
+    assert [r["company"] for r in got["rows"]] == ["Acme Corp", "Gamma LLC", "Delta Co"]
+    assert got["rows"][1]["next"] == "Interview done, awaiting decision"
+    assert mp.waiting_on_them(tmp_path / "none") == {"error": "file not found", "rows": None}
+
+
+def test_the_page_shows_waiting_on_them_in_block_3():
+    b3 = _section(demo_html(), "b3")
+    assert "Waiting on them" in b3 and "Acme Corp: Await their read" in b3
+    src = mp.gather_demo()
+    src["waiting_on_them"] = {"error": "file not found", "rows": None}
+    page = mp.render(mp.build_view(src, NOW), NOW, demo=True)
+    assert "Pipeline unavailable: file not found" in _section(page, "b3")
+    src["waiting_on_them"] = {"error": None, "rows": [{"company": f"Co{i}", "next": "Await", "updated": ""} for i in range(6)]}
+    page = mp.render(mp.build_view(src, NOW), NOW, demo=True)
+    assert "and 2 more" in _section(page, "b3")
+    src.pop("waiting_on_them")
+    assert "Pipeline unavailable: not read" in _section(mp.render(mp.build_view(src, NOW), NOW, demo=True), "b3")

@@ -18,7 +18,7 @@ also a dated copy (output/morning-page/<date>.html) as the day's record. calenda
 may refresh its own token file; nothing else is written.
 
 Content, in Nick's order: 1 must-dos, 2 waiting on me, 3 people funnel (placeholder until
-the funnel codify run), 4 machine room, 5 done so far today, 6 one commonplace prompt.
+the funnel codify run; holds "Waiting on them", the processes whose next move is theirs), 4 machine room, 5 done so far today, 6 one commonplace prompt.
 Plus "Claude's read" and the First chair prompt.
 
 Rules the tests hold it to:
@@ -54,6 +54,7 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import day_check  # noqa: E402
 import standup_collect  # noqa: E402
+from stage_vocab import is_terminal_stage  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 FIXTURES = REPO_ROOT / "tests" / "fixtures" / "morning_page"
@@ -128,6 +129,40 @@ def claude_read(root: Path, today: date) -> dict:
     return {"text": str(text), "note": None}
 
 
+# The next move is the OTHER side's: an awaited reply or read, a call they booked, a wait
+# after an interview. Matched in the Next Action cell, or in Stage when that cell is empty.
+THEIRS = re.compile(
+    r"^(await|wait\b|waiting\b|ball (is )?on\b|pending (their|his|her)\b|their move)"
+    r"|\b(will (reply|respond|send|call|follow up|let)|to (reply|respond) by|is to reply)\b"
+    r"|\bawaiting\b|\bscheduled\b|\bshe calls\b|\bhe calls\b|\bthey call\b",
+    re.I)
+
+
+def waiting_on_them(root: Path) -> dict:
+    """9e (feedback_entity_identifier_drift_breaks_reconciliation, 2026-10-29): every open
+    pipeline process whose next action belongs to the other side. Before this they showed
+    only as a number in the snapshot. Read from data/job-pipeline.md, read-only; terminal
+    rows (stage_vocab) are left out. Stalled rows are not left out: a stall where the ball
+    is theirs is still theirs, and the row says how long it has sat."""
+    text, err = day_check._read(root / "data" / "job-pipeline.md")
+    if text is None:
+        return {"error": err, "rows": None}
+    rows = []
+    for cols in day_check.pipeline_rows(text):
+        if len(cols) < 5 or cols[0] == "Company" or set(cols[0]) <= set("-: "):
+            continue
+        company, stage, updated, nxt = cols[0], cols[2], cols[3], cols[4]
+        if is_terminal_stage(stage):
+            continue
+        has_next = nxt not in ("", "—", "-")
+        # The Next Action cell decides when there is one: a row whose stage says "awaiting
+        # read" but whose next action is Nick's ("Send deck to ...") is his move.
+        if THEIRS.search(nxt if has_next else stage):
+            rows.append({"company": company, "next": (nxt if has_next else stage)[:90],
+                         "updated": updated})
+    return {"error": None, "rows": rows}
+
+
 def open_findings(root: Path) -> int | None:
     try:
         import finding_write
@@ -145,12 +180,14 @@ def gather_live(root: Path, now: datetime) -> dict:
         "commonplace": commonplace(root, today),
         "claude_read": claude_read(root, today),
         "open_findings": open_findings(root),
+        "waiting_on_them": waiting_on_them(root),
     }
 
 
 def gather_demo(fixtures: Path = FIXTURES) -> dict:
     out = {}
-    for name in ("collector", "day", "calendar", "commonplace", "claude_read", "open_findings"):
+    for name in ("collector", "day", "calendar", "commonplace", "claude_read", "open_findings",
+                 "waiting_on_them"):
         out[name] = json.loads((fixtures / f"{name}.json").read_text(encoding="utf-8"))
     return out
 
@@ -243,6 +280,7 @@ def build_view(src: dict, now: datetime) -> dict:
         "day": src.get("day") or {},
         "commonplace": cp.get("pick"),
         "claude_read": read,
+        "waiting_on_them": src.get("waiting_on_them") or {"error": "not read", "rows": None},
     }
 
 
@@ -362,6 +400,15 @@ def render(view: dict, now: datetime, demo: bool) -> str:
         cp = '<p class="muted">No saved article is waiting for a take.</p>'
     cp += '<h3>First chair</h3><p>Practice today? Dictate one line.</p>'
 
+    wt = view["waiting_on_them"]
+    if wt.get("rows") is None:
+        theirs = f'<h3>Waiting on them</h3><p class="muted">Pipeline unavailable: {_e(wt.get("error"))}</p>'
+    else:
+        items = [f"{r['company']}: {r['next']}" for r in wt["rows"]]
+        more = len(items) - MAX_ITEMS
+        theirs = ("<h3>Waiting on them</h3>" + _list(items, "")
+                  + (f'<p class="muted">and {more} more</p>' if more > 0 else ""))
+
     read = view["claude_read"]
     read_html = _e(read["text"]) if read.get("text") else f'<span class="muted">{_e(read.get("note"))}</span>'
 
@@ -377,7 +424,7 @@ def render(view: dict, now: datetime, demo: bool) -> str:
 <main>
 <section id="b1"><h2>1. Today's must-dos</h2>{must}</section>
 <section id="b2"><h2>2. Waiting on me</h2>{waiting}</section>
-<section id="b3"><h2>3. People funnel</h2><p class="muted">Placeholder until the funnel codify run.</p></section>
+<section id="b3"><h2>3. People funnel</h2><p class="muted">Placeholder until the funnel codify run.</p>{theirs}</section>
 <section id="b4"><h2>4. Machine room</h2>{machine}</section>
 <section id="b5"><h2>5. Done so far today</h2>{done}</section>
 <section id="b6"><h2>6. Commonplace</h2>{cp}</section>
