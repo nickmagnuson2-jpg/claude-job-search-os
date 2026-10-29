@@ -30,6 +30,8 @@ To-dos closed. For each: today, then the week so far (Monday to today). Where `t
 entry, show it with its period (today only weekly targets exist, in `data/goals.md` Success
 Metrics). Do not turn a weekly target into a daily one.
 
+- Under Applications, when `counts.applications_unconfirmed.today` is above 0, add one line:
+  "plus N row(s) moved to Applied today with no applied date: confirm". Never add it to the count.
 - A count of `null` prints as "unknown", followed by the source error from `sources`. Never as 0.
 - Exit code 1 means at least one source was unreadable; say which.
 

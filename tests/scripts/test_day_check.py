@@ -320,3 +320,30 @@ def test_running_writes_no_bytecode(tmp_path):
                        timeout=60, env={"PATH": "/usr/bin:/bin", "PYTHONIOENCODING": "utf-8"})
     assert r.returncode == 0, r.stderr
     assert not list(tools.rglob("__pycache__")), "day_check wrote bytecode"
+
+
+@pytest.mark.parametrize("summary", [
+    "Sam never replied after the intro.", "No reply from Sam yet.", "Nobody responded to the post.",
+    "Still have not heard back from the team.", "Sam has yet to respond.",
+])
+def test_negated_notes_are_not_replies(summary):
+    assert dc.classify_summary("email", summary) is None
+
+
+def test_a_negated_note_that_records_a_send_is_a_send():
+    assert dc.classify_summary("email", "Follow-up #2 SENT; no reply from Sam to #1.") == "send"
+    assert dc.classify_summary("email (inbound)", "No reply needed, she wrote first") == "reply"
+
+
+def test_a_pipeline_table_without_its_header_is_unreadable(tmp_path):
+    pipe = PIPELINE.replace("| Company | Role | Stage | Date Updated | Next Action | CV Used | Notes | URL |",
+                            "| Firm | Role | Stage | Date Updated | Next Action | CV Used | Notes | URL |")
+    out = dc.collect(_repo(tmp_path, **{"job-pipeline.md": pipe}), D)
+    assert out["sources"]["pipeline"]["readable"] is False
+    assert "no '| Company |' header" in out["sources"]["pipeline"]["error"]
+    assert out["counts"]["applications"]["today"] is None
+
+
+def test_the_check_skill_prints_unconfirmed_applications():
+    text = (REPO_ROOT / ".claude" / "skills" / "check" / "SKILL.md").read_text()
+    assert "applications_unconfirmed" in text

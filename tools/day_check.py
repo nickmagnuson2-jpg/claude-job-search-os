@@ -74,6 +74,8 @@ OUTBOUND_START = re.compile(r"^(nick (replied|sent)\b|outbound\b|follow-up #\d+|
                             re.I)
 INBOUND_START = re.compile(r"^(reply from\b|inbound\b)", re.I)
 INBOUND_UPPER = re.compile(r"\bINBOUND\b")
+NEGATED = re.compile(r"\b(no|never|not|nobody|no one|hasn't|hasnt|didn't|didnt|without|yet to)"
+                     r"\b[^.;:]{0,24}?\b(repl|respon|heard|wrote back|got back)", re.I)
 OTHER_REPLIED = re.compile(r"\b([A-Za-z][\w'-]*) (replied|responded)\b")
 PIPELINE_COLUMNS = ["Company", "Role", "Stage", "Date Updated", "Next Action", "CV Used",
                     "Notes", "URL"]
@@ -106,6 +108,10 @@ def classify_summary(kind: str, summary: str) -> str | None:
     s = summary.strip()
     if k == "email (inbound)" or INBOUND_START.match(s) or INBOUND_UPPER.search(s):
         return "reply"
+    # A negated note ("Sam never replied", "No reply from Sam", "nobody responded") records
+    # the absence of a reply; only the explicit inbound shapes above outrank it (D8 r2).
+    if NEGATED.search(s):
+        return "send" if (OUTBOUND_UPPER.search(s) or OUTBOUND_START.match(s)) else None
     if any(m.group(1).casefold() not in ("nick", "i") for m in OTHER_REPLIED.finditer(s)):
         return "reply"
     # networking_write's own inbound vocabulary ("heard back", "wrote back", ...), so the
@@ -219,7 +225,12 @@ def collect(root: Path, target: date) -> dict:
 
     if pipeline is not None:
         try:
-            assert_schema(find_header_line(pipeline, "| Company |"), PIPELINE_COLUMNS)
+            header = find_header_line(pipeline, "| Company |")
+            if header is None and pipeline_rows(pipeline):
+                # A table with no recognisable header is drift too; assert_schema passes a
+                # missing header, so it is caught here (D8 r2).
+                raise SchemaDriftError("no '| Company |' header line above the table rows")
+            assert_schema(header, PIPELINE_COLUMNS)
         except SchemaDriftError as e:
             sources["pipeline"] = {"readable": False, "error": f"schema drift: {e}"}
             pipeline = None
