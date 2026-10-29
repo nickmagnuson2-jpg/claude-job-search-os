@@ -75,7 +75,6 @@
   "tools/inbox_drain_apply.py": "pre-existing at 2026-10-23, convert when next touched",
   "tools/inbox_extract.py": "pre-existing at 2026-10-23, convert when next touched",
   "tools/inbox_lock.py": "pre-existing at 2026-10-23, convert when next touched",
-  "tools/inbox_triage.py": "pre-existing at 2026-10-23, convert when next touched",
   "tools/job_quiesce.py": "pre-existing at 2026-10-23, convert when next touched",
   "tools/ledger_diff.py": "pre-existing at 2026-10-23, convert when next touched",
   "tools/linkedin_post_readout.py": "pre-existing at 2026-10-23, convert when next touched",
