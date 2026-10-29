@@ -23,12 +23,31 @@ import pytest
 
 SCRIPT = Path(__file__).resolve().parents[2] / "tools" / "friction_log.py"
 
+# A fixture ledger, not the live memory/friction-log.md: that file is gitignored, so these
+# tests failed in any fresh worktree and turned unrelated mutation runs baseline_red
+# (friction-log row 2026-10-27; plan A1, output/mutation-parallel-102826/plan.md).
+LEDGER_ROWS = (
+    "| 2026-10-01 | gmail_fetch.py | token refresh raced another job | per-pid temp | 1 | — |\n"
+    "| 2026-10-02 | pipe_write.py | rejected a valid stage | widened enum | 2 | feedback_x.md |\n"
+    "| 2026-10-03 | bash:grep | ripgrep skipped data/ | named the trees | 3 | — |\n"
+)
+
+
+@pytest.fixture(autouse=True, scope="module")
+def _ledger(tmp_path_factory):
+    global LEDGER
+    LEDGER = tmp_path_factory.mktemp("ledger") / "friction-log.md"
+    LEDGER.write_text("# Friction log\n\n## Entries\n\n"
+                      "| Date | Surface | Nature | Fix | Occurrences | Promotion |\n"
+                      "|---|---|---|---|---|---|\n" + LEDGER_ROWS, encoding="utf-8")
+
 
 def _list(*args):
     r = subprocess.run(
         [sys.executable, str(SCRIPT), "list", *args],
         capture_output=True, text=True,
-        env={"PYTHONIOENCODING": "utf-8", "PATH": "/usr/bin:/bin"},
+        env={"PYTHONIOENCODING": "utf-8", "PATH": "/usr/bin:/bin",
+             "FRICTION_LEDGER": str(LEDGER)},
     )
     lines = (r.stdout or "").strip().splitlines()
     return r.returncode, (json.loads(lines[-1]) if lines else {})
@@ -37,7 +56,7 @@ def _list(*args):
 def test_unfiltered_list_says_it_is_unfiltered():
     code, out = _list()
     assert out["filters_applied"]["surface"] is None
-    assert out["count"] == out["total_rows"], "no filter, so count must equal the ledger size"
+    assert out["count"] == out["total_rows"] == 3, "no filter, so count must equal the ledger size"
 
 
 def test_empty_surface_is_reported_as_no_filter_not_as_a_scope():
@@ -62,7 +81,7 @@ def test_whitespace_surface_reports_the_filter_that_actually_ran():
 def test_real_surface_reports_the_scope_it_applied():
     code, out = _list("--surface", "gmail_fetch.py")
     assert out["filters_applied"]["surface"] == "gmail_fetch.py"
-    assert out["count"] <= out["total_rows"]
+    assert (out["count"], out["total_rows"]) == (1, 3)
 
 
 def test_scoped_and_unscoped_results_are_distinguishable():

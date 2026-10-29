@@ -248,8 +248,11 @@ def partially_measured_tools(rows: list[dict]) -> list[str]:
     return sorted(
         r["tool"] for r in mutation_state.latest_per_tool(rows)
         if not is_engine_failure(r)
-        and (r.get("timed_out") or r.get("status") in ("mutants_timed_out",
-                                                       "isolation_unmeasured")))
+        # "incomplete" and `unfinished` (mutation_check --max-hours, 2026-10-28): a run
+        # stopped early has verdicts for only some mutants, so it must not pass as clean.
+        and (r.get("timed_out") or r.get("unfinished")
+             or r.get("status") in ("mutants_timed_out", "isolation_unmeasured",
+                                    "incomplete")))
 
 
 def completed_tools(rows: list[dict], targets: list[dict] | None = None) -> set:
@@ -531,7 +534,6 @@ def currently_wired(root: pathlib.Path | None = None) -> set[str]:
     `~/.claude/settings.json`. The previous substring test over a single file also missed
     anything wired in the other two.
     """
-    import json as _json
     try:
         import check_hook_warn_tier as hwt
     except Exception:
@@ -545,29 +547,22 @@ def currently_wired(root: pathlib.Path | None = None) -> set[str]:
     candidates = [base / ".claude" / "settings.json",
                   base / ".claude" / "settings.local.json",
                   pathlib.Path(hwt.DEFAULT_EXTRA_SETTINGS[-1])]  # the global file
-    try:
-        wired: dict = {}
-        for sp in candidates:
-            if not sp.is_file():
-                continue
-            for tool, events in hwt.wired_hooks(
-                    _json.loads(sp.read_text(encoding="utf-8"))).items():
-                wired.setdefault(tool, set()).update(events)
-        return set(wired)
-    except Exception:
-        # A registry we cannot read is not an empty registry. Signalled to the caller,
-        # which refuses to sweep rather than assuming nothing is wired.
-        raise
+    # A registry we cannot read is not an empty registry: a parse error propagates to the
+    # caller, which refuses to sweep rather than assuming nothing is wired.
+    wired: dict = {}
+    for sp in candidates:
+        if not sp.is_file():
+            continue
+        for tool, events in hwt.wired_hooks(
+                json.loads(sp.read_text(encoding="utf-8"))).items():
+            wired.setdefault(tool, set()).update(events)
+    return set(wired)
 
 
 def _run_sweep_inner(targets, out: Path, only_mode: bool = False,
                      allow_battery: bool = False) -> int:
 
-    banked = []
-    if out.exists():
-        for line in out.read_text(encoding="utf-8").splitlines():
-            if line.strip():
-                banked.append(json.loads(line))
+    banked = mutation_state.read_rows(out)
     # Only genuinely-measured tools count as done. A banked engine failure is work
     # remaining: counting it as complete is how one failed night became a clean run
     # two nights later with the tool never measured.
@@ -746,6 +741,8 @@ def _run_sweep_inner(targets, out: Path, only_mode: bool = False,
                        # saying which file or how many mutants.
                        "isolation_timed_out": d.get("isolation_timed_out"),
                        "timed_out": d.get("timed_out"),
+                       # Carried so a --max-hours stop stays visible after banking.
+                       "unfinished": d.get("unfinished"),
                        # How long the unmutated suite took, against the limit it ran
                        # under. "Night runs are about twice as slow" was inferred from
                        # two leftover backups; this makes it a number per tool per night.
@@ -790,11 +787,7 @@ def _run_sweep_inner(targets, out: Path, only_mode: bool = False,
     # unmeasured rows is not a successful sweep, whether they errored tonight or on
     # a previous night. Genuine SURVIVORS are not failures -- that is the tool
     # working, and mutation_check's own exit 2 already reports them.
-    final = []
-    if out.exists():
-        for line in out.read_text(encoding="utf-8").splitlines():
-            if line.strip():
-                final.append(json.loads(line))
+    final = mutation_state.read_rows(out)
     unaudited = unmeasured_tools(final)
     partial = partially_measured_tools(final)
     if partial:

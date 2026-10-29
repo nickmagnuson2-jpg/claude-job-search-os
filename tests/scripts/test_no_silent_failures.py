@@ -354,8 +354,9 @@ _STDIN_READERS = {"read_payload", "read_stdin_bounded", "read_stdin_bounded_ex",
 # The floor. If the selector stops finding one of these, the test below loses that
 # script silently; this set makes that loud instead. check_public_pii.py is the
 # positive control: it already rejected unknown argv before this test existed.
-KNOWN_DUAL_MODE_CHECKERS = {"check_public_pii.py", "check_table_integrity.py",
-                            "check_edit_after_mutation.py"}
+# check_edit_after_mutation.py left this set 2026-10-28: deleted, because its PreToolUse
+# warning went to stdout with exit 0 and never reached the model.
+KNOWN_DUAL_MODE_CHECKERS = {"check_public_pii.py", "check_table_integrity.py"}
 
 
 def _all_checkers() -> list[Path]:
@@ -727,6 +728,7 @@ KNOWN_DARK_PROBES = {
 }
 
 
+@pytest.mark.live_data
 def test_dark_input_debt_does_not_grow():
     """A new dark probe is a new prose->machine boundary that went inert."""
     import json

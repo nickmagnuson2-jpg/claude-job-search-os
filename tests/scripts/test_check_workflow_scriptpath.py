@@ -6,6 +6,7 @@ property checks that a presence check would miss (scriptPath that does not resol
 on disk; scriptPath pointing into the persisted snapshot dir), and the clean and
 fail-open cases.
 """
+from pathlib import Path
 import importlib.util
 import io
 import json
@@ -409,7 +410,7 @@ def test_fails_open(payload, fake_repo):
 def test_real_repo_workflow_path_is_clean():
     """Verified on the REAL file, not a fixture: the repo's own plan-hardening.js
     resolves and passes. Skips if run outside the repo."""
-    repo = os.environ.get("JOB_SEARCH_REPO", "/Users/mag/Documents/Obsidian/30-projects/job-search")
+    repo = os.environ.get("JOB_SEARCH_REPO", str(Path(__file__).resolve().parents[2]))
     if not os.path.isfile(os.path.join(repo, REAL_SCRIPT)):
         pytest.skip("repo not present")
     code, err = _run(

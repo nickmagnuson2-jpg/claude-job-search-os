@@ -74,6 +74,16 @@
         ]
       },
       {
+        "matcher": "mcp__claude_ai_Google_Calendar__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "PYTHONIOENCODING=utf-8 python3 $CLAUDE_PROJECT_DIR/tools/check_calendar_mcp.py",
+            "timeout": 240
+          }
+        ]
+      },
+      {
         "matcher": "Bash",
         "hooks": [
           {
@@ -146,10 +156,6 @@
       {
         "matcher": "Edit|MultiEdit",
         "hooks": [
-          {
-            "type": "command",
-            "command": "PYTHONIOENCODING=utf-8 python3 $CLAUDE_PROJECT_DIR/tools/check_edit_after_mutation.py --mode check"
-          },
           {
             "type": "command",
             "command": "PYTHONIOENCODING=utf-8 python3 $CLAUDE_PROJECT_DIR/tools/check_replace_all_safety.py"
@@ -228,15 +234,6 @@
           {
             "type": "command",
             "command": "PYTHONIOENCODING=utf-8 python3 $CLAUDE_PROJECT_DIR/tools/check_script_error_logged.py"
-          }
-        ]
-      },
-      {
-        "matcher": "Read|Write|Edit|MultiEdit|Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "PYTHONIOENCODING=utf-8 python3 $CLAUDE_PROJECT_DIR/tools/check_edit_after_mutation.py --mode record"
           }
         ]
       },

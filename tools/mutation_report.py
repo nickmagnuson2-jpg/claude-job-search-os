@@ -15,7 +15,6 @@ from __future__ import annotations
 import argparse
 import datetime as _dt
 import json
-import os
 import sys
 from pathlib import Path
 
@@ -31,8 +30,6 @@ from pathlib import Path
 # its numbers are used to decide what is already hardened.
 BYTECODE_FIX_UTC = _dt.datetime(2026, 8, 31, tzinfo=_dt.timezone.utc).timestamp()
 
-REPO_ROOT = Path(os.environ.get("MUTATION_REPO_ROOT",
-                                Path(__file__).resolve().parents[1])).resolve()
 import mutation_state  # noqa: E402
 DEFAULT_STATE = mutation_state.state_dir()
 

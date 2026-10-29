@@ -428,6 +428,7 @@ def test_overlay_clamped_to_bounds():
     assert adj == -5.0  # -4 (title) + -3 (domain) = -7, clamped to min -5.0
 
 
+@pytest.mark.live_data
 def test_real_fit_spec_loads_and_screens():
     """Integration: the real data/calibration/fit-spec.yaml loads and the
     title-shape screen fires on a GTM-in-disguise deployment role."""

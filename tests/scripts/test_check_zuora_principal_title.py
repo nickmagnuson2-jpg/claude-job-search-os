@@ -8,6 +8,7 @@ The key case is `test_blocks_origin_input`: a CV content file in the shape
 that created the rule (the stale title rendered in several places), and the corrected
 version of the same file that must stay clean.
 """
+from pathlib import Path
 import importlib.util
 import json
 import os
@@ -25,7 +26,7 @@ HOOK = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
 # staging dir we point PYTHONPATH at tools/ so the same import resolves.
 REPO_TOOLS = os.environ.get(
     "ZUORA_HOOK_SIBLING_DIR",
-    "/Users/mag/Documents/Obsidian/30-projects/job-search/tools",
+    str(Path(__file__).resolve().parents[2] / "tools"),
 )
 
 

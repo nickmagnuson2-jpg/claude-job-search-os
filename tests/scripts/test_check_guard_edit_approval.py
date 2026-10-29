@@ -33,7 +33,8 @@ def _run(path, tool="Edit", env=None):
     "tools/hook_command_lint.py",                # shared strip logic; weakening it weakens every command hook
     ".claude/settings.json",                     # the wiring is guard infrastructure too
     ".claude/settings.local.json",
-    "/Users/mag/Documents/Obsidian/30-projects/job-search/tools/check_bare_python.py",
+    # an absolute path into THIS checkout, derived so a worktree tests its own tree
+    str(Path(__file__).resolve().parents[2] / "tools" / "check_bare_python.py"),
 ])
 def test_blocks_guard_edits(path):
     code, err = _run(path)

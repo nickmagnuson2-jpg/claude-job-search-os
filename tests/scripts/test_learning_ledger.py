@@ -213,6 +213,7 @@ def test_json_output_is_parseable(tmp_path, capsys):
 
 # ---------------------------------------------------------------- the live repo
 
+@pytest.mark.live_data
 def test_the_live_ledger_reads_every_lane():
     mem = Path.home() / ".claude/projects/-Users-mag-Documents-Obsidian-30-projects-job-search/memory"
     if not mem.is_dir():

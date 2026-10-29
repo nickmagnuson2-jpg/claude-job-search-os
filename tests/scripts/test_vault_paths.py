@@ -159,6 +159,34 @@ def test_no_public_file_hardcodes_the_vault_root():
     )
 
 
+def test_no_tool_or_test_hardcodes_this_repos_own_path():
+    """A worktree must test ITSELF. A tool or test holding this checkout's absolute path
+    reaches the live checkout from a worktree, so a parallel mutation worker would mutate
+    its own copy and test the live one without any check noticing (Codex plan review F1,
+    2026-10-28; plan A3, output/mutation-parallel-102826/plan.md). Five tests did; they
+    now derive the path from __file__. Built from parts for the same reason as above."""
+    import subprocess
+    needle = "Obsidian/30-projects/" + "job-search"
+    # GIT_* stripped: an inherited GIT_DIR could point git elsewhere and turn a real
+    # checkout into "not a git repository", which would skip this check (Codex commit-3
+    # round 2 F2).
+    out = subprocess.run(
+        ["git", "grep", "-l", "-I", needle, "--", "tools/*.py", "tests/*.py",
+         "tools/**/*.py", "tests/**/*.py"],
+        cwd=REPO_ROOT, capture_output=True, text=True,
+        env={k: v for k, v in os.environ.items() if not k.startswith("GIT_")},
+    )
+    if out.returncode == 128 and "not a git repository" in out.stderr:
+        # This file is also copied into plain tmp folders as fixture material
+        # (test_mutation_check's _live_tool_copy). There is nothing tracked to check.
+        pytest.skip("not a git checkout: no tracked files to check")
+    assert out.returncode in (0, 1), f"git grep failed, so this proved nothing: {out.stderr}"
+    offenders = sorted(set(out.stdout.split()))
+    assert offenders == [], (
+        "this repo's absolute path is hardcoded in: " + ", ".join(offenders)
+        + ". Derive it from Path(__file__) (a test) or REPO_ROOT (a tool).")
+
+
 # --- personal_mail_dir (added 2026-08-18 for gmail_fetch --personal) ---------
 
 def test_personal_mail_dir_is_a_directory_under_data(tmp_path):

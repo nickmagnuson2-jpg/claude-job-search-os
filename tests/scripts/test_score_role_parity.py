@@ -7,6 +7,7 @@ at runtime. Two implementations of "how well does this role fit," which is the
 duplicated-domain-logic case: every consumer wants the SAME answer for the same role, so
 it is mechanism, not policy. This file is the parity guard for the consolidation.
 """
+import pytest
 import json
 import subprocess
 import sys
@@ -48,6 +49,7 @@ def test_cli_and_library_agree_on_every_role():
         f"computes its own answer the consolidation is fiction. cli={via_cli} direct={direct}")
 
 
+@pytest.mark.live_data
 def test_the_scorer_actually_discriminates_these_three():
     """A parity test passes trivially if the scorer returns a constant. Pin the ordering."""
     ctx = load_scoring_context(REPO)

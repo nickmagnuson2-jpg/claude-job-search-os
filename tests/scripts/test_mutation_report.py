@@ -762,3 +762,27 @@ def test_a_sweep_with_no_timeouts_says_nothing_about_them(tmp_path):
     d = state(tmp_path, [target("tools/a.py")], [result("tools/a.py", survived=1)])
     assert "TIMED OUT" not in mod.build(d)
 
+
+
+# --- the command line (mutation survivors 2026-10-28: --out and the entry point) ---
+
+def _cli(*args):
+    return subprocess.run([sys.executable, str(TOOL), *args],
+                          capture_output=True, text=True, env={**os.environ, "PYTHONIOENCODING": "utf-8"})
+
+
+def test_cli_prints_the_report_and_writes_nothing_without_out(tmp_path):
+    d = state(tmp_path, [target("tools/a.py")], [result("tools/a.py", survived=1)])
+    before = sorted(p.name for p in tmp_path.rglob("*"))
+    r = _cli("--state-dir", str(d))
+    assert r.returncode == 0, r.stderr
+    assert "a.py" in r.stdout
+    assert sorted(p.name for p in tmp_path.rglob("*")) == before
+
+
+def test_cli_out_writes_the_same_body(tmp_path):
+    d = state(tmp_path, [target("tools/a.py")], [result("tools/a.py", survived=1)])
+    out = tmp_path / "report.md"
+    r = _cli("--state-dir", str(d), "--out", str(out))
+    assert r.returncode == 0
+    assert out.read_text(encoding="utf-8") == r.stdout.rstrip("\n")

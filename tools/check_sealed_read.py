@@ -74,13 +74,40 @@ def _root() -> Path:
 SEALED_HOME_SUFFIX = "-sealed"
 SEALED_HOME = _root().name + SEALED_HOME_SUFFIX
 
+# The therapy vault in the sibling personal repo. personal/CLAUDE.md labels it SEALED, under
+# the same rule as the in-repo sealed tree. Personal-repo sessions read it; a job-search
+# session never does. Added 2026-10-27, approved by Nick: "definitely fix the block of
+# reading the personal therapy files". In command text it counts only path-shaped (followed by
+# `/`, or after `data/`): unlike the in-repo name it is an ordinary English word, and a
+# restraint replay over 282 transcripts found about a dozen bare-word false blocks.
+THERAPY_NAME = "therapy"
+THERAPY_REL = "../personal/data/therapy"
+# Unlike the in-repo tree, which moved to a sibling home of its own, the vault still sits
+# under readable directories of the personal repo, so a recursive search of either one
+# walks into it without spelling its name (cross-model review of 2026-10-27, Codex F1 and
+# Grok F1-F3). Both parents are therefore targets in their own right: Grep, Glob or Read
+# aimed at one, or a Bash word that is a path to one (`cd`, `grep -r`, `find`, `ls -R`).
+# A named file beside the vault, such as ../personal/data/<log>.md, is not a parent.
+THERAPY_PARENTS = ("../personal/data", "../personal")   # direct parent first
+
+# The vault's direct parent spelled as a path that ENDS at it: `personal/data`,
+# `<anything>/personal/data/`, or `personal/data/*`. A file beside the vault
+# (`personal/data/<log>.md`) does not match. The personal repo ROOT is not in this regex:
+# a restraint replay found most mentions of it are ordinary personal-repo work (cd, git,
+# named files), so it counts only for a command that walks directories (_walks).
+# Cross-model review 2026-10-27, Grok round 2 F2: the parents must sit in this regex, where
+# the wrapper, assignment and heredoc handling already applies, not only in a whole-word test.
+_PARENT_END = r"(?=$|[^\w./-])"
+_PARENT_TEXT = r"personal/data/*" + _PARENT_END
+
 # The directory's own name as a whole path component, in any case (this volume is
 # case-insensitive). Matched after quote and backslash removal, so a quote or a
 # backslash spliced into the name does not hide it. The `data/` parent is not required:
 # `cd data && cat project-background/x.md` reads the same files. The sibling home's
 # name counts the same way: everything in it is sealed.
 _SEALED_RE = re.compile(
-    r"(?<![\w-])(?:project-background|%s)(?![\w-])(?!\.\w)" % re.escape(SEALED_HOME), re.I)
+    r"(?<![\w-])(?:project-background|therapy(?=/)|(?<=data/)therapy|%s|%s)(?![\w-])(?!\.\w)" % (
+        re.escape(SEALED_HOME), _PARENT_TEXT), re.I)
 _SHELL_QUOTING = re.compile(r"""["'\\]""")
 
 # The inline override, as a whole word. It counts only as an assignment in front of the
@@ -150,7 +177,7 @@ def _is_a_sealed_path(word: str) -> bool:
     """Read as ONE path, does this word point under the sealed directory?"""
     parts = [p.lower() for p in os.path.normpath(word).split("/")]
     return SEALED_HOME.lower() in parts or any(
-        p == SEALED_NAME and (k == 0 or parts[k - 1] == "data")
+        p in (SEALED_NAME, THERAPY_NAME) and (k == 0 or parts[k - 1] == "data")
         for k, p in enumerate(parts))
 
 
@@ -749,6 +776,9 @@ def _command_reads(c, py_ok: bool = False) -> bool:
                                                    and _stdin_program_only_mentions(c)))
                           or (c.fed_by is not None and _passes_the_name_on(c.fed_by))):
         return True            # a shell, an interpreter, xargs or a loop is fed the name
+    if _reaches_vault(words, h):
+        return True            # into the vault from a directory the call is in, or a walk
+                               # of a directory that contains it (THERAPY_PARENTS)
     kinds = _mentions(words, c.quoted, h, c.fed_by is not None, py_ok and _plain_output(c))
     return any(_names_sealed(w) and i not in kinds for i, w in enumerate(words) if i > h)
 
@@ -799,6 +829,8 @@ def _bash_reads_sealed(command: str, depth: int = 0, intent: bool = False,
     if depth == 0:
         intent = _any_override(cmds)
         py_ok = True
+        _CWDS.clear()
+    _note_cds(cmds)
     py_ok = py_ok and _no_process_substitution(cmds)
     for c in cmds:
         if depth == 0 and _exports_override(c):
@@ -807,14 +839,200 @@ def _bash_reads_sealed(command: str, depth: int = 0, intent: bool = False,
             continue
         if not (intent and _carries(c)) and _command_reads(c, py_ok):
             return True
-        if any(_bash_reads_sealed(s, depth + 1, intent, py_ok) for s in c.subs):
+        if any(_bash_reads_sealed(s, depth + 1, intent, py_ok)
+               for s in list(c.subs) + _wrapped_scripts(c)):
             return True
     return False
 
 
+_SHELLS = {"bash", "sh", "zsh", "dash", "ksh"}
+
+
+def _wrapped_scripts(c) -> list:
+    """The script inside `bash -c '...'` (any -c flag cluster, e.g. -lc) or `eval ...`.
+    Grok round 4 F2: a walk of the personal repo root inside a wrapper was never parsed,
+    because the script is one quoted word, not a substitution in c.subs."""
+    h = _head_index(c.words)
+    if h >= len(c.words):
+        return []
+    head, rest = os.path.basename(c.words[h]), c.words[h + 1:]
+    if head == "eval":
+        return [" ".join(rest)] if rest else []
+    if head in _SHELLS:
+        # The word after the first short-flag cluster holding c, wherever it sits: long
+        # options and option values may come first (round 5: `bash --login -c`,
+        # `bash -o errexit -c`). Over-approximate on purpose; a stray match only parses
+        # one more word.
+        for i, w in enumerate(rest):
+            if re.fullmatch(r"-[A-Za-z]*c[A-Za-z]*", w):
+                return rest[i + 1:i + 2]     # shell_tokens has already removed the quotes
+    return []
+
+
+# Directories a Bash call moves into, besides the repo root, filled by _bash_reads_sealed
+# before any word is judged. Grok round 2 F1: `cd .. && grep -r x personal/data` names the
+# parent relative to the NEW directory, which resolving from the root alone misses.
+_CWDS: list = []
+
+
+def _note_cds(cmds) -> None:
+    """Add every literal `cd`/`pushd` target in these commands to _CWDS, each resolved
+    against the directories already known (over-approximate: order is not tracked)."""
+    for c in cmds:
+        h = _head_index(c.words)
+        if h < len(c.words) and c.words[h] in ("cd", "pushd"):
+            # The first word after the options: `cd -- dir`, `pushd -q dir` (Codex round 4
+            # F2 read the option as the directory). A bare `-` (cd back) is not a target.
+            args = c.words[h + 1:]
+            while args and args[0].startswith("-"):    # `--`, `-q`, `-P`, and `-` (go back)
+                args = args[1:]
+            if not args:
+                continue
+            target = _SHELL_QUOTING.sub("", args[0])
+            if "$" in target or "`" in target:
+                continue
+            here = os.path.realpath(str(_root()))
+            for base in [here] + list(_CWDS):
+                d = os.path.realpath(os.path.join(base, os.path.expanduser(target)))
+                if d not in _CWDS and d != here:
+                    _CWDS.append(d)
+
+
+# Commands that walk a directory tree. Only these reach the vault from the repo root.
+_WALKERS = {"find", "du", "tree", "fd", "rg"}
+# Commands that copy or archive a tree when given a recursive flag (Codex round 5 F2:
+# `tar -cf out.tar ../personal`). tar walks when it creates; the others with -r/-R/-a.
+_COPIERS = {"cp", "rsync", "scp", "zip"}
+
+
+def _walks(words: list, h: int) -> bool:
+    """Does this command descend into subdirectories of its targets?"""
+    if h >= len(words):
+        return False
+    head = os.path.basename(words[h])
+    flags = [w for w in words[h + 1:] if w.startswith("-")]
+    if head in _WALKERS:
+        return True
+    if head == "tar":
+        return any(f == "--create" or (not f.startswith("--") and "c" in f) for f in flags)
+    if head in _COPIERS:
+        return any(f in ("--recursive", "--archive")
+                   or (not f.startswith("--") and any(x in f for x in "rRa")) for f in flags)
+    if head in _GREPS:
+        return any(f in ("--recursive", "--dereference-recursive") or f.startswith("--directories=r")
+                   or (not f.startswith("--") and ("r" in f or "R" in f)) for f in flags)
+    if head == "ls":
+        return any(not f.startswith("--") and "R" in f or f == "--recursive" for f in flags)
+    return False
+
+
+def _rel_from_root(path: str) -> str:
+    here = os.path.realpath(str(_root()))
+    return os.path.relpath(path, here).replace(os.sep, "/").lower()
+
+
+def _walk_targets(words: list, h: int) -> list:
+    """The directories a walking command descends from; none named means the current one."""
+    head = os.path.basename(words[h])
+    if head == "rg" and "--files" in words[h + 1:]:
+        # `rg --files [path...]` lists files and takes no pattern (Grok round 4 F1), so
+        # every positional is a path.
+        targets = [w for w in words[h + 1:] if not w.startswith("-")]
+    elif head in _GREPS or head == "rg":
+        targets = _grep_layout(words, h, head)[1]
+    elif head == "find":
+        targets = []
+        args = words[h + 1:]
+        # find's global options come before the paths (Grok round 4 F3: `find -L dir`).
+        # BSD find also takes -E -X -d -s -x, and -f <path> names a path (Grok round 5 F2).
+        while args and (re.fullmatch(r"-[HLPEXdsx]+", args[0]) or args[0].startswith("-O")
+                        or args[0] in ("-D", "-f")):
+            if args[0] == "-f":
+                targets += args[1:2]
+            args = args[2:] if args[0] in ("-D", "-f") else args[1:]
+        # `--` ends the options; the paths follow it (Codex final-r3-g2 F1, 2026-10-28:
+        # `find -- dir` read `--` as the expression and fell back to the current dir).
+        if args[:1] == ["--"]:
+            args = args[1:]
+        for w in args:
+            if w.startswith("-") or w in ("(", "!", "\\("):
+                break
+            targets.append(w)
+    elif head == "fd":
+        # `fd [pattern] [path...]`: the first positional is what is searched FOR (Codex
+        # round 3 F1: `cd ../personal && fd x` read `x` as the path and missed the walk),
+        # and an option's value is neither (round 4 F1: `fd -e md x` read `md` as the
+        # pattern and `x` as the path).
+        targets = _fd_targets(words[h + 1:])
+    else:
+        targets = [w for w in words[h + 1:] if not w.startswith("-")]
+    return targets or ["."]
+
+
+# fd options that take a value, short and long. Their value is never a pattern or a path,
+# except --search-path and --base-directory, whose value IS a directory searched.
+_FD_VALUE_OPTS = {"-e", "--extension", "-t", "--type", "-d", "--max-depth", "--min-depth",
+                  "--exact-depth", "-E", "--exclude", "-S", "--size", "-c", "--color",
+                  "-j", "--threads", "--changed-within", "--change-newer-than", "--newer",
+                  "--changed-before", "--change-older-than", "--older", "-o", "--owner",
+                  "--max-results", "--ignore-file", "--format", "--path-separator",
+                  "--batch-size", "--max-buffer-time", "--and", "--hyperlink"}
+_FD_PATH_OPTS = {"--search-path", "--base-directory"}
+
+
+def _fd_targets(args: list) -> list:
+    """The directories `fd` searches: positionals after the pattern, plus --search-path and
+    --base-directory values. -x/--exec and -X/--exec-batch end the fd arguments."""
+    positional, paths, i = [], [], 0
+    while i < len(args):
+        w = args[i]
+        if w in ("-x", "--exec", "-X", "--exec-batch"):
+            break
+        name, has_eq, value = w.partition("=")
+        if w.startswith("--") and has_eq and name in _FD_PATH_OPTS:
+            paths.append(value)
+        elif w in _FD_PATH_OPTS:
+            paths += args[i + 1:i + 2]
+            i += 1
+        elif w in _FD_VALUE_OPTS:
+            i += 1
+        elif not w.startswith("-"):
+            positional.append(w)
+        i += 1
+    return positional[1:] + paths
+
+
+def _resolves_to(word: str, test) -> bool:
+    """Does `word`, as a path from the repo root or from any directory the call cds to,
+    satisfy `test(rel)`? A glob is judged by the directory it starts in."""
+    w = _SHELL_QUOTING.sub("", word)
+    if "$" in w or "`" in w or not w:
+        return False
+    w = w.split("=", 1)[1] if re.match(r"-[\w-]*=", w) else w
+    wild = re.search(r"[*?\[]", w)
+    if wild:
+        w = os.path.dirname(w[:wild.start()]) or "."
+    here = os.path.realpath(str(_root()))
+    return any(test(_rel_from_root(os.path.realpath(os.path.join(base, os.path.expanduser(w)))))
+               for base in [here] + list(_CWDS))
+
+
+def _reaches_vault(words: list, h: int) -> bool:
+    """A word that resolves into the vault (`cd ../personal/data && ls <vault name>`), or a
+    walking command whose target is a directory that contains it (`cd .. && ls -R personal`).
+    A walk of another folder in the personal repo, or a named file there, passes."""
+    vault = THERAPY_REL.lower()
+    if any(_resolves_to(w, lambda r: r == vault or r.startswith(vault + "/"))
+           for w in words[h + 1:]):
+        return True
+    return _walks(words, h) and any(_resolves_to(w, lambda r: r in THERAPY_PARENTS)
+                                    for w in _walk_targets(words, h))
+
+
 def _under_sealed(root: Path, p: str) -> bool:
     """Is p the sealed directory or a path in it, at the old in-tree place or anywhere
-    in the sibling home?"""
+    in the sibling home, or the vault, a path in it, or a directory above it in the
+    personal repo?"""
     p = os.path.join(str(root), os.path.expanduser(p))   # an absolute p stays as it is
     # Resolved on both sides, so a symlink into the sealed tree, or a second spelling of
     # the same directory (/var and /private/var), is judged by where it leads.
@@ -822,7 +1040,9 @@ def _under_sealed(root: Path, p: str) -> bool:
     rel = os.path.relpath(os.path.realpath(p), here).replace(os.sep, "/").lower()
     home = "../" + (os.path.basename(here) + SEALED_HOME_SUFFIX).lower()
     return (rel == SEALED_REL or rel.startswith(SEALED_REL + "/")
-            or rel == home or rel.startswith(home + "/"))
+            or rel == home or rel.startswith(home + "/")
+            or rel == THERAPY_REL or rel.startswith(THERAPY_REL + "/")
+            or rel in THERAPY_PARENTS)
 
 
 def _overridden() -> bool:
@@ -848,7 +1068,9 @@ def main() -> None:
         # does. Grep's `pattern` is the text searched FOR and is not a target.
         base = ti.get("path", "") or ""
         glob = (ti.get("pattern", "") if tool == "Glob" else ti.get("glob", "")) or ""
-        targets = [base]
+        wild = re.search(r"[*?\[]", glob)
+        start = os.path.dirname(glob[:wild.start()]) if wild else ""
+        targets = [base, os.path.join(base, start)] if tool == "Glob" and start else [base]
         if _names_sealed(glob) or _names_sealed(os.path.join(base, glob)):
             targets = [SEALED_REL]
     elif tool == "Bash":
@@ -869,7 +1091,8 @@ def main() -> None:
 
     msg = [
         f"BLOCKED: this {tool} targets the SEALED directory {SEALED_REL}/ "
-        f"(kept outside the repo, in ../{SEALED_HOME}/).",
+        f"(kept outside the repo, in ../{SEALED_HOME}/), or the personal therapy vault "
+        f"{THERAPY_REL}/ or a directory above it ({', '.join(THERAPY_PARENTS)}).",
         "",
         "Sealed content (Zuora/McKinsey raw materials, personal captures) must never",
         "enter context that could reach an external-facing artifact (CV, cover letter,",

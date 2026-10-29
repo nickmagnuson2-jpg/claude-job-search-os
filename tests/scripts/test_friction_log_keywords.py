@@ -23,7 +23,7 @@ def _jaccard(a: str, b: str) -> float:
 
 
 def test_repo_path_prefix_stripped_from_keywords():
-    text = ("ls: /Users/mag/Documents/Obsidian/30-projects/job-search/tools/"
+    text = (f"ls: {fl.REPO_ROOT}/tools/"
             "career_scanner/test_company_scorer.py: No such file or directory")
     kw = fl.keywords(text)
     assert "test_company_scorer" in kw
@@ -33,14 +33,14 @@ def test_repo_path_prefix_stripped_from_keywords():
 
 
 def test_two_distinct_missing_files_stay_below_dedup_threshold():
-    a = ("ls: /Users/mag/Documents/Obsidian/30-projects/job-search/tools/"
+    a = (f"ls: {fl.REPO_ROOT}/tools/"
          "career_scanner/test_company_scorer.py: No such file or directory")
-    b = ("ls: /Users/mag/Documents/Obsidian/30-projects/job-search/tools/"
+    b = (f"ls: {fl.REPO_ROOT}/tools/"
          "some_other_missing_script.py: No such file or directory")
     assert _jaccard(a, b) < fl.DEDUP_THRESHOLD
 
 
 def test_genuinely_identical_error_still_matches():
-    a = ("ls: /Users/mag/Documents/Obsidian/30-projects/job-search/tools/"
+    a = (f"ls: {fl.REPO_ROOT}/tools/"
          "career_scanner/test_company_scorer.py: No such file or directory")
     assert _jaccard(a, a) == 1.0

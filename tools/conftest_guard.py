@@ -80,12 +80,12 @@ def all_backups(root: Path | None = None) -> list[Path]:
     found = sorted(d.glob("*" + SUFFIX))
     if root is None:
         return found
-    r = str(Path(root).resolve())
-    return [b for b in found if str(source_of(b)).startswith(r)]
-
-
-def _implied_source(backup: Path) -> Path:
-    return source_of(backup)
+    # By whole path components. A bare string prefix let a root `.../wt1` claim the
+    # backups of `.../wt10` (and `.../wt` those of `.../wt2`), which a parallel run with
+    # one worktree per worker would hit on every pass. Codex F4, 2026-10-06; fixed
+    # 2026-10-28, approved by Nick.
+    r = Path(root).resolve()
+    return [b for b in found if source_of(b) == r or r in source_of(b).parents]
 
 
 def stranded_backups(root: Path | None = None) -> list[Path]:
@@ -96,7 +96,7 @@ def stranded_backups(root: Path | None = None) -> list[Path]:
     sitting next to an orphan must still be returned here, or the fix would invert into a
     silent pass while the tree is genuinely mutated.
     """
-    return [b for b in all_backups(root) if _implied_source(b).exists()]
+    return [b for b in all_backups(root) if source_of(b).exists()]
 
 
 def orphan_backups(root: Path | None = None) -> list[Path]:
@@ -113,7 +113,7 @@ def orphan_backups(root: Path | None = None) -> list[Path]:
     backup beside a file it is rewriting. So it must not halt anything -- but it is still
     junk that should be deleted, so it is reported rather than ignored.
     """
-    return [b for b in all_backups(root) if not _implied_source(b).exists()]
+    return [b for b in all_backups(root) if not source_of(b).exists()]
 
 
 def prune_orphans(root: Path | None = None) -> list[Path]:
@@ -129,11 +129,10 @@ def prune_orphans(root: Path | None = None) -> list[Path]:
     still exists is never touched, so a concurrent run's live backup is never at risk.
     """
     removed = []
-    for b in all_backups(root):
-        if not source_of(b).exists():
-            try:
-                b.unlink()
-                removed.append(b)
-            except OSError:
-                pass
+    for b in orphan_backups(root):
+        try:
+            b.unlink()
+            removed.append(b)
+        except OSError:
+            pass
     return removed

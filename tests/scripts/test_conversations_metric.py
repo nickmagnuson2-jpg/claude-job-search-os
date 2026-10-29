@@ -9,6 +9,7 @@ The third invariant is the one that matters most for honesty: an unreadable sour
 yield null, never 0. "No conversations" and "could not read the file" must never render
 the same, because /standup reshapes Nick's whole day on a low count.
 """
+import pytest
 import json
 import subprocess
 import sys
@@ -302,6 +303,7 @@ class TestMainExitPaths:
         assert out.returncode == 2
         assert json.loads(out.stdout)["status"] == "error"
 
+    @pytest.mark.live_data
     def test_good_run_exits_zero_and_combines(self, tmp_path):
         out = subprocess.run(
             [sys.executable, str(ROOT / "tools" / "conversations_metric.py"),

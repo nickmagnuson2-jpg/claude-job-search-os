@@ -31,6 +31,18 @@ from tools.granola_auto_debrief import (
     format_inbox_entry,
 )
 
+
+# The personal-vault root comes from the gitignored tools/.personal-vault.conf, so these
+# tests failed in any fresh worktree (plan A1, output/mutation-parallel-102826/plan.md).
+# PERSONAL_VAULT_ROOT outranks that file, and a temp vault keeps the tests off the real one.
+@pytest.fixture(autouse=True)
+def _temp_vault(monkeypatch, tmp_path):
+    vault = tmp_path / "personal-vault"
+    vault.mkdir()
+    monkeypatch.setenv("PERSONAL_VAULT_ROOT", str(vault))
+    return vault
+
+
 PARTNER_CONFIG = {
     "rules": [
         {

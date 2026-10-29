@@ -43,11 +43,6 @@ BASELINE_NAME = "baseline.jsonl"
 TREND_NAME = "survival-trend.jsonl"
 QUIESCE_MARKER_NAME = ".quiesced-jobs.json"
 
-#: The allowlist is CODE-adjacent, not state: it is committed, reviewed, and read by
-#: mutation_check on every run. It stays in tools/ and is named here only so nothing has to
-#: guess at it.
-ALLOW_PATH = REPO_ROOT / "tools" / "mutation-allow.json"
-
 
 def state_dir() -> Path:
     """The store. A function because three tools resolve it at import time.

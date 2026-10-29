@@ -35,12 +35,16 @@ Usage:
 """
 import argparse
 import json
+import os
+import re
+import shlex
 import subprocess
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import approval_signing  # noqa: E402
 import inbox_lock  # noqa: E402
 from inbox_census import census  # noqa: E402
 from inbox_decision_log import (  # noqa: E402
@@ -84,14 +88,116 @@ from inbox_extract import extract  # noqa: E402
 INBOX_REL = "data/inbox.md"
 
 
+# ── S16: what a routing command may be (2026-10-27) ──────────────────────────────
+# Before this, each logged writer_invocation ran through a shell, so whatever text sat in
+# the decision log ran: a redirect, `git push`, or an env assignment that switches a guard
+# off (SEAL_READ_OK=1). Now a command is parsed, never shell-run, and must be one of these
+# writers. The writer list is the three the log uses (act_apply 91 rows, todo_write 25,
+# personal_todo_write 20, counted 2026-10-27) plus the three other atomic data writers.
+# `&&` is kept as a sequence: 32 of the 136 logged commands chain several writer calls, and
+# each piece is checked on its own and run in order, stopping at the first failure.
+WRITERS = {"act_apply.py", "todo_write.py", "personal_todo_write.py",
+           "networking_write.py", "person_write.py", "pipe_write.py"}
+ALLOWED_ENV = {"PYTHONIOENCODING"}          # the only assignment any logged command makes
+_OPERATOR = re.compile(r"^[;&|<>()]+$")
+
+
+class Refused(ValueError):
+    """A routing command outside the allowlist. Nothing is run."""
+
+
+def parse_invocation(command: str, root: Path) -> list[tuple[list[str], dict]]:
+    """[(argv, env), ...] for each `&&`-joined writer call, or raise Refused."""
+    lex = shlex.shlex(command, posix=True, punctuation_chars=True)
+    lex.whitespace_split = True
+    try:
+        tokens = list(lex)
+    except ValueError as e:
+        raise Refused(f"cannot parse: {e}")
+    pieces, cur = [], []
+    for t in tokens:
+        if t == "&&":
+            pieces.append(cur)
+            cur = []
+        elif _OPERATOR.match(t):
+            raise Refused(f"shell operator {t!r} is not allowed")
+        else:
+            cur.append(t)
+    pieces.append(cur)
+
+    out = []
+    here = root.resolve()
+    for words in pieces:
+        env = {}
+        while words and re.match(r"^[A-Za-z_]\w*=", words[0]):
+            name, value = words.pop(0).split("=", 1)
+            if name not in ALLOWED_ENV:
+                raise Refused(f"environment variable {name} is not allowed")
+            env[name] = value
+        if len(words) < 2 or words[0] != "python3":
+            raise Refused(f"must be `python3 tools/<writer>.py ...`, got {words[:2]}")
+        script = words[1]
+        if Path(script).parent.as_posix() != "tools" or Path(script).name not in WRITERS:
+            raise Refused(f"{script} is not an allowed writer")
+        for i, w in enumerate(words[2:], start=2):
+            if w == "Applied":
+                raise Refused("marking a job Applied is Nick's, never a drain's")
+            if w.startswith("<") and w.endswith(">"):
+                raise Refused(f"unresolved placeholder {w[:60]!r}")
+            pathlike = words[i - 1] == "--repo-root" or w.startswith(("/", "~", ".."))
+            if pathlike:
+                p = Path(os.path.expanduser(w))
+                full = (p if p.is_absolute() else here / p).resolve()
+                if full != here and here not in full.parents:
+                    raise Refused(f"path outside the repo: {w}")
+                if words[i - 1] == "--repo-root" and full != here:
+                    raise Refused(f"--repo-root must be this repo, got {w}")
+        out.append(([sys.executable, str(here / script)] + words[2:], env))
+    return out
+
+
+def run_invocation(command: str, root: Path) -> subprocess.CompletedProcess:
+    """Run each checked piece in order without a shell; stop at the first failure."""
+    proc = None
+    for argv, env in parse_invocation(command, root):
+        proc = subprocess.run(argv, shell=False, cwd=str(root), capture_output=True,
+                              text=True, timeout=60, env={**os.environ, **env})
+        if proc.returncode != 0:
+            break
+    return proc
+
+
+def signed_approvals(root: Path, allowed_signers: Path | None = None) -> tuple[dict, list]:
+    """(approvals with a valid signature by Nick, rule ids whose latest row is unsigned).
+
+    An approval counts only if `approval_signing.verify` accepts it: a row anyone can
+    append is not Nick's approval until his Touch ID key has signed it.
+    """
+    allowed_signers = allowed_signers or approval_signing.ALLOWED_SIGNERS
+    good, unsigned = {}, []
+    for rid, row in load_approvals(root).items():
+        if approval_signing.verify(approval_signing.payload(row), row.get("signature"),
+                                   allowed_signers):
+            good[rid] = row
+        else:
+            unsigned.append(rid)
+    return good, unsigned
+
+
 def fail(message: str, code: str, **extra) -> None:
     print(json.dumps({"status": "error", "message": message, "code": code, **extra},
                      ensure_ascii=False))
     sys.exit(1)
 
 
-def approved_rows(root: Path) -> tuple[list[dict], dict]:
-    """Rows under an approved bulk rule, plus a per-rule tally.
+def approved_rows(root: Path, approvals: dict) -> tuple[list[dict], dict, list]:
+    """Rows under an approved rule, a per-rule tally, and the approvals voided as stale.
+
+    An approval is a UNIT: the signature covers the rule's exact block_ids. It applies
+    only while the blocks now decided under that rule are exactly that list. A block
+    added after signing, or a signed block moved to another rule, voids the whole
+    approval rather than applying a set Nick never signed (Codex and Grok final-g4 F1;
+    Codex final-r2-g4 F1, 2026-10-28: a per-block filter still applied a subset).
 
     Reads current_log(), NOT load_log(). The decision log is append-only and a
     revision is a later row for the same block, so the raw file still contains
@@ -99,21 +205,32 @@ def approved_rows(root: Path) -> tuple[list[dict], dict]:
     retired rule whose invocations were the ones the revision existed to fix -
     caught in dry-run on 2026-09-08, before anything was written.
     """
-    log = current_log(root)
-    approvals = load_approvals(root)
-    rows, tally = [], {}
-    for r in log:
+    members: dict = {}
+    for r in current_log(root):
         # A bulk row is approved by its RULE text; an individual row by its
         # (destination, confidence) COHORT, because it has no rule to approve.
         rid = (rule_id(r["bulk_rule"]) if r["mode"] == "bulk"
                else cohort_id(r["destination"], r["confidence"]))
-        if rid not in approvals:
+        if rid in approvals:
+            members.setdefault(rid, []).append(r)
+    rows, tally, stale = [], {}, []
+    for rid, rs in members.items():
+        signed = set(approvals[rid].get("block_ids") or [])
+        now = {r["block_id"] for r in rs}
+        if now != signed:
+            stale.append({"rule_id": rid, "added": sorted(now - signed),
+                          "missing": sorted(signed - now)})
             continue
-        rows.append({**r, "rule_id": rid})
-        tally.setdefault(rid, {"rule_id": rid, "destination": r["destination"],
-                               "producer": r["producer"], "blocks": 0})
-        tally[rid]["blocks"] += 1
-    return rows, tally
+        for r in rs:
+            rows.append({**r, "rule_id": rid})
+            tally.setdefault(rid, {"rule_id": rid, "destination": r["destination"],
+                                   "producer": r["producer"], "blocks": 0})
+            tally[rid]["blocks"] += 1
+    for rid in approvals:
+        if rid not in members:
+            stale.append({"rule_id": rid, "added": [],
+                          "missing": sorted(approvals[rid].get("block_ids") or [])})
+    return rows, tally, stale
 
 
 def main() -> None:
@@ -128,13 +245,16 @@ def main() -> None:
     if not inbox.is_file():
         fail(f"inbox not found: {inbox}", "file_not_found")
 
-    rows, tally = approved_rows(root)
+    approvals, unsigned = signed_approvals(root)
+    rows, tally, stale = approved_rows(root, approvals)
     already = load_executed(root)
     skipped = [r["block_id"] for r in rows if r["block_id"] in already]
     rows = [r for r in rows if r["block_id"] not in already]
     if not rows:
-        fail("no rows under an approved rule; nothing to do. Approve a rule first "
-             "with inbox_decision_log.py approve --rule <id>.", "nothing_approved")
+        fail("no rows under a SIGNED approval; nothing to do. Approve a rule with "
+             "inbox_decision_log.py approve --rule <id> (Touch ID signs it).",
+             "nothing_approved", unsigned_approvals_ignored=unsigned,
+             stale_approvals_ignored=stale)
 
     text = inbox.read_text(encoding="utf-8")
     live = census(text)
@@ -177,6 +297,17 @@ def main() -> None:
              missing=missing[:10])
 
     routed = [t for t in targets if t["destination"] not in ("delete", "archive")]
+    # Every routing command is checked before anything runs, dry run included, so a
+    # refused command stops the batch with the inbox untouched.
+    refused = []
+    for t in routed:
+        try:
+            parse_invocation(t["writer_invocation"], root)
+        except Refused as e:
+            refused.append({"block_id": t["block_id"], "reason": str(e)})
+    if refused:
+        fail(f"{len(refused)} routing command(s) are outside the writer allowlist; "
+             "nothing was written.", "invocation_refused", refused=refused[:10])
     # ARCHIVE IS NOT DELETE. There is no archive writer, so an archive decision
     # means "leave this block where it is". The one archive row in this drain is
     # a drip carrying a hand-written, struck-through location correction, and
@@ -195,6 +326,8 @@ def main() -> None:
         "blocks_to_remove": len(to_remove),
         "blocks_preserved_in_place": [t["block_id"] for t in preserved],
         "already_executed_skipped": len(skipped),
+        "unsigned_approvals_ignored": unsigned,
+        "stale_approvals_ignored": stale,
         "live_blocks_before": live["live_h2_headers"],
         "live_blocks_after_expected": live["live_h2_headers"] - len(to_remove),
     }
@@ -207,8 +340,7 @@ def main() -> None:
     route_results = []
     for t in routed:
         cmd = t["writer_invocation"]
-        proc = subprocess.run(cmd, shell=True, cwd=str(root), capture_output=True,
-                              text=True, timeout=60)
+        proc = run_invocation(cmd, root)
         route_results.append({"block_id": t["block_id"], "rc": proc.returncode,
                               "stdout": proc.stdout.strip()[:200],
                               "stderr": proc.stderr.strip()[:200]})
