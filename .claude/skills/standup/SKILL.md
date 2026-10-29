@@ -8,7 +8,7 @@ allowed-tools: Read(*), Glob(inbox/*), Glob(data/reflections/*), Glob(data/workb
 
 # Standup — Morning Briefing
 
-Reads five data files and generates a focused daily brief. Output is in-chat only — nothing is written to disk.
+Reads five data files and generates a focused daily brief. Output is in-chat only. The one write is Step 2w's: on the first working day of the week it prepends the week's Top 5 to `data/weekly-review-log.md` (S6, 2026-10-29); nothing else is written to disk.
 
 ## Instructions
 
@@ -188,7 +188,9 @@ toward creating conversations — follow-ups on live threads, scheduling asks, w
 replies — and **not** toward research, tooling, or corpus work, whatever `top_n` ranked. Say so
 explicitly in one line: `Top 3 is conversation-shaped: 7d conversations = N.` If 7d is 2+, rank
 normally. Origin: 2026-09-01, Nick's metric change, wired here rather than `/weekly-review` because
-he does not run that skill.
+he did not run that skill (deleted 2026-10-29).
+
+**Learning lanes (from `results.learning_ledger.data`, S7):** one line, `Learning lanes: <due_total> due across <N> lanes`, inside the queue-depth block below. `due_total` counts records at 2+ fires still open across all five capture lanes, which no other surface shows. If the source failed, say "learning ledger unavailable" and continue.
 
 **Queue depth (from `attention.py`) — surface SECOND, right below automation health.** This is the only place the promotion backlog is ever seen: the weekly scan writes it to `memory/promotion-backlog.md` and a Low-priority todo, and neither is read. Render a single compact block, never a duplicate of the Pipeline/Inbox sections below:
 
@@ -570,6 +572,42 @@ Origin: `feedback_check_calendar_context_before_surfacing_a_cadence_pattern`, fi
 2026-09-06 and again 2026-09-07 (both Labor Day weekend, same failure, second one after the
 rule was already written). Promoted to skill tier on the 2nd fire.
 
+### Step 2w: Mondays only: this week's Top 5 priorities
+
+`/weekly-review` was deleted on 2026-10-29 (S6, ruled 2026-10-28: "Delete, fold into Monday
+/standup"; it had 0 invocations in 282 transcripts). Its one output something else read, the
+week's Top 5 priorities, moved here. **Run this step on the first working day of the week:** when Step 2z resolved
+the day as a working day AND `data/weekly-review-log.md` has no entry yet for this week's
+Monday (the `### Week of <Monday>` header). That is Monday, or Tuesday after a Monday
+holiday, and it runs once a week whichever day comes first.
+
+Rank 5 specific, actionable priorities for the next 7 days, from the same Step 1 data (no new
+reads). If the Momentum Read's 7-day output column is thin, priority #1 must be output-shaped.
+Score in this order:
+
+1. **Blocking status**: is this preventing stage advancement? (highest weight)
+2. **Time sensitivity**: overdue item or hard deadline approaching?
+3. **Stage advancement potential**: would this action move a pipeline entry forward?
+4. **Relationship maintenance**: contact awaiting response, follow-up window closing?
+5. **Research gap**: pipeline entry with no company dossier?
+
+Each priority is one line: `[Specific action] - [Company/Contact] - [Why urgent/important]`.
+Show them in the brief under **This Week's Priorities**, then prepend one entry to
+`data/weekly-review-log.md` (newest first, never delete older entries; create the file with a
+`# Job Search - Weekly Priorities Log` header if it is missing):
+
+```markdown
+### Week of YYYY-MM-DD (Monday): priorities from /standup
+
+#### Top 5 Priorities for Coming Week
+1. [action - company/contact - why]
+2. ...
+```
+
+If an entry for this Monday already exists, replace it rather than adding a second.
+`/checkout` reads the newest `#### Top 5 Priorities for Coming Week` section from this file
+to mark tomorrow's Top 3, so the heading text must stay exactly as above.
+
 ### Step 3: Generate the Brief
 
 Output the brief in this exact format:
@@ -582,6 +620,7 @@ Output the brief in this exact format:
 **Day context:** [Working day | Weekend | Holiday — <name> | Holiday weekend] — MANDATORY, never omit
 
 📥 **Queues:** inbox [N / N] · todos [N] overdue (oldest [N]d) · promotion [N] ([N] partial) · pipeline [N] stale — **total [N]**
+Learning lanes: [due_total] due across [N] lanes
 [If complete=false: ⚠️ [N] of 4 queues unreadable: [names]]
 [If total_open=null: **Queues: UNREADABLE** — say this, never omit the line]
 
@@ -602,6 +641,11 @@ Output the brief in this exact format:
 
 ### This Week's Focus
 [Numbered list from goals.md weekly focus section, or "— goals.md not populated" if missing]
+
+[Mondays only (Step 2w):]
+**This Week's Priorities**
+1. [action - company/contact - why]
+2. ... (5 lines)
 
 ---
 
@@ -702,6 +746,10 @@ should interrupt the day:]
 [If nothing pending:]
 > No outreach awaiting response (last 30 days).
 
+A thread Nick says is resolved (no reply coming, or the loop closed elsewhere) leaves this list
+when its row is marked `Closed`, the terminal status (2026-10-29, todo #120). Only on his word:
+`PYTHONIOENCODING=utf-8 python3 tools/outreach_status.py --recipient "<name>" --set-status --date <YYYY-MM-DD> --status Closed`.
+
 ---
 
 ### Follow-Up Due
@@ -798,7 +846,7 @@ Three calls this has to get right, or the classification is worse than not doing
 
 **If the 7-day output column is thin, say so plainly and make Today's Top 3 output-shaped.** Nick
 asked to be held to this. This lives here, on the daily surface, because the identical check at
-`/weekly-review` Step 5c is anchored to a skill he does not run reliably — per
+`/weekly-review` Step 5c was anchored to a skill he did not run (deleted 2026-10-29) — per
 [[user_nick_invokes_standup_not_weekly_review]] and [[feedback_verify_the_surface_fires_before_anchoring_to_it]].
 Rolling 7 days rather than a calendar week so a daily invocation needs no stored state.
 Examples:

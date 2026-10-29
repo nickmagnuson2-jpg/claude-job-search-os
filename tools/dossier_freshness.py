@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-dossier_freshness.py — Pre-process dossier staleness for /weekly-review and /act.
+dossier_freshness.py — Pre-process dossier staleness for /act.
 
 Reads: output/**/*.md (dossiers only — files where filename matches parent directory name)
 

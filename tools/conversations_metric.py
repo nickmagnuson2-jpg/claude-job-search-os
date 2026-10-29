@@ -49,6 +49,11 @@ META = {
     "recruiter screen scheduled", "call scheduled", "—", "-", "",
 }
 
+# An outreach-log status that means the message went out. "Drafted" is the one that did not.
+# Shared with tools/day_check.py, so a send is one definition.
+SENT_STATES = {"sent", "replied", "delivered", "no reply", "delivery unknown", "bounced",
+               "closed"}
+
 INTERACTION_RE = re.compile(r"^####\s+(\d{4}-\d{2}-\d{2})\s*\|\s*([^|]+?)\s*\|", re.M)
 STAGE_RE = re.compile(r"^stage:\s*(.+?)\s*$", re.M)
 DATED_FILE_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})")
@@ -194,10 +199,9 @@ def count_outreach(path: Path, today: date) -> dict:
         out["error"] = f"unreadable: {e}"
         return out
     counts = _empty_windows()
-    sent_states = {"sent", "replied", "delivered", "no reply", "delivery unknown", "bounced"}
     for row in parse_outreach_rows(content):
         d = _parse_date(row["date"])
-        if d is not None and row["status"].casefold() in sent_states:
+        if d is not None and row["status"].casefold() in SENT_STATES:
             _add(counts, d, today)
     out.update(readable=True, counts=counts)
     return out

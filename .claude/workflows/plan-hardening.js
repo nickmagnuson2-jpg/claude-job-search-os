@@ -1,7 +1,7 @@
 export const meta = {
   name: 'plan-hardening',
   description: 'Two-layer plan hardening: a premise gate that HARD STOPS before execution critique, then scoped probes with per-hole regression retest. Returns a residual risk register.',
-  whenToUse: 'Before executing an expensive or irreversible plan. Implements framework/plan-hardening-v2-spec.md. Bounded questions converge; "attack this plan" does not — v1 ran 5 rounds x ~26 new blocking holes and never converged. ARGS MUST BE AN OBJECT, never a prose string: {planText OR planPath (required), context (required), outPath?, registerPath?, targets? (SUPPLYING THIS BYPASSES S2 TARGET GENERATION), minPlanChars?, minRetention?, perFixChars?, maxTotalGrowth?}. Passing prose dies with a JSON parse error in ~15ms before any agent runs.',
+  whenToUse: 'PARKED 2026-10-29 (S14): do not start new runs; one earlier run is still OPEN and this file stays so its register can be read. Before executing an expensive or irreversible plan. Implements framework/plan-hardening-v2-spec.md. Bounded questions converge; "attack this plan" does not — v1 ran 5 rounds x ~26 new blocking holes and never converged. ARGS MUST BE AN OBJECT, never a prose string: {planText OR planPath (required), context (required), outPath?, registerPath?, targets? (SUPPLYING THIS BYPASSES S2 TARGET GENERATION), minPlanChars?, minRetention?, perFixChars?, maxTotalGrowth?}. Passing prose dies with a JSON parse error in ~15ms before any agent runs.',
   phases: [
     { title: 'Goal', detail: 'two independent goal statements, one blind to the plan' },
     { title: 'Premise', detail: 'is G the right goal — HARD STOP if open' },
@@ -14,6 +14,9 @@ export const meta = {
   ],
 }
 
+// PARKED 2026-10-29 (S14, ruled 2026-10-28: "Yes, all three"). Not deleted: 25 files cite it
+// and one run is still OPEN. Do not start a new run without Nick reopening it.
+//
 // Implements framework/plan-hardening-v2-spec.md. Read that before editing this file.
 //
 // WHAT CHANGED FROM v1 AND WHY (both measured, same plan, 2026-08-21):

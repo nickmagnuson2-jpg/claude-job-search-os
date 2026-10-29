@@ -1,0 +1,15 @@
+{
+ "error": null,
+ "rows": [
+  {
+   "company": "Acme Corp",
+   "next": "Await their read of the take-home",
+   "updated": "2026-01-06"
+  },
+  {
+   "company": "Beta Inc",
+   "next": "Recruiter call Thu, she calls",
+   "updated": "2026-01-07"
+  }
+ ]
+}

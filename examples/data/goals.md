@@ -34,12 +34,12 @@
 
 ## This Week's Focus
 
-<!-- Updated by /weekly-review each week -->
+<!-- Updated by hand each week; Monday /standup writes the week's Top 5 to data/weekly-review-log.md -->
 1. Convert the Larkspur Data phone screen into an onsite — prep the technical-discovery story.
 2. Two fresh `/cold-outreach` reps to Sales Engineering leaders at data-infra companies.
 3. Decide whether Vantage Loop (analytics) clears the "technical selling is valued" bar before applying.
 
-**Week of:** (set by /weekly-review)
+**Week of:** (set by hand)
 
 ## Success Metrics
 

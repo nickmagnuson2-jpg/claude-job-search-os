@@ -66,7 +66,7 @@ The bookend to standup. Builds today's progress snapshot (completed count, strea
 
 > **You should see:** a clean close. Tomorrow's standup starts from today's real state, not from memory.
 
-**Weekly:** run `/weekly-review` once a week for pipeline health by stage, outreach counts (sent, replied, no reply), task velocity, and the coming week's top five.
+**Weekly:** Monday's `/standup` drafts the coming week's top five priorities into `data/weekly-review-log.md`.
 
 ---
 

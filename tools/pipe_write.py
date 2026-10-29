@@ -126,19 +126,15 @@ def cmd_add(args, pipeline_path: Path, dry_run: bool) -> None:
     if getattr(args, "fit_reason", None):
         notes = compose_fit_note("—", args.fit_reason, getattr(args, "fit_verdict", None), today)
 
-    if dry_run:
-        row = fmt_row(args.company, args.role, stage, today, "—", "—", notes, url)
-        out_ok("add", f"Would add: {args.company} | {args.role}",
-               dry_run=True, would_mutate=[{"file": str(pipeline_path), "row": row}])
-        return
-
     content, lines = load_lines(pipeline_path)
 
     act_start, act_end = find_section(lines, r"^##\s+Active")
     if act_start == -1:
         out_error("Could not find ## Active section in job-pipeline.md", "missing_section")
 
-    # Duplicate check (case-insensitive company match)
+    # Duplicate check: the same company AND the same role (case-insensitive). Keyed on the
+    # company alone until 2026-10-29 (dedup audit, 9d), so a second, different role at a
+    # company already in the pipeline could not be added and nothing said it was dropped.
     existing_roles = []
     for i in range(act_start, act_end):
         if is_data_row(lines[i]):
@@ -146,18 +142,25 @@ def cmd_add(args, pipeline_path: Path, dry_run: bool) -> None:
             if cols and cols[0].lower() == args.company.lower():
                 existing_roles.append(cols[1] if len(cols) > 1 else "")
 
-    if existing_roles:
+    if any(r.strip().lower() == args.role.strip().lower() for r in existing_roles):
         out_ok("duplicate_warning",
-               f"{args.company} already exists in active pipeline",
+               f"{args.company} | {args.role} already exists in active pipeline",
                existing_roles=existing_roles)
         return
 
     row = fmt_row(args.company, args.role, stage, today, "—", "—", notes, url)
+    # Dry run after the duplicate check, so its preview matches what a real run does
+    # (review 846.F3, 850.F3).
+    if dry_run:
+        out_ok("add", f"Would add: {args.company} | {args.role}",
+               dry_run=True, would_mutate=[{"file": str(pipeline_path), "row": row}])
+        return
     pos = table_insert_pos(lines, act_start, act_end, is_data_row)
     lines.insert(pos, row)
     save_lines(pipeline_path, lines, content)
 
-    out_ok("add", f"Added: {args.company} | {args.role} | {stage}",
+    out_ok("add", f"Added: {args.company} | {args.role} | {stage}"
+           + (f" (same company, other roles: {', '.join(existing_roles)})" if existing_roles else ""),
            company=args.company, role=args.role, stage=stage,
            fit_reason_logged=bool(getattr(args, "fit_reason", None)))
 

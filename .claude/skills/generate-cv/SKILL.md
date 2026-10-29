@@ -209,6 +209,14 @@ For each correction returned, check the drafted line against the **corrected** w
 
 Also grep the drafted content YAML for `—` before first render. No em dashes, ever (hard project rule). Past fires shipped several of them in the Summary section.
 
+**Then the fixed-section check (BLOCKS the render):**
+
+```bash
+PYTHONIOENCODING=utf-8 python3 tools/cv_fixed_sections.py output/<company-slug>/MMDDYY-magnuson.yaml
+```
+
+Exit 2 means the Skills details differ from the fixed line in this file, or the Building details do not start with `(github.com/`: the CV was templated off an older CV (fired twice, `feedback_never_template_a_cv_off_a_prior_cv`). Fix the YAML from this spec, never from a prior CV, and rerun until it exits 0. Do not render before it does. The script reads the Skills line from this file, so edit the spec here, not the script.
+
 **Why here and not Step 10b:** both failures were caught only by the 6-agent deep review, after the render. This check costs one command and runs before the expensive pass. Origin: `memory/feedback_cv_em_dash_and_source_verb_regression.md`.
 
 ### Step 6b: Inline Quality Review (mandatory — do NOT skip)

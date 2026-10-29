@@ -309,3 +309,16 @@ def test_main_returns_0_on_a_successful_read(tmp_path):
     mem = tmp_path / "mem"; mem.mkdir()
     write_rule(mem, "feedback_a.md")
     assert ll.main(["--memory-dir", str(mem), "--repo-root", str(tmp_path)]) == 0
+
+
+def test_summary_json_drops_the_records(tmp_path, capsys):
+    """S7: the collector reads the per-lane counts only."""
+    import json as _json
+    import learning_ledger as _ll
+    mem = tmp_path / "memory"
+    mem.mkdir()
+    assert _ll.main(["--memory-dir", str(mem), "--repo-root", str(tmp_path), "--json", "--summary"]) == 0
+    out = _json.loads(capsys.readouterr().out)
+    assert set(out) == {"total", "lanes", "due_total"}
+    assert _ll.main(["--memory-dir", str(mem), "--repo-root", str(tmp_path), "--json"]) == 0
+    assert "records" in _json.loads(capsys.readouterr().out)

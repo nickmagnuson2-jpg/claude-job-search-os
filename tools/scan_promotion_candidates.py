@@ -25,7 +25,8 @@ Two entry points share this one script (per the 2026-07-08 "no drift" decision):
   - cron mode (--mode cron): headless, regenerates memory/promotion-backlog.md,
     and if new items crossed threshold, adds a Low-priority todo via todo_write.py.
   - interactive mode (--mode interactive, the default): prints a chat-facing
-    summary; used by the /memory-refresh skill. Same detection logic either way.
+    summary, run by hand (the /memory-refresh skill that used it was archived
+    2026-10-29, S8). Same detection logic either way.
 
 Usage:
   PYTHONIOENCODING=utf-8 python3 tools/scan_promotion_candidates.py --memory-dir <path> [--mode cron|interactive] [--stale-days 60] [--repo-root .]
@@ -472,8 +473,8 @@ def _open_refresh_todo(todo_script: Path, repo_root: Path) -> bool:
 
     WHY (2026-10-25). Each run added a new row, and two tests ran this job in cron mode
     against the real repo, so every test and mutation run added one: 358 such rows in
-    the 2026-10-22 backup, 2,009 three days later. The open row already says "run
-    /memory-refresh", and the current numbers are in the backlog file, so one is enough.
+    the 2026-10-22 backup, 2,009 three days later. The open row already points at
+    the backlog, and the current numbers are in the backlog file, so one is enough.
     An unreadable list counts as "none open": a missing reminder is worse than a second.
     """
     r = subprocess.run(["python3", str(todo_script), "--repo-root", str(repo_root), "list",
@@ -764,7 +765,7 @@ def main(argv: list[str]) -> None:
                   f"{len(demotion_candidates)} demotion candidates"
                   + (f" + {len(crossing)} rule FAMILY crossing its threshold" if crossing else "")
                   + (f" + {len(registry_defects)} family registry defect(s)" if registry_defects else "")
-                  + " -- run /memory-refresh"),
+                  + " -- see memory/promotion-backlog.md"),
                  "Low"],
                 capture_output=True, text=True,
             )

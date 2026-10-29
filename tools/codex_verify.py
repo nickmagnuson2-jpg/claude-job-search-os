@@ -985,6 +985,35 @@ def gate_requirement(paths, model: str) -> str:
             f"This run ({model}={family}) {counts}.")
 
 
+def open_p0_line(repo_root: Path, paths) -> str:
+    """One line, printed on every run beside the GATE line: how many P0s still block a
+    push of these paths, and that P1/P2 never do.
+
+    WHY (feedback_stop_when_findings_shrink_while_cost_stays_flat, built 2026-10-29). Review
+    loops kept running after the last P0 closed because nothing on screen said which
+    findings block. The count is the gate's own (cross_model_gate.open_p0_against: open,
+    or parked without Nick's acceptance), imported so the two cannot disagree."""
+    try:
+        n = len(gate.open_p0_against(Path(repo_root), set(paths or [])))
+    except Exception as e:  # an unreadable ledger is reported, not shown as 0
+        return f"open P0s on these paths: unknown ({type(e).__name__}); P1/P2 do not block the push"
+    return f"open P0s on these paths: {n}; P1/P2 do not block the push"
+
+
+def default_report_path(root: Path, model: str, target: str, now=None, run_id=None) -> Path:
+    """output/analysis/<MMDDYY>-<model>-<slug>-<run id>.md.
+
+    The run id (time to the second plus 4 random hex) is what keeps two same-day runs on
+    the same target from writing one file; before 2026-10-29 the name was date, model
+    and slug only, so a second run overwrote the first report."""
+    import uuid
+    now = now or datetime.now()
+    run_id = run_id or f"{now.strftime('%H%M%S')}{uuid.uuid4().hex[:4]}"
+    slug = "".join(c if c.isalnum() else "-" for c in target.lower())[:40]
+    slug = "-".join(p for p in slug.split("-") if p)
+    return root / "output" / "analysis" / f"{now.strftime('%m%d%y')}-{model}-{slug}-{run_id}.md"
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--target", required=True, help="what Codex should verify")
@@ -992,7 +1021,8 @@ def main(argv=None) -> int:
                     help="repo paths this verification covers; the gate matches on these")
     ap.add_argument("--question", default="", help="specific questions to press on")
     ap.add_argument("--prior", default=None, help="a previous Codex report to check against")
-    ap.add_argument("--report", default=None, help="where Codex writes (default: dated)")
+    ap.add_argument("--report", default=None,
+                    help="where Codex writes (default: dated, with a unique run id)")
     ap.add_argument("--repo-root", default=str(REPO_ROOT))
     ap.add_argument("--model", default=DEFAULT_MODEL_NAME, choices=sorted(MODELS),
                     help="which verifier to dispatch")
@@ -1025,7 +1055,10 @@ def main(argv=None) -> int:
         return 4
     requirement = gate_requirement(args.paths, args.model)
     if requirement:
+        # Beside the GATE line on every run that has one; a path the gate ignores still
+        # prints nothing (test_main_prints_nothing_for_a_path_the_gate_ignores).
         print(requirement, file=sys.stderr)
+        print(open_p0_line(args.repo_root, args.paths), file=sys.stderr)
 
     # Before anything else: a verifier pointed at a mutated tree reviews fiction.
     if not args.print_only:
@@ -1045,10 +1078,7 @@ def main(argv=None) -> int:
     if args.report:
         report = Path(args.report)
     else:
-        slug = "".join(c if c.isalnum() else "-" for c in args.target.lower())[:40]
-        slug = "-".join(p for p in slug.split("-") if p)
-        report = (root / "output" / "analysis" /
-                  f"{datetime.now().strftime('%m%d%y')}-{args.model}-{slug}.md")
+        report = default_report_path(root, args.model, args.target)
 
     if args.bar.strip():      # after the report name, so the bar never enters the slug
         args.target += ("\n\nBAR (threat model, what counts as a finding, when to stop): "

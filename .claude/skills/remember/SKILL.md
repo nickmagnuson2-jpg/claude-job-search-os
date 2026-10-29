@@ -80,7 +80,7 @@ Changes if wrong: [reversal trigger]
 
 **For an `accomplishment`** ask:
 - What landed?
-- Why does it matter? (substrate for /weekly-review or a LinkedIn post)
+- Why does it matter? (substrate for a retro or a LinkedIn post)
 
 Assemble:
 ```

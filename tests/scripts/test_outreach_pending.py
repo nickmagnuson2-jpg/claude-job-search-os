@@ -461,3 +461,24 @@ def test_a_six_cell_row_without_status_is_not_read():
                "| 2026-02-01 | cold | email | Ann Example | Acme | Hi |\n")
     out = _op.parse_outreach_log(content, date(2026, 2, 28), 30, 7)
     assert out["awaiting_response_overdue"] == [] and out["awaiting_response"] == []
+
+
+def test_a_closed_thread_leaves_every_awaiting_list(tmp_path):
+    """Todo #120: 'Closed' is terminal. Counted as sent, never awaiting, even when the
+    networking log shows no later interaction and the row is weeks old."""
+    write_fixture(tmp_path, "data/outreach-log.md", """\
+        # Outreach Log
+
+        | Date | Type | Channel | Name | Company | Subject | Status |
+        |------|------|---------|------|---------|---------|--------|
+        | 2026-02-01 | cold-outreach | email | Alex Example | Acme Corp | Hello | Closed |
+        | 2026-02-20 | cold-outreach | email | Blair Sample | Beta Inc | Hi | Closed |
+        | 2026-02-02 | cold-outreach | email | Casey Person | Gamma LLC | Hey | No reply |
+    """)
+    result = run_script("outreach_pending.py", "--target-date", "2026-02-26",
+                        "--days-threshold-overdue", "5", "--repo-root", str(tmp_path))
+    names = [e["name"] for e in result["awaiting_response"] + result["awaiting_response_overdue"]]
+    assert names == ["Casey Person"]
+    ro = result["recent_outreach"]
+    assert (ro["sent"], ro["closed"], ro["no_reply"], ro["replied"]) == (3, 2, 1, 0)
+    assert ro["sanity_warnings"] == []

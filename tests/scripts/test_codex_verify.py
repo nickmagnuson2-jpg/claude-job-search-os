@@ -354,8 +354,38 @@ def test_cli_requires_a_target(tmp_path):
 
 def test_cli_names_the_report_after_the_target_and_the_date(tmp_path):
     from datetime import datetime
+    import re
     r = _cli(["--target", "The Drain Fixes", "--print-only"], tmp_path)
-    assert f"{datetime.now().strftime('%m%d%y')}-codex-the-drain-fixes.md" in r.stdout
+    assert re.search(rf"{datetime.now().strftime('%m%d%y')}-codex-the-drain-fixes-\d{{6}}[0-9a-f]{{4}}\.md",
+                     r.stdout), r.stdout
+
+
+def test_two_same_day_runs_get_two_report_paths(tmp_path):
+    """9a: date + model + slug alone let a second run overwrite the first report."""
+    from datetime import datetime
+    now = datetime(2026, 1, 7, 9, 30, 5)
+    a = cv.default_report_path(tmp_path, "codex", "Same Target", now=now)
+    b = cv.default_report_path(tmp_path, "codex", "Same Target", now=now)
+    assert a != b and a.parent == b.parent == tmp_path / "output" / "analysis"
+    assert cv.default_report_path(tmp_path, "grok", "A b", now=now, run_id="X").name == \
+        "010726-grok-a-b-X.md"
+    assert cv.default_report_path(tmp_path, "codex", "A b", now=now).name.startswith("010726-codex-a-b-093005")
+
+
+def test_every_run_prints_the_open_p0_line(tmp_path, monkeypatch):
+    monkeypatch.setattr(cv.gate, "open_p0_against", lambda root, paths: [{"addr": "1.F1"}] if "x.py" in paths else [])
+    assert cv.open_p0_line(tmp_path, ["x.py"]) == "open P0s on these paths: 1; P1/P2 do not block the push"
+    assert cv.open_p0_line(tmp_path, []) == "open P0s on these paths: 0; P1/P2 do not block the push"
+
+    def boom(root, paths):
+        raise OSError("ledger")
+    monkeypatch.setattr(cv.gate, "open_p0_against", boom)
+    assert cv.open_p0_line(tmp_path, ["x.py"]).startswith("open P0s on these paths: unknown (OSError)")
+
+
+def test_the_cli_prints_the_open_p0_line(tmp_path):
+    r = _cli(["--target", "t", "--print-only", "--paths", "tools/x.py"], tmp_path)
+    assert "open P0s on these paths: 0; P1/P2 do not block the push" in r.stderr
 
 
 def test_a_reported_run_that_wrote_nothing_exits_nonzero(tmp_path, monkeypatch):

@@ -19,7 +19,7 @@ import standup_collect as sc  # noqa: E402
 
 def test_every_command_is_an_argv_list_naming_a_script_that_exists():
     cmds = sc.commands("2026-01-02")
-    assert len(cmds) == 12
+    assert len(cmds) == 13
     for name, argv in cmds.items():
         assert isinstance(argv, list) and all(isinstance(a, str) and " " not in a for a in argv), name
         assert (REPO_ROOT / argv[0]).is_file(), f"{name}: {argv[0]} does not exist"
@@ -51,7 +51,7 @@ def test_a_failing_script_is_reported_and_the_others_still_run(tmp_path, monkeyp
         "bad.py": "import sys; sys.stderr.write('boom on stderr'); sys.exit(3)",
         "plain.py": "print('not json')",
     })
-    monkeypatch.setattr(sc, "commands", lambda d: {
+    monkeypatch.setattr(sc, "commands", lambda d, read_only=False, root=None: {
         "good": ["tools/good.py", "--target-date", d],
         "bad": ["tools/bad.py"],
         "plain": ["tools/plain.py"],
@@ -69,7 +69,7 @@ def test_stderr_never_corrupts_the_parsed_json(tmp_path, monkeypatch):
     root = _fake_repo(tmp_path, {
         "noisy.py": "import json, sys; sys.stderr.write('progress...\\n'); print(json.dumps({'n': 1}))",
     })
-    monkeypatch.setattr(sc, "commands", lambda d: {"noisy": ["tools/noisy.py"]})
+    monkeypatch.setattr(sc, "commands", lambda d, read_only=False, root=None: {"noisy": ["tools/noisy.py"]})
     out = sc.collect(root, "2026-01-02")
     assert out["results"]["noisy"]["data"] == {"n": 1}
 
@@ -77,7 +77,7 @@ def test_stderr_never_corrupts_the_parsed_json(tmp_path, monkeypatch):
 def test_a_hung_script_times_out_instead_of_stalling_the_brief(tmp_path, monkeypatch):
     root = _fake_repo(tmp_path, {"slow.py": "import time; time.sleep(5)"})
     monkeypatch.setattr(sc, "TIMEOUT", 0.5)
-    monkeypatch.setattr(sc, "commands", lambda d: {"slow": ["tools/slow.py"]})
+    monkeypatch.setattr(sc, "commands", lambda d, read_only=False, root=None: {"slow": ["tools/slow.py"]})
     out = sc.collect(root, "2026-01-02")
     assert out["failed"] == ["slow"] and "timed out" in out["results"]["slow"]["stderr"]
 
@@ -88,7 +88,7 @@ def test_the_cli_exits_1_when_any_script_failed(tmp_path):
                         "--repo-root", str(root), "--target-date", "2026-01-02"],
                        capture_output=True, text=True, timeout=120)
     out = json.loads(r.stdout)
-    assert r.returncode == 1 and len(out["failed"]) == 12, "a repo with no scripts fails all twelve"
+    assert r.returncode == 1 and len(out["failed"]) == 13, "a repo with no scripts fails all thirteen"
 
 
 def test_a_script_that_cannot_start_is_reported_not_raised(tmp_path, monkeypatch):
@@ -106,7 +106,7 @@ def test_a_nonzero_exit_with_data_is_partial_not_failed(tmp_path, monkeypatch):
         "probes.py": "import json, sys; print(json.dumps({'error': 1})); sys.stderr.write('probe x failed'); sys.exit(1)",
         "dead.py": "import sys; sys.exit(1)",
     })
-    monkeypatch.setattr(sc, "commands", lambda d: {"probes": ["tools/probes.py"], "dead": ["tools/dead.py"]})
+    monkeypatch.setattr(sc, "commands", lambda d, read_only=False, root=None: {"probes": ["tools/probes.py"], "dead": ["tools/dead.py"]})
     out = sc.collect(root, "2026-01-02")
     assert out["partial"] == ["probes"] and out["failed"] == ["dead"] and out["ok"] == []
     assert out["results"]["probes"]["data"] == {"error": 1}
@@ -116,5 +116,82 @@ def test_a_nonzero_exit_with_data_is_partial_not_failed(tmp_path, monkeypatch):
 def test_exit_0_with_no_output_is_a_failure(tmp_path, monkeypatch):
     """591.F3: a script that exits 0 and prints nothing has no usable output."""
     root = _fake_repo(tmp_path, {"silent.py": "pass"})
-    monkeypatch.setattr(sc, "commands", lambda d: {"silent": ["tools/silent.py"]})
+    monkeypatch.setattr(sc, "commands", lambda d, read_only=False, root=None: {"silent": ["tools/silent.py"]})
     assert sc.collect(root, "2026-01-02")["failed"] == ["silent"]
+
+
+# --- read-only mode (S4): the morning page renders from it every 15 minutes -------------
+
+def test_read_only_drops_the_two_writes_and_changes_nothing_else():
+    rw, ro = sc.commands("2026-01-02"), sc.commands("2026-01-02", read_only=True)
+    assert "--render" in rw["workstream_state"] and "--render" not in ro["workstream_state"]
+    assert "--no-state" not in rw["sent_artifacts"] and "--no-state" in ro["sent_artifacts"]
+    for name in rw:
+        if name not in ("workstream_state", "sent_artifacts"):
+            assert rw[name] == ro[name], name
+
+
+def _snapshot(root: Path) -> dict:
+    """Every file, __pycache__ included: a bytecode write is a write (S4 review F1)."""
+    import hashlib
+    out = {}
+    for p in sorted(root.rglob("*")):
+        if p.is_file():
+            out[str(p.relative_to(root))] = (hashlib.sha256(p.read_bytes()).hexdigest(),
+                                             p.stat().st_mtime_ns)
+    return out
+
+
+def _copied_repo(tmp_path: Path) -> Path:
+    """A copy of the real tools/ plus a workstream whose STATE-BLOCK a render rewrites."""
+    import shutil
+    root = tmp_path / "repo"
+    shutil.copytree(REPO_ROOT / "tools", root / "tools",
+                    ignore=shutil.ignore_patterns("__pycache__", ".sent-artifact-state.json"))
+    ws_dir = root / "data" / "workstreams"
+    ws_dir.mkdir(parents=True)
+    probe = json.dumps([sys.executable, "-c", "print('{\"value\": 7}')"])
+    (ws_dir / "example.md").write_text(
+        f"# example\n\n| **Status** | ACTIVE |\n\n<!-- PROBE: {probe} -->\n", encoding="utf-8")
+    for name in ("job-todos.md", "job-pipeline.md", "networking.md"):
+        (root / "data" / name).write_text(f"# {name}\n", encoding="utf-8")
+    return root
+
+
+@pytest.mark.parametrize("read_only", [True, False])
+def test_read_only_run_on_a_copied_repo_changes_no_file(tmp_path, monkeypatch, read_only):
+    """The default mode is the control: it must change something here, or the read-only
+    assertion would pass on a fixture nothing could write to."""
+    monkeypatch.delenv("PYTHONDONTWRITEBYTECODE", raising=False)
+    root = _copied_repo(tmp_path)
+    before = _snapshot(root)
+    out = sc.collect(root, "2026-01-02", read_only=read_only)
+    assert out["read_only"] is read_only
+    after = _snapshot(root)
+    changed = sorted(k for k in set(before) | set(after) if before.get(k) != after.get(k))
+    if read_only:
+        assert changed == [], f"read-only mode wrote: {changed}"
+    else:
+        # The sent-check state write needs a Gmail token, which no fixture has; its
+        # --no-state flag is pinned by the argv test above.
+        assert "data/workstreams/example.md" in changed, changed
+        assert any("__pycache__" in k for k in changed), "control: imports write bytecode"
+
+
+def test_the_cli_passes_read_only_through(tmp_path):
+    root = _fake_repo(tmp_path, {})
+    r = subprocess.run([sys.executable, str(REPO_ROOT / "tools" / "standup_collect.py"),
+                        "--repo-root", str(root), "--target-date", "2026-01-02", "--read-only"],
+                       capture_output=True, text=True, timeout=120)
+    assert json.loads(r.stdout)["read_only"] is True
+
+
+def test_learning_ledger_is_a_source_reading_the_live_memory_tier(tmp_path):
+    """S7: the ledger's due count reaches /standup and the page through the collector."""
+    from hook_runtime import claude_project_dir
+    argv = sc.commands("2026-01-02", root=tmp_path)["learning_ledger"]
+    assert argv[:3] == ["tools/learning_ledger.py", "--memory-dir",
+                        str(claude_project_dir(tmp_path) / "memory")]
+    assert "--summary" in argv and "--json" in argv
+    assert sc.commands("2026-01-02")["learning_ledger"][2] == str(
+        claude_project_dir(sc.REPO_ROOT) / "memory")

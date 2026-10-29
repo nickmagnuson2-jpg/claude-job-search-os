@@ -319,3 +319,54 @@ class TestMainExitPaths:
                     == d["live_conversations"]["counts"][w]
                     + d["interviews"]["counts"][w])
         assert d["outcome_vs_input"]["7d"]["outreach_sent"] == d["outreach_sent"]["counts"]["7d"]
+
+
+class TestMainOnAFixtureRepo:
+    """The live_data test above skips in a worktree with no data/; these pin the same
+    combine rules on a fixture so they hold everywhere."""
+
+    def _repo(self, tmp_path, with_progress=True):
+        (tmp_path / "data").mkdir()
+        (tmp_path / "data" / "networking.md").write_text(
+            "#### 2026-08-30 | call | x\n", encoding="utf-8")
+        (tmp_path / "data" / "outreach-log.md").write_text(
+            "| Date | Skill | Channel | Recipient | Company | Subject | Status |\n"
+            "| 2026-08-31 | cold-outreach | email | A Person | Acme | hi | Sent |\n"
+            "| 2026-08-31 | cold-outreach | email | B Person | Acme | hi | Drafted |\n",
+            encoding="utf-8")
+        if with_progress:
+            prog = tmp_path / "coaching" / "progress"
+            prog.mkdir(parents=True)
+            (prog / "2026-08-29-1000-acme.md").write_text("stage: recruiter screen\n",
+                                                          encoding="utf-8")
+        return tmp_path
+
+    def _run(self, root):
+        out = subprocess.run(
+            [sys.executable, str(ROOT / "tools" / "conversations_metric.py"),
+             "--repo-root", str(root), "--target-date", "2026-09-01"],
+            capture_output=True, text=True)
+        return out.returncode, json.loads(out.stdout)
+
+    def test_combined_and_outcome_vs_input(self, tmp_path):
+        rc, d = self._run(self._repo(tmp_path))
+        assert rc == 0 and d["complete"] is True
+        assert d["conversations_and_interviews"]["7d"] == 2
+        assert d["outcome_vs_input"]["7d"] == {"conversations_and_interviews": 2,
+                                               "outreach_sent": 1}
+
+    def test_an_unreadable_source_leaves_combined_null(self, tmp_path):
+        rc, d = self._run(self._repo(tmp_path, with_progress=False))
+        assert d["complete"] is False and d["conversations_and_interviews"] is None
+        assert set(d["outcome_vs_input"]) == {"_note"}
+
+    def test_unreadable_outreach_keeps_combined_but_no_pairs(self, tmp_path):
+        root = self._repo(tmp_path)
+        (root / "data" / "outreach-log.md").unlink()
+        rc, d = self._run(root)
+        assert d["conversations_and_interviews"]["7d"] == 2
+        assert set(d["outcome_vs_input"]) == {"_note"}
+
+
+def test_a_closed_outreach_row_counts_as_sent():
+    assert "closed" in cm.SENT_STATES and "drafted" not in cm.SENT_STATES

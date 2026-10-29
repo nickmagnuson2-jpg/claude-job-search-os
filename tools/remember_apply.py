@@ -346,7 +346,7 @@ LOG_HEADERS = {
         ACCOMPLISHMENTS_FILE,
         "# Job-Search Accomplishments Log\n\n"
         "> Job-search-process wins, newest first. NOT career-history bullets (those live in data/projects/). "
-        "Substrate for /weekly-review and retros. Captured via `/remember` or appended directly. Gitignored (personal).\n\n"
+        "Substrate for retros. Captured via `/remember` or appended directly. Gitignored (personal).\n\n"
         "<!-- NEW ENTRIES BELOW (newest first) -->\n",
     ),
 }
