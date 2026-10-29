@@ -83,7 +83,6 @@ LABEL_TARGETS = [
 
 # Files exempt from label-check (templates, summaries, sealed, legacy).
 LABEL_EXEMPT = {
-    "data/reflections/_journal-template.md",
     "coaching/progress-recruiter/_summary.md",
     "data/projects/_template.md",
 }
