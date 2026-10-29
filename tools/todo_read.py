@@ -16,6 +16,8 @@ The rules, each stated once:
     is the file's known spacer row and is skipped.
   * OPEN: a row in the Active section whose Status is not closed (stage_vocab's
     is_closed_todo_status: "Done", "Withdrawn <date> (...)"). Pending and In Progress are open.
+  * PENDING: status exactly "Pending" (is_pending), for consumers that act only on rows
+    nobody has started (/act).
   * OVERDUE: an open row whose Due cell holds a date strictly BEFORE today. A row due today
     is due today, not overdue.
   * COMPLETED ON a date: a Completed-section row whose Completed or Notes cell holds that
@@ -126,6 +128,12 @@ def completed_rows(content: str) -> list[dict]:
 
 def is_open(row: dict) -> bool:
     return not is_closed_todo_status(row["status"])
+
+
+def is_pending(row: dict) -> bool:
+    """Status is exactly Pending: open and not yet started. /act executes only these; an
+    In Progress row is open (it counts for overdue) but someone is already on it."""
+    return row["status"].strip().casefold() == "pending"
 
 
 def is_overdue(row: dict, today: date) -> bool:

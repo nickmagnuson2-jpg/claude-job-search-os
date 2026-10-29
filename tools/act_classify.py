@@ -286,8 +286,9 @@ def classify_todo(row: dict, today: date, dossier_map: dict) -> tuple[str, dict]
     notes = row["notes"]
     status = row["status"]
 
-    # Only process open rows (todo_read.is_open: Pending or In Progress, not Done/Withdrawn)
-    if not todo_read.is_open(row):
+    # Only Pending rows: /act executes work nobody has started, so In Progress is skipped
+    # (todo_read.is_pending, the shared rule; S5 review 831.F1/833.F1).
+    if not todo_read.is_pending(row):
         return ("skip", row)
 
     # ── Pre-filter 1: blocked ─────────────────────────────────────────────

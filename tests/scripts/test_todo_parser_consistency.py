@@ -178,7 +178,7 @@ def test_the_three_tools_agree_on_the_live_file():
 def test_act_classify_decides_open_through_todo_read():
     src, funcs = _functions("act_classify.py")
     seg = ast.get_source_segment(src, funcs["classify_todo"])
-    assert "todo_read.is_open(row)" in seg and '"pending"' not in seg
+    assert "todo_read.is_pending(row)" in seg and '"pending"' not in seg
 
 
 def test_act_classify_reads_the_same_open_rows():
@@ -275,3 +275,10 @@ def test_daily_tools_default_to_the_logical_day(monkeypatch, tmp_path):
     assert seen["dc"] == date(2020, 2, 2)
     src = (TOOLS / "todo_daily_metrics.py").read_text()
     assert "if args.target_date else todo_read.logical_today()" in src
+
+
+def test_act_skips_in_progress_rows():
+    import act_classify
+    row = {"task": "x", "priority": "High", "due": "—", "status": "In Progress", "notes": ""}
+    assert act_classify.classify_todo(row, date(2026, 1, 10), {})[0] == "skip"
+    assert todo_read.is_pending({"status": " pending "}) and not todo_read.is_pending({"status": "In Progress"})
