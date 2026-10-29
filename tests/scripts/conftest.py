@@ -84,3 +84,19 @@ def fixtures_dir() -> Path:
 def repo_root() -> Path:
     """Return path to repository root."""
     return REPO_ROOT
+
+
+@pytest.fixture(autouse=True)
+def _no_real_browser(monkeypatch):
+    """No test may open a real browser tab.
+
+    2026-10-28: a mutation run over tools/open_draft.py opened live Gmail tabs, because
+    a mutant reached webbrowser.open before a test's own stub. Tests that want to see
+    what was opened patch webbrowser.open themselves; that later patch wins. BROWSER=true
+    covers any subprocess a test starts.
+    """
+    import webbrowser
+    monkeypatch.setattr(webbrowser, "open", lambda *a, **k: True)
+    monkeypatch.setattr(webbrowser, "open_new", lambda *a, **k: True)
+    monkeypatch.setattr(webbrowser, "open_new_tab", lambda *a, **k: True)
+    monkeypatch.setenv("BROWSER", "true")

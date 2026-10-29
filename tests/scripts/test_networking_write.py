@@ -658,3 +658,94 @@ def test_auxiliary_fillers_are_negated(summary):
     sys.path.insert(0, str(TOOLS_DIR))
     import networking_write as nw
     assert nw.reply_received(summary) is False
+
+
+# ---------------------------------------------------------------------------
+# The follow-up to-do is a side effect on a SECOND file. It must be visible in
+# the output, and a caller barred from that file must be able to switch it off.
+# Origin 2026-10-28: four `log --followup` calls wrote data/job-todos.md during a
+# session whose brief put that file off-limits, and the output never said so.
+# ---------------------------------------------------------------------------
+
+TODOS_FIXTURE = """\
+# Job Search To-Dos
+
+## Active
+
+| Task | Priority | Due | Status | Notes |
+| --- | --- | --- | --- | --- |
+| Alpha task | High | 2026-08-01 | Pending | note one |
+
+## Completed
+
+| Task | Priority | Due | Status | Notes |
+| --- | --- | --- | --- | --- |
+"""
+
+
+def _log_with_followup(tmp_path, *extra):
+    write_fixture(tmp_path, "data/networking.md", NETWORKING_WITH_CONTACT)
+    write_fixture(tmp_path, "data/job-todos.md", TODOS_FIXTURE)
+    return run_nw_write(
+        "--repo-root", str(tmp_path),
+        "log", "Jane Doe",
+        "--date", "2026-02-10",
+        "--type", "email",
+        "--summary", "Sent a note",
+        "--followup", "Wait for her reply",
+        *extra,
+    )
+
+
+def test_log_followup_reports_the_todo_it_wrote(tmp_path):
+    result, code = _log_with_followup(tmp_path)
+    assert code == 0
+    todos = (tmp_path / "data/job-todos.md").read_text(encoding="utf-8")
+    assert "Follow up: Jane Doe — Wait for her reply" in todos
+    assert result["todo_added"] is True
+    assert result["todos_file"] == "data/job-todos.md"
+
+
+def test_log_no_todo_leaves_the_todos_file_untouched(tmp_path):
+    result, code = _log_with_followup(tmp_path, "--no-todo")
+    assert code == 0
+    assert (tmp_path / "data/job-todos.md").read_text(encoding="utf-8") == TODOS_FIXTURE
+    assert result["todo_added"] is False
+    # the networking entry itself is still written
+    content = (tmp_path / "data/networking.md").read_text(encoding="utf-8")
+    assert "**Follow-up:** Wait for her reply" in content
+
+
+def test_log_without_followup_reports_no_todo(tmp_path):
+    write_fixture(tmp_path, "data/networking.md", NETWORKING_WITH_CONTACT)
+    write_fixture(tmp_path, "data/job-todos.md", TODOS_FIXTURE)
+    result, code = run_nw_write(
+        "--repo-root", str(tmp_path), "log", "Jane Doe",
+        "--date", "2026-02-10", "--type", "email", "--summary", "Sent a note",
+    )
+    assert code == 0 and result["todo_added"] is False
+    assert (tmp_path / "data/job-todos.md").read_text(encoding="utf-8") == TODOS_FIXTURE
+
+
+def test_log_followup_with_no_todos_file_reports_nothing_written(tmp_path):
+    write_fixture(tmp_path, "data/networking.md", NETWORKING_WITH_CONTACT)
+    result, code = run_nw_write(
+        "--repo-root", str(tmp_path), "log", "Jane Doe",
+        "--date", "2026-02-10", "--type", "email", "--summary", "Sent a note",
+        "--followup", "Wait for her reply",
+    )
+    assert code == 0 and result["todo_added"] is False
+    assert not (tmp_path / "data/job-todos.md").exists()
+
+
+def test_a_second_followup_replaces_the_first_auto_row(tmp_path):
+    _log_with_followup(tmp_path)
+    run_nw_write(
+        "--repo-root", str(tmp_path), "log", "Jane Doe",
+        "--date", "2026-02-12", "--type", "email", "--summary", "Sent another",
+        "--followup", "Call her Monday instead",
+    )
+    todos = (tmp_path / "data/job-todos.md").read_text(encoding="utf-8")
+    active = todos.split("## Completed")[0]
+    assert "Follow up: Jane Doe — Call her Monday instead" in active
+    assert "Follow up: Jane Doe — Wait for her reply" not in active
