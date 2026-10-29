@@ -232,7 +232,7 @@ def main() -> int:
     args = ap.parse_args()
 
     today = (datetime.strptime(args.today, "%Y-%m-%d").date() if args.today
-             else date.today())
+             else todo_read.logical_today())
     report = build(Path(args.repo_root).resolve(), today, Path(args.memory_dir))
     print(json.dumps(report, ensure_ascii=False, indent=2) if args.json else render(report))
     return 0

@@ -101,7 +101,7 @@ def main():
     args = parse_args()
     root = Path(args.repo_root) if args.repo_root else Path.cwd()
     today = (datetime.strptime(args.target_date, "%Y-%m-%d").date()
-             if args.target_date else date.today())
+             if args.target_date else todo_read.logical_today())
 
     todos_path = root / "data" / "job-todos.md"
     content = read_file(todos_path)

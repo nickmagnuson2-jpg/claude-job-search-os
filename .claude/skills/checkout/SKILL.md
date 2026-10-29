@@ -135,9 +135,9 @@ Before computing Tomorrow's Top 3, sweep for `Pending` todos whose trigger event
 
 Patterns to sweep (run each in parallel, treat absent matches as no-op):
 
-1. **Call-prep todos with debrief evidence:** for each file in `coaching/progress/$(date +%Y-%m-%d)-*.md`, extract the slug from the filename and run `tools/todo_write.py done "<slug> call"`. Report any closures.
-2. **Morning-starter read todo:** if `data/workbooks/_morning-starter-$(date +%Y-%m-%d).md` exists, run `tools/todo_write.py done "READ FIRST: data/workbooks/_morning-starter-$(date +%Y-%m-%d).md"`. If status is "No task found," skip (already closed by `/standup`). If "ok," report closure.
-3. **Print-before-call todos:** if a `Print [Company] [doc] PDF before [Person] call` todo exists and the corresponding call file exists in `coaching/progress/$(date +%Y-%m-%d)-*.md`, close it.
+1. **Call-prep todos with debrief evidence:** for each file in `coaching/progress/$(PYTHONIOENCODING=utf-8 python3 tools/todo_read.py --logical-date)-*.md`, extract the slug from the filename and run `tools/todo_write.py done "<slug> call"`. Report any closures.
+2. **Morning-starter read todo:** if `data/workbooks/_morning-starter-<D>.md` exists, where D is `$(PYTHONIOENCODING=utf-8 python3 tools/todo_read.py --logical-date)`, run `tools/todo_write.py done "READ FIRST: data/workbooks/_morning-starter-<D>.md"`. If status is "No task found," skip (already closed by `/standup`). If "ok," report closure.
+3. **Print-before-call todos:** if a `Print [Company] [doc] PDF before [Person] call` todo exists and the corresponding call file exists in `coaching/progress/<D>-*.md` (D as above, the logical date), close it.
 
 Display closures under `#### System Changes` in the checkout summary as: `Auto-closed N prep todo(s): [task fragments]`.
 

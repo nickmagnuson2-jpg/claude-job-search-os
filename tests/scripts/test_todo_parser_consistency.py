@@ -282,3 +282,27 @@ def test_act_skips_in_progress_rows():
     row = {"task": "x", "priority": "High", "due": "—", "status": "In Progress", "notes": ""}
     assert act_classify.classify_todo(row, date(2026, 1, 10), {})[0] == "skip"
     assert todo_read.is_pending({"status": " pending "}) and not todo_read.is_pending({"status": "In Progress"})
+
+
+def test_todo_daily_metrics_runs_on_the_logical_day(monkeypatch, tmp_path, capsys):
+    """Behaviour, not a source substring (849.F2, 854.F3): with no --target-date the run
+    reports the logical day."""
+    import todo_daily_metrics as tdm
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "job-todos.md").write_text(FIXTURE)
+    monkeypatch.setattr(todo_read, "logical_today", lambda *a, **k: date(2026, 1, 10))
+    monkeypatch.setattr(sys, "argv", ["todo_daily_metrics.py", "--repo-root", str(tmp_path)])
+    tdm.main()
+    out = json.loads(capsys.readouterr().out)
+    assert out["target_date"] == "2026-01-10" and len(out["overdue"]) == 2
+
+
+def test_the_collector_passes_its_date_to_attention():
+    import standup_collect
+    argv = standup_collect.commands("2026-01-10")["attention"]
+    assert argv[argv.index("--today") + 1] == "2026-01-10"
+
+
+def test_the_skills_use_the_logical_date():
+    co = (REPO_ROOT / ".claude" / "skills" / "checkout" / "SKILL.md").read_text()
+    assert "$(date +%Y-%m-%d)" not in co and co.count("todo_read.py --logical-date") >= 3
