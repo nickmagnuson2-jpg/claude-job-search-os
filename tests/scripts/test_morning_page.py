@@ -198,6 +198,10 @@ def test_bad_now_exits_2(capsys):
 
 # --- the plist: written, not installed ----------------------------------------------------
 
+def test_the_docstring_names_the_disarmed_plist():
+    assert "tools/launchd/disarmed/com.nickmagnuson.jobsearch.morning-page.plist" in mp.__doc__
+
+
 def test_plist_is_disarmed_and_runs_every_15_minutes_from_7_to_19():
     assert not (TOOLS / "launchd" / PLIST.name).exists(), "must not be in the standing set"
     p = plistlib.loads(PLIST.read_bytes())
@@ -394,6 +398,7 @@ def test_the_page_shows_waiting_on_them_in_block_3():
 @pytest.mark.parametrize("nxt,theirs", [
     ("Will follow up Monday", False), ("I will send the deck", False), ("Nick will call back", False),
     ("Emily will reply by Thu", True), ("Emily to reply by EOD", True), ("Await Sam's times", True),
+    ("Call to be scheduled", False), ("Intro scheduled once Nick sends times", False),
 ])
 def test_will_needs_a_named_other_person(nxt, theirs):
     assert bool(mp.THEIRS.search(nxt)) is theirs

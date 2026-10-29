@@ -35,8 +35,8 @@ Usage:
   PYTHONIOENCODING=utf-8 python3 tools/morning_page.py [--repo-root .] [--out PATH] [--demo]
       [--now YYYY-MM-DDTHH:MM]
 
-The launchd job (tools/launchd/com.nickmagnuson.jobsearch.morning-page.plist) runs it at
-07:00 and every 15 minutes until 19:00. It is written, not installed.
+The launchd job (tools/launchd/disarmed/com.nickmagnuson.jobsearch.morning-page.plist) runs
+it at 07:00 and every 15 minutes until 19:00. It is written, not installed.
 """
 from __future__ import annotations
 
@@ -129,13 +129,15 @@ def claude_read(root: Path, today: date) -> dict:
 
 # The next move is the OTHER side's: an awaited reply or read, a call they booked, a wait
 # after an interview. Matched in the Next Action cell, or in Stage when that cell is empty.
+# "scheduled" alone is not theirs: "to be scheduled" is Nick's move, and a booked call is on
+# the calendar block already (D5 review 838.F3, 842.F1).
 # "<Name> will reply" needs a named other person: "Will follow up Monday" and "I will send"
 # are Nick's own moves (D5 review 836.F1).
 THEIRS = re.compile(
     r"^(await|wait\b|waiting\b|ball (is )?on\b|pending (their|his|her)\b|their move)"
     r"|\b(?!(?:I|Nick|We)\b)[A-Z][\w'-]* (will (reply|respond|send|call|follow up|let)"
     r"|to (reply|respond) by|is to reply)\b"
-    r"|\bawaiting\b|\bscheduled\b|\bshe calls\b|\bhe calls\b|\bthey call\b",
+    r"|\bawaiting\b|\bshe calls\b|\bhe calls\b|\bthey call\b",
     re.I)
 
 

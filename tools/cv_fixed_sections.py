@@ -40,8 +40,12 @@ def fixed_skills(skill_text: str) -> str | None:
     return found[0].strip() if len(found) == 1 else None
 
 
-def entries(cv: dict) -> dict:
-    sections = ((cv or {}).get("cv") or {}).get("sections") or {}
+def entries(cv) -> dict:
+    """ADDITIONAL INFORMATION entries by label; {} for any shape that is not the CV mapping."""
+    top = cv.get("cv") if isinstance(cv, dict) else None
+    sections = top.get("sections") if isinstance(top, dict) else None
+    if not isinstance(sections, dict):
+        return {}
     out = {}
     for e in sections.get(SECTION) or []:
         if isinstance(e, dict) and "label" in e:

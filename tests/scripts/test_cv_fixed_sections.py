@@ -53,6 +53,8 @@ def test_each_problem(kw, needle):
 
 def test_entries_tolerates_odd_shapes():
     assert cfs.entries({}) == {} and cfs.entries(None) == {}
+    assert cfs.entries(["a", "list"]) == {} and cfs.entries({"cv": "text"}) == {}
+    assert cfs.entries({"cv": {"sections": ["x"]}}) == {}
     assert cfs.entries({"cv": {"sections": {"ADDITIONAL INFORMATION": ["text", {"x": 1}]}}}) == {}
 
 
