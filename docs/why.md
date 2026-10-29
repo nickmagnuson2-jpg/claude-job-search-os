@@ -24,7 +24,7 @@ Outbound communication runs through a voice system rather than a generic LLM. A 
 
 ### 3. Recurring errors become guardrails
 
-This is the part most setups skip. When you flag a tooling failure, it is logged to a friction ledger (`tools/friction_log.py`). A weekly background job (`tools/scan_promotion_candidates.py`, also run by `/memory-refresh`) lists recurring memory rules that have not yet been turned into a skill step or hook, and you decide which become one. The intent is a system that becomes more reliable the more it is used, because its recurring failures get converted into skill steps and hooks.
+This is the part most setups skip. When you flag a tooling failure, it is logged to a friction ledger (`tools/friction_log.py`). A weekly background job (`tools/scan_promotion_candidates.py`, also runnable by hand) lists recurring memory rules that have not yet been turned into a skill step or hook, and you decide which become one. The intent is a system that becomes more reliable the more it is used, because its recurring failures get converted into skill steps and hooks.
 
 ### 4. It enforces structurally, not by willpower
 

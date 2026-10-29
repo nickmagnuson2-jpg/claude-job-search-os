@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-pipeline_staleness.py — Pre-process pipeline staleness for /standup and /weekly-review.
+pipeline_staleness.py — Pre-process pipeline staleness for /standup.
 
 Reads: data/job-pipeline.md
 

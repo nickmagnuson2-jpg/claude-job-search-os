@@ -101,36 +101,13 @@ Five properties do the work, and each maps to a measured v1 failure:
 **Its known limit:** hole IDs are stable *within* a pass but no prior register is read back, so a
 second pass over the same artifact is not yet trustworthy. See the spec's status header.
 
-#### The superseded v1 body, kept for the reasoning that still holds
+#### The superseded v1 body (removed 2026-10-29)
 
-> ⚠️ **Everything from here to the end of this subsection describes the REPLACED round-based
-> design.** It sat under the §3b heading unmarked until 2026-08-21, so a reader following the
-> deprecation banner landed on round-based guidance. Do not implement from it. What still holds:
-> distinct critic lenses, a reviser allowed to reject with a reason, and no pass/fail certificate.
-
-Generate → critique → revise → **judge** → loop, stopping when a round surfaces no
-**new** blocking hole (or a round cap). The explicit stopping rule is what separates
-this from endless tinkering — but it must be a *delta* rule, not "until the judge is
-satisfied." Looping until a judge declares the artifact sound is anti-convergent by
-construction: every fix adds prose, new prose is new attack surface, and N fresh critics
-primed to attack will essentially always find something. Equally, **do not return a
-pass/fail certificate.** A self-reported "airtight" is a claim the panel makes about
-itself, and it has twice been wrong here — most recently certifying a spec that produced
-7 real defects on execution, two of which the panel had flagged as blocking in an earlier
-round and silently dropped. Return a *residual risk register* (each risk named, with a
-status and where to verify it) plus the repo-state claims nobody checked. That is always
-achievable and tells the executing agent where to look. Used here to harden a *plan* before executing it, but the shape
-generalizes to any artifact (a design, a doc, a piece of code).
-
-- **Use when:** an artifact is expensive to get wrong downstream (a plan that will
-  drive many commits; a spec).
-- **Key moves:** (a) multiple *distinct* critic lenses per round, not one generic
-  reviewer; (b) a reviser that is allowed to REJECT a critique with a reason (don't
-  cargo-cult every suggestion); (c) a **fresh** judge each round that re-reads the
-  artifact itself, not just trusts that holes were fixed; (d) a severity scheme so
-  only *blocking* holes gate convergence.
-- **Failure mode:** the reviser bloats the artifact fixing minor nits. Gate on
-  blocking-only; let major/minor accrue as a backlog.
+The round-based v1 text that sat here was collapsed to this pointer on 2026-10-29 (S14). It is
+in git history before that date. What still holds from it, and is all a reader needs: use
+distinct critic lenses, let the reviser reject a critique with a written reason, and return a
+residual risk register, never a pass/fail certificate. `.claude/workflows/plan-hardening.js`
+is parked as of the same date.
 
 ### 4. Extract → verify (structured data from a messy corpus)
 Pull structured records out of many unstructured sources (notes, logs, docs), one

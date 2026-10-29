@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-todos_summary.py — Pre-process job-todos.md for /standup and /weekly-review.
+todos_summary.py — Pre-process job-todos.md for /standup.
 
 Reads: data/job-todos.md, data/workbooks/_morning-starter-YYYY-MM-DD.md
 
@@ -27,7 +27,6 @@ Usage:
 """
 import argparse
 import json
-import re
 import sys
 from datetime import date, datetime
 from pathlib import Path
@@ -38,6 +37,7 @@ from pathlib import Path
 # scripts live in tools/; ensure that dir is importable regardless of cwd.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from todo_daily_metrics import parse_upcoming_scheduled  # noqa: E402
+import todo_read  # noqa: E402
 
 
 PRIORITY_RANK = {"high": 0, "med": 1, "medium": 1, "low": 2}
@@ -58,51 +58,24 @@ def read_file(path: Path) -> str:
         return ""
 
 
-def parse_date(s: str) -> date | None:
-    s = (s or "").strip()
-    m = re.search(r"(\d{4}-\d{2}-\d{2})", s)
-    if not m:
-        return None
-    try:
-        return datetime.strptime(m.group(1), "%Y-%m-%d").date()
-    except ValueError:
-        return None
+parse_date = todo_read.parse_date
 
 
 def parse_todos(content: str) -> list[dict]:
-    """Parse the | Task | Priority | Due | Status | Notes | table rows."""
-    todos = []
-    for line in content.splitlines():
-        if not line.startswith("|"):
-            continue
-        # Skip header + separator rows
-        if re.match(r"^\|\s*Task\s*\|", line) or re.match(r"^\|\s*-+\s*\|", line):
-            continue
-        cols = [c.strip() for c in line.split("|")[1:-1]]
-        if len(cols) < 4:
-            continue
-        task, priority, due, status = cols[0], cols[1], cols[2], cols[3]
-        notes = cols[4] if len(cols) > 4 else ""
-        if not task or task == "---":
-            continue
-        todos.append({
-            "task": task,
-            "priority": priority,
-            "priority_rank": PRIORITY_RANK.get(priority.lower().strip(), 3),
-            "due_raw": due,
-            "due_date": parse_date(due),
-            "status": status,
-            "notes": notes,
-        })
-    return todos
+    """Active-section rows through tools/todo_read.py, with this tool's ranking fields."""
+    return [{"task": r["task"], "priority": r["priority"],
+             "priority_rank": PRIORITY_RANK.get(r["priority"].lower().strip(), 3),
+             "due_raw": r["due"], "due_date": r["due_date"], "status": r["status"],
+             "notes": r["notes"], "row": r}
+            for r in todo_read.active_rows(content)]
 
 
 def rank_todos(todos: list[dict], today: date) -> list[dict]:
     """Sort by: overdue first, then priority, then due-date asc, then task order."""
-    pending = [t for t in todos if t["status"].lower() == "pending"]
+    pending = [t for t in todos if todo_read.is_open(t["row"])]
     for t in pending:
         d = t["due_date"]
-        t["is_overdue"] = bool(d and d < today)
+        t["is_overdue"] = todo_read.is_overdue(t["row"], today)
         t["is_due_today"] = bool(d and d == today)
         t["days_until_due"] = (d - today).days if d else None
 
@@ -128,7 +101,7 @@ def main():
     args = parse_args()
     root = Path(args.repo_root) if args.repo_root else Path.cwd()
     today = (datetime.strptime(args.target_date, "%Y-%m-%d").date()
-             if args.target_date else date.today())
+             if args.target_date else todo_read.logical_today())
 
     todos_path = root / "data" / "job-todos.md"
     content = read_file(todos_path)

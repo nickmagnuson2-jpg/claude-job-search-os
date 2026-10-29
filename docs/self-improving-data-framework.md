@@ -31,14 +31,13 @@ How the 11 behavioral patterns in the global CLAUDE.md snippet map to this proje
 **Project implementation:**
 - `.claude/skills/research-company/SKILL.md` — 14-day freshness check, auto-refresh, "What Changed" section
 - `.claude/skills/act/SKILL.md` — builds fresh dossier map from `Last updated:` headers
-- `.claude/skills/weekly-review/SKILL.md` — freshness reporting in weekly retrospectives
 
 ### 4. Longitudinal Logging
 
 **Global rule:** Append-only logs, newest-first, trend computation.
 
 **Project implementation:**
-- `.claude/skills/weekly-review/SKILL.md` — append-only with "Do not delete entries"
+- `.claude/skills/standup/SKILL.md` Step 2w — prepends the week's priorities to `data/weekly-review-log.md`, never deletes older entries
 - `.claude/skills/checkout/SKILL.md` — daily log snapshots to `data/job-todos-daily-log.md` (absorbed from `/todo daily` 2026-02-26)
 - `coaching/progress/_summary.md` — session scorecards
 - `coaching/anti-pattern-tracker.md` — Update Log section
@@ -79,7 +78,6 @@ How the 11 behavioral patterns in the global CLAUDE.md snippet map to this proje
 **Project implementation:**
 - `CLAUDE.md` Profile guard rule (Hard Rules) — stops generative skills if profile/goals are missing, with specific remediation instructions
 - `.claude/skills/standup/SKILL.md` — works with whatever data exists, notes gaps
-- `.claude/skills/weekly-review/SKILL.md` — generates baseline metrics on first run
 
 ### 9. Script-First for Deterministic Work
 

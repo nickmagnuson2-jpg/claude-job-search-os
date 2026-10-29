@@ -1,0 +1,6 @@
+{"target_date": "2026-01-07", "week_start": "2026-01-05",
+ "counts": {"sends": {"today": 3, "week": 8}, "replies": {"today": 1, "week": 2},
+  "calls": {"today": 1, "week": 1}, "applications": {"today": 0, "week": 1},
+  "pipeline_moves": {"today": 2, "week": 4}, "todos_closed": {"today": 4, "week": 9}},
+ "targets": {"applications": {"target": 5, "period": "week", "label": "Applications / week", "source": "data/goals.md Success Metrics"}},
+ "sources": {}, "complete": true}

@@ -409,7 +409,7 @@ def test_state_default_since_and_save(tmp_path):
 
 
 def _run_main(monkeypatch, repo, svc, *args):
-    monkeypatch.setattr(sac, "connect", lambda tools_dir: svc)
+    monkeypatch.setattr(sac, "connect", lambda tools_dir, persist=True: svc)
     return sac.main(["--repo-root", str(repo), *args])
 
 
@@ -452,7 +452,7 @@ def test_main_exits_1_when_a_message_errored(repo, monkeypatch, capsys):
 
 @pytest.mark.parametrize("exc", [SystemExit(1), RuntimeError("invalid_grant")])
 def test_auth_failure_exits_nonzero_and_never_prints_zero_flags(repo, monkeypatch, capsys, exc):
-    def boom(tools_dir):
+    def boom(tools_dir, persist=True):
         raise exc
     monkeypatch.setattr(sac, "connect", boom)
     rc = sac.main(["--repo-root", str(repo), "--json"])
@@ -462,7 +462,7 @@ def test_auth_failure_exits_nonzero_and_never_prints_zero_flags(repo, monkeypatc
 
 
 def test_bad_since_is_rejected_before_any_connection(repo, monkeypatch, capsys):
-    def never(tools_dir):
+    def never(tools_dir, persist=True):
         raise AssertionError("connected")
     monkeypatch.setattr(sac, "connect", never)
     assert sac.main(["--repo-root", str(repo), "--since", "10/01/2026"]) == 2
@@ -564,3 +564,86 @@ def test_a_logged_url_matches_whatever_its_letter_case(repo):
     build_log(repo, f"sent: {DAY} Casey Doe\n")
     assert check(repo, message(leaf("text/plain", "https://Acme-Demo.app/X"))) is None
 
+
+
+# --- --no-state writes nothing, including the Gmail token (S4 review, 102926 grok F1) ----
+
+def test_main_passes_persist_from_no_state(repo, monkeypatch, capsys):
+    seen = []
+    svc = FakeService({None: {"messages": []}}, {})
+
+    def fake(tools_dir, persist=True):
+        seen.append(persist)
+        return svc
+    monkeypatch.setattr(sac, "connect", fake)
+    sac.main(["--repo-root", str(repo), "--since", "2026-10-01", "--no-state"])
+    sac.main(["--repo-root", str(repo), "--since", "2026-10-01"])
+    assert seen == [False, True]
+
+
+def _fake_google(monkeypatch, creds):
+    import types
+    oc = types.ModuleType("google.oauth2.credentials")
+    oc.Credentials = types.SimpleNamespace(from_authorized_user_file=lambda path, scopes: creds)
+    tr = types.ModuleType("google.auth.transport.requests")
+    tr.Request = lambda: "request"
+    monkeypatch.setitem(sys.modules, "google.oauth2.credentials", oc)
+    monkeypatch.setitem(sys.modules, "google.auth.transport.requests", tr)
+
+
+class FakeCreds:
+    def __init__(self, valid, expired=True, refresh_token="r"):
+        self.valid, self.expired, self.refresh_token = valid, expired, refresh_token
+        self.refreshed = []
+
+    def refresh(self, req):
+        self.refreshed.append(req)
+
+
+def test_read_only_creds_refreshes_in_memory_and_leaves_the_token_file(tmp_path, monkeypatch):
+    tok = tmp_path / "gmail_token.json"
+    tok.write_text('{"token": "old"}')
+    before = tok.stat().st_mtime_ns
+    creds = FakeCreds(valid=False)
+    _fake_google(monkeypatch, creds)
+    assert sac.read_only_creds(tmp_path) is creds
+    assert creds.refreshed == ["request"]
+    assert tok.read_text() == '{"token": "old"}' and tok.stat().st_mtime_ns == before
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["gmail_token.json"]
+
+
+def test_read_only_creds_does_not_refresh_a_valid_token(tmp_path, monkeypatch):
+    (tmp_path / "gmail_token.json").write_text("{}")
+    creds = FakeCreds(valid=True)
+    _fake_google(monkeypatch, creds)
+    assert sac.read_only_creds(tmp_path) is creds and creds.refreshed == []
+
+
+@pytest.mark.parametrize("creds", [FakeCreds(valid=False, expired=False),
+                                   FakeCreds(valid=False, refresh_token=None)])
+def test_read_only_creds_raises_and_writes_no_alert(tmp_path, monkeypatch, creds):
+    (tmp_path / "tools").mkdir()
+    (tmp_path / "tools" / "gmail_token.json").write_text("{}")
+    _fake_google(monkeypatch, creds)
+    with pytest.raises(RuntimeError, match="cannot be refreshed"):
+        sac.read_only_creds(tmp_path / "tools")
+    assert not (tmp_path / "inbox").exists() and creds.refreshed == []
+
+
+def test_read_only_creds_without_a_token_raises(tmp_path, monkeypatch):
+    _fake_google(monkeypatch, FakeCreds(valid=True))
+    with pytest.raises(RuntimeError, match="no Gmail token"):
+        sac.read_only_creds(tmp_path)
+
+
+def test_connect_read_only_never_uses_the_writing_helper(monkeypatch):
+    import types
+    fake = types.ModuleType("googleapiclient.discovery")
+    fake.build = lambda name, ver, credentials: (name, ver, credentials)
+    monkeypatch.setitem(sys.modules, "googleapiclient.discovery", fake)
+
+    def writing(d):
+        raise AssertionError("get_or_refresh_creds writes the token")
+    monkeypatch.setattr(sac, "get_or_refresh_creds", writing)
+    monkeypatch.setattr(sac, "read_only_creds", lambda d: ("ro", d))
+    assert sac.connect(Path("/t"), persist=False) == ("gmail", "v1", ("ro", Path("/t")))

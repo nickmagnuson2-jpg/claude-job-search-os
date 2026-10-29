@@ -75,7 +75,6 @@
   "tools/inbox_drain_apply.py": "pre-existing at 2026-10-23, convert when next touched",
   "tools/inbox_extract.py": "pre-existing at 2026-10-23, convert when next touched",
   "tools/inbox_lock.py": "pre-existing at 2026-10-23, convert when next touched",
-  "tools/inbox_triage.py": "pre-existing at 2026-10-23, convert when next touched",
   "tools/job_quiesce.py": "pre-existing at 2026-10-23, convert when next touched",
   "tools/ledger_diff.py": "pre-existing at 2026-10-23, convert when next touched",
   "tools/linkedin_post_readout.py": "pre-existing at 2026-10-23, convert when next touched",
@@ -115,6 +114,7 @@
   "tools/scan_promotion_candidates.py": "pre-existing at 2026-10-23, convert when next touched",
   "tools/scorer_eval.py": "pre-existing at 2026-10-23, convert when next touched",
   "tools/scoring_probe.py": "pre-existing at 2026-10-23, convert when next touched",
+  "tools/sf_property_records.py": "Another session's read-only CLI, committed as-is on 2026-10-28 (a739f0a). Its '### <dataset> (N rows)' headers print row counts that are silently capped at the query $limit (200 per dataset, 5 for the parcel lookup), which is exactly the reach gap count_report exists to close. Convert to count_report (population unknown, so state the limit as the reach) when next touched.",
   "tools/slide_check.py": "pre-existing at 2026-10-23, convert when next touched",
   "tools/source_check.py": "pre-existing at 2026-10-23, convert when next touched",
   "tools/source_corrections.py": "pre-existing at 2026-10-23, convert when next touched",
@@ -128,5 +128,7 @@
   "tools/webset_discover.py": "pre-existing at 2026-10-23, convert when next touched",
   "tools/wispr_pull.py": "pre-existing at 2026-10-23, convert when next touched",
   "tools/workstream_probe.py": "pre-existing at 2026-10-23, convert when next touched",
-  "tools/workstream_state.py": "pre-existing at 2026-10-23, convert when next touched"
+  "tools/workstream_state.py": "pre-existing at 2026-10-23, convert when next touched",
+  "tools/morning_page.py": "renders counts that day_check.py and the read-only collector already computed into one HTML page; it counts nothing itself, and day_check's docstring states each count's rule and source. Added 2026-10-29.",
+  "tools/cv_fixed_sections.py": "prints a pass/fail verdict on two fixed CV sections; it counts nothing. Added 2026-10-29."
 }

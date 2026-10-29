@@ -994,3 +994,49 @@ def test_set_status_finds_a_row_by_its_artifact_cell(tmp_path):
     assert code == 0
     assert "| Bounced |" in log.read_text(encoding="utf-8")
 
+
+
+def test_closed_is_a_known_terminal_sent_status():
+    """Todo #120: a resolved thread can be marked Closed, and Closed counts as sent."""
+    import outreach_status as _os
+    assert "Closed" in _os.KNOWN_STATUSES and "Closed" in _os.SENT_STATUSES
+    assert "Closed" not in _os.RECEIPT_STATUSES and "Closed" not in _os.OPEN_STATUSES
+
+
+def test_a_closed_thread_awaits_nothing(tmp_path):
+    """10a review 849.F1: Closed is terminal, so awaiting_reply is False."""
+    log = make_log(tmp_path, [
+        "| 2026-01-05 | cold-outreach | email | Jane Doe | Acme Corp | Cold intro | Closed |",
+    ])
+    code, out = query("--recipient", "Jane Doe", "--log", log)
+    assert code == 0 and (out["sent"], out["awaiting_reply"]) == (True, False)
+
+
+def test_a_later_send_reopens_a_closed_thread(tmp_path):
+    log = make_log(tmp_path, [
+        "| 2026-01-05 | cold-outreach | email | Jane Doe | Acme Corp | Cold intro | Closed |",
+        "| 2026-02-05 | follow-up | email | Jane Doe | Acme Corp | New angle | Sent |",
+    ])
+    code, out = query("--recipient", "Jane Doe", "--log", log)
+    assert code == 0 and out["awaiting_reply"] is True
+
+
+# A Replied or Closed row ends that loop; a later send opens a new one (review
+# 2026-10-29: "a Replied anywhere" meant one reply in May cleared every later send).
+
+def test_a_send_after_an_old_reply_awaits_again(tmp_path):
+    log = make_log(tmp_path, [
+        "| 2026-05-07 | follow-up | email | Jane Doe | Acme Corp | First note | Replied |",
+        "| 2026-10-07 | follow-up | email | Jane Doe | Acme Corp | Re-engagement | Sent |",
+    ])
+    _, out = query("--recipient", "Jane Doe", "--log", log)
+    assert out["awaiting_reply"] is True
+
+
+def test_a_reply_after_the_last_send_still_clears_it(tmp_path):
+    log = make_log(tmp_path, [
+        "| 2026-10-07 | follow-up | email | Jane Doe | Acme Corp | Re-engagement | Sent |",
+        "| 2026-10-09 | follow-up | email | Jane Doe | Acme Corp | Her answer | Replied |",
+    ])
+    _, out = query("--recipient", "Jane Doe", "--log", log)
+    assert out["awaiting_reply"] is False

@@ -205,6 +205,9 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--repo-root", type=Path, default=REPO_ROOT)
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--due", action="store_true", help="list only records at 2+ and still open")
+    ap.add_argument("--summary", action="store_true",
+                    help="with --json: the per-lane counts and due_total only, no records "
+                         "(what standup_collect reads)")
     args = ap.parse_args(argv)
 
     if not args.memory_dir.is_dir():
@@ -212,7 +215,9 @@ def main(argv: list[str]) -> int:
         return 1
     report = collect(args.repo_root, args.memory_dir)
 
-    if args.json:
+    if args.json and args.summary:
+        print(json.dumps({k: report[k] for k in ("total", "lanes", "due_total")}, indent=2))
+    elif args.json:
         print(json.dumps(report, indent=2))
     elif args.due:
         for r in report["records"]:

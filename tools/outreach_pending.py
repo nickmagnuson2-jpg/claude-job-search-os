@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-outreach_pending.py — Pre-process outreach follow-up status for /standup and /weekly-review.
+outreach_pending.py — Pre-process outreach follow-up status for /standup.
 
 Reads: data/outreach-log.md, data/networking.md, data/job-pipeline.md
 
@@ -12,7 +12,8 @@ from the awaiting-response lists (still counted in stats).
 Outputs JSON to stdout with keys:
   awaiting_response[]           — outreach with no reply, not yet overdue
   awaiting_response_overdue[]   — outreach with no reply, overdue (>=threshold days)
-  recent_outreach{}             — {sent, replied, no_reply, response_rate_percent}
+  recent_outreach{}             — {sent, replied, no_reply, closed, response_rate_percent}
+                                  ("Closed" is a resolved thread: counted, never awaiting)
 
 Usage:
   python3 tools/outreach_pending.py [--days-threshold-overdue N] [--lookback-days N]
@@ -170,6 +171,7 @@ def parse_outreach_log(content: str, today: date, lookback_days: int,
     sent_count = 0
     replied_count = 0
     no_reply_count = 0
+    closed_count = 0
     awaiting = []
     awaiting_overdue = []
 
@@ -205,6 +207,9 @@ def parse_outreach_log(content: str, today: date, lookback_days: int,
 
         if effective_status.lower() in ("replied", "reply"):
             replied_count += 1
+        elif effective_status.lower() == "closed":
+            # Sent and resolved (todo #120): counted in the stats, never awaiting.
+            closed_count += 1
         elif effective_status.lower() in ("no reply", "no_reply", "noreply"):
             no_reply_count += 1
             if suppress_awaiting:
@@ -253,7 +258,7 @@ def parse_outreach_log(content: str, today: date, lookback_days: int,
     sanity_warnings = []
     if replied_count > sent_count:
         sanity_warnings.append(f"replied ({replied_count}) > sent ({sent_count})")
-    if replied_count + no_reply_count > sent_count:
+    if replied_count + no_reply_count + closed_count > sent_count:
         sanity_warnings.append(
             f"replied+no_reply ({replied_count + no_reply_count}) > sent ({sent_count})")
     if response_rate is not None and not (0 <= response_rate <= 100):
@@ -266,6 +271,7 @@ def parse_outreach_log(content: str, today: date, lookback_days: int,
             "sent": sent_count,
             "replied": replied_count,
             "no_reply": no_reply_count,
+            "closed": closed_count,
             "response_rate_percent": response_rate,
             "sanity_warnings": sanity_warnings,
         },

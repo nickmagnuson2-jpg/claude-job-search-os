@@ -31,6 +31,10 @@ Usage:
 --since defaults to the date the state file records (the last run's date, or the oldest
 unresolved flag's date, so a flag is shown again until it is resolved), else 7 days back.
 
+--no-state writes nothing at all: no state file, and an expired Gmail token is refreshed in
+memory only (no token-file rewrite, no inbox/GMAIL-AUTH-FAILURE.md on failure). The
+read-only collector (standup_collect.py --read-only) relies on this.
+
 Exit codes: 0 scanned; 1 scanned with per-message errors (see `errors`); 2 auth or setup
 failure (nothing printed on stdout: an auth failure must never read as "0 flags").
 """
@@ -49,7 +53,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from count_report import format_line  # noqa: E402
 from gmail_attachments import walk_parts  # noqa: E402
-from gmail_fetch import _extract_header, get_or_refresh_creds  # noqa: E402
+from gmail_fetch import SCOPES, _extract_header, get_or_refresh_creds  # noqa: E402
 
 STATE_NAME = ".sent-artifact-state.json"
 BIO_NAME = ".sent-artifact-bio.json"
@@ -349,9 +353,32 @@ def build_context(repo_root: Path) -> dict:
             "sent_texts": build_log_sent_texts(repo_root), "errors": [err] if err else []}
 
 
-def connect(tools_dir: Path):
+def read_only_creds(tools_dir: Path):
+    """Credentials for a run that must write nothing (--no-state, the page's 15-minute render).
+
+    gmail_fetch.get_or_refresh_creds rewrites tools/gmail_token.json after a refresh and
+    writes inbox/GMAIL-AUTH-FAILURE.md when one fails. Both are right for the fetcher and
+    wrong here. This loads the same token, refreshes an expired one in memory only, and on
+    any failure raises, which main() reports as exit 2 with nothing written.
+    """
+    from google.auth.transport.requests import Request
+    from google.oauth2.credentials import Credentials
+    token_path = tools_dir / "gmail_token.json"
+    if not token_path.exists():
+        raise RuntimeError(f"no Gmail token at {token_path}; run gmail_fetch.py --auth")
+    creds = Credentials.from_authorized_user_file(str(token_path), SCOPES)
+    if not creds.valid:
+        if not (creds.expired and creds.refresh_token):
+            raise RuntimeError("Gmail token invalid and cannot be refreshed; "
+                               "run gmail_fetch.py --auth")
+        creds.refresh(Request())  # in memory; the token file is not touched
+    return creds
+
+
+def connect(tools_dir: Path, persist: bool = True):
     from googleapiclient.discovery import build
-    return build("gmail", "v1", credentials=get_or_refresh_creds(tools_dir))
+    creds = get_or_refresh_creds(tools_dir) if persist else read_only_creds(tools_dir)
+    return build("gmail", "v1", credentials=creds)
 
 
 def main(argv=None) -> int:
@@ -359,7 +386,8 @@ def main(argv=None) -> int:
     ap.add_argument("--repo-root", default=".")
     ap.add_argument("--since", help="YYYY-MM-DD (default: from the state file, else 7 days)")
     ap.add_argument("--json", action="store_true")
-    ap.add_argument("--no-state", action="store_true", help="do not update the state file")
+    ap.add_argument("--no-state", action="store_true",
+                    help="write nothing: no state file, no token write, no auth-failure alert")
     a = ap.parse_args(argv)
     root = Path(a.repo_root).resolve()
     tools_dir = root / "tools"
@@ -372,7 +400,7 @@ def main(argv=None) -> int:
         print(f"ERROR: --since must be YYYY-MM-DD, got {since!r}", file=sys.stderr)
         return 2
     try:
-        service = connect(tools_dir)
+        service = connect(tools_dir, persist=not a.no_state)
         ctx = build_context(root)
         result = scan(service, ctx, since)
     except (Exception, SystemExit) as e:

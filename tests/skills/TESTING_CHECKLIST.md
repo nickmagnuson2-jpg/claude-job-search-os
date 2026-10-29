@@ -58,12 +58,6 @@
 2. **Empty todos** — no active or completed items
 3. **First run** — no daily log file exists yet
 
-### `/weekly-review`
-
-1. **Normal run** — daily log has entries from the past 7+ days
-2. **No daily log** — falls back to raw todo file correctly
-3. **Mixed week** — some days with log entries, some without
-
 ### `/standup`
 
 1. **Normal run** — all files populated

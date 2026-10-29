@@ -589,3 +589,72 @@ def test_reply_flip_on_a_same_date_tie_marks_the_later_row(tmp_path):
     rows = (tmp_path / "data/outreach-log.md").read_text(encoding="utf-8").splitlines()[-2:]
     assert rows[0].endswith("| Sent |") and rows[1].endswith("| Replied |")
 
+
+
+@pytest.mark.parametrize("summary, replied", [
+    ("I haven't heard back", False),
+    ("Sam never replied", False),
+    ("No reply from Sam yet", False),
+    ("she hasn’t responded", False),
+    ("She replied yesterday", True),
+    ("Heard back from Sam: yes to Tuesday", True),
+])
+def test_reply_received_respects_negation(summary, replied):
+    """Review 2026-10-29: a negated note wrote Replied into the outreach log."""
+    sys.path.insert(0, str(TOOLS_DIR))
+    import networking_write as nw
+    assert nw.reply_received(summary) is replied
+
+
+@pytest.mark.parametrize("summary, replied", [
+    ("no worries, replied yesterday", True),
+    ("not interested, she replied", True),
+    ("She replied, hasn't heard from the HM", True),
+    ("she won't reply", False),
+    ("still waiting to hear back", False),
+])
+def test_negation_is_scoped_to_the_reply_word(summary, replied):
+    """Round 2, 2026-10-29: an unscoped negator swallowed real replies."""
+    sys.path.insert(0, str(TOOLS_DIR))
+    import networking_write as nw
+    assert nw.reply_received(summary) is replied
+
+
+def test_an_explicit_inbound_note_outranks_a_negation_inside_it():
+    sys.path.insert(0, str(TOOLS_DIR))
+    import networking_write as nw
+    assert nw.reply_received("INBOUND 4:46am, a bump on a prior unanswered message") is True
+    assert nw.reply_received("Inbound 8:55am, replying to the question: no reply needed") is True
+
+
+def test_cutting_a_negation_never_removes_an_outbound_marker():
+    sys.path.insert(0, str(TOOLS_DIR))
+    import networking_write as nw
+    assert nw.reply_received("Follow-up #2 sent: reply in the thread. No reply to the 10/2 note.") is False
+
+
+@pytest.mark.parametrize("summary", ["haven't got a reply", "never got a reply from Sam",
+                                     "didn't get a response", "has not received a reply"])
+def test_got_and_received_forms_are_negated(summary):
+    """Round 3 (Grok), 2026-10-29: 'got a reply' after a negator wrote Replied."""
+    sys.path.insert(0, str(TOOLS_DIR))
+    import networking_write as nw
+    assert nw.reply_received(summary) is False
+
+
+@pytest.mark.parametrize("summary", ["still waiting for a reply", "Sent cold text. Awaiting reply.",
+                                     "waiting on a response from Sam", "still waiting on her reply"])
+def test_waiting_and_awaiting_forms_are_negated(summary):
+    """Round 4 (Codex + Grok), 2026-10-29."""
+    sys.path.insert(0, str(TOOLS_DIR))
+    import networking_write as nw
+    assert nw.reply_received(summary) is False
+
+
+@pytest.mark.parametrize("summary", ["nobody has replied", "nobody has heard back",
+                                     "no one has ever responded", "not the reply I hoped for"])
+def test_auxiliary_fillers_are_negated(summary):
+    """Round 5 (Grok), 2026-10-29."""
+    sys.path.insert(0, str(TOOLS_DIR))
+    import networking_write as nw
+    assert nw.reply_received(summary) is False

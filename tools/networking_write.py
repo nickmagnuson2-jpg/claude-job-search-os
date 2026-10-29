@@ -71,16 +71,39 @@ INBOUND_SUBJECT_MARKERS = (
 )
 
 
+# A note that records the ABSENCE of a reply ("haven't heard back", "No reply from Sam",
+# "never responded"). Checked first: writing Replied for a non-reply is the worse error.
+# The ONE definition: tools/day_check.py imports it, so the writer and that reader cannot
+# disagree on what a reply is (review 2026-10-29: day_check knew "hasn't" but not
+# "haven't", and this writer had no negation at all).
+REPLY_NEGATION = re.compile(
+    r"\b(?:no|never|not|nobody|no one|without|yet to|still waiting(?: to| for| on)?|awaiting|waiting (?:for|on)|"
+    r"(?:has|have|had|did|does|do|is|was|were)n['\u2019]?t|won['\u2019]?t|can['\u2019]?t)"
+    r"(?:\s+(?:yet|a|any|been|heard|to|got|get|gotten|received|had|her|his|their|my|has|have|the|ever|even|actually|really))*\s+"
+    r"(?:repl|respon|hear back|heard back|heard|wrote back|got back|called back|texted back)\w*",
+    re.IGNORECASE)
+# The negator must sit directly on the reply word (a few filler words, no comma or
+# clause break): "no worries, replied yesterday" is a reply (round 2, 2026-10-29).
+
+
 def reply_received(summary: str) -> bool:
     """Heuristic: did the RECIPIENT reply (→ flip outreach-log to Replied)?
 
     Order matters: an explicit inbound subject ("she replied") wins; an outbound
     marker ("replied to her") suppresses; otherwise fall back to the bare signals.
     """
-    s = summary.lower()
+    # An explicit inbound note outranks any negation inside it, the same order as
+    # day_check ("INBOUND 4:46am, a bump on a prior unanswered message").
+    if re.match(r"\s*(inbound|reply from)\b", summary, re.I) or re.search(r"\bINBOUND\b", summary):
+        return True
+    # Cut the negated phrases out, then judge what is left: "She replied, hasn't heard
+    # from the HM" is still a reply; "No reply from Sam yet" is not.
+    s = REPLY_NEGATION.sub(" ", summary.lower())
     if any(m in s for m in INBOUND_SUBJECT_MARKERS):
         return True
-    if any(m in s for m in OUTBOUND_REPLY_MARKERS):
+    # Outbound markers are read from the ORIGINAL text: cutting "No reply to the 10/2
+    # note" must not also cut the outbound marker "reply to" (round 2 live diff).
+    if any(m in summary.lower() for m in OUTBOUND_REPLY_MARKERS):
         return False
     return any(sig in s for sig in REPLY_SIGNALS)
 
