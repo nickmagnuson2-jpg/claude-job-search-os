@@ -36,3 +36,11 @@ def test_checkout_never_skips_a_missing_week_silently():
     skill = (Path(__file__).resolve().parents[2] / ".claude/skills/checkout/SKILL.md").read_text()
     assert "Skip the weekly priority cross-reference silently" not in skill
     assert "No weekly priorities on file for this week" in skill
+
+
+def test_checkout_uses_only_this_weeks_entry():
+    """Round 7 (Grok), 2026-10-29: checkout read the NEWEST Top 5 with no week check, so a
+    missed Monday write silently starred last week's priorities."""
+    skill = (REPO / ".claude/skills/checkout/SKILL.md").read_text(encoding="utf-8")
+    assert "### Week of YYYY-MM-DD" in skill
+    assert "never star last week's priorities" in skill

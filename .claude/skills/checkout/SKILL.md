@@ -289,6 +289,7 @@ From the current Active to-dos in `data/job-todos.md`, rank tomorrow's top 3:
 
 **Cross-reference with this week's priorities:**
 - Read the most recent Top 5 from `data/weekly-review-log.md`: the newest `#### Top 5 Priorities for Coming Week` section (this exact heading; Monday's `/standup` Step 2w writes it, and entries from the deleted `/weekly-review` used the same one).
+- **Use it only if it is this week's.** The entry's `### Week of YYYY-MM-DD` header must name this week's Monday. If the newest entry is from an earlier week, treat it as no entry (see Edge Cases: say so in one line); never star last week's priorities.
 - For each item in the Top 5 that hasn't been completed (not in the Done section of today's log), annotate it in the top 3 list if it matches — add `(⭐ weekly priority)`.
 
 **Display:** Show 3 items maximum. For each: the task, priority, due date (if set), and a brief "why" (overdue / priority / weekly goal).
