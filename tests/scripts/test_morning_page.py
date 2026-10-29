@@ -158,6 +158,8 @@ def test_commonplace_rotates_one_a_day(tmp_path):
 
 # --- public safety -----------------------------------------------------------------------
 
+@pytest.mark.skipif(not (TOOLS / ".pii-denylist.txt").exists(),
+                    reason="no PII denylist in this checkout (gitignored; run tools/gen_pii_denylist.py)")
 def test_demo_fixtures_pass_the_pii_denylist_scan():
     files = sorted(str(p) for p in FIX.glob("*.json"))
     assert files, "no fixtures"
@@ -385,3 +387,15 @@ def test_the_page_shows_waiting_on_them_in_block_3():
     assert "and 2 more" in _section(page, "b3")
     src.pop("waiting_on_them")
     assert "Pipeline unavailable: not read" in _section(mp.render(mp.build_view(src, NOW), NOW, demo=True), "b3")
+
+
+@pytest.mark.parametrize("nxt,theirs", [
+    ("Will follow up Monday", False), ("I will send the deck", False), ("Nick will call back", False),
+    ("Emily will reply by Thu", True), ("Emily to reply by EOD", True), ("Await Sam's times", True),
+])
+def test_will_needs_a_named_other_person(nxt, theirs):
+    assert bool(mp.THEIRS.search(nxt)) is theirs
+
+
+def test_a_short_window_scrolls_instead_of_clipping():
+    assert "@media (max-height:760px){body{overflow:auto}" in demo_html()
