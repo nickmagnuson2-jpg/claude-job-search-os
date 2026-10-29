@@ -170,7 +170,7 @@ def test_a_block_decided_under_the_rule_after_signing_is_not_applied(repo, monke
     assert code == 0 and out["blocks_to_remove"] == 1
     assert out["stale_approvals_ignored"] == [{"rule_id": dlog.rule_id("drips"),
                                                "added": [repo["blocks"][2]["block_id"]],
-                                               "missing": []}]
+                                               "missing": [], "changed_command": []}]
     assert "keep me" in _inbox(repo) and "drip one" in _inbox(repo)
     assert "dentist" not in _inbox(repo)
 
@@ -187,7 +187,7 @@ def test_nothing_signed_reports_the_blocks_it_left_out(repo, monkeypatch, capsys
     assert code == 1 and out["code"] == "nothing_approved"
     assert out["stale_approvals_ignored"] == [{"rule_id": dlog.rule_id("drips"),
                                                "added": [repo["blocks"][2]["block_id"]],
-                                               "missing": [repo["blocks"][0]["block_id"]]}]
+                                               "missing": [repo["blocks"][0]["block_id"]], "changed_command": []}]
     assert _inbox(repo) == INBOX
 
 
@@ -204,7 +204,7 @@ def test_a_signed_block_moved_to_another_rule_voids_the_rest(repo, monkeypatch, 
     code, out = _run(repo, monkeypatch, capsys, "--apply")
     assert code == 1 and out["code"] == "nothing_approved"
     assert out["stale_approvals_ignored"] == [{"rule_id": dlog.rule_id("drips"), "added": [],
-                                               "missing": [repo["blocks"][2]["block_id"]]}]
+                                               "missing": [repo["blocks"][2]["block_id"]], "changed_command": []}]
     assert _inbox(repo) == INBOX
 
 
@@ -324,4 +324,42 @@ def test_an_approval_whose_blocks_all_left_the_rule_is_reported_stale(repo, monk
     code, out = _run(repo, monkeypatch, capsys, "--apply")
     assert code == 1 and out["code"] == "nothing_approved"
     assert out["stale_approvals_ignored"] == [{"rule_id": dlog.rule_id("drips"), "added": [],
-                                               "missing": [repo["blocks"][0]["block_id"]]}]
+                                               "missing": [repo["blocks"][0]["block_id"]], "changed_command": []}]
+
+
+def test_a_signed_block_re_decided_with_a_new_command_voids_the_approval(repo, monkeypatch, capsys):
+    """The signature covers each block's command, not only its id (788.F2, 2026-10-28)."""
+    _decide(repo)
+    _approve(repo, rules=("todos",))
+    p = repo["root"] / dlog.LOG_REL
+    rows = [json.loads(l) for l in p.read_text().splitlines()]
+    # Same block, same rule, a different command after signing.
+    p.write_text(p.read_text() + json.dumps(
+        {**rows[1], "writer_invocation": 'PYTHONIOENCODING=utf-8 python3 tools/todo_write.py add "something else" --repo-root .'}) + "\n")
+    code, out = _run(repo, monkeypatch, capsys, "--apply")
+    assert code == 1 and out["code"] == "nothing_approved"
+    assert out["stale_approvals_ignored"] == [{"rule_id": dlog.rule_id("todos"), "added": [],
+                                               "missing": [],
+                                               "changed_command": [repo["blocks"][1]["block_id"]]}]
+    assert _inbox(repo) == INBOX
+    assert not (repo["root"] / "routed.jsonl").exists()
+
+
+def test_the_signature_covers_the_commands(repo):
+    """Editing a stored command breaks the signature itself, not only the unit check."""
+    _decide(repo)
+    _approve(repo, rules=("todos",))
+    row = json.loads((repo["root"] / dlog.APPROVALS_REL).read_text().splitlines()[-1])
+    bid = repo["blocks"][1]["block_id"]
+    assert row["block_commands"] == {bid: 'PYTHONIOENCODING=utf-8 python3 tools/todo_write.py add "call the dentist" --repo-root .'}
+    assert sig.verify(sig.payload(row), row["signature"], sig.ALLOWED_SIGNERS)
+    row["block_commands"][bid] = "rm -rf ."
+    assert not sig.verify(sig.payload(row), row["signature"], sig.ALLOWED_SIGNERS)
+
+
+def test_an_approval_signed_without_commands_is_stale():
+    a = {"rule_id": "r", "block_ids": ["b1"], "block_commands": None}
+    rows = [{"block_id": "b1", "writer_invocation": ""}]
+    assert apply.approval_staleness(a, rows) == {"rule_id": "r", "added": [], "missing": [],
+                                                 "changed_command": ["b1"]}
+    assert apply.approval_staleness({**a, "block_commands": {"b1": ""}}, rows) is None

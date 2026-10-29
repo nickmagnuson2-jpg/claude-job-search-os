@@ -48,7 +48,7 @@ import approval_signing  # noqa: E402
 import inbox_lock  # noqa: E402
 from inbox_census import census  # noqa: E402
 from inbox_decision_log import (  # noqa: E402
-    APPROVALS_REL, LOG_REL, cohort_id, current_log, load_approvals, rule_id,
+    APPROVALS_REL, LOG_REL, approval_staleness, current_log, load_approvals, unit_id,
 )
 import datetime as _dt  # noqa: E402
 
@@ -207,19 +207,14 @@ def approved_rows(root: Path, approvals: dict) -> tuple[list[dict], dict, list]:
     """
     members: dict = {}
     for r in current_log(root):
-        # A bulk row is approved by its RULE text; an individual row by its
-        # (destination, confidence) COHORT, because it has no rule to approve.
-        rid = (rule_id(r["bulk_rule"]) if r["mode"] == "bulk"
-               else cohort_id(r["destination"], r["confidence"]))
+        rid = unit_id(r)
         if rid in approvals:
             members.setdefault(rid, []).append(r)
     rows, tally, stale = [], {}, []
     for rid, rs in members.items():
-        signed = set(approvals[rid].get("block_ids") or [])
-        now = {r["block_id"] for r in rs}
-        if now != signed:
-            stale.append({"rule_id": rid, "added": sorted(now - signed),
-                          "missing": sorted(signed - now)})
+        s = approval_staleness(approvals[rid], rs)
+        if s:
+            stale.append(s)
             continue
         for r in rs:
             rows.append({**r, "rule_id": rid})
@@ -228,8 +223,7 @@ def approved_rows(root: Path, approvals: dict) -> tuple[list[dict], dict, list]:
             tally[rid]["blocks"] += 1
     for rid in approvals:
         if rid not in members:
-            stale.append({"rule_id": rid, "added": [],
-                          "missing": sorted(approvals[rid].get("block_ids") or [])})
+            stale.append(approval_staleness(approvals[rid], []))
     return rows, tally, stale
 
 

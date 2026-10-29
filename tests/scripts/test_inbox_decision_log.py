@@ -216,6 +216,23 @@ def test_status_counts_and_signed_approval(root, capsys, signer):
     assert s["unsigned_approvals_ignored"] == []
 
 
+def test_status_does_not_count_a_stale_signed_approval(root, capsys, signer):
+    """Status reads the same unit check as the applier (798.F1): a block added under a
+    signed rule after signing voids the approval here too."""
+    append(root, [good(mode="bulk", bulk_rule="drips")])
+    dlog.cmd_approve(root, [dlog.rule_id("drips")], "", sign=signer)
+    append(root, [good("L00005-b", producer="agent_drips", mode="bulk", bulk_rule="drips")])
+    capsys.readouterr()
+    dlog.cmd_status(root)
+    s = json.loads(capsys.readouterr().out)
+    rule, = s["bulk_rules"]
+    assert rule["approved"] is False and rule["blocks"] == 2
+    assert s["blocks_under_approved_rules"] == 0
+    assert s["stale_approvals_ignored"] == [{"rule_id": dlog.rule_id("drips"),
+                                             "added": ["L00005-b"], "missing": [],
+                                             "changed_command": []}]
+
+
 def test_status_does_not_count_an_unsigned_approval(root, capsys, signer):
     append(root, [good(), good("L00005-b", producer="agent_drips", mode="bulk", bulk_rule="d")])
     dlog.cmd_approve(root, ["ind:delete:high"], "", sign=lambda b: "forged")

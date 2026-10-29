@@ -217,13 +217,11 @@ def cmd_approve(root: Path, rule_ids: list[str], note: str, sign=None) -> None:
     log = current_log(root)
     if not log:
         fail("no decisions logged yet", "empty_log")
-    by_rule = {}
+    by_rule, commands = {}, {}
     for r in log:
-        if r["mode"] == "bulk":
-            by_rule.setdefault(rule_id(r["bulk_rule"]), []).append(r["block_id"])
-        else:
-            by_rule.setdefault(cohort_id(r["destination"], r["confidence"]),
-                               []).append(r["block_id"])
+        rid = unit_id(r)
+        by_rule.setdefault(rid, []).append(r["block_id"])
+        commands.setdefault(rid, {})[r["block_id"]] = r.get("writer_invocation") or ""
 
     unknown = [r for r in rule_ids if r not in by_rule]
     if unknown:
@@ -241,6 +239,7 @@ def cmd_approve(root: Path, rule_ids: list[str], note: str, sign=None) -> None:
             "approved_by": approval_signing.PRINCIPAL,
             "blocks": len(by_rule[rid]),
             "block_ids": by_rule[rid],
+            "block_commands": commands[rid],
             "note": note,
             "executed": False,
         }
@@ -258,6 +257,34 @@ def cmd_approve(root: Path, rule_ids: list[str], note: str, sign=None) -> None:
     print(json.dumps({"status": "ok", "approved": rule_ids,
                       "blocks_covered": sum(len(by_rule[r]) for r in rule_ids)},
                      ensure_ascii=False))
+
+
+def unit_id(r: dict) -> str:
+    """The approval unit a decision belongs to: its RULE for a bulk row, its
+    (destination, confidence) COHORT for an individual row, which has no rule."""
+    return (rule_id(r["bulk_rule"]) if r["mode"] == "bulk"
+            else cohort_id(r["destination"], r["confidence"]))
+
+
+def approval_staleness(approval: dict, rows: list[dict]) -> dict | None:
+    """None when a signed approval still describes its unit exactly, else what changed.
+
+    The signature covers the unit's block_ids and each block's command. The approval
+    applies only while the blocks now decided under the unit are exactly those, each with
+    the command that was signed. A block added, removed, or re-decided with a new command
+    voids the whole approval (final-g4 F1, final-r2-g4 F1, 788.F2). An approval with no
+    block_commands, signed before the field existed, matches no command and is stale.
+    One copy, read by inbox_drain_apply and by cmd_status, so the two cannot disagree (798.F1).
+    """
+    signed = set(approval.get("block_ids") or [])
+    cmds = approval.get("block_commands") or {}
+    now = {r["block_id"] for r in rows}
+    changed = sorted(r["block_id"] for r in rows
+                     if r["block_id"] in signed and cmds.get(r["block_id"]) != (r.get("writer_invocation") or ""))
+    if now == signed and not changed:
+        return None
+    return {"rule_id": approval.get("rule_id"), "added": sorted(now - signed),
+            "missing": sorted(signed - now), "changed_command": changed}
 
 
 def current_log(root: Path) -> list[dict]:
@@ -320,6 +347,17 @@ def cmd_status(root: Path) -> None:
         e["approved"] = bool(a)
         e["approved_by"] = a["approved_by"] if a else None
         e["executed"] = a.get("executed", False) if a else False
+    members = {}
+    for r in log:
+        members.setdefault(unit_id(r), []).append(r)
+    stale = []
+    for e in list(rules.values()) + list(cohorts.values()):
+        a = approvals.get(e["rule_id"])
+        if a:
+            s = approval_staleness(a, members.get(e["rule_id"], []))
+            if s:
+                e["approved"] = False
+                stale.append(s)
     approved_blocks = (sum(e["blocks"] for e in rules.values() if e["approved"])
                        + sum(e["blocks"] for e in cohorts.values() if e["approved"]))
 
@@ -342,6 +380,7 @@ def cmd_status(root: Path) -> None:
         "individual_cohorts": sorted(cohorts.values(), key=lambda e: -e["blocks"]),
         "blocks_under_approved_rules": approved_blocks,
         "unsigned_approvals_ignored": unsigned,
+        "stale_approvals_ignored": stale,
         "blocks_awaiting_a_decision": len(log) - approved_blocks,
         "executed_any": any(e["executed"] for e in rules.values()),
     }, ensure_ascii=False, indent=2))

@@ -39,7 +39,11 @@ ALLOWED_SIGNERS = Path.home() / ".ssh" / "allowed_signers"
 AGENT_SOCKET = (Path.home() / "Library/Containers/com.maxgoedjen.Secretive.SecretAgent"
                 / "Data/socket.ssh")
 # The fields a signature covers. Changing any of them after signing breaks the signature.
-SIGNED_FIELDS = ("rule_id", "block_ids", "approved_at", "approved_by", "note")
+# block_commands maps each signed block to the exact command it will run ("" for none), so
+# a block re-decided after signing with a new command is not covered (788.F2; guard edit
+# approved by Nick 2026-10-28). No signed approval existed when it was added.
+SIGNED_FIELDS = ("rule_id", "block_ids", "block_commands", "approved_at", "approved_by",
+                 "note")
 
 
 def payload(row: dict) -> bytes:
