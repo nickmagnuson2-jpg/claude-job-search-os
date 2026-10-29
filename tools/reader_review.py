@@ -484,8 +484,7 @@ def cluster_findings(per_seat: dict) -> list[dict]:
             home = {"items": [], "locations": set()}
             clusters.append(home)
         home["items"].append(it)
-        if it["location"]:
-            home["locations"].add(it["location"])
+        home["locations"].add(it["location"])  # "" never matches: same_line needs a location
     out = []
     for c in clusters:
         seats = sorted({i["seat"] for i in c["items"]})
@@ -554,10 +553,10 @@ def run_panel(a, repo: Path, doc: Path) -> int:
         # codex_verify's stdout carries a findings COUNT; the findings themselves are the
         # report's machine-readable block (panel review 846.F2, 850.F2).
         path = repo / report
-        if r["rc"] != 0 or not path.is_file() or not codex_verify.has_findings_block(path):
+        if r["rc"] == 0 and path.is_file() and codex_verify.has_findings_block(path):
+            per_seat[seat["role"]] = codex_verify.parse_findings(path)
+        else:
             failed.append(seat["role"])
-            continue
-        per_seat[seat["role"]] = codex_verify.parse_findings(path)
     clusters = cluster_findings(per_seat)
     out = repo / "output" / "analysis" / f"{stamp}-{slug}-panel.md"
     write_atomic(out, panel_report(clusters, seats, rel(doc) if doc.is_relative_to(repo) else str(doc), failed))
