@@ -630,7 +630,7 @@ After coaching sessions or career reflection, run `/extract-identity` again or d
 /remember Jamie Torres mentioned they're hiring a second CoS-type role in Q2
 ```
 
-Routes to the right file automatically (contact note → networking.md, company note → `data/company-notes/<slug>.md`, pipeline update → job-pipeline.md, etc.). A note that matches nothing falls back to `data/notes.md`. Tag a note `#personal` to send it to your personal vault's inbox instead; nothing is then written to this repo. Captures classified as a `decision` route to `data/decisions.md` and captures classified as an `accomplishment` route to `data/accomplishments.md`, both append-only chronological logs, newest first. `/weekly-review` and `/standup` read these logs.
+Routes to the right file automatically (contact note → networking.md, company note → `data/company-notes/<slug>.md`, pipeline update → job-pipeline.md, etc.). A note that matches nothing falls back to `data/notes.md`. Tag a note `#personal` to send it to your personal vault's inbox instead; nothing is then written to this repo. Captures classified as a `decision` route to `data/decisions.md` and captures classified as an `accomplishment` route to `data/accomplishments.md`, both append-only chronological logs, newest first. `/standup` reads these logs.
 
 **Daily orientation (global command):**
 ```

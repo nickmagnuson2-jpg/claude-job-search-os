@@ -190,6 +190,8 @@ explicitly in one line: `Top 3 is conversation-shaped: 7d conversations = N.` If
 normally. Origin: 2026-09-01, Nick's metric change, wired here rather than `/weekly-review` because
 he did not run that skill (deleted 2026-10-29).
 
+**Learning lanes (from `results.learning_ledger.data`, S7):** one line, `Learning lanes: <due_total> due across <N> lanes`, inside the queue-depth block below. `due_total` counts records at 2+ fires still open across all five capture lanes, which no other surface shows. If the source failed, say "learning ledger unavailable" and continue.
+
 **Queue depth (from `attention.py`) — surface SECOND, right below automation health.** This is the only place the promotion backlog is ever seen: the weekly scan writes it to `memory/promotion-backlog.md` and a Low-priority todo, and neither is read. Render a single compact block, never a duplicate of the Pipeline/Inbox sections below:
 
 ```
