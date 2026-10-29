@@ -48,32 +48,10 @@ import approval_signing  # noqa: E402
 import inbox_lock  # noqa: E402
 from inbox_census import census  # noqa: E402
 from inbox_decision_log import (  # noqa: E402
-    APPROVALS_REL, LOG_REL, approval_staleness, current_log, load_approvals, unit_id,
+    APPROVALS_REL, EXECUTED_REL, LOG_REL, approval_staleness, current_log, load_approvals,
+    load_executed, unit_id,
 )
 import datetime as _dt  # noqa: E402
-
-EXECUTED_REL = "output/career-scan/inbox-drain-executed.jsonl"
-
-
-def load_executed(root: Path) -> set:
-    """block_ids already applied. Append-only; makes a re-run idempotent.
-
-    Without this the applier tries to relocate blocks it removed on an earlier
-    batch, cannot find them, and aborts - which is correct behaviour for a
-    MUTATED block and wrong for an already-removed one. Recording execution is
-    the only way to tell those two apart, because a header is not unique
-    (53 blocks in this corpus share the header "Career Scan Results").
-    """
-    path = root / EXECUTED_REL
-    if not path.is_file():
-        return set()
-    out = set()
-    with path.open(encoding="utf-8") as fh:
-        for line in fh:
-            if line.strip():
-                out.update(json.loads(line)["block_ids"])
-    return out
-
 
 def record_executed(root: Path, block_ids: list, note: str) -> None:
     path = root / EXECUTED_REL

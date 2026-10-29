@@ -380,3 +380,20 @@ def test_a_signed_block_re_decided_to_another_destination_voids_the_approval(rep
     assert code == 1 and out["code"] == "nothing_approved"
     assert out["stale_approvals_ignored"][0]["changed_command"] == [repo["blocks"][0]["block_id"]]
     assert _inbox(repo) == INBOX
+
+
+def test_status_reports_execution_from_the_applier_log(repo, monkeypatch, capsys):
+    """Status reads the executed log the applier writes, not the approval row's flag,
+    which is never updated (Codex inbox-signing r2 F1)."""
+    _decide(repo)
+    _approve(repo, rules=("drips",))
+    capsys.readouterr()
+    dlog.cmd_status(repo["root"])
+    before = json.loads(capsys.readouterr().out)
+    assert before["executed_any"] is False
+    code, _ = _run(repo, monkeypatch, capsys, "--apply")
+    assert code == 0
+    dlog.cmd_status(repo["root"])
+    after = json.loads(capsys.readouterr().out)
+    rule = next(e for e in after["bulk_rules"] if e["rule_id"] == dlog.rule_id("drips"))
+    assert rule["executed"] is True and after["executed_any"] is True

@@ -259,6 +259,29 @@ def cmd_approve(root: Path, rule_ids: list[str], note: str, sign=None) -> None:
                      ensure_ascii=False))
 
 
+EXECUTED_REL = "output/career-scan/inbox-drain-executed.jsonl"
+
+
+def load_executed(root: Path) -> set:
+    """block_ids already applied. Append-only; makes a re-run idempotent.
+
+    Without this the applier tries to relocate blocks it removed on an earlier
+    batch, cannot find them, and aborts - which is correct behaviour for a
+    MUTATED block and wrong for an already-removed one. Recording execution is
+    the only way to tell those two apart, because a header is not unique
+    (53 blocks in this corpus share the header "Career Scan Results").
+    """
+    path = root / EXECUTED_REL
+    if not path.is_file():
+        return set()
+    out = set()
+    with path.open(encoding="utf-8") as fh:
+        for line in fh:
+            if line.strip():
+                out.update(json.loads(line)["block_ids"])
+    return out
+
+
 def unit_id(r: dict) -> str:
     """The approval unit a decision belongs to: its RULE for a bulk row, its
     (destination, confidence) COHORT for an individual row, which has no rule."""
@@ -328,6 +351,10 @@ def cmd_status(root: Path) -> None:
                  if approval_signing.verify(approval_signing.payload(a), a.get("signature"),
                                             approval_signing.ALLOWED_SIGNERS)}
     unsigned = sorted(set(load_approvals(root)) - set(approvals))
+    # Execution comes from the applier's own log. The approval row's "executed" field is
+    # written False and never updated, so reading it reported nothing as run after a real
+    # apply (Codex inbox-signing r2 F1).
+    executed = load_executed(root)
     rules, cohorts = {}, {}
     for r in log:
         if r["mode"] == "bulk":
@@ -348,12 +375,12 @@ def cmd_status(root: Path) -> None:
         a = approvals.get(c["rule_id"])
         c["approved"] = bool(a)
         c["approved_by"] = a["approved_by"] if a else None
-        c["executed"] = a.get("executed", False) if a else False
+        c["executed"] = bool(a) and set(a.get("block_ids") or []) <= executed
     for rid, e in rules.items():
         a = approvals.get(rid)
         e["approved"] = bool(a)
         e["approved_by"] = a["approved_by"] if a else None
-        e["executed"] = a.get("executed", False) if a else False
+        e["executed"] = bool(a) and set(a.get("block_ids") or []) <= executed
     members = {}
     for r in log:
         members.setdefault(unit_id(r), []).append(r)
@@ -392,7 +419,7 @@ def cmd_status(root: Path) -> None:
         "unsigned_approvals_ignored": unsigned,
         "stale_approvals_ignored": stale,
         "blocks_awaiting_a_decision": len(log) - approved_blocks,
-        "executed_any": any(e["executed"] for e in rules.values()),
+        "executed_any": any(e["executed"] for e in list(rules.values()) + list(cohorts.values())),
     }, ensure_ascii=False, indent=2))
 
 
