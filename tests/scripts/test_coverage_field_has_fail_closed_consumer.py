@@ -334,6 +334,9 @@ REGISTRY: dict[tuple[str, str, str | None], object] = {
         Text(STANDUP, r"`partial` names any that exited nonzero but still printed data")],
     ("conversations_metric.py", "complete", None): [
         Text(STANDUP, r"If `complete: false`, append")],
+    ("day_check.py", "complete", None): [
+        Branch("day_check.py", "main", reads="complete", closes="exit"),
+        Text(".claude/skills/check/SKILL.md", r"Exit code 1 means at least one source was unreadable")],
     ("conversations_metric.py", "unreadable_sources", None): [
         Text(STANDUP, r"unreadable: <unreadable_sources>")],
 
