@@ -263,7 +263,7 @@ def test_a_bad_target_date_says_why_on_stderr():
 @pytest.mark.parametrize("summary", [
     "IMMEDIATE RESPONSE: Sam replied minutes after the cold email.",
     "Heard back from Sam: not hiring.",
-    "Shannon responded to the comment.",
+    "Sam responded to the comment.",
     "Backfilled. INBOUND 2:06 PM from the thread.",
 ])
 def test_more_reply_shapes(summary):

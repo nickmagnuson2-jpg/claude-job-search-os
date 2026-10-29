@@ -397,7 +397,7 @@ def test_the_page_shows_waiting_on_them_in_block_3():
 
 @pytest.mark.parametrize("nxt,theirs", [
     ("Will follow up Monday", False), ("I will send the deck", False), ("Nick will call back", False),
-    ("Emily will reply by Thu", True), ("Emily to reply by EOD", True), ("Await Sam's times", True),
+    ("Casey will reply by Thu", True), ("Casey to reply by EOD", True), ("Await Sam's times", True),
     ("Call to be scheduled", False), ("Intro scheduled once Nick sends times", False),
     ("team will reply soon", False), ("Need to reply by Fri", False), ("they will send it", False),
 ])
