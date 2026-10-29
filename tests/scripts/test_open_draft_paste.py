@@ -96,3 +96,66 @@ def test_an_empty_body_never_counts_as_copied(monkeypatch):
     _fake_clipboard(monkeypatch)
     assert od.copy_text_to_clipboard("") is False
     assert od.copy_text_to_clipboard("  \n") is False
+
+
+# A reply cannot be put into a Gmail thread by URL, so reply mode used to open
+# nothing and only print instructions. On 2026-10-28 that read as "the draft is not
+# in Gmail". Now it opens a Gmail search for the thread once the body is on the
+# clipboard, and says plainly that nothing is in Drafts.
+
+def test_a_reply_opens_a_search_for_its_thread_not_compose(run_main, capsys):
+    seen = run_main(REPLY)
+    assert len(seen["opened"]) == 1
+    url = seen["opened"][0]
+    assert url.startswith("https://mail.google.com/mail/u/0/#search/")
+    assert "view=cm" not in url
+    from urllib.parse import unquote
+    q = unquote(url.split("#search/", 1)[1])
+    assert '"Following up"' in q and "casey@example.com" in q
+    out = capsys.readouterr().out
+    assert "not in Gmail Drafts" in out
+    assert seen["consumed"] == 1
+
+
+def test_a_reply_without_a_recipient_searches_by_subject_alone(run_main):
+    seen = run_main("TO:\nSUBJECT: Re: Congrats on the launch\nBODY:\nHi\n")
+    from urllib.parse import unquote
+    q = unquote(seen["opened"][0].split("#search/", 1)[1])
+    assert '"Congrats on the launch"' in q and "to:" not in q
+
+
+def test_a_reply_whose_body_did_not_reach_the_clipboard_opens_nothing(run_main):
+    seen = run_main(REPLY, copied=False)
+    assert seen["opened"] == []
+
+
+@pytest.mark.parametrize("to, expected", [
+    ("Doe, Jane <jane@example.com>, b@example.com", "jane@example.com"),
+    ("Jane Doe <jane@example.com>", "jane@example.com"),
+    ("casey@example.com, b@example.com", "casey@example.com"),
+])
+def test_the_thread_search_narrows_to_the_first_parsed_address(to, expected):
+    from urllib.parse import unquote
+    q = unquote(od.thread_search_url(to, "Re: Thanks").split("#search/", 1)[1])
+    assert f"(from:{expected} OR to:{expected})" in q
+    assert "Doe" not in q and "<" not in q
+
+
+def test_a_recipient_with_no_address_is_not_used_to_narrow():
+    from urllib.parse import unquote
+    q = unquote(od.thread_search_url("Jane Doe", "Re: Thanks").split("#search/", 1)[1])
+    assert q == 'subject:"Thanks"'
+
+
+def test_a_quoted_subject_keeps_every_word():
+    from urllib.parse import unquote
+    q = unquote(od.thread_search_url("", 'Re: He said "yes" today').split("#search/", 1)[1])
+    assert q == "subject:(He said yes today)"
+
+
+@pytest.mark.parametrize("subject", ["Re: Re: Thanks for today", "RE: Thanks for today",
+                                     "Fwd: Thanks for today", "re : Thanks for today"])
+def test_reply_and_forward_prefixes_are_stripped(subject):
+    from urllib.parse import unquote
+    q = unquote(od.thread_search_url("", subject).split("#search/", 1)[1])
+    assert q == 'subject:"Thanks for today"'

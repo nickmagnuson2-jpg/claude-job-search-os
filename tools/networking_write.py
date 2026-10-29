@@ -13,7 +13,8 @@ Subcommands:
 "possible_duplicate". Re-run with --force only if it is genuinely a different
 person; otherwise `log` to the existing contact. Origin 2026-06-12.
 Note: `log --followup` already auto-creates the follow-up todo — do not also add
-one manually, or you double-write.
+one manually, or you double-write. That writes data/job-todos.md as well, reported as
+`todo_added` in the output; pass `--no-todo` when the todos file is off-limits.
 
 Options (all subcommands):
   --repo-root PATH   Repository root. Defaults to cwd.
@@ -28,6 +29,7 @@ Usage:
   PYTHONIOENCODING=utf-8 python3 tools/networking_write.py log "Jane Doe" --date 2026-02-28 --type email --summary "Replied" --repo-root .
   PYTHONIOENCODING=utf-8 python3 tools/networking_write.py remove "Jane Doe" --repo-root .
 """
+import json
 import os
 import re
 import subprocess
@@ -408,7 +410,10 @@ def cmd_log(args, networking_path: Path, repo_root: Path, dry_run: bool) -> None
     # duplicates (bug origin 2026-06-18). The "— " prefix matches only the auto
     # format, so a manually-curated variant (e.g. "Follow up: <name> (Acme) — ...")
     # is left untouched.
-    if args.followup:
+    # The todo is a write to a SECOND file, so its outcome is reported in the output
+    # (todo_added), and --no-todo turns it off for a caller barred from that file.
+    todo_added = False
+    if args.followup and not getattr(args, "no_todo", False):
         todos_path = repo_root / TODOS_FILE
         if todos_path.exists():
             todo_write = str(Path(__file__).parent / "todo_write.py")
@@ -423,12 +428,17 @@ def cmd_log(args, networking_path: Path, repo_root: Path, dry_run: bool) -> None
                 todo_task = f"Follow up: {args.name} — {args.followup}"
                 from datetime import timedelta
                 due = (date.today() + timedelta(days=7)).strftime("%Y-%m-%d")
-                subprocess.run(
+                added = subprocess.run(
                     [sys.executable, todo_write,
                      "add", todo_task, "Med", due, f"From networking log on {log_date}"],
                     capture_output=True, text=True, encoding="utf-8", env=todo_env,
                     cwd=str(repo_root),
                 )
+                try:
+                    todo_added = (added.returncode == 0
+                                  and json.loads(added.stdout).get("status") == "ok")
+                except ValueError:
+                    todo_added = False
             except Exception:
                 pass  # todo creation is best-effort
 
@@ -447,7 +457,8 @@ def cmd_log(args, networking_path: Path, repo_root: Path, dry_run: bool) -> None
 
     out_ok("log", f"Logged interaction for {args.name}: {args.summary}",
            name=args.name, date=log_date,
-           outreach_log_updated=outreach_updated)
+           outreach_log_updated=outreach_updated,
+           todo_added=todo_added, todos_file=TODOS_FILE)
 
 
 def cmd_update(args, networking_path: Path, dry_run: bool) -> None:
@@ -610,6 +621,10 @@ def parse_args():
     log_p.add_argument("--no-reply-flip", action="store_true",
                        help="Never flip the outreach-log, even if the summary looks "
                             "like a reply. Use when logging Nick's own outbound reply.")
+    log_p.add_argument("--no-todo", action="store_true",
+                       help="Do not write the follow-up todo to data/job-todos.md. The "
+                            "Follow-up line is still logged. Use when a session must "
+                            "not touch the todos file.")
 
     rem_p = sub.add_parser("remove")
     rem_p.add_argument("name")

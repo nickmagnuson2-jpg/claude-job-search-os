@@ -29,11 +29,13 @@ any header line this parser does not name, it is dropped.
 """
 
 import os
+import re
 import shutil
 import subprocess
 import sys
 import time
 import webbrowser
+from email.utils import getaddresses
 import urllib.parse
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -256,13 +258,36 @@ def is_reply(subject):
     return s.startswith("re:") or s.startswith("re :")
 
 
+def thread_search_url(to, subject):
+    """A Gmail search URL that lands on the thread this reply belongs to.
+
+    Searches by the subject with its Re:/Fwd: prefixes stripped, narrowed to the
+    first recipient address when one parses. Gmail has no escape for a double quote
+    inside a quoted phrase, so a subject containing one is searched as its words,
+    which is looser but never a different subject.
+    """
+    base = re.sub(r"^\s*((re|fwd?)\s*:\s*)+", "", subject, flags=re.I).strip()
+    if '"' in base:
+        words = re.sub(r"[\"()]", " ", base).split()
+        query = "subject:(" + " ".join(words) + ")"
+    else:
+        query = f'subject:"{base}"'
+    addresses = [a for _, a in getaddresses([to or ""]) if "@" in a]
+    if addresses:
+        query += f" (from:{addresses[0]} OR to:{addresses[0]})"
+    return "https://mail.google.com/mail/u/0/#search/" + urllib.parse.quote(query, safe="")
+
+
 def handle_reply(to, subject, body, attachments):
     """
     Reply path: Gmail compose URL doesn't thread into existing conversations
     (only prepends 'Re:' to the subject, opens a new compose window). For replies,
-    we pbcopy the body and instruct the user to open the existing thread and paste.
+    we pbcopy the body and open a Gmail search for the thread, so the user lands
+    on it, hits Reply and pastes. Nothing is ever saved to Gmail Drafts; on
+    2026-10-28 the old print-only path read as "the draft is not in Gmail".
     """
-    print("REPLY MODE — subject starts with 'Re:'")
+    print("REPLY MODE — this draft is not in Gmail Drafts. The body is on your clipboard;")
+    print("the thread opens in Gmail: hit Reply on the newest message and paste.")
     print()
     print(f"  Original recipient: {to or '(unset — find by sender)'}")
     print(f"  Subject:            {subject}")
@@ -271,12 +296,14 @@ def handle_reply(to, subject, body, attachments):
 
     copied = copy_text_to_clipboard(body)
     if copied:
+        url = thread_search_url(to, subject)
         print("Body copied to clipboard (read back and verified). Next steps:")
-        print("  1. Open Gmail in your browser")
-        print(f"  2. Find the original thread (search: from:{to or '<sender>'})")
-        print("  3. Hit Reply on the most recent message in that thread")
-        print("  4. Cmd+V to paste the body")
-        print("  5. Review, then Send")
+        print("  1. Gmail opens on a search for the thread (opening now)")
+        print("  2. Open the thread and hit Reply on the most recent message")
+        print("  3. Cmd+V to paste the body")
+        print("  4. Review, then Send")
+        print(f"  Search URL: {url}")
+        webbrowser.open(url)
     else:
         print_copy_failure(body)
 

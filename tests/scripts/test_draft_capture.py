@@ -368,7 +368,9 @@ def test_a_reply_is_captured_too(opener, store, capsys):
     opener.staging.write_text(DRAFT.replace("Following up", "Re: Following up"), encoding="utf-8")
     opener.main()
     capsys.readouterr()
-    assert opener.opened_urls == [], "a reply is pasted into the thread, not opened as compose"
+    assert len(opener.opened_urls) == 1, "a reply opens a search for its thread"
+    assert "#search/" in opener.opened_urls[0] and "view=cm" not in opener.opened_urls[0], \
+        "a reply is pasted into the thread, never opened as a new compose"
     assert [m["subject"] for m in dc.captures()] == ["Re: Following up"]
     assert Path(str(opener.staging) + ".opened").exists()
 
@@ -468,7 +470,9 @@ def test_a_reply_puts_the_body_on_the_clipboard_and_not_in_a_new_compose(opener,
                               encoding="utf-8")
     opener.main()
     capsys.readouterr()
-    assert copied == ["Reply text"] and opener.opened_urls == []
+    assert copied == ["Reply text"]
+    assert [u for u in opener.opened_urls if "view=cm" in u] == []
+    assert len(opener.opened_urls) == 1 and "#search/" in opener.opened_urls[0]
 
 
 # --- a revised email is not recorded as sent until its edits are learned from ---------
