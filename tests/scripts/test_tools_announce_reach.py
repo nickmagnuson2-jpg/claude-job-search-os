@@ -124,7 +124,6 @@ GRANDFATHERED = frozenset([
     "tools/inbox_drain_apply.py",
     "tools/inbox_extract.py",
     "tools/inbox_lock.py",
-    "tools/inbox_triage.py",
     "tools/job_quiesce.py",
     "tools/ledger_diff.py",
     "tools/linkedin_post_readout.py",
