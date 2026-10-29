@@ -313,3 +313,15 @@ def test_script_entry_point_runs_main(tmp_path):
     r = subprocess.run([sys.executable, str(TOOLS / "inbox_drain_apply.py"), "--repo-root",
                         str(tmp_path)], capture_output=True, text=True)
     assert r.returncode == 1 and '"file_not_found"' in r.stdout
+
+
+def test_an_approval_whose_blocks_all_left_the_rule_is_reported_stale(repo, monkeypatch, capsys):
+    _decide(repo)
+    _approve(repo, rules=("drips",))
+    p = repo["root"] / dlog.LOG_REL
+    rows = [json.loads(l) for l in p.read_text().splitlines()]
+    p.write_text(p.read_text() + json.dumps({**rows[0], "bulk_rule": "keep"}) + "\n")
+    code, out = _run(repo, monkeypatch, capsys, "--apply")
+    assert code == 1 and out["code"] == "nothing_approved"
+    assert out["stale_approvals_ignored"] == [{"rule_id": dlog.rule_id("drips"), "added": [],
+                                               "missing": [repo["blocks"][0]["block_id"]]}]
