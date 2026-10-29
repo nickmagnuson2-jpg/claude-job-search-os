@@ -262,10 +262,15 @@ def derive_state(matched: list[dict], artifact: str | None) -> dict:
                 delivered = False
 
     latest = _latest(known) if known else None
-    # Closed is terminal (10a, 849.F1), but only while it is the newest row: a later Sent
-    # reopens the thread (856.F1). A Replied anywhere still clears it, as before.
-    awaiting = (sent and not any(r["status"] == "Replied" for r in known)
-                and not (latest is not None and latest["status"] == "Closed"))
+    # Only rows NEWER than the last Replied or Closed row decide: a Replied or Closed
+    # ends that loop, and a later send opens a new one (10a, 849.F1, 856.F1; review
+    # 2026-10-29: "a Replied anywhere" kept a recipient who answered once in May from
+    # ever awaiting a reply again).
+    closers = [r for r in known if r["status"] in ("Replied", "Closed")]
+    cut = _latest(closers) if closers else None
+    after = [r for r in known
+             if cut is None or (r["date"], r["_line"]) > (cut["date"], cut["_line"])]
+    awaiting = any(r["status"] in SENT_STATUSES and r["status"] != "Replied" for r in after)
 
     return {
         "matched_rows": [_public(r) for r in matched],

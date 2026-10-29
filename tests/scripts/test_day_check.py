@@ -347,3 +347,12 @@ def test_a_pipeline_table_without_its_header_is_unreadable(tmp_path):
 def test_the_check_skill_prints_unconfirmed_applications():
     text = (REPO_ROOT / ".claude" / "skills" / "check" / "SKILL.md").read_text()
     assert "applications_unconfirmed" in text
+
+
+@pytest.mark.parametrize("summary", [
+    "I haven't heard back", "haven't heard back from her", "I havent heard back",
+    "I haven’t heard back", "she hadn't responded", "still waiting to hear back",
+])
+def test_a_note_recording_no_reply_is_never_counted_as_a_reply(summary):
+    """Review 2026-10-29: NEGATED knew "hasn't" but not "haven't"."""
+    assert dc.classify_summary("email", summary) != "reply"

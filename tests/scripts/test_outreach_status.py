@@ -1019,3 +1019,24 @@ def test_a_later_send_reopens_a_closed_thread(tmp_path):
     ])
     code, out = query("--recipient", "Jane Doe", "--log", log)
     assert code == 0 and out["awaiting_reply"] is True
+
+
+# A Replied or Closed row ends that loop; a later send opens a new one (review
+# 2026-10-29: "a Replied anywhere" meant one reply in May cleared every later send).
+
+def test_a_send_after_an_old_reply_awaits_again(tmp_path):
+    log = make_log(tmp_path, [
+        "| 2026-05-07 | follow-up | email | Jane Doe | Acme Corp | First note | Replied |",
+        "| 2026-10-07 | follow-up | email | Jane Doe | Acme Corp | Re-engagement | Sent |",
+    ])
+    _, out = query("--recipient", "Jane Doe", "--log", log)
+    assert out["awaiting_reply"] is True
+
+
+def test_a_reply_after_the_last_send_still_clears_it(tmp_path):
+    log = make_log(tmp_path, [
+        "| 2026-10-07 | follow-up | email | Jane Doe | Acme Corp | Re-engagement | Sent |",
+        "| 2026-10-09 | follow-up | email | Jane Doe | Acme Corp | Her answer | Replied |",
+    ])
+    _, out = query("--recipient", "Jane Doe", "--log", log)
+    assert out["awaiting_reply"] is False

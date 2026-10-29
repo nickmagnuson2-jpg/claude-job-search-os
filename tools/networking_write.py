@@ -71,6 +71,18 @@ INBOUND_SUBJECT_MARKERS = (
 )
 
 
+# A note that records the ABSENCE of a reply ("haven't heard back", "No reply from Sam",
+# "never responded"). Checked first: writing Replied for a non-reply is the worse error.
+# The ONE definition: tools/day_check.py imports it, so the writer and that reader cannot
+# disagree on what a reply is (review 2026-10-29: day_check knew "hasn't" but not
+# "haven't", and this writer had no negation at all).
+REPLY_NEGATION = re.compile(
+    r"\b(?:no|never|not|nobody|no one|without|yet to|still waiting|"
+    r"(?:has|have|had|did|does|do|is|was|were|won)n['\u2019]?t)"
+    r"\b[^.;:]{0,24}?\b(?:repl|respon|heard|wrote back|got back|called back|texted back)",
+    re.IGNORECASE)
+
+
 def reply_received(summary: str) -> bool:
     """Heuristic: did the RECIPIENT reply (→ flip outreach-log to Replied)?
 
@@ -78,6 +90,8 @@ def reply_received(summary: str) -> bool:
     marker ("replied to her") suppresses; otherwise fall back to the bare signals.
     """
     s = summary.lower()
+    if REPLY_NEGATION.search(s):
+        return False
     if any(m in s for m in INBOUND_SUBJECT_MARKERS):
         return True
     if any(m in s for m in OUTBOUND_REPLY_MARKERS):

@@ -56,7 +56,7 @@ from pathlib import Path
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from conversations_metric import LIVE, SENT_STATES  # noqa: E402
-from networking_write import INBOUND_SUBJECT_MARKERS  # noqa: E402
+from networking_write import INBOUND_SUBJECT_MARKERS, REPLY_NEGATION  # noqa: E402
 from schema_guard import SchemaDriftError, assert_schema, find_header_line  # noqa: E402
 from outreach_read import parse_rows as parse_outreach_rows  # noqa: E402
 import todo_read  # noqa: E402
@@ -74,8 +74,7 @@ OUTBOUND_START = re.compile(r"^(nick (replied|sent)\b|outbound\b|follow-up #\d+|
                             re.I)
 INBOUND_START = re.compile(r"^(reply from\b|inbound\b)", re.I)
 INBOUND_UPPER = re.compile(r"\bINBOUND\b")
-NEGATED = re.compile(r"\b(no|never|not|nobody|no one|hasn't|hasnt|didn't|didnt|without|yet to)"
-                     r"\b[^.;:]{0,24}?\b(repl|respon|heard|wrote back|got back)", re.I)
+NEGATED = REPLY_NEGATION  # one definition, in networking_write.py
 OTHER_REPLIED = re.compile(r"\b([A-Za-z][\w'-]*) (replied|responded)\b")
 PIPELINE_COLUMNS = ["Company", "Role", "Stage", "Date Updated", "Next Action", "CV Used",
                     "Notes", "URL"]

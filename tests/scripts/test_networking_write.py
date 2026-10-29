@@ -589,3 +589,18 @@ def test_reply_flip_on_a_same_date_tie_marks_the_later_row(tmp_path):
     rows = (tmp_path / "data/outreach-log.md").read_text(encoding="utf-8").splitlines()[-2:]
     assert rows[0].endswith("| Sent |") and rows[1].endswith("| Replied |")
 
+
+
+@pytest.mark.parametrize("summary, replied", [
+    ("I haven't heard back", False),
+    ("Sam never replied", False),
+    ("No reply from Sam yet", False),
+    ("she hasn’t responded", False),
+    ("She replied yesterday", True),
+    ("Heard back from Sam: yes to Tuesday", True),
+])
+def test_reply_received_respects_negation(summary, replied):
+    """Review 2026-10-29: a negated note wrote Replied into the outreach log."""
+    sys.path.insert(0, str(TOOLS_DIR))
+    import networking_write as nw
+    assert nw.reply_received(summary) is replied
