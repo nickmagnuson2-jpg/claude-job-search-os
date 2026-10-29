@@ -190,8 +190,12 @@ def fail(message: str, code: str, **extra) -> None:
     sys.exit(1)
 
 
-def approved_rows(root: Path, approvals: dict) -> tuple[list[dict], dict]:
-    """Rows under an approved bulk rule, plus a per-rule tally.
+def approved_rows(root: Path, approvals: dict) -> tuple[list[dict], dict, list]:
+    """Rows under an approved bulk rule, a per-rule tally, and the blocks left out.
+
+    A row counts only if its block_id is in the SIGNED block_ids of its rule's approval.
+    The signature covers that list, so a block decided under the same rule after Nick
+    signed is not approved by that signature (Codex and Grok final-g4 F1, 2026-10-28).
 
     Reads current_log(), NOT load_log(). The decision log is append-only and a
     revision is a later row for the same block, so the raw file still contains
@@ -200,7 +204,7 @@ def approved_rows(root: Path, approvals: dict) -> tuple[list[dict], dict]:
     caught in dry-run on 2026-09-08, before anything was written.
     """
     log = current_log(root)
-    rows, tally = [], {}
+    rows, tally, unsigned_blocks = [], {}, []
     for r in log:
         # A bulk row is approved by its RULE text; an individual row by its
         # (destination, confidence) COHORT, because it has no rule to approve.
@@ -208,11 +212,14 @@ def approved_rows(root: Path, approvals: dict) -> tuple[list[dict], dict]:
                else cohort_id(r["destination"], r["confidence"]))
         if rid not in approvals:
             continue
+        if r["block_id"] not in (approvals[rid].get("block_ids") or []):
+            unsigned_blocks.append(r["block_id"])
+            continue
         rows.append({**r, "rule_id": rid})
         tally.setdefault(rid, {"rule_id": rid, "destination": r["destination"],
                                "producer": r["producer"], "blocks": 0})
         tally[rid]["blocks"] += 1
-    return rows, tally
+    return rows, tally, unsigned_blocks
 
 
 def main() -> None:
@@ -228,14 +235,15 @@ def main() -> None:
         fail(f"inbox not found: {inbox}", "file_not_found")
 
     approvals, unsigned = signed_approvals(root)
-    rows, tally = approved_rows(root, approvals)
+    rows, tally, unsigned_blocks = approved_rows(root, approvals)
     already = load_executed(root)
     skipped = [r["block_id"] for r in rows if r["block_id"] in already]
     rows = [r for r in rows if r["block_id"] not in already]
     if not rows:
         fail("no rows under a SIGNED approval; nothing to do. Approve a rule with "
              "inbox_decision_log.py approve --rule <id> (Touch ID signs it).",
-             "nothing_approved", unsigned_approvals_ignored=unsigned)
+             "nothing_approved", unsigned_approvals_ignored=unsigned,
+             unsigned_blocks_ignored=unsigned_blocks)
 
     text = inbox.read_text(encoding="utf-8")
     live = census(text)
@@ -308,6 +316,7 @@ def main() -> None:
         "blocks_preserved_in_place": [t["block_id"] for t in preserved],
         "already_executed_skipped": len(skipped),
         "unsigned_approvals_ignored": unsigned,
+        "unsigned_blocks_ignored": unsigned_blocks,
         "live_blocks_before": live["live_h2_headers"],
         "live_blocks_after_expected": live["live_h2_headers"] - len(to_remove),
     }

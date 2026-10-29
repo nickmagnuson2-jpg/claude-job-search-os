@@ -157,6 +157,34 @@ def test_only_the_signed_rule_runs(repo, monkeypatch, capsys):
     assert out["unsigned_approvals_ignored"] == [dlog.rule_id("todos")]
 
 
+def test_a_block_decided_under_the_rule_after_signing_is_not_applied(repo, monkeypatch, capsys):
+    """The signature covers the rule's block_ids, not the rule (final-g4 F1, 2026-10-28)."""
+    _decide(repo)
+    _approve(repo, rules=("drips", "todos"))
+    # Re-decide the kept block under the already-signed "drips" rule, after the signature.
+    p = repo["root"] / dlog.LOG_REL
+    rows = [json.loads(l) for l in p.read_text().splitlines()]
+    p.write_text(p.read_text() + json.dumps({**rows[2], "bulk_rule": "drips"}) + "\n")
+    code, out = _run(repo, monkeypatch, capsys, "--apply")
+    assert code == 0 and out["blocks_to_remove"] == 2
+    assert out["unsigned_blocks_ignored"] == [repo["blocks"][2]["block_id"]]
+    assert "keep me" in _inbox(repo)
+
+
+def test_nothing_signed_reports_the_blocks_it_left_out(repo, monkeypatch, capsys):
+    _decide(repo)
+    _approve(repo, rules=("drips",))
+    p = repo["root"] / dlog.LOG_REL
+    rows = [json.loads(l) for l in p.read_text().splitlines()]
+    # The one signed block now sits under another rule, and a new one joins "drips".
+    p.write_text(p.read_text() + json.dumps({**rows[0], "bulk_rule": "keep"}) + "\n"
+                 + json.dumps({**rows[2], "bulk_rule": "drips"}) + "\n")
+    code, out = _run(repo, monkeypatch, capsys, "--apply")
+    assert code == 1 and out["code"] == "nothing_approved"
+    assert out["unsigned_blocks_ignored"] == [repo["blocks"][2]["block_id"]]
+    assert _inbox(repo) == INBOX
+
+
 @pytest.mark.parametrize("flags", [(), ("--apply",)])
 def test_a_command_outside_the_allowlist_stops_everything(repo, monkeypatch, capsys, flags):
     _decide(repo, todo_invocation='python3 tools/todo_write.py add x; touch pwned')
