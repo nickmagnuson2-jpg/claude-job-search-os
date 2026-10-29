@@ -631,3 +631,12 @@ def test_cutting_a_negation_never_removes_an_outbound_marker():
     sys.path.insert(0, str(TOOLS_DIR))
     import networking_write as nw
     assert nw.reply_received("Follow-up #2 sent: reply in the thread. No reply to the 10/2 note.") is False
+
+
+@pytest.mark.parametrize("summary", ["haven't got a reply", "never got a reply from Sam",
+                                     "didn't get a response", "has not received a reply"])
+def test_got_and_received_forms_are_negated(summary):
+    """Round 3 (Grok), 2026-10-29: 'got a reply' after a negator wrote Replied."""
+    sys.path.insert(0, str(TOOLS_DIR))
+    import networking_write as nw
+    assert nw.reply_received(summary) is False
