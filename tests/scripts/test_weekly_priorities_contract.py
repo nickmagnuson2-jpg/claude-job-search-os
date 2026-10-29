@@ -20,3 +20,19 @@ def test_the_weekly_review_skill_is_gone():
 def test_standup_surfaces_the_learning_ledger():
     standup = (REPO / ".claude/skills/standup/SKILL.md").read_text(encoding="utf-8")
     assert "results.learning_ledger.data" in standup
+
+
+def test_standup_is_allowed_to_write_the_weekly_log_and_nothing_else():
+    """853/856/863/867.F1, 2026-10-29: Step 2w had to write data/weekly-review-log.md, but
+    the skill's allowed-tools granted no Write at all."""
+    import re
+    skill = (Path(__file__).resolve().parents[2] / ".claude/skills/standup/SKILL.md").read_text()
+    tools = re.search(r"^allowed-tools:(.*)$", skill, re.M).group(1)
+    writes = re.findall(r"\b(?:Write|Edit)\(([^)]*)\)", tools)
+    assert writes == ["data/weekly-review-log.md"]
+
+
+def test_checkout_never_skips_a_missing_week_silently():
+    skill = (Path(__file__).resolve().parents[2] / ".claude/skills/checkout/SKILL.md").read_text()
+    assert "Skip the weekly priority cross-reference silently" not in skill
+    assert "No weekly priorities on file for this week" in skill

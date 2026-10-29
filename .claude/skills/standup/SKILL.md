@@ -3,7 +3,7 @@ name: standup
 description: Morning briefing — pipeline health, today's top 3 actions, pending outreach, corpus state, and a momentum read of the search state
 argument-hint: [none]
 user-invocable: true
-allowed-tools: Read(*), Glob(inbox/*), Glob(data/reflections/*), Glob(data/workbooks/*), Bash(PYTHONIOENCODING=utf-8 python3 tools/standup_collect.py:*), Bash(PYTHONIOENCODING=utf-8 python3 tools/fetch_source_email.py:*), Bash(ls:*), Bash(stat:*)
+allowed-tools: Read(*), Glob(inbox/*), Glob(data/reflections/*), Glob(data/workbooks/*), Bash(PYTHONIOENCODING=utf-8 python3 tools/standup_collect.py:*), Bash(PYTHONIOENCODING=utf-8 python3 tools/fetch_source_email.py:*), Bash(ls:*), Bash(stat:*), Write(data/weekly-review-log.md)
 ---
 
 # Standup — Morning Briefing

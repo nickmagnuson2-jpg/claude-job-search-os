@@ -387,7 +387,7 @@ Origin: wired into `/checkout` 2026-06-11, replacing the manual-only backup. The
 - **job-todos.md missing or empty:** Note "No to-dos tracked yet" — skip snapshot sections. Still write a minimal log entry and display the checkout summary.
 - **No completions today:** Show "Nothing completed yet today." — still write the log entry. This is valid data (streak resets if this was the only entry).
 - **Existing entry for today:** Replace it in place — do not append a duplicate. This supports running `/checkout` multiple times in a day (last run wins).
-- **No weekly-review-log.md, or no entry this week:** Skip the weekly priority cross-reference silently. Display Tomorrow's Top 3 based on todo priority/date only.
+- **No weekly-review-log.md, or no entry this week:** Say so in one line, "No weekly priorities on file for this week (Monday's `/standup` writes them in Step 2w)", then display Tomorrow's Top 3 based on todo priority/date only. Never skip silently: a missing week is how a broken Step 2w would otherwise go unnoticed.
 - **No active to-dos:** Display "No active to-dos — run `/todo add` to capture tomorrow's work" instead of the Top 3 section.
 - **All files missing:** Display a setup message: "No data files found yet. Start with `/import-cv` to populate your profile, then `/pipe add` to track your first application."
 - **Daily log file doesn't exist:** Create it with the standard header (see Step 4) before writing the first entry.
