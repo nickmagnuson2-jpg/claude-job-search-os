@@ -79,7 +79,7 @@ INBOUND_SUBJECT_MARKERS = (
 REPLY_NEGATION = re.compile(
     r"\b(?:no|never|not|nobody|no one|without|yet to|still waiting(?: to| for| on)?|awaiting|waiting (?:for|on)|"
     r"(?:has|have|had|did|does|do|is|was|were)n['\u2019]?t|won['\u2019]?t|can['\u2019]?t)"
-    r"(?:\s+(?:yet|a|any|been|heard|to|got|get|gotten|received|had|her|his|their|my))*\s+"
+    r"(?:\s+(?:yet|a|any|been|heard|to|got|get|gotten|received|had|her|his|their|my|has|have|the|ever|even|actually|really))*\s+"
     r"(?:repl|respon|hear back|heard back|heard|wrote back|got back|called back|texted back)\w*",
     re.IGNORECASE)
 # The negator must sit directly on the reply word (a few filler words, no comma or

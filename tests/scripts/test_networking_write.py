@@ -649,3 +649,12 @@ def test_waiting_and_awaiting_forms_are_negated(summary):
     sys.path.insert(0, str(TOOLS_DIR))
     import networking_write as nw
     assert nw.reply_received(summary) is False
+
+
+@pytest.mark.parametrize("summary", ["nobody has replied", "nobody has heard back",
+                                     "no one has ever responded", "not the reply I hoped for"])
+def test_auxiliary_fillers_are_negated(summary):
+    """Round 5 (Grok), 2026-10-29."""
+    sys.path.insert(0, str(TOOLS_DIR))
+    import networking_write as nw
+    assert nw.reply_received(summary) is False
