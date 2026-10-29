@@ -132,10 +132,11 @@ def test_read_only_drops_the_two_writes_and_changes_nothing_else():
 
 
 def _snapshot(root: Path) -> dict:
+    """Every file, __pycache__ included: a bytecode write is a write (S4 review F1)."""
     import hashlib
     out = {}
     for p in sorted(root.rglob("*")):
-        if p.is_file() and "__pycache__" not in p.parts:
+        if p.is_file():
             out[str(p.relative_to(root))] = (hashlib.sha256(p.read_bytes()).hexdigest(),
                                              p.stat().st_mtime_ns)
     return out
@@ -161,7 +162,7 @@ def _copied_repo(tmp_path: Path) -> Path:
 def test_read_only_run_on_a_copied_repo_changes_no_file(tmp_path, monkeypatch, read_only):
     """The default mode is the control: it must change something here, or the read-only
     assertion would pass on a fixture nothing could write to."""
-    monkeypatch.setenv("PYTHONDONTWRITEBYTECODE", "1")
+    monkeypatch.delenv("PYTHONDONTWRITEBYTECODE", raising=False)
     root = _copied_repo(tmp_path)
     before = _snapshot(root)
     out = sc.collect(root, "2026-01-02", read_only=read_only)
@@ -174,6 +175,7 @@ def test_read_only_run_on_a_copied_repo_changes_no_file(tmp_path, monkeypatch, r
         # The sent-check state write needs a Gmail token, which no fixture has; its
         # --no-state flag is pinned by the argv test above.
         assert "data/workstreams/example.md" in changed, changed
+        assert any("__pycache__" in k for k in changed), "control: imports write bytecode"
 
 
 def test_the_cli_passes_read_only_through(tmp_path):

@@ -13,9 +13,15 @@ Usage:
       [--read-only]
 
 --read-only writes nothing: workstream_state runs without --render (which rewrites the
-STATE-BLOCKs in data/workstreams/) and sent_artifact_check runs with --no-state (which would
-update tools/.sent-artifact-state.json). The morning page renders from this mode every 15
-minutes, so a render must never change the tree it reads. /standup keeps the default mode.
+STATE-BLOCKs in data/workstreams/), sent_artifact_check runs with --no-state (no state file,
+no Gmail token rewrite, no auth-failure alert), and every child runs with
+PYTHONDONTWRITEBYTECODE=1 so no __pycache__ is written. The morning page renders from this
+mode every 15 minutes, so a render must never change the tree it reads. /standup keeps the
+default mode.
+
+Limit: workstream_state still RUNS each workstream's declared PROBE command, and nothing
+sandboxes it. Read-only covers what this collector and its scripts write; a probe that
+writes a file is that probe's defect.
 
 Output (stdout, one JSON object):
   {"target_date": "...", "ok": [names], "partial": [names], "failed": [names],
@@ -69,11 +75,13 @@ def commands(target_date: str, read_only: bool = False) -> dict[str, list[str]]:
     }
 
 
-def run_one(argv: list[str], root: Path) -> dict:
+def run_one(argv: list[str], root: Path, read_only: bool = False) -> dict:
+    env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
+    if read_only:
+        env["PYTHONDONTWRITEBYTECODE"] = "1"
     try:
         proc = subprocess.run([sys.executable, *argv], cwd=str(root), capture_output=True,
-                              text=True, timeout=TIMEOUT,
-                              env={**os.environ, "PYTHONIOENCODING": "utf-8"})
+                              text=True, timeout=TIMEOUT, env=env)
     except subprocess.TimeoutExpired:
         return {"rc": -1, "data": None, "text": "", "stderr": f"timed out after {TIMEOUT}s"}
     except OSError as e:
@@ -91,7 +99,8 @@ def run_one(argv: list[str], root: Path) -> dict:
 def collect(root: Path, target_date: str, read_only: bool = False) -> dict:
     cmds = commands(target_date, read_only)
     with ThreadPoolExecutor(max_workers=len(cmds)) as pool:
-        futures = {name: pool.submit(run_one, argv, root) for name, argv in cmds.items()}
+        futures = {name: pool.submit(run_one, argv, root, read_only)
+                   for name, argv in cmds.items()}
         results = {name: f.result() for name, f in futures.items()}
     # A nonzero exit WITH parsed output is not a dead script: workstream_state exits 1
     # when a probe errored, and its JSON says which (588.F5). Only no usable output fails.
