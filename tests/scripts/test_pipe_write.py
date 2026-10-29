@@ -113,10 +113,10 @@ def test_add_new_entry(tmp_path):
 
 
 def test_add_duplicate_returns_warning(tmp_path):
-    """Second add for same company returns duplicate_warning, no new row written."""
+    """Second add for the same company AND role returns duplicate_warning, no new row."""
     write_fixture(tmp_path, "data/job-pipeline.md", PIPELINE_WITH_ROW)
     result, code = run_pipe_write(
-        "--repo-root", str(tmp_path), "add", "Acme Corp", "VP"
+        "--repo-root", str(tmp_path), "add", "acme corp", "director"
     )
     assert code == 0
     assert result["action"] == "duplicate_warning"
@@ -640,3 +640,13 @@ def test_update_notes_with_notes_append_is_refused_without_writing(tmp_path):
                                   "--notes", "x", "--notes-append", "y")
     assert code == 1 and result["code"] == "conflicting_flags"
     assert (tmp_path / "data/job-pipeline.md").read_text(encoding="utf-8") == before
+
+
+def test_a_second_role_at_the_same_company_is_added(tmp_path):
+    """9d dedup audit: keyed on company alone, a new role there was silently dropped."""
+    write_fixture(tmp_path, "data/job-pipeline.md", PIPELINE_WITH_ROW)
+    result, code = run_pipe_write("--repo-root", str(tmp_path), "add", "Acme Corp", "VP")
+    assert code == 0 and result["action"] == "add"
+    assert "other roles: Director" in result["summary"]
+    content = (tmp_path / "data/job-pipeline.md").read_text(encoding="utf-8")
+    assert len([l for l in content.splitlines() if l.startswith("| Acme Corp |")]) == 2
