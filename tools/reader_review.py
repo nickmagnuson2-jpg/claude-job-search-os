@@ -408,6 +408,7 @@ def page_height(light: Path, fallback: int = 24000) -> int:
 SEAT_FIELDS = ("role", "mandate", "measured_on", "fears")
 MIN_SEATS, MAX_SEATS = 3, 5
 PANEL_MODEL = "codex"
+SAME_LINE_SHARED = 2   # shared claim-term weight that joins two findings on one line
 
 
 def parse_seat(spec: str) -> dict:
@@ -470,10 +471,13 @@ def cluster_findings(per_seat: dict) -> list[dict]:
         terms = claim_terms(it["summary"])
         home = None
         for c in clusters:
-            same_line = it["location"] and it["location"] in c["locations"]
-            overlap = any(_weight(terms & claim_terms(o["summary"])) >= MIN_SHARED
-                          for o in c["items"])
-            if same_line or overlap:
+            # One problem, not two objections that happen to cite one line: the same line
+            # needs some shared wording too (panel review 846.F1, 850.F1); without a
+            # shared line, the full MIN_SHARED overlap is required.
+            same_line = bool(it["location"]) and it["location"] in c["locations"]
+            best = max((_weight(terms & claim_terms(o["summary"])) for o in c["items"]),
+                       default=0)
+            if (same_line and best >= SAME_LINE_SHARED) or best >= MIN_SHARED:
                 home = c
                 break
         if home is None:
@@ -547,10 +551,13 @@ def run_panel(a, repo: Path, doc: Path) -> int:
         results = list(ex.map(lambda p: run_one(p[2], repo), plans))
     per_seat, failed = {}, []
     for (seat, report, _), r in zip(plans, results):
-        if r["rc"] != 0 or not isinstance(r["findings"], list):
+        # codex_verify's stdout carries a findings COUNT; the findings themselves are the
+        # report's machine-readable block (panel review 846.F2, 850.F2).
+        path = repo / report
+        if r["rc"] != 0 or not path.is_file() or not codex_verify.has_findings_block(path):
             failed.append(seat["role"])
             continue
-        per_seat[seat["role"]] = r["findings"]
+        per_seat[seat["role"]] = codex_verify.parse_findings(path)
     clusters = cluster_findings(per_seat)
     out = repo / "output" / "analysis" / f"{stamp}-{slug}-panel.md"
     write_atomic(out, panel_report(clusters, seats, rel(doc) if doc.is_relative_to(repo) else str(doc), failed))

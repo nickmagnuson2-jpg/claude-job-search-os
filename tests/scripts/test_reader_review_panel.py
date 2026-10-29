@@ -48,11 +48,18 @@ def test_a_seat_prompt_holds_that_seat_only_and_forbids_approval():
     assert "never approval" in t and "do not praise" in t and "page.md" in t
 
 
+def test_two_unrelated_objections_on_one_line_are_not_agreement():
+    """846.F1/850.F1: the same line with nothing in common is two problems."""
+    per = {"A": [{"location": "p:3", "summary": "Pricing figure contradicts appendix"}],
+           "B": [{"location": "p:3", "summary": "Tone condescending toward operators"}]}
+    assert [c["seats"] for c in rr.cluster_findings(per)] == [["A"], ["B"]]
+
+
 def test_clusters_put_agreement_first():
     per = {
-        "VP Operations": [{"location": "page.md:12", "summary": "Timeline claim is unrealistic", "severity": "P1"},
+        "VP Operations": [{"location": "page.md:12", "summary": "Launch timeline unrealistic given budget", "severity": "P1"},
                           {"location": "page.md:40", "summary": "Typo in the header", "severity": "P2"}],
-        "CFO": [{"location": "page.md:12", "summary": "Launch date has no budget behind it", "severity": "P0"}],
+        "CFO": [{"location": "page.md:12", "summary": "Launch timeline has no budget behind it", "severity": "P0"}],
         "Head of Support": [{"location": "page.md:70", "summary": "Support staffing assumption 30% lower than "
                                                                   "headcount numbers implies overload staffing",
                              "severity": "P1"}],
@@ -67,8 +74,8 @@ def test_clusters_put_agreement_first():
 
 def test_panel_report_order_and_failed_seats():
     clusters = rr.cluster_findings({
-        "A": [{"location": "p:1", "summary": "x"}], "B": [{"location": "p:1", "summary": "y"},
-                                                         {"location": "p:2", "summary": "z"}]})
+        "A": [{"location": "p:1", "summary": "staffing headcount missing"}],
+        "B": [{"location": "p:1", "summary": "staffing headcount absent"}, {"location": "p:2", "summary": "z"}]})
     seats = [{"role": r} for r in ("A", "B", "C")]
     text = rr.panel_report(clusters, seats, "doc.md", failed=["C"])
     must = text.index("## Must fix"); tri = text.index("## Triage")
@@ -90,13 +97,18 @@ def test_run_panel_dispatches_each_seat_alone(tmp_path, monkeypatch, capsys):
     calls = []
 
     def fake_run(argv, repo):
+        """Like codex_verify: stdout carries a COUNT; the findings live in the report."""
         target = argv[argv.index("--target") + 1]
         calls.append(target)
         role = target.split(".")[0].replace("You are ", "")
         if role == "Head of Support":
             return {"rc": 1, "findings": None, "report": None, "stderr": "boom"}
-        return {"rc": 0, "report": "r", "stderr": "",
-                "findings": [{"location": "brief:3", "summary": f"{role} objects", "severity": "P1"}]}
+        report = repo / argv[argv.index("--report") + 1]
+        report.parent.mkdir(parents=True, exist_ok=True)
+        block = [{"id": "F1", "severity": "P1", "location": "brief:3",
+                  "summary": f"Launch timeline unrealistic, says {role}"}]
+        report.write_text("# r\n\n## FINDINGS (machine-readable)\n\n```json\n" + json.dumps(block) + "\n```\n")
+        return {"rc": 0, "report": str(report), "stderr": "", "findings": 1}
     monkeypatch.setattr(rr, "run_one", fake_run)
     rc = rr.main([str(doc), "--panel", "--purpose", "decide", "--repo-root", str(tmp_path),
                   *sum((["--seat", s] for s in SEATS), [])])

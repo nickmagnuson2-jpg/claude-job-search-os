@@ -126,12 +126,6 @@ def cmd_add(args, pipeline_path: Path, dry_run: bool) -> None:
     if getattr(args, "fit_reason", None):
         notes = compose_fit_note("—", args.fit_reason, getattr(args, "fit_verdict", None), today)
 
-    if dry_run:
-        row = fmt_row(args.company, args.role, stage, today, "—", "—", notes, url)
-        out_ok("add", f"Would add: {args.company} | {args.role}",
-               dry_run=True, would_mutate=[{"file": str(pipeline_path), "row": row}])
-        return
-
     content, lines = load_lines(pipeline_path)
 
     act_start, act_end = find_section(lines, r"^##\s+Active")
@@ -155,6 +149,12 @@ def cmd_add(args, pipeline_path: Path, dry_run: bool) -> None:
         return
 
     row = fmt_row(args.company, args.role, stage, today, "—", "—", notes, url)
+    # Dry run after the duplicate check, so its preview matches what a real run does
+    # (review 846.F3, 850.F3).
+    if dry_run:
+        out_ok("add", f"Would add: {args.company} | {args.role}",
+               dry_run=True, would_mutate=[{"file": str(pipeline_path), "row": row}])
+        return
     pos = table_insert_pos(lines, act_start, act_end, is_data_row)
     lines.insert(pos, row)
     save_lines(pipeline_path, lines, content)
