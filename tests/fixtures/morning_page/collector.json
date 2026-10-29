@@ -1,0 +1,16 @@
+{"target_date": "2026-01-07", "read_only": true, "ok": [], "partial": [], "failed": [],
+ "results": {
+  "todos_summary": {"rc": 0, "text": "", "data": {"top_n": [
+    {"task": "Send the follow-up to Alex Example at Acme Corp", "priority": "High", "due": "2026-01-05", "is_overdue": true, "is_due_today": false, "days_until_due": -2, "notes": ""},
+    {"task": "Prep for the Beta Inc screen", "priority": "High", "due": "2026-01-07", "is_overdue": false, "is_due_today": true, "days_until_due": 0, "notes": ""},
+    {"task": "Read the Gamma LLC job post", "priority": "Medium", "due": "2026-01-09", "is_overdue": false, "is_due_today": false, "days_until_due": 2, "notes": ""},
+    {"task": "Tidy the pipeline", "priority": "Low", "due": "", "is_overdue": false, "is_due_today": false, "days_until_due": null, "notes": ""}]}},
+  "networking_followup": {"rc": 0, "text": "", "data": {"summary": {"total_contacts": 12, "due_today": 1, "overdue": 3, "suppressed_closed": 0},
+    "followup_overdue": [{"name": "Blair Sample", "follow_up_action": "Send a note about the role"},
+                         {"name": "Casey Person", "follow_up_action": "Ask for an intro"}]}},
+  "outreach_pending": {"rc": 0, "text": "", "data": {"awaiting_response": [], "awaiting_response_overdue": [{"name": "Dana Placeholder"}]}},
+  "sent_artifacts": {"rc": 0, "text": "", "data": {"flags": [], "errors": []}},
+  "conversations_metric": {"rc": 0, "text": "", "data": {"outreach_sent": {"counts": {"7d": 9, "30d": 30, "90d": 70}}}},
+  "workstream_state": {"rc": 0, "text": "", "data": {"summary": {"total": 5, "surfacing": 2, "changed": 2, "error": 0}}},
+  "automation_health": {"rc": 0, "text": "", "data": {"warnings": []}}
+ }}

@@ -75,7 +75,6 @@
   "tools/inbox_drain_apply.py": "pre-existing at 2026-10-23, convert when next touched",
   "tools/inbox_extract.py": "pre-existing at 2026-10-23, convert when next touched",
   "tools/inbox_lock.py": "pre-existing at 2026-10-23, convert when next touched",
-  "tools/inbox_triage.py": "pre-existing at 2026-10-23, convert when next touched",
   "tools/job_quiesce.py": "pre-existing at 2026-10-23, convert when next touched",
   "tools/ledger_diff.py": "pre-existing at 2026-10-23, convert when next touched",
   "tools/linkedin_post_readout.py": "pre-existing at 2026-10-23, convert when next touched",
@@ -128,5 +127,6 @@
   "tools/webset_discover.py": "pre-existing at 2026-10-23, convert when next touched",
   "tools/wispr_pull.py": "pre-existing at 2026-10-23, convert when next touched",
   "tools/workstream_probe.py": "pre-existing at 2026-10-23, convert when next touched",
-  "tools/workstream_state.py": "pre-existing at 2026-10-23, convert when next touched"
+  "tools/workstream_state.py": "pre-existing at 2026-10-23, convert when next touched",
+  "tools/morning_page.py": "renders counts that day_check.py and the read-only collector already computed into one HTML page; it counts nothing itself, and day_check's docstring states each count's rule and source. Added 2026-10-29."
 }
