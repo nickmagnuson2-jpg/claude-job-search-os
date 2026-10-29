@@ -30,6 +30,11 @@ Usage:
   whose reader or value_item is blank, and after a real run appends the report paths and
   the last Entry id to the log's Ship block. An explicit flag wins over the log's value.
   The log is parsed by tools/build_check.parse_log, the one parser for the template.
+  --panel (9g) replaces the three questions with 3 to 5 real decision-maker seats:
+      --panel --purpose "..." --seat "VP Ops | owns the rollout | on-time launch | a stall"
+  (or --seats-file seats.json, written by the caller from the company dossier). Each seat
+  reviews alone; the report lists problems named by 2+ seats first as must-fix, then the
+  single-seat items as triage. The Q1-Q3 mode is unchanged.
 
 EVIDENCE SCOPE (added 2026-10-12)
 ---------------------------------
@@ -394,6 +399,167 @@ def page_height(light: Path, fallback: int = 24000) -> int:
     return int(m.group(1)) + 100 if m else fallback
 
 
+# --- PANEL MODE (9g, ruled 2026-10-28: Nick "A") -----------------------------------------
+# Real decision-maker seats instead of fixed personas. A generic critic is the mistake the
+# panel exists to avoid (feedback_ground_pressure_test_in_decision_panel_not_generic_partner;
+# /prep-interview B4b). Each seat is one isolated run: its prompt is built from that seat
+# alone and no seat is shown another's output (the anti-anchoring rule), so agreement
+# between seats is evidence, not echo. A problem named by 2+ seats is must-fix.
+SEAT_FIELDS = ("role", "mandate", "measured_on", "fears")
+MIN_SEATS, MAX_SEATS = 3, 5
+PANEL_MODEL = "codex"
+
+
+def parse_seat(spec: str) -> dict:
+    """'role | mandate | measured on | fears' -> a seat dict. All four are required."""
+    parts = [p.strip() for p in spec.split("|")]
+    if len(parts) != 4 or not all(parts):
+        raise ValueError(f"a seat needs 4 non-empty fields 'role | mandate | measured on | "
+                         f"fears', got {spec!r}")
+    return dict(zip(SEAT_FIELDS, parts))
+
+
+def load_seats(specs=(), seats_file: str = "") -> list[dict]:
+    """Seats from --seat flags and/or a JSON file (a list of objects with SEAT_FIELDS)."""
+    seats = [parse_seat(x) for x in specs]
+    if seats_file:
+        data = json.loads(Path(seats_file).read_text(encoding="utf-8"))
+        if not isinstance(data, list):
+            raise ValueError("the seats file must hold a JSON list of seats")
+        for d in data:
+            if not isinstance(d, dict) or not all(str(d.get(k, "")).strip() for k in SEAT_FIELDS):
+                raise ValueError(f"each seat needs {', '.join(SEAT_FIELDS)}: {d!r}")
+            seats.append({k: str(d[k]).strip() for k in SEAT_FIELDS})
+    if not MIN_SEATS <= len(seats) <= MAX_SEATS:
+        raise ValueError(f"a panel takes {MIN_SEATS} to {MAX_SEATS} seats, got {len(seats)}")
+    return seats
+
+
+def seat_target(seat: dict, text_path: str, purpose: str) -> str:
+    """One seat's prompt, built from that seat only."""
+    return (
+        f"You are {seat['role']}. Your mandate: {seat['mandate']}. You are measured on:"
+        f" {seat['measured_on']}. What you fear: {seat['fears']}.\n"
+        f"Review ONLY {text_path} (the finished document, collapsed and hidden content"
+        f" included) as you would if it landed on your desk. Do not read anything under data/.\n"
+        f"WHAT THE AUTHOR WANTS FROM YOU: {purpose}.\n"
+        "Return concrete corrections only, never approval: for each, quote the page line it"
+        " concerns, say what is wrong FOR SOMEONE IN YOUR SEAT, and give the change you would"
+        " require. If you would change nothing, return an empty findings array; do not praise."
+    )
+
+
+def _seat_slug(seat: dict) -> str:
+    return _slugify(seat["role"])[:30] or "seat"
+
+
+def cluster_findings(per_seat: dict) -> list[dict]:
+    """Group findings across seats: same location line, or enough shared claim terms.
+
+    Returns clusters sorted with the most seats first; each is
+    {"seats": [role, ...], "items": [{"seat", "location", "summary", "severity"}]}."""
+    items = []
+    for role, findings in per_seat.items():
+        for f in findings or []:
+            if isinstance(f, dict):
+                items.append({"seat": role, "location": str(f.get("location") or "").strip(),
+                              "summary": str(f.get("summary") or "").strip(),
+                              "severity": f.get("severity")})
+    clusters: list[dict] = []
+    for it in items:
+        terms = claim_terms(it["summary"])
+        home = None
+        for c in clusters:
+            same_line = it["location"] and it["location"] in c["locations"]
+            overlap = any(_weight(terms & claim_terms(o["summary"])) >= MIN_SHARED
+                          for o in c["items"])
+            if same_line or overlap:
+                home = c
+                break
+        if home is None:
+            home = {"items": [], "locations": set()}
+            clusters.append(home)
+        home["items"].append(it)
+        if it["location"]:
+            home["locations"].add(it["location"])
+    out = []
+    for c in clusters:
+        seats = sorted({i["seat"] for i in c["items"]})
+        out.append({"seats": seats, "items": c["items"]})
+    return sorted(out, key=lambda c: -len(c["seats"]))
+
+
+def panel_report(clusters: list[dict], seats: list[dict], doc: str, failed=()) -> str:
+    must = [c for c in clusters if len(c["seats"]) >= 2]
+    single = [c for c in clusters if len(c["seats"]) < 2]
+    lines = [f"# Panel review: {doc}", "",
+             "Seats (each reviewed in isolation, none saw another's output): "
+             + "; ".join(s["role"] for s in seats), ""]
+    if failed:
+        lines += [f"**Seats with no usable result:** {', '.join(failed)}. Agreement below is "
+                  "counted over the seats that returned.", ""]
+    lines += ["## Must fix: named by 2 or more seats", ""]
+    if not must:
+        lines += ["None.", ""]
+    for i, c in enumerate(must, 1):
+        lines.append(f"{i}. **{len(c['seats'])} seats** ({', '.join(c['seats'])})")
+        for it in c["items"]:
+            lines.append(f"   - {it['seat']}: {it['summary']} [{it['location'] or 'no location'}]")
+    lines += ["", "## Triage: named by one seat", ""]
+    if not single:
+        lines += ["None.", ""]
+    for c in single:
+        it = c["items"][0]
+        extra = f" (+{len(c['items']) - 1} more from the same seat)" if len(c["items"]) > 1 else ""
+        lines.append(f"- {it['seat']}: {it['summary']} [{it['location'] or 'no location'}]{extra}")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def run_panel(a, repo: Path, doc: Path) -> int:
+    try:
+        seats = load_seats(a.seat or (), a.seats_file)
+    except (OSError, ValueError) as e:
+        print(f"reader_review: refused: {e}", file=sys.stderr)
+        return 2
+    if not a.purpose.strip():
+        print("reader_review: --panel needs --purpose", file=sys.stderr)
+        return 2
+    slug = a.slug or _slugify(doc.stem)
+    stamp = dt.date.today().strftime("%m%d%y")
+    out_dir = repo / "output" / "analysis" / "reader-review-inputs" / f"{stamp}-{slug}-panel"
+    text_path, _images = render(doc, out_dir)
+    rel = lambda p: str(Path(p).resolve().relative_to(repo))  # noqa: E731
+    model = a.panel_model
+    plans = []
+    for seat in seats:
+        report = f"output/analysis/{stamp}-{model}-{slug}-panel-{_seat_slug(seat)}.md"
+        argv = [sys.executable, "tools/codex_verify.py", "--model", model,
+                "--target", seat_target(seat, rel(text_path), a.purpose),
+                "--paths", rel(text_path), "--report", report]
+        plans.append((seat, report, argv))
+    if a.dry_run:
+        for seat, report, argv in plans:
+            print(f"SEAT {seat['role']} -> {report}")
+            print(argv[argv.index('--target') + 1], "\n")
+        return 0
+    # Isolation is structural: each run is its own process, given only its own seat.
+    with ThreadPoolExecutor(max_workers=len(plans)) as ex:
+        results = list(ex.map(lambda p: run_one(p[2], repo), plans))
+    per_seat, failed = {}, []
+    for (seat, report, _), r in zip(plans, results):
+        if r["rc"] != 0 or not isinstance(r["findings"], list):
+            failed.append(seat["role"])
+            continue
+        per_seat[seat["role"]] = r["findings"]
+    clusters = cluster_findings(per_seat)
+    out = repo / "output" / "analysis" / f"{stamp}-{slug}-panel.md"
+    write_atomic(out, panel_report(clusters, seats, rel(doc) if doc.is_relative_to(repo) else str(doc), failed))
+    print(json.dumps({"panel_report": rel(out), "seats": len(seats), "failed": failed,
+                      "must_fix": sum(1 for c in clusters if len(c["seats"]) >= 2),
+                      "single_seat": sum(1 for c in clusters if len(c["seats"]) < 2)}, indent=2))
+    return 0 if not failed else 1
+
+
 def run_one(argv: list[str], repo_root: Path) -> dict:
     proc = subprocess.run(argv, cwd=repo_root, capture_output=True, text=True,
                           env={**__import__("os").environ, "PYTHONIOENCODING": "utf-8"})
@@ -457,6 +623,14 @@ def main(argv=None) -> int:
     ap.add_argument("--known-errors", default="")
     ap.add_argument("--repo-root", default=str(REPO_ROOT))
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--panel", action="store_true",
+                    help="panel mode: 3 to 5 real decision-maker seats, each reviewing in "
+                         "isolation; problems named by 2+ seats are reported first")
+    ap.add_argument("--seat", action="append",
+                    help="with --panel: 'role | mandate | measured on | fears'; repeatable")
+    ap.add_argument("--seats-file", default="",
+                    help="with --panel: JSON list of {role, mandate, measured_on, fears}")
+    ap.add_argument("--panel-model", default=PANEL_MODEL, help="with --panel: the verifier")
     a = ap.parse_args(argv)
 
     repo = Path(a.repo_root).resolve()
@@ -464,6 +638,8 @@ def main(argv=None) -> int:
     if not doc.exists():
         print(f"reader_review: no such document: {doc}", file=sys.stderr)
         return 2
+    if a.panel:
+        return run_panel(a, repo, doc)
     gate = None
     if a.gate:
         log_path = Path(a.gate) if Path(a.gate).is_absolute() else repo / a.gate
