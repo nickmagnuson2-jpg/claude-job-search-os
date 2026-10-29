@@ -2,7 +2,9 @@
 import csv
 import datetime as dt
 import json
+import re
 import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -246,6 +248,22 @@ def test_final_rows_order_independent():
     assert [r["reservations"] for r in bt.final_rows(rows, dt.datetime(2026, 1, 7, tzinfo=UTC))] == ["9"]
 
 
+def test_parse_utc_works_on_a_strict_fromisoformat(monkeypatch):
+    """Python 3.10's fromisoformat rejects '+0000' and 'Z'; parse_utc must normalize both first."""
+    class Strict(dt.datetime):
+        @classmethod
+        def fromisoformat(cls, s):
+            if not re.search(r"[+-]\d\d:\d\d$", s):
+                raise ValueError(f"3.10 rejects {s!r}")
+            return dt.datetime.fromisoformat(s)
+    monkeypatch.setattr(bt, "dt", types.SimpleNamespace(datetime=Strict))
+    want = dt.datetime(2026, 1, 6, 1, tzinfo=UTC)
+    assert bt.parse_utc("2026-01-06T01:00:00+0000") == want
+    assert bt.parse_utc("2026-01-06T01:00:00Z") == want
+    assert bt.parse_utc("2026-01-06T01:00:00-0500") == dt.datetime(2026, 1, 6, 6, tzinfo=UTC)
+    assert bt.parse_utc("2026-01-06T01:00:00+00:00") == want
+
+
 def test_diff_truncates_long_slot_lists():
     many = [f"2026-01-{d:02d}T01:00 New Space cap 8" for d in range(1, 8)]
     assert any(x.endswith(" ...)") for x in bt.diff({"watched_slots": []}, {"watched_slots": many}))
@@ -310,6 +328,7 @@ def test_main_prints_results_and_failures(tmp_path, monkeypatch, capsys):
     o = capsys.readouterr()
     assert "Example Spa: 3 slots, 4 reservations, 1 change line(s), errors: ['store: x']" in o.out
     assert "Bad: FAILED down" in o.err
+    assert "| population 2 | included 0 | excluded: not selected by --venue 0, failed 1, partial read 1" in o.out
 
 
 @pytest.mark.parametrize("errors,code", [([], 0), (["store: x"], 1)])

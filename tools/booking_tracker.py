@@ -41,6 +41,8 @@ import time
 import urllib.request
 from zoneinfo import ZoneInfo
 
+from count_report import report
+
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_CONFIG = os.path.join(REPO, "data", "booking-tracker.json")
 BASE = "https://www.zettlor.com"
@@ -290,25 +292,28 @@ def main(argv=None):
     ap.add_argument("--venue", help="only this venue (by name)")
     ap.add_argument("--summary", action="store_true")
     a = ap.parse_args(argv)
-    venues = json.load(open(a.config))["venues"]
-    if a.venue:
-        venues = [v for v in venues if v["name"] == a.venue]
-        if not venues:
-            sys.exit(f"no venue named {a.venue!r} in {a.config}")
-    failed = 0
-    for v in venues:
-        if a.summary:
+    every = json.load(open(a.config))["venues"]
+    venues = [v for v in every if not a.venue or v["name"] == a.venue]
+    if a.venue and not venues:
+        sys.exit(f"no venue named {a.venue!r} in {a.config}")
+    if a.summary:
+        for v in venues:
             print(f"== {v['name']}\n{summary(v)}")
-            continue
+        return 0
+    failed = partial = 0
+    for v in venues:
         try:
             r = run_venue(v)
-            failed += bool(r["errors"])   # a partial read is a failed run, even though its slots were kept
-            print(f"{v['name']}: {r['slots']} slots, {r['reservations']} reservations, {r['changes']} change line(s)"
-                  + (f", errors: {r['errors']}" if r["errors"] else ""))
         except Exception as e:   # one venue failing must not stop the others
             failed += 1
             print(f"{v['name']}: FAILED {e}", file=sys.stderr)
-    return 1 if failed else 0
+            continue
+        partial += bool(r["errors"])   # a partial read is a failed run, even though its slots were kept
+        print(f"{v['name']}: {r['slots']} slots, {r['reservations']} reservations, {r['changes']} change line(s)"
+              + (f", errors: {r['errors']}" if r["errors"] else ""))
+    report(f"venues in {a.config}", len(every), len(venues) - failed - partial,
+           {"not selected by --venue": len(every) - len(venues), "failed": failed, "partial read": partial})
+    return 1 if failed or partial else 0
 
 
 if __name__ == "__main__":
