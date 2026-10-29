@@ -397,3 +397,24 @@ def test_status_reports_execution_from_the_applier_log(repo, monkeypatch, capsys
     after = json.loads(capsys.readouterr().out)
     rule = next(e for e in after["bulk_rules"] if e["rule_id"] == dlog.rule_id("drips"))
     assert rule["executed"] is True and after["executed_any"] is True
+
+
+def test_status_reports_an_executed_individual_cohort(repo, monkeypatch, capsys):
+    _decide(repo)
+    log = repo["root"] / dlog.LOG_REL
+    rows = [json.loads(l) for l in log.read_text().splitlines()]
+    rows[0].update(mode="individual", bulk_rule=None)
+    log.write_text("".join(json.dumps(r) + "\n" for r in rows))
+    dlog.cmd_approve(repo["root"], [dlog.cohort_id("delete", "high")], "c",
+                     sign=lambda d: sig.sign(d, key_file=repo["key"]))
+    capsys.readouterr()
+    dlog.cmd_status(repo["root"])
+    cohort = next(c for c in json.loads(capsys.readouterr().out)["individual_cohorts"]
+                  if c["rule_id"] == "ind:delete:high")
+    assert cohort["executed"] is False
+    code, _ = _run(repo, monkeypatch, capsys, "--apply")
+    assert code == 0
+    dlog.cmd_status(repo["root"])
+    s = json.loads(capsys.readouterr().out)
+    cohort = next(c for c in s["individual_cohorts"] if c["rule_id"] == "ind:delete:high")
+    assert cohort["executed"] is True and s["executed_any"] is True
