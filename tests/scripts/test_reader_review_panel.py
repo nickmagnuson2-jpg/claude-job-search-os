@@ -142,8 +142,8 @@ def test_the_three_question_mode_is_unchanged():
 def test_panel_report_lists_every_item_and_counts_extras():
     clusters = rr.cluster_findings({
         "A": [{"location": "p:1", "summary": "staffing headcount missing"},
-              {"location": "p:5", "summary": "pricing figure wrong"},
-              {"location": "p:5", "summary": "pricing figure stale"}],
+              {"location": "p:5", "summary": "pricing discount wrong"},
+              {"location": "p:5", "summary": "pricing discount stale"}],
         "B": [{"location": "p:1", "summary": "staffing headcount absent"}]})
     text = rr.panel_report(clusters, [{"role": "A"}, {"role": "B"}, {"role": "C"}], "d.md")
     assert "None." not in text
