@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-todos_summary.py — Pre-process job-todos.md for /standup and /weekly-review.
+todos_summary.py — Pre-process job-todos.md for /standup.
 
 Reads: data/job-todos.md, data/workbooks/_morning-starter-YYYY-MM-DD.md
 

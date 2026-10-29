@@ -42,7 +42,7 @@ TODO: Write your one-sentence search thesis here.
 
 ## This Week's Focus
 
-<!-- Updated by /weekly-review each week -->
+<!-- Updated by hand each week; Monday /standup writes the week's Top 5 to data/weekly-review-log.md -->
 1. TODO
 2. TODO
 3. TODO

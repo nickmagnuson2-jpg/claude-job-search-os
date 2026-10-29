@@ -120,14 +120,14 @@ Argument syntax and worked examples for each: [docs/usage.md](docs/usage.md).
 
 | Area | Skills |
 |---|---|
-| Planning and tracking | `/standup` `/checkout` `/todo` `/personal-todo` `/weekly-review` `/act` `/pipe` |
+| Planning and tracking | `/standup` `/checkout` `/todo` `/personal-todo` `/act` `/pipe` |
 | Capture | `/wispr` `/remember` |
 | Research | `/research-industry` `/research-company` `/discover-companies` `/scan-companies` `/scan-jobs` `/analyze` `/analyze-stream` `/learn` |
 | Applications | `/generate-cv` `/apply` `/cover-letter` `/review-cv` `/review-cv-deep` |
 | Outreach and networking | `/cold-outreach` `/outreach-batch` `/follow-up` `/draft-email` `/networking` `/scan-contacts` |
 | Interviews | `/prep-interview` `/voice-export` `/debrief` |
 | Setup (one time) | `/import-cv` `/extract-identity` `/setup-goals` |
-| Maintenance | `/audit-pii` `/verify` `/critique-plan` `/memory-refresh` `/trim-context-file` |
+| Maintenance | `/audit-pii` `/verify` `/critique-plan` `/trim-context-file` |
 
 ---
 

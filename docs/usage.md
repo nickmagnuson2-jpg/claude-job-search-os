@@ -119,13 +119,9 @@ Bookend to `/standup`. Runs `todo_daily_metrics.py` to build today's progress sn
 
 It also runs a Granola debrief cascade (Step 4d): surfaces calls from the day that haven't been debriefed yet and proposes them, propose-only, it never auto-debriefs. It proposes any milestone-level accomplishment candidates from the day's real artifacts for you to confirm into `data/accomplishments.md` (a strict bar: most days produce none, and nothing is ever auto-logged), and runs a state audit that surfaces stuck tasks, long-overdue to-dos and stalled pipeline rows for your decision without closing any of them, and ends with a silent-failure probe: an open question asking whether anything happened today that the system never captured. As its closing action it pushes an automatic private-data backup to a private remote (non-blocking: a backup failure never aborts checkout, and the public repo is never touched).
 
-### Weekly retrospective
+### Weekly priorities
 
-```
-/weekly-review
-```
-
-Covers pipeline health by stage, outreach activity (sent, replied, no-reply counts; no response-rate percentage), task velocity trend, research activity, and Top 5 priorities for the coming week. Logs to `data/weekly-review-log.md`.
+There is no separate weekly skill. On Mondays, `/standup` drafts the week's Top 5 priorities and prepends them to `data/weekly-review-log.md`, which `/checkout` reads to mark tomorrow's Top 3. (`/weekly-review` was deleted 2026-10-29: it was never run.)
 
 ### Autonomous execution
 
@@ -492,8 +488,6 @@ Full list of all 39 skills in `.claude/skills/`:
 | `/learn` | `<topic> [--focused\|--comprehensive] [--repos <paths>] [--no-quiz] [--no-pdf] [--neutral] [--audience "..."]` | Validated deep briefing: parallel research, BLUF synthesis, comprehension and interview quiz, adversarial claim-check that auto-fixes and cites → `output/MMDDYY-<topic-slug>-briefing.md` (+ PDF) and `-validation.md` |
 | `/standup` | *(none)* | Morning briefing: conversations-had metric, pipeline, new scanned roles, top 3 (scheduled interviews pinned), outreach, follow-ups, suggested priority |
 | `/checkout` | *(none)* | End-of-day close-out: daily log, scheduled-event pins, accomplishments capture, tomorrow's top 3, velocity snapshot, auto private-backup |
-| `/weekly-review` | *(none)* | Weekly retrospective → `data/weekly-review-log.md` |
-| `/memory-refresh` | *(none)* | Shows memory rules due for promotion (recurring but not yet skill/hook-wired) or demotion (unread 60+ days), and offers to act |
 | `/trim-context-file` | `<path>` (default `CLAUDE.md`) | Shrink an always-loaded context file by relocating reference-shaped sections to on-demand docs, leaving a router pointer. Measures first, proposes KEEP/MOVE per section, never deletes, never acts without approval. Runs `tools/trim_context_gate.sh` as a mandatory Step 0. |
 | `/act` | *(none)* | Autonomous execution of Bucket A to-dos, processes inbox/ |
 | `/analyze-stream` | `<url or "day N of <event>"> [stream_type] [focus]` | Analyze a long recording (45+ min livestream, conference session, podcast, workshop): local Whisper transcription, anomaly review, per-chunk evidence extraction, synthesis against goals, adversarial verification pass → `output/analysis/MMDDYY-<slug>.md` and `-verify.md` |
@@ -592,7 +586,6 @@ The friction log is an append-only ledger of small recurring errors that waste t
 - `check_script_error_logged.py` (PostToolUse on Bash) fires after a `tools/*.py` call that returns a JSON error (Branch A) or any `python3` invocation that crashes with a traceback, including inline heredocs and skill helpers outside `tools/` (Branch B), and auto-appends to `memory/friction-log.md`.
 - `log_tool_failure.py` (PostToolUseFailure on Bash/Edit/Write/MultiEdit) is the primary capture for outright tool-call failures, which standard PostToolUse hooks never see.
 - `scan_transcript_failures.py` (Stop hook) scans the session transcript at turn-end for harness pre-check errors (e.g., "file not read" Edit rejections) that the other two hooks cannot see.
-- `/weekly-review` Step 5b audits unpromoted entries during the weekly retro.
 
 **Promotion ladder:**
 

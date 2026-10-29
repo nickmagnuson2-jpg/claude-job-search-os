@@ -44,7 +44,7 @@ Pattern: `YYYY-MM-DD-HHMM-<slug>.md` (transcript) + `YYYY-MM-DD-HHMM-<slug>-summ
 > ⚠️ Raw Granola transcript not found at `data/voice-corpus/granola/` for this call. The two-tier-capture rule requires raw-on-disk before any synthesized debrief. Options:
 > 1. Run `/granola-pull` first to fetch and persist (recommended)
 > 2. If transcript was pasted (no Granola source), persist it manually: `python3 tools/granola_save.py --transcript <path> --date <YYYY-MM-DD> --slug <slug>`
-> 3. To bypass for a one-off case (e.g., notes-only debrief with no recording): set `DEBRIEF_NO_RAW=1` in environment and re-invoke. This will produce a per-call file with `<!-- raw: none, bypass-flag -->` in the metadata, which `/checkout` and `/weekly-review` will surface for audit.
+> 3. To bypass for a one-off case (e.g., notes-only debrief with no recording): set `DEBRIEF_NO_RAW=1` in environment and re-invoke. This will produce a per-call file with `<!-- raw: none, bypass-flag -->` in the metadata, which `/checkout` will surface for audit.
 
 Do NOT proceed to Step 1 until either (a) raw is on disk, OR (b) bypass flag is set.
 

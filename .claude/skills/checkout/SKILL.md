@@ -38,7 +38,7 @@ Parse the JSON output. The script reads all source files and returns:
 **Do not re-read the source files** — use these values directly in Steps 3–7. Specifically: **do NOT call Read on `data/job-todos.md` with a `limit:` parameter** — silent truncation past line 120 produces wrong rankings (origin: 2026-05-13 /standup miss + same-day /checkout fix; see `memory/feedback_todos_full_file_read_required.md`).
 
 Also read separately (not covered by the metrics script):
-- `data/weekly-review-log.md` — for tomorrow's top 3 cross-reference (Step 6)
+- `data/weekly-review-log.md` — for tomorrow's top 3 cross-reference (Step 6). Since 2026-10-29 its newest entry is written by Monday's `/standup` (Step 2w); `/weekly-review` was deleted.
 - `data/reflections/_longitudinal.md` (if present) — read the TOP entry only (newest). Surface 1-2 headline lines from its three axes (thinking patterns / decision biases / communication tendencies) as the longitudinal read in the checkout summary. This is the `/my-world` deep-pass output; skip silently if the file does not exist.
 
 ### Step 1b: (Deprecated — now in todo_daily_metrics.py)
@@ -251,7 +251,7 @@ On a non-working day:
 - **Never count a non-working day toward a zero-activity streak,** and never read zero outreach
   on a holiday as a signal. Outreach sent on a holiday has near-zero expected value.
 - **The daily log is the longitudinal substrate.** If the entry records a holiday as a
-  displacement day, `/weekly-review` and `/my-world` will read it back as one. Write the day
+  displacement day, `/my-world` and Monday's `/standup` will read it back as one. Write the day
   context into the log entry itself, not only into the chat summary.
 - `data/goals.md` Search Principle 4 governs the infrastructure-vs-outreach pattern
   specifically. **Read it, do not recall it** — it is a weekday-morning test by construction
@@ -284,8 +284,8 @@ From the current Active to-dos in `data/job-todos.md`, rank tomorrow's top 3:
 3. Med priority, earliest due date
 4. Low priority, earliest due date (rarely surfaces unless nothing higher)
 
-**Cross-reference with weekly review:**
-- Read the most recent Top 5 from `data/weekly-review-log.md` (look for the latest `#### Top 5 Priorities` section).
+**Cross-reference with this week's priorities:**
+- Read the most recent Top 5 from `data/weekly-review-log.md` (look for the latest `#### Top 5 Priorities` section). Monday's `/standup` writes it (Step 2w).
 - For each item in the Top 5 that hasn't been completed (not in the Done section of today's log), annotate it in the top 3 list if it matches — add `(⭐ weekly priority)`.
 
 **Display:** Show 3 items maximum. For each: the task, priority, due date (if set), and a brief "why" (overdue / priority / weekly goal).
@@ -384,7 +384,7 @@ Origin: wired into `/checkout` 2026-06-11, replacing the manual-only backup. The
 - **job-todos.md missing or empty:** Note "No to-dos tracked yet" — skip snapshot sections. Still write a minimal log entry and display the checkout summary.
 - **No completions today:** Show "Nothing completed yet today." — still write the log entry. This is valid data (streak resets if this was the only entry).
 - **Existing entry for today:** Replace it in place — do not append a duplicate. This supports running `/checkout` multiple times in a day (last run wins).
-- **No weekly-review-log.md:** Skip the weekly priority cross-reference silently. Display Tomorrow's Top 3 based on todo priority/date only.
+- **No weekly-review-log.md, or no entry this week:** Skip the weekly priority cross-reference silently. Display Tomorrow's Top 3 based on todo priority/date only.
 - **No active to-dos:** Display "No active to-dos — run `/todo add` to capture tomorrow's work" instead of the Top 3 section.
 - **All files missing:** Display a setup message: "No data files found yet. Start with `/import-cv` to populate your profile, then `/pipe add` to track your first application."
 - **Daily log file doesn't exist:** Create it with the standard header (see Step 4) before writing the first entry.

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-todo_daily_metrics.py — Pre-process daily job search metrics for /checkout and /weekly-review.
+todo_daily_metrics.py — Pre-process daily job search metrics for /checkout.
 
 Reads: data/job-todos.md, data/job-todos-daily-log.md, data/job-pipeline.md,
        data/networking.md, data/outreach-log.md, docs/CHANGELOG.md, output/**/*.md

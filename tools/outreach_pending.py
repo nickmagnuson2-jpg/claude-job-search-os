@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-outreach_pending.py — Pre-process outreach follow-up status for /standup and /weekly-review.
+outreach_pending.py — Pre-process outreach follow-up status for /standup.
 
 Reads: data/outreach-log.md, data/networking.md, data/job-pipeline.md
 

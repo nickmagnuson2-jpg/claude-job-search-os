@@ -85,7 +85,7 @@ Using the template from `framework/templates/goals.md` as the structure, write `
 - **Geography** — from candidate's answer
 - **Comp range** — from candidate's answer
 - **Current Phase** — mark the correct checkbox; fill Phase notes with target date
-- **This Week's Focus** — leave as TODO (populated by `/weekly-review`)
+- **This Week's Focus** — leave as TODO (Nick fills it; Monday `/standup` drafts the week's Top 5 separately)
 - **Week of** — leave as TODO
 - **Success Metrics** — leave targets as TODO (candidate fills these in)
 - **Notes** — add a line: `_Industries, priority stack, non-negotiables, and work style preferences are in data/professional-identity.md._`
@@ -106,7 +106,7 @@ Profile guard will now pass — all generative skills are unblocked.
 
 Suggested next step:
 - Run `/standup` for a morning briefing now that goals are set
-- Or `/weekly-review` to set This Week's Focus
+- Or Monday's `/standup` for the week's Top 5 priorities
 - Fill in the Success Metrics targets in data/goals.md when you have a sense of your weekly pace
 ```
 
