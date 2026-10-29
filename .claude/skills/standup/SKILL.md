@@ -741,6 +741,10 @@ should interrupt the day:]
 [If nothing pending:]
 > No outreach awaiting response (last 30 days).
 
+A thread Nick says is resolved (no reply coming, or the loop closed elsewhere) leaves this list
+when its row is marked `Closed`, the terminal status (2026-10-29, todo #120). Only on his word:
+`PYTHONIOENCODING=utf-8 python3 tools/outreach_status.py --recipient "<name>" --set-status --date <YYYY-MM-DD> --status Closed`.
+
 ---
 
 ### Follow-Up Due

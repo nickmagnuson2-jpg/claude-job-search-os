@@ -366,3 +366,7 @@ class TestMainOnAFixtureRepo:
         rc, d = self._run(root)
         assert d["conversations_and_interviews"]["7d"] == 2
         assert set(d["outcome_vs_input"]) == {"_note"}
+
+
+def test_a_closed_outreach_row_counts_as_sent():
+    assert "closed" in cm.SENT_STATES and "drafted" not in cm.SENT_STATES

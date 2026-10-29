@@ -67,6 +67,10 @@ STAMP_TEMPLATE = (
 KNOWN_STATUSES = {
     "Drafted", "Sent", "Replied", "No reply",
     "Bounced", "Delivered", "Delivery unknown",
+    # Terminal (2026-10-29, todo #120): the thread is resolved and expects nothing more,
+    # so it leaves every awaiting-response list. Before this a "No reply" row sat in
+    # /standup's awaiting list and outreach_pending's overdue list forever.
+    "Closed",
 }
 # A bounce is still a transmission — it left Nick's outbox. That is exactly why `sent`
 # alone must never license a suppressive claim.
@@ -75,7 +79,7 @@ KNOWN_STATUSES = {
 # transmission with no receipt evidence. It contributes to `sent` and never to
 # `delivered`, so it can never unlock suppression. (The spec's state-derivation
 # bullet omitted it while its OQ1 resolution required it; OQ1 is the decision.)
-SENT_STATUSES = {"Sent", "Replied", "Delivered", "Bounced", "No reply"}
+SENT_STATUSES = {"Sent", "Replied", "Delivered", "Bounced", "No reply", "Closed"}
 # Statuses that carry information about whether the message actually ARRIVED.
 RECEIPT_STATUSES = {"Replied", "Delivered", "Bounced"}
 POSITIVE_RECEIPT = {"Replied", "Delivered"}

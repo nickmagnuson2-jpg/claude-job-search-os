@@ -994,3 +994,10 @@ def test_set_status_finds_a_row_by_its_artifact_cell(tmp_path):
     assert code == 0
     assert "| Bounced |" in log.read_text(encoding="utf-8")
 
+
+
+def test_closed_is_a_known_terminal_sent_status():
+    """Todo #120: a resolved thread can be marked Closed, and Closed counts as sent."""
+    import outreach_status as _os
+    assert "Closed" in _os.KNOWN_STATUSES and "Closed" in _os.SENT_STATUSES
+    assert "Closed" not in _os.RECEIPT_STATUSES and "Closed" not in _os.OPEN_STATUSES

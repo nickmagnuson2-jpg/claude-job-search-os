@@ -51,7 +51,8 @@ META = {
 
 # An outreach-log status that means the message went out. "Drafted" is the one that did not.
 # Shared with tools/day_check.py, so a send is one definition.
-SENT_STATES = {"sent", "replied", "delivered", "no reply", "delivery unknown", "bounced"}
+SENT_STATES = {"sent", "replied", "delivered", "no reply", "delivery unknown", "bounced",
+               "closed"}
 
 INTERACTION_RE = re.compile(r"^####\s+(\d{4}-\d{2}-\d{2})\s*\|\s*([^|]+?)\s*\|", re.M)
 STAGE_RE = re.compile(r"^stage:\s*(.+?)\s*$", re.M)
