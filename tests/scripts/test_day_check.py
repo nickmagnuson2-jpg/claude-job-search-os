@@ -356,3 +356,8 @@ def test_the_check_skill_prints_unconfirmed_applications():
 def test_a_note_recording_no_reply_is_never_counted_as_a_reply(summary):
     """Review 2026-10-29: NEGATED knew "hasn't" but not "haven't"."""
     assert dc.classify_summary("email", summary) != "reply"
+
+
+@pytest.mark.parametrize("summary", ["Sam replied, no worries", "She replied, hasn't heard from the HM"])
+def test_a_reply_beside_an_unrelated_negation_still_counts(summary):
+    assert dc.classify_summary("email", summary) == "reply"

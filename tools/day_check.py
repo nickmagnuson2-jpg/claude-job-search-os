@@ -110,7 +110,11 @@ def classify_summary(kind: str, summary: str) -> str | None:
     # A negated note ("Sam never replied", "No reply from Sam", "nobody responded") records
     # the absence of a reply; only the explicit inbound shapes above outrank it (D8 r2).
     if NEGATED.search(s):
-        return "send" if (OUTBOUND_UPPER.search(s) or OUTBOUND_START.match(s)) else None
+        rest = NEGATED.sub(" ", s)
+        if not (any(m.group(1).casefold() not in ("nick", "i") for m in OTHER_REPLIED.finditer(rest))
+                or any(marker in rest.casefold() for marker in INBOUND_SUBJECT_MARKERS)):
+            return "send" if (OUTBOUND_UPPER.search(s) or OUTBOUND_START.match(s)) else None
+        s = rest
     if any(m.group(1).casefold() not in ("nick", "i") for m in OTHER_REPLIED.finditer(s)):
         return "reply"
     # networking_write's own inbound vocabulary ("heard back", "wrote back", ...), so the

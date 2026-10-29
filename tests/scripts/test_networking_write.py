@@ -604,3 +604,30 @@ def test_reply_received_respects_negation(summary, replied):
     sys.path.insert(0, str(TOOLS_DIR))
     import networking_write as nw
     assert nw.reply_received(summary) is replied
+
+
+@pytest.mark.parametrize("summary, replied", [
+    ("no worries, replied yesterday", True),
+    ("not interested, she replied", True),
+    ("She replied, hasn't heard from the HM", True),
+    ("she won't reply", False),
+    ("still waiting to hear back", False),
+])
+def test_negation_is_scoped_to_the_reply_word(summary, replied):
+    """Round 2, 2026-10-29: an unscoped negator swallowed real replies."""
+    sys.path.insert(0, str(TOOLS_DIR))
+    import networking_write as nw
+    assert nw.reply_received(summary) is replied
+
+
+def test_an_explicit_inbound_note_outranks_a_negation_inside_it():
+    sys.path.insert(0, str(TOOLS_DIR))
+    import networking_write as nw
+    assert nw.reply_received("INBOUND 4:46am, a bump on a prior unanswered message") is True
+    assert nw.reply_received("Inbound 8:55am, replying to the question: no reply needed") is True
+
+
+def test_cutting_a_negation_never_removes_an_outbound_marker():
+    sys.path.insert(0, str(TOOLS_DIR))
+    import networking_write as nw
+    assert nw.reply_received("Follow-up #2 sent: reply in the thread. No reply to the 10/2 note.") is False
