@@ -6,7 +6,8 @@ For each venue in a gitignored config (default data/booking-tracker.json), every
      every scheduled slot from today through HORIZON_DAYS, with capacity and current reservations;
   2. reads the booking page /c/<handle> (product menu, incl. switched-off offerings) and the store
      page /c/<handle>/store (packs, passes, memberships, rentals, prices);
-  3. appends slot counts to <data_dir>/snapshots.csv and diffs the menu, store, price rules and the
+  3. appends slot counts to <data_dir>/snapshots.csv, the snapshot time to <data_dir>/snapshot-times.txt
+     (so an empty schedule still counts as a snapshot), and diffs the menu, store, price rules and the
      watched offering's slots against <data_dir>/watch-state.json, appending dated lines to
      <data_dir>/changes.md (a workstream PROBE can count them so /standup shows a change).
 
@@ -72,13 +73,14 @@ def page_props(html):
 
 # ---------------------------------------------------------------- parsing (pure)
 def slots_from_payload(payload):
-    """Slots in date order. Raises on a missing data dict or a truncated response, so neither is
-    ever stored as a complete schedule."""
-    data, pag = payload.get("data"), payload.get("pagination") or {}
+    """Slots in date order. Raises on a missing data dict, missing pagination, or a truncated
+    response, so none of them is ever stored as a complete schedule. The feed always sends
+    pagination.hasMore; only an explicit false counts as complete."""
+    data, pag = payload.get("data"), payload.get("pagination")
     if not isinstance(data, dict):
         raise ValueError(f"availability payload has no data dict: {str(payload)[:200]}")
-    if pag.get("hasMore"):
-        raise ValueError(f"availability truncated at page_size (pagination {pag})")
+    if not isinstance(pag, dict) or pag.get("hasMore") is not False:
+        raise ValueError(f"availability may be truncated (pagination {pag})")
     return [s for day in sorted(data) for s in data[day]], pag
 
 
@@ -88,14 +90,14 @@ def menu_from_props(pp):
         raise ValueError("booking page has no discovery filters")
     menu = {f"{f.get('key')}: {o.get('label')}": ("off" if o.get("enabled") is False else "on")
             for f in filters for o in (f.get("options") or [])}
+    if not menu:
+        raise ValueError("booking page filters list no options")
     return menu, (pp.get("orgConfig") or {}).get("bookingPageStatus")
 
 
 def store_from_props(pp):
-    if not pp.get("entries"):
-        raise ValueError("store page has no entries")
     items = {}
-    for e in pp["entries"]:
+    for e in pp.get("entries") or []:
         if e.get("entryType") == "SECTION_HEADER" or not e.get("isVisible", True):
             continue
         prod, pos = e.get("product") or {}, e.get("posItem") or {}
@@ -105,14 +107,23 @@ def store_from_props(pp):
         extra += ["recurring"] if prod.get("isRecurring") else []
         name = e.get("displayName") or prod.get("name") or pos.get("name")
         items[name] = f"{kind} ${price}" + (f" ({', '.join(extra)})" if extra else "")
+    if not items:
+        raise ValueError("store page has no visible items")
     return items
+
+
+def parse_utc(s):
+    s = s.replace("Z", "+00:00")
+    if len(s) > 5 and s[-5] in "+-" and s[-3] != ":":
+        s = s[:-2] + ":" + s[-2:]
+    return dt.datetime.fromisoformat(s)
 
 
 def slot_rows(slots, now_utc, tz):
     rows = []
     for s in slots:
         cc = s.get("capacity_context") or {}
-        local = dt.datetime.fromisoformat(s["datetime"].replace("+0000", "+00:00")).astimezone(tz)
+        local = parse_utc(s["datetime"]).astimezone(tz)
         rows.append({"snapshot_utc": now_utc, "slot_id": s["id"], "slot_start_utc": s["datetime"],
                      "local_date": local.date().isoformat(), "local_time": s.get("time"),
                      "offering": s.get("offering_name"), "duration_min": s.get("duration"),
@@ -152,17 +163,11 @@ def diff(old, new):
     return out
 
 
-def parse_utc(s):
-    s = s.replace("Z", "+00:00")
-    if len(s) > 5 and s[-5] in "+-" and s[-3] != ":":
-        s = s[:-2] + ":" + s[-2:]
-    return dt.datetime.fromisoformat(s)
-
-
-def final_rows(rows, now):
+def final_rows(rows, now, snap_times=()):
     """For each slot that has started: its row from the last snapshot taken before the start.
-    A slot that a later pre-start snapshot no longer listed is treated as canceled and dropped."""
-    last_before, snap_times = {}, set()
+    A slot that a later pre-start snapshot no longer listed is treated as canceled and dropped.
+    snap_times adds snapshots that wrote no rows (an empty schedule is still a snapshot)."""
+    last_before, snap_times = {}, set(snap_times)
     for r in rows:
         snap_times.add(r["snapshot_utc"])
         snap, start = parse_utc(r["snapshot_utc"]), parse_utc(r["slot_start_utc"])
@@ -187,6 +192,10 @@ def is_primary(r, venue):
 def paths(venue):
     d = venue["data_dir"] if os.path.isabs(venue["data_dir"]) else os.path.join(REPO, venue["data_dir"])
     return d, os.path.join(d, "snapshots.csv"), os.path.join(d, "watch-state.json"), os.path.join(d, "changes.md")
+
+
+def times_path(venue):
+    return os.path.join(paths(venue)[0], "snapshot-times.txt")
 
 
 def run_venue(venue, fetch=get, now=None):
@@ -218,9 +227,14 @@ def run_venue(venue, fetch=get, now=None):
         if new_file:
             w.writeheader()
         w.writerows(rows)
+    with open(times_path(venue), "a") as f:
+        f.write(now_utc + "\n")
     if errors:
         with open(os.path.join(data_dir, "errors.log"), "a") as f:
             f.write("".join(f"{stamp} {e}\n" for e in errors))
+    if old is None and errors:   # no baseline from a partial read: the next clean run writes it
+        return {"slots": len(rows), "reservations": sum(r["reservations"] or 0 for r in rows),
+                "changes": 0, "errors": errors}
     state = watch_state(slots, pag, menu, status, store, venue.get("watch_offering"))
     if old is None:
         lines = [f"- {stamp} baseline: {len(menu)} menu options ({sum(v == 'off' for v in menu.values())} switched off), "
@@ -245,7 +259,9 @@ def summary(venue, now=None):
     _, snaps_p, _, _ = paths(venue)
     if not os.path.exists(snaps_p):
         return "no snapshots yet"
-    rows = final_rows(list(csv.DictReader(open(snaps_p))), now or dt.datetime.now(dt.timezone.utc))
+    tp = times_path(venue)
+    times = open(tp).read().split() if os.path.exists(tp) else ()
+    rows = final_rows(list(csv.DictReader(open(snaps_p))), now or dt.datetime.now(dt.timezone.utc), times)
     if not rows:
         return "No slot has started since the first snapshot yet."
     by_day, by_start = {}, {}
@@ -286,6 +302,7 @@ def main(argv=None):
             continue
         try:
             r = run_venue(v)
+            failed += bool(r["errors"])   # a partial read is a failed run, even though its slots were kept
             print(f"{v['name']}: {r['slots']} slots, {r['reservations']} reservations, {r['changes']} change line(s)"
                   + (f", errors: {r['errors']}" if r["errors"] else ""))
         except Exception as e:   # one venue failing must not stop the others

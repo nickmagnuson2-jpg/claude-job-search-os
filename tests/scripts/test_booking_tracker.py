@@ -59,6 +59,15 @@ def test_truncated_or_missing_feed_raises():
         bt.slots_from_payload(payload([], more=True))
     with pytest.raises(ValueError):
         bt.slots_from_payload({"error": "x"})
+    with pytest.raises(ValueError):
+        bt.slots_from_payload({"data": None, "pagination": {"hasMore": False}})
+    for pag in (None, {}, {"lastSlotDate": None}, {"hasMore": None}):   # no explicit hasMore: false
+        p = {"data": {"2026-01-05": []}}
+        if pag is not None:
+            p["pagination"] = pag
+        with pytest.raises(ValueError):
+            bt.slots_from_payload(p)
+    assert bt.slots_from_payload(payload([])) == ([], {"hasMore": False, "lastSlotDate": None})
 
 
 def test_empty_pages_raise():
@@ -68,6 +77,15 @@ def test_empty_pages_raise():
         bt.menu_from_props({})
     with pytest.raises(ValueError):
         bt.store_from_props({"entries": []})
+    with pytest.raises(ValueError):
+        bt.store_from_props({})
+    # structurally nonempty pages with nothing in them are outages, not empty catalogs
+    with pytest.raises(ValueError):
+        bt.menu_from_props({"bootstrap": {"discovery": {"filters": [{"key": "k", "options": []}]}}})
+    with pytest.raises(ValueError):
+        bt.store_from_props({"entries": [{"entryType": "SECTION_HEADER"}]})
+    with pytest.raises(ValueError):
+        bt.store_from_props({"entries": [dict(STORE["entries"][1], isVisible=False)]})
 
 
 def test_menu_and_store_parse():
@@ -131,6 +149,39 @@ def test_final_rows_use_last_pre_start_snapshot_and_drop_canceled():
             row("2026-01-05T20:00:00Z", "B", "2026-01-06T01:30:00+0000", res=5)]    # missing at 23:00: canceled
     final = bt.final_rows(rows, dt.datetime(2026, 1, 7, tzinfo=UTC))
     assert [(r["slot_id"], r["reservations"]) for r in final] == [("A", "9")]
+
+
+def test_final_rows_empty_snapshot_cancels():
+    rows = [row("2026-01-05T20:00:00Z", "B", "2026-01-06T01:30:00+0000", res=5)]
+    now = dt.datetime(2026, 1, 7, tzinfo=UTC)
+    assert [r["slot_id"] for r in bt.final_rows(rows, now)] == ["B"]
+    assert bt.final_rows(rows, now, ["2026-01-05T20:00:00Z", "2026-01-05T23:00:00Z"]) == []
+    assert len(bt.final_rows(rows, now, ["2026-01-06T02:00:00Z"])) == 1   # after start: not a cancellation
+
+
+def test_run_venue_empty_schedule_cancels_in_summary(tmp_path):
+    v = dict(VENUE, data_dir=str(tmp_path))
+    b = slot("B", "2026-01-06T01:30:00+0000", res=5)
+    bt.run_venue(v, fetch=fake_fetch(payload([b])), now=dt.datetime(2026, 1, 5, 20, tzinfo=UTC))
+    assert "2026-01-05      1       5" in bt.summary(v, now=dt.datetime(2026, 1, 7, tzinfo=UTC))
+    r = bt.run_venue(v, fetch=fake_fetch(payload([])), now=dt.datetime(2026, 1, 5, 23, tzinfo=UTC))
+    assert r["slots"] == 0
+    assert (tmp_path / "snapshot-times.txt").read_text().split() == ["2026-01-05T20:00:00Z", "2026-01-05T23:00:00Z"]
+    assert bt.summary(v, now=dt.datetime(2026, 1, 7, tzinfo=UTC)) == "No slot has started since the first snapshot yet."
+
+
+@pytest.mark.parametrize("part", ["menu", "store"])
+def test_first_run_partial_read_writes_no_baseline(tmp_path, part):
+    v = dict(VENUE, data_dir=str(tmp_path))
+    s1 = [slot("A", "2026-01-06T01:00:00+0000", res=3)]
+    r = bt.run_venue(v, fetch=fake_fetch(payload(s1), fail=(part,)), now=dt.datetime(2026, 1, 5, tzinfo=UTC))
+    assert r["changes"] == 0 and r["slots"] == 1 and r["errors"][0].startswith(part)
+    assert not (tmp_path / "changes.md").exists() and not (tmp_path / "watch-state.json").exists()
+    assert len(list(csv.DictReader(open(tmp_path / "snapshots.csv")))) == 1     # slots still kept
+    r = bt.run_venue(v, fetch=fake_fetch(payload(s1)), now=dt.datetime(2026, 1, 5, tzinfo=UTC))
+    text = (tmp_path / "changes.md").read_text()
+    assert r["changes"] == 1 and "baseline: 2 menu options (1 switched off), 1 store items" in text
+    assert "added" not in text
 
 
 def test_primary_filter_excludes_other_offerings_free_and_odd_capacity():
@@ -259,3 +310,12 @@ def test_main_prints_results_and_failures(tmp_path, monkeypatch, capsys):
     o = capsys.readouterr()
     assert "Example Spa: 3 slots, 4 reservations, 1 change line(s), errors: ['store: x']" in o.out
     assert "Bad: FAILED down" in o.err
+
+
+@pytest.mark.parametrize("errors,code", [([], 0), (["store: x"], 1)])
+def test_main_partial_read_fails_the_run(tmp_path, monkeypatch, errors, code):
+    cfg = tmp_path / "c.json"
+    cfg.write_text(json.dumps({"venues": [dict(VENUE, data_dir=str(tmp_path / "a"))]}))
+    monkeypatch.setattr(bt, "run_venue", lambda v, fetch=None, now=None:
+                        {"slots": 3, "reservations": 4, "changes": 0, "errors": errors})
+    assert bt.main(["--config", str(cfg)]) == code
