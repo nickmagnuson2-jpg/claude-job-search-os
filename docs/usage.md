@@ -115,7 +115,7 @@ Sibling to `/todo`: same schema, different scope. Writes to a separate personal 
 /checkout
 ```
 
-Bookend to `/standup`. Runs `todo_daily_metrics.py` to build today's progress snapshot (completed count, streak, velocity, overdue trend), writes it to the top of `data/job-todos-daily-log.md`, and surfaces tomorrow's top 3 priorities, pinning any interview/screen scheduled within 3 days (from the pipeline Next-Action column) ahead of regular to-dos, then cross-referenced against the weekly review's Top 5.
+Bookend to `/standup`. Runs `todo_daily_metrics.py` to build today's progress snapshot (completed count, streak, velocity, overdue trend), writes it to the top of `data/job-todos-daily-log.md`, and surfaces tomorrow's top 3 priorities, pinning any interview/screen scheduled within 3 days (from the pipeline Next-Action column) ahead of regular to-dos, then cross-referenced against the week's Top 5 that Monday's `/standup` wrote.
 
 It also runs a Granola debrief cascade (Step 4d): surfaces calls from the day that haven't been debriefed yet and proposes them, propose-only, it never auto-debriefs. It proposes any milestone-level accomplishment candidates from the day's real artifacts for you to confirm into `data/accomplishments.md` (a strict bar: most days produce none, and nothing is ever auto-logged), and runs a state audit that surfaces stuck tasks, long-overdue to-dos and stalled pipeline rows for your decision without closing any of them, and ends with a silent-failure probe: an open question asking whether anything happened today that the system never captured. As its closing action it pushes an automatic private-data backup to a private remote (non-blocking: a backup failure never aborts checkout, and the public repo is never touched).
 

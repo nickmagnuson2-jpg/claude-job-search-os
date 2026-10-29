@@ -8,7 +8,7 @@ allowed-tools: Read(*), Glob(inbox/*), Glob(data/reflections/*), Glob(data/workb
 
 # Standup — Morning Briefing
 
-Reads five data files and generates a focused daily brief. Output is in-chat only — nothing is written to disk.
+Reads five data files and generates a focused daily brief. Output is in-chat only. The one write is Step 2w's: on the first working day of the week it prepends the week's Top 5 to `data/weekly-review-log.md` (S6, 2026-10-29); nothing else is written to disk.
 
 ## Instructions
 
@@ -576,8 +576,10 @@ rule was already written). Promoted to skill tier on the 2nd fire.
 
 `/weekly-review` was deleted on 2026-10-29 (S6, ruled 2026-10-28: "Delete, fold into Monday
 /standup"; it had 0 invocations in 282 transcripts). Its one output something else read, the
-week's Top 5 priorities, moved here. **Run this step only when Step 2z resolved the day as a
-Monday** (a Monday holiday: run it on the first working day of the week instead).
+week's Top 5 priorities, moved here. **Run this step on the first working day of the week:** when Step 2z resolved
+the day as a working day AND `data/weekly-review-log.md` has no entry yet for this week's
+Monday (the `### Week of <Monday>` header). That is Monday, or Tuesday after a Monday
+holiday, and it runs once a week whichever day comes first.
 
 Rank 5 specific, actionable priorities for the next 7 days, from the same Step 1 data (no new
 reads). If the Momentum Read's 7-day output column is thin, priority #1 must be output-shaped.
@@ -603,8 +605,8 @@ Show them in the brief under **This Week's Priorities**, then prepend one entry 
 ```
 
 If an entry for this Monday already exists, replace it rather than adding a second.
-`/checkout` reads the newest `#### Top 5 Priorities` section from this file to mark
-tomorrow's Top 3, so the heading text must stay exactly as above.
+`/checkout` reads the newest `#### Top 5 Priorities for Coming Week` section from this file
+to mark tomorrow's Top 3, so the heading text must stay exactly as above.
 
 ### Step 3: Generate the Brief
 
@@ -618,6 +620,7 @@ Output the brief in this exact format:
 **Day context:** [Working day | Weekend | Holiday — <name> | Holiday weekend] — MANDATORY, never omit
 
 📥 **Queues:** inbox [N / N] · todos [N] overdue (oldest [N]d) · promotion [N] ([N] partial) · pipeline [N] stale — **total [N]**
+Learning lanes: [due_total] due across [N] lanes
 [If complete=false: ⚠️ [N] of 4 queues unreadable: [names]]
 [If total_open=null: **Queues: UNREADABLE** — say this, never omit the line]
 
