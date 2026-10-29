@@ -38,6 +38,10 @@ PYTHONIOENCODING=utf-8 python3 tools/codex_verify.py \
 `--print-only` assembles the prompt without spending a run. `--mode diverge` for the
 independent form.
 
+**Reviewing a plan before any code exists:** omit `--paths`. The tool refuses a path with no
+diff, because the ledger would record it as reviewed when nothing was sent. Inline the plan text
+in `--target` and name the files the reviewer should read; Codex reads them from the repo.
+
 ## Guard changes: state the bar first (`--bar`, required)
 
 When `--paths` touch guard infrastructure (`tools/check_*.py`, `shell_tokens.py`,
