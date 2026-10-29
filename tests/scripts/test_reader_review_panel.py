@@ -130,7 +130,7 @@ def test_run_panel_refusals_and_dry_run(tmp_path, monkeypatch, capsys):
     assert "needs --purpose" in capsys.readouterr().err
     assert rr.main(base + ["--purpose", "p", "--dry-run", *sum((["--seat", s] for s in SEATS), [])]) == 0
     out = capsys.readouterr().out
-    assert out.count("SEAT ") == 3 and "panel-vp-operations" in out
+    assert out.count("SEAT ") == 3 and "panel-1-vp-operations" in out
 
 
 def test_the_three_question_mode_is_unchanged():
@@ -180,3 +180,14 @@ def test_run_panel_counts_single_seat_items(tmp_path, monkeypatch, capsys):
                   *sum((["--seat", s] for s in SEATS), [])])
     out = json.loads(capsys.readouterr().out)
     assert rc == 0 and out["failed"] == [] and out["must_fix"] == 0 and out["single_seat"] == 3
+
+
+def test_seats_that_slug_alike_get_distinct_reports(tmp_path, monkeypatch, capsys):
+    doc = _repo(tmp_path)
+    reports = []
+    monkeypatch.setattr(rr, "run_one", lambda argv, repo: reports.append(argv[argv.index("--report") + 1])
+                        or {"rc": 1, "findings": None, "report": None, "stderr": ""})
+    seats = ["VP, Ops | a | b | c", "VP Ops | a | b | c", "CFO | a | b | c"]
+    rr.main([str(doc), "--panel", "--purpose", "p", "--repo-root", str(tmp_path),
+             *sum((["--seat", s] for s in seats), [])])
+    assert len(set(reports)) == 3

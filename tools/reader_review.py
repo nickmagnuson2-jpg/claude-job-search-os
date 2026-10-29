@@ -534,8 +534,9 @@ def run_panel(a, repo: Path, doc: Path) -> int:
     rel = lambda p: str(Path(p).resolve().relative_to(repo))  # noqa: E731
     model = a.panel_model
     plans = []
-    for seat in seats:
-        report = f"output/analysis/{stamp}-{model}-{slug}-panel-{_seat_slug(seat)}.md"
+    for n, seat in enumerate(seats, 1):
+        # The seat number keeps two roles that slug alike from sharing one report (855.F1).
+        report = f"output/analysis/{stamp}-{model}-{slug}-panel-{n}-{_seat_slug(seat)}.md"
         argv = [sys.executable, "tools/codex_verify.py", "--model", model,
                 "--target", seat_target(seat, rel(text_path), a.purpose),
                 "--paths", rel(text_path), "--report", report]

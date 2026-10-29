@@ -1010,3 +1010,12 @@ def test_a_closed_thread_awaits_nothing(tmp_path):
     ])
     code, out = query("--recipient", "Jane Doe", "--log", log)
     assert code == 0 and (out["sent"], out["awaiting_reply"]) == (True, False)
+
+
+def test_a_later_send_reopens_a_closed_thread(tmp_path):
+    log = make_log(tmp_path, [
+        "| 2026-01-05 | cold-outreach | email | Jane Doe | Acme Corp | Cold intro | Closed |",
+        "| 2026-02-05 | follow-up | email | Jane Doe | Acme Corp | New angle | Sent |",
+    ])
+    code, out = query("--recipient", "Jane Doe", "--log", log)
+    assert code == 0 and out["awaiting_reply"] is True

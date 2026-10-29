@@ -261,9 +261,11 @@ def derive_state(matched: list[dict], artifact: str | None) -> dict:
             if receipts and _latest(receipts)["status"] == "Bounced":
                 delivered = False
 
-    # Closed is terminal (10a): a resolved thread awaits nothing (review 849.F1).
-    awaiting = sent and not any(r["status"] in ("Replied", "Closed") for r in known)
     latest = _latest(known) if known else None
+    # Closed is terminal (10a, 849.F1), but only while it is the newest row: a later Sent
+    # reopens the thread (856.F1). A Replied anywhere still clears it, as before.
+    awaiting = (sent and not any(r["status"] == "Replied" for r in known)
+                and not (latest is not None and latest["status"] == "Closed"))
 
     return {
         "matched_rows": [_public(r) for r in matched],
