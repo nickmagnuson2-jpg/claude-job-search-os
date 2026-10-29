@@ -191,11 +191,13 @@ def fail(message: str, code: str, **extra) -> None:
 
 
 def approved_rows(root: Path, approvals: dict) -> tuple[list[dict], dict, list]:
-    """Rows under an approved bulk rule, a per-rule tally, and the blocks left out.
+    """Rows under an approved rule, a per-rule tally, and the approvals voided as stale.
 
-    A row counts only if its block_id is in the SIGNED block_ids of its rule's approval.
-    The signature covers that list, so a block decided under the same rule after Nick
-    signed is not approved by that signature (Codex and Grok final-g4 F1, 2026-10-28).
+    An approval is a UNIT: the signature covers the rule's exact block_ids. It applies
+    only while the blocks now decided under that rule are exactly that list. A block
+    added after signing, or a signed block moved to another rule, voids the whole
+    approval rather than applying a set Nick never signed (Codex and Grok final-g4 F1;
+    Codex final-r2-g4 F1, 2026-10-28: a per-block filter still applied a subset).
 
     Reads current_log(), NOT load_log(). The decision log is append-only and a
     revision is a later row for the same block, so the raw file still contains
@@ -203,23 +205,32 @@ def approved_rows(root: Path, approvals: dict) -> tuple[list[dict], dict, list]:
     retired rule whose invocations were the ones the revision existed to fix -
     caught in dry-run on 2026-09-08, before anything was written.
     """
-    log = current_log(root)
-    rows, tally, unsigned_blocks = [], {}, []
-    for r in log:
+    members: dict = {}
+    for r in current_log(root):
         # A bulk row is approved by its RULE text; an individual row by its
         # (destination, confidence) COHORT, because it has no rule to approve.
         rid = (rule_id(r["bulk_rule"]) if r["mode"] == "bulk"
                else cohort_id(r["destination"], r["confidence"]))
-        if rid not in approvals:
+        if rid in approvals:
+            members.setdefault(rid, []).append(r)
+    rows, tally, stale = [], {}, []
+    for rid, rs in members.items():
+        signed = set(approvals[rid].get("block_ids") or [])
+        now = {r["block_id"] for r in rs}
+        if now != signed:
+            stale.append({"rule_id": rid, "added": sorted(now - signed),
+                          "missing": sorted(signed - now)})
             continue
-        if r["block_id"] not in (approvals[rid].get("block_ids") or []):
-            unsigned_blocks.append(r["block_id"])
-            continue
-        rows.append({**r, "rule_id": rid})
-        tally.setdefault(rid, {"rule_id": rid, "destination": r["destination"],
-                               "producer": r["producer"], "blocks": 0})
-        tally[rid]["blocks"] += 1
-    return rows, tally, unsigned_blocks
+        for r in rs:
+            rows.append({**r, "rule_id": rid})
+            tally.setdefault(rid, {"rule_id": rid, "destination": r["destination"],
+                                   "producer": r["producer"], "blocks": 0})
+            tally[rid]["blocks"] += 1
+    for rid in approvals:
+        if rid not in members:
+            stale.append({"rule_id": rid, "added": [],
+                          "missing": sorted(approvals[rid].get("block_ids") or [])})
+    return rows, tally, stale
 
 
 def main() -> None:
@@ -235,7 +246,7 @@ def main() -> None:
         fail(f"inbox not found: {inbox}", "file_not_found")
 
     approvals, unsigned = signed_approvals(root)
-    rows, tally, unsigned_blocks = approved_rows(root, approvals)
+    rows, tally, stale = approved_rows(root, approvals)
     already = load_executed(root)
     skipped = [r["block_id"] for r in rows if r["block_id"] in already]
     rows = [r for r in rows if r["block_id"] not in already]
@@ -243,7 +254,7 @@ def main() -> None:
         fail("no rows under a SIGNED approval; nothing to do. Approve a rule with "
              "inbox_decision_log.py approve --rule <id> (Touch ID signs it).",
              "nothing_approved", unsigned_approvals_ignored=unsigned,
-             unsigned_blocks_ignored=unsigned_blocks)
+             stale_approvals_ignored=stale)
 
     text = inbox.read_text(encoding="utf-8")
     live = census(text)
@@ -316,7 +327,7 @@ def main() -> None:
         "blocks_preserved_in_place": [t["block_id"] for t in preserved],
         "already_executed_skipped": len(skipped),
         "unsigned_approvals_ignored": unsigned,
-        "unsigned_blocks_ignored": unsigned_blocks,
+        "stale_approvals_ignored": stale,
         "live_blocks_before": live["live_h2_headers"],
         "live_blocks_after_expected": live["live_h2_headers"] - len(to_remove),
     }

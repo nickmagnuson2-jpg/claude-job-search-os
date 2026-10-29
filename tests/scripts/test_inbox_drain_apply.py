@@ -166,9 +166,13 @@ def test_a_block_decided_under_the_rule_after_signing_is_not_applied(repo, monke
     rows = [json.loads(l) for l in p.read_text().splitlines()]
     p.write_text(p.read_text() + json.dumps({**rows[2], "bulk_rule": "drips"}) + "\n")
     code, out = _run(repo, monkeypatch, capsys, "--apply")
-    assert code == 0 and out["blocks_to_remove"] == 2
-    assert out["unsigned_blocks_ignored"] == [repo["blocks"][2]["block_id"]]
-    assert "keep me" in _inbox(repo)
+    # The whole "drips" approval is void; only "todos" runs.
+    assert code == 0 and out["blocks_to_remove"] == 1
+    assert out["stale_approvals_ignored"] == [{"rule_id": dlog.rule_id("drips"),
+                                               "added": [repo["blocks"][2]["block_id"]],
+                                               "missing": []}]
+    assert "keep me" in _inbox(repo) and "drip one" in _inbox(repo)
+    assert "dentist" not in _inbox(repo)
 
 
 def test_nothing_signed_reports_the_blocks_it_left_out(repo, monkeypatch, capsys):
@@ -181,7 +185,26 @@ def test_nothing_signed_reports_the_blocks_it_left_out(repo, monkeypatch, capsys
                  + json.dumps({**rows[2], "bulk_rule": "drips"}) + "\n")
     code, out = _run(repo, monkeypatch, capsys, "--apply")
     assert code == 1 and out["code"] == "nothing_approved"
-    assert out["unsigned_blocks_ignored"] == [repo["blocks"][2]["block_id"]]
+    assert out["stale_approvals_ignored"] == [{"rule_id": dlog.rule_id("drips"),
+                                               "added": [repo["blocks"][2]["block_id"]],
+                                               "missing": [repo["blocks"][0]["block_id"]]}]
+    assert _inbox(repo) == INBOX
+
+
+def test_a_signed_block_moved_to_another_rule_voids_the_rest(repo, monkeypatch, capsys):
+    """A subset of a signed unit is not what was signed (Codex final-r2-g4 F1)."""
+    _decide(repo)
+    p = repo["root"] / dlog.LOG_REL
+    rows = [json.loads(l) for l in p.read_text().splitlines()]
+    # "drips" covers two blocks at signing time.
+    p.write_text(p.read_text() + json.dumps({**rows[2], "bulk_rule": "drips"}) + "\n")
+    _approve(repo, rules=("drips",))
+    # Then one of them is re-decided under another rule.
+    p.write_text(p.read_text() + json.dumps({**rows[2], "bulk_rule": "keep"}) + "\n")
+    code, out = _run(repo, monkeypatch, capsys, "--apply")
+    assert code == 1 and out["code"] == "nothing_approved"
+    assert out["stale_approvals_ignored"] == [{"rule_id": dlog.rule_id("drips"), "added": [],
+                                               "missing": [repo["blocks"][2]["block_id"]]}]
     assert _inbox(repo) == INBOX
 
 
