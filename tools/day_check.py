@@ -26,8 +26,8 @@ Six counts, each for the target date and for the week so far (Monday to the targ
                   `pipe_write.py update <co> Applied` writes) are reported apart as
                   applications_unconfirmed, for Nick to confirm.
   pipeline_moves  pipeline rows whose Date Updated is the date.
-  todos_closed    job-todos.md Completed rows for the date (todo_daily_metrics.parse_todos,
-                  withdrawn rows excluded).
+  todos_closed    job-todos.md Completed rows for the date (todo_read.completed_on, withdrawn
+                  rows excluded).
 
 Targets come from the Success Metrics table in data/goals.md. Only weekly targets are
 written there today, so each target is shown with its period, against the week so far.
@@ -59,6 +59,7 @@ from conversations_metric import LIVE, SENT_STATES  # noqa: E402
 from networking_write import INBOUND_SUBJECT_MARKERS  # noqa: E402
 from schema_guard import SchemaDriftError, assert_schema, find_header_line  # noqa: E402
 from outreach_read import parse_rows as parse_outreach_rows  # noqa: E402
+import todo_read  # noqa: E402
 
 COUNTS = ("sends", "replies", "calls", "applications", "pipeline_moves", "todos_closed")
 # Shown beside applications, never added to it (see unconfirmed_applied).
@@ -198,9 +199,7 @@ def parse_targets(content: str) -> dict:
 
 
 def _todos_closed(content: str, d: date) -> int:
-    from todo_daily_metrics import parse_todos
-    completed, _active, _overdue = parse_todos(content, d)
-    return len(completed)
+    return len(todo_read.completed_on(content, d))
 
 
 def collect(root: Path, target: date) -> dict:

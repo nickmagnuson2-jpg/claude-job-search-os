@@ -44,11 +44,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from schema_guard import assert_schema, find_header_line, SchemaDriftError  # noqa: E402
 from hook_runtime import claude_project_dir  # noqa: E402
 from stage_vocab import is_closed_todo_status, is_terminal_stage  # noqa: E402
+import todo_read  # noqa: E402
 
 # Canonical schemas (see the writers: tools/todo_write.py, tools/pipe_write.py). The
 # cols[N] indices throughout this file's parsers assume these exact column orders.
 # See schema_guard.py docstring for the 2026-06-08 incident this guards against.
-TODOS_ACTIVE_EXPECTED_COLUMNS = ["Task", "Priority", "Due", "Status", "Notes"]
+TODOS_ACTIVE_EXPECTED_COLUMNS = todo_read.ACTIVE_COLUMNS
 PIPELINE_EXPECTED_COLUMNS = [
     "Company", "Role", "Stage", "Date Updated",
     "Next Action", "CV Used", "Notes", "URL",
@@ -77,37 +78,12 @@ def _is_separator_row(*values: str) -> bool:
     return any(v.strip() in ("---", "—", "") for v in values[:1])
 
 
-SECTION_RE = r"^## {header}.*?\n(.*?)(?=^## |\Z)"
-
-
-def _section_text(content: str, header: str) -> str | None:
-    """Extract one section's body using THIS module's section detection.
-
-    Single source of truth for "where does the reader think a section starts and
-    stops" -- todo_write.py's round-trip guard calls through here rather than
-    reimplementing it, because a reimplementation would share the writer's blind
-    spots and prove nothing. See tests/scripts/test_todo_write_roundtrip.py.
-    """
-    m = re.search(SECTION_RE.format(header=header), content, re.DOTALL | re.MULTILINE)
-    return m.group(1) if m else None
-
-
-def _is_row(line: str) -> bool:
-    """Data-row predicate, matching todo_write.is_data_row's semantics."""
-    if not line.startswith("|"):
-        return False
-    if re.match(r"^\|\s*:?-+:?\s*\|", line):   # separator
-        return False
-    return not line.startswith("| Task")           # header
-
-
-def section_row_counts(content: str) -> tuple[int, int]:
-    """(active_rows, completed_rows) as the READER sees them. -1 for a missing section."""
-    out = []
-    for header in ("Active", "Completed"):
-        body = _section_text(content, header)
-        out.append(-1 if body is None else sum(1 for l in body.splitlines() if _is_row(l)))
-    return out[0], out[1]
+# Section detection lives in todo_read.py (one reader). These names stay importable from
+# here because todo_write.py's round-trip guard reads the file through this module.
+SECTION_RE = todo_read.SECTION_RE
+_section_text = todo_read.section_text
+_is_row = todo_read.is_row
+section_row_counts = todo_read.section_row_counts
 
 
 def is_closed_status(status: str) -> bool:
@@ -121,78 +97,22 @@ def is_closed_status(status: str) -> bool:
 
 
 def parse_todos(content: str, today: date) -> tuple[list, list, list]:
-    """Parse job-todos.md into completed_today, active, overdue lists. Strips '---' separator rows."""
-    # Fail loudly (not silently) if the live file's Active-section header has
-    # drifted from what the cols[N] indices below assume — see schema_guard.py.
-    assert_schema(find_header_line(content, "| Task |"), TODOS_ACTIVE_EXPECTED_COLUMNS)
+    """(completed_today, active, overdue) from job-todos.md, through tools/todo_read.py.
 
-    completed_today = []
-    active = []
-    overdue = []
+    `active` is every Active-section row, closed ones included, because callers such as
+    duet_snapshot count the closed rows they skip. `overdue` and the active_remaining
+    output use todo_read's one definition of open and overdue. Raises SchemaDriftError
+    when the header drifts.
+    """
+    def shape(r):
+        return {"task": r["task"], "priority": r["priority"], "due": r["due"],
+                "status": r["status"], "notes": r["notes"]}
 
-    today_str = today.strftime("%Y-%m-%d")
-
-    # Find Active section.
-    # ^-anchored + MULTILINE, deliberately: an unanchored search matches ANYWHERE,
-    # so a notes cell containing the literal "## Completed" acts as a phantom header
-    # and silently truncates the section. Fired live 2026-08-17 -- completed_today
-    # reported 0 while five rows read "Completed 2026-08-17". A table row always
-    # starts with "|", so ^## can only match a real header.
-    active_match = re.search(r"^## Active.*?\n(.*?)(?=^## |\Z)", content, re.DOTALL | re.MULTILINE)
-    if active_match:
-        active_text = active_match.group(1)
-        # Parse markdown table rows (skip header/separator)
-        for line in active_text.splitlines():
-            if not line.startswith("|") or line.startswith("| Task") or line.startswith("|---"):
-                continue
-            cols = [c.strip() for c in line.strip("|").split("|")]
-            if len(cols) < 4:
-                continue
-            task, priority, due, status = cols[0], cols[1], cols[2], cols[3]
-            notes = cols[4] if len(cols) > 4 else ""
-
-            # Skip in-table separator rows (literal '---' as task)
-            if _is_separator_row(task):
-                continue
-
-            item = {"task": task, "priority": priority, "due": due, "status": status, "notes": notes}
-            active.append(item)
-
-            # Check if overdue
-            if due and due != "—" and due != "-":
-                try:
-                    due_date = datetime.strptime(due, "%Y-%m-%d").date()
-                    if due_date < today and not is_closed_status(status):
-                        overdue.append(item)
-                except ValueError:
-                    pass
-
-    # Find Completed section — look for today's date in Notes or Completed column
-    completed_match = re.search(r"^## Completed.*?\n(.*?)(?=^## |\Z)", content, re.DOTALL | re.MULTILINE)
-    if completed_match:
-        completed_text = completed_match.group(1)
-        assert_schema(find_header_line(completed_text, "| Task |"),
-                      ["Task", "Priority", "Completed", "Notes"])
-        for line in completed_text.splitlines():
-            if not line.startswith("|") or line.startswith("| Task") or line.startswith("|---"):
-                continue
-            cols = [c.strip() for c in line.strip("|").split("|")]
-            if len(cols) < 3:
-                continue
-            task, priority = cols[0], cols[1]
-            completed_date = cols[2] if len(cols) > 2 else ""
-            notes = cols[3] if len(cols) > 3 else ""
-
-            # Withdrawn rows live in the Completed section too (marked in the Completed
-            # column or Notes), but a withdrawal is NOT a completion — it must not inflate
-            # streak/velocity/all-time counts.
-            if "withdrawn" in completed_date.lower() or "withdrawn" in notes.lower():
-                continue
-
-            # Check if completed today
-            if today_str in completed_date or today_str in notes:
-                completed_today.append({"task": task, "priority": priority, "notes": notes})
-
+    rows = todo_read.active_rows(content)
+    active = [shape(r) for r in rows]
+    overdue = [shape(r) for r in rows if todo_read.is_overdue(r, today)]
+    completed_today = [{"task": r["task"], "priority": r["priority"], "notes": r["notes"]}
+                       for r in todo_read.completed_on(content, today)]
     return completed_today, active, overdue
 
 
@@ -736,7 +656,9 @@ def _run(todos_content, daily_log_content, pipeline_content, networking_content,
     result = {
         "target_date": today.strftime("%Y-%m-%d"),
         "completed_today": completed_today,
-        "active_remaining": active,
+        # Open rows only: a Withdrawn or Done row left in the Active section is not
+        # remaining work (it made this count 5 higher than todos_summary's; S5).
+        "active_remaining": [r for r in active if not is_closed_status(r["status"])],
         "overdue": overdue,
         "outreach_sent_today": outreach_today,
         "outreach_touches_today_from_networking": networking_touches_today,

@@ -40,6 +40,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from slug import slugify as _slugify  # noqa: E402
 from pipe_read import parse_all_rows  # noqa: E402
+import todo_read  # noqa: E402
 
 # ── ATS URL patterns that signal a job ad ────────────────────────────────────
 ATS_PATTERNS = [
@@ -268,40 +269,12 @@ def build_dossier_map(repo_root: Path, today: date) -> dict:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def parse_todos(content: str) -> list[dict]:
-    """
-    Parse data/job-todos.md and return rows from the Active section.
-    Columns: Task | Priority | Due | Status | Notes
-    """
-    rows = []
-    in_active = False
-
-    for line in content.splitlines():
-        # Track section
-        if re.match(r"^##\s+Active", line, re.IGNORECASE):
-            in_active = True
-            continue
-        if re.match(r"^##\s+", line) and in_active:
-            in_active = False
-            continue
-
-        if not in_active:
-            continue
-        if not line.startswith("|") or line.startswith("| Task") or line.startswith("|---") or line.startswith("| ---"):
-            continue
-
-        cols = [c.strip() for c in line.strip("|").split("|")]
-        if len(cols) < 4 or cols[0] == "---":
-            continue
-
-        rows.append({
-            "task":     cols[0] if len(cols) > 0 else "",
-            "priority": cols[1] if len(cols) > 1 else "",
-            "due":      cols[2] if len(cols) > 2 else "",
-            "status":   cols[3] if len(cols) > 3 else "",
-            "notes":    cols[4] if len(cols) > 4 else "",
-        })
-
-    return rows
+    """Active-section rows of data/job-todos.md, through tools/todo_read.py (the one todo
+    reader, S5). Columns: Task | Priority | Due | Status | Notes. Raises SchemaDriftError
+    when the header drifts."""
+    return [{"task": r["task"], "priority": r["priority"], "due": r["due"],
+             "status": r["status"], "notes": r["notes"]}
+            for r in todo_read.active_rows(content)]
 
 
 def classify_todo(row: dict, today: date, dossier_map: dict) -> tuple[str, dict]:
@@ -313,8 +286,8 @@ def classify_todo(row: dict, today: date, dossier_map: dict) -> tuple[str, dict]
     notes = row["notes"]
     status = row["status"]
 
-    # Only process Pending rows
-    if status.lower() != "pending":
+    # Only process open rows (todo_read.is_open: Pending or In Progress, not Done/Withdrawn)
+    if not todo_read.is_open(row):
         return ("skip", row)
 
     # ── Pre-filter 1: blocked ─────────────────────────────────────────────

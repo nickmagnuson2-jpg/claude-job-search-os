@@ -30,13 +30,13 @@ gap). `complete: false` in the payload is the signal to read the skips.
 """
 import argparse
 import json
-import re
 import subprocess
 import sys
 from datetime import date, datetime
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # siblings import as `tools.X` too
 from hook_runtime import claude_project_dir  # noqa: E402
+import todo_read  # noqa: E402
 
 TOOLS = Path(__file__).resolve().parent
 # The auto-memory dir lives OUTSIDE the repo, so --repo-root alone does not scope this tool.
@@ -90,37 +90,26 @@ def queue_inbox(repo: Path) -> dict:
 
 
 # --------------------------------------------------------------------------- todos
-_ROW = re.compile(r"^\|(?!\s*-{2,})")
-
-
 def queue_todos(repo: Path, today: date) -> dict:
+    """Overdue todos by tools/todo_read.py's one definition (open, due strictly before
+    today). The denominator is every Active-section row, as before; it no longer counts the
+    Completed section's rows too."""
     src = repo / "data/job-todos.md"
     if not src.is_file():
         return _skip("todos", src, "data/job-todos.md not found")
     text = src.read_text(encoding="utf-8", errors="replace")
-    rows, overdue, oldest = 0, [], None
-    for line in text.splitlines():
-        if not _ROW.match(line):
-            continue
-        cells = [c.strip() for c in line.strip().strip("|").split("|")]
-        if len(cells) < 4 or cells[0].lower() == "task":
-            continue
-        rows += 1
-        task, prio, due, status = cells[0], cells[1], cells[2], cells[3]
-        if not status.lower().startswith("pending"):
-            continue
-        m = re.match(r"(\d{4})-(\d{2})-(\d{2})", due)
-        if not m:
-            continue
-        d = date(*map(int, m.groups()))
-        if d <= today:
-            age = (today - d).days
-            overdue.append({"task": task[:90], "priority": prio, "due": due, "age_days": age})
-            oldest = age if oldest is None else max(oldest, age)
+    try:
+        rows = todo_read.active_rows(text)
+    except todo_read.SchemaDriftError as e:
+        return _skip("todos", src, f"schema drift: {e}")
+    overdue = [{"task": r["task"][:90], "priority": r["priority"], "due": r["due"],
+                "age_days": (today - r["due_date"]).days}
+               for r in rows if todo_read.is_overdue(r, today)]
     overdue.sort(key=lambda r: -r["age_days"])
     return {
         "name": "todos", "status": "ok", "source": str(src),
-        "count": len(overdue), "denominator": rows, "oldest_age_days": oldest,
+        "count": len(overdue), "denominator": len(rows),
+        "oldest_age_days": overdue[0]["age_days"] if overdue else None,
         "detail": {"top": overdue[:5]}, "reason": None,
     }
 

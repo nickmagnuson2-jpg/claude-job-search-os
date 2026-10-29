@@ -149,7 +149,8 @@ def test_an_unreadable_source_is_null_never_zero(tmp_path, missing, nulls):
 
 
 def test_todo_schema_drift_is_reported_not_zeroed(tmp_path):
-    out = dc.collect(_repo(tmp_path, **{"job-todos.md": "## Active\n\n| Task | Due |\n|---|---|\n"}), D)
+    drift = TODOS.replace("| Task | Priority | Completed | Notes |", "| Task | Done on | Notes |")
+    out = dc.collect(_repo(tmp_path, **{"job-todos.md": drift}), D)
     assert out["counts"]["todos_closed"]["today"] is None
     assert out["sources"]["job-todos"]["readable"] is False
 
