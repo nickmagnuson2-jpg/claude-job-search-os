@@ -59,7 +59,8 @@ PIPELINE_EXPECTED_COLUMNS = [
 def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument("--target-date", default=None,
-                   help="Date to evaluate as 'today' (YYYY-MM-DD). Defaults to actual today.")
+                   help="Date to evaluate as 'today' (YYYY-MM-DD). Defaults to the logical "
+                        "day: before 04:00 local, yesterday (todo_read.logical_today).")
     p.add_argument("--repo-root", default=None,
                    help="Repository root path. Defaults to cwd.")
     return p.parse_args()
@@ -532,6 +533,14 @@ def parse_networking_touches_today(networking_content: str, today: date) -> list
     return results
 
 
+def day_window(day: date) -> tuple[float, float]:
+    """[local midnight of `day`, local midnight of the next day) as epoch seconds.
+    Built from the next calendar date, not +86400, so a DST day is 23 or 25 hours."""
+    start = datetime(day.year, day.month, day.day).timestamp()
+    nxt = day + timedelta(days=1)
+    return start, datetime(nxt.year, nxt.month, nxt.day).timestamp()
+
+
 def scan_substantive_work(repo_root: Path, today: date) -> dict:
     """Scan filesystem for artifacts produced today. Mirrors /checkout Step 1b.
 
@@ -539,15 +548,17 @@ def scan_substantive_work(repo_root: Path, today: date) -> dict:
     even when todo completion count is low.
     """
     today_str = today.strftime("%Y-%m-%d")
-    # mtime cutoff: midnight at start of target date (local)
-    cutoff = datetime.strptime(today_str, "%Y-%m-%d").timestamp()
+    # The target day's window, [local midnight, next local midnight). Lower bound only
+    # (before 2026-10-29, todo #113) made a past-date /checkout count every file touched
+    # since that day, so a run for yesterday reported today's work too.
+    start, end = day_window(today)
 
     def count_modified_after(globpath: str) -> tuple[int, list]:
         n = 0
         paths = []
         for p in glob.glob(globpath, recursive=True):
             try:
-                if os.path.getmtime(p) >= cutoff:
+                if start <= os.path.getmtime(p) < end:
                     n += 1
                     paths.append(p)
             except OSError:
@@ -603,7 +614,7 @@ def main():
     args = parse_args()
 
     today = (datetime.strptime(args.target_date, "%Y-%m-%d").date()
-             if args.target_date else date.today())
+             if args.target_date else todo_read.logical_today())
 
     repo_root = Path(args.repo_root) if args.repo_root else Path.cwd()
 

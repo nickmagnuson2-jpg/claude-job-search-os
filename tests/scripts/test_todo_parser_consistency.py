@@ -236,3 +236,42 @@ def test_section_row_counts():
     # The "| --- |" spacer row reads as a separator, so 7 of the 8 Active lines are rows.
     assert todo_read.section_row_counts(FIXTURE) == (7, 2)
     assert todo_read.section_row_counts("nothing") == (-1, -1)
+
+
+# --- 10c (todo #31): the logical day ------------------------------------------------------
+
+def test_logical_today_rolls_over_at_four():
+    from datetime import datetime as dt
+    assert todo_read.logical_today(dt(2026, 1, 8, 0, 30)) == date(2026, 1, 7)
+    assert todo_read.logical_today(dt(2026, 1, 8, 3, 59)) == date(2026, 1, 7)
+    assert todo_read.logical_today(dt(2026, 1, 8, 4, 0)) == date(2026, 1, 8)
+    assert todo_read.logical_today(dt(2026, 1, 1, 1, 0)) == date(2025, 12, 31)
+    assert todo_read.logical_today(dt(2026, 1, 8, 5, 0), rollover_hour=6) == date(2026, 1, 7)
+    assert todo_read.ROLLOVER_HOUR == 4
+
+
+def test_logical_date_cli():
+    r = subprocess.run([sys.executable, str(TOOLS / "todo_read.py"), "--logical-date"],
+                       capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0 and r.stdout.strip() == todo_read.logical_today().isoformat()
+    bad = subprocess.run([sys.executable, str(TOOLS / "todo_read.py")], capture_output=True,
+                         text=True, timeout=30)
+    assert bad.returncode == 2 and "usage" in bad.stderr
+
+
+def test_daily_tools_default_to_the_logical_day(monkeypatch, tmp_path):
+    import day_check
+    import standup_collect
+    monkeypatch.setattr(todo_read, "logical_today", lambda *a, **k: date(2020, 2, 2))
+    seen = {}
+    monkeypatch.setattr(standup_collect, "collect",
+                        lambda root, d, ro: seen.setdefault("sc", d) and {"failed": []})
+    standup_collect.main(["--repo-root", str(tmp_path)])
+    assert seen["sc"] == "2020-02-02"
+    monkeypatch.setattr(day_check, "collect", lambda root, d: seen.setdefault("dc", d) and
+                        {"complete": True, "counts": {}, "targets": {}, "sources": {},
+                         "target_date": "", "week_start": ""})
+    day_check.main(["--repo-root", str(tmp_path), "--json"])
+    assert seen["dc"] == date(2020, 2, 2)
+    src = (TOOLS / "todo_daily_metrics.py").read_text()
+    assert "if args.target_date else todo_read.logical_today()" in src

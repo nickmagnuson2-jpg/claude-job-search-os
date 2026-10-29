@@ -43,7 +43,6 @@ import os
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
-from datetime import date
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -125,11 +124,14 @@ def collect(root: Path, target_date: str, read_only: bool = False) -> dict:
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--repo-root", default=str(REPO_ROOT))
-    ap.add_argument("--target-date", default=date.today().isoformat())
+    # Before 04:00 local the run is about the day that just ended (todo #31).
+    ap.add_argument("--target-date", default=None)
     ap.add_argument("--read-only", action="store_true",
                     help="write nothing: no STATE-BLOCK render, no sent-check state update")
     args = ap.parse_args(argv)
-    out = collect(Path(args.repo_root).resolve(), args.target_date, args.read_only)
+    import todo_read
+    target = args.target_date or todo_read.logical_today().isoformat()
+    out = collect(Path(args.repo_root).resolve(), target, args.read_only)
     print(json.dumps(out, indent=1, ensure_ascii=False))
     return 1 if out["failed"] else 0
 

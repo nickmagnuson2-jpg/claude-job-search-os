@@ -21,6 +21,9 @@ The rules, each stated once:
   * COMPLETED ON a date: a Completed-section row whose Completed or Notes cell holds that
     date, unless the row was withdrawn (a withdrawal is not a completion).
 
+  * LOGICAL DAY: before 04:00 local, a run with no explicit date is about the previous day
+    (logical_today).
+
 Schema drift (the Active header no longer reads Task | Priority | Due | Status | Notes)
 raises SchemaDriftError rather than reading the wrong columns.
 """
@@ -28,7 +31,7 @@ from __future__ import annotations
 
 import re
 import sys
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -36,6 +39,9 @@ from schema_guard import SchemaDriftError, assert_schema, find_header_line  # no
 from stage_vocab import is_closed_todo_status  # noqa: E402
 
 ACTIVE_COLUMNS = ["Task", "Priority", "Due", "Status", "Notes"]
+# Before this hour (local), "today" is still the previous day (todo #31, 2026-10-29): a
+# /checkout or /standup run at 00:30 after a late session is about the day that just ended.
+ROLLOVER_HOUR = 4
 COMPLETED_COLUMNS = ["Task", "Priority", "Completed", "Notes"]
 
 SECTION_RE = r"^## {header}.*?\n(.*?)(?=^## |\Z)"
@@ -139,3 +145,22 @@ def completed_on(content: str, day: date) -> list[dict]:
     d = day.isoformat()
     return [r for r in completed_rows(content)
             if not r["withdrawn"] and (d in r["completed"] or d in r["notes"])]
+
+
+def logical_today(now: datetime | None = None, rollover_hour: int = ROLLOVER_HOUR) -> date:
+    """The day a run is about: the calendar date, or the previous one before rollover_hour.
+
+    Used by every daily tool when no --target-date is given (todo_daily_metrics,
+    standup_collect, day_check), and printed by `todo_read.py --logical-date` for the
+    skills' shell lines, so one rule decides which day a late-night run belongs to."""
+    now = now or datetime.now()
+    return (now - timedelta(days=1)).date() if now.hour < rollover_hour else now.date()
+
+
+if __name__ == "__main__":
+    if sys.argv[1:] == ["--logical-date"]:
+        print(logical_today().isoformat())
+        sys.exit(0)
+    print("usage: todo_read.py --logical-date   (prints the day a run now is about)",
+          file=sys.stderr)
+    sys.exit(2)

@@ -19,7 +19,7 @@ Takes no arguments. Always runs for today's date.
 Run the preprocessing script to extract all daily metrics in one call:
 
 ```bash
-python3 tools/todo_daily_metrics.py --target-date $(date +%Y-%m-%d)
+python3 tools/todo_daily_metrics.py --target-date $(PYTHONIOENCODING=utf-8 python3 tools/todo_read.py --logical-date)
 ```
 
 Parse the JSON output. The script reads all source files and returns:
@@ -260,7 +260,10 @@ On a non-working day:
   compliance to on his own time.
 
 **Also check the session boundary, not just the calendar boundary.** `/checkout` metrics are
-date-bounded, so a session running past midnight is split in half and the entry undercounts it.
+date-bounded. Since 2026-10-29 (todo #31) a run before 04:00 local targets the previous day
+(`tools/todo_read.py --logical-date`, used by the Step 1 command and every daily tool's
+default), so a late checkout lands on the day it closes. A session that runs past 04:00 is
+still split.
 Before writing "Completed today: 0", run
 `git log --since="<yesterday> 12:00" --pretty="%h %ad %s" --date=format:'%H:%M'` and, if the
 commit stream is continuous across midnight, say so in the entry and characterize the whole

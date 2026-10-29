@@ -297,7 +297,7 @@ def main(argv=None) -> int:
     ap.add_argument("--target-date", default=None)
     ap.add_argument("--json", action="store_true")
     a = ap.parse_args(argv)
-    target = _date(a.target_date) if a.target_date else date.today()
+    target = _date(a.target_date) if a.target_date else todo_read.logical_today()
     if target is None:
         print(f"ERROR: --target-date must be YYYY-MM-DD, got {a.target_date!r}", file=sys.stderr)
         return 2
