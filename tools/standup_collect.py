@@ -10,6 +10,12 @@ shell, stdout and stderr are kept apart, and a script that fails is reported, ne
 
 Usage:
   PYTHONIOENCODING=utf-8 python3 tools/standup_collect.py [--repo-root .] [--target-date YYYY-MM-DD]
+      [--read-only]
+
+--read-only writes nothing: workstream_state runs without --render (which rewrites the
+STATE-BLOCKs in data/workstreams/) and sent_artifact_check runs with --no-state (which would
+update tools/.sent-artifact-state.json). The morning page renders from this mode every 15
+minutes, so a render must never change the tree it reads. /standup keeps the default mode.
 
 Output (stdout, one JSON object):
   {"target_date": "...", "ok": [names], "partial": [names], "failed": [names],
@@ -39,10 +45,14 @@ TIMEOUT = 300
 STDERR_TAIL = 2000
 
 
-def commands(target_date: str) -> dict[str, list[str]]:
-    """The Step 1 scripts, in the order /standup reads them. Argv lists, never strings."""
+def commands(target_date: str, read_only: bool = False) -> dict[str, list[str]]:
+    """The Step 1 scripts, in the order /standup reads them. Argv lists, never strings.
+
+    read_only drops the two writes the default mode makes (see the module docstring)."""
     d = ["--target-date", target_date]
     r = ["--repo-root", "."]
+    render = [] if read_only else ["--render"]
+    no_state = ["--no-state"] if read_only else []
     return {
         "pipeline_staleness": ["tools/pipeline_staleness.py", *d],
         "outreach_pending": ["tools/outreach_pending.py", *d],
@@ -52,9 +62,9 @@ def commands(target_date: str) -> dict[str, list[str]]:
         "attention": ["tools/attention.py", *r, "--json"],
         "conversations_metric": ["tools/conversations_metric.py", *r, *d],
         "source_check": ["tools/source_check.py", "due", *r, *d, "--json"],
-        "workstream_state": ["tools/workstream_state.py", "--render", "--json"],
+        "workstream_state": ["tools/workstream_state.py", *render, "--json"],
         "role_queue": ["tools/role_queue_read.py", *r, "--top", "5"],
-        "sent_artifacts": ["tools/sent_artifact_check.py", *r, "--json"],
+        "sent_artifacts": ["tools/sent_artifact_check.py", *r, "--json", *no_state],
         "build_check": ["tools/build_check.py", *r, "--json"],
     }
 
@@ -78,8 +88,8 @@ def run_one(argv: list[str], root: Path) -> dict:
     return out
 
 
-def collect(root: Path, target_date: str) -> dict:
-    cmds = commands(target_date)
+def collect(root: Path, target_date: str, read_only: bool = False) -> dict:
+    cmds = commands(target_date, read_only)
     with ThreadPoolExecutor(max_workers=len(cmds)) as pool:
         futures = {name: pool.submit(run_one, argv, root) for name, argv in cmds.items()}
         results = {name: f.result() for name, f in futures.items()}
@@ -88,7 +98,7 @@ def collect(root: Path, target_date: str) -> dict:
     failed = [n for n, r in results.items()
               if r["data"] is None and (r["rc"] != 0 or not r["text"].strip())]
     partial = [n for n, r in results.items() if r["rc"] != 0 and r["data"] is not None]
-    return {"target_date": target_date,
+    return {"target_date": target_date, "read_only": read_only,
             "ok": [n for n in results if n not in failed and n not in partial],
             "partial": partial, "failed": failed, "results": results}
 
@@ -97,8 +107,10 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--repo-root", default=str(REPO_ROOT))
     ap.add_argument("--target-date", default=date.today().isoformat())
+    ap.add_argument("--read-only", action="store_true",
+                    help="write nothing: no STATE-BLOCK render, no sent-check state update")
     args = ap.parse_args(argv)
-    out = collect(Path(args.repo_root).resolve(), args.target_date)
+    out = collect(Path(args.repo_root).resolve(), args.target_date, args.read_only)
     print(json.dumps(out, indent=1, ensure_ascii=False))
     return 1 if out["failed"] else 0
 
