@@ -351,15 +351,32 @@ def test_the_signature_covers_the_commands(repo):
     _approve(repo, rules=("todos",))
     row = json.loads((repo["root"] / dlog.APPROVALS_REL).read_text().splitlines()[-1])
     bid = repo["blocks"][1]["block_id"]
-    assert row["block_commands"] == {bid: 'PYTHONIOENCODING=utf-8 python3 tools/todo_write.py add "call the dentist" --repo-root .'}
+    assert row["block_commands"] == {bid: {"destination": "job-todo", "command":
+        'PYTHONIOENCODING=utf-8 python3 tools/todo_write.py add "call the dentist" --repo-root .'}}
     assert sig.verify(sig.payload(row), row["signature"], sig.ALLOWED_SIGNERS)
-    row["block_commands"][bid] = "rm -rf ."
+    row["block_commands"][bid]["command"] = "rm -rf ."
     assert not sig.verify(sig.payload(row), row["signature"], sig.ALLOWED_SIGNERS)
 
 
 def test_an_approval_signed_without_commands_is_stale():
     a = {"rule_id": "r", "block_ids": ["b1"], "block_commands": None}
-    rows = [{"block_id": "b1", "writer_invocation": ""}]
+    rows = [{"block_id": "b1", "destination": "archive", "writer_invocation": ""}]
     assert apply.approval_staleness(a, rows) == {"rule_id": "r", "added": [], "missing": [],
                                                  "changed_command": ["b1"]}
-    assert apply.approval_staleness({**a, "block_commands": {"b1": ""}}, rows) is None
+    ok = {**a, "block_commands": {"b1": {"destination": "archive", "command": ""}}}
+    assert apply.approval_staleness(ok, rows) is None
+    # Same empty command, different destination: an archive re-decided as a delete.
+    assert apply.approval_staleness(ok, [{**rows[0], "destination": "delete"}])["changed_command"] == ["b1"]
+
+
+def test_a_signed_block_re_decided_to_another_destination_voids_the_approval(repo, monkeypatch, capsys):
+    """Two decisions with no command differ only in destination (Grok inbox-signing r1 F2)."""
+    _decide(repo)
+    _approve(repo, rules=("drips",))
+    p = repo["root"] / dlog.LOG_REL
+    rows = [json.loads(l) for l in p.read_text().splitlines()]
+    p.write_text(p.read_text() + json.dumps({**rows[0], "destination": "archive"}) + "\n")
+    code, out = _run(repo, monkeypatch, capsys, "--apply")
+    assert code == 1 and out["code"] == "nothing_approved"
+    assert out["stale_approvals_ignored"][0]["changed_command"] == [repo["blocks"][0]["block_id"]]
+    assert _inbox(repo) == INBOX

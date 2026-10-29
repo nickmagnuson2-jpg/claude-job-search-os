@@ -221,7 +221,7 @@ def cmd_approve(root: Path, rule_ids: list[str], note: str, sign=None) -> None:
     for r in log:
         rid = unit_id(r)
         by_rule.setdefault(rid, []).append(r["block_id"])
-        commands.setdefault(rid, {})[r["block_id"]] = r.get("writer_invocation") or ""
+        commands.setdefault(rid, {})[r["block_id"]] = signed_decision(r)
 
     unknown = [r for r in rule_ids if r not in by_rule]
     if unknown:
@@ -266,13 +266,20 @@ def unit_id(r: dict) -> str:
             else cohort_id(r["destination"], r["confidence"]))
 
 
+def signed_decision(r: dict) -> dict:
+    """What a signature covers for one block: where it goes and the exact command that
+    sends it there ("" for none). Destination is in it because two decisions with no
+    command (archive and delete) differ only there (Grok inbox-signing r1 F2)."""
+    return {"destination": r.get("destination"), "command": r.get("writer_invocation") or ""}
+
+
 def approval_staleness(approval: dict, rows: list[dict]) -> dict | None:
     """None when a signed approval still describes its unit exactly, else what changed.
 
-    The signature covers the unit's block_ids and each block's command. The approval
-    applies only while the blocks now decided under the unit are exactly those, each with
-    the command that was signed. A block added, removed, or re-decided with a new command
-    voids the whole approval (final-g4 F1, final-r2-g4 F1, 788.F2). An approval with no
+    The signature covers the unit's block_ids and each block's decision (destination and
+    command, `signed_decision`). The approval applies only while the blocks now decided
+    under the unit are exactly those, each with the decision that was signed. A block
+    added, removed, or re-decided to a new destination or command voids the whole approval (final-g4 F1, final-r2-g4 F1, 788.F2). An approval with no
     block_commands, signed before the field existed, matches no command and is stale.
     One copy, read by inbox_drain_apply and by cmd_status, so the two cannot disagree (798.F1).
     """
@@ -280,7 +287,7 @@ def approval_staleness(approval: dict, rows: list[dict]) -> dict | None:
     cmds = approval.get("block_commands") or {}
     now = {r["block_id"] for r in rows}
     changed = sorted(r["block_id"] for r in rows
-                     if r["block_id"] in signed and cmds.get(r["block_id"]) != (r.get("writer_invocation") or ""))
+                     if r["block_id"] in signed and cmds.get(r["block_id"]) != signed_decision(r))
     if now == signed and not changed:
         return None
     return {"rule_id": approval.get("rule_id"), "added": sorted(now - signed),
@@ -350,14 +357,17 @@ def cmd_status(root: Path) -> None:
     members = {}
     for r in log:
         members.setdefault(unit_id(r), []).append(r)
+    # Iterate the VERIFIED APPROVALS, as the applier does, not the display rows: an
+    # approval whose blocks all left its unit has no display row and must still be
+    # reported stale (Codex and Grok inbox-signing r1 F1).
     stale = []
-    for e in list(rules.values()) + list(cohorts.values()):
-        a = approvals.get(e["rule_id"])
-        if a:
-            s = approval_staleness(a, members.get(e["rule_id"], []))
-            if s:
-                e["approved"] = False
-                stale.append(s)
+    shown = {e["rule_id"]: e for e in list(rules.values()) + list(cohorts.values())}
+    for rid, a in approvals.items():
+        s = approval_staleness(a, members.get(rid, []))
+        if s:
+            stale.append(s)
+            if rid in shown:
+                shown[rid]["approved"] = False
     approved_blocks = (sum(e["blocks"] for e in rules.values() if e["approved"])
                        + sum(e["blocks"] for e in cohorts.values() if e["approved"]))
 
