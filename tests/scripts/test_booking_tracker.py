@@ -118,14 +118,14 @@ def test_run_venue_baseline_then_change_then_outage(tmp_path):
     changes = (tmp_path / "changes.md").read_text()
     assert "baseline" in changes and "1 watched slots" in changes
     # a store outage keeps last values: no false change, error logged
-    r = bt.run_venue(v, fetch=fake_fetch(payload(s1), fail=("store",)), now=now)
+    r = bt.run_venue(v, fetch=fake_fetch(payload(s1), fail=("store",)), now=now + dt.timedelta(hours=1))
     assert r["changes"] == 0 and r["errors"]
     assert "store" in (tmp_path / "errors.log").read_text()
     # the watched slot disappears: reported as removed
     before = (tmp_path / "changes.md").read_text()
-    r = bt.run_venue(v, fetch=fake_fetch(payload(s1)), now=now)          # nothing changed: file untouched
+    r = bt.run_venue(v, fetch=fake_fetch(payload(s1)), now=now + dt.timedelta(hours=2))   # nothing changed: file untouched
     assert r["changes"] == 0 and (tmp_path / "changes.md").read_text() == before
-    r = bt.run_venue(v, fetch=fake_fetch(payload(s1[:1])), now=now)
+    r = bt.run_venue(v, fetch=fake_fetch(payload(s1[:1])), now=now + dt.timedelta(hours=3))
     text = (tmp_path / "changes.md").read_text()
     assert r["changes"] >= 1 and "1 removed" in text and text.count("# Booking-page changes") == 1
     rows = list(csv.DictReader(open(tmp_path / "snapshots.csv")))
@@ -280,7 +280,7 @@ def test_run_venue_files(tmp_path):
     assert text.startswith("# Booking-page changes: Example Spa") and "3 menu options (1 switched off)" in text
     assert not (tmp_path / "d" / "errors.log").exists()
     bt.run_venue(v, fetch=fake_fetch(payload([slot("A", "2026-01-06T01:00:00+0000")]), fail=("menu",)),
-                 now=dt.datetime(2026, 1, 5, tzinfo=UTC))
+                 now=dt.datetime(2026, 1, 5, 1, tzinfo=UTC))
     assert "menu:" in (tmp_path / "d" / "errors.log").read_text()
     assert (tmp_path / "d" / "changes.md").read_text().count("# Booking-page changes") == 1
 
@@ -338,3 +338,172 @@ def test_main_partial_read_fails_the_run(tmp_path, monkeypatch, errors, code):
     monkeypatch.setattr(bt, "run_venue", lambda v, fetch=None, now=None:
                         {"slots": 3, "reservations": 4, "changes": 0, "errors": errors})
     assert bt.main(["--config", str(cfg)]) == code
+
+
+def lrow(snap, sid, start, **kw):
+    r = row(snap, sid, start, **{k: v for k, v in kw.items() if k in ("offering", "price", "cap", "res")})
+    r.update({"held": str(kw.get("held", 0)), "waitlist": str(kw.get("waitlist", 0)),
+              "category": kw.get("category", "shared"), "event_name": kw.get("event_name", "")})
+    return r
+
+
+def test_slot_observations_lag_and_baselines():
+    start = "2026-01-06T02:00:00+0000"   # 8:00 PM Chicago on 01-05
+    rows = [lrow("2026-01-05T12:00:00Z", "A", start, res=1),   # 6 AM local: previous-day? no, same local date
+            lrow("2026-01-05T23:55:00Z", "A", start, res=4),   # 2h05 before start: the 2h baseline
+            lrow("2026-01-06T01:55:00Z", "A", start, res=7),   # last pre-start read, 5 min before
+            lrow("2026-01-06T02:00:00Z", "A", start, res=50)]  # AT start: not a pre-start read
+    tz = bt.ZoneInfo("America/Chicago")
+    [o] = bt.slot_observations(rows, dt.datetime(2026, 1, 7, tzinfo=UTC), tz=tz)
+    assert (o["final"], o["lag_min"], o["base_day"], o["base_day_at"], o["base_2h"], o["base_2h_lag"]) == (7, 5, 1, "06:00", 4, 125)
+
+
+def test_slot_observations_missing_baselines_and_unstarted():
+    tz = bt.ZoneInfo("America/Chicago")
+    rows = [lrow("2026-01-06T01:00:00Z", "A", "2026-01-06T02:00:00+0000", res=3),   # one read, 1h before
+            lrow("2026-01-06T01:00:00Z", "B", "2099-01-06T02:00:00+0000", res=3)]   # not started
+    [o] = bt.slot_observations(rows, dt.datetime(2026, 1, 7, tzinfo=UTC), tz=tz)
+    assert o["row"]["slot_id"] == "A" and o["base_2h"] is None and o["base_day"] == 3
+    rows = [lrow("2026-01-05T01:00:00Z", "C", "2026-01-06T02:00:00+0000", res=2)]   # only read is the day before
+    [o] = bt.slot_observations(rows, dt.datetime(2026, 1, 7, tzinfo=UTC), tz=tz)
+    assert o["base_day"] is None and o["base_2h"] == 2
+
+
+def test_anomaly_predicates():
+    o = {"row": {"offering": "Sauna Session", "event_name": " Community Night "}, "price": 0.0, "capacity": 24}
+    assert bt.anomaly(o, {"Sauna Session": 30}) == ["price $0", "capacity 24 vs usual 30", "named 'Community Night'"]
+    assert bt.anomaly({"row": {"offering": "Sauna Session"}, "price": 40.0, "capacity": 30}, {"Sauna Session": 30}) == []
+
+
+def test_levers_report_blocks(tmp_path):
+    v = dict(VENUE, data_dir=str(tmp_path))
+    s1, s2, s3 = "2026-01-06T00:00:00+0000", "2026-01-06T01:00:00+0000", "2026-01-06T02:00:00+0000"
+    write_snaps(tmp_path / "snapshots.csv", [
+        lrow("2026-01-05T15:00:00Z", "A", s1, res=2), lrow("2026-01-05T21:55:00Z", "A", s1, res=10),
+        lrow("2026-01-05T23:55:00Z", "A", s1, res=30, waitlist=3),
+        lrow("2026-01-05T15:00:00Z", "B", s2, price=0, cap=20, res=0, event_name="Buyout"),
+        lrow("2026-01-05T23:55:00Z", "B", s2, price=0, cap=20, res=0, event_name="Buyout"),
+        lrow("2026-01-05T15:00:00Z", "C", s3, offering="Yoga", price=15, res=1, category="class"),
+        lrow("2026-01-05T23:55:00Z", "C", s3, offering="Yoga", price=15, res=4, category="class", held=2)])
+    out = bt.summary(v, now=dt.datetime(2026, 1, 7, tzinfo=UTC), levers=True)
+    assert "COVERAGE: 3 finished slots" in out and "1 within 10 min of start, 0 at 11-30 min, 2 over 30 min" in out
+    assert "price $0; capacity 20 vs usual 30; named 'Buyout'" in out
+    assert "capacity 30 vs usual" not in out   # a tie between 30 and 20 must not flag the normal slot
+    assert "(1 candidates; 1 other slots with held seats" in out
+    assert "31 of 34 bookings" in out and "n=2 slots" in out and "1 zero-booking slots excluded" in out
+    assert "Added in the last 2 hours before start: 20 bookings, n=2 slots" in out and "1 slots without one excluded" in out
+    assert bt.NOT_VISIBLE in out
+    assert "COVERAGE" not in bt.summary(v, now=dt.datetime(2026, 1, 7, tzinfo=UTC))
+
+
+def test_main_levers_flag(tmp_path, capsys):
+    cfg = tmp_path / "c.json"
+    cfg.write_text(json.dumps({"venues": [dict(VENUE, data_dir=str(tmp_path / "a"))]}))
+    assert bt.main(["--config", str(cfg), "--levers"]) == 0
+    assert "== Example Spa\nno snapshots yet" in capsys.readouterr().out
+
+
+def test_lever_headings_and_helpers():
+    assert bt.num("", 5) == 5 and bt.num("x", 7) == 7 and bt.num("2.5") == 2.5
+    assert bt.hour_key("9:00 AM") < bt.hour_key("10:00 AM") < bt.hour_key("6:00 PM")
+    assert bt.hour_key("bad") == dt.time(0) and bt.hour_key(None) == dt.time(0)
+    assert bt.median_time([]) == "n/a" and bt.median_time(["09:00", None, "07:55", "08:10"]) == "08:10"
+
+
+def lever_out(tmp_path, rows, venue=None):
+    v = dict(venue or VENUE, data_dir=str(tmp_path))
+    write_snaps(tmp_path / "snapshots.csv", rows)
+    return bt.summary(v, now=dt.datetime(2026, 1, 7, tzinfo=UTC), levers=True)
+
+
+def test_lever_report_has_three_blocks(tmp_path):
+    out = lever_out(tmp_path, [lrow("2026-01-05T23:55:00Z", "A", "2026-01-06T00:00:00+0000", res=3)])
+    for h in ("COVERAGE:", "EVENT / ANOMALOUS-CAPACITY CANDIDATES", "ADDED SINCE THE FIRST SAME-DAY SNAPSHOT"):
+        assert h in out
+    for gone in ("FILL BY POSTED PRICE", "CLASSES:", "PUBLIC WAITLIST", "BOOKABLE SEATS LEFT"):
+        assert gone not in out
+
+
+def test_usual_capacity_comes_from_paid_slots_and_config(tmp_path):
+    s = "2026-01-06T0{}:00:00+0000"
+    rows = [lrow("2026-01-05T15:00:00Z", "A", s.format(1), offering="Event Room", price=20, cap=20, res=1),
+            lrow("2026-01-05T15:00:00Z", "B", s.format(2), offering="Event Room", price=0, cap=25, res=0),
+            lrow("2026-01-05T15:00:00Z", "C", s.format(3), offering="Event Room", price=0, cap=25, res=0)]
+    out = lever_out(tmp_path, rows)
+    assert out.count("price $0; capacity 25 vs usual 20") == 2 and "capacity 20 vs usual" not in out
+    # the primary offering's usual capacity is the configured seat count, even when most slots differ
+    rows = [lrow("2026-01-05T15:00:00Z", x, s.format(i), cap=36, res=1) for i, x in enumerate("ABC", 1)]
+    assert lever_out(tmp_path, rows).count("capacity 36 vs usual 30") == 3
+    assert "capacity 36 vs usual" not in lever_out(tmp_path, rows, dict(VENUE, primary_capacity=None))
+
+
+def test_summary_sorted_by_clock_time(tmp_path):
+    rows = [dict(lrow("2026-01-05T13:00:00Z", "A", "2026-01-05T16:00:00+0000", res=1), local_time="10:00 AM"),
+            dict(lrow("2026-01-05T13:00:00Z", "B", "2026-01-05T15:00:00+0000", res=1), local_time="9:00 AM")]
+    out = lever_out(tmp_path, rows)
+    assert out.index("Mon  9:00 AM") < out.index("Mon 10:00 AM")
+    assert "fill   3%  lag 120m" in out
+
+
+def test_usual_capacity_for_an_all_free_offering_uses_its_own_slots(tmp_path):
+    rows = [lrow("2026-01-05T15:00:00Z", "A", "2026-01-06T01:00:00+0000", res=1),   # paid primary, 30 seats
+            lrow("2026-01-05T15:00:00Z", "B", "2026-01-06T02:00:00+0000", offering="Open House", price=0, cap=25)]
+    out = lever_out(tmp_path, rows)
+    assert "Open House: price $0" in out and "capacity 25 vs usual" not in out
+
+
+def counting_fetch(inner):
+    calls = []
+    def fetch(url, headers=None):
+        calls.append("api" if "/api/" in url else "store" if url.endswith("/store") else "menu")
+        return inner(url, headers)
+    return fetch, calls
+
+
+def test_page_reads_happen_about_hourly(tmp_path):
+    v = dict(VENUE, data_dir=str(tmp_path))
+    t0 = dt.datetime(2026, 1, 5, 14, 55, tzinfo=UTC)   # :55 run, 48 min after a :07 one, so always a page check
+    s = [slot("A", "2026-01-06T01:00:00+0000", res=3)]
+    f, calls = counting_fetch(fake_fetch(payload(s)))
+    bt.run_venue(v, fetch=f, now=t0)                                   # first run: all three
+    assert calls == ["api", "menu", "store"]
+    calls.clear()
+    other_menu = {"bootstrap": {"discovery": {"filters": [{"key": "k", "options": [{"label": "Changed"}]}]}},
+                  "orgConfig": {"bookingPageStatus": "PAUSED"}}
+    f2, calls2 = counting_fetch(fake_fetch(payload(s), menu=other_menu))
+    r = bt.run_venue(v, fetch=f2, now=t0 + dt.timedelta(minutes=12))   # 15:07: availability only
+    assert calls2 == ["api"] and r["changes"] == 0 and not r["errors"]
+    state = json.load(open(tmp_path / "watch-state.json"))
+    assert state["page_status"] == "LIVE" and state["pages_checked_utc"] == "2026-01-05T14:55:00Z"
+    r = bt.run_venue(v, fetch=f2, now=t0 + dt.timedelta(minutes=60))   # 15:55: 60 min since the check
+    assert calls2[-3:] == ["api", "menu", "store"] and r["changes"] >= 1
+    assert "page_status: LIVE -> PAUSED" in (tmp_path / "changes.md").read_text()
+    assert len(list(csv.DictReader(open(tmp_path / "snapshots.csv")))) == 3   # a snapshot every run
+
+
+def test_failed_page_read_is_retried_next_run(tmp_path):
+    v = dict(VENUE, data_dir=str(tmp_path))
+    t0 = dt.datetime(2026, 1, 5, 14, 7, tzinfo=UTC)
+    s = [slot("A", "2026-01-06T01:00:00+0000")]
+    bt.run_venue(v, fetch=fake_fetch(payload(s)), now=t0)
+    r = bt.run_venue(v, fetch=fake_fetch(payload(s), fail=("store",)), now=t0 + dt.timedelta(minutes=60))
+    assert r["errors"] and json.load(open(tmp_path / "watch-state.json"))["pages_checked_utc"] == "2026-01-05T14:07:00Z"
+    f, calls = counting_fetch(fake_fetch(payload(s), fail=("menu",)))
+    r = bt.run_venue(v, fetch=f, now=t0 + dt.timedelta(minutes=70))   # 10 min later: still due, retried
+    assert calls == ["api", "menu", "store"] and r["errors"] == [r["errors"][0]] and r["errors"][0].startswith("menu:")
+
+
+def test_future_page_stamp_is_stale(tmp_path):
+    v = dict(VENUE, data_dir=str(tmp_path))
+    s = [slot("A", "2026-01-06T01:00:00+0000")]
+    bt.run_venue(v, fetch=fake_fetch(payload(s)), now=dt.datetime(2026, 1, 5, 15, tzinfo=UTC))
+    f, calls = counting_fetch(fake_fetch(payload(s)))
+    bt.run_venue(v, fetch=f, now=dt.datetime(2026, 1, 5, 14, 30, tzinfo=UTC))   # clock moved back
+    assert calls == ["api", "menu", "store"]
+    f, calls = counting_fetch(fake_fetch(payload(s)))
+    bt.run_venue(v, fetch=f, now=dt.datetime(2026, 1, 5, 15, 14, 59, tzinfo=UTC))   # 44:59 after 14:30
+    assert calls == ["api"]
+    f, calls = counting_fetch(fake_fetch(payload(s)))
+    bt.run_venue(v, fetch=f, now=dt.datetime(2026, 1, 5, 15, 15, tzinfo=UTC))   # exactly 45 min: due
+    assert calls == ["api", "menu", "store"]
+
