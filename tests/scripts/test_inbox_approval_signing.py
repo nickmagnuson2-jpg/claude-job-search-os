@@ -176,7 +176,7 @@ def test_approve_has_no_approver_flag():
 
 REAL = [  # shapes taken from the live decision log, 2026-10-27
     'PYTHONIOENCODING=utf-8 python3 tools/todo_write.py add "Tag; log | analyse > ideas" --repo-root .',
-    'PYTHONIOENCODING=utf-8 python3 tools/personal_todo_write.py add "2026-05-04 | Whoop" --repo-root .',
+    'PYTHONIOENCODING=utf-8 python3 tools/personal_todo_write.py add "2026-05-04 | Renew library card" --repo-root .',
     'PYTHONIOENCODING=utf-8 python3 tools/act_apply.py target-add --company "Acme" --repo-root . '
     '&& PYTHONIOENCODING=utf-8 python3 tools/act_apply.py notes-add --company "Acme" --repo-root .',
 ]

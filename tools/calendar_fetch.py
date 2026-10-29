@@ -2,8 +2,8 @@
 """
 calendar_fetch.py — Read-only list of upcoming Google Calendar events, as JSON.
 
-The morning page needs calls on the calendar: a replay of October found two real
-calls (2026-10-13, 2026-10-27) in no file the standup collector reads. Nick approved
+The morning page needs calls on the calendar: a replay of past weeks found real calls
+in no file the standup collector reads. Nick approved
 read-only access on 2026-10-27: "yeah give google with readonly access".
 
 Enforcement tier: a dependency Google enforces. The token this script writes is
@@ -54,22 +54,20 @@ def _clean(text: str) -> str:
     """Sanitized, on one line: a title or location has no paragraphs to keep."""
     return " ".join(sanitize_text(text, MAX_FIELD_CHARS).split())
 
-# Private appointments. The first real fetch (2026-10-28) printed a health appointment's
-# provider and its private session link into the session, though personal health material
-# is sealed everywhere else in this repo. An event whose location, description, or
+# Private appointments. An event whose location, description, or
 # conference links name one of these telehealth hosts is printed as "Private appointment"
 # with its times only: the morning page still shows the hour is taken. Matched by
 # hostname, the domain itself or a subdomain, never by substring, so
-# "notsimplepractice.com" is not private. Nick approved 2026-10-28: "I like this fix".
+# "not<host>.com" is not private. Nick approved 2026-10-28: "I like this fix".
 # A generic list of common platforms, so it names no one's provider.
-PRIVATE_DOMAINS = ("simplepractice.com", "doxy.me", "therapynotes.com", "headway.co",
-                   "sondermind.com", "betterhelp.com", "talkspace.com")
+PRIVATE_DOMAINS = ("betterhelp.com", "doxy.me", "headway.co", "simplepractice.com",
+                   "sondermind.com", "talkspace.com", "therapynotes.com")
 PRIVATE_SUMMARY = "Private appointment"
 _HOST_RE = re.compile(r"(?<![A-Za-z0-9.-])([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+)")
 
 
 # Dots a hostname may be spelled with that IDNA treats as a full stop (UTS 46): ideographic,
-# fullwidth and halfwidth. Codex calendar-gate r1 F1: "video\u3002simplepractice\u3002com" and
+# fullwidth and halfwidth. Codex calendar-gate r1 F1: "video\u3002<host>\u3002com" and
 # a percent-encoded "%2E" both slipped past an ASCII-only match.
 _DOTS = str.maketrans({"\u3002": ".", "\uff0e": ".", "\uff61": "."})
 

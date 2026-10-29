@@ -80,7 +80,7 @@ def test_blocks_symlink_into_therapy(tmp_path):
 
 def test_allows_job_search_file_with_therapy_in_its_name(tmp_path):
     root, _ = _layout(tmp_path)
-    code, _ = _run(root, "Read", {"file_path": str(root / "data" / "workbooks" / "insights-from-therapy-work.md")})
+    code, _ = _run(root, "Read", {"file_path": str(root / "data" / "workbooks" / "notes-on-therapy-topics.md")})
     assert code == 0
 
 
@@ -105,11 +105,11 @@ def test_allows_the_bare_word_as_a_recursive_grep_pattern(tmp_path):
 
 
 def test_allows_the_word_inside_sed_replacement_text(tmp_path):
-    # The real replayed form (2026-10, a granola_save.py title scrub). Known limitation:
+    # A title scrub, the shape a real replay used. Known limitation:
     # with `/` as the sed delimiter right after the word (`s/... therapy/.../`), the word
     # looks path-shaped and blocks; use another delimiter such as `|`.
     root, _ = _layout(tmp_path)
-    code, _ = _run(root, "Bash", {"command": "sed -i '' 's/\"title\": \"Provider - Couples therapy\",/\"title\": \"Weekly\",/' tools/x.py"})
+    code, _ = _run(root, "Bash", {"command": "sed -i '' 's/\"title\": \"Acme therapy group\",/\"title\": \"Weekly\",/' tools/x.py"})
     assert code == 0
 
 

@@ -268,17 +268,17 @@ def test_calendar_uses_the_one_gmail_sanitizer():
 # Placeholder fixtures only: no real title, provider or link appears in this file.
 
 @pytest.mark.parametrize("field,value", [
-    ("location", "https://video.simplepractice.com/appt-0000?origin=client"),
-    ("location", "video.simplepractice.com/appt-0000"),          # no scheme
-    ("location", "SIMPLEPRACTICE.COM"),                           # case
-    ("description", "Join at https://simplepractice.com/x"),     # the domain itself
-    ("hangoutLink", "https://a.b.simplepractice.com/"),
+    ("location", "https://video.talkspace.com/appt-0000?origin=client"),
+    ("location", "video.talkspace.com/appt-0000"),          # no scheme
+    ("location", "TALKSPACE.COM"),                           # case
+    ("description", "Join at https://talkspace.com/x"),     # the domain itself
+    ("hangoutLink", "https://a.b.talkspace.com/"),
     # Codex calendar-gate r1 F1: other dot spellings and escapes of the same host
-    ("location", "https://video\u3002simplepractice\u3002com/appt-0000"),
-    ("location", "https://video\uff0esimplepractice\uff0ecom/appt-0000"),
-    ("location", "https://video\uff61simplepractice\uff61com/appt-0000"),
-    ("location", "https://simplepractice%2Ecom/appt-0000"),
-    ("location", "https://simplepractice%252Ecom/appt-0000"),
+    ("location", "https://video\u3002talkspace\u3002com/appt-0000"),
+    ("location", "https://video\uff0etalkspace\uff0ecom/appt-0000"),
+    ("location", "https://video\uff61talkspace\uff61com/appt-0000"),
+    ("location", "https://talkspace%2Ecom/appt-0000"),
+    ("location", "https://talkspace%252Ecom/appt-0000"),
     ("location", "https://\uff53implepractice.com/appt-0000"),               # fullwidth s
 ])
 def test_an_event_naming_a_private_host_is_redacted(field, value):
@@ -302,15 +302,15 @@ def test_every_listed_domain_is_redacted(domain):
 
 def test_a_conference_entry_point_naming_a_private_host_is_redacted():
     item = _timed("Placeholder", "x", conferenceData={"entryPoints": [
-        {"uri": "https://meet.google.com/aaa"}, {"uri": "https://video.simplepractice.com/z"}]})
+        {"uri": "https://meet.google.com/aaa"}, {"uri": "https://video.talkspace.com/z"}]})
     assert cf.normalize_event(item, "primary")["summary"] == "Private appointment"
 
 
 @pytest.mark.parametrize("value", [
-    "https://notsimplepractice.com/x",          # substring, different host
-    "https://simplepractice.com.evil.example/",  # private name as a prefix label
+    "https://nottalkspace.com/x",          # substring, different host
+    "https://talkspace.com.evil.example/",  # private name as a prefix label
     "https://meet.google.com/abc-defg-hij",
-    "simplepractice",                            # a word, not a host
+    "talkspace",                            # a word, not a host
 ])
 def test_a_host_that_only_resembles_a_private_one_is_not_redacted(value):
     ev = cf.normalize_event(_timed("Coffee", "x", location=value), "primary")
@@ -326,11 +326,11 @@ def test_redaction_reaches_the_printed_output(monkeypatch, capsys):
     monkeypatch.setattr(cf, "get_creds", lambda d, auth_mode=False: "creds")
     monkeypatch.setattr(cf, "fetch", lambda *a: {"primary": [
         _timed("Placeholder Provider", "2026-10-28T15:00:00-07:00",
-               location="https://video.simplepractice.com/appt-0000")]})
+               location="https://video.talkspace.com/appt-0000")]})
     assert cf.main([]) == 0
     out = capsys.readouterr().out
     assert "Private appointment" in out
-    assert "Placeholder" not in out and "simplepractice" not in out
+    assert "Placeholder" not in out and "talkspace" not in out
 
 
 # ── a refusal from Google is one line, not a traceback (2026-10-28) ───────────
