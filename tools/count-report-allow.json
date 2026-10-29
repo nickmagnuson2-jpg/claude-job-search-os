@@ -128,5 +128,6 @@
   "tools/wispr_pull.py": "pre-existing at 2026-10-23, convert when next touched",
   "tools/workstream_probe.py": "pre-existing at 2026-10-23, convert when next touched",
   "tools/workstream_state.py": "pre-existing at 2026-10-23, convert when next touched",
-  "tools/morning_page.py": "renders counts that day_check.py and the read-only collector already computed into one HTML page; it counts nothing itself, and day_check's docstring states each count's rule and source. Added 2026-10-29."
+  "tools/morning_page.py": "renders counts that day_check.py and the read-only collector already computed into one HTML page; it counts nothing itself, and day_check's docstring states each count's rule and source. Added 2026-10-29.",
+  "tools/cv_fixed_sections.py": "prints a pass/fail verdict on two fixed CV sections; it counts nothing. Added 2026-10-29."
 }
