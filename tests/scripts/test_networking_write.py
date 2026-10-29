@@ -640,3 +640,12 @@ def test_got_and_received_forms_are_negated(summary):
     sys.path.insert(0, str(TOOLS_DIR))
     import networking_write as nw
     assert nw.reply_received(summary) is False
+
+
+@pytest.mark.parametrize("summary", ["still waiting for a reply", "Sent cold text. Awaiting reply.",
+                                     "waiting on a response from Sam", "still waiting on her reply"])
+def test_waiting_and_awaiting_forms_are_negated(summary):
+    """Round 4 (Codex + Grok), 2026-10-29."""
+    sys.path.insert(0, str(TOOLS_DIR))
+    import networking_write as nw
+    assert nw.reply_received(summary) is False

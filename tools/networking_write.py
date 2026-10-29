@@ -77,9 +77,9 @@ INBOUND_SUBJECT_MARKERS = (
 # disagree on what a reply is (review 2026-10-29: day_check knew "hasn't" but not
 # "haven't", and this writer had no negation at all).
 REPLY_NEGATION = re.compile(
-    r"\b(?:no|never|not|nobody|no one|without|yet to|still waiting to|"
+    r"\b(?:no|never|not|nobody|no one|without|yet to|still waiting(?: to| for| on)?|awaiting|waiting (?:for|on)|"
     r"(?:has|have|had|did|does|do|is|was|were)n['\u2019]?t|won['\u2019]?t|can['\u2019]?t)"
-    r"(?:\s+(?:yet|a|any|been|heard|to|got|get|gotten|received|had))*\s+"
+    r"(?:\s+(?:yet|a|any|been|heard|to|got|get|gotten|received|had|her|his|their|my))*\s+"
     r"(?:repl|respon|hear back|heard back|heard|wrote back|got back|called back|texted back)\w*",
     re.IGNORECASE)
 # The negator must sit directly on the reply word (a few filler words, no comma or
