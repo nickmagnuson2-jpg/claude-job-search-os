@@ -258,6 +258,8 @@ def test_personal_repo_work_passes_but_a_walk_of_its_root_blocks(tmp_path):
                 "find -L ../personal -name x",          # Grok round 4 F3
                 "find -H -O2 ../personal",
                 "find -D tree ../personal",
+                "find -- ../personal -type f",          # Codex final-r3-g2 F1
+                "find -L -- ../personal -name x",
                 "bash --login -c 'grep -r x ../personal'",   # round 5 F1, both models
                 "bash -o errexit -c 'grep -r x ../personal'",
                 "zsh --norc -c 'fd secret ../personal'",

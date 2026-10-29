@@ -950,6 +950,10 @@ def _walk_targets(words: list, h: int) -> list:
             if args[0] == "-f":
                 targets += args[1:2]
             args = args[2:] if args[0] in ("-D", "-f") else args[1:]
+        # `--` ends the options; the paths follow it (Codex final-r3-g2 F1, 2026-10-28:
+        # `find -- dir` read `--` as the expression and fell back to the current dir).
+        if args[:1] == ["--"]:
+            args = args[1:]
         for w in args:
             if w.startswith("-") or w in ("(", "!", "\\("):
                 break
