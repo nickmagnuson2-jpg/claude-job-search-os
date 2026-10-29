@@ -261,7 +261,8 @@ def derive_state(matched: list[dict], artifact: str | None) -> dict:
             if receipts and _latest(receipts)["status"] == "Bounced":
                 delivered = False
 
-    awaiting = sent and not any(r["status"] == "Replied" for r in known)
+    # Closed is terminal (10a): a resolved thread awaits nothing (review 849.F1).
+    awaiting = sent and not any(r["status"] in ("Replied", "Closed") for r in known)
     latest = _latest(known) if known else None
 
     return {

@@ -1001,3 +1001,12 @@ def test_closed_is_a_known_terminal_sent_status():
     import outreach_status as _os
     assert "Closed" in _os.KNOWN_STATUSES and "Closed" in _os.SENT_STATUSES
     assert "Closed" not in _os.RECEIPT_STATUSES and "Closed" not in _os.OPEN_STATUSES
+
+
+def test_a_closed_thread_awaits_nothing(tmp_path):
+    """10a review 849.F1: Closed is terminal, so awaiting_reply is False."""
+    log = make_log(tmp_path, [
+        "| 2026-01-05 | cold-outreach | email | Jane Doe | Acme Corp | Cold intro | Closed |",
+    ])
+    code, out = query("--recipient", "Jane Doe", "--log", log)
+    assert code == 0 and (out["sent"], out["awaiting_reply"]) == (True, False)
