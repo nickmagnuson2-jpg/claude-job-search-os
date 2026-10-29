@@ -46,12 +46,16 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from hook_runtime import claude_project_dir  # noqa: E402
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 TIMEOUT = 300
 STDERR_TAIL = 2000
 
 
-def commands(target_date: str, read_only: bool = False) -> dict[str, list[str]]:
+def commands(target_date: str, read_only: bool = False,
+             root: Path | None = None) -> dict[str, list[str]]:
     """The Step 1 scripts, in the order /standup reads them. Argv lists, never strings.
 
     read_only drops the two writes the default mode makes (see the module docstring)."""
@@ -59,6 +63,8 @@ def commands(target_date: str, read_only: bool = False) -> dict[str, list[str]]:
     r = ["--repo-root", "."]
     render = [] if read_only else ["--render"]
     no_state = ["--no-state"] if read_only else []
+    # The live memory tier sits outside the repo, in Claude Code's per-project folder.
+    memory = str(claude_project_dir(root or REPO_ROOT) / "memory")
     return {
         "pipeline_staleness": ["tools/pipeline_staleness.py", *d],
         "outreach_pending": ["tools/outreach_pending.py", *d],
@@ -72,6 +78,10 @@ def commands(target_date: str, read_only: bool = False) -> dict[str, list[str]]:
         "role_queue": ["tools/role_queue_read.py", *r, "--top", "5"],
         "sent_artifacts": ["tools/sent_artifact_check.py", *r, "--json", *no_state],
         "build_check": ["tools/build_check.py", *r, "--json"],
+        # S7 (2026-10-28, "Merge into the collector"): the five capture lanes' due count,
+        # which no surface printed. Summary only; the full record list stays in the tool.
+        "learning_ledger": ["tools/learning_ledger.py", "--memory-dir", memory, *r,
+                            "--json", "--summary"],
     }
 
 
@@ -97,7 +107,7 @@ def run_one(argv: list[str], root: Path, read_only: bool = False) -> dict:
 
 
 def collect(root: Path, target_date: str, read_only: bool = False) -> dict:
-    cmds = commands(target_date, read_only)
+    cmds = commands(target_date, read_only, root)
     with ThreadPoolExecutor(max_workers=len(cmds)) as pool:
         futures = {name: pool.submit(run_one, argv, root, read_only)
                    for name, argv in cmds.items()}

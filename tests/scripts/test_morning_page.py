@@ -212,3 +212,9 @@ def test_page_fits_a_laptop_without_scrolling():
     assert "overflow:hidden" in page and "font:20px" in page
     v = mp.build_view(mp.gather_demo(), NOW)
     assert len(v["todos"]) <= mp.MAX_ITEMS and len(v["waiting_names"]) < mp.MAX_ITEMS
+
+
+def test_machine_room_shows_the_learning_ledger_due_count():
+    v = mp.build_view(mp.gather_demo(), NOW)
+    assert v["machine"]["learning_due"] == 6
+    assert "Learning lanes due" in _section(demo_html(), "b4")

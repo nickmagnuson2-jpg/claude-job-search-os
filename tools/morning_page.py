@@ -224,6 +224,7 @@ def build_view(src: dict, now: datetime) -> dict:
         "workstream_errors": ws.get("error"),
         "open_findings": src.get("open_findings"),
         "launchd_warnings": len(ah["warnings"]) if isinstance(ah.get("warnings"), list) else None,
+        "learning_due": (_data(col, "learning_ledger") or {}).get("due_total"),
         "sources_failed": list(col.get("failed") or []),
     }
 
@@ -336,6 +337,7 @@ def render(view: dict, now: datetime, demo: bool) -> str:
                + f'<tr><td>Workstream probe errors</td><td class="n">{_n(m["workstream_errors"])}</td></tr>'
                + f'<tr><td>Open cross-model findings</td><td class="n">{_n(m["open_findings"])}</td></tr>'
                + f'<tr><td>launchd warnings</td><td class="n">{_n(m["launchd_warnings"])}</td></tr>'
+               + f'<tr><td>Learning lanes due</td><td class="n">{_n(m["learning_due"])}</td></tr>'
                + "</table>")
     if m["sources_failed"]:
         machine += f'<p class="warn">Sources failed: {_e(", ".join(m["sources_failed"]))}</p>'

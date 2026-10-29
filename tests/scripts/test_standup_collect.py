@@ -19,7 +19,7 @@ import standup_collect as sc  # noqa: E402
 
 def test_every_command_is_an_argv_list_naming_a_script_that_exists():
     cmds = sc.commands("2026-01-02")
-    assert len(cmds) == 12
+    assert len(cmds) == 13
     for name, argv in cmds.items():
         assert isinstance(argv, list) and all(isinstance(a, str) and " " not in a for a in argv), name
         assert (REPO_ROOT / argv[0]).is_file(), f"{name}: {argv[0]} does not exist"
@@ -51,7 +51,7 @@ def test_a_failing_script_is_reported_and_the_others_still_run(tmp_path, monkeyp
         "bad.py": "import sys; sys.stderr.write('boom on stderr'); sys.exit(3)",
         "plain.py": "print('not json')",
     })
-    monkeypatch.setattr(sc, "commands", lambda d, read_only=False: {
+    monkeypatch.setattr(sc, "commands", lambda d, read_only=False, root=None: {
         "good": ["tools/good.py", "--target-date", d],
         "bad": ["tools/bad.py"],
         "plain": ["tools/plain.py"],
@@ -69,7 +69,7 @@ def test_stderr_never_corrupts_the_parsed_json(tmp_path, monkeypatch):
     root = _fake_repo(tmp_path, {
         "noisy.py": "import json, sys; sys.stderr.write('progress...\\n'); print(json.dumps({'n': 1}))",
     })
-    monkeypatch.setattr(sc, "commands", lambda d, read_only=False: {"noisy": ["tools/noisy.py"]})
+    monkeypatch.setattr(sc, "commands", lambda d, read_only=False, root=None: {"noisy": ["tools/noisy.py"]})
     out = sc.collect(root, "2026-01-02")
     assert out["results"]["noisy"]["data"] == {"n": 1}
 
@@ -77,7 +77,7 @@ def test_stderr_never_corrupts_the_parsed_json(tmp_path, monkeypatch):
 def test_a_hung_script_times_out_instead_of_stalling_the_brief(tmp_path, monkeypatch):
     root = _fake_repo(tmp_path, {"slow.py": "import time; time.sleep(5)"})
     monkeypatch.setattr(sc, "TIMEOUT", 0.5)
-    monkeypatch.setattr(sc, "commands", lambda d, read_only=False: {"slow": ["tools/slow.py"]})
+    monkeypatch.setattr(sc, "commands", lambda d, read_only=False, root=None: {"slow": ["tools/slow.py"]})
     out = sc.collect(root, "2026-01-02")
     assert out["failed"] == ["slow"] and "timed out" in out["results"]["slow"]["stderr"]
 
@@ -88,7 +88,7 @@ def test_the_cli_exits_1_when_any_script_failed(tmp_path):
                         "--repo-root", str(root), "--target-date", "2026-01-02"],
                        capture_output=True, text=True, timeout=120)
     out = json.loads(r.stdout)
-    assert r.returncode == 1 and len(out["failed"]) == 12, "a repo with no scripts fails all twelve"
+    assert r.returncode == 1 and len(out["failed"]) == 13, "a repo with no scripts fails all thirteen"
 
 
 def test_a_script_that_cannot_start_is_reported_not_raised(tmp_path, monkeypatch):
@@ -106,7 +106,7 @@ def test_a_nonzero_exit_with_data_is_partial_not_failed(tmp_path, monkeypatch):
         "probes.py": "import json, sys; print(json.dumps({'error': 1})); sys.stderr.write('probe x failed'); sys.exit(1)",
         "dead.py": "import sys; sys.exit(1)",
     })
-    monkeypatch.setattr(sc, "commands", lambda d, read_only=False: {"probes": ["tools/probes.py"], "dead": ["tools/dead.py"]})
+    monkeypatch.setattr(sc, "commands", lambda d, read_only=False, root=None: {"probes": ["tools/probes.py"], "dead": ["tools/dead.py"]})
     out = sc.collect(root, "2026-01-02")
     assert out["partial"] == ["probes"] and out["failed"] == ["dead"] and out["ok"] == []
     assert out["results"]["probes"]["data"] == {"error": 1}
@@ -116,7 +116,7 @@ def test_a_nonzero_exit_with_data_is_partial_not_failed(tmp_path, monkeypatch):
 def test_exit_0_with_no_output_is_a_failure(tmp_path, monkeypatch):
     """591.F3: a script that exits 0 and prints nothing has no usable output."""
     root = _fake_repo(tmp_path, {"silent.py": "pass"})
-    monkeypatch.setattr(sc, "commands", lambda d, read_only=False: {"silent": ["tools/silent.py"]})
+    monkeypatch.setattr(sc, "commands", lambda d, read_only=False, root=None: {"silent": ["tools/silent.py"]})
     assert sc.collect(root, "2026-01-02")["failed"] == ["silent"]
 
 
@@ -184,3 +184,14 @@ def test_the_cli_passes_read_only_through(tmp_path):
                         "--repo-root", str(root), "--target-date", "2026-01-02", "--read-only"],
                        capture_output=True, text=True, timeout=120)
     assert json.loads(r.stdout)["read_only"] is True
+
+
+def test_learning_ledger_is_a_source_reading_the_live_memory_tier(tmp_path):
+    """S7: the ledger's due count reaches /standup and the page through the collector."""
+    from hook_runtime import claude_project_dir
+    argv = sc.commands("2026-01-02", root=tmp_path)["learning_ledger"]
+    assert argv[:3] == ["tools/learning_ledger.py", "--memory-dir",
+                        str(claude_project_dir(tmp_path) / "memory")]
+    assert "--summary" in argv and "--json" in argv
+    assert sc.commands("2026-01-02")["learning_ledger"][2] == str(
+        claude_project_dir(sc.REPO_ROOT) / "memory")
