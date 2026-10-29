@@ -92,6 +92,7 @@ def test_an_unknown_count_prints_unknown_not_zero():
 def test_machine_room_m4_against_the_floor():
     v = mp.build_view(mp.gather_demo(), NOW)
     assert v["machine"]["m4"] == {"last_7": 9, "floor": 7.0, "ok": True}
+    assert 'M4 sends, last 7 days vs floor</td><td class="n ok">9 / 7.0' in _section(demo_html(), "b4")
     src = mp.gather_demo()
     src["collector"]["results"]["conversations_metric"]["data"]["outreach_sent"]["counts"]["7d"] = 5
     assert mp.build_view(src, NOW)["machine"]["m4"]["ok"] is False
@@ -362,6 +363,7 @@ PIPE = """# Job Application Pipeline
 | Delta Co | Ops | Recruiter call | 2026-01-07 | Call Thu 1:30pm (she calls) | — | | |
 | Epsilon | Ops | Rejected | 2026-01-03 | Await nothing | — | | |
 | Zeta | Ops | Researching | 2026-01-02 | Research the team | — | | |
+| Short | Ops | Applied | 2026-01-02 |
 """
 
 

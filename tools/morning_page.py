@@ -101,9 +101,7 @@ def commonplace(root: Path, today: date) -> dict:
     waiting = []
     for rel in TAKE_DIRS:
         d = root / rel
-        if not d.is_dir():
-            continue
-        for f in sorted(d.glob("*.md")):
+        for f in sorted(d.glob("*.md")):  # a missing folder globs to nothing
             try:
                 text = f.read_text(encoding="utf-8")
             except (OSError, ValueError):
@@ -152,7 +150,7 @@ def waiting_on_them(root: Path) -> dict:
         return {"error": err, "rows": None}
     rows = []
     for cols in day_check.pipeline_rows(text):
-        if len(cols) < 5 or cols[0] == "Company" or set(cols[0]) <= set("-: "):
+        if len(cols) < 5:  # the header and separator rows match nothing below
             continue
         company, stage, updated, nxt = cols[0], cols[2], cols[3], cols[4]
         if is_terminal_stage(stage):
@@ -198,13 +196,11 @@ def gather_demo(fixtures: Path = FIXTURES) -> dict:
 # --------------------------------------------------------------------------- view
 
 def _event_day(ev: dict) -> date | None:
+    # fromisoformat reads both "2026-01-07" (all-day) and "2026-01-07T10:00:00".
     try:
         return datetime.fromisoformat(str(ev.get("start", ""))[:19]).date()
     except ValueError:
-        try:
-            return date.fromisoformat(str(ev.get("start", ""))[:10])
-        except ValueError:
-            return None
+        return None
 
 
 def _event_line(ev: dict) -> str:

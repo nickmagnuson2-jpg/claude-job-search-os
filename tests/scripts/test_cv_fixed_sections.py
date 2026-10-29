@@ -79,7 +79,7 @@ def test_cli_exit_codes(tmp_path):
     noskill = subprocess.run([sys.executable, str(REPO / "tools" / "cv_fixed_sections.py"),
                               str(tmp_path / "cv.yaml"), "--skill", str(tmp_path / "x.md")],
                              capture_output=True, text=True, timeout=60)
-    assert noskill.returncode == 1
+    assert noskill.returncode == 1 and "cannot read" in noskill.stderr
 
 
 def test_the_skill_runs_it_before_the_first_render():

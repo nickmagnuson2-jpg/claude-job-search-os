@@ -67,13 +67,8 @@ def stage_paths(backup_script: str) -> list[str]:
 
 
 def backed_up(rel: str, stage: list[str]) -> bool:
-    for p in stage:
-        if p.endswith("/"):
-            if rel.startswith(p):
-                return True
-        elif rel == p:
-            return True
-    return False
+    """A STAGE_PATHS entry ending in "/" covers everything under it; any other names one file."""
+    return any(rel.startswith(p) if p.endswith("/") else rel == p for p in stage)
 
 
 def ephemeral(rel: str) -> str | None:
