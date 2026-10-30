@@ -153,6 +153,8 @@ def test_writer_flips_exactly_when_day_check_counts_a_reply(tmp_path, kind, summ
     ("email", "Sam responded to the comment."),
     ("text", "Sam texted back within the hour."),
     ("email", "Sam (Talent @ Acme) replied 10:58am with a booking link."),
+    ("email", "Brant replied."),
+    ("email", "Kent responded at noon."),
     ("email", "Re: Draft post - Sam replied 2:00 PM (cc Lee)."),
     ("email", "Nick replied 1:00 PM; Sam replied 2:00 PM."),
 ])
@@ -174,6 +176,10 @@ def test_positive_structured_signals_are_replies(kind, summary):
     "still waiting on her reply", "nobody has replied", "nobody has heard back",
     "no one has ever responded", "not the reply I hoped for",
     "Sam won't be replying until next week",  # the round-6 P0 (895.F1)
+    # Review 1 of the class fix (Grok F1): a capitalized auxiliary is not a subject.
+    "Hasn't replied.", "Haven’t replied.", "Hadn't responded.", "Hasnt replied.",
+    "Follow-up #1 SENT. Hasn't replied.", "Emailed Monday. Didn't respond.",
+    "Has replied?", "Still waiting. Haven't heard back.",
     # Nick's own replies.
     "Replied to her intro - yes to a chat", "I replied with times.",
     "Reply SENT 10:55am in the thread.", "Follow-up #2 sent: reply in the thread.",

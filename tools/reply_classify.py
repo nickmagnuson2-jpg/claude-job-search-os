@@ -31,8 +31,10 @@ What counts as a reply (any one):
      called back / texted back / got back. The subject must be the word right before the
      verb (one parenthetical between them is allowed: "Sam (recruiter) replied"), so
      "Sam never replied" and "she hasn't responded" do not match. Never counted:
-     Nick or I as the subject, a negative word as the subject ("Nobody replied"), or the
-     form inside a condition ("if Sam replied", "whether she responded").
+     Nick or I as the subject, a negative word or an auxiliary as the subject ("Nobody
+     replied", "Hasn't replied."), or the form inside a condition ("if Sam replied",
+     "whether she responded"). Known gap, accepted: a negation earlier in the clause
+     ("I don't think Sam replied") is not seen; none occurs in the live log.
 
 What counts as a send (only when no reply signal matched): the uppercase word SENT, or a
 note opening "Nick replied", "Nick sent", "Outbound", "Follow-up #<n>", "Cold outreach".
@@ -67,7 +69,14 @@ SUBJECT_REPLY = re.compile(
 NOT_A_CONTACT = frozenset({
     "nick", "i", "we", "me", "nobody", "none", "noone", "never", "not", "no", "who",
     "already", "also", "just", "finally", "still", "yet", "then",
+    # Auxiliaries, bare or negated: a sentence-initial "Hasn't replied." is capitalized
+    # but has no subject at all (review 1, 2026-10-29).
+    "has", "have", "had", "did", "does", "do", "is", "was", "were", "will", "would",
+    "could", "should", "can", "may", "might", "must",
+    "hasnt", "havent", "hadnt", "didnt", "doesnt", "dont", "isnt", "wasnt", "werent",
+    "wont", "cant", "couldnt", "wouldnt", "shouldnt",
 })
+_NEGATED_CONTRACTION = re.compile(r"n['’]t$", re.IGNORECASE)
 # A reply form inside a condition is not a reply.
 CONDITION_WORDS = frozenset({"if", "whether", "unless", "until"})
 
@@ -83,7 +92,7 @@ def _subject_reply(summary: str) -> bool:
         # Names must be capitalized; only the three pronouns may be lowercase.
         if subj.lower() not in ("she", "he", "they") and not subj[0].isupper():
             continue
-        if subj.lower() in NOT_A_CONTACT:
+        if subj.lower() in NOT_A_CONTACT or _NEGATED_CONTRACTION.search(subj):
             continue
         before = summary[:m.start()].split()
         if before and before[-1].strip(",;:").lower() in CONDITION_WORDS:
