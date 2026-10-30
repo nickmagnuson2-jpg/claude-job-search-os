@@ -734,6 +734,7 @@ def test_a_same_family_row_CANNOT_fill_a_slot_a_tier_demands(tmp_path, monkeypat
     So the tier's appetite must be met by OUTSIDE families alone. A same-family verifier
     earns its keep through the findings it produces, not by clearing a push."""
     monkeypatch.setattr(g, "WIRED_MODELS", ("codex", "grok", "fable"))
+    monkeypatch.setattr(g, "fable_standin_active", lambda today=None: False)  # the normal rule
     _row(tmp_path, paths=["CLAUDE.md"], model="codex")
     _row(tmp_path, paths=["CLAUDE.md"], model="fable")
     assert g.check(tmp_path, [("CLAUDE.md", 3, 1)], since=0).blocked is True
@@ -1532,3 +1533,37 @@ def test_cli_RECORDS_a_waiver_that_bypasses_an_open_P0_on_a_small_push(tmp_path)
     assert r.returncode == 0 and "WAIVED" in r.stderr
     assert [x for x in g.read_ledger(tmp_path) if x.get("waived")][0]["reason"] == \
         "ship the typo fix"
+
+
+
+# --- Grok-outage exception (Nick, 2026-10-30): Fable stands in for one slot until 2026-11-12 ---
+
+def test_the_fable_standin_expires_after_2026_11_12():
+    from datetime import date
+    assert g.fable_standin_active(date(2026, 11, 12)) is True
+    assert g.fable_standin_active(date(2026, 11, 13)) is False
+
+
+def test_during_the_exception_codex_plus_fable_clears_and_says_so(tmp_path, monkeypatch):
+    monkeypatch.setattr(g, "WIRED_MODELS", ("codex", "grok", "fable"))
+    monkeypatch.setattr(g, "fable_standin_active", lambda today=None: True)
+    _row(tmp_path, paths=["CLAUDE.md"], model="codex")
+    _row(tmp_path, paths=["CLAUDE.md"], model="fable")
+    v = g.check(tmp_path, [("CLAUDE.md", 3, 1)], since=0)
+    assert v.blocked is False and "Fable standing in for Grok" in v.message
+
+
+def test_during_the_exception_fable_alone_never_clears(tmp_path, monkeypatch):
+    monkeypatch.setattr(g, "WIRED_MODELS", ("codex", "grok", "fable"))
+    monkeypatch.setattr(g, "fable_standin_active", lambda today=None: True)
+    _row(tmp_path, paths=["CLAUDE.md"], model="fable")
+    assert g.check(tmp_path, [("CLAUDE.md", 3, 1)], since=0).blocked is True
+
+
+def test_codex_plus_grok_does_not_mention_the_exception(tmp_path, monkeypatch):
+    monkeypatch.setattr(g, "WIRED_MODELS", ("codex", "grok", "fable"))
+    monkeypatch.setattr(g, "fable_standin_active", lambda today=None: True)
+    _row(tmp_path, paths=["CLAUDE.md"], model="codex")
+    _row(tmp_path, paths=["CLAUDE.md"], model="grok")
+    v = g.check(tmp_path, [("CLAUDE.md", 3, 1)], since=0)
+    assert v.blocked is False and "Fable" not in v.message
