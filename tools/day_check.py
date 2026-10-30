@@ -10,13 +10,11 @@ Six counts, each for the target date and for the week so far (Monday to the targ
 
   sends           people written to: outreach-log rows whose status says the message went
                   out (the shared conversations_metric.SENT_STATES), plus networking.md
-                  interactions whose summary records an outbound message (SENT, "Nick
-                  replied", OUTBOUND, a follow-up or cold outreach). A person counts once
-                  per day across both logs ("First" and "First Last" are one person).
-  replies         networking.md interactions that record an inbound message: type
-                  "email (inbound)"; a summary starting "REPLY from" or "Inbound", or
-                  holding the word INBOUND; "<someone other than Nick> replied/responded"
-                  anywhere; or networking_write's inbound markers ("heard back", ...).
+                  interactions that tools/reply_classify.py calls a send. A person counts
+                  once per day across both logs ("First" and "First Last" are one person).
+  replies         networking.md interactions that tools/reply_classify.py calls a reply
+                  (the one rule networking_write.py also uses; what counts is written in
+                  that module's docstring).
   calls           networking.md interactions of a live type (conversations_metric.LIVE:
                   call, video, in-person, interview, and so on).
   applications    pipeline rows whose text says "Applied <date>" (or "applied on <date>").
@@ -56,7 +54,8 @@ from pathlib import Path
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from conversations_metric import LIVE, SENT_STATES  # noqa: E402
-from networking_write import INBOUND_SUBJECT_MARKERS, REPLY_NEGATION  # noqa: E402
+# The one "did they reply" rule, shared with networking_write.py (no local copy here).
+from reply_classify import classify as classify_summary  # noqa: E402
 from schema_guard import SchemaDriftError, assert_schema, find_header_line  # noqa: E402
 from outreach_read import parse_rows as parse_outreach_rows  # noqa: E402
 import todo_read  # noqa: E402
@@ -67,15 +66,6 @@ EXTRA = ("applications_unconfirmed",)
 
 CONTACT_RE = re.compile(r"^###\s+(.+?)(?:\s+[—–-]\s+(.+))?\s*$")
 INTERACTION_RE = re.compile(r"^####\s+(\d{4}-\d{2}-\d{2})\s*\|\s*([^|]+?)\s*\|\s*(.*)$")
-# Only the uppercase word counts: a lowercase "sent" in a summary ("she sent the deck")
-# is usually someone else's action.
-OUTBOUND_UPPER = re.compile(r"\bSENT\b")
-OUTBOUND_START = re.compile(r"^(nick (replied|sent)\b|outbound\b|follow-up #\d+|cold outreach)",
-                            re.I)
-INBOUND_START = re.compile(r"^(reply from\b|inbound\b)", re.I)
-INBOUND_UPPER = re.compile(r"\bINBOUND\b")
-NEGATED = REPLY_NEGATION  # one definition, in networking_write.py
-OTHER_REPLIED = re.compile(r"\b([A-Za-z][\w'-]*) (replied|responded)\b")
 PIPELINE_COLUMNS = ["Company", "Role", "Stage", "Date Updated", "Next Action", "CV Used",
                     "Notes", "URL"]
 
@@ -99,31 +89,6 @@ def _read(path: Path) -> tuple[str | None, str | None]:
         return None, "file not found"
     except (OSError, ValueError) as e:  # ValueError: UnicodeDecodeError on a non-UTF-8 file
         return None, f"unreadable: {e}"
-
-
-def classify_summary(kind: str, summary: str) -> str | None:
-    """-> 'reply' | 'send' | None for one networking.md interaction."""
-    k = kind.strip().casefold()
-    s = summary.strip()
-    if k == "email (inbound)" or INBOUND_START.match(s) or INBOUND_UPPER.search(s):
-        return "reply"
-    # A negated note ("Sam never replied", "No reply from Sam", "nobody responded") records
-    # the absence of a reply; only the explicit inbound shapes above outrank it (D8 r2).
-    if NEGATED.search(s):
-        rest = NEGATED.sub(" ", s)
-        if not (any(m.group(1).casefold() not in ("nick", "i") for m in OTHER_REPLIED.finditer(rest))
-                or any(marker in rest.casefold() for marker in INBOUND_SUBJECT_MARKERS)):
-            return "send" if (OUTBOUND_UPPER.search(s) or OUTBOUND_START.match(s)) else None
-        s = rest
-    if any(m.group(1).casefold() not in ("nick", "i") for m in OTHER_REPLIED.finditer(s)):
-        return "reply"
-    # networking_write's own inbound vocabulary ("heard back", "wrote back", ...), so the
-    # writer and this reader agree on what a reply is.
-    if any(marker in s.casefold() for marker in INBOUND_SUBJECT_MARKERS):
-        return "reply"
-    if OUTBOUND_UPPER.search(s) or OUTBOUND_START.match(s):
-        return "send"
-    return None
 
 
 def networking_events(content: str) -> list[dict]:

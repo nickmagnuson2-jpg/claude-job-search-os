@@ -1,0 +1,109 @@
+#!/usr/bin/env python3
+"""reply_classify.py - the ONE rule for "did the contact reply?" in a networking note.
+
+Used by:
+  - tools/networking_write.py `log`: flips the outreach-log row to Replied only when
+    is_reply() is true (the caller's --reply-received / --no-reply-flip still override).
+  - tools/day_check.py: counts replies and sends from data/networking.md.
+
+No other tool may keep its own copy of these rules
+(tests/scripts/test_reply_classification_consistency.py enforces that).
+
+Why it is built this way. The old rule was a bare-word list ("reply", "replied",
+"heard back", ...) with a negation regex cut out first. Every review round found one more
+English phrasing that the negation missed ("still waiting for a reply", "nobody has replied",
+"won't be replying"), so the list never converged. This module has NO bare-word fallback:
+a note counts as a reply only on one of the positive, structured signals below. Anything
+else is "not a reply". A missed reply costs one manual `--reply-received`; a false one
+writes Replied into the outreach log, which is the worse error.
+
+What counts as a reply (any one):
+  1. The interaction type says inbound: "email (inbound)" or "inbound".
+  2. The note opens with an inbound marker: "INBOUND", "Inbound", "REPLY from",
+     "Reply from", "Response from", "Reply received", "Heard back from",
+     "Got a reply from", "Got a response from". "Opens" means the start of the note or
+     the start of a sentence in it (after ". ", "! ", "? "), so no negator can sit in
+     front ("No reply from Sam" does not match).
+  3. The uppercase word INBOUND anywhere (the house convention for logging an inbound
+     message inside a longer note: "Backfilled. INBOUND 2:06 PM from the thread").
+  4. A contact as the grammatical subject, directly followed by a reply verb: a
+     capitalized name or she/he/they, then replied / responded / wrote back /
+     called back / texted back / got back. The subject must be the word right before the
+     verb (one parenthetical between them is allowed: "Sam (recruiter) replied"), so
+     "Sam never replied" and "she hasn't responded" do not match. Never counted:
+     Nick or I as the subject, a negative word as the subject ("Nobody replied"), or the
+     form inside a condition ("if Sam replied", "whether she responded").
+
+What counts as a send (only when no reply signal matched): the uppercase word SENT, or a
+note opening "Nick replied", "Nick sent", "Outbound", "Follow-up #<n>", "Cold outreach".
+
+Everything else is None: not counted either way. When unsure, the answer is "not a reply".
+"""
+from __future__ import annotations
+
+import re
+
+# 1. Interaction types that are inbound by definition.
+INBOUND_KINDS = frozenset({"email (inbound)", "inbound"})
+
+# 2. Inbound markers that must open the note or a sentence in it.
+_SENTENCE_START = r"(?:^|[.!?]\s+)\s*"
+INBOUND_OPENER = re.compile(
+    _SENTENCE_START
+    + r"(?:inbound|reply from|response from|reply received|heard back from"
+      r"|got a (?:reply|response) from)\b",
+    re.IGNORECASE)
+
+# 3. The uppercase house marker, anywhere.
+INBOUND_UPPER = re.compile(r"\bINBOUND\b")
+
+# 4. Contact-as-subject reply form.
+_REPLY_VERB = r"(?:replied|responded|wrote back|called back|texted back|got back)"
+SUBJECT_REPLY = re.compile(
+    r"(?<![\w'’-])"
+    r"(?P<subj>[A-Z][\w'’-]*|she|he|they)(?:\s+\([^()]{1,60}\))?\s+" + _REPLY_VERB + r"\b",
+    re.IGNORECASE)
+# Words that can sit in the subject slot but are not a contact who replied.
+NOT_A_CONTACT = frozenset({
+    "nick", "i", "we", "me", "nobody", "none", "noone", "never", "not", "no", "who",
+    "already", "also", "just", "finally", "still", "yet", "then",
+})
+# A reply form inside a condition is not a reply.
+CONDITION_WORDS = frozenset({"if", "whether", "unless", "until"})
+
+# Sends.
+OUTBOUND_UPPER = re.compile(r"\bSENT\b")
+OUTBOUND_START = re.compile(r"^(nick (replied|sent)\b|outbound\b|follow-up #\d+|cold outreach)",
+                            re.IGNORECASE)
+
+
+def _subject_reply(summary: str) -> bool:
+    for m in SUBJECT_REPLY.finditer(summary):
+        subj = m.group("subj")
+        # Names must be capitalized; only the three pronouns may be lowercase.
+        if subj.lower() not in ("she", "he", "they") and not subj[0].isupper():
+            continue
+        if subj.lower() in NOT_A_CONTACT:
+            continue
+        before = summary[:m.start()].split()
+        if before and before[-1].strip(",;:").lower() in CONDITION_WORDS:
+            continue
+        return True
+    return False
+
+
+def classify(kind: str, summary: str) -> str | None:
+    """-> 'reply' | 'send' | None for one interaction (its type and its summary)."""
+    k = (kind or "").strip().casefold()
+    s = (summary or "").strip()
+    if (k in INBOUND_KINDS or INBOUND_OPENER.search(s) or INBOUND_UPPER.search(s)
+            or _subject_reply(s)):
+        return "reply"
+    if OUTBOUND_UPPER.search(s) or OUTBOUND_START.match(s):
+        return "send"
+    return None
+
+
+def is_reply(kind: str, summary: str) -> bool:
+    """True only on a positive reply signal (see the module docstring)."""
+    return classify(kind, summary) == "reply"
