@@ -147,10 +147,7 @@ def _to_nick(rest: str, end: str) -> bool:
         return end != ":"
     if _NEXT_STEP.match(rest):
         return True
-    words = rest.split()
-    if not words or rest[:1] not in (" ", "\t"):
-        return False
-    first = words[0].strip(",").lower()
+    first = rest.split()[0].strip(",").lower()  # rest is not blank: handled above
     return first in TO_NICK_WORDS or first in TIME_WORDS or first[:1].isdigit()
 
 
