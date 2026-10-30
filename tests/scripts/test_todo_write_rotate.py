@@ -286,3 +286,53 @@ def test_the_cli_accepts_rotate_flags(tmp_path):
     _todos(tmp_path)
     out, code = _run(tmp_path, "rotate", "Check ACME", "--due", "2026-09-11", "--bogus", "x")
     assert code == 1 and "Unknown flag" in out["message"]
+
+
+# --- mutation pass 2026-10-30 on the rotate code -----------------------------------
+
+def test_the_closed_row_keeps_the_old_notes_after_the_rotation_marker(tmp_path):
+    p = _todos(tmp_path)
+    _run(tmp_path, "rotate", "Check ACME", "--due", "2026-09-11", "--closed-on", "2026-09-08",
+         "--op-id", "acme:2026-09-08:abc123")
+    closed = [l for l in p.read_text(encoding="utf-8").splitlines() if "| 2026-09-08 |" in l]
+    assert closed == ["| Check ACME board for new job postings | High | 2026-09-08 | "
+                      "Completed 2026-09-08 (rotated, acme:2026-09-08:abc123) / Recurring. |"]
+    # " / " not " | ": fmt_completed sanitizes the pipe, the same as `done` does.
+
+
+def test_a_closed_row_with_no_old_notes_carries_only_the_marker(tmp_path):
+    p = _todos(tmp_path, TODOS.replace("| Pending | Recurring. |", "| Pending | — |"))
+    _run(tmp_path, "rotate", "Check ACME", "--due", "2026-09-11", "--closed-on", "2026-09-08",
+         "--op-id", "acme:2026-09-08:abc123")
+    assert ("| 2026-09-08 | Completed 2026-09-08 (rotated, acme:2026-09-08:abc123) |\n"
+            in p.read_text(encoding="utf-8"))
+
+
+def test_rotate_on_a_file_without_a_completed_section_refuses_safely(tmp_path):
+    """PINS A KNOWN DEFECT (found 2026-10-30, parked after the last review round): with no
+    ## Completed section, verify_rotation compares counts using -1 for "missing", so a correct
+    rotation fails verification. It fails SAFE: the file is restored and the error is
+    explicit. When the defect is fixed (treat a missing section as 0 rows), this test should
+    assert a successful rotation instead."""
+    text = TODOS.split("## Completed")[0].rstrip("\n") + "\n"
+    p = _todos(tmp_path, text)
+    out, code = _run(tmp_path, "rotate", "Check ACME", "--due", "2026-09-11", "--closed-on", "2026-09-08")
+    assert code == 1 and out["reason"] == "rotate_unverified", out
+    assert out["problems"] == ["section counts went (2, -1) -> (2, 1); expected (2, 0)"]
+    assert p.read_text(encoding="utf-8") == text
+
+
+def test_rotate_without_an_active_section_says_so(tmp_path):
+    text = "# Job To-Dos\n\n## Completed\n\n| Task | Priority | Completed | Notes |\n|---|---|---|---|\n"
+    p = _todos(tmp_path, text)
+    out, code = _run(tmp_path, "rotate", "Check ACME", "--due", "2026-09-11")
+    assert code == 1 and out["message"] == "Could not find ## Active section in job-todos.md"
+    assert p.read_text(encoding="utf-8") == text
+
+
+def test_rotate_refuses_a_weekday_that_contradicts_its_date_in_the_notes(tmp_path):
+    p = _todos(tmp_path)
+    out, code = _run(tmp_path, "rotate", "Check ACME", "--due", "2026-09-11",
+                     "--notes", "next check Fri 1/8/2026")
+    assert code == 1 and out["reason"] == "weekday_mismatch", out
+    assert p.read_text(encoding="utf-8") == TODOS
