@@ -766,14 +766,17 @@ when its row is marked `Closed`, the terminal status (2026-10-29, todo #120). On
 From `source_check.py due`. These are the recurring lead sources; Nick checks them by hand
 and the point of surfacing them here is that marking one checked is a SINGLE action.
 
-[For each source where `is_due` is true:]
+[For each source where `retired` is true, surface it LOUDLY, first — this is a dropped lead
+source, not a late one:]
+> ⚠️ **[label] has no live todo row.** The recurring check was closed without being recreated,
+> so this lead source is silently retired. Recreate it before anything else in this section.
+
+[For each source where `is_due` is true and `retired` is false:]
 - **[label]** — due [due][, N days overdue]. Checked it? → `tools/source_check.py mark <id> --none`
   (or `--found "<what turned up>"`).
 
-[For each source where `retired` is true, surface it LOUDLY — this is a dropped lead source,
-not a late one:]
-> ⚠️ **[label] has no live todo row.** The recurring check was closed without being recreated,
-> so this lead source is silently retired. Recreate it before anything else in this section.
+(A retired source also carries `is_due: true`; the `retired` check above is what keeps it from
+rendering twice.)
 
 [If nothing is due and nothing is retired:]
 > Lead sources current.
@@ -782,8 +785,8 @@ not a late one:]
 an observation only he can make. Surface the command, let him run it or tell you to.
 
 **Never close the recurring todo by hand** (`todo_write.py done`) — that is the exact move that
-retires a source. `source_check.py mark` closes and recreates as one operation and verifies the
-recreate landed.
+retires a source. `source_check.py mark` closes and recreates in ONE write
+(`todo_write.py rotate`) and verifies the result before reporting ok.
 
 ---
 

@@ -18,6 +18,14 @@ Commands:
                                          No marker when the edit only INSERTED text
                                          (subsequence test), since nothing was lost.
   done <task_fragment>                 — move matching row to Completed (a completion)
+  rotate <task_fragment> --due D       — close a RECURRING Active row and recreate it with
+         [--priority P] [--notes N]      Due D, in ONE write, reported ok only after the
+         [--expect-due D] [--op-id ID]   re-read file proves it (exactly one live row, the
+         [--closed-on D]                 new Due, the op-id marker, Completed +1). Matches
+                                         ## Active only and refuses 0 or 2+ matches.
+                                         --expect-due aborts if the row's Due changed since
+                                         the caller read it. Use it, never `done`, for a
+                                         recurring row: `done` alone retires it.
   withdraw <task_fragment>             — mark matching row Withdrawn, not Done (NOT a completion;
                                          also corrects a row already mis-marked Completed)
   clear                                — move Done/Withdrawn rows to Completed
@@ -63,6 +71,7 @@ Usage:
 import json
 import re
 import sys
+import uuid
 from datetime import date
 from pathlib import Path
 
@@ -495,6 +504,149 @@ def _find_in_section(lines: list[str], start: int, end: int, fragment: str) -> l
         if cols and cols[0] and fragment in cols[0].lower():
             matches.append((i, cols))
     return matches
+
+
+def active_rows(lines: list[str]) -> list[tuple[int, list[str]]]:
+    """[(line_index, cols)] for every data row under ## Active, and nowhere else.
+
+    The one section-aware reader for "is this row live". source_check.py imports it
+    instead of scanning the whole file (finding 37.F1: a Pending row stranded under
+    ## Completed read as live, so a retired lead source was reported as fine).
+    """
+    start, end = find_section(lines, "## Active")
+    if start == -1:
+        return []
+    return [(i, parse_cols(lines[i])) for i in range(start, end) if is_data_row(lines[i])]
+
+
+ROTATE_FLAGS = {"--due", "--priority", "--notes", "--expect-due", "--op-id", "--closed-on"}
+_ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _parse_rotate_flags(args: list[str]) -> tuple[str, dict[str, str]]:
+    fragment, flags, i = None, {}, 0
+    while i < len(args):
+        a = args[i]
+        if a in ROTATE_FLAGS:
+            if i + 1 >= len(args):
+                out_error(f"{a} needs a value")
+            flags[a] = args[i + 1]
+            i += 2
+            continue
+        if fragment is not None:
+            out_error(f"rotate takes one task fragment; got a second: {a!r}")
+        fragment = a
+        i += 1
+    if not fragment:
+        out_error("Usage: rotate <task_fragment> --due YYYY-MM-DD [--priority P] [--notes N] "
+                  "[--expect-due YYYY-MM-DD] [--op-id ID] [--closed-on YYYY-MM-DD]")
+    for key in ("--due", "--expect-due", "--closed-on"):
+        if key in flags and not _ISO_DATE.match(flags[key]):
+            out_error(f"{key} must be YYYY-MM-DD, got {flags[key]!r}")
+    if "--due" not in flags:
+        out_error("rotate needs --due YYYY-MM-DD (the recreated row's due date)")
+    if "--op-id" in flags and not re.fullmatch(r"[\w:.-]+", flags["--op-id"]):
+        out_error(f"--op-id may hold only letters, digits and : . _ -, got {flags['--op-id']!r}")
+    if "--priority" in flags and flags["--priority"] not in ("High", "Med", "Low"):
+        out_error(f"--priority must be High, Med or Low, got {flags['--priority']!r}")
+    return fragment, flags
+
+
+def verify_rotation(before: list[str], after: list[str], task: str, due: str,
+                    op_id: str, closed_on: str) -> list[str]:
+    """Every way the post-state can fail to be a rotation. Empty list = rotated.
+
+    Built to FAIL on a no-op (finding 37.F4: the old check accepted any Pending row,
+    which the pre-existing row satisfies). Conditions 2, 3 and 4 each tell "rotated"
+    from "nothing happened" on their own; three are kept on purpose so the check
+    cannot quietly decay into a tautology.
+    """
+    problems = []
+    live = [c for _, c in active_rows(after)
+            if c and c[0] == task and len(c) > 3 and c[3].strip() == "Pending"]
+    if len(live) != 1:
+        problems.append(f"expected exactly 1 live Pending row for the task, found {len(live)}")
+    else:
+        row = live[0]
+        if row[2].strip() != due:
+            problems.append(f"live row's Due is {row[2].strip()!r}, not {due!r}")
+        if op_id not in " | ".join(row[4:]):
+            problems.append("live row's Notes do not carry the rotation marker")
+
+    def closed(lines):
+        s, e = find_section(lines, "## Completed")
+        if s == -1:
+            return 0
+        return sum(1 for i in range(s, e) if is_data_row(lines[i])
+                   and (lambda c: c and c[0] == task and len(c) > 2 and c[2].strip() == closed_on)(
+                       parse_cols(lines[i])))
+    if closed(after) != closed(before) + 1:
+        problems.append(f"## Completed did not gain exactly one row for the task on {closed_on}")
+    ba, bc = writer_section_counts(before)
+    aa, ac = writer_section_counts(after)
+    if (aa, ac) != (ba, bc + 1):
+        problems.append(f"section counts went ({ba}, {bc}) -> ({aa}, {ac}); expected ({ba}, {bc + 1})")
+    return problems
+
+
+def cmd_rotate(args: list[str], todos_path: Path) -> None:
+    """Close a recurring Active row and recreate it, in ONE verified write.
+
+    Exists so "close a recurring row without its successor" cannot be committed: there
+    is one write, and it is reported ok only after the re-read file passes
+    verify_rotation(). Spec: output/analysis/090826-source-check-upstream-rotate-spec.md.
+    """
+    fragment, flags = _parse_rotate_flags(args)
+    due = flags["--due"]
+    closed_on = flags.get("--closed-on") or date.today().strftime("%Y-%m-%d")
+    op_id = flags.get("--op-id") or f"rotate:{closed_on}:{uuid.uuid4().hex[:6]}"
+    refuse_wrong_weekdays(flags.get("--notes", ""))
+
+    content, lines = load_todos(todos_path)
+    if find_section(lines, "## Active")[0] == -1:
+        out_error("Could not find ## Active section in job-todos.md")
+    frag = fragment.lower()
+    matches = [(i, c) for i, c in active_rows(lines) if c and c[0] and frag in c[0].lower()]
+    if not matches:
+        stranded = [c[0] for _, c in find_misfiled(lines) if c and c[0] and frag in c[0].lower()]
+        extra = (f" A Pending row matching it sits under ## Completed ({stranded[0]!r}); that row "
+                 f"is not live. Run `todo_write.py audit`." if stranded else "")
+        out_error(f"No live row: nothing under ## Active matches {fragment!r}.{extra}",
+                  reason="no_live_row")
+    if len(matches) > 1:
+        out_error(f"{len(matches)} Active rows match {fragment!r}; refusing to guess: "
+                  + "; ".join(c[0] for _, c in matches), reason="ambiguous",
+                  matches=[c[0] for _, c in matches])
+    row_idx, cols = matches[0]
+    task = cols[0]
+    old_priority = cols[1] if len(cols) > 1 else "Med"
+    old_due = cols[2].strip() if len(cols) > 2 else ""
+    old_notes = " | ".join(cols[4:]) if len(cols) > 4 else "—"
+    if "--expect-due" in flags and old_due != flags["--expect-due"]:
+        out_error(f"The live row's Due is {old_due!r}, not the expected {flags['--expect-due']!r}; "
+                  f"something changed it since it was read. Nothing written.",
+                  reason="expect_due_mismatch")
+
+    before = list(lines)
+    suffix = f"Completed {closed_on} (rotated, {op_id})"
+    lines.pop(row_idx)
+    insert_into_completed(lines, fmt_completed(
+        task, old_priority, closed_on, suffix if old_notes in ("—", "") else f"{suffix} | {old_notes}"))
+    new_notes = flags.get("--notes") or old_notes
+    new_notes = f"[{op_id}] {new_notes}" if new_notes not in ("—", "") else f"[{op_id}]"
+    act_s, act_e = find_section(lines, "## Active")
+    lines.insert(table_insert_pos(lines, act_s, act_e, is_data_row),
+                 fmt_active(task, flags.get("--priority", old_priority), due, "Pending", new_notes))
+    save_lines(todos_path, lines, content)
+
+    _, written = load_todos(todos_path)
+    problems = verify_rotation(before, written, task, due, op_id, closed_on)
+    if problems:
+        write_atomic(todos_path, content)
+        out_error("Rotation did not verify, so the file was restored: " + "; ".join(problems),
+                  reason="rotate_unverified", problems=problems)
+    out_ok("rotate", f"Rotated: {task} (next due {due})", task=task, closed_on=closed_on,
+           new_due=due, op_id=op_id)
 
 
 def cmd_withdraw(args: list[str], todos_path: Path) -> None:
@@ -1219,7 +1371,7 @@ def main() -> None:
             i += 1
 
     if not filtered:
-        out_error("Usage: todo_write.py <add|update|done|withdraw|supersede|clear|sync|list> [args...]")
+        out_error("Usage: todo_write.py <add|update|done|rotate|withdraw|supersede|clear|sync|list> [args...]")
 
     cmd = filtered[0].lower()
     extra_args = filtered[1:]
@@ -1243,6 +1395,8 @@ def main() -> None:
         allowed_flags = {"--apply"}
     elif cmd == "update":
         allowed_flags = set(UPDATE_FIELD_FLAGS)
+    elif cmd == "rotate":
+        allowed_flags = set(ROTATE_FLAGS)
     else:
         allowed_flags = set()
     unknown_flags = [
@@ -1255,7 +1409,7 @@ def main() -> None:
             "(except `list`, which takes --status/--grep). "
             "Usage: add <task> [priority] [due] [notes]  |  "
             "update <fragment> [--task|--priority|--due|--notes|--notes-append|--notes-prepend] X  |  "
-            "done <fragment>  |  withdraw <fragment>  |  supersede <prefix>  |  clear  |  sync  |  "
+            "done <fragment>  |  rotate <fragment> --due D [...]  |  withdraw <fragment>  |  supersede <prefix>  |  clear  |  sync  |  "
             "list [--status <Status>] [--grep <substring>]  |  audit  |  --repo-root <path> (anywhere)"
         )
 
@@ -1266,6 +1420,8 @@ def main() -> None:
         cmd_add(extra_args, todos_path)
     elif cmd == "done":
         cmd_done(extra_args, todos_path)
+    elif cmd == "rotate":
+        cmd_rotate(extra_args, todos_path)
     elif cmd == "withdraw":
         cmd_withdraw(extra_args, todos_path)
     elif cmd == "update":
@@ -1281,7 +1437,7 @@ def main() -> None:
     elif cmd == "audit":
         cmd_audit(todos_path)
     else:
-        out_error(f"Unknown command: {cmd}. Use: add, update, done, withdraw, supersede, clear, sync, list, audit")
+        out_error(f"Unknown command: {cmd}. Use: add, update, done, rotate, withdraw, supersede, clear, sync, list, audit")
 
 
 if __name__ == "__main__":
