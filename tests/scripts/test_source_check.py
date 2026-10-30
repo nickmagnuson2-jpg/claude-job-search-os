@@ -616,10 +616,12 @@ def test_a_retry_refuses_when_a_duplicate_live_row_exists(repo_with_writer: Path
     argv = ["--repo-root", str(repo), "mark", "acme", "--none", "--date", "2026-09-08"]
     assert sc.main(argv) == 0
     todos = repo / "data/job-todos.md"
-    text = todos.read_text(encoding="utf-8")
-    text = text.replace("| Unrelated task | Low |",
-                        "| Check ACME board for new job postings | High | 2026-09-20 | Pending | dup |\n"
-                        "| Unrelated task | Low |", 1)
+    lines = todos.read_text(encoding="utf-8").splitlines()
+    tagged = next(i for i, l in enumerate(lines) if "acme:2026-09-08:" in l and "| Pending |" in l)
+    # The duplicate goes AFTER the tagged row, so the retry-skip path (which reads the first
+    # match) is what runs; before it, `rotate` itself would refuse and hide a missing check.
+    lines.insert(tagged + 1, "| Check ACME board for new job postings | High | 2026-09-20 | Pending | dup |")
+    text = "\n".join(lines) + "\n"
     todos.write_text(text, encoding="utf-8")
     notes_before = (repo / "data/notes.md").read_text(encoding="utf-8")
     assert sc.main(argv) == 2
