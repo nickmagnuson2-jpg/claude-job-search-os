@@ -310,3 +310,37 @@ def test_find_contact_log_section_bounds():
     assert nw.find_contact_log_section(lines, "Nobody") == (-1, -1)
     assert nw.find_contact_log_section(["#### Jane Doe"], "Jane Doe") == (-1, -1)
     assert nw.find_contact_log_section(["### Jane Doe", "x", "## Next", "y"], "Jane Doe") == (0, 2)
+
+
+# --- second mutation pass (2026-10-30) -----------------------------------------------
+
+def test_an_alignment_separator_is_not_a_data_row():
+    assert nw.is_data_row("| :--- | ---: |") is False
+
+
+@pytest.mark.parametrize("cmd", [
+    ["log", "Name", "--summary", "hi", "--no-todo"],
+    ["update", "Name", "--role", "x"],
+    ["remove", "Name"],
+])
+def test_the_table_header_row_is_never_a_contact(tmp_path, cmd):
+    p = net(tmp_path, TWO_CONTACTS)
+    out, code = run(tmp_path, *cmd)
+    assert code == 1 and out["code"] == "not_found", out
+    assert p.read_text(encoding="utf-8") == TWO_CONTACTS
+
+
+def test_adding_a_contact_named_like_the_header_column_is_not_a_duplicate(tmp_path):
+    net(tmp_path, TWO_CONTACTS)
+    out, code = run(tmp_path, "add", "Name", "--force")
+    assert code == 0 and out["action"] == "add", out
+
+
+def test_remove_without_a_log_section_leaves_the_last_heading_alone(tmp_path):
+    text = TWO_CONTACTS.replace("### Jane Doe — Beta Inc", "### Lee Sample — Gamma LLC")
+    p = net(tmp_path, text.rstrip("\n").rsplit("\n", 3)[0] + "\n### Lee Sample — Gamma LLC")
+    before = p.read_text(encoding="utf-8")
+    assert run(tmp_path, "remove", "Jane Doe")[1] == 0
+    after = p.read_text(encoding="utf-8")
+    assert after.endswith("\n### Lee Sample — Gamma LLC") and "[ARCHIVED]" not in after
+    assert after == before.replace("| Jane Doe | Beta Inc | Eng | peer | 2026-01-02 | — | — |\n", "")
