@@ -186,3 +186,52 @@ def test_networking_activity_lists_real_contacts_named_in_todos_with_counts():
 
 def test_networking_activity_skips_the_header_even_when_todos_say_name():
     assert tdm.parse_networking_activity(NET, "Name and Company") == []
+
+
+# --- second pass: the code the first run never reached --------------------------------
+
+TOUCHES = ("#### 2026-01-07 | email | before any heading\n"
+           "### Sam Example — Acme Corp\n"
+           "#### 2026-01-07 | email | " + "x" * 130 + "\n"
+           "#### 2026-01-06 | call | yesterday\n"
+           "### ---\n"
+           "#### 2026-01-07 | email | under a separator heading\n"
+           "### Lee Sample\n"
+           "#### 2026-01-07 | linkedin | hi\n")
+
+
+def test_networking_touches_today_returns_whole_entries_for_named_contacts_only():
+    assert tdm.parse_networking_touches_today(TOUCHES, D) == [
+        {"date": "2026-01-07", "name": "Sam Example", "company": "Acme Corp", "channel": "email",
+         "subject": "x" * 120, "source": "networking.md"},
+        {"date": "2026-01-07", "name": "Lee Sample", "company": "", "channel": "linkedin",
+         "subject": "hi", "source": "networking.md"},
+    ]
+
+
+def test_memory_tier_counts_today_entries_but_not_routers(tmp_path, monkeypatch):
+    proj = tmp_path / "proj"
+    mem = proj / "memory"
+    mem.mkdir(parents=True)
+    for name in ("feedback_a.md", "MEMORY.md", "index-tools.md"):
+        (mem / name).write_text("x", encoding="utf-8")
+    monkeypatch.setattr(tdm, "claude_project_dir", lambda root: proj)
+    out = tdm.scan_substantive_work(tmp_path, date.today())
+    assert out["memories_today"] == 1 and out["memories_names"] == ["feedback_a"]
+
+
+TODOS_MIN = ("# To-Dos\n\n## Active\n\n| Task | Priority | Due | Status | Notes |\n|---|---|---|---|---|\n\n"
+             "## Completed\n\n| Task | Priority | Completed | Notes |\n|---|---|---|---|\n")
+
+
+def test_run_unions_outreach_log_and_networking_touches_without_duplicates(tmp_path, capsys):
+    import json
+    outreach = ("| Date | Type | Channel | Recipient | Company | Subject | Status |\n|---|---|---|---|---|---|---|\n"
+                "| 2026-01-07 | cold-outreach | email | Sam Example | Acme Corp | Hello | Sent |\n")
+    net = ("### Sam Example — Acme Corp\n#### 2026-01-07 | email | same send, logged twice\n"
+           "### Lee Sample — Beta Inc\n#### 2026-01-07 | linkedin | first\n#### 2026-01-07 | linkedin | second\n")
+    (tmp_path / "output").mkdir()
+    tdm._run(TODOS_MIN, "", "## Active\n" + PIPE_HEAD, net, outreach, "", tmp_path / "output", tmp_path, D)
+    sent = json.loads(capsys.readouterr().out)["outreach_sent_today"]
+    assert [(o["name"], o["channel"], o.get("source", "outreach-log")) for o in sent] == [
+        ("Sam Example", "email", "outreach-log"), ("Lee Sample", "linkedin", "networking.md")]
