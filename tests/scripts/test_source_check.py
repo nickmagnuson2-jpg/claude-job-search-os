@@ -526,7 +526,7 @@ def test_a_row_changed_since_it_was_read_is_not_overwritten(repo_with_writer: Pa
     todos = repo / "data/job-todos.md"
     before = todos.read_text(encoding="utf-8")
     stale = ["Check ACME board for new job postings", "High", "2026-09-04", "Pending", "Recurring."]
-    monkeypatch.setattr(sc, "find_pending_row", lambda text, frag: stale)
+    monkeypatch.setattr(sc, "live_pending_rows", lambda text, frag: [stale])
     with pytest.raises(sc.SourceCheckError, match="could not rotate.*not the expected"):
         sc.rotate_todo(repo, REGISTRY["sources"][0], dt.date(2026, 9, 8), "acme:2026-09-08:abc")
     assert todos.read_text(encoding="utf-8") == before
@@ -608,3 +608,28 @@ def test_standup_renders_a_retired_source_once():
     sec = text[text.index("### Job-Lead Sources"):text.index("### Inbox")]
     assert "[For each source where `is_due` is true and `retired` is false:]" in sec
     assert sec.index("where `retired` is true") < sec.index("where `is_due` is true")
+
+
+def test_a_retry_refuses_when_a_duplicate_live_row_exists(repo_with_writer: Path):
+    """Review 1 (Codex F1): the retry path returned before `rotate` could see 2 matches."""
+    repo = repo_with_writer
+    argv = ["--repo-root", str(repo), "mark", "acme", "--none", "--date", "2026-09-08"]
+    assert sc.main(argv) == 0
+    todos = repo / "data/job-todos.md"
+    text = todos.read_text(encoding="utf-8")
+    text = text.replace("| Unrelated task | Low |",
+                        "| Check ACME board for new job postings | High | 2026-09-20 | Pending | dup |\n"
+                        "| Unrelated task | Low |", 1)
+    todos.write_text(text, encoding="utf-8")
+    notes_before = (repo / "data/notes.md").read_text(encoding="utf-8")
+    assert sc.main(argv) == 2
+    assert todos.read_text(encoding="utf-8") == text
+    assert (repo / "data/notes.md").read_text(encoding="utf-8") == notes_before
+
+
+def test_live_pending_rows_returns_every_live_match():
+    two = TODOS.replace("| Unrelated task | Low | — | Pending | noise |",
+                        "| Check ACME board for new job postings | Low | — | Pending | dup |")
+    assert len(sc.live_pending_rows(two, "Check ACME")) == 2
+    assert len(sc.live_pending_rows(TODOS, "Check ACME")) == 1
+    assert sc.live_pending_rows(STRANDED, "Check ACME") == []

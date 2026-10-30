@@ -128,16 +128,21 @@ def get_source(sources: list[dict], source_id: str) -> dict:
     raise SourceCheckError(f"unknown source id {source_id!r}. Known: {known}")
 
 
-def find_pending_row(todos_text: str, fragment: str) -> list[str] | None:
-    """The live Pending row whose Task contains `fragment`, or None.
+def live_pending_rows(todos_text: str, fragment: str) -> list[list[str]]:
+    """Every live Pending row whose Task contains `fragment`.
 
     Live means under ## Active (todo_write.active_rows); a Pending row stranded under
     ## Completed is NOT live and is not returned.
     """
-    for _, cols in active_rows(todos_text.splitlines()):
-        if len(cols) > 3 and fragment.lower() in cols[0].lower() and cols[3].strip() == "Pending":
-            return cols
-    return None
+    return [cols for _, cols in active_rows(todos_text.splitlines())
+            if len(cols) > 3 and fragment.lower() in cols[0].lower()
+            and cols[3].strip() == "Pending"]
+
+
+def find_pending_row(todos_text: str, fragment: str) -> list[str] | None:
+    """The first live Pending row whose Task contains `fragment`, or None."""
+    rows = live_pending_rows(todos_text, fragment)
+    return rows[0] if rows else None
 
 
 def compute_due(sources: list[dict], todos_text: str, today: _dt.date) -> list[dict]:
@@ -240,7 +245,14 @@ def rotate_todo(repo_root: Path, src: dict, today: _dt.date, op_id: str) -> dict
     """
     fragment = src["todo_fragment"]
     todos_text = (repo_root / TODOS_REL).read_text(encoding="utf-8")
-    row = find_pending_row(todos_text, fragment)
+    rows = live_pending_rows(todos_text, fragment)
+    if len(rows) > 1:
+        # Checked here too, not only inside `todo_write.py rotate`: the retry path below
+        # returns before rotate runs (review 1, Codex F1).
+        raise SourceCheckError(
+            f"{len(rows)} live Pending rows match {fragment!r}; exactly one is expected. "
+            "Remove the duplicate before marking a check.")
+    row = rows[0] if rows else None
     if row is None:
         raise SourceCheckError(
             f"no live Pending todo row matching {fragment!r}. The source may already "

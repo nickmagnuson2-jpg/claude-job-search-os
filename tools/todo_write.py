@@ -541,8 +541,13 @@ def _parse_rotate_flags(args: list[str]) -> tuple[str, dict[str, str]]:
         out_error("Usage: rotate <task_fragment> --due YYYY-MM-DD [--priority P] [--notes N] "
                   "[--expect-due YYYY-MM-DD] [--op-id ID] [--closed-on YYYY-MM-DD]")
     for key in ("--due", "--expect-due", "--closed-on"):
-        if key in flags and not _ISO_DATE.match(flags[key]):
-            out_error(f"{key} must be YYYY-MM-DD, got {flags[key]!r}")
+        if key in flags:
+            if not _ISO_DATE.match(flags[key]):
+                out_error(f"{key} must be YYYY-MM-DD, got {flags[key]!r}")
+            try:
+                date.fromisoformat(flags[key])
+            except ValueError:
+                out_error(f"{key} is not a real calendar date: {flags[key]!r}")
     if "--due" not in flags:
         out_error("rotate needs --due YYYY-MM-DD (the recreated row's due date)")
     if "--op-id" in flags and not re.fullmatch(r"[\w:.-]+", flags["--op-id"]):
