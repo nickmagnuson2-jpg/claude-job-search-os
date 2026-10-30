@@ -270,11 +270,13 @@ def test_a_missing_kind_is_not_an_error():
     ("email", "Sam emailed Nick the deck."),
     ("email", "Sam emailed me back."),
     ("linkedin", "Sam messaged at 9 AM."),
-    ("linkedin dm", "Sam messaged: open to a chat."),
+    ("linkedin dm", "Sam messaged today: open to a chat."),
+    ("email", "Sam emailed Friday with times."),
+    ("text", "Sam texted back."),
     ("email (inbound)", "Sam emailed."),
     ("imessage", "She texted."),
     ("sms", "He texted 8 PM."),
-    ("slack", "They messaged in the channel."),
+    ("slack", "They messaged."),
     ("Email", "Sam emailed 9 AM."),
 ])
 def test_message_verbs_count_on_a_message_channel(kind, summary):
@@ -308,6 +310,28 @@ def test_message_verbs_count_on_a_message_channel(kind, summary):
     ("email", "Check if Sam emailed."),
     ("email", "emailed Sam the deck."),
     ("email", "sam emailed 9 AM."),
+    # Review 1 of this rule (Codex, 2026-10-30, F1): an unrecognized word after the verb
+    # is not evidence that Nick was the recipient, so it is not counted.
+    ("text", "Sam texted the recruiter about my candidacy."),
+    ("email", "Sam emailed the hiring manager my resume."),
+    ("text", "Sam texted robin on Friday."),
+    ("email", "Sam emailed a recruiter and copied me."),
+    ("email", "Sam emailed the team and cc’d me."),
+    ("email", "Sam emailed the deck to Robin."),
+    ("email", "Sam emailed us the deck."),
+    ("slack", "Sam messaged the channel about the opening."),
+    ("email", "Sam emailed everyone in the group thread."),
+    ("email", "Sam emailed: “Robin, here is Nick’s resume.”"),
+    ("email", "Sam emailed someone at Acme."),
+    ("linkedin dm", "Sam messaged: open to a chat."),
+    # A time is not enough when the same clause names another recipient.
+    ("email", "Sam emailed at 9 AM to Robin."),
+    ("email", "Sam emailed 9 AM, cc Robin."),
+    ("email", "Sam emailed today and copied the team."),
+    ("email", "Sam emailed this morning, forwarded from Robin."),
+    ("text", "Sam texted 2 PM in the group chat."),
+    ("slack", "They messaged in the channel."),
+    ("email", "Sam emailed:"),
 ])
 def test_message_verbs_are_strict(kind, summary):
     assert rc.classify(kind, summary) != "reply", (kind, summary)
@@ -317,3 +341,19 @@ def test_the_reply_verbs_still_ignore_the_channel():
     """The strict channel rule applies to the new message verbs only."""
     assert rc.classify("note", "Sam replied 2 PM.") == "reply"
     assert rc.classify(None, "Sam texted back.") == "reply"
+
+
+@pytest.mark.parametrize("summary,want", [
+    # Review 1 (Codex F2): rule 5 must not turn an existing send into a reply.
+    ("Follow-up #2 SENT; Sam emailed 9 AM.", "send"),
+    ("Outbound: a nudge. Sam texted 2 PM.", "send"),
+    ("Follow-up #1 sent. Sam emailed back 3 PM.", "send"),  # the old verdict stands
+])
+def test_message_verbs_never_override_a_send(summary, want):
+    assert rc.classify("email", summary) == want
+
+
+def test_a_third_party_marker_after_the_clause_does_not_block():
+    """The clause ends at ; . or : -- quoted content after it is not the recipient."""
+    assert rc.classify("email", "Pat emailed 6/23 5:51am: 'I'll have you chat to Robin (cc) first.'") == "reply"
+    assert rc.classify("text", "Jo texted 1:20 PM confirming; Nick texted Robin later.") == "reply"

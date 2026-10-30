@@ -38,11 +38,17 @@ What counts as a reply (any one):
   5. The same subject form with a message verb (emailed / texted / messaged), held
      stricter (Nick, 2026-10-30: "add the reply verbs but keep it strict"). It counts only
      when the interaction type is a message channel (MESSAGE_KINDS), because a note or
-     call that reports "Lee texted the founder" is not a message to Nick; and only when
-     no other recipient follows the verb: a capitalized name other than Nick, him / her /
-     them / his / their, or a/an/the before a capitalized word ("texted the Acme
-     Labs founder"). "she emailed the next step", "Jo texted 1:20 PM",
-     "Sam emailed you" count. Accepted miss: "Jo texted an Acme list" (live: one).
+     call that reports "Lee texted the founder" is not a message to Nick. What follows
+     the verb is an ALLOWLIST, not a list of recipients to reject (review 1, Codex F1:
+     a reject list missed "texted the recruiter", "emailed us", "the deck to Robin"):
+     the next word must make Nick the recipient (you / me / Nick / back) or be a time
+     (a digit, at / on / after / today / a weekday ...), or the words are "the next
+     step(s)". Anything else is not counted. Even then, the clause (up to ; . or :)
+     must carry no third-party marker: cc, copied, forwarded, group, or "to <Name>".
+     Rule 5 never overrides a send (review 1, Codex F2): it is checked after the send
+     signals, so the verdicts rules 1-4 and the send rules gave are unchanged.
+     "she emailed the next step", "Jo texted 1:20 PM", "Sam emailed you" count.
+     Accepted misses: "Jo texted an Acme list", "Sam proactively texted".
 
 What counts as a send (only when no reply signal matched): the uppercase word SENT, or a
 note opening "Nick replied", "Nick sent", "Outbound", "Follow-up #<n>", "Cold outreach".
@@ -78,14 +84,22 @@ SUBJECT_REPLY = re.compile(
 SUBJECT_MESSAGE = re.compile(
     r"(?<![\w'’-])"
     r"(?P<subj>[A-Z][\w'’-]*|she|he|they)(?:\s+\([^()]{1,60}\))?\s+(?:emailed|texted|messaged)\b"
-    r"(?:\s+(?P<obj>[\w'’-]+)(?:\s+(?P<obj2>[\w'’-]+))?)?",
+    r"(?P<rest>[^;.:]*)(?P<end>[;.:]|$)",
     re.IGNORECASE)
 MESSAGE_KINDS = frozenset({
     "email", "email (inbound)", "inbound", "text", "sms", "imessage", "linkedin",
     "linkedin message", "linkedin dm", "slack"})
-OTHER_RECIPIENT_WORDS = frozenset({"him", "her", "them", "his", "their"})
-_NICK = frozenset({"nick", "nick's", "nick’s"})
-_ARTICLES = frozenset({"a", "an", "the"})
+# The word right after the verb: Nick as the recipient, or a time. Nothing else counts.
+TO_NICK_WORDS = frozenset({"you", "me", "nick", "nick's", "nick’s", "back"})
+TIME_WORDS = frozenset({
+    "at", "on", "after", "before", "around", "about", "this", "today", "yesterday",
+    "tonight", "overnight", "earlier", "later", "last", "early", "late", "again",
+    "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"})
+_NEXT_STEP = re.compile(r"\s+the\s+next\s+steps?\b", re.IGNORECASE)
+# Anywhere in the clause: someone other than Nick was on the message.
+THIRD_PARTY_IN_CLAUSE = re.compile(
+    r"\b(?:cc|cc'd|cc’d|ccd|bcc|copied|copying|forwarded|forwarding|fwd|group)\b"
+    r"|\bto\s+(?!Nick\b)[A-Z]")
 # Words that can sit in the subject slot but are not a contact who replied.
 NOT_A_CONTACT = frozenset({
     "nick", "i", "we", "me", "nobody", "none", "noone", "never", "not", "no", "who",
@@ -118,21 +132,26 @@ def _subject_reply(summary: str, pattern: re.Pattern = SUBJECT_REPLY) -> bool:
         before = summary[:m.start()].split()
         if before and before[-1].strip(",;:").lower() in CONDITION_WORDS:
             continue
-        if pattern is SUBJECT_MESSAGE and _other_recipient(m.group("obj"), m.group("obj2")):
+        if pattern is SUBJECT_MESSAGE and not _to_nick(m.group("rest"), m.group("end")):
             continue
         return True
     return False
 
 
-def _other_recipient(obj: str | None, obj2: str | None) -> bool:
-    """True when the words after a message verb name someone other than Nick."""
-    if not obj:
+def _to_nick(rest: str, end: str) -> bool:
+    """True only when the clause after a message verb positively reads as sent to Nick."""
+    if THIRD_PARTY_IN_CLAUSE.search(rest):
         return False
-    if obj.lower() in OTHER_RECIPIENT_WORDS:
+    if not rest.strip():
+        # "She texted." ends the clause; "Sam emailed: ..." opens quoted content.
+        return end != ":"
+    if _NEXT_STEP.match(rest):
         return True
-    if obj[0].isupper() and obj.lower() not in _NICK:
-        return True
-    return obj.lower() in _ARTICLES and bool(obj2) and obj2[0].isupper()
+    words = rest.split()
+    if not words or rest[:1] not in (" ", "\t"):
+        return False
+    first = words[0].strip(",").lower()
+    return first in TO_NICK_WORDS or first in TIME_WORDS or first[:1].isdigit()
 
 
 def classify(kind: str, summary: str) -> str | None:
@@ -140,11 +159,12 @@ def classify(kind: str, summary: str) -> str | None:
     k = (kind or "").strip().casefold()
     s = (summary or "").strip()
     if (k in INBOUND_KINDS or INBOUND_OPENER.search(s) or INBOUND_UPPER.search(s)
-            or _subject_reply(s)
-            or (k in MESSAGE_KINDS and _subject_reply(s, SUBJECT_MESSAGE))):
+            or _subject_reply(s)):
         return "reply"
     if OUTBOUND_UPPER.search(s) or OUTBOUND_START.match(s):
         return "send"
+    if k in MESSAGE_KINDS and _subject_reply(s, SUBJECT_MESSAGE):
+        return "reply"
     return None
 
 
