@@ -907,7 +907,8 @@ def test_an_empty_candidate_never_matches_an_empty_query():
     assert os_.resolve_recipient(rows, ".", None)[0] == "not_found"
 
 
-@pytest.mark.parametrize("cell,q", [("Jane Doe", "Jane"), ("Jane", "Jane Smith")])
+@pytest.mark.parametrize("cell,q", [("Jane Doe", "Jane"), ("Jane", "Jane Smith"),
+                                    ("Lee", "Sam")])  # one token each, different names
 def test_a_first_name_alone_does_not_resolve_a_different_person(cell, q):
     os_ = _writer()
     rows = os_.parse_text(HEADER + f"| 2026-01-05 | cold-outreach | email | {cell} | Acme | x | Sent |\n")
@@ -1040,3 +1041,10 @@ def test_a_reply_after_the_last_send_still_clears_it(tmp_path):
     ])
     _, out = query("--recipient", "Jane Doe", "--log", log)
     assert out["awaiting_reply"] is False
+
+
+@pytest.mark.parametrize("value", ["20260105", "2026-01-05T00:00", "2026-W01-1"])
+def test_real_date_requires_the_dashed_form(value):
+    """Mutation 2026-10-30: date.fromisoformat also accepts compact and week forms, so the
+    YYYY-MM-DD shape check is what refuses them."""
+    assert _writer()._real_date(value) is False
