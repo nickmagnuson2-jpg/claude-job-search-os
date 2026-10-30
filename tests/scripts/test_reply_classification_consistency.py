@@ -29,7 +29,8 @@ import day_check as dc  # noqa: E402
 import reply_classify as rc  # noqa: E402
 
 CONSUMERS = {"networking_write.py": "from reply_classify import",
-             "day_check.py": "from reply_classify import"}
+             "day_check.py": "from reply_classify import",
+             "remember_classify.py": "from reply_classify import"}
 
 # Local definitions that were the two drifting copies. None may reappear outside
 # reply_classify.py, in any tool.
@@ -42,7 +43,14 @@ _BANNED_LOCAL_DEFS = [
     re.compile(r"^\s*NEGATED\s*=", re.M),
     re.compile(r"^\s*def\s+reply_received\b", re.M),
     re.compile(r"^\s*def\s+classify_summary\b", re.M),
+    re.compile(r"^\s*REPLY_KEYWORDS\s*=", re.M),
 ]
+
+# Reply-detection phrases. One of them alone in a collection is a status value ("Replied" is
+# an outreach-log Status); two or more is a classifier copy, whatever it is named (1.F2).
+_REPLY_PHRASES = {"replied", "responded", "heard back", "heard back from", "wrote back",
+                  "got back", "got back to me", "reply from", "response from", "got a reply",
+                  "called back", "texted back"}
 
 
 # ---------------------------------------------------------------------------
@@ -63,6 +71,34 @@ def test_no_tool_keeps_its_own_reply_vocabulary():
         src = path.read_text(encoding="utf-8")
         offenders += [f"{path.name}: {p.pattern}" for p in _BANNED_LOCAL_DEFS if p.search(src)]
     assert not offenders, offenders
+
+
+def test_no_tool_holds_a_renamed_reply_vocabulary():
+    """Review 1.F2: the guard above bans old NAMES only, so a copy under a new name passed."""
+    import ast
+    offenders = []
+    for path in sorted(TOOLS_DIR.glob("*.py")):
+        if path.name == "reply_classify.py":
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in tree.body:
+            value = getattr(node, "value", None)
+            if not isinstance(node, (ast.Assign, ast.AnnAssign)) or value is None:
+                continue
+            words = {n.value.lower() for n in ast.walk(value)
+                     if isinstance(n, ast.Constant) and isinstance(n.value, str)}
+            if len(words & _REPLY_PHRASES) >= 2:
+                offenders.append(f"{path.name}:{node.lineno}")
+    assert not offenders, offenders
+
+
+def test_the_phrase_scan_would_catch_a_renamed_copy():
+    import ast
+    tree = ast.parse('MY_WORDS = ("replied", "heard back")\nSTATUSES = ("Replied", "Sent")\n')
+    hits = [n.lineno for n in tree.body
+            if len({c.value.lower() for c in ast.walk(n.value) if isinstance(c, ast.Constant)}
+                   & _REPLY_PHRASES) >= 2]
+    assert hits == [1]
 
 
 def test_day_check_uses_the_shared_function_itself():
