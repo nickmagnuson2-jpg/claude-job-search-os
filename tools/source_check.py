@@ -270,10 +270,16 @@ def rotate_todo(repo_root: Path, src: dict, today: _dt.date, op_id: str) -> dict
         f"(result in {NOTES_REL}). Closing a recurring row without recreating it "
         "silently retires a lead source."
     )
-    res = _run_todo(repo_root, [
-        "rotate", fragment, "--due", next_due, "--priority", src.get("priority", "High"),
-        "--notes", notes, "--expect-due", row[2].strip(), "--op-id", op_id,
-        "--closed-on", today.isoformat()])
+    args = ["rotate", fragment, "--due", next_due, "--priority", src.get("priority", "High"),
+            "--notes", notes, "--op-id", op_id, "--closed-on", today.isoformat()]
+    # The compare-and-swap needs a real date to compare. A blank or free-text Due is
+    # reported as due by compute_due, so it must stay markable (review 1, Grok F3).
+    try:
+        _dt.date.fromisoformat(row[2].strip())
+        args += ["--expect-due", row[2].strip()]
+    except ValueError:
+        pass
+    res = _run_todo(repo_root, args)
     if res.get("status") != "ok":
         raise SourceCheckError(
             f"could not rotate the todo row; nothing was written to it: {res.get('message')}")

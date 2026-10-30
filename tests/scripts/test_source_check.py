@@ -633,3 +633,23 @@ def test_live_pending_rows_returns_every_live_match():
     assert len(sc.live_pending_rows(two, "Check ACME")) == 2
     assert len(sc.live_pending_rows(TODOS, "Check ACME")) == 1
     assert sc.live_pending_rows(STRANDED, "Check ACME") == []
+
+
+@pytest.mark.parametrize("cell", ["—", "next week"])
+def test_a_row_with_a_blank_or_free_text_due_can_still_be_marked(repo_with_writer: Path, cell, capsys):
+    """Review 1 (Grok F3): compute_due calls such a row due, so mark must work on it."""
+    todos = repo_with_writer / "data/job-todos.md"
+    todos.write_text(TODOS.replace("| High | 2026-09-05 | Pending |", f"| High | {cell} | Pending |"),
+                     encoding="utf-8")
+    assert sc.main(["--repo-root", str(repo_with_writer), "mark", "acme", "--none",
+                    "--date", "2026-09-08"]) == 0
+    assert json.loads(capsys.readouterr().out)["rotated"] is True
+    row = sc.find_pending_row(todos.read_text(encoding="utf-8"), "Check ACME")
+    assert row[2] == "2026-09-11"
+
+
+def test_an_iso_due_is_sent_as_the_compare_and_swap(repo: Path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(sc, "_run_todo", lambda r, a: calls.append(a) or {"status": "ok"})
+    sc.rotate_todo(repo, REGISTRY["sources"][0], dt.date(2026, 9, 8), "acme:2026-09-08:abc")
+    assert calls[0][calls[0].index("--expect-due") + 1] == "2026-09-05"
