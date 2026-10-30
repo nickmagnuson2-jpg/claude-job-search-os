@@ -35,6 +35,14 @@ What counts as a reply (any one):
      replied", "Hasn't replied."), or the form inside a condition ("if Sam replied",
      "whether she responded"). Known gap, accepted: a negation earlier in the clause
      ("I don't think Sam replied") is not seen; none occurs in the live log.
+  5. The same subject form with a message verb (emailed / texted / messaged), held
+     stricter (Nick, 2026-10-30: "add the reply verbs but keep it strict"). It counts only
+     when the interaction type is a message channel (MESSAGE_KINDS), because a note or
+     call that reports "Lee texted the founder" is not a message to Nick; and only when
+     no other recipient follows the verb: a capitalized name other than Nick, him / her /
+     them / his / their, or a/an/the before a capitalized word ("texted the Acme
+     Labs founder"). "she emailed the next step", "Jo texted 1:20 PM",
+     "Sam emailed you" count. Accepted miss: "Jo texted an Acme list" (live: one).
 
 What counts as a send (only when no reply signal matched): the uppercase word SENT, or a
 note opening "Nick replied", "Nick sent", "Outbound", "Follow-up #<n>", "Cold outreach".
@@ -65,6 +73,19 @@ SUBJECT_REPLY = re.compile(
     r"(?<![\w'’-])"
     r"(?P<subj>[A-Z][\w'’-]*|she|he|they)(?:\s+\([^()]{1,60}\))?\s+" + _REPLY_VERB + r"\b",
     re.IGNORECASE)
+# 5. Message verbs: the same subject slot, plus the word after the verb for the recipient
+#    check, and only on a message channel.
+SUBJECT_MESSAGE = re.compile(
+    r"(?<![\w'’-])"
+    r"(?P<subj>[A-Z][\w'’-]*|she|he|they)(?:\s+\([^()]{1,60}\))?\s+(?:emailed|texted|messaged)\b"
+    r"(?:\s+(?P<obj>[\w'’-]+)(?:\s+(?P<obj2>[\w'’-]+))?)?",
+    re.IGNORECASE)
+MESSAGE_KINDS = frozenset({
+    "email", "email (inbound)", "inbound", "text", "sms", "imessage", "linkedin",
+    "linkedin message", "linkedin dm", "slack"})
+OTHER_RECIPIENT_WORDS = frozenset({"him", "her", "them", "his", "their"})
+_NICK = frozenset({"nick", "nick's", "nick’s"})
+_ARTICLES = frozenset({"a", "an", "the"})
 # Words that can sit in the subject slot but are not a contact who replied.
 NOT_A_CONTACT = frozenset({
     "nick", "i", "we", "me", "nobody", "none", "noone", "never", "not", "no", "who",
@@ -86,8 +107,8 @@ OUTBOUND_START = re.compile(r"^(nick (replied|sent)\b|outbound\b|follow-up #\d+|
                             re.IGNORECASE)
 
 
-def _subject_reply(summary: str) -> bool:
-    for m in SUBJECT_REPLY.finditer(summary):
+def _subject_reply(summary: str, pattern: re.Pattern = SUBJECT_REPLY) -> bool:
+    for m in pattern.finditer(summary):
         subj = m.group("subj")
         # Names must be capitalized; only the three pronouns may be lowercase.
         if subj.lower() not in ("she", "he", "they") and not subj[0].isupper():
@@ -97,8 +118,21 @@ def _subject_reply(summary: str) -> bool:
         before = summary[:m.start()].split()
         if before and before[-1].strip(",;:").lower() in CONDITION_WORDS:
             continue
+        if pattern is SUBJECT_MESSAGE and _other_recipient(m.group("obj"), m.group("obj2")):
+            continue
         return True
     return False
+
+
+def _other_recipient(obj: str | None, obj2: str | None) -> bool:
+    """True when the words after a message verb name someone other than Nick."""
+    if not obj:
+        return False
+    if obj.lower() in OTHER_RECIPIENT_WORDS:
+        return True
+    if obj[0].isupper() and obj.lower() not in _NICK:
+        return True
+    return obj.lower() in _ARTICLES and bool(obj2) and obj2[0].isupper()
 
 
 def classify(kind: str, summary: str) -> str | None:
@@ -106,7 +140,8 @@ def classify(kind: str, summary: str) -> str | None:
     k = (kind or "").strip().casefold()
     s = (summary or "").strip()
     if (k in INBOUND_KINDS or INBOUND_OPENER.search(s) or INBOUND_UPPER.search(s)
-            or _subject_reply(s)):
+            or _subject_reply(s)
+            or (k in MESSAGE_KINDS and _subject_reply(s, SUBJECT_MESSAGE))):
         return "reply"
     if OUTBOUND_UPPER.search(s) or OUTBOUND_START.match(s):
         return "send"

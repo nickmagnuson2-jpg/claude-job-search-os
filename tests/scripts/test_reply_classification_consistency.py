@@ -143,6 +143,9 @@ PARITY_CASES = [
     ("email", "still waiting for a reply"),
     ("email", "nobody has replied"),
     ("email", "no worries, replied yesterday"),
+    ("email", "2:53 PM she emailed the next step: a video call"),
+    ("note", "Jane texted the Acme founder on Friday"),
+    ("text", "Jane texted Lee on Friday"),
 ]
 
 
@@ -249,3 +252,68 @@ def test_sends_and_nothing(kind, summary, want):
 def test_a_missing_kind_is_not_an_error():
     assert rc.classify(None, "Sam replied") == "reply"
     assert rc.classify(None, "context") is None
+
+
+# ---------------------------------------------------------------------------
+# 4. Message verbs: emailed / texted / messaged (Nick, 2026-10-30: "add the reply verbs
+#    but keep it strict"). They count only on a message channel and only when no
+#    other recipient follows the verb.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("kind,summary", [
+    ("email", "2:53 PM she emailed the next step: 45-min video via booking link."),
+    ("text", "Jo texted 1:20 PM confirming the 2pm call; Nick replied."),
+    ("email", "Pat Doe (Head of Deployment) emailed 6/23 5:51am: excited."),
+    ("email", "POST-INTERVIEW ADVANCE. Max emailed at 10:50am PT."),
+    ("text", "Kim texted after the intro."),
+    ("email", "Sam emailed you wanting to set up a call."),
+    ("email", "Sam emailed Nick the deck."),
+    ("email", "Sam emailed me back."),
+    ("linkedin", "Sam messaged at 9 AM."),
+    ("linkedin dm", "Sam messaged: open to a chat."),
+    ("email (inbound)", "Sam emailed."),
+    ("imessage", "She texted."),
+    ("sms", "He texted 8 PM."),
+    ("slack", "They messaged in the channel."),
+    ("Email", "Sam emailed 9 AM."),
+])
+def test_message_verbs_count_on_a_message_channel(kind, summary):
+    assert rc.classify(kind, summary) == "reply", (kind, summary)
+
+
+@pytest.mark.parametrize("kind,summary", [
+    # A third-hand report is not a message to Nick (live: one such note).
+    ("note", "Per Nick: Lee texted the Acme Labs founder on Friday."),
+    ("note", "Sam emailed at 9 AM."),
+    ("call", "Sam emailed the deck after the call."),
+    ("other", "Sam texted 2 PM."),
+    (None, "Sam emailed 9 AM."),
+    ("", "Sam emailed 9 AM."),
+    # Another recipient right after the verb.
+    ("text", "Lee texted Robin on Friday."),
+    ("text", "Lee texted him on Friday."),
+    ("email", "Sam emailed her the deck."),
+    ("email", "Sam emailed them a summary."),
+    ("email", "Sam emailed his manager."),
+    ("email", "Sam emailed their recruiter."),
+    ("text", "Lee texted the Acme Labs founder."),
+    ("email", "Sam emailed a Globex list."),
+    ("email", "Sam emailed an Acme recruiter."),
+    # The same subject rules as the reply verbs.
+    ("email", "Nick emailed Sam."),
+    ("email", "I emailed Robin."),
+    ("email", "Sam never emailed."),
+    ("email", "Sam hasn't emailed."),
+    ("email", "Hasn't emailed."),
+    ("email", "Check if Sam emailed."),
+    ("email", "emailed Sam the deck."),
+    ("email", "sam emailed 9 AM."),
+])
+def test_message_verbs_are_strict(kind, summary):
+    assert rc.classify(kind, summary) != "reply", (kind, summary)
+
+
+def test_the_reply_verbs_still_ignore_the_channel():
+    """The strict channel rule applies to the new message verbs only."""
+    assert rc.classify("note", "Sam replied 2 PM.") == "reply"
+    assert rc.classify(None, "Sam texted back.") == "reply"
