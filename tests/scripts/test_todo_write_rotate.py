@@ -308,18 +308,31 @@ def test_a_closed_row_with_no_old_notes_carries_only_the_marker(tmp_path):
             in p.read_text(encoding="utf-8"))
 
 
-def test_rotate_on_a_file_without_a_completed_section_refuses_safely(tmp_path):
-    """PINS A KNOWN DEFECT (found 2026-10-30, parked after the last review round): with no
-    ## Completed section, verify_rotation compares counts using -1 for "missing", so a correct
-    rotation fails verification. It fails SAFE: the file is restored and the error is
-    explicit. When the defect is fixed (treat a missing section as 0 rows), this test should
-    assert a successful rotation instead."""
+def test_rotate_creates_the_completed_section_when_there_is_none(tmp_path):
+    """Found 2026-10-30: counts compared -1 for "missing", so this correct rotation failed its
+    own verification. A missing section now counts as 0 rows."""
     text = TODOS.split("## Completed")[0].rstrip("\n") + "\n"
     p = _todos(tmp_path, text)
     out, code = _run(tmp_path, "rotate", "Check ACME", "--due", "2026-09-11", "--closed-on", "2026-09-08")
-    assert code == 1 and out["reason"] == "rotate_unverified", out
-    assert out["problems"] == ["section counts went (2, -1) -> (2, 1); expected (2, 0)"]
+    assert code == 0, out
+    after = p.read_text(encoding="utf-8")
+    assert "\n## Completed\n" in after and "| 2026-09-08 | Completed 2026-09-08 (rotated" in after
+    assert len(_live(p)) == 1 and _live(p)[0][2] == "2026-09-11"
+
+
+@pytest.mark.parametrize("status", ["Done", "Withdrawn 2026-09-01"])
+def test_rotate_ignores_a_closed_row_left_in_active(tmp_path, status):
+    """Review 6.F1: only a Pending or In Progress row is live."""
+    text = TODOS.replace("| 2026-09-05 | Pending | Recurring. |", f"| 2026-09-05 | {status} | Recurring. |")
+    p = _todos(tmp_path, text)
+    out, code = _run(tmp_path, "rotate", "Check ACME", "--due", "2026-09-11")
+    assert code == 1 and out["reason"] == "no_live_row", out
     assert p.read_text(encoding="utf-8") == text
+
+
+def test_rotate_accepts_an_in_progress_row(tmp_path):
+    _todos(tmp_path, TODOS.replace("| Pending | Recurring. |", "| In Progress | Recurring. |"))
+    assert _run(tmp_path, "rotate", "Check ACME", "--due", "2026-09-11")[1] == 0
 
 
 def test_rotate_without_an_active_section_says_so(tmp_path):
@@ -336,3 +349,62 @@ def test_rotate_refuses_a_weekday_that_contradicts_its_date_in_the_notes(tmp_pat
                      "--notes", "next check Fri 1/8/2026")
     assert code == 1 and out["reason"] == "weekday_mismatch", out
     assert p.read_text(encoding="utf-8") == TODOS
+
+
+# --- spec section 6, option (a): `done` refuses a recurring row (Nick, 2026-10-30) ------
+
+def _registry(tmp_path, fragment="Check ACME board for new job postings"):
+    write_fixture(tmp_path, "data/source-checks.json", json.dumps({"sources": [
+        {"id": "acme", "label": "ACME", "todo_fragment": fragment, "cadence_days": 3,
+         "note_label": "ACME board"}]}))
+
+
+def test_done_refuses_a_row_named_in_the_registry(tmp_path):
+    p = _todos(tmp_path)
+    _registry(tmp_path)
+    out, code = _run(tmp_path, "done", "Check ACME")
+    assert code == 1 and out["reason"] == "recurring_row", out
+    assert "registered source fragment" in out["message"] and "rotate" in out["message"]
+    assert p.read_text(encoding="utf-8") == TODOS
+
+
+def test_done_refuses_a_row_carrying_a_rotation_marker_without_a_registry(tmp_path):
+    p = _todos(tmp_path)
+    _run(tmp_path, "rotate", "Check ACME", "--due", "2026-09-11", "--op-id", "acme:2026-09-08:abc123")
+    before = p.read_text(encoding="utf-8")
+    out, code = _run(tmp_path, "done", "Check ACME")
+    assert code == 1 and out["reason"] == "recurring_row"
+    assert "rotation marker" in out["message"]
+    assert p.read_text(encoding="utf-8") == before
+
+
+def test_done_still_closes_an_ordinary_row(tmp_path):
+    _todos(tmp_path)
+    _registry(tmp_path)
+    out, code = _run(tmp_path, "done", "Unrelated task")
+    assert code == 0 and out["action"] == "done", out
+
+
+def test_withdraw_is_the_deliberate_way_to_retire_a_recurring_row(tmp_path):
+    _todos(tmp_path)
+    _registry(tmp_path)
+    out, code = _run(tmp_path, "withdraw", "Check ACME")
+    assert code == 0, out
+
+
+@pytest.mark.parametrize("registry", ["not json", '{"sources": 5}', '{"other": []}',
+                                      '{"sources": [{"todo_fragment": 7}, "x"]}'])
+def test_an_unreadable_registry_adds_no_recurring_rows(tmp_path, registry):
+    _todos(tmp_path)
+    write_fixture(tmp_path, "data/source-checks.json", registry)
+    out, code = _run(tmp_path, "done", "Check ACME")
+    assert code == 0, out
+
+
+def test_recurring_reason_matches_case_insensitively_and_ignores_blank_fragments(tmp_path):
+    _registry(tmp_path, "check acme BOARD")
+    assert "registered" in tw.recurring_reason("Check ACME board for new job postings", "—", tmp_path)
+    _registry(tmp_path, "   ")
+    assert tw.recurring_reason("Check ACME board", "—", tmp_path) == ""
+    assert tw.recurring_reason("x", "[rotate:2026-01-01:ab12]", tmp_path) == "its Notes carry a rotation marker"
+    assert tw.recurring_reason("x", "[not a marker]", tmp_path) == ""

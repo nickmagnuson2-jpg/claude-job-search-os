@@ -122,7 +122,12 @@ def test_the_exemption_list_matches_the_tools_real_flag_taking_subcommands():
     spec = importlib.util.spec_from_file_location("cw", SCRIPT)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
-    assert mod.FLAG_TAKING_SUBCOMMANDS == {"update", "list", "sync"}
+    # Derived from the tool, not typed: review 4.F1 (2026-10-30) found `rotate` blocked
+    # because this line froze the old set and never opened todo_write.py.
+    import sys as _sys
+    _sys.path.insert(0, str(Path(SCRIPT).parent))
+    import todo_write
+    assert mod.FLAG_TAKING_SUBCOMMANDS == set(todo_write.SUBCOMMAND_FLAGS)
     assert mod.subcommand_of(" --repo-root /tmp update frag ") == "update"
     assert mod.subcommand_of(" add frag ") == "add"
 
@@ -303,3 +308,15 @@ def test_a_payload_with_no_command_exits_clean_without_a_traceback(tool_input):
                        capture_output=True, text=True)
     assert r.returncode == 0
     assert r.stderr == ""
+
+
+
+@pytest.mark.parametrize("command,code", [
+    ('python3 tools/todo_write.py rotate "Check ACME" --due 2026-09-11 --priority High --notes "n"', 0),
+    ('python3 tools/todo_write.py --repo-root /tmp rotate "Check ACME" --due 2026-09-11', 0),
+    ('python3 tools/todo_write.py done "Check ACME" --due 2026-09-11', 2),
+    ('python3 tools/todo_write.py add "rotate the tires" --due 2026-09-11', 2),
+])
+def test_rotate_takes_its_flags_and_nothing_else_is_unlocked(command, code):
+    """Review 4.F1 (2026-10-30): a correct `rotate --due` was blocked."""
+    assert _run(command) == code

@@ -559,6 +559,8 @@ def _entry(**kw):
 @pytest.mark.parametrize("sources,needle", [
     ([_entry(id="")], "'id' must be a nonempty string"),
     ([_entry(id=7)], "'id' must be a nonempty string"),
+    ([_entry(id="acme:portal")], "'id' may hold only"),
+    ([_entry(id="acme portal")], "'id' may hold only"),
     ([_entry(label="  ")], "'label' must be a nonempty string"),
     ([_entry(todo_fragment="")], "'todo_fragment' must be a nonempty string"),
     ([_entry(note_label=None)], "'note_label' must be a nonempty string"),

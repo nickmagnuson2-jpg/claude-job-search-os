@@ -416,6 +416,35 @@ def cmd_add(args: list[str], todos_path: Path) -> None:
     print(json.dumps(result, ensure_ascii=False))
 
 
+REGISTRY_FILE = "data/source-checks.json"
+_ROTATION_MARKER = re.compile(r"\[[\w.-]+:\d{4}-\d{2}-\d{2}:[0-9a-f]+\]")
+
+
+def recurring_reason(task: str, notes: str, repo_root: Path) -> str:
+    """Why this row is a recurring row, or "" if it is not one.
+
+    Spec 090826 section 6, option (a), Nick 2026-10-30: `done` refuses a recurring row,
+    because closing one without its successor silently retires a lead source. Two
+    signals, either is enough:
+      - the task matches a `todo_fragment` in data/source-checks.json (the registry
+        source_check.py rotates from); a missing or unreadable registry adds nothing;
+      - the Notes carry a rotation marker `[<id>:<YYYY-MM-DD>:<hex>]`, which only
+        `rotate` writes.
+    """
+    if _ROTATION_MARKER.search(notes or ""):
+        return "its Notes carry a rotation marker"
+    try:
+        sources = json.loads((repo_root / REGISTRY_FILE).read_text(encoding="utf-8"))["sources"]
+        fragments = [s["todo_fragment"] for s in sources
+                     if isinstance(s, dict) and isinstance(s.get("todo_fragment"), str)]
+    except (OSError, ValueError, KeyError, TypeError):
+        return ""
+    for frag in fragments:
+        if frag.strip() and frag.strip().lower() in task.lower():
+            return f"it matches the registered source fragment {frag!r} in {REGISTRY_FILE}"
+    return ""
+
+
 def cmd_done(args: list[str], todos_path: Path) -> None:
     """Move a matching Active row to Completed."""
     if not args:
@@ -480,6 +509,14 @@ def cmd_done(args: list[str], todos_path: Path) -> None:
     priority = cols[1] if len(cols) > 1 else "Med"
     # Join extra cols back in case notes contained a pipe character
     notes = " | ".join(cols[4:]) if len(cols) > 4 else "—"
+
+    why = recurring_reason(task, notes, todos_path.parent.parent)
+    if why:
+        out_error(f"Refusing to close a recurring row with `done`: {task!r} ({why}). Closing it "
+                  f"without its successor silently retires a lead source. Use "
+                  f"`source_check.py mark <id>` or `todo_write.py rotate <fragment> --due "
+                  f"YYYY-MM-DD`. To retire it on purpose, remove it from {REGISTRY_FILE}, or "
+                  f"`withdraw` it.", reason="recurring_row", task=task)
 
     suffix = f"Completed {today_str}"
     completed_notes = suffix if notes in ("—", "") else f"{suffix} | {notes}"
@@ -587,8 +624,10 @@ def verify_rotation(before: list[str], after: list[str], task: str, due: str,
                        parse_cols(lines[i])))
     if closed(after) != closed(before) + 1:
         problems.append(f"## Completed did not gain exactly one row for the task on {closed_on}")
-    ba, bc = writer_section_counts(before)
-    aa, ac = writer_section_counts(after)
+    # A missing section counts as 0 rows: rotate creates ## Completed when the file has none
+    # (found 2026-10-30; before, -1 for "missing" made a correct rotation fail this check).
+    ba, bc = (max(n, 0) for n in writer_section_counts(before))
+    aa, ac = (max(n, 0) for n in writer_section_counts(after))
     if (aa, ac) != (ba, bc + 1):
         problems.append(f"section counts went ({ba}, {bc}) -> ({aa}, {ac}); expected ({ba}, {bc + 1})")
     return problems
@@ -611,7 +650,10 @@ def cmd_rotate(args: list[str], todos_path: Path) -> None:
     if find_section(lines, "## Active")[0] == -1:
         out_error("Could not find ## Active section in job-todos.md")
     frag = fragment.lower()
-    matches = [(i, c) for i, c in active_rows(lines) if c and c[0] and frag in c[0].lower()]
+    # Live means Pending or In Progress: a Done/Withdrawn row still sitting in ## Active
+    # (not yet cleared) is not a recurring check to rotate (review 6.F1).
+    matches = [(i, c) for i, c in active_rows(lines) if c and c[0] and frag in c[0].lower()
+               and len(c) > 3 and c[3].strip().lower() in MISFILED_STATUSES]
     if not matches:
         stranded = [c[0] for _, c in find_misfiled(lines) if c and c[0] and frag in c[0].lower()]
         extra = (f" A Pending row matching it sits under ## Completed ({stranded[0]!r}); that row "
@@ -1361,6 +1403,19 @@ def cmd_audit(todos_path: Path) -> None:
     out_ok("audit", summary, misfiled_count=len(rows), misfiled=rows)
 
 
+# The subcommands that take real --flags, and which. Every other subcommand is
+# positional-only. tools/check_todo_write_kwargs.py (a Bash guard) keeps its own copy of
+# the keys, because a hook must not import this module; test_check_todo_write_kwargs pins
+# the two together so a new flag-taking subcommand cannot be blocked by a stale guard
+# (review 4.F1, 2026-10-30: `rotate` was).
+SUBCOMMAND_FLAGS = {
+    "list": {"--status", "--grep"},
+    "sync": {"--apply"},
+    "update": set(UPDATE_FIELD_FLAGS),
+    "rotate": set(ROTATE_FLAGS),
+}
+
+
 def main() -> None:
     # Extract --repo-root from anywhere in argv so it works before or after the command
     argv = sys.argv[1:]
@@ -1394,16 +1449,7 @@ def main() -> None:
     # `update` is partial-field by design: naming the field is the whole point, and a
     # positional form would need sentinel placeholders for every column you are NOT
     # changing, which reintroduces exactly the retyping this verb exists to delete.
-    if cmd == "list":
-        allowed_flags = {"--status", "--grep"}
-    elif cmd == "sync":
-        allowed_flags = {"--apply"}
-    elif cmd == "update":
-        allowed_flags = set(UPDATE_FIELD_FLAGS)
-    elif cmd == "rotate":
-        allowed_flags = set(ROTATE_FLAGS)
-    else:
-        allowed_flags = set()
+    allowed_flags = SUBCOMMAND_FLAGS.get(cmd, set())
     unknown_flags = [
         a for a in filtered if a.startswith("--") and len(a) > 2 and a not in allowed_flags
     ]

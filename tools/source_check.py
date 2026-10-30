@@ -109,6 +109,12 @@ def load_registry(repo_root: Path) -> list[dict]:
             raise SourceCheckError(
                 f"registry entry {name!r}: 'priority' must be one of {PRIORITIES}, "
                 f"got {src['priority']!r}")
+        if not re.fullmatch(r"[\w.-]+", src["id"]):
+            # The id is the first part of the op id `<id>:<date>:<hex>` that rotate accepts
+            # only as [\w:.-]+, and a ':' inside the id would break the prefix match a retry
+            # uses (review 6.F2).
+            raise SourceCheckError(
+                f"registry entry {name!r}: 'id' may hold only letters, digits, '.', '_' and '-'")
         if src["id"] in ids:
             raise SourceCheckError(f"registry has two entries with id {src['id']!r}")
         frag = src["todo_fragment"].lower()
