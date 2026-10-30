@@ -89,6 +89,15 @@ KWARG = re.compile(r"--(task|priority|due|notes)\b")
 # test_the_exemption_list_matches_the_tools_real_flag_taking_subcommands).
 FLAG_TAKING_SUBCOMMANDS = {"update", "list", "sync", "rotate"}
 
+# Which of the four guarded kwargs each subcommand really takes (review round 3, 2026-10-30:
+# exempting a whole subcommand let `rotate --task` through, and `list`/`sync` take none of
+# them). Any guarded kwarg not listed for its subcommand is blocked. Pinned to
+# todo_write.SUBCOMMAND_FLAGS by test_the_exemption_list_matches_the_tools_real_flag_taking_subcommands.
+ALLOWED_KWARGS = {
+    "update": {"task", "priority", "due", "notes"},
+    "rotate": {"priority", "due", "notes"},
+}
+
 
 def subcommand_of(tail) -> str:
     """The subcommand token in `todo_write.py [--repo-root P] <cmd> ...`, or ''.
@@ -129,11 +138,11 @@ def find_violation(command: str):
         args = todo_write_args(cmd.words)
         if args is not None:
             sub = subcommand_of(args)
-            if sub not in FLAG_TAKING_SUBCOMMANDS:
-                for arg in args:
-                    m = KWARG.match(arg)
-                    if m:
-                        return sub, m.group(1)
+            allowed = ALLOWED_KWARGS.get(sub, set())
+            for arg in args:
+                m = KWARG.match(arg)
+                if m and m.group(1) not in allowed:
+                    return sub, m.group(1)
         for inner in cmd.subs:          # `$(...)` and backticks run too
             found = find_violation(inner)
             if found:

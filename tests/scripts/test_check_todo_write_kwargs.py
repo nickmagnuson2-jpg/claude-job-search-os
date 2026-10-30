@@ -128,6 +128,10 @@ def test_the_exemption_list_matches_the_tools_real_flag_taking_subcommands():
     _sys.path.insert(0, str(Path(SCRIPT).parent))
     import todo_write
     assert mod.FLAG_TAKING_SUBCOMMANDS == set(todo_write.SUBCOMMAND_FLAGS)
+    # Per subcommand: exactly the guarded kwargs todo_write accepts there (round 3).
+    guarded = {"task", "priority", "due", "notes"}
+    real = {sub: {f[2:] for f in flags} & guarded for sub, flags in todo_write.SUBCOMMAND_FLAGS.items()}
+    assert {s: k for s, k in real.items() if k} == mod.ALLOWED_KWARGS
     assert mod.subcommand_of(" --repo-root /tmp update frag ") == "update"
     assert mod.subcommand_of(" add frag ") == "add"
 
@@ -316,6 +320,11 @@ def test_a_payload_with_no_command_exits_clean_without_a_traceback(tool_input):
     ('python3 tools/todo_write.py --repo-root /tmp rotate "Check ACME" --due 2026-09-11', 0),
     ('python3 tools/todo_write.py done "Check ACME" --due 2026-09-11', 2),
     ('python3 tools/todo_write.py add "rotate the tires" --due 2026-09-11', 2),
+    # Round 3 (Codex P0): a subcommand unlocks only the kwargs it takes.
+    ('python3 tools/todo_write.py rotate "Check ACME" --due 2026-09-11 --task "x"', 2),
+    ('python3 tools/todo_write.py list --due 2026-09-11', 2),
+    ('python3 tools/todo_write.py sync --notes x', 2),
+    ('python3 tools/todo_write.py update frag --task "y" --due 2026-09-11', 0),
 ])
 def test_rotate_takes_its_flags_and_nothing_else_is_unlocked(command, code):
     """Review 4.F1 (2026-10-30): a correct `rotate --due` was blocked."""
