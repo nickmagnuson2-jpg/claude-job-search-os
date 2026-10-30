@@ -183,6 +183,29 @@ def test_demo_mode_reads_only_the_fixture_folder(tmp_path, monkeypatch):
     assert mp.DEMO_BAND in out.read_text()
 
 
+def test_demo_on_any_day_shows_the_sample_calendar_moved_to_that_day(tmp_path):
+    # The fixtures are dated 2026-01-07; rendered on 2026-10-30 the events move by the same gap.
+    out = tmp_path / "demo.html"
+    assert mp.main(["--demo", "--out", str(out), "--now", "2026-10-30T09:00"]) == 0
+    b1 = _section(out.read_text(), "b1")
+    assert "10:30  Screen with Beta Inc" in b1
+    assert "Sat  13:30  Coffee with Alex Example" in b1
+    assert "Sun  all day  Private appointment" in b1
+
+
+def test_the_demo_shift_keeps_times_and_offsets_and_leaves_other_sections_alone():
+    shifted = mp.gather_demo(today=datetime(2026, 10, 30).date())
+    ev = shifted["calendar"]["events"]
+    assert [e["start"] for e in ev] == ["2026-10-30T10:30:00-08:00", "2026-10-31T13:30:00-08:00",
+                                        "2026-11-01"]
+    assert [e["end"] for e in ev] == ["2026-10-30T11:00:00-08:00", "2026-10-31T14:00:00-08:00",
+                                      "2026-11-02"]
+    plain = mp.gather_demo()
+    assert plain["calendar"]["events"][0]["start"] == "2026-01-07T10:30:00-08:00"
+    assert {k: v for k, v in shifted.items() if k != "calendar"} == \
+        {k: v for k, v in plain.items() if k != "calendar"}
+
+
 # --- the CLI and the archive copy ------------------------------------------------------------
 
 def test_live_main_writes_the_page_and_the_dated_copy_after_19(tmp_path, monkeypatch):

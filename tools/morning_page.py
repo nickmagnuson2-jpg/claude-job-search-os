@@ -200,11 +200,19 @@ def gather_live(root: Path, now: datetime) -> dict:
     }
 
 
-def gather_demo(fixtures: Path = FIXTURES) -> dict:
+def gather_demo(fixtures: Path = FIXTURES, today: date | None = None) -> dict:
     out = {}
     for name in ("collector", "day", "calendar", "commonplace", "claude_read", "open_findings",
                  "waiting_on_them"):
         out[name] = json.loads((fixtures / f"{name}.json").read_text(encoding="utf-8"))
+    if today is not None:
+        # The fixtures are dated to the collector's target_date. Move the calendar by the same
+        # number of days so --demo on any day shows the sample events. Only the calendar is
+        # compared against today; todo ages are stored as day counts.
+        shift = today - date.fromisoformat(out["collector"]["target_date"])
+        for ev in out["calendar"].get("events") or []:
+            for k in ("start", "end"):
+                ev[k] = (date.fromisoformat(ev[k][:10]) + shift).isoformat() + ev[k][10:]
     return out
 
 
@@ -483,7 +491,7 @@ def main(argv=None) -> int:
     except ValueError:
         print(f"ERROR: --now must be YYYY-MM-DDTHH:MM, got {a.now!r}", file=sys.stderr)
         return 2
-    src = gather_demo() if a.demo else gather_live(root, now)
+    src = gather_demo(today=now.date()) if a.demo else gather_live(root, now)
     page = render(build_view(src, now), now, demo=a.demo)
     out = Path(a.out) if a.out else root / OUT_REL / ("demo.html" if a.demo else "index.html")
     write_page(page, out)
