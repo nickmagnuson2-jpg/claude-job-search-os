@@ -161,7 +161,7 @@ def test_upcoming_scheduled_without_an_active_heading_reads_the_table():
 
 # --- parse_networking_activity ---------------------------------------------------------
 
-NET = ("| Name | Company | Role | Relationship | Added | Last Interaction | Email |\n"
+NET = ("## Contacts\n\n| Name | Company | Role | Relationship | Added | Last Interaction | Email |\n"
        "|---|---|---|---|---|---|---|\n"
        "| Sam Example | Acme Corp | PM | peer | 2026-01-01 | 2026-01-05 | — |\n"
        "| Lee Sample | Beta Inc | Eng |\n"
@@ -173,12 +173,10 @@ TODOS = "| Follow up: Sam Example | Med |\n| Ping Lee Sample, then Sam Example |
 
 
 def test_networking_activity_lists_real_contacts_named_in_todos_with_counts():
-    # PINS CURRENT BEHAVIOR, NOT CORRECT BEHAVIOR: "last_interaction" is read from cols[4],
-    # which in today's networking.md schema is the Added column (Last Interaction is
-    # cols[5]). Found 2026-10-30 while writing this test; reported for a fix, not fixed here
-    # (the run allowed test changes only). Change this expectation with the fix.
+    # last_interaction is the Last Interaction column (cols[5]). Until 2026-10-30 this read
+    # the Added column; the parser is now networking_read.parse_contacts.
     assert tdm.parse_networking_activity(NET, TODOS) == [
-        {"name": "Sam Example", "company": "Acme Corp", "last_interaction": "2026-01-01",
+        {"name": "Sam Example", "company": "Acme Corp", "last_interaction": "2026-01-05",
          "pending_todos": 2},
         {"name": "Lee Sample", "company": "Beta Inc", "last_interaction": "", "pending_todos": 1},
     ]

@@ -28,8 +28,10 @@ HOOK = TOOLS / "check_calendar_mcp.py"
 P = h.PREFIX
 WRITES = [P + t for t in ("create_event", "update_event", "delete_event", "respond_to_event")]
 READS = sorted(h.READ_TOOLS)
-EVENT = {"summary": "Coffee with A. Person", "startTime": "2026-10-30T10:00:00",
-         "endTime": "2026-10-30T10:30:00",
+# A date in the past on purpose: the decision log stamps "now", and an event dated today
+# made test_the_log_holds_no_event_content fail for one hour on 2026-10-30.
+EVENT = {"summary": "Coffee with A. Person", "startTime": "2001-02-03T10:00:00",
+         "endTime": "2001-02-03T10:30:00",
          "attendees": [{"email": "person@example.com", "displayName": "A. Person"}]}
 
 
@@ -250,8 +252,8 @@ def test_dialog_lists_invitees_under_a_caps_label_and_warns():
     i = lines.index("INVITEES (each gets an email from you):")
     assert lines[i - 1] == "THIS SENDS INVITATIONS."
     assert lines[i + 1:i + 3] == ["  - A. Person <person@example.com>", "  - b@example.com"]
-    for want in ("Title: Coffee with A. Person", "Start: 2026-10-30T10:00:00",
-                 "End: 2026-10-30T10:30:00", "Calendar: primary (default)"):
+    for want in ("Title: Coffee with A. Person", "Start: 2001-02-03T10:00:00",
+                 "End: 2001-02-03T10:30:00", "Calendar: primary (default)"):
         assert want in lines
 
 
@@ -469,7 +471,7 @@ def test_the_log_holds_no_event_content(keys, monkeypatch, capsys, _log):
     _decide(monkeypatch, capsys, keys, dialog=Dialog(True))
     _decide(monkeypatch, capsys, keys, dialog=Dialog(False))
     text = _log.read_text()
-    for value in ("Coffee", "person@example.com", "A. Person", "2026-10-30T10"):
+    for value in ("Coffee", "person@example.com", "A. Person", "2001-02-03T10"):
         assert value not in text
 
 
