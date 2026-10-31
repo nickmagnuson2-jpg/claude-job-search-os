@@ -458,25 +458,16 @@ def parse_upcoming_scheduled(pipeline_content: str, today: date,
 
 
 def parse_networking_activity(networking_content: str, todos_content: str) -> list:
-    """Find contacts with pending follow-up to-dos. Filters '---' separator rows."""
-    results = []
+    """Find contacts with pending follow-up to-dos.
 
-    # Extract contact names from networking.md
-    contacts = []
-    for line in networking_content.splitlines():
-        if not line.startswith("|") or line.startswith("| Name") or line.startswith("|---"):
-            continue
-        cols = [c.strip() for c in line.strip("|").split("|")]
-        if len(cols) < 3 or not cols[0]:
-            continue
-        # Skip in-table separator rows (literal '---' as name)
-        if _is_separator_row(cols[0]):
-            continue
-        contacts.append({
-            "name": cols[0],
-            "company": cols[1] if len(cols) > 1 else "",
-            "last_interaction": cols[4] if len(cols) > 4 else "",
-        })
+    The Contacts table is read by networking_read.parse_contacts, the one parser for it.
+    This module used to keep its own, which read "last_interaction" from the Added column
+    (found 2026-10-30; /checkout Step 5b relies on that date as the most recent touch).
+    """
+    from networking_read import parse_contacts
+    results = []
+    # A '—' name is the file's known separator artifact, which parse_contacts keeps.
+    contacts = [c for c in parse_contacts(networking_content) if not _is_separator_row(c["name"])]
 
     # Cross-reference with active todos (full name matching)
     for contact in contacts:

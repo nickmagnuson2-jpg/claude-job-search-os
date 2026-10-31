@@ -41,73 +41,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from name_dedup import find_near_duplicates  # noqa: E402
 import outreach_status  # noqa: E402
+# The one "did they reply" rule, shared with day_check.py (no local copy here).
+from reply_classify import is_reply  # noqa: E402
 from md_table import JsonArgumentParser, find_section, load_lines, is_sep_row, out_error, out_ok, parse_cols, read_file, table_insert_pos, write_atomic  # noqa: E402
 
 NETWORKING_FILE  = "data/networking.md"
 TODOS_FILE       = "data/job-todos.md"
 OUTREACH_FILE    = "data/outreach-log.md"
-
-# Keywords in interaction summary that signal a reply was received
-REPLY_SIGNALS = (
-    "replied", "responded", "heard back", "call scheduled", "meeting set",
-    "coffee scheduled", "phone screen", "interview scheduled", "got back",
-    "reply", "called back", "texted back",
-)
-
-# Phrases where NICK is the one replying/sending (outbound). These must NOT flip
-# the outreach-log to "Replied" — that status means the RECIPIENT replied, not
-# that Nick replied to them. Bug origin 2026-06-18: logging "Replied to her
-# intro" (Nick's own send) falsely flipped a Sent row to Replied.
-OUTBOUND_REPLY_MARKERS = (
-    "replied to", "reply to", "replying to", "responded to", "responding to",
-    "my reply", "sent a reply", "sent my reply", "i replied", "nick replied",
-)
-
-# Explicit inbound-subject phrases — the RECIPIENT acted. These win over an
-# outbound marker so "She replied to my email" still counts as a received reply.
-INBOUND_SUBJECT_MARKERS = (
-    "they replied", "she replied", "he replied", "they responded",
-    "she responded", "he responded", "heard back", "got back", "wrote back",
-    "called back", "texted back", "reply from", "response from",
-    "got a reply", "got a response",
-)
-
-
-# A note that records the ABSENCE of a reply ("haven't heard back", "No reply from Sam",
-# "never responded"). Checked first: writing Replied for a non-reply is the worse error.
-# The ONE definition: tools/day_check.py imports it, so the writer and that reader cannot
-# disagree on what a reply is (review 2026-10-29: day_check knew "hasn't" but not
-# "haven't", and this writer had no negation at all).
-REPLY_NEGATION = re.compile(
-    r"\b(?:no|never|not|nobody|no one|without|yet to|still waiting(?: to| for| on)?|awaiting|waiting (?:for|on)|"
-    r"(?:has|have|had|did|does|do|is|was|were)n['\u2019]?t|won['\u2019]?t|can['\u2019]?t)"
-    r"(?:\s+(?:yet|a|any|been|heard|to|got|get|gotten|received|had|her|his|their|my|has|have|the|ever|even|actually|really))*\s+"
-    r"(?:repl|respon|hear back|heard back|heard|wrote back|got back|called back|texted back)\w*",
-    re.IGNORECASE)
-# The negator must sit directly on the reply word (a few filler words, no comma or
-# clause break): "no worries, replied yesterday" is a reply (round 2, 2026-10-29).
-
-
-def reply_received(summary: str) -> bool:
-    """Heuristic: did the RECIPIENT reply (→ flip outreach-log to Replied)?
-
-    Order matters: an explicit inbound subject ("she replied") wins; an outbound
-    marker ("replied to her") suppresses; otherwise fall back to the bare signals.
-    """
-    # An explicit inbound note outranks any negation inside it, the same order as
-    # day_check ("INBOUND 4:46am, a bump on a prior unanswered message").
-    if re.match(r"\s*(inbound|reply from)\b", summary, re.I) or re.search(r"\bINBOUND\b", summary):
-        return True
-    # Cut the negated phrases out, then judge what is left: "She replied, hasn't heard
-    # from the HM" is still a reply; "No reply from Sam yet" is not.
-    s = REPLY_NEGATION.sub(" ", summary.lower())
-    if any(m in s for m in INBOUND_SUBJECT_MARKERS):
-        return True
-    # Outbound markers are read from the ORIGINAL text: cutting "No reply to the 10/2
-    # note" must not also cut the outbound marker "reply to" (round 2 live diff).
-    if any(m in summary.lower() for m in OUTBOUND_REPLY_MARKERS):
-        return False
-    return any(sig in s for sig in REPLY_SIGNALS)
 
 CONTACTS_HEADER = "| Name | Company | Role | Relationship | Added | Last Interaction | Email |"
 CONTACTS_SEP    = "| --- | --- | --- | --- | --- | --- | --- |"
@@ -443,15 +383,15 @@ def cmd_log(args, networking_path: Path, repo_root: Path, dry_run: bool) -> None
                 pass  # todo creation is best-effort
 
     # Auto-update outreach-log.md only if the RECIPIENT replied.
-    # Explicit flags override the heuristic; otherwise reply_received() guards
-    # against flipping on Nick's own outbound replies ("Replied to her intro").
+    # Explicit flags override; otherwise reply_classify.is_reply() decides, and it says
+    # yes only on a positive inbound signal (see tools/reply_classify.py).
     outreach_updated = False
     if getattr(args, "reply_received", False):
         should_flip = True
     elif getattr(args, "no_reply_flip", False):
         should_flip = False
     else:
-        should_flip = reply_received(args.summary)
+        should_flip = is_reply(args.type, args.summary)
     if should_flip:
         outreach_updated = update_outreach_status(repo_root, args.name)
 

@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import os
+import re
 import sys
 from pathlib import Path
 
@@ -16,6 +18,7 @@ REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "tools"))
 
 import source_check as sc  # noqa: E402
+import todo_write as tw  # noqa: E402
 
 
 TODOS = """# Job To-Dos
@@ -177,34 +180,27 @@ def test_registry_empty_sources_is_fatal(repo: Path):
 
 # --- the load-bearing invariant --------------------------------------------
 
-def test_rotate_restores_table_when_recreate_fails(repo: Path, monkeypatch):
-    """If the recreate half fails, the close must be rolled back.
-
-    Leaving the row closed is exactly how a lead source gets silently retired.
-    """
+def test_rotate_is_one_todo_write_call_and_a_failed_rotate_writes_nothing(repo: Path, monkeypatch):
+    """There is no close-then-recreate pair any more: one `rotate` call or nothing."""
     todos = repo / "data" / "job-todos.md"
     before = todos.read_text(encoding="utf-8")
+    calls = []
 
     def fake_run(repo_root, args):
-        if args[0] == "done":
-            # Simulate a real close: drop the Pending row.
-            text = todos.read_text(encoding="utf-8")
-            todos.write_text(
-                text.replace(
-                    "| Check ACME board for new job postings | High | 2026-09-05 | Pending | Recurring. |\n",
-                    "",
-                ),
-                encoding="utf-8",
-            )
-            return {"status": "ok"}
+        calls.append(args)
         return {"status": "error", "message": "disk full"}
 
     monkeypatch.setattr(sc, "_run_todo", fake_run)
-    with pytest.raises(sc.SourceCheckError, match="recreate FAILED"):
-        sc.rotate_todo(repo, REGISTRY["sources"][0], dt.date(2026, 9, 8), "note")
-
+    with pytest.raises(sc.SourceCheckError, match="could not rotate.*disk full"):
+        sc.rotate_todo(repo, REGISTRY["sources"][0], dt.date(2026, 9, 8), "acme:2026-09-08:abc")
+    assert [a[0] for a in calls] == ["rotate"]
+    args = calls[0]
+    assert args[1] == "Check ACME board for new job postings"
+    flag = lambda k: args[args.index(k) + 1]  # noqa: E731
+    assert flag("--due") == "2026-09-11" and flag("--expect-due") == "2026-09-05"
+    assert flag("--op-id") == "acme:2026-09-08:abc" and flag("--closed-on") == "2026-09-08"
+    assert flag("--priority") == "High" and "Recurring - check every 3 days" in flag("--notes")
     assert todos.read_text(encoding="utf-8") == before
-    assert sc.find_pending_row(todos.read_text(encoding="utf-8"), "Check ACME") is not None
 
 
 def test_rotate_refuses_when_no_pending_row_exists(repo: Path):
@@ -216,22 +212,8 @@ def test_rotate_refuses_when_no_pending_row_exists(repo: Path):
         ),
         encoding="utf-8",
     )
-    with pytest.raises(sc.SourceCheckError, match="no Pending todo row"):
-        sc.rotate_todo(repo, REGISTRY["sources"][0], dt.date(2026, 9, 8), "note")
-
-
-def test_rotate_sets_next_due_from_cadence(repo: Path, monkeypatch):
-    captured = {}
-
-    def fake_run(repo_root, args):
-        if args[0] == "add":
-            captured["due"] = args[3]
-        return {"status": "ok"}
-
-    monkeypatch.setattr(sc, "_run_todo", fake_run)
-    res = sc.rotate_todo(repo, REGISTRY["sources"][0], dt.date(2026, 9, 8), "note")
-    assert res["next_due"] == "2026-09-11"
-    assert captured["due"] == "2026-09-11"
+    with pytest.raises(sc.SourceCheckError, match="no live Pending todo row"):
+        sc.rotate_todo(repo, REGISTRY["sources"][0], dt.date(2026, 9, 8), "acme:2026-09-08:abc")
 
 
 # --- CLI --------------------------------------------------------------------
@@ -257,43 +239,6 @@ def test_unknown_source_exits_nonzero(repo: Path):
 
 
 # --- gaps found by mutation survival, not by reading the tests --------------
-
-def test_rotate_raises_when_close_itself_fails(repo: Path, monkeypatch):
-    """If the close fails we must abort, not proceed to recreate a duplicate."""
-    todos = repo / "data" / "job-todos.md"
-    before = todos.read_text(encoding="utf-8")
-    monkeypatch.setattr(
-        sc, "_run_todo",
-        lambda r, a: {"status": "error", "message": "locked"} if a[0] == "done"
-        else {"status": "ok"},
-    )
-    with pytest.raises(sc.SourceCheckError, match="could not close"):
-        sc.rotate_todo(repo, REGISTRY["sources"][0], dt.date(2026, 9, 8), "n")
-    assert todos.read_text(encoding="utf-8") == before
-
-
-def test_active_rows_skips_separators_headers_and_short_rows():
-    text = (
-        "| Task | Priority | Due | Status | Notes |\n"
-        "|---|---|---|---|---|\n"
-        "| Real row | High | 2026-09-05 | Pending | ok |\n"
-        "| too | few |\n"
-        "not a table line\n"
-    )
-    rows = sc._active_rows(text)
-    assert len(rows) == 1
-    assert rows[0][0] == "Real row"
-
-
-def test_active_rows_excludes_the_header_row_specifically():
-    rows = sc._active_rows("| Task | Priority | Due | Status | Notes |\n")
-    assert rows == []
-
-
-def test_active_rows_excludes_separator_specifically():
-    rows = sc._active_rows("|---|---|---|---|---|\n")
-    assert rows == []
-
 
 def test_present_flag_is_true_when_row_exists():
     rows = sc.compute_due(REGISTRY["sources"], TODOS, dt.date(2026, 9, 8))
@@ -437,7 +382,7 @@ def test_mark_twice_does_not_accumulate_duplicate_pending_rows(repo_with_writer:
     sc.main(["--repo-root", str(repo), "mark", "acme", "--none", "--date", "2026-09-11"])
     todos = (repo / "data" / "job-todos.md").read_text(encoding="utf-8")
     pending = [
-        c for c in sc._active_rows(todos)
+        c for _, c in tw.active_rows(todos.splitlines())
         if "Check ACME board" in c[0] and c[3] == "Pending"
     ]
     assert len(pending) == 1, f"expected exactly one live row, got {len(pending)}"
@@ -493,3 +438,222 @@ def test_repo_root_after_subcommand_works_for_mark(repo: Path, capsys):
     assert sc.main(["mark", "--repo-root", str(repo), "acme", "--none",
                     "--date", "2026-09-08", "--dry-run"]) == 0
     assert json.loads(capsys.readouterr().out)["status"] == "dry-run"
+
+
+# --- spec 090826 section 5: the upstream rotate (37.F1-F7) -------------------
+
+STRANDED = TODOS.replace(
+    "| Check ACME board for new job postings | High | 2026-09-05 | Pending | Recurring. |\n", ""
+).replace(
+    "| Check ACME board for new job postings | High | 2026-09-02 | old instance |",
+    "| Check ACME board for new job postings | High | 2026-09-05 | Pending | stranded |",
+)
+
+
+def test_a_pending_row_stranded_under_completed_is_not_live():
+    """37.F1, the finding Nick called most important: the old whole-file scan returned
+    this row as live, so a retired source was reported as fine."""
+    assert sc.find_pending_row(STRANDED, "Check ACME board") is None
+    rows = sc.compute_due(REGISTRY["sources"], STRANDED, dt.date(2026, 9, 8))
+    assert rows[0]["retired"] is True and rows[0]["present"] is False
+
+
+def test_mark_refuses_a_stranded_row_and_writes_nothing(repo_with_writer: Path):
+    todos = repo_with_writer / "data" / "job-todos.md"
+    todos.write_text(STRANDED, encoding="utf-8")
+    notes_before = (repo_with_writer / "data" / "notes.md").read_text(encoding="utf-8")
+    assert sc.main(["--repo-root", str(repo_with_writer), "mark", "acme", "--none",
+                    "--date", "2026-09-08"]) == 2
+    assert todos.read_text(encoding="utf-8") == STRANDED
+    assert (repo_with_writer / "data" / "notes.md").read_text(encoding="utf-8") == notes_before
+
+
+def test_mark_rotates_first_and_tags_row_and_note_with_one_op_id(repo_with_writer: Path, capsys):
+    repo = repo_with_writer
+    assert sc.main(["--repo-root", str(repo), "mark", "acme", "--none", "--date", "2026-09-08"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    op = out["op_id"]
+    assert op.startswith("acme:2026-09-08:") and out["rotated"] is True
+    assert out["note_status"] == "logged"
+    row = sc.find_pending_row((repo / "data/job-todos.md").read_text(encoding="utf-8"), "Check ACME")
+    assert op in row[4]
+    notes = (repo / "data/notes.md").read_text(encoding="utf-8")
+    assert f"<!-- source-check:{op} -->" in notes
+    closed = [l for l in (repo / "data/job-todos.md").read_text(encoding="utf-8").splitlines()
+              if "| 2026-09-08 |" in l]
+    assert len(closed) == 1, closed
+
+
+def test_a_retried_mark_neither_rotates_nor_logs_twice(repo_with_writer: Path, capsys):
+    repo = repo_with_writer
+    argv = ["--repo-root", str(repo), "mark", "acme", "--none", "--date", "2026-09-08"]
+    assert sc.main(argv) == 0
+    first = json.loads(capsys.readouterr().out)
+    todos_after_first = (repo / "data/job-todos.md").read_text(encoding="utf-8")
+    notes_after_first = (repo / "data/notes.md").read_text(encoding="utf-8")
+    assert sc.main(argv) == 0
+    second = json.loads(capsys.readouterr().out)
+    assert second["rotated"] is False and second["note_status"] == "already-logged"
+    assert second["op_id"] == first["op_id"] and second["next_due"] == "2026-09-11"
+    assert (repo / "data/job-todos.md").read_text(encoding="utf-8") == todos_after_first
+    assert (repo / "data/notes.md").read_text(encoding="utf-8") == notes_after_first
+
+
+def test_a_crash_after_the_rotate_is_finished_by_the_retry(repo_with_writer: Path, monkeypatch, capsys):
+    """Rotate committed, note write died: the retry logs the note and does not rotate again."""
+    repo = repo_with_writer
+    argv = ["--repo-root", str(repo), "mark", "acme", "--none", "--date", "2026-09-08"]
+    real = sc.prepend_note
+
+    def die(*a, **k):
+        raise OSError("crashed before the note")
+    monkeypatch.setattr(sc, "prepend_note", die)
+    with pytest.raises(OSError):
+        sc.main(argv)
+    todos_after_crash = (repo / "data/job-todos.md").read_text(encoding="utf-8")
+    assert "2026-09-08" not in (repo / "data/notes.md").read_text(encoding="utf-8")
+    monkeypatch.setattr(sc, "prepend_note", real)
+    assert sc.main(argv) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["rotated"] is False and out["note_status"] == "logged"
+    assert (repo / "data/job-todos.md").read_text(encoding="utf-8") == todos_after_crash
+    assert f"<!-- source-check:{out['op_id']} -->" in (repo / "data/notes.md").read_text(encoding="utf-8")
+
+
+def test_a_row_changed_since_it_was_read_is_not_overwritten(repo_with_writer: Path, monkeypatch):
+    """--expect-due is a compare-and-swap: a stale read aborts, nothing is written."""
+    repo = repo_with_writer
+    todos = repo / "data/job-todos.md"
+    before = todos.read_text(encoding="utf-8")
+    stale = ["Check ACME board for new job postings", "High", "2026-09-04", "Pending", "Recurring."]
+    monkeypatch.setattr(sc, "live_pending_rows", lambda text, frag: [stale])
+    with pytest.raises(sc.SourceCheckError, match="could not rotate.*not the expected"):
+        sc.rotate_todo(repo, REGISTRY["sources"][0], dt.date(2026, 9, 8), "acme:2026-09-08:abc")
+    assert todos.read_text(encoding="utf-8") == before
+
+
+def test_the_note_write_is_atomic(repo: Path, monkeypatch):
+    notes = repo / "data" / "notes.md"
+    before = notes.read_text(encoding="utf-8")
+
+    def boom(*a, **k):
+        raise OSError("disk gone")
+    monkeypatch.setattr(os, "replace", boom)  # the rename is the commit point
+    with pytest.raises(OSError):
+        sc.prepend_note(notes, "**2026-09-08:** newest.")
+    assert notes.read_text(encoding="utf-8") == before
+
+
+def test_note_already_logged_matches_source_and_date_only():
+    src = REGISTRY["sources"][0]
+    text = "x <!-- source-check:acme:2026-09-08:abc123 --> y"
+    assert sc.note_already_logged(text, src, dt.date(2026, 9, 8)) is True
+    assert sc.note_already_logged(text, src, dt.date(2026, 9, 9)) is False
+    assert sc.note_already_logged(text, {**src, "id": "acm"}, dt.date(2026, 9, 8)) is False
+
+
+def _entry(**kw):
+    return {**REGISTRY["sources"][0], **kw}
+
+
+@pytest.mark.parametrize("sources,needle", [
+    ([_entry(id="")], "'id' must be a nonempty string"),
+    ([_entry(id=7)], "'id' must be a nonempty string"),
+    ([_entry(id="acme:portal")], "'id' may hold only"),
+    ([_entry(id="acme portal")], "'id' may hold only"),
+    ([_entry(label="  ")], "'label' must be a nonempty string"),
+    ([_entry(todo_fragment="")], "'todo_fragment' must be a nonempty string"),
+    ([_entry(note_label=None)], "'note_label' must be a nonempty string"),
+    ([_entry(cadence_days=0)], "positive integer"),
+    ([_entry(cadence_days=-3)], "positive integer"),
+    ([_entry(cadence_days="3")], "positive integer"),
+    ([_entry(cadence_days=2.5)], "positive integer"),
+    ([_entry(cadence_days=True)], "positive integer"),
+    ([_entry(priority="Urgent")], "'priority' must be one of"),
+    ([_entry(), _entry(todo_fragment="Other")], "two entries with id"),
+    ([_entry(), _entry(id="b", todo_fragment="CHECK acme BOARD for new job postings")],
+     "two entries with todo_fragment"),
+    (["not an object"], "is not an object"),
+    ([{k: v for k, v in _entry().items() if k != "cadence_days"}], "missing 'cadence_days'"),
+])
+def test_registry_schema_rejects_each_malformed_shape(repo: Path, sources, needle):
+    (repo / "data" / "source-checks.json").write_text(json.dumps({"sources": sources}),
+                                                      encoding="utf-8")
+    with pytest.raises(sc.SourceCheckError, match=re.escape(needle)):
+        sc.load_registry(repo)
+
+
+def test_registry_without_priority_is_valid(repo: Path):
+    (repo / "data" / "source-checks.json").write_text(
+        json.dumps({"sources": [{k: v for k, v in _entry().items() if k != "priority"}]}),
+        encoding="utf-8")
+    assert sc.load_registry(repo)[0]["id"] == "acme"
+
+
+def test_registry_that_is_a_list_not_an_object_is_fatal(repo: Path):
+    (repo / "data" / "source-checks.json").write_text("[]", encoding="utf-8")
+    with pytest.raises(sc.SourceCheckError, match="no 'sources' list"):
+        sc.load_registry(repo)
+
+
+def test_source_check_has_no_todo_parser_of_its_own():
+    """Spec 3.4: one section-aware parser, todo_write's. No snapshot, no restore branch."""
+    src = (REPO / "tools" / "source_check.py").read_text(encoding="utf-8")
+    assert "from todo_write import active_rows" in src
+    for gone in ("def _active_rows", "write_text(before", '"done"', "rotate_todo(repo_root, src, today, note)"):
+        assert gone not in src, gone
+
+
+def test_standup_renders_a_retired_source_once():
+    """37.F7: a retired source has is_due=True, so the due loop must exclude it."""
+    text = (REPO / ".claude" / "skills" / "standup" / "SKILL.md").read_text(encoding="utf-8")
+    sec = text[text.index("### Job-Lead Sources"):text.index("### Inbox")]
+    assert "[For each source where `is_due` is true and `retired` is false:]" in sec
+    assert sec.index("where `retired` is true") < sec.index("where `is_due` is true")
+
+
+def test_a_retry_refuses_when_a_duplicate_live_row_exists(repo_with_writer: Path):
+    """Review 1 (Codex F1): the retry path returned before `rotate` could see 2 matches."""
+    repo = repo_with_writer
+    argv = ["--repo-root", str(repo), "mark", "acme", "--none", "--date", "2026-09-08"]
+    assert sc.main(argv) == 0
+    todos = repo / "data/job-todos.md"
+    lines = todos.read_text(encoding="utf-8").splitlines()
+    tagged = next(i for i, l in enumerate(lines) if "acme:2026-09-08:" in l and "| Pending |" in l)
+    # The duplicate goes AFTER the tagged row, so the retry-skip path (which reads the first
+    # match) is what runs; before it, `rotate` itself would refuse and hide a missing check.
+    lines.insert(tagged + 1, "| Check ACME board for new job postings | High | 2026-09-20 | Pending | dup |")
+    text = "\n".join(lines) + "\n"
+    todos.write_text(text, encoding="utf-8")
+    notes_before = (repo / "data/notes.md").read_text(encoding="utf-8")
+    assert sc.main(argv) == 2
+    assert todos.read_text(encoding="utf-8") == text
+    assert (repo / "data/notes.md").read_text(encoding="utf-8") == notes_before
+
+
+def test_live_pending_rows_returns_every_live_match():
+    two = TODOS.replace("| Unrelated task | Low | — | Pending | noise |",
+                        "| Check ACME board for new job postings | Low | — | Pending | dup |")
+    assert len(sc.live_pending_rows(two, "Check ACME")) == 2
+    assert len(sc.live_pending_rows(TODOS, "Check ACME")) == 1
+    assert sc.live_pending_rows(STRANDED, "Check ACME") == []
+
+
+@pytest.mark.parametrize("cell", ["—", "next week"])
+def test_a_row_with_a_blank_or_free_text_due_can_still_be_marked(repo_with_writer: Path, cell, capsys):
+    """Review 1 (Grok F3): compute_due calls such a row due, so mark must work on it."""
+    todos = repo_with_writer / "data/job-todos.md"
+    todos.write_text(TODOS.replace("| High | 2026-09-05 | Pending |", f"| High | {cell} | Pending |"),
+                     encoding="utf-8")
+    assert sc.main(["--repo-root", str(repo_with_writer), "mark", "acme", "--none",
+                    "--date", "2026-09-08"]) == 0
+    assert json.loads(capsys.readouterr().out)["rotated"] is True
+    row = sc.find_pending_row(todos.read_text(encoding="utf-8"), "Check ACME")
+    assert row[2] == "2026-09-11"
+
+
+def test_an_iso_due_is_sent_as_the_compare_and_swap(repo: Path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(sc, "_run_todo", lambda r, a: calls.append(a) or {"status": "ok"})
+    sc.rotate_todo(repo, REGISTRY["sources"][0], dt.date(2026, 9, 8), "acme:2026-09-08:abc")
+    assert calls[0][calls[0].index("--expect-due") + 1] == "2026-09-05"

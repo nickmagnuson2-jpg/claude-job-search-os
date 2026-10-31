@@ -135,3 +135,15 @@ def test_load_pipeline_companies_uses_the_shared_terminal_rule():
                         "| Decl | PM | Intro done - declined, no current fit | 2026-02-01 | — | — | — | — |",
                         "| Lower | PM | accepted | 2026-02-01 | — | — | — | — |")
     assert _rc.load_pipeline_companies(content) == ["Acme"]
+
+
+
+@pytest.mark.parametrize("note", ["Jordan Lee never replied", "haven't heard back from Jordan Lee",
+                                  "still waiting for Jordan Lee to respond"])
+def test_a_note_recording_no_reply_is_not_an_outreach_reply(tmp_path, note):
+    """Review 3.F2 (2026-10-30): the bare-word list routed these to outreach_reply, which
+    writes Replied. The shared reply_classify rule does not."""
+    _setup_networking(tmp_path)
+    result = run_script("remember_classify.py", "--note", note, "--repo-root", str(tmp_path))
+    assert "outreach_reply" not in _types(result)
+    assert "contact_note" in _types(result)

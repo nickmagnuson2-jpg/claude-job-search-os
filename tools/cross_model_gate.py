@@ -41,7 +41,7 @@ import re
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -253,6 +253,19 @@ AUTHOR_FAMILY = "anthropic"
 # Duplicated deliberately rather than imported from codex_verify.MODELS: that import
 # would be circular, since codex_verify imports this module. A parity test pins them.
 LEGACY_MODEL_FAMILIES = {"codex": "openai", "grok": "xai", "fable": "anthropic"}
+
+# TEMPORARY EXCEPTION, Nick 2026-10-30: Grok (xai) hit its provider usage limit, which resets
+# when the monthly cycle ends on 2026-11-12, and Nick chose not to buy more. Until then the
+# author family (Fable) may fill ONE of the slots a tier demands, but at least one family
+# OUTSIDE the author's is still required, so Fable alone never clears a push. Every push
+# that relies on it says so in the gate message. The date is the expiry: from 2026-11-13
+# the normal rule applies again with nothing to revert. Delete this block after that.
+FABLE_STANDIN_UNTIL = date(2026, 11, 12)
+
+
+def fable_standin_active(today: date | None = None) -> bool:
+    """True while the Grok-outage exception lets the author family fill one slot."""
+    return (today or date.today()) <= FABLE_STANDIN_UNTIL
 
 
 def models_required(tier: int) -> int:
@@ -655,6 +668,7 @@ def check(repo_root: Path, changes: list[tuple[str, int, int]],
     # from the same model are one perspective recorded twice, which is the anchoring
     # failure this gate exists to defeat, so they count once.
     need = max(1, v.need_models)
+    standin_used: list[str] = []
 
     def path_is_covered(pth: str) -> bool:
         """Enough distinct families, AND at least one from outside the author's.
@@ -674,7 +688,14 @@ def check(repo_root: Path, changes: list[tuple[str, int, int]],
         # is true at tier 1 and false at tier 2. Found by cross-model review (F2, P0,
         # 2026-09-16) on the same commit that wired the same-family model.
         outside = fams - {AUTHOR_FAMILY}
-        return len(outside) >= need
+        if len(outside) >= need:
+            return True
+        # Grok-outage exception (see FABLE_STANDIN_UNTIL): Fable fills one slot, never all.
+        if (fable_standin_active() and AUTHOR_FAMILY in fams and outside
+                and len(outside) + 1 >= need):
+            standin_used.append(pth)
+            return True
+        return False
 
     missing = sorted(p for p in required if not path_is_covered(p))
     # EVERY CHANGED PATH, not the trigger set. `required` is narrowed to the highest-tier
@@ -685,6 +706,9 @@ def check(repo_root: Path, changes: list[tuple[str, int, int]],
         v.blocked = False
         v.message = (f"cleared: all {len(required)} tier-{v.tier} path(s) covered by "
                      f"{need} independent model(s)")
+        if standin_used:
+            v.message += (f"; NOTE: {len(standin_used)} path(s) cleared with Fable standing in "
+                          f"for Grok (exception until {FABLE_STANDIN_UNTIL.isoformat()})")
         return v
 
     v.blocked = True

@@ -47,14 +47,11 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from slug import slugify as _slugify  # noqa: E402
 from pipe_read import parse_all_rows  # noqa: E402
+# Whether a note says a contact replied: the one rule, shared with networking_write and
+# day_check (review 3.F2, 2026-10-30: this file kept a third, bare-word copy).
+from reply_classify import is_reply  # noqa: E402
 
 # ── Keywords ──────────────────────────────────────────────────────────────────
-
-REPLY_KEYWORDS = [
-    "replied", "responded", "heard back from", "got back to me",
-    "wrote back", "responded to", "reached back", "got a reply",
-    "reply from",
-]
 
 DECISION_STATUS_KEYWORDS = [
     "decided", "stage", "withdrawn", "withdraw", "offer", "rejected",
@@ -280,7 +277,7 @@ def classify_note(
     matching_companies = find_matching_companies(note, pipeline_companies, dossier_slugs)
 
     # ── 1. Outreach reply ─────────────────────────────────────────────────
-    if matching_contacts and _contains_any(note, REPLY_KEYWORDS):
+    if matching_contacts and is_reply("note", note):
         for contact in matching_contacts:
             destinations.append({
                 "type":         "outreach_reply",

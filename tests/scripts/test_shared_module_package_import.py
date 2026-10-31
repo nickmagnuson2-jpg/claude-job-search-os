@@ -97,6 +97,7 @@ TOOLS = (
     "remember_classify",
     "scan_jobs",
     "scan_transcript_failures",
+    "source_check",
     "standup_collect",
     "todo_daily_metrics",
     "todo_write",

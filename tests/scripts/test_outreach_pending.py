@@ -482,3 +482,87 @@ def test_a_closed_thread_leaves_every_awaiting_list(tmp_path):
     ro = result["recent_outreach"]
     assert (ro["sent"], ro["closed"], ro["no_reply"], ro["replied"]) == (3, 2, 1, 0)
     assert ro["sanity_warnings"] == []
+
+
+# --- mutation pass 2026-10-30: outreach_pending survivors ----------------------------
+
+_OP_HEAD = ("| Date | Skill | Channel | Recipient | Company | Subject | Status |\n"
+            "|---|---|---|---|---|---|---|\n")
+
+
+def _op_log(*rows):
+    return _OP_HEAD + "".join(r + "\n" for r in rows)
+
+
+def test_parse_networking_interactions_ignores_entries_before_any_heading():
+    from datetime import date
+    text = "#### 2026-02-01 | email | orphan\n### Ann Example — Acme\n#### 2026-02-03 | email | x\n"
+    assert _op.parse_networking_interactions(text) == {
+        _op.reconcile_key("Ann Example", "Acme"): date(2026, 2, 3)}
+
+
+def test_parse_networking_interactions_skips_an_impossible_date():
+    text = "### Ann Example — Acme\n#### 2026-13-40 | email | bad\n"
+    assert _op.parse_networking_interactions(text) == {}
+
+
+def test_is_closed_stage_delegates_to_the_shared_classifier():
+    assert _op.is_closed_stage("Closed - rejected") is True
+    assert _op.is_closed_stage("Applied") is False
+
+
+def test_parse_outreach_log_works_without_the_optional_maps():
+    from datetime import date
+    out = _op.parse_outreach_log(_op_log("| 2026-02-01 | cold | email | Ann Example | Acme | Hi | Sent |"),
+                                 date(2026, 2, 28), 30, 7)
+    assert [e["name"] for e in out["awaiting_response_overdue"]] == ["Ann Example"]
+
+
+def test_rows_older_than_the_lookback_are_not_counted():
+    from datetime import date
+    out = _op.parse_outreach_log(_op_log(
+        "| 2026-01-01 | cold | email | Old Contact | Acme | Hi | Sent |",
+        "| 2026-02-20 | cold | email | New Contact | Beta | Hi | Sent |"), date(2026, 2, 28), 30, 7, {}, {})
+    assert out["recent_outreach"]["sent"] == 1
+    assert [e["name"] for e in out["awaiting_response_overdue"]] == ["New Contact"]
+
+
+def test_an_unknown_status_is_counted_sent_and_nothing_else():
+    from datetime import date
+    out = _op.parse_outreach_log(_op_log("| 2026-02-01 | cold | email | Ann Example | Acme | Hi | Bounced |"),
+                                 date(2026, 2, 28), 30, 7, {}, {})
+    assert out["recent_outreach"]["sent"] == 1 and out["recent_outreach"]["no_reply"] == 0
+    assert out["awaiting_response"] == [] and out["awaiting_response_overdue"] == []
+
+
+def test_no_reply_rows_split_by_threshold_and_sort_most_overdue_first():
+    from datetime import date
+    out = _op.parse_outreach_log(_op_log(
+        "| 2026-02-26 | cold | email | Fresh One | Acme | Hi | No reply |",
+        "| 2026-02-27 | cold | email | Fresh Two | Beta | Hi | No reply |",
+        "| 2026-02-25 | cold | email | Fresh Three | Gamma | Hi | No reply |",
+        "| 2026-02-10 | cold | email | Stale One | Delta | Hi | No reply |",
+        "| 2026-02-01 | cold | email | Stale Two | Echo | Hi | No reply |"), date(2026, 2, 28), 30, 7, {}, {})
+    assert [e["name"] for e in out["awaiting_response"]] == ["Fresh Three", "Fresh One", "Fresh Two"]
+    assert [e["name"] for e in out["awaiting_response_overdue"]] == ["Stale Two", "Stale One"]
+    assert out["recent_outreach"]["no_reply"] == 5
+
+
+def test_sent_rows_under_the_threshold_are_not_overdue_and_overdue_sorts_most_first():
+    from datetime import date
+    out = _op.parse_outreach_log(_op_log(
+        "| 2026-02-27 | cold | email | Fresh One | Acme | Hi | Sent |",
+        "| 2026-02-10 | cold | email | Stale One | Beta | Hi | Sent |",
+        "| 2026-02-01 | cold | email | Stale Two | Gamma | Hi | Sent |",
+        "| 2026-02-15 | cold | email | Stale Three | Delta | Hi | Sent |"), date(2026, 2, 28), 30, 7, {}, {})
+    assert [e["name"] for e in out["awaiting_response_overdue"]] == ["Stale Two", "Stale One", "Stale Three"]
+    assert out["awaiting_response"] == []
+
+
+def test_a_row_with_an_impossible_date_is_skipped_not_given_the_previous_date():
+    from datetime import date
+    out = _op.parse_outreach_log(_op_log(
+        "| 2026-02-20 | cold | email | Ann Example | Acme | Hi | Sent |",
+        "| 2026-13-40 | cold | email | Bad Date | Beta | Hi | Sent |"), date(2026, 2, 28), 30, 7, {}, {})
+    assert out["recent_outreach"]["sent"] == 1
+    assert [e["name"] for e in out["awaiting_response_overdue"]] == ["Ann Example"]

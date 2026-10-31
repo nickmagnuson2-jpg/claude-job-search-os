@@ -18,6 +18,14 @@ Commands:
                                          No marker when the edit only INSERTED text
                                          (subsequence test), since nothing was lost.
   done <task_fragment>                 — move matching row to Completed (a completion)
+  rotate <task_fragment> --due D       — close a RECURRING Active row and recreate it with
+         [--priority P] [--notes N]      Due D, in ONE write, reported ok only after the
+         [--expect-due D] [--op-id ID]   re-read file proves it (exactly one live row, the
+         [--closed-on D]                 new Due, the op-id marker, Completed +1). Matches
+                                         ## Active only and refuses 0 or 2+ matches.
+                                         --expect-due aborts if the row's Due changed since
+                                         the caller read it. Use it, never `done`, for a
+                                         recurring row: `done` alone retires it.
   withdraw <task_fragment>             — mark matching row Withdrawn, not Done (NOT a completion;
                                          also corrects a row already mis-marked Completed)
   clear                                — move Done/Withdrawn rows to Completed
@@ -63,6 +71,7 @@ Usage:
 import json
 import re
 import sys
+import uuid
 from datetime import date
 from pathlib import Path
 
@@ -407,6 +416,36 @@ def cmd_add(args: list[str], todos_path: Path) -> None:
     print(json.dumps(result, ensure_ascii=False))
 
 
+REGISTRY_FILE = "data/source-checks.json"
+_ROTATION_MARKER = re.compile(r"\[[\w.-]+:\d{4}-\d{2}-\d{2}:[0-9a-f]+\]")
+
+
+def recurring_reason(task: str, notes: str, repo_root: Path) -> str:
+    """Why this row is a recurring row, or "" if it is not one.
+
+    Spec 090826 section 6, option (a), Nick 2026-10-30: `done` refuses a recurring row,
+    because closing one without its successor silently retires a lead source. Two
+    signals, either is enough:
+      - the task matches a `todo_fragment` in data/source-checks.json (the registry
+        source_check.py rotates from); a missing or unreadable registry adds nothing;
+      - the Notes carry a rotation marker `[<id>:<YYYY-MM-DD>:<hex>]`, which only
+        `rotate` writes.
+    """
+    if _ROTATION_MARKER.search(notes or ""):
+        return "its Notes carry a rotation marker"
+    try:
+        sources = json.loads((repo_root / REGISTRY_FILE).read_text(encoding="utf-8"))["sources"]
+        fragments = [s["todo_fragment"] for s in sources
+                     if isinstance(s, dict) and isinstance(s.get("todo_fragment"), str)]
+    except (OSError, ValueError, KeyError, TypeError):
+        fragments = []  # no usable registry adds nothing
+    # One return for both outcomes: "" (not recurring) is the next() default, so no
+    # separate `return ""` exists whose None-vs-"" difference callers cannot see.
+    return next((f"it matches the registered source fragment {frag!r} in {REGISTRY_FILE}"
+                 for frag in fragments
+                 if frag.strip() and frag.strip().lower() in task.lower()), "")
+
+
 def cmd_done(args: list[str], todos_path: Path) -> None:
     """Move a matching Active row to Completed."""
     if not args:
@@ -472,6 +511,14 @@ def cmd_done(args: list[str], todos_path: Path) -> None:
     # Join extra cols back in case notes contained a pipe character
     notes = " | ".join(cols[4:]) if len(cols) > 4 else "—"
 
+    why = recurring_reason(task, notes, todos_path.parent.parent)
+    if why:
+        out_error(f"Refusing to close a recurring row with `done`: {task!r} ({why}). Closing it "
+                  f"without its successor silently retires a lead source. Use "
+                  f"`source_check.py mark <id>` or `todo_write.py rotate <fragment> --due "
+                  f"YYYY-MM-DD`. To retire it on purpose, remove it from {REGISTRY_FILE}, or "
+                  f"`withdraw` it.", reason="recurring_row", task=task)
+
     suffix = f"Completed {today_str}"
     completed_notes = suffix if notes in ("—", "") else f"{suffix} | {notes}"
 
@@ -497,6 +544,158 @@ def _find_in_section(lines: list[str], start: int, end: int, fragment: str) -> l
     return matches
 
 
+def active_rows(lines: list[str]) -> list[tuple[int, list[str]]]:
+    """[(line_index, cols)] for every data row under ## Active, and nowhere else.
+
+    The one section-aware reader for "is this row live". source_check.py imports it
+    instead of scanning the whole file (finding 37.F1: a Pending row stranded under
+    ## Completed read as live, so a retired lead source was reported as fine).
+    """
+    start, end = find_section(lines, "## Active")
+    # No guard for a missing section: find_section returns (-1, -1), and range(-1, -1) is empty.
+    return [(i, parse_cols(lines[i])) for i in range(start, end) if is_data_row(lines[i])]
+
+
+ROTATE_FLAGS = {"--due", "--priority", "--notes", "--expect-due", "--op-id", "--closed-on"}
+_ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _parse_rotate_flags(args: list[str]) -> tuple[str, dict[str, str]]:
+    fragment, flags, i = None, {}, 0
+    while i < len(args):
+        a = args[i]
+        if a in ROTATE_FLAGS:
+            if i + 1 >= len(args):
+                out_error(f"{a} needs a value")
+            flags[a] = args[i + 1]
+            i += 2
+            continue
+        if fragment is not None:
+            out_error(f"rotate takes one task fragment; got a second: {a!r}")
+        fragment = a
+        i += 1
+    if not fragment:
+        out_error("Usage: rotate <task_fragment> --due YYYY-MM-DD [--priority P] [--notes N] "
+                  "[--expect-due YYYY-MM-DD] [--op-id ID] [--closed-on YYYY-MM-DD]")
+    for key in ("--due", "--expect-due", "--closed-on"):
+        if key in flags:
+            if not _ISO_DATE.match(flags[key]):
+                out_error(f"{key} must be YYYY-MM-DD, got {flags[key]!r}")
+            try:
+                date.fromisoformat(flags[key])
+            except ValueError:
+                out_error(f"{key} is not a real calendar date: {flags[key]!r}")
+    if "--due" not in flags:
+        out_error("rotate needs --due YYYY-MM-DD (the recreated row's due date)")
+    if "--op-id" in flags and not re.fullmatch(r"[\w:.-]+", flags["--op-id"]):
+        out_error(f"--op-id may hold only letters, digits and : . _ -, got {flags['--op-id']!r}")
+    if "--priority" in flags and flags["--priority"] not in ("High", "Med", "Low"):
+        out_error(f"--priority must be High, Med or Low, got {flags['--priority']!r}")
+    return fragment, flags
+
+
+def verify_rotation(before: list[str], after: list[str], task: str, due: str,
+                    op_id: str, closed_on: str) -> list[str]:
+    """Every way the post-state can fail to be a rotation. Empty list = rotated.
+
+    Built to FAIL on a no-op (finding 37.F4: the old check accepted any Pending row,
+    which the pre-existing row satisfies). Conditions 2, 3 and 4 each tell "rotated"
+    from "nothing happened" on their own; three are kept on purpose so the check
+    cannot quietly decay into a tautology.
+    """
+    problems = []
+    live = [c for _, c in active_rows(after)
+            if c and c[0] == task and len(c) > 3 and c[3].strip() == "Pending"]
+    if len(live) != 1:
+        problems.append(f"expected exactly 1 live Pending row for the task, found {len(live)}")
+    else:
+        row = live[0]
+        if row[2].strip() != due:
+            problems.append(f"live row's Due is {row[2].strip()!r}, not {due!r}")
+        if op_id not in " | ".join(row[4:]):
+            problems.append("live row's Notes do not carry the rotation marker")
+
+    def closed(lines):
+        s, e = find_section(lines, "## Completed")
+        if s == -1:
+            return 0
+        return sum(1 for i in range(s, e) if is_data_row(lines[i])
+                   and (lambda c: c and c[0] == task and len(c) > 2 and c[2].strip() == closed_on)(
+                       parse_cols(lines[i])))
+    if closed(after) != closed(before) + 1:
+        problems.append(f"## Completed did not gain exactly one row for the task on {closed_on}")
+    # A missing section counts as 0 rows: rotate creates ## Completed when the file has none
+    # (found 2026-10-30; before, -1 for "missing" made a correct rotation fail this check).
+    ba, bc = (max(n, 0) for n in writer_section_counts(before))
+    aa, ac = (max(n, 0) for n in writer_section_counts(after))
+    if (aa, ac) != (ba, bc + 1):
+        problems.append(f"section counts went ({ba}, {bc}) -> ({aa}, {ac}); expected ({ba}, {bc + 1})")
+    return problems
+
+
+def cmd_rotate(args: list[str], todos_path: Path) -> None:
+    """Close a recurring Active row and recreate it, in ONE verified write.
+
+    Exists so "close a recurring row without its successor" cannot be committed: there
+    is one write, and it is reported ok only after the re-read file passes
+    verify_rotation(). Spec: output/analysis/090826-source-check-upstream-rotate-spec.md.
+    """
+    fragment, flags = _parse_rotate_flags(args)
+    due = flags["--due"]
+    closed_on = flags.get("--closed-on") or date.today().strftime("%Y-%m-%d")
+    op_id = flags.get("--op-id") or f"rotate:{closed_on}:{uuid.uuid4().hex[:6]}"
+    refuse_wrong_weekdays(flags.get("--notes", ""))
+
+    content, lines = load_todos(todos_path)
+    if find_section(lines, "## Active")[0] == -1:
+        out_error("Could not find ## Active section in job-todos.md")
+    frag = fragment.lower()
+    # Live means Pending or In Progress: a Done/Withdrawn row still sitting in ## Active
+    # (not yet cleared) is not a recurring check to rotate (review 6.F1).
+    matches = [(i, c) for i, c in active_rows(lines) if c and c[0] and frag in c[0].lower()
+               and len(c) > 3 and c[3].strip().lower() in MISFILED_STATUSES]
+    if not matches:
+        stranded = [c[0] for _, c in find_misfiled(lines) if c and c[0] and frag in c[0].lower()]
+        extra = (f" A Pending row matching it sits under ## Completed ({stranded[0]!r}); that row "
+                 f"is not live. Run `todo_write.py audit`." if stranded else "")
+        out_error(f"No live row: nothing under ## Active matches {fragment!r}.{extra}",
+                  reason="no_live_row")
+    if len(matches) > 1:
+        out_error(f"{len(matches)} Active rows match {fragment!r}; refusing to guess: "
+                  + "; ".join(c[0] for _, c in matches), reason="ambiguous",
+                  matches=[c[0] for _, c in matches])
+    row_idx, cols = matches[0]
+    task = cols[0]
+    old_priority = cols[1] if len(cols) > 1 else "Med"
+    old_due = cols[2].strip() if len(cols) > 2 else ""
+    old_notes = " | ".join(cols[4:]) if len(cols) > 4 else "—"
+    if "--expect-due" in flags and old_due != flags["--expect-due"]:
+        out_error(f"The live row's Due is {old_due!r}, not the expected {flags['--expect-due']!r}; "
+                  f"something changed it since it was read. Nothing written.",
+                  reason="expect_due_mismatch")
+
+    before = list(lines)
+    suffix = f"Completed {closed_on} (rotated, {op_id})"
+    lines.pop(row_idx)
+    insert_into_completed(lines, fmt_completed(
+        task, old_priority, closed_on, suffix if old_notes in ("—", "") else f"{suffix} | {old_notes}"))
+    new_notes = flags.get("--notes") or old_notes
+    new_notes = f"[{op_id}] {new_notes}" if new_notes not in ("—", "") else f"[{op_id}]"
+    act_s, act_e = find_section(lines, "## Active")
+    lines.insert(table_insert_pos(lines, act_s, act_e, is_data_row),
+                 fmt_active(task, flags.get("--priority", old_priority), due, "Pending", new_notes))
+    save_lines(todos_path, lines, content)
+
+    _, written = load_todos(todos_path)
+    problems = verify_rotation(before, written, task, due, op_id, closed_on)
+    if problems:
+        write_atomic(todos_path, content)
+        out_error("Rotation did not verify, so the file was restored: " + "; ".join(problems),
+                  reason="rotate_unverified", problems=problems)
+    out_ok("rotate", f"Rotated: {task} (next due {due})", task=task, closed_on=closed_on,
+           new_due=due, op_id=op_id)
+
+
 def cmd_withdraw(args: list[str], todos_path: Path) -> None:
     """Mark a matching todo Withdrawn (NOT Done) so it never counts as a completion.
 
@@ -514,73 +713,73 @@ def cmd_withdraw(args: list[str], todos_path: Path) -> None:
 
     # 1) Active section: move the row out, marked Withdrawn.
     act_start, act_end = find_section(lines, "## Active")
-    if act_start != -1:
-        matches = _find_in_section(lines, act_start, act_end, fragment)
-        if len(matches) > 1:
-            opts = "\n".join(f"  - {c[0]}" for _, c in matches)
-            out_error(f"Multiple matches — be more specific:\n{opts}")
-        if len(matches) == 1:
-            row_idx, cols = matches[0]
-            task = cols[0]
-            priority = cols[1] if len(cols) > 1 else "Med"
-            notes = " | ".join(cols[4:]) if len(cols) > 4 else "—"
-            lines.pop(row_idx)
-            insert_into_completed(lines, fmt_completed(task, priority, f"Withdrawn {today_str}", notes))
-            save_lines(todos_path, lines, content)
-            out_ok("withdrawn", f"Withdrawn: {task}", task=task)
-            return
+    # A missing ## Active needs no guard: find_section returns (-1, -1), so the search is empty.
+    matches = _find_in_section(lines, act_start, act_end, fragment)
+    if len(matches) > 1:
+        opts = "\n".join(f"  - {c[0]}" for _, c in matches)
+        out_error(f"Multiple matches — be more specific:\n{opts}")
+    if len(matches) == 1:
+        row_idx, cols = matches[0]
+        task = cols[0]
+        priority = cols[1] if len(cols) > 1 else "Med"
+        notes = " | ".join(cols[4:]) if len(cols) > 4 else "—"
+        lines.pop(row_idx)
+        insert_into_completed(lines, fmt_completed(task, priority, f"Withdrawn {today_str}", notes))
+        save_lines(todos_path, lines, content)
+        out_ok("withdrawn", f"Withdrawn: {task}", task=task)
+        return
 
     # 2) Completed section: correct an already-archived row to Withdrawn.
     comp_start, comp_end = find_section(lines, "## Completed")
-    if comp_start != -1:
-        matches = _find_in_section(lines, comp_start, comp_end, fragment)
-        if len(matches) > 1:
-            # Among Completed matches these are NOT equally plausible targets: a
-            # MISFILED row (status still Pending) is the only un-finished one, so it
-            # is uniquely identifiable and is what the caller meant. Narrow to it.
-            # Deliberately narrow -- two misfiled rows remain genuinely ambiguous.
-            # Origin 2026-08-17: repairing the live file created exactly this state (a
-            # recovered duplicate beside the stranded original) and withdraw deadlocked.
-            misfiled_matches = [(i, c) for i, c in matches if is_misfiled_row(c)]
-            if len(misfiled_matches) == 1:
-                matches = misfiled_matches
-            else:
-                opts = "\n".join(f"  - {c[0]}" for _, c in matches)
-                out_error(f"Multiple matches — be more specific:\n{opts}")
-        if len(matches) == 1:
-            row_idx, cols = matches[0]
-            task = cols[0]
-            priority = cols[1] if len(cols) > 1 else "Med"
-            completed_cell = cols[2] if len(cols) > 2 else ""
-            notes = cols[3] if len(cols) > 3 else "—"
-            # A MISFILED row's status word sits in the position this schema reads as
-            # `notes`, so scrub it or the repaired row ends up saying "Pending" forever.
-            # Caught on REAL data 2026-08-17 after the fixture suite passed: withdraw
-            # only ever stripped a leading "Completed <date>" marker.
-            stranded_status = notes.strip().lower() in MISFILED_STATUSES
-            if "withdrawn" in completed_cell.lower() or "withdrawn" in notes.lower():
-                if not stranded_status:
-                    out_ok("withdrawn", f"Already withdrawn: {task}", task=task, changed=False)
-                    return
-                # Already withdrawn but carrying the residue of a pre-fix repair: scrub
-                # it in place rather than leaving a permanently confusing row.
-                lines[row_idx] = fmt_completed(task, priority, completed_cell,
-                                               "— | was misfiled, status residue scrubbed 2026-08-17")
-                save_lines(todos_path, lines, content)
-                out_ok("withdrawn", f"Scrubbed stranded status on: {task}",
-                       task=task, changed=True, scrubbed_status_residue=True)
+    # A missing ## Completed needs no guard: find_section returns (-1, -1), so the search is empty.
+    matches = _find_in_section(lines, comp_start, comp_end, fragment)
+    if len(matches) > 1:
+        # Among Completed matches these are NOT equally plausible targets: a
+        # MISFILED row (status still Pending) is the only un-finished one, so it
+        # is uniquely identifiable and is what the caller meant. Narrow to it.
+        # Deliberately narrow -- two misfiled rows remain genuinely ambiguous.
+        # Origin 2026-08-17: repairing the live file created exactly this state (a
+        # recovered duplicate beside the stranded original) and withdraw deadlocked.
+        misfiled_matches = [(i, c) for i, c in matches if is_misfiled_row(c)]
+        if len(misfiled_matches) == 1:
+            matches = misfiled_matches
+        else:
+            opts = "\n".join(f"  - {c[0]}" for _, c in matches)
+            out_error(f"Multiple matches — be more specific:\n{opts}")
+    if len(matches) == 1:
+        row_idx, cols = matches[0]
+        task = cols[0]
+        priority = cols[1] if len(cols) > 1 else "Med"
+        completed_cell = cols[2] if len(cols) > 2 else ""
+        notes = cols[3] if len(cols) > 3 else "—"
+        # A MISFILED row's status word sits in the position this schema reads as
+        # `notes`, so scrub it or the repaired row ends up saying "Pending" forever.
+        # Caught on REAL data 2026-08-17 after the fixture suite passed: withdraw
+        # only ever stripped a leading "Completed <date>" marker.
+        stranded_status = notes.strip().lower() in MISFILED_STATUSES
+        if "withdrawn" in completed_cell.lower() or "withdrawn" in notes.lower():
+            if not stranded_status:
+                out_ok("withdrawn", f"Already withdrawn: {task}", task=task, changed=False)
                 return
-            # Preserve the original date if present, else use today.
-            m = re.search(r"\d{4}-\d{2}-\d{2}", f"{completed_cell} {notes}")
-            date_token = m.group(0) if m else today_str
-            # Strip a leading "Completed <date>" marker from notes so no completion marker remains.
-            clean_notes = re.sub(r"^Completed\s+\d{4}-\d{2}-\d{2}\s*\|?\s*", "", notes).strip() or "—"
-            if stranded_status:
-                clean_notes = "— | was misfiled under ## Completed, repaired 2026-08-17"
-            lines[row_idx] = fmt_completed(task, priority, f"Withdrawn {date_token}", clean_notes)
+            # Already withdrawn but carrying the residue of a pre-fix repair: scrub
+            # it in place rather than leaving a permanently confusing row.
+            lines[row_idx] = fmt_completed(task, priority, completed_cell,
+                                           "— | was misfiled, status residue scrubbed 2026-08-17")
             save_lines(todos_path, lines, content)
-            out_ok("withdrawn", f"Corrected to Withdrawn: {task}", task=task, changed=True)
+            out_ok("withdrawn", f"Scrubbed stranded status on: {task}",
+                   task=task, changed=True, scrubbed_status_residue=True)
             return
+        # Preserve the original date if present, else use today.
+        m = re.search(r"\d{4}-\d{2}-\d{2}", f"{completed_cell} {notes}")
+        date_token = m.group(0) if m else today_str
+        # Strip a leading "Completed <date>" marker from notes so no completion marker remains.
+        clean_notes = re.sub(r"^Completed\s+\d{4}-\d{2}-\d{2}\s*\|?\s*", "", notes).strip() or "—"
+        if stranded_status:
+            clean_notes = "— | was misfiled under ## Completed, repaired 2026-08-17"
+        lines[row_idx] = fmt_completed(task, priority, f"Withdrawn {date_token}", clean_notes)
+        save_lines(todos_path, lines, content)
+        out_ok("withdrawn", f"Corrected to Withdrawn: {task}", task=task, changed=True)
+        return
 
     out_error(f"No task found matching: {args[0]}")
 
@@ -608,9 +807,8 @@ def is_insertion_only(old: str, new: str) -> bool:
     Deletions, truncations and replacements all break the ordering and correctly
     still record. "Ship the widget" -> "Ship the thing" is NOT insertion-only: after
     "Ship the " there is no `w` left to match.
+    An empty `old` needs no special case: all() over no characters is True.
     """
-    if not old:
-        return True
     it = iter(new)
     return all(ch in it for ch in old)
 
@@ -914,11 +1112,7 @@ def is_distinctive_company(name: str, dictionary: set[str]) -> bool:
     one manual withdrawal while a false candidate costs a live todo.
     """
     tokens = [t for t in re.split(r"[^A-Za-z0-9.]+", name) if t]
-    if not tokens:
-        return False
-    if len(tokens) > 1:
-        return True
-    return is_distinctive_single(tokens[0], dictionary)
+    return len(tokens) > 1 or (len(tokens) == 1 and is_distinctive_single(tokens[0], dictionary))
 
 
 def cmd_sync(todos_path: Path, pipeline_path: Path, apply: bool = False) -> None:
@@ -1034,8 +1228,6 @@ def cmd_sync(todos_path: Path, pipeline_path: Path, apply: bool = False) -> None
         if not is_data_row(lines[i]):
             continue
         cols = parse_cols(lines[i])
-        if not cols:
-            continue
         # Skip rows already marked terminal
         if len(cols) >= 4 and is_closed_todo_status(cols[3]):
             continue
@@ -1093,7 +1285,7 @@ def cmd_sync(todos_path: Path, pipeline_path: Path, apply: bool = False) -> None
 
     n = len(to_withdraw)
     companies = list(dict.fromkeys(c for _, _, c, _ in to_withdraw))  # deduped, ordered
-    out_ok("sync", f"{n} to-do(s) auto-withdrawn — {'; '.join(set(notices))}",
+    out_ok("sync", f"{n} to-do(s) auto-withdrawn — {'; '.join(dict.fromkeys(notices))}",
            withdrawn=n, companies=companies)
 
 
@@ -1120,46 +1312,46 @@ def cmd_list(args: list[str], todos_path: Path) -> None:
     content, lines = load_todos(todos_path)
     entries: list[dict] = []
 
+    # No guard on a missing section: find_section returns (-1, -1) and range(-1, -1)
+    # is empty, so an absent ## Active or ## Completed simply contributes no entries.
     act_start, act_end = find_section(lines, "## Active")
-    if act_start != -1:
-        for i in range(act_start, act_end):
-            if not is_data_row(lines[i]):
-                continue
-            cols = parse_cols(lines[i])
-            # Filter separator-row noise (project convention: e.get("task") != "---").
-            if not cols or not cols[0] or cols[0] == "---":
-                continue
-            entries.append({
-                "section": "Active",
-                "task": cols[0],
-                "priority": cols[1] if len(cols) > 1 else "",
-                "due": cols[2] if len(cols) > 2 else "",
-                "status": cols[3] if len(cols) > 3 else "",
-                "notes": " | ".join(cols[4:]) if len(cols) > 4 else "—",
-            })
+    for i in range(act_start, act_end):
+        if not is_data_row(lines[i]):
+            continue
+        cols = parse_cols(lines[i])
+        # Filter separator-row noise (project convention: e.get("task") != "---").
+        if not cols or not cols[0] or cols[0] == "---":
+            continue
+        entries.append({
+            "section": "Active",
+            "task": cols[0],
+            "priority": cols[1] if len(cols) > 1 else "",
+            "due": cols[2] if len(cols) > 2 else "",
+            "status": cols[3] if len(cols) > 3 else "",
+            "notes": " | ".join(cols[4:]) if len(cols) > 4 else "—",
+        })
 
     comp_start, comp_end = find_section(lines, "## Completed")
-    if comp_start != -1:
-        for i in range(comp_start, comp_end):
-            if not is_data_row(lines[i]):
-                continue
-            cols = parse_cols(lines[i])
-            if not cols or not cols[0] or cols[0] == "---":
-                continue
-            completed = cols[2] if len(cols) > 2 else ""
-            status = "Withdrawn" if completed.lower().startswith("withdrawn") else "Done"
-            # Some Completed rows have drifted to 5 columns (a stray Active-shaped row
-            # migrated without reflow) — join everything past col 3 so trailing notes
-            # text a --grep filter relies on isn't silently dropped.
-            notes = " | ".join(cols[3:]) if len(cols) > 3 else "—"
-            entries.append({
-                "section": "Completed",
-                "task": cols[0],
-                "priority": cols[1] if len(cols) > 1 else "",
-                "due": completed,
-                "status": status,
-                "notes": notes,
-            })
+    for i in range(comp_start, comp_end):
+        if not is_data_row(lines[i]):
+            continue
+        cols = parse_cols(lines[i])
+        if not cols or not cols[0] or cols[0] == "---":
+            continue
+        completed = cols[2] if len(cols) > 2 else ""
+        status = "Withdrawn" if completed.lower().startswith("withdrawn") else "Done"
+        # Some Completed rows have drifted to 5 columns (a stray Active-shaped row
+        # migrated without reflow) — join everything past col 3 so trailing notes
+        # text a --grep filter relies on isn't silently dropped.
+        notes = " | ".join(cols[3:]) if len(cols) > 3 else "—"
+        entries.append({
+            "section": "Completed",
+            "task": cols[0],
+            "priority": cols[1] if len(cols) > 1 else "",
+            "due": completed,
+            "status": status,
+            "notes": notes,
+        })
 
     if status_filter:
         entries = [e for e in entries if e["status"].lower() == status_filter.lower()]
@@ -1191,9 +1383,11 @@ def cmd_audit(todos_path: Path) -> None:
         {
             "line": i + 1,
             "task": cols[0],
-            "priority": cols[1] if len(cols) > 1 else "",
-            "due": cols[2] if len(cols) > 2 else "",
-            "status": cols[3] if len(cols) > 3 else "",
+            # find_misfiled() only returns rows is_misfiled_row() accepted, which
+            # requires at least 4 columns, so these indexes always exist.
+            "priority": cols[1],
+            "due": cols[2],
+            "status": cols[3],
         }
         for i, cols in misfiled
     ]
@@ -1202,6 +1396,19 @@ def cmd_audit(todos_path: Path) -> None:
         if rows else "No misfiled rows — every row's section agrees with its status"
     )
     out_ok("audit", summary, misfiled_count=len(rows), misfiled=rows)
+
+
+# The subcommands that take real --flags, and which. Every other subcommand is
+# positional-only. tools/check_todo_write_kwargs.py (a Bash guard) keeps its own copy of
+# the keys, because a hook must not import this module; test_check_todo_write_kwargs pins
+# the two together so a new flag-taking subcommand cannot be blocked by a stale guard
+# (review 4.F1, 2026-10-30: `rotate` was).
+SUBCOMMAND_FLAGS = {
+    "list": {"--status", "--grep"},
+    "sync": {"--apply"},
+    "update": set(UPDATE_FIELD_FLAGS),
+    "rotate": set(ROTATE_FLAGS),
+}
 
 
 def main() -> None:
@@ -1219,7 +1426,7 @@ def main() -> None:
             i += 1
 
     if not filtered:
-        out_error("Usage: todo_write.py <add|update|done|withdraw|supersede|clear|sync|list> [args...]")
+        out_error("Usage: todo_write.py <add|update|done|rotate|withdraw|supersede|clear|sync|list> [args...]")
 
     cmd = filtered[0].lower()
     extra_args = filtered[1:]
@@ -1237,14 +1444,7 @@ def main() -> None:
     # `update` is partial-field by design: naming the field is the whole point, and a
     # positional form would need sentinel placeholders for every column you are NOT
     # changing, which reintroduces exactly the retyping this verb exists to delete.
-    if cmd == "list":
-        allowed_flags = {"--status", "--grep"}
-    elif cmd == "sync":
-        allowed_flags = {"--apply"}
-    elif cmd == "update":
-        allowed_flags = set(UPDATE_FIELD_FLAGS)
-    else:
-        allowed_flags = set()
+    allowed_flags = SUBCOMMAND_FLAGS.get(cmd, set())
     unknown_flags = [
         a for a in filtered if a.startswith("--") and len(a) > 2 and a not in allowed_flags
     ]
@@ -1255,7 +1455,7 @@ def main() -> None:
             "(except `list`, which takes --status/--grep). "
             "Usage: add <task> [priority] [due] [notes]  |  "
             "update <fragment> [--task|--priority|--due|--notes|--notes-append|--notes-prepend] X  |  "
-            "done <fragment>  |  withdraw <fragment>  |  supersede <prefix>  |  clear  |  sync  |  "
+            "done <fragment>  |  rotate <fragment> --due D [...]  |  withdraw <fragment>  |  supersede <prefix>  |  clear  |  sync  |  "
             "list [--status <Status>] [--grep <substring>]  |  audit  |  --repo-root <path> (anywhere)"
         )
 
@@ -1266,6 +1466,8 @@ def main() -> None:
         cmd_add(extra_args, todos_path)
     elif cmd == "done":
         cmd_done(extra_args, todos_path)
+    elif cmd == "rotate":
+        cmd_rotate(extra_args, todos_path)
     elif cmd == "withdraw":
         cmd_withdraw(extra_args, todos_path)
     elif cmd == "update":
@@ -1281,7 +1483,7 @@ def main() -> None:
     elif cmd == "audit":
         cmd_audit(todos_path)
     else:
-        out_error(f"Unknown command: {cmd}. Use: add, update, done, withdraw, supersede, clear, sync, list, audit")
+        out_error(f"Unknown command: {cmd}. Use: add, update, done, rotate, withdraw, supersede, clear, sync, list, audit")
 
 
 if __name__ == "__main__":

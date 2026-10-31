@@ -83,7 +83,23 @@ KWARG = re.compile(r"--(task|priority|due|notes)\b")
 # the word "update" elsewhere in the command line cannot unlock the guard.
 # [[feedback_command_hook_match_position_not_substring]] — the blind spot this whole
 # hook family keeps re-learning.
-FLAG_TAKING_SUBCOMMANDS = {"update", "list", "sync"}
+# `rotate` (2026-10-30, review 4.F1, Nick approved the edit): closes a recurring row and
+# recreates it in one write; its --due/--priority/--notes describe the successor row.
+# The set must equal the keys of todo_write.SUBCOMMAND_FLAGS (pinned by
+# test_the_exemption_list_matches_the_tools_real_flag_taking_subcommands).
+FLAG_TAKING_SUBCOMMANDS = {"update", "list", "sync", "rotate"}
+
+# Which guarded flag WORDS each subcommand really takes (review round 3, 2026-10-30:
+# exempting a whole subcommand let `rotate --task` through, and `list`/`sync` take none of
+# them). The whole argument word is compared, not the name KWARG extracts: the tool takes
+# `--due D`, never `--due=D`, and `rotate` takes `--notes` but not `--notes-append`
+# (final branch review 2026-10-30, P0; Nick approved the edit). Any word KWARG matches
+# that is not listed for its subcommand is blocked. Pinned to todo_write.SUBCOMMAND_FLAGS
+# by test_allowed_kwargs_are_exactly_the_tools_guarded_flags.
+ALLOWED_KWARGS = {
+    "update": {"--task", "--priority", "--due", "--notes", "--notes-append", "--notes-prepend"},
+    "rotate": {"--priority", "--due", "--notes"},
+}
 
 
 def subcommand_of(tail) -> str:
@@ -125,11 +141,11 @@ def find_violation(command: str):
         args = todo_write_args(cmd.words)
         if args is not None:
             sub = subcommand_of(args)
-            if sub not in FLAG_TAKING_SUBCOMMANDS:
-                for arg in args:
-                    m = KWARG.match(arg)
-                    if m:
-                        return sub, m.group(1)
+            allowed = ALLOWED_KWARGS.get(sub, set())
+            for arg in args:
+                m = KWARG.match(arg)
+                if m and arg not in allowed:
+                    return sub, m.group(1)
         for inner in cmd.subs:          # `$(...)` and backticks run too
             found = find_violation(inner)
             if found:
@@ -147,6 +163,9 @@ USAGE_REMINDER = (
     "\n"
     "Other subcommands:\n"
     "  python3 tools/todo_write.py done <fragment>      # fuzzy substring match (a completion)\n"
+    "  python3 tools/todo_write.py rotate <fragment> --due YYYY-MM-DD\n"
+    "                                                   # a RECURRING row: close and recreate\n"
+    "                                                   # in one write. Never `done` it.\n"
     "  python3 tools/todo_write.py withdraw <fragment>  # mark Withdrawn, not a completion\n"
     "  python3 tools/todo_write.py clear                # archive completed\n"
     "  python3 tools/todo_write.py sync                 # rebuild from data files\n"
@@ -155,7 +174,7 @@ USAGE_REMINDER = (
     "                                                   # edit ONE field in place;\n"
     "                                                   # `update` DOES take these flags\n"
     "\n"
-    "The --repo-root flag IS accepted (positional anywhere), and `update`/`list`/`sync`\n"
+    "The --repo-root flag IS accepted (positional anywhere), and `update`/`list`/`sync`/`rotate`\n"
     "take real flags. --task / --priority / --due / --notes trigger this on every other\n"
     "subcommand (`add`, `done`, `withdraw`, ...), judged per command in a chained call.\n"
 )
@@ -181,7 +200,7 @@ def main() -> None:
     where = f"`{sub}`" if sub else "no subcommand before the flag"
     print(
         f"BLOCKED: todo_write.py invoked with --{flag} (kwarg) on {where}. "
-        "Argparse will reject this.\n"
+        "todo_write.py will reject it as an unknown flag.\n"
         "\n"
         + USAGE_REMINDER
         + "\n"

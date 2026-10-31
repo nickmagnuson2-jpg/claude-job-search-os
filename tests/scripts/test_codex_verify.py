@@ -1875,3 +1875,27 @@ def test_diff_base_picks_the_nearest_default_branch(tmp_path):
     (repo / "a.py").write_text("feature\n")
     git("commit", "-qam", "work on the branch")
     assert cv.diff_base(repo) == new
+
+
+def test_diff_base_prefers_the_upstream_over_origin_main(tmp_path):
+    """A branch's upstream is where its unpushed work starts; origin/main is only the
+    fallback. Mutation 2026-10-29: skipping the upstream branch of diff_base survived,
+    because no test gave a branch an upstream that differs from origin/main."""
+    import subprocess
+    repo = _tiny_repo(tmp_path)
+    env = {"PATH": "/usr/bin:/bin:/usr/local/bin", "HOME": str(tmp_path),
+           "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+           "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
+    def git(*a):
+        return subprocess.run(["git"] + list(a), cwd=str(repo), env=env,
+                              capture_output=True, text=True).stdout.strip()
+    old = git("rev-parse", "HEAD")
+    git("update-ref", "refs/remotes/origin/main", old)
+    git("commit", "-qam", "pushed to the upstream")
+    pushed = git("rev-parse", "HEAD")
+    git("branch", "trunk", pushed)
+    git("switch", "-q", "-c", "feature")
+    git("branch", "--set-upstream-to=trunk")
+    (repo / "a.py").write_text("unpushed\n")
+    git("commit", "-qam", "unpushed work")
+    assert cv.diff_base(repo) == pushed != old
