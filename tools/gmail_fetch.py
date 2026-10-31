@@ -437,7 +437,7 @@ def cleanup_old_inbox_files(inbox_dir: Path, hours: int = 48) -> int:
                 f.unlink()
                 deleted += 1
             except OSError:
-                continue
+                pass  # leave it for the next run
 
     return deleted
 
@@ -776,9 +776,31 @@ def _seed_history_id(service, count: int = 50) -> str:
         return "1"
 
 
+MAX_RETRY_ATTEMPTS = 5
+HISTORY_PAGE_SIZE = 500
+
+
+def _mark_retry(state: dict, msg_id: str) -> None:
+    """Queue a message that failed to fetch or write for the next run. A message that fails
+    MAX_RETRY_ATTEMPTS times is dropped with a warning, so one broken message cannot loop.
+    The cursor itself never waits for it: re-reading history would rewrite the messages that
+    did succeed, and write_inbox_file suffixes a clashing name instead of skipping it."""
+    retry = state.setdefault("retry_ids", {})
+    n = retry.get(msg_id, 0) + 1
+    if n >= MAX_RETRY_ATTEMPTS:
+        retry.pop(msg_id, None)
+        print(f"Warning: giving up on message {msg_id} after {n} attempts.", file=sys.stderr)
+    else:
+        retry[msg_id] = n
+
+
 def fetch_new_messages(service, state: dict, label_id: str | None = None) -> list:
     """
     Fetch new messages since last sync using the Gmail history API.
+
+    Reads every page of history (nextPageToken) and moves state["historyId"] only after the
+    last page, so a failure part-way leaves the cursor where it was. Messages queued in
+    state["retry_ids"] by an earlier failure are fetched first.
 
     On 404 (historyId expired): reseeds from last 20 messages and returns [].
     State dict is updated in-place with the new historyId.
@@ -789,6 +811,8 @@ def fetch_new_messages(service, state: dict, label_id: str | None = None) -> lis
     if not history_id:
         return []
 
+    histories: list = []
+    new_history_id = None
     try:
         # When scoped to a label, also request labelAdded: emails the user
         # manually tags after arrival are recorded by Gmail as labelAdded
@@ -803,42 +827,50 @@ def fetch_new_messages(service, state: dict, label_id: str | None = None) -> lis
             "userId": "me",
             "startHistoryId": history_id,
             "historyTypes": history_types,
+            "maxResults": HISTORY_PAGE_SIZE,
         }
         if label_id:
             kwargs["labelId"] = label_id
-        response = service.users().history().list(**kwargs).execute()
+        page_token = None
+        while True:
+            if page_token:
+                kwargs["pageToken"] = page_token
+            response = service.users().history().list(**kwargs).execute()
+            histories.extend(response.get("history", []))
+            new_history_id = response.get("historyId", new_history_id)
+            page_token = response.get("nextPageToken")
+            if not page_token:
+                break
     except Exception as e:
         err_str = str(e)
-        if "404" in err_str or "invalidHistoryId" in err_str.lower():
+        if "404" in err_str or "invalidhistoryid" in err_str.lower():
             print("Warning: historyId expired — reseeding from last 20 messages.", file=sys.stderr)
             state["historyId"] = _seed_history_id(service, count=20)
             return []
         raise
 
-    histories = response.get("history", [])
-    message_ids: list[str] = []
-    seen: set[str] = set()
+    message_ids: list[str] = list(state.get("retry_ids") or {})
+    seen: set[str] = set(message_ids)
     for hist in histories:
         for added in hist.get("messagesAdded", []):
             msg_id = added["message"]["id"]
             if msg_id not in seen:
                 seen.add(msg_id)
                 message_ids.append(msg_id)
-        # Emails the user manually tagged with the target label after arrival.
-        # Only when label-scoped, and only if the target label is among the
-        # labels added in this event. The format=full label re-check below
-        # (label_id not in msg.labelIds) is the final correctness gate.
-        if label_id:
-            for labeled in hist.get("labelsAdded", []):
-                if label_id not in labeled.get("labelIds", []):
-                    continue
-                msg_id = labeled["message"]["id"]
-                if msg_id not in seen:
-                    seen.add(msg_id)
-                    message_ids.append(msg_id)
+        # Emails the user manually tagged with the target label after arrival, only when
+        # the target label is among the labels added in this event. Unscoped syncs never
+        # request labelAdded (above), and a None label_id matches no entry here. The
+        # format=full label re-check below (label_id not in msg.labelIds) is the final gate.
+        for labeled in hist.get("labelsAdded", []):
+            if label_id not in labeled.get("labelIds", []):
+                continue
+            msg_id = labeled["message"]["id"]
+            if msg_id not in seen:
+                seen.add(msg_id)
+                message_ids.append(msg_id)
 
-    if "historyId" in response:
-        state["historyId"] = response["historyId"]
+    if new_history_id:
+        state["historyId"] = new_history_id
 
     if not message_ids:
         return []
@@ -851,12 +883,37 @@ def fetch_new_messages(service, state: dict, label_id: str | None = None) -> lis
             ).execute()
             # Re-check label membership (history labelId filter is not always reliable)
             if label_id and label_id not in msg.get("labelIds", []):
+                (state.get("retry_ids") or {}).pop(msg_id, None)
                 continue
             messages.append(msg)
         except Exception as e:
             print(f"Warning: could not fetch message {msg_id}: {e}", file=sys.stderr)
+            _mark_retry(state, msg_id)
 
     return messages
+
+
+def write_messages(messages: list, state: dict, inbox_dir: Path,
+                   dry_run: bool) -> tuple[int, list[str]]:
+    """Write each message to the inbox. A written message leaves state["retry_ids"]; one
+    that fails is queued there for the next run. Returns (written, senders)."""
+    written = 0
+    new_senders = []
+    for msg in messages:
+        msg_id = msg.get("id", "?")
+        try:
+            msg_meta, raw_body = _process_message(msg)
+            sanitized = sanitize_body(raw_body)
+            path = write_inbox_file(inbox_dir, msg_meta, sanitized, dry_run=dry_run)
+            if not dry_run:
+                print(f"  Wrote: {path.name}")
+                written += 1
+                new_senders.append(msg_meta.get("sender", ""))
+                (state.get("retry_ids") or {}).pop(msg_id, None)
+        except Exception as e:
+            print(f"Warning: could not process message {msg_id}: {e}", file=sys.stderr)
+            _mark_retry(state, msg_id)
+    return written, new_senders
 
 
 def fetch_labeled_messages(
@@ -1365,19 +1422,7 @@ def main():
     messages = fetch_new_messages(service, state, label_id=args.label_id)
     print(f"Found {len(messages)} new message(s).")
 
-    written = 0
-    new_senders = []
-    for msg in messages:
-        try:
-            msg_meta, raw_body = _process_message(msg)
-            sanitized = sanitize_body(raw_body)
-            path = write_inbox_file(inbox_dir, msg_meta, sanitized, dry_run=args.dry_run)
-            if not args.dry_run:
-                print(f"  Wrote: {path.name}")
-                written += 1
-                new_senders.append(msg_meta.get("sender", ""))
-        except Exception as e:
-            print(f"Warning: could not process message {msg.get('id', '?')}: {e}", file=sys.stderr)
+    written, new_senders = write_messages(messages, state, inbox_dir, dry_run=args.dry_run)
 
     state["last_refresh"] = datetime.now().isoformat()
     if not args.dry_run:

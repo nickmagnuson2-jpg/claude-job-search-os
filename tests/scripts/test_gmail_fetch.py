@@ -835,3 +835,133 @@ def test_list_labels_refuses_to_combine_with_auth():
     r = subprocess.run([sys.executable, str(Path(gmail_fetch.__file__)), "--list-labels", "--auth"],
                        capture_output=True, text=True)
     assert r.returncode == 2 and "run them separately" in r.stderr
+
+
+# --- forward sync: paging and retry (2026-10-30, dedup audit defects 2 and 3) ----------------
+
+class _Req:
+    def __init__(self, fn):
+        self._fn = fn
+
+    def execute(self):
+        return self._fn()
+
+
+class _FakeHistoryGmail:
+    """users().history().list(...) serves `pages` in order; users().messages().get(id=...)
+    returns a message, or raises for ids in `fail_ids`."""
+
+    def __init__(self, pages, fail_ids=(), labels=("L1",)):
+        self.pages = list(pages)
+        self.fail_ids = set(fail_ids)
+        self.labels = list(labels)
+        self.history_calls = []
+
+    def users(self):
+        return self
+
+    def history(self):
+        return self
+
+    def messages(self):
+        return self
+
+    def list(self, **kw):
+        self.history_calls.append(kw)
+
+        def run():
+            page = self.pages.pop(0)
+            if isinstance(page, Exception):
+                raise page
+            return page
+        return _Req(run)
+
+    def get(self, userId, id, format):
+        def run():
+            if id in self.fail_ids:
+                raise RuntimeError("transient 500")
+            return {"id": id, "labelIds": self.labels}
+        return _Req(run)
+
+
+def _added(*ids):
+    return [{"messagesAdded": [{"message": {"id": i}} for i in ids]}]
+
+
+def test_forward_sync_reads_every_history_page():
+    svc = _FakeHistoryGmail([
+        {"history": _added("m1"), "nextPageToken": "t2", "historyId": "150"},
+        {"history": _added("m2"), "historyId": "200"},
+    ])
+    state = {"historyId": "100"}
+    got = gmail_fetch.fetch_new_messages(svc, state)
+    assert [m["id"] for m in got] == ["m1", "m2"]
+    assert "pageToken" not in svc.history_calls[0]
+    assert svc.history_calls[1]["pageToken"] == "t2"
+    assert svc.history_calls[1]["startHistoryId"] == "100"
+    assert state["historyId"] == "200"
+
+
+def test_a_failed_later_page_leaves_the_cursor_where_it_was():
+    svc = _FakeHistoryGmail([
+        {"history": _added("m1"), "nextPageToken": "t2", "historyId": "150"},
+        RuntimeError("transient 500"),
+    ])
+    state = {"historyId": "100"}
+    with pytest.raises(RuntimeError):
+        gmail_fetch.fetch_new_messages(svc, state)
+    assert state["historyId"] == "100"
+
+
+def test_a_message_that_fails_to_fetch_is_retried_on_the_next_run():
+    state = {"historyId": "100"}
+    run1 = _FakeHistoryGmail([{"history": _added("m1", "m2"), "historyId": "200"}], fail_ids={"m2"})
+    assert [m["id"] for m in gmail_fetch.fetch_new_messages(run1, state)] == ["m1"]
+    assert state["retry_ids"] == {"m2": 1}
+    run2 = _FakeHistoryGmail([{"historyId": "210"}])
+    assert [m["id"] for m in gmail_fetch.fetch_new_messages(run2, state)] == ["m2"]
+    assert state["historyId"] == "210"
+
+
+def test_a_retried_message_is_cleared_once_it_is_written(tmp_path):
+    state = {"historyId": "100", "retry_ids": {"m2": 1}}
+    msg = {"id": "m2", "labelIds": ["L1"],
+           "payload": {"headers": [{"name": "From", "value": "a@example.com"},
+                                   {"name": "Subject", "value": "Hi"},
+                                   {"name": "Date", "value": "Mon, 1 Jan 2026 09:00:00 +0000"}],
+                       "mimeType": "text/plain",
+                       "body": {"data": base64.urlsafe_b64encode(b"hello").decode()}},
+           "internalDate": "1767258000000"}
+    written, _ = gmail_fetch.write_messages([msg], state, tmp_path, dry_run=False)
+    assert written == 1
+    assert state["retry_ids"] == {}
+
+
+def test_a_message_that_fails_to_write_is_queued_for_retry(tmp_path, monkeypatch):
+    def boom(*a, **k):
+        raise OSError("disk full")
+    monkeypatch.setattr(gmail_fetch, "write_inbox_file", boom)
+    state = {"historyId": "100"}
+    written, _ = gmail_fetch.write_messages([{"id": "m3", "payload": {}}], state, tmp_path,
+                                            dry_run=False)
+    assert written == 0
+    assert state["retry_ids"] == {"m3": 1}
+
+
+def test_retry_gives_up_after_the_last_attempt(capsys):
+    state = {"historyId": "100", "retry_ids": {"m2": gmail_fetch.MAX_RETRY_ATTEMPTS - 1}}
+    svc = _FakeHistoryGmail([{"historyId": "110"}], fail_ids={"m2"})
+    assert gmail_fetch.fetch_new_messages(svc, state) == []
+    assert state["retry_ids"] == {}
+    assert "giving up on message m2" in capsys.readouterr().err
+
+
+def test_an_invalid_history_id_error_without_404_reseeds(monkeypatch):
+    # Gmail can report an expired cursor with reason "invalidHistoryId" and no "404". The
+    # check lowercased the message and then searched it for a mixed-case literal, so it never
+    # matched and the run crashed instead of reseeding.
+    monkeypatch.setattr(gmail_fetch, "_seed_history_id", lambda service, count: "999")
+    svc = _FakeHistoryGmail([RuntimeError("HttpError 400, reason: invalidHistoryId")])
+    state = {"historyId": "100"}
+    assert gmail_fetch.fetch_new_messages(svc, state) == []
+    assert state["historyId"] == "999"
