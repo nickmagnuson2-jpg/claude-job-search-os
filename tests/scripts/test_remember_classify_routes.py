@@ -84,6 +84,15 @@ def test_a_reply_gets_both_the_outreach_reply_and_the_contact_note():
     assert types(out) == [("outreach_reply", "Jordan Lee"), ("contact_note", "Jordan Lee")]
 
 
+def test_a_name_listed_twice_on_the_roster_gets_one_contact_note():
+    """The roster can carry a duplicate row for one person (load_contacts keeps every row),
+    so the same name can match twice; the note still gets ONE contact_note for that person
+    (final branch review 2026-10-30, Fable F4: the allowlist reason claimed each name could
+    match only once)."""
+    out = classify("Jordan Lee met me for coffee", ["Jordan Lee", "Jordan Lee"])
+    assert types(out) == [("contact_note", "Jordan Lee")]
+
+
 # --- companies and dossiers -------------------------------------------------------------
 
 def test_load_dossier_slugs_lists_only_dossiers(tmp_path):

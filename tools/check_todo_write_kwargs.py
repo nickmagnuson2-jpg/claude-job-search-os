@@ -89,13 +89,16 @@ KWARG = re.compile(r"--(task|priority|due|notes)\b")
 # test_the_exemption_list_matches_the_tools_real_flag_taking_subcommands).
 FLAG_TAKING_SUBCOMMANDS = {"update", "list", "sync", "rotate"}
 
-# Which of the four guarded kwargs each subcommand really takes (review round 3, 2026-10-30:
+# Which guarded flag WORDS each subcommand really takes (review round 3, 2026-10-30:
 # exempting a whole subcommand let `rotate --task` through, and `list`/`sync` take none of
-# them). Any guarded kwarg not listed for its subcommand is blocked. Pinned to
-# todo_write.SUBCOMMAND_FLAGS by test_the_exemption_list_matches_the_tools_real_flag_taking_subcommands.
+# them). The whole argument word is compared, not the name KWARG extracts: the tool takes
+# `--due D`, never `--due=D`, and `rotate` takes `--notes` but not `--notes-append`
+# (final branch review 2026-10-30, P0; Nick approved the edit). Any word KWARG matches
+# that is not listed for its subcommand is blocked. Pinned to todo_write.SUBCOMMAND_FLAGS
+# by test_allowed_kwargs_are_exactly_the_tools_guarded_flags.
 ALLOWED_KWARGS = {
-    "update": {"task", "priority", "due", "notes"},
-    "rotate": {"priority", "due", "notes"},
+    "update": {"--task", "--priority", "--due", "--notes", "--notes-append", "--notes-prepend"},
+    "rotate": {"--priority", "--due", "--notes"},
 }
 
 
@@ -141,7 +144,7 @@ def find_violation(command: str):
             allowed = ALLOWED_KWARGS.get(sub, set())
             for arg in args:
                 m = KWARG.match(arg)
-                if m and m.group(1) not in allowed:
+                if m and arg not in allowed:
                     return sub, m.group(1)
         for inner in cmd.subs:          # `$(...)` and backticks run too
             found = find_violation(inner)

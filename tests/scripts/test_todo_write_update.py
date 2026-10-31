@@ -114,6 +114,18 @@ def test_priority_change_is_not_stamped(tmp_path):
     assert "[rev " not in row
 
 
+def test_a_non_notes_edit_keeps_the_empty_notes_placeholder(tmp_path):
+    """A row whose Notes cell is the "—" placeholder (what `add` writes by default) keeps it
+    when only another field changes. Running the notes merge on that edit would turn "—"
+    into an empty cell (merge_notes reads "—" as no notes), so the merge must run only when
+    a notes flag is given (final branch review 2026-10-30, Fable P0 against the allowlist
+    entry cmd_update::IF_TRUE::820b5212, now removed)."""
+    p = _write(tmp_path)
+    run_script("todo_write.py", "update", "acme", "--priority", "High",
+               "--repo-root", str(tmp_path))
+    assert _row(p, "Apply to Acme") == "| Apply to Acme | High | — | Pending | — |"
+
+
 # ------------------------------------------------------------------ the destructive path
 
 def test_task_rename_records_the_old_text(tmp_path):
