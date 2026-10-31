@@ -175,8 +175,8 @@ def test_todo_subject_and_distinctive_company_helpers():
     sys.path.insert(0, str(TOOLS_DIR))
     import todo_write as tw
     assert tw.todo_subject("PARKED") == "" and tw.todo_subject("Apply to Acme") == "Apply to Acme"
-    assert tw.is_distinctive_company("", set()) is False
-    assert tw.is_distinctive_company("...", set()) is False
+    assert not tw.is_distinctive_company("", set())
+    assert not tw.is_distinctive_company("...", set())
 
 
 PIPE_HEAD = ("| Company | Role | Stage | Date Updated | Next Action | CV Used | Notes | URL |\n"
@@ -222,7 +222,14 @@ def test_sync_without_an_active_todo_section_refuses(tmp_path):
     assert p.read_text(encoding="utf-8") == NO_ACTIVE
 
 
-def test_sync_never_reads_the_todo_header_as_a_task(tmp_path):
+def test_a_terminal_company_named_like_an_ordinary_word_is_never_a_candidate(tmp_path):
+    """A closed company called "Task" (the to-do header's own first cell) never becomes a sync
+    candidate, because is_distinctive_company rejects ordinary words before any row is scanned.
+
+    This does NOT test header-row exclusion in cmd_sync: no header can match a company that the
+    distinctive-name filter already dropped (Codex review 2026-10-30, P0 under its stopping rule,
+    against this test's previous name). Row exclusion is tested by
+    test_todo_write_sync_survivors.py::test_a_prose_line_in_the_active_section_is_not_a_candidate."""
     todos(tmp_path, SYNC_TODOS)
     _pipeline(tmp_path, "| Task | PM | Rejected | 2026-01-01 | x | x | x | x |\n")
     out, _ = run(tmp_path, "sync")
