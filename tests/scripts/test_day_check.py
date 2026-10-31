@@ -32,15 +32,15 @@ NETWORKING = """# Networking
 
 ### Alex — Acme Corp
 
-#### 2026-01-07 | email | Follow-up #1 SENT 9:00 AM on the intro thread.
-#### 2026-01-07 | email | REPLY from Alex 10:00 AM: happy to talk.
+#### 2026-01-07 | email (outbound) | Follow-up #1 SENT 9:00 AM on the intro thread.
+#### 2026-01-07 | email (inbound) | REPLY from Alex 10:00 AM: happy to talk.
 
 ### Erin Example — Epsilon
 
 #### 2026-01-07 | email (inbound) | She wrote first about a role.
-#### 2026-01-07 | email | Nick replied 11:00 AM with times.
+#### 2026-01-07 | email (outbound) | Nick replied 11:00 AM with times.
 #### 2026-01-07 | call | Intro call, 30 minutes.
-#### 2026-01-07 | email | Erin replied 1:00 PM: Thursday works.
+#### 2026-01-07 | email (inbound) | Erin replied 1:00 PM: Thursday works.
 #### 2026-01-07 | email | she sent the deck over, nothing owed.
 #### 2026-01-06 | video | Screen with the team.
 """
@@ -107,9 +107,9 @@ def test_counts_for_the_day_and_the_week(tmp_path):
     c = out["counts"]
     assert out["week_start"] == "2026-01-05" and out["complete"] is True
     # Alex (both logs, "Alex" and "Alex Example" are one person), Casey (Replied is sent),
-    # Erin ("Nick replied"). Blair is only Drafted.
+    # Erin (her "(outbound)" entry). Blair is only Drafted.
     assert c["sends"] == {"today": 3, "week": 4}
-    # REPLY from, email (inbound), "Erin replied". Not "Nick replied", not "she sent".
+    # The three "(inbound)" entries. The plain "she sent the deck" is not counted.
     assert c["replies"] == {"today": 3, "week": 3}
     assert c["calls"] == {"today": 1, "week": 2}
     # Beta says "Applied 2026-01-07". Acme's Stage "Applied" next to Date Updated
@@ -153,23 +153,6 @@ def test_todo_schema_drift_is_reported_not_zeroed(tmp_path):
     out = dc.collect(_repo(tmp_path, **{"job-todos.md": drift}), D)
     assert out["counts"]["todos_closed"]["today"] is None
     assert out["sources"]["job-todos"]["readable"] is False
-
-
-@pytest.mark.parametrize("kind,summary,want", [
-    ("email", "REPLY from Sam 9:19 AM: confirmed.", "reply"),
-    ("email", "Inbound 09:12: asked for an intro call.", "reply"),
-    ("email (inbound)", "anything", "reply"),
-    ("email", "Sam replied 2:00 PM.", "reply"),
-    ("email", "Nick replied 2:00 PM.", "send"),
-    ("email", "Follow-up #2 SENT unchanged.", "send"),
-    ("text", "OUTBOUND text: a nudge.", "send"),
-    ("email", "Cold outreach after applying.", "send"),
-    ("email", "Final note SENT 1:43 PM.", "send"),
-    ("email", "she sent the deck.", None),
-    ("note", "context only", None),
-])
-def test_classify_summary(kind, summary, want):
-    assert dc.classify_summary(kind, summary) == want
 
 
 def test_same_person_needs_a_word_prefix():
@@ -260,23 +243,6 @@ def test_a_bad_target_date_says_why_on_stderr():
 
 # --- D8 review round 1 -------------------------------------------------------------------
 
-@pytest.mark.parametrize("summary", [
-    "IMMEDIATE RESPONSE: Sam replied minutes after the cold email.",
-    "Heard back from Sam: not hiring.",
-    "Sam responded to the comment.",
-    "Backfilled. INBOUND 2:06 PM from the thread.",
-])
-def test_more_reply_shapes(summary):
-    assert dc.classify_summary("email", summary) == "reply"
-
-
-@pytest.mark.parametrize("summary", [
-    "Nick replied 2:00 PM.", "I replied with times.", "No reply yet.",
-    "Follow-up #2 SENT, reply in the old thread.",
-])
-def test_not_replies(summary):
-    assert dc.classify_summary("email", summary) != "reply"
-
 
 def test_a_non_utf8_file_is_unreadable_not_a_crash(tmp_path):
     root = _repo(tmp_path)
@@ -322,19 +288,6 @@ def test_running_writes_no_bytecode(tmp_path):
     assert not list(tools.rglob("__pycache__")), "day_check wrote bytecode"
 
 
-@pytest.mark.parametrize("summary", [
-    "Sam never replied after the intro.", "No reply from Sam yet.", "Nobody responded to the post.",
-    "Still have not heard back from the team.", "Sam has yet to respond.",
-])
-def test_negated_notes_are_not_replies(summary):
-    assert dc.classify_summary("email", summary) is None
-
-
-def test_a_negated_note_that_records_a_send_is_a_send():
-    assert dc.classify_summary("email", "Follow-up #2 SENT; no reply from Sam to #1.") == "send"
-    assert dc.classify_summary("email (inbound)", "No reply needed, she wrote first") == "reply"
-
-
 def test_a_pipeline_table_without_its_header_is_unreadable(tmp_path):
     pipe = PIPELINE.replace("| Company | Role | Stage | Date Updated | Next Action | CV Used | Notes | URL |",
                             "| Firm | Role | Stage | Date Updated | Next Action | CV Used | Notes | URL |")
@@ -349,15 +302,26 @@ def test_the_check_skill_prints_unconfirmed_applications():
     assert "applications_unconfirmed" in text
 
 
-@pytest.mark.parametrize("summary", [
-    "I haven't heard back", "haven't heard back from her", "I havent heard back",
-    "I haven’t heard back", "she hadn't responded", "still waiting to hear back",
-])
-def test_a_note_recording_no_reply_is_never_counted_as_a_reply(summary):
-    """Review 2026-10-29: NEGATED knew "hasn't" but not "haven't"."""
-    assert dc.classify_summary("email", summary) != "reply"
+# --- the recorded direction (2026-10-30): the suffix never changes the base type ---------
+# The summary-phrasing tests (replies, sends, negations) were retired with the summary
+# rules; tests/scripts/test_reply_classification_consistency.py holds the type-only contract.
+
+DIRECTED = ("### Sam Example — Acme\n"
+            "#### 2026-01-07 | call (inbound) | they rang about the role\n"
+            "#### 2026-01-07 | Email (outbound) | sent the deck\n"
+            "#### 2026-01-07 | note | prepared questions\n")
 
 
-@pytest.mark.parametrize("summary", ["Sam replied, no worries", "She replied, hasn't heard from the HM"])
-def test_a_reply_beside_an_unrelated_negation_still_counts(summary):
-    assert dc.classify_summary("email", summary) == "reply"
+def test_a_direction_suffix_leaves_the_kind_and_sets_the_verdict():
+    ev = dc.networking_events(DIRECTED)
+    assert [(e["kind"], e["direction"]) for e in ev] == [
+        ("call", "reply"), ("email", "send"), ("note", None)]
+
+
+def test_a_two_way_entry_counts_as_a_reply_and_a_send(tmp_path):
+    net = ("# Networking\n\n### Sam Example — Acme\n\n"
+           "#### 2026-01-07 | email (two-way) | Sent times; Sam replied.\n")
+    empty_log = "\n".join(OUTREACH.splitlines()[:4]) + "\n"  # the header rows only
+    out = dc.collect(_repo(tmp_path, **{"networking.md": net, "outreach-log.md": empty_log}), D)
+    assert out["counts"]["replies"]["today"] == 1
+    assert out["counts"]["sends"]["today"] == 1

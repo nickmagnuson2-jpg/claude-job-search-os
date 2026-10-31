@@ -45,6 +45,7 @@ from schema_guard import assert_schema, find_header_line, SchemaDriftError  # no
 from hook_runtime import claude_project_dir  # noqa: E402
 from stage_vocab import is_closed_todo_status, is_terminal_stage  # noqa: E402
 import todo_read  # noqa: E402
+from reply_classify import base_type, direction  # noqa: E402
 
 # Canonical schemas (see the writers: tools/todo_write.py, tools/pipe_write.py). The
 # cols[N] indices throughout this file's parsers assume these exact column orders.
@@ -501,9 +502,13 @@ def parse_networking_touches_today(networking_content: str, today: date) -> list
             current_company = (m.group(2) or "").strip()
             continue
         # Detect today-dated interaction header: #### YYYY-MM-DD | type | summary
-        m2 = re.match(rf"^####\s+{re.escape(today_str)}\s*\|\s*(\w+)\s*\|\s*(.*)", line)
-        if m2 and current_name and not _is_separator_row(current_name):
-            channel = m2.group(1).strip()
+        m2 = re.match(rf"^####\s+{re.escape(today_str)}\s*\|\s*([^|]+?)\s*\|\s*(.*)", line)
+        # A touch is Nick reaching out, so an inbound entry is not one. The channel is the
+        # base type, and only a one-word base counts (what the old `\w+` pattern matched).
+        if (m2 and current_name and not _is_separator_row(current_name)
+                and direction(m2.group(1)) != "in"
+                and re.fullmatch(r"\w+", base_type(m2.group(1)))):
+            channel = base_type(m2.group(1))
             summary = m2.group(2).strip()
             results.append({
                 "date": today_str,

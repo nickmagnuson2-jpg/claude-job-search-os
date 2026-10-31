@@ -59,8 +59,23 @@ PYTHONIOENCODING=utf-8 python3 tools/remember_classify.py --note "[escaped $ARGU
 Parse the JSON output:
 - `destinations[]` — list of routing destinations, each with `type`, `file`, `entity` (matched contact or company name), and `slug` (for company-notes paths)
 - `ambiguous` — if `true`, default to `data/notes.md` and flag the routing as uncertain in the Step 4 confirmation
+- `direction_needed` — if `true`, every `contact_note` has `"direction": null` and Step 1.2 must fill it in. `remember_apply.py` refuses a `contact_note` without a direction.
 
 Proceed to Step 2 with the resolved `destinations[]`. If the script fails or returns an empty destinations list, fall back to `data/notes.md` as general_note.
+
+### Step 1.2: Record who reached whom (required for a contact note)
+
+If `direction_needed` is `true`, ask Nick once, naming the contact:
+
+> "Did Sam reach you, or did you reach Sam?"
+
+Map the answer, and set it as `"direction"` on every `contact_note` in `destinations[]`:
+- they reached Nick (they wrote, replied, called, texted) → `"in"`. This also marks the contact's newest open `outreach-log.md` row `Replied`.
+- Nick reached them (he sent, replied, followed up) → `"out"`.
+- both, in this one note (he sent, and they replied) → `"both"`. This counts as a reply and a send, and also marks the outreach row `Replied`.
+- neither (a meeting, an observation, something heard about them) → `"none"`.
+
+Never infer the direction from the note's wording, even when it reads like a reply ("Sam replied ..."). Ask. A note can name two contacts; if the answer differs per contact, ask for each.
 
 ### Step 1.5: Structure decision and accomplishment captures
 

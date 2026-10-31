@@ -1,4 +1,4 @@
-"""One "did they reply" rule for networking_write.py and day_check.py.
+"""One "did they reply" rule for networking_write.py, remember_apply.py and day_check.py.
 
 The bug class: the reply decision lived in networking_write.py as a bare-word list with a
 negation regex cut out first, and day_check.py kept a second, different version. Review
@@ -11,8 +11,8 @@ fallback, and these tests.
      reply_classify.py defines the reply vocabulary.
   2. CROSS-TOOL PARITY - for the same logged note, networking_write flips the outreach log
      exactly when day_check counts the note as a reply.
-  3. THE CONTRACT - positive structured signals count; everything else, including every
-     negated phrasing the old rule leaked, does not.
+  3. THE CONTRACT (2026-10-30) - only the recorded direction in the type counts. The
+     summary is not even an argument, so no phrasing can make a note a reply.
 """
 import json
 import os
@@ -30,7 +30,7 @@ import reply_classify as rc  # noqa: E402
 
 CONSUMERS = {"networking_write.py": "from reply_classify import",
              "day_check.py": "from reply_classify import",
-             "remember_classify.py": "from reply_classify import"}
+             "remember_apply.py": "from reply_classify import"}
 
 # Local definitions that were the two drifting copies. None may reappear outside
 # reply_classify.py, in any tool.
@@ -77,9 +77,8 @@ def test_no_tool_holds_a_renamed_reply_vocabulary():
     """Review 1.F2: the guard above bans old NAMES only, so a copy under a new name passed."""
     import ast
     offenders = []
+    # reply_classify.py is scanned too: since 2026-10-30 it holds no reply vocabulary.
     for path in sorted(TOOLS_DIR.glob("*.py")):
-        if path.name == "reply_classify.py":
-            continue
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in tree.body:
             value = getattr(node, "value", None)
@@ -102,7 +101,7 @@ def test_the_phrase_scan_would_catch_a_renamed_copy():
 
 
 def test_day_check_uses_the_shared_function_itself():
-    assert dc.classify_summary is rc.classify
+    assert dc.classify is rc.classify
 
 
 # ---------------------------------------------------------------------------
@@ -149,211 +148,111 @@ PARITY_CASES = [
 ]
 
 
+@pytest.mark.parametrize("direction,want", [("in", "reply"), ("out", "send"), ("both", "both")])
 @pytest.mark.parametrize("kind,summary", PARITY_CASES)
-def test_writer_flips_exactly_when_day_check_counts_a_reply(tmp_path, kind, summary):
+def test_writer_flips_exactly_when_day_check_counts_a_reply(tmp_path, kind, summary,
+                                                            direction, want):
+    """The caller's --direction decides both: the writer's flip and day_check's verdict,
+    whatever the summary says."""
+    if rc.direction(kind) not in (None, direction):
+        pytest.skip("the writer refuses a type that contradicts --direction")
     write_fixture(tmp_path, "data/networking.md", NETWORKING)
     write_fixture(tmp_path, "data/outreach-log.md", OUTREACH)
     r = subprocess.run(
         [sys.executable, str(TOOLS_DIR / "networking_write.py"), "--repo-root", str(tmp_path),
          "log", "Jane Doe", "--date", "2026-06-19", "--type", kind, "--summary", summary,
-         "--no-todo"],
+         "--direction", direction, "--no-todo"],
         capture_output=True, text=True, encoding="utf-8",
         env={**os.environ, "PYTHONIOENCODING": "utf-8"}, cwd=str(REPO_ROOT))
     assert r.returncode == 0, r.stderr
     flipped = json.loads(r.stdout)["outreach_log_updated"]
     events = dc.networking_events((tmp_path / "data/networking.md").read_text(encoding="utf-8"))
     assert len(events) == 1
-    assert flipped is (events[0]["direction"] == "reply"), (summary, flipped, events[0])
+    assert events[0]["direction"] == want, (summary, events[0])
+    assert flipped is (want in ("reply", "both")), (summary, flipped)
 
 
 # ---------------------------------------------------------------------------
-# 3. The contract
+# 2b. The recorded direction: one place reads and writes the type suffix
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("kind,summary", [
-    ("email (inbound)", "No reply needed, she wrote first"),
-    ("inbound", "anything"),
-    ("email", "INBOUND 4:46am, a bump on a prior unanswered message"),
-    ("email", "Inbound 8:55am, replying to the question: no reply needed"),
-    ("email", "Backfilled. INBOUND 2:06 PM from the thread."),
-    ("email", "REPLY from Sam 9:19 AM: confirmed."),
-    ("email", "Reply received: Sam passed."),
-    ("email", "Heard back from Sam: yes to Tuesday"),
-    ("email", "Follow-up sent. Heard back from Sam an hour later."),
-    ("email", "Got a response from Sam."),
-    ("email", "Sam replied 2:00 PM."),
-    ("email", "Sam REPLIED 2:00 PM."),
-    ("email", "She replied yesterday"),
-    ("email", "not interested, she replied"),
-    ("email", "She replied, hasn't heard from the HM"),
-    ("email", "Sam replied, no worries"),
-    ("email", "She replied to my email with availability"),
-    ("email", "IMMEDIATE RESPONSE: Sam replied minutes after the cold email."),
-    ("email", "Sam responded to the comment."),
-    ("text", "Sam texted back within the hour."),
-    ("email", "Sam (Talent @ Acme) replied 10:58am with a booking link."),
-    ("email", "Brant replied."),
-    ("email", "Kent responded at noon."),
-    ("email", "Re: Draft post - Sam replied 2:00 PM (cc Lee)."),
-    ("email", "Nick replied 1:00 PM; Sam replied 2:00 PM."),
+@pytest.mark.parametrize("kind,want", [
+    ("email (inbound)", "in"), ("Email (Inbound)", "in"), ("inbound", "in"),
+    ("text (inbound) ", "in"), ("email (outbound)", "out"), ("LinkedIn (outbound)", "out"),
+    ("email (two-way)", "both"), ("Text (Two-Way)", "both"), ("email (twoway)", None),
+    ("email", None), ("", None), (None, None), ("email-sent", None),
+    ("inbound call", None), ("call (scheduled)", None),
 ])
-def test_positive_structured_signals_are_replies(kind, summary):
-    assert rc.classify(kind, summary) == "reply"
-    assert rc.is_reply(kind, summary) is True
+def test_direction_reads_only_the_suffix(kind, want):
+    assert rc.direction(kind) == want
 
 
+@pytest.mark.parametrize("kind,want", [
+    ("email (inbound)", "email"), ("LinkedIn (outbound)", "LinkedIn"), ("email", "email"),
+    ("inbound", "inbound"), ("call (scheduled)", "call (scheduled)"), ("", ""), (None, ""),
+    ("text (two-way)", "text"),
+])
+def test_base_type_drops_only_the_direction_suffix(kind, want):
+    assert rc.base_type(kind) == want
+
+
+@pytest.mark.parametrize("kind,d,want", [
+    ("email", "in", "email (inbound)"), ("email", "out", "email (outbound)"),
+    ("email", "none", "email"), ("LinkedIn", "in", "LinkedIn (inbound)"),
+    ("email (inbound)", "in", "email (inbound)"), ("inbound", "in", "inbound"),
+    ("email (outbound)", "out", "email (outbound)"),
+    ("email", "both", "email (two-way)"), ("email (two-way)", "both", "email (two-way)"),
+])
+def test_with_direction_adds_one_suffix_at_most(kind, d, want):
+    assert rc.with_direction(kind, d) == want
+
+
+@pytest.mark.parametrize("kind,d", [
+    ("email (inbound)", "out"), ("email (inbound)", "none"), ("inbound", "out"),
+    ("email (outbound)", "in"), ("email (outbound)", "none"), ("email", "sideways"),
+    ("email (two-way)", "in"), ("email (two-way)", "none"), ("email (inbound)", "both"),
+])
+def test_with_direction_refuses_a_contradiction(kind, d):
+    with pytest.raises(ValueError):
+        rc.with_direction(kind, d)
+
+
+# ---------------------------------------------------------------------------
+# 3. The contract: the type decides, the summary cannot
+# ---------------------------------------------------------------------------
+
+def test_the_classifier_takes_no_summary():
+    import inspect
+    for fn in (rc.classify, rc.is_reply, rc.is_send):
+        assert list(inspect.signature(fn).parameters) == ["kind"], fn.__name__
+
+
+@pytest.mark.parametrize("kind,want", [
+    ("email (inbound)", "reply"), ("call (inbound)", "reply"), ("note (inbound)", "reply"),
+    ("inbound", "reply"), ("LinkedIn (Inbound)", "reply"),
+    ("email (outbound)", "send"), ("text (outbound)", "send"),
+    ("email (two-way)", "both"), ("call (two-way)", "both"),
+    ("email", None), ("note", None), ("", None), (None, None), ("email-sent", None),
+    ("inbound call", None), ("email (inbound) follow-up", None),
+])
+def test_only_the_recorded_direction_counts(kind, want):
+    assert rc.classify(kind) == want
+    assert rc.is_reply(kind) is (want in ("reply", "both"))
+    assert rc.is_send(kind) is (want in ("send", "both"))
+
+
+def test_two_way_is_both_a_reply_and_a_send():
+    """Nick, 2026-10-30 13:42: one note can record a message each way."""
+    assert rc.REPLY_VERDICTS == {"reply", "both"} and rc.SEND_VERDICTS == {"send", "both"}
+
+
+# Every phrasing the old summary rules counted as a reply or a send. Written with a plain
+# type, none of them counts now: the direction must be recorded.
 @pytest.mark.parametrize("summary", [
-    # Every phrasing that leaked through the old negation, rounds 1-6 of 2026-10-29.
-    "I haven't heard back", "haven't heard back from her", "I havent heard back",
-    "I haven’t heard back", "she hadn't responded", "she hasn’t responded",
-    "still waiting to hear back", "Sam never replied", "Sam never replied after the intro.",
-    "No reply from Sam yet", "No reply yet.", "Nobody responded to the post.",
-    "Nobody replied", "Still have not heard back from the team.", "Sam has yet to respond.",
-    "she won't reply", "haven't got a reply", "never got a reply from Sam",
-    "didn't get a response", "has not received a reply", "still waiting for a reply",
-    "Sent cold text. Awaiting reply.", "waiting on a response from Sam",
-    "still waiting on her reply", "nobody has replied", "nobody has heard back",
-    "no one has ever responded", "not the reply I hoped for",
-    "Sam won't be replying until next week",  # the round-6 P0 (895.F1)
-    # Review 1 of the class fix (Grok F1): a capitalized auxiliary is not a subject.
-    "Hasn't replied.", "Haven’t replied.", "Hadn't responded.", "Hasnt replied.",
-    "Follow-up #1 SENT. Hasn't replied.", "Emailed Monday. Didn't respond.",
-    "Has replied?", "Still waiting. Haven't heard back.",
-    # Nick's own replies.
-    "Replied to her intro - yes to a chat", "I replied with times.",
-    "Reply SENT 10:55am in the thread.", "Follow-up #2 sent: reply in the thread.",
-    # No subject: unsure, so not a reply (--reply-received is the override).
-    "no worries, replied yesterday", "Replied 11:08 AM with the status.",
-    # Conditions and questions.
-    "Ask whether Sam replied to the intro.", "Check if she responded.",
-    # Possessive or noun forms are not structured signals.
-    "Full text of Sam's reply, captured later.",
+    "Jane replied 2:00 PM with times", "INBOUND 9:12 AM: asked for a call",
+    "Reply from Jane: yes to Tuesday", "Follow-up #1 SENT", "Cold outreach after applying",
+    "Nick replied with times", "2:53 PM she emailed the next step",
 ])
-def test_everything_else_is_not_a_reply(summary):
-    assert rc.classify("email", summary) != "reply"
-    assert rc.is_reply("email", summary) is False
-
-
-@pytest.mark.parametrize("kind,summary,want", [
-    ("email", "Nick replied 2:00 PM.", "send"),
-    ("email", "Follow-up #2 SENT unchanged.", "send"),
-    ("text", "OUTBOUND text: a nudge.", "send"),
-    ("email", "Cold outreach after applying.", "send"),
-    ("email", "Follow-up #2 SENT; no reply from Sam to #1.", "send"),
-    ("email", "she sent the deck.", None),
-    ("note", "context only", None),
-    ("email", "", None),
-    ("email", None, None),
-])
-def test_sends_and_nothing(kind, summary, want):
-    assert rc.classify(kind, summary) == want
-
-
-def test_a_missing_kind_is_not_an_error():
-    assert rc.classify(None, "Sam replied") == "reply"
-    assert rc.classify(None, "context") is None
-
-
-# ---------------------------------------------------------------------------
-# 4. Message verbs: emailed / texted / messaged (Nick, 2026-10-30: "add the reply verbs
-#    but keep it strict"). They count only on a message channel and only when no
-#    other recipient follows the verb.
-# ---------------------------------------------------------------------------
-
-@pytest.mark.parametrize("kind,summary", [
-    ("email", "2:53 PM she emailed the next step: 45-min video via booking link."),
-    ("text", "Jo texted 1:20 PM confirming the 2pm call; Nick replied."),
-    ("email", "Pat Doe (Head of Deployment) emailed 6/23 5:51am: excited."),
-    ("email", "POST-INTERVIEW ADVANCE. Max emailed at 10:50am PT."),
-    ("text", "Kim texted after the intro."),
-    ("email", "Sam emailed you wanting to set up a call."),
-    ("email", "Sam emailed Nick the deck."),
-    ("email", "Sam emailed me back."),
-    ("linkedin", "Sam messaged at 9 AM."),
-    ("linkedin dm", "Sam messaged today: open to a chat."),
-    ("email", "Sam emailed Friday with times."),
-    ("text", "Sam texted back."),
-    ("email (inbound)", "Sam emailed."),
-    ("imessage", "She texted."),
-    ("sms", "He texted 8 PM."),
-    ("slack", "They messaged."),
-    ("Email", "Sam emailed 9 AM."),
-])
-def test_message_verbs_count_on_a_message_channel(kind, summary):
-    assert rc.classify(kind, summary) == "reply", (kind, summary)
-
-
-@pytest.mark.parametrize("kind,summary", [
-    # A third-hand report is not a message to Nick (live: one such note).
-    ("note", "Per Nick: Lee texted the Acme Labs founder on Friday."),
-    ("note", "Sam emailed at 9 AM."),
-    ("call", "Sam emailed the deck after the call."),
-    ("other", "Sam texted 2 PM."),
-    (None, "Sam emailed 9 AM."),
-    ("", "Sam emailed 9 AM."),
-    # Another recipient right after the verb.
-    ("text", "Lee texted Robin on Friday."),
-    ("text", "Lee texted him on Friday."),
-    ("email", "Sam emailed her the deck."),
-    ("email", "Sam emailed them a summary."),
-    ("email", "Sam emailed his manager."),
-    ("email", "Sam emailed their recruiter."),
-    ("text", "Lee texted the Acme Labs founder."),
-    ("email", "Sam emailed a Globex list."),
-    ("email", "Sam emailed an Acme recruiter."),
-    # The same subject rules as the reply verbs.
-    ("email", "Nick emailed Sam."),
-    ("email", "I emailed Robin."),
-    ("email", "Sam never emailed."),
-    ("email", "Sam hasn't emailed."),
-    ("email", "Hasn't emailed."),
-    ("email", "Check if Sam emailed."),
-    ("email", "emailed Sam the deck."),
-    ("email", "sam emailed 9 AM."),
-    # Review 1 of this rule (Codex, 2026-10-30, F1): an unrecognized word after the verb
-    # is not evidence that Nick was the recipient, so it is not counted.
-    ("text", "Sam texted the recruiter about my candidacy."),
-    ("email", "Sam emailed the hiring manager my resume."),
-    ("text", "Sam texted robin on Friday."),
-    ("email", "Sam emailed a recruiter and copied me."),
-    ("email", "Sam emailed the team and cc’d me."),
-    ("email", "Sam emailed the deck to Robin."),
-    ("email", "Sam emailed us the deck."),
-    ("slack", "Sam messaged the channel about the opening."),
-    ("email", "Sam emailed everyone in the group thread."),
-    ("email", "Sam emailed: “Robin, here is Nick’s resume.”"),
-    ("email", "Sam emailed someone at Acme."),
-    ("linkedin dm", "Sam messaged: open to a chat."),
-    # A time is not enough when the same clause names another recipient.
-    ("email", "Sam emailed at 9 AM to Robin."),
-    ("email", "Sam emailed 9 AM, cc Robin."),
-    ("email", "Sam emailed today and copied the team."),
-    ("email", "Sam emailed this morning, forwarded from Robin."),
-    ("text", "Sam texted 2 PM in the group chat."),
-    ("slack", "They messaged in the channel."),
-    ("email", "Sam emailed:"),
-])
-def test_message_verbs_are_strict(kind, summary):
-    assert rc.classify(kind, summary) != "reply", (kind, summary)
-
-
-def test_the_reply_verbs_still_ignore_the_channel():
-    """The strict channel rule applies to the new message verbs only."""
-    assert rc.classify("note", "Sam replied 2 PM.") == "reply"
-    assert rc.classify(None, "Sam texted back.") == "reply"
-
-
-@pytest.mark.parametrize("summary,want", [
-    # Review 1 (Codex F2): rule 5 must not turn an existing send into a reply.
-    ("Follow-up #2 SENT; Sam emailed 9 AM.", "send"),
-    ("Outbound: a nudge. Sam texted 2 PM.", "send"),
-    ("Follow-up #1 sent. Sam emailed back 3 PM.", "send"),  # the old verdict stands
-])
-def test_message_verbs_never_override_a_send(summary, want):
-    assert rc.classify("email", summary) == want
-
-
-def test_a_third_party_marker_after_the_clause_does_not_block():
-    """The clause ends at ; . or : -- quoted content after it is not the recipient."""
-    assert rc.classify("email", "Pat emailed 6/23 5:51am: 'I'll have you chat to Robin (cc) first.'") == "reply"
-    assert rc.classify("text", "Jo texted 1:20 PM confirming; Nick texted Robin later.") == "reply"
+def test_a_plain_type_is_never_counted_whatever_the_summary(tmp_path, summary):
+    text = NETWORKING + f"#### 2026-06-19 | email | {summary}\n"
+    assert [e["direction"] for e in dc.networking_events(text)] == [None]

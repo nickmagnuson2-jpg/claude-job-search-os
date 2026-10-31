@@ -121,21 +121,26 @@ Create a per-person relationship dossier for an active relationship. The roster 
    - Look for phrases like "follow up", "intro", "send", "share", "connect", "schedule", "reach out", "let me know", "next steps"
    - If found, extract the follow-up action text
    - If none detected, ask: "Any follow-up actions from this interaction?"
-8. Call `networking_write.py log`:
+8. Decide the **direction** (required; the script refuses to log without it, and never reads it from the summary):
+   - `in`: the contact reached Nick (they replied, wrote, called, texted). The type is written as `<type> (inbound)` and the contact's newest open `outreach-log.md` row flips to `Replied`.
+   - `out`: Nick reached the contact (he sent, replied, followed up). The type is written as `<type> (outbound)`. No flip.
+   - `both`: one entry records a message each way (Nick sent, and the contact replied). The type is written as `<type> (two-way)`; it counts as a reply and a send, and the outreach row flips to `Replied`.
+   - `none`: neither, such as a meeting, a call both joined, or a note about the contact. The type stays plain. No flip.
+   - If the content does not make it clear who reached whom, ask once: "Did they reach you, or did you reach them?" Do not guess.
+9. Call `networking_write.py log`:
    ```bash
-   PYTHONIOENCODING=utf-8 python3 tools/networking_write.py log "<name>" \
-     --date YYYY-MM-DD --type TYPE --summary "Summary line" \
-     [--followup "Action text"] [--content "Full message text"] \
-     --repo-root .
+   PYTHONIOENCODING=utf-8 python3 tools/networking_write.py --repo-root . log "<name>" \
+     --date YYYY-MM-DD --type TYPE --summary "Summary line" --direction in|out|both|none \
+     [--followup "Action text"] [--content "Full message text"]
    ```
    The script writes the interaction entry (newest-first), updates Last Interaction in Contacts table, and shells out to `todo_write.py` for follow-up todos automatically.
-9. If `code == "not_found"`: ask if user wants to add the contact first.
-10. **Auto-generate follow-up to-dos** — if follow-up actions were identified AND the script didn't already create them (it does this when `--followup` is passed), create manually via:
+10. If `code == "not_found"`: ask if user wants to add the contact first.
+11. **Auto-generate follow-up to-dos** — if follow-up actions were identified AND the script didn't already create them (it does this when `--followup` is passed), create manually via:
     ```bash
     PYTHONIOENCODING=utf-8 python3 tools/todo_write.py add "Follow up: <name> @ <company> — <action>" Med <due-date> "From networking interaction on <date>"
     ```
-11. Display the logged interaction and any cross-references.
-12. **Dossier sync (if promoted).** If `data/people/<slug>.md` exists for this contact, offer to append a Touchpoints entry, plus any new Commitments or What-I-Owe items surfaced in this interaction:
+12. Display the logged interaction and any cross-references.
+13. **Dossier sync (if promoted).** If `data/people/<slug>.md` exists for this contact, offer to append a Touchpoints entry, plus any new Commitments or What-I-Owe items surfaced in this interaction:
     ```bash
     PYTHONIOENCODING=utf-8 python3 tools/person_write.py --repo-root . add-entry "<name>" --section touchpoints --text "<one-line summary; point to networking.md for the full content>"
     ```
@@ -221,7 +226,7 @@ Each contact gets a section with entries in reverse chronological order (newest 
 ```markdown
 ### Jordan Lee — Acme AI
 
-#### 2026-02-18 | email | Cold outreach — Tuck alum, coffee chat
+#### 2026-02-18 | email (outbound) | Cold outreach — Tuck alum, coffee chat
 
 > Hi Alex,
 >

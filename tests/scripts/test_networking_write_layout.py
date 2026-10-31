@@ -65,7 +65,7 @@ TWO_CONTACTS = f"""# Networking
 
 def test_log_into_an_existing_section_is_newest_first_with_exact_spacing(tmp_path):
     p = net(tmp_path, TWO_CONTACTS)
-    out, code = run(tmp_path, "log", "Jane Doe", "--date", "2026-02-01", "--type", "call",
+    out, code = run(tmp_path, "log", "Jane Doe", "--direction", "none", "--date", "2026-02-01", "--type", "call",
                     "--summary", "talked", "--content", "line one\n\nline three", "--no-todo")
     assert code == 0, out
     want = TWO_CONTACTS.replace(
@@ -80,7 +80,7 @@ def test_log_into_an_existing_section_is_newest_first_with_exact_spacing(tmp_pat
 def test_log_creates_a_missing_contact_section_with_company(tmp_path):
     text = TWO_CONTACTS.split("### Jane Doe — Beta Inc")[0].rstrip("\n") + "\n"
     p = net(tmp_path, text)
-    out, code = run(tmp_path, "log", "Jane Doe", "--date", "2026-02-01", "--summary", "hi",
+    out, code = run(tmp_path, "log", "Jane Doe", "--direction", "none", "--date", "2026-02-01", "--summary", "hi",
                     "--no-todo")
     assert code == 0, out
     want = text.replace("| 2026-01-02 | — | — |", "| 2026-01-02 | 2026-02-01 | — |") + (
@@ -92,7 +92,7 @@ def test_log_creates_a_missing_contact_section_without_company(tmp_path):
     text = TWO_CONTACTS.replace("| Jane Doe | Beta Inc |", "| Jane Doe | — |")
     text = text.split("### Jane Doe — Beta Inc")[0].rstrip("\n") + "\n"
     p = net(tmp_path, text)
-    assert run(tmp_path, "log", "Jane Doe", "--date", "2026-02-01", "--summary", "hi",
+    assert run(tmp_path, "log", "Jane Doe", "--direction", "none", "--date", "2026-02-01", "--summary", "hi",
                "--no-todo")[1] == 0
     assert p.read_text(encoding="utf-8").endswith(
         "\n### Jane Doe\n\n#### 2026-02-01 | other | hi\n\n**Follow-up:** —\n\n")
@@ -101,7 +101,7 @@ def test_log_creates_a_missing_contact_section_without_company(tmp_path):
 def test_log_creates_the_whole_interaction_log_when_absent(tmp_path):
     text = TWO_CONTACTS.split("## Interaction Log")[0].rstrip("\n") + "\n"
     p = net(tmp_path, text)
-    assert run(tmp_path, "log", "Sam Example", "--date", "2026-02-01", "--summary", "hi",
+    assert run(tmp_path, "log", "Sam Example", "--direction", "none", "--date", "2026-02-01", "--summary", "hi",
                "--no-todo")[1] == 0
     want = text.replace("| 2026-01-01 | — | — |", "| 2026-01-01 | 2026-02-01 | — |") + (
         "\n## Interaction Log\n\n### Sam Example — Acme Corp\n\n"
@@ -113,14 +113,14 @@ def test_log_whole_section_without_company(tmp_path):
     text = TWO_CONTACTS.replace("| Sam Example | Acme Corp |", "| Sam Example | — |")
     text = text.split("## Interaction Log")[0].rstrip("\n") + "\n"
     p = net(tmp_path, text)
-    assert run(tmp_path, "log", "Sam Example", "--date", "2026-02-01", "--summary", "hi",
+    assert run(tmp_path, "log", "Sam Example", "--direction", "none", "--date", "2026-02-01", "--summary", "hi",
                "--no-todo")[1] == 0
     assert "\n## Interaction Log\n\n### Sam Example\n\n#### 2026-02-01" in p.read_text(encoding="utf-8")
 
 
 def test_log_matches_the_named_contact_not_the_first_row(tmp_path):
     p = net(tmp_path, TWO_CONTACTS)
-    run(tmp_path, "log", "Jane Doe", "--date", "2026-02-01", "--summary", "hi", "--no-todo")
+    run(tmp_path, "log", "Jane Doe", "--direction", "none", "--date", "2026-02-01", "--summary", "hi", "--no-todo")
     text = p.read_text(encoding="utf-8")
     assert "| Sam Example | Acme Corp | PM | peer | 2026-01-01 | — | — |" in text
     assert "| Jane Doe | Beta Inc | Eng | peer | 2026-01-02 | 2026-02-01 | — |" in text
@@ -128,14 +128,14 @@ def test_log_matches_the_named_contact_not_the_first_row(tmp_path):
 
 def test_log_for_an_unknown_contact_is_not_found_and_writes_nothing(tmp_path):
     p = net(tmp_path, TWO_CONTACTS)
-    out, code = run(tmp_path, "log", "Nobody Here", "--summary", "hi", "--no-todo")
+    out, code = run(tmp_path, "log", "Nobody Here", "--direction", "none", "--summary", "hi", "--no-todo")
     assert code == 1 and out["code"] == "not_found"
     assert p.read_text(encoding="utf-8") == TWO_CONTACTS
 
 
 def test_log_dry_run_reports_the_entry_and_writes_nothing(tmp_path):
     p = net(tmp_path, TWO_CONTACTS)
-    out, code = run(tmp_path, "--dry-run", "log", "Jane Doe", "--date", "2026-02-01",
+    out, code = run(tmp_path, "--dry-run", "log", "Jane Doe", "--direction", "none", "--date", "2026-02-01",
                     "--summary", "hi")
     assert code == 0 and out["dry_run"] is True
     assert out["would_mutate"][0]["entry"] == "#### 2026-02-01 | other | hi"
@@ -146,7 +146,7 @@ def test_log_pads_a_short_contact_row_to_seven_columns(tmp_path):
     text = TWO_CONTACTS.replace("| Jane Doe | Beta Inc | Eng | peer | 2026-01-02 | — | — |",
                                 "| Jane Doe | Beta Inc | Eng | peer | 2026-01-02 |")
     p = net(tmp_path, text)
-    assert run(tmp_path, "log", "Jane Doe", "--date", "2026-02-01", "--summary", "hi",
+    assert run(tmp_path, "log", "Jane Doe", "--direction", "none", "--date", "2026-02-01", "--summary", "hi",
                "--no-todo")[1] == 0
     assert "| Jane Doe | Beta Inc | Eng | peer | 2026-01-02 | 2026-02-01 | — |" in p.read_text(encoding="utf-8")
 
@@ -154,14 +154,14 @@ def test_log_pads_a_short_contact_row_to_seven_columns(tmp_path):
 def test_log_into_a_heading_with_no_blank_line_after_it(tmp_path):
     text = TWO_CONTACTS.replace("### Jane Doe — Beta Inc\n\n", "### Jane Doe — Beta Inc\n")
     p = net(tmp_path, text)
-    run(tmp_path, "log", "Jane Doe", "--date", "2026-02-01", "--summary", "hi", "--no-todo")
+    run(tmp_path, "log", "Jane Doe", "--direction", "none", "--date", "2026-02-01", "--summary", "hi", "--no-todo")
     assert "### Jane Doe — Beta Inc\n#### 2026-02-01 | other | hi\n\n**Follow-up:** —\n\n#### 2026-01-04" \
         in p.read_text(encoding="utf-8")
 
 
 def test_a_file_without_a_trailing_newline_keeps_none(tmp_path):
     p = net(tmp_path, TWO_CONTACTS.rstrip("\n"))
-    run(tmp_path, "log", "Sam Example", "--date", "2026-02-01", "--summary", "hi", "--no-todo")
+    run(tmp_path, "log", "Sam Example", "--direction", "none", "--date", "2026-02-01", "--summary", "hi", "--no-todo")
     assert not p.read_text(encoding="utf-8").endswith("\n")
 
 
@@ -319,7 +319,7 @@ def test_an_alignment_separator_is_not_a_data_row():
 
 
 @pytest.mark.parametrize("cmd", [
-    ["log", "Name", "--summary", "hi", "--no-todo"],
+    ["log", "Name", "--direction", "none", "--summary", "hi", "--no-todo"],
     ["update", "Name", "--role", "x"],
     ["remove", "Name"],
 ])

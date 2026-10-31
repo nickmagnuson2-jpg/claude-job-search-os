@@ -135,7 +135,7 @@ def test_networking_followup_with_wrong_weekday_writes_nothing(tmp_path):
     net.write_text(NETWORKING, encoding="utf-8")
     todos.write_text(TODOS_WITH_FOLLOWUP, encoding="utf-8")
     cmd = [sys.executable, str(TOOLS_DIR / "networking_write.py"), "--repo-root", str(tmp_path),
-           "log", "Casey Doe", "--date", "2026-09-19", "--type", "email",
+           "log", "Casey Doe", "--direction", "none", "--date", "2026-09-19", "--type", "email",
            "--summary", "Sent the deck", "--followup", "nudge Fri 9/26/2026 if silent"]
     r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
                        env={**os.environ, "PYTHONIOENCODING": "utf-8"})
@@ -152,7 +152,7 @@ def test_networking_followup_with_correct_weekday_still_adds_the_todo(tmp_path):
     net.write_text(NETWORKING, encoding="utf-8")
     todos.write_text(TODOS_WITH_FOLLOWUP, encoding="utf-8")
     cmd = [sys.executable, str(TOOLS_DIR / "networking_write.py"), "--repo-root", str(tmp_path),
-           "log", "Casey Doe", "--date", "2026-09-19", "--type", "email",
+           "log", "Casey Doe", "--direction", "none", "--date", "2026-09-19", "--type", "email",
            "--summary", "Sent the deck", "--followup", "nudge Sat 9/26/2026 if silent"]
     r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
                        env={**os.environ, "PYTHONIOENCODING": "utf-8"}, cwd=str(tmp_path))

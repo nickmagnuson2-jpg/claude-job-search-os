@@ -26,7 +26,7 @@ Output: JSON to stdout
 
 Usage:
   PYTHONIOENCODING=utf-8 python3 tools/networking_write.py add "Jane Doe" --company Acme --repo-root .
-  PYTHONIOENCODING=utf-8 python3 tools/networking_write.py log "Jane Doe" --date 2026-02-28 --type email --summary "Replied" --repo-root .
+  PYTHONIOENCODING=utf-8 python3 tools/networking_write.py --repo-root . log "Jane Doe" --date 2026-02-28 --type email --summary "Asked for a call" --direction in
   PYTHONIOENCODING=utf-8 python3 tools/networking_write.py remove "Jane Doe" --repo-root .
 """
 import json
@@ -42,7 +42,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from name_dedup import find_near_duplicates  # noqa: E402
 import outreach_status  # noqa: E402
 # The one "did they reply" rule, shared with day_check.py (no local copy here).
-from reply_classify import is_reply  # noqa: E402
+from reply_classify import with_direction  # noqa: E402
 from md_table import JsonArgumentParser, find_section, load_lines, is_sep_row, out_error, out_ok, parse_cols, read_file, table_insert_pos, write_atomic  # noqa: E402
 
 NETWORKING_FILE  = "data/networking.md"
@@ -268,9 +268,13 @@ def cmd_log(args, networking_path: Path, repo_root: Path, dry_run: bool) -> None
     refuse_wrong_weekdays(args.followup or "")
     today = date.today().strftime("%Y-%m-%d")
     log_date = args.date if args.date else today
+    try:
+        kind = with_direction(args.type, args.direction)
+    except ValueError as e:
+        out_error(str(e), "direction_conflict")
 
     # Build the entry block
-    header = f"#### {log_date} | {args.type} | {args.summary}"
+    header = f"#### {log_date} | {kind} | {args.summary}"
     followup = args.followup if args.followup else "—"
     entry_lines = [header, ""]
     if args.content:
@@ -382,17 +386,10 @@ def cmd_log(args, networking_path: Path, repo_root: Path, dry_run: bool) -> None
             except Exception:
                 pass  # todo creation is best-effort
 
-    # Auto-update outreach-log.md only if the RECIPIENT replied.
-    # Explicit flags override; otherwise reply_classify.is_reply() decides, and it says
-    # yes only on a positive inbound signal (see tools/reply_classify.py).
+    # Auto-update outreach-log.md only when the caller said the contact reached Nick
+    # (--direction in or both). The summary is never read for this.
     outreach_updated = False
-    if getattr(args, "reply_received", False):
-        should_flip = True
-    elif getattr(args, "no_reply_flip", False):
-        should_flip = False
-    else:
-        should_flip = is_reply(args.type, args.summary)
-    if should_flip:
+    if args.direction in ("in", "both"):
         outreach_updated = update_outreach_status(repo_root, args.name)
 
     out_ok("log", f"Logged interaction for {args.name}: {args.summary}",
@@ -555,12 +552,12 @@ def parse_args():
     log_p.add_argument("--summary",  required=True)
     log_p.add_argument("--followup", default=None)
     log_p.add_argument("--content",  default=None)
-    log_p.add_argument("--reply-received", action="store_true",
-                       help="Force-flip the matching outreach-log row to 'Replied' "
-                            "(the RECIPIENT replied). Overrides the summary heuristic.")
-    log_p.add_argument("--no-reply-flip", action="store_true",
-                       help="Never flip the outreach-log, even if the summary looks "
-                            "like a reply. Use when logging Nick's own outbound reply.")
+    log_p.add_argument("--direction", required=True, choices=("in", "out", "both", "none"),
+                       help="in: the contact reached Nick (type gets ' (inbound)', and the "
+                            "outreach-log row flips to Replied). out: Nick reached them "
+                            "(' (outbound)', no flip). both: one note records a message "
+                            "each way (' (two-way)', flips). none: neither, e.g. a note or "
+                            "a meeting (type unchanged, no flip).")
     log_p.add_argument("--no-todo", action="store_true",
                        help="Do not write the follow-up todo to data/job-todos.md. The "
                             "Follow-up line is still logged. Use when a session must "

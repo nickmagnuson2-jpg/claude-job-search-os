@@ -370,3 +370,15 @@ def test_a_three_column_pipeline_row_yields_an_empty_updated_not_a_crash(repo, m
     rows = mod.pipeline_rows("Acme")
     legacy = [r for r in rows if r["role"] == "Legacy role"]
     assert legacy and legacy[0]["updated"] == ""
+
+
+def test_the_channel_shows_the_recorded_direction(tmp_path, monkeypatch):
+    """2026-10-30 decision: the history view shows the raw type, direction included."""
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "networking.md").write_text(
+        "### Casey Doe — Acme\n\n"
+        "#### 2026-03-20 | email (inbound) | They asked for times.\n"
+        "#### 2026-03-19 | email (outbound) | Sent the deck.\n", encoding="utf-8")
+    mod = load(tmp_path, monkeypatch)
+    assert [r["channel"] for r in mod.interactions("Casey Doe")] == [
+        "email (outbound)", "email (inbound)"]
