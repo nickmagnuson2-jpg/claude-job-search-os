@@ -2286,6 +2286,19 @@ def test_writing_the_target_deletes_only_its_cached_bytecode(tmp_path):
     assert sorted(p.name for p in cache.iterdir()) == ["other.cpython-314.pyc"]
 
 
+def test_a_target_name_with_glob_characters_deletes_only_its_own_bytecode(tmp_path):
+    """The stem is matched as text, not as a glob pattern: 'a[b]' must not match 'ab'
+    (Codex infra-1031 F2, P0, 2026-11-01)."""
+    target = tmp_path / "a[b].py"
+    target.write_text("x = 1\n", encoding="utf-8")
+    cache = tmp_path / "__pycache__"
+    cache.mkdir()
+    for name in ("a[b].cpython-314.pyc", "ab.cpython-314.pyc", "a[b]x.cpython-314.pyc"):
+        (cache / name).write_bytes(b"stale")
+    mc._write_owned(target, "x = 2\n")
+    assert sorted(p.name for p in cache.iterdir()) == ["a[b]x.cpython-314.pyc", "ab.cpython-314.pyc"]
+
+
 def test_writing_the_target_without_a_cache_directory_is_fine(tmp_path):
     target = tmp_path / "tool.py"
     target.write_text("x = 1\n", encoding="utf-8")

@@ -321,15 +321,27 @@ def sealed_subpaths(repo_root) -> list[str]:
 
 
 def _main_checkout(root: Path) -> Path | None:
-    """The main checkout when `root` is a linked git worktree, else None."""
+    """The main checkout when `root` is a linked git worktree, else None.
+
+    `git worktree list` names the main checkout first. With `--separate-git-dir` git keeps
+    no record of where the checkout is and names the git dir instead, which has no `.git`
+    entry of its own. From a linked worktree (.git is a file), any answer that is not a
+    checkout refuses: returning None would build a sandbox that leaves the main checkout
+    and its conf readable (Codex and Fable infra-1031 F1/F3, 2026-11-01)."""
+    first = ""
     try:
-        r = subprocess.run(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+        r = subprocess.run(["git", "worktree", "list", "--porcelain"],
                            cwd=str(root), capture_output=True, text=True, timeout=10)
+        if r.returncode == 0:
+            first = (r.stdout.splitlines() or [""])[0]
     except (OSError, subprocess.SubprocessError):
+        pass
+    main = Path(first[len("worktree "):]).resolve() if first.startswith("worktree ") else None
+    if main is None or not (main / ".git").exists():
+        if (root / ".git").is_file():
+            raise RuntimeError(f"cannot find the main checkout of linked worktree {root}; "
+                               "refusing to build a sandbox that leaves it readable")
         return None
-    if r.returncode != 0:
-        return None
-    main = Path(r.stdout.strip()).resolve().parent
     return main if main != root else None
 
 

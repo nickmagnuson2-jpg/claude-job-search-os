@@ -1137,6 +1137,51 @@ def test_a_review_from_a_linked_worktree_seals_the_main_checkout_and_its_peers(t
     assert str(wt.resolve()) not in sealed
 
 
+def test_a_worktree_of_a_separate_git_dir_checkout_refuses(tmp_path, monkeypatch):
+    """With `git init --separate-git-dir`, git keeps no record of the main checkout's path, so
+    from a linked worktree nothing can find it to seal it (Codex infra-1031 F1, P0,
+    2026-11-01). The review refuses instead of running with the checkout readable."""
+    projects = tmp_path / "projects"
+    main = projects / "job-search"
+    main.mkdir(parents=True)
+    (tmp_path / "gitdirs").mkdir()
+    git = ["git", "-c", "user.name=t", "-c", "user.email=t@example.com"]
+    subprocess.run([*git, "init", "-q", "--separate-git-dir", str(tmp_path / "gitdirs" / "js"),
+                    str(main)], check=True)
+    subprocess.run([*git, "-C", str(main), "commit", "-q", "--allow-empty", "-m", "x"], check=True)
+    wt = tmp_path / "worktrees" / "branch-wt"
+    subprocess.run([*git, "-C", str(main), "worktree", "add", "-q", "--detach", str(wt)], check=True)
+    monkeypatch.setattr(cv, "SEALED_CONF", tmp_path / "worktree-has-no.conf")
+    with pytest.raises(RuntimeError, match="main checkout"):
+        cv.sealed_subpaths(wt)
+
+
+def test_a_linked_worktree_whose_main_checkout_cannot_be_found_refuses(tmp_path, monkeypatch):
+    """A failed git call used to return None, and the review ran with the main checkout and
+    its conf unsealed (Fable infra-1031 F3, 2026-11-01). From a linked worktree (.git is a
+    file) that now refuses instead of running open."""
+    wt = tmp_path / "worktrees" / "branch-wt"
+    wt.mkdir(parents=True)
+    (wt / ".git").write_text("gitdir: /nowhere\n", encoding="utf-8")
+
+    def broken(*a, **k):
+        raise OSError("git not found")
+    monkeypatch.setattr(cv.subprocess, "run", broken)
+    with pytest.raises(RuntimeError, match="main checkout"):
+        cv.sealed_subpaths(wt)
+
+
+def test_an_ordinary_checkout_with_no_git_is_not_a_refusal(tmp_path, monkeypatch):
+    repo = tmp_path / "projects" / "job-search"
+    repo.mkdir(parents=True)
+
+    def broken(*a, **k):
+        raise OSError("git not found")
+    monkeypatch.setattr(cv.subprocess, "run", broken)
+    monkeypatch.setattr(cv, "SEALED_CONF", tmp_path / "none.conf")
+    assert cv.sealed_subpaths(repo) == []
+
+
 def test_the_seal_is_the_last_word(tmp_path):
     """Seatbelt applies the LAST matching rule. A seal emitted before a carve-out is not
     a seal. This asserts ordering, which is the only thing that makes the rule binding."""
@@ -1352,6 +1397,9 @@ def test_the_ledger_records_what_the_verifier_could_see(tmp_path, monkeypatch):
         returncode, stdout, stderr = 0, "", ""
 
     monkeypatch.setattr(cv.subprocess, "run", lambda *a, **k: _Done())
+    # The faked run() also answers the main-checkout lookup; that is not this test's
+    # question, and from a linked worktree a lookup that gets no answer refuses.
+    monkeypatch.setattr(cv, "_main_checkout", lambda root: None)
     monkeypatch.setattr(cv, "jailed_argv", lambda *a, **k: ["true"])
     cv.run(REPO_ROOT, "t", [], "", tmp_path / "r.md", None, False,
            model="codex", images=[img])

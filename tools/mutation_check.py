@@ -1102,8 +1102,12 @@ def _write_owned(target: Path, text: str) -> None:
     with _signals_held():
         target.write_text(text, encoding="utf-8")
         _LAST_WRITTEN = text
-    for pyc in (target.parent / "__pycache__").glob(f"{target.stem}.*.pyc"):
-        pyc.unlink(missing_ok=True)
+    cache = target.parent / "__pycache__"
+    if cache.is_dir():
+        # Matched as text, never as a glob: a stem like 'a[b]' must not match 'ab'.
+        for pyc in cache.iterdir():
+            if pyc.name.startswith(f"{target.stem}.") and pyc.name.endswith(".pyc"):
+                pyc.unlink(missing_ok=True)
 
 
 def write_mutant(target: Path, original: str, mutated: str) -> None:
