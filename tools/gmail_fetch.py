@@ -402,7 +402,16 @@ def write_inbox_file(
         print(f"[dry-run] Would write: {candidate}")
         print(content[:300] + ("..." if len(content) > 300 else ""))
     else:
-        candidate.write_text(content, encoding="utf-8")
+        # Written whole under a hidden temp name, then renamed into place. Written in place, a
+        # death mid-write left either a partial file WITH its Message-ID line, which made the
+        # next run skip the message for good, or one without it, which pushed the replay to a
+        # suffixed copy. The temp name does not end in .md, so the scan and cleanup skip it.
+        tmp = inbox_dir / f".{candidate.name}.tmp.{os.getpid()}"
+        try:
+            tmp.write_text(content, encoding="utf-8")
+            os.replace(tmp, candidate)
+        finally:
+            tmp.unlink(missing_ok=True)
 
     return candidate
 

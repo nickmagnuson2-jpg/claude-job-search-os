@@ -646,3 +646,21 @@ def test_a_non_utf8_inbox_file_is_skipped_by_the_scan_and_by_cleanup(tmp_path):
     assert gmail_fetch._existing_message_ids(tmp_path) == {"m7"}
     assert gmail_fetch.cleanup_old_inbox_files(tmp_path, hours=0) == 0
     assert bad.exists()
+
+
+def test_an_inbox_write_that_dies_leaves_no_file_and_queues_a_retry(tmp_path, monkeypatch):
+    # Codex final review, F1: written in place, a death mid-write left a partial file. With its
+    # Message-ID line it made the next run skip the message for good; without it, the replay
+    # wrote a suffixed copy.
+    def dies(src, dst):
+        raise OSError("killed during write")
+
+    monkeypatch.setattr(gmail_fetch.os, "replace", dies)
+    state = {}
+    written, _ = gmail_fetch.write_messages([_full_msg("m1")], state, tmp_path, dry_run=False)
+    assert written == 0
+    assert list(tmp_path.iterdir()) == []
+    assert state["retry_ids"] == {"m1": 1}
+    assert state["written_ids"] == {}
+    monkeypatch.undo()
+    assert gmail_fetch._existing_message_ids(tmp_path) == set()
