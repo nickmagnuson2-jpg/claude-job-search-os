@@ -280,7 +280,8 @@ def ignored_entries(repo_root) -> list[str]:
 # GITIGNORED BY DESIGN, same as tools/.gmail-labels.conf and tools/.pii-denylist.txt: this
 # file is PUBLIC, so the mechanism lives here and the specifics do not. Naming a sealed
 # directory in a public repo discloses exactly what sealing it was meant to protect.
-SEALED_CONF = Path(__file__).resolve().parent / ".sealed-paths.conf"
+SEALED_CONF_NAME = ".sealed-paths.conf"
+SEALED_CONF = Path(__file__).resolve().parent / SEALED_CONF_NAME
 
 
 def sealed_subpaths(repo_root) -> list[str]:
@@ -297,21 +298,39 @@ def sealed_subpaths(repo_root) -> list[str]:
 
     Derived from repo_root rather than hardcoded so this file carries no absolute path, and
     so a peer repo added tomorrow is covered without an edit.
+    3. FROM A LINKED WORKTREE (2026-10-30): repo_root.parent is the worktrees folder, so 1
+       missed the main checkout and its peers, and 2 found no conf (it is gitignored). The
+       main checkout itself, its peers and its conf are sealed too.
     """
     root = Path(repo_root).resolve()
-    projects = root.parent
+    main = _main_checkout(root)
     sealed: list[str] = []
+    for conf in [SEALED_CONF] + ([main / "tools" / SEALED_CONF_NAME] if main else []):
+        try:
+            for line in conf.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if line and not line.startswith("#"):
+                    sealed.append(str(Path(line).expanduser()))
+        except OSError:
+            pass                  # no conf is a valid state, not an error
+    for projects in [root.parent] + ([main.parent] if main else []):
+        for sibling in sorted(p for p in projects.iterdir() if p.is_dir()):
+            if sibling.resolve() != root:
+                sealed.append(str(sibling.resolve()))
+    return list(dict.fromkeys(sealed))
+
+
+def _main_checkout(root: Path) -> Path | None:
+    """The main checkout when `root` is a linked git worktree, else None."""
     try:
-        for line in SEALED_CONF.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if line and not line.startswith("#"):
-                sealed.append(str(Path(line).expanduser()))
-    except OSError:
-        pass                      # no conf is a valid state, not an error
-    for sibling in sorted(p for p in projects.iterdir() if p.is_dir()):
-        if sibling.resolve() != root:
-            sealed.append(str(sibling))
-    return sealed
+        r = subprocess.run(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+                           cwd=str(root), capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if r.returncode != 0:
+        return None
+    main = Path(r.stdout.strip()).resolve().parent
+    return main if main != root else None
 
 
 def sandbox_policy(repo_root, extra_writable=()) -> str:

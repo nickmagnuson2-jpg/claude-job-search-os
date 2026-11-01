@@ -1110,6 +1110,31 @@ def test_peer_repos_are_sealed_and_this_repo_is_not(tmp_path):
     assert f'(deny file-read* (subpath "{repo.resolve()}"))' not in pol
 
 
+def test_a_review_from_a_linked_worktree_seals_the_main_checkout_and_its_peers(tmp_path, monkeypatch):
+    """Run from a linked worktree, repo_root.parent is the worktrees folder, so the peer-repo
+    deny used to miss the main checkout (its private trees), the main checkout's peer repos,
+    and the gitignored sealed-paths conf, which a worktree does not have (2026-10-30). The
+    main checkout is found through git, and all three are sealed."""
+    projects = tmp_path / "projects"
+    main = projects / "job-search"
+    (main / "tools").mkdir(parents=True)
+    (projects / "peer").mkdir()
+    secret = tmp_path / "elsewhere" / "private-tree"
+    secret.mkdir(parents=True)
+    (main / "tools" / ".sealed-paths.conf").write_text(f"{secret}\n", encoding="utf-8")
+    git = ["git", "-c", "user.name=t", "-c", "user.email=t@example.com"]
+    subprocess.run([*git, "init", "-q", str(main)], check=True)
+    subprocess.run([*git, "-C", str(main), "commit", "-q", "--allow-empty", "-m", "x"], check=True)
+    wt = tmp_path / "worktrees" / "branch-wt"
+    subprocess.run([*git, "-C", str(main), "worktree", "add", "-q", "--detach", str(wt)], check=True)
+    monkeypatch.setattr(cv, "SEALED_CONF", tmp_path / "worktree-has-no.conf")
+    sealed = cv.sealed_subpaths(wt)
+    for path in (main, projects / "peer"):
+        assert str(path.resolve()) in sealed, path
+    assert str(secret) in sealed          # a conf entry is used as written
+    assert str(wt.resolve()) not in sealed
+
+
 def test_the_seal_is_the_last_word(tmp_path):
     """Seatbelt applies the LAST matching rule. A seal emitted before a carve-out is not
     a seal. This asserts ordering, which is the only thing that makes the rule binding."""

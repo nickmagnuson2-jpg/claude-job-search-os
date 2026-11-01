@@ -2267,3 +2267,27 @@ def test_a_dirty_input_outside_tools_and_tests_counts(tmp_path):
     repo = _git_repo(tmp_path)
     (repo / "docs" / "f.py").write_text("x = 2\n")
     assert mc.uncommitted_inputs(repo, only={"docs/f.py"}) == ["docs/f.py"]
+
+
+def test_writing_the_target_deletes_only_its_cached_bytecode(tmp_path):
+    """Each write of the target (every mutant, and the restore) drops that file's .pyc, so no
+    earlier mutant's bytecode can be read for a later one. A test that starts a child with a
+    fresh environment loses PYTHONDONTWRITEBYTECODE and writes the target's .pyc; CPython checks
+    a .pyc only by (mtime, size), so a same-size mutant written in the same second used to run
+    as the earlier mutant and score a false KILLED (2026-10-30, found during the gmail_fetch run)."""
+    target = tmp_path / "tool.py"
+    target.write_text("x = 1\n", encoding="utf-8")
+    cache = tmp_path / "__pycache__"
+    cache.mkdir()
+    for name in ("tool.cpython-314.pyc", "tool.cpython-312.opt-1.pyc", "other.cpython-314.pyc"):
+        (cache / name).write_bytes(b"stale")
+    mc._write_owned(target, "x = 2\n")
+    assert target.read_text(encoding="utf-8") == "x = 2\n"
+    assert sorted(p.name for p in cache.iterdir()) == ["other.cpython-314.pyc"]
+
+
+def test_writing_the_target_without_a_cache_directory_is_fine(tmp_path):
+    target = tmp_path / "tool.py"
+    target.write_text("x = 1\n", encoding="utf-8")
+    mc._write_owned(target, "x = 2\n")
+    assert target.read_text(encoding="utf-8") == "x = 2\n"

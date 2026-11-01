@@ -1090,11 +1090,20 @@ def matches_head(target: Path, text: str, root: Path | None = None) -> bool | No
 
 
 def _write_owned(target: Path, text: str) -> None:
-    """Write the target and record what was written, with no signal able to separate the two."""
+    """Write the target and record what was written, with no signal able to separate the two.
+
+    Also deletes the target's cached bytecode. PYTHONDONTWRITEBYTECODE (run_tests) only reaches
+    children that inherit it; a test that starts a child with a fresh environment writes the
+    target's .pyc anyway, and CPython checks a .pyc only by (mtime, size), so a same-size mutant
+    written in the same second ran as the earlier mutant: a false KILLED (2026-10-30). Deleting
+    it on every write leaves no earlier mutant's bytecode to read.
+    """
     global _LAST_WRITTEN
     with _signals_held():
         target.write_text(text, encoding="utf-8")
         _LAST_WRITTEN = text
+    for pyc in (target.parent / "__pycache__").glob(f"{target.stem}.*.pyc"):
+        pyc.unlink(missing_ok=True)
 
 
 def write_mutant(target: Path, original: str, mutated: str) -> None:
