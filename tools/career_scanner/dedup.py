@@ -2,17 +2,31 @@
 dedup.py - Pipeline deduplication checker for career scanner.
 
 Checks discovered roles against existing entries in data/job-pipeline.md
-using exact company match (case-insensitive) + fuzzy title match (>= 80%).
+using exact company match (case-insensitive) + fuzzy title match (>= 90%).
 
 Per D-10: If already in pipeline, skip silently.
 """
 import json
+import re
 import subprocess
 import sys
 from difflib import SequenceMatcher
 from pathlib import Path
 
-_FUZZY_THRESHOLD = 0.80
+# 0.90, raised from 0.80 on 2026-10-30 (Nick). Measured on the live pipeline and scanner data:
+# at 0.80, three levels of one title at one company (Associate, Enterprise and the plain
+# title; 0.84-0.88) were treated as one role, so two real roles were skipped.
+_FUZZY_THRESHOLD = 0.90
+# Abbreviations score like a different role ("Sr." vs "Senior" is 0.878), so they are expanded
+# before comparing rather than tolerated by a lower threshold.
+_ABBREV = ((re.compile(r"\bsr\b\.?"), "senior"), (re.compile(r"\bjr\b\.?"), "junior"))
+
+
+def _norm_title(title: str) -> str:
+    t = title.lower()
+    for pat, full in _ABBREV:
+        t = pat.sub(full, t)
+    return t
 _SUBPROCESS_TIMEOUT = 10  # seconds, per T-02-06 threat mitigation
 
 
@@ -72,14 +86,14 @@ def load_closed_entries(repo_root: Path) -> list[dict]:
 def find_match(role_title: str, role_company: str,
                pipeline_entries: list[dict]) -> dict | None:
     """The first entry at the same company (case-insensitive) whose role title is a fuzzy
-    match (SequenceMatcher ratio >= 0.80, D-10), else None."""
+    match (SequenceMatcher ratio >= 0.90 after _norm_title, D-10), else None."""
     # No empty-company guard: pipe_read and both loaders drop rows with a blank company,
     # so an empty role_company equals no entry's company and the loop returns None.
     company_lower = role_company.lower().strip()
     for entry in pipeline_entries:
         if entry["company"].lower().strip() != company_lower:
             continue
-        if SequenceMatcher(None, role_title.lower(), entry["role"].lower()).ratio() >= _FUZZY_THRESHOLD:
+        if SequenceMatcher(None, _norm_title(role_title), _norm_title(entry["role"])).ratio() >= _FUZZY_THRESHOLD:
             return entry
     return None
 
@@ -101,7 +115,7 @@ def is_duplicate(role_title: str, role_company: str,
     """Check if a role is already in the pipeline.
 
     Per D-10: Exact company match (case-insensitive) + fuzzy title match
-    (SequenceMatcher ratio >= 0.80).
+    (SequenceMatcher ratio >= 0.90 after expanding Sr./Jr.).
 
     Args:
         role_title: Title of the discovered role

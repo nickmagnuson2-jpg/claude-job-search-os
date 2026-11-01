@@ -51,7 +51,8 @@ To LIST a label read-only (the thing `--search ""` looks like it would do):
   inbox dir if absent). Drop --dry-run only when you want the messages imported.
 
 State file: tools/.gmail_state.json
-  {"historyId": "...", "last_refresh": "ISO-datetime"}
+  {"historyId": "...", "last_refresh": "ISO-datetime",
+   "retry_ids": {"<gmail id>": attempts}, "written_ids": {"<gmail id>": "ISO-datetime"}}
 
 Security: All email content is treated as untrusted external data.
 Body is sanitized before writing to inbox/:
@@ -401,7 +402,16 @@ def write_inbox_file(
         print(f"[dry-run] Would write: {candidate}")
         print(content[:300] + ("..." if len(content) > 300 else ""))
     else:
-        candidate.write_text(content, encoding="utf-8")
+        # Written whole under a hidden temp name, then renamed into place. Written in place, a
+        # death mid-write left either a partial file WITH its Message-ID line, which made the
+        # next run skip the message for good, or one without it, which pushed the replay to a
+        # suffixed copy. The temp name does not end in .md, so the scan and cleanup skip it.
+        tmp = inbox_dir / f".{candidate.name}.tmp.{os.getpid()}"
+        try:
+            tmp.write_text(content, encoding="utf-8")
+            os.replace(tmp, candidate)
+        finally:
+            tmp.unlink(missing_ok=True)
 
     return candidate
 
@@ -424,7 +434,7 @@ def cleanup_old_inbox_files(inbox_dir: Path, hours: int = 48) -> int:
     for f in sorted(inbox_dir.glob("*.md")):
         try:
             content = f.read_text(encoding="utf-8")
-        except (OSError, PermissionError):
+        except (OSError, ValueError):  # unreadable, or not UTF-8 (a manual drop)
             continue
         if 'source="gmail"' not in content:
             continue
@@ -437,7 +447,7 @@ def cleanup_old_inbox_files(inbox_dir: Path, hours: int = 48) -> int:
                 f.unlink()
                 deleted += 1
             except OSError:
-                continue
+                pass  # leave it for the next run
 
     return deleted
 
@@ -751,15 +761,22 @@ def _load_state(state_path: Path) -> dict:
 
 
 def _save_state(state_path: Path, state: dict) -> None:
-    """Save sync state to .gmail_state.json."""
-    state_path.write_text(json.dumps(state, indent=2), encoding="utf-8")
+    """Save sync state to .gmail_state.json via temp file + os.replace, as _write_token_atomic
+    does. A plain write_text truncates first, so a death mid-write left empty JSON, which
+    _load_state reads as {}: the next run then auto-seeds past every unprocessed message."""
+    tmp = state_path.with_suffix(state_path.suffix + f".tmp.{os.getpid()}")
+    try:
+        tmp.write_text(json.dumps(state, indent=2), encoding="utf-8")
+        os.replace(tmp, state_path)
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def _seed_history_id(service, count: int = 50) -> str:
     """
     Seed historyId from the last `count` messages without importing them.
 
-    Called on --auth and on 404 recovery. Returns the historyId string.
+    Called on --auth, on a fresh state file, and on expired-cursor recovery. Returns the historyId string.
     """
     try:
         result = service.users().messages().list(userId="me", maxResults=count).execute()
@@ -776,11 +793,79 @@ def _seed_history_id(service, count: int = 50) -> str:
         return "1"
 
 
+MAX_RETRY_ATTEMPTS = 5
+HISTORY_PAGE_SIZE = 500
+# An expired cursor is recovered by listing mail since the last finished run. The look-back
+# is capped, and has a default for a state file that never recorded a run.
+GAP_MAX_DAYS = 30
+GAP_DEFAULT_DAYS = 7
+GAP_MARGIN = timedelta(hours=1)
+# state["written_ids"] keeps every id written for as long as recovery can look back, so a
+# replayed or recovered message is skipped even after cleanup deleted its inbox file.
+WRITTEN_KEEP_DAYS = GAP_MAX_DAYS
+_MESSAGE_ID_LINE = "> **Message-ID:** "
+
+
+def _gap_start(state: dict) -> int:
+    """Epoch seconds to recover from: the last finished run minus GAP_MARGIN, never more
+    than GAP_MAX_DAYS back. last_refresh is the time that run STARTED and is saved only after
+    its writes, so a long run cannot leave out mail that arrived while it ran, and a run that
+    crashed leaves an earlier time, which recovers more, not less."""
+    now = datetime.now()
+    try:
+        start = datetime.fromisoformat(state["last_refresh"]) - GAP_MARGIN
+    except (KeyError, TypeError, ValueError):
+        print(f"Warning: no last_refresh in state — recovering the last {GAP_DEFAULT_DAYS} days.",
+              file=sys.stderr)
+        start = now - timedelta(days=GAP_DEFAULT_DAYS)
+    floor = now - timedelta(days=GAP_MAX_DAYS)
+    if start < floor:
+        print(f"Warning: the last run was more than {GAP_MAX_DAYS} days ago — recovering only "
+              f"the last {GAP_MAX_DAYS} days; older mail is not recovered.", file=sys.stderr)
+        start = floor
+    return int(start.timestamp())
+
+
+def _list_ids_since(service, label_id: str | None, after_epoch: int) -> list[str]:
+    """Every message id after `after_epoch`, in this sync's label scope, all pages."""
+    kwargs: dict = {"userId": "me", "q": f"after:{after_epoch}", "maxResults": HISTORY_PAGE_SIZE}
+    if label_id:
+        kwargs["labelIds"] = [label_id]
+    ids: list[str] = []
+    while True:
+        response = service.users().messages().list(**kwargs).execute()
+        ids.extend(m["id"] for m in response.get("messages", []))
+        if not response.get("nextPageToken"):
+            return ids
+        kwargs["pageToken"] = response["nextPageToken"]
+
+
+def _mark_retry(state: dict, msg_id: str) -> None:
+    """Queue a message that failed to fetch or write for the next run. A message that fails
+    MAX_RETRY_ATTEMPTS times is dropped with a warning, so one broken message cannot loop.
+    The cursor itself never waits for it: re-reading history would fetch again every message
+    that did succeed."""
+    retry = state.setdefault("retry_ids", {})
+    n = retry.get(msg_id, 0) + 1
+    if n >= MAX_RETRY_ATTEMPTS:
+        retry.pop(msg_id, None)
+        print(f"Warning: giving up on message {msg_id} after {n} attempts.", file=sys.stderr)
+    else:
+        retry[msg_id] = n
+
+
 def fetch_new_messages(service, state: dict, label_id: str | None = None) -> list:
     """
     Fetch new messages since last sync using the Gmail history API.
 
-    On 404 (historyId expired): reseeds from last 20 messages and returns [].
+    Reads every page of history (nextPageToken) and moves state["historyId"] only after the
+    last page, so a failure part-way leaves the cursor where it was. Messages queued in
+    state["retry_ids"] by an earlier failure are fetched first.
+
+    On an expired cursor (404 or invalidHistoryId): takes a new cursor from the newest
+    message FIRST, then returns the mail listed since the last finished run (_gap_start), so
+    nothing in between is skipped. Mail that arrives during recovery is after the new cursor;
+    the overlap is harmless because write_messages skips ids already written.
     State dict is updated in-place with the new historyId.
 
     Returns list of full message dicts (format=full).
@@ -789,6 +874,9 @@ def fetch_new_messages(service, state: dict, label_id: str | None = None) -> lis
     if not history_id:
         return []
 
+    histories: list = []
+    new_history_id = None
+    gap_ids: list[str] = []
     try:
         # When scoped to a label, also request labelAdded: emails the user
         # manually tags after arrival are recorded by Gmail as labelAdded
@@ -803,42 +891,60 @@ def fetch_new_messages(service, state: dict, label_id: str | None = None) -> lis
             "userId": "me",
             "startHistoryId": history_id,
             "historyTypes": history_types,
+            "maxResults": HISTORY_PAGE_SIZE,
         }
         if label_id:
             kwargs["labelId"] = label_id
-        response = service.users().history().list(**kwargs).execute()
+        page_token = None
+        while True:
+            if page_token:
+                kwargs["pageToken"] = page_token
+            response = service.users().history().list(**kwargs).execute()
+            histories.extend(response.get("history", []))
+            new_history_id = response.get("historyId", new_history_id)
+            page_token = response.get("nextPageToken")
+            if not page_token:
+                break
     except Exception as e:
         err_str = str(e)
-        if "404" in err_str or "invalidHistoryId" in err_str.lower():
-            print("Warning: historyId expired — reseeding from last 20 messages.", file=sys.stderr)
-            state["historyId"] = _seed_history_id(service, count=20)
-            return []
-        raise
+        # An HttpError's text includes the request URL, so "404" can appear in a cursor, label
+        # id or page token on an unrelated 500. Trust its status when it has one.
+        status = getattr(getattr(e, "resp", None), "status", None)
+        expired = (str(status) == "404" if status is not None else "404" in err_str)
+        if not expired and "invalidhistoryid" not in err_str.lower():
+            raise
+        new_history_id = _seed_history_id(service, count=20)
+        after = _gap_start(state)
+        print(f"Warning: historyId expired — recovering mail since "
+              f"{datetime.fromtimestamp(after).isoformat()}.", file=sys.stderr)
+        gap_ids = _list_ids_since(service, label_id, after)
 
-    histories = response.get("history", [])
-    message_ids: list[str] = []
-    seen: set[str] = set()
+    message_ids: list[str] = list(state.get("retry_ids") or {})
+    seen: set[str] = set(message_ids)
+    for msg_id in gap_ids:
+        if msg_id not in seen:
+            seen.add(msg_id)
+            message_ids.append(msg_id)
     for hist in histories:
         for added in hist.get("messagesAdded", []):
             msg_id = added["message"]["id"]
             if msg_id not in seen:
                 seen.add(msg_id)
                 message_ids.append(msg_id)
-        # Emails the user manually tagged with the target label after arrival.
-        # Only when label-scoped, and only if the target label is among the
-        # labels added in this event. The format=full label re-check below
-        # (label_id not in msg.labelIds) is the final correctness gate.
-        if label_id:
-            for labeled in hist.get("labelsAdded", []):
-                if label_id not in labeled.get("labelIds", []):
-                    continue
-                msg_id = labeled["message"]["id"]
-                if msg_id not in seen:
-                    seen.add(msg_id)
-                    message_ids.append(msg_id)
+        # Emails the user manually tagged with the target label after arrival, only when
+        # the target label is among the labels added in this event. Unscoped syncs never
+        # request labelAdded (above), and a None label_id matches no entry here. The
+        # format=full label re-check below (label_id not in msg.labelIds) is the final gate.
+        for labeled in hist.get("labelsAdded", []):
+            if label_id not in labeled.get("labelIds", []):
+                continue
+            msg_id = labeled["message"]["id"]
+            if msg_id not in seen:
+                seen.add(msg_id)
+                message_ids.append(msg_id)
 
-    if "historyId" in response:
-        state["historyId"] = response["historyId"]
+    if new_history_id:
+        state["historyId"] = new_history_id
 
     if not message_ids:
         return []
@@ -851,12 +957,86 @@ def fetch_new_messages(service, state: dict, label_id: str | None = None) -> lis
             ).execute()
             # Re-check label membership (history labelId filter is not always reliable)
             if label_id and label_id not in msg.get("labelIds", []):
+                (state.get("retry_ids") or {}).pop(msg_id, None)
                 continue
             messages.append(msg)
         except Exception as e:
             print(f"Warning: could not fetch message {msg_id}: {e}", file=sys.stderr)
+            _mark_retry(state, msg_id)
 
     return messages
+
+
+def _existing_message_ids(inbox_dir: Path) -> set[str]:
+    """Gmail ids already in the inbox, read from each file's Message-ID line. A missing inbox
+    globs to nothing. An empty id can be in the set harmlessly: write_messages never looks
+    up a message that has no id."""
+    ids: set[str] = set()
+    for f in sorted(inbox_dir.glob("*.md")):
+        try:
+            text = f.read_text(encoding="utf-8")
+        except (OSError, ValueError):  # unreadable, or not UTF-8 (a manual drop)
+            continue
+        for line in text.splitlines():
+            if line.startswith(_MESSAGE_ID_LINE):
+                ids.add(line[len(_MESSAGE_ID_LINE):].strip())
+                break
+    return ids
+
+
+def _prune_written(state: dict, now: datetime) -> None:
+    """Drop written_ids entries older than WRITTEN_KEEP_DAYS, or with an unreadable date."""
+    cutoff = now - timedelta(days=WRITTEN_KEEP_DAYS)
+    kept = {}
+    for msg_id, when in (state.get("written_ids") or {}).items():
+        try:
+            if datetime.fromisoformat(when) >= cutoff:
+                kept[msg_id] = when
+        except (TypeError, ValueError):
+            pass
+    state["written_ids"] = kept
+
+
+def write_messages(messages: list, state: dict, inbox_dir: Path,
+                   dry_run: bool) -> tuple[int, list[str]]:
+    """Write each message to the inbox. A written message leaves state["retry_ids"]; one
+    that fails is queued there for the next run. Returns (written, senders).
+
+    Idempotent by Gmail id: an id already on an inbox file's Message-ID line, or recorded in
+    state["written_ids"], is skipped. A run killed after writing but before its state was
+    saved therefore writes nothing new when the same history is replayed, and the record
+    outlives cleanup_old_inbox_files. written_ids is saved by the same _save_state that
+    moves historyId, so the two cannot disagree."""
+    now = datetime.now()
+    written_ids = state.setdefault("written_ids", {})
+    done = _existing_message_ids(inbox_dir) | set(written_ids)
+    written = 0
+    new_senders = []
+    for msg in messages:
+        msg_id = msg.get("id", "?")
+        if msg.get("id") and msg_id in done:
+            print(f"  Skipped {msg_id}: already written")
+            (state.get("retry_ids") or {}).pop(msg_id, None)
+            if not dry_run:
+                written_ids.setdefault(msg_id, now.isoformat())
+            continue
+        try:
+            msg_meta, raw_body = _process_message(msg)
+            sanitized = sanitize_body(raw_body)
+            path = write_inbox_file(inbox_dir, msg_meta, sanitized, dry_run=dry_run)
+            if not dry_run:
+                print(f"  Wrote: {path.name}")
+                written += 1
+                new_senders.append(msg_meta.get("sender", ""))
+                (state.get("retry_ids") or {}).pop(msg_id, None)
+                if msg.get("id"):
+                    written_ids[msg_id] = now.isoformat()
+            done.add(msg_id)
+        except Exception as e:
+            print(f"Warning: could not process message {msg_id}: {e}", file=sys.stderr)
+            _mark_retry(state, msg_id)
+    _prune_written(state, now)
+    return written, new_senders
 
 
 def fetch_labeled_messages(
@@ -1309,17 +1489,10 @@ def main():
             since_date=args.since,
             max_messages=args.max_messages,
         )
-        written = 0
-        for msg in messages:
-            try:
-                msg_meta, raw_body = _process_message(msg)
-                sanitized = sanitize_body(raw_body)
-                path = write_inbox_file(inbox_dir, msg_meta, sanitized, dry_run=args.dry_run)
-                if not args.dry_run:
-                    print(f"  Wrote: {path.name}")
-                    written += 1
-            except Exception as e:
-                print(f"Warning: could not process message {msg.get('id', '?')}: {e}", file=sys.stderr)
+        # The same idempotent writer as forward sync, on a throwaway copy of the state: it
+        # skips ids already written, and the state file is never saved here.
+        scratch = json.loads(json.dumps(_load_state(state_path)))
+        written, _ = write_messages(messages, scratch, inbox_dir, dry_run=args.dry_run)
         print(f"Backfill done. Wrote {written} inbox file(s). Forward-sync state unchanged.")
         return
 
@@ -1357,32 +1530,23 @@ def main():
         print(f"Seeded {state_path} with historyId={history_id}.", file=sys.stderr)
         return
 
-    # Cleanup old Gmail files before fetching new ones
-    deleted = cleanup_old_inbox_files(inbox_dir, hours=48)
-    if deleted:
-        print(f"Cleaned up {deleted} old Gmail inbox file(s).")
-
+    started = datetime.now()
     messages = fetch_new_messages(service, state, label_id=args.label_id)
     print(f"Found {len(messages)} new message(s).")
 
-    written = 0
-    new_senders = []
-    for msg in messages:
-        try:
-            msg_meta, raw_body = _process_message(msg)
-            sanitized = sanitize_body(raw_body)
-            path = write_inbox_file(inbox_dir, msg_meta, sanitized, dry_run=args.dry_run)
-            if not args.dry_run:
-                print(f"  Wrote: {path.name}")
-                written += 1
-                new_senders.append(msg_meta.get("sender", ""))
-        except Exception as e:
-            print(f"Warning: could not process message {msg.get('id', '?')}: {e}", file=sys.stderr)
+    written, new_senders = write_messages(messages, state, inbox_dir, dry_run=args.dry_run)
 
-    state["last_refresh"] = datetime.now().isoformat()
+    state["last_refresh"] = started.isoformat()
     if not args.dry_run:
         _save_state(state_path, state)
         _notify_new_emails(written, new_senders)
+
+    # Cleanup old Gmail files only after the state (with written_ids) is saved. Run first, it
+    # could delete the only record of a message an earlier run wrote and then died before
+    # saving, and the replayed history would write it again.
+    deleted = cleanup_old_inbox_files(inbox_dir, hours=48)
+    if deleted:
+        print(f"Cleaned up {deleted} old Gmail inbox file(s).")
 
     print(f"Done. Wrote {written} inbox file(s).")
 
