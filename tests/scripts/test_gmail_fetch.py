@@ -956,12 +956,14 @@ def test_retry_gives_up_after_the_last_attempt(capsys):
     assert "giving up on message m2" in capsys.readouterr().err
 
 
-def test_an_invalid_history_id_error_without_404_reseeds(monkeypatch):
+def test_an_invalid_history_id_error_without_404_is_recovered(monkeypatch):
     # Gmail can report an expired cursor with reason "invalidHistoryId" and no "404". The
     # check lowercased the message and then searched it for a mixed-case literal, so it never
-    # matched and the run crashed instead of reseeding.
+    # matched and the run crashed instead of recovering.
     monkeypatch.setattr(gmail_fetch, "_seed_history_id", lambda service, count: "999")
-    svc = _FakeHistoryGmail([RuntimeError("HttpError 400, reason: invalidHistoryId")])
+    svc = _FakeHistoryGmail([RuntimeError("HttpError 400, reason: invalidHistoryId"),
+                             {"messages": []}])
     state = {"historyId": "100"}
     assert gmail_fetch.fetch_new_messages(svc, state) == []
     assert state["historyId"] == "999"
+    assert svc.history_calls[1]["q"].startswith("after:")

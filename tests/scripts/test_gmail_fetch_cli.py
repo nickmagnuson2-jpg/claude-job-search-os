@@ -456,3 +456,105 @@ def test_sync_without_history_id_dry_run_does_not_save(env, capsys):
     assert env.calls["seed"] == [(SERVICE, 50)]
     assert not env.state_path.exists()
     assert env.calls["fetch_new"] == []
+
+
+# ── idempotent writes through main() (2026-10-31, Codex review 1.F2) ────────────────
+
+def test_a_run_killed_before_saving_state_writes_nothing_new_on_rerun(env, monkeypatch):
+    env.write_state({"historyId": "100"})
+    env.new_messages = [_msg("m1"), _msg("m2", sender="Contoso <hr@example.com>",
+                                         subject="Next steps")]
+    real_save = gf._save_state
+
+    def killed(path, state):
+        raise KeyboardInterrupt  # the process dies after the files, before the state
+
+    monkeypatch.setattr(gf, "_save_state", killed)
+    with pytest.raises(KeyboardInterrupt):
+        env.run()
+    first = sorted(p.name for p in env.inbox.glob("*.md"))
+    assert len(first) == 2
+    assert env.read_state() == {"historyId": "100"}
+
+    monkeypatch.setattr(gf, "_save_state", real_save)
+    env.run()  # the cursor never moved, so the same two messages come back
+    assert sorted(p.name for p in env.inbox.glob("*.md")) == first
+    assert sorted(env.read_state()["written_ids"]) == ["m1", "m2"]
+    assert env.calls["notify"][-1] == (0, [])
+
+
+def test_backfill_skips_messages_already_in_the_inbox(env, capsys):
+    env.write_state({"historyId": "100"})
+    env.labeled_messages = [_msg("m1")]
+    env.run("--backfill", "--label-id", "Label_X")
+    first = sorted(p.name for p in env.inbox.glob("*.md"))
+    assert len(first) == 1
+    capsys.readouterr()
+
+    env.labeled_messages = [_msg("m1"), _msg("m2", subject="Second")]
+    env.run("--backfill", "--label-id", "Label_X")
+    names = sorted(p.name for p in env.inbox.glob("*.md"))
+    assert len(names) == 2 and set(first) < set(names)
+    out = capsys.readouterr().out
+    assert "Skipped m1: already written" in out
+    assert "Backfill done. Wrote 1 inbox file(s). Forward-sync state unchanged." in out
+    assert env.read_state() == {"historyId": "100"}
+
+
+def test_a_rerun_more_than_48h_after_a_killed_run_writes_nothing_new(env, monkeypatch, capsys):
+    # Codex round 2, F2: cleanup used to run BEFORE the duplicate check, so on a late rerun it
+    # deleted the only record of what the killed run had written, and the replay rewrote it.
+    env.write_state({"historyId": "100"})
+    env.new_messages = [_msg("m1"), _msg("m2", subject="Second")]
+    real_save = gf._save_state
+
+    def killed(path, state):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(gf, "_save_state", killed)
+    with pytest.raises(KeyboardInterrupt):
+        env.run()
+    old = time.time() - 72 * 3600
+    for p in env.inbox.glob("*.md"):
+        os.utime(p, (old, old))
+    capsys.readouterr()
+
+    monkeypatch.setattr(gf, "_save_state", real_save)
+    env.run()
+    out = capsys.readouterr().out
+    assert "Done. Wrote 0 inbox file(s)." in out
+    assert "Cleaned up 2 old Gmail inbox file(s)." in out
+    assert list(env.inbox.glob("*.md")) == []
+    assert sorted(env.read_state()["written_ids"]) == ["m1", "m2"]
+
+
+def test_a_state_save_that_dies_leaves_the_old_state_intact(tmp_path, monkeypatch):
+    # Codex round 2, F1: write_text truncates first, so a death mid-save left empty JSON,
+    # which the next run read as a fresh install and auto-seeded past unprocessed mail.
+    path = tmp_path / ".gmail_state.json"
+    path.write_text(json.dumps({"historyId": "100"}), encoding="utf-8")
+
+    def dies(src, dst):
+        raise OSError("killed during save")
+
+    monkeypatch.setattr(gf.os, "replace", dies)
+    with pytest.raises(OSError):
+        gf._save_state(path, {"historyId": "200"})
+    assert json.loads(path.read_text(encoding="utf-8")) == {"historyId": "100"}
+    assert [p.name for p in tmp_path.iterdir()] == [".gmail_state.json"]
+
+
+def test_last_refresh_is_the_time_the_run_started(env, monkeypatch):
+    # Fable round 2, F5: saved as the END time, a long run moved the next recovery start past
+    # mail that arrived early in that run.
+    env.write_state({"historyId": "100"})
+    seen = {}
+    real_fetch = gf.fetch_new_messages
+
+    def fetch_and_note_time(service, state, label_id=None):
+        seen["fetch"] = datetime.now()
+        return real_fetch(service, state, label_id)
+
+    monkeypatch.setattr(gf, "fetch_new_messages", fetch_and_note_time)
+    env.run()
+    assert datetime.fromisoformat(env.read_state()["last_refresh"]) <= seen["fetch"]

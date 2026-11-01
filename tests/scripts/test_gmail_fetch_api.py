@@ -214,11 +214,9 @@ def test_scoped_sync_requests_label_added_and_label_filter():
     assert call["labelId"] == "L1"
 
 
-def test_expired_history_id_reseeds_and_returns_empty(capsys):
-    # Only the "404" clause is exercised: `"invalidHistoryId" in err_str.lower()` compares a
-    # mixed-case literal against a lowercased string and can never be true (known defect).
+def test_expired_history_id_takes_the_new_cursor_from_the_newest_message(capsys):
     svc = FakeGmail(history_pages=[RuntimeError("HttpError 404 Not Found")],
-                    list_pages=[{"messages": [{"id": "m5"}]}],
+                    list_pages=[{"messages": [{"id": "m5"}]}, {"messages": []}],
                     messages_by_id={"m5": {"id": "m5", "historyId": "9000"}})
     state = {"historyId": "100"}
     got = gmail_fetch.fetch_new_messages(svc, state)
@@ -472,3 +470,179 @@ def test_search_show_body_prints_body_and_truncation(capsys):
     assert second.endswith(truncated_line + "\n")
     assert "  --- body ---\n  line one\n" in second
     assert f"  {'y' * (gmail_fetch.MAX_BODY_CHARS - len('line one') - 1)}\n" in second
+
+
+# ── expired cursor recovers the gap; writes are idempotent by Gmail id (2026-10-31) ──
+# Codex review 1.F1 and 1.F2 on fixes-1030. Before this, an expired cursor jumped to the
+# newest message and returned nothing, so the mail in between was never written; and a run
+# killed after writing files but before saving state rewrote the same messages, suffixed.
+
+from datetime import datetime, timedelta  # noqa: E402
+
+
+def _expired_gmail(gap_pages, gap_msgs):
+    """History raises 404. The first messages.list is the reseed (newest message, whose
+    historyId becomes the new cursor); the rest are the gap listing."""
+    by_id = {"newest": {"id": "newest", "historyId": "9000"}}
+    by_id.update({m["id"]: m for m in gap_msgs})
+    return FakeGmail(history_pages=[RuntimeError("HttpError 404 Not Found")],
+                     list_pages=[{"messages": [{"id": "newest"}]}, *gap_pages],
+                     messages_by_id=by_id)
+
+
+def _after(call):
+    return int(call["q"].removeprefix("after:"))
+
+
+def test_an_expired_cursor_returns_the_mail_in_the_gap(capsys):
+    last = datetime.now().replace(microsecond=0) - timedelta(hours=5)
+    svc = _expired_gmail(
+        [{"messages": [{"id": "g1"}], "nextPageToken": "p2"}, {"messages": [{"id": "g2"}]}],
+        [_full_msg("g1", labels=("L1",)), _full_msg("g2", labels=("L1",))])
+    state = {"historyId": "100", "last_refresh": last.isoformat()}
+    got = gmail_fetch.fetch_new_messages(svc, state, label_id="L1")
+    assert [m["id"] for m in got] == ["g1", "g2"]
+    assert state["historyId"] == "9000"
+    gap = svc.list_calls[1:]
+    assert len(gap) == 2
+    assert _after(gap[0]) == int((last - timedelta(hours=1)).timestamp())
+    assert gap[0]["labelIds"] == ["L1"]
+    assert gap[1]["pageToken"] == "p2"
+    assert "recovering mail since" in capsys.readouterr().err
+
+
+def _days_ago(n):
+    # The same local-calendar arithmetic as _gap_start, so a DST change inside the window
+    # does not move the expected value by an hour (Fable round 2, F3/F4).
+    return int((datetime.now() - timedelta(days=n)).timestamp())
+
+
+def test_the_gap_looks_back_at_most_30_days_and_says_so(capsys):
+    svc = _expired_gmail([{"messages": []}], [])
+    state = {"historyId": "100",
+             "last_refresh": (datetime.now() - timedelta(days=90)).isoformat()}
+    assert gmail_fetch.fetch_new_messages(svc, state) == []
+    assert abs(_after(svc.list_calls[1]) - _days_ago(30)) < 60
+    assert "labelIds" not in svc.list_calls[1]
+    assert "older mail is not recovered" in capsys.readouterr().err
+
+
+def test_without_a_last_run_time_the_gap_is_7_days_and_says_so(capsys):
+    svc = _expired_gmail([{"messages": []}], [])
+    state = {"historyId": "100"}
+    gmail_fetch.fetch_new_messages(svc, state)
+    assert abs(_after(svc.list_calls[1]) - _days_ago(7)) < 60
+    assert "no last_refresh" in capsys.readouterr().err
+
+
+def test_an_id_already_written_is_not_rewritten_after_its_file_is_gone(tmp_path, capsys):
+    state = {"written_ids": {"m1": datetime.now().isoformat()}}
+    written, _ = gmail_fetch.write_messages([_full_msg("m1")], state, tmp_path, dry_run=False)
+    assert written == 0
+    assert list(tmp_path.glob("*.md")) == []
+    assert "Skipped m1: already written" in capsys.readouterr().out
+
+
+def test_a_repeat_within_one_batch_is_written_once(tmp_path):
+    state = {}
+    written, senders = gmail_fetch.write_messages(
+        [_full_msg("m1"), _full_msg("m1")], state, tmp_path, dry_run=False)
+    assert written == 1 and senders == ["a@example.com"]
+    assert len(list(tmp_path.glob("*.md"))) == 1
+    assert list(state["written_ids"]) == ["m1"]
+
+
+def test_written_ids_drops_entries_older_than_30_days(tmp_path):
+    now = datetime.now()
+    keep = (now - timedelta(days=29)).isoformat()
+    state = {"written_ids": {"old": (now - timedelta(days=31)).isoformat(), "new": keep,
+                             "junk": "not a date"}}
+    gmail_fetch.write_messages([], state, tmp_path, dry_run=False)
+    assert state["written_ids"] == {"new": keep}
+
+
+def test_a_gap_id_already_queued_or_listed_twice_is_fetched_once():
+    svc = _expired_gmail([{"messages": [{"id": "g1"}], "nextPageToken": "p2"},
+                          {"messages": [{"id": "g1"}, {"id": "g2"}]}],
+                         [_full_msg("g1", labels=("L1",)), _full_msg("g2", labels=("L1",))])
+    state = {"historyId": "100", "last_refresh": datetime.now().isoformat(),
+             "retry_ids": {"g2": 1}}
+    got = gmail_fetch.fetch_new_messages(svc, state, label_id="L1")
+    assert [m["id"] for m in got] == ["g2", "g1"]
+    assert [c["id"] for c in svc.get_calls if c["id"] != "newest"] == ["g2", "g1"]
+
+
+def test_a_written_message_is_recorded_with_the_time_it_was_written(tmp_path):
+    before = datetime.now()
+    state = {}
+    gmail_fetch.write_messages([_full_msg("m1")], state, tmp_path, dry_run=False)
+    assert list(state["written_ids"]) == ["m1"]
+    assert before <= datetime.fromisoformat(state["written_ids"]["m1"]) <= datetime.now()
+
+
+def test_a_message_without_an_id_is_written_but_never_recorded(tmp_path):
+    msg = _full_msg("x")
+    del msg["id"]
+    state = {}
+    written, _ = gmail_fetch.write_messages([msg], state, tmp_path, dry_run=False)
+    assert written == 1
+    assert state["written_ids"] == {}
+
+
+def test_a_skipped_message_leaves_the_retry_queue(tmp_path):
+    state = {"retry_ids": {"m1": 2}, "written_ids": {"m1": datetime.now().isoformat()}}
+    gmail_fetch.write_messages([_full_msg("m1")], state, tmp_path, dry_run=False)
+    assert state["retry_ids"] == {}
+
+
+def test_a_dry_run_records_nothing_for_an_id_found_in_the_inbox(tmp_path, capsys):
+    gmail_fetch.write_messages([_full_msg("m1")], {}, tmp_path, dry_run=False)
+    capsys.readouterr()
+    state = {}
+    written, _ = gmail_fetch.write_messages([_full_msg("m1")], state, tmp_path, dry_run=True)
+    assert written == 0
+    assert "Skipped m1: already written" in capsys.readouterr().out
+    assert state["written_ids"] == {}
+
+
+def test_an_unreadable_inbox_entry_is_skipped_and_the_rest_are_read(tmp_path):
+    (tmp_path / "0-first.md").mkdir()  # sorts first; reading it raises IsADirectoryError
+    (tmp_path / "1-mail.md").write_text("# Email\n\n> **Message-ID:** m7\n", encoding="utf-8")
+    assert gmail_fetch._existing_message_ids(tmp_path) == {"m7"}
+
+
+class _HttpErrorLike(Exception):
+    """Shaped like googleapiclient's HttpError: a .resp with .status, and text that includes
+    the request URL."""
+
+    def __init__(self, status, text):
+        super().__init__(text)
+        self.resp = type("Resp", (), {"status": status})()
+
+
+def test_a_500_whose_url_contains_404_is_not_taken_for_an_expired_cursor():
+    err = _HttpErrorLike(500, "<HttpError 500 when requesting .../history?startHistoryId=140472"
+                              "&maxResults=500 returned Backend Error>")
+    svc = FakeGmail(history_pages=[err])
+    state = {"historyId": "140472"}
+    with pytest.raises(_HttpErrorLike):
+        gmail_fetch.fetch_new_messages(svc, state)
+    assert state == {"historyId": "140472"}
+    assert svc.list_calls == []
+
+
+def test_an_http_error_with_status_404_is_recovered_without_404_in_its_text():
+    svc = _expired_gmail([{"messages": []}], [])
+    svc.history_pages = [_HttpErrorLike(404, "<HttpError when requesting .../history>")]
+    state = {"historyId": "100", "last_refresh": datetime.now().isoformat()}
+    assert gmail_fetch.fetch_new_messages(svc, state) == []
+    assert state["historyId"] == "9000"
+
+
+def test_a_non_utf8_inbox_file_is_skipped_by_the_scan_and_by_cleanup(tmp_path):
+    bad = tmp_path / "0-drop.md"
+    bad.write_bytes(b"\xff\xfe not utf-8")
+    (tmp_path / "1-mail.md").write_text("> **Message-ID:** m7\n", encoding="utf-8")
+    assert gmail_fetch._existing_message_ids(tmp_path) == {"m7"}
+    assert gmail_fetch.cleanup_old_inbox_files(tmp_path, hours=0) == 0
+    assert bad.exists()
