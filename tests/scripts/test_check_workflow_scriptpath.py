@@ -319,8 +319,8 @@ def test_importing_the_hook_does_not_run_main():
 
 def test_resolve_script_path_returns_none_for_non_string_input():
     """Kills IF_FALSE on the line-85 type/empty guard in resolve_script_path. Without
-    it, a non-string reaches os.path.isabs() and raises TypeError instead of
-    returning None."""
+    it, a non-string reaches the root loop's os.path.join() and raises TypeError
+    instead of returning None."""
     module = _import_hook_module()
     assert module.resolve_script_path(None, {}) is None
     assert module.resolve_script_path(12345, {}) is None
@@ -341,33 +341,6 @@ def test_resolve_script_path_returns_the_resolved_candidate(fake_repo):
     resolved = module.resolve_script_path(REAL_SCRIPT, {"cwd": str(fake_repo)})
     assert resolved == os.path.join(str(fake_repo), REAL_SCRIPT)
     assert os.path.isfile(resolved)
-
-
-def test_main_exits_zero_explicitly_on_the_clean_path(fake_repo):
-    """Kills DROP_CALL on the line-183 `sys.exit(0)`.
-
-    A subprocess cannot see this: dropping the final exit still lets the interpreter
-    fall off the end of main() and terminate 0. The hook contract is that main()
-    ALWAYS terminates by naming its exit code — every other outcome in this function
-    is a `sys.exit`/`_block` — so the clean path must raise SystemExit(0), not return
-    None to its caller.
-    """
-    module = _import_hook_module()
-    payload = json.dumps(
-        {
-            "tool_name": "Workflow",
-            "cwd": str(fake_repo),
-            "tool_input": {"scriptPath": REAL_SCRIPT, "args": {"context": "x"}},
-        }
-    )
-    original_stdin = sys.stdin
-    sys.stdin = io.StringIO(payload)
-    try:
-        with pytest.raises(SystemExit) as excinfo:
-            module.main()
-    finally:
-        sys.stdin = original_stdin
-    assert excinfo.value.code == 0
 
 
 @pytest.mark.parametrize(

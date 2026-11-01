@@ -287,6 +287,9 @@ def test_a_stage_with_no_command_word_has_no_terminal_formatter(stage):
     in FORMATTERS, where "" and None agree, so _first_word now returns None)."""
     mod = _load_module()
     assert mod._terminal_formatter(stage) is None
+    # None of these stages holds a pipe, so _terminal_formatter returns before it calls
+    # _first_word; call the helper directly so its no-match branch is exercised too.
+    assert mod._first_word(stage) is None
 
 @pytest.mark.parametrize("stage,expected", [
     (" tail -14", "tail"),
