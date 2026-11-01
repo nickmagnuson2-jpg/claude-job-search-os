@@ -267,10 +267,12 @@ SKILLS_DIR = REPO_ROOT / ".claude" / "skills"
 _TEMPLATE_HEADING = re.compile(r"^\s*#### YYYY-MM-DD \| ([^|]+?) \|", re.M)
 
 
-# The ONE stated exception (job-search-47 for Nick, 2026-10-31, round-3 finding F6):
-# /draft-email logs when the draft is opened, before it is sent, and a draft is not a
-# send. Its template stays plain, so the morning page does not count it, as before.
-PLAIN_TEMPLATE_EXCEPTIONS = {"draft-email": "logged when the draft opens; a draft is not a send"}
+# The ONE stated exception (job-search-47 for Nick, 2026-10-31, review rounds 3-4): the
+# old meaning. The old summary rules gave a /draft-email entry (thank-you, status update,
+# intro request) no verdict, while /follow-up and /cold-outreach entries ("Follow-up #N",
+# "Cold outreach") counted as sends. So /draft-email stays plain and the other two record
+# (outbound). The timing is NOT the reason: all three log when the draft opens.
+PLAIN_TEMPLATE_EXCEPTIONS = {"draft-email": "keep the old meaning: not counted before 2026-10-30"}
 
 
 def _templates():
@@ -291,12 +293,15 @@ def test_every_hand_written_heading_template_records_a_direction():
 
 
 def test_the_draft_email_template_stays_plain_and_says_why():
-    """The exception is pinned both ways: /draft-email must NOT record a direction (a draft
-    is not a send), and its template must say so, so nobody 'fixes' it back."""
+    """The exception is pinned both ways: /draft-email's template must NOT record a
+    direction, and the step that holds it must give the reason (the old meaning) right
+    before the template, so nobody 'fixes' it back without seeing why."""
     kinds = [kind for skill, kind in _templates() if skill == "draft-email"]
     assert kinds and all(rc.direction(k) is None for k in kinds), kinds
     text = (SKILLS_DIR / "draft-email" / "SKILL.md").read_text(encoding="utf-8")
-    assert "a draft is not a send" in text.lower()
+    m = _TEMPLATE_HEADING.search(text)
+    reason = text[max(0, m.start() - 700):m.start()].lower()
+    assert "keep the old meaning" in reason and "/follow-up" in reason, reason[-300:]
     assert set(PLAIN_TEMPLATE_EXCEPTIONS) == {"draft-email"}
 
 
