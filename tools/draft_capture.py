@@ -68,6 +68,8 @@ import time
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import eic_review  # noqa: E402
 
 DRAFT_NAME = "draft-v0.txt"
 SENT_NAME = "sent.txt"
@@ -351,6 +353,13 @@ def confirm(capture_id: str, outcome: str, sent_text: str | None = None,
         "screenshots": list(screenshots or []),
     })
     _write_meta(directory, meta)
+    # A sent email to the EIC opens a review that only her reply can close
+    # (tools/eic_review.py). Reported in the result, not stored in the capture.
+    try:
+        if eic_review.open_for(meta, now=now):
+            return {**meta, "eic_review": "opened"}
+    except OSError as exc:
+        return {**meta, "eic_review": f"ERROR: could not open the EIC review: {exc}"}
     return meta
 
 

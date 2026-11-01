@@ -78,8 +78,10 @@ from hook_runtime import read_payload  # noqa: E402
 # approval_signing and calendar_approval (2026-10-28): check_calendar_mcp allows a calendar
 # write only when calendar_approval.approve() returns, which needs approval_signing.verify()
 # to pass, so a change to either changes a guard verdict.
+# eic_review (2026-10-30, Nick approved): check_eic_review blocks the published-post record
+# exactly while eic_review.open_reviews() is non-empty, so a change to it changes a verdict.
 HOOK_LIBRARIES = ("shell_tokens", "hook_runtime", "hook_command_lint", "approval_signing",
-                  "calendar_approval")
+                  "calendar_approval", "eic_review")
 # Imported by a guard but deliberately NOT guarded (Nick's call, 2026-10-01: "just the
 # hook libraries"). Each is domain logic or tooling that ordinary work edits.
 NOT_HOOK_LIBRARIES = {
@@ -104,6 +106,10 @@ NOT_HOOK_LIBRARIES = {
     "vault_paths": "vault path helper, imported via the Gmail tooling",
     "count_report": "reach-line formatter for counted output, imported via build_check "
                     "and sent_artifact_check; formatting, never a decision",
+    "draft_capture": "draft/sent record store, imported via eic_review's manual `open` "
+                     "command; it decides when a review opens, never what the hook blocks, "
+                     "and test_eic_review covers that opening step (2026-10-30, Nick "
+                     "approved)",
 }
 
 # Guard infrastructure. Repo-relative, matched against the tail of the path so an

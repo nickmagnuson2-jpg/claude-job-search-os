@@ -337,6 +337,10 @@ REGISTRY: dict[tuple[str, str, str | None], object] = {
     ("day_check.py", "complete", None): [
         Branch("day_check.py", "main", reads="complete", closes="exit"),
         Text(".claude/skills/check/SKILL.md", r"Exit code 1 means at least one source was unreadable")],
+    ("eic_review.py", "unreadable", None): [
+        # An unreadable review record counts as an open review, so the publish gate
+        # (check_eic_review.py) blocks rather than letting a post through.
+        Branch("eic_review.py", "open_reviews", reads="unreadable")],
     ("conversations_metric.py", "unreadable_sources", None): [
         Text(STANDUP, r"unreadable: <unreadable_sources>")],
 
