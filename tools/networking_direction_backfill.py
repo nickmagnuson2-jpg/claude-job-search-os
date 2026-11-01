@@ -32,10 +32,10 @@ Two steps, and the second needs Nick's approval:
          else may move; must be empty), (b) the morning-page effect: day_check's week counts
          for the last 4 weeks, before and after, and (c) the interim effect: entries whose
          verdict --classifier itself would change after the backfill.
-  apply  --plan PATH --classifier PATH --approved. Refuses unless the acceptance check is
-         empty, the file's sha256 still equals the plan's, and the plan recomputed from the
-         file and the classifier equals the plan file (so an edited plan cannot pass, Codex
-         F2). Backs the file up to output/reply-direction/backups/, rewrites only the planned
+  apply  --plan PATH --classifier PATH --approved. Refuses unless the file's sha256 still
+         equals the plan's, the change list recomputed from the file and the classifier
+         equals the plan file, and the acceptance check RECOMPUTED here is empty (so an
+         edited plan cannot pass; review rounds 1 and 2). Backs the file up to output/reply-direction/backups/, rewrites only the planned
          headings, and writes atomically.
 
 Usage:
@@ -179,6 +179,18 @@ def _plan_changes(entries: list[dict], old) -> tuple[list[dict], int, int]:
     return changes, no_verdict, already
 
 
+def _acceptance(entries: list[dict], new_text: str, old) -> list[dict]:
+    """Every entry whose verdict moves other than reply -> two-way: old rules on the
+    original entry vs the current classifier on the relabelled one. Must be empty."""
+    out = []
+    for a, b in zip(entries, _entries(new_text)):
+        before, after = old(a["type"], a["summary"]), classify_type(b["type"])
+        if (before, after) not in ALLOWED:
+            out.append({"line": a["line"], "before": before, "after": after,
+                        "new_type": b["type"], "summary": a["summary"]})
+    return out
+
+
 def cmd_plan(root: Path, out_dir: Path, classifier: str, today: date) -> None:
     if out_dir.resolve().is_relative_to((root / "data").resolve()):
         out_error(f"--out-dir {out_dir} is inside data/; plan never writes there",
@@ -195,7 +207,8 @@ def cmd_plan(root: Path, out_dir: Path, classifier: str, today: date) -> None:
                              {"no verdict": no_verdict, "direction already recorded": already})
     new_text = _relabel(text, changes)
 
-    acceptance, interim = [], []
+    acceptance = _acceptance(entries, new_text, old)
+    interim = []
     totals = {"replies": {"before": 0, "after": 0}, "sends": {"before": 0, "after": 0}}
     for a, b in zip(entries, _entries(new_text)):
         before, after = old(a["type"], a["summary"]), classify_type(b["type"])
@@ -203,12 +216,9 @@ def cmd_plan(root: Path, out_dir: Path, classifier: str, today: date) -> None:
         totals["sends"]["before"] += before == "send"
         totals["replies"]["after"] += after in REPLY_VERDICTS
         totals["sends"]["after"] += after in SEND_VERDICTS
-        row = {"line": a["line"], "before": before, "new_type": b["type"],
-               "summary": a["summary"]}
-        if (before, after) not in ALLOWED:
-            acceptance.append({**row, "after": after})
         if old(b["type"], b["summary"]) != before:
-            interim.append({**row, "after": old(b["type"], b["summary"])})
+            interim.append({"line": a["line"], "before": before, "new_type": b["type"],
+                            "summary": a["summary"], "after": old(b["type"], b["summary"])})
 
     plan = {"source": str(NETWORKING), "source_sha256": _sha(raw),
             "new_sha256": _sha(new_text.encode("utf-8")), "scope": scope_line,
@@ -301,16 +311,20 @@ def cmd_apply(root: Path, plan_path: Path, classifier: str, approved: bool) -> N
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
     path = root / NETWORKING
     raw = path.read_bytes()
-    if plan["acceptance_diff"]:
-        out_error("the plan changes verdicts under the current classifier", "acceptance_failed")
     if _sha(raw) != plan["source_sha256"]:
         out_error(f"{path} changed after the plan was made; run plan again", "sha_mismatch")
     text = raw.decode("utf-8")
-    recomputed, _, _ = _plan_changes(_entries(text), _load_classifier(classifier))
+    old = _load_classifier(classifier)
+    entries = _entries(text)
+    recomputed, _, _ = _plan_changes(entries, old)
     if recomputed != plan["changes"]:
         out_error("the plan file differs from the plan recomputed from the file and the "
                   "classifier; run plan again", "plan_mismatch")
     new_text = _relabel(text, plan["changes"])
+    # Recomputed, never read from the plan file (review round 2): a cleared
+    # acceptance_diff must not let a failing plan through.
+    if _acceptance(entries, new_text, old):
+        out_error("the plan changes verdicts under the current classifier", "acceptance_failed")
     if _sha(new_text.encode("utf-8")) != plan["new_sha256"]:
         out_error("the relabelled file does not match the plan", "result_mismatch")
     backup = BACKUPS / f"networking.md.{datetime.now():%Y%m%d-%H%M%S}.bak"

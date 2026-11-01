@@ -459,9 +459,9 @@ Archive file format:
 
 
 **If recipient exists in `data/networking.md`:**
-1. Log the interaction:
+1. Log the interaction. The `(outbound)` in the type is what counts this as a send on the morning page (`tools/reply_classify.py` reads only the type, never the summary). Keep it.
    ```markdown
-   #### YYYY-MM-DD | email | [Type] — [1-line summary]
+   #### YYYY-MM-DD | email (outbound) | [Type] — [1-line summary]
 
    > [Full message text in blockquote]
 

@@ -128,7 +128,7 @@ Or use `--destinations-file` on Windows to avoid shell-escaping issues:
 
 Parse the response:
 - Single destination: `{"status":"ok","action":"<type>","file":"..."}` — use `file` in confirmation
-- Multi destination: `{"status":"ok","action":"multi_write","results":[...]}` — surface any `warning` fields
+- Multi destination: `{"status":"ok","action":"multi_write","results":[...]}` — surface any `warning` fields. If `has_errors` is `true`, some destinations were NOT written: surface each result whose `status` is `error` (for example `direction_required`, a contact note without a direction) and fix it before confirming
 - Error: `{"status":"error","message":"..."}` — surface to user with fallback suggestion
 
 If the script fails or classify returned empty destinations: fall back to writing `data/notes.md` as general_note.

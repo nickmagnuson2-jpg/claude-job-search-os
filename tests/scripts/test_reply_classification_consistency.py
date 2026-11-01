@@ -256,3 +256,33 @@ def test_two_way_is_both_a_reply_and_a_send():
 def test_a_plain_type_is_never_counted_whatever_the_summary(tmp_path, summary):
     text = NETWORKING + f"#### 2026-06-19 | email | {summary}\n"
     assert [e["direction"] for e in dc.networking_events(text)] == [None]
+
+
+# ---------------------------------------------------------------------------
+# 4. Writers outside networking_write.py (review round 2, 2026-10-31)
+# ---------------------------------------------------------------------------
+
+SKILLS_DIR = REPO_ROOT / ".claude" / "skills"
+# A heading TEMPLATE a skill tells the model to write by hand: a placeholder date.
+_TEMPLATE_HEADING = re.compile(r"^\s*#### YYYY-MM-DD \| ([^|]+?) \|", re.M)
+
+
+def test_every_hand_written_heading_template_records_a_direction():
+    """/follow-up, /cold-outreach and /draft-email write their own interaction heading. A
+    plain type there makes every send they log count as nothing once the summary is not
+    read (Fable round 2, F1-F3). Every such template must carry a direction suffix."""
+    found, plain = [], []
+    for path in sorted(SKILLS_DIR.glob("*/SKILL.md")):
+        for m in _TEMPLATE_HEADING.finditer(path.read_text(encoding="utf-8")):
+            found.append(path.parent.name)
+            if rc.direction(m.group(1)) is None:
+                plain.append(f"{path.parent.name}: {m.group(1)!r}")
+    assert not plain, plain
+    assert {"follow-up", "cold-outreach", "draft-email"} <= set(found), found
+
+
+def test_the_template_scan_would_catch_a_plain_type():
+    assert [m.group(1) for m in _TEMPLATE_HEADING.finditer(
+        "#### YYYY-MM-DD | [email/linkedin] | Cold outreach — x\n")] == ["[email/linkedin]"]
+    assert rc.direction("[email/linkedin]") is None
+    assert rc.direction("[email/linkedin] (outbound)") == "out"

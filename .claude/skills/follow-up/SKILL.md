@@ -451,10 +451,10 @@ Archive file format:
 
 **1. Log the interaction in `data/networking.md`:**
 
-Add an entry under the contact's Interaction Log section:
+Add an entry under the contact's Interaction Log section. The `(outbound)` in the type is what counts this as a send on the morning page (`tools/reply_classify.py` reads only the type, never the summary). Keep it.
 
 ```markdown
-#### YYYY-MM-DD | [email/linkedin] | Follow-up #N — [1-line summary]
+#### YYYY-MM-DD | [email/linkedin] (outbound) | Follow-up #N — [1-line summary]
 
 > [Full message text in blockquote]
 

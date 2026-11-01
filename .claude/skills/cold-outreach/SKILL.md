@@ -473,12 +473,12 @@ If they already exist (from Step 2 — found but no interactions), update the La
 
 **2. Log the interaction:**
 
-Add an entry under the contact's Interaction Log section (create the section if new contact):
+Add an entry under the contact's Interaction Log section (create the section if new contact). The `(outbound)` in the type is what counts this as a send on the morning page (`tools/reply_classify.py` reads only the type, never the summary). Keep it.
 
 ```markdown
 ### [Name] — [Company]
 
-#### YYYY-MM-DD | [email/linkedin] | Cold outreach — [1-line summary]
+#### YYYY-MM-DD | [email/linkedin] (outbound) | Cold outreach — [1-line summary]
 
 > [Full message text, line by line, in blockquote]
 

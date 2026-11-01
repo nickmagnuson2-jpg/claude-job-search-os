@@ -42,7 +42,7 @@ LIVE = {
 }
 ASYNC = {
     "email", "linkedin", "text", "imessage", "sms", "email-sent", "email reply",
-    "email (inbound)", "linkedin message", "inbound", "claude-chat",
+    "linkedin message", "inbound", "claude-chat",
 }
 META = {
     "other", "closeout", "profile-import", "captured", "status", "note", "context",

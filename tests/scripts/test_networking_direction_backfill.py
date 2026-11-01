@@ -203,7 +203,7 @@ def test_a_plan_that_fails_acceptance_cannot_be_applied(repo):
         (21, None, "reply"), (35, None, "reply")]
     before = sha(repo / "data/networking.md")
     out, code, _ = apply_(repo, "--plan", repo / "review" / "backfill-plan.json",
-                       "--approved")
+                       "--approved", rules="odd_rules.py")
     assert code != 0 and out["code"] == "acceptance_failed"
     assert sha(repo / "data/networking.md") == before
 
@@ -448,3 +448,24 @@ def test_plan_refuses_to_write_under_data(repo, out_dir):
     out, code, _ = run(repo, "plan", "--out-dir", out_dir, "--classifier", repo / "old_rules.py")
     assert code != 0 and out["code"] == "out_dir_in_data"
     assert sorted(p.relative_to(repo) for p in (repo / "data").rglob("*")) == before
+
+
+def test_a_cleared_acceptance_diff_does_not_hide_a_failing_plan(repo):
+    """Round 2 (Codex F1, Fable F4): the acceptance failure comes from an entry the plan
+    leaves unchanged (an already-inbound line that the old rules call nothing), so the
+    recomputed change list matches. apply must recompute acceptance itself, not read the
+    plan's field."""
+    write_fixture(repo, "odd_rules.py", OLD_RULES.replace(
+        "    k = (kind or '').strip().casefold()\n",
+        "    k = (kind or '').strip().casefold()\n"
+        "    if k == 'email (inbound)':\n        return None\n"))
+    plan(repo, "odd_rules.py")
+    path = repo / "review" / "backfill-plan.json"
+    p = json.loads(path.read_text(encoding="utf-8"))
+    assert p["acceptance_diff"]
+    p["acceptance_diff"] = []
+    path.write_text(json.dumps(p), encoding="utf-8")
+    before = sha(repo / "data/networking.md")
+    out, code, _ = apply_(repo, "--plan", path, "--approved", rules="odd_rules.py")
+    assert code != 0 and out["code"] == "acceptance_failed"
+    assert sha(repo / "data/networking.md") == before
