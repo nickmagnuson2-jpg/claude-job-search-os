@@ -1248,6 +1248,30 @@ def test_a_worktree_on_an_orphan_branch_still_finds_its_main_checkout(tmp_path, 
     assert str(main.resolve()) in cv.sealed_subpaths(wt)
 
 
+def test_a_failed_worktree_listing_is_not_trusted_even_if_it_prints(tmp_path, monkeypatch):
+    """git worktree list that exits non-zero is ignored even when it printed a worktree line;
+    trusting it would let a forged checkout pass (Codex and Fable infra-1031 round 7,
+    2026-11-01). The holder below passes every other check, so only the exit code stops it."""
+    wt = tmp_path / "worktrees" / "branch-wt"
+    wt.mkdir(parents=True)
+    (wt / ".git").write_text("gitdir: /nowhere\n", encoding="utf-8")
+    holder = tmp_path / "holder"
+    (holder / ".git").mkdir(parents=True)
+    (holder / "README.md").write_text("x\n", encoding="utf-8")
+
+    class Done:
+        def __init__(self, rc, out):
+            self.returncode, self.stdout, self.stderr = rc, out, ""
+
+    def fake(cmd, *a, **k):
+        if "worktree" in cmd:
+            return Done(1, f"worktree {holder}\n")
+        return Done(0, "README.md\n")             # ls-tree
+    monkeypatch.setattr(cv.subprocess, "run", fake)
+    with pytest.raises(RuntimeError, match="main checkout"):
+        cv._main_checkout(wt.resolve())
+
+
 def test_a_linked_worktree_whose_main_checkout_cannot_be_found_refuses(tmp_path, monkeypatch):
     """A failed git call used to return None, and the review ran with the main checkout and
     its conf unsealed (Fable infra-1031 F3, 2026-11-01). From a linked worktree (.git is a
