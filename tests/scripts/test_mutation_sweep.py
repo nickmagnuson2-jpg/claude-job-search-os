@@ -381,6 +381,20 @@ def test_writer_detection_flags_every_write_shape(repo, monkeypatch):
                      "tools/r_only.py": False}
 
 
+def test_a_self_excluded_row_is_recorded_as_a_writer(repo, monkeypatch):
+    """A self-excluded row (the sweep itself, a runner dependency) is recorded with w:true
+    whatever its text, as at 4a8af8a. The infra-1031 merge of the two row builders had
+    started taking w from the writer regex, which flipped conftest_guard.py to w:false
+    (Codex and Fable review, 2026-11-01)."""
+    (repo / "tools" / "mutation_sweep.py").write_text("x = 1\n", encoding="utf-8")
+    (repo / "tests" / "scripts" / "test_mutation_sweep.py").write_text(
+        "def test_a():\n    assert 1 == 1\n", encoding="utf-8")
+    mod = load(repo, monkeypatch)
+    row = {r["tool"]: r for r in mod.build_targets()}["tools/mutation_sweep.py"]
+    assert row["mutants"] == mod.SELF_EXCLUDED
+    assert row["w"] is True
+
+
 def test_the_self_excluded_row_still_reports_its_hook_wiring(repo, monkeypatch):
     """Skipped from measurement is not the same as unknown: the row still feeds the
     accounting, so an inverted flag there is a quiet lie in the target list."""

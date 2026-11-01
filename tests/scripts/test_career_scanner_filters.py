@@ -531,12 +531,16 @@ def test_is_duplicate_still_uses_company_plus_fuzzy_title():
     assert is_duplicate("Deployment Strategist", "", entries) is False
 
 
-def test_a_role_with_no_company_never_matches_even_a_blank_company_row():
-    """find_match refuses an empty company outright: a blank company is unknown, not a
-    company called "", so a row that also lost its company must not claim the role."""
-    from tools.career_scanner.dedup import find_match
-    assert find_match("Deployment Strategist", "  ",
-                      [{"company": "", "role": "Deployment Strategist"}]) is None
+def test_a_role_with_no_company_never_matches_a_blank_company_row(tmp_path):
+    """A blank company is unknown, not a company called "": a closed row that also lost
+    its company must not tag the role. The real read path drops that row (pipe_read
+    skips it, load_closed_entries filters it), which is what lets find_match go
+    without an empty-company guard."""
+    from tools.career_scanner.dedup import load_closed_entries, tag_previously_closed
+    text = PIPELINE_WITH_CLOSED + "|  | Deployment Strategist | Rejected | 2026-01-02 | — | — | — | — |\n"
+    roles = [_role(company="  ")]
+    assert tag_previously_closed(roles, load_closed_entries(_pipeline_repo(tmp_path, text))) == 0
+    assert roles == [_role(company="  ")]
 
 
 # load_pipeline_entries had no direct test: every branch survived mutation (2026-10-23).

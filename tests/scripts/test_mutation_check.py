@@ -2267,3 +2267,60 @@ def test_a_dirty_input_outside_tools_and_tests_counts(tmp_path):
     repo = _git_repo(tmp_path)
     (repo / "docs" / "f.py").write_text("x = 2\n")
     assert mc.uncommitted_inputs(repo, only={"docs/f.py"}) == ["docs/f.py"]
+
+
+def test_writing_the_target_deletes_only_its_cached_bytecode(tmp_path):
+    """Each write of the target (every mutant, and the restore) drops that file's .pyc, so no
+    earlier mutant's bytecode can be read for a later one. A test that starts a child with a
+    fresh environment loses PYTHONDONTWRITEBYTECODE and writes the target's .pyc; CPython checks
+    a .pyc only by (mtime, size), so a same-size mutant written in the same second used to run
+    as the earlier mutant and score a false KILLED (2026-10-30, found during the gmail_fetch run)."""
+    target = tmp_path / "tool.py"
+    target.write_text("x = 1\n", encoding="utf-8")
+    cache = tmp_path / "__pycache__"
+    cache.mkdir()
+    import importlib.util
+    plain = Path(importlib.util.cache_from_source(str(target)))
+    opt1 = Path(importlib.util.cache_from_source(str(target), optimization=1))
+    other = Path(importlib.util.cache_from_source(str(tmp_path / "other.py")))
+    for p in (plain, opt1, other):
+        p.write_bytes(b"stale")
+    mc._write_owned(target, "x = 2\n")
+    assert target.read_text(encoding="utf-8") == "x = 2\n"
+    assert sorted(p.name for p in cache.iterdir()) == [other.name]
+
+
+def test_a_target_name_with_glob_characters_deletes_only_its_own_bytecode(tmp_path):
+    """The stem is matched as text, not as a glob pattern: 'a[b]' must not match 'ab'
+    (Codex infra-1031 F2, P0, 2026-11-01)."""
+    target = tmp_path / "a[b].py"
+    target.write_text("x = 1\n", encoding="utf-8")
+    cache = tmp_path / "__pycache__"
+    cache.mkdir()
+    for name in ("a[b].cpython-314.pyc", "ab.cpython-314.pyc", "a[b]x.cpython-314.pyc"):
+        (cache / name).write_bytes(b"stale")
+    mc._write_owned(target, "x = 2\n")
+    assert sorted(p.name for p in cache.iterdir()) == ["a[b]x.cpython-314.pyc", "ab.cpython-314.pyc"]
+
+
+def test_writing_foo_keeps_the_bytecode_of_a_sibling_named_foo_dot_bar(tmp_path):
+    """'foo.bar.py' is a different source whose cache file starts 'foo.'; only foo's own
+    cache paths are deleted (Codex infra-1031 round 2 F1, P0, 2026-11-01)."""
+    import importlib.util
+    target = tmp_path / "foo.py"
+    target.write_text("x = 1\n", encoding="utf-8")
+    own = Path(importlib.util.cache_from_source(str(target)))
+    sibling = Path(importlib.util.cache_from_source(str(tmp_path / "foo.bar.py")))
+    own.parent.mkdir()
+    own.write_bytes(b"stale")
+    sibling.write_bytes(b"keep")
+    mc._write_owned(target, "x = 2\n")
+    assert not own.exists()
+    assert sibling.exists()
+
+
+def test_writing_the_target_without_a_cache_directory_is_fine(tmp_path):
+    target = tmp_path / "tool.py"
+    target.write_text("x = 1\n", encoding="utf-8")
+    mc._write_owned(target, "x = 2\n")
+    assert target.read_text(encoding="utf-8") == "x = 2\n"
