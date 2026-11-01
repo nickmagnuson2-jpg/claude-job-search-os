@@ -361,18 +361,21 @@ def _main_checkout(root: Path) -> Path | None:
 
 
 def _holds_tracked_files(main: Path, root: Path) -> bool:
-    """True when `main` contains at least one of HEAD's top-level tracked names.
+    """True when `main` contains EVERY top-level name tracked in main's own HEAD.
 
     With --separate-git-dir aimed at <holder>/.git, git names <holder> as the main checkout
-    and <holder>/.git exists, so it passes for a checkout. It holds none of the repo's files.
+    and <holder>/.git exists, so it passes for a checkout. A stray file or two in <holder>
+    passed a one-name check (Codex round 4 F1); a real checkout holds them all. Main's own
+    HEAD is read, not the worktree's, so a worktree on an orphan branch still matches.
+    An unborn or empty HEAD shows nothing, so it does not match and the review refuses.
     """
     try:
-        r = subprocess.run(["git", "ls-tree", "--name-only", "HEAD"],
-                           cwd=str(root), capture_output=True, text=True, timeout=10)
+        r = subprocess.run(["git", "-C", str(main), "ls-tree", "--name-only", "HEAD"],
+                           capture_output=True, text=True, timeout=10)
     except (OSError, subprocess.SubprocessError):
         return False
     names = r.stdout.splitlines() if r.returncode == 0 else []
-    return any((main / n).exists() for n in names)
+    return bool(names) and all((main / n).exists() for n in names)
 
 
 def sandbox_policy(repo_root, extra_writable=()) -> str:

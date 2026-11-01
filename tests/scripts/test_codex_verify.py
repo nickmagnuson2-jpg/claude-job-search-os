@@ -1150,7 +1150,9 @@ def test_a_worktree_of_a_separate_git_dir_checkout_refuses(tmp_path, monkeypatch
     git = ["git", "-c", "user.name=t", "-c", "user.email=t@example.com"]
     subprocess.run([*git, "init", "-q", "--separate-git-dir", str(tmp_path / "gitdirs" / "js"),
                     str(main)], check=True)
-    subprocess.run([*git, "-C", str(main), "commit", "-q", "--allow-empty", "-m", "x"], check=True)
+    (main / "README.md").write_text("x\n", encoding="utf-8")
+    subprocess.run([*git, "-C", str(main), "add", "README.md"], check=True)
+    subprocess.run([*git, "-C", str(main), "commit", "-q", "-m", "x"], check=True)
     wt = tmp_path / "worktrees" / "branch-wt"
     subprocess.run([*git, "-C", str(main), "worktree", "add", "-q", "--detach", str(wt)], check=True)
     monkeypatch.setattr(cv, "SEALED_CONF", tmp_path / "worktree-has-no.conf")
@@ -1204,6 +1206,46 @@ def test_a_worktree_inside_its_main_checkout_is_not_sealed_off_from_itself(tmp_p
     for path in (main / "data", main / "CLAUDE.local.md", main / ".worktrees" / "other",
                  projects / "peer"):
         assert str(path.resolve()) in sealed, path
+
+
+def test_a_git_dir_holder_with_one_of_the_repo_files_still_refuses(tmp_path, monkeypatch):
+    """One top-level name in the holder (a stray README) was enough to pass it as the main
+    checkout (Codex infra-1031 round 4 F1, P0, 2026-11-01). Every top-level name is required."""
+    main = tmp_path / "projects" / "job-search"
+    main.mkdir(parents=True)
+    holder = tmp_path / "holder"
+    holder.mkdir()
+    git = ["git", "-c", "user.name=t", "-c", "user.email=t@example.com"]
+    subprocess.run([*git, "init", "-q", "--separate-git-dir", str(holder / ".git"), str(main)],
+                   check=True)
+    for name in ("README.md", "tool.py"):
+        (main / name).write_text("x\n", encoding="utf-8")
+    subprocess.run([*git, "-C", str(main), "add", "."], check=True)
+    subprocess.run([*git, "-C", str(main), "commit", "-q", "-m", "x"], check=True)
+    (holder / "README.md").write_text("stray\n", encoding="utf-8")
+    wt = tmp_path / "worktrees" / "branch-wt"
+    subprocess.run([*git, "-C", str(main), "worktree", "add", "-q", "--detach", str(wt)], check=True)
+    monkeypatch.setattr(cv, "SEALED_CONF", tmp_path / "worktree-has-no.conf")
+    with pytest.raises(RuntimeError, match="main checkout"):
+        cv.sealed_subpaths(wt)
+
+
+def test_a_worktree_on_an_orphan_branch_still_finds_its_main_checkout(tmp_path, monkeypatch):
+    """The tracked-name check read the WORKTREE's HEAD, so a worktree on an orphan branch
+    rejected its real main (Codex round 4 F2, Fable round 4 F3, 2026-11-01). It reads the
+    main checkout's own HEAD."""
+    main = tmp_path / "projects" / "job-search"
+    main.mkdir(parents=True)
+    git = ["git", "-c", "user.name=t", "-c", "user.email=t@example.com"]
+    subprocess.run([*git, "init", "-q", str(main)], check=True)
+    (main / "README.md").write_text("x\n", encoding="utf-8")
+    subprocess.run([*git, "-C", str(main), "add", "README.md"], check=True)
+    subprocess.run([*git, "-C", str(main), "commit", "-q", "-m", "x"], check=True)
+    wt = tmp_path / "worktrees" / "orphan-wt"
+    subprocess.run([*git, "-C", str(main), "worktree", "add", "-q", "--orphan", "-b", "o", str(wt)],
+                   check=True)
+    monkeypatch.setattr(cv, "SEALED_CONF", tmp_path / "worktree-has-no.conf")
+    assert str(main.resolve()) in cv.sealed_subpaths(wt)
 
 
 def test_a_linked_worktree_whose_main_checkout_cannot_be_found_refuses(tmp_path, monkeypatch):
