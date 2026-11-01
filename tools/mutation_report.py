@@ -34,6 +34,16 @@ import mutation_state  # noqa: E402
 DEFAULT_STATE = mutation_state.state_dir()
 
 
+def _table(w, *columns: str) -> None:
+    """A Markdown table's header row and its separator, built from one column list.
+
+    Written as two literals, a header and a separator could disagree in width, or the
+    separator could be dropped on its own; either way the table stops rendering.
+    """
+    w("| " + " | ".join(columns) + " |")
+    w("|" + "---|" * len(columns))
+
+
 def measured_rows(rows: list[dict]) -> list[dict]:
     """The rows that actually produced a verdict.
 
@@ -162,8 +172,7 @@ def build(state_dir: Path) -> str:
           "can be changed with the whole suite green. They carry a test count, which is "
           "what makes them worse than a tool with no tests at all: the count reads as "
           "coverage.\n")
-        w("| tool | mutants | all survived | tests mapped | files mapped |")
-        w("|---|---|---|---|---|")
+        _table(w, "tool", "mutants", "all survived", "tests mapped", "files mapped")
         for r in sorted(dead, key=lambda x: -x["mutants"]):
             files = targets.get(r["tool"], {}).get("test_files", "?")
             w(f"| `{r['tool'][6:]}` | {r['mutants']} | **{r.get('survived')}** | "
@@ -173,8 +182,7 @@ def build(state_dir: Path) -> str:
           "anything about the result. Both look identical from a green suite.\n")
 
     w("\n### By category\n")
-    w("| category | tools | mutants | survivors | survival |")
-    w("|---|---|---|---|---|")
+    _table(w, "category", "tools", "mutants", "survivors", "survival")
     for cat in ("hook", "writer", "other"):
         rs = [r for r in ok if r["cat"] == cat]
         if not rs:
@@ -185,8 +193,7 @@ def build(state_dir: Path) -> str:
           f"| {cat} | {len(rs)} | 0 | 0 | n/a |")
 
     w("\n### Ranked worst-first (the work list)\n")
-    w("| # | tool | cat | mutants | survivors | survival | tests | mins |")
-    w("|---|---|---|---|---|---|---|---|")
+    _table(w, "#", "tool", "cat", "mutants", "survivors", "survival", "tests", "mins")
     for i, r in enumerate(sorted(ok, key=lambda x: -(x.get("survived") or 0)), 1):
         w(f"| {i} | `{r['tool'][6:]}` | {r['cat']} | {r['mutants']} | "
           f"**{r.get('survived')}** | {r['pct']:.0f}% | {r.get('tests')} | "
@@ -212,15 +219,13 @@ def build(state_dir: Path) -> str:
           "test is decorative.\n")
     if af:
         w(f"\n**{len(af)} tests contain no assertion at all.**\n")
-        w("| tool | test | file:line |")
-        w("|---|---|---|")
+        _table(w, "tool", "test", "file:line")
         for tool, t in af:
             w(f"| `{tool[6:]}` | `{t.get('test')}` | {t.get('file')}:{t.get('line')} |")
     if ta:
         w(f"\n**{len(ta)} assertions are tautological** (cannot fail regardless of the "
           "code -- e.g. `assert x or True`).\n")
-        w("| tool | test | file:line |")
-        w("|---|---|---|")
+        _table(w, "tool", "test", "file:line")
         for tool, t in ta:
             w(f"| `{tool[6:]}` | `{t.get('test')}` | {t.get('file')}:{t.get('line')} |")
 
@@ -230,8 +235,7 @@ def build(state_dir: Path) -> str:
       "well-tested tool; it is one that crashes readily.\n")
     weak_rows = [r for r in ok if r.get("weak") is not None and (r.get("killed") or 0)]
     if weak_rows:
-        w("| tool | killed | weak (crash-only) | share |")
-        w("|---|---|---|---|")
+        _table(w, "tool", "killed", "weak (crash-only)", "share")
         for r in sorted(weak_rows, key=lambda x: -(x.get("weak") or 0))[:15]:
             k, wk = r["killed"], r["weak"]
             w(f"| `{r['tool'][6:]}` | {k} | {wk} | {100*wk/k:.0f}% |")
