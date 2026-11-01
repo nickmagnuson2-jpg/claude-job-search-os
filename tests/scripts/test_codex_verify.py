@@ -1126,7 +1126,9 @@ def test_a_review_from_a_linked_worktree_seals_the_main_checkout_and_its_peers(t
     (main / "tools" / ".sealed-paths.conf").write_text(f"{secret}\n", encoding="utf-8")
     git = ["git", "-c", "user.name=t", "-c", "user.email=t@example.com"]
     subprocess.run([*git, "init", "-q", str(main)], check=True)
-    subprocess.run([*git, "-C", str(main), "commit", "-q", "--allow-empty", "-m", "x"], check=True)
+    (main / "README.md").write_text("x\n", encoding="utf-8")   # a checkout holds tracked files
+    subprocess.run([*git, "-C", str(main), "add", "README.md"], check=True)
+    subprocess.run([*git, "-C", str(main), "commit", "-q", "-m", "x"], check=True)
     wt = tmp_path / "worktrees" / "branch-wt"
     subprocess.run([*git, "-C", str(main), "worktree", "add", "-q", "--detach", str(wt)], check=True)
     monkeypatch.setattr(cv, "SEALED_CONF", tmp_path / "worktree-has-no.conf")
@@ -1154,6 +1156,54 @@ def test_a_worktree_of_a_separate_git_dir_checkout_refuses(tmp_path, monkeypatch
     monkeypatch.setattr(cv, "SEALED_CONF", tmp_path / "worktree-has-no.conf")
     with pytest.raises(RuntimeError, match="main checkout"):
         cv.sealed_subpaths(wt)
+
+
+def test_a_separate_git_dir_ending_in_dot_git_refuses(tmp_path, monkeypatch):
+    """--separate-git-dir aimed at <holder>/.git makes git name <holder> as the main checkout,
+    and <holder>/.git exists, so it looked like a checkout while the real one stayed readable
+    (Codex infra-1031 round 3 F1, P0, 2026-11-01). <holder> holds none of the repo's tracked
+    files, so the review refuses."""
+    main = tmp_path / "projects" / "job-search"
+    main.mkdir(parents=True)
+    (tmp_path / "holder").mkdir()
+    git = ["git", "-c", "user.name=t", "-c", "user.email=t@example.com"]
+    subprocess.run([*git, "init", "-q", "--separate-git-dir", str(tmp_path / "holder" / ".git"),
+                    str(main)], check=True)
+    (main / "README.md").write_text("x\n", encoding="utf-8")
+    subprocess.run([*git, "-C", str(main), "add", "README.md"], check=True)
+    subprocess.run([*git, "-C", str(main), "commit", "-q", "-m", "x"], check=True)
+    wt = tmp_path / "worktrees" / "branch-wt"
+    subprocess.run([*git, "-C", str(main), "worktree", "add", "-q", "--detach", str(wt)], check=True)
+    monkeypatch.setattr(cv, "SEALED_CONF", tmp_path / "worktree-has-no.conf")
+    with pytest.raises(RuntimeError, match="main checkout"):
+        cv.sealed_subpaths(wt)
+
+
+def test_a_worktree_inside_its_main_checkout_is_not_sealed_off_from_itself(tmp_path, monkeypatch):
+    """A worktree at <main>/.worktrees/x used to get <main> sealed, and the last-match deny
+    covered the review root itself: a blind review that still recorded a verified row (Codex
+    infra-1031 round 3 F2, P0, 2026-11-01). The folders above the root are not sealed whole;
+    everything else in them is."""
+    projects = tmp_path / "projects"
+    main = projects / "job-search"
+    (main / "data").mkdir(parents=True)
+    (main / "CLAUDE.local.md").write_text("private\n", encoding="utf-8")
+    (projects / "peer").mkdir()
+    git = ["git", "-c", "user.name=t", "-c", "user.email=t@example.com"]
+    subprocess.run([*git, "init", "-q", str(main)], check=True)
+    (main / "README.md").write_text("x\n", encoding="utf-8")
+    subprocess.run([*git, "-C", str(main), "add", "README.md"], check=True)
+    subprocess.run([*git, "-C", str(main), "commit", "-q", "-m", "x"], check=True)
+    wt = main / ".worktrees" / "x"
+    subprocess.run([*git, "-C", str(main), "worktree", "add", "-q", "--detach", str(wt)], check=True)
+    (main / ".worktrees" / "other").mkdir()
+    monkeypatch.setattr(cv, "SEALED_CONF", tmp_path / "worktree-has-no.conf")
+    sealed = cv.sealed_subpaths(wt)
+    root = wt.resolve()
+    assert not [p for p in sealed if root.is_relative_to(Path(p))], "a seal covers the root"
+    for path in (main / "data", main / "CLAUDE.local.md", main / ".worktrees" / "other",
+                 projects / "peer"):
+        assert str(path.resolve()) in sealed, path
 
 
 def test_a_linked_worktree_whose_main_checkout_cannot_be_found_refuses(tmp_path, monkeypatch):

@@ -315,9 +315,22 @@ def sealed_subpaths(repo_root) -> list[str]:
             pass                  # no conf is a valid state, not an error
     for projects in [root.parent] + ([main.parent] if main else []):
         for sibling in sorted(p for p in projects.iterdir() if p.is_dir()):
-            if sibling.resolve() != root:
-                sealed.append(str(sibling.resolve()))
+            _seal(sibling.resolve(), root, sealed)
     return list(dict.fromkeys(sealed))
+
+
+def _seal(path: Path, root: Path, sealed: list[str]) -> None:
+    """Seal `path`, unless it is the review root or holds it. A folder that holds the root
+    (a worktree inside its main checkout) is never sealed whole, because the last-match deny
+    would cover the root and the reviewer would read nothing (Codex infra-1031 round 3 F2,
+    2026-11-01); everything in it except the way down to the root is sealed instead."""
+    if path == root:
+        return
+    if not root.is_relative_to(path):
+        sealed.append(str(path))
+        return
+    for child in sorted(path.iterdir()):
+        _seal(child.resolve(), root, sealed)
 
 
 def _main_checkout(root: Path) -> Path | None:
@@ -337,12 +350,29 @@ def _main_checkout(root: Path) -> Path | None:
     except (OSError, subprocess.SubprocessError):
         pass
     main = Path(first[len("worktree "):]).resolve() if first.startswith("worktree ") else None
+    if main is not None and main != root and not _holds_tracked_files(main, root):
+        main = None               # the git dir's parent, not a checkout (round 3 F1)
     if main is None or not (main / ".git").exists():
         if (root / ".git").is_file():
             raise RuntimeError(f"cannot find the main checkout of linked worktree {root}; "
                                "refusing to build a sandbox that leaves it readable")
         return None
     return main if main != root else None
+
+
+def _holds_tracked_files(main: Path, root: Path) -> bool:
+    """True when `main` contains at least one of HEAD's top-level tracked names.
+
+    With --separate-git-dir aimed at <holder>/.git, git names <holder> as the main checkout
+    and <holder>/.git exists, so it passes for a checkout. It holds none of the repo's files.
+    """
+    try:
+        r = subprocess.run(["git", "ls-tree", "--name-only", "HEAD"],
+                           cwd=str(root), capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    names = r.stdout.splitlines() if r.returncode == 0 else []
+    return any((main / n).exists() for n in names)
 
 
 def sandbox_policy(repo_root, extra_writable=()) -> str:
