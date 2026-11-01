@@ -827,9 +827,13 @@ def run(repo_root: Path, target: str, paths: list[str], question: str,
     started = time.time()
     # The model runs inside an OS-level jail. See THE JAIL above: read-only was measured
     # to give full read access to the private trees, so the boundary is seatbelt's.
+    # Built before the temp file exists, so a refusal leaves nothing behind.
+    try:
+        policy = sandbox_policy(repo_root, extra_writable=[report.parent])
+    except RuntimeError as e:
+        raise SystemExit(f"codex_verify: {e}")
     policy_file = Path(tempfile.mkstemp(suffix=".sb", prefix="codex-jail-")[1])
-    policy_file.write_text(sandbox_policy(repo_root, extra_writable=[report.parent]),
-                           encoding="utf-8")
+    policy_file.write_text(policy, encoding="utf-8")
     argv = jailed_argv(repo_root, policy_file, model, images=images)
     refuse_dispatch_inside_tests(argv)
     try:

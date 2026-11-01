@@ -1182,6 +1182,20 @@ def test_an_ordinary_checkout_with_no_git_is_not_a_refusal(tmp_path, monkeypatch
     assert cv.sealed_subpaths(repo) == []
 
 
+def test_a_sandbox_refusal_exits_cleanly_and_leaves_no_policy_file(tmp_path, monkeypatch):
+    """The main-checkout refusal used to raise after the policy temp file was created and
+    before the try/finally that removes it: a traceback and a leaked codex-jail-*.sb
+    (Fable infra-1031 round 2 F3, 2026-11-01)."""
+    def refuse(*a, **k):
+        raise RuntimeError("cannot find the main checkout of linked worktree x")
+    made = []
+    monkeypatch.setattr(cv, "sandbox_policy", refuse)
+    monkeypatch.setattr(cv.tempfile, "mkstemp", lambda *a, **k: made.append(1) or (0, str(tmp_path / "p.sb")))
+    with pytest.raises(SystemExit, match="main checkout"):
+        cv.run(REPO_ROOT, "t", [], "", tmp_path / "r.md", None, False, model="codex")
+    assert made == []
+
+
 def test_the_seal_is_the_last_word(tmp_path):
     """Seatbelt applies the LAST matching rule. A seal emitted before a carve-out is not
     a seal. This asserts ordering, which is the only thing that makes the rule binding."""

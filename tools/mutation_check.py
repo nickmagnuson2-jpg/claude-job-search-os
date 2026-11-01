@@ -61,6 +61,7 @@ import contextlib
 import fcntl
 import functools
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -1102,12 +1103,11 @@ def _write_owned(target: Path, text: str) -> None:
     with _signals_held():
         target.write_text(text, encoding="utf-8")
         _LAST_WRITTEN = text
-    cache = target.parent / "__pycache__"
-    if cache.is_dir():
-        # Matched as text, never as a glob: a stem like 'a[b]' must not match 'ab'.
-        for pyc in cache.iterdir():
-            if pyc.name.startswith(f"{target.stem}.") and pyc.name.endswith(".pyc"):
-                pyc.unlink(missing_ok=True)
+    # The exact paths this interpreter would read, never a pattern: a glob matched 'ab' for
+    # 'a[b]', and a name prefix matched the sibling 'foo.bar.py' for 'foo.py'.
+    for opt in ("", 1, 2):
+        Path(importlib.util.cache_from_source(str(target), optimization=opt)).unlink(
+            missing_ok=True)
 
 
 def write_mutant(target: Path, original: str, mutated: str) -> None:

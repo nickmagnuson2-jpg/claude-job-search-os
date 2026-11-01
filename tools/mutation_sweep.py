@@ -332,7 +332,9 @@ def build_targets() -> list[dict]:
         mutants = (SELF_EXCLUDED if tool.name == SELF_NAME or tool.name in RUNNER_DEPENDENCIES
                    else count_mutants(tool))
         rows.append({"tool": rel,
-                     "w": bool(_WRITER_RE.search(tool.read_text(encoding="utf-8"))),
+                     # A self-excluded row is recorded as a writer, as before the merge.
+                     "w": (mutants == SELF_EXCLUDED
+                           or bool(_WRITER_RE.search(tool.read_text(encoding="utf-8")))),
                      "h": tool.name in wired,
                      "own": has_own_suite(tool),
                      "tests": sum(count_tests(f) for f in test_files),

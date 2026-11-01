@@ -2279,11 +2279,15 @@ def test_writing_the_target_deletes_only_its_cached_bytecode(tmp_path):
     target.write_text("x = 1\n", encoding="utf-8")
     cache = tmp_path / "__pycache__"
     cache.mkdir()
-    for name in ("tool.cpython-314.pyc", "tool.cpython-312.opt-1.pyc", "other.cpython-314.pyc"):
-        (cache / name).write_bytes(b"stale")
+    import importlib.util
+    plain = Path(importlib.util.cache_from_source(str(target)))
+    opt1 = Path(importlib.util.cache_from_source(str(target), optimization=1))
+    other = Path(importlib.util.cache_from_source(str(tmp_path / "other.py")))
+    for p in (plain, opt1, other):
+        p.write_bytes(b"stale")
     mc._write_owned(target, "x = 2\n")
     assert target.read_text(encoding="utf-8") == "x = 2\n"
-    assert sorted(p.name for p in cache.iterdir()) == ["other.cpython-314.pyc"]
+    assert sorted(p.name for p in cache.iterdir()) == [other.name]
 
 
 def test_a_target_name_with_glob_characters_deletes_only_its_own_bytecode(tmp_path):
@@ -2297,6 +2301,22 @@ def test_a_target_name_with_glob_characters_deletes_only_its_own_bytecode(tmp_pa
         (cache / name).write_bytes(b"stale")
     mc._write_owned(target, "x = 2\n")
     assert sorted(p.name for p in cache.iterdir()) == ["a[b]x.cpython-314.pyc", "ab.cpython-314.pyc"]
+
+
+def test_writing_foo_keeps_the_bytecode_of_a_sibling_named_foo_dot_bar(tmp_path):
+    """'foo.bar.py' is a different source whose cache file starts 'foo.'; only foo's own
+    cache paths are deleted (Codex infra-1031 round 2 F1, P0, 2026-11-01)."""
+    import importlib.util
+    target = tmp_path / "foo.py"
+    target.write_text("x = 1\n", encoding="utf-8")
+    own = Path(importlib.util.cache_from_source(str(target)))
+    sibling = Path(importlib.util.cache_from_source(str(tmp_path / "foo.bar.py")))
+    own.parent.mkdir()
+    own.write_bytes(b"stale")
+    sibling.write_bytes(b"keep")
+    mc._write_owned(target, "x = 2\n")
+    assert not own.exists()
+    assert sibling.exists()
 
 
 def test_writing_the_target_without_a_cache_directory_is_fine(tmp_path):
