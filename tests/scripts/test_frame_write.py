@@ -921,3 +921,18 @@ def test_record_delivery_takes_the_shared_write_flags(tmp_path):
     before = f.read_bytes()
     code, _ = _deliver(f, expect=7)
     assert code != 0 and f.read_bytes() == before
+
+
+def test_missing_pyyaml_prints_the_install_hint_and_exits_3(tmp_path):
+    """Without PyYAML the tool must stop at startup with exit 3 and one JSON line.
+
+    A yaml.py that raises ImportError, placed on PYTHONPATH, shadows the real package
+    (PYTHONPATH sits ahead of site-packages). Dropping the print or the sys.exit(3) in
+    the ImportError guard changes this exact output.
+    """
+    (tmp_path / "yaml.py").write_text("raise ImportError('hidden by test')\n", encoding="utf-8")
+    r = subprocess.run([sys.executable, str(SCRIPT), "show", "--frame", str(tmp_path / "f.yaml")],
+                       capture_output=True, text=True,
+                       env={**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONPATH": str(tmp_path)})
+    assert r.returncode == 3
+    assert r.stdout == '{"status": "error", "message": "PyYAML required: pip install pyyaml"}\n'

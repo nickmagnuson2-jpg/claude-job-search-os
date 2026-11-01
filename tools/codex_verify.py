@@ -280,7 +280,8 @@ def ignored_entries(repo_root) -> list[str]:
 # GITIGNORED BY DESIGN, same as tools/.gmail-labels.conf and tools/.pii-denylist.txt: this
 # file is PUBLIC, so the mechanism lives here and the specifics do not. Naming a sealed
 # directory in a public repo discloses exactly what sealing it was meant to protect.
-SEALED_CONF = Path(__file__).resolve().parent / ".sealed-paths.conf"
+SEALED_CONF_NAME = ".sealed-paths.conf"
+SEALED_CONF = Path(__file__).resolve().parent / SEALED_CONF_NAME
 
 
 def sealed_subpaths(repo_root) -> list[str]:
@@ -297,21 +298,84 @@ def sealed_subpaths(repo_root) -> list[str]:
 
     Derived from repo_root rather than hardcoded so this file carries no absolute path, and
     so a peer repo added tomorrow is covered without an edit.
+    3. FROM A LINKED WORKTREE (2026-10-30): repo_root.parent is the worktrees folder, so 1
+       missed the main checkout and its peers, and 2 found no conf (it is gitignored). The
+       main checkout itself, its peers and its conf are sealed too.
     """
     root = Path(repo_root).resolve()
-    projects = root.parent
+    main = _main_checkout(root)
     sealed: list[str] = []
+    for conf in [SEALED_CONF] + ([main / "tools" / SEALED_CONF_NAME] if main else []):
+        try:
+            for line in conf.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if line and not line.startswith("#"):
+                    sealed.append(str(Path(line).expanduser()))
+        except OSError:
+            pass                  # no conf is a valid state, not an error
+    for projects in [root.parent] + ([main.parent] if main else []):
+        for sibling in sorted(p for p in projects.iterdir() if p.is_dir()):
+            _seal(sibling.resolve(), root, sealed)
+    return list(dict.fromkeys(sealed))
+
+
+def _seal(path: Path, root: Path, sealed: list[str]) -> None:
+    """Seal `path`, unless it is the review root or holds it. A folder that holds the root
+    (a worktree inside its main checkout) is never sealed whole, because the last-match deny
+    would cover the root and the reviewer would read nothing (Codex infra-1031 round 3 F2,
+    2026-11-01); everything in it except the way down to the root is sealed instead."""
+    if path == root:
+        return
+    if not root.is_relative_to(path):
+        sealed.append(str(path))
+        return
+    for child in sorted(path.iterdir()):
+        _seal(child.resolve(), root, sealed)
+
+
+def _main_checkout(root: Path) -> Path | None:
+    """The main checkout when `root` is a linked git worktree, else None.
+
+    `git worktree list` names the main checkout first. With `--separate-git-dir` git keeps
+    no record of where the checkout is and names the git dir instead, which has no `.git`
+    entry of its own. From a linked worktree (.git is a file), any answer that is not a
+    checkout refuses: returning None would build a sandbox that leaves the main checkout
+    and its conf readable (Codex and Fable infra-1031 F1/F3, 2026-11-01)."""
+    first = ""
     try:
-        for line in SEALED_CONF.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if line and not line.startswith("#"):
-                sealed.append(str(Path(line).expanduser()))
-    except OSError:
-        pass                      # no conf is a valid state, not an error
-    for sibling in sorted(p for p in projects.iterdir() if p.is_dir()):
-        if sibling.resolve() != root:
-            sealed.append(str(sibling))
-    return sealed
+        r = subprocess.run(["git", "worktree", "list", "--porcelain"],
+                           cwd=str(root), capture_output=True, text=True, timeout=10)
+        if r.returncode == 0:
+            first = (r.stdout.splitlines() or [""])[0]
+    except (OSError, subprocess.SubprocessError):
+        pass
+    main = Path(first[len("worktree "):]).resolve() if first.startswith("worktree ") else None
+    if main is not None and main != root and not _holds_tracked_files(main, root):
+        main = None               # the git dir's parent, not a checkout (round 3 F1)
+    if main is None or not (main / ".git").exists():
+        if (root / ".git").is_file():
+            raise RuntimeError(f"cannot find the main checkout of linked worktree {root}; "
+                               "refusing to build a sandbox that leaves it readable")
+        return None
+    return main if main != root else None
+
+
+def _holds_tracked_files(main: Path, root: Path) -> bool:
+    """True when `main` contains EVERY top-level name tracked in main's own HEAD.
+
+    With --separate-git-dir aimed at <holder>/.git, git names <holder> as the main checkout
+    and <holder>/.git exists, so it passes for a checkout. A stray file or two in <holder>
+    passed a one-name check (Codex round 4 F1); a real checkout holds them all. Main's own
+    HEAD is read, not the worktree's, so a worktree on an orphan branch still matches.
+    An unborn or empty HEAD shows nothing, so it does not match and the review refuses.
+    """
+    try:
+        r = subprocess.run(["git", "-C", str(main), "ls-tree", "--name-only", "HEAD"],
+                           capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    names = r.stdout.splitlines() if r.returncode == 0 else []
+    return bool(names) and all((main / n).exists() for n in names)
 
 
 def sandbox_policy(repo_root, extra_writable=()) -> str:
@@ -796,9 +860,13 @@ def run(repo_root: Path, target: str, paths: list[str], question: str,
     started = time.time()
     # The model runs inside an OS-level jail. See THE JAIL above: read-only was measured
     # to give full read access to the private trees, so the boundary is seatbelt's.
+    # Built before the temp file exists, so a refusal leaves nothing behind.
+    try:
+        policy = sandbox_policy(repo_root, extra_writable=[report.parent])
+    except RuntimeError as e:
+        raise SystemExit(f"codex_verify: {e}")
     policy_file = Path(tempfile.mkstemp(suffix=".sb", prefix="codex-jail-")[1])
-    policy_file.write_text(sandbox_policy(repo_root, extra_writable=[report.parent]),
-                           encoding="utf-8")
+    policy_file.write_text(policy, encoding="utf-8")
     argv = jailed_argv(repo_root, policy_file, model, images=images)
     refuse_dispatch_inside_tests(argv)
     try:

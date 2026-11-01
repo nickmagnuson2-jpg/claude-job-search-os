@@ -218,14 +218,13 @@ def is_stale(row: dict, target: dict | None) -> bool:
     same reason. A tool with no target, or whose file cannot be read, is not this
     function's question.
     """
-    if target is None:
-        return False
     recorded = row.get("src")
-    if recorded:
+    if target is not None and recorded:
         current = source_fingerprint(row["tool"])
         return current is not None and current != recorded
     scheduled_with = row.get("mutants")
-    return scheduled_with is not None and scheduled_with != target.get("mutants")
+    return (target is not None and scheduled_with is not None
+            and scheduled_with != target.get("mutants"))
 
 
 def stale_tools(rows: list[dict], targets: list[dict]) -> list[str]:
@@ -326,19 +325,16 @@ def build_targets() -> list[dict]:
         test_files = mutation_check.map_tests(tool, REPO_ROOT)
         if not test_files:
             continue
-        if tool.name == SELF_NAME or tool.name in RUNNER_DEPENDENCIES:
-            # Recorded, not silently dropped: a -1 row lands in `self_excluded` so the
-            # selected-vs-auditable accounting still names it. Measuring this file is
-            # still possible -- run mutation_check.py on it directly, with no sweep in
-            # flight.
-            rows.append({"tool": rel, "w": True, "h": tool.name in wired,
-                         "own": has_own_suite(tool),
-                         "tests": sum(count_tests(f) for f in test_files),
-                         "test_files": len(test_files), "mutants": SELF_EXCLUDED})
-            continue
-        mutants = count_mutants(tool)
+        # Recorded, not silently dropped: a -1 row lands in `self_excluded` so the
+        # selected-vs-auditable accounting still names it. Measuring this file is
+        # still possible -- run mutation_check.py on it directly, with no sweep in
+        # flight.
+        mutants = (SELF_EXCLUDED if tool.name == SELF_NAME or tool.name in RUNNER_DEPENDENCIES
+                   else count_mutants(tool))
         rows.append({"tool": rel,
-                     "w": bool(_WRITER_RE.search(tool.read_text(encoding="utf-8"))),
+                     # A self-excluded row is recorded as a writer, as before the merge.
+                     "w": (mutants == SELF_EXCLUDED
+                           or bool(_WRITER_RE.search(tool.read_text(encoding="utf-8")))),
                      "h": tool.name in wired,
                      "own": has_own_suite(tool),
                      "tests": sum(count_tests(f) for f in test_files),
