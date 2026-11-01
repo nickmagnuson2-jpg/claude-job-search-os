@@ -531,17 +531,26 @@ def test_a_rerun_more_than_48h_after_a_killed_run_writes_nothing_new(env, monkey
 def test_a_state_save_that_dies_leaves_the_old_state_intact(tmp_path, monkeypatch):
     # Codex round 2, F1: write_text truncates first, so a death mid-save left empty JSON,
     # which the next run read as a fresh install and auto-seeded past unprocessed mail.
+    # Fable 6.F2: checked AT the instant before the rename (what a SIGKILL there leaves), not
+    # after the exception unwinds and finally has removed the temp.
     path = tmp_path / ".gmail_state.json"
     path.write_text(json.dumps({"historyId": "100"}), encoding="utf-8")
+    at_death = {}
 
-    def dies(src, dst):
-        raise OSError("killed during save")
+    def snapshot_then_die(src, dst):
+        at_death["names"] = sorted(p.name for p in tmp_path.iterdir())
+        at_death["state"] = json.loads(path.read_text(encoding="utf-8"))
+        at_death["temp"] = json.loads(Path(src).read_text(encoding="utf-8"))
+        raise KeyboardInterrupt
 
-    monkeypatch.setattr(gf.os, "replace", dies)
-    with pytest.raises(OSError):
+    monkeypatch.setattr(gf.os, "replace", snapshot_then_die)
+    with pytest.raises(KeyboardInterrupt):
         gf._save_state(path, {"historyId": "200"})
+    assert at_death["state"] == {"historyId": "100"}
+    assert at_death["temp"] == {"historyId": "200"}
+    (temp_name,) = [n for n in at_death["names"] if n != ".gmail_state.json"]
+    assert temp_name.startswith(".gmail_state.json.tmp.")
     assert json.loads(path.read_text(encoding="utf-8")) == {"historyId": "100"}
-    assert [p.name for p in tmp_path.iterdir()] == [".gmail_state.json"]
 
 
 def test_last_refresh_is_the_time_the_run_started(env, monkeypatch):
