@@ -63,7 +63,9 @@ def test_environment_facts_are_gathered_in_the_real_shell(tmp_path):
     assert "loaded launchd jobs:" in facts
     assert "git HEAD:" in facts
     # The probe ran here, so it reports the real machine, not a sandbox.
-    assert "<empty>" not in facts.split("git HEAD:")[1][:80]
+    # Only the HEAD line: on a clean tree the next line reads "working tree: <empty>", which is
+    # true, and a fixed 80-character window reached it whenever the commit subject was short.
+    assert "<empty>" not in facts.split("git HEAD:")[1].splitlines()[0]
 
 
 def test_a_failing_probe_does_not_break_the_prompt(tmp_path, monkeypatch):
