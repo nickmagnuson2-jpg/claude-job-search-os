@@ -341,11 +341,12 @@ def _main_checkout(root: Path) -> Path | None:
     entry of its own. From a linked worktree (.git is a file), any answer that is not a
     checkout refuses: returning None would build a sandbox that leaves the main checkout
     and its conf readable (Codex and Fable infra-1031 F1/F3, 2026-11-01)."""
-    first = ""                    # a failed git writes nothing to stdout
+    first = ""
     try:
         r = subprocess.run(["git", "worktree", "list", "--porcelain"],
                            cwd=str(root), capture_output=True, text=True, timeout=10)
-        first = (r.stdout.splitlines() or [""])[0]
+        if r.returncode == 0:
+            first = (r.stdout.splitlines() or [""])[0]
     except (OSError, subprocess.SubprocessError):
         pass
     main = Path(first[len("worktree "):]).resolve() if first.startswith("worktree ") else None
@@ -368,12 +369,12 @@ def _holds_tracked_files(main: Path, root: Path) -> bool:
     HEAD is read, not the worktree's, so a worktree on an orphan branch still matches.
     An unborn or empty HEAD shows nothing, so it does not match and the review refuses.
     """
-    names: list[str] = []         # a failed git (unborn HEAD) writes nothing to stdout
     try:
-        names = subprocess.run(["git", "-C", str(main), "ls-tree", "--name-only", "HEAD"],
-                               capture_output=True, text=True, timeout=10).stdout.splitlines()
+        r = subprocess.run(["git", "-C", str(main), "ls-tree", "--name-only", "HEAD"],
+                           capture_output=True, text=True, timeout=10)
     except (OSError, subprocess.SubprocessError):
-        pass
+        return False
+    names = r.stdout.splitlines() if r.returncode == 0 else []
     return bool(names) and all((main / n).exists() for n in names)
 
 
