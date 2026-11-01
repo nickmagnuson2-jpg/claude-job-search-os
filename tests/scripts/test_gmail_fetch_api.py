@@ -648,19 +648,54 @@ def test_a_non_utf8_inbox_file_is_skipped_by_the_scan_and_by_cleanup(tmp_path):
     assert bad.exists()
 
 
-def test_an_inbox_write_that_dies_leaves_no_file_and_queues_a_retry(tmp_path, monkeypatch):
-    # Codex final review, F1: written in place, a death mid-write left a partial file. With its
+def test_a_death_before_the_rename_leaves_no_md_only_a_complete_hidden_temp(tmp_path, monkeypatch):
+    # Codex final review 4.F1: written in place, a death mid-write left a partial .md. With its
     # Message-ID line it made the next run skip the message for good; without it, the replay
-    # wrote a suffixed copy.
-    def dies(src, dst):
-        raise OSError("killed during write")
+    # wrote a suffixed copy. Round 5 F1: a raised exception is not a death (finally and the
+    # retry queue still run), so this inspects the inbox AT the instant before the rename,
+    # which is exactly what a SIGKILL there would leave on disk.
+    at_death = {}
 
-    monkeypatch.setattr(gmail_fetch.os, "replace", dies)
+    def snapshot_then_die(src, dst):
+        at_death["names"] = sorted(p.name for p in tmp_path.iterdir())
+        at_death["temp"] = Path(src).read_text(encoding="utf-8")
+        at_death["dst"] = Path(dst).name
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(gmail_fetch.os, "replace", snapshot_then_die)
+    with pytest.raises(KeyboardInterrupt):
+        gmail_fetch.write_messages([_full_msg("m1", body="the whole body")], {}, tmp_path,
+                                   dry_run=False)
+    assert len(at_death["names"]) == 1
+    (temp_name,) = at_death["names"]
+    assert temp_name.startswith(".") and not temp_name.endswith(".md")
+    assert at_death["dst"].endswith(".md") and at_death["dst"] not in at_death["names"]
+    assert "> **Message-ID:** m1" in at_death["temp"]
+    assert "the whole body" in at_death["temp"]
+
+
+def test_the_run_after_a_death_writes_the_message_exactly_once(tmp_path):
+    # What a SIGKILL before the rename leaves: a hidden temp from another process, complete,
+    # and no .md. The next run must neither skip the message nor write it twice.
+    gmail_fetch.write_messages([_full_msg("m1")], {}, tmp_path / "probe", dry_run=False)
+    (name,) = [p.name for p in (tmp_path / "probe").glob("*.md")]
+    leftover = tmp_path / f".{name}.tmp.99999"
+    leftover.write_text((tmp_path / "probe" / name).read_text(encoding="utf-8"), encoding="utf-8")
+    state = {}
+    written, _ = gmail_fetch.write_messages([_full_msg("m1")], state, tmp_path, dry_run=False)
+    assert written == 1
+    assert [p.name for p in tmp_path.glob("*.md")] == [name]
+    assert list(state["written_ids"]) == ["m1"]
+
+
+def test_a_failed_rename_leaves_nothing_and_queues_a_retry(tmp_path, monkeypatch):
+    def fails(src, dst):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(gmail_fetch.os, "replace", fails)
     state = {}
     written, _ = gmail_fetch.write_messages([_full_msg("m1")], state, tmp_path, dry_run=False)
     assert written == 0
     assert list(tmp_path.iterdir()) == []
     assert state["retry_ids"] == {"m1": 1}
     assert state["written_ids"] == {}
-    monkeypatch.undo()
-    assert gmail_fetch._existing_message_ids(tmp_path) == set()
