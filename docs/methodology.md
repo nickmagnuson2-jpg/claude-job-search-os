@@ -607,7 +607,6 @@ memory/                          ← Persistent session context (auto-memory sys
   ├── personal-todo/              ← /personal-todo — personal-life to-do list (sibling of /todo)
   ├── standup/                    ← /standup — morning briefing
   ├── checkout/                   ← /checkout — end-of-day close-out, bookend to /standup
-  ├── weekly-review/              ← /weekly-review — weekly retrospective
   ├── act/                        ← /act — autonomous to-do execution
   ├── analyze/                    ← /analyze — artifact teardown vs. your systems + wisdom
   ├── critique-plan/              ← /critique-plan — six-agent plan critique + hybrid synthesis
@@ -664,7 +663,7 @@ Every data file mutation (pipeline, networking, notes, todos) goes through a ded
 
 | Script | Target file | Operations |
 |--------|-------------|------------|
-| `todo_write.py` | `data/job-todos.md` | add, done, withdraw, supersede, clear, sync |
+| `todo_write.py` | `data/job-todos.md` | add, done, withdraw, supersede, clear, sync, rotate |
 | `pipe_write.py` | `data/job-pipeline.md` | add, update, remove |
 | `networking_write.py` | `data/networking.md` + `data/outreach-log.md` | add, log (flips outreach status to Replied only when the *recipient* replied, via `outreach_status.py`, the only writer of that cell), remove |
 | `remember_apply.py` | 12 destinations (pipeline, networking, notes, profile, decisions, accomplishments, personal-vault, etc.) | route-and-write |

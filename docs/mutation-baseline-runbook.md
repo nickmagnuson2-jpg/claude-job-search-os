@@ -278,6 +278,10 @@ Fixed at both subprocess sites (`run_tests` and the `--isolation` pass). `mutati
 banner above the numbers for any `baseline.jsonl` older than the fix, and the banner disappears on its own
 once a post-fix baseline is written — nothing to remember to remove.
 
+A second path stayed open until 2026-10-31: a test that starts a child with a fresh environment drops
+`PYTHONDONTWRITEBYTECODE` and writes the target's `.pyc` anyway. `mutation_check` now deletes the
+target's cached bytecode on every write, each mutant and the restore.
+
 **Any "mutation-clean" claim made before 2026-08-31 is unverified**, including ones written into commit
 messages. When comparing a new sweep against an old one, every tool whose survivor count **RISES** is work
 this bug hid.

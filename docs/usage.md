@@ -465,7 +465,7 @@ Saved to `output/<company-slug>/MMDDYY-prep.md`. A debrief to-do is created auto
 
 ## Skills Reference
 
-Full list of all 39 skills in `.claude/skills/`:
+Full list of all 38 skills in `.claude/skills/`:
 
 | Skill | Arguments | What it does |
 |---|---|---|
@@ -487,6 +487,7 @@ Full list of all 39 skills in `.claude/skills/`:
 | `/analyze` | `<url> [focus]` | Teardown of a paper/repo/article/video vs. your systems and wisdom -> `output/analysis/MMDDYY-<slug>.md` |
 | `/learn` | `<topic> [--focused\|--comprehensive] [--repos <paths>] [--no-quiz] [--no-pdf] [--neutral] [--audience "..."]` | Validated deep briefing: parallel research, BLUF synthesis, comprehension and interview quiz, adversarial claim-check that auto-fixes and cites → `output/MMDDYY-<topic-slug>-briefing.md` (+ PDF) and `-validation.md` |
 | `/standup` | *(none)* | Morning briefing: conversations-had metric, pipeline, new scanned roles, top 3 (scheduled interviews pinned), outreach, follow-ups, suggested priority |
+| `/check` | `[YYYY-MM-DD]` | Read-only midday counts from `tools/day_check.py`: today's sends, replies logged, calls, applications, pipeline moves and to-dos closed, plus the week so far against the weekly targets |
 | `/checkout` | *(none)* | End-of-day close-out: daily log, scheduled-event pins, accomplishments capture, tomorrow's top 3, velocity snapshot, auto private-backup |
 | `/trim-context-file` | `<path>` (default `CLAUDE.md`) | Shrink an always-loaded context file by relocating reference-shaped sections to on-demand docs, leaving a router pointer. Measures first, proposes KEEP/MOVE per section, never deletes, never acts without approval. Runs `tools/trim_context_gate.sh` as a mandatory Step 0. |
 | `/act` | *(none)* | Autonomous execution of Bucket A to-dos, processes inbox/ |

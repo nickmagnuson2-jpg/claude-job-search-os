@@ -114,13 +114,13 @@ If you tried the demo, delete the demo files from `data/` and `output/` first, o
 
 ---
 
-## All 39 skills
+## All 38 skills
 
 Argument syntax and worked examples for each: [docs/usage.md](docs/usage.md).
 
 | Area | Skills |
 |---|---|
-| Planning and tracking | `/standup` `/checkout` `/todo` `/personal-todo` `/act` `/pipe` |
+| Planning and tracking | `/standup` `/check` `/checkout` `/todo` `/personal-todo` `/act` `/pipe` |
 | Capture | `/wispr` `/remember` |
 | Research | `/research-industry` `/research-company` `/discover-companies` `/scan-companies` `/scan-jobs` `/analyze` `/analyze-stream` `/learn` |
 | Applications | `/generate-cv` `/apply` `/cover-letter` `/review-cv` `/review-cv-deep` |

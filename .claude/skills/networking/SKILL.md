@@ -130,7 +130,7 @@ Create a per-person relationship dossier for an active relationship. The roster 
    ```
    The script writes the interaction entry (newest-first), updates Last Interaction in Contacts table, and shells out to `todo_write.py` for follow-up todos automatically.
 9. If `code == "not_found"`: ask if user wants to add the contact first.
-10. **Auto-generate follow-up to-dos** — if follow-up actions were identified AND the script didn't already create them (it does this when `--followup` is passed), create manually via:
+10. **Auto-generate follow-up to-dos** — if follow-up actions were identified AND the script didn't already create them (it does this when `--followup` is passed; the JSON reports `todo_added`), create manually via:
     ```bash
     PYTHONIOENCODING=utf-8 python3 tools/todo_write.py add "Follow up: <name> @ <company> — <action>" Med <due-date> "From networking interaction on <date>"
     ```

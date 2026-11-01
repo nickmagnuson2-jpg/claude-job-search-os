@@ -5,6 +5,184 @@ Format: newest entries at the top.
 
 Forked from raphaotten/claude-interview-coach (MIT / CC BY 4.0).
 
+## 2026-11-01: Gmail sync recovers missed mail, and fixes to the mutation and review tools
+
+**What prompted it.** Three branches landed after the 10/31 merges. A review of
+`gmail_fetch.py` found that an expired history cursor skipped the mail in between, and a run
+killed mid-write could lose or duplicate mail. While landing the 10/30 branches, a stale
+`.pyc` produced false kills in mutation runs, and a review run from a linked worktree could
+read the main checkout. The parked follow-ups from the overnight-1029 review were also closed.
+
+**Gmail sync (`tools/gmail_fetch.py`)**
+- Forward sync reads every history page (500 per page). The cursor moves only after the last
+  page, so a failure part-way leaves it where it was.
+- A message that fails to fetch or write is kept in `state["retry_ids"]` and retried on the
+  next run; it is dropped with a warning after 5 attempts.
+- An expired cursor (HTTP 404 or `invalidHistoryId`) now recovers the gap: it lists every
+  message since the last run's start minus 1 hour, in the same label scope, all pages. The
+  window is capped at 30 days, or 7 days when no last run is recorded, and a warning says
+  when older mail is not recovered. The check uses the HTTP status when there is one, so a
+  500 whose URL contains "404" is no longer read as an expired cursor.
+- Writes are idempotent by Gmail id: a message whose id is already on an inbox file's
+  Message-ID line or in `state["written_ids"]` (kept 30 days) is skipped, so a run killed
+  after writing and before saving state writes nothing new when it is replayed.
+- The state file and each inbox file are written to a temp file and renamed into place, so a
+  death mid-write leaves no partial file. Old inbox files are cleaned up only after the state
+  is saved. `last_refresh` is the time the run started. `--backfill` works on a throwaway copy
+  of the state and never saves it. A non-UTF-8 inbox file is skipped instead of crashing the
+  scan.
+- `.gitignore`: the token and both state files are ignored by stem globs
+  (`tools/gmail_token*`, `tools/.gmail_state*`), which cover the temp files a death leaves and
+  a Finder duplicate such as `gmail_token 2.json`. Two tests in
+  `test_gitignore_public_safety.py` check each name with `git check-ignore`.
+
+**Career scanner**
+- `career_scanner/dedup.py`: the fuzzy title match threshold is 0.90 (was 0.80), and "Sr." and
+  "Jr." are expanded before comparing, so different levels of one title at one company are no
+  longer merged as one role.
+
+**To-dos**
+- `todo_write.py done`: the repair path for a Pending row stranded under `## Completed` now
+  refuses a recurring row, as the live path already did. Both paths call one check.
+- `todo_write.py update --notes`: the value is trimmed like every other Notes cell.
+- `source_check.py`: an In Progress recurring row counts as live, not retired. It imports
+  `rotate`'s own status set, so the two tools cannot disagree about a row.
+
+**Mutation and review tools**
+- `mutation_check.py`: deletes the target's cached bytecode on every write (each mutant and
+  the restore). A test that starts a child with a fresh environment wrote the `.pyc` anyway,
+  and a same-size mutant written in the same second ran as the earlier mutant and was
+  reported KILLED. This replaces the manual `chmod a-w tools/__pycache__` workaround.
+- `codex_verify.py`: run from a linked worktree, it finds the main checkout through git and
+  seals the main checkout, its peer repos and the paths listed in the main checkout's
+  `tools/.sealed-paths.conf`. Before, it sealed only
+  the worktree's siblings in the worktrees folder.
+- Redundant code removed across 12 tools, so mutants that could never be killed no longer
+  exist: `pipe_write.is_data_row`, `allowlist_write`, `career_scanner/dedup.find_match`,
+  `friction_surface`, `scan_promotion_candidates`, `mutation_sweep`, `mutation_report`,
+  `conftest_guard`, `frame_write`, `coverage_invariant`, `todo_daily_metrics` (with its unused
+  `ACTIVE_PROCESS_STAGES`), and `schema_guard`, whose `__main__` self-check is deleted (its
+  tests cover the same cases). Allowlist entries for removed code are deleted and false
+  reasons rewritten in `tools/mutation-allow.json`.
+
+**Docs**
+- `CLAUDE.md`: the Self-Improvement Loop's Step 2 records a REOPEN gate in the rule file's
+  `reopen_gate` frontmatter, or in the owning `data/workstreams/` file, not as a parked to-do.
+  The `/memory-refresh` mentions are removed; the weekly `memory-promotion-scan` job is the
+  reader.
+
+## 2026-10-31: Calendar and inbox approvals behind Touch ID, a morning page, and one parser per data file
+
+**What prompted it.** The work from 10/23 to 10/31 merged to main as PRs #1 to #5 and
+five direct merges (overnight-deletions, overnight-simplicity, overnight-codify,
+overnight-inbox-signing, and the overnight-calendar follow-ons). The runs deleted unused
+tools, moved private parsers onto shared readers, codified the artifact workflow, and added
+calendar access behind Touch ID. Guard edits were approved by Nick.
+
+**Deleted**
+- `tools/linkedin-scanner/` (replaced by `contact_finder.py`), four June one-shot migration
+  tools, `/dashboard` (its only command had failed with an ImportError since July),
+  `tools/inbox_triage.py`, and `tools/check_checkout_status.sh` (its launchd job was not
+  installed).
+- `/weekly-review` (no invocations in 282 transcripts). On the first working day of a week,
+  `/standup` Step 2w writes the week's Top 5 to `data/weekly-review-log.md`, which `/checkout`
+  reads only when the entry is this week's. `/standup`'s allowed-tools grant Write for that
+  one file.
+- `/memory-refresh` archived; the weekly scan's to-do points at `memory/promotion-backlog.md`.
+- `check_edit_after_mutation.py` deleted and unwired: it exited 0 with a stdout warning the
+  model never sees.
+
+**New gates**
+- **`commit_msg_pii_guard.py` (run by `tools/hooks/commit-msg`)**: blocks a commit message
+  that contains a denylist name. The ambiguous and target-word tiers only warn. The pre-commit
+  gate now also blocks on the denylist only and warns on the other tiers.
+- **`check_build_log_present.py`**: blocks creating or editing a build file (HTML, code,
+  notebook, spreadsheet, deck) under `output/<company>/` until a `BUILD-LOG.md` on the path
+  to it has `reader_ask` filled and the company dossier exists. `copy_destinations` in
+  `check_handoff_producer.py` now reports each landed file for a copy into a folder, so `cp`,
+  `mv`, `install` and `rsync` into `output/` are judged too.
+- **`check_draft_artifact.py`**: opening a staged draft with an attachment or a non-bio link
+  needs an `ARTIFACT:` header naming a BUILD-LOG for that reader, or `none (<reason>)` for a
+  link. A rendered CV passes.
+- **`check_frozen_file.py`**: blocks a write to an existing file with no owner-write bit (a
+  build's `chmod a-w` freeze).
+- **`check_calendar_mcp.py`**: blocks Google Calendar connector reads (use
+  `calendar_fetch.py`), and allows a write only after a macOS dialog showing the event is
+  approved and a Touch ID signature over the exact call verifies. Each decision is logged by
+  hash only.
+- **`check_sealed_read.py`** also blocks reads and recursive walks of a sibling personal
+  repo's sealed folder.
+- **`tests/conftest.py`** fails any test that changes one of the four real data tables. Two
+  tests had been adding a "Memory refresh" row to the real to-do file on every run.
+
+**Artifact workflow**
+- `framework/artifact-workflow.md`, `framework/decision-tree.md` and
+  `framework/templates/build-log.md`: one workflow for every reader-facing build.
+- `build_check.py` checks every `output/**/BUILD-LOG.md` and renders the `/standup` Builds
+  line. `sent_artifact_check.py` flags any attachment or link in Gmail Sent that no BUILD-LOG
+  names; its launchd job stays in `tools/launchd/disarmed/`.
+- The outreach log gains an Artifact column, and `outreach_status.py --append` is the row
+  writer the outreach skills call.
+
+**Calendar and inbox**
+- `calendar_fetch.py` (read-only token) lists upcoming events and prints a telehealth event as
+  "Private appointment" with its times only. `calendar_write.py` creates, updates or deletes
+  one event with its own `calendar.events.owned` token, only after the dialog and a Touch ID
+  signature. Invitations go out only with `--attendee`.
+- `approval_signing.py`: an inbox-drain approval counts only with a Touch ID signature, which
+  covers the exact set of blocks and each block's command and destination. Any change voids
+  the approval.
+
+**Daily views**
+- `/check` and `day_check.py`: read-only midday counts of sends, replies, calls, applications,
+  pipeline moves and closed to-dos against the weekly targets. A source it cannot read is
+  null, never 0.
+- `morning_page.py`: a static HTML page rendered from read-only sources
+  (`standup_collect.py --read-only`, `day_check`, `calendar_fetch`). Its launchd job is armed.
+  The page scrolls at every window height, to-dos lead with their due tag, and `--demo` moves
+  the sample calendar to the render day.
+- New tools: `duet_snapshot.py` (a privacy-filtered daily snapshot of search state),
+  `booking_tracker.py` (public booking-page data for venues in a gitignored config),
+  `sf_property_records.py` (SF open-data records for one address), `cv_fixed_sections.py`
+  (blocks a CV render whose fixed sections came from an older CV), `coverage_invariant.py`
+  (every untracked file is backed up or listed as ephemeral).
+
+**One parser per data file**
+- Pipeline: six tools and `pipeline_staleness.py` read rows through `pipe_read.parse_all_rows`,
+  so "closed" means what `/pipe` means. An alignment separator row is no longer a company.
+  `webset_discover.py` uses `agent_core`'s helpers, so a rejected company is not re-proposed.
+- Outreach log: `outreach_read.parse_rows` is the one row reader.
+- To-dos: `todo_read.py` is the one reader. Overdue means due strictly before today, and
+  before 04:00 the run is about the previous day (`todo_read.py --logical-date`).
+- Replies: `reply_classify.py` is the one rule for "did the contact reply", used by
+  `networking_write.py`, `day_check.py` and `remember_classify.py`. It counts a reply only on
+  a positive signal, and a negated note ("never replied") is not a reply.
+- `todo_daily_metrics.py` reads `last_interaction` from the Last Interaction column through
+  `networking_read.parse_contacts`; it had read the Added column.
+
+**Writers**
+- `todo_write.py rotate <fragment> --due YYYY-MM-DD` closes a recurring row and recreates it in
+  one verified write; a failed check restores the file. `done` refuses a recurring row and
+  points to `rotate`; `withdraw` still retires one. `source_check.py mark` calls `rotate`.
+  `check_todo_write_kwargs.py` allows each subcommand only the exact flags it takes.
+- `networking_write.py log --followup` reports `todo_added` and `todos_file`; `--no-todo`
+  skips the to-do.
+- `open_draft.py` reply mode opens a Gmail search for the thread.
+- Outreach: a `Closed` status leaves the awaiting lists, and only rows newer than the last
+  Replied or Closed row decide whether a recipient is awaited.
+- `pipe_write.py add` checks duplicates on company and role, not company alone.
+
+**Review and mutation tools**
+- `codex_verify.py` prints the open-P0 count beside the GATE line, gives each default report a
+  run id, and diffs a branch with no upstream against origin. Until 2026-11-12 a Fable review
+  may fill one of a tier's slots in place of Grok.
+- `reader_review.py --panel` runs 3 to 5 real decision-maker seats, each in isolation.
+- `mutation_check.py`: `--in-worktree` runs in a throwaway linked worktree; `--max-hours`
+  stops starting mutants and reports status `incomplete`; each mutant runs first against the
+  test files that execute the target. Tests that need the owner's real data carry
+  `@pytest.mark.live_data` and skip in a linked worktree.
+- Mutation survivors were closed or allowlisted with reasons in most of the tools above.
+
 ## 2026-10-25: Review findings fixed, and two recurring mistakes turned into gates
 
 **What prompted it.** The 10/23 push left a set of parked review findings. They were
