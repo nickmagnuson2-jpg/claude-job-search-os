@@ -77,7 +77,7 @@ read the main checkout. The parked follow-ups from the overnight-1029 review wer
 five direct merges (overnight-deletions, overnight-simplicity, overnight-codify,
 overnight-inbox-signing, and the overnight-calendar follow-ons). The runs deleted unused
 tools, moved private parsers onto shared readers, codified the artifact workflow, and added
-calendar access behind Touch ID. Guard edits were approved by Nick.
+calendar access behind Touch ID. Guard edits were approved by the owner.
 
 **Deleted**
 - `tools/linkedin-scanner/` (replaced by `contact_finder.py`), four June one-shot migration

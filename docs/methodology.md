@@ -39,7 +39,7 @@ An open-source framework that turns Claude Code into an **end-to-end job search 
 | `data/profile.md` | Name, contact, compensation, availability, interests |
 | `data/goals.md` | Search thesis, role types, company stage, geography, compensation, current phase |
 
-**Skills covered:** `/generate-cv`, `/research-company`, `/research-industry`, `/prep-interview`, `/cold-outreach`, `/follow-up`, `/draft-email`, `/voice-export`, `/extract-identity`, `/review-cv`, `/review-cv-deep`, `/weekly-review`, `/scan-jobs`, `/standup`
+**Skills covered:** `/generate-cv`, `/research-company`, `/research-industry`, `/prep-interview`, `/cold-outreach`, `/follow-up`, `/draft-email`, `/voice-export`, `/extract-identity`, `/review-cv`, `/review-cv-deep`, `/scan-jobs`, `/standup`
 
 If either file is missing or all-TODOs, Claude stops immediately and tells you exactly what to do:
 - Missing `profile.md` → run `/import-cv` to populate it, or create it manually
