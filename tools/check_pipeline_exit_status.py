@@ -115,13 +115,10 @@ _AND_OR = re.compile(r"(\|\||&&)")
 _LINE_CONT = re.compile(r"\\\n")
 
 
-def _first_word(segment: str) -> str:
-    """First actual command word of a pipeline stage, basename-normalised."""
-    stripped = _VAR_PREFIX.sub("", segment)
-    m = _FIRST_WORD.match(stripped)
-    if not m:
-        return ""
-    return os.path.basename(m.group(0))
+def _first_word(segment: str) -> str | None:
+    """First actual command word of a pipeline stage, basename-normalised; None if none."""
+    m = _FIRST_WORD.match(_VAR_PREFIX.sub("", segment))
+    return os.path.basename(m.group(0)) if m else None
 
 
 def _terminal_formatter(element: str) -> str | None:

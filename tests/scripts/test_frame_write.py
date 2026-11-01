@@ -921,3 +921,22 @@ def test_record_delivery_takes_the_shared_write_flags(tmp_path):
     before = f.read_bytes()
     code, _ = _deliver(f, expect=7)
     assert code != 0 and f.read_bytes() == before
+
+
+def test_a_missing_pyyaml_exits_3_with_the_install_hint(tmp_path):
+    """Someone running the tool without PyYAML gets one JSON line naming the fix and exit 3,
+    before anything else runs. A stub `yaml` package that raises ImportError stands in for
+    the missing library (2026-10-30: replaces two allowlist entries kept "for cost")."""
+    import json as _json
+    import subprocess as _sp
+    import sys as _sys
+    shim = tmp_path / "yaml"
+    shim.mkdir()
+    (shim / "__init__.py").write_text("raise ImportError('hidden for this test')\n",
+                                      encoding="utf-8")
+    tool = Path(__file__).resolve().parents[2] / "tools" / "frame_write.py"
+    proc = _sp.run([_sys.executable, str(tool), "--help"], capture_output=True, text=True,
+                   env={**__import__("os").environ, "PYTHONPATH": str(tmp_path)})
+    assert proc.returncode == 3, proc.stderr
+    assert _json.loads(proc.stdout.strip()) == {
+        "status": "error", "message": "PyYAML required: pip install pyyaml"}

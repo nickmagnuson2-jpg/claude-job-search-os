@@ -281,18 +281,12 @@ def _load_module():
     "",                  # empty stage
     " VAR=1 (tail)",     # var prefix stripped, still no command word
 ])
-def test_first_word_returns_empty_string_not_none_when_no_command_word(stage):
-    """Kills RETURN_NONE on `return ""` (line 107). `_first_word` is annotated
-    `-> str` and its result is handed to a string-set membership test in
-    `_terminal_formatter`; the documented no-match value is the empty STRING.
-    Returning None instead silently changes the helper's contract for every
-    caller, so assert the value and the type."""
+def test_a_stage_with_no_command_word_has_no_terminal_formatter(stage):
+    """What callers see: no command word means no formatter. Replaces a test that pinned
+    the helper's empty string (2026-10-30 case audit: its only caller checks membership
+    in FORMATTERS, where "" and None agree, so _first_word now returns None)."""
     mod = _load_module()
-    got = mod._first_word(stage)
-    assert got == "", (stage, got)
-    assert got is not None, stage
-    assert isinstance(got, str), (stage, type(got).__name__)
-
+    assert mod._terminal_formatter(stage) is None
 
 @pytest.mark.parametrize("stage,expected", [
     (" tail -14", "tail"),
@@ -300,8 +294,7 @@ def test_first_word_returns_empty_string_not_none_when_no_command_word(stage):
     (" PYTHONIOENCODING=utf-8 python3 tool.py", "python3"),
 ])
 def test_first_word_returns_the_basename_of_a_real_command_word(stage, expected):
-    """Companion to the above: the match branch returns a basename-normalised
-    str, so the two branches are pinned to the same declared return type."""
+    """Companion to the above: the match branch returns a basename-normalised str."""
     mod = _load_module()
     got = mod._first_word(stage)
     assert got == expected, (stage, got)

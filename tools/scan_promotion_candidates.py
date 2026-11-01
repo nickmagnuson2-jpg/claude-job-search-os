@@ -76,9 +76,7 @@ def parse_frontmatter(text: str) -> dict:
 
 def _is_scannable(name: str) -> bool:
     """Is this a memory RULE file (vs an index, archive, audit, or the router)?"""
-    if name in ("MEMORY.md",):
-        return False
-    return not any(name.startswith(pfx) for pfx in (
+    return name != "MEMORY.md" and not any(name.startswith(pfx) for pfx in (
         "MEMORY.backup", "archive-", "archived-", "audit-",
         "promotion-backlog", "index-",
     ))

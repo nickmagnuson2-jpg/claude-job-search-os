@@ -82,8 +82,7 @@ def quiescible_labels(repo_root: Path) -> list[str]:
     conftest.
     """
     plist_dir = repo_root / "tools" / "launchd"
-    if not plist_dir.is_dir():
-        return []
+    # A missing folder globs to nothing, so no separate existence check is needed.
     labels = set()
     for p in plist_dir.glob(f"{JOB_PREFIX}*.plist"):
         label = p.name[:-len(".plist")]

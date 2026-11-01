@@ -291,12 +291,9 @@ def extract_text(content) -> str:
 def is_excluded_bash(tool_use: dict) -> bool:
     """Don't log Bash errors for --help calls or friction-log infrastructure scripts."""
     command = ((tool_use or {}).get("input") or {}).get("command", "") or ""
-    if re.search(r"\s--help\b|\s-h\b", command):
-        return True
     matches = SCRIPT_RE.findall(command)
-    if matches and all((m + ".py").lower() in EXCLUDE_SCRIPTS for m in matches):
-        return True
-    return False
+    return bool(re.search(r"\s--help\b|\s-h\b", command)) or bool(
+        matches and all((m + ".py").lower() in EXCLUDE_SCRIPTS for m in matches))
 
 
 def derive_surface(tool_name: str, command: str, error_text: str = "") -> str:
