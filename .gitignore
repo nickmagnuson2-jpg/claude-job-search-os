@@ -21,11 +21,12 @@ __pycache__/
 # Glob, not exact names: a Finder duplicate ('.pending-draft.txt 2.txt') slipped past the exact list (2026-09-28)
 tools/.pending-draft*
 tools/.personal-recipients.txt
-tools/gmail_credentials.json
-# Stem globs, not exact names: gmail_fetch writes the token and both state files via a
-# '<name>.tmp.<pid>' temp + os.replace, and a death between the two leaves the temp behind
-# (the token temp holds OAuth credentials; the state temps hold Gmail ids). The stem also
-# covers a Finder duplicate ('gmail_token 2.json'). Pinned by test_gitignore_public_safety.py.
+# Stem globs, not exact names. gmail_fetch writes the token and both state files via a
+# '<name>.tmp.<pid>' temp + os.replace and removes the temp on any handled error, but a
+# death it cannot handle (SIGKILL, power loss) leaves it behind (the token temp holds OAuth
+# credentials; the state temps hold Gmail ids). The stems also cover Finder duplicates and
+# .bak copies, including of the OAuth client file. Pinned by test_gitignore_public_safety.py.
+tools/gmail_credentials*
 tools/gmail_token*
 tools/.gmail_state*
 tools/.wispr-state.json

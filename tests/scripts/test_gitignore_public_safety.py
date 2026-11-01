@@ -61,3 +61,10 @@ def test_daily_stoic_state_and_its_temp_are_gitignored():
     # daily_stoic.py writes '<state>.json.tmp' and then replaces; the state holds Gmail ids.
     for name in (".daily_stoic_state.json", ".daily_stoic_state.json.tmp"):
         assert _is_ignored(f"tools/{name}"), name
+
+
+def test_gmail_oauth_client_file_and_its_copies_are_gitignored():
+    # The OAuth client file holds the client secret; gmail_fetch.py and calendar_fetch.py
+    # both read it. A Finder duplicate or a .bak copy must be ignored too.
+    for name in ("gmail_credentials.json", "gmail_credentials 2.json", "gmail_credentials.json.bak"):
+        assert _is_ignored(f"tools/{name}"), name
