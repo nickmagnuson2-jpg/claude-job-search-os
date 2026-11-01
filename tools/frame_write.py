@@ -567,8 +567,7 @@ def init_frame(frame_path: Path, engagement: str, today: str) -> dict:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(body)
     finally:
-        if tmp.exists():
-            tmp.unlink()
+        tmp.unlink(missing_ok=True)
 
     return {"status": "ok", "created": str(frame_path), "version": 1,
             "schema_version": skeleton["schema_version"],
