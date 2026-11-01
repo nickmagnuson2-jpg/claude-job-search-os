@@ -267,18 +267,37 @@ SKILLS_DIR = REPO_ROOT / ".claude" / "skills"
 _TEMPLATE_HEADING = re.compile(r"^\s*#### YYYY-MM-DD \| ([^|]+?) \|", re.M)
 
 
-def test_every_hand_written_heading_template_records_a_direction():
-    """/follow-up, /cold-outreach and /draft-email write their own interaction heading. A
-    plain type there makes every send they log count as nothing once the summary is not
-    read (Fable round 2, F1-F3). Every such template must carry a direction suffix."""
-    found, plain = [], []
+# The ONE stated exception (job-search-47 for Nick, 2026-10-31, round-3 finding F6):
+# /draft-email logs when the draft is opened, before it is sent, and a draft is not a
+# send. Its template stays plain, so the morning page does not count it, as before.
+PLAIN_TEMPLATE_EXCEPTIONS = {"draft-email": "logged when the draft opens; a draft is not a send"}
+
+
+def _templates():
     for path in sorted(SKILLS_DIR.glob("*/SKILL.md")):
         for m in _TEMPLATE_HEADING.finditer(path.read_text(encoding="utf-8")):
-            found.append(path.parent.name)
-            if rc.direction(m.group(1)) is None:
-                plain.append(f"{path.parent.name}: {m.group(1)!r}")
+            yield path.parent.name, m.group(1)
+
+
+def test_every_hand_written_heading_template_records_a_direction():
+    """/follow-up and /cold-outreach write their own interaction heading. A plain type there
+    makes every send they log count as nothing once the summary is not read (Fable round
+    2, F1-F2). Every such template must carry a direction suffix, except the stated ones."""
+    found = list(_templates())
+    plain = [f"{skill}: {kind!r}" for skill, kind in found
+             if rc.direction(kind) is None and skill not in PLAIN_TEMPLATE_EXCEPTIONS]
     assert not plain, plain
-    assert {"follow-up", "cold-outreach", "draft-email"} <= set(found), found
+    assert {"follow-up", "cold-outreach", "draft-email"} <= {skill for skill, _ in found}
+
+
+def test_the_draft_email_template_stays_plain_and_says_why():
+    """The exception is pinned both ways: /draft-email must NOT record a direction (a draft
+    is not a send), and its template must say so, so nobody 'fixes' it back."""
+    kinds = [kind for skill, kind in _templates() if skill == "draft-email"]
+    assert kinds and all(rc.direction(k) is None for k in kinds), kinds
+    text = (SKILLS_DIR / "draft-email" / "SKILL.md").read_text(encoding="utf-8")
+    assert "a draft is not a send" in text.lower()
+    assert set(PLAIN_TEMPLATE_EXCEPTIONS) == {"draft-email"}
 
 
 def test_the_template_scan_would_catch_a_plain_type():

@@ -4,8 +4,8 @@ networking_write.py — Atomic mutations for data/networking.md.
 
 Subcommands:
   add <name> [--company CO] [--role ROLE] [--relationship TYPE] [--force]
-  log <name> --date DATE --type TYPE --summary SUMMARY
-             [--followup TEXT] [--content TEXT]
+  log <name> --date DATE --type TYPE --summary SUMMARY --direction in|out|both|none
+             [--followup TEXT] [--content TEXT] [--no-todo]
   remove <name> [--role ROLE]
 
 `add` blocks on a fuzzy name match to an existing contact (spelling variants like
