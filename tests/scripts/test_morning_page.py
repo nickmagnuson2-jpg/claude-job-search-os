@@ -20,7 +20,8 @@ import morning_page as mp  # noqa: E402
 
 NOW = datetime(2026, 1, 7, 9, 0)
 FIX = REPO / "tests" / "fixtures" / "morning_page"
-PLIST = TOOLS / "launchd" / "disarmed" / "com.nickmagnuson.jobsearch.morning-page.plist"
+# Armed by Nick 2026-10-29 (install.sh arm morning-page): in the standing set, not disarmed/.
+PLIST = TOOLS / "launchd" / "com.nickmagnuson.jobsearch.morning-page.plist"
 
 
 def demo_html(now=NOW):
@@ -65,8 +66,8 @@ def test_must_dos_keep_calendar_apart_from_todos():
     v = mp.build_view(mp.gather_demo(), NOW)
     assert v["cal_today"] == ["10:30  Screen with Beta Inc"]
     assert v["cal_soon"] == ["Thu  13:30  Coffee with Alex Example", "Fri  all day  Private appointment"]
-    assert v["todos"][0].endswith("(2d overdue)") and v["todos"][1].endswith("(due today)")
-    assert v["todos"][2].endswith("(in 2d)") and v["todos"][3].endswith("(no date)")
+    assert v["todos"][0].startswith("(2d overdue) ") and v["todos"][1].startswith("(due today) ")
+    assert v["todos"][2].startswith("(in 2d) ") and v["todos"][3].startswith("(no date) ")
 
 
 def test_an_unavailable_calendar_says_why():
@@ -77,8 +78,10 @@ def test_an_unavailable_calendar_says_why():
 
 def test_done_so_far_today_shows_the_day_check_counts_and_the_weekly_target():
     b5 = _section(demo_html(), "b5")
-    assert "Sends" in b5 and ">3<" in b5 and "week 8" in b5
-    assert "week 1 of 5 a week" in b5
+    assert '<th class="n">Today</th><th class="n">This week</th>' in b5
+    assert "Sends" in b5 and ">3<" in b5 and '<td class="n">8</td>' in b5
+    assert '<td class="n">1 <span class="muted">/ 5 a week</span></td>' in b5
+    assert "week 8" not in b5
 
 
 def test_an_unknown_count_prints_unknown_not_zero():
@@ -92,7 +95,8 @@ def test_an_unknown_count_prints_unknown_not_zero():
 def test_machine_room_m4_against_the_floor():
     v = mp.build_view(mp.gather_demo(), NOW)
     assert v["machine"]["m4"] == {"last_7": 9, "floor": 7.0, "ok": True}
-    assert 'M4 sends, last 7 days vs floor</td><td class="n ok">9 / 7.0' in _section(demo_html(), "b4")
+    assert ('Outreach pace: sent in 7 days</td><td class="n ok">9 <span class="muted">(avg 7)</span>'
+            in _section(demo_html(), "b4"))
     src = mp.gather_demo()
     src["collector"]["results"]["conversations_metric"]["data"]["outreach_sent"]["counts"]["7d"] = 5
     assert mp.build_view(src, NOW)["machine"]["m4"]["ok"] is False
@@ -179,6 +183,29 @@ def test_demo_mode_reads_only_the_fixture_folder(tmp_path, monkeypatch):
     assert mp.DEMO_BAND in out.read_text()
 
 
+def test_demo_on_any_day_shows_the_sample_calendar_moved_to_that_day(tmp_path):
+    # The fixtures are dated 2026-01-07; rendered on 2026-10-30 the events move by the same gap.
+    out = tmp_path / "demo.html"
+    assert mp.main(["--demo", "--out", str(out), "--now", "2026-10-30T09:00"]) == 0
+    b1 = _section(out.read_text(), "b1")
+    assert "10:30  Screen with Beta Inc" in b1
+    assert "Sat  13:30  Coffee with Alex Example" in b1
+    assert "Sun  all day  Private appointment" in b1
+
+
+def test_the_demo_shift_keeps_times_and_offsets_and_leaves_other_sections_alone():
+    shifted = mp.gather_demo(today=datetime(2026, 10, 30).date())
+    ev = shifted["calendar"]["events"]
+    assert [e["start"] for e in ev] == ["2026-10-30T10:30:00-08:00", "2026-10-31T13:30:00-08:00",
+                                        "2026-11-01"]
+    assert [e["end"] for e in ev] == ["2026-10-30T11:00:00-08:00", "2026-10-31T14:00:00-08:00",
+                                      "2026-11-02"]
+    plain = mp.gather_demo()
+    assert plain["calendar"]["events"][0]["start"] == "2026-01-07T10:30:00-08:00"
+    assert {k: v for k, v in shifted.items() if k != "calendar"} == \
+        {k: v for k, v in plain.items() if k != "calendar"}
+
+
 # --- the CLI and the archive copy ------------------------------------------------------------
 
 def test_live_main_writes_the_page_and_the_dated_copy_after_19(tmp_path, monkeypatch):
@@ -196,14 +223,15 @@ def test_bad_now_exits_2(capsys):
     assert "--now must be" in capsys.readouterr().err
 
 
-# --- the plist: written, not installed ----------------------------------------------------
+# --- the plist: armed 2026-10-29 ----------------------------------------------------
 
-def test_the_docstring_names_the_disarmed_plist():
-    assert "tools/launchd/disarmed/com.nickmagnuson.jobsearch.morning-page.plist" in mp.__doc__
+def test_the_docstring_names_the_armed_plist():
+    assert "tools/launchd/com.nickmagnuson.jobsearch.morning-page.plist" in mp.__doc__
+    assert "disarmed" not in mp.__doc__
 
 
-def test_plist_is_disarmed_and_runs_every_15_minutes_from_7_to_19():
-    assert not (TOOLS / "launchd" / PLIST.name).exists(), "must not be in the standing set"
+def test_plist_is_armed_and_runs_every_15_minutes_from_7_to_19():
+    assert not (TOOLS / "launchd" / "disarmed" / PLIST.name).exists(), "armed: must not also sit in disarmed/"
     p = plistlib.loads(PLIST.read_bytes())
     assert p["Label"] == "com.nickmagnuson.jobsearch.morning-page"
     assert p["ProgramArguments"][1].endswith("/tools/morning_page.py")
@@ -214,9 +242,9 @@ def test_plist_is_disarmed_and_runs_every_15_minutes_from_7_to_19():
     assert p["EnvironmentVariables"]["PYTHONDONTWRITEBYTECODE"] == "1"
 
 
-def test_page_fits_a_laptop_without_scrolling():
+def test_page_keeps_large_type_and_few_items():
     page = demo_html()
-    assert "overflow:hidden" in page and "font:20px" in page
+    assert "font:20px" in page
     v = mp.build_view(mp.gather_demo(), NOW)
     assert len(v["todos"]) <= mp.MAX_ITEMS and len(v["waiting_names"]) < mp.MAX_ITEMS
 
@@ -309,7 +337,7 @@ def test_m4_is_unknown_without_both_windows():
     v = mp.build_view(src, NOW)
     assert v["machine"]["m4"] is None
     page = mp.render(v, NOW, demo=True)
-    assert "M4 sends vs floor</td><td class=\"n\">unknown" in page
+    assert "Outreach pace: sent in 7 days</td><td class=\"n\">unknown" in page
 
 
 def test_a_read_without_digits_is_shown():
@@ -405,9 +433,35 @@ def test_will_needs_a_named_other_person(nxt, theirs):
     assert bool(mp.THEIRS.search(nxt)) is theirs
 
 
-def test_a_short_window_scrolls_instead_of_clipping():
+def test_no_window_height_clips_or_overlaps_a_section():
+    # Codex 2026-10-30 F1: a height breakpoint only moved the failure to the next pixel.
+    # Rows size to content at every height; only a list item clamps (to two lines).
     css = mp.CSS
-    i = css.index("@media (max-height:760px)")
-    assert "@media (max-height:760px){body{overflow:auto}" in demo_html()
-    # last rule block, so the base main/section rules cannot override it
-    assert "main{" not in css[i + 60:] and "section{" not in css[i + 60:].replace("section{overflow:visible}", "")
+    assert "grid-template-rows" not in css and "max-height" not in css
+    assert "overflow:hidden" not in css.replace("-webkit-line-clamp:2;overflow:hidden", "")
+
+
+def test_a_todo_line_leads_with_its_due_tag_so_the_two_line_clamp_cannot_hide_it():
+    b1 = _section(demo_html(), "b1")
+    assert "<li>(2d overdue) " in b1 and "(2d overdue)</li>" not in b1
+
+
+def test_an_unavailable_todo_list_renders_instead_of_crashing():
+    view = {**mp.build_view(mp.gather_demo(), NOW), "todos": None}
+    assert "<h3>Top to-dos</h3>" in _section(mp.render(view, NOW, demo=True), "b1")
+
+
+def test_outreach_pace_below_the_average_renders_red():
+    src = mp.gather_demo()
+    src["collector"]["results"]["conversations_metric"]["data"]["outreach_sent"]["counts"]["7d"] = 5
+    page = mp.render(mp.build_view(src, NOW), NOW, demo=True)
+    assert 'sent in 7 days</td><td class="n warn">5 ' in _section(page, "b4")
+
+
+def test_the_shown_average_is_the_threshold_that_colours_the_row():
+    # Codex 2026-10-30 r2 F1: a rounded average could read "20 (avg 20)" in red against 20.4.
+    src = mp.gather_demo()
+    sent = src["collector"]["results"]["conversations_metric"]["data"]["outreach_sent"]["counts"]
+    sent["7d"], sent["30d"] = 20, 87  # 87 / 30 * 7 = 20.3
+    b4 = _section(mp.render(mp.build_view(src, NOW), NOW, demo=True), "b4")
+    assert '<td class="n warn">20 <span class="muted">(avg 20.3)</span>' in b4

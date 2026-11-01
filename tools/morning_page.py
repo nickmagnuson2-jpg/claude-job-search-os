@@ -28,15 +28,15 @@ Rules the tests hold it to:
     files in tests/fixtures/morning_page/ and carries a "DEMO DATA" band instead.
   * Numbers come only from script output. "Claude's read" may hold no digit: a read that
     contains one is withheld, not shown.
-  * Built for a glance at a laptop screen: large type, at most a few items per block,
-    everything visible without scrolling.
+  * Built for a glance at a laptop screen: large type, at most a few items per block.
+    Sections grow to fit their content and the page scrolls; nothing is clipped or overlapped.
 
 Usage:
   PYTHONIOENCODING=utf-8 python3 tools/morning_page.py [--repo-root .] [--out PATH] [--demo]
       [--now YYYY-MM-DDTHH:MM]
 
-The launchd job (tools/launchd/disarmed/com.nickmagnuson.jobsearch.morning-page.plist) runs
-it at 07:00 and every 15 minutes until 19:00. It is written, not installed.
+The launchd job (tools/launchd/com.nickmagnuson.jobsearch.morning-page.plist) runs it at
+07:00 and every 15 minutes until 19:00.
 """
 from __future__ import annotations
 
@@ -200,11 +200,19 @@ def gather_live(root: Path, now: datetime) -> dict:
     }
 
 
-def gather_demo(fixtures: Path = FIXTURES) -> dict:
+def gather_demo(fixtures: Path = FIXTURES, today: date | None = None) -> dict:
     out = {}
     for name in ("collector", "day", "calendar", "commonplace", "claude_read", "open_findings",
                  "waiting_on_them"):
         out[name] = json.loads((fixtures / f"{name}.json").read_text(encoding="utf-8"))
+    if today is not None:
+        # The fixtures are dated to the collector's target_date. Move the calendar by the same
+        # number of days so --demo on any day shows the sample events. Only the calendar is
+        # compared against today; todo ages are stored as day counts.
+        shift = today - date.fromisoformat(out["collector"]["target_date"])
+        for ev in out["calendar"].get("events") or []:
+            for k in ("start", "end"):
+                ev[k] = (date.fromisoformat(ev[k][:10]) + shift).isoformat() + ev[k][10:]
     return out
 
 
@@ -242,7 +250,8 @@ def build_view(src: dict, now: datetime) -> dict:
         d = t.get("days_until_due")
         age = ("due today" if d == 0 else f"{-d}d overdue" if isinstance(d, int) and d < 0
                else f"in {d}d" if isinstance(d, int) else "no date")
-        todos.append(f"{t.get('task', '')[:90]}  ({age})")
+        # The tag leads: long tasks are clamped to two lines and must not lose it.
+        todos.append(f"({age}) {t.get('task', '')[:90]}")
 
     # 2. Waiting on me.
     nf = _data(col, "networking_followup") or {}
@@ -326,29 +335,29 @@ CSS = """
 --line:#34332f;--live:#e07a7a;--demo:#7aa7e0;--stale:#e0a84a;--ok:#7ac08a;--warn:#e07a7a}
 *{box-sizing:border-box}html,body{margin:0;height:100%}
 body{background:var(--bg);color:var(--ink);font:20px/1.35 -apple-system,"Helvetica Neue",
-Helvetica,Arial,sans-serif;overflow:hidden;display:flex;flex-direction:column}
+Helvetica,Arial,sans-serif}
 .band{font-weight:700;letter-spacing:.08em;text-align:center;padding:4px;color:#fff}
 .band.live{background:var(--live)}.band.demo{background:var(--demo)}
 #stale{display:none;background:var(--stale);color:#000;text-align:center;font-weight:700;padding:6px}
-header{display:flex;justify-content:space-between;align-items:baseline;padding:10px 24px 4px}
-header h1{font-size:30px;margin:0}header .gen{color:var(--muted);font-size:16px}
-.read{margin:0 24px 8px;padding:8px 14px;border-left:4px solid var(--line);font-size:19px}
-main{flex:1;display:grid;grid-template-columns:repeat(3,1fr);grid-template-rows:1fr 1fr;
-gap:14px;padding:0 24px 18px;min-height:0}
-section{background:var(--card);border:1px solid var(--line);border-radius:10px;
-padding:12px 16px;overflow:hidden;min-height:0}
-h2{font-size:15px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:0 0 6px}
-h3{font-size:16px;margin:8px 0 2px;color:var(--muted);font-weight:600}
-ul{margin:0;padding-left:20px}li{margin:2px 0}p{margin:4px 0}
+header{display:flex;justify-content:space-between;align-items:baseline;padding:14px 32px 6px}
+header h1{font-size:30px;margin:0;font-weight:700}header .gen{color:var(--muted);font-size:16px}
+.read{margin:0 32px 10px;font-size:19px}
+main{display:grid;grid-template-columns:repeat(3,1fr);column-gap:40px;row-gap:18px;
+padding:0 32px 20px}
+section{border-top:2px solid var(--ink);padding:8px 0 0}
+h2{font-size:15px;text-transform:uppercase;letter-spacing:.06em;margin:0 0 8px}
+h3{font-size:16px;margin:10px 0 2px;color:var(--muted);font-weight:600}
+ul{margin:0}li{margin:2px 0}p{margin:4px 0}
 .muted{color:var(--muted)}table{border-collapse:collapse;width:100%}
-td{padding:3px 0;vertical-align:top}td.n{text-align:right;font-weight:700;white-space:nowrap;padding-left:10px}
+td,th{padding:3px 0;vertical-align:top}td.n,th.n{text-align:right;white-space:nowrap;padding-left:14px;
+font-variant-numeric:tabular-nums}td.n{font-weight:700}
+th{font-size:14px;font-weight:600;color:var(--muted);text-align:left;border-bottom:1px solid var(--line)}
+td.n .muted{font-weight:400}
+li{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}
+ul{list-style:none;padding-left:0}li{padding-left:14px;text-indent:-14px}li::before{content:"\\2022\\00a0\\00a0"}
 .ok{color:var(--ok)}.warn{color:var(--warn)}
-@media (max-width:900px){body{overflow:auto}main{grid-template-columns:1fr;grid-template-rows:none;padding:0 16px 16px}
+@media (max-width:900px){main{grid-template-columns:1fr;padding:0 16px 16px}
 header{padding:10px 16px 4px}.read{margin:0 16px 8px}}
-/* A short window must not clip content (D5 review 830.F1). LAST, so it
-   overrides the base main/section rules above (848.F1, 852.F1): below 760px of height the page
-   scrolls and the cards size to their content instead of to the screen. */
-@media (max-height:760px){body{overflow:auto}main{grid-template-rows:none}section{overflow:visible}}
 """
 
 STALE_JS = """
@@ -383,10 +392,12 @@ def render(view: dict, now: datetime, demo: bool) -> str:
     m = view["machine"]
     if m["m4"]:
         cls = "ok" if m["m4"]["ok"] else "warn"
-        m4 = (f'<tr><td>M4 sends, last 7 days vs floor</td><td class="n {cls}">'
-              f'{_e(m["m4"]["last_7"])} / {_e(m["m4"]["floor"])}</td></tr>')
+        # M4 in the codify plan: green while the last 7 days are at or above the 30-day pace.
+        m4 = (f'<tr><td>Outreach pace: sent in 7 days</td><td class="n {cls}">'
+              f'{_e(m["m4"]["last_7"])} <span class="muted">(avg {m["m4"]["floor"]:g})</span>'
+              '</td></tr>')
     else:
-        m4 = '<tr><td>M4 sends vs floor</td><td class="n">unknown</td></tr>'
+        m4 = '<tr><td>Outreach pace: sent in 7 days</td><td class="n">unknown</td></tr>'
     machine = ("<table>" + m4
                + '<tr><td>M1 weekly flow</td><td class="n">not built</td></tr>'
                + f'<tr><td>Workstreams changed</td><td class="n">{_n(m["workstreams_changed"])}</td></tr>'
@@ -405,10 +416,12 @@ def render(view: dict, now: datetime, demo: bool) -> str:
     for k in day_check.COUNTS:
         c = counts.get(k) or {}
         t = targets.get(k)
-        tail = f" of {_e(t['target'])} a {_e(t['period'])}" if t else ""
+        tail = (f' <span class="muted">/ {_e(t["target"])} a {_e(t["period"])}</span>'
+                if t else "")
         drows += (f'<tr><td>{_e(day_check.LABELS[k])}</td><td class="n">{_n(c.get("today"))}'
-                  f'</td><td class="n muted">week {_n(c.get("week"))}{tail}</td></tr>')
-    done = f"<table>{drows}</table>"
+                  f'</td><td class="n">{_n(c.get("week"))}{tail}</td></tr>')
+    done = ('<table><tr><th></th><th class="n">Today</th><th class="n">This week</th></tr>'
+            f"{drows}</table>")
 
     pick = view["commonplace"]
     if pick:
@@ -429,6 +442,12 @@ def render(view: dict, now: datetime, demo: bool) -> str:
 
     read = view["claude_read"]
     read_html = _e(read["text"]) if read.get("text") else f'<span class="muted">{_e(read.get("note"))}</span>'
+    try:
+        d = date.fromisoformat(view["date"])
+        heading = f"{view['weekday']}, {d.strftime('%B')} {d.day}"
+    except (TypeError, ValueError):
+        heading = f"{view['weekday']} {view['date']}"
+    updated = now.strftime("%I:%M %p").lstrip("0")
 
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
@@ -437,15 +456,15 @@ def render(view: dict, now: datetime, demo: bool) -> str:
 <title>Morning Page</title><style>{CSS}</style></head>
 <body data-generated-at="{_e(gen)}">
 {band}<div id="stale"></div>
-<header><h1>{_e(view["weekday"])} {_e(view["date"])}</h1><span class="gen">generated {_e(gen)}</span></header>
+<header><h1>{_e(heading)}</h1><span class="gen">updated {_e(updated)}</span></header>
 <div class="read" id="claude-read"><strong>Claude's read:</strong> {read_html}</div>
 <main>
-<section id="b1"><h2>1. Today's must-dos</h2>{must}</section>
-<section id="b2"><h2>2. Waiting on me</h2>{waiting}</section>
-<section id="b3"><h2>3. People funnel</h2><p class="muted">Placeholder until the funnel codify run.</p>{theirs}</section>
-<section id="b4"><h2>4. Machine room</h2>{machine}</section>
-<section id="b5"><h2>5. Done so far today</h2>{done}</section>
-<section id="b6"><h2>6. Commonplace</h2>{cp}</section>
+<section id="b1"><h2>Today's must-dos</h2>{must}</section>
+<section id="b2"><h2>Waiting on me</h2>{waiting}</section>
+<section id="b3"><h2>People funnel</h2><p class="muted">Placeholder until the funnel codify run.</p>{theirs}</section>
+<section id="b4"><h2>Machine room</h2>{machine}</section>
+<section id="b5"><h2>Done so far</h2>{done}</section>
+<section id="b6"><h2>Commonplace</h2>{cp}</section>
 </main>
 <script>{STALE_JS}</script>
 </body></html>
@@ -472,7 +491,7 @@ def main(argv=None) -> int:
     except ValueError:
         print(f"ERROR: --now must be YYYY-MM-DDTHH:MM, got {a.now!r}", file=sys.stderr)
         return 2
-    src = gather_demo() if a.demo else gather_live(root, now)
+    src = gather_demo(today=now.date()) if a.demo else gather_live(root, now)
     page = render(build_view(src, now), now, demo=a.demo)
     out = Path(a.out) if a.out else root / OUT_REL / ("demo.html" if a.demo else "index.html")
     write_page(page, out)
