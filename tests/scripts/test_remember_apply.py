@@ -23,6 +23,7 @@ def run_apply(*args, tmp_path=None):
         encoding="utf-8",
         env={**os.environ, "PYTHONIOENCODING": "utf-8"},
         cwd=str(REPO_ROOT),
+        timeout=60,  # a hang (e.g. a never-ending padding loop) fails fast instead of stalling the suite
     )
     out = result.stdout.strip()
     if out:
@@ -465,7 +466,7 @@ def run_apply_env(*args, env_extra=None):
     env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
     env.update(env_extra or {})
     result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
-                            env=env, cwd=str(REPO_ROOT))
+                            env=env, cwd=str(REPO_ROOT), timeout=60)
     out = result.stdout.strip()
     if out:
         return json.loads(out), result.returncode
@@ -1372,3 +1373,158 @@ def test_the_direction_is_written_into_the_type(tmp_path, direction, kind, flipp
     assert result.get("outreach_log_updated", False) is flipped
     log = (tmp_path / "data/outreach-log.md").read_text(encoding="utf-8")
     assert ("| Replied |" in log) is flipped
+
+
+# ---------------------------------------------------------------------------
+# Exact-output tests (2026-11-02): each pins the whole written file, so dropping a
+# blank line, an inserted separator, or a trailing-newline branch is caught.
+# ---------------------------------------------------------------------------
+
+def _contact(tmp_path, body, entity="Jane Doe", direction="none"):
+    (tmp_path / "data").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "data" / "networking.md").write_text(body, encoding="utf-8")
+    result, code = run_apply(
+        "--repo-root", str(tmp_path), "--note", "met for coffee",
+        "--destinations", dest_json({"type": "contact_note", "entity": entity,
+                                     "file": "data/networking.md", "direction": direction}),
+    )
+    return result, code, (tmp_path / "data" / "networking.md").read_text(encoding="utf-8")
+
+
+def _entry():
+    return f"#### {_today()} | remember | met for coffee"
+
+
+def test_ensure_section_create_path_appends_blank_heading_blank():
+    mod = _load_module()
+    base = ["# T", "", "## Alpha", "a"]
+    grow = list(base)
+    idx = mod.ensure_section(grow, "## Gamma")
+    assert grow == base + ["", "## Gamma", ""], f"a missing section is appended as blank/heading/blank, got {grow}"
+    assert idx is not None and "## Gamma" in grow[idx:idx + 2], f"the index must locate the new heading, got {idx}"
+
+
+def test_contact_note_ignores_tab_separated_decoy_heading(tmp_path):
+    body = "# N\n\n###\tJane Doe\nx\n\n### Jane Doe — Acme Corp\n\nold\n"
+    _r, code, out = _contact(tmp_path, body)
+    assert code == 0, _r
+    assert out == f"# N\n\n###\tJane Doe\nx\n\n### Jane Doe — Acme Corp\n\n{_entry()}\n\nold\n", out
+
+
+def test_contact_note_absent_contact_exact_block(tmp_path):
+    _r, code, out = _contact(tmp_path, "# N\n", entity="Sam Example")
+    assert code == 0, _r
+    assert out == f"# N\n### Sam Example\n\n{_entry()}\n\n", out
+
+
+def test_contact_note_heading_followed_by_blank_line(tmp_path):
+    _r, code, out = _contact(tmp_path, "# N\n\n### Jane Doe\n\nold\n")
+    assert code == 0, _r
+    assert out == f"# N\n\n### Jane Doe\n\n{_entry()}\n\nold\n", out
+
+
+def test_contact_note_heading_followed_directly_by_text(tmp_path):
+    _r, code, out = _contact(tmp_path, "# N\n\n### Jane Doe\nold\n")
+    assert code == 0, _r
+    assert out == f"# N\n\n### Jane Doe\n{_entry()}\n\nold\n", out
+
+
+def test_contact_note_heading_is_last_line_without_trailing_newline(tmp_path):
+    _r, code, out = _contact(tmp_path, "# N\n\n### Jane Doe")
+    assert code == 0, _r
+    assert out == f"# N\n\n### Jane Doe\n{_entry()}\n", out
+
+
+PIPE_HEAD = ("| Company | Role | Stage | Applied | Next | Contact | Notes | Link |\n"
+             "| --- | --- | --- | --- | --- | --- | --- | --- |\n")
+
+
+def _pipe(tmp_path, body, timeout=30):
+    (tmp_path / "data").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "data" / "job-pipeline.md").write_text(body, encoding="utf-8")
+    proc = subprocess.run(
+        [sys.executable, str(TOOLS_DIR / "remember_apply.py"), "--repo-root", str(tmp_path),
+         "--note", "offer call", "--destinations",
+         dest_json({"type": "pipeline_note", "entity": "Acme Corp"})],
+        capture_output=True, text=True, encoding="utf-8", timeout=timeout,
+        env={**os.environ, "PYTHONIOENCODING": "utf-8"}, cwd=str(REPO_ROOT))
+    return proc.returncode, (tmp_path / "data" / "job-pipeline.md").read_text(encoding="utf-8")
+
+
+def test_pipeline_note_skips_prose_line_named_like_the_company(tmp_path):
+    body = "# Pipeline\n\nAcme Corp\n\n" + PIPE_HEAD + "| Acme Corp | PM | Applied | x | x | x | — | x |\n"
+    code, out = _pipe(tmp_path, body)
+    assert code == 0
+    assert out == ("# Pipeline\n\nAcme Corp\n\n" + PIPE_HEAD +
+                   f"| Acme Corp | PM | Applied | x | x | x | [{_today()}]: offer call | x |\n"), out
+
+
+def test_pipeline_note_pads_a_short_row(tmp_path):
+    body = PIPE_HEAD + "| Acme Corp | PM | Applied | x | x | x |"
+    code, out = _pipe(tmp_path, body)
+    assert code == 0
+    assert out == PIPE_HEAD + f"| Acme Corp | PM | Applied | x | x | x | [{_today()}]: offer call | — |", out
+
+
+def test_company_note_inserts_blank_line_before_new_entry(tmp_path):
+    d = tmp_path / "data" / "company-notes"
+    d.mkdir(parents=True)
+    (d / "acme-corp.md").write_text("# Acme Corp — Notes\n\n## 2026-01-01 | General\nold\n", encoding="utf-8")
+    _r, code = run_apply("--repo-root", str(tmp_path), "--note", "new",
+                         "--destinations", dest_json({"type": "company_note", "slug": "acme-corp"}))
+    assert code == 0, _r
+    out = (d / "acme-corp.md").read_text(encoding="utf-8")
+    assert out == f"# Acme Corp — Notes\n\n\n## {_today()} | General\nnew\n## 2026-01-01 | General\nold\n", out
+
+
+def _one(tmp_path, rel, body, dest):
+    p = tmp_path / rel
+    p.parent.mkdir(parents=True, exist_ok=True)
+    if body is not None:
+        p.write_text(body, encoding="utf-8")
+    _r, code = run_apply("--repo-root", str(tmp_path), "--note", "hello",
+                         "--destinations", dest_json(dest))
+    assert code == 0, _r
+    return p.read_text(encoding="utf-8")
+
+
+def test_profile_update_adds_session_notes_section_exactly(tmp_path):
+    out = _one(tmp_path, "data/profile.md", "# Profile\nbio\n", {"type": "profile_update"})
+    assert out == f"# Profile\nbio\n\n## Session Notes\n\n**{_today()}:** hello\n\n", out
+
+
+def test_profile_update_existing_section_exact(tmp_path):
+    out = _one(tmp_path, "data/profile.md", "# Profile\n## Session Notes\na\n## Other\nb\n",
+               {"type": "profile_update"})
+    assert out == f"# Profile\n## Session Notes\na\n**{_today()}:** hello\n\n## Other\nb\n", out
+
+
+def test_general_note_preserves_existing_notes_file_exactly(tmp_path):
+    out = _one(tmp_path, "data/notes.md", "# Mine\n## Notes\nkeep\n## Tail\nt\n", {"type": "general_note"})
+    assert out == f"# Mine\n## Notes\nkeep\n**{_today()}:** hello\n\n## Tail\nt\n", out
+
+
+def test_general_note_adds_missing_notes_section_exactly(tmp_path):
+    out = _one(tmp_path, "data/notes.md", "# Mine\nkeep\n", {"type": "general_note"})
+    assert out == f"# Mine\nkeep\n\n## Notes\n\n**{_today()}:** hello\n\n", out
+
+
+def _personal(tmp_path, existing):
+    vault = tmp_path / "vault"
+    (vault / "data").mkdir(parents=True)
+    (vault / "data" / "inbox.md").write_text(existing, encoding="utf-8")
+    _r, code = run_apply_env("--repo-root", str(tmp_path / "repo"), "--note", "item",
+                             "--destinations", dest_json({"type": "personal_capture"}),
+                             env_extra={"PERSONAL_VAULT_ROOT": str(vault)})
+    assert code == 0, _r
+    lines = (vault / "data" / "inbox.md").read_text(encoding="utf-8").split("\n")
+    assert lines[-1] == "" and lines[-2].endswith(" — item"), lines
+    return lines[:-2]
+
+
+def test_personal_capture_adds_newline_when_existing_lacks_one(tmp_path):
+    assert _personal(tmp_path, "# Inbox\n- old") == ["# Inbox", "- old"]
+
+
+def test_personal_capture_no_extra_blank_when_existing_ends_with_newline(tmp_path):
+    assert _personal(tmp_path, "# Inbox\n- old\n") == ["# Inbox", "- old"]
