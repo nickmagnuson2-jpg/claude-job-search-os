@@ -106,6 +106,16 @@ def _load_owner_identifiers(config_path=None) -> tuple:
     return tuple(ids)
 NICK_IDENTIFIERS = _load_owner_identifiers()
 DEFAULT_SEALED_CONFIG = DEFAULT_REPO_ROOT / "tools" / ".sealed-meetings.txt"
+def unclassified_reason() -> str:
+    """Why a meeting classified "unknown", for the operator. A missing sealed-meeting config
+    makes EVERY meeting unknown, and saying "no sealed signal" then would invite a --type
+    override on a meeting that may be sealed (Fable r1 8.F2/10.F4)."""
+    if load_sealed_meetings_config() is None:
+        return ("the sealed-meeting config tools/.sealed-meetings.txt is missing, so no "
+                "meeting can be classified; restore that gitignored file before persisting")
+    return "no attendees, no sealed signal, no project match"
+
+
 def load_sealed_meetings_config(path=None) -> dict:
     """Load the gitignored sealed-meeting config.
 
@@ -623,3 +633,34 @@ def split_transcript_turns(text: str) -> tuple[list[str], list[str]]:
             continue
         (owner if canon == "Me" else other).append(body)
     return owner, other
+
+
+def drop_sealed_titles(meetings: list, config: dict) -> list:
+    """`meetings` without those whose title holds a configured sealed keyword. For a caller
+    that must hide sealed meetings by title without opening the config, which also holds
+    sealed contacts' names and addresses (Fable r1 10.F6)."""
+    keywords = config.get("keywords", ())
+    return [m for m in meetings
+            if not any(kw in (m.get("title") or "").lower() for kw in keywords)]
+
+
+def main(argv=None) -> int:
+    import argparse
+    import sys
+    ap = argparse.ArgumentParser(description="Meeting classification helpers.")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    d = sub.add_parser("drop-sealed", help="read a JSON list of meetings on stdin; print it "
+                                           "without the ones whose title is sealed")
+    d.add_argument("--config", type=Path, default=None, help=argparse.SUPPRESS)
+    a = ap.parse_args(argv)
+    config = load_sealed_meetings_config(a.config)
+    if config is None:
+        # Without the config no title can be judged; printing the list would show them all.
+        print(f"ERROR: {unclassified_reason()}", file=sys.stderr)
+        return 2
+    print(json.dumps(drop_sealed_titles(json.load(sys.stdin), config)))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -142,11 +142,11 @@ tools/.private-backup.conf
 
 # Sealed-meeting config for granola classification (real names/emails/keywords; never commit).
 # The second line keeps the file's earlier name ignored until it is renamed on disk.
-tools/.sealed-meetings.txt
+tools/.sealed-meetings*
 tools/.*-classifier.txt
 # Which personal-vault folders are sealed, and the private calendar hosts (2026-11-01)
-tools/.sealed-folders.conf
-tools/.private-calendar-domains.txt
+tools/.sealed-folders*
+tools/.private-calendar-domains*
 tools/.personal-projects.txt
 tools/.personal-vault.conf
 tools/.granola-pending-classification.json

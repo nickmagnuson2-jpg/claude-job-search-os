@@ -239,9 +239,57 @@ def test_a_sealed_folder_outside_the_vault_is_refused(tmp_path, bad):
 
 
 def test_sealed_dir_is_the_first_folder_under_the_root(tmp_path):
-    root = _conf(tmp_path, "/srv/vault\n")
+    vault = tmp_path / "vault"
+    (vault / "data" / "sessions").mkdir(parents=True)
+    root = _conf(tmp_path, f"{vault}\n")
     sealed = _sealed_conf(tmp_path, "data/sessions\ndata/other\n")
-    assert vp.sealed_dir(root, sealed) == Path("/srv/vault/data/sessions")
+    assert vp.sealed_dir(root, sealed) == vault / "data" / "sessions"
+
+
+# Review round 1 (Fable 2026-11-02): a folder that is not there, or a malformed config,
+# refuses instead of creating a shadow folder; a BOM or trailing comment still names it.
+
+def test_sealed_dir_refuses_a_folder_that_does_not_exist(tmp_path):
+    vault = tmp_path / "vault"
+    (vault / "data" / "sessions").mkdir(parents=True)
+    root = _conf(tmp_path, f"{vault}\n")
+    with pytest.raises(vp.SealedFolderMissing):
+        vp.sealed_dir(root, _sealed_conf(tmp_path, "data/sesions\n"))
+
+
+def test_sealed_dir_refuses_a_malformed_config(tmp_path):
+    root = _conf(tmp_path, f"{tmp_path}\n")
+    with pytest.raises(vp.SealedFolderMissing):
+        vp.sealed_dir(root, _sealed_conf(tmp_path, "../outside\n"))
+
+
+def test_sealed_rels_strips_a_bom_and_a_trailing_comment(tmp_path):
+    conf = tmp_path / "s.conf"
+    conf.write_text("\ufeffdata/sessions  # sealed\n# only a comment\ndata/other#x\n",
+                    encoding="utf-8")
+    assert vp.sealed_rels(conf) == ("data/sessions", "data/other")
+
+
+def test_main_checkout_follows_a_worktree_git_file(tmp_path):
+    main = tmp_path / "repo"
+    (main / ".git" / "worktrees" / "wt").mkdir(parents=True)
+    wt = tmp_path / "elsewhere" / "wt"
+    wt.mkdir(parents=True)
+    (wt / ".git").write_text(f"gitdir: {main / '.git' / 'worktrees' / 'wt'}\n")
+    assert vp.main_checkout(wt) == main
+    assert vp.main_checkout(main) == main               # a main checkout is itself
+
+
+def test_main_checkout_keeps_root_for_anything_it_cannot_read_as_a_worktree(tmp_path):
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    assert vp.main_checkout(plain) == plain             # no .git at all
+    (plain / ".git").write_text("not a gitdir line\n")
+    assert vp.main_checkout(plain) == plain
+    (plain / ".git").write_text(f"gitdir: {tmp_path / 'nowhere'}\n")
+    assert vp.main_checkout(plain) == plain             # names no .git component
+    (plain / ".git").write_text(f"gitdir: {tmp_path / 'gone' / '.git' / 'worktrees' / 'x'}\n")
+    assert vp.main_checkout(plain) == plain             # the main .git is not a directory
 
 
 def test_sealed_dir_refuses_when_no_folder_is_configured(tmp_path):

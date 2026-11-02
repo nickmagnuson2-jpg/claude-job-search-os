@@ -444,9 +444,63 @@ def test_without_config_a_vault_file_named_inside_code_blocks(tmp_path):
     assert _run(root2, "Bash", {"command": "python3 -c \"print(open('../personal/data/practice-log.md').read())\""})[0] == 0
 
 
-def test_a_top_level_sealed_folder_does_not_seal_the_same_name_elsewhere(tmp_path):
+def test_a_bare_word_without_a_slash_is_not_read_as_the_top_level_folder(tmp_path):
+    # Renamed from "...does not seal the same name elsewhere" (Fable r1 F4): with a slash,
+    # `sessions/` anywhere in command text IS blocked, as the old guard's literal was.
     root, _ = _layout(tmp_path)
     (root / "tools" / ".sealed-folders.conf").write_text("sessions\n")
     (tmp_path / "personal" / "sessions").mkdir()
     assert _run(root, "Bash", {"command": "cat ../personal/sessions/a.md"})[0] == 2
     assert _run(root, "Bash", {"command": "python3 -c \"print(open('../other/sessions').read())\""})[0] == 0
+
+
+# --- review round 1 (Fable 7.F1, 6.F2/7.F2/10.F1, 6.F1/7.F3; Codex g1b F1), 2026-11-02 ---
+
+def test_in_a_worktree_the_main_checkout_anchors_the_vault_and_config(tmp_path):
+    """A linked worktree has a .git FILE naming the main checkout's .git/worktrees/<name>.
+    The vault and the config are found from the main checkout, not beside the worktree."""
+    main, vault = _layout(tmp_path)
+    (main / ".git" / "worktrees" / "wt").mkdir(parents=True)
+    wt = tmp_path / "caches" / "wt"
+    (wt / "tools").mkdir(parents=True)
+    (wt / ".git").write_text(f"gitdir: {main / '.git' / 'worktrees' / 'wt'}\n")
+    assert _run(wt, "Read", {"file_path": str(vault / "2026-01-01-session.md")})[0] == 2
+    # Configured from the main checkout: a vault file outside the sealed folder passes.
+    beside = {"file_path": str(tmp_path / "personal" / "data" / "practice-log.md")}
+    assert _run(wt, "Read", beside)[0] == 0
+
+
+def test_a_configured_folder_that_is_not_a_directory_keeps_fail_closed_on(tmp_path):
+    root, vault = _layout(tmp_path)
+    (root / "tools" / ".sealed-folders.conf").write_text("data/sesions\n")    # a typo
+    assert _run(root, "Read", {"file_path": str(vault / "2026-01-01-session.md")})[0] == 2
+    beside = {"file_path": str(tmp_path / "personal" / "data" / "practice-log.md")}
+    assert _run(root, "Read", beside)[0] == 2
+
+
+def test_a_bom_or_trailing_comment_in_the_config_still_names_the_folder(tmp_path):
+    for text in ("\ufeffdata/sessions\n", "data/sessions   # the sealed one\n"):
+        root, vault = _layout(tmp_path / str(len(text)))
+        (root / "tools" / ".sealed-folders.conf").write_text(text, encoding="utf-8")
+        assert _run(root, "Read", {"file_path": str(vault / "2026-01-01-session.md")})[0] == 2
+        beside = {"file_path": str(tmp_path / str(len(text)) / "personal" / "data" / "x.md")}
+        assert _run(root, "Read", beside)[0] == 0, repr(text)    # configured, not fail closed
+
+
+def test_an_absolute_or_escaping_config_fails_closed_at_the_guard(tmp_path):
+    for i, text in enumerate(("/abs/path\n", "data/../../x\n", "data/../sesions\n")):
+        root, _ = _layout(tmp_path / str(i))
+        (root / "tools" / ".sealed-folders.conf").write_text(text)
+        beside = {"file_path": str(tmp_path / str(i) / "personal" / "data" / "practice-log.md")}
+        code, err = _run(root, "Read", beside)
+        assert code == 2, (text, err)
+
+
+def test_without_config_a_quoted_vault_path_handed_to_a_repo_tool_blocks(tmp_path):
+    cmd = 'python3 tools/x.py "see ../personal/data/sessions/a.md"'
+    root, _ = _layout(tmp_path, configured=False)
+    (root / "tools" / "x.py").write_text("")
+    assert _run(root, "Bash", {"command": cmd})[0] == 2
+    root2, _ = _layout(tmp_path / "b")
+    (root2 / "tools" / "x.py").write_text("")
+    assert _run(root2, "Bash", {"command": cmd})[0] == 2      # configured mode blocked it too

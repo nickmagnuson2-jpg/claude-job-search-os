@@ -68,3 +68,12 @@ def test_gmail_oauth_client_file_and_its_copies_are_gitignored():
     # both read it. A Finder duplicate or a .bak copy must be ignored too.
     for name in ("gmail_credentials.json", "gmail_credentials 2.json", "gmail_credentials.json.bak"):
         assert _is_ignored(f"tools/{name}"), name
+
+
+def test_private_classifier_configs_and_their_copies_are_gitignored():
+    # The sealed-folder list, the sealed-meeting identities and keywords, and the private
+    # calendar hosts. A backup or Finder duplicate holds the same names (Fable r1 8.F4).
+    for stem, ext in ((".sealed-folders", ".conf"), (".sealed-meetings", ".txt"),
+                      (".private-calendar-domains", ".txt")):
+        for name in (f"{stem}{ext}", f"{stem}{ext}.bak", f"{stem} 2{ext}", f"{stem}{ext}~"):
+            assert _is_ignored(f"tools/{name}"), name

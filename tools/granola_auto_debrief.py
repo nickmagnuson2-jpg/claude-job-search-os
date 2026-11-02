@@ -56,6 +56,7 @@ try:
         DEFAULT_PERSONAL_PROJECTS_CONFIG,
         _load_owner_identifiers,
         load_sealed_meetings_config,
+        unclassified_reason,
         load_personal_projects_config,
         match_personal_project,
         _speaker_label,
@@ -73,6 +74,7 @@ except ModuleNotFoundError:  # imported as a `tools.` package module
         DEFAULT_PERSONAL_PROJECTS_CONFIG,
         _load_owner_identifiers,
         load_sealed_meetings_config,
+        unclassified_reason,
         load_personal_projects_config,
         match_personal_project,
         _speaker_label,
@@ -99,24 +101,10 @@ from tools import vault_paths
 
 import re
 
-# Generic, non-PII sealed title markers. Real sealed-contact identities (names + emails)
-# live in the gitignored tools/.sealed-meetings.txt — this repo is public.
-# "session with" was removed 2026-08-07: as a bare substring it sealed ordinary
-# business calls ("Strategy session with the contractor") into the sealed folder,
-# where they vanish from every surface with only a line in an unread log.
-
-# Nick's own handle — used to find EXTERNAL attendees. The NAME is fork-safe public
-# identity; a live email ADDRESS is not (in a public repo it is a scrape surface, and
-# hardcoding it here contradicted the pattern used for sealed contact and personal-project
-# identities below). Additional identifiers — email addresses, alternate handles — load
-# from the gitignored tools/.owner-identity.txt, one per line, '#' comments allowed.
-# With no config file present the name alone is used, so forks work unchanged.
-
-
-
-
-
-# Gitignored allowlist of real sealed-contact identities.
+# Sealed-meeting identities and title keywords live in the gitignored
+# tools/.sealed-meetings.txt and the owner's identifiers in tools/.owner-identity.txt; both are
+# read by tools/meeting_vocab.py (this repo is public). The title markers and the owner handle
+# that these comments used to describe moved there (Fable r1 8.F9).
 
 VOICE_CORPUS_DIR = DEFAULT_REPO_ROOT / "data/voice-corpus/granola"
 
@@ -206,7 +194,9 @@ def resolve_destination(meeting: dict, meeting_type: str, project: str = None,
     title = meeting.get("title", "Untitled")
     type_ = meeting_type
     created_at = meeting.get("created_at", "")
-    vault_root = Path(vault_root) if vault_root else personal_vault()
+    # Only the personal route lands under vault_root; the sealed route has its own folder and
+    # the rest land in the repo, so they never need the personal vault (Fable r1 8.F1/9.F1).
+    vault_root = Path(vault_root) if vault_root else None
 
     # Convert UTC timestamp to local time for date extraction.
     # Granola REST returns ISO-8601 UTC (e.g. "2026-05-05T00:04:58.303Z").
@@ -240,7 +230,10 @@ def resolve_destination(meeting: dict, meeting_type: str, project: str = None,
         name = title.lower()
         for kw in (load_sealed_meetings_config() or {}).get("keywords", ()):
             name = name.replace(kw, "")
-        contact_slug = slugify(name.replace("session with", ""))
+        # A keyword may itself hold "session" ("x session with Jordan" leaves "with Jordan"),
+        # so drop a leftover leading "with" too (Fable r1 8.F6).
+        name = re.sub(r"^\W*with\b", "", name.replace("session with", "").strip())
+        contact_slug = slugify(name)
         if not contact_slug or contact_slug == "untitled":
             contact_slug = slugify(title)
         filename = f"{date_part}-sealed-{contact_slug}-transcript.md"
@@ -250,7 +243,7 @@ def resolve_destination(meeting: dict, meeting_type: str, project: str = None,
         # Personal-OS (or any non-job-search vault): same two-tier filename
         # convention, destination resolved per project via the `vault:` seam.
         filename = f"{date_part}{time_part}-{slugify(title)}.md"
-        output_path = vault_root / "data/voice-corpus/granola" / filename
+        output_path = (vault_root or personal_vault()) / "data/voice-corpus/granola" / filename
         proj = f" [{project}]" if project else ""
         session_desc = f"{title}{proj} (personal-OS; auto-routed by granola_auto_debrief)"
         # granola_save.py has no 'personal' type; 'general' carries exactly the
@@ -292,8 +285,9 @@ def persist_via_granola_save(meeting: dict, summary: str, private_notes: str,
     try:
         dest = resolve_destination(meeting, meeting_type, project, vault_root)
     except (vault_paths.VaultRootMissing, vault_paths.SealedFolderMissing) as exc:
-        # Unconfigured vault or sealed folder: refuse, the same as a missing vault below.
-        # Raising here would end the whole launchd run on the first such meeting.
+        # Unconfigured vault or sealed folder (sealed and personal routes only): refuse, the
+        # same as a missing vault below, so the CLI callers, which do not catch, report it
+        # instead of crashing.
         print(f"  [error] {exc.args[0].splitlines()[0]}; '{title}' NOT persisted.",
               file=sys.stderr)
         return {"status": "error", "reason": "vault-missing", "expected_vault": "unconfigured"}
@@ -442,7 +436,7 @@ def pull_single_meeting(meeting_id: str, force_type: str = None, project: str = 
         return {
             "status": "error", "meeting_id": meeting_id, "type": "unknown",
             "reason": "unclassified",
-            "message": ("Fail-closed: no attendees, no sealed signal, no project match. "
+            "message": (f"Fail-closed: {unclassified_reason()}. "
                         "Re-run with --force-type once you have confirmed what this call is."),
         }
 
@@ -737,10 +731,10 @@ def auto_debrief_new_calls(dry_run: bool = False, hours: int = None,
         vault_root = vault_for_project(project, pconfig) if meeting_type == "personal" else None
 
         # FAIL-CLOSED: an unclassifiable meeting (no attendees, no sealed signal) may be
-        # mis-titled sealed sealed started cold from the phone. Persist NOWHERE (not even
+        # mis-titled sealed session started cold from the phone. Persist NOWHERE (not even
         # voice-corpus, also a non-sealed surface) and never post to inbox; flag for manual pull.
         if meeting_type == "unknown":
-            print(f"  [info] '{title}' could not be classified (no attendees, no sealed signal) — "
+            print(f"  [info] '{title}' could not be classified ({unclassified_reason()}) — "
                   f"fail-closed: not persisted, not posted. Run /granola-pull to classify manually.",
                   file=sys.stderr)
             flagged.append({"id": meeting.get("id", ""), "title": meeting.get("title", "")})

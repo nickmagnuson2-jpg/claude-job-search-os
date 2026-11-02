@@ -1,6 +1,6 @@
 """Tests for the fail-closed meeting classifier in tools/granola_auto_debrief.py.
 
-Safety contract: the cron auto-debrief must never post potentially-sealed sealed
+Safety contract: the cron auto-debrief must never post potentially sealed
 content to a non-sealed surface (data/inbox.md or data/voice-corpus/granola/).
 
 Three-way classification:

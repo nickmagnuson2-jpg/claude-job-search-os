@@ -36,12 +36,16 @@ Example:
   # Writes both -transcript.md AND -transcript-summary.md, with wiki-links between them.
 """
 import json
+import os
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from meeting_vocab import split_transcript_turns  # noqa: E402
 from md_table import JsonArgumentParser, write_atomic  # noqa: E402
+import vault_paths  # noqa: E402
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 SEALED_HEADER_SESSION = """> **SEALED.** This is sensitive personal material. Per `<personal-vault>/CLAUDE.md`, contents of this sealed folder never appear in CVs, cover letters, recruiter prep, voice exports, networking notes, or any external-facing artifact. The verbatim transcript is preserved here as source-of-truth; do not paraphrase or excerpt outside this folder."""
@@ -223,7 +227,31 @@ def attribution_warning(transcript: str) -> str | None:
             "than on speakerphone.")
 
 
+def output_refusal(output: Path, type_: str, repo_root: Path) -> str | None:
+    """Why `output` may not receive a transcript of `type_`, or None when it may.
+
+    A sealed transcript never lands inside the repo: it is public, and gitignored trees in
+    it are backed up to a second repo. Judged on the resolved path, so `..` and symlinks
+    count where they lead, against the checkout and, from a worktree, its main checkout.
+    The write primitive checks this itself, whatever its caller chose (Codex r1 g2a F1).
+    """
+    if type_ not in TRANSCRIPT_HEADERS:
+        return f"unknown meeting type {type_!r}; expected one of {sorted(TRANSCRIPT_HEADERS)}"
+    if type_ != "sealed":
+        return None
+    target = Path(os.path.realpath(output))
+    for root in {Path(repo_root), vault_paths.main_checkout(Path(repo_root))}:
+        top = Path(os.path.realpath(root))
+        if target == top or top in target.parents:
+            return f"a sealed transcript may not be written inside the repo ({top})"
+    return None
+
+
 def cmd_write(data: dict, output: Path, no_overwrite: bool = False) -> None:
+    refusal = output_refusal(output, data.get("type", "general"), REPO_ROOT)
+    if refusal:
+        print(json.dumps({"status": "refused", "reason": refusal, "requested_path": str(output)}))
+        sys.exit(2)
     output.parent.mkdir(parents=True, exist_ok=True)
     transcript_basename = output.stem
     summary_path = output.with_name(transcript_basename + "-summary.md")

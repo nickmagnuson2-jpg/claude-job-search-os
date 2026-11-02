@@ -66,8 +66,11 @@ SEALED_NAME = "project-background"
 
 
 def _root() -> Path:
+    """The checkout judged from. In a linked worktree, the main checkout: the vault, the
+    -sealed tree and the gitignored config all sit beside or inside it (Fable r1 7.F1)."""
     env = os.environ.get("SEAL_REPO_ROOT")
-    return Path(env).resolve() if env else Path(__file__).resolve().parent.parent
+    here = Path(env).resolve() if env else Path(__file__).resolve().parent.parent
+    return vault_paths.main_checkout(here)
 
 
 # The sibling directory that holds the sealed tree: the repo's own name plus this
@@ -87,6 +90,7 @@ SEALED_HOME = _root().name + SEALED_HOME_SUFFIX
 # FAIL CLOSED. With no config, or one that names a folder outside the vault, the hook
 # cannot tell which folder is sealed, so everything under the vault's data/ counts.
 PERSONAL = "../personal"
+_VAULT_BASE = PERSONAL.rsplit("/", 1)[-1]
 
 
 def _vault_rels() -> tuple:
@@ -98,8 +102,12 @@ def _vault_rels() -> tuple:
 
 
 VAULT_RELS = _vault_rels()
-FAIL_CLOSED = not VAULT_RELS
-VAULT_DIRS = tuple(PERSONAL + "/" + r for r in VAULT_RELS) or (PERSONAL + "/data",)
+# A configured folder that is not a directory is a typo or a rename; the real folder is then
+# unnamed, so fail closed as well (Fable r1 F2). A stat, not a read of the folder.
+FAIL_CLOSED = not VAULT_RELS or not all(os.path.isdir(_root() / PERSONAL / r)
+                                        for r in VAULT_RELS)
+VAULT_DIRS = (tuple(PERSONAL + "/" + r for r in VAULT_RELS)
+              + ((PERSONAL + "/data",) if FAIL_CLOSED else ()))
 # (name, the name of the folder it sits in) for each sealed folder: the name counts in
 # command text when it is path-shaped, as `<parent>/<name>` or `<name>/`.
 VAULT_NAMES = tuple((r.rsplit("/", 1)[-1], r.rsplit("/", 1)[0].rsplit("/", 1)[-1] if "/" in r
@@ -213,6 +221,10 @@ def _is_a_sealed_path(word: str) -> bool:
     """Read as ONE path, does this word point under the sealed directory?"""
     parts = [p.lower() for p in os.path.normpath(word).split("/")]
     names = [(SEALED_NAME, "data")] + list(VAULT_NAMES)
+    # Fail closed, every folder under the vault's data/ is sealed (Fable r1 6.F1/7.F3).
+    if FAIL_CLOSED and any(parts[k - 2:k] == [_VAULT_BASE, "data"]
+                           for k in range(2, len(parts))):
+        return True
     return SEALED_HOME.lower() in parts or any(
         p == n and (k == 0 or parts[k - 1] == pa)
         for k, p in enumerate(parts) for n, pa in names)

@@ -117,3 +117,34 @@ def test_every_reexported_symbol_actually_resolves_package_style():
             names |= {a.name for a in node.names}
     missing = [n for n in sorted(names) if not hasattr(mod, n)]
     assert not missing, f"re-exported but unresolvable package-style: {missing}"
+
+
+# --- review round 1 (Fable 10.F6), 2026-11-02 ----------------------------------------------
+# /checkout drops sealed meetings by title. It pipes the list through this filter instead of
+# opening the gitignored config, which also holds sealed contacts' names and addresses.
+
+import json as _json
+import subprocess as _subprocess
+
+
+def test_drop_sealed_titles_removes_only_keyword_titles():
+    import meeting_vocab as mv
+    config = {"attendees": set(), "names": [], "keywords": ["private"]}
+    meetings = [{"title": "Private catch-up"}, {"title": "Recruiter screen"}, {"title": None}]
+    assert mv.drop_sealed_titles(meetings, config) == [{"title": "Recruiter screen"},
+                                                      {"title": None}]
+
+
+def test_drop_sealed_cli_filters_stdin_and_refuses_without_config(tmp_path):
+    script = Path(__file__).resolve().parents[2] / "tools" / "meeting_vocab.py"
+    conf = tmp_path / "s.txt"
+    conf.write_text("keyword: private\n", encoding="utf-8")
+    meetings = _json.dumps([{"title": "Private catch-up"}, {"title": "Recruiter screen"}])
+    r = _subprocess.run([sys.executable, str(script), "drop-sealed", "--config", str(conf)],
+                        input=meetings, capture_output=True, text=True)
+    assert r.returncode == 0 and _json.loads(r.stdout) == [{"title": "Recruiter screen"}]
+    r = _subprocess.run([sys.executable, str(script), "drop-sealed",
+                         "--config", str(tmp_path / "absent.txt")],
+                        input=meetings, capture_output=True, text=True)
+    assert r.returncode == 2 and r.stdout == ""
+    assert "sealed-meetings.txt" in r.stderr          # the operator is told what is missing

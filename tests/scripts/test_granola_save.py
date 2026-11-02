@@ -84,3 +84,63 @@ def test_only_a_sealed_summary_carries_the_sealed_boundary():
     general = gs.summary_body({**base, "type": "general"}, "t-transcript")
     assert sealed.startswith("> **SEALED.**") and "[[t-transcript]]" not in sealed.split("\n")[0]
     assert not general.startswith("> **SEALED.**") and "[[t-transcript]]" in general
+
+
+# --- review round 1 (Codex g2a F1 P0, F3; Fable 8.F7/9.F7/10.F8), 2026-11-02 ---------------
+# A sealed transcript must never land inside the repo (a public repo, backed up elsewhere),
+# whatever --output says; and a type the tool does not know refuses before any directory is
+# made.
+
+sys.path.insert(0, str(REPO_ROOT / "tools"))
+import granola_save as gs  # noqa: E402
+
+
+def test_a_sealed_output_inside_the_repo_is_refused(tmp_path):
+    repo = tmp_path / "repo"
+    (repo / "data").mkdir(parents=True)
+    assert gs.output_refusal(repo / "data" / "t.md", "sealed", repo)
+    assert gs.output_refusal(repo / "a" / ".." / "t.md", "sealed", repo)
+    link = tmp_path / "into-repo"
+    link.symlink_to(repo / "data")
+    assert gs.output_refusal(link / "t.md", "sealed", repo)      # followed through a symlink
+    assert gs.output_refusal(tmp_path / "vault" / "t.md", "sealed", repo) is None
+
+
+def test_only_sealed_is_held_outside_the_repo(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    for type_ in ("recruiter", "networking", "general"):
+        assert gs.output_refusal(repo / "data" / "t.md", type_, repo) is None, type_
+
+
+def test_an_unknown_type_is_refused(tmp_path):
+    assert "retired-type" in gs.output_refusal(tmp_path / "t.md", "retired-type", tmp_path)
+
+
+def _write_raw(tmp_path, type_, output):
+    import subprocess, json as _json
+    payload = {"meeting_id": "x", "title": "t", "captured": "2026-08-25 10:00",
+               "transcript": "Me: hi Them: hello", "summary": "s", "type": type_,
+               "session_desc": "d"}
+    inp = tmp_path / "in.json"
+    inp.write_text(_json.dumps(payload), encoding="utf-8")
+    return subprocess.run([sys.executable, str(SCRIPT), "write", "--output", str(output),
+                           "--input", str(inp)], capture_output=True, text=True)
+
+
+def test_write_refuses_a_sealed_payload_aimed_into_the_repo_before_making_anything():
+    import shutil, tempfile
+    target = REPO_ROOT / "output" / "zz-sealed-refusal-test" / "t.md"
+    try:
+        r = _write_raw(Path(tempfile.mkdtemp()), "sealed", target)
+        assert r.returncode == 2
+        assert not target.parent.exists()
+    finally:                       # a regression must not leave a sealed-shaped file behind
+        shutil.rmtree(target.parent, ignore_errors=True)
+
+
+def test_write_refuses_a_stale_type_before_making_its_directory(tmp_path):
+    target = tmp_path / "new-dir" / "t.md"
+    r = _write_raw(tmp_path, "retired-type", target)
+    assert r.returncode == 2 and "retired-type" in r.stdout
+    assert not target.parent.exists()

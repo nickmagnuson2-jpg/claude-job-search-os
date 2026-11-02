@@ -155,3 +155,44 @@ def test_the_unconfigured_refusal_says_why(monkeypatch, capsys):
     gad.persist_via_granola_save(MEETING, "summary text", "", "sealed")
     err = capsys.readouterr().err
     assert "no sealed vault folder is configured" in err and "NOT persisted" in err
+
+
+# --- review round 1 (Fable 8.F1/9.F1, 8.F6, 8.F2/10.F4), 2026-11-02 ----------------------
+
+def test_a_repo_bound_destination_never_needs_the_personal_vault(monkeypatch):
+    """Recruiter, networking and general land in the repo. Resolving them must not ask for
+    the personal vault, so an unconfigured vault cannot turn them into a quiet refusal."""
+    monkeypatch.delenv("PERSONAL_VAULT_ROOT", raising=False)
+    monkeypatch.setattr(gad.vault_paths, "vault_root", lambda config_path=None: None)
+    for type_ in ("recruiter", "networking", "general"):
+        dest = gad.resolve_destination(MEETING, type_)
+        assert str(dest["output_path"]).startswith(str(gad.VOICE_CORPUS_DIR)), type_
+
+
+def test_a_multiword_keyword_holding_session_still_leaves_the_contact(monkeypatch):
+    monkeypatch.setattr(gad, "vault_sealed_dir", lambda: Path("/v/sealed"))
+    monkeypatch.setattr(gad, "load_sealed_meetings_config",
+                        lambda: {"attendees": set(), "names": [], "keywords": ["private session"]})
+    meeting = {"title": "Private session with Jordan", "created_at": "2026-11-01T17:00:00Z"}
+    dest = gad.resolve_destination(meeting, "sealed", None, Path("/v"))
+    assert dest["output_path"].name.endswith("-sealed-jordan-transcript.md"), dest["output_path"]
+
+
+def test_an_unclassified_meeting_names_a_missing_sealed_config(monkeypatch, tmp_path):
+    import meeting_vocab as mv
+    monkeypatch.setattr(mv, "DEFAULT_SEALED_CONFIG", tmp_path / "absent.txt")
+    assert ".sealed-meetings.txt" in mv.unclassified_reason()
+    present = tmp_path / "present.txt"
+    present.write_text("keyword: private\n", encoding="utf-8")
+    monkeypatch.setattr(mv, "DEFAULT_SEALED_CONFIG", present)
+    assert ".sealed-meetings.txt" not in mv.unclassified_reason()
+    assert "no sealed signal" in mv.unclassified_reason()
+
+
+def test_a_forced_sealed_meeting_with_no_config_still_names_its_file(monkeypatch):
+    """--force-type sealed with the config missing (Fable r1 8.F5): no keywords to strip."""
+    monkeypatch.setattr(gad, "vault_sealed_dir", lambda: Path("/v/sealed"))
+    monkeypatch.setattr(gad, "load_sealed_meetings_config", lambda: None)
+    dest = gad.resolve_destination({"title": "Session with Jordan",
+                                    "created_at": "2026-11-01T17:00:00Z"}, "sealed", None, Path("/v"))
+    assert dest["output_path"].name.endswith("-sealed-jordan-transcript.md"), dest["output_path"]

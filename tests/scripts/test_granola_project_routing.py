@@ -376,7 +376,7 @@ def test_solo_attendee_sealed_is_not_routed_personal():
 
     The scan used to be gated on `not attendees`, so a self-created calendar
     event (attendees == [Nick]) fell through to the project matcher. With a
-    project keyword in the auto-generated title, sealed sealed classified as
+    project keyword in the auto-generated title, a sealed session classified as
     'personal' and would have been written to the project folder, the personal
     inbox, to-dos, and an explicitly external-facing takeaways section.
     """

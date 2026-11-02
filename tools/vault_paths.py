@@ -111,13 +111,15 @@ def sealed_rels(config_path: Path | None = None) -> tuple[str, ...] | None:
     writer would then both point somewhere other than the folder meant.
     """
     try:
-        raw = (config_path or SEALED_CONFIG).read_text(encoding="utf-8").splitlines()
+        # utf-8-sig drops a BOM an editor may add; a BOM kept would name a folder that never
+        # matches (Fable r1 F2).
+        raw = (config_path or SEALED_CONFIG).read_text(encoding="utf-8-sig").splitlines()
     except (OSError, UnicodeDecodeError):
         return None
     rels = []
     for line in raw:
-        line = line.strip()
-        if not line or line.startswith("#"):
+        line = line.split("#", 1)[0].strip()        # a trailing comment is not the name
+        if not line:
             continue
         rel = os.path.normpath(line)
         if os.path.isabs(rel) or rel in (".", "..") or rel.startswith("../"):
@@ -130,10 +132,41 @@ def sealed_dir(config_path: Path | None = None, sealed_config: Path | None = Non
     """The folder sealed transcripts are written to: the first configured one.
     Never appears in any external-facing artifact."""
     root = require_vault_root(config_path)
-    rels = sealed_rels(sealed_config)
-    if not rels:
+    try:
+        rels = sealed_rels(sealed_config)
+    except ValueError:                  # a malformed config is no configured folder (Fable r1 F2)
+        rels = None
+    # A folder that is not there is a typo or a rename: writing would create a shadow folder
+    # the guard does not protect (Fable r1 F5).
+    if not rels or not (root / rels[0]).is_dir():
         raise SealedFolderMissing()
     return root / rels[0]
+
+
+def main_checkout(root: Path) -> Path:
+    """The main checkout a linked git worktree belongs to, or `root` itself.
+
+    A linked worktree's `.git` is a FILE reading `gitdir: <main>/.git/worktrees/<name>`.
+    Files that sit beside the repo (the personal vault, the -sealed tree) and gitignored
+    config exist only beside and inside the main checkout, so a worktree must look there
+    (Fable r1 7.F1). A plain file read: no git subprocess, safe inside a hook."""
+    marker = Path(root) / ".git"
+    try:
+        if not marker.is_file():
+            return Path(root)
+        line = marker.read_text(encoding="utf-8").strip()
+    except OSError:
+        return Path(root)
+    if not line.startswith("gitdir:"):
+        return Path(root)
+    gitdir = Path(line[len("gitdir:"):].strip())
+    if not gitdir.is_absolute():
+        gitdir = (Path(root) / gitdir).resolve()
+    parts = gitdir.parts
+    if ".git" not in parts:
+        return Path(root)
+    main = Path(*parts[:len(parts) - 1 - parts[::-1].index(".git")])
+    return main if (main / ".git").is_dir() else Path(root)
 
 
 def personal_inbox(config_path: Path | None = None) -> Path:

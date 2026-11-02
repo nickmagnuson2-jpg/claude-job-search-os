@@ -17,7 +17,9 @@ Subcommands:
       Persists via granola_save.py (idempotent, --no-overwrite).
       Stdout: title, AI summary (first ~600 chars), file paths.
       The full transcript is NOT printed to stdout — it lives on disk.
-      Type is auto-classified from title (sealed keywords → sealed, else networking).
+      Type is auto-classified by tools/meeting_vocab.classify_meeting (sealed attendees,
+      names or title keywords; external attendees; personal project rules); a meeting it
+      cannot place is "unknown" and is not persisted without --type.
       Override with --type {sealed,recruiter,networking,general}.
 
   info <ref>
@@ -68,6 +70,7 @@ from tools.meeting_vocab import (  # noqa: E402
     _speaker_label,
     classify_meeting,
     load_sealed_meetings_config,
+    unclassified_reason,
 )
 from tools.granola_auto_debrief import (  # noqa: E402
     persist_via_granola_save,
@@ -219,8 +222,9 @@ def cmd_pull(args) -> int:
 
     # Fail closed in the manual path too: an unclassifiable meeting needs an explicit type.
     if type_ == "unknown":
-        print(f"Could not classify '{title}' (no attendees, no sealed signal).", file=sys.stderr)
-        print("Re-run with --type sealed|networking to persist.", file=sys.stderr)
+        print(f"Could not classify '{title}' ({unclassified_reason()}).", file=sys.stderr)
+        if load_sealed_meetings_config() is not None:   # else the fix is the config, not a type
+            print("Re-run with --type sealed|networking to persist.", file=sys.stderr)
         return 2
 
     # Persist via granola_save.py (type already resolved — passed explicitly).

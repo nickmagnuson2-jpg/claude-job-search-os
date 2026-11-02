@@ -198,7 +198,7 @@ def test_main_prints_window_and_normalized_events(monkeypatch, capsys):
     out = __import__("json").loads(capsys.readouterr().out)
     assert seen == {"creds": "creds", "cals": ["work"], "days": 2}
     assert [e["summary"] for e in out["events"]] == ["Call"]
-    assert set(out) == {"source", "sanitized", "generated_at", "window_start", "window_end", "events"}
+    assert set(out) == {"source", "sanitized", "private_hosts_configured", "generated_at", "window_start", "window_end", "events"}
     assert (out["source"], out["sanitized"]) == ("google-calendar", True)
 
 
@@ -454,3 +454,34 @@ def test_no_hosts_file_means_no_host_rule(tmp_path, monkeypatch):
     monkeypatch.setattr(cf, "PRIVATE_DOMAINS", ())
     assert cf.is_private({"location": "https://privatehost.example/x"}) is False
     assert cf.is_private({"location": "x", "visibility": "private"}) is True
+
+
+# --- review round 1 (Fable 10.F2, 10.F10), 2026-11-02 -------------------------------------
+
+def test_host_lines_are_read_the_way_event_text_is(tmp_path):
+    f = tmp_path / ".private-calendar-domains.txt"
+    f.write_text("﻿https://PrivateHost.Example/path  # the main one\n"
+                 "second-host。example\n", encoding="utf-8")
+    assert cf.load_private_domains(f) == ("privatehost.example", "second-host.example")
+
+
+def _main_output(monkeypatch, capsys):
+    monkeypatch.setattr(cf, "get_creds", lambda d, auth_mode=False: "creds")
+    monkeypatch.setattr(cf, "fetch", lambda creds, cals, start, end: {"primary": []})
+    assert cf.main(["--days", "1"]) == 0
+    got = capsys.readouterr()
+    return __import__("json").loads(got.out), got.err
+
+
+def test_the_output_says_when_the_host_rule_is_unconfigured(monkeypatch, capsys):
+    monkeypatch.setattr(cf, "PRIVATE_DOMAINS", ())
+    out, err = _main_output(monkeypatch, capsys)
+    assert out["private_hosts_configured"] is False
+    assert ".private-calendar-domains.txt" in err
+
+
+def test_the_output_says_when_the_host_rule_is_configured(monkeypatch, capsys):
+    monkeypatch.setattr(cf, "PRIVATE_DOMAINS", ("privatehost.example",))
+    out, err = _main_output(monkeypatch, capsys)
+    assert out["private_hosts_configured"] is True
+    assert ".private-calendar-domains.txt" not in err

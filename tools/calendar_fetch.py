@@ -20,7 +20,7 @@ Setup (once):
 Run:
   PYTHONIOENCODING=utf-8 python3 tools/calendar_fetch.py [--days 3] [--calendar primary]
 
-Prints {"source", "sanitized", "generated_at", "window_start", "window_end", "events": [...]}
+Prints {"source", "sanitized", "private_hosts_configured", "generated_at", "window_start", "window_end", "events": [...]}
 to stdout. Each event: start, end (ISO), all_day, summary, location, calendar; summary and
 location are sanitized (gmail_fetch.sanitize_text) because invites are stranger-written, and
 `private` is true for an event redacted to "Private appointment" (is_private). A refusal
@@ -67,18 +67,6 @@ PRIVATE_VISIBILITY = ("private", "confidential")
 PRIVATE_SUMMARY = "Private appointment"
 
 
-def load_private_domains(path: Path = PRIVATE_DOMAINS_CONFIG) -> tuple[str, ...]:
-    """The configured private hosts, lowercased. No file means none, and the visibility
-    rule still applies."""
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except (OSError, UnicodeDecodeError):
-        return ()
-    return tuple(h.strip().lower().strip(".") for h in lines
-                 if h.strip() and not h.strip().startswith("#"))
-
-
-PRIVATE_DOMAINS = load_private_domains()
 _HOST_RE = re.compile(r"(?<![A-Za-z0-9.-])([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+)")
 
 
@@ -97,6 +85,24 @@ def _hosts(text: str) -> set[str]:
     """Every hostname-shaped token in `text`, lowercased, with or without a scheme."""
     return {m.group(1).lower().strip(".")
             for m in _HOST_RE.finditer(_normalize(text or ""))}
+
+
+def load_private_domains(path: Path = PRIVATE_DOMAINS_CONFIG) -> tuple[str, ...]:
+    """The configured private hosts, read the way event text is (_hosts: NFKC, every dot
+    spelling, a scheme or path ignored), so a host line cannot be silently inert where the
+    same host in an event would match (Fable r1 10.F10). A BOM and `#` comments are dropped.
+    No file means none, and the visibility rule still applies."""
+    try:
+        lines = path.read_text(encoding="utf-8-sig").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return ()
+    found: list[str] = []
+    for line in lines:
+        found.extend(sorted(_hosts(line.split("#", 1)[0])))
+    return tuple(dict.fromkeys(found))
+
+
+PRIVATE_DOMAINS = load_private_domains()
 
 
 def is_private(item: dict) -> bool:
@@ -249,9 +255,15 @@ def main(argv=None) -> int:
             raise
         print(msg, file=sys.stderr)
         return 1
+    if not PRIVATE_DOMAINS:
+        # The visibility rule still applies, but a host-only private event would print in
+        # full, so say so rather than letting sanitized:true imply it (Fable r1 10.F2).
+        print(f"WARNING: no private hosts configured ({PRIVATE_DOMAINS_CONFIG.name} missing or "
+              f"empty); only events Google marks private are redacted.", file=sys.stderr)
     print(json.dumps({
         "source": SOURCE,
         "sanitized": True,
+        "private_hosts_configured": bool(PRIVATE_DOMAINS),
         "generated_at": now.isoformat(timespec="seconds"),
         "window_start": start.isoformat(),
         "window_end": end.isoformat(),
