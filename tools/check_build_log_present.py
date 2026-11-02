@@ -25,8 +25,9 @@ WHAT IT DOES NOT SEE, stated rather than buried:
   * Files a script writes from inside Python (`python build_deck.py` landing a .pptx): the
     target is not in the command text. The script itself is caught unless it sits under a
     `scripts/` or `data/` subfolder, which are exempt by the spec.
-  * A relative Bash target after `cd output/x &&` resolves against the repo root, the same
-    limitation `check_handoff_producer.py` has, whose target parser this reuses.
+  * A cd the walk cannot read (a path built from a command substitution, or one assembled
+    from variables the command does not assign). Relative targets after an ordinary `cd`
+    are judged from that directory too, through tools/shell_writes.py (2026-11-01).
   * In a Bash copy, a glob or variable (`cp *.html output/acme/`, `cp $X output/acme/`), a
     source that does not exist yet when the hook runs, and the contents of a source folder
     past the parser's walk cap (`check_handoff_producer.WALK_MAX_DEPTH`, `WALK_MAX_FILES`).

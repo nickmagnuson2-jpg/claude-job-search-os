@@ -100,3 +100,51 @@ def test_walk_yields_a_group_once_after_its_body(tmp_path):
     (tmp_path / "sub").mkdir()
     got = segments("(cd sub; echo x > a.md)", [str(tmp_path)])
     assert [seg for seg, _ in got] == ["echo x > a.md", "(cd sub; echo x > a.md)"]
+
+
+# Round 3 (Codex F1, Fable F1-F4, F11): prefixes, compound bodies, pushd, ~, a cd with a
+# redirect, subshell scope, and a nesting cap.
+
+def _hits(cmd, root, rel):
+    return str(root / rel) in sw.bash_write_targets(cmd, "", root)
+
+
+def test_a_group_after_bang_or_time_is_followed(tmp_path):
+    (tmp_path / "sub").mkdir()
+    for cmd in ("! (cd sub; echo x > a.md)", "time (cd sub; echo x > a.md)",
+                "time -p { cd sub; echo x > a.md; }"):
+        assert _hits(cmd, tmp_path, "sub/a.md"), cmd
+
+
+def test_a_cd_inside_if_for_while_bodies_and_pushd_is_followed(tmp_path):
+    (tmp_path / "sub").mkdir()
+    for cmd in ("if true; then cd sub; echo x > a.md; fi",
+                "for i in 1; do cd sub; echo x > a.md; done",
+                "if false; then :; else cd sub; echo x > a.md; fi",
+                "pushd sub; echo x > a.md"):
+        assert _hits(cmd, tmp_path, "sub/a.md"), cmd
+
+
+def test_a_cd_to_home_or_with_a_redirect_is_followed(tmp_path, monkeypatch):
+    home = tmp_path / "h"
+    (home / "sub").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    assert str(home / "sub" / "a.md") in sw.bash_write_targets("cd ~/sub && echo x > a.md", "", tmp_path)
+    # A cd to ~ is a cd: walk() does not yield it as a segment that may write.
+    assert [seg for seg, _ in segments("cd ~/sub && echo x > a.md", [str(tmp_path)])] == [
+        "echo x > a.md"]
+    (tmp_path / "d").mkdir()
+    for cmd in ("cd d 2>/dev/null && echo x > a.md", "cd d >/dev/null && echo x > a.md"):
+        assert _hits(cmd, tmp_path, "d/a.md"), cmd
+
+
+def test_a_subshell_cd_does_not_outlive_the_subshell_but_a_brace_cd_does(tmp_path):
+    (tmp_path / "sub").mkdir()
+    assert not _hits("(cd sub; true); echo x > a.md", tmp_path, "sub/a.md")
+    assert _hits("(cd sub; true); echo x > a.md", tmp_path, "a.md")
+    assert _hits("{ cd sub; }; echo x > a.md", tmp_path, "sub/a.md")
+
+
+def test_deep_nesting_does_not_crash(tmp_path):
+    cmd = "(" * 400 + "echo x > a.md" + ")" * 400
+    assert isinstance(sw.bash_write_targets(cmd, "", tmp_path), list)

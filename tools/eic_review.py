@@ -132,10 +132,18 @@ def read(capture_id: str) -> dict:
 def open_for(meta: dict, now: float | None = None) -> bool:
     """Open a review for a sent email to the EIC. True when one was opened now.
 
-    Never reopens or overwrites: a review that exists keeps its state, so re-confirming
-    the same capture cannot erase a close."""
+    Never overwrites an open or closed review, so re-confirming the same capture cannot
+    erase a close. A CANCELLED review (the send was corrected to not sent) is reopened when
+    the send is confirmed again (Fable r3 F5)."""
+    path = _record_path(meta["id"])
+    existing = None
+    if path.exists():
+        try:
+            existing = json.loads(path.read_text(encoding="utf-8")).get("status")
+        except (OSError, ValueError, AttributeError):
+            existing = "unreadable"
     opening = (is_eic_email(meta) and meta.get("status") in ("unchanged", "edited")
-               and not _record_path(meta["id"]).exists())
+               and existing in (None, "cancelled"))
     if opening:
         _write({
             "capture_id": meta["id"],

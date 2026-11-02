@@ -383,3 +383,15 @@ def test_a_no_edits_close_records_the_reason_and_no_lesson():
     er.close(cid2, REPLY, lesson_ref="She cut the second hook")
     rec2 = er.read(cid2)
     assert rec2["lesson_ref"] == "She cut the second hook" and "no_edits_reason" not in rec2
+
+
+def test_E_a_send_reconfirmed_after_a_not_sent_correction_reopens_the_review():
+    """Fable r3 F5: open_for refused when any record existed, so a cancelled review never
+    came back when the send was confirmed again, and the published record went unblocked."""
+    cid = sent_to()["id"]
+    dc.confirm(cid, "not-sent", force=True)
+    assert er.read(cid)["status"] == "cancelled"
+    dc.confirm(cid, "unchanged", force=True)
+    assert er.read(cid)["status"] == "open"
+    assert [r["capture_id"] for r in er.open_reviews()] == [cid]
+    assert gate.decide("Write", {"file_path": PUBLISHED, "content": "x"}) is not None

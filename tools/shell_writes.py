@@ -26,6 +26,7 @@ check_public_pii imports this module inside main(), so neither import is circula
 from __future__ import annotations
 
 import os
+import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -53,19 +54,45 @@ def walk(command: str, starts, exact: bool | None = None):
     yield from _walk(pairs, env, cwds, exact)
 
 
+# Words that can open a segment without changing what it does: `! (...)`, `time {...}`, and
+# the bodies of if/for/while (`then cd x`, `do cd x`, `else cd x`). Codex r3 F1, Fable r3 F1.
+_PREFIX = re.compile(r"^\s*(?:(?:!|time(?:\s+-p)?|then|do|else)\s+)+")
+# A redirect to /dev/null or to another fd on a cd changes nothing about where it lands.
+_QUIET = re.compile(r"\s+\d*>{1,2}\s*(?:/dev/null|&\d)")
+_COMPOUND = re.compile(r"(if|for|while|until|case)\b")
+_COMPOUND_END = {"if": "fi", "for": "done", "while": "done", "until": "done", "case": "esac"}
+_MAX_DEPTH = 32       # deeper groups are judged as one segment; recursion must not crash a hook
+
+
+def _plain(segment: str) -> str:
+    """The segment with leading `!`, `time`, `then`, `do` or `else` removed."""
+    return _PREFIX.sub("", segment)
+
+
+def _cd_segment(segment: str) -> str:
+    """The segment as a plain `cd`: pushd read as cd, /dev/null redirects dropped."""
+    seg = _QUIET.sub("", _plain(segment)).strip()
+    return "cd" + seg[5:] if seg.startswith("pushd ") else seg
+
+
 def _group_body(segment: str) -> str | None:
     """The body of a `( ... )` or `{ ...; }` group, or None for any other segment."""
-    s = segment.strip()
+    s = _plain(segment).strip()
     if s[:1] == "(":
         end = s.rfind(")")
     elif s[:1] == "{" and s[1:2].isspace():
         end = s.rfind("}")
     else:
-        return None
+        # if/for/while/until/case are also kept whole by the parser (Fable r3 F1).
+        m = _COMPOUND.match(s)
+        if not m:
+            return None
+        end = s.rfind(_COMPOUND_END[m.group(1)])
+        return s[m.end():end] if end > m.end() else None
     return s[1:end] if end > 0 else None
 
 
-def _walk(pairs, env, cwds, exact):
+def _walk(pairs, env, cwds, exact, depth=0):
     """The segment loop of walk(). Returns the directories the shell may be in after it."""
     for segment, before in pairs:
         # A `( ... )` or `{ ...; }` group stays ONE segment in the parser, so a cd inside it
@@ -73,19 +100,29 @@ def _walk(pairs, env, cwds, exact):
         # ADDS candidates, and the directories it reaches stay candidates after the group:
         # right for `{ }`, where a cd persists, and only cautious for a subshell. The group
         # itself is still judged from outside, for a redirect such as `(...) > f`.
-        body = _group_body(segment)
+        body = _group_body(segment) if depth < _MAX_DEPTH else None
         if body is not None:
-            cwds = yield from _walk(_pii.segments_with_separators(body), env, cwds, False)
+            inner = yield from _walk(_pii.segments_with_separators(body), env, cwds, False,
+                                     depth + 1)
+            # Everything but a ( ) subshell runs in this shell, so a cd in it persists;
+            # a subshell's does not (Fable r3 F4).
+            if _plain(segment).strip()[:1] != "(":
+                cwds = inner
             yield segment, env, cwds
             continue
-        operand = _pii.pure_cd_operand(segment)
+        cd_seg = _cd_segment(segment)
+        operand = _pii.pure_cd_operand(cd_seg)
         if operand is not None:
             cwds = _pii.apply_cd(cwds, operand, certain=exact and before <= {";", "\n"})
             continue                                # a bare cd writes nothing
         # `dir=tools; cd "$dir"` moves the shell to every value the command gives dir.
         # Each is ADDED (never certain), so the old directories stay. A variable the
         # command does not assign adds nothing.
-        text = _pii.cd_operand_text(segment)
+        text = _pii.cd_operand_text(cd_seg)
+        if text is not None and text.startswith("~"):
+            # `cd ~/x`: the redirect extractor expands ~, so the cd must too (Fable r3 F2).
+            cwds = _pii.apply_cd(cwds, os.path.expanduser(text), certain=False)
+            continue
         if text is not None and _pii._VAR_REF.search(text):
             for value in _pii._expand_vars(text, env):
                 if (value and value[0] not in "-+"
