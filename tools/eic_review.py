@@ -13,10 +13,11 @@ hold, so the obligation is now a record a run cannot skip:
   * The review closes only with her reply's Gmail message id AND a memory/lessons.md row
     carrying the EIC tag (her diff, logged), or an explicit reason she made no edits.
     The id is looked up in Gmail: it must be an inbound message from an EIC address, dated
-    after the review opened, and the lessons row must be dated on or after that day.
+    after the draft was opened (which precedes the send; her reply can arrive before Nick
+    confirms), and the lessons row must be dated on or after that day.
   * Re-confirming the capture as not sent cancels its review.
   * `tools/check_eic_review.py` blocks writing a published-post record
-    (output/linkedin-profile/voice-sources/*-published.md) while any review is open.
+    (any *-published.md under output/) while any review is open.
 
 WHAT THIS DOES NOT COVER, stated rather than buried: nothing here can stop a session from
 arguing with her version in chat. It enforces that her reply is fetched and her diff is
@@ -149,6 +150,9 @@ def open_for(meta: dict, now: float | None = None) -> bool:
             "capture_id": meta["id"],
             "subject": meta.get("subject", ""),
             "sent_confirmed_at": meta.get("confirmed_at", ""),
+            # When the draft was opened, which precedes the send. Her reply can arrive
+            # before Nick confirms, so it is dated against this, not opened_at (Fable r4 F1).
+            "draft_opened_at": meta.get("opened_at", ""),
             "opened_at": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(now)),
             "status": "open",
         })
@@ -240,9 +244,15 @@ def fetch_reply(reply_id: str) -> dict:
             "epoch": int(msg["internalDate"]) / 1000}
 
 
-def _check_reply(record: dict, reply_id: str, addresses: set[str]) -> None:
+def _since(record: dict) -> str:
+    """The earliest time her reply to this post could exist: when the draft was opened, or,
+    for a record written before that was stored, when the review opened."""
+    return record.get("draft_opened_at") or record["opened_at"]
+
+
+def _check_reply(record: dict, reply_id: str, addresses: set[str]) -> float:
     """Her reply exists in Gmail, came from an EIC address, is inbound, and postdates the
-    review. Any failure to ask Gmail refuses the close: this is the check that a reply was
+    draft (_since). Any failure to ask Gmail refuses the close: this is the check that a reply was
     read, so it cannot pass on an unanswered question."""
     try:
         reply = fetch_reply(reply_id)
@@ -255,10 +265,11 @@ def _check_reply(record: dict, reply_id: str, addresses: set[str]) -> None:
     if labels & NOT_INBOUND:
         raise ReviewError(f"{reply_id} is labelled {sorted(labels & NOT_INBOUND)}, so it is "
                           f"not her reply")
-    opened = time.mktime(time.strptime(record["opened_at"], "%Y-%m-%dT%H:%M:%S"))
-    if float(reply.get("epoch", 0)) < opened:
-        raise ReviewError(f"{reply_id} is dated before the review opened "
-                          f"({record['opened_at']}), so it is not her reply to this post")
+    since = _since(record)
+    if float(reply.get("epoch", 0)) < time.mktime(time.strptime(since, "%Y-%m-%dT%H:%M:%S")):
+        raise ReviewError(f"{reply_id} is dated before the draft was opened ({since}), so it "
+                          f"is not her reply to this post")
+    return float(reply.get("epoch", 0))
 
 
 def close(capture_id: str, reply_id: str, lesson_ref: str | None = None,
@@ -283,14 +294,18 @@ def close(capture_id: str, reply_id: str, lesson_ref: str | None = None,
         if not rows:
             raise ReviewError(f"--lesson {lesson_ref!r} is not in a {lessons_path()} table "
                               f"row tagged {tag!r}; log her edits as rows first")
-        opened_day = record["opened_at"][:10]
-        if not any((_row_date(r) or "") >= opened_day for r in rows):
-            raise ReviewError(f"--lesson {lesson_ref!r} is only in rows dated before the "
-                              f"review opened ({opened_day}) or with no readable date; "
-                              f"log her edits to this post as a new row")
     elif not no_edits.strip():
         raise ReviewError("--no-edits needs a reason")
-    _check_reply(record, reply_id.strip(), addresses)
+    replied = _check_reply(record, reply_id.strip(), addresses)
+    if lesson_ref is not None:
+        # The row records her edits, so it cannot predate her reply. Anchored to the reply,
+        # not the draft: a row from the days between drafting and her reply could be about
+        # another post (job-search-47 on Fable r4 F1).
+        reply_day = time.strftime("%Y-%m-%d", time.localtime(replied))
+        if not any((_row_date(r) or "") >= reply_day for r in rows):
+            raise ReviewError(f"--lesson {lesson_ref!r} is only in rows dated before her "
+                              f"reply ({reply_day}) or with no readable date; log her edits "
+                              f"to this post as a new row")
     if lesson_ref is not None:
         record["lesson_ref"] = lesson_ref
     else:

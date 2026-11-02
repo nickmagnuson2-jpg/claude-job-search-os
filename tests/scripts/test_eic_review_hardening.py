@@ -45,8 +45,10 @@ def draft(to: str, subject: str = SUBJECT) -> str:
 
 
 def good_reply(reply_id: str) -> dict:
-    """Her reply as the Gmail seam reports it: inbound, from her, an hour from now."""
-    return {"from": f"Editor <{EIC}>", "labels": ["INBOX"], "epoch": time.time() + 3600}
+    """Her reply as the Gmail seam reports it: inbound, from her, just after now. One second,
+    not an hour: a lessons row must be dated on or after her reply's DAY, and an hour ahead
+    crosses midnight for any run after 23:00."""
+    return {"from": f"Editor <{EIC}>", "labels": ["INBOX"], "epoch": time.time() + 1}
 
 
 @pytest.fixture(autouse=True)
@@ -107,6 +109,74 @@ def test_B_close_refuses_a_reply_dated_before_the_review_opened(monkeypatch):
     with pytest.raises(er.ReviewError, match="before"):
         er.close(cid, REPLY, no_edits="approved as is")
     assert er.read(cid)["status"] == "open"
+
+
+# Round 4 (Fable 17.F1): her reply can arrive before Nick confirms the send. The review is
+# dated from when the draft was opened, which precedes the send, not from the confirm.
+
+def _sent_yesterday_confirmed_now() -> str:
+    t0 = time.time() - 86400
+    cid = dc.capture(draft(EIC), skill="draft-email", now=t0)
+    return dc.confirm(cid, "unchanged")["id"], t0
+
+
+def test_round4_a_reply_between_the_send_and_the_confirm_closes_the_review(monkeypatch):
+    cid, t0 = _sent_yesterday_confirmed_now()
+    monkeypatch.setattr(er, "fetch_reply", lambda rid: {**good_reply(rid), "epoch": t0 + 1},
+                        raising=False)
+    assert er.close(cid, REPLY, no_edits="approved as is")["status"] == "closed"
+
+
+def test_round4_a_reply_before_the_draft_was_opened_is_still_refused(monkeypatch):
+    cid, t0 = _sent_yesterday_confirmed_now()
+    monkeypatch.setattr(er, "fetch_reply", lambda rid: {**good_reply(rid), "epoch": t0 - 60},
+                        raising=False)
+    with pytest.raises(er.ReviewError, match="before"):
+        er.close(cid, REPLY, no_edits="approved as is")
+
+
+def test_round4_a_lesson_row_dated_the_day_of_the_send_counts(monkeypatch, tmp_path):
+    cid, t0 = _sent_yesterday_confirmed_now()
+    day = time.strftime("%Y-%m-%d", time.localtime(t0))
+    lessons = tmp_path / "lessons-sent-day.md"
+    lessons.write_text("| Pattern | Rule | Occ | Promoted | Date |\n|---|---|---|---|---|\n"
+                       f"| **{TAG}.** She cut the sign-off. | No sign-off. | 1 | No | {day} |\n",
+                       encoding="utf-8")
+    monkeypatch.setenv("LESSONS_PATH", str(lessons))
+    monkeypatch.setattr(er, "fetch_reply", lambda rid: {**good_reply(rid), "epoch": t0 + 1},
+                        raising=False)
+    assert er.close(cid, REPLY, lesson_ref="She cut the sign-off")["status"] == "closed"
+
+
+def test_round4_a_lesson_row_dated_before_her_reply_is_refused(monkeypatch, tmp_path):
+    # The draft-time anchor is for the reply only. A lessons row records her edits, so it
+    # cannot predate her reply: a row from the days between drafting and her reply could be
+    # about another post (47 on r4 F1).
+    t0 = time.time() - 3 * 86400
+    cid = dc.confirm(dc.capture(draft(EIC), skill="draft-email", now=t0), "unchanged")["id"]
+    before_reply = time.strftime("%Y-%m-%d", time.localtime(t0 + 86400))
+    lessons = tmp_path / "lessons-early.md"
+    lessons.write_text("| Pattern | Rule | Occ | Promoted | Date |\n|---|---|---|---|---|\n"
+                       f"| **{TAG}.** She cut the sign-off. | No sign-off. | 1 | No | {before_reply} |\n",
+                       encoding="utf-8")
+    monkeypatch.setenv("LESSONS_PATH", str(lessons))
+    monkeypatch.setattr(er, "fetch_reply",
+                        lambda rid: {**good_reply(rid), "epoch": t0 + 2 * 86400}, raising=False)
+    with pytest.raises(er.ReviewError, match="before"):
+        er.close(cid, REPLY, lesson_ref="She cut the sign-off")
+    assert er.read(cid)["status"] == "open"
+
+
+def test_round4_a_record_without_the_draft_time_falls_back_to_when_the_review_opened(monkeypatch):
+    cid = sent_to()["id"]
+    record = er.read(cid)
+    record.pop("draft_opened_at", None)
+    er._write(record)
+    monkeypatch.setattr(er, "fetch_reply", lambda rid: {**good_reply(rid),
+                                                        "epoch": time.time() - 600},
+                        raising=False)
+    with pytest.raises(er.ReviewError, match="before"):
+        er.close(cid, REPLY, no_edits="approved as is")
 
 
 def test_B_close_fails_closed_when_gmail_cannot_be_reached(monkeypatch):

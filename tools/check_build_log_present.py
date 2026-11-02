@@ -27,7 +27,9 @@ WHAT IT DOES NOT SEE, stated rather than buried:
     `scripts/` or `data/` subfolder, which are exempt by the spec.
   * A cd the walk cannot read (a path built from a command substitution, or one assembled
     from variables the command does not assign). Relative targets after an ordinary `cd`
-    are judged from that directory too, through tools/shell_writes.py (2026-11-01).
+    are judged from that directory too, through tools/shell_writes.py (2026-11-01), including
+    a cd inside a group, an if/elif/for/while body or a case arm, and one silenced with
+    >/dev/null, 2>/dev/null or &>/dev/null.
   * In a Bash copy, a glob or variable (`cp *.html output/acme/`, `cp $X output/acme/`), a
     source that does not exist yet when the hook runs, and the contents of a source folder
     past the parser's walk cap (`check_handoff_producer.WALK_MAX_DEPTH`, `WALK_MAX_FILES`).

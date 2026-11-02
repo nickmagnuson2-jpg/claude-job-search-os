@@ -16,8 +16,9 @@ trusts and lets each `cd` be confirmed by a shell probe, so a cd that certainly 
 REPLACES the candidates. The blocking gates (check_eic_review, check_handoff_producer) call
 bash_write_targets(), which skips the probe: every cd only ADDS candidates, so their answer is a
 superset, and it starts from the repo root and the payload's cwd as well. A superset can only add
-a block. Replayed over 37,700 past Bash calls on 2026-11-01, it added none that the probed walk
-did not also give from the real repo root, and it starts no subprocess.
+a block, and it starts no subprocess. Each change to the walk is replayed over the real Bash
+history before it lands; the counts are in the commit messages, not here, so this docstring
+cannot go stale (Fable r4 F7).
 
 The cd parsing, the shell probe and apply_cd still live in check_public_pii, which the other
 gates already import their write-target parser from. Imported at module level here, and
@@ -55,12 +56,18 @@ def walk(command: str, starts, exact: bool | None = None):
 
 
 # Words that can open a segment without changing what it does: `! (...)`, `time {...}`, and
-# the bodies of if/for/while (`then cd x`, `do cd x`, `else cd x`). Codex r3 F1, Fable r3 F1.
-_PREFIX = re.compile(r"^\s*(?:(?:!|time(?:\s+-p)?|then|do|else)\s+)+")
+# the bodies of if/for/while (`then cd x`, `do cd x`, `else cd x`, `elif cd x`). Codex r3 F1,
+# Fable r3 F1, Fable r4 F3.
+_PREFIX = re.compile(r"^\s*(?:(?:!|time(?:\s+-p)?|then|do|else|elif)\s+)+")
 # A redirect to /dev/null or to another fd on a cd changes nothing about where it lands.
-_QUIET = re.compile(r"\s+\d*>{1,2}\s*(?:/dev/null|&\d)")
+# Covers >, 2>, &> and >& to /dev/null, and >&N (Codex r4 F2, Fable r4 F2).
+_QUIET = re.compile(r"(?:\s+\d*|\s*&|\s*)>{1,2}(?:&\d|&?\s*/dev/null)")
 _COMPOUND = re.compile(r"(if|for|while|until|case)\b")
 _COMPOUND_END = {"if": "fi", "for": "done", "while": "done", "until": "done", "case": "esac"}
+# `case WORD in`, and an arm's `pattern)` label, which would hide a cd that opens the arm
+# (Codex r4 F1, Fable r4 F1).
+_CASE_HEAD = re.compile(r"^\s*\S+\s+in\b")
+_CASE_LABEL = re.compile(r"^\s*\(?[^();]*\)")
 _MAX_DEPTH = 32       # deeper groups are judged as one segment; recursion must not crash a hook
 
 
@@ -88,7 +95,13 @@ def _group_body(segment: str) -> str | None:
         if not m:
             return None
         end = s.rfind(_COMPOUND_END[m.group(1)])
-        return s[m.end():end] if end > m.end() else None
+        if end <= m.end():
+            return None
+        body = s[m.end():end]
+        if m.group(1) == "case":
+            arms = re.split(r";;&?|;&", _CASE_HEAD.sub("", body, count=1))
+            body = "; ".join(_CASE_LABEL.sub("", arm, count=1) for arm in arms)
+        return body
     return s[1:end] if end > 0 else None
 
 
