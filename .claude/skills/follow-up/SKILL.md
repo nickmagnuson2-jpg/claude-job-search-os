@@ -111,12 +111,17 @@ Before determining follow-up type, check whether the contact has replied to prio
      N — No response yet
      S — Skip / don't update status now
    ```
-4. **If Yes (replied):** Set the most recent matching row's Status to `Replied` with the script below (never by hand). Store `reply_status = "replied"` — this informs Step 3.
+4. **If Yes (replied):** Log the reply as an inbound interaction, which also sets the most recent open matching row's Status to `Replied`, so the reply counts on the morning page:
+   ```bash
+   PYTHONIOENCODING=utf-8 python3 tools/networking_write.py --repo-root . log "<Name>" \
+     --type <email|linkedin|text> --summary "Reply received to <the message it answers>" --direction in --no-todo
+   ```
+   Do NOT also run the status script below for a Yes: `--direction in` already sets `Replied`, and a second write could mark an older open row. Only if this returns `code == "not_found"` (the contact is not in `networking.md`), set the status with the script below instead. Store `reply_status = "replied"` — this informs Step 3.
    Optionally ask: "Briefly, what did they say? (helps tailor the follow-up — press Enter to skip)"
    If context is provided, carry it into Steps 3 and 6.
 5. **If No (no response):** Set the most recent matching row's Status to `No reply` with the same script. Store `reply_status = "no_reply"`.
 
-   **The write, for both 4 and 5:**
+   **The status write (step 5, and step 4 only when the contact is not in `networking.md`):**
    ```bash
    PYTHONIOENCODING=utf-8 python3 tools/outreach_status.py --set-status --latest \
      --recipient "<Name>" --status <Replied|No reply>

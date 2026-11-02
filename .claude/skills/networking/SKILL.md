@@ -70,7 +70,7 @@ Examples:
    - Otherwise default to `peer`
 2. Call `networking_write.py add`:
    ```bash
-   PYTHONIOENCODING=utf-8 python3 tools/networking_write.py add "<name>" [--company CO] [--role ROLE] [--relationship TYPE] --repo-root .
+   PYTHONIOENCODING=utf-8 python3 tools/networking_write.py --repo-root . add "<name>" [--company CO] [--role ROLE] [--relationship TYPE]
    ```
 3. If result `action == "duplicate_warning"`: warn user, show existing company.
 4. On success: display the added contact and total contact count.
@@ -161,7 +161,7 @@ When the user asks to draft a message to a contact, read their full interaction 
 
 1. Call `networking_write.py remove`:
    ```bash
-   PYTHONIOENCODING=utf-8 python3 tools/networking_write.py remove "<name>" --repo-root .
+   PYTHONIOENCODING=utf-8 python3 tools/networking_write.py --repo-root . remove "<name>"
    ```
 2. If `code == "not_found"`: tell user the contact wasn't found.
 3. On success: confirm removal (row deleted, interaction log heading prefixed `[ARCHIVED]`).
@@ -248,7 +248,7 @@ Each contact gets a section with entries in reverse chronological order (newest 
 
 **Follow-up:** Wait for response, schedule coffee chat
 
-#### 2026-02-11 | linkedin | Connected on LinkedIn
+#### 2026-02-11 | linkedin (outbound) | Connected on LinkedIn
 
 Sent connection request with note about Tuck network.
 

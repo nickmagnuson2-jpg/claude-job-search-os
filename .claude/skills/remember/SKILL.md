@@ -16,8 +16,8 @@ Quickly saves something you want to retain across sessions, routed to the right 
 
 Examples:
 - `/remember "Jordan mentioned Acme is building a new site in a new metro"` → appended to Jordan Lee's contact entry in networking.md
-- `/remember "Jordan Lee replied to my email"` → updates outreach-log.md Status to Replied on Jordan Lee's newest open (Drafted/Sent) row
-- `/remember "heard back from Sarah Chen, she's happy to connect"` → updates outreach-log.md Status to Replied + logs contact note
+- `/remember "Jordan Lee replied to my email"` → asks who reached whom (Step 1.2); on "they reached me" it logs an `(inbound)` note on Jordan Lee and sets the newest open (Drafted/Sent) outreach row to Replied. The wording alone never does this.
+- `/remember "heard back from Sarah Chen, she's happy to connect"` → same: the direction is asked, never read from the words
 - `/remember "comp floor is $95K in practice, not $100K"` → appended to profile.md compensation section
 - `/remember "decided not to pursue Lumen — too similar to what I want to leave"` → `data/decisions.md` (prompts for what drove it / what changes if wrong)
 - `/remember "shipped the Lane B dossier"` → `data/accomplishments.md` (prompts for why it matters)
@@ -61,7 +61,7 @@ Parse the JSON output:
 - `ambiguous` — if `true`, default to `data/notes.md` and flag the routing as uncertain in the Step 4 confirmation
 - `direction_needed` — if `true`, every `contact_note` has `"direction": null` and Step 1.2 must fill it in. `remember_apply.py` refuses a `contact_note` without a direction.
 
-Proceed to Step 2 with the resolved `destinations[]`. If the script fails or returns an empty destinations list, fall back to `data/notes.md` as general_note.
+Proceed to Step 2 with the resolved `destinations[]`. If the script fails or returns an empty destinations list, fall back to `data/notes.md` as general_note. Never for a `direction_required` refusal: that means Step 1.2 was skipped, so go back to Step 1.2, ask the direction, and rerun with it; the note belongs in `networking.md`.
 
 ### Step 1.2: Record who reached whom (required for a contact note)
 
@@ -131,7 +131,7 @@ Parse the response:
 - Multi destination: `{"status":"ok","action":"multi_write","results":[...]}` — surface any `warning` fields. If `has_errors` is `true`, some destinations were NOT written: surface each result whose `status` is `error` (for example `direction_required`, a contact note without a direction) and fix it before confirming
 - Error: `{"status":"error","message":"..."}` — surface to user with fallback suggestion
 
-If the script fails or classify returned empty destinations: fall back to writing `data/notes.md` as general_note.
+If the script fails or classify returned empty destinations: fall back to writing `data/notes.md` as general_note. Never for a `direction_required` refusal: that means Step 1.2 was skipped, so go back to Step 1.2, ask the direction, and rerun with it; the note belongs in `networking.md`.
 
 ### Step 4: Confirm
 

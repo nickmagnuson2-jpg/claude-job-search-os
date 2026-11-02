@@ -264,21 +264,25 @@ def test_a_plain_type_is_never_counted_whatever_the_summary(tmp_path, summary):
 
 SKILLS_DIR = REPO_ROOT / ".claude" / "skills"
 # A heading TEMPLATE a skill tells the model to write by hand: a placeholder date.
-_TEMPLATE_HEADING = re.compile(r"^\s*#### YYYY-MM-DD \| ([^|]+?) \|", re.M)
+# Any placeholder date spelling a skill might use (round 3, F7).
+_TEMPLATE_HEADING = re.compile(
+    r"^\s*#### (?:YYYY-MM-DD|\[YYYY-MM-DD\]|\[date\]|\{date\}|<date>) \| ([^|]+?) \|", re.M | re.I)
 
 
 # The ONE stated exception (job-search-47 for Nick, 2026-10-31, review rounds 3-4): the
 # old meaning. The old summary rules gave a /draft-email entry (thank-you, status update,
-# intro request) no verdict, while /follow-up and /cold-outreach entries ("Follow-up #N",
+# intro request) no SEND verdict, while /follow-up and /cold-outreach entries ("Follow-up #N",
 # "Cold outreach") counted as sends. So /draft-email stays plain and the other two record
 # (outbound). The timing is NOT the reason: all three log when the draft opens.
 PLAIN_TEMPLATE_EXCEPTIONS = {"draft-email": "keep the old meaning: not counted before 2026-10-30"}
 
 
 def _templates():
-    for path in sorted(SKILLS_DIR.glob("*/SKILL.md")):
+    # Every markdown file of every skill, not only SKILL.md (round 3, F7).
+    for path in sorted(SKILLS_DIR.glob("*/**/*.md")):
+        skill = path.relative_to(SKILLS_DIR).parts[0]
         for m in _TEMPLATE_HEADING.finditer(path.read_text(encoding="utf-8")):
-            yield path.parent.name, m.group(1)
+            yield skill, m.group(1)
 
 
 def test_every_hand_written_heading_template_records_a_direction():

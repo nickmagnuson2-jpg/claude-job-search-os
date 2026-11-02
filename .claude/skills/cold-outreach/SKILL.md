@@ -466,7 +466,7 @@ Archive file format:
 Read `data/networking.md`. If the contact doesn't exist in the Contacts table, add a new row:
 
 ```markdown
-| [Name] | [Company] | [Role] | peer | [today] | — |
+| [Name] | [Company] | [Role] | peer | [today] | — | — |
 ```
 
 If they already exist (from Step 2 — found but no interactions), update the Last Interaction date.

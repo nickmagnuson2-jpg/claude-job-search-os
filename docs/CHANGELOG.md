@@ -24,7 +24,8 @@ logged, decided by Nick.
   `remember_classify.py` never infers a reply; `remember_apply.py` refuses a contact
   note without a direction. The `outreach_reply` destination is folded into it.
 - Readers of the type use `base_type()`: `day_check.py`, `conversations_metric.py`,
-  `todo_daily_metrics.py` (an inbound entry is no longer counted as an outreach touch).
+  `todo_daily_metrics.py` (outreach touches: `(outbound)` and `(two-way)` entries count under
+  their base channel; replies relabelled `(inbound)` by the backfill stop counting as touches).
   `person_history.py` shows the raw type, direction included.
 - **`networking_direction_backfill.py` (new, one-off):** labels existing entries from the
   verdict the old rules gave them (`--classifier` = the old module from git). `plan`

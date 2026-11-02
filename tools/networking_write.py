@@ -25,9 +25,9 @@ Output: JSON to stdout
   Failure: {"status": "error", "message": "...", "code": "..."}
 
 Usage:
-  PYTHONIOENCODING=utf-8 python3 tools/networking_write.py add "Jane Doe" --company Acme --repo-root .
+  PYTHONIOENCODING=utf-8 python3 tools/networking_write.py --repo-root . add "Jane Doe" --company Acme
   PYTHONIOENCODING=utf-8 python3 tools/networking_write.py --repo-root . log "Jane Doe" --date 2026-02-28 --type email --summary "Asked for a call" --direction in
-  PYTHONIOENCODING=utf-8 python3 tools/networking_write.py remove "Jane Doe" --repo-root .
+  PYTHONIOENCODING=utf-8 python3 tools/networking_write.py --repo-root . remove "Jane Doe"
 """
 import json
 import os
