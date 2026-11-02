@@ -32,9 +32,10 @@ logged, decided by Nick.
   writes a review file and never touches `data/`; `apply` needs `--approved`, refuses a
   changed file or an edited plan, backs up, and writes atomically.
 
-**Open.** 44 surviving mutants in untouched functions of `remember_apply.py` (38) and
-`remember_classify.py` (6) were already in the mutation baseline; none is new, and
-covering them is queued.
+**Closed.** 44 surviving mutants in untouched functions of `remember_apply.py` (38) and
+`remember_classify.py` (6) were already in the mutation baseline. Exact-output tests now
+kill them, except six equivalent mutants allowlisted with traced reasons; both files have
+0 survivors.
 
 ## 2026-10-25: Review findings fixed, and two recurring mistakes turned into gates
 

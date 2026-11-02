@@ -37,7 +37,7 @@ def dest_json(*dests):
 
 # ---------------------------------------------------------------------------
 # Destination-count guard (fable-audit Theme 2 doc-drift)
-# Locks HANDLERS at 12 so a handler added/removed without updating the docstring,
+# Locks HANDLERS at 11 so a handler added/removed without updating the docstring,
 # CLAUDE.md, and docs/methodology.md (all of which state the count) fails loudly.
 # ---------------------------------------------------------------------------
 
