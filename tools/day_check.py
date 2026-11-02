@@ -10,11 +10,13 @@ Six counts, each for the target date and for the week so far (Monday to the targ
 
   sends           people written to: outreach-log rows whose status says the message went
                   out (the shared conversations_metric.SENT_STATES), plus networking.md
-                  interactions that tools/reply_classify.py calls a send. A person counts
-                  once per day across both logs ("First" and "First Last" are one person).
-  replies         networking.md interactions that tools/reply_classify.py calls a reply
-                  (the one rule networking_write.py also uses; what counts is written in
-                  that module's docstring).
+                  interactions whose type records "(outbound)" or "(two-way)"
+                  (tools/reply_classify.py).
+                  A person counts once per day across both logs ("First" and "First Last"
+                  are one person).
+  replies         networking.md interactions whose type records "(inbound)" or
+                  "(two-way)" (the one
+                  rule in tools/reply_classify.py; the summary is never read).
   calls           networking.md interactions of a live type (conversations_metric.LIVE:
                   call, video, in-person, interview, and so on).
   applications    pipeline rows whose text says "Applied <date>" (or "applied on <date>").
@@ -55,7 +57,7 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from conversations_metric import LIVE, SENT_STATES  # noqa: E402
 # The one "did they reply" rule, shared with networking_write.py (no local copy here).
-from reply_classify import classify as classify_summary  # noqa: E402
+from reply_classify import REPLY_VERDICTS, SEND_VERDICTS, base_type, classify  # noqa: E402
 from schema_guard import SchemaDriftError, assert_schema, find_header_line  # noqa: E402
 from outreach_read import parse_rows as parse_outreach_rows  # noqa: E402
 import todo_read  # noqa: E402
@@ -102,9 +104,9 @@ def networking_events(content: str) -> list[dict]:
         if not m or name is None:
             continue
         # A bad date ("2026-13-45") parses to None and so never equals a day counted.
-        kind, summary = m.group(2), m.group(3)
-        events.append({"date": _date(m.group(1)), "name": name, "kind": kind.strip().casefold(),
-                       "direction": classify_summary(kind, summary)})
+        kind = m.group(2)
+        events.append({"date": _date(m.group(1)), "name": name, "kind": base_type(kind).casefold(),
+                       "direction": classify(kind)})
     return events
 
 
@@ -213,10 +215,10 @@ def collect(root: Path, target: date) -> dict:
         if outreach is not None and networking is not None:
             people = [r["recipient"] for r in o_rows
                       if _date(r["date"]) == d and r["status"].casefold() in SENT_STATES]
-            people += [e["name"] for e in events if e["date"] == d and e["direction"] == "send"]
+            people += [e["name"] for e in events if e["date"] == d and e["direction"] in SEND_VERDICTS]
             c["sends"] = count_people(people)
         if networking is not None:
-            c["replies"] = sum(1 for e in events if e["date"] == d and e["direction"] == "reply")
+            c["replies"] = sum(1 for e in events if e["date"] == d and e["direction"] in REPLY_VERDICTS)
             c["calls"] = sum(1 for e in events if e["date"] == d and e["kind"] in LIVE)
         if pipeline is not None:
             c["applications"] = sum(1 for cols in p_rows if applied_on(cols, d))

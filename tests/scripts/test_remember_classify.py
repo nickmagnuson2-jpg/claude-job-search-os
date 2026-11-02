@@ -34,14 +34,25 @@ def _setup_pipeline(tmp_path: Path, company: str = "Northwind") -> None:
     """)
 
 
-def test_known_contact_reply_routes_to_outreach_reply(tmp_path):
-    """Note with known contact name + reply keyword → outreach_reply destination."""
+def test_a_reply_is_never_read_from_the_wording(tmp_path):
+    """2026-10-30: a note that says a contact replied gets a contact_note with no direction,
+    and direction_needed, so /remember asks. It used to route to outreach_reply."""
     _setup_networking(tmp_path)
     result = run_script("remember_classify.py",
                         "--note", "Jordan Lee replied to my email this morning",
                         "--repo-root", str(tmp_path))
-    assert "outreach_reply" in _types(result)
+    assert "outreach_reply" not in _types(result)
+    notes = [d for d in result["destinations"] if d["type"] == "contact_note"]
+    assert notes and all(d["direction"] is None for d in notes)
+    assert result["direction_needed"] is True
     assert result["ambiguous"] is False
+
+
+def test_no_contact_means_no_direction_needed(tmp_path):
+    _setup_networking(tmp_path)
+    result = run_script("remember_classify.py", "--note", "comp floor is firm",
+                        "--repo-root", str(tmp_path))
+    assert result["direction_needed"] is False
 
 
 def test_known_contact_routes_to_contact_note(tmp_path):
