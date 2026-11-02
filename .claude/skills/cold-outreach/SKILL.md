@@ -466,19 +466,19 @@ Archive file format:
 Read `data/networking.md`. If the contact doesn't exist in the Contacts table, add a new row:
 
 ```markdown
-| [Name] | [Company] | [Role] | peer | [today] | — |
+| [Name] | [Company] | [Role] | peer | [today] | — | — |
 ```
 
 If they already exist (from Step 2 — found but no interactions), update the Last Interaction date.
 
 **2. Log the interaction:**
 
-Add an entry under the contact's Interaction Log section (create the section if new contact):
+Add an entry under the contact's Interaction Log section (create the section if new contact). The `(outbound)` in the type is what counts this as a send on the morning page (`tools/reply_classify.py` reads only the type, never the summary). Keep it.
 
 ```markdown
 ### [Name] — [Company]
 
-#### YYYY-MM-DD | [email/linkedin] | Cold outreach — [1-line summary]
+#### YYYY-MM-DD | [email/linkedin] (outbound) | Cold outreach — [1-line summary]
 
 > [Full message text, line by line, in blockquote]
 

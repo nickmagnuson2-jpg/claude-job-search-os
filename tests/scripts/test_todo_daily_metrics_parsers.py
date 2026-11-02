@@ -233,3 +233,26 @@ def test_run_unions_outreach_log_and_networking_touches_without_duplicates(tmp_p
     sent = json.loads(capsys.readouterr().out)["outreach_sent_today"]
     assert [(o["name"], o["channel"], o.get("source", "outreach-log")) for o in sent] == [
         ("Sam Example", "email", "outreach-log"), ("Lee Sample", "linkedin", "networking.md")]
+
+
+DIRECTED_TOUCHES = ("### Sam Example — Acme Corp\n"
+                    "#### 2026-01-07 | email (outbound) | sent the deck\n"
+                    "#### 2026-01-07 | email (inbound) | they asked for times\n"
+                    "#### 2026-01-07 | linkedin-post (outbound) | hyphenated base\n")
+
+
+def test_networking_touches_read_the_base_type_and_skip_inbound():
+    """A touch is Nick reaching out: "(outbound)" counts under its base channel, and an
+    inbound entry is not a touch (the old `\\w+` pattern skipped "email (inbound)" too).
+    A base type that `\\w+` never matched stays unmatched."""
+    assert tdm.parse_networking_touches_today(DIRECTED_TOUCHES, D) == [
+        {"date": "2026-01-07", "name": "Sam Example", "company": "Acme Corp", "channel": "email",
+         "subject": "sent the deck", "source": "networking.md"},
+    ]
+
+
+def test_a_two_way_entry_is_an_outreach_touch():
+    """Nick sent in it, so it is a touch (2026-10-30 two-way decision)."""
+    touches = tdm.parse_networking_touches_today(
+        "### Sam Example — Acme Corp\n#### 2026-01-07 | text (two-way) | sent, then a reply\n", D)
+    assert [(t["name"], t["channel"]) for t in touches] == [("Sam Example", "text")]
