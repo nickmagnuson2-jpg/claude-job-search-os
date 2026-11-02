@@ -71,3 +71,16 @@ def test_named_channel_capture_does_not_warn(tmp_path):
                   "\n\nSystem audio (Jane Doe): " + "reply " * 150)
     out = _write(tmp_path, transcript)
     assert "attribution_warning" not in out
+
+
+# --- the sealed summary boundary (2026-11-02, a mutation survivor on a renamed line) ---
+
+def test_only_a_sealed_summary_carries_the_sealed_boundary():
+    sys.path.insert(0, str(REPO_ROOT / "tools"))
+    import granola_save as gs
+    base = {"captured": "2026-11-01T10:00", "session_desc": "x", "title": "t", "summary": "s",
+            "meeting_id": "not_x"}
+    sealed = gs.summary_body({**base, "type": "sealed"}, "t-transcript")
+    general = gs.summary_body({**base, "type": "general"}, "t-transcript")
+    assert sealed.startswith("> **SEALED.**") and "[[t-transcript]]" not in sealed.split("\n")[0]
+    assert not general.startswith("> **SEALED.**") and "[[t-transcript]]" in general

@@ -4,7 +4,7 @@
 
 This repo is PUBLIC. The personal Obsidian vault is not, and its location is a
 private fact: naming it in committed code discloses where sealed material
-(therapy transcripts, family logistics, side-business notes) lives on disk.
+(sealed transcripts, family logistics, side-business notes) lives on disk.
 Before 2026-08-11 the absolute root was hardcoded in 17 places across 7 public
 files, so scrubbing any one of them was cosmetic.
 
@@ -17,7 +17,7 @@ Every consumer now derives its paths from `vault_root()`, which reads, in order:
 MISSING CONFIG IS A LOUD FAILURE, NEVER A SILENT FALLBACK.
 There is deliberately no default path. A fallback would have to be either the
 real location (which puts it back in public code, defeating the point) or a
-guess (which risks writing sealed therapy content somewhere unintended). Both
+guess (which risks writing sealed content somewhere unintended). Both
 are worse than stopping. This matches `backup-data.sh` + `.private-backup.conf`,
 which also exits non-zero rather than silently skipping.
 
@@ -29,12 +29,19 @@ Config format (`tools/.personal-vault.conf`):
 
     # Absolute path to the personal Obsidian vault. Gitignored: this repo is public.
     ~/path/to/personal-vault
+
+SEALED FOLDERS (added 2026-11-01). Which vault folders are sealed is private too: a folder's
+name says what it holds. They come from the gitignored `tools/.sealed-folders.conf`, one
+vault-relative folder per line, and from nowhere else: no env var can change what the guard
+protects. sealed_rels() returns None when the file is missing or lists nothing. check_sealed_read treats None as "every folder under the
+vault's data/ is sealed" (fail closed), and sealed_dir() refuses instead of guessing.
 """
 import os
 from pathlib import Path
 
 DEFAULT_CONFIG = Path(__file__).resolve().parent / ".personal-vault.conf"
 ENV_VAR = "PERSONAL_VAULT_ROOT"
+SEALED_CONFIG = Path(__file__).resolve().parent / ".sealed-folders.conf"
 
 SETUP_HINT = (
     f"Set {ENV_VAR}, or create {DEFAULT_CONFIG} containing one line:\n"
@@ -87,9 +94,46 @@ def require_vault_root(config_path: Path | None = None) -> Path:
 
 # ── Named locations (single source of truth; add here, never inline elsewhere) ──
 
-def therapy_dir(config_path: Path | None = None) -> Path:
-    """Sealed therapy transcripts. Never appears in any external-facing artifact."""
-    return require_vault_root(config_path) / "data" / "therapy"
+class SealedFolderMissing(RuntimeError):
+    """Raised when no sealed vault folder is configured."""
+
+    def __init__(self):
+        super().__init__(
+            f"no sealed vault folder is configured.\nCreate {SEALED_CONFIG} with one "
+            f"vault-relative folder per line (e.g. data/<name>).\n"
+            f"That file is gitignored because this repo is public.")
+
+
+def sealed_rels(config_path: Path | None = None) -> tuple[str, ...] | None:
+    """The vault-relative sealed folders, or None if none is configured.
+
+    Raises ValueError for a folder that is absolute or leaves the vault: the guard and the
+    writer would then both point somewhere other than the folder meant.
+    """
+    try:
+        raw = (config_path or SEALED_CONFIG).read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return None
+    rels = []
+    for line in raw:
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        rel = os.path.normpath(line)
+        if os.path.isabs(rel) or rel in (".", "..") or rel.startswith("../"):
+            raise ValueError(f"sealed folder {line!r} is not inside the vault")
+        rels.append(rel)
+    return tuple(rels) or None
+
+
+def sealed_dir(config_path: Path | None = None, sealed_config: Path | None = None) -> Path:
+    """The folder sealed transcripts are written to: the first configured one.
+    Never appears in any external-facing artifact."""
+    root = require_vault_root(config_path)
+    rels = sealed_rels(sealed_config)
+    if not rels:
+        raise SealedFolderMissing()
+    return root / rels[0]
 
 
 def personal_inbox(config_path: Path | None = None) -> Path:

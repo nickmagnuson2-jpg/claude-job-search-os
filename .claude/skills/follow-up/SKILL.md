@@ -189,8 +189,8 @@ Analyze the interaction history to determine the follow-up type:
 1. **Pull the verbatim inbound.** If not already in context, fetch it: `tools/gmail_fetch.py --all-mail --search "<query>" --body`. **Check the `Mailbox:` line on each hit** — `--all-mail` includes DRAFTS, and a draft is shaped exactly like a sent message, so an unsent draft can be mistaken for a real inbound or a real send (2026-09-02). Read it line by line — do NOT work from a summary. **`<query>` must be a real non-empty query** (`from:`, `subject:`, a name). An empty one exits 2 by design since 2026-08-19: there is no empty-query listing mode, and before the guard it fell through to a SYNC that wrote to `inbox/`. To browse rather than search, use `--backfill --label-id <ID> --max N --dry-run`.
 2. **Build a claim→source map (working notes, not the email).** For every substantive sentence the draft will make about the contact's message — per entity / per role / per offer — quote the verbatim line it grounds in:
    ```
-   - "Beacon is worth moving on quickly" → "This one is worth moving on quickly." [verbatim]
-   - "which verticals are they building out" → "depends on which verticals they are actively building out" — tied to NORTHWIND, not Beacon
+   - "Beacon is the stronger fit" → "Beacon looks like the closer match of the two." [verbatim]
+   - "which teams are they hiring for" → "it comes down to which teams have open headcount" — tied to NORTHWIND, not Beacon
    - "adjacent-vertical experience in my lane" → NO source line. INVENTED. Cut or recast to the role-shape claim.
    ```
 3. **Any claim with no source line is invented** — cut it, recast it to something grounded, or ask Nick. This is stricter than Step 6b's after-the-fact provenance labeling: re-read their actual words; do not label an un-checked claim as "grounded."
@@ -339,7 +339,7 @@ If any `G` blocks fire, return to Step 4 (sequence-aware drafting) and request t
 
 Run the three-question test. For each question, write a **specific one-sentence answer** — not just a rating:
 
-1. **"Why you?"** — Does the follow-up reference something specific to this person? (e.g., "Referenced her recent post about scaling clinical ops" — NOT "She's at the company")
+1. **"Why you?"** — Does the follow-up reference something specific to this person? (e.g., "Referenced her recent post about scaling support ops" — NOT "She's at the company")
 2. **"What's new?"** — What new value does this follow-up add? (e.g., "Sharing a relevant article about their competitor's Series C" — NOT "Just checking in")
 3. **"Why me?"** — Does it reinforce (not repeat) the sender's credibility? (e.g., "Adds context about a similar challenge I solved at [Project]" — NOT "Same as before")
 

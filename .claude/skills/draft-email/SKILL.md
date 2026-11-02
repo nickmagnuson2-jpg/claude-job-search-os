@@ -230,7 +230,7 @@ See `memory/feedback_voice_pure_diff_minimal.md` and `memory/feedback_minimize_p
 **Structure:**
 1. **Warm opener** (1 sentence) — reference last conversation or connection
 2. **Progress bullets** (3–5 bullets) — scannable, concrete updates
-3. **What you're looking for** (1 sentence) — specific and actionable ("CoS roles at Series B–C healthtech companies" not "exploring opportunities")
+3. **What you're looking for** (1 sentence) — specific and actionable ("CoS roles at Series B–C SaaS companies" not "exploring opportunities")
 4. **Reciprocal offer or specific ask** (1 sentence) — not vague "keep me in mind"
 5. **Close**
 

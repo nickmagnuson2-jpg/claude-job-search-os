@@ -5,7 +5,7 @@ personal-vault root.
 
 The property under test is not "does it return a path." It is: **an
 unconfigured vault must fail loudly, never fall back to a guess.** The root is
-private (this repo is public) and it hosts sealed therapy material, so a
+private (this repo is public) and it hosts sealed material, so a
 fallback would have to be either the real location — putting it back in public
 code, defeating the point — or a guess, which risks writing sealed content
 somewhere unintended. Both are worse than stopping.
@@ -110,7 +110,7 @@ def test_missing_root_error_tells_you_how_to_fix_it(tmp_path):
     assert "gitignored" in msg
 
 
-@pytest.mark.parametrize("fn", ["therapy_dir", "personal_inbox",
+@pytest.mark.parametrize("fn", ["personal_inbox",
                                 "personal_voice_corpus_dir", "personal_todos"])
 def test_every_named_location_refuses_when_unconfigured(tmp_path, fn):
     """No named location may silently resolve against a guessed root."""
@@ -127,7 +127,6 @@ def test_living_log_refuses_when_unconfigured(tmp_path):
 
 def test_named_locations_derive_from_the_configured_root(tmp_path):
     cfg = _conf(tmp_path, "/srv/vault\n")
-    assert vp.therapy_dir(cfg) == Path("/srv/vault/data/therapy")
     assert vp.personal_inbox(cfg) == Path("/srv/vault/data/inbox.md")
     assert vp.personal_voice_corpus_dir(cfg) == Path("/srv/vault/data/voice-corpus/granola")
     assert vp.personal_todos(cfg) == Path("/srv/vault/data/personal-todos.md")
@@ -209,3 +208,50 @@ def test_personal_mail_dir_raises_when_unconfigured(tmp_path):
     missing = tmp_path / "absent.conf"
     with pytest.raises(vp.VaultRootMissing):
         vp.personal_mail_dir(missing)
+
+
+# --- sealed folders ----------------------------------------------------------
+# Which vault folder is sealed is itself private (its name says what it holds), so it
+# comes from a gitignored file, as the root does. Unset means None; the guard that reads
+# it fails closed on None, and sealed_dir() refuses rather than guess a folder.
+
+def _sealed_conf(tmp_path: Path, body: str) -> Path:
+    p = tmp_path / ".sealed-folders.conf"
+    p.write_text(body, encoding="utf-8")
+    return p
+
+
+def test_sealed_rels_reads_every_line_skipping_comments_and_blanks(tmp_path):
+    cfg = _sealed_conf(tmp_path, "# sealed\n\ndata/sessions\n  data/other/  \n")
+    assert vp.sealed_rels(cfg) == ("data/sessions", "data/other")
+
+
+def test_sealed_rels_is_none_when_unconfigured(tmp_path):
+    assert vp.sealed_rels(tmp_path / "absent.conf") is None
+    assert vp.sealed_rels(_sealed_conf(tmp_path, "# nothing yet\n")) is None
+
+
+@pytest.mark.parametrize("bad", ["/abs/path", "../escape", "data/../../x", "."])
+def test_a_sealed_folder_outside_the_vault_is_refused(tmp_path, bad):
+    """A rel that leaves the vault would point the guard and the writer somewhere else."""
+    with pytest.raises(ValueError):
+        vp.sealed_rels(_sealed_conf(tmp_path, bad + "\n"))
+
+
+def test_sealed_dir_is_the_first_folder_under_the_root(tmp_path):
+    root = _conf(tmp_path, "/srv/vault\n")
+    sealed = _sealed_conf(tmp_path, "data/sessions\ndata/other\n")
+    assert vp.sealed_dir(root, sealed) == Path("/srv/vault/data/sessions")
+
+
+def test_sealed_dir_refuses_when_no_folder_is_configured(tmp_path):
+    root = _conf(tmp_path, "/srv/vault\n")
+    with pytest.raises(vp.SealedFolderMissing) as exc:
+        vp.sealed_dir(root, tmp_path / "absent.conf")
+    assert ".sealed-folders.conf" in str(exc.value) and "gitignored" in str(exc.value)
+
+
+def test_sealed_dir_refuses_when_the_root_is_unconfigured(tmp_path):
+    sealed = _sealed_conf(tmp_path, "data/sessions\n")
+    with pytest.raises(vp.VaultRootMissing):
+        vp.sealed_dir(tmp_path / "absent.conf", sealed)

@@ -1,15 +1,15 @@
 """Tests for the fail-closed meeting classifier in tools/granola_auto_debrief.py.
 
-Safety contract: the cron auto-debrief must never post potentially-sealed therapy
+Safety contract: the cron auto-debrief must never post potentially-sealed sealed
 content to a non-sealed surface (data/inbox.md or data/voice-corpus/granola/).
 
 Three-way classification:
-  therapy    -> seal to personal vault, never inbox
+  sealed    -> seal to personal vault, never inbox
   networking -> voice-corpus + inbox (the only post-to-inbox class)
   unknown    -> fail-closed: persist nowhere, flag for manual /granola-pull
 
-All fixtures use FAKE therapist identities. Real ones live in the gitignored
-tools/.therapy-classifier.txt (this repo is public).
+All fixtures use FAKE sealed-contact identities. Real ones live in the gitignored
+tools/.sealed-meetings.txt (this repo is public).
 """
 import sys
 from pathlib import Path
@@ -19,7 +19,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 
-from tools.granola_auto_debrief import classify_meeting, load_therapy_classifier_config
+from tools.granola_auto_debrief import classify_meeting, load_sealed_meetings_config
 
 
 # ---------------------------------------------------------------------------
@@ -27,21 +27,23 @@ from tools.granola_auto_debrief import classify_meeting, load_therapy_classifier
 # ---------------------------------------------------------------------------
 
 CONFIG_TEXT = """\
-# Fake therapy classifier config for tests
+# Fake sealed classifier config for tests
 # attendee: matched against meeting attendees (name or email), case-insensitive
 attendee: fake.virtual@example.com
-attendee: Virtual Therapist
+attendee: Virtual Contact
 # name: full name matched against transcript (in-person, no-attendee sessions)
-name: Virtual Therapist
-name: Inperson Therapist
+name: Virtual Contact
+name: Inperson Contact
+# keyword: matched as a substring of the lowercased title
+keyword: private session
 """
 
 
 @pytest.fixture
 def config(tmp_path):
-    cfg = tmp_path / ".therapy-classifier.txt"
+    cfg = tmp_path / ".sealed-meetings.txt"
     cfg.write_text(CONFIG_TEXT, encoding="utf-8")
-    return load_therapy_classifier_config(cfg)
+    return load_sealed_meetings_config(cfg)
 
 
 # ---------------------------------------------------------------------------
@@ -50,66 +52,83 @@ def config(tmp_path):
 
 def test_config_loader_parses_attendees_and_names(config):
     assert "fake.virtual@example.com" in config["attendees"]
-    assert "virtual therapist" in config["attendees"]
-    assert "Inperson Therapist" in config["names"]
-    assert "Virtual Therapist" in config["names"]
+    assert "virtual contact" in config["attendees"]
+    assert config["keywords"] == ["private session"]
+    assert "Inperson Contact" in config["names"]
+    assert "Virtual Contact" in config["names"]
 
 
-def test_missing_config_returns_empty_and_does_not_crash(tmp_path):
-    cfg = load_therapy_classifier_config(tmp_path / "does-not-exist.txt")
-    assert cfg["attendees"] == set()
-    assert cfg["names"] == []
+def test_a_missing_config_is_none_and_classifies_everything_unknown(tmp_path, monkeypatch):
+    """No config: the title keywords live in it, so a sealed meeting cannot be recognized.
+    Every meeting fails closed, even one with an external attendee that would otherwise
+    be networking."""
+    import meeting_vocab
+    assert load_sealed_meetings_config(tmp_path / "does-not-exist.txt") is None
+    monkeypatch.setattr(meeting_vocab, "DEFAULT_SEALED_CONFIG", tmp_path / "does-not-exist.txt")
+    call = {"title": "Coffee", "attendees": [{"name": "Sam Carter", "email": "sam@example.com"}],
+            "transcript": "Me: hi"}
+    assert classify_meeting(call) == "unknown"
+    assert classify_meeting(call, {"attendees": set(), "names": [], "keywords": []}) == "networking"
+
+
+def test_an_empty_config_classifies_normally(tmp_path):
+    cfg = tmp_path / ".sealed-meetings.txt"
+    cfg.write_text("# no sealed meetings\n", encoding="utf-8")
+    empty = load_sealed_meetings_config(cfg)
+    assert empty == {"attendees": set(), "names": [], "keywords": []}
+    call = {"title": "Coffee", "attendees": [{"name": "Sam Carter", "email": "sam@example.com"}]}
+    assert classify_meeting(call, empty) == "networking"
 
 
 # ---------------------------------------------------------------------------
-# Therapy classification
+# Sealed classification
 # ---------------------------------------------------------------------------
 
-def test_virtual_therapy_by_attendee_email(config):
+def test_virtual_sealed_by_attendee_email(config):
     """Virtual session (attendees populate): attendee email matches the allowlist."""
     meeting = {
-        "title": "Weekly check-in",  # innocuous, no therapy keyword
+        "title": "Weekly check-in",  # innocuous, no sealed keyword
         "attendees": [
             {"name": "Nick Magnuson", "email": "owner@example.com"},
-            {"name": "V. Therapist", "email": "fake.virtual@example.com"},
+            {"name": "V. Contact", "email": "fake.virtual@example.com"},
         ],
         "transcript": "Me: hi. Them: how have you been.",
     }
-    assert classify_meeting(meeting, config) == "therapy"
+    assert classify_meeting(meeting, config) == "sealed"
 
 
-def test_virtual_therapy_by_attendee_name(config):
+def test_virtual_sealed_by_attendee_name(config):
     meeting = {
         "title": "Weekly check-in",
-        "attendees": [{"name": "Virtual Therapist", "email": "unknown@example.com"}],
+        "attendees": [{"name": "Virtual Contact", "email": "unknown@example.com"}],
         "transcript": "",
     }
-    assert classify_meeting(meeting, config) == "therapy"
+    assert classify_meeting(meeting, config) == "sealed"
 
 
-def test_therapy_by_generic_title_keyword(config):
+def test_sealed_by_generic_title_keyword(config):
     """Generic, non-PII title keyword still seals."""
-    meeting = {"title": "Couples session", "attendees": [], "transcript": ""}
-    assert classify_meeting(meeting, config) == "therapy"
+    meeting = {"title": "Private session", "attendees": [], "transcript": ""}
+    assert classify_meeting(meeting, config) == "sealed"
 
 
-def test_inperson_therapy_by_transcript_first_name(config):
-    """In-person (no attendees): therapist FIRST name surfaces in transcript -> seal."""
+def test_inperson_sealed_by_transcript_first_name(config):
+    """In-person (no attendees): sealed contact FIRST name surfaces in transcript -> seal."""
     meeting = {
         "title": "Reflections",  # innocuous
         "attendees": [],
         "transcript": "Me: I wanted to talk about that. Inperson: tell me more.",
     }
-    assert classify_meeting(meeting, config) == "therapy"
+    assert classify_meeting(meeting, config) == "sealed"
 
 
-def test_inperson_therapy_by_transcript_full_name(config):
+def test_inperson_sealed_by_transcript_full_name(config):
     meeting = {
         "title": "Session",  # 'session' alone is not a keyword; relies on name scan
         "attendees": [],
-        "transcript": "Notes from my talk with Inperson Therapist today.",
+        "transcript": "Notes from my talk with Inperson Contact today.",
     }
-    assert classify_meeting(meeting, config) == "therapy"
+    assert classify_meeting(meeting, config) == "sealed"
 
 
 # ---------------------------------------------------------------------------
@@ -117,7 +136,7 @@ def test_inperson_therapy_by_transcript_full_name(config):
 # ---------------------------------------------------------------------------
 
 def test_networking_with_external_attendee(config):
-    """A real call with a non-therapist external attendee posts."""
+    """A real call with a non-sealed contact external attendee posts."""
     meeting = {
         "title": "Acme intro",
         "attendees": [
@@ -129,9 +148,9 @@ def test_networking_with_external_attendee(config):
     assert classify_meeting(meeting, config) == "networking"
 
 
-def test_networking_call_mentioning_therapist_first_name_still_networking(config):
+def test_networking_call_mentioning_contact_first_name_still_networking(config):
     """FP guard: when attendees are present, a transcript that happens to mention a
-    therapist first name must NOT override the external-attendee networking signal."""
+    sealed contact first name must NOT override the external-attendee networking signal."""
     meeting = {
         "title": "Acme intro",
         "attendees": [
@@ -148,8 +167,8 @@ def test_networking_call_mentioning_therapist_first_name_still_networking(config
 # ---------------------------------------------------------------------------
 
 def test_nameless_attendeeless_innocuous_title_is_unknown(config):
-    """THE leak case: mis-titled in-person therapy ('Job search reflections and
-    insights', no attendees, no therapist name in transcript) must be unknown,
+    """THE leak case: mis-titled in-person sealed ('Job search reflections and
+    insights', no attendees, no sealed contact name in transcript) must be unknown,
     NOT networking. Unknown never reaches inbox."""
     meeting = {
         "title": "Job search reflections and insights",
@@ -160,7 +179,7 @@ def test_nameless_attendeeless_innocuous_title_is_unknown(config):
 
 
 def test_only_nick_attendee_is_unknown(config):
-    """A solo session where only Nick is an attendee and no therapy signal -> unknown."""
+    """A solo session where only Nick is an attendee and no sealed signal -> unknown."""
     meeting = {
         "title": "Brain dump",
         "attendees": [{"name": "Nick Magnuson", "email": "owner@example.com"}],
@@ -170,7 +189,7 @@ def test_only_nick_attendee_is_unknown(config):
 
 
 def test_networking_title_but_no_attendees_is_unknown(config):
-    """In-person coffee (clear title, but no attendees, no therapy signal) -> fail
+    """In-person coffee (clear title, but no attendees, no sealed signal) -> fail
     closed. Better to flag for manual pull than risk an unattended mis-post."""
     meeting = {
         "title": "Coffee with Acme founder",
@@ -181,8 +200,9 @@ def test_networking_title_but_no_attendees_is_unknown(config):
 
 
 def test_leak_case_fails_safe_even_with_empty_config(tmp_path):
-    """With no config loaded at all, the leak case must STILL be unknown."""
-    empty = load_therapy_classifier_config(tmp_path / "missing.txt")
+    """With an empty config, the leak case must STILL be unknown."""
+    (tmp_path / "empty.txt").write_text("", encoding="utf-8")
+    empty = load_sealed_meetings_config(tmp_path / "empty.txt")
     meeting = {
         "title": "Job search reflections and insights",
         "attendees": [],
@@ -206,4 +226,34 @@ def test_transcript_as_segment_list_is_handled(config):
             {"speaker": "Inperson", "text": "go on."},
         ],
     }
-    assert classify_meeting(meeting, config) == "therapy"
+    assert classify_meeting(meeting, config) == "sealed"
+
+
+# --- config parsing edges (mutation survivors, 2026-11-02) ----------------------------
+
+def test_an_empty_directive_value_is_ignored(tmp_path):
+    """An empty `keyword:` would otherwise add "" as a keyword, and "" is in every title,
+    so every meeting would be sealed."""
+    cfg = tmp_path / ".sealed-meetings.txt"
+    cfg.write_text("keyword:\nattendee:\nname:\n", encoding="utf-8")
+    loaded = load_sealed_meetings_config(cfg)
+    assert loaded == {"attendees": set(), "names": [], "keywords": []}
+    call = {"title": "Coffee", "attendees": [{"name": "Sam Carter", "email": "sam@example.com"}]}
+    assert classify_meeting(call, loaded) == "networking"
+
+
+def test_an_unknown_directive_is_not_read_as_a_keyword(tmp_path):
+    cfg = tmp_path / ".sealed-meetings.txt"
+    cfg.write_text("color: coffee\nkeyword: private session\n", encoding="utf-8")
+    assert load_sealed_meetings_config(cfg)["keywords"] == ["private session"]
+
+
+def test_with_no_config_passed_the_default_file_is_used(tmp_path, monkeypatch):
+    """classify_meeting(meeting) reads the default config; with a keyword there, a titled
+    meeting seals. (A missing default classifies everything unknown, tested above.)"""
+    import meeting_vocab
+    cfg = tmp_path / ".sealed-meetings.txt"
+    cfg.write_text("keyword: private session\n", encoding="utf-8")
+    monkeypatch.setattr(meeting_vocab, "DEFAULT_SEALED_CONFIG", cfg)
+    titled = {"title": "Private session", "attendees": [{"name": "Sam Carter", "email": "sam@example.com"}]}
+    assert classify_meeting(titled) == "sealed"

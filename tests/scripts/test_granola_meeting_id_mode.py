@@ -69,7 +69,7 @@ def _stub_fetch(monkeypatch, *, transcript=SEGMENTS, note=None):
 
 def _stub_configs(monkeypatch, pconfig=None):
     """Neutralize the gitignored allowlists so tests are hermetic."""
-    monkeypatch.setattr(gad, "load_therapy_classifier_config",
+    monkeypatch.setattr(gad, "load_sealed_meetings_config",
                         lambda *a, **k: {"attendees": set(), "names": []})
     monkeypatch.setattr(gad, "load_personal_projects_config",
                         lambda *a, **k: pconfig or {"rules": []})
@@ -292,7 +292,7 @@ CLI_STUBS_OK = (
     "gad.fetch_note_full = lambda mid: {'id': mid, 'title': 'Intro chat',"
     " 'created_at': '2026-08-06T21:34:00Z', 'summary_markdown': 's',"
     " 'attendees': [{'name': 'Robin Placeholder', 'email': 'robin@example.com'}]}\n"
-    "gad.load_therapy_classifier_config = lambda *a, **k: {'attendees': set(), 'names': []}\n"
+    "gad.load_sealed_meetings_config = lambda *a, **k: {'attendees': set(), 'names': []}\n"
     "gad.load_personal_projects_config = lambda *a, **k: {'rules': []}\n"
 )
 

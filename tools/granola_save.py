@@ -9,7 +9,7 @@ one file. This tool writes both as a wiki-linked pair:
   <output>-summary.md  — cloud-generated (Granola AI summary)
 
 Voice classifications:
-  therapy     -> source-of-truth (transcript) | cloud-generated (summary), both sealed
+  sealed     -> source-of-truth (transcript) | cloud-generated (summary), both sealed
   recruiter   -> mixed-voice (transcript)     | cloud-generated (summary), not sealed
   networking  -> mixed-voice (transcript)     | cloud-generated (summary), not sealed
   general     -> not persisted; surface in chat only
@@ -25,14 +25,14 @@ JSON shape (passed via --input file or stdin):
     "transcript": "...",                    // verbatim (Me:/Them: or Speaker A/B)
     "summary": "...",                       // Granola's AI summary, markdown
     "private_notes": "..." (optional),       // Notes Nick typed in Granola (his voice)
-    "type": "therapy" | "recruiter" | "networking" | "general",
-    "session_desc": "...",                  // Free-text label (e.g. therapist name)
+    "type": "sealed" | "recruiter" | "networking" | "general",
+    "session_desc": "...",                  // Free-text label (e.g. sealed contact name)
     "speaker_note": "..." (optional)         // Free-text re: speaker labels
   }
 
 Example:
   echo '{...}' | PYTHONIOENCODING=utf-8 python3 tools/granola_save.py write \\
-    --output <personal-vault>/data/therapy/2026-01-01-private-session-transcript.md
+    --output <personal-vault>/<sealed folder>/2026-01-01-private-session-transcript.md
   # Writes both -transcript.md AND -transcript-summary.md, with wiki-links between them.
 """
 import json
@@ -44,7 +44,7 @@ from meeting_vocab import split_transcript_turns  # noqa: E402
 from md_table import JsonArgumentParser, write_atomic  # noqa: E402
 
 
-SEALED_HEADER_THERAPY = """> **SEALED.** This is sensitive personal therapy material. Per `<personal-vault>/CLAUDE.md`, contents of `personal/data/therapy/` never appear in CVs, cover letters, recruiter prep, voice exports, networking notes, or any external-facing artifact. The verbatim transcript is preserved here as source-of-truth; do not paraphrase or excerpt outside this folder."""
+SEALED_HEADER_SESSION = """> **SEALED.** This is sensitive personal material. Per `<personal-vault>/CLAUDE.md`, contents of this sealed folder never appear in CVs, cover letters, recruiter prep, voice exports, networking notes, or any external-facing artifact. The verbatim transcript is preserved here as source-of-truth; do not paraphrase or excerpt outside this folder."""
 
 RECRUITER_HEADER = """> **Voice classification:** mixed-voice (Nick + counterpart, verbatim Granola transcript). Per `framework/two-tier-capture.md`. Synthesized debriefs live in `coaching/progress-recruiter/`; this file is the raw tier."""
 
@@ -53,21 +53,21 @@ NETWORKING_HEADER = """> **Voice classification:** mixed-voice (Nick + counterpa
 GENERAL_HEADER = """> **Voice classification:** Granola-captured meeting transcript. Per `framework/two-tier-capture.md`."""
 
 TRANSCRIPT_HEADERS = {
-    "therapy": SEALED_HEADER_THERAPY,
+    "sealed": SEALED_HEADER_SESSION,
     "recruiter": RECRUITER_HEADER,
     "networking": NETWORKING_HEADER,
     "general": GENERAL_HEADER,
 }
 
 TRANSCRIPT_VOICE = {
-    "therapy": "source-of-truth",
+    "sealed": "source-of-truth",
     "recruiter": "mixed-voice",
     "networking": "mixed-voice",
     "general": "mixed-voice",
 }
 
 SEALED_FLAG = {
-    "therapy": "true",
+    "sealed": "true",
     "recruiter": "false",
     "networking": "false",
     "general": "false",
@@ -135,11 +135,11 @@ def transcript_body(data: dict, summary_basename: str) -> str:
 
 def summary_body(data: dict, transcript_basename: str) -> str:
     type_ = data.get("type", "general")
-    if type_ == "therapy":
+    if type_ == "sealed":
         boundary = (
-            "> **SEALED.** This is sensitive personal therapy material. Per "
+            "> **SEALED.** This is sensitive personal material. Per "
             "`<personal-vault>/CLAUDE.md`, contents of "
-            "`personal/data/therapy/` never appear in CVs, cover letters, recruiter prep, "
+            "this sealed folder never appear in CVs, cover letters, recruiter prep, "
             "voice exports, networking notes, or any external-facing artifact."
         )
     else:

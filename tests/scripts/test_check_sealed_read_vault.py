@@ -1,10 +1,12 @@
-"""Tests for the therapy-vault extension of check_sealed_read.py (2026-10-27).
+"""Tests for the personal-vault branch of check_sealed_read.py (added 2026-10-27).
 
-`personal/data/therapy/` sits in the sibling personal repo and is labeled SEALED there
-("same rule as job-search/data/project-background", personal/CLAUDE.md). A job-search
-session must not read it. Nick approved the guard on 2026-10-27: "definitely fix the block
-of reading the personal therapy files". The repo root is injected via SEAL_REPO_ROOT, so
-the sibling is `<tmp>/../personal/data/therapy` and no real file is touched.
+A sealed folder in the sibling personal repo is labeled SEALED there, under the same rule as
+job-search's own sealed tree, and a job-search session must not read it. Which folder is
+sealed is itself private, so the guard reads it from the gitignored
+tools/.sealed-folders.conf (tools/vault_paths.py, 2026-11-01). These tests write that file
+under a tmp repo root (SEAL_REPO_ROOT) naming the fictional folder data/sessions, so no real
+file is touched. With no config the guard fails closed: everything under the vault's data/
+counts as sealed (the tests at the end).
 """
 import json
 import os
@@ -26,61 +28,64 @@ def _run(root, tool, tool_input, env_extra=None):
     return r.returncode, r.stderr
 
 
-def _layout(tmp_path):
+def _layout(tmp_path, configured=True):
     root = tmp_path / "job-search"
-    therapy = tmp_path / "personal" / "data" / "therapy"
-    therapy.mkdir(parents=True)
-    (therapy / "2026-01-01-session.md").write_text("x")
+    vault = tmp_path / "personal" / "data" / "sessions"
+    vault.mkdir(parents=True)
+    (vault / "2026-01-01-session.md").write_text("x")
     (root / "data" / "workbooks").mkdir(parents=True)
-    return root, therapy
+    (root / "tools").mkdir()
+    if configured:
+        (root / "tools" / ".sealed-folders.conf").write_text("# sealed\ndata/sessions\n")
+    return root, vault
 
 
 # --- should BLOCK (exit 2) --------------------------------------------------
 
-def test_blocks_read_of_therapy_file(tmp_path):
-    root, therapy = _layout(tmp_path)
-    code, err = _run(root, "Read", {"file_path": str(therapy / "2026-01-01-session.md")})
+def test_blocks_read_of_sealed_file(tmp_path):
+    root, vault = _layout(tmp_path)
+    code, err = _run(root, "Read", {"file_path": str(vault / "2026-01-01-session.md")})
     assert code == 2
-    assert "therapy" in err
+    assert "sealed" in err
 
 
-def test_blocks_grep_into_therapy_dir(tmp_path):
-    root, therapy = _layout(tmp_path)
-    code, _ = _run(root, "Grep", {"pattern": "x", "path": str(therapy)})
-    assert code == 2
-
-
-def test_blocks_glob_into_therapy_dir(tmp_path):
-    root, therapy = _layout(tmp_path)
-    code, _ = _run(root, "Glob", {"pattern": "*.md", "path": str(therapy)})
+def test_blocks_grep_into_vault_dir(tmp_path):
+    root, vault = _layout(tmp_path)
+    code, _ = _run(root, "Grep", {"pattern": "x", "path": str(vault)})
     assert code == 2
 
 
-def test_blocks_bash_cat_of_therapy_path(tmp_path):
+def test_blocks_glob_into_vault_dir(tmp_path):
+    root, vault = _layout(tmp_path)
+    code, _ = _run(root, "Glob", {"pattern": "*.md", "path": str(vault)})
+    assert code == 2
+
+
+def test_blocks_bash_cat_of_a_vault_path(tmp_path):
     root, _ = _layout(tmp_path)
-    code, _ = _run(root, "Bash", {"command": "cat ../personal/data/therapy/2026-01-01-session.md"})
+    code, _ = _run(root, "Bash", {"command": "cat ../personal/data/sessions/2026-01-01-session.md"})
     assert code == 2
 
 
 def test_blocks_bash_cd_then_relative_read(tmp_path):
     root, _ = _layout(tmp_path)
-    code, _ = _run(root, "Bash", {"command": "cd ../personal/data && cat therapy/2026-01-01-session.md"})
+    code, _ = _run(root, "Bash", {"command": "cd ../personal/data && cat sessions/2026-01-01-session.md"})
     assert code == 2
 
 
-def test_blocks_symlink_into_therapy(tmp_path):
-    root, therapy = _layout(tmp_path)
+def test_blocks_symlink_into_the_vault(tmp_path):
+    root, vault = _layout(tmp_path)
     link = root / "data" / "link-to-notes"
-    link.symlink_to(therapy)
+    link.symlink_to(vault)
     code, _ = _run(root, "Read", {"file_path": str(link / "2026-01-01-session.md")})
     assert code == 2
 
 
 # --- should ALLOW (exit 0) --------------------------------------------------
 
-def test_allows_job_search_file_with_therapy_in_its_name(tmp_path):
+def test_allows_job_search_file_with_the_folder_name_in_its_name(tmp_path):
     root, _ = _layout(tmp_path)
-    code, _ = _run(root, "Read", {"file_path": str(root / "data" / "workbooks" / "notes-on-therapy-topics.md")})
+    code, _ = _run(root, "Read", {"file_path": str(root / "data" / "workbooks" / "notes-on-sessions-topics.md")})
     assert code == 0
 
 
@@ -92,7 +97,7 @@ def test_allows_other_personal_data_file(tmp_path):
 
 def test_allows_grep_for_the_word_in_one_named_file(tmp_path):
     root, _ = _layout(tmp_path)
-    code, _ = _run(root, "Bash", {"command": "grep -c therapy data/workbooks/notes.md"})
+    code, _ = _run(root, "Bash", {"command": "grep -c sessions data/workbooks/notes.md"})
     assert code == 0
 
 
@@ -100,36 +105,36 @@ def test_allows_the_bare_word_as_a_recursive_grep_pattern(tmp_path):
     # In command text the name counts only when path-shaped: it is an ordinary English
     # word, and a replay over 282 real transcripts found about a dozen bare-word blocks.
     root, _ = _layout(tmp_path)
-    code, _ = _run(root, "Bash", {"command": 'grep -ri "therapy" data/'})
+    code, _ = _run(root, "Bash", {"command": 'grep -ri "sessions" data/'})
     assert code == 0
 
 
 def test_allows_the_word_inside_sed_replacement_text(tmp_path):
     # A title scrub, the shape a real replay used. Known limitation:
-    # with `/` as the sed delimiter right after the word (`s/... therapy/.../`), the word
+    # with `/` as the sed delimiter right after the word (`s/... sessions/.../`), the word
     # looks path-shaped and blocks; use another delimiter such as `|`.
     root, _ = _layout(tmp_path)
-    code, _ = _run(root, "Bash", {"command": "sed -i '' 's/\"title\": \"Acme therapy group\",/\"title\": \"Weekly\",/' tools/x.py"})
+    code, _ = _run(root, "Bash", {"command": "sed -i '' 's/\"title\": \"Acme sessions group\",/\"title\": \"Weekly\",/' tools/x.py"})
     assert code == 0
 
 
 def test_blocks_listing_the_vault_directory(tmp_path):
     root, _ = _layout(tmp_path)
-    code, _ = _run(root, "Bash", {"command": f"ls {tmp_path}/personal/data/therapy/"})
+    code, _ = _run(root, "Bash", {"command": f"ls {tmp_path}/personal/data/sessions/"})
     assert code == 2
 
 
 def test_allows_the_word_in_echoed_prose(tmp_path):
     root, _ = _layout(tmp_path)
-    code, _ = _run(root, "Bash", {"command": 'echo "therapy themes are personal"'})
+    code, _ = _run(root, "Bash", {"command": 'echo "sessions themes are personal"'})
     assert code == 0
 
 
 def test_override_allows_intentional_read(tmp_path):
     # Paired with the same read unoverridden, so this fails if the vault branch goes:
     # alone, an exit 0 here would also hold for a guard that never knew the vault.
-    root, therapy = _layout(tmp_path)
-    target = {"file_path": str(therapy / "2026-01-01-session.md")}
+    root, vault = _layout(tmp_path)
+    target = {"file_path": str(vault / "2026-01-01-session.md")}
     assert _run(root, "Read", target)[0] == 2
     assert _run(root, "Read", target, env_extra={"SEAL_READ_OK": "1"})[0] == 0
 
@@ -155,7 +160,7 @@ def test_blocks_bash_recursion_through_a_parent(tmp_path):
     for cmd in ("grep -r x ../personal/data",
                 "find ../personal/data -type f -maxdepth 3",
                 "ls -R ../personal/data",
-                "grep -r therapy/ ../personal",
+                "grep -r sessions/ ../personal",
                 "rg x ../personal/",
                 f"grep -rn x {tmp_path}/personal/data"):
         assert _run(root, "Bash", {"command": cmd})[0] == 2, cmd
@@ -163,8 +168,8 @@ def test_blocks_bash_recursion_through_a_parent(tmp_path):
 
 def test_blocks_cd_into_a_parent_then_a_bare_name(tmp_path):
     root, _ = _layout(tmp_path)
-    for cmd in ("cd ../personal/data && ls therapy",
-                "cd ../personal/data && grep -r x therapy",
+    for cmd in ("cd ../personal/data && ls sessions",
+                "cd ../personal/data && grep -r x sessions",
                 f"cd {tmp_path}/personal && grep -r x data"):
         assert _run(root, "Bash", {"command": cmd})[0] == 2, cmd
 
@@ -172,7 +177,6 @@ def test_blocks_cd_into_a_parent_then_a_bare_name(tmp_path):
 def test_blocks_a_parent_reached_after_cd_to_its_own_parent(tmp_path):
     # Grok round 2 F1: words resolve against every directory the call cds to.
     root, _ = _layout(tmp_path)
-    (root / "tools").mkdir()
     for cmd in ("cd .. && grep -r x personal/data",
                 "cd .. && ls -R personal",
                 "cd .. && find personal/data -type f",
@@ -275,8 +279,8 @@ def test_personal_repo_work_passes_but_a_walk_of_its_root_blocks(tmp_path):
                 "cd -P -- ../personal && grep -r x .",
                 "fd secret ../personal",
                 "ls -R ../personal",
-                "cd ../personal/data && ls therapy",
-                "cd ../personal && cat data/therapy/a.md"):
+                "cd ../personal/data && ls sessions",
+                "cd ../personal && cat data/sessions/a.md"):
         assert _run(root, "Bash", {"command": cmd})[0] == 2, cmd
 
 
@@ -303,7 +307,7 @@ def test_an_assignment_only_command_does_not_end_the_check(tmp_path):
     # A command with no command word (`X=1`) must be judged, not crash the hook: a crash
     # exits as "allow" for the whole call, so the read after it would pass.
     root, _ = _layout(tmp_path)
-    assert _run(root, "Bash", {"command": "X=1; cat ../personal/data/therapy/a.md"})[0] == 2
+    assert _run(root, "Bash", {"command": "X=1; cat ../personal/data/sessions/a.md"})[0] == 2
     assert _run(root, "Bash", {"command": "X=1; grep -r x ../personal"})[0] == 2
     assert _run(root, "Bash", {"command": "X=1; echo ok"})[0] == 0
 
@@ -312,7 +316,7 @@ def test_a_cd_reached_in_two_steps_is_tracked(tmp_path):
     # Neither word spells a parent the regex knows; only the cd tracking sees that the
     # second cd lands in personal/data, so the bare vault name then resolves into it.
     root, _ = _layout(tmp_path)
-    assert _run(root, "Bash", {"command": "cd ../personal && cd data && ls therapy"})[0] == 2
+    assert _run(root, "Bash", {"command": "cd ../personal && cd data && ls sessions"})[0] == 2
     assert _run(root, "Bash", {"command": "cd ../personal && cd data && ls"})[0] == 0
 
 
@@ -362,3 +366,87 @@ def test_shell_wrapper_script_is_the_word_after_the_c_cluster():
     assert S("bash --login -o errexit -c 'ls x'") == ["ls x"]
     assert S("bash -c") == [] and S("bash script.sh") == [] and S("python3 -c 'x'") == []
     assert S("eval ls -R x") == ["ls -R x"] and S("eval") == []
+
+
+# --- no config: fail closed (2026-11-01) -------------------------------------
+# Without tools/.sealed-folders.conf the guard cannot tell which vault folder is sealed,
+# so every folder under the vault's data/ counts as sealed. Each test pairs the read with
+# the same read under a config, so it fails if the fail-closed branch is removed.
+
+def test_without_config_any_file_under_the_vault_data_blocks(tmp_path):
+    root, _ = _layout(tmp_path, configured=False)
+    beside = {"file_path": str(tmp_path / "personal" / "data" / "practice-log.md")}
+    assert _run(root, "Read", beside)[0] == 2
+    root2, _ = _layout(tmp_path / "b")
+    beside2 = {"file_path": str(tmp_path / "b" / "personal" / "data" / "practice-log.md")}
+    assert _run(root2, "Read", beside2)[0] == 0
+
+
+def test_without_config_bash_reads_under_the_vault_data_block(tmp_path):
+    root, _ = _layout(tmp_path, configured=False)
+    for cmd in ("cat ../personal/data/practice-log.md",
+                "cat ../personal/data/other/notes.md",
+                "cd ../personal && cat data/practice-log.md"):
+        assert _run(root, "Bash", {"command": cmd})[0] == 2, cmd
+    root2, _ = _layout(tmp_path / "b")
+    assert _run(root2, "Bash", {"command": "cat ../personal/data/practice-log.md"})[0] == 0
+
+
+def test_without_config_the_personal_root_outside_data_still_passes(tmp_path):
+    root, _ = _layout(tmp_path, configured=False)
+    for cmd in ("cat ../personal/CLAUDE.md", "ls ../personal/output/house-project"):
+        assert _run(root, "Bash", {"command": cmd})[0] == 0, cmd
+
+
+def test_a_malformed_config_fails_closed(tmp_path):
+    root, _ = _layout(tmp_path)
+    (root / "tools" / ".sealed-folders.conf").write_text("../outside\n")
+    beside = {"file_path": str(tmp_path / "personal" / "data" / "practice-log.md")}
+    assert _run(root, "Read", beside)[0] == 2
+
+
+def test_a_second_configured_folder_is_sealed_too(tmp_path):
+    root, _ = _layout(tmp_path)
+    (root / "tools" / ".sealed-folders.conf").write_text("data/sessions\ndata/other\n")
+    other = tmp_path / "personal" / "data" / "other"
+    other.mkdir()
+    assert _run(root, "Read", {"file_path": str(other / "a.md")})[0] == 2
+    assert _run(root, "Bash", {"command": "cat ../personal/data/other/a.md"})[0] == 2
+    assert _run(root, "Bash", {"command": "cat ../personal/data/practice-log.md"})[0] == 0
+
+
+# --- the folder named inside text the path checks cannot resolve (mutation survivors,
+# 2026-11-02). The old guard spelled the name in one regex literal, which had no mutation
+# points; built from config, each alternative must be needed by a test.
+
+_IN_TEXT = [
+    "python3 -c \"print(open('../personal/data/sessions/a.md').read())\"",
+    "python3 - <<'PY'\nprint(open('../personal/data/sessions/a.md').read())\nPY",
+    'D=../personal/data/sessions; cat "$D/a.md"',
+    "grep -r x sessions/",
+    "xargs cat <<< ../personal/data/sessions/a.md",
+    "python3 -c \"import os; print(os.listdir('../personal/data/sessions'))\"",
+]
+
+
+def test_a_configured_folder_named_inside_code_or_a_variable_blocks(tmp_path):
+    root, _ = _layout(tmp_path)
+    for cmd in _IN_TEXT:
+        assert _run(root, "Bash", {"command": cmd})[0] == 2, cmd
+
+
+def test_without_config_a_vault_file_named_inside_code_blocks(tmp_path):
+    root, _ = _layout(tmp_path, configured=False)
+    for cmd in ("python3 -c \"print(open('../personal/data/practice-log.md').read())\"",
+                "python3 - <<'PY'\nprint(open('../personal/data/practice-log.md').read())\nPY"):
+        assert _run(root, "Bash", {"command": cmd})[0] == 2, cmd
+    root2, _ = _layout(tmp_path / "b")
+    assert _run(root2, "Bash", {"command": "python3 -c \"print(open('../personal/data/practice-log.md').read())\""})[0] == 0
+
+
+def test_a_top_level_sealed_folder_does_not_seal_the_same_name_elsewhere(tmp_path):
+    root, _ = _layout(tmp_path)
+    (root / "tools" / ".sealed-folders.conf").write_text("sessions\n")
+    (tmp_path / "personal" / "sessions").mkdir()
+    assert _run(root, "Bash", {"command": "cat ../personal/sessions/a.md"})[0] == 2
+    assert _run(root, "Bash", {"command": "python3 -c \"print(open('../other/sessions').read())\""})[0] == 0

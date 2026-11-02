@@ -89,7 +89,7 @@ Required in the prompt:
 - A person's name not spoken on stream is followed by `(from the agenda)` in the same sentence.
 - Discount rules for the `stream_type` (vendor_demo: unscripted failures and conceded gaps weigh more than scripted wins; metrics are self-reported; a pre-made example is not live output).
 - Sections: 1 Verdict; 2 What the stream was (segments with times); 3 Evidence discount; 4 Capability shown vs claimed (table); 5 Systems insights (target file or skill, effort, confidence tag); 6 Search and wisdom insights (confidence tag); 7 Where it does NOT fit (non-empty); 8 Next actions or "nothing to build"; 9 Coverage note.
-- Confidence tags `(strong)`, `(lean)`, `(unsure)` on every item in 5 and 6. No em dashes. Plain literal language. No compensation, family, health, or therapy content. No inferred role titles for Nick.
+- Confidence tags `(strong)`, `(lean)`, `(unsure)` on every item in 5 and 6. No em dashes. Plain literal language. No compensation, family, or other private personal content. No inferred role titles for Nick.
 - Output path: `output/analysis/MMDDYY-<slug>.md`, with `Last updated:` header.
 
 Then run:

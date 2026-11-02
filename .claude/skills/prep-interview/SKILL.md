@@ -475,11 +475,11 @@ After all 3 agents return, compile their outputs into a single document. Do not 
 **Staging gates:** If the interview type is `recruiter`, add explicit staging labels throughout:
 - Mark any content that references personal experience, deeper disclosure, or operational insights with `[HM-STAGE ONLY]` or move to a separate "If You Advance" section at the bottom.
 - When the company's mission touches a personal topic, recruiter-stage answer frameworks should use the most guarded framing of personal motivation (e.g., "X is personal to me" not "going through X myself").
-- If the company works in a sensitive field such as healthcare, recruiters can infer personal details from specific language. Heighten disclosure awareness in anti-patterns.
+- If the company works in a sensitive field, recruiters can infer personal details from specific language. Heighten disclosure awareness in anti-patterns.
 
-**Self-reported metrics:** When citing company-reported outcomes (readmission rates, NPS, adherence, cost savings) in answer frameworks or company context, qualify with "they report" or "self-reported." Presenting unverified metrics as fact undermines credibility with knowledgeable interviewers.
+**Self-reported metrics:** When citing company-reported outcomes (retention, NPS, cost savings) in answer frameworks or company context, qualify with "they report" or "self-reported." Presenting unverified metrics as fact undermines credibility with knowledgeable interviewers.
 
-**Cross-reference reduction:** If existing research briefs (SMI brief, industry dossier, comparison briefs) cover a topic in depth, cross-reference them in the prep doc rather than reproducing the content. The prep doc should be a quick-scan interview tool, not a second copy of the research.
+**Cross-reference reduction:** If existing research briefs (sector brief, industry dossier, comparison briefs) cover a topic in depth, cross-reference them in the prep doc rather than reproducing the content. The prep doc should be a quick-scan interview tool, not a second copy of the research.
 
 **Time-boxed compression (F2):** A usable doc beats a comprehensive one. Compute a realistic item budget for the call length (30 min is roughly 2-3 deep stories + 3-4 questions). Put the non-negotiable few at the top (carry-these, the Deep-N stories, the decision-aligned question shortlist); move everything else under an explicit "Depth Bank (only if the conversation goes there)." Tag each kept item with the decision it serves and its job (carry / screen / answer per F1). When in doubt, cut; do not defend volume.
 

@@ -17,8 +17,8 @@ Subcommands:
       Persists via granola_save.py (idempotent, --no-overwrite).
       Stdout: title, AI summary (first ~600 chars), file paths.
       The full transcript is NOT printed to stdout — it lives on disk.
-      Type is auto-classified from title (therapy keywords → therapy, else networking).
-      Override with --type {therapy,recruiter,networking,general}.
+      Type is auto-classified from title (sealed keywords → sealed, else networking).
+      Override with --type {sealed,recruiter,networking,general}.
 
   info <ref>
       Print just the AI summary + metadata. No transcript fetch, no persist.
@@ -33,7 +33,7 @@ CLI:
   python3 tools/granola_cli.py info <id>
 
 Exit codes:
-  0 ok, 1 error, 2 unclassifiable meeting (re-run with --type therapy|networking)
+  0 ok, 1 error, 2 unclassifiable meeting (re-run with --type sealed|networking)
 
 State:
   tools/.cache/granola_last_list.json — caches last list output so position-based
@@ -67,7 +67,7 @@ from tools.granola_fetch import (  # noqa: E402
 from tools.meeting_vocab import (  # noqa: E402
     _speaker_label,
     classify_meeting,
-    load_therapy_classifier_config,
+    load_sealed_meetings_config,
 )
 from tools.granola_auto_debrief import (  # noqa: E402
     persist_via_granola_save,
@@ -200,7 +200,7 @@ def cmd_pull(args) -> int:
     }
 
     # Classify (override allowed). Falls back to fail-closed 'unknown'.
-    config = load_therapy_classifier_config()
+    config = load_sealed_meetings_config()
     type_ = args.type or classify_meeting(meeting, config)
 
     if args.no_persist:
@@ -219,8 +219,8 @@ def cmd_pull(args) -> int:
 
     # Fail closed in the manual path too: an unclassifiable meeting needs an explicit type.
     if type_ == "unknown":
-        print(f"Could not classify '{title}' (no attendees, no therapy signal).", file=sys.stderr)
-        print("Re-run with --type therapy|networking to persist.", file=sys.stderr)
+        print(f"Could not classify '{title}' (no attendees, no sealed signal).", file=sys.stderr)
+        print("Re-run with --type sealed|networking to persist.", file=sys.stderr)
         return 2
 
     # Persist via granola_save.py (type already resolved — passed explicitly).
@@ -250,7 +250,7 @@ def cmd_pull(args) -> int:
     else:
         print("_(no summary returned by REST API)_")
     print()
-    print(f"_Note: private_notes are NOT exposed via REST. For therapy/high-stakes calls where_")
+    print(f"_Note: private_notes are NOT exposed via REST. For sealed/high-stakes calls where_")
     print(f"_Nick typed notes in Granola, fall back to MCP `get_meetings` to backfill._")
     return 0
 
@@ -287,7 +287,7 @@ def main() -> int:
 
     p_pull = sub.add_parser("pull", help="Fetch + persist a meeting; compact summary to stdout, full content to disk")
     p_pull.add_argument("ref", help="REST ID (not_*) OR list position number from a recent `list` call")
-    p_pull.add_argument("--type", choices=["therapy", "recruiter", "networking", "general"], default=None,
+    p_pull.add_argument("--type", choices=["sealed", "recruiter", "networking", "general"], default=None,
                         help="Override auto-classification (default: title-based)")
     p_pull.add_argument("--no-persist", action="store_true", help="Print summary; don't write files")
 

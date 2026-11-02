@@ -194,7 +194,7 @@ Origin: an external personal-OS system's `/eod` cascade (E3, build queue 2026-05
    ```
    Parse the JSON array (each entry has `id`, `title`, `created_at`, `local_time`).
 
-2. **Exclude private meetings silently.** A meeting whose title matches the private-meeting keyword list in `tools/granola_auto_debrief.py` (`THERAPY_TITLE_KEYWORDS`) is sealed personal context. Drop it from the cascade without listing it. Do not name it, count it, or hint at it in the checkout summary.
+2. **Exclude private meetings silently.** A meeting whose title matches a sealed-meeting keyword (the `keyword:` lines of the gitignored `tools/.sealed-meetings.txt`, read by `tools/meeting_vocab.py`) is sealed personal context. Drop it from the cascade without listing it. Do not name it, count it, or hint at it in the checkout summary.
 
 3. **Cross-reference each remaining meeting against existing debrief artifacts.** A meeting is "debriefed" if either:
    - a debrief file exists in `coaching/progress/` whose date matches the meeting's local date AND whose filename slug fuzzy-matches the meeting title (e.g. "recruiter screen" matches `2026-06-01-recruiter-acme.md`), OR

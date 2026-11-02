@@ -140,8 +140,13 @@ tools/.owner-identity.txt
 # Private backup target (names the private remote + overlay git-dir; never public)
 tools/.private-backup.conf
 
-# Therapist allowlist for granola classification (real names/emails; never commit)
-tools/.therapy-classifier.txt
+# Sealed-meeting config for granola classification (real names/emails/keywords; never commit).
+# The second line keeps the file's earlier name ignored until it is renamed on disk.
+tools/.sealed-meetings.txt
+tools/.*-classifier.txt
+# Which personal-vault folders are sealed, and the private calendar hosts (2026-11-01)
+tools/.sealed-folders.conf
+tools/.private-calendar-domains.txt
 tools/.personal-projects.txt
 tools/.personal-vault.conf
 tools/.granola-pending-classification.json

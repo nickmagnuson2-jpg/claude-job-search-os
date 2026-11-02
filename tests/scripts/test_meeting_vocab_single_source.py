@@ -20,11 +20,11 @@ sys.path.insert(0, str(TOOLS))
 
 OWNED = {
     "classify_meeting",
-    "load_therapy_classifier_config",
+    "load_sealed_meetings_config",
     "load_personal_projects_config",
     "match_personal_project",
-    "_attendee_is_therapist",
-    "_transcript_names_therapist",
+    "_attendee_is_sealed_contact",
+    "_transcript_names_sealed_contact",
     "_is_nick",
 }
 
