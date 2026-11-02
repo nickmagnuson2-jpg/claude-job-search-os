@@ -302,15 +302,21 @@ def test_the_clean_run_does_not_announce_zero_failures_as_a_finding(tmp_path):
     ("| category | tools | mutants | survivors | survival |", "|---|---|---|---|---|"),
     ("| # | tool | cat | mutants | survivors | survival | tests | mins |",
      "|---|---|---|---|---|---|---|---|"),
-    ("| tool | killed | weak (crash-only) | share |", "|---|---|---|"),
+    ("| tool | killed | weak (crash-only) | share |", "|---|---|---|---|"),
 ])
 def test_every_table_keeps_its_header_and_separator(tmp_path, header, separator):
     d = state(tmp_path, [target("tools/a.py", w=True)],
               [result("tools/a.py", survived=3, killed=7, weak=2, w=True)])
     body = load().build(d)
     assert header in body
-    assert separator in body.split(header)[1].splitlines()[1], \
+    assert body.split(header)[1].splitlines()[1] == separator, \
         "the separator row must directly follow its header or the table stops rendering"
+
+
+def test_table_writes_a_header_and_a_separator_of_the_same_width():
+    out = []
+    load()._table(out.append, "tool", "killed", "share")
+    assert out == ["| tool | killed | share |", "|---|---|---|"]
 
 
 def test_the_weak_kill_definition_travels_with_the_weak_kill_table(tmp_path):

@@ -198,7 +198,7 @@ Checks the message history, determines where you are in the sequence (first thro
 /networking promote "Jordan Kim"
 ```
 
-Logging an interaction with reply-signal keywords automatically updates the outreach log from "Sent" to "Replied." When a contact becomes an active relationship, promote them to a per-person dossier (`data/people/<slug>.md`) that tracks where the relationship stands, what each of you committed to, and the next move. This is the judgment layer, distinct from the raw interaction log. Adding a contact also guards against duplicates: a spelling variant of someone already in your roster is blocked with the likely match surfaced, so the same person doesn't fork into two records.
+Every logged interaction states who reached whom (in, out, both or none). Logging one where the contact reached you (in, or both) sets the contact's newest open outreach-log row (Drafted or Sent) to "Replied"; the wording of the note is never read for this. When a contact becomes an active relationship, promote them to a per-person dossier (`data/people/<slug>.md`) that tracks where the relationship stands, what each of you committed to, and the next move. This is the judgment layer, distinct from the raw interaction log. Adding a contact also guards against duplicates: a spelling variant of someone already in your roster is blocked with the likely match surfaced, so the same person doesn't fork into two records.
 
 > **You should see:** the handful of relationships actually driving your search getting a dedicated, synthesized record, while the long tail stays in the lightweight roster. The dossier is read by `/follow-up`, `/cold-outreach`, `/draft-email`, and `/prep-interview` whenever that person is involved.
 

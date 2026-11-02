@@ -154,7 +154,7 @@ def test_log_appends_entry(tmp_path):
     write_fixture(tmp_path, "data/networking.md", NETWORKING_WITH_CONTACT)
     result, code = run_nw_write(
         "--repo-root", str(tmp_path),
-        "log", "Jane Doe",
+        "log", "Jane Doe", "--direction", "none",
         "--date", "2026-02-01",
         "--type", "email",
         "--summary", "Replied to coffee invite",
@@ -171,7 +171,7 @@ def test_log_newest_entry_at_top(tmp_path):
     write_fixture(tmp_path, "data/networking.md", NETWORKING_WITH_LOG)
     run_nw_write(
         "--repo-root", str(tmp_path),
-        "log", "Jane Doe",
+        "log", "Jane Doe", "--direction", "none",
         "--date", "2026-02-20",
         "--type", "coffee",
         "--summary", "Had coffee",
@@ -187,7 +187,7 @@ def test_log_updates_last_interaction_date(tmp_path):
     write_fixture(tmp_path, "data/networking.md", NETWORKING_WITH_CONTACT)
     run_nw_write(
         "--repo-root", str(tmp_path),
-        "log", "Jane Doe",
+        "log", "Jane Doe", "--direction", "none",
         "--date", "2026-03-01",
         "--type", "call",
         "--summary", "Quick catch-up",
@@ -204,7 +204,7 @@ def test_log_with_content_uses_blockquote(tmp_path):
     write_fixture(tmp_path, "data/networking.md", NETWORKING_WITH_CONTACT)
     run_nw_write(
         "--repo-root", str(tmp_path),
-        "log", "Jane Doe",
+        "log", "Jane Doe", "--direction", "none",
         "--date", "2026-02-10",
         "--type", "email",
         "--summary", "Cold outreach",
@@ -219,7 +219,7 @@ def test_log_with_followup_line(tmp_path):
     write_fixture(tmp_path, "data/networking.md", NETWORKING_WITH_CONTACT)
     run_nw_write(
         "--repo-root", str(tmp_path),
-        "log", "Jane Doe",
+        "log", "Jane Doe", "--direction", "none",
         "--date", "2026-02-10",
         "--type", "linkedin",
         "--summary", "Connected",
@@ -234,7 +234,7 @@ def test_log_unknown_contact_returns_error(tmp_path):
     write_fixture(tmp_path, "data/networking.md", NETWORKING_EMPTY)
     result, code = run_nw_write(
         "--repo-root", str(tmp_path),
-        "log", "Ghost Person",
+        "log", "Ghost Person", "--direction", "none",
         "--date", "2026-02-01",
         "--type", "call",
         "--summary", "Phantom call",
@@ -334,68 +334,112 @@ def _setup_outreach(tmp_path):
     write_fixture(tmp_path, "data/outreach-log.md", OUTREACH_LOG_SENT)
 
 
-def test_outbound_reply_does_not_flip_outreach_log(tmp_path):
-    """Logging Nick's OWN reply ('Replied to ...') must NOT flip the row to Replied."""
+def _run_raw(*args):
+    """For argparse failures: stdout is empty, so run_nw_write's json.loads cannot run."""
+    return subprocess.run(
+        [sys.executable, str(TOOLS_DIR / "networking_write.py"), *[str(a) for a in args]],
+        capture_output=True, text=True, encoding="utf-8",
+        env={**os.environ, "PYTHONIOENCODING": "utf-8"}, cwd=str(REPO_ROOT))
+
+
+def _log(tmp_path, direction, kind="email", summary="Heard back from Jane"):
+    return run_nw_write(
+        "--repo-root", str(tmp_path), "log", "Jane Doe", "--date", "2026-06-19",
+        "--type", kind, "--summary", summary, "--direction", direction, "--no-todo")
+
+
+def _header(tmp_path):
+    text = (tmp_path / "data/networking.md").read_text(encoding="utf-8")
+    return [line for line in text.splitlines() if line.startswith("#### ")]
+
+
+def test_log_without_direction_is_refused_and_writes_nothing(tmp_path):
+    """Nick, 2026-10-30: the direction is required, never guessed from the summary."""
+    _setup_outreach(tmp_path)
+    before = (tmp_path / "data/networking.md").read_text(encoding="utf-8")
+    r = _run_raw("--repo-root", tmp_path, "log", "Jane Doe", "--date", "2026-06-19",
+                 "--type", "email", "--summary", "Heard back from Jane", "--no-todo")
+    assert r.returncode != 0
+    assert "--direction" in r.stderr
+    assert (tmp_path / "data/networking.md").read_text(encoding="utf-8") == before
+    assert "| Sent |" in (tmp_path / "data/outreach-log.md").read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("flag", ["--reply-received", "--no-reply-flip"])
+def test_the_old_override_flags_are_gone(tmp_path, flag):
+    _setup_outreach(tmp_path)
+    r = _run_raw("--repo-root", tmp_path, "log", "Jane Doe", "--summary", "hi",
+                 "--direction", "none", "--no-todo", flag)
+    assert r.returncode != 0 and "unrecognized arguments" in r.stderr
+
+
+def test_an_unknown_direction_is_refused(tmp_path):
+    _setup_outreach(tmp_path)
+    r = _run_raw("--repo-root", tmp_path, "log", "Jane Doe", "--summary", "hi",
+                 "--direction", "inbound", "--no-todo")
+    assert r.returncode != 0 and "invalid choice" in r.stderr
+
+
+def test_direction_in_marks_the_type_and_flips_the_outreach_log(tmp_path):
+    _setup_outreach(tmp_path)
+    result, code = _log(tmp_path, "in", summary="Asked for a resume")
+    assert code == 0 and result["outreach_log_updated"] is True
+    assert _header(tmp_path) == ["#### 2026-06-19 | email (inbound) | Asked for a resume"]
+    assert "| Replied |" in (tmp_path / "data/outreach-log.md").read_text(encoding="utf-8")
+
+
+def test_direction_out_marks_the_type_and_never_flips(tmp_path):
+    """Even a summary that reads like a reply: the caller said it went out."""
+    _setup_outreach(tmp_path)
+    result, code = _log(tmp_path, "out", summary="Heard back from Jane, replied with times")
+    assert code == 0 and result["outreach_log_updated"] is False
+    assert _header(tmp_path) == [
+        "#### 2026-06-19 | email (outbound) | Heard back from Jane, replied with times"]
+    assert "| Sent |" in (tmp_path / "data/outreach-log.md").read_text(encoding="utf-8")
+
+
+def test_direction_none_keeps_the_type_plain_and_never_flips(tmp_path):
+    _setup_outreach(tmp_path)
+    result, code = _log(tmp_path, "none", summary="Heard back from Jane")
+    assert code == 0 and result["outreach_log_updated"] is False
+    assert _header(tmp_path) == ["#### 2026-06-19 | email | Heard back from Jane"]
+
+
+def test_direction_both_marks_two_way_and_flips(tmp_path):
+    """Nick, 2026-10-30: a note can record a message each way; the contact replied, so
+    the outreach row flips."""
+    _setup_outreach(tmp_path)
+    result, code = _log(tmp_path, "both", summary="Sent times, Jane replied")
+    assert code == 0 and result["outreach_log_updated"] is True
+    assert _header(tmp_path) == ["#### 2026-06-19 | email (two-way) | Sent times, Jane replied"]
+
+
+def test_a_type_that_already_says_inbound_gets_no_second_suffix(tmp_path):
+    _setup_outreach(tmp_path)
+    result, code = _log(tmp_path, "in", kind="email (inbound)", summary="Asked for a call")
+    assert code == 0 and result["outreach_log_updated"] is True
+    assert _header(tmp_path) == ["#### 2026-06-19 | email (inbound) | Asked for a call"]
+
+
+@pytest.mark.parametrize("kind,direction", [
+    ("email (inbound)", "out"), ("email (inbound)", "none"), ("inbound", "none"),
+    ("email (outbound)", "in"), ("email (outbound)", "none"),
+])
+def test_a_type_that_contradicts_the_direction_is_refused(tmp_path, kind, direction):
+    _setup_outreach(tmp_path)
+    before = (tmp_path / "data/networking.md").read_text(encoding="utf-8")
+    result, code = _log(tmp_path, direction, kind=kind)
+    assert code != 0 and result["status"] == "error"
+    assert (tmp_path / "data/networking.md").read_text(encoding="utf-8") == before
+
+
+def test_dry_run_shows_the_marked_type(tmp_path):
     _setup_outreach(tmp_path)
     result, code = run_nw_write(
-        "--repo-root", str(tmp_path), "log", "Jane Doe",
-        "--date", "2026-06-18", "--type", "email reply",
-        "--summary", "Replied to her intro - yes to a chat",
-    )
+        "--repo-root", str(tmp_path), "--dry-run", "log", "Jane Doe", "--date", "2026-06-19",
+        "--type", "text", "--summary", "Asked for a call", "--direction", "in")
     assert code == 0
-    assert result["outreach_log_updated"] is False
-    log = (tmp_path / "data/outreach-log.md").read_text(encoding="utf-8")
-    assert "| Sent |" in log
-    assert "| Replied |" not in log
-
-
-def test_inbound_reply_flips_outreach_log(tmp_path):
-    """A genuine received reply ('Heard back ...') flips the row to Replied."""
-    _setup_outreach(tmp_path)
-    result, code = run_nw_write(
-        "--repo-root", str(tmp_path), "log", "Jane Doe",
-        "--date", "2026-06-19", "--type", "email",
-        "--summary", "Heard back from Jane - wants to schedule",
-    )
-    assert code == 0
-    assert result["outreach_log_updated"] is True
-    log = (tmp_path / "data/outreach-log.md").read_text(encoding="utf-8")
-    assert "| Replied |" in log
-
-
-def test_inbound_subject_wins_over_outbound_marker(tmp_path):
-    """'She replied to my email' is inbound even though it contains 'replied to'."""
-    _setup_outreach(tmp_path)
-    result, _ = run_nw_write(
-        "--repo-root", str(tmp_path), "log", "Jane Doe",
-        "--date", "2026-06-19", "--type", "email",
-        "--summary", "She replied to my email with availability",
-    )
-    assert result["outreach_log_updated"] is True
-
-
-def test_reply_received_flag_forces_flip(tmp_path):
-    """--reply-received forces the flip even with outbound-looking phrasing."""
-    _setup_outreach(tmp_path)
-    result, _ = run_nw_write(
-        "--repo-root", str(tmp_path), "log", "Jane Doe",
-        "--date", "2026-06-19", "--type", "email",
-        "--summary", "Replied to her note", "--reply-received",
-    )
-    assert result["outreach_log_updated"] is True
-
-
-def test_no_reply_flip_flag_suppresses(tmp_path):
-    """--no-reply-flip suppresses the flip even with inbound-looking phrasing."""
-    _setup_outreach(tmp_path)
-    result, _ = run_nw_write(
-        "--repo-root", str(tmp_path), "log", "Jane Doe",
-        "--date", "2026-06-19", "--type", "email",
-        "--summary", "Heard back from Jane", "--no-reply-flip",
-    )
-    assert result["outreach_log_updated"] is False
-    log = (tmp_path / "data/outreach-log.md").read_text(encoding="utf-8")
-    assert "| Sent |" in log
+    assert result["would_mutate"][0]["entry"] == "#### 2026-06-19 | text (inbound) | Asked for a call"
 
 
 # ---------------------------------------------------------------------------
@@ -564,7 +608,7 @@ def test_reply_flip_without_an_outreach_log_reports_false(tmp_path):
     result, code = run_nw_write(
         "--repo-root", str(tmp_path), "log", "Jane Doe",
         "--date", "2026-06-19", "--type", "email",
-        "--summary", "Heard back from Jane", "--reply-received",
+        "--summary", "Heard back from Jane", "--direction", "in",
     )
     assert code == 0
     assert result["outreach_log_updated"] is False
@@ -583,7 +627,7 @@ def test_reply_flip_on_a_same_date_tie_marks_the_later_row(tmp_path):
     result, code = run_nw_write(
         "--repo-root", str(tmp_path), "log", "Jane Doe",
         "--date", "2026-06-19", "--type", "email",
-        "--summary", "Heard back from Jane", "--reply-received",
+        "--summary", "Heard back from Jane", "--direction", "in",
     )
     assert code == 0 and result["outreach_log_updated"] is True
     rows = (tmp_path / "data/outreach-log.md").read_text(encoding="utf-8").splitlines()[-2:]
@@ -623,7 +667,7 @@ def _log_with_followup(tmp_path, *extra):
     write_fixture(tmp_path, "data/job-todos.md", TODOS_FIXTURE)
     return run_nw_write(
         "--repo-root", str(tmp_path),
-        "log", "Jane Doe",
+        "log", "Jane Doe", "--direction", "none",
         "--date", "2026-02-10",
         "--type", "email",
         "--summary", "Sent a note",
@@ -655,7 +699,7 @@ def test_log_without_followup_reports_no_todo(tmp_path):
     write_fixture(tmp_path, "data/networking.md", NETWORKING_WITH_CONTACT)
     write_fixture(tmp_path, "data/job-todos.md", TODOS_FIXTURE)
     result, code = run_nw_write(
-        "--repo-root", str(tmp_path), "log", "Jane Doe",
+        "--repo-root", str(tmp_path), "log", "Jane Doe", "--direction", "none",
         "--date", "2026-02-10", "--type", "email", "--summary", "Sent a note",
     )
     assert code == 0 and result["todo_added"] is False
@@ -665,7 +709,7 @@ def test_log_without_followup_reports_no_todo(tmp_path):
 def test_log_followup_with_no_todos_file_reports_nothing_written(tmp_path):
     write_fixture(tmp_path, "data/networking.md", NETWORKING_WITH_CONTACT)
     result, code = run_nw_write(
-        "--repo-root", str(tmp_path), "log", "Jane Doe",
+        "--repo-root", str(tmp_path), "log", "Jane Doe", "--direction", "none",
         "--date", "2026-02-10", "--type", "email", "--summary", "Sent a note",
         "--followup", "Wait for her reply",
     )
@@ -676,7 +720,7 @@ def test_log_followup_with_no_todos_file_reports_nothing_written(tmp_path):
 def test_a_second_followup_replaces_the_first_auto_row(tmp_path):
     _log_with_followup(tmp_path)
     run_nw_write(
-        "--repo-root", str(tmp_path), "log", "Jane Doe",
+        "--repo-root", str(tmp_path), "log", "Jane Doe", "--direction", "none",
         "--date", "2026-02-12", "--type", "email", "--summary", "Sent another",
         "--followup", "Call her Monday instead",
     )

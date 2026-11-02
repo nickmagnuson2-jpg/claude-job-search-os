@@ -923,20 +923,16 @@ def test_record_delivery_takes_the_shared_write_flags(tmp_path):
     assert code != 0 and f.read_bytes() == before
 
 
-def test_a_missing_pyyaml_exits_3_with_the_install_hint(tmp_path):
-    """Someone running the tool without PyYAML gets one JSON line naming the fix and exit 3,
-    before anything else runs. A stub `yaml` package that raises ImportError stands in for
-    the missing library (2026-10-30: replaces two allowlist entries kept "for cost")."""
-    import json as _json
-    import subprocess as _sp
-    import sys as _sys
-    shim = tmp_path / "yaml"
-    shim.mkdir()
-    (shim / "__init__.py").write_text("raise ImportError('hidden for this test')\n",
-                                      encoding="utf-8")
-    tool = Path(__file__).resolve().parents[2] / "tools" / "frame_write.py"
-    proc = _sp.run([_sys.executable, str(tool), "--help"], capture_output=True, text=True,
-                   env={**__import__("os").environ, "PYTHONPATH": str(tmp_path)})
-    assert proc.returncode == 3, proc.stderr
-    assert _json.loads(proc.stdout.strip()) == {
-        "status": "error", "message": "PyYAML required: pip install pyyaml"}
+def test_missing_pyyaml_prints_the_install_hint_and_exits_3(tmp_path):
+    """Without PyYAML the tool must stop at startup with exit 3 and one JSON line.
+
+    A yaml.py that raises ImportError, placed on PYTHONPATH, shadows the real package
+    (PYTHONPATH sits ahead of site-packages). Dropping the print or the sys.exit(3) in
+    the ImportError guard changes this exact output.
+    """
+    (tmp_path / "yaml.py").write_text("raise ImportError('hidden by test')\n", encoding="utf-8")
+    r = subprocess.run([sys.executable, str(SCRIPT), "show", "--frame", str(tmp_path / "f.yaml")],
+                       capture_output=True, text=True,
+                       env={**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONPATH": str(tmp_path)})
+    assert r.returncode == 3
+    assert r.stdout == '{"status": "error", "message": "PyYAML required: pip install pyyaml"}\n'

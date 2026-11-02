@@ -126,6 +126,15 @@ def test_a_non_notes_edit_keeps_the_empty_notes_placeholder(tmp_path):
     assert _row(p, "Apply to Acme") == "| Apply to Acme | High | — | Pending | — |"
 
 
+def test_a_notes_value_is_stored_without_surrounding_spaces(tmp_path):
+    """`--notes` with stray spaces writes the trimmed text, the same as every other path that
+    builds a Notes cell (final branch review 2026-10-30, Fable 24.F2)."""
+    p = _write(tmp_path)
+    run_script("todo_write.py", "update", "acme", "--notes", "  spaced out  ",
+               "--repo-root", str(tmp_path))
+    assert _row(p, "Apply to Acme") == "| Apply to Acme | Med | — | Pending | spaced out |"
+
+
 # ------------------------------------------------------------------ the destructive path
 
 def test_task_rename_records_the_old_text(tmp_path):

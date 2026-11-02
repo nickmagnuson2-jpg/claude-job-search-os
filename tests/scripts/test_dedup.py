@@ -40,12 +40,32 @@ class TestIsDuplicateExact:
 
 class TestIsDuplicateFuzzy:
     def test_fuzzy_title_above_threshold(self, sample_pipeline):
-        # "Sr Product Manager" vs "Senior Product Manager" should be >= 0.80
+        # "Sr." is expanded to "senior" before comparing (raw ratio 0.878, under 0.90)
         assert is_duplicate("Sr. Product Manager", "Northwind", sample_pipeline) is True
 
     def test_fuzzy_title_below_threshold(self, sample_pipeline):
         # Completely different title at same company
         assert is_duplicate("Junior Frontend Developer", "Northwind", sample_pipeline) is False
+
+    def test_jr_is_expanded_like_sr(self):
+        entries = [{"company": "Northwind", "role": "Junior Data Analyst"}]
+        assert is_duplicate("Jr Data Analyst", "Northwind", entries) is True
+
+    def test_a_different_level_of_the_same_title_is_a_different_role(self):
+        # The live case behind 0.90 (2026-10-30): three levels of one title at one company
+        # scored 0.84-0.88 and were all treated as one role at 0.80.
+        entries = [{"company": "Contoso", "role": "Solutions Engineer (Data Platform)"}]
+        assert is_duplicate("Associate Solutions Engineer (Data Platform)", "Contoso",
+                            entries) is False
+        assert is_duplicate("Enterprise Solutions Engineer (Data Platform)", "Contoso",
+                            entries) is False
+
+    def test_the_threshold_is_inclusive_at_0_90(self):
+        # A pair whose ratio is exactly 0.9 counts as a match (>=, not >).
+        from difflib import SequenceMatcher
+        a, b = "abcdefghij", "abcdefghik"
+        assert SequenceMatcher(None, a, b).ratio() == 0.9
+        assert is_duplicate(a, "Contoso", [{"company": "Contoso", "role": b}]) is True
 
     def test_very_similar_title(self, sample_pipeline):
         # Minor variation: "Head of Operation" vs "Head of Operations"
@@ -81,7 +101,7 @@ class TestIsDuplicateEdgeCases:
         assert is_duplicate("Senior Product Manager", "", sample_pipeline) is False
 
     def test_empty_title(self, sample_pipeline):
-        # Empty title won't fuzzy match above 0.80
+        # Empty title won't fuzzy match above 0.90
         assert is_duplicate("", "Northwind", sample_pipeline) is False
 
 

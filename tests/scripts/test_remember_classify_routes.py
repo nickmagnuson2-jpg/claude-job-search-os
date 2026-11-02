@@ -79,9 +79,10 @@ def test_two_contacts_each_get_their_own_contact_note():
     assert types(out) == [("contact_note", "Jordan Lee"), ("contact_note", "Sam Example")]
 
 
-def test_a_reply_gets_both_the_outreach_reply_and_the_contact_note():
+def test_a_reply_gets_one_contact_note_that_needs_a_direction():
     out = classify("Jordan Lee replied with times", ["Jordan Lee"])
-    assert types(out) == [("outreach_reply", "Jordan Lee"), ("contact_note", "Jordan Lee")]
+    assert types(out) == [("contact_note", "Jordan Lee")]
+    assert out["destinations"][0]["direction"] is None and out["direction_needed"] is True
 
 
 def test_a_name_listed_twice_on_the_roster_gets_one_contact_note():
@@ -121,3 +122,16 @@ def test_a_status_word_adds_a_pipeline_note_for_pipeline_companies_only():
 def test_no_status_word_means_no_pipeline_note():
     out = classify("Acme Corp has a nice office", companies=["Acme Corp"])
     assert types(out) == [("company_note", "Acme Corp")]
+
+
+def test_only_a_contact_note_carries_a_direction():
+    """2026-10-30: the direction is asked for a contact note only. A company or general
+    note gets no direction field, so the /remember skill never asks about it."""
+    out = classify("Jordan Lee says Acme is hiring", ["Jordan Lee"], ["Acme"])
+    by_type = {d["type"]: d for d in out["destinations"]}
+    assert "contact_note" in by_type and by_type["contact_note"]["direction"] is None
+    others = [d for d in out["destinations"] if d["type"] != "contact_note"]
+    assert others and all("direction" not in d for d in others)
+    alone = classify("note to self: the comp floor is firm")
+    assert all("direction" not in d for d in alone["destinations"])
+    assert alone["direction_needed"] is False
