@@ -353,13 +353,16 @@ def confirm(capture_id: str, outcome: str, sent_text: str | None = None,
         "screenshots": list(screenshots or []),
     })
     _write_meta(directory, meta)
-    # A sent email to the EIC opens a review that only her reply can close
-    # (tools/eic_review.py). Reported in the result, not stored in the capture.
+    # A sent email to the EIC opens a review that only her reply can close, and a send
+    # corrected to not sent cancels it (tools/eic_review.py). Reported in the result, not
+    # stored in the capture.
     try:
         if eic_review.open_for(meta, now=now):
             return {**meta, "eic_review": "opened"}
+        if eic_review.cancel_for(meta, now=now):
+            return {**meta, "eic_review": "cancelled"}
     except OSError as exc:
-        return {**meta, "eic_review": f"ERROR: could not open the EIC review: {exc}"}
+        return {**meta, "eic_review": f"ERROR: could not update the EIC review: {exc}"}
     return meta
 
 

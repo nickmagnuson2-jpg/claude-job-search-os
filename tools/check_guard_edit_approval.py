@@ -80,8 +80,10 @@ from hook_runtime import read_payload  # noqa: E402
 # to pass, so a change to either changes a guard verdict.
 # eic_review (2026-10-30, Nick approved): check_eic_review blocks the published-post record
 # exactly while eic_review.open_reviews() is non-empty, so a change to it changes a verdict.
+# shell_writes (2026-11-01, Nick approved): the Bash write-target walk with cwd tracking that
+# check_eic_review, check_handoff_producer and check_public_pii all judge from.
 HOOK_LIBRARIES = ("shell_tokens", "hook_runtime", "hook_command_lint", "approval_signing",
-                  "calendar_approval", "eic_review")
+                  "calendar_approval", "eic_review", "shell_writes")
 # Imported by a guard but deliberately NOT guarded (Nick's call, 2026-10-01: "just the
 # hook libraries"). Each is domain logic or tooling that ordinary work edits.
 NOT_HOOK_LIBRARIES = {

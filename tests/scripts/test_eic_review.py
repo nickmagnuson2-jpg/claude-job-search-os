@@ -11,6 +11,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -25,10 +26,11 @@ EIC = "editor@example.com"
 TAG = "EDITOR NOTE"
 REPLY = "0123456789abcdef"
 PUBLISHED = "output/linkedin-profile/voice-sources/103026-linkedin-post-published.md"
+TODAY = time.strftime("%Y-%m-%d")
 
 
 def draft(to: str) -> str:
-    return f"TO: {to}\nSUBJECT: Post for review\nBODY:\nHi,\n\nCan you edit this post?\n\nNick\n"
+    return f"TO: {to}\nSUBJECT: LinkedIn post for review\nBODY:\nHi,\n\nCan you edit this post?\n\nNick\n"
 
 
 @pytest.fixture(autouse=True)
@@ -42,10 +44,14 @@ def env(tmp_path, monkeypatch):
     lessons = tmp_path / "lessons.md"
     lessons.write_text(
         "| Pattern | Rule | Occ | Promoted | Date |\n|---|---|---|---|---|\n"
-        f"| **{TAG}.** She reordered the hook. | Lead with the shared thing. | 1 | No | 2026-10-30 |\n"
-        "| **NICK EDIT.** He linked a word. | Link a word, not a URL. | 1 | No | 2026-10-30 |\n",
+        f"| **{TAG}.** She reordered the hook. | Lead with the shared thing. | 1 | No | {TODAY} |\n"
+        f"| **NICK EDIT.** He linked a word. | Link a word, not a URL. | 1 | No | {TODAY} |\n",
         encoding="utf-8")
     monkeypatch.setenv("LESSONS_PATH", str(lessons))
+    # close() looks her reply up in Gmail (finding B, tested in test_eic_review_hardening.py);
+    # here it is always her inbound reply, an hour after the review opened.
+    monkeypatch.setattr(er, "fetch_reply", lambda rid: {
+        "from": f"Editor <{EIC}>", "labels": ["INBOX"], "epoch": time.time() + 3600})
     return tmp_path
 
 
@@ -62,7 +68,7 @@ def test_a_sent_email_to_the_eic_opens_exactly_one_review():
     assert meta["eic_review"] == "opened"
     rows = er.reviews()
     assert [(r["capture_id"], r["status"], r["subject"]) for r in rows] == [
-        (meta["id"], "open", "Post for review")]
+        (meta["id"], "open", "LinkedIn post for review")]
     assert [r["capture_id"] for r in er.open_reviews()] == [meta["id"]]
 
 
@@ -101,7 +107,7 @@ def test_reopening_never_erases_a_close():
 def test_config_reads_comments_and_tag_and_defaults_the_tag(env):
     (env / "eic.txt").write_text(f"\n# a comment line\n\n{EIC}  # trailing comment\n   \n",
                                  encoding="utf-8")
-    assert er.load_config() == ({EIC}, "EIC EDIT")
+    assert er.load_config() == ({EIC}, "EIC EDIT", "LinkedIn post")
 
 
 # --- closing ---------------------------------------------------------------------
@@ -166,7 +172,7 @@ def test_an_unreadable_record_counts_as_open(env):
 
 # --- the CLI ---------------------------------------------------------------------
 
-def test_cli_list_and_close_report_json():
+def test_cli_list_and_close_report_json(capsys):
     cid = sent_to(EIC)["id"]
     run = lambda *a: subprocess.run([sys.executable, str(TOOLS / "eic_review.py"), *a],
                                     capture_output=True, text=True, env=os.environ.copy())
@@ -179,8 +185,9 @@ def test_cli_list_and_close_report_json():
     assert "population 2" in out.stderr and "included 1" in out.stderr and "closed 1" in out.stderr
     bad = run("close", cid, "--reply-id", "nope", "--no-edits", "x")
     assert bad.returncode == 1 and json.loads(bad.stdout)["status"] == "error"
-    good = run("close", cid, "--reply-id", REPLY, "--lesson", "She reordered the hook")
-    assert good.returncode == 0 and json.loads(good.stdout)["status"] == "closed"
+    # In-process, so the Gmail lookup is the fixture's stub and the test never calls Gmail.
+    assert er.main(["close", cid, "--reply-id", REPLY, "--lesson", "She reordered the hook"]) == 0
+    assert json.loads(capsys.readouterr().out)["status"] == "closed"
 
 
 def test_cli_open_backfills_a_confirmed_capture_and_refuses_others():
@@ -204,5 +211,5 @@ def test_a_failed_review_open_is_reported_and_the_send_is_still_recorded(monkeyp
     monkeypatch.setattr(dc.eic_review, "open_for", broken)
     cid = dc.capture(draft(EIC))
     meta = dc.confirm(cid, "unchanged")
-    assert meta["eic_review"] == "ERROR: could not open the EIC review: disk full"
+    assert meta["eic_review"] == "ERROR: could not update the EIC review: disk full"
     assert meta["status"] == "unchanged" and dc.read_meta(cid)["status"] == "unchanged"

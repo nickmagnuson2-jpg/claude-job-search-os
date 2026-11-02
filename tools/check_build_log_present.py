@@ -46,8 +46,9 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from build_check import ask_state  # noqa: E402
-from check_handoff_producer import all_write_targets, relativize  # noqa: E402
+from check_handoff_producer import relativize  # noqa: E402
 from hook_runtime import read_payload  # noqa: E402
+import shell_writes  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -128,12 +129,16 @@ No dossier at output/{slug}/{slug}.md. Every company Nick builds for gets one: r
 """
 
 
-def decide(tool_name: str, tool_input: dict, *, root: Path = REPO_ROOT) -> str | None:
-    """The BLOCK message for this tool call, or None to allow. Pure given the filesystem."""
+def decide(tool_name: str, tool_input: dict, *, root: Path = REPO_ROOT,
+           cwd: str = "") -> str | None:
+    """The BLOCK message for this tool call, or None to allow. Pure given the filesystem.
+
+    A relative Bash target is judged from the repo root, the session `cwd` and wherever a
+    `cd` in the command moves the shell (tools/shell_writes.py, 2026-11-01)."""
     if not isinstance(tool_input, dict):
         return None
     if tool_name == "Bash":
-        targets = all_write_targets(tool_input.get("command") or "")
+        targets = shell_writes.bash_write_targets(tool_input.get("command") or "", cwd, root)
     elif tool_name in TARGET_FIELD:
         targets = [tool_input.get(TARGET_FIELD[tool_name]) or ""]
     else:
@@ -169,7 +174,7 @@ def main() -> None:
                   "write could not be checked. Split the write.", file=sys.stderr)
             sys.exit(2)
         sys.exit(0)
-    message = decide(p.tool_name, p.tool_input)
+    message = decide(p.tool_name, p.tool_input, cwd=p.cwd)
     if message:
         print(message, file=sys.stderr)
         sys.exit(2)

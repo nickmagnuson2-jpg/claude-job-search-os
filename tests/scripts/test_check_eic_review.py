@@ -11,6 +11,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -25,10 +26,11 @@ EIC = "editor@example.com"
 TAG = "EDITOR NOTE"
 REPLY = "0123456789abcdef"
 PUBLISHED = "output/linkedin-profile/voice-sources/103026-linkedin-post-published.md"
+TODAY = time.strftime("%Y-%m-%d")
 
 
 def draft(to: str) -> str:
-    return f"TO: {to}\nSUBJECT: Post for review\nBODY:\nHi,\n\nCan you edit this post?\n\nNick\n"
+    return f"TO: {to}\nSUBJECT: LinkedIn post for review\nBODY:\nHi,\n\nCan you edit this post?\n\nNick\n"
 
 
 @pytest.fixture(autouse=True)
@@ -42,10 +44,14 @@ def env(tmp_path, monkeypatch):
     lessons = tmp_path / "lessons.md"
     lessons.write_text(
         "| Pattern | Rule | Occ | Promoted | Date |\n|---|---|---|---|---|\n"
-        f"| **{TAG}.** She reordered the hook. | Lead with the shared thing. | 1 | No | 2026-10-30 |\n"
-        "| **NICK EDIT.** He linked a word. | Link a word, not a URL. | 1 | No | 2026-10-30 |\n",
+        f"| **{TAG}.** She reordered the hook. | Lead with the shared thing. | 1 | No | {TODAY} |\n"
+        f"| **NICK EDIT.** He linked a word. | Link a word, not a URL. | 1 | No | {TODAY} |\n",
         encoding="utf-8")
     monkeypatch.setenv("LESSONS_PATH", str(lessons))
+    # close() looks her reply up in Gmail (finding B, tested in test_eic_review_hardening.py);
+    # here it is always her inbound reply, an hour after the review opened.
+    monkeypatch.setattr(er, "fetch_reply", lambda rid: {
+        "from": f"Editor <{EIC}>", "labels": ["INBOX"], "epoch": time.time() + 3600})
     return tmp_path
 
 
@@ -79,7 +85,7 @@ def test_the_gate_allows_the_published_record_once_every_review_is_closed():
 @pytest.mark.parametrize("tool,tool_input", [
     ("Write", {"file_path": "output/linkedin-profile/voice-sources/103026-linkedin-post-draft.md"}),
     ("Write", {"file_path": "output/linkedin-profile/linkedin-post-analytics-log.md"}),
-    ("Write", {"file_path": "output/acme-ai/101626-linkedin-post-published.md"}),
+    ("Write", {"file_path": "output/acme-ai/101626-published-notes.md"}),
     ("Bash", {"command": f"cat {PUBLISHED}"}),
     ("Bash", {"command": f"grep -n post {PUBLISHED} > /tmp/out.txt"}),
 ])
