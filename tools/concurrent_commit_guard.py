@@ -49,7 +49,9 @@ merge of main was refused for main's own files. Still refused, and still needing
 a conflicted path or one both sides changed (even when git auto-merged it cleanly), a
 merged file edited afterwards, a mode change, a deletion arriving in the merge, and a
 file staged at the other side's version on a path this branch changed (that would revert
-this branch's change). The exemption fails closed on any git or OS error.
+this branch's change). No exemption when the histories have several best common
+ancestors (criss-cross), or for `git merge --squash`, which writes no MERGE_HEAD. The
+exemption fails closed on any git or OS error.
 
 WHAT IT CANNOT DETECT (read before trusting a pass)
 ---------------------------------------------------
@@ -407,8 +409,10 @@ def merged_unchanged(root: Path, staged: list[str]) -> set[str]:
                                   "--", *chunk), 1)
             ours = _tree(root, "HEAD", chunk)
             for head in heads:
-                base = _git(root, "merge-base", "HEAD", head).strip()
-                theirs, at_base = _tree(root, head, chunk), _tree(root, base, chunk)
+                bases = _git(root, "merge-base", "--all", "HEAD", head).split()
+                if len(bases) != 1:
+                    continue        # criss-cross history: no single base to compare with
+                theirs, at_base = _tree(root, head, chunk), _tree(root, bases[0], chunk)
                 out.update(p for p in chunk if p in index and index[p] == theirs.get(p)
                            and ours.get(p) == at_base.get(p))
     except (RuntimeError, OSError):
@@ -416,13 +420,45 @@ def merged_unchanged(root: Path, staged: list[str]) -> set[str]:
     return out
 
 
-# `merge` / `pull` as a whole subcommand word: not merge-base, merge-tree, pull-request.
-_MERGE_CMD = re.compile(r"\bgit\b[^\n;&|]*(?<![\w-])(?:merge|pull)(?![\w-])")
+_GIT_OPTS_WITH_VALUE = {"-C", "-c"}
+
+
+def _git_subcommand(words: list[str]) -> str:
+    """The subcommand of a `git ...` simple command (after global options), or ''."""
+    i = 0
+    while i < len(words) and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", words[i]):
+        i += 1                                     # leading VAR=value assignments
+    if i >= len(words) or os.path.basename(words[i]) != "git":
+        return ""
+    i += 1
+    while i < len(words):
+        w = words[i]
+        if w in _GIT_OPTS_WITH_VALUE:
+            i += 2
+        elif w.startswith("-"):
+            i += 1
+        else:
+            return w
+    return ""
 
 
 def ran_merge(commands: list[str]) -> bool:
-    """Whether any of this session's Bash commands ran `git merge` or `git pull`."""
-    return any(_MERGE_CMD.search(c) for c in commands)
+    """Whether any of this session's Bash commands ran `git merge` or `git pull`, read
+    as the shell would: the git SUBCOMMAND must be merge or pull, so `git log --merges`,
+    `git config pull.rebase`, `git commit -m "merge: x"` and `git merge-base` do not
+    count. False if the shell tokenizer cannot be loaded: no exemption, more refusals."""
+    try:
+        # tools/ is on sys.path: the hook runs this file as a script from tools/.
+        from shell_tokens import simple_commands
+    except ImportError:
+        return False
+    pending = list(commands)
+    while pending:
+        for cmd in simple_commands(pending.pop()):
+            if _git_subcommand(cmd.words) in ("merge", "pull"):
+                return True
+            pending.extend(cmd.subs)
+    return False
 
 
 def record_waiver(root: Path, paths: list[str], reason: str, mode: str) -> Path:

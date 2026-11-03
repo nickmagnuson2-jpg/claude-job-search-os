@@ -53,6 +53,8 @@ def repo(tmp_path):
     (root / "tools" / "hooks").mkdir(parents=True)
     _git(root, "init", "-q", "-b", "main")
     (root / "tools" / "concurrent_commit_guard.py").write_bytes(GUARD.read_bytes())
+    (root / "tools" / "shell_tokens.py").write_bytes(
+        (REPO_ROOT / "tools" / "shell_tokens.py").read_bytes())
     (root / "seed.txt").write_text("seed\n")
     _git(root, "add", "-A")
     _git(root, "commit", "-q", "-m", "seed", "--no-verify")
@@ -108,7 +110,8 @@ def test_broad_add_sweeping_another_sessions_file_is_refused(repo, cfg):
     assert "theirs.py" in r.stderr
     assert "mine.py" not in r.stderr.replace("theirs.py", "")
     assert g.WAIVE_ENV in r.stderr, "the refusal must print the exact override"
-    assert _committed(repo) == ["seed.txt", "tools/concurrent_commit_guard.py"]
+    assert _committed(repo) == ["seed.txt", "tools/concurrent_commit_guard.py",
+                                "tools/shell_tokens.py"]
 
 
 def test_plain_commit_over_an_index_someone_else_staged_is_refused(repo, cfg):
@@ -962,6 +965,12 @@ def test_a_merge_this_session_never_ran_gives_no_exemption(repo, cfg):
     ("cd x && git -C y merge --no-commit main", True),
     ("git merge-base HEAD main", False), ("git merge-tree --write-tree a b", False),
     ("echo merge && git status", False), ("git log --merges", False),
+    ("git config pull.rebase false", False), ("git fetch origin pull/7/head", False),
+    ("git log --grep=merge", False), ("git diff -- docs/merge.md", False),
+    ('git commit -m "merge: tidy"', False), ("git log --oneline merge", False),
+    ("GIT_EDITOR=true git -c core.x=1 merge main", True),
+    ("x=$(git merge --no-commit main)", True), ("/usr/bin/git merge main", True),
+    ("git --no-pager merge main", True), ("git -p pull", True),
 ])
 def test_only_a_git_merge_or_pull_command_counts_as_running_a_merge(cmd, ran):
     assert g.ran_merge([cmd]) is ran
@@ -974,3 +983,38 @@ def test_an_unmerged_paths_stages_are_not_read_as_its_index_entry():
     out = nul.join([f"100644 {blob} {n}\tc.py" for n in (1, 2, 3)]
                    + [f"100644 {blob} 0\tok.py", ""])
     assert g._entries(out, 1) == {"ok.py": ("100644", blob)}
+
+
+def test_a_criss_cross_history_gives_no_exemption(repo):
+    """Review 2 (Fable F1): several best common ancestors leave no single base."""
+    _git(repo, "checkout", "-q", "-b", "a")
+    (repo / "a.txt").write_text("a\n"); _git(repo, "add", "a.txt")
+    _git(repo, "commit", "-q", "-m", "a", "--no-verify")
+    _git(repo, "checkout", "-q", "-b", "b", "main")
+    (repo / "b.txt").write_text("b\n"); _git(repo, "add", "b.txt")
+    _git(repo, "commit", "-q", "-m", "b", "--no-verify")
+    _git(repo, "merge", "-q", "--no-edit", "--no-verify", "a")      # b gets a
+    _git(repo, "checkout", "-q", "a")
+    _git(repo, "merge", "-q", "--no-edit", "--no-verify", "b~1")    # a gets old b
+    (repo / "new.txt").write_text("n\n"); _git(repo, "add", "new.txt")
+    _git(repo, "commit", "-q", "-m", "a2", "--no-verify")
+    _git(repo, "checkout", "-q", "b")
+    (repo / "up.txt").write_text("u\n"); _git(repo, "add", "up.txt")
+    _git(repo, "commit", "-q", "-m", "b2", "--no-verify")
+    _git(repo, "checkout", "-q", "a")
+    assert len(_git(repo, "merge-base", "--all", "HEAD", "b").stdout.split()) == 2
+    _git(repo, "merge", "--no-commit", "--no-ff", "b", check=False)
+    assert g.merged_unchanged(repo, ["up.txt"]) == set()
+
+
+def test_ran_merge_is_false_when_the_tokenizer_cannot_load(monkeypatch):
+    import builtins
+    real = builtins.__import__
+
+    def no_tokens(name, *a, **k):
+        if name == "shell_tokens":
+            raise ImportError(name)
+        return real(name, *a, **k)
+    monkeypatch.setattr(builtins, "__import__", no_tokens)
+    monkeypatch.delitem(sys.modules, "shell_tokens", raising=False)
+    assert g.ran_merge(["git merge main"]) is False
