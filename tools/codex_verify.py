@@ -151,7 +151,7 @@ PRIVATE_TREES = ("data", "memory", "coaching",
                  # and the wrapper still recorded verified=True. A verifier that cannot
                  # see the artifact is worse than no verifier, because its agreement
                  # gets counted. The sealed material that used to be protected by the
-                 # blanket `output` deny is now protected by SEALED_SUBPATHS below,
+                 # blanket `output` deny is now protected by seal_rules() below,
                  # which is narrower and is applied LAST so nothing can re-open it.
                  # .git holds every version ever committed, and data/ was committed 9
                  # times and memory/ 7 before they were gitignored. Those objects are
@@ -280,45 +280,98 @@ def ignored_entries(repo_root) -> list[str]:
 # GITIGNORED BY DESIGN, same as tools/.gmail-labels.conf and tools/.pii-denylist.txt: this
 # file is PUBLIC, so the mechanism lives here and the specifics do not. Naming a sealed
 # directory in a public repo discloses exactly what sealing it was meant to protect.
-SEALED_CONF = Path(__file__).resolve().parent / ".sealed-paths.conf"
+SEALED_CONF_NAME = ".sealed-paths.conf"
+SEALED_CONF = Path(__file__).resolve().parent / SEALED_CONF_NAME
 
 
-def sealed_subpaths(repo_root) -> list[str]:
-    """Absolute paths that are NEVER readable, appended LAST so no rule can re-open them.
+def seal_rules(repo_root) -> list[str]:
+    """Deny-read rules applied LAST, so no carve-out can re-open them.
 
-    Two sources, both discovered 2026-09-16 while widening `output` for review:
+    1. ANYTHING LISTED IN SEALED_CONF (and, from a linked worktree, the main checkout's
+       copy, which the worktree lacks because it is gitignored). Private trees whose paths
+       must not appear in a public file. Absent or empty is fine.
+    2. PEER REPOS. Everything beside the review root under its parent folder, and, from a
+       linked worktree, everything beside the main checkout too (2026-09-16, 2026-10-30).
+       None of it is material for reviewing this repo's work.
 
-    1. PEER REPOS. Everything beside this repo under the projects root. `sandbox_policy`
-       denied this repo's trees and ~/.claude and opened with `(allow default)`, so every
-       sibling repo was readable inside the jail the whole time. None of it is ever
-       material for reviewing this repo's work.
-    2. ANYTHING LISTED IN SEALED_CONF. Private trees whose paths should not appear in a
-       public file. Absent or empty is fine; the peer-repo deny already covers a sibling.
-
-    Derived from repo_root rather than hardcoded so this file carries no absolute path, and
-    so a peer repo added tomorrow is covered without an edit.
+    One rule per parent folder: deny everything under it except the review root and the
+    folders on the way down to it (as themselves, not their contents, so `cd` still
+    works). It used to be one rule per sibling, so the profile grew with every folder
+    beside the repo and passed macOS's 64 KB profile limit once a parent held a few
+    thousand (2026-11-02). A worktree inside its main checkout stays readable (Codex
+    infra-1031 round 3 F2): its own path and its ancestors are the exceptions.
     """
     root = Path(repo_root).resolve()
-    projects = root.parent
-    sealed: list[str] = []
+    main = _main_checkout(root)
+    rules: list[str] = []
+    for conf in [SEALED_CONF] + ([main / "tools" / SEALED_CONF_NAME] if main else []):
+        try:
+            for line in conf.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if line and not line.startswith("#"):
+                    rules.append(f'(deny file-read* (subpath "{Path(line).expanduser()}"))')
+        except OSError:
+            pass                  # no conf is a valid state, not an error
+    for parent in dict.fromkeys([root.parent] + ([main.parent] if main else [])):
+        # The parent itself, the root, and the folders on the way down to the root stay
+        # readable (as themselves, so `cd` works). Entries outside the parent never match a
+        # rule scoped to it, so the root's other ancestors can be listed without a filter.
+        keep = [f'(require-not (subpath "{root}"))'] + [
+            f'(require-not (literal "{d}"))' for d in dict.fromkeys([parent, *root.parents])]
+        rules.append(f'(deny file-read* (require-all (subpath "{parent}") {" ".join(keep)}))')
+    return list(dict.fromkeys(rules))
+
+
+def _main_checkout(root: Path) -> Path | None:
+    """The main checkout when `root` is a linked git worktree, else None.
+
+    `git worktree list` names the main checkout first. With `--separate-git-dir` git keeps
+    no record of where the checkout is and names the git dir instead, which has no `.git`
+    entry of its own. From a linked worktree (.git is a file), any answer that is not a
+    checkout refuses: returning None would build a sandbox that leaves the main checkout
+    and its conf readable (Codex and Fable infra-1031 F1/F3, 2026-11-01)."""
+    first = ""
     try:
-        for line in SEALED_CONF.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if line and not line.startswith("#"):
-                sealed.append(str(Path(line).expanduser()))
-    except OSError:
-        pass                      # no conf is a valid state, not an error
-    for sibling in sorted(p for p in projects.iterdir() if p.is_dir()):
-        if sibling.resolve() != root:
-            sealed.append(str(sibling))
-    return sealed
+        r = subprocess.run(["git", "worktree", "list", "--porcelain"],
+                           cwd=str(root), capture_output=True, text=True, timeout=10)
+        if r.returncode == 0:
+            first = (r.stdout.splitlines() or [""])[0]
+    except (OSError, subprocess.SubprocessError):
+        pass
+    main = Path(first[len("worktree "):]).resolve() if first.startswith("worktree ") else None
+    if main is not None and main != root and not _holds_tracked_files(main, root):
+        main = None               # the git dir's parent, not a checkout (round 3 F1)
+    if main is None or not (main / ".git").exists():
+        if (root / ".git").is_file():
+            raise RuntimeError(f"cannot find the main checkout of linked worktree {root}; "
+                               "refusing to build a sandbox that leaves it readable")
+        return None
+    return main if main != root else None
+
+
+def _holds_tracked_files(main: Path, root: Path) -> bool:
+    """True when `main` contains EVERY top-level name tracked in main's own HEAD.
+
+    With --separate-git-dir aimed at <holder>/.git, git names <holder> as the main checkout
+    and <holder>/.git exists, so it passes for a checkout. A stray file or two in <holder>
+    passed a one-name check (Codex round 4 F1); a real checkout holds them all. Main's own
+    HEAD is read, not the worktree's, so a worktree on an orphan branch still matches.
+    An unborn or empty HEAD shows nothing, so it does not match and the review refuses.
+    """
+    try:
+        r = subprocess.run(["git", "-C", str(main), "ls-tree", "--name-only", "HEAD"],
+                           capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    names = r.stdout.splitlines() if r.returncode == 0 else []
+    return bool(names) and all((main / n).exists() for n in names)
 
 
 def sandbox_policy(repo_root, extra_writable=()) -> str:
     """A seatbelt profile denying everything private and all repo writes.
 
     Later rules override earlier ones, so the output/analysis carve-outs must follow
-    the broad denies -- and SEALED_SUBPATHS must follow everything.
+    the broad denies -- and seal_rules() must follow everything.
     """
     root = str(Path(repo_root).resolve())
     lines = ["(version 1)", "(allow default)"]
@@ -349,7 +402,7 @@ def sandbox_policy(repo_root, extra_writable=()) -> str:
     # SEALED, LAST. Seatbelt applies the last matching rule, so these deny-reads come
     # after every allow above and cannot be re-opened by a carve-out added later in
     # this function. The configured private trees come first.
-    lines += [f'(deny file-read* (subpath "{p}"))' for p in sealed_subpaths(repo_root)]
+    lines += seal_rules(repo_root)
     return "\n".join(lines) + "\n"
 
 
@@ -796,9 +849,13 @@ def run(repo_root: Path, target: str, paths: list[str], question: str,
     started = time.time()
     # The model runs inside an OS-level jail. See THE JAIL above: read-only was measured
     # to give full read access to the private trees, so the boundary is seatbelt's.
+    # Built before the temp file exists, so a refusal leaves nothing behind.
+    try:
+        policy = sandbox_policy(repo_root, extra_writable=[report.parent])
+    except RuntimeError as e:
+        raise SystemExit(f"codex_verify: {e}")
     policy_file = Path(tempfile.mkstemp(suffix=".sb", prefix="codex-jail-")[1])
-    policy_file.write_text(sandbox_policy(repo_root, extra_writable=[report.parent]),
-                           encoding="utf-8")
+    policy_file.write_text(policy, encoding="utf-8")
     argv = jailed_argv(repo_root, policy_file, model, images=images)
     refuse_dispatch_inside_tests(argv)
     try:

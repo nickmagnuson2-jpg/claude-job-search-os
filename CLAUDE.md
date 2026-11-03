@@ -62,7 +62,7 @@ After any user correction, run the **full tiered protocol** — not just a lesso
    ---
    ```
 
-   **`occurrences` / `promoted` / `reopen_gate` / `last_cited` are the ONLY keys `tools/scan_promotion_candidates.py` reads** — the detector behind both `/memory-refresh` and the weekly `memory-promotion-scan` job. A memory file without them is **invisible** to it: the rule accumulates fires while reporting as a first-timer, and no promotion ever surfaces. Prose alone does not register. (384 of 403 `feedback_*.md` files, 95%, were invisible this way until it was fixed 2026-08-13.)
+   **`occurrences` / `promoted` / `reopen_gate` / `last_cited` are the ONLY keys `tools/scan_promotion_candidates.py` reads** — the detector behind the weekly `memory-promotion-scan` job. A memory file without them is **invisible** to it: the rule accumulates fires while reporting as a first-timer, and no promotion ever surfaces. Prose alone does not register. (384 of 403 `feedback_*.md` files, 95%, were invisible this way until it was fixed 2026-08-13.)
 
    - **Rule:** the new rule, plainly stated
    - **Why:** the underlying principle
@@ -78,10 +78,8 @@ After any user correction, run the **full tiered protocol** — not just a lesso
 
 ### Step 2 — Plan promotion via REOPEN gate (when build cost > 5 min)
 
-If the structural fix (skill edit / hook addition / framework rewrite) takes more than a few minutes and you're not building it now, **add a parked todo with an explicit REOPEN gate** (per [[feedback_defer_todos_as_reopen_gates]]):
+If the structural fix (skill edit / hook addition / framework rewrite) takes more than a few minutes and you're not building it now, **record the REOPEN gate in the rule file's `reopen_gate` frontmatter** (the weekly `memory-promotion-scan` reads it), or, when the fix belongs to a workstream, in that `data/workstreams/` file. Do not add a parked todo. Per [[feedback_defer_todos_as_reopen_gates]].
 
-- **Format:** `"PARKED — <skill or system> improvement: <change>. REOPEN gate: <occurrence-count trigger or named decision criterion>. Per [[feedback_*]]."`
-- **Priority:** Low · **Due:** `—`
 - **The REOPEN gate is mandatory.** "Build by [date]" is the failure mode; "REOPEN when this fires a 2nd time" is the correct shape.
 
 ### Step 3 — Promote when gate trips
@@ -248,7 +246,7 @@ Never use a CV bullet as an interview answer or a spoken story as a CV bullet.
 - "New feature" note has been stable >2 weeks
 - Session-specific reminders past their date
 
-**Check CLASS before archiving, not just the ARCHIVE flag.** A file flagged `canonical` is safe to archive ONLY if it is pure MACHINERY (canon target `-`). If it is HYBRID or PRINCIPLE, the flag means only the *machinery half* shipped — the portable kernel is still in the file and archiving strands it. Join each candidate against `output/analysis/061226-memory-sort-results.md` (`FILE | CLASS | CANON | ARCHIVE`); route HYBRID/PRINCIPLE to "hold for principles promotion." **A file absent from that dataset HOLDS** — it classified 330 files on 2026-06-12 and the corpus is larger now, so a lookup miss means *unclassified*, never *safe*. Promotion and archival are separate decisions: never flip `promoted:` and archive in the same breath, which is the coupling that caused this. Fail-safe direction: an un-archived file costs shard bytes, a wrongly-archived hybrid costs the kernel. This guard lives here, not only in `/memory-refresh` Step 3a, because archiving happens in any hygiene pass and that skill is rarely invoked. Full rule: `memory/feedback_dont_archive_hybrid_before_kernel_promoted.md`.
+**Check CLASS before archiving, not just the ARCHIVE flag.** A file flagged `canonical` is safe to archive ONLY if it is pure MACHINERY (canon target `-`). If it is HYBRID or PRINCIPLE, the flag means only the *machinery half* shipped — the portable kernel is still in the file and archiving strands it. Join each candidate against `output/analysis/061226-memory-sort-results.md` (`FILE | CLASS | CANON | ARCHIVE`); route HYBRID/PRINCIPLE to "hold for principles promotion." **A file absent from that dataset HOLDS** — it classified 330 files on 2026-06-12 and the corpus is larger now, so a lookup miss means *unclassified*, never *safe*. Promotion and archival are separate decisions: never flip `promoted:` and archive in the same breath, which is the coupling that caused this. Fail-safe direction: an un-archived file costs shard bytes, a wrongly-archived hybrid costs the kernel. This guard lives here because archiving happens in any hygiene pass. Full rule: `memory/feedback_dont_archive_hybrid_before_kernel_promoted.md`.
 
 **Before deleting the source file on archive, update citing artifacts.** `grep -rl <entry-slug> .claude/skills/ CLAUDE.md docs/` — if anything still cites it, either repoint the citation to the archive rollup or leave a one-line stub file that points to `[[archive-YYYY-MM]]`. A deleted memory file with live citations is a recall dead-end (fable-audit 2026-07-07 #1: 6 skill citations stranded this way).
 

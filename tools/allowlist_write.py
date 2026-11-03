@@ -110,10 +110,11 @@ def remove(repo_root: Path, key: str, timeout: float = 30.0) -> dict:
     path = allow_path(repo_root)
     with inbox_lock.file_lock(path, timeout=timeout):
         data = load(repo_root)
-        if key not in data:
-            raise KeyError(f"{key} is not in the allowlist")
         before = len(data)
-        data.pop(key)
+        try:
+            data.pop(key)
+        except KeyError:
+            raise KeyError(f"{key} is not in the allowlist") from None
         _dump(repo_root, data)
     return {"key": key, "action": "removed",
             "entries_before": before, "entries_after": before - 1}
@@ -151,9 +152,10 @@ def main(argv=None) -> int:
             out = remove(root, args.key, timeout=args.timeout)
         elif args.cmd == "get":
             data = load(root)
-            if args.key not in data:
-                raise KeyError(f"{args.key} is not in the allowlist")
-            out = {"key": args.key, "why": data[args.key]}
+            try:
+                out = {"key": args.key, "why": data[args.key]}
+            except KeyError:
+                raise KeyError(f"{args.key} is not in the allowlist") from None
         else:
             data = load(root)
             keys = sorted(k for k in data

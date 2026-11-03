@@ -10,11 +10,13 @@ Accepts:
   --repo-root PATH         Repository root. Defaults to cwd.
   --dry-run                Return JSON contract without writing.
 
-Destination types handled (12):
+Destination types handled (11):
   personal_capture → <personal-vault>/data/inbox.md — #personal short-circuit;
                      writes NOTHING into this repo (see remember_classify step 0)
-  contact_note    → data/networking.md — append to contact's section
-  outreach_reply  → data/outreach-log.md — update Status to Replied
+  contact_note    → data/networking.md — append to contact's section. Needs "direction":
+                    in / out / both / none (who reached whom, asked by /remember, never
+                    inferred). `in` and `both` also set the contact's newest open
+                    outreach-log row to Replied.
   pipeline_note   → data/job-pipeline.md — append to Notes cell
   company_note    → data/company-notes/<slug>.md — prepend entry
   profile_update  → data/profile.md — append under ## Session Notes
@@ -32,8 +34,8 @@ Output: JSON to stdout
 
 Usage:
   PYTHONIOENCODING=utf-8 python3 tools/remember_apply.py \\
-    --note "Jane replied" \\
-    --destinations '[{"type":"contact_note","entity":"Jane Doe","file":"data/networking.md"}]' \\
+    --note "Jane asked for a call" \\
+    --destinations '[{"type":"contact_note","entity":"Jane Doe","file":"data/networking.md","direction":"in"}]' \\
     --repo-root .
 """
 import argparse
@@ -45,6 +47,7 @@ import sys as _sys
 _sys.path.insert(0, str(Path(__file__).resolve().parent))
 import inbox_lock
 import outreach_status  # noqa: E402
+from reply_classify import with_direction  # noqa: E402
 from md_table import find_section, is_sep_row, out_error, out_ok, parse_cols, read_file, write_atomic  # noqa: E402
 
 NOTES_FILE      = "data/notes.md"
@@ -105,12 +108,19 @@ def section_end(lines: list, start: int) -> int:
 # ---------------------------------------------------------------------------
 
 def apply_contact_note(note: str, dest: dict, repo_root: Path) -> dict:
-    """Append a `#### YYYY-MM-DD | remember | <note>` interaction entry to the
+    """Append a `#### YYYY-MM-DD | remember<suffix> | <note>` interaction entry to the
     matching contact's section in networking.md (parseable by the Interaction-Log
-    reconcilers, unlike the old bare `[date] note` line)."""
+    reconcilers, unlike the old bare `[date] note` line). The suffix records dest's
+    direction (reply_classify.with_direction); `in` also flips the outreach log."""
     today = datetime.now().strftime("%Y-%m-%d")
     entity = dest.get("entity", "")
     path = repo_root / NETWORKING_FILE
+    d = dest.get("direction")
+    if d not in ("in", "out", "both", "none"):
+        return {"status": "error", "type": "contact_note", "code": "direction_required",
+                "message": "contact_note needs direction in, out, both or none: did they "
+                           "reach Nick (in), did Nick reach them (out), both in this note "
+                           "(both), or neither (none)?"}
 
     content = read_file(path)
     if not content:
@@ -137,7 +147,7 @@ def apply_contact_note(note: str, dest: dict, repo_root: Path) -> dict:
     # headers. A bare `[date]` line was invisible to them, so a /remember-captured
     # reply stayed "awaiting response" in standup (fable-audit Theme 2, 2026-07-14).
     summary = " ".join(note.split())  # collapse newlines/whitespace for the header
-    entry = f"#### {today} | remember | {summary}"
+    entry = f"#### {today} | {with_direction('remember', d)} | {summary}"
 
     if sec_start == -1:
         # Contact section not found — append note to general section or create
@@ -157,35 +167,36 @@ def apply_contact_note(note: str, dest: dict, repo_root: Path) -> dict:
     if content.endswith("\n"):
         new_content += "\n"
     write_atomic(path, new_content)
-    return {"status": "ok", "type": "contact_note", "file": str(path), "entity": entity}
+    result = {"status": "ok", "type": "contact_note", "file": str(path), "entity": entity,
+              "direction": d}
+    if d in ("in", "both"):
+        result.update(apply_outreach_reply(entity, repo_root))
+    return result
 
 
-def apply_outreach_reply(note: str, dest: dict, repo_root: Path) -> dict:
+def apply_outreach_reply(entity: str, repo_root: Path) -> dict:
     """Mark the entity's newest open outreach-log row Replied, via outreach_status (the
-    only writer of that cell). Falls back to a networking.md note when there is none."""
-    entity = dest.get("entity", "")
+    only writer of that cell). -> {"outreach_log_updated": bool, plus "warning" (and
+    "candidates" for an ambiguous name) when no row was updated}."""
     path = repo_root / OUTREACH_FILE
-
     if not path.exists():
-        result = apply_contact_note(note, dest, repo_root)
-        result["warning"] = "No outreach-log.md found — logged to networking.md"
-        return result
-
+        return {"outreach_log_updated": False,
+                "warning": "No outreach-log.md found — logged to networking.md"}
     try:
         code, payload = outreach_status.set_latest_open(path, entity, "Replied")
     except outreach_status.LogError as exc:
         code, payload = 1, {"reason": str(exc)}
-    if code != 0:
-        result = apply_contact_note(note, dest, repo_root)
-        reason = payload.get("reason", "unknown")
-        if reason == "no open row for recipient":
-            result["warning"] = f"No open outreach row found for {entity} — logged to networking.md"
-        else:
-            result["warning"] = f"Outreach row not updated for {entity} ({reason}) — logged to networking.md"
-            if payload.get("candidates"):
-                result["candidates"] = payload["candidates"]
-        return result
-    return {"status": "ok", "type": "outreach_reply", "file": str(path), "entity": entity}
+    if code == 0:
+        return {"outreach_log_updated": True, "outreach_file": str(path)}
+    reason = payload.get("reason", "unknown")
+    out = {"outreach_log_updated": False}
+    if reason == "no open row for recipient":
+        out["warning"] = f"No open outreach row found for {entity} — logged to networking.md"
+    else:
+        out["warning"] = f"Outreach row not updated for {entity} ({reason}) — logged to networking.md"
+        if payload.get("candidates"):
+            out["candidates"] = payload["candidates"]
+    return out
 
 
 def apply_pipeline_note(note: str, dest: dict, repo_root: Path) -> dict:
@@ -551,7 +562,6 @@ def apply_personal_capture(note: str, dest: dict, repo_root: Path) -> dict:
 HANDLERS = {
     "personal_capture": apply_personal_capture,
     "contact_note":   apply_contact_note,
-    "outreach_reply": apply_outreach_reply,
     "pipeline_note":  apply_pipeline_note,
     "company_note":   apply_company_note,
     "profile_update": apply_profile_update,

@@ -74,10 +74,8 @@ def all_backups(root: Path | None = None) -> list[Path]:
     store from leaking between trees: a fixture repo in tmp_path and the real repo write to
     the same directory, and each must see only its own.
     """
-    d = backup_dir()
-    if not d.exists():
-        return []
-    found = sorted(d.glob("*" + SUFFIX))
+    # A missing store globs to nothing, so this returns [] without a separate check.
+    found = sorted(backup_dir().glob("*" + SUFFIX))
     if root is None:
         return found
     # By whole path components. A bare string prefix let a root `.../wt1` claim the

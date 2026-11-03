@@ -5,6 +5,38 @@ Format: newest entries at the top.
 
 Forked from raphaotten/claude-interview-coach (MIT / CC BY 4.0).
 
+## 2026-10-30: Reply and send direction is recorded, not guessed from the note
+
+**What prompted it.** Whether a networking note was a reply or a send was decided by
+rules that read its English. Every review round found a new phrasing they got wrong, so
+the rules never converged. The direction is now a field set when the interaction is
+logged, decided by Nick.
+
+**Changed**
+- **`networking_write.py log` requires `--direction in|out|both|none`.** It is stored in
+  the interaction type: `email (inbound)`, `(outbound)`, `(two-way)` (one note with a
+  message each way), or plain. Only `in` and `both` mark the outreach-log row Replied.
+  `--reply-received` and `--no-reply-flip` are removed.
+- **`reply_classify.py` reads only the type.** `classify(kind)` takes no summary;
+  `direction()`, `base_type()` and `with_direction()` are the only code that reads or
+  writes the suffix. Two-way counts as one reply and one send on the morning page.
+- **`/remember` asks** "did they reach you, or did you reach them?" for a contact note.
+  `remember_classify.py` never infers a reply; `remember_apply.py` refuses a contact
+  note without a direction. The `outreach_reply` destination is folded into it.
+- Readers of the type use `base_type()`: `day_check.py`, `conversations_metric.py`,
+  `todo_daily_metrics.py` (outreach touches: `(outbound)` and `(two-way)` entries count under
+  their base channel; replies relabelled `(inbound)` by the backfill stop counting as touches).
+  `person_history.py` shows the raw type, direction included.
+- **`networking_direction_backfill.py` (new, one-off):** labels existing entries from the
+  verdict the old rules gave them (`--classifier` = the old module from git). `plan`
+  writes a review file and never touches `data/`; `apply` needs `--approved`, refuses a
+  changed file or an edited plan, backs up, and writes atomically.
+
+**Closed.** 44 surviving mutants in untouched functions of `remember_apply.py` (38) and
+`remember_classify.py` (6) were already in the mutation baseline. Exact-output tests now
+kill them, except six equivalent mutants allowlisted with traced reasons; both files have
+0 survivors.
+
 ## 2026-10-25: Review findings fixed, and two recurring mistakes turned into gates
 
 **What prompted it.** The 10/23 push left a set of parked review findings. They were

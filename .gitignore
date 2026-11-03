@@ -22,10 +22,14 @@ __pycache__/
 tools/.pending-draft*
 tools/.personal-recipients.txt
 tools/.eic-reviewers.txt
-tools/gmail_credentials.json
-tools/gmail_token.json
-tools/.gmail_state.json
-tools/.gmail_state_personal.json
+# Stem globs, not exact names. gmail_fetch writes the token and both state files via a
+# '<name>.tmp.<pid>' temp + os.replace and removes the temp on any handled error, but a
+# death it cannot handle (SIGKILL, power loss) leaves it behind (the token temp holds OAuth
+# credentials; the state temps hold Gmail ids). The stems also cover Finder duplicates and
+# .bak copies, including of the OAuth client file. Pinned by test_gitignore_public_safety.py.
+tools/gmail_credentials*
+tools/gmail_token*
+tools/.gmail_state*
 tools/.wispr-state.json
 tools/.alirohde_state.json
 tools/.agent_seen.json
@@ -77,7 +81,7 @@ nul
 data/voice-corpus/
 
 # Daily Stoic pipeline state (generated)
-tools/.daily_stoic_state.json
+tools/.daily_stoic_state*
 
 # Private archive (personal scratch moved out of the public tree; backed up to the private remote via tools/backup-data.sh)
 /_archive/
@@ -187,6 +191,6 @@ tools/.sealed-paths.conf
 /tests/skills/SCAN_CONTACTS_TESTING.md
 
 # Read-only Google Calendar token (calendar_fetch.py), separate from the Gmail token
-tools/calendar_token.json
+tools/calendar_token*
 # Calendar write token (calendar_write.py, events.owned only), its own file
-tools/calendar_write_token.json
+tools/calendar_write_token*

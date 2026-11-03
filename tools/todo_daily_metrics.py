@@ -45,6 +45,7 @@ from schema_guard import assert_schema, find_header_line, SchemaDriftError  # no
 from hook_runtime import claude_project_dir  # noqa: E402
 from stage_vocab import is_closed_todo_status, is_terminal_stage  # noqa: E402
 import todo_read  # noqa: E402
+from reply_classify import base_type, direction  # noqa: E402
 
 # Canonical schemas (see the writers: tools/todo_write.py, tools/pipe_write.py). The
 # cols[N] indices throughout this file's parsers assume these exact column orders.
@@ -276,24 +277,18 @@ def parse_changelog_today(content: str, today: date) -> list:
     return results
 
 
-ACTIVE_PROCESS_STAGES = {
-    "applied", "phone screen", "screening", "first round", "interview", "interviewing",
-    "onsite", "onsite loop", "offer", "recruiter submitted", "recruiter screen pending",
-    "recruiter contact", "hiring manager", "founder meet", "peer meet", "networking",
-}
 EVALUATION_BACKLOG_STAGES = {"to evaluate", "to apply", "researching"}
 TERMINAL_STAGES = {"closed", "rejected", "withdrawn", "skipped", "archived", "accepted"}
 
 
 def _bucket_for_stage(stage: str) -> str:
     s = stage.strip().lower()
-    if s in ACTIVE_PROCESS_STAGES:
-        return "active_process"
     if s in EVALUATION_BACKLOG_STAGES:
         return "evaluation_backlog"
     if s in TERMINAL_STAGES:
         return "terminal"
-    # Unknown stage = active by default (don't lose real entries)
+    # Active stages (applied, interviewing, offer, ...) and any unknown stage
+    # are active (don't lose real entries)
     return "active_process"
 
 
@@ -475,13 +470,12 @@ def parse_networking_activity(networking_content: str, todos_content: str) -> li
         if name and name in todos_content:
             # Count pending todos mentioning this contact
             count = todos_content.count(name)
-            if count > 0:
-                results.append({
-                    "name": name,
-                    "company": contact["company"],
-                    "last_interaction": contact["last_interaction"],
-                    "pending_todos": count,
-                })
+            results.append({
+                "name": name,
+                "company": contact["company"],
+                "last_interaction": contact["last_interaction"],
+                "pending_todos": count,
+            })
 
     return results
 
@@ -508,9 +502,13 @@ def parse_networking_touches_today(networking_content: str, today: date) -> list
             current_company = (m.group(2) or "").strip()
             continue
         # Detect today-dated interaction header: #### YYYY-MM-DD | type | summary
-        m2 = re.match(rf"^####\s+{re.escape(today_str)}\s*\|\s*(\w+)\s*\|\s*(.*)", line)
-        if m2 and current_name and not _is_separator_row(current_name):
-            channel = m2.group(1).strip()
+        m2 = re.match(rf"^####\s+{re.escape(today_str)}\s*\|\s*([^|]+?)\s*\|\s*(.*)", line)
+        # A touch is Nick reaching out, so an inbound entry is not one. The channel is the
+        # base type, and only a one-word base counts (what the old `\w+` pattern matched).
+        if (m2 and current_name and not _is_separator_row(current_name)
+                and direction(m2.group(1)) != "in"
+                and re.fullmatch(r"\w+", base_type(m2.group(1)))):
+            channel = base_type(m2.group(1))
             summary = m2.group(2).strip()
             results.append({
                 "date": today_str,
@@ -566,16 +564,15 @@ def scan_substantive_work(repo_root: Path, today: date) -> dict:
     # .resolve() (follow symlinks) is this tool's behaviour since then and is kept;
     # claude_project_dir itself uses abspath, which differs only for a symlinked root.
     memory_dir = claude_project_dir(Path(repo_root).resolve()) / "memory"
-    memories_n, memories_paths = (0, [])
-    if memory_dir.exists():
-        memories_n, memories_paths = count_modified_after(str(memory_dir / "*.md"))
-        # Exclude MEMORY.md and the index-<topic>.md shards (2026-07-08 7-shard
-        # restructure) — these are router/index containers, not memory entries.
-        memories_paths = [
-            p for p in memories_paths
-            if not p.endswith("MEMORY.md") and "/index-" not in p
-        ]
-        memories_n = len(memories_paths)
+    # A missing memory dir globs to nothing, so the counts are 0.
+    _, memories_paths = count_modified_after(str(memory_dir / "*.md"))
+    # Exclude MEMORY.md and the index-<topic>.md shards (2026-07-08 7-shard
+    # restructure) — these are router/index containers, not memory entries.
+    memories_paths = [
+        p for p in memories_paths
+        if not p.endswith("MEMORY.md") and "/index-" not in p
+    ]
+    memories_n = len(memories_paths)
 
     # Inbox entries today (count of '## YYYY-MM-DD' headers matching today)
     inbox = read_file(repo_root / "data" / "inbox.md")

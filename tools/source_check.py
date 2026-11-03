@@ -49,6 +49,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from md_table import write_atomic  # noqa: E402
 from todo_write import active_rows  # noqa: E402
+from todo_write import MISFILED_STATUSES  # noqa: E402
 
 REGISTRY_REL = "data/source-checks.json"
 NOTES_REL = "data/notes.md"
@@ -135,14 +136,16 @@ def get_source(sources: list[dict], source_id: str) -> dict:
 
 
 def live_pending_rows(todos_text: str, fragment: str) -> list[list[str]]:
-    """Every live Pending row whose Task contains `fragment`.
+    """Every live row (Pending or In Progress) whose Task contains `fragment`.
 
-    Live means under ## Active (todo_write.active_rows); a Pending row stranded under
+    Live means under ## Active (todo_write.active_rows); a row stranded under
     ## Completed is NOT live and is not returned.
     """
     return [cols for _, cols in active_rows(todos_text.splitlines())
             if len(cols) > 3 and fragment.lower() in cols[0].lower()
-            and cols[3].strip() == "Pending"]
+            # The statuses rotate treats as live, imported so the two tools cannot disagree
+            # about one row (Fable 21.F2, 2026-10-30: an In Progress row read as RETIRED here).
+            and cols[3].strip().lower() in MISFILED_STATUSES]
 
 
 def find_pending_row(todos_text: str, fragment: str) -> list[str] | None:

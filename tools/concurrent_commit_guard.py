@@ -40,6 +40,22 @@ must both hold, and neither comes from the transcript:
 `git add -A` and `git commit -a` have no pathspec index, so they still depend on the
 transcript and are refused when it is behind. So is a pathspec given without `--`.
 
+A merge's incoming files count as named (added 2026-11-02), on three conditions:
+MERGE_HEAD exists; this session's own commands include a `git merge` or `git pull`;
+and, for some merged commit, the staged entry (mode and blob) equals that commit's entry
+while this branch's entry still equals the merge base's. That is exactly the file git
+takes from the other side unchanged, so it carries no one's edit. Before this, every
+merge of main was refused for main's own files. Still refused, and still needing names:
+a conflicted path or one both sides changed (even when git auto-merged it cleanly), a
+merged file edited afterwards, a mode change, a deletion arriving in the merge, and a
+file staged at the other side's version on a path this branch changed (that would revert
+this branch's change), or the target of a rename on their side. It also depends on the
+transcript showing this session's `git merge`, so a transcript that lags can still
+refuse. Not covered: after `git merge -s ours` or after this session unstages an
+incoming file, a peer staging the other side's version would pass. No exemption when the histories have several best common
+ancestors (criss-cross), or for `git merge --squash`, which writes no MERGE_HEAD. The
+exemption fails closed on any git or OS error.
+
 WHAT IT CANNOT DETECT (read before trusting a pass)
 ---------------------------------------------------
   * A path this session named in ANY Bash command counts, including `cat <path>` or
@@ -48,6 +64,10 @@ WHAT IT CANNOT DETECT (read before trusting a pass)
   * Two sessions editing the SAME file: the path is attributed, the other session's
     hunks ride along. The guard compares paths, never content.
   * Sibling subagents of one session are one session here. It cannot separate them.
+  * The merge exemption trusts that a session whose commands include `git merge` or
+    `git pull` owns the merge in progress. That check has no repo or time bound: a merge
+    run in another repo (`-C`), a `pull --rebase`, or one finished hours ago all count,
+    so such a session can complete a peer's stopped merge in this worktree.
   * Files a script generated without their path appearing in a command (a tool that
     writes its own output file, `git mv` into a directory, a `cd` followed by a
     relative name, a directory pathspec such as `git add tools/`) are NOT attributed
@@ -314,14 +334,17 @@ def invoking_commit_command(pid: int, run=subprocess.run) -> str:
 # --------------------------------------------------------------------------- decision
 
 def decide(staged: list[str], *, session_id: str, transcripts: list[Path],
-           peers: list[int], root: Path, commit_command: str = "") -> Verdict:
+           peers: list[int], root: Path, commit_command: str = "",
+           merged: frozenset[str] | set[str] = frozenset()) -> Verdict:
     if not staged:
         return Verdict(False, mode="nothing-staged")
     if not session_id:
         return Verdict(False, mode="not-a-session")
     claims = session_claims(transcripts)
     claims.commands.append(commit_command)      # '' when there is none: names nothing
-    missing = unattributed(staged, claims, root)
+    if not ran_merge(claims.commands):
+        merged = frozenset()          # a merge another session started is not ours
+    missing = [p for p in unattributed(staged, claims, root) if p not in merged]
     if not missing:
         return Verdict(False, mode="attribution")
     if not transcripts:
@@ -343,6 +366,118 @@ def staged_paths(root: Path) -> list[str]:
     """Paths in the index git handed this hook. --no-renames lists both sides."""
     out = _git(root, "diff", "--cached", "--name-only", "--no-renames", "-z")
     return [p for p in out.split("\0") if p]
+
+
+def _entries(out: str, blob_field: int) -> dict[str, tuple[str, str]]:
+    """{path: (mode, blob)} from -z output. The blob is field 1 of `ls-files -s`
+    ("<mode> <blob> <stage>") and field 2 of `ls-tree` ("<mode> <type> <blob>").
+    For ls-files only stage 0 counts: an unmerged path has no resolved entry."""
+    got = {}
+    for rec in out.split("\0"):
+        if "\t" in rec:
+            meta, path = rec.split("\t", 1)
+            parts = meta.split()
+            if blob_field == 1 and parts[2] != "0":
+                continue
+            got[path] = (parts[0], parts[blob_field])
+    return got
+
+
+def merge_heads(root: Path) -> list[str]:
+    """Every commit being merged (an octopus merge lists several); [] when no merge
+    is in progress."""
+    path = Path(root) / _git(root, "rev-parse", "--git-path", "MERGE_HEAD").strip()
+    try:
+        return path.read_text(encoding="utf-8").split()
+    except OSError:
+        return []
+
+
+def _tree(root: Path, commit: str, paths: list[str]) -> dict[str, tuple[str, str]]:
+    return _entries(_git(root, "--literal-pathspecs", "ls-tree", "-r", "-z", commit,
+                         "--", *paths), 2)
+
+
+def merged_unchanged(root: Path, staged: list[str]) -> set[str]:
+    """Staged paths that are a merged commit's version of a file this branch never
+    changed since the merge base: the index entry equals that commit's, and HEAD's
+    equals the base's (both absent counts as equal, so a new file qualifies). Empty
+    when no merge is in progress, and on any git error: a failure here can only
+    refuse more, never pass more."""
+    out: set[str] = set()
+    try:
+        heads = merge_heads(root)
+        for i in range(0, len(staged) if heads else 0, 500):
+            chunk = staged[i:i + 500]
+            index = _entries(_git(root, "--literal-pathspecs", "ls-files", "-s", "-z",
+                                  "--", *chunk), 1)
+            ours = _tree(root, "HEAD", chunk)
+            for head in heads:
+                bases = _git(root, "merge-base", "--all", "HEAD", head).split()
+                if len(bases) != 1:
+                    continue        # criss-cross history: no single base to compare with
+                theirs, at_base = _tree(root, head, chunk), _tree(root, bases[0], chunk)
+                # A path new on their side counts only if git sees it ADDED, not as the
+                # target of a rename: a renamed file can carry this branch's edit.
+                # -l0: no rename limit. Under diff.renameLimit's default a large diff
+                # skips rename detection and lists a target as A, while the merge
+                # (merge.renameLimit, higher) still saw the rename.
+                added = set(_git(root, "diff", "--name-only", "--diff-filter=A", "-M",
+                                 "-l0", "-z", bases[0], head).split("\0"))
+                out.update(p for p in chunk if p in index and index[p] == theirs.get(p)
+                           and ours.get(p) == at_base.get(p)
+                           and (p in at_base or p in added))
+    except (RuntimeError, OSError):
+        return set()
+    return out
+
+
+# git's global options that take their value as a separate word. An option missing
+# here makes its value read as the subcommand: no merge counted, so more refusals.
+_GIT_OPTS_WITH_VALUE = {"-C", "-c", "--git-dir", "--work-tree", "--namespace"}
+# Global options after which git runs no subcommand at all.
+_GIT_STOP_OPTS = {"--exec-path", "--version", "--help", "-h", "--html-path",
+                  "--man-path", "--info-path"}
+
+
+def _git_subcommand(words: list[str]) -> str:
+    """The subcommand of a `git ...` simple command (after global options), or ''."""
+    i = 0
+    while i < len(words) and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", words[i]):
+        i += 1                                     # leading VAR=value assignments
+    if i >= len(words) or os.path.basename(words[i]) != "git":
+        return ""
+    i += 1
+    while i < len(words):
+        w = words[i]
+        if w in _GIT_STOP_OPTS:
+            return ""                              # git prints something and exits
+        if w in _GIT_OPTS_WITH_VALUE:
+            i += 2
+        elif w.startswith("-"):
+            i += 1
+        else:
+            return w
+    return ""
+
+
+def ran_merge(commands: list[str]) -> bool:
+    """Whether any of this session's Bash commands ran `git merge` or `git pull`, read
+    as the shell would: the git SUBCOMMAND must be merge or pull, so `git log --merges`,
+    `git config pull.rebase`, `git commit -m "merge: x"` and `git merge-base` do not
+    count. False if the shell tokenizer cannot be loaded: no exemption, more refusals."""
+    try:
+        # tools/ is on sys.path: the hook runs this file as a script from tools/.
+        from shell_tokens import simple_commands
+    except ImportError:
+        return False
+    pending = list(commands)
+    while pending:
+        for cmd in simple_commands(pending.pop()):
+            if _git_subcommand(cmd.words) in ("merge", "pull"):
+                return True
+            pending.extend(cmd.subs)
+    return False
 
 
 def record_waiver(root: Path, paths: list[str], reason: str, mode: str) -> Path:
@@ -403,7 +538,8 @@ def main(argv=None) -> int:
                    peers=peers, root=root,
                    commit_command=commit_pathspecs(
                        invoking_commit_command(os.getpid()),
-                       os.environ.get("GIT_INDEX_FILE", "")))
+                       os.environ.get("GIT_INDEX_FILE", "")),
+                   merged=merged_unchanged(root, staged))
         if not v.blocked:
             return 0
         if waive:
