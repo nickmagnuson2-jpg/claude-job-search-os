@@ -1019,3 +1019,25 @@ def test_ran_merge_is_false_when_the_tokenizer_cannot_load(monkeypatch):
     monkeypatch.setattr(builtins, "__import__", no_tokens)
     monkeypatch.delitem(sys.modules, "shell_tokens", raising=False)
     assert g.ran_merge(["git merge main"]) is False
+
+
+def test_an_incoming_rename_is_still_refused_through_its_deletion(repo, cfg):
+    """Review 3 (Fable F1, parked): the renamed-to path can look unchanged since the
+    base, but the rename also stages the old path's deletion, which is never exempt."""
+    (repo / "old.py").write_text("v1\n" * 20)
+    _git(repo, "add", "old.py")
+    _git(repo, "commit", "-q", "-m", "old", "--no-verify")
+    _git(repo, "checkout", "-q", "-b", "work")
+    (repo / "old.py").write_text("v1\n" * 19 + "work edit\n")
+    _git(repo, "commit", "-q", "-am", "work edits old", "--no-verify")
+    _git(repo, "checkout", "-q", "main")
+    _git(repo, "mv", "old.py", "new.py")
+    _git(repo, "commit", "-q", "-m", "main renames", "--no-verify")
+    _git(repo, "checkout", "-q", "work")
+    _git(repo, "merge", "--no-commit", "--no-ff", "main", check=False)
+    _git(repo, "checkout", "main", "--", "new.py")            # the peer
+    _write_main(cfg, _record("Bash", {"command": "git merge --no-commit --no-ff main"}),
+                _record("Bash", {"command": "git commit --no-edit"}))
+    r = _git(repo, "commit", "--no-edit", env=_env(cfg), check=False)
+    assert r.returncode != 0
+    assert "old.py" in r.stderr
