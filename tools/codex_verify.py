@@ -313,11 +313,11 @@ def seal_rules(repo_root) -> list[str]:
         except OSError:
             pass                  # no conf is a valid state, not an error
     for parent in dict.fromkeys([root.parent] + ([main.parent] if main else [])):
-        if root.is_relative_to(parent):
-            keep = [f'(require-not (subpath "{root}"))'] + [
-                f'(require-not (literal "{d}"))' for d in root.parents if d.is_relative_to(parent)]
-        else:
-            keep = [f'(require-not (literal "{parent}"))']
+        # The parent itself, the root, and the folders on the way down to the root stay
+        # readable (as themselves, so `cd` works). Entries outside the parent never match a
+        # rule scoped to it, so the root's other ancestors can be listed without a filter.
+        keep = [f'(require-not (subpath "{root}"))'] + [
+            f'(require-not (literal "{d}"))' for d in dict.fromkeys([parent, *root.parents])]
         rules.append(f'(deny file-read* (require-all (subpath "{parent}") {" ".join(keep)}))')
     return list(dict.fromkeys(rules))
 
