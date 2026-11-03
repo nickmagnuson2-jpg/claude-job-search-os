@@ -111,12 +111,19 @@ Before determining follow-up type, check whether the contact has replied to prio
      N — No response yet
      S — Skip / don't update status now
    ```
-4. **If Yes (replied):** Set the most recent matching row's Status to `Replied` with the script below (never by hand). Store `reply_status = "replied"` — this informs Step 3.
-   Optionally ask: "Briefly, what did they say? (helps tailor the follow-up — press Enter to skip)"
-   If context is provided, carry it into Steps 3 and 6.
+4. **If Yes (replied):** First ask: "Briefly, what did they say? (goes into the reply entry and tailors the follow-up; press Enter to skip)". Then log the reply ONCE as an inbound interaction, with that answer in the summary. This also sets the most recent open matching row's Status to `Replied`, so the reply counts on the morning page:
+   ```bash
+   PYTHONIOENCODING=utf-8 python3 tools/networking_write.py --repo-root . log "<Name>" \
+     --type <email|linkedin|text> --summary "Reply received to <the message it answers>[: <what they said>]" --direction in --no-todo
+   ```
+   This entry IS the reply's record and counts as one reply. Tell Nick it is logged, and never log the same reply again (not here, not through `/networking`), or it counts twice.
+   Do NOT also run the status script below for a Yes: `--direction in` already sets `Replied`, and a second write could mark an older open row. Two exceptions:
+   - `code == "not_found"` (the contact is not in `networking.md`): nothing was logged; set the status with the script below instead.
+   - `outreach_log_updated` is `false`: the reply IS logged, but no row was set to `Replied` (no open row, an ambiguous recipient, or an unreadable log). Run the status script below with `--status Replied` once to set the row or get the `reason` and `candidates`, and show them to Nick. Do not log the reply again.
+   Store `reply_status = "replied"` — this informs Step 3. If context was provided, carry it into Steps 3 and 6.
 5. **If No (no response):** Set the most recent matching row's Status to `No reply` with the same script. Store `reply_status = "no_reply"`.
 
-   **The write, for both 4 and 5:**
+   **The status write (step 5, and step 4 only when the contact is not in `networking.md`):**
    ```bash
    PYTHONIOENCODING=utf-8 python3 tools/outreach_status.py --set-status --latest \
      --recipient "<Name>" --status <Replied|No reply>
@@ -451,10 +458,10 @@ Archive file format:
 
 **1. Log the interaction in `data/networking.md`:**
 
-Add an entry under the contact's Interaction Log section:
+Add an entry under the contact's Interaction Log section. The `(outbound)` in the type is what counts this as a send on the morning page (`tools/reply_classify.py` reads only the type, never the summary). Keep it.
 
 ```markdown
-#### YYYY-MM-DD | [email/linkedin] | Follow-up #N — [1-line summary]
+#### YYYY-MM-DD | [email/linkedin] (outbound) | Follow-up #N — [1-line summary]
 
 > [Full message text in blockquote]
 

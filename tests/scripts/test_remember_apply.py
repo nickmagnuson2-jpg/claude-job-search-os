@@ -23,6 +23,7 @@ def run_apply(*args, tmp_path=None):
         encoding="utf-8",
         env={**os.environ, "PYTHONIOENCODING": "utf-8"},
         cwd=str(REPO_ROOT),
+        timeout=60,  # a hang (e.g. a never-ending padding loop) fails fast instead of stalling the suite
     )
     out = result.stdout.strip()
     if out:
@@ -36,17 +37,19 @@ def dest_json(*dests):
 
 # ---------------------------------------------------------------------------
 # Destination-count guard (fable-audit Theme 2 doc-drift)
-# Locks HANDLERS at 12 so a handler added/removed without updating the docstring,
+# Locks HANDLERS at 11 so a handler added/removed without updating the docstring,
 # CLAUDE.md, and docs/methodology.md (all of which state the count) fails loudly.
 # ---------------------------------------------------------------------------
 
-def test_handler_count_is_twelve():
+def test_handler_count_is_eleven():
     import importlib.util
     spec = importlib.util.spec_from_file_location(
         "remember_apply", str(TOOLS_DIR / "remember_apply.py"))
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
-    assert len(mod.HANDLERS) == 12, sorted(mod.HANDLERS)
+    assert len(mod.HANDLERS) == 11, sorted(mod.HANDLERS)
+    # outreach_reply was folded into contact_note's direction "in" (2026-10-30).
+    assert "outreach_reply" not in mod.HANDLERS
 
 
 # ---------------------------------------------------------------------------
@@ -113,7 +116,7 @@ def test_contact_note_appends_to_section(tmp_path):
         "--repo-root", str(tmp_path),
         "--note", "Jane mentioned she'll be at the conference",
         "--destinations", dest_json(
-            {"type": "contact_note", "entity": "Jane Doe", "file": "data/networking.md"}
+            {"type": "contact_note", "entity": "Jane Doe", "file": "data/networking.md", "direction": "none"}
         ),
     )
     assert code == 0
@@ -137,7 +140,7 @@ def test_contact_note_is_parseable_interaction_entry(tmp_path):
         "--repo-root", str(tmp_path),
         "--note", "Jane replied confirming the intro",
         "--destinations", dest_json(
-            {"type": "contact_note", "entity": "Jane Doe"}
+            {"type": "contact_note", "entity": "Jane Doe", "direction": "none"}
         ),
     )
     assert code == 0
@@ -182,7 +185,7 @@ def test_contact_note_flips_reply_out_of_awaiting_end_to_end(tmp_path):
     result, code = run_apply(
         "--repo-root", str(tmp_path),
         "--note", "Jane replied — happy to intro me",
-        "--destinations", dest_json({"type": "contact_note", "entity": "Jane Doe"}),
+        "--destinations", dest_json({"type": "contact_note", "entity": "Jane Doe", "direction": "in"}),
     )
     assert code == 0
 
@@ -196,19 +199,21 @@ def test_contact_note_flips_reply_out_of_awaiting_end_to_end(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Tests: outreach_reply
+# Tests: contact_note with direction in (was outreach_reply until 2026-10-30)
 # ---------------------------------------------------------------------------
 
-def test_outreach_reply_updates_status(tmp_path):
+def test_inbound_contact_note_updates_status(tmp_path):
+    write_fixture(tmp_path, "data/networking.md", NETWORKING_MD)
     write_fixture(tmp_path, "data/outreach-log.md", OUTREACH_MD)
     result, code = run_apply(
         "--repo-root", str(tmp_path),
         "--note", "Jane replied to my email",
         "--destinations", dest_json(
-            {"type": "outreach_reply", "entity": "Jane Doe", "file": "data/outreach-log.md"}
+            {"type": "contact_note", "entity": "Jane Doe", "direction": "in"}
         ),
     )
     assert code == 0
+    assert result["outreach_log_updated"] is True
     content = (tmp_path / "data/outreach-log.md").read_text(encoding="utf-8")
     rows = [l for l in content.splitlines() if "Jane Doe" in l and l.startswith("|")]
     assert len(rows) == 1
@@ -218,19 +223,19 @@ def test_outreach_reply_updates_status(tmp_path):
     assert cols[5] == "Hi Jane"
 
 
-def test_outreach_reply_fallback_to_networking(tmp_path):
+def test_inbound_contact_note_fallback_to_networking(tmp_path):
     """No outreach-log.md → falls back to writing a contact note."""
     write_fixture(tmp_path, "data/networking.md", NETWORKING_MD)
     result, code = run_apply(
         "--repo-root", str(tmp_path),
         "--note", "Jane replied",
         "--destinations", dest_json(
-            {"type": "outreach_reply", "entity": "Jane Doe"}
+            {"type": "contact_note", "entity": "Jane Doe", "direction": "in"}
         ),
     )
     assert code == 0
-    assert "warning" in result or result.get("type") in ("outreach_reply", "contact_note")
-    # Note written somewhere (no crash)
+    assert result["outreach_log_updated"] is False and "warning" in result
+    assert "Jane replied" in (tmp_path / "data/networking.md").read_text(encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -377,7 +382,7 @@ def test_multi_destination_write(tmp_path):
         "--repo-root", str(tmp_path),
         "--note", "Jane at Acme is interested",
         "--destinations", dest_json(
-            {"type": "contact_note", "entity": "Jane Doe"},
+            {"type": "contact_note", "entity": "Jane Doe", "direction": "none"},
             {"type": "general_note"},
         ),
     )
@@ -461,7 +466,7 @@ def run_apply_env(*args, env_extra=None):
     env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
     env.update(env_extra or {})
     result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
-                            env=env, cwd=str(REPO_ROOT))
+                            env=env, cwd=str(REPO_ROOT), timeout=60)
     out = result.stdout.strip()
     if out:
         return json.loads(out), result.returncode
@@ -475,7 +480,7 @@ def test_contact_note_creates_section_when_contact_absent(tmp_path):
     result, code = run_apply(
         "--repo-root", str(tmp_path),
         "--note", "Met Rex Random at a meetup",
-        "--destinations", dest_json({"type": "contact_note", "entity": "Rex Random"}),
+        "--destinations", dest_json({"type": "contact_note", "entity": "Rex Random", "direction": "none"}),
     )
     assert code == 0, f"unknown contact should still succeed, got {result}"
     content = (tmp_path / "data/networking.md").read_text(encoding="utf-8")
@@ -488,7 +493,7 @@ def test_contact_note_missing_networking_file_is_error(tmp_path):
     result, code = run_apply(
         "--repo-root", str(tmp_path),
         "--note", "Jane replied",
-        "--destinations", dest_json({"type": "contact_note", "entity": "Jane Doe"}),
+        "--destinations", dest_json({"type": "contact_note", "entity": "Jane Doe", "direction": "none"}),
     )
     assert code == 1, f"missing networking.md must exit 1, got {code}: {result}"
     assert result["status"] == "error", "status must be error"
@@ -503,7 +508,7 @@ def test_contact_note_collapses_multiline_note_into_one_header(tmp_path):
     _r, code = run_apply(
         "--repo-root", str(tmp_path),
         "--note", "line one\nline two   line three",
-        "--destinations", dest_json({"type": "contact_note", "entity": "Jane Doe"}),
+        "--destinations", dest_json({"type": "contact_note", "entity": "Jane Doe", "direction": "none"}),
     )
     assert code == 0, "multi-line note must be accepted"
     content = (tmp_path / "data/networking.md").read_text(encoding="utf-8")
@@ -517,7 +522,7 @@ def test_contact_note_matches_archived_heading_and_preserves_trailing_newline(tm
     _r, code = run_apply(
         "--repo-root", str(tmp_path),
         "--note", "archived contact resurfaced",
-        "--destinations", dest_json({"type": "contact_note", "entity": "Jane Doe"}),
+        "--destinations", dest_json({"type": "contact_note", "entity": "Jane Doe", "direction": "none"}),
     )
     assert code == 0, "archived heading must still match"
     content = (tmp_path / "data/networking.md").read_text(encoding="utf-8")
@@ -528,7 +533,7 @@ def test_contact_note_matches_archived_heading_and_preserves_trailing_newline(tm
     assert "### Jane Doe\n" not in content, "must not append a duplicate section"
 
 
-# --- outreach_reply ---------------------------------------------------------
+# --- contact_note, direction in (was outreach_reply) -------------------------
 
 OUTREACH_TWO_ROWS = """\
 # Outreach Log
@@ -540,12 +545,13 @@ OUTREACH_TWO_ROWS = """\
 """
 
 
-def test_outreach_reply_flips_the_last_matching_row_only(tmp_path):
+def test_inbound_contact_note_flips_the_last_matching_row_only(tmp_path):
+    write_fixture(tmp_path, "data/networking.md", NETWORKING_MD)
     write_fixture(tmp_path, "data/outreach-log.md", OUTREACH_TWO_ROWS)
     _r, code = run_apply(
         "--repo-root", str(tmp_path),
         "--note", "Jane replied",
-        "--destinations", dest_json({"type": "outreach_reply", "entity": "Jane Doe"}),
+        "--destinations", dest_json({"type": "contact_note", "entity": "Jane Doe", "direction": "in"}),
     )
     assert code == 0, "outreach reply must succeed"
     content = (tmp_path / "data/outreach-log.md").read_text(encoding="utf-8")
@@ -556,7 +562,7 @@ def test_outreach_reply_flips_the_last_matching_row_only(tmp_path):
     assert content.endswith("\n"), "trailing newline must be preserved"
 
 
-def test_outreach_reply_ignores_replied_rows_and_falls_back(tmp_path):
+def test_inbound_contact_note_ignores_replied_rows_and_falls_back(tmp_path):
     write_fixture(tmp_path, "data/networking.md", NETWORKING_MD)
     write_fixture(tmp_path, "data/outreach-log.md",
                   "# Outreach Log\n\n"
@@ -566,7 +572,7 @@ def test_outreach_reply_ignores_replied_rows_and_falls_back(tmp_path):
     result, code = run_apply(
         "--repo-root", str(tmp_path),
         "--note", "Jane replied again",
-        "--destinations", dest_json({"type": "outreach_reply", "entity": "Jane Doe"}),
+        "--destinations", dest_json({"type": "contact_note", "entity": "Jane Doe", "direction": "in"}),
     )
     assert code == 0, "fallback path must succeed"
     assert result["warning"] == "No open outreach row found for Jane Doe — logged to networking.md", \
@@ -577,19 +583,19 @@ def test_outreach_reply_ignores_replied_rows_and_falls_back(tmp_path):
     assert "Jane replied again" in net, "note must land in networking.md"
 
 
-def test_outreach_reply_missing_log_falls_back_with_its_own_warning(tmp_path):
+def test_inbound_contact_note_missing_log_falls_back_with_its_own_warning(tmp_path):
     write_fixture(tmp_path, "data/networking.md", NETWORKING_MD)
     result, code = run_apply(
         "--repo-root", str(tmp_path),
         "--note", "Jane replied",
-        "--destinations", dest_json({"type": "outreach_reply", "entity": "Jane Doe"}),
+        "--destinations", dest_json({"type": "contact_note", "entity": "Jane Doe", "direction": "in"}),
     )
     assert code == 0, "missing outreach log must fall back, not fail"
     assert result["warning"] == "No outreach-log.md found — logged to networking.md", \
         f"unexpected warning: {result.get('warning')}"
 
 
-def test_outreach_reply_skips_rows_with_too_few_columns(tmp_path):
+def test_inbound_contact_note_skips_rows_with_too_few_columns(tmp_path):
     write_fixture(tmp_path, "data/networking.md", NETWORKING_MD)
     write_fixture(tmp_path, "data/outreach-log.md",
                   "# Outreach Log\n\n"
@@ -599,7 +605,7 @@ def test_outreach_reply_skips_rows_with_too_few_columns(tmp_path):
     result, code = run_apply(
         "--repo-root", str(tmp_path),
         "--note", "Jane replied",
-        "--destinations", dest_json({"type": "outreach_reply", "entity": "Jane Doe"}),
+        "--destinations", dest_json({"type": "contact_note", "entity": "Jane Doe", "direction": "in"}),
     )
     assert code == 0, "short rows must not crash"
     assert "warning" in result, "a 3-column row is not a valid outreach row, so it must fall back"
@@ -1304,7 +1310,7 @@ def test_write_atomic_creates_parents_and_leaves_no_tmp(tmp_path):
     assert list(tmp_path.rglob("*.tmp")) == [], "the temp file must be renamed away"
 
 
-def test_outreach_reply_surfaces_an_ambiguous_name_instead_of_no_open_row(tmp_path):
+def test_inbound_contact_note_surfaces_an_ambiguous_name_instead_of_no_open_row(tmp_path):
     """An ambiguous name is not the same as no open row; the warning must say which."""
     write_fixture(tmp_path, "data/networking.md", NETWORKING_MD)
     write_fixture(tmp_path, "data/outreach-log.md",
@@ -1316,7 +1322,7 @@ def test_outreach_reply_surfaces_an_ambiguous_name_instead_of_no_open_row(tmp_pa
     result, code = run_apply(
         "--repo-root", str(tmp_path),
         "--note", "Doe replied",
-        "--destinations", dest_json({"type": "outreach_reply", "entity": "Doe"}),
+        "--destinations", dest_json({"type": "contact_note", "entity": "Doe", "direction": "in"}),
     )
     assert code == 0
     assert "ambiguous recipient" in result["warning"], result["warning"]
@@ -1324,3 +1330,201 @@ def test_outreach_reply_surfaces_an_ambiguous_name_instead_of_no_open_row(tmp_pa
     log = (tmp_path / "data/outreach-log.md").read_text(encoding="utf-8")
     assert log.count("| Sent |") == 2, "an ambiguous name must not flip either row"
 
+
+# --- the recorded direction (2026-10-30) ---------------------------------------------
+
+def _headers(tmp_path):
+    return [l for l in (tmp_path / "data/networking.md").read_text(encoding="utf-8").splitlines()
+            if l.startswith("#### ")]
+
+
+@pytest.mark.parametrize("dest", [
+    {"type": "contact_note", "entity": "Jane Doe"},
+    {"type": "contact_note", "entity": "Jane Doe", "direction": None},
+    {"type": "contact_note", "entity": "Jane Doe", "direction": "inbound"},
+])
+def test_a_contact_note_without_a_direction_is_refused(tmp_path, dest):
+    """Nick, 2026-10-30: /remember asks who reached whom; nothing is inferred."""
+    write_fixture(tmp_path, "data/networking.md", NETWORKING_MD)
+    write_fixture(tmp_path, "data/outreach-log.md", OUTREACH_MD)
+    before = {f: (tmp_path / f).read_text(encoding="utf-8")
+              for f in ("data/networking.md", "data/outreach-log.md")}
+    result, code = run_apply("--repo-root", str(tmp_path), "--note", "Jane replied",
+                             "--destinations", dest_json(dest))
+    assert code != 0 and result["code"] == "direction_required"
+    assert {f: (tmp_path / f).read_text(encoding="utf-8") for f in before} == before
+
+
+@pytest.mark.parametrize("direction,kind,flipped", [
+    ("in", "remember (inbound)", True),
+    ("out", "remember (outbound)", False),
+    ("none", "remember", False),
+    ("both", "remember (two-way)", True),
+])
+def test_the_direction_is_written_into_the_type(tmp_path, direction, kind, flipped):
+    write_fixture(tmp_path, "data/networking.md", NETWORKING_MD)
+    write_fixture(tmp_path, "data/outreach-log.md", OUTREACH_MD)
+    result, code = run_apply(
+        "--repo-root", str(tmp_path), "--note", "Jane replied with times",
+        "--destinations", dest_json({"type": "contact_note", "entity": "Jane Doe",
+                                     "direction": direction}))
+    assert code == 0
+    assert [h for h in _headers(tmp_path) if "Jane replied with times" in h][0].split(" | ")[1] == kind
+    assert result.get("outreach_log_updated", False) is flipped
+    log = (tmp_path / "data/outreach-log.md").read_text(encoding="utf-8")
+    assert ("| Replied |" in log) is flipped
+
+
+# ---------------------------------------------------------------------------
+# Exact-output tests (2026-11-02): each pins the whole written file, so dropping a
+# blank line, an inserted separator, or a trailing-newline branch is caught.
+# ---------------------------------------------------------------------------
+
+def _contact(tmp_path, body, entity="Jane Doe", direction="none"):
+    (tmp_path / "data").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "data" / "networking.md").write_text(body, encoding="utf-8")
+    result, code = run_apply(
+        "--repo-root", str(tmp_path), "--note", "met for coffee",
+        "--destinations", dest_json({"type": "contact_note", "entity": entity,
+                                     "file": "data/networking.md", "direction": direction}),
+    )
+    return result, code, (tmp_path / "data" / "networking.md").read_text(encoding="utf-8")
+
+
+def _entry():
+    return f"#### {_today()} | remember | met for coffee"
+
+
+def test_ensure_section_create_path_appends_blank_heading_blank():
+    mod = _load_module()
+    base = ["# T", "", "## Alpha", "a"]
+    grow = list(base)
+    idx = mod.ensure_section(grow, "## Gamma")
+    assert grow == base + ["", "## Gamma", ""], f"a missing section is appended as blank/heading/blank, got {grow}"
+    assert idx is not None and "## Gamma" in grow[idx:idx + 2], f"the index must locate the new heading, got {idx}"
+
+
+def test_contact_note_ignores_tab_separated_decoy_heading(tmp_path):
+    body = "# N\n\n###\tJane Doe\nx\n\n### Jane Doe — Acme Corp\n\nold\n"
+    _r, code, out = _contact(tmp_path, body)
+    assert code == 0, _r
+    assert out == f"# N\n\n###\tJane Doe\nx\n\n### Jane Doe — Acme Corp\n\n{_entry()}\n\nold\n", out
+
+
+def test_contact_note_absent_contact_exact_block(tmp_path):
+    _r, code, out = _contact(tmp_path, "# N\n", entity="Sam Example")
+    assert code == 0, _r
+    assert out == f"# N\n### Sam Example\n\n{_entry()}\n\n", out
+
+
+def test_contact_note_heading_followed_by_blank_line(tmp_path):
+    _r, code, out = _contact(tmp_path, "# N\n\n### Jane Doe\n\nold\n")
+    assert code == 0, _r
+    assert out == f"# N\n\n### Jane Doe\n\n{_entry()}\n\nold\n", out
+
+
+def test_contact_note_heading_followed_directly_by_text(tmp_path):
+    _r, code, out = _contact(tmp_path, "# N\n\n### Jane Doe\nold\n")
+    assert code == 0, _r
+    assert out == f"# N\n\n### Jane Doe\n{_entry()}\n\nold\n", out
+
+
+def test_contact_note_heading_is_last_line_without_trailing_newline(tmp_path):
+    _r, code, out = _contact(tmp_path, "# N\n\n### Jane Doe")
+    assert code == 0, _r
+    assert out == f"# N\n\n### Jane Doe\n{_entry()}\n", out
+
+
+PIPE_HEAD = ("| Company | Role | Stage | Applied | Next | Contact | Notes | Link |\n"
+             "| --- | --- | --- | --- | --- | --- | --- | --- |\n")
+
+
+def _pipe(tmp_path, body, timeout=30):
+    (tmp_path / "data").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "data" / "job-pipeline.md").write_text(body, encoding="utf-8")
+    proc = subprocess.run(
+        [sys.executable, str(TOOLS_DIR / "remember_apply.py"), "--repo-root", str(tmp_path),
+         "--note", "offer call", "--destinations",
+         dest_json({"type": "pipeline_note", "entity": "Acme Corp"})],
+        capture_output=True, text=True, encoding="utf-8", timeout=timeout,
+        env={**os.environ, "PYTHONIOENCODING": "utf-8"}, cwd=str(REPO_ROOT))
+    return proc.returncode, (tmp_path / "data" / "job-pipeline.md").read_text(encoding="utf-8")
+
+
+def test_pipeline_note_skips_prose_line_named_like_the_company(tmp_path):
+    body = "# Pipeline\n\nAcme Corp\n\n" + PIPE_HEAD + "| Acme Corp | PM | Applied | x | x | x | — | x |\n"
+    code, out = _pipe(tmp_path, body)
+    assert code == 0
+    assert out == ("# Pipeline\n\nAcme Corp\n\n" + PIPE_HEAD +
+                   f"| Acme Corp | PM | Applied | x | x | x | [{_today()}]: offer call | x |\n"), out
+
+
+def test_pipeline_note_pads_a_short_row(tmp_path):
+    body = PIPE_HEAD + "| Acme Corp | PM | Applied | x | x | x |"
+    code, out = _pipe(tmp_path, body)
+    assert code == 0
+    assert out == PIPE_HEAD + f"| Acme Corp | PM | Applied | x | x | x | [{_today()}]: offer call | — |", out
+
+
+def test_company_note_inserts_blank_line_before_new_entry(tmp_path):
+    d = tmp_path / "data" / "company-notes"
+    d.mkdir(parents=True)
+    (d / "acme-corp.md").write_text("# Acme Corp — Notes\n\n## 2026-01-01 | General\nold\n", encoding="utf-8")
+    _r, code = run_apply("--repo-root", str(tmp_path), "--note", "new",
+                         "--destinations", dest_json({"type": "company_note", "slug": "acme-corp"}))
+    assert code == 0, _r
+    out = (d / "acme-corp.md").read_text(encoding="utf-8")
+    assert out == f"# Acme Corp — Notes\n\n\n## {_today()} | General\nnew\n## 2026-01-01 | General\nold\n", out
+
+
+def _one(tmp_path, rel, body, dest):
+    p = tmp_path / rel
+    p.parent.mkdir(parents=True, exist_ok=True)
+    if body is not None:
+        p.write_text(body, encoding="utf-8")
+    _r, code = run_apply("--repo-root", str(tmp_path), "--note", "hello",
+                         "--destinations", dest_json(dest))
+    assert code == 0, _r
+    return p.read_text(encoding="utf-8")
+
+
+def test_profile_update_adds_session_notes_section_exactly(tmp_path):
+    out = _one(tmp_path, "data/profile.md", "# Profile\nbio\n", {"type": "profile_update"})
+    assert out == f"# Profile\nbio\n\n## Session Notes\n\n**{_today()}:** hello\n\n", out
+
+
+def test_profile_update_existing_section_exact(tmp_path):
+    out = _one(tmp_path, "data/profile.md", "# Profile\n## Session Notes\na\n## Other\nb\n",
+               {"type": "profile_update"})
+    assert out == f"# Profile\n## Session Notes\na\n**{_today()}:** hello\n\n## Other\nb\n", out
+
+
+def test_general_note_preserves_existing_notes_file_exactly(tmp_path):
+    out = _one(tmp_path, "data/notes.md", "# Mine\n## Notes\nkeep\n## Tail\nt\n", {"type": "general_note"})
+    assert out == f"# Mine\n## Notes\nkeep\n**{_today()}:** hello\n\n## Tail\nt\n", out
+
+
+def test_general_note_adds_missing_notes_section_exactly(tmp_path):
+    out = _one(tmp_path, "data/notes.md", "# Mine\nkeep\n", {"type": "general_note"})
+    assert out == f"# Mine\nkeep\n\n## Notes\n\n**{_today()}:** hello\n\n", out
+
+
+def _personal(tmp_path, existing):
+    vault = tmp_path / "vault"
+    (vault / "data").mkdir(parents=True)
+    (vault / "data" / "inbox.md").write_text(existing, encoding="utf-8")
+    _r, code = run_apply_env("--repo-root", str(tmp_path / "repo"), "--note", "item",
+                             "--destinations", dest_json({"type": "personal_capture"}),
+                             env_extra={"PERSONAL_VAULT_ROOT": str(vault)})
+    assert code == 0, _r
+    lines = (vault / "data" / "inbox.md").read_text(encoding="utf-8").split("\n")
+    assert lines[-1] == "" and lines[-2].endswith(" — item"), lines
+    return lines[:-2]
+
+
+def test_personal_capture_adds_newline_when_existing_lacks_one(tmp_path):
+    assert _personal(tmp_path, "# Inbox\n- old") == ["# Inbox", "- old"]
+
+
+def test_personal_capture_no_extra_blank_when_existing_ends_with_newline(tmp_path):
+    assert _personal(tmp_path, "# Inbox\n- old\n") == ["# Inbox", "- old"]
