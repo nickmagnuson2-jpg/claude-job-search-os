@@ -12,9 +12,10 @@ hold, so the obligation is now a record a run cannot skip:
   * `draft_capture.py confirm` on an email to an EIC address opens a review here.
   * The review closes only with her reply's Gmail message id AND a memory/lessons.md row
     carrying the EIC tag (her diff, logged), or an explicit reason she made no edits.
-    The id is looked up in Gmail: it must be an inbound message from an EIC address, dated
-    after the draft was opened (which precedes the send; her reply can arrive before Nick
-    confirms), and the lessons row must be dated on or after that day.
+    The id is looked up in Gmail: it must be an inbound message from an EIC address, in the
+    Gmail thread of the post Nick sent for THIS review (a sent message to the EIC with the
+    review's subject, dated between the draft opening and Nick's confirm), and after it.
+    The lessons row must be dated on or after the day of her reply.
   * Re-confirming the capture as not sent cancels its review.
   * `tools/check_eic_review.py` blocks writing a published-post record
     (any *-published.md under output/) while any review is open.
@@ -128,6 +129,10 @@ def read(capture_id: str) -> dict:
         return json.loads(_record_path(capture_id).read_text(encoding="utf-8"))
     except FileNotFoundError:
         raise ReviewError(f"no EIC review for capture {capture_id!r}") from None
+    except (OSError, ValueError):
+        # It still counts as open (reviews()), so the gate keeps blocking (Fable r5 F2).
+        raise ReviewError(f"the review record for {capture_id!r} is unreadable; fix or "
+                          f"remove {_record_path(capture_id)}") from None
 
 
 def open_for(meta: dict, now: float | None = None) -> bool:
@@ -167,7 +172,10 @@ def cancel_for(meta: dict, now: float | None = None) -> bool:
     path = _record_path(meta["id"])
     if meta.get("status") != "not-sent" or not path.exists():
         return False
-    record = read(meta["id"])
+    try:
+        record = read(meta["id"])
+    except ReviewError:
+        return False                    # left as it is: an unreadable record stays owed
     if not isinstance(record, dict) or record.get("status") != "open":
         return False
     record.update({"status": "cancelled",
@@ -207,6 +215,9 @@ def reviews() -> list[dict]:
 def open_reviews() -> list[dict]:
     """Reviews still owed. An unreadable record counts as owed, so the gate fails closed.
     A cancelled review (the send was corrected to not sent) is not owed."""
+    # `unreadable` repeats what reviews() already forces (status "open"), deliberately: this
+    # is the field's registered fail-closed consumer (test_coverage_field_has_fail_closed_
+    # consumer.py), so the gate stays closed if reviews() ever stops forcing the status.
     return [r for r in reviews()
             if r.get("unreadable") or r.get("status") not in ("closed", "cancelled")]
 
@@ -228,32 +239,58 @@ def _row_date(row: str) -> str | None:
 
 
 def fetch_reply(reply_id: str) -> dict:
-    """The message `reply_id` as Gmail reports it: {"from", "labels", "epoch"}.
+    """The message `reply_id` as Gmail reports it, with the thread it sits in:
+    {"from", "to", "subject", "labels", "epoch", "thread": [the same keys, per message]}.
 
-    Read-only metadata request through the same credentials tools/gmail_fetch.py uses.
+    Two read-only metadata requests through the credentials tools/gmail_fetch.py uses.
     Tests replace this function; nothing else in this module talks to Gmail."""
     import gmail_fetch
     from googleapiclient.discovery import build
     creds = gmail_fetch.get_or_refresh_creds(Path(__file__).parent)
     service = build("gmail", "v1", credentials=creds, cache_discovery=False)
+    headers = ["From", "To", "Subject"]
+
+    def summary(msg: dict) -> dict:
+        h = (msg.get("payload") or {}).get("headers") or []
+        return {"from": gmail_fetch._extract_header(h, "From"),
+                "to": gmail_fetch._extract_header(h, "To"),
+                "subject": gmail_fetch._extract_header(h, "Subject"),
+                "labels": list(msg.get("labelIds") or []),
+                "epoch": int(msg["internalDate"]) / 1000}
+
     msg = service.users().messages().get(userId="me", id=reply_id, format="metadata",
-                                         metadataHeaders=["From"]).execute()
-    headers = (msg.get("payload") or {}).get("headers") or []
-    return {"from": gmail_fetch._extract_header(headers, "From"),
-            "labels": list(msg.get("labelIds") or []),
-            "epoch": int(msg["internalDate"]) / 1000}
+                                         metadataHeaders=headers).execute()
+    thread = service.users().threads().get(userId="me", id=msg["threadId"], format="metadata",
+                                           metadataHeaders=headers).execute()
+    return {**summary(msg), "thread": [summary(m) for m in thread.get("messages") or []]}
 
 
 def _since(record: dict) -> str:
-    """The earliest time her reply to this post could exist: when the draft was opened, or,
-    for a record written before that was stored, when the review opened."""
+    """The earliest time the post for this review could have been sent: when the draft was
+    opened, or, for a record written before that was stored, when the review opened."""
     return record.get("draft_opened_at") or record["opened_at"]
 
 
+def _epoch(stamp: str) -> float:
+    return time.mktime(time.strptime(stamp, "%Y-%m-%dT%H:%M:%S"))
+
+
+# Gmail's internalDate and the confirm stamp come from different clocks; the confirm is
+# typed after the send, so a minute of slack only ever admits the real send.
+CONFIRM_SLACK = 60
+
+
 def _check_reply(record: dict, reply_id: str, addresses: set[str]) -> float:
-    """Her reply exists in Gmail, came from an EIC address, is inbound, and postdates the
-    draft (_since). Any failure to ask Gmail refuses the close: this is the check that a reply was
-    read, so it cannot pass on an unanswered question."""
+    """Her reply exists in Gmail, came from an EIC address, is inbound, and sits in the
+    thread of the post Nick sent for THIS review, after it. Returns her reply's time.
+
+    The thread is what ties the reply to the post: a later message from her about anything
+    else, or her reply to another post, is in another thread (Codex r5 19.F1, Fable 22.F1,
+    13.F10). The post is the thread's sent message to an EIC address whose subject, less
+    Re:/Fwd:, is the review's, sent between the draft opening (_since) and Nick's confirm.
+    Any failure to ask Gmail refuses the close: this is the check that a reply was read, so
+    it cannot pass on an unanswered question."""
+    import draft_capture            # here, not at the top: draft_capture imports this module
     try:
         reply = fetch_reply(reply_id)
     except (Exception, SystemExit) as exc:  # gmail_fetch exits on missing credentials
@@ -265,11 +302,24 @@ def _check_reply(record: dict, reply_id: str, addresses: set[str]) -> float:
     if labels & NOT_INBOUND:
         raise ReviewError(f"{reply_id} is labelled {sorted(labels & NOT_INBOUND)}, so it is "
                           f"not her reply")
-    since = _since(record)
-    if float(reply.get("epoch", 0)) < time.mktime(time.strptime(since, "%Y-%m-%dT%H:%M:%S")):
-        raise ReviewError(f"{reply_id} is dated before the draft was opened ({since}), so it "
-                          f"is not her reply to this post")
-    return float(reply.get("epoch", 0))
+    subject = draft_capture._thread_subject(record.get("subject", ""))
+    earliest = _epoch(_since(record))
+    confirmed = record.get("sent_confirmed_at")
+    latest = _epoch(confirmed) + CONFIRM_SLACK if confirmed else float("inf")
+    sent = [float(m.get("epoch", 0)) for m in reply.get("thread") or []
+            if "SENT" in (m.get("labels") or ())
+            and addresses & recipients(m.get("to", ""))
+            and draft_capture._thread_subject(m.get("subject", "")) == subject
+            and earliest <= float(m.get("epoch", 0)) <= latest]
+    if not sent:
+        raise ReviewError(f"{reply_id} is not in the thread of the post sent for this review "
+                          f"({record.get('subject')!r}, sent between {_since(record)} and "
+                          f"{confirmed or 'now'}); give the id of her reply to that email")
+    replied = float(reply.get("epoch", 0))
+    if replied <= min(sent):
+        raise ReviewError(f"{reply_id} is dated before the post was sent, so it is not her "
+                          f"reply to it")
+    return replied
 
 
 def close(capture_id: str, reply_id: str, lesson_ref: str | None = None,

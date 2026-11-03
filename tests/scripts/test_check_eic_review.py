@@ -21,6 +21,7 @@ sys.path.insert(0, str(TOOLS))
 import check_eic_review as gate  # noqa: E402
 import draft_capture as dc  # noqa: E402
 import eic_review as er  # noqa: E402
+from eic_reply_stub import her_reply  # noqa: E402
 
 EIC = "editor@example.com"
 TAG = "EDITOR NOTE"
@@ -48,10 +49,11 @@ def env(tmp_path, monkeypatch):
         f"| **NICK EDIT.** He linked a word. | Link a word, not a URL. | 1 | No | {TODAY} |\n",
         encoding="utf-8")
     monkeypatch.setenv("LESSONS_PATH", str(lessons))
-    # close() looks her reply up in Gmail (finding B, tested in test_eic_review_hardening.py);
-    # here it is always her inbound reply, an hour after the review opened.
-    monkeypatch.setattr(er, "fetch_reply", lambda rid: {
-        "from": f"Editor <{EIC}>", "labels": ["INBOX"], "epoch": time.time() + 3600})
+    # close() looks her reply and its thread up in Gmail (tested in
+    # test_eic_review_hardening.py); here it is always her reply in the thread of the post
+    # just sent. One second after, not an hour: the lessons row must be dated on or after her
+    # reply's day, and an hour crosses midnight after 23:00 (Fable r5 F1).
+    monkeypatch.setattr(er, "fetch_reply", lambda rid: her_reply())
     return tmp_path
 
 

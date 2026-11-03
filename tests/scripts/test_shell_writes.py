@@ -5,7 +5,6 @@ test_check_build_log_present.py, and check_public_pii's cd tests). These pin the
 contract: which segments walk() yields, which directories it carries, and what resolve() and
 bash_write_targets() return.
 """
-import os
 import sys
 from pathlib import Path
 
@@ -15,7 +14,9 @@ import shell_writes as sw  # noqa: E402
 
 
 def segments(command, starts):
-    return [(seg.strip(), cwds) for seg, _env, cwds in sw.walk(command, starts)]
+    # exact=False: no shell probe, so the test never sources the tester's own shell
+    # snapshots (Fable r5 F4).
+    return [(seg.strip(), cwds) for seg, _env, cwds in sw.walk(command, starts, exact=False)]
 
 
 def test_walk_yields_every_segment_but_a_cd(tmp_path):
@@ -171,3 +172,23 @@ def test_deep_nesting_does_not_crash(tmp_path):
     # Deeper than Python's default recursion limit, so it fails without _MAX_DEPTH (Fable 16.F4).
     cmd = "(" * 1500 + "echo x > a.md" + ")" * 1500
     assert isinstance(sw.bash_write_targets(cmd, "", tmp_path), list)
+
+
+# Round 5 (Codex 18.F1, Fable 21.F1, 21.F3).
+
+def test_an_escaped_paren_in_a_case_pattern_is_part_of_the_label(tmp_path):
+    (tmp_path / "sub").mkdir()
+    assert _hits("case x in a\\)) cd sub; echo x > a.md;; esac", tmp_path, "sub/a.md")
+
+
+def test_a_cd_inside_a_select_body_is_followed(tmp_path):
+    (tmp_path / "sub").mkdir()
+    assert _hits("select x in a; do cd sub; echo x > a.md; break; done", tmp_path, "sub/a.md")
+
+
+def test_a_copy_or_tee_that_opens_a_compound_body_is_seen(tmp_path):
+    for cmd, rel in (("if true; then cp draft.md out/p.md; fi", "out/p.md"),
+                     ("for f in a; do mv draft.md out/p.md; done", "out/p.md"),
+                     ("if true; then echo x | tee out/t.md; fi", "out/t.md")):
+        assert _hits(cmd, tmp_path, rel), cmd
+

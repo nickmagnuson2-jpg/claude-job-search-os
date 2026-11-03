@@ -30,6 +30,7 @@ import check_eic_review as gate  # noqa: E402
 import check_handoff_producer as handoff  # noqa: E402
 import draft_capture as dc  # noqa: E402
 import eic_review as er  # noqa: E402
+from eic_reply_stub import her_reply  # noqa: E402
 
 EIC = "editor@example.com"
 TAG = "EDITOR NOTE"
@@ -45,10 +46,8 @@ def draft(to: str, subject: str = SUBJECT) -> str:
 
 
 def good_reply(reply_id: str) -> dict:
-    """Her reply as the Gmail seam reports it: inbound, from her, just after now. One second,
-    not an hour: a lessons row must be dated on or after her reply's DAY, and an hour ahead
-    crosses midnight for any run after 23:00."""
-    return {"from": f"Editor <{EIC}>", "labels": ["INBOX"], "epoch": time.time() + 1}
+    """Her reply in the thread of the post sent just now (eic_reply_stub.her_reply)."""
+    return her_reply()
 
 
 @pytest.fixture(autouse=True)
@@ -83,86 +82,115 @@ def run_hook(name: str, payload: dict) -> subprocess.CompletedProcess:
 
 # --- B: the reply is checked in Gmail ----------------------------------------------
 
-def test_B_a_reply_from_her_after_the_review_opened_closes_it():
+def test_B_her_reply_in_the_thread_of_the_sent_post_closes_it():
     cid = sent_to()["id"]
     assert er.close(cid, REPLY, no_edits="approved as is")["status"] == "closed"
 
 
-@pytest.mark.parametrize("reply,why", [
-    ({"from": "Casey <casey@example.com>", "labels": ["INBOX"]}, "not from an EIC address"),
-    ({"from": f"Nick <{EIC}>", "labels": ["SENT"]}, "a message Nick sent"),
-    ({"from": f"Editor <{EIC}>", "labels": ["DRAFT"]}, "a draft"),
+# Each must leave the review open. Built inside the test, after the capture, so the sent
+# post is never dated before the draft by accident.
+@pytest.mark.parametrize("bend,why", [
+    ({"sender": "casey@example.com"}, "not from an EIC address"),
+    ({"labels": ("SENT",)}, "a message Nick sent"),
+    ({"labels": ("DRAFT",)}, "a draft"),
+    # Round 5 (Codex 19.F1 P0, Fable 22.F1): her reply must sit in the thread of THIS post.
+    ({"subject": "LinkedIn post for review: the next one"}, "her reply to another post"),
+    ({"to": "casey@example.com"}, "a thread where the post went to someone else"),
 ])
-def test_B_close_refuses_a_message_that_is_not_her_reply(monkeypatch, reply, why):
+def test_B_close_refuses_a_message_that_is_not_her_reply_to_this_post(monkeypatch, bend, why):
     cid = sent_to()["id"]
-    monkeypatch.setattr(er, "fetch_reply", lambda rid: {**reply, "epoch": time.time() + 3600},
-                        raising=False)
+    monkeypatch.setattr(er, "fetch_reply", lambda rid: her_reply(**bend), raising=False)
     with pytest.raises(er.ReviewError):
         er.close(cid, REPLY, no_edits="approved as is")
     assert er.read(cid)["status"] == "open", why
 
 
-def test_B_close_refuses_a_reply_dated_before_the_review_opened(monkeypatch):
+def test_B_a_reply_in_a_thread_with_no_sent_post_is_refused(monkeypatch):
     cid = sent_to()["id"]
-    old = {"from": f"Editor <{EIC}>", "labels": ["INBOX"], "epoch": time.time() - 86400}
-    monkeypatch.setattr(er, "fetch_reply", lambda rid: old, raising=False)
-    with pytest.raises(er.ReviewError, match="before"):
-        er.close(cid, REPLY, no_edits="approved as is")
-    assert er.read(cid)["status"] == "open"
-
-
-# Round 4 (Fable 17.F1): her reply can arrive before Nick confirms the send. The review is
-# dated from when the draft was opened, which precedes the send, not from the confirm.
-
-def _sent_yesterday_confirmed_now() -> str:
-    t0 = time.time() - 86400
-    cid = dc.capture(draft(EIC), skill="draft-email", now=t0)
-    return dc.confirm(cid, "unchanged")["id"], t0
-
-
-def test_round4_a_reply_between_the_send_and_the_confirm_closes_the_review(monkeypatch):
-    cid, t0 = _sent_yesterday_confirmed_now()
-    monkeypatch.setattr(er, "fetch_reply", lambda rid: {**good_reply(rid), "epoch": t0 + 1},
-                        raising=False)
-    assert er.close(cid, REPLY, no_edits="approved as is")["status"] == "closed"
-
-
-def test_round4_a_reply_before_the_draft_was_opened_is_still_refused(monkeypatch):
-    cid, t0 = _sent_yesterday_confirmed_now()
-    monkeypatch.setattr(er, "fetch_reply", lambda rid: {**good_reply(rid), "epoch": t0 - 60},
-                        raising=False)
-    with pytest.raises(er.ReviewError, match="before"):
+    lone = her_reply()
+    lone["thread"] = [m for m in lone["thread"] if "SENT" not in m["labels"]]
+    monkeypatch.setattr(er, "fetch_reply", lambda rid: lone, raising=False)
+    with pytest.raises(er.ReviewError, match="not in the thread"):
         er.close(cid, REPLY, no_edits="approved as is")
 
 
-def test_round4_a_lesson_row_dated_the_day_of_the_send_counts(monkeypatch, tmp_path):
-    cid, t0 = _sent_yesterday_confirmed_now()
-    day = time.strftime("%Y-%m-%d", time.localtime(t0))
-    lessons = tmp_path / "lessons-sent-day.md"
+def test_B_a_reply_dated_before_the_post_was_sent_is_refused(monkeypatch):
+    cid = sent_to()["id"]
+    now = time.time()
+    monkeypatch.setattr(er, "fetch_reply", lambda rid: her_reply(sent=now, epoch=now - 30),
+                        raising=False)
+    with pytest.raises(er.ReviewError, match="before the post was sent"):
+        er.close(cid, REPLY, no_edits="approved as is")
+
+
+def test_B_an_earlier_send_of_the_same_subject_does_not_count(monkeypatch):
+    # The thread holds only an older send of a post with this subject, from before this
+    # draft was opened: her reply answers that one (13.F10).
+    t0 = _noon(2)
+    cid = dc.confirm(dc.capture(draft(EIC), skill="draft-email", now=t0), "unchanged")["id"]
+    monkeypatch.setattr(er, "fetch_reply", lambda rid: her_reply(sent=t0 - 86400), raising=False)
+    with pytest.raises(er.ReviewError, match="not in the thread"):
+        er.close(cid, REPLY, no_edits="approved as is")
+
+
+def test_B_a_send_after_the_confirm_does_not_count(monkeypatch):
+    t0 = _noon(2)
+    cid = dc.confirm(dc.capture(draft(EIC), skill="draft-email", now=t0), "unchanged",
+                     now=t0 + 600)["id"]
+    monkeypatch.setattr(er, "fetch_reply", lambda rid: her_reply(sent=t0 + 86400), raising=False)
+    with pytest.raises(er.ReviewError, match="not in the thread"):
+        er.close(cid, REPLY, no_edits="approved as is")
+
+
+def test_B_a_resend_or_a_re_subject_in_the_thread_still_counts(monkeypatch):
+    for bend in ({"subject": "Re: " + SUBJECT}, {"extra_sent": ((time.time() + 5, SUBJECT),)}):
+        cid = sent_to()["id"]
+        monkeypatch.setattr(er, "fetch_reply", lambda rid, b=bend: her_reply(**b), raising=False)
+        assert er.close(cid, REPLY, no_edits="approved as is")["status"] == "closed", bend
+
+
+# Round 4 (Fable 17.F1): her reply can arrive before Nick confirms the send. Times are at
+# noon of a past day, so no run can cross midnight between the send and the lessons row
+# (Fable r5 F1, F4).
+
+def _noon(days_ago: int) -> float:
+    import datetime
+    d = datetime.date.today() - datetime.timedelta(days=days_ago)
+    return time.mktime((d.year, d.month, d.day, 12, 0, 0, 0, 0, -1))
+
+
+def _sent_at(t0: float) -> str:
+    """A capture opened at t0 and confirmed now; the post went out a minute after t0."""
+    return dc.confirm(dc.capture(draft(EIC), skill="draft-email", now=t0), "unchanged")["id"]
+
+
+def _lessons_dated(monkeypatch, tmp_path, day: str) -> None:
+    lessons = tmp_path / f"lessons-{day}.md"
     lessons.write_text("| Pattern | Rule | Occ | Promoted | Date |\n|---|---|---|---|---|\n"
                        f"| **{TAG}.** She cut the sign-off. | No sign-off. | 1 | No | {day} |\n",
                        encoding="utf-8")
     monkeypatch.setenv("LESSONS_PATH", str(lessons))
-    monkeypatch.setattr(er, "fetch_reply", lambda rid: {**good_reply(rid), "epoch": t0 + 1},
+
+
+def test_round4_a_reply_between_the_send_and_the_confirm_closes_with_a_row_that_day(
+        monkeypatch, tmp_path):
+    t0 = _noon(1)
+    cid = _sent_at(t0)
+    monkeypatch.setattr(er, "fetch_reply", lambda rid: her_reply(sent=t0 + 60, epoch=t0 + 120),
                         raising=False)
+    _lessons_dated(monkeypatch, tmp_path, time.strftime("%Y-%m-%d", time.localtime(t0)))
     assert er.close(cid, REPLY, lesson_ref="She cut the sign-off")["status"] == "closed"
 
 
 def test_round4_a_lesson_row_dated_before_her_reply_is_refused(monkeypatch, tmp_path):
-    # The draft-time anchor is for the reply only. A lessons row records her edits, so it
-    # cannot predate her reply: a row from the days between drafting and her reply could be
-    # about another post (47 on r4 F1).
-    t0 = time.time() - 3 * 86400
-    cid = dc.confirm(dc.capture(draft(EIC), skill="draft-email", now=t0), "unchanged")["id"]
-    before_reply = time.strftime("%Y-%m-%d", time.localtime(t0 + 86400))
-    lessons = tmp_path / "lessons-early.md"
-    lessons.write_text("| Pattern | Rule | Occ | Promoted | Date |\n|---|---|---|---|---|\n"
-                       f"| **{TAG}.** She cut the sign-off. | No sign-off. | 1 | No | {before_reply} |\n",
-                       encoding="utf-8")
-    monkeypatch.setenv("LESSONS_PATH", str(lessons))
+    # A lessons row records her edits, so it cannot predate her reply: a row from the days
+    # between drafting and her reply could be about another post (47 on r4 F1).
+    t0 = _noon(3)
+    cid = _sent_at(t0)
     monkeypatch.setattr(er, "fetch_reply",
-                        lambda rid: {**good_reply(rid), "epoch": t0 + 2 * 86400}, raising=False)
-    with pytest.raises(er.ReviewError, match="before"):
+                        lambda rid: her_reply(sent=t0 + 60, epoch=t0 + 2 * 86400), raising=False)
+    _lessons_dated(monkeypatch, tmp_path, time.strftime("%Y-%m-%d", time.localtime(t0 + 86400)))
+    with pytest.raises(er.ReviewError, match="before her reply"):
         er.close(cid, REPLY, lesson_ref="She cut the sign-off")
     assert er.read(cid)["status"] == "open"
 
@@ -172,10 +200,9 @@ def test_round4_a_record_without_the_draft_time_falls_back_to_when_the_review_op
     record = er.read(cid)
     record.pop("draft_opened_at", None)
     er._write(record)
-    monkeypatch.setattr(er, "fetch_reply", lambda rid: {**good_reply(rid),
-                                                        "epoch": time.time() - 600},
+    monkeypatch.setattr(er, "fetch_reply", lambda rid: her_reply(sent=time.time() - 600),
                         raising=False)
-    with pytest.raises(er.ReviewError, match="before"):
+    with pytest.raises(er.ReviewError, match="not in the thread"):
         er.close(cid, REPLY, no_edits="approved as is")
 
 
@@ -404,22 +431,32 @@ def test_E_the_confirm_result_reports_the_cancel():
     assert dc.confirm(cid, "not-sent", force=True)["eic_review"] == "cancelled"
 
 
-def test_B_fetch_reply_reads_from_labels_and_date_from_the_gmail_message(monkeypatch):
+def test_B_fetch_reply_reads_the_reply_and_its_thread_from_gmail(monkeypatch):
     import types
     import gmail_fetch
     seen = {}
 
+    def message(labels, epoch, sender, to, subject):
+        return {"labelIds": labels, "internalDate": epoch,
+                "payload": {"headers": [{"name": "Subject", "value": subject},
+                                        {"name": "From", "value": sender},
+                                        {"name": "To", "value": to}]}}
+    reply = {**message(["INBOX", "UNREAD"], "1793000000123", f"Editor <{EIC}>",
+                       "Nick <nick@example.com>", "Re: post"), "threadId": "t1"}
+    sent = message(["SENT"], "1792999000000", "Nick <nick@example.com>", f"Editor <{EIC}>",
+                   "post")
+
     class Call:
-        def __init__(self, **kw):
-            seen.update(kw)
+        def __init__(self, kind, **kw):
+            self.kind = kind
+            seen[kind] = kw
 
         def execute(self):
-            return {"labelIds": ["INBOX", "UNREAD"], "internalDate": "1793000000123",
-                    "payload": {"headers": [{"name": "Subject", "value": "Re: post"},
-                                            {"name": "From", "value": f"Editor <{EIC}>"}]}}
+            return reply if self.kind == "message" else {"messages": [sent, reply]}
 
     service = types.SimpleNamespace(users=lambda: types.SimpleNamespace(
-        messages=lambda: types.SimpleNamespace(get=lambda **kw: Call(**kw))))
+        messages=lambda: types.SimpleNamespace(get=lambda **kw: Call("message", **kw)),
+        threads=lambda: types.SimpleNamespace(get=lambda **kw: Call("thread", **kw))))
     discovery = types.ModuleType("googleapiclient.discovery")
     discovery.build = lambda *a, **kw: service
     monkeypatch.setitem(sys.modules, "googleapiclient", types.ModuleType("googleapiclient"))
@@ -432,9 +469,13 @@ def test_B_fetch_reply_reads_from_labels_and_date_from_the_gmail_message(monkeyp
     fresh = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(fresh)
     got = fresh.fetch_reply(REPLY)
-    assert got == {"from": f"Editor <{EIC}>", "labels": ["INBOX", "UNREAD"],
-                   "epoch": 1793000000.123}
-    assert seen["id"] == REPLY and seen["userId"] == "me" and seen["format"] == "metadata"
+    mine = {"from": f"Editor <{EIC}>", "to": "Nick <nick@example.com>", "subject": "Re: post",
+            "labels": ["INBOX", "UNREAD"], "epoch": 1793000000.123}
+    assert got == {**mine, "thread": [
+        {"from": "Nick <nick@example.com>", "to": f"Editor <{EIC}>", "subject": "post",
+         "labels": ["SENT"], "epoch": 1792999000.0}, mine]}
+    assert seen["message"]["id"] == REPLY and seen["message"]["format"] == "metadata"
+    assert seen["thread"]["id"] == "t1" and seen["thread"]["userId"] == "me"
 
 
 def test_B_close_refuses_a_record_that_is_not_an_object(env):
@@ -465,3 +506,15 @@ def test_E_a_send_reconfirmed_after_a_not_sent_correction_reopens_the_review():
     assert er.read(cid)["status"] == "open"
     assert [r["capture_id"] for r in er.open_reviews()] == [cid]
     assert gate.decide("Write", {"file_path": PUBLISHED, "content": "x"}) is not None
+
+
+def test_G_a_record_that_is_not_json_refuses_close_and_cancel_without_a_traceback(env):
+    # Round 5 (Fable 22.F2, raised in rounds 1, 3 and 4 too): read() let JSONDecodeError
+    # through, so the close the gate prescribes died with a traceback, and cancel_for did
+    # inside draft_capture.confirm after the capture meta was already written.
+    (env / "reviews").mkdir()
+    (env / "reviews" / "bad.json").write_text("{not json", encoding="utf-8")
+    with pytest.raises(er.ReviewError, match="unreadable"):
+        er.close("bad", REPLY, no_edits="approved as is")
+    assert er.cancel_for({"id": "bad", "status": "not-sent"}) is False
+    assert [r["capture_id"] for r in er.open_reviews()] == ["bad"]     # still blocks

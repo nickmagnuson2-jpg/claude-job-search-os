@@ -62,12 +62,13 @@ _PREFIX = re.compile(r"^\s*(?:(?:!|time(?:\s+-p)?|then|do|else|elif)\s+)+")
 # A redirect to /dev/null or to another fd on a cd changes nothing about where it lands.
 # Covers >, 2>, &> and >& to /dev/null, and >&N (Codex r4 F2, Fable r4 F2).
 _QUIET = re.compile(r"(?:\s+\d*|\s*&|\s*)>{1,2}(?:&\d|&?\s*/dev/null)")
-_COMPOUND = re.compile(r"(if|for|while|until|case)\b")
-_COMPOUND_END = {"if": "fi", "for": "done", "while": "done", "until": "done", "case": "esac"}
+_COMPOUND = re.compile(r"(if|for|select|while|until|case)\b")       # select: Fable r5 F3
+_COMPOUND_END = {"if": "fi", "for": "done", "select": "done", "while": "done", "until": "done",
+                 "case": "esac"}
 # `case WORD in`, and an arm's `pattern)` label, which would hide a cd that opens the arm
 # (Codex r4 F1, Fable r4 F1).
 _CASE_HEAD = re.compile(r"^\s*\S+\s+in\b")
-_CASE_LABEL = re.compile(r"^\s*\(?[^();]*\)")
+_CASE_LABEL = re.compile(r"^\s*\(?(?:\\.|[^();\\])*\)")    # `a\))`: an escaped ) (Codex r5)
 _MAX_DEPTH = 32       # deeper groups are judged as one segment; recursion must not crash a hook
 
 
@@ -170,9 +171,11 @@ def bash_write_targets(command: str, cwd: str, root) -> list[str]:
     """
     # Imported here: check_handoff_producer imports this module at its top.
     from check_handoff_producer import copy_destinations
-    starts = _pii.start_cwds([cwd]) + [str(root), cwd]
     out: list[str] = []
-    for segment, env, cwds in walk(command, starts, exact=False):
+    for segment, env, cwds in walk(command, [os.getcwd(), str(root), cwd], exact=False):
+        # _plain: a write that opens an if/for/else body (`then cp a b`) is still a write
+        # (Fable r5 F1).
+        segment = _plain(segment)
         cands = list(_pii.extract_write_targets(segment, env)) + copy_destinations(segment)
         out.extend(resolve(cands, cwds))
     return list(dict.fromkeys(out))
