@@ -4,7 +4,7 @@ A sealed folder in the sibling personal repo is labeled SEALED there, under the 
 job-search's own sealed tree, and a job-search session must not read it. Which folder is
 sealed is itself private, so the guard reads it from the gitignored
 tools/.sealed-folders.conf (tools/vault_paths.py, 2026-11-01). These tests write that file
-under a tmp repo root (SEAL_REPO_ROOT) naming the fictional folder data/sessions, so no real
+under a tmp repo root (SEAL_REPO_ROOT) naming the fictional folder data/alcove, so no real
 file is touched. With no config the guard fails closed: everything under the vault's data/
 counts as sealed (the tests at the end).
 """
@@ -30,13 +30,13 @@ def _run(root, tool, tool_input, env_extra=None):
 
 def _layout(tmp_path, configured=True):
     root = tmp_path / "job-search"
-    vault = tmp_path / "personal" / "data" / "sessions"
+    vault = tmp_path / "personal" / "data" / "alcove"
     vault.mkdir(parents=True)
-    (vault / "2026-01-01-session.md").write_text("x")
+    (vault / "2026-01-01-note.md").write_text("x")
     (root / "data" / "workbooks").mkdir(parents=True)
     (root / "tools").mkdir()
     if configured:
-        (root / "tools" / ".sealed-folders.conf").write_text("# sealed\ndata/sessions\n")
+        (root / "tools" / ".sealed-folders.conf").write_text("# sealed\ndata/alcove\n")
     return root, vault
 
 
@@ -44,7 +44,7 @@ def _layout(tmp_path, configured=True):
 
 def test_blocks_read_of_sealed_file(tmp_path):
     root, vault = _layout(tmp_path)
-    code, err = _run(root, "Read", {"file_path": str(vault / "2026-01-01-session.md")})
+    code, err = _run(root, "Read", {"file_path": str(vault / "2026-01-01-note.md")})
     assert code == 2
     assert "sealed" in err
 
@@ -63,13 +63,13 @@ def test_blocks_glob_into_vault_dir(tmp_path):
 
 def test_blocks_bash_cat_of_a_vault_path(tmp_path):
     root, _ = _layout(tmp_path)
-    code, _ = _run(root, "Bash", {"command": "cat ../personal/data/sessions/2026-01-01-session.md"})
+    code, _ = _run(root, "Bash", {"command": "cat ../personal/data/alcove/2026-01-01-note.md"})
     assert code == 2
 
 
 def test_blocks_bash_cd_then_relative_read(tmp_path):
     root, _ = _layout(tmp_path)
-    code, _ = _run(root, "Bash", {"command": "cd ../personal/data && cat sessions/2026-01-01-session.md"})
+    code, _ = _run(root, "Bash", {"command": "cd ../personal/data && cat alcove/2026-01-01-note.md"})
     assert code == 2
 
 
@@ -77,7 +77,7 @@ def test_blocks_symlink_into_the_vault(tmp_path):
     root, vault = _layout(tmp_path)
     link = root / "data" / "link-to-notes"
     link.symlink_to(vault)
-    code, _ = _run(root, "Read", {"file_path": str(link / "2026-01-01-session.md")})
+    code, _ = _run(root, "Read", {"file_path": str(link / "2026-01-01-note.md")})
     assert code == 2
 
 
@@ -85,7 +85,7 @@ def test_blocks_symlink_into_the_vault(tmp_path):
 
 def test_allows_job_search_file_with_the_folder_name_in_its_name(tmp_path):
     root, _ = _layout(tmp_path)
-    code, _ = _run(root, "Read", {"file_path": str(root / "data" / "workbooks" / "notes-on-sessions-topics.md")})
+    code, _ = _run(root, "Read", {"file_path": str(root / "data" / "workbooks" / "notes-on-alcove-topics.md")})
     assert code == 0
 
 
@@ -97,7 +97,7 @@ def test_allows_other_personal_data_file(tmp_path):
 
 def test_allows_grep_for_the_word_in_one_named_file(tmp_path):
     root, _ = _layout(tmp_path)
-    code, _ = _run(root, "Bash", {"command": "grep -c sessions data/workbooks/notes.md"})
+    code, _ = _run(root, "Bash", {"command": "grep -c alcove data/workbooks/notes.md"})
     assert code == 0
 
 
@@ -105,28 +105,28 @@ def test_allows_the_bare_word_as_a_recursive_grep_pattern(tmp_path):
     # In command text the name counts only when path-shaped: it is an ordinary English
     # word, and a replay over 282 real transcripts found about a dozen bare-word blocks.
     root, _ = _layout(tmp_path)
-    code, _ = _run(root, "Bash", {"command": 'grep -ri "sessions" data/'})
+    code, _ = _run(root, "Bash", {"command": 'grep -ri "alcove" data/'})
     assert code == 0
 
 
 def test_allows_the_word_inside_sed_replacement_text(tmp_path):
     # A title scrub, the shape a real replay used. Known limitation:
-    # with `/` as the sed delimiter right after the word (`s/... sessions/.../`), the word
+    # with `/` as the sed delimiter right after the word (`s/... alcove/.../`), the word
     # looks path-shaped and blocks; use another delimiter such as `|`.
     root, _ = _layout(tmp_path)
-    code, _ = _run(root, "Bash", {"command": "sed -i '' 's/\"title\": \"Acme sessions group\",/\"title\": \"Weekly\",/' tools/x.py"})
+    code, _ = _run(root, "Bash", {"command": "sed -i '' 's/\"title\": \"Acme alcove group\",/\"title\": \"Weekly\",/' tools/x.py"})
     assert code == 0
 
 
 def test_blocks_listing_the_vault_directory(tmp_path):
     root, _ = _layout(tmp_path)
-    code, _ = _run(root, "Bash", {"command": f"ls {tmp_path}/personal/data/sessions/"})
+    code, _ = _run(root, "Bash", {"command": f"ls {tmp_path}/personal/data/alcove/"})
     assert code == 2
 
 
 def test_allows_the_word_in_echoed_prose(tmp_path):
     root, _ = _layout(tmp_path)
-    code, _ = _run(root, "Bash", {"command": 'echo "sessions themes are personal"'})
+    code, _ = _run(root, "Bash", {"command": 'echo "alcove themes are personal"'})
     assert code == 0
 
 
@@ -134,7 +134,7 @@ def test_override_allows_intentional_read(tmp_path):
     # Paired with the same read unoverridden, so this fails if the vault branch goes:
     # alone, an exit 0 here would also hold for a guard that never knew the vault.
     root, vault = _layout(tmp_path)
-    target = {"file_path": str(vault / "2026-01-01-session.md")}
+    target = {"file_path": str(vault / "2026-01-01-note.md")}
     assert _run(root, "Read", target)[0] == 2
     assert _run(root, "Read", target, env_extra={"SEAL_READ_OK": "1"})[0] == 0
 
@@ -160,7 +160,7 @@ def test_blocks_bash_recursion_through_a_parent(tmp_path):
     for cmd in ("grep -r x ../personal/data",
                 "find ../personal/data -type f -maxdepth 3",
                 "ls -R ../personal/data",
-                "grep -r sessions/ ../personal",
+                "grep -r alcove/ ../personal",
                 "rg x ../personal/",
                 f"grep -rn x {tmp_path}/personal/data"):
         assert _run(root, "Bash", {"command": cmd})[0] == 2, cmd
@@ -168,8 +168,8 @@ def test_blocks_bash_recursion_through_a_parent(tmp_path):
 
 def test_blocks_cd_into_a_parent_then_a_bare_name(tmp_path):
     root, _ = _layout(tmp_path)
-    for cmd in ("cd ../personal/data && ls sessions",
-                "cd ../personal/data && grep -r x sessions",
+    for cmd in ("cd ../personal/data && ls alcove",
+                "cd ../personal/data && grep -r x alcove",
                 f"cd {tmp_path}/personal && grep -r x data"):
         assert _run(root, "Bash", {"command": cmd})[0] == 2, cmd
 
@@ -279,8 +279,8 @@ def test_personal_repo_work_passes_but_a_walk_of_its_root_blocks(tmp_path):
                 "cd -P -- ../personal && grep -r x .",
                 "fd secret ../personal",
                 "ls -R ../personal",
-                "cd ../personal/data && ls sessions",
-                "cd ../personal && cat data/sessions/a.md"):
+                "cd ../personal/data && ls alcove",
+                "cd ../personal && cat data/alcove/a.md"):
         assert _run(root, "Bash", {"command": cmd})[0] == 2, cmd
 
 
@@ -307,7 +307,7 @@ def test_an_assignment_only_command_does_not_end_the_check(tmp_path):
     # A command with no command word (`X=1`) must be judged, not crash the hook: a crash
     # exits as "allow" for the whole call, so the read after it would pass.
     root, _ = _layout(tmp_path)
-    assert _run(root, "Bash", {"command": "X=1; cat ../personal/data/sessions/a.md"})[0] == 2
+    assert _run(root, "Bash", {"command": "X=1; cat ../personal/data/alcove/a.md"})[0] == 2
     assert _run(root, "Bash", {"command": "X=1; grep -r x ../personal"})[0] == 2
     assert _run(root, "Bash", {"command": "X=1; echo ok"})[0] == 0
 
@@ -316,7 +316,7 @@ def test_a_cd_reached_in_two_steps_is_tracked(tmp_path):
     # Neither word spells a parent the regex knows; only the cd tracking sees that the
     # second cd lands in personal/data, so the bare vault name then resolves into it.
     root, _ = _layout(tmp_path)
-    assert _run(root, "Bash", {"command": "cd ../personal && cd data && ls sessions"})[0] == 2
+    assert _run(root, "Bash", {"command": "cd ../personal && cd data && ls alcove"})[0] == 2
     assert _run(root, "Bash", {"command": "cd ../personal && cd data && ls"})[0] == 0
 
 
@@ -407,7 +407,7 @@ def test_a_malformed_config_fails_closed(tmp_path):
 
 def test_a_second_configured_folder_is_sealed_too(tmp_path):
     root, _ = _layout(tmp_path)
-    (root / "tools" / ".sealed-folders.conf").write_text("data/sessions\ndata/other\n")
+    (root / "tools" / ".sealed-folders.conf").write_text("data/alcove\ndata/other\n")
     other = tmp_path / "personal" / "data" / "other"
     other.mkdir()
     assert _run(root, "Read", {"file_path": str(other / "a.md")})[0] == 2
@@ -420,12 +420,12 @@ def test_a_second_configured_folder_is_sealed_too(tmp_path):
 # points; built from config, each alternative must be needed by a test.
 
 _IN_TEXT = [
-    "python3 -c \"print(open('../personal/data/sessions/a.md').read())\"",
-    "python3 - <<'PY'\nprint(open('../personal/data/sessions/a.md').read())\nPY",
-    'D=../personal/data/sessions; cat "$D/a.md"',
-    "grep -r x sessions/",
-    "xargs cat <<< ../personal/data/sessions/a.md",
-    "python3 -c \"import os; print(os.listdir('../personal/data/sessions'))\"",
+    "python3 -c \"print(open('../personal/data/alcove/a.md').read())\"",
+    "python3 - <<'PY'\nprint(open('../personal/data/alcove/a.md').read())\nPY",
+    'D=../personal/data/alcove; cat "$D/a.md"',
+    "grep -r x alcove/",
+    "xargs cat <<< ../personal/data/alcove/a.md",
+    "python3 -c \"import os; print(os.listdir('../personal/data/alcove'))\"",
 ]
 
 
@@ -446,12 +446,12 @@ def test_without_config_a_vault_file_named_inside_code_blocks(tmp_path):
 
 def test_a_bare_word_without_a_slash_is_not_read_as_the_top_level_folder(tmp_path):
     # Renamed from "...does not seal the same name elsewhere" (Fable r1 F4): with a slash,
-    # `sessions/` anywhere in command text IS blocked, as the old guard's literal was.
+    # `alcove/` anywhere in command text IS blocked, as the old guard's literal was.
     root, _ = _layout(tmp_path)
-    (root / "tools" / ".sealed-folders.conf").write_text("sessions\n")
-    (tmp_path / "personal" / "sessions").mkdir()
-    assert _run(root, "Bash", {"command": "cat ../personal/sessions/a.md"})[0] == 2
-    assert _run(root, "Bash", {"command": "python3 -c \"print(open('../other/sessions').read())\""})[0] == 0
+    (root / "tools" / ".sealed-folders.conf").write_text("alcove\n")
+    (tmp_path / "personal" / "alcove").mkdir()
+    assert _run(root, "Bash", {"command": "cat ../personal/alcove/a.md"})[0] == 2
+    assert _run(root, "Bash", {"command": "python3 -c \"print(open('../other/alcove').read())\""})[0] == 0
 
 
 # --- review round 1 (Fable 7.F1, 6.F2/7.F2/10.F1, 6.F1/7.F3; Codex g1b F1), 2026-11-02 ---
@@ -464,7 +464,7 @@ def test_in_a_worktree_the_main_checkout_anchors_the_vault_and_config(tmp_path):
     wt = tmp_path / "caches" / "wt"
     (wt / "tools").mkdir(parents=True)
     (wt / ".git").write_text(f"gitdir: {main / '.git' / 'worktrees' / 'wt'}\n")
-    assert _run(wt, "Read", {"file_path": str(vault / "2026-01-01-session.md")})[0] == 2
+    assert _run(wt, "Read", {"file_path": str(vault / "2026-01-01-note.md")})[0] == 2
     # Configured from the main checkout: a vault file outside the sealed folder passes.
     beside = {"file_path": str(tmp_path / "personal" / "data" / "practice-log.md")}
     assert _run(wt, "Read", beside)[0] == 0
@@ -473,16 +473,16 @@ def test_in_a_worktree_the_main_checkout_anchors_the_vault_and_config(tmp_path):
 def test_a_configured_folder_that_is_not_a_directory_keeps_fail_closed_on(tmp_path):
     root, vault = _layout(tmp_path)
     (root / "tools" / ".sealed-folders.conf").write_text("data/sesions\n")    # a typo
-    assert _run(root, "Read", {"file_path": str(vault / "2026-01-01-session.md")})[0] == 2
+    assert _run(root, "Read", {"file_path": str(vault / "2026-01-01-note.md")})[0] == 2
     beside = {"file_path": str(tmp_path / "personal" / "data" / "practice-log.md")}
     assert _run(root, "Read", beside)[0] == 2
 
 
 def test_a_bom_or_trailing_comment_in_the_config_still_names_the_folder(tmp_path):
-    for text in ("\ufeffdata/sessions\n", "data/sessions   # the sealed one\n"):
+    for text in ("\ufeffdata/alcove\n", "data/alcove   # the sealed one\n"):
         root, vault = _layout(tmp_path / str(len(text)))
         (root / "tools" / ".sealed-folders.conf").write_text(text, encoding="utf-8")
-        assert _run(root, "Read", {"file_path": str(vault / "2026-01-01-session.md")})[0] == 2
+        assert _run(root, "Read", {"file_path": str(vault / "2026-01-01-note.md")})[0] == 2
         beside = {"file_path": str(tmp_path / str(len(text)) / "personal" / "data" / "x.md")}
         assert _run(root, "Read", beside)[0] == 0, repr(text)    # configured, not fail closed
 
@@ -499,7 +499,7 @@ def test_an_absolute_or_escaping_or_missing_config_folder_fails_closed_at_the_gu
 
 
 def test_without_config_a_quoted_vault_path_handed_to_a_repo_tool_blocks(tmp_path):
-    cmd = 'python3 tools/x.py "see ../personal/data/sessions/a.md"'
+    cmd = 'python3 tools/x.py "see ../personal/data/alcove/a.md"'
     root, _ = _layout(tmp_path, configured=False)
     (root / "tools" / "x.py").write_text("")
     assert _run(root, "Bash", {"command": cmd})[0] == 2
@@ -540,7 +540,7 @@ def test_a_relative_read_is_judged_from_where_the_call_runs(tmp_path):
 def test_an_unreadable_worktree_git_file_does_not_crash_the_guard(tmp_path):
     main, wt, vault = _wt_layout(tmp_path)
     (wt / ".git").write_bytes(b"gitdir: \xff\xfe\n")
-    code, _ = _run(wt, "Read", {"file_path": str(vault / "2026-01-01-session.md")})
+    code, _ = _run(wt, "Read", {"file_path": str(vault / "2026-01-01-note.md")})
     assert code in (0, 2)                     # a verdict, never a crash (exit 1 = allow)
 
 
@@ -550,11 +550,11 @@ def test_the_vault_location_comes_from_the_configured_vault_root(tmp_path):
     root = tmp_path / "job-search"
     (root / "tools").mkdir(parents=True)
     vault = tmp_path / "pv"
-    sealed = vault / "data" / "sessions"
+    sealed = vault / "data" / "alcove"
     sealed.mkdir(parents=True)
     (sealed / "a.md").write_text("x")
     (root / "tools" / ".personal-vault.conf").write_text(f"{vault}\n")
-    (root / "tools" / ".sealed-folders.conf").write_text("data/sessions\n")
+    (root / "tools" / ".sealed-folders.conf").write_text("data/alcove\n")
     assert _run(root, "Read", {"file_path": str(sealed / "a.md")})[0] == 2
     assert _run(root, "Read", {"file_path": str(vault / "data" / "other.md")})[0] == 0
 

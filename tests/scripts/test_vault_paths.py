@@ -222,8 +222,8 @@ def _sealed_conf(tmp_path: Path, body: str) -> Path:
 
 
 def test_sealed_rels_reads_every_line_skipping_comments_and_blanks(tmp_path):
-    cfg = _sealed_conf(tmp_path, "# sealed\n\ndata/sessions\n  data/other/  \n")
-    assert vp.sealed_rels(cfg) == ("data/sessions", "data/other")
+    cfg = _sealed_conf(tmp_path, "# sealed\n\ndata/alcove\n  data/other/  \n")
+    assert vp.sealed_rels(cfg) == ("data/alcove", "data/other")
 
 
 def test_sealed_rels_is_none_when_unconfigured(tmp_path):
@@ -240,10 +240,10 @@ def test_a_sealed_folder_outside_the_vault_is_refused(tmp_path, bad):
 
 def test_sealed_dir_is_the_first_folder_under_the_root(tmp_path):
     vault = tmp_path / "vault"
-    (vault / "data" / "sessions").mkdir(parents=True)
+    (vault / "data" / "alcove").mkdir(parents=True)
     root = _conf(tmp_path, f"{vault}\n")
-    sealed = _sealed_conf(tmp_path, "data/sessions\ndata/other\n")
-    assert vp.sealed_dir(root, sealed) == vault / "data" / "sessions"
+    sealed = _sealed_conf(tmp_path, "data/alcove\ndata/other\n")
+    assert vp.sealed_dir(root, sealed) == vault / "data" / "alcove"
 
 
 # Review round 1 (Fable 2026-11-02): a folder that is not there, or a malformed config,
@@ -251,7 +251,7 @@ def test_sealed_dir_is_the_first_folder_under_the_root(tmp_path):
 
 def test_sealed_dir_refuses_a_folder_that_does_not_exist(tmp_path):
     vault = tmp_path / "vault"
-    (vault / "data" / "sessions").mkdir(parents=True)
+    (vault / "data" / "alcove").mkdir(parents=True)
     root = _conf(tmp_path, f"{vault}\n")
     with pytest.raises(vp.SealedFolderMissing):
         vp.sealed_dir(root, _sealed_conf(tmp_path, "data/sesions\n"))
@@ -265,9 +265,9 @@ def test_sealed_dir_refuses_a_malformed_config(tmp_path):
 
 def test_sealed_rels_strips_a_bom_and_a_trailing_comment(tmp_path):
     conf = tmp_path / "s.conf"
-    conf.write_text("\ufeffdata/sessions  # sealed\n# only a comment\ndata/other#x\n",
+    conf.write_text("\ufeffdata/alcove  # sealed\n# only a comment\ndata/other#x\n",
                     encoding="utf-8")
-    assert vp.sealed_rels(conf) == ("data/sessions", "data/other")
+    assert vp.sealed_rels(conf) == ("data/alcove", "data/other")
 
 
 def test_main_checkout_follows_a_worktree_git_file(tmp_path):
@@ -300,7 +300,7 @@ def test_sealed_dir_refuses_when_no_folder_is_configured(tmp_path):
 
 
 def test_sealed_dir_refuses_when_the_root_is_unconfigured(tmp_path):
-    sealed = _sealed_conf(tmp_path, "data/sessions\n")
+    sealed = _sealed_conf(tmp_path, "data/alcove\n")
     with pytest.raises(vp.VaultRootMissing):
         vp.sealed_dir(tmp_path / "absent.conf", sealed)
 
@@ -321,10 +321,10 @@ def test_sealed_dir_refuses_a_folder_that_resolves_outside_the_vault(tmp_path):
     (vault / "data").mkdir(parents=True)
     outside = tmp_path / "outside"
     outside.mkdir()
-    (vault / "data" / "sessions").symlink_to(outside)
+    (vault / "data" / "alcove").symlink_to(outside)
     root = _conf(tmp_path, f"{vault}\n")
     with pytest.raises(vp.SealedFolderMissing):
-        vp.sealed_dir(root, _sealed_conf(tmp_path, "data/sessions\n"))
+        vp.sealed_dir(root, _sealed_conf(tmp_path, "data/alcove\n"))
 
 
 def test_the_vault_config_reads_past_a_bom(tmp_path):
