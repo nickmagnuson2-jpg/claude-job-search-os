@@ -47,7 +47,7 @@ import sys as _sys
 _sys.path.insert(0, str(Path(__file__).resolve().parent))
 import inbox_lock
 import outreach_status  # noqa: E402
-from reply_classify import open_reply, with_direction  # noqa: E402
+from reply_classify import contact_lines, open_reply, with_direction  # noqa: E402
 from md_table import find_section, is_sep_row, out_error, out_ok, parse_cols, read_file, write_atomic  # noqa: E402
 
 NOTES_FILE      = "data/notes.md"
@@ -149,10 +149,8 @@ def apply_contact_note(note: str, dest: dict, repo_root: Path) -> dict:
     summary = " ".join(note.split())  # collapse newlines/whitespace for the header
     entry = f"#### {today} | {with_direction('remember', d)} | {summary}"
 
-    if sec_start != -1 and d in ("in", "both") and not dest.get("new_reply"):
-        sec_end = next((j for j in range(sec_start + 1, len(lines))
-                        if lines[j].startswith("## ") or lines[j].startswith("### ")), len(lines))
-        prev = open_reply(lines[sec_start + 1:sec_end])
+    if sec_start != -1 and d in ("in", "both") and dest.get("new_reply") is not True:
+        prev = open_reply(contact_lines(lines, entity))
         if prev:
             return {"status": "error", "type": "contact_note", "code": "possible_duplicate_reply",
                     "existing": {"date": prev[0], "type": prev[1], "summary": prev[2]},

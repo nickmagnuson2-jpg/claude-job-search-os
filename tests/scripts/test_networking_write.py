@@ -737,7 +737,7 @@ def test_a_second_followup_replaces_the_first_auto_row(tmp_path):
 @pytest.mark.parametrize("first,second,refused", [
     ("in", "in", True),      # the same reply again, e.g. /follow-up then /networking
     ("in", "both", True),
-    ("both", "in", False),   # Nick's message is in the two-way entry, so this reply is new
+    ("both", "in", True),    # a two-way entry holds a reply, so this is usually the same one
     ("out", "in", False),    # Nick wrote after nothing; a reply now is the first one
     ("none", "in", False),   # a plain entry records no direction, so there is nothing open
 ])
@@ -750,7 +750,8 @@ def test_a_second_reply_with_no_send_between_is_refused(tmp_path, first, second,
     r2, c2 = _log(tmp_path, second, summary="Second")
     if refused:
         assert c2 != 0 and r2["code"] == "possible_duplicate_reply", r2
-        assert r2["existing"] == {"date": "2026-06-19", "type": "email (inbound)", "summary": "First"}
+        assert r2["existing"] == {"date": "2026-06-19", "summary": "First",
+                                  "type": {"in": "email (inbound)", "both": "email (two-way)"}[first]}
         assert (tmp_path / "data/networking.md").read_text(encoding="utf-8") == before
         assert (tmp_path / "data/outreach-log.md").read_text(encoding="utf-8") == log_before
     else:
@@ -794,3 +795,12 @@ def test_the_check_reads_only_this_contacts_section(tmp_path):
     write_fixture(tmp_path, "data/outreach-log.md", OUTREACH_LOG_SENT)
     result, code = _log(tmp_path, "in", summary="Jane replied")
     assert code == 0, result
+
+
+def test_an_archived_section_still_counts_for_the_check(tmp_path):
+    text = NETWORKING_WITH_CONTACT + "### [ARCHIVED] Jane Doe — Acme Corp\n\n#### 2026-06-01 | email (inbound) | Old reply\n\n"
+    write_fixture(tmp_path, "data/networking.md", text)
+    write_fixture(tmp_path, "data/outreach-log.md", OUTREACH_LOG_SENT)
+    result, code = _log(tmp_path, "in", summary="Again")
+    assert code != 0 and result["code"] == "possible_duplicate_reply"
+    assert result["existing"]["summary"] == "Old reply"

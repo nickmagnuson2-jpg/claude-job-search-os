@@ -96,10 +96,28 @@ def is_send(kind: str | None) -> bool:
 _ENTRY_RE = re.compile(r"^####\s+(\d{4}-\d{2}-\d{2})\s*\|\s*([^|]+?)\s*\|\s*(.*)$")
 
 
+_HEADING_RE = re.compile(r"^###\s+(?:\[ARCHIVED\]\s+)?(.+?)(?:\s+[—–]|$)")
+
+
+def contact_lines(lines: list[str], name: str) -> list[str]:
+    """Every line in every ### section for `name`, archived ([ARCHIVED]) or not. A contact
+    removed and re-added has two sections; a reply logged in either still counts."""
+    want, out, inside = name.strip().lower(), [], False
+    for line in lines:
+        if line.startswith("## ") or line.startswith("### "):
+            m = _HEADING_RE.match(line) if line.startswith("### ") else None
+            inside = bool(m) and m.group(1).strip().lower() == want
+            continue
+        if inside:
+            out.append(line)
+    return out
+
+
 def open_reply(section_lines: list[str]) -> tuple[str, str, str] | None:
-    """The contact's newest entry that records a direction, when it is a reply with no send
-    after it: (date, type, summary). None when the newest such entry includes a send
-    (outbound or two-way), or when no entry records a direction.
+    """The contact's newest entry that records a direction, when it holds a reply with no
+    outbound entry after it: (date, type, summary). A two-way entry holds a reply too, so it
+    leaves the reply open (2026-11-02 review: /follow-up could log that reply again against an
+    older outreach row). None when the newest such entry is outbound, or none records one.
 
     Why (2026-11-02): one reply was being logged twice, once by /follow-up and again by
     /networking or /remember, or by a second /follow-up run, and day_check counted it twice.
@@ -120,6 +138,6 @@ def open_reply(section_lines: list[str]) -> tuple[str, str, str] | None:
     if best is None:
         return None
     m = best[1]
-    if classify(m.group(2)) != "reply":
+    if classify(m.group(2)) not in REPLY_VERDICTS:
         return None
     return (m.group(1), m.group(2), m.group(3))

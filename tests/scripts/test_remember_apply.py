@@ -1580,3 +1580,13 @@ def test_an_outbound_note_after_a_reply_is_not_refused(tmp_path):
     write_fixture(tmp_path, "data/outreach-log.md", OUTREACH_MD)
     result, code = _contact_note(tmp_path, "out", note="Answered Jane")
     assert code == 0 and result["status"] == "ok", result
+
+
+@pytest.mark.parametrize("value", ["false", "true", 1, "yes"])
+def test_only_a_literal_true_new_reply_passes_the_check(tmp_path, value):
+    write_fixture(tmp_path, "data/networking.md", NETWORKING_MD.replace(
+        "### Jane Doe — Acme Corp\n\n",
+        "### Jane Doe — Acme Corp\n\n#### 2026-01-12 | email (inbound) | Jane replied\n\n"))
+    write_fixture(tmp_path, "data/outreach-log.md", OUTREACH_MD)
+    result, code = _contact_note(tmp_path, "in", new_reply=value)
+    assert code != 0 and result["code"] == "possible_duplicate_reply"

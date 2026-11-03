@@ -42,7 +42,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from name_dedup import find_near_duplicates  # noqa: E402
 import outreach_status  # noqa: E402
 # The one "did they reply" rule, shared with day_check.py (no local copy here).
-from reply_classify import open_reply, with_direction  # noqa: E402
+from reply_classify import contact_lines, open_reply, with_direction  # noqa: E402
 from md_table import JsonArgumentParser, find_section, load_lines, is_sep_row, out_error, out_ok, parse_cols, read_file, table_insert_pos, write_atomic  # noqa: E402
 
 NETWORKING_FILE  = "data/networking.md"
@@ -339,7 +339,7 @@ def cmd_log(args, networking_path: Path, repo_root: Path, dry_run: bool) -> None
         # A reply when the newest directional entry is already an unanswered reply is
         # usually the same reply logged a second time (reply_classify.open_reply).
         if args.direction in ("in", "both") and not args.new_reply:
-            prev = open_reply(lines[log_sec_start + 1:log_sec_end])
+            prev = open_reply(contact_lines(lines, args.name))
             if prev:
                 out_error(
                     f"{args.name} already has a reply logged with no message from Nick after "
