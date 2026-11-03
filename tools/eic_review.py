@@ -416,7 +416,8 @@ def main(argv: list[str] | None = None) -> int:
                        no_edits=args.no_edits)
         print(json.dumps({"status": "ok", **record}, indent=2))
         return 0
-    except (ReviewError, OSError, KeyError) as exc:
+    except (ReviewError, OSError, KeyError, ValueError, AttributeError) as exc:
+        # ValueError/AttributeError: a malformed capture meta read by `open` (Fable r8 44.F4).
         print(json.dumps({"status": "error", "message": str(exc)}))
         return 1
 

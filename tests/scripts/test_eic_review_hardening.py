@@ -359,6 +359,11 @@ def test_G_an_unreadable_store_folder_blocks(env):
     f"nohup mv /tmp/p.md {VOICE}/110126-x-published.md",
     f"env cp /tmp/p.md {VOICE}/110126-x-published.md",
     f"cd {VOICE} && command cp /tmp/p.md 110126-x-published.md",
+    # Codex r8: wrappers with options, found by check_public_pii's command-position parser.
+    f"env -i cp /tmp/p.md {VOICE}/110126-x-published.md",
+    f"command -- cp /tmp/p.md {VOICE}/110126-x-published.md",
+    f"exec -a name cp /tmp/p.md {VOICE}/110126-x-published.md",
+    f"sudo -u nobody mv /tmp/p.md {VOICE}/110126-x-published.md",
 ])
 def test_J_the_eic_gate_follows_a_cd_in_the_command(command):
     sent_to()
@@ -376,6 +381,7 @@ def test_J_the_eic_gate_follows_the_session_cwd_in_the_payload():
 @pytest.mark.parametrize("command", [
     "cd /tmp && echo post > 110126-x-published.md",
     f"cd {VOICE} && cat 110126-x-published.md",
+    f"echo cp /tmp/p.md {VOICE}/110126-x-published.md",     # cp is an argument here
 ])
 def test_J_a_cd_elsewhere_or_a_read_is_still_allowed(command):
     sent_to()
@@ -572,3 +578,13 @@ def test_round7_an_unreadable_time_in_the_record_refuses_instead_of_crashing(env
     with pytest.raises(er.ReviewError, match="unreadable time"):
         er.close(cid, REPLY, no_edits="approved as is")
 
+
+
+@pytest.mark.parametrize("meta", ["{not json", "[]"])
+def test_round8_open_on_a_malformed_capture_returns_an_error_not_a_traceback(
+        monkeypatch, tmp_path, capsys, meta):
+    monkeypatch.setenv("DRAFT_CAPTURE_DIR", str(tmp_path / "caps"))
+    (tmp_path / "caps" / "bad").mkdir(parents=True)
+    (tmp_path / "caps" / "bad" / dc.META_NAME).write_text(meta, encoding="utf-8")
+    assert er.main(["open", "bad"]) == 1
+    assert json.loads(capsys.readouterr().out)["status"] == "error"

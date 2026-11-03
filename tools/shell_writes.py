@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -57,10 +58,8 @@ def walk(command: str, starts, exact: bool | None = None):
 
 # Words that can open a segment without changing what it does: `! (...)`, `time {...}`, and
 # the bodies of if/for/while (`then cd x`, `do cd x`, `else cd x`, `elif cd x`). Codex r3 F1,
-# Fable r3 F1, Fable r4 F3. `command cp`, `nohup mv`, `env cp`: a wrapper that runs the next
-# word as the command (Codex r7 29.F1).
-_PREFIX = re.compile(
-    r"^\s*(?:(?:!|time(?:\s+-p)?|then|do|else|elif|command|builtin|exec|nohup|env)\s+)+")
+# Fable r3 F1, Fable r4 F3. Wrappers (`env -i cp`) are found by _wrapped_copies instead.
+_PREFIX = re.compile(r"^\s*(?:(?:!|time(?:\s+-p)?|then|do|else|elif)\s+)+")
 # A redirect to /dev/null or to another fd on a cd changes nothing about where it lands.
 # Covers >, 2>, &> and >& to /dev/null, and >&N (Codex r4 F2, Fable r4 F2).
 _QUIET = re.compile(r"(?:\s+\d*|\s*&|\s*)>{1,2}(?:&\d|&?\s*/dev/null)")
@@ -75,7 +74,7 @@ _MAX_DEPTH = 32       # deeper groups are judged as one segment; recursion must 
 
 
 def _plain(segment: str) -> str:
-    """The segment with leading `!`, `time`, `then`, `do`, `else` or a wrapper removed."""
+    """The segment with leading `!`, `time`, `then`, `do` or `else` removed."""
     return _PREFIX.sub("", segment)
 
 
@@ -161,6 +160,21 @@ def resolve(candidates, cwds) -> list[str]:
     return list(dict.fromkeys(out))
 
 
+def _wrapped_copies(segment: str, copy_destinations) -> list[str]:
+    """Destinations of a cp/mv/rsync/install run through a wrapper (`env -i cp`,
+    `command -- cp`, `exec -a x mv`, `sudo -u u cp`). Where the wrapped command starts is
+    check_public_pii's _all_command_positions, the one parser of wrapper options, so the
+    copy gates and the PII gate agree on it (Codex r7 29.F1, r8; Fable r7 35.F3)."""
+    out: list[str] = []
+    for cmd in _pii.simple_commands(segment):
+        words = cmd.words
+        # copy_destinations reads a copy only at the start, so every command position can
+        # be handed over as is; the ones that are not cp/mv/rsync/install return nothing.
+        for k in sorted(_pii._all_command_positions(words)):
+            out += copy_destinations(" ".join(shlex.quote(w) for w in words[k:]))
+    return out
+
+
 def bash_write_targets(command: str, cwd: str, root) -> list[str]:
     """Every path `command` may write, from every directory the shell may be in: where the
     hook runs, the payload's session `cwd`, the repo `root`, and wherever a cd adds (no probe;
@@ -178,6 +192,7 @@ def bash_write_targets(command: str, cwd: str, root) -> list[str]:
         # _plain: a write that opens an if/for/else body (`then cp a b`) is still a write
         # (Fable r5 F1).
         segment = _plain(segment)
-        cands = list(_pii.extract_write_targets(segment, env)) + copy_destinations(segment)
+        cands = (list(_pii.extract_write_targets(segment, env)) + copy_destinations(segment)
+                 + _wrapped_copies(segment, copy_destinations))
         out.extend(resolve(cands, cwds))
     return list(dict.fromkeys(out))
