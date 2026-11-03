@@ -60,7 +60,7 @@ class VaultRootMissing(RuntimeError):
 def _read_config(config_path: Path) -> str | None:
     """First non-comment, non-blank line of the config file, or None."""
     try:
-        text = config_path.read_text(encoding="utf-8")
+        text = config_path.read_text(encoding="utf-8-sig")
     except (FileNotFoundError, NotADirectoryError, PermissionError, OSError, UnicodeDecodeError):
         return None
     for line in text.splitlines():
@@ -99,7 +99,8 @@ class SealedFolderMissing(RuntimeError):
 
     def __init__(self):
         super().__init__(
-            f"no sealed vault folder is configured.\nCreate {SEALED_CONFIG} with one "
+            f"no sealed vault folder is configured (or the one named does not exist).\n"
+            f"Create {SEALED_CONFIG} with one "
             f"vault-relative folder per line (e.g. data/<name>).\n"
             f"That file is gitignored because this repo is public.")
 
@@ -138,7 +139,10 @@ def sealed_dir(config_path: Path | None = None, sealed_config: Path | None = Non
         rels = None
     # A folder that is not there is a typo or a rename: writing would create a shadow folder
     # the guard does not protect (Fable r1 F5).
-    if not rels or not (root / rels[0]).is_dir():
+    # Resolved on both sides: a folder that is a symlink out of the vault is not the sealed
+    # folder the guard protects (Codex r2 F2).
+    if (not rels or not (root / rels[0]).is_dir()
+            or not (root / rels[0]).resolve().is_relative_to(root.resolve())):
         raise SealedFolderMissing()
     return root / rels[0]
 
@@ -155,7 +159,7 @@ def main_checkout(root: Path) -> Path:
         if not marker.is_file():
             return Path(root)
         line = marker.read_text(encoding="utf-8").strip()
-    except OSError:
+    except (OSError, UnicodeDecodeError):     # a guard that raises here exits 1 = allow
         return Path(root)
     if not line.startswith("gitdir:"):
         return Path(root)
@@ -165,7 +169,10 @@ def main_checkout(root: Path) -> Path:
     parts = gitdir.parts
     if ".git" not in parts:
         return Path(root)
-    main = Path(*parts[:len(parts) - 1 - parts[::-1].index(".git")])
+    at = len(parts) - 1 - parts[::-1].index(".git")
+    if parts[at + 1:at + 2] != ("worktrees",):    # .git/modules/<name> is a submodule
+        return Path(root)
+    main = Path(*parts[:at])
     return main if (main / ".git").is_dir() else Path(root)
 
 

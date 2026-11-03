@@ -103,7 +103,23 @@ def test_a_sealed_output_inside_the_repo_is_refused(tmp_path):
     link = tmp_path / "into-repo"
     link.symlink_to(repo / "data")
     assert gs.output_refusal(link / "t.md", "sealed", repo)      # followed through a symlink
-    assert gs.output_refusal(tmp_path / "vault" / "t.md", "sealed", repo) is None
+    sealed = tmp_path / "vault" / "sealed"
+    sealed.mkdir(parents=True)
+    assert gs.output_refusal(sealed / "t.md", "sealed", repo, sealed_folder=sealed) is None
+
+
+def test_a_sealed_output_outside_the_sealed_folder_is_refused(tmp_path, monkeypatch):
+    # Strict (Codex r2 F1, Fable 18.F3, 19.F5; Nick 2026-11-02): only the sealed folder.
+    repo, sealed = tmp_path / "repo", tmp_path / "vault" / "sealed"
+    repo.mkdir()
+    sealed.mkdir(parents=True)
+    assert "only be written inside the sealed folder" in gs.output_refusal(
+        tmp_path / "vault" / "elsewhere" / "t.md", "sealed", repo, sealed_folder=sealed)
+    def unconfigured():
+        raise gs.vault_paths.SealedFolderMissing()
+    monkeypatch.setattr(gs.vault_paths, "sealed_dir", unconfigured)   # not the real config
+    assert "no sealed folder is configured" in gs.output_refusal(
+        tmp_path / "anywhere" / "t.md", "sealed", repo)        # default: from the config
 
 
 def test_only_sealed_is_held_outside_the_repo(tmp_path):
@@ -144,3 +160,13 @@ def test_write_refuses_a_stale_type_before_making_its_directory(tmp_path):
     r = _write_raw(tmp_path, "retired-type", target)
     assert r.returncode == 2 and "retired-type" in r.stdout
     assert not target.parent.exists()
+
+
+def test_a_sealed_folder_configured_inside_the_repo_is_still_refused(tmp_path):
+    """The repo check comes before the sealed-folder check, so a sealed folder set by mistake
+    to a path inside the repo cannot route a transcript into it (q22 survivor, 2026-11-03)."""
+    repo = tmp_path / "repo"
+    inside = repo / "data" / "sealed"
+    inside.mkdir(parents=True)
+    refusal = gs.output_refusal(inside / "t.md", "sealed", repo, sealed_folder=inside)
+    assert refusal and "inside the repo" in refusal

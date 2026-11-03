@@ -89,7 +89,20 @@ SEALED_HOME = _root().name + SEALED_HOME_SUFFIX
 #
 # FAIL CLOSED. With no config, or one that names a folder outside the vault, the hook
 # cannot tell which folder is sealed, so everything under the vault's data/ counts.
-PERSONAL = "../personal"
+def _personal() -> str:
+    """The vault, as a path beside the checkout. Read from the main checkout's
+    tools/.personal-vault.conf, the file the writer's vault_paths.vault_root() reads, so the
+    guard protects the folder the writer writes to (Fable r2 17.F1); the env var is not read.
+    A vault that is not a sibling of the checkout keeps the default, so the folder-name
+    matching below still holds."""
+    value = vault_paths._read_config(_root() / "tools" / ".personal-vault.conf")
+    vault = Path(os.path.expanduser(value)) if value else None
+    if vault is not None and vault.is_absolute() and vault.parent.resolve() == _root().parent.resolve():
+        return "../" + vault.name
+    return "../" + "personal"
+
+
+PERSONAL = _personal()
 _VAULT_BASE = PERSONAL.rsplit("/", 1)[-1]
 
 
@@ -878,7 +891,7 @@ def _bash_reads_sealed(command: str, depth: int = 0, intent: bool = False,
     if depth == 0:
         intent = _any_override(cmds)
         py_ok = True
-        _CWDS.clear()
+        _CWDS[:] = _START_CWDS
     _note_cds(cmds)
     py_ok = py_ok and _no_process_substitution(cmds)
     for c in cmds:
@@ -922,6 +935,7 @@ def _wrapped_scripts(c) -> list:
 # before any word is judged. Grok round 2 F1: `cd .. && grep -r x personal/data` names the
 # parent relative to the NEW directory, which resolving from the root alone misses.
 _CWDS: list = []
+_START_CWDS: list = []     # the call's own cwd, which every top-level reset keeps
 
 
 def _note_cds(cmds) -> None:
@@ -1085,7 +1099,11 @@ def _under_sealed(root: Path, p: str) -> bool:
     """Is p the sealed directory or a path in it, at the old in-tree place or anywhere
     in the sibling home, or the vault, a path in it, or a directory above it in the
     personal repo?"""
-    p = os.path.join(str(root), os.path.expanduser(p))   # an absolute p stays as it is
+    return any(_under_sealed_from(root, os.path.join(base, os.path.expanduser(p)))
+               for base in [str(root)] + list(_CWDS))   # an absolute p stays as it is
+
+
+def _under_sealed_from(root: Path, p: str) -> bool:
     # Resolved on both sides, so a symlink into the sealed tree, or a second spelling of
     # the same directory (/var and /private/var), is judged by where it leads.
     here = os.path.realpath(str(root))
@@ -1110,6 +1128,13 @@ def main() -> None:
     tool = data.get("tool_name", "")
     ti = data.get("tool_input", {}) or {}
     root = _root()
+    # A relative path means what it means where the call runs. Since the root is the main
+    # checkout (a worktree's own .git file leads there), the call's cwd is a base as well
+    # (Fable r2 F1): one more candidate, so it can only add a block.
+    cwd = data.get("cwd") or ""
+    if os.path.isabs(cwd) and os.path.realpath(cwd) != os.path.realpath(str(root)):
+        _START_CWDS.append(os.path.realpath(cwd))
+        _CWDS[:] = _START_CWDS
 
     targets = []
     if tool == "Read":
@@ -1145,7 +1170,7 @@ def main() -> None:
         f"(kept outside the repo, in ../{SEALED_HOME}/), or a sealed folder in the personal "
         f"vault ({PERSONAL}/, set in tools/.sealed-folders.conf) or a directory above one.",
         *(["No sealed folder is configured, so everything under "
-           f"{PERSONAL}/data/ is treated as sealed until tools/.sealed-folders.conf exists."]
+           f"{PERSONAL}/data/ is treated as sealed until tools/.sealed-folders.conf names an existing vault folder."]
           if FAIL_CLOSED else []),
         "",
         "Sealed content (Zuora/McKinsey raw materials, personal captures) must never",

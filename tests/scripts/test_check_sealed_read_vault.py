@@ -487,7 +487,9 @@ def test_a_bom_or_trailing_comment_in_the_config_still_names_the_folder(tmp_path
         assert _run(root, "Read", beside)[0] == 0, repr(text)    # configured, not fail closed
 
 
-def test_an_absolute_or_escaping_config_fails_closed_at_the_guard(tmp_path):
+def test_an_absolute_or_escaping_or_missing_config_folder_fails_closed_at_the_guard(tmp_path):
+    # data/../sesions normalizes to an in-vault folder that does not exist: fail closed
+    # because it is missing, not because it escapes (Fable r2 F2).
     for i, text in enumerate(("/abs/path\n", "data/../../x\n", "data/../sesions\n")):
         root, _ = _layout(tmp_path / str(i))
         (root / "tools" / ".sealed-folders.conf").write_text(text)
@@ -504,3 +506,55 @@ def test_without_config_a_quoted_vault_path_handed_to_a_repo_tool_blocks(tmp_pat
     root2, _ = _layout(tmp_path / "b")
     (root2 / "tools" / "x.py").write_text("")
     assert _run(root2, "Bash", {"command": cmd})[0] == 2      # configured mode blocked it too
+
+
+# --- review round 2 (Fable 16.F1, 20.F4; 16.F7/17.F3; 17.F4) -------------------------------
+
+def _wt_layout(tmp_path):
+    main, vault = _layout(tmp_path)
+    (main / ".git" / "worktrees" / "wt").mkdir(parents=True)
+    wt = tmp_path / "caches" / "wt"
+    (wt / "tools").mkdir(parents=True)
+    (wt / ".git").write_text(f"gitdir: {main / '.git' / 'worktrees' / 'wt'}\n")
+    return main, wt, vault
+
+
+def _run_in(root, cwd, command):
+    payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": command},
+                          "cwd": str(cwd)})
+    env = {**os.environ, "SEAL_REPO_ROOT": str(root)}
+    env.pop("SEAL_READ_OK", None)
+    return subprocess.run([sys.executable, str(SCRIPT)], input=payload, capture_output=True,
+                          text=True, env=env).returncode
+
+
+def test_a_relative_read_is_judged_from_where_the_call_runs(tmp_path):
+    main, wt, _ = _wt_layout(tmp_path)
+    # The session already sits in the vault's data/ (a parent of the sealed folder) and the
+    # command names nothing: `.` is judged from the call's cwd, not the checkout.
+    data = tmp_path / "personal" / "data"
+    assert _run_in(wt, data, "ls -R .") == 2
+    assert _run_in(wt, wt, "ls -R .") == 0                   # the worktree itself is fine
+
+
+def test_an_unreadable_worktree_git_file_does_not_crash_the_guard(tmp_path):
+    main, wt, vault = _wt_layout(tmp_path)
+    (wt / ".git").write_bytes(b"gitdir: \xff\xfe\n")
+    code, _ = _run(wt, "Read", {"file_path": str(vault / "2026-01-01-session.md")})
+    assert code in (0, 2)                     # a verdict, never a crash (exit 1 = allow)
+
+
+def test_the_vault_location_comes_from_the_configured_vault_root(tmp_path):
+    """The writer finds the vault through tools/.personal-vault.conf; the guard must protect
+    that same folder, not a fixed name beside the checkout (Fable r2 17.F1)."""
+    root = tmp_path / "job-search"
+    (root / "tools").mkdir(parents=True)
+    vault = tmp_path / "pv"
+    sealed = vault / "data" / "sessions"
+    sealed.mkdir(parents=True)
+    (sealed / "a.md").write_text("x")
+    (root / "tools" / ".personal-vault.conf").write_text(f"{vault}\n")
+    (root / "tools" / ".sealed-folders.conf").write_text("data/sessions\n")
+    assert _run(root, "Read", {"file_path": str(sealed / "a.md")})[0] == 2
+    assert _run(root, "Read", {"file_path": str(vault / "data" / "other.md")})[0] == 0
+

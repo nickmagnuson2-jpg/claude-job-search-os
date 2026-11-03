@@ -384,3 +384,25 @@ def test_personal_route_falls_back_to_the_personal_vault(monkeypatch, tmp_path):
     dest = gad.resolve_destination({"title": "Partner call", "created_at": "2026-08-06T21:34:00Z"},
                                    "personal")
     assert dest["output_path"].parent == tmp_path / "vault" / "data/voice-corpus/granola"
+
+
+# --- review round 2 (Fable 18.F5, 19.F4) ---------------------------------------------------
+
+def test_dry_run_with_no_vault_returns_vault_missing_not_a_traceback(monkeypatch):
+    _stub_fetch(monkeypatch)
+    _stub_configs(monkeypatch)
+    monkeypatch.setattr(gad, "classify_meeting", lambda *a, **k: "sealed")
+    def missing():
+        raise gad.vault_paths.SealedFolderMissing()
+    monkeypatch.setattr(gad, "vault_sealed_dir", missing)
+    out = gad.pull_single_meeting(NOT_ID, dry_run=True)
+    assert out["status"] == "error" and out["reason"] == "vault-missing"
+
+
+def test_with_no_sealed_config_the_unknown_message_does_not_offer_force_type(monkeypatch):
+    _stub_fetch(monkeypatch, note={"id": NOT_ID, "title": "Untitled",
+                                   "created_at": "2026-08-06T21:34:00Z", "attendees": []})
+    _stub_configs(monkeypatch)
+    monkeypatch.setattr(gad, "load_sealed_meetings_config", lambda *a, **k: None)
+    msg = gad.pull_single_meeting(NOT_ID)["message"]
+    assert "--force-type would bypass" in msg and "Re-run with --force-type" not in msg

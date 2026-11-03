@@ -485,3 +485,9 @@ def test_the_output_says_when_the_host_rule_is_configured(monkeypatch, capsys):
     out, err = _main_output(monkeypatch, capsys)
     assert out["private_hosts_configured"] is True
     assert ".private-calendar-domains.txt" not in err
+
+
+def test_a_host_line_with_a_leading_dot_or_wildcard_still_names_the_host(tmp_path):
+    f = tmp_path / ".private-calendar-domains.txt"
+    f.write_text(".privatehost.example\n*.second-host.example\n", encoding="utf-8")
+    assert cf.load_private_domains(f) == ("privatehost.example", "second-host.example")

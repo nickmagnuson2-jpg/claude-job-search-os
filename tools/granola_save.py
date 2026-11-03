@@ -227,7 +227,8 @@ def attribution_warning(transcript: str) -> str | None:
             "than on speakerphone.")
 
 
-def output_refusal(output: Path, type_: str, repo_root: Path) -> str | None:
+def output_refusal(output: Path, type_: str, repo_root: Path,
+                   sealed_folder: Path | None = None) -> str | None:
     """Why `output` may not receive a transcript of `type_`, or None when it may.
 
     A sealed transcript never lands inside the repo: it is public, and gitignored trees in
@@ -244,6 +245,15 @@ def output_refusal(output: Path, type_: str, repo_root: Path) -> str | None:
         top = Path(os.path.realpath(root))
         if target == top or top in target.parents:
             return f"a sealed transcript may not be written inside the repo ({top})"
+    # And only into the configured sealed folder (Codex r2 F1, Fable r2 18.F3, 19.F5;
+    # Nick: strict). `sealed_folder` is for tests; callers leave it to the config.
+    try:
+        folder = sealed_folder or vault_paths.sealed_dir()
+    except (vault_paths.VaultRootMissing, vault_paths.SealedFolderMissing):
+        return "no sealed folder is configured, so a sealed transcript has nowhere to go"
+    folder = Path(os.path.realpath(folder))
+    if folder not in target.parents:
+        return f"a sealed transcript may only be written inside the sealed folder ({folder})"
     return None
 
 

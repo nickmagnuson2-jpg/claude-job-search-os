@@ -147,4 +147,20 @@ def test_drop_sealed_cli_filters_stdin_and_refuses_without_config(tmp_path):
                          "--config", str(tmp_path / "absent.txt")],
                         input=meetings, capture_output=True, text=True)
     assert r.returncode == 2 and r.stdout == ""
-    assert "sealed-meetings.txt" in r.stderr          # the operator is told what is missing
+    assert "is missing" in r.stderr and "absent.txt" in r.stderr   # told what is missing
+
+
+def test_a_bom_in_the_sealed_meeting_config_does_not_hide_the_first_directive(tmp_path):
+    # Review round 2 (Fable 18.F4, 20.F3).
+    import meeting_vocab as mv
+    conf = tmp_path / "s.txt"
+    conf.write_text("﻿keyword: private\n", encoding="utf-8")
+    assert mv.load_sealed_meetings_config(conf)["keywords"] == ["private"]
+
+
+def test_drop_sealed_names_the_config_it_was_given(tmp_path):
+    script = Path(__file__).resolve().parents[2] / "tools" / "meeting_vocab.py"
+    missing = tmp_path / "given.txt"
+    r = _subprocess.run([sys.executable, str(script), "drop-sealed", "--config", str(missing)],
+                        input="[]", capture_output=True, text=True)
+    assert r.returncode == 2 and str(missing) in r.stderr       # Fable r2 F2 (19.F2)

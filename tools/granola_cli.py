@@ -17,9 +17,10 @@ Subcommands:
       Persists via granola_save.py (idempotent, --no-overwrite).
       Stdout: title, AI summary (first ~600 chars), file paths.
       The full transcript is NOT printed to stdout — it lives on disk.
-      Type is auto-classified by tools/meeting_vocab.classify_meeting (sealed attendees,
-      names or title keywords; external attendees; personal project rules); a meeting it
-      cannot place is "unknown" and is not persisted without --type.
+      Type is auto-classified by tools/meeting_vocab.classify_meeting from the sealed
+      attendees, names and title keywords and the external attendees (no personal project
+      rules on this path); a meeting it cannot place is "unknown" and is not persisted
+      without --type.
       Override with --type {sealed,recruiter,networking,general}.
 
   info <ref>

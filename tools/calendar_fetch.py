@@ -98,7 +98,9 @@ def load_private_domains(path: Path = PRIVATE_DOMAINS_CONFIG) -> tuple[str, ...]
         return ()
     found: list[str] = []
     for line in lines:
-        found.extend(sorted(_hosts(line.split("#", 1)[0])))
+        # `.host.example` and `*.host.example` mean the host and its subdomains, which is
+        # what a listed host already matches (Fable r2 F2).
+        found.extend(sorted(_hosts(line.split("#", 1)[0].strip().lstrip("*."))))
     return tuple(dict.fromkeys(found))
 
 

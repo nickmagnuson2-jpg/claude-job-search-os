@@ -97,7 +97,7 @@ def _load_owner_identifiers(config_path=None) -> tuple:
     ids = ["nick magnuson"]
     path = config_path or DEFAULT_OWNER_IDENTITY_CONFIG
     try:
-        for line in Path(path).read_text(encoding="utf-8").splitlines():
+        for line in Path(path).read_text(encoding="utf-8-sig").splitlines():
             tok = line.strip().lower()
             if tok and not tok.startswith("#"):
                 ids.append(tok)
@@ -138,7 +138,7 @@ def load_sealed_meetings_config(path=None) -> dict:
     keywords: list = []
     if not path.is_file():
         return None
-    for line in path.read_text(encoding="utf-8").splitlines():
+    for line in path.read_text(encoding="utf-8-sig").splitlines():
         line = line.strip()
         if not line or line.startswith("#") or ":" not in line:
             continue
@@ -173,7 +173,7 @@ def load_personal_projects_config(path=None) -> dict:
     if not path.is_file():
         return {"rules": rules}
     current = None
-    for line in path.read_text(encoding="utf-8").splitlines():
+    for line in path.read_text(encoding="utf-8-sig").splitlines():
         line = line.strip()
         if not line or line.startswith("#") or ":" not in line:
             continue
@@ -656,7 +656,8 @@ def main(argv=None) -> int:
     config = load_sealed_meetings_config(a.config)
     if config is None:
         # Without the config no title can be judged; printing the list would show them all.
-        print(f"ERROR: {unclassified_reason()}", file=sys.stderr)
+        print(f"ERROR: the sealed-meeting config {a.config or DEFAULT_SEALED_CONFIG} is "
+              f"missing; no title can be judged, so nothing is printed", file=sys.stderr)
         return 2
     print(json.dumps(drop_sealed_titles(json.load(sys.stdin), config)))
     return 0

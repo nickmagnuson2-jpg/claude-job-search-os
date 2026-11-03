@@ -351,7 +351,9 @@ def persist_via_granola_save(meeting: dict, summary: str, private_notes: str,
             env={**os.environ, "PYTHONIOENCODING": "utf-8"},
         )
         if result.returncode != 0:
-            print(f"granola_save.py error for '{title}': {result.stderr}", file=sys.stderr)
+            # A refusal is a JSON line on stdout, not stderr (Fable r2 F6).
+            print(f"granola_save.py error for '{title}': {result.stderr or result.stdout}",
+                  file=sys.stderr)
             return {"status": "error", "stderr": result.stderr}
         try:
             return json.loads(result.stdout)
@@ -437,7 +439,9 @@ def pull_single_meeting(meeting_id: str, force_type: str = None, project: str = 
             "status": "error", "meeting_id": meeting_id, "type": "unknown",
             "reason": "unclassified",
             "message": (f"Fail-closed: {unclassified_reason()}. "
-                        "Re-run with --force-type once you have confirmed what this call is."),
+                        + ("Re-run with --force-type once you have confirmed what this call is."
+                           if load_sealed_meetings_config() is not None else
+                           "Restore the config; --force-type would bypass the sealed check.")),
         }
 
     if meeting_type == "personal":
@@ -449,7 +453,11 @@ def pull_single_meeting(meeting_id: str, force_type: str = None, project: str = 
         vault_root = None
 
     if dry_run:
-        dest = resolve_destination(meeting, meeting_type, project, vault_root)
+        try:
+            dest = resolve_destination(meeting, meeting_type, project, vault_root)
+        except (vault_paths.VaultRootMissing, vault_paths.SealedFolderMissing) as exc:
+            return {"status": "error", "meeting_id": meeting_id, "type": meeting_type,
+                    "reason": "vault-missing", "message": exc.args[0].splitlines()[0]}
         out = dest["output_path"]
         print(f"  [dry-run] would persist '{meeting['title']}' as {meeting_type}"
               + (f" [{project}]" if project else ""), file=sys.stderr)

@@ -303,3 +303,30 @@ def test_sealed_dir_refuses_when_the_root_is_unconfigured(tmp_path):
     sealed = _sealed_conf(tmp_path, "data/sessions\n")
     with pytest.raises(vp.VaultRootMissing):
         vp.sealed_dir(tmp_path / "absent.conf", sealed)
+
+
+def test_main_checkout_ignores_a_submodule_pointer_and_an_undecodable_file(tmp_path):
+    sup = tmp_path / "super"
+    (sup / ".git" / "modules" / "sub").mkdir(parents=True)
+    sub = sup / "sub"
+    sub.mkdir()
+    (sub / ".git").write_text(f"gitdir: {sup / '.git' / 'modules' / 'sub'}\n")
+    assert vp.main_checkout(sub) == sub          # a submodule is not a linked worktree
+    (sub / ".git").write_bytes(b"gitdir: \xff\xfe\n")
+    assert vp.main_checkout(sub) == sub
+
+
+def test_sealed_dir_refuses_a_folder_that_resolves_outside_the_vault(tmp_path):
+    vault = tmp_path / "vault"
+    (vault / "data").mkdir(parents=True)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (vault / "data" / "sessions").symlink_to(outside)
+    root = _conf(tmp_path, f"{vault}\n")
+    with pytest.raises(vp.SealedFolderMissing):
+        vp.sealed_dir(root, _sealed_conf(tmp_path, "data/sessions\n"))
+
+
+def test_the_vault_config_reads_past_a_bom(tmp_path):
+    root = _conf(tmp_path, f"﻿{tmp_path}\n")
+    assert vp.vault_root(root) == tmp_path
