@@ -61,9 +61,10 @@ WHAT IT CANNOT DETECT (read before trusting a pass)
   * Two sessions editing the SAME file: the path is attributed, the other session's
     hunks ride along. The guard compares paths, never content.
   * Sibling subagents of one session are one session here. It cannot separate them.
-  * The merge exemption trusts that a session whose commands include `git merge` owns
-    the merge in progress. If two sessions both ran merges in one worktree, either can
-    complete the other's.
+  * The merge exemption trusts that a session whose commands include `git merge` or
+    `git pull` owns the merge in progress. That check has no repo or time bound: a merge
+    run in another repo (`-C`), a `pull --rebase`, or one finished hours ago all count,
+    so such a session can complete a peer's stopped merge in this worktree.
   * Files a script generated without their path appearing in a command (a tool that
     writes its own output file, `git mv` into a directory, a `cd` followed by a
     relative name, a directory pathspec such as `git add tools/`) are NOT attributed
@@ -420,7 +421,9 @@ def merged_unchanged(root: Path, staged: list[str]) -> set[str]:
     return out
 
 
-_GIT_OPTS_WITH_VALUE = {"-C", "-c"}
+# git's global options that take their value as a separate word.
+_GIT_OPTS_WITH_VALUE = {"-C", "-c", "--git-dir", "--work-tree", "--namespace",
+                        "--config-env", "--attr-source", "--exec-path", "--super-prefix"}
 
 
 def _git_subcommand(words: list[str]) -> str:

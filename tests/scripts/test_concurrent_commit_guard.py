@@ -971,6 +971,7 @@ def test_a_merge_this_session_never_ran_gives_no_exemption(repo, cfg):
     ("GIT_EDITOR=true git -c core.x=1 merge main", True),
     ("x=$(git merge --no-commit main)", True), ("/usr/bin/git merge main", True),
     ("git --no-pager merge main", True), ("git -p pull", True),
+    ("git --git-dir .git --work-tree . merge main", True),
 ])
 def test_only_a_git_merge_or_pull_command_counts_as_running_a_merge(cmd, ran):
     assert g.ran_merge([cmd]) is ran
