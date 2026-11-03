@@ -972,6 +972,8 @@ def test_a_merge_this_session_never_ran_gives_no_exemption(repo, cfg):
     ("x=$(git merge --no-commit main)", True), ("/usr/bin/git merge main", True),
     ("git --no-pager merge main", True), ("git -p pull", True),
     ("git --git-dir .git --work-tree . merge main", True),
+    ("git --exec-path pull", False), ("git --exec-path x pull", False),
+    ("git --version merge", False),
 ])
 def test_only_a_git_merge_or_pull_command_counts_as_running_a_merge(cmd, ran):
     assert g.ran_merge([cmd]) is ran
@@ -1022,8 +1024,8 @@ def test_ran_merge_is_false_when_the_tokenizer_cannot_load(monkeypatch):
 
 
 def test_an_incoming_rename_is_still_refused_through_its_deletion(repo, cfg):
-    """Review 3 (Fable F1, parked): the renamed-to path can look unchanged since the
-    base, but the rename also stages the old path's deletion, which is never exempt."""
+    """Review 3/4 (Fable F1): a rename's target is never exempt (it can carry this
+    branch's edit), and the old path's deletion is never exempt either."""
     (repo / "old.py").write_text("v1\n" * 20)
     _git(repo, "add", "old.py")
     _git(repo, "commit", "-q", "-m", "old", "--no-verify")
@@ -1040,4 +1042,22 @@ def test_an_incoming_rename_is_still_refused_through_its_deletion(repo, cfg):
                 _record("Bash", {"command": "git commit --no-edit"}))
     r = _git(repo, "commit", "--no-edit", env=_env(cfg), check=False)
     assert r.returncode != 0
-    assert "old.py" in r.stderr
+    assert "old.py" in r.stderr and "new.py" in r.stderr
+
+
+def test_a_rename_delete_conflicts_target_is_not_exempt(repo, cfg):
+    """Review 4 (Fable F1): this branch deleted old.py, main renamed it to new.py. No
+    deletion is staged, so only the rename rule stops a peer's staged new.py."""
+    (repo / "old.py").write_text("v1\n" * 20)
+    _git(repo, "add", "old.py")
+    _git(repo, "commit", "-q", "-m", "old", "--no-verify")
+    _git(repo, "checkout", "-q", "-b", "work")
+    _git(repo, "rm", "-q", "old.py")
+    _git(repo, "commit", "-q", "-m", "work deletes old", "--no-verify")
+    _git(repo, "checkout", "-q", "main")
+    _git(repo, "mv", "old.py", "new.py")
+    _git(repo, "commit", "-q", "-m", "main renames", "--no-verify")
+    _git(repo, "checkout", "-q", "work")
+    _git(repo, "merge", "--no-commit", "--no-ff", "main", check=False)
+    _git(repo, "checkout", "main", "--", "new.py")            # the peer
+    assert g.merged_unchanged(repo, ["new.py"]) == set()

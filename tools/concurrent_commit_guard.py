@@ -49,7 +49,10 @@ merge of main was refused for main's own files. Still refused, and still needing
 a conflicted path or one both sides changed (even when git auto-merged it cleanly), a
 merged file edited afterwards, a mode change, a deletion arriving in the merge, and a
 file staged at the other side's version on a path this branch changed (that would revert
-this branch's change). No exemption when the histories have several best common
+this branch's change), or the target of a rename on their side. It also depends on the
+transcript showing this session's `git merge`, so a transcript that lags can still
+refuse. Not covered: after `git merge -s ours` or after this session unstages an
+incoming file, a peer staging the other side's version would pass. No exemption when the histories have several best common
 ancestors (criss-cross), or for `git merge --squash`, which writes no MERGE_HEAD. The
 exemption fails closed on any git or OS error.
 
@@ -414,16 +417,24 @@ def merged_unchanged(root: Path, staged: list[str]) -> set[str]:
                 if len(bases) != 1:
                     continue        # criss-cross history: no single base to compare with
                 theirs, at_base = _tree(root, head, chunk), _tree(root, bases[0], chunk)
+                # A path new on their side counts only if git sees it ADDED, not as the
+                # target of a rename: a renamed file can carry this branch's edit.
+                added = set(_git(root, "diff", "--name-only", "--diff-filter=A", "-M",
+                                 "-z", bases[0], head).split("\0"))
                 out.update(p for p in chunk if p in index and index[p] == theirs.get(p)
-                           and ours.get(p) == at_base.get(p))
+                           and ours.get(p) == at_base.get(p)
+                           and (p in at_base or p in added))
     except (RuntimeError, OSError):
         return set()
     return out
 
 
-# git's global options that take their value as a separate word.
-_GIT_OPTS_WITH_VALUE = {"-C", "-c", "--git-dir", "--work-tree", "--namespace",
-                        "--config-env", "--attr-source", "--exec-path", "--super-prefix"}
+# git's global options that take their value as a separate word. An option missing
+# here makes its value read as the subcommand: no merge counted, so more refusals.
+_GIT_OPTS_WITH_VALUE = {"-C", "-c", "--git-dir", "--work-tree", "--namespace"}
+# Global options after which git runs no subcommand at all.
+_GIT_STOP_OPTS = {"--exec-path", "--version", "--help", "-h", "--html-path",
+                  "--man-path", "--info-path"}
 
 
 def _git_subcommand(words: list[str]) -> str:
@@ -436,6 +447,8 @@ def _git_subcommand(words: list[str]) -> str:
     i += 1
     while i < len(words):
         w = words[i]
+        if w in _GIT_STOP_OPTS:
+            return ""                              # git prints something and exits
         if w in _GIT_OPTS_WITH_VALUE:
             i += 2
         elif w.startswith("-"):
