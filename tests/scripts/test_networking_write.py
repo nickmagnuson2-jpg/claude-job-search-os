@@ -728,3 +728,69 @@ def test_a_second_followup_replaces_the_first_auto_row(tmp_path):
     active = todos.split("## Completed")[0]
     assert "Follow up: Jane Doe — Call her Monday instead" in active
     assert "Follow up: Jane Doe — Wait for her reply" not in active
+
+
+# ---------------------------------------------------------------------------
+# A reply logged twice (2026-11-02): reply_classify.open_reply
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("first,second,refused", [
+    ("in", "in", True),      # the same reply again, e.g. /follow-up then /networking
+    ("in", "both", True),
+    ("both", "in", False),   # Nick's message is in the two-way entry, so this reply is new
+    ("out", "in", False),    # Nick wrote after nothing; a reply now is the first one
+    ("none", "in", False),   # a plain entry records no direction, so there is nothing open
+])
+def test_a_second_reply_with_no_send_between_is_refused(tmp_path, first, second, refused):
+    _setup_outreach(tmp_path)
+    r1, c1 = _log(tmp_path, first, summary="First")
+    assert c1 == 0, r1
+    before = (tmp_path / "data/networking.md").read_text(encoding="utf-8")
+    log_before = (tmp_path / "data/outreach-log.md").read_text(encoding="utf-8")
+    r2, c2 = _log(tmp_path, second, summary="Second")
+    if refused:
+        assert c2 != 0 and r2["code"] == "possible_duplicate_reply", r2
+        assert r2["existing"] == {"date": "2026-06-19", "type": "email (inbound)", "summary": "First"}
+        assert (tmp_path / "data/networking.md").read_text(encoding="utf-8") == before
+        assert (tmp_path / "data/outreach-log.md").read_text(encoding="utf-8") == log_before
+    else:
+        assert c2 == 0, r2
+        assert _header(tmp_path)[0].endswith("| Second")
+
+
+def test_new_reply_logs_a_genuinely_new_message(tmp_path):
+    _setup_outreach(tmp_path)
+    _log(tmp_path, "in", summary="First")
+    result, code = run_nw_write(
+        "--repo-root", str(tmp_path), "log", "Jane Doe", "--date", "2026-06-20", "--type", "email",
+        "--summary", "Second", "--direction", "in", "--new-reply", "--no-todo")
+    assert code == 0, result
+    assert _header(tmp_path)[:2] == ["#### 2026-06-20 | email (inbound) | Second",
+                                     "#### 2026-06-19 | email (inbound) | First"]
+
+
+def test_a_send_after_the_reply_reopens_logging(tmp_path):
+    _setup_outreach(tmp_path)
+    _log(tmp_path, "in", summary="Their reply")
+    _log(tmp_path, "out", summary="My answer")
+    result, code = _log(tmp_path, "in", summary="Their second reply")
+    assert code == 0, result
+
+
+def test_an_outbound_log_is_never_refused_after_a_reply(tmp_path):
+    _setup_outreach(tmp_path)
+    _log(tmp_path, "in", summary="Their reply")
+    result, code = _log(tmp_path, "out", summary="My answer")
+    assert code == 0, result
+
+
+def test_the_check_reads_only_this_contacts_section(tmp_path):
+    text = NETWORKING_WITH_CONTACT.replace(
+        "| Jane Doe | Acme Corp | PM | peer | 2026-01-01 | — | — |",
+        "| Jane Doe | Acme Corp | PM | peer | 2026-01-01 | — | — |\n"
+        "| Sam Example | Beta Inc | VP | peer | 2026-01-01 | — | — |")
+    text += "### Sam Example — Beta Inc\n\n#### 2026-06-18 | email (inbound) | Sam replied\n\n"
+    write_fixture(tmp_path, "data/networking.md", text)
+    write_fixture(tmp_path, "data/outreach-log.md", OUTREACH_LOG_SENT)
+    result, code = _log(tmp_path, "in", summary="Jane replied")
+    assert code == 0, result

@@ -42,7 +42,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from name_dedup import find_near_duplicates  # noqa: E402
 import outreach_status  # noqa: E402
 # The one "did they reply" rule, shared with day_check.py (no local copy here).
-from reply_classify import with_direction  # noqa: E402
+from reply_classify import open_reply, with_direction  # noqa: E402
 from md_table import JsonArgumentParser, find_section, load_lines, is_sep_row, out_error, out_ok, parse_cols, read_file, table_insert_pos, write_atomic  # noqa: E402
 
 NETWORKING_FILE  = "data/networking.md"
@@ -336,6 +336,17 @@ def cmd_log(args, networking_path: Path, repo_root: Path, dry_run: bool) -> None
             lines.insert(insert_at + 2, "")
             insert_at = insert_at + 3
     else:
+        # A reply when the newest directional entry is already an unanswered reply is
+        # usually the same reply logged a second time (reply_classify.open_reply).
+        if args.direction in ("in", "both") and not args.new_reply:
+            prev = open_reply(lines[log_sec_start + 1:log_sec_end])
+            if prev:
+                out_error(
+                    f"{args.name} already has a reply logged with no message from Nick after "
+                    f"it ({prev[0]} | {prev[1]} | {prev[2][:80]}). If this is that reply, do "
+                    f"not log it again. If it is a new message from them, rerun with "
+                    f"--new-reply.", "possible_duplicate_reply",
+                    existing={"date": prev[0], "type": prev[1], "summary": prev[2]})
         # Insert after section heading (+ blank line), i.e., newest first
         insert_at = log_sec_start + 1
         # Skip a blank line if present right after heading
@@ -558,6 +569,11 @@ def parse_args():
                             "(' (outbound)', no flip). both: one note records a message "
                             "each way (' (two-way)', flips). none: neither, e.g. a note or "
                             "a meeting (type unchanged, no flip).")
+    log_p.add_argument("--new-reply", dest="new_reply", action="store_true",
+                       help="Log a reply even though the contact's newest directional entry "
+                            "is already a reply with no message from Nick after it. Use "
+                            "only for a genuinely new message from them; without it the "
+                            "log refuses with code possible_duplicate_reply.")
     log_p.add_argument("--no-todo", action="store_true",
                        help="Do not write the follow-up todo to data/job-todos.md. The "
                             "Follow-up line is still logged. Use when a session must "

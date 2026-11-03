@@ -18,7 +18,8 @@ is not an argument, so no caller can make it count.
 
 Used by:
   - tools/networking_write.py `log`: writes the caller's --direction with with_direction().
-    It flips the outreach-log row to Replied on --direction in or both.
+    It flips the outreach-log row to Replied on --direction in or both, and refuses a
+    reply that open_reply() says may already be logged.
   - tools/remember_apply.py `contact_note`: the same, from the direction /remember asked for.
   - tools/day_check.py: counts replies and sends from data/networking.md.
   - tools/conversations_metric.py, tools/todo_daily_metrics.py: base_type() for the channel.
@@ -90,3 +91,35 @@ def is_reply(kind: str | None) -> bool:
 def is_send(kind: str | None) -> bool:
     """True only when the type records that Nick reached the contact (outbound or two-way)."""
     return classify(kind) in SEND_VERDICTS
+
+
+_ENTRY_RE = re.compile(r"^####\s+(\d{4}-\d{2}-\d{2})\s*\|\s*([^|]+?)\s*\|\s*(.*)$")
+
+
+def open_reply(section_lines: list[str]) -> tuple[str, str, str] | None:
+    """The contact's newest entry that records a direction, when it is a reply with no send
+    after it: (date, type, summary). None when the newest such entry includes a send
+    (outbound or two-way), or when no entry records a direction.
+
+    Why (2026-11-02): one reply was being logged twice, once by /follow-up and again by
+    /networking or /remember, or by a second /follow-up run, and day_check counted it twice.
+    A second reply from the same contact with no message from Nick in between is usually that
+    same reply, so both writers refuse it unless the caller says it is a new one.
+
+    "Newest" is the latest date; on the same date, the entry nearer the top of the section,
+    because both writers insert newest first.
+    """
+    best = None
+    for i, line in enumerate(section_lines):
+        m = _ENTRY_RE.match(line)
+        if not m or direction(m.group(2)) is None:
+            continue
+        key = (m.group(1), -i)
+        if best is None or key > best[0]:
+            best = (key, m)
+    if best is None:
+        return None
+    m = best[1]
+    if classify(m.group(2)) != "reply":
+        return None
+    return (m.group(1), m.group(2), m.group(3))

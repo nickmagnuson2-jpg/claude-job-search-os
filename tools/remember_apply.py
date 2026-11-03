@@ -47,7 +47,7 @@ import sys as _sys
 _sys.path.insert(0, str(Path(__file__).resolve().parent))
 import inbox_lock
 import outreach_status  # noqa: E402
-from reply_classify import with_direction  # noqa: E402
+from reply_classify import open_reply, with_direction  # noqa: E402
 from md_table import find_section, is_sep_row, out_error, out_ok, parse_cols, read_file, write_atomic  # noqa: E402
 
 NOTES_FILE      = "data/notes.md"
@@ -148,6 +148,18 @@ def apply_contact_note(note: str, dest: dict, repo_root: Path) -> dict:
     # reply stayed "awaiting response" in standup (fable-audit Theme 2, 2026-07-14).
     summary = " ".join(note.split())  # collapse newlines/whitespace for the header
     entry = f"#### {today} | {with_direction('remember', d)} | {summary}"
+
+    if sec_start != -1 and d in ("in", "both") and not dest.get("new_reply"):
+        sec_end = next((j for j in range(sec_start + 1, len(lines))
+                        if lines[j].startswith("## ") or lines[j].startswith("### ")), len(lines))
+        prev = open_reply(lines[sec_start + 1:sec_end])
+        if prev:
+            return {"status": "error", "type": "contact_note", "code": "possible_duplicate_reply",
+                    "existing": {"date": prev[0], "type": prev[1], "summary": prev[2]},
+                    "message": f"{entity} already has a reply logged with no message from "
+                               f"Nick after it ({prev[0]} | {prev[1]}). If this note is that "
+                               f"reply, it is already counted. If it is a new message from "
+                               f"them, rerun this destination with \"new_reply\": true."}
 
     if sec_start == -1:
         # Contact section not found — append note to general section or create
@@ -601,7 +613,9 @@ def apply_destinations(note: str, destinations: list, repo_root: Path, dry_run: 
     if len(results) == 1:
         r = results[0]
         if r["status"] == "error":
-            out_error(r["message"], r.get("code", "handler_error"))
+            out_error(r["message"], r.get("code", "handler_error"), **{
+                k: v for k, v in r.items() if k not in ("status", "type", "message", "code")
+            })
         else:
             out_ok(r["type"], f"Written to {r.get('file', r['type'])}", **{
                 k: v for k, v in r.items() if k not in ("status", "type")

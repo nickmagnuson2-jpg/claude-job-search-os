@@ -1528,3 +1528,55 @@ def test_personal_capture_adds_newline_when_existing_lacks_one(tmp_path):
 
 def test_personal_capture_no_extra_blank_when_existing_ends_with_newline(tmp_path):
     assert _personal(tmp_path, "# Inbox\n- old\n") == ["# Inbox", "- old"]
+
+
+# ---------------------------------------------------------------------------
+# A reply logged twice (2026-11-02): the same open_reply check as networking_write
+# ---------------------------------------------------------------------------
+
+def _contact_note(tmp_path, direction, note="Jane replied", **extra):
+    return run_apply("--repo-root", str(tmp_path), "--note", note, "--destinations",
+                     dest_json({"type": "contact_note", "entity": "Jane Doe",
+                                "direction": direction, **extra}))
+
+
+def test_a_remembered_reply_after_an_unanswered_reply_is_refused(tmp_path):
+    write_fixture(tmp_path, "data/networking.md", NETWORKING_MD.replace(
+        "### Jane Doe — Acme Corp\n\n",
+        "### Jane Doe — Acme Corp\n\n#### 2026-01-12 | email (inbound) | Jane replied\n\n"))
+    write_fixture(tmp_path, "data/outreach-log.md", OUTREACH_MD)
+    before = {f: (tmp_path / f).read_text(encoding="utf-8")
+              for f in ("data/networking.md", "data/outreach-log.md")}
+    result, code = _contact_note(tmp_path, "in")
+    assert code != 0 and result["code"] == "possible_duplicate_reply", result
+    assert result["existing"] == {"date": "2026-01-12", "type": "email (inbound)",
+                                  "summary": "Jane replied"}
+    assert {f: (tmp_path / f).read_text(encoding="utf-8") for f in before} == before
+
+
+def test_new_reply_true_logs_the_remembered_reply(tmp_path):
+    write_fixture(tmp_path, "data/networking.md", NETWORKING_MD.replace(
+        "### Jane Doe — Acme Corp\n\n",
+        "### Jane Doe — Acme Corp\n\n#### 2026-01-12 | email (inbound) | Jane replied\n\n"))
+    write_fixture(tmp_path, "data/outreach-log.md", OUTREACH_MD)
+    result, code = _contact_note(tmp_path, "in", note="Jane wrote again", new_reply=True)
+    assert code == 0 and result["status"] == "ok", result
+    text = (tmp_path / "data/networking.md").read_text(encoding="utf-8")
+    assert f"#### {_today()} | remember (inbound) | Jane wrote again" in text
+
+
+def test_the_remember_check_stops_at_the_next_contact(tmp_path):
+    md = NETWORKING_MD + "### Sam Example — Beta Inc\n\n#### 2026-01-12 | email (inbound) | Sam replied\n\n"
+    write_fixture(tmp_path, "data/networking.md", md)
+    write_fixture(tmp_path, "data/outreach-log.md", OUTREACH_MD)
+    result, code = _contact_note(tmp_path, "both")
+    assert code == 0 and result["status"] == "ok", result
+
+
+def test_an_outbound_note_after_a_reply_is_not_refused(tmp_path):
+    write_fixture(tmp_path, "data/networking.md", NETWORKING_MD.replace(
+        "### Jane Doe — Acme Corp\n\n",
+        "### Jane Doe — Acme Corp\n\n#### 2026-01-12 | email (inbound) | Jane replied\n\n"))
+    write_fixture(tmp_path, "data/outreach-log.md", OUTREACH_MD)
+    result, code = _contact_note(tmp_path, "out", note="Answered Jane")
+    assert code == 0 and result["status"] == "ok", result

@@ -61,7 +61,7 @@ Parse the JSON output:
 - `ambiguous` — if `true`, default to `data/notes.md` and flag the routing as uncertain in the Step 4 confirmation
 - `direction_needed` — if `true`, every `contact_note` has `"direction": null` and Step 1.2 must fill it in. `remember_apply.py` refuses a `contact_note` without a direction.
 
-Proceed to Step 2 with the resolved `destinations[]`. If the script fails or returns an empty destinations list, fall back to `data/notes.md` as general_note. Never for a `direction_required` refusal: that means Step 1.2 was skipped, so go back to Step 1.2, ask the direction, and rerun with ONLY the refused `contact_note` destination, now carrying the direction (in a multi-destination call the other destinations were already written, so rerunning the whole list writes them twice); the note belongs in `networking.md`.
+Proceed to Step 2 with the resolved `destinations[]`. If the script fails or returns an empty destinations list, fall back to `data/notes.md` as general_note.
 
 ### Step 1.2: Record who reached whom (required for a contact note)
 
@@ -128,10 +128,12 @@ Or use `--destinations-file` on Windows to avoid shell-escaping issues:
 
 Parse the response:
 - Single destination: `{"status":"ok","action":"<type>","file":"..."}` — use `file` in confirmation
-- Multi destination: `{"status":"ok","action":"multi_write","results":[...]}` — surface any `warning` fields. If `has_errors` is `true`, some destinations were NOT written: surface each result whose `status` is `error` (for example `direction_required`, a contact note without a direction) and fix it before confirming
+- Multi destination: `{"status":"ok","action":"multi_write","results":[...]}` — surface any `warning` fields. If `has_errors` is `true`, some destinations were NOT written: surface each result whose `status` is `error` (for example `direction_required`, a contact note without a direction, or `possible_duplicate_reply`, below) and fix it before confirming
 - Error: `{"status":"error","message":"..."}` — surface to user with fallback suggestion
 
-If the script fails or classify returned empty destinations: fall back to writing `data/notes.md` as general_note. Never for a `direction_required` refusal: that means Step 1.2 was skipped, so go back to Step 1.2, ask the direction, and rerun with ONLY the refused `contact_note` destination, now carrying the direction (in a multi-destination call the other destinations were already written, so rerunning the whole list writes them twice); the note belongs in `networking.md`.
+If the script fails or classify returned empty destinations: fall back to writing `data/notes.md` as general_note. Never for a `direction_required` refusal: that means Step 1.2 was skipped, so go back to Step 1.2, ask the direction, and rerun with ONLY the refused `contact_note` destinations (every one, if the note names several contacts), now carrying the direction (in a multi-destination call the other destinations were already written, so rerunning the whole list writes them twice); the note belongs in `networking.md`.
+
+A `possible_duplicate_reply` refusal (direction `in` or `both`) means the contact's newest entry is already a reply with no message from Nick after it, shown in `existing`; nothing was written for that contact. Show Nick the entry. If the note is that same reply, it is already counted: confirm without rerunning. Rerun that one destination with `"new_reply": true` only if he says it is a new message from them.
 
 ### Step 4: Confirm
 
