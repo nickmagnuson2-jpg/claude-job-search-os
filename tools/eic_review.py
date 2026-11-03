@@ -317,11 +317,11 @@ def _check_reply(record: dict, reply_id: str, addresses: set[str]) -> float:
     earliest = _epoch(_since(record))
     confirmed = record.get("sent_confirmed_at")
     latest = _epoch(confirmed) + CONFIRM_SLACK if confirmed else float("inf")
-    sent = [float(m.get("epoch", 0)) for m in reply.get("thread") or []
-            if "SENT" in (m.get("labels") or ())
-            and addresses & recipients(m.get("to", ""))
-            and draft_capture._thread_subject(m.get("subject", "")) == subject
-            and earliest <= float(m.get("epoch", 0)) <= latest]
+    posts = [float(m.get("epoch", 0)) for m in reply.get("thread") or []
+             if "SENT" in (m.get("labels") or ())
+             and addresses & recipients(m.get("to", ""))
+             and draft_capture._thread_subject(m.get("subject", "")) == subject]
+    sent = [e for e in posts if earliest <= e <= latest]
     if not sent:
         raise ReviewError(f"{reply_id} is not in the thread of the post sent for this review "
                           f"({record.get('subject')!r}, sent between {_since(record)} and "
@@ -330,6 +330,11 @@ def _check_reply(record: dict, reply_id: str, addresses: set[str]) -> float:
     if replied <= max(sent):        # after the LATEST send: a resend supersedes (Codex r7 29.F2)
         raise ReviewError(f"{reply_id} is dated before the post was sent, so it is not her "
                           f"reply to it")
+    # A later post of the same subject in the thread, sent before her reply, is the one she
+    # answered; it has its own review (Fable r9 49.F1).
+    if any(latest < e < replied for e in posts):
+        raise ReviewError(f"{reply_id} follows a later send of the same post in this thread, "
+                          f"so it answers that send, not this review's")
     return replied
 
 
@@ -355,6 +360,10 @@ def close(capture_id: str, reply_id: str, lesson_ref: str | None = None,
                               f"row tagged {tag!r}; log her edits as rows first")
     elif not no_edits.strip():
         raise ReviewError("--no-edits needs a reason")
+    used = [r["capture_id"] for r in reviews()
+            if r.get("reply_id") == reply_id.strip() and r.get("capture_id") != capture_id]
+    if used:                        # one reply answers one send (Fable r9 49.F1, 50.F1)
+        raise ReviewError(f"{reply_id} already closed the review for {used[0]}")
     replied = _check_reply(record, reply_id.strip(), addresses)
     if lesson_ref is not None:
         # The row records her edits, so it cannot predate her reply. Anchored to the reply,

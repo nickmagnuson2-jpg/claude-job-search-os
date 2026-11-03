@@ -148,7 +148,8 @@ def test_B_a_resend_or_a_re_subject_in_the_thread_still_counts(monkeypatch):
                  {"extra_sent": ((now + 5, SUBJECT),), "sent": now, "epoch": now + 6}):
         cid = sent_to()["id"]
         monkeypatch.setattr(er, "fetch_reply", lambda rid, b=bend: her_reply(**b), raising=False)
-        assert er.close(cid, REPLY, no_edits="approved as is")["status"] == "closed", bend
+        reply = "0123456789abcde" + str(len(bend))       # each review gets its own reply
+        assert er.close(cid, reply, no_edits="approved as is")["status"] == "closed", bend
 
 
 # Round 4 (Fable 17.F1): her reply can arrive before Nick confirms the send. Times are at
@@ -364,6 +365,9 @@ def test_G_an_unreadable_store_folder_blocks(env):
     f"command -- cp /tmp/p.md {VOICE}/110126-x-published.md",
     f"exec -a name cp /tmp/p.md {VOICE}/110126-x-published.md",
     f"sudo -u nobody mv /tmp/p.md {VOICE}/110126-x-published.md",
+    # Fable r9 52.F1, 52.F2: a path-named copy, and find's -exec copy.
+    f"/bin/cp /tmp/p.md {VOICE}/110126-x-published.md",
+    f"find /tmp -name p.md -exec cp {{}} {VOICE}/110126-x-published.md \\;",
 ])
 def test_J_the_eic_gate_follows_a_cd_in_the_command(command):
     sent_to()
@@ -504,7 +508,7 @@ def test_a_no_edits_close_records_the_reason_and_no_lesson():
     rec = er.read(cid)
     assert rec["no_edits_reason"] == "approved as is" and "lesson_ref" not in rec
     cid2 = sent_to()["id"]
-    er.close(cid2, REPLY, lesson_ref="She cut the second hook")
+    er.close(cid2, "fedcba9876543210", lesson_ref="She cut the second hook")  # its own reply
     rec2 = er.read(cid2)
     assert rec2["lesson_ref"] == "She cut the second hook" and "no_edits_reason" not in rec2
 
@@ -588,3 +592,26 @@ def test_round8_open_on_a_malformed_capture_returns_an_error_not_a_traceback(
     (tmp_path / "caps" / "bad" / dc.META_NAME).write_text(meta, encoding="utf-8")
     assert er.main(["open", "bad"]) == 1
     assert json.loads(capsys.readouterr().out)["status"] == "error"
+
+
+# --- round 9 (Fable r9 49.F1, 50.F1), 2026-11-03 ---------------------------------------------
+
+def test_round9_a_reply_after_a_later_send_of_the_same_post_does_not_close(monkeypatch):
+    """A later post of the same subject in the thread, sent before her reply, is the one she
+    answered; the earlier review stays open."""
+    now = time.time()
+    cid = sent_to()["id"]
+    monkeypatch.setattr(er, "fetch_reply", lambda rid: her_reply(
+        sent=now, epoch=now + 7200, extra_sent=((now + 3600, SUBJECT),)), raising=False)
+    with pytest.raises(er.ReviewError, match="later send"):
+        er.close(cid, REPLY, no_edits="approved as is")
+    assert er.read(cid)["status"] == "open"
+
+
+def test_round9_one_reply_closes_one_review():
+    first, second = sent_to()["id"], sent_to()["id"]
+    er.close(first, REPLY, no_edits="approved as is")
+    with pytest.raises(er.ReviewError, match="already closed"):
+        er.close(second, REPLY, no_edits="approved as is")
+    assert er.read(second)["status"] == "open"
+

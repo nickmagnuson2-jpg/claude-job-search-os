@@ -188,7 +188,9 @@ def test_cli_list_and_close_report_json(capsys):
     bad = run("close", cid, "--reply-id", "nope", "--no-edits", "x")
     assert bad.returncode == 1 and json.loads(bad.stdout)["status"] == "error"
     # In-process, so the Gmail lookup is the fixture's stub and the test never calls Gmail.
-    assert er.main(["close", cid, "--reply-id", REPLY, "--lesson", "She reordered the hook"]) == 0
+    # A second reply: one reply id closes one review (Fable r9 49.F1).
+    assert er.main(["close", cid, "--reply-id", "fedcba9876543210", "--lesson",
+                    "She reordered the hook"]) == 0
     assert json.loads(capsys.readouterr().out)["status"] == "closed"
 
 

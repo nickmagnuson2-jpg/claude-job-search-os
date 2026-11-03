@@ -171,7 +171,11 @@ def _wrapped_copies(segment: str, copy_destinations) -> list[str]:
         # copy_destinations reads a copy only at the start, so every command position can
         # be handed over as is; the ones that are not cp/mv/rsync/install return nothing.
         for k in sorted(_pii._all_command_positions(words)):
-            out += copy_destinations(" ".join(shlex.quote(w) for w in words[k:]))
+            # By base name (`/bin/cp`), and only up to find's `;`/`+` terminator, which the
+            # copy parser would read as a separator (Fable r9 52.F1, 52.F2).
+            run = [os.path.basename(words[k])] + words[k + 1:]
+            run = run[:next((i for i, w in enumerate(run) if w in (";", "+")), len(run))]
+            out += copy_destinations(" ".join(shlex.quote(w) for w in run))
     return out
 
 
