@@ -40,6 +40,14 @@ must both hold, and neither comes from the transcript:
 `git add -A` and `git commit -a` have no pathspec index, so they still depend on the
 transcript and are refused when it is behind. So is a pathspec given without `--`.
 
+A merge's incoming files count as named (added 2026-11-02). While MERGE_HEAD exists, a
+staged path whose index entry (mode and blob) equals its entry in a merged commit is
+that commit's finished work arriving unchanged, not another session's edit, so it is not
+refused. Before this, every merge of main was refused for main's own files, and the only
+ways through were the override or spelling all of them out in a command. A merged file
+that was then edited no longer matches and still needs naming; a deletion that arrives
+in the merge is not covered and still needs naming.
+
 WHAT IT CANNOT DETECT (read before trusting a pass)
 ---------------------------------------------------
   * A path this session named in ANY Bash command counts, including `cat <path>` or
@@ -314,14 +322,15 @@ def invoking_commit_command(pid: int, run=subprocess.run) -> str:
 # --------------------------------------------------------------------------- decision
 
 def decide(staged: list[str], *, session_id: str, transcripts: list[Path],
-           peers: list[int], root: Path, commit_command: str = "") -> Verdict:
+           peers: list[int], root: Path, commit_command: str = "",
+           merged: frozenset[str] | set[str] = frozenset()) -> Verdict:
     if not staged:
         return Verdict(False, mode="nothing-staged")
     if not session_id:
         return Verdict(False, mode="not-a-session")
     claims = session_claims(transcripts)
     claims.commands.append(commit_command)      # '' when there is none: names nothing
-    missing = unattributed(staged, claims, root)
+    missing = [p for p in unattributed(staged, claims, root) if p not in merged]
     if not missing:
         return Verdict(False, mode="attribution")
     if not transcripts:
@@ -343,6 +352,48 @@ def staged_paths(root: Path) -> list[str]:
     """Paths in the index git handed this hook. --no-renames lists both sides."""
     out = _git(root, "diff", "--cached", "--name-only", "--no-renames", "-z")
     return [p for p in out.split("\0") if p]
+
+
+def _entries(out: str, blob_field: int) -> dict[str, tuple[str, str]]:
+    """{path: (mode, blob)} from -z output. The blob is field 1 of `ls-files -s`
+    ("<mode> <blob> <stage>") and field 2 of `ls-tree` ("<mode> <type> <blob>")."""
+    got = {}
+    for rec in out.split("\0"):
+        if "\t" in rec:
+            meta, path = rec.split("\t", 1)
+            parts = meta.split()
+            got[path] = (parts[0], parts[blob_field])
+    return got
+
+
+def merge_heads(root: Path) -> list[str]:
+    """Every commit being merged (an octopus merge lists several); [] when no merge
+    is in progress."""
+    path = Path(root) / _git(root, "rev-parse", "--git-path", "MERGE_HEAD").strip()
+    try:
+        return path.read_text(encoding="utf-8").split()
+    except OSError:
+        return []
+
+
+def merged_unchanged(root: Path, staged: list[str]) -> set[str]:
+    """Staged paths whose index entry (mode and blob) equals their entry in a commit
+    being merged. Empty when no merge is in progress, and on any git error: a failure
+    here can only refuse more, never pass more."""
+    out: set[str] = set()
+    try:
+        heads = merge_heads(root)
+        for i in range(0, len(staged) if heads else 0, 500):
+            chunk = staged[i:i + 500]
+            index = _entries(_git(root, "--literal-pathspecs", "ls-files", "-s", "-z",
+                                  "--", *chunk), 1)
+            for head in heads:
+                theirs = _entries(_git(root, "--literal-pathspecs", "ls-tree", "-r",
+                                       "-z", head, "--", *chunk), 2)
+                out.update(p for p in chunk if p in index and index[p] == theirs.get(p))
+    except (RuntimeError, OSError):
+        return set()
+    return out
 
 
 def record_waiver(root: Path, paths: list[str], reason: str, mode: str) -> Path:
@@ -403,7 +454,8 @@ def main(argv=None) -> int:
                    peers=peers, root=root,
                    commit_command=commit_pathspecs(
                        invoking_commit_command(os.getpid()),
-                       os.environ.get("GIT_INDEX_FILE", "")))
+                       os.environ.get("GIT_INDEX_FILE", "")),
+                   merged=merged_unchanged(root, staged))
         if not v.blocked:
             return 0
         if waive:
