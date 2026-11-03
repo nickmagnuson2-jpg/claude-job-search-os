@@ -518,3 +518,25 @@ def test_G_a_record_that_is_not_json_refuses_close_and_cancel_without_a_tracebac
         er.close("bad", REPLY, no_edits="approved as is")
     assert er.cancel_for({"id": "bad", "status": "not-sent"}) is False
     assert [r["capture_id"] for r in er.open_reviews()] == ["bad"]     # still blocks
+
+
+# --- round 6 (Codex r6 25.F1/26.F1/27.F2, 27.F1), 2026-11-03 ---------------------------------
+
+@pytest.mark.parametrize("body", ["[]", "3", '"x"', "null"])
+def test_round6_read_refuses_a_record_of_any_non_object_shape(env, body):
+    """read() is the one place a record is parsed, so every caller (the open command's
+    output, cancel_for, close) gets an object or a ReviewError, never a crash."""
+    (env / "reviews").mkdir(exist_ok=True)
+    (env / "reviews" / "odd.json").write_text(body, encoding="utf-8")
+    with pytest.raises(er.ReviewError, match="not a JSON object"):
+        er.read("odd")
+    assert any(r.get("capture_id") == "odd" for r in er.open_reviews())   # still blocks
+
+
+def test_round6_a_date_shaped_but_impossible_lessons_date_cannot_close(env):
+    with open(env / "lessons.md", "a", encoding="utf-8") as f:
+        f.write(f"| **{TAG}.** She cut a line. | Shorter. | 1 | No | 9999-99-99 |\n")
+    cid = sent_to()["id"]
+    with pytest.raises(er.ReviewError, match="dated"):
+        er.close(cid, REPLY, lesson_ref="She cut a line")
+    assert er.read(cid)["status"] == "open"

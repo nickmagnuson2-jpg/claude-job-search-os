@@ -46,6 +46,7 @@ import os
 import re
 import sys
 import time
+from datetime import date
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -57,7 +58,6 @@ GMAIL_ID = re.compile(r"^[0-9a-f]{16}$")
 MIN_LESSON_REF = 8
 # Gmail labels that mark a message as not an inbound reply.
 NOT_INBOUND = {"SENT", "DRAFT"}
-LESSON_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 
 class ReviewError(Exception):
@@ -126,13 +126,17 @@ def _write(record: dict) -> None:
 
 def read(capture_id: str) -> dict:
     try:
-        return json.loads(_record_path(capture_id).read_text(encoding="utf-8"))
+        record = json.loads(_record_path(capture_id).read_text(encoding="utf-8"))
     except FileNotFoundError:
         raise ReviewError(f"no EIC review for capture {capture_id!r}") from None
     except (OSError, ValueError):
         # It still counts as open (reviews()), so the gate keeps blocking (Fable r5 F2).
         raise ReviewError(f"the review record for {capture_id!r} is unreadable; fix or "
                           f"remove {_record_path(capture_id)}") from None
+    if not isinstance(record, dict):      # valid JSON, wrong shape (Codex r6 25.F1)
+        raise ReviewError(f"the review record for {capture_id!r} is not a JSON object; fix "
+                          f"or remove {_record_path(capture_id)}")
+    return record
 
 
 def open_for(meta: dict, now: float | None = None) -> bool:
@@ -145,8 +149,8 @@ def open_for(meta: dict, now: float | None = None) -> bool:
     existing = None
     if path.exists():
         try:
-            existing = json.loads(path.read_text(encoding="utf-8")).get("status")
-        except (OSError, ValueError, AttributeError):
+            existing = read(meta["id"]).get("status")
+        except ReviewError:
             existing = "unreadable"
     opening = (is_eic_email(meta) and meta.get("status") in ("unchanged", "edited")
                and existing in (None, "cancelled"))
@@ -176,7 +180,7 @@ def cancel_for(meta: dict, now: float | None = None) -> bool:
         record = read(meta["id"])
     except ReviewError:
         return False                    # left as it is: an unreadable record stays owed
-    if not isinstance(record, dict) or record.get("status") != "open":
+    if record.get("status") != "open":
         return False
     record.update({"status": "cancelled",
                    "cancelled_at": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(now))})
@@ -234,8 +238,11 @@ def _tagged_rows(ref: str, tag: str) -> list[str]:
 
 def _row_date(row: str) -> str | None:
     """The row's Date cell, the last cell in the Section 2 table, as YYYY-MM-DD."""
-    cells = [c.strip() for c in row.strip().strip("|").split("|")]
-    return cells[-1] if cells and LESSON_DATE.fullmatch(cells[-1]) else None
+    cell = row.strip().strip("|").split("|")[-1].strip()
+    try:                    # a real day, normalised; 9999-99-99 is not one (Codex r6 27.F1)
+        return date.fromisoformat(cell).isoformat()
+    except ValueError:
+        return None
 
 
 def fetch_reply(reply_id: str) -> dict:
@@ -326,8 +333,6 @@ def close(capture_id: str, reply_id: str, lesson_ref: str | None = None,
           no_edits: str | None = None, now: float | None = None) -> dict:
     """Close a review: her reply was fetched, and her diff was logged or she made none."""
     record = read(capture_id)
-    if not isinstance(record, dict):
-        raise ReviewError(f"the review record for {capture_id} is not a JSON object")
     if record.get("status") in ("closed", "cancelled"):
         raise ReviewError(f"{capture_id} is already {record['status']}")
     if not GMAIL_ID.match((reply_id or "").strip()):
