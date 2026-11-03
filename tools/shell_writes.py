@@ -57,8 +57,10 @@ def walk(command: str, starts, exact: bool | None = None):
 
 # Words that can open a segment without changing what it does: `! (...)`, `time {...}`, and
 # the bodies of if/for/while (`then cd x`, `do cd x`, `else cd x`, `elif cd x`). Codex r3 F1,
-# Fable r3 F1, Fable r4 F3.
-_PREFIX = re.compile(r"^\s*(?:(?:!|time(?:\s+-p)?|then|do|else|elif)\s+)+")
+# Fable r3 F1, Fable r4 F3. `command cp`, `nohup mv`, `env cp`: a wrapper that runs the next
+# word as the command (Codex r7 29.F1).
+_PREFIX = re.compile(
+    r"^\s*(?:(?:!|time(?:\s+-p)?|then|do|else|elif|command|builtin|exec|nohup|env)\s+)+")
 # A redirect to /dev/null or to another fd on a cd changes nothing about where it lands.
 # Covers >, 2>, &> and >& to /dev/null, and >&N (Codex r4 F2, Fable r4 F2).
 _QUIET = re.compile(r"(?:\s+\d*|\s*&|\s*)>{1,2}(?:&\d|&?\s*/dev/null)")
@@ -73,7 +75,7 @@ _MAX_DEPTH = 32       # deeper groups are judged as one segment; recursion must 
 
 
 def _plain(segment: str) -> str:
-    """The segment with leading `!`, `time`, `then`, `do` or `else` removed."""
+    """The segment with leading `!`, `time`, `then`, `do`, `else` or a wrapper removed."""
     return _PREFIX.sub("", segment)
 
 

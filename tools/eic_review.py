@@ -279,7 +279,11 @@ def _since(record: dict) -> str:
 
 
 def _epoch(stamp: str) -> float:
-    return time.mktime(time.strptime(stamp, "%Y-%m-%dT%H:%M:%S"))
+    try:
+        return time.mktime(time.strptime(stamp, "%Y-%m-%dT%H:%M:%S"))
+    except (TypeError, ValueError):       # a hand-edited record (Codex r7 29.F3, 30.F2)
+        raise ReviewError(f"the review record has an unreadable time {stamp!r}; fix it "
+                          f"or remove the record") from None
 
 
 # Gmail's internalDate and the confirm stamp come from different clocks; the confirm is
@@ -323,7 +327,7 @@ def _check_reply(record: dict, reply_id: str, addresses: set[str]) -> float:
                           f"({record.get('subject')!r}, sent between {_since(record)} and "
                           f"{confirmed or 'now'}); give the id of her reply to that email")
     replied = float(reply.get("epoch", 0))
-    if replied <= min(sent):
+    if replied <= max(sent):        # after the LATEST send: a resend supersedes (Codex r7 29.F2)
         raise ReviewError(f"{reply_id} is dated before the post was sent, so it is not her "
                           f"reply to it")
     return replied

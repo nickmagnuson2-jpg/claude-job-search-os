@@ -4,7 +4,7 @@ Each test names the fix it covers. The fixes and why they exist:
   B  close checks her reply in Gmail: from an EIC address, inbound, dated after the review
      opened. Before, any 16 hex characters closed a review.
   C  the gate matches a published-post record anywhere under output/, not only voice-sources/.
-  D  the lessons row used to close must be dated on or after the day the review opened.
+  D  the lessons row used to close must be dated on or after the day of her reply.
   E  re-confirming a capture as not sent cancels its review.
   F  only an email whose subject carries the configured filter (default "LinkedIn post")
      opens a review, so personal mail to the same address does not block publishing.
@@ -143,7 +143,9 @@ def test_B_a_send_after_the_confirm_does_not_count(monkeypatch):
 
 
 def test_B_a_resend_or_a_re_subject_in_the_thread_still_counts(monkeypatch):
-    for bend in ({"subject": "Re: " + SUBJECT}, {"extra_sent": ((time.time() + 5, SUBJECT),)}):
+    now = time.time()
+    for bend in ({"subject": "Re: " + SUBJECT},
+                 {"extra_sent": ((now + 5, SUBJECT),), "sent": now, "epoch": now + 6}):
         cid = sent_to()["id"]
         monkeypatch.setattr(er, "fetch_reply", lambda rid, b=bend: her_reply(**b), raising=False)
         assert er.close(cid, REPLY, no_edits="approved as is")["status"] == "closed", bend
@@ -250,7 +252,7 @@ def test_C_the_gate_still_ignores_paths_that_are_not_a_published_record(path):
 
 # --- D: the lessons row must be new ----------------------------------------------
 
-def test_D_a_lessons_row_dated_before_the_review_opened_cannot_close_it():
+def test_D_a_lessons_row_dated_before_her_reply_cannot_close_it():
     cid = sent_to()["id"]
     with pytest.raises(er.ReviewError, match="dated"):
         er.close(cid, REPLY, lesson_ref="She reordered the opener")
@@ -352,6 +354,11 @@ def test_G_an_unreadable_store_folder_blocks(env):
     f"{{ cd {VOICE}; echo post > 110126-x-published.md; }}",
     f"(cd output && (cd linkedin-profile/voice-sources && echo post > 110126-x-published.md))",
     f"{{ cd {VOICE}; }}; echo post > 110126-x-published.md",
+    # Codex r7 29.F1: a wrapper that runs the next word as the command.
+    f"command cp /tmp/p.md {VOICE}/110126-x-published.md",
+    f"nohup mv /tmp/p.md {VOICE}/110126-x-published.md",
+    f"env cp /tmp/p.md {VOICE}/110126-x-published.md",
+    f"cd {VOICE} && command cp /tmp/p.md 110126-x-published.md",
 ])
 def test_J_the_eic_gate_follows_a_cd_in_the_command(command):
     sent_to()
@@ -524,8 +531,8 @@ def test_G_a_record_that_is_not_json_refuses_close_and_cancel_without_a_tracebac
 
 @pytest.mark.parametrize("body", ["[]", "3", '"x"', "null"])
 def test_round6_read_refuses_a_record_of_any_non_object_shape(env, body):
-    """read() is the one place a record is parsed, so every caller (the open command's
-    output, cancel_for, close) gets an object or a ReviewError, never a crash."""
+    """read() parses a record for every caller that acts on one (the open command's
+    output, open_for, cancel_for, close), so each gets an object or a ReviewError."""
     (env / "reviews").mkdir(exist_ok=True)
     (env / "reviews" / "odd.json").write_text(body, encoding="utf-8")
     with pytest.raises(er.ReviewError, match="not a JSON object"):
@@ -540,3 +547,28 @@ def test_round6_a_date_shaped_but_impossible_lessons_date_cannot_close(env):
     with pytest.raises(er.ReviewError, match="dated"):
         er.close(cid, REPLY, lesson_ref="She cut a line")
     assert er.read(cid)["status"] == "open"
+
+
+# --- round 7 (Codex r7 29.F2, 29.F3/30.F2), 2026-11-03 --------------------------------------
+
+def test_round7_a_reply_to_a_send_that_was_resent_does_not_close(monkeypatch):
+    """Her reply must follow the latest send of the post in the window: a reply between the
+    first send and a resend answers text that was replaced."""
+    now = time.time()
+    cid = sent_to()["id"]
+    monkeypatch.setattr(er, "fetch_reply", lambda rid: her_reply(
+        sent=now, epoch=now + 2, extra_sent=((now + 5, SUBJECT),)), raising=False)
+    with pytest.raises(er.ReviewError, match="before the post was sent"):
+        er.close(cid, REPLY, no_edits="approved as is")
+    assert er.read(cid)["status"] == "open"
+
+
+def test_round7_an_unreadable_time_in_the_record_refuses_instead_of_crashing(env):
+    cid = sent_to()["id"]
+    path = env / "reviews" / f"{cid}.json"
+    record = json.loads(path.read_text(encoding="utf-8"))
+    record["draft_opened_at"] = "yesterday"
+    path.write_text(json.dumps(record), encoding="utf-8")
+    with pytest.raises(er.ReviewError, match="unreadable time"):
+        er.close(cid, REPLY, no_edits="approved as is")
+
