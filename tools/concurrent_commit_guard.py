@@ -419,8 +419,11 @@ def merged_unchanged(root: Path, staged: list[str]) -> set[str]:
                 theirs, at_base = _tree(root, head, chunk), _tree(root, bases[0], chunk)
                 # A path new on their side counts only if git sees it ADDED, not as the
                 # target of a rename: a renamed file can carry this branch's edit.
+                # -l0: no rename limit. Under diff.renameLimit's default a large diff
+                # skips rename detection and lists a target as A, while the merge
+                # (merge.renameLimit, higher) still saw the rename.
                 added = set(_git(root, "diff", "--name-only", "--diff-filter=A", "-M",
-                                 "-z", bases[0], head).split("\0"))
+                                 "-l0", "-z", bases[0], head).split("\0"))
                 out.update(p for p in chunk if p in index and index[p] == theirs.get(p)
                            and ours.get(p) == at_base.get(p)
                            and (p in at_base or p in added))

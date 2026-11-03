@@ -1061,3 +1061,26 @@ def test_a_rename_delete_conflicts_target_is_not_exempt(repo, cfg):
     _git(repo, "merge", "--no-commit", "--no-ff", "main", check=False)
     _git(repo, "checkout", "main", "--", "new.py")            # the peer
     assert g.merged_unchanged(repo, ["new.py"]) == set()
+
+
+def test_rename_detection_ignores_a_low_rename_limit(repo, cfg):
+    """Review 5 (Fable F1): with diff.renameLimit tiny, a plain `diff -M` lists the
+    rename target as Added; the guard must still see the rename."""
+    _git(repo, "config", "diff.renameLimit", "1")
+    for i in range(3):
+        (repo / f"o{i}.py").write_text(f"{i}\n" * 30)
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "olds", "--no-verify")
+    _git(repo, "checkout", "-q", "-b", "work")
+    _git(repo, "rm", "-q", "o0.py")
+    _git(repo, "commit", "-q", "-m", "work deletes o0", "--no-verify")
+    _git(repo, "checkout", "-q", "main")
+    for i in range(3):
+        (repo / f"o{i}.py").write_text(f"{i}\n" * 29 + "tweak\n")
+        _git(repo, "mv", f"o{i}.py", f"n{i}.py")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "main renames and tweaks", "--no-verify")
+    _git(repo, "checkout", "-q", "work")
+    _git(repo, "merge", "--no-commit", "--no-ff", "main", check=False)
+    _git(repo, "checkout", "main", "--", "n0.py")            # the peer
+    assert g.merged_unchanged(repo, ["n0.py"]) == set()
