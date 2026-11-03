@@ -40,13 +40,16 @@ must both hold, and neither comes from the transcript:
 `git add -A` and `git commit -a` have no pathspec index, so they still depend on the
 transcript and are refused when it is behind. So is a pathspec given without `--`.
 
-A merge's incoming files count as named (added 2026-11-02). While MERGE_HEAD exists, a
-staged path whose index entry (mode and blob) equals its entry in a merged commit is
-that commit's finished work arriving unchanged, not another session's edit, so it is not
-refused. Before this, every merge of main was refused for main's own files, and the only
-ways through were the override or spelling all of them out in a command. A merged file
-that was then edited no longer matches and still needs naming; a deletion that arrives
-in the merge is not covered and still needs naming.
+A merge's incoming files count as named (added 2026-11-02), on three conditions:
+MERGE_HEAD exists; this session's own commands include a `git merge` or `git pull`;
+and, for some merged commit, the staged entry (mode and blob) equals that commit's entry
+while this branch's entry still equals the merge base's. That is exactly the file git
+takes from the other side unchanged, so it carries no one's edit. Before this, every
+merge of main was refused for main's own files. Still refused, and still needing names:
+a conflicted path or one both sides changed (even when git auto-merged it cleanly), a
+merged file edited afterwards, a mode change, a deletion arriving in the merge, and a
+file staged at the other side's version on a path this branch changed (that would revert
+this branch's change). The exemption fails closed on any git or OS error.
 
 WHAT IT CANNOT DETECT (read before trusting a pass)
 ---------------------------------------------------
@@ -56,6 +59,9 @@ WHAT IT CANNOT DETECT (read before trusting a pass)
   * Two sessions editing the SAME file: the path is attributed, the other session's
     hunks ride along. The guard compares paths, never content.
   * Sibling subagents of one session are one session here. It cannot separate them.
+  * The merge exemption trusts that a session whose commands include `git merge` owns
+    the merge in progress. If two sessions both ran merges in one worktree, either can
+    complete the other's.
   * Files a script generated without their path appearing in a command (a tool that
     writes its own output file, `git mv` into a directory, a `cd` followed by a
     relative name, a directory pathspec such as `git add tools/`) are NOT attributed
@@ -330,6 +336,8 @@ def decide(staged: list[str], *, session_id: str, transcripts: list[Path],
         return Verdict(False, mode="not-a-session")
     claims = session_claims(transcripts)
     claims.commands.append(commit_command)      # '' when there is none: names nothing
+    if not ran_merge(claims.commands):
+        merged = frozenset()          # a merge another session started is not ours
     missing = [p for p in unattributed(staged, claims, root) if p not in merged]
     if not missing:
         return Verdict(False, mode="attribution")
@@ -356,12 +364,15 @@ def staged_paths(root: Path) -> list[str]:
 
 def _entries(out: str, blob_field: int) -> dict[str, tuple[str, str]]:
     """{path: (mode, blob)} from -z output. The blob is field 1 of `ls-files -s`
-    ("<mode> <blob> <stage>") and field 2 of `ls-tree` ("<mode> <type> <blob>")."""
+    ("<mode> <blob> <stage>") and field 2 of `ls-tree` ("<mode> <type> <blob>").
+    For ls-files only stage 0 counts: an unmerged path has no resolved entry."""
     got = {}
     for rec in out.split("\0"):
         if "\t" in rec:
             meta, path = rec.split("\t", 1)
             parts = meta.split()
+            if blob_field == 1 and parts[2] != "0":
+                continue
             got[path] = (parts[0], parts[blob_field])
     return got
 
@@ -376,10 +387,17 @@ def merge_heads(root: Path) -> list[str]:
         return []
 
 
+def _tree(root: Path, commit: str, paths: list[str]) -> dict[str, tuple[str, str]]:
+    return _entries(_git(root, "--literal-pathspecs", "ls-tree", "-r", "-z", commit,
+                         "--", *paths), 2)
+
+
 def merged_unchanged(root: Path, staged: list[str]) -> set[str]:
-    """Staged paths whose index entry (mode and blob) equals their entry in a commit
-    being merged. Empty when no merge is in progress, and on any git error: a failure
-    here can only refuse more, never pass more."""
+    """Staged paths that are a merged commit's version of a file this branch never
+    changed since the merge base: the index entry equals that commit's, and HEAD's
+    equals the base's (both absent counts as equal, so a new file qualifies). Empty
+    when no merge is in progress, and on any git error: a failure here can only
+    refuse more, never pass more."""
     out: set[str] = set()
     try:
         heads = merge_heads(root)
@@ -387,13 +405,24 @@ def merged_unchanged(root: Path, staged: list[str]) -> set[str]:
             chunk = staged[i:i + 500]
             index = _entries(_git(root, "--literal-pathspecs", "ls-files", "-s", "-z",
                                   "--", *chunk), 1)
+            ours = _tree(root, "HEAD", chunk)
             for head in heads:
-                theirs = _entries(_git(root, "--literal-pathspecs", "ls-tree", "-r",
-                                       "-z", head, "--", *chunk), 2)
-                out.update(p for p in chunk if p in index and index[p] == theirs.get(p))
+                base = _git(root, "merge-base", "HEAD", head).strip()
+                theirs, at_base = _tree(root, head, chunk), _tree(root, base, chunk)
+                out.update(p for p in chunk if p in index and index[p] == theirs.get(p)
+                           and ours.get(p) == at_base.get(p))
     except (RuntimeError, OSError):
         return set()
     return out
+
+
+# `merge` / `pull` as a whole subcommand word: not merge-base, merge-tree, pull-request.
+_MERGE_CMD = re.compile(r"\bgit\b[^\n;&|]*(?<![\w-])(?:merge|pull)(?![\w-])")
+
+
+def ran_merge(commands: list[str]) -> bool:
+    """Whether any of this session's Bash commands ran `git merge` or `git pull`."""
+    return any(_MERGE_CMD.search(c) for c in commands)
 
 
 def record_waiver(root: Path, paths: list[str], reason: str, mode: str) -> Path:

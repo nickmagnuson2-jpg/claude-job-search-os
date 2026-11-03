@@ -808,6 +808,7 @@ def _merge_in_progress(repo, cfg):
     _git(repo, "merge", "main", check=False)          # conflict in shared.py
     (repo / "shared.py").write_text("a = 3\n")
     _write_main(cfg,
+                _record("Bash", {"command": "git merge main"}),
                 _record("Write", {"file_path": str(repo / "shared.py"), "content": "a = 3\n"}),
                 _record("Bash", {"command": "git commit --no-edit"}))
     _git(repo, "add", "shared.py")
@@ -905,3 +906,71 @@ def test_merged_unchanged_handles_more_paths_than_one_chunk(repo):
     _git(repo, "merge", "--no-commit", "--no-ff", "many", check=False)
     staged = [f"f{i:03}.txt" for i in range(520)]
     assert g.merged_unchanged(repo, staged) == set(staged)
+
+
+def test_a_peers_restore_from_main_on_a_path_this_branch_changed_is_refused(repo, cfg):
+    """Review F1 (Codex and Fable, P0): equality with a merge head is not provenance.
+    work changed f.py and deleted del.py; main touched neither. A peer staging main's
+    versions would revert work's change and resurrect the deletion under this merge."""
+    (repo / "f.py").write_text("base\n")
+    (repo / "del.py").write_text("d\n")
+    _git(repo, "add", "f.py", "del.py")
+    _git(repo, "commit", "-q", "-m", "base", "--no-verify")
+    _git(repo, "checkout", "-q", "-b", "work")
+    (repo / "f.py").write_text("work-change\n")
+    _git(repo, "rm", "-q", "del.py")
+    _git(repo, "commit", "-q", "-am", "work", "--no-verify")
+    _git(repo, "checkout", "-q", "main")
+    (repo / "upstream.py").write_text("u\n")
+    _git(repo, "add", "upstream.py")
+    _git(repo, "commit", "-q", "-m", "main moves", "--no-verify")
+    _git(repo, "checkout", "-q", "work")
+    _git(repo, "merge", "--no-commit", "--no-ff", "main")
+    _git(repo, "checkout", "main", "--", "f.py", "del.py")     # the peer
+    _write_main(cfg, _record("Bash", {"command": "git merge --no-commit --no-ff main"}),
+                _record("Bash", {"command": "git commit --no-edit"}))
+    r = _git(repo, "commit", "--no-edit", env=_env(cfg), check=False)
+    assert r.returncode != 0
+    assert "f.py" in r.stderr and "del.py" in r.stderr
+    assert "upstream.py" not in r.stderr
+
+
+def test_a_peers_staging_of_main_on_a_conflicted_path_is_refused(repo, cfg):
+    """Review F5: the other session stages the merge head's version of the conflict."""
+    _merge_in_progress(repo, cfg)
+    _git(repo, "checkout", "main", "--", "shared.py")          # the peer, not this session
+    _write_main(cfg, _record("Bash", {"command": "git merge main"}),
+                _record("Bash", {"command": "git commit --no-edit"}))
+    r = _git(repo, "commit", "--no-edit", env=_env(cfg), check=False)
+    assert r.returncode != 0
+    assert "shared.py" in r.stderr and "upstream.py" not in r.stderr
+
+
+def test_a_merge_this_session_never_ran_gives_no_exemption(repo, cfg):
+    """Review F2: an unrelated commit must not silently complete another session's merge."""
+    _merge_in_progress(repo, cfg)
+    _write_main(cfg,
+                _record("Write", {"file_path": str(repo / "shared.py"), "content": "a = 3\n"}),
+                _record("Bash", {"command": "git commit --no-edit"}))
+    r = _git(repo, "commit", "--no-edit", env=_env(cfg), check=False)
+    assert r.returncode != 0
+    assert "upstream.py" in r.stderr
+
+
+@pytest.mark.parametrize("cmd,ran", [
+    ("git merge main", True), ("git pull --ff-only", True),
+    ("cd x && git -C y merge --no-commit main", True),
+    ("git merge-base HEAD main", False), ("git merge-tree --write-tree a b", False),
+    ("echo merge && git status", False), ("git log --merges", False),
+])
+def test_only_a_git_merge_or_pull_command_counts_as_running_a_merge(cmd, ran):
+    assert g.ran_merge([cmd]) is ran
+
+
+def test_an_unmerged_paths_stages_are_not_read_as_its_index_entry():
+    """Review F4: ls-files -s lists stages 1-3 for a conflicted path; none is resolved."""
+    blob = "a" * 40
+    nul = "\x00"
+    out = nul.join([f"100644 {blob} {n}\tc.py" for n in (1, 2, 3)]
+                   + [f"100644 {blob} 0\tok.py", ""])
+    assert g._entries(out, 1) == {"ok.py": ("100644", blob)}
