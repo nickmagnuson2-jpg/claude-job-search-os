@@ -31,6 +31,7 @@ Check, and write down what each returned, before saying a recording does not exi
 2. Gmail: `search_threads` for the event name and "recording" in the last 7 days.
 3. The event page (Luma or vendor).
 4. The host's X account.
+5. **If the URL is a social repost of a video** (an X, LinkedIn or similar post whose video is not the poster's own recording), check what the video actually is before `acquire`: find the original (search the title and the speaker), then match one distinctive line from the start of the reupload against the original's official captions. A caption like "X dropped a 2-hour masterclass on Y" is a label, not evidence of content. If the original has official captions, offer `/analyze <original url>` on those first: it needs no Whisper and no chunk agents. Report the match (original id, offset, line) to Nick before spending on the pipeline. Origin 2026-11-02: an "agents masterclass" repost was Karpathy's early-2025 "How I use LLMs" from 7:01, with no agent content; see `feedback_a_url_slug_is_not_a_source`.
 
 ## Step 1: Acquire and transcribe
 
