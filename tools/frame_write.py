@@ -477,8 +477,7 @@ def write_frame(frame_path: Path, new: dict, expect: int, segment=None,
             snapshot.write_text(frame_path.read_text(encoding="utf-8"), encoding="utf-8")
             os.replace(tmp, frame_path)
         finally:
-            if tmp.exists():
-                tmp.unlink()
+            tmp.unlink(missing_ok=True)
 
     return {"status": "ok", "version": new["version"], "snapshot": f"frame.v{actual}.yaml",
             "clean": verdict.get("clean"), "fully_covered": verdict.get("fully_covered"),
