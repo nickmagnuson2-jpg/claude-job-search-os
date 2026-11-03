@@ -133,7 +133,7 @@ Parse the response:
 
 If the script fails or classify returned empty destinations: fall back to writing `data/notes.md` as general_note. Never for a `direction_required` refusal: that means Step 1.2 was skipped, so go back to Step 1.2, ask the direction, and rerun with ONLY the refused `contact_note` destinations (every one, if the note names several contacts), now carrying the direction (in a multi-destination call the other destinations were already written, so rerunning the whole list writes them twice); the note belongs in `networking.md`.
 
-A `possible_duplicate_reply` refusal (direction `in` or `both`) means the contact's newest entry is already a reply with no message from Nick after it, shown in `existing`; nothing was written for that contact. Show Nick the entry. If the note is that same reply, it is already counted: confirm without rerunning. Rerun that one destination with `"new_reply": true` only if he says it is a new message from them.
+A `possible_duplicate_reply` refusal (direction `in` or `both`; nothing in the call was written) means the contact's newest entry is already a reply with no message from Nick after it, shown in `existing`; nothing was written for that contact. Show Nick the entry. If the note is that same reply, it is already counted. When the refused direction was `both`, the note also records a message from Nick: rerun that destination with direction `out`, so the send is not lost. Otherwise confirm without rerunning. Rerun that one destination with `"new_reply": true` only if he says it is a new message from them.
 
 ### Step 4: Confirm
 

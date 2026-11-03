@@ -1590,3 +1590,31 @@ def test_only_a_literal_true_new_reply_passes_the_check(tmp_path, value):
     write_fixture(tmp_path, "data/outreach-log.md", OUTREACH_MD)
     result, code = _contact_note(tmp_path, "in", new_reply=value)
     assert code != 0 and result["code"] == "possible_duplicate_reply"
+
+
+def test_a_duplicate_reply_refusal_writes_no_other_destination(tmp_path):
+    write_fixture(tmp_path, "data/networking.md", NETWORKING_MD.replace(
+        "### Jane Doe — Acme Corp\n\n",
+        "### Jane Doe — Acme Corp\n\n#### 2026-01-12 | email (inbound) | Jane replied\n\n"))
+    write_fixture(tmp_path, "data/outreach-log.md", OUTREACH_MD)
+    write_fixture(tmp_path, "data/notes.md", NOTES_MD)
+    before = {f: (tmp_path / f).read_text(encoding="utf-8")
+              for f in ("data/networking.md", "data/outreach-log.md", "data/notes.md")}
+    result, code = run_apply("--repo-root", str(tmp_path), "--note", "Jane replied again",
+                             "--destinations", json.dumps([
+                                 {"type": "general_note"},
+                                 {"type": "contact_note", "entity": "Jane Doe", "direction": "in"}]))
+    assert code != 0 and result["code"] == "possible_duplicate_reply"
+    assert result["written"] == 0 and result["refused"] == 1 and "Nothing was written." in result["message"]
+    assert {f: (tmp_path / f).read_text(encoding="utf-8") for f in before} == before
+
+
+def test_the_pre_flight_lets_an_unrefused_call_through(tmp_path):
+    write_fixture(tmp_path, "data/networking.md", NETWORKING_MD)
+    write_fixture(tmp_path, "data/outreach-log.md", OUTREACH_MD)
+    write_fixture(tmp_path, "data/notes.md", NOTES_MD)
+    result, code = run_apply("--repo-root", str(tmp_path), "--note", "Jane replied",
+                             "--destinations", json.dumps([
+                                 {"type": "general_note"},
+                                 {"type": "contact_note", "entity": "Jane Doe", "direction": "in"}]))
+    assert code == 0 and result["status"] == "ok", result

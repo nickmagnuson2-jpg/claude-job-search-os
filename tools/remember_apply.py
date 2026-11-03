@@ -107,6 +107,25 @@ def section_end(lines: list, start: int) -> int:
 # Per-destination writers
 # ---------------------------------------------------------------------------
 
+def duplicate_reply_refusal(dest: dict, lines: list[str]) -> dict | None:
+    """The possible_duplicate_reply refusal for a contact_note dest, or None. Checked once,
+    by apply_destinations' pre-flight, so one refusal writes nothing at all."""
+    if dest.get("type") != "contact_note" or dest.get("direction") not in ("in", "both"):
+        return None
+    if dest.get("new_reply") is True:
+        return None
+    entity = dest.get("entity", "")
+    prev = open_reply(contact_lines(lines, entity))
+    if not prev:
+        return None
+    return {"status": "error", "type": "contact_note", "code": "possible_duplicate_reply",
+            "existing": {"date": prev[0], "type": prev[1], "summary": prev[2]},
+            "message": f"{entity} already has a reply logged with no message from "
+                       f"Nick after it ({prev[0]} | {prev[1]}). If this note is that "
+                       f"reply, it is already counted. If it is a new message from "
+                       f"them, rerun this destination with \"new_reply\": true."}
+
+
 def apply_contact_note(note: str, dest: dict, repo_root: Path) -> dict:
     """Append a `#### YYYY-MM-DD | remember<suffix> | <note>` interaction entry to the
     matching contact's section in networking.md (parseable by the Interaction-Log
@@ -148,16 +167,6 @@ def apply_contact_note(note: str, dest: dict, repo_root: Path) -> dict:
     # reply stayed "awaiting response" in standup (fable-audit Theme 2, 2026-07-14).
     summary = " ".join(note.split())  # collapse newlines/whitespace for the header
     entry = f"#### {today} | {with_direction('remember', d)} | {summary}"
-
-    if sec_start != -1 and d in ("in", "both") and dest.get("new_reply") is not True:
-        prev = open_reply(contact_lines(lines, entity))
-        if prev:
-            return {"status": "error", "type": "contact_note", "code": "possible_duplicate_reply",
-                    "existing": {"date": prev[0], "type": prev[1], "summary": prev[2]},
-                    "message": f"{entity} already has a reply logged with no message from "
-                               f"Nick after it ({prev[0]} | {prev[1]}). If this note is that "
-                               f"reply, it is already counted. If it is a new message from "
-                               f"them, rerun this destination with \"new_reply\": true."}
 
     if sec_start == -1:
         # Contact section not found — append note to general section or create
@@ -593,6 +602,16 @@ def apply_destinations(note: str, destinations: list, repo_root: Path, dry_run: 
 
     if not destinations:
         out_error("No destinations provided", "no_destinations")
+
+    # Pre-flight: if any contact note would be refused as a duplicate reply, write nothing,
+    # so a refusal never leaves the call's other destinations half applied (review round 2).
+    # (apply_contact_note does not check again: this is the one place.)
+    net_lines = (read_file(repo_root / NETWORKING_FILE) or "").splitlines()
+    refused = [r for r in (duplicate_reply_refusal(d, net_lines) for d in destinations) if r]
+    if refused:
+        first = refused[0]
+        out_error(first["message"] + " Nothing was written.", "possible_duplicate_reply",
+                  existing=first["existing"], refused=len(refused), written=0)
 
     results = []
     for dest in destinations:
