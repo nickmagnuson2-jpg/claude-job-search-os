@@ -32,7 +32,9 @@ subcommand; argparse rejects them after it with "unrecognized arguments"):
 """
 import argparse
 import json
+import os
 import re
+import subprocess
 import sys
 from datetime import date
 from pathlib import Path
@@ -88,156 +90,84 @@ def is_data_row(line: str) -> bool:
 # Commands
 # ---------------------------------------------------------------------------
 
+def _owner(script: str, argv: list, repo_root: Path, dry_run: bool) -> dict:
+    """Run a table's owner script (pipe_write.py, networking_write.py) and return its JSON.
+    act_apply never writes those tables itself: the owner holds the row format, the cell
+    escaping and the duplicate rules, so a second copy cannot drift from them."""
+    cmd = [sys.executable, str(Path(__file__).resolve().parent / script), "--repo-root", str(repo_root)]
+    cmd += ["--dry-run"] if dry_run else []
+    proc = subprocess.run(cmd + [str(a) for a in argv], capture_output=True, text=True,
+                          encoding="utf-8", env={**os.environ, "PYTHONIOENCODING": "utf-8"})
+    try:
+        return json.loads(proc.stdout.strip().splitlines()[-1])
+    except (ValueError, IndexError):
+        return {"status": "error", "code": "owner_failed",
+                "message": f"{script} returned no JSON (exit {proc.returncode}): "
+                           f"{(proc.stderr or proc.stdout).strip()[:300]}"}
+
+
+def _relay_error(result: dict) -> None:
+    extra = {k: v for k, v in result.items() if k not in ("status", "message", "code")}
+    out_error(result.get("message", "owner script failed"), result.get("code", "owner_failed"), **extra)
+
+
 def cmd_pipeline_add(args, pipeline_path: Path, dry_run: bool) -> None:
-    today   = date.today().strftime("%Y-%m-%d")
-    company = sanitize_cell(args.company)
-    role    = sanitize_cell(args.role)        if args.role        else "—"
-    url     = sanitize_cell(args.url)         if args.url         else "—"
-    source  = sanitize_cell(args.source_file) if args.source_file else ""
+    """Add an inbox job ad to the pipeline, through pipe_write.py add."""
+    role   = args.role if args.role else "—"
+    source = sanitize_cell(args.source_file) if args.source_file else ""
     base_notes = sanitize_cell(args.notes) if args.notes else "—"
-    # Separator is " - ", NOT " | ". A literal pipe here is a column separator, so every
-    # row added with a source file came out 11 fields instead of 10, shifting the URL
-    # column into Notes. Found and fixed 2026-08-31 on a row written months earlier.
+    # Separator is " - ", NOT " | ": a literal pipe is a column separator (2026-08-31).
     notes = f"{base_notes} - Added from inbox/{source}" if source else base_notes
-
-    next_action = "Run /research-company, then /generate-cv"
-    row = f"| {company} | {role} | Researching | {today} | {next_action} | — | {notes} | {url} |"
-
-    if dry_run:
-        out_ok("pipeline_add", f"Would add pipeline entry: {args.company}",
-               dry_run=True, would_mutate=[{"file": str(pipeline_path), "row": row}])
+    argv = ["add", args.company, role, "--notes", notes,
+            "--next-action", "Run /research-company, then /generate-cv"]
+    if args.url:
+        argv += ["--url", args.url]
+    result = _owner("pipe_write.py", argv, pipeline_path.parent.parent, dry_run)
+    if result.get("status") != "ok":
+        _relay_error(result)
+    if result.get("action") == "duplicate_warning":
+        out_ok("duplicate_warning", result.get("summary", ""), existing_roles=result.get("existing_roles"))
         return
-
-    content = read_file(pipeline_path)
-    if not content:
-        out_error(f"File not found or empty: {pipeline_path}", "file_not_found")
-
-    lines = [ln.rstrip("\n").rstrip("\r") for ln in content.splitlines(keepends=True)]
-    act_start, act_end = find_section(lines, r"^##\s+Active")
-    if act_start == -1:
-        out_error("Could not find ## Active section in job-pipeline.md", "missing_section")
-
-    pos = table_insert_pos(lines, act_start, act_end, is_data_row)
-    lines.insert(pos, row)
-
-    new_content = "\n".join(lines)
-    if content.endswith("\n"):
-        new_content += "\n"
-    write_atomic(pipeline_path, new_content)
-
+    if dry_run:
+        out_ok("pipeline_add", f"Would add pipeline entry: {args.company}", dry_run=True,
+               would_mutate=result.get("would_mutate"))
+        return
     out_ok("pipeline_add", f"Added pipeline entry: {args.company} | {role}",
            company=args.company, role=role)
 
 
 def cmd_contact_add(args, networking_path: Path, dry_run: bool) -> None:
-    today   = date.today().strftime("%Y-%m-%d")
-    name    = sanitize_cell(args.name)
-    company = sanitize_cell(args.company)     if args.company     else "—"
-    role    = sanitize_cell(args.role)        if args.role        else "—"
+    """Add an inbox contact and its first interaction, through networking_write.py add, then
+    networking_write.py log (direction none: a captured contact records no message)."""
+    company = args.company if args.company else None
+    role    = args.role if args.role else None
     source  = sanitize_cell(args.source_file) if args.source_file else ""
-    content_text = args.content if args.content else ""
-
-    # networking.md is pipe-delimited too, so every cell is sanitized for the same reason
-    # cmd_pipeline_add sanitizes its own.
-    contact_row = (
-        f"| {name} | {company} | {role} | other | {today} | — | — |"
-    )
-    log_source = f"inbox/{source}" if source else "inbox"
-    interaction_summary = f"Captured from {log_source}"
-
-    # Load the file up front so the duplicate guard runs in BOTH dry-run and real
-    # mode — a --dry-run must report the SAME duplicate the real run would block on,
-    # not a blind "Would add" (parity with networking_write.cmd_add; fable-audit
-    # Theme 2 reviewer finding). On a missing/empty file there are no existing
-    # contacts, so dry-run still previews an add; only the real write requires the file.
-    content = read_file(networking_path)
-    lines = [ln.rstrip("\n").rstrip("\r") for ln in content.splitlines(keepends=True)] if content else []
-
-    contacts_start, contacts_end = find_section(lines, r"^##\s+Contacts")
-
-    # Duplicate guard — the sibling write path (networking_write.py add) blocks on
-    # exact and fuzzy name matches; this path previously had NO check, so /act
-    # inbox-routing could silently create a duplicate contact row. Same contract here.
-    existing_names = []
-    if contacts_start != -1:
-        for i in range(contacts_start, contacts_end):
-            if is_data_row(lines[i]):
-                cols = parse_cols(lines[i])
-                if cols and cols[0]:
-                    existing_names.append((cols[0], cols[1] if len(cols) > 1 else ""))
-
-    for nm, co in existing_names:
-        if nm.lower() == name.lower():
-            out_ok("duplicate_warning",
-                   f"{name} already exists in contacts",
-                   existing_company=co)
-            return
-
-    if not getattr(args, "force", False):
-        near = find_near_duplicates(name, [nm for nm, _ in existing_names])
-        if near:
-            co_by_name = {nm: co for nm, co in existing_names}
-            candidates = [
-                {"name": nm, "company": co_by_name.get(nm, ""), "similarity": ratio}
-                for nm, ratio in near
-            ]
-            out_error(
-                "Possible duplicate of existing contact(s): "
-                + ", ".join(f"{c['name']} ({c['similarity']})" for c in candidates)
-                + f". If {name} is genuinely a different person, re-run with --force. "
-                  f"Otherwise log to the existing contact instead of adding a new one.",
-                code="possible_duplicate",
-                candidates=candidates,
-            )
-
-    if dry_run:
-        out_ok("contact_add", f"Would add contact: {name}",
-               dry_run=True, would_mutate=[{"file": str(networking_path)}])
+    add = ["add", args.name, "--relationship", "other"]
+    add += ["--company", company] if company else []
+    add += ["--role", role] if role else []
+    add += ["--force"] if getattr(args, "force", False) else []
+    repo_root = networking_path.parent.parent
+    result = _owner("networking_write.py", add, repo_root, dry_run)
+    if result.get("status") != "ok":
+        _relay_error(result)
+    if result.get("action") == "duplicate_warning":
+        out_ok("duplicate_warning", result.get("summary", ""), existing_company=result.get("existing_company"))
         return
-
-    if not content:
-        out_error(f"File not found or empty: {networking_path}", "file_not_found")
-    if contacts_start == -1:
-        out_error("Could not find ## Contacts section in networking.md", "missing_section")
-
-    pos = table_insert_pos(lines, contacts_start, contacts_end, is_data_row)
-    lines.insert(pos, contact_row)
-
-    # Add interaction log entry
-    log_start, log_end = find_section(lines, r"^##\s+Interaction\s+Log")
-    company_part = company if company != "—" else None
-    heading = f"### {name} — {company_part}" if company_part else f"### {name}"
-    entry_lines = [
-        heading,
-        "",
-        f"#### {today} | other | {interaction_summary}",
-        "",
-    ]
-    if content_text:
-        for cl in content_text.splitlines():
-            entry_lines.append(f"> {cl}" if cl else ">")
-        entry_lines.append("")
-    entry_lines.append("**Follow-up:** Review and update relationship type, add outreach if appropriate.")
-    entry_lines.append("")
-
-    if log_start == -1:
-        lines.append("")
-        lines.append("## Interaction Log")
-        lines.append("")
-        for el in entry_lines:
-            lines.append(el)
-    else:
-        insert_at = log_end
-        for j, el in enumerate(entry_lines):
-            lines.insert(insert_at + j, el)
-
-    new_content = "\n".join(lines)
-    if content.endswith("\n"):
-        new_content += "\n"
-    write_atomic(networking_path, new_content)
-
-    out_ok("contact_add", f"Added contact: {name} | {company}",
-           name=name, company=company)
+    if dry_run:
+        out_ok("contact_add", f"Would add contact: {args.name}", dry_run=True,
+               would_mutate=result.get("would_mutate"))
+        return
+    log = ["log", args.name, "--type", "other", "--direction", "none", "--no-todo",
+           "--summary", f"Captured from {'inbox/' + source if source else 'inbox'}",
+           "--followup", "Review and update relationship type, add outreach if appropriate."]
+    if args.content:
+        log += ["--content", args.content]
+    logged = _owner("networking_write.py", log, repo_root, False)
+    if logged.get("status") != "ok":
+        out_error(f"Added contact {args.name}, but logging its first interaction failed: "
+                  f"{logged.get('message', '')}", "partial_write", contact_added=True)
+    out_ok("contact_add", f"Added contact: {args.name} | {company or '—'}",
+           name=args.name, company=company or "—")
 
 
 def cmd_notes_add(args, repo_root: Path, dry_run: bool) -> None:

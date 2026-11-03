@@ -650,3 +650,146 @@ def test_a_second_role_at_the_same_company_is_added(tmp_path):
     assert "other roles: Director" in result["summary"]
     content = (tmp_path / "data/job-pipeline.md").read_text(encoding="utf-8")
     assert len([l for l in content.splitlines() if l.startswith("| Acme Corp |")]) == 2
+
+
+# ---------------------------------------------------------------------------
+# One owner for the pipeline table (table-writers, 2026-11-02)
+# ---------------------------------------------------------------------------
+
+def _rows(tmp_path):
+    text = (tmp_path / "data/job-pipeline.md").read_text(encoding="utf-8")
+    return [l for l in text.splitlines() if l.startswith("| ") and not l.startswith("| Company")
+            and not l.startswith("| ---")]
+
+
+def test_fmt_row_escapes_a_pipe_in_every_cell():
+    import importlib, sys as _s
+    _s.path.insert(0, str(TOOLS_DIR)); pw = importlib.import_module("pipe_write")
+    row = pw.fmt_row("A|B", "R|1", "S|", "D", "N|x", "C", "n|o", "u|rl")
+    assert row == "| A/B | R/1 | S/ | D | N/x | C | n/o | u/rl |"
+    assert row.count("|") == 9
+
+
+def test_add_takes_notes_and_next_action_and_escapes_them(tmp_path):
+    write_fixture(tmp_path, "data/job-pipeline.md", PIPELINE_MD)
+    result, code = run_pipe_write("--repo-root", str(tmp_path), "add", "Beta|Co", "PM",
+                                  "--notes", "from inbox | a.md", "--next-action", "Read  it",
+                                  "--url", "https://x.test/a|b")
+    assert code == 0, result
+    (row,) = _rows(tmp_path)
+    cells = [c.strip() for c in row.strip("|").split("|")]
+    assert len(cells) == 8
+    assert cells[0] == "Beta/Co" and cells[4] == "Read it" and cells[6] == "from inbox / a.md"
+    assert cells[7] == "https://x.test/a/b"
+
+
+def test_add_without_notes_keeps_the_dash_defaults(tmp_path):
+    write_fixture(tmp_path, "data/job-pipeline.md", PIPELINE_MD)
+    run_pipe_write("--repo-root", str(tmp_path), "add", "Beta", "PM")
+    (row,) = _rows(tmp_path)
+    cells = [c.strip() for c in row.strip("|").split("|")]
+    assert (cells[4], cells[6], cells[7]) == ("—", "—", "—")
+
+
+def test_add_notes_and_fit_reason_keep_both(tmp_path):
+    write_fixture(tmp_path, "data/job-pipeline.md", PIPELINE_MD)
+    run_pipe_write("--repo-root", str(tmp_path), "add", "Beta", "PM", "--notes", "seed",
+                   "--fit-reason", "good fit")
+    (row,) = _rows(tmp_path)
+    notes = [c.strip() for c in row.strip("|").split("|")][6]
+    assert notes.startswith("seed") and "[fit-reason" in notes and "good fit" in notes
+
+
+def test_note_changes_only_the_notes_cell(tmp_path):
+    write_fixture(tmp_path, "data/job-pipeline.md", PIPELINE_WITH_ROW)
+    result, code = run_pipe_write("--repo-root", str(tmp_path), "note", "acme corp",
+                                  "--append", "[2026-02-02]: called | left message")
+    assert code == 0 and result["action"] == "note", result
+    assert result["company"] == "Acme Corp" and result["role"] == "Director"
+    assert _rows(tmp_path) == [
+        "| Acme Corp | Director | Researching | 2026-01-01 | Research role | — | "
+        "[2026-02-02]: called / left message | — |"]
+
+
+def test_note_appends_after_existing_notes_without_a_pipe(tmp_path):
+    write_fixture(tmp_path, "data/job-pipeline.md",
+                  PIPELINE_WITH_ROW.replace("| — | — | — |\n", "| — | first | — |\n", 1))
+    run_pipe_write("--repo-root", str(tmp_path), "note", "Acme Corp", "--append", "second")
+    (row,) = _rows(tmp_path)
+    assert row.count("|") == 9
+    assert [c.strip() for c in row.strip("|").split("|")][6] == "first second"
+
+
+def test_note_needs_a_role_when_a_company_has_two_rows(tmp_path):
+    write_fixture(tmp_path, "data/job-pipeline.md", PIPELINE_TWO_ROLES)
+    before = (tmp_path / "data/job-pipeline.md").read_text(encoding="utf-8")
+    result, code = run_pipe_write("--repo-root", str(tmp_path), "note", "MultiCo", "--append", "x")
+    assert code != 0 and result["code"] == "ambiguous_match"
+    assert result["matches"] == [{"role": "PM"}, {"role": "Director"}]
+    assert (tmp_path / "data/job-pipeline.md").read_text(encoding="utf-8") == before
+    result, code = run_pipe_write("--repo-root", str(tmp_path), "note", "MultiCo", "--role", "director",
+                                  "--append", "x")
+    assert code == 0 and result["role"] == "Director"
+    assert _rows(tmp_path)[1].endswith("| Follow up | — | x | — |")
+
+
+def test_note_falls_back_to_archived(tmp_path):
+    text = PIPELINE_MD + "| OldCo | PM | Withdrawn | 2026-01-01 | — | — | — | — |\n"
+    write_fixture(tmp_path, "data/job-pipeline.md", text)
+    result, code = run_pipe_write("--repo-root", str(tmp_path), "note", "OldCo", "--append", "x")
+    assert code == 0, result
+    assert _rows(tmp_path) == ["| OldCo | PM | Withdrawn | 2026-01-01 | — | — | x | — |"]
+
+
+def test_note_prefers_the_active_row_over_an_archived_one(tmp_path):
+    text = PIPELINE_WITH_ROW + "| Acme Corp | PM | Withdrawn | 2025-01-01 | — | — | — | — |\n"
+    write_fixture(tmp_path, "data/job-pipeline.md", text)
+    result, code = run_pipe_write("--repo-root", str(tmp_path), "note", "Acme Corp", "--append", "x")
+    assert code == 0 and result["role"] == "Director"
+    assert _rows(tmp_path)[1].endswith("| — | — | — | — |")
+
+
+def test_note_refuses_an_unknown_company_and_an_empty_note(tmp_path):
+    write_fixture(tmp_path, "data/job-pipeline.md", PIPELINE_WITH_ROW)
+    result, code = run_pipe_write("--repo-root", str(tmp_path), "note", "Nobody", "--append", "x")
+    assert code != 0 and result["code"] == "not_found"
+    result, code = run_pipe_write("--repo-root", str(tmp_path), "note", "Acme Corp", "--role", "PM",
+                                  "--append", "x")
+    assert code != 0 and result["code"] == "not_found" and "Acme Corp / PM" in result["message"]
+    result, code = run_pipe_write("--repo-root", str(tmp_path), "note", "Acme Corp", "--append", "  ")
+    assert code != 0 and result["code"] == "empty_note"
+
+
+def test_note_pads_a_short_row(tmp_path):
+    write_fixture(tmp_path, "data/job-pipeline.md",
+                  PIPELINE_MD.replace("| --- | --- | --- | --- | --- | --- | --- | --- |\n",
+                                      "| --- | --- | --- | --- | --- | --- | --- | --- |\n| Short | PM | x |\n", 1))
+    run_pipe_write("--repo-root", str(tmp_path), "note", "Short", "--append", "n")
+    assert _rows(tmp_path)[0] == "| Short | PM | x | — | — | — | n | — |"
+
+
+def test_note_dry_run_writes_nothing(tmp_path):
+    write_fixture(tmp_path, "data/job-pipeline.md", PIPELINE_WITH_ROW)
+    before = (tmp_path / "data/job-pipeline.md").read_text(encoding="utf-8")
+    result, code = run_pipe_write("--repo-root", str(tmp_path), "--dry-run", "note", "Acme Corp",
+                                  "--append", "x")
+    assert code == 0 and result["dry_run"] is True and result["role"] == "Director"
+    assert result["would_mutate"][0]["row"].endswith("| — | x | — |")
+    assert (tmp_path / "data/job-pipeline.md").read_text(encoding="utf-8") == before
+
+
+def test_escaping_is_idempotent_so_a_rewrite_never_double_escapes():
+    import importlib, sys as _s
+    _s.path.insert(0, str(TOOLS_DIR)); pw = importlib.import_module("pipe_write")
+    for value in ("a|b", "a/b", "  a  |  b  ", "—", "[fit-reason x]", "https://x.test/a|b"):
+        once = pw.sanitize_cell(value)
+        assert pw.sanitize_cell(once) == once
+
+
+def test_a_company_with_a_pipe_is_found_again_as_a_duplicate(tmp_path):
+    write_fixture(tmp_path, "data/job-pipeline.md", PIPELINE_MD)
+    run_pipe_write("--repo-root", str(tmp_path), "add", "Test|Co", "PM|Lead")
+    result, code = run_pipe_write("--repo-root", str(tmp_path), "add", "Test|Co", "PM|Lead")
+    assert code == 0 and result["action"] == "duplicate_warning", result
+    result, code = run_pipe_write("--repo-root", str(tmp_path), "note", "Test|Co", "--append", "x")
+    assert code == 0 and result["company"] == "Test/Co"

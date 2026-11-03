@@ -43,6 +43,7 @@ from name_dedup import find_near_duplicates  # noqa: E402
 import outreach_status  # noqa: E402
 # The one "did they reply" rule, shared with day_check.py (no local copy here).
 from reply_classify import with_direction  # noqa: E402
+from pipe_write import sanitize_cell  # noqa: E402
 from md_table import JsonArgumentParser, find_section, load_lines, is_sep_row, out_error, out_ok, parse_cols, read_file, table_insert_pos, write_atomic  # noqa: E402
 
 NETWORKING_FILE  = "data/networking.md"
@@ -74,8 +75,10 @@ def is_data_row(line: str) -> bool:
 
 
 def fmt_contact_row(name, company, role, relationship, added, last_interaction, email="—"):
-    return (f"| {name} | {company} | {role} | {relationship} | "
-            f"{added} | {last_interaction} | {email} |")
+    """One contact row. Every cell goes through pipe_write.sanitize_cell, so a '|' in a
+    caller's value cannot add a column, whichever command wrote the row."""
+    cells = (name, company, role, relationship, added, last_interaction, email)
+    return "| " + " | ".join(sanitize_cell(c) for c in cells) + " |"
 
 
 # ---------------------------------------------------------------------------
@@ -148,8 +151,8 @@ def update_outreach_status(repo_root: Path, contact_name: str) -> bool:
 
 def cmd_add(args, networking_path: Path, dry_run: bool) -> None:
     today     = date.today().strftime("%Y-%m-%d")
-    company   = args.company      if args.company      else "—"
-    role      = args.role         if args.role         else "—"
+    company   = sanitize_cell(args.company) if args.company else "—"
+    role      = sanitize_cell(args.role)    if args.role    else "—"
     rel       = args.relationship if args.relationship else "peer"
     email     = (args.email or "").strip()
     if email:
@@ -576,6 +579,10 @@ def main() -> None:
 
     repo_root       = Path(args.repo_root) if args.repo_root else Path.cwd()
     networking_path = repo_root / NETWORKING_FILE
+    # The name is escaped the way fmt_contact_row stores it, once, for every command, so
+    # the row it writes and the row a later log or update looks up are the same text.
+    # Every subcommand takes a positional name.
+    args.name = sanitize_cell(args.name)
 
     if args.command == "add":
         cmd_add(args, networking_path, args.dry_run)
