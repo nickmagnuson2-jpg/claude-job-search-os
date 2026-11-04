@@ -291,21 +291,48 @@ class CaptureError(Exception):
 SENT_OUTCOMES = ("unchanged", "edited")
 
 
+CLAIM_NAME = "networking.claim"
+
+
 def link_networking(capture_id: str, link: dict) -> None:
     """Record which data/networking.md entry this draft was logged as. Called by
-    networking_write.py `log --capture` right after it writes the entry. One entry per
-    capture: a second link is refused, because it would mean the draft was logged twice."""
+    networking_write.py `log --capture` right BEFORE it saves the entry, so a link that
+    cannot be made leaves no entry (round 5, 9.F2). One entry per capture: the claim is a
+    directory made with mkdir, which only one caller can create, so two logs racing for the
+    same capture cannot both pass even before either has written the meta."""
+    directory = store_dir() / capture_id
     meta = read_meta(capture_id)
     if meta.get("networking"):
         raise CaptureError(f"{capture_id} is already linked to a networking entry "
                            f"({meta['networking']})")
+    try:
+        (directory / CLAIM_NAME).mkdir()
+    except FileExistsError:
+        raise CaptureError(f"{capture_id} is already linked: another log holds its claim")
     meta["networking"] = dict(link)
-    _write_meta(store_dir() / capture_id, meta)
+    try:
+        _write_meta(directory, meta)
+    except OSError:
+        (directory / CLAIM_NAME).rmdir()
+        raise
 
 
-def _mark_networking(link: dict, undo: bool) -> None:
+def unlink_networking(capture_id: str) -> None:
+    """Undo link_networking, when the entry it described could not be saved."""
+    directory = store_dir() / capture_id
+    meta = read_meta(capture_id)
+    meta.pop("networking", None)
+    _write_meta(directory, meta)
+    try:
+        (directory / CLAIM_NAME).rmdir()
+    except FileNotFoundError:
+        pass
+
+
+def _mark_networking(link: dict, undo: bool) -> bool:
     """Mark the linked entry outbound (or, with undo, plain) through networking_write.py.
-    Raises CaptureError with the writer's code when it cannot: never a silent skip."""
+    True when the entry changed. Raises CaptureError with the writer's code when it cannot:
+    never a silent skip."""
     cmd = [sys.executable, str(Path(__file__).resolve().parent / "networking_write.py"),
            "--repo-root", str(link["repo_root"]), "mark-sent", link["name"],
            "--date", link["date"], "--type", link["type"], "--summary", link["summary"]]
@@ -320,6 +347,7 @@ def _mark_networking(link: dict, undo: bool) -> None:
     if r.returncode != 0 or out.get("status") != "ok":
         raise CaptureError(f"the networking entry for this draft was not marked "
                            f"({out.get('code')}): {out.get('message')}. Nothing was recorded.")
+    return out.get("changed") is True
 
 
 def resolve(capture_id: str) -> str:
@@ -373,12 +401,35 @@ def confirm(capture_id: str, outcome: str, sent_text: str | None = None,
                 meta["no_lesson_reason"] = no_lesson.strip()
     # The networking entry goes last among the checks and first among the writes: if it
     # cannot be marked, nothing below is written and the capture stays as it was.
-    link = meta.get("networking")
+    # If a write below then fails, the mark is undone and sent.txt put back, so networking
+    # and the capture still agree (round 5, 9.F3).
+    # rollback: the undo flag that reverses what was marked, or None when nothing changed.
+    link, rollback = meta.get("networking"), None
     if link:
         if outcome in SENT_OUTCOMES:
-            _mark_networking(link, undo=False)
+            rollback = True if _mark_networking(link, undo=False) else None
         elif meta.get("status") in SENT_OUTCOMES:
-            _mark_networking(link, undo=True)
+            rollback = False if _mark_networking(link, undo=True) else None
+    prev_sent = sent_file.read_text(encoding="utf-8") if sent_file.exists() else None
+    try:
+        _write_confirmation(directory, meta, outcome, sent_text, draft_body, edits, revised,
+                            screenshots, now)
+    except OSError as exc:
+        if prev_sent is None:
+            sent_file.unlink(missing_ok=True)
+        else:
+            sent_file.write_text(prev_sent, encoding="utf-8")
+        if rollback is not None:
+            _mark_networking(link, undo=rollback)
+        raise CaptureError(f"the capture could not be written ({exc}); the networking entry "
+                           f"and sent.txt were rolled back, so nothing changed")
+    return meta
+
+
+def _write_confirmation(directory: Path, meta: dict, outcome: str, sent_text: str | None,
+                        draft_body: str, edits: list[dict], revised: int,
+                        screenshots: list[str] | None, now: float | None) -> None:
+    sent_file = directory / SENT_NAME
     if outcome == "edited":
         sent_file.write_text(sent_text, encoding="utf-8")
         ratio = changed_word_ratio(draft_body, body_of(sent_text))
@@ -404,7 +455,6 @@ def confirm(capture_id: str, outcome: str, sent_text: str | None = None,
         "screenshots": list(screenshots or []),
     })
     _write_meta(directory, meta)
-    return meta
 
 
 def _check_lesson(revised: int, edit: float, lesson_ref: str | None,

@@ -50,7 +50,8 @@ import sys as _sys
 _sys.path.insert(0, str(Path(__file__).resolve().parent))
 import inbox_lock
 import outreach_status  # noqa: E402
-from reply_classify import contact_lines, open_reply  # noqa: E402
+from reply_classify import contact_lines, open_reply, with_direction  # noqa: E402
+from networking_write import find_contact_row  # noqa: E402
 from md_table import find_section, is_sep_row, out_error, out_ok, parse_cols, read_file, write_atomic  # noqa: E402
 
 NOTES_FILE      = "data/notes.md"
@@ -110,23 +111,61 @@ def section_end(lines: list, start: int) -> int:
 # Per-destination writers
 # ---------------------------------------------------------------------------
 
-def duplicate_reply_refusal(dest: dict, lines: list[str]) -> dict | None:
-    """The possible_duplicate_reply refusal for a contact_note dest, or None. Checked once,
-    by apply_destinations' pre-flight, so one refusal writes nothing at all."""
-    if dest.get("type") != "contact_note" or dest.get("direction") not in ("in", "both"):
+def contact_note_refusal(note: str, destinations: list, net_content: str) -> dict | None:
+    """The refusal for this call's contact notes, or None. Checked once, by apply_destinations'
+    pre-flight, BEFORE any destination is written, so a refusal writes nothing at all
+    (review round 2; round 5, 9.F1 and 11.F1). Three refusals:
+
+      file_not_found            networking.md is missing or empty.
+      not_found                 a contact is not in the Contacts table (networking_write.py
+                                log, which writes the note, would refuse it).
+      possible_duplicate_reply  a reply note (in/both) for a contact whose newest
+                                directional entry is already an unanswered reply. The call
+                                is read in order, as the writer would see it: an earlier
+                                reply note for the same contact in this call leaves the
+                                reply open, an earlier out note closes it, and only a
+                                literal "new_reply": true passes.
+    """
+    notes = [d for d in destinations if d.get("type") == "contact_note"]
+    if not notes:
         return None
-    if dest.get("new_reply") is True:
-        return None
-    entity = dest.get("entity", "")
-    prev = open_reply(contact_lines(lines, entity))
-    if not prev:
-        return None
-    return {"status": "error", "type": "contact_note", "code": "possible_duplicate_reply",
-            "existing": {"date": prev[0], "type": prev[1], "summary": prev[2]},
-            "message": f"{entity} already has a reply logged with no message from "
-                       f"Nick after it ({prev[0]} | {prev[1]}). If this note is that "
-                       f"reply, it is already counted. If it is a new message from "
-                       f"them, rerun this destination with \"new_reply\": true."}
+    if not net_content:
+        return {"code": "file_not_found",
+                "message": "networking.md not found or empty, so no contact note can be logged."}
+    lines = net_content.splitlines()
+    for d in notes:
+        entity = (d.get("entity") or "").strip()
+        if find_contact_row(lines, entity) == -1:
+            return {"code": "not_found",
+                    "message": f"{entity or '(no name)'} is not in the Contacts table of "
+                               f"data/networking.md, so the note cannot be logged there."}
+    summary = " ".join(note.split())
+    today = datetime.now().strftime("%Y-%m-%d")
+    open_by: dict = {}
+    for d in notes:
+        direction = d.get("direction")
+        if direction not in ("in", "out", "both"):
+            continue
+        entity = d.get("entity", "").strip()
+        key = entity.lower()
+        if key not in open_by:
+            prev = open_reply(contact_lines(lines, entity))
+            open_by[key] = ({"date": prev[0], "type": prev[1], "summary": prev[2]}
+                            if prev else None)
+        if direction == "out":
+            open_by[key] = None
+            continue
+        existing = open_by[key]
+        if existing and d.get("new_reply") is not True:
+            return {"code": "possible_duplicate_reply", "existing": existing,
+                    "message": f"{entity} already has a reply logged with no message from "
+                               f"Nick after it ({existing['date']} | {existing['type']}). If "
+                               f"this note is that reply, it is already counted. If it is a "
+                               f"new message from them, rerun this destination with "
+                               f"\"new_reply\": true."}
+        open_by[key] = {"date": today, "type": with_direction("remember", direction),
+                        "summary": summary}
+    return None
 
 
 def apply_contact_note(note: str, dest: dict, repo_root: Path) -> dict:
@@ -135,14 +174,15 @@ def apply_contact_note(note: str, dest: dict, repo_root: Path) -> dict:
     (finding 4.F1, 2026-11-04). That writer picks the contact's live section (creating it
     when missing), writes the canonical entry block, updates Last Interaction, and on
     direction in or both sets the newest open outreach-log row Replied. A contact who is not
-    in the Contacts table is refused (`not_found`) and nothing is written.
+    in the Contacts table is refused (`not_found`); apply_destinations' pre-flight refuses
+    that, a missing networking.md and a duplicate reply before anything in the call is written.
 
     The duplicate-reply check is NOT repeated here: apply_destinations' pre-flight is the one
     place, so a reply note is passed with --new-reply. Checking again would refuse the second
     of two notes in one call after the first was written.
     """
     today = datetime.now().strftime("%Y-%m-%d")
-    entity = dest.get("entity", "")
+    entity = dest.get("entity", "").strip()
     path = repo_root / NETWORKING_FILE
     d = dest.get("direction")
     if d not in ("in", "out", "both", "none"):
@@ -150,10 +190,6 @@ def apply_contact_note(note: str, dest: dict, repo_root: Path) -> dict:
                 "message": "contact_note needs direction in, out, both or none: did they "
                            "reach Nick (in), did Nick reach them (out), both in this note "
                            "(both), or neither (none)?"}
-    if not read_file(path):
-        return {"status": "error", "type": "contact_note",
-                "message": "networking.md not found or empty"}
-
     summary = " ".join(note.split())  # one header line
     cmd = [_sys.executable, str(Path(__file__).resolve().parent / "networking_write.py"),
            "--repo-root", str(repo_root), "log", entity, f"--date={today}",
@@ -595,15 +631,15 @@ def apply_destinations(note: str, destinations: list, repo_root: Path, dry_run: 
     if not destinations:
         out_error("No destinations provided", "no_destinations")
 
-    # Pre-flight: if any contact note would be refused as a duplicate reply, write nothing,
-    # so a refusal never leaves the call's other destinations half applied (review round 2).
+    # Pre-flight: if any contact note would be refused, write nothing, so a refusal never
+    # leaves the call's other destinations half applied (review round 2; round 5).
     # (apply_contact_note does not check again: this is the one place.)
-    net_lines = (read_file(repo_root / NETWORKING_FILE) or "").splitlines()
-    refused = [r for r in (duplicate_reply_refusal(d, net_lines) for d in destinations) if r]
-    if refused:
-        first = refused[0]
-        out_error(first["message"] + " Nothing was written.", "possible_duplicate_reply",
-                  existing=first["existing"], refused=len(refused), written=0)
+    refusal = contact_note_refusal(note, destinations,
+                                   read_file(repo_root / NETWORKING_FILE) or "")
+    if refusal:
+        extra = {"existing": refusal["existing"]} if "existing" in refusal else {}
+        out_error(refusal["message"] + " Nothing was written.", refusal["code"],
+                  refused=1, written=0, **extra)
 
     results = []
     for dest in destinations:

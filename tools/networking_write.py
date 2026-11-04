@@ -86,6 +86,21 @@ def fmt_contact_row(name, company, role, relationship, added, last_interaction, 
             f"{added} | {last_interaction} | {email} |")
 
 
+def find_contact_row(lines: list, name: str) -> int:
+    """Index of the contact's row in the ## Contacts table (case-insensitive name), or -1.
+    The one roster rule: `log` refuses a name it does not find here, and remember_apply's
+    pre-flight asks the same question before it writes anything."""
+    start, end = find_section(lines, r"^##\s+Contacts")
+    if start == -1:
+        return -1
+    for i in range(start, end):
+        if is_data_row(lines[i]):
+            cols = parse_cols(lines[i])
+            if cols and cols[0].lower() == name.lower():
+                return i
+    return -1
+
+
 # ---------------------------------------------------------------------------
 # Section navigation
 # ---------------------------------------------------------------------------
@@ -304,16 +319,7 @@ def cmd_log(args, networking_path: Path, repo_root: Path, dry_run: bool) -> None
     content, lines = load_lines(networking_path)
 
     # Verify contact exists in Contacts table
-    contacts_start, contacts_end = find_section(lines, r"^##\s+Contacts")
-    contact_row_idx = -1
-    if contacts_start != -1:
-        for i in range(contacts_start, contacts_end):
-            if is_data_row(lines[i]):
-                cols = parse_cols(lines[i])
-                if cols and cols[0].lower() == args.name.lower():
-                    contact_row_idx = i
-                    break
-
+    contact_row_idx = find_contact_row(lines, args.name)
     if contact_row_idx == -1:
         out_error(f"Contact not found: {args.name}", "not_found")
 
@@ -368,8 +374,9 @@ def cmd_log(args, networking_path: Path, repo_root: Path, dry_run: bool) -> None
     for j, eline in enumerate(entry_lines):
         lines.insert(insert_at + j, eline)
 
-    save_lines(networking_path, lines, content)
-
+    # A draft is linked to its capture BEFORE the entry is saved, and the link is removed if
+    # the save fails: all or nothing, so a retry can never log the same draft twice (round 5,
+    # 9.F2). Every refusal above has already run, so nothing after this point refuses.
     if args.capture:
         import draft_capture
         try:
@@ -377,9 +384,15 @@ def cmd_log(args, networking_path: Path, repo_root: Path, dry_run: bool) -> None
                 "name": args.name, "date": log_date, "type": args.type,
                 "summary": args.summary, "repo_root": str(repo_root.resolve())})
         except (draft_capture.CaptureError, OSError, ValueError) as e:
-            out_error(f"the entry was written but NOT linked to capture {args.capture} ({e}), "
-                      f"so confirming the send will not mark it outbound. Tell Nick.",
-                      "link_failed")
+            out_error(f"capture {args.capture} could not be linked ({e}), so nothing was "
+                      f"written", "link_failed")
+    try:
+        save_lines(networking_path, lines, content)
+    except OSError as e:
+        if args.capture:
+            draft_capture.unlink_networking(args.capture)
+        out_error(f"{networking_path} could not be written ({e}); nothing was logged",
+                  "write_failed")
 
     # Follow-up todo via subprocess (non-fatal if todos file missing).
     # Supersede this contact's prior AUTO-generated follow-up first so repeated

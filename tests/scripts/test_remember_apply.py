@@ -499,8 +499,8 @@ def test_contact_note_missing_networking_file_is_error(tmp_path):
     assert result["status"] == "error", "status must be error"
     assert "networking.md not found or empty" in result["message"], \
         f"message must name the missing file, got {result['message']}"
-    assert result["code"] == "handler_error", \
-        f"handler errors without an explicit code map to handler_error, got {result['code']}"
+    assert result["code"] == "file_not_found" and result["written"] == 0, \
+        f"the pre-flight refuses a contact note with no networking.md (round 5), got {result}"
 
 
 def test_contact_note_collapses_multiline_note_into_one_header(tmp_path):

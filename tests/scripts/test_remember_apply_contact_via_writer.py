@@ -170,13 +170,65 @@ def test_the_note_writes_no_todo(tmp_path):
     assert read(tmp_path, "data/job-todos.md") == "# To-Dos\n"
 
 
-def test_two_reply_notes_in_one_call_are_not_half_written(tmp_path):
-    """The pre-flight is the ONE duplicate check (it saw no open reply for either). If the
-    writer checked again, the second would be refused after the first was written."""
+def test_two_reply_notes_for_one_contact_in_one_call_are_refused(tmp_path):
+    """Round 5, 11.F1: two inbound notes for the same contact in one call are the same reply
+    logged twice. The pre-flight reads the call in order, as the writer would, and refuses
+    the second; nothing is written."""
     setup(tmp_path)
+    before = read(tmp_path), read(tmp_path, "data/outreach-log.md")
     r, c = remember(tmp_path, note_dest("in"), note_dest("in"))
+    assert c != 0 and r["code"] == "possible_duplicate_reply" and r["written"] == 0, r
+    assert (read(tmp_path), read(tmp_path, "data/outreach-log.md")) == before
+
+
+def test_a_send_between_two_reply_notes_in_one_call_lets_both_through(tmp_path):
+    setup(tmp_path)
+    r, c = remember(tmp_path, note_dest("in"), note_dest("out"), note_dest("both"))
     assert c == 0 and not r["has_errors"], r
-    assert read(tmp_path).count(f"| remember (inbound) |") == 2
+    assert read(tmp_path).count("| remember (") == 3
+
+
+def test_a_new_reply_flag_lets_a_second_note_in_one_call_through(tmp_path):
+    setup(tmp_path)
+    r, c = remember(tmp_path, note_dest("in"), note_dest("in", new_reply=True))
+    assert c == 0 and not r["has_errors"], r
+    assert read(tmp_path).count("| remember (inbound) |") == 2
+
+
+def test_reply_notes_for_two_contacts_in_one_call_are_both_logged(tmp_path):
+    setup(tmp_path, NETWORKING.replace(
+        "| Jane Doe | Acme Corp | PM | peer | 2026-01-01 | — | — |",
+        "| Jane Doe | Acme Corp | PM | peer | 2026-01-01 | — | — |\n"
+        "| Sam Example | Beta Inc | VP | peer | 2026-01-01 | — | — |"))
+    r, c = remember(tmp_path, note_dest("in"), note_dest("in", entity="Sam Example"))
+    assert c == 0 and not r["has_errors"], r
+    assert read(tmp_path).count("| remember (inbound) |") == 2
+
+
+def test_an_unlisted_contact_refuses_the_whole_call(tmp_path):
+    """Round 5, 9.F1: roster membership is checked in the pre-flight, so a not_found note
+    leaves the call's other destinations unwritten too."""
+    setup(tmp_path)
+    write_fixture(tmp_path, "data/notes.md", "# Job Search Notes\n\n## Decisions\n\n## Notes\n")
+    before = read(tmp_path), read(tmp_path, "data/notes.md")
+    r, c = remember(tmp_path, {"type": "general_note"}, note_dest(),
+                    note_dest(entity="Rex Random"))
+    assert c != 0 and r["code"] == "not_found" and r["written"] == 0, r
+    assert "Rex Random" in r["message"]
+    assert (read(tmp_path), read(tmp_path, "data/notes.md")) == before
+
+
+def test_a_missing_networking_file_refuses_the_whole_call(tmp_path):
+    write_fixture(tmp_path, "data/notes.md", "# Job Search Notes\n\n## Decisions\n\n## Notes\n")
+    r, c = remember(tmp_path, {"type": "general_note"}, note_dest())
+    assert c != 0 and r["code"] == "file_not_found" and r["written"] == 0, r
+    assert read(tmp_path, "data/notes.md") == "# Job Search Notes\n\n## Decisions\n\n## Notes\n"
+
+
+def test_the_roster_match_ignores_case_and_surrounding_space(tmp_path):
+    setup(tmp_path)
+    r, c = remember(tmp_path, note_dest(entity="  jane doe "))
+    assert c == 0, r
 
 
 def test_an_open_reply_is_still_refused_once_with_nothing_written(tmp_path):

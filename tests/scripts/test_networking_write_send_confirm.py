@@ -370,17 +370,124 @@ def test_not_sent_on_a_never_sent_capture_does_not_need_the_entry(tmp_path):
     assert dc.confirm(cid, "not-sent")["status"] == "not-sent"
 
 
-def test_a_link_that_cannot_be_written_is_reported(tmp_path, store):
+def test_a_link_that_cannot_be_written_writes_no_entry(tmp_path, store):
+    """All or nothing (round 5, 9.F2): a capture that cannot be linked leaves no entry, so a
+    retry cannot log the draft twice."""
     cid = dc.capture(DRAFT)
     d = store / cid
+    before = text(tmp_path)
     d.chmod(0o500)
     try:
         r, c = log_draft(tmp_path, cid)
     finally:
         d.chmod(0o700)
     assert c != 0 and r["code"] == "link_failed", r
-    assert headers(tmp_path)[0] == f"#### 2026-06-20 | email | {SUMMARY}"
+    assert text(tmp_path) == before
     assert "networking" not in dc.read_meta(cid)
+    r, c = log_draft(tmp_path, cid)
+    assert c == 0, r
+    assert headers(tmp_path) == [f"#### 2026-06-20 | email | {SUMMARY}"]
+
+
+def test_a_save_that_fails_unlinks_the_capture_and_a_retry_logs_once(tmp_path):
+    cid = dc.capture(DRAFT)
+    data = tmp_path / "data"
+    before = text(tmp_path)
+    data.chmod(0o500)
+    try:
+        r, c = log_draft(tmp_path, cid)
+    finally:
+        data.chmod(0o700)
+    assert c != 0 and r.get("code") == "write_failed", r
+    assert text(tmp_path) == before
+    assert "networking" not in dc.read_meta(cid)
+    r, c = log_draft(tmp_path, cid)
+    assert c == 0, r
+    assert headers(tmp_path) == [f"#### 2026-06-20 | email | {SUMMARY}"]
+    assert dc.read_meta(cid)["networking"]["summary"] == SUMMARY
+
+
+def test_a_link_claim_holds_while_the_meta_is_not_yet_written(tmp_path):
+    """The race (round 5, 9.F2): a second linker that reads the meta before the first one
+    writes it must still be refused. The claim, not the meta key, decides."""
+    cid = dc.capture(DRAFT)
+    link = {"name": "Jane Doe", "date": "2026-06-20", "type": "email", "summary": "first",
+            "repo_root": str(tmp_path)}
+    dc.link_networking(cid, link)
+    meta = dc.read_meta(cid)
+    meta.pop("networking")
+    dc._write_meta(dc.store_dir() / cid, meta)
+    with pytest.raises(dc.CaptureError, match="already linked"):
+        dc.link_networking(cid, dict(link, summary="second"))
+
+
+def test_unlink_releases_the_claim(tmp_path):
+    cid = dc.capture(DRAFT)
+    link = {"name": "Jane Doe", "date": "2026-06-20", "type": "email", "summary": "first",
+            "repo_root": str(tmp_path)}
+    dc.link_networking(cid, link)
+    dc.unlink_networking(cid)
+    assert "networking" not in dc.read_meta(cid)
+    dc.link_networking(cid, dict(link, summary="again"))
+    assert dc.read_meta(cid)["networking"]["summary"] == "again"
+
+
+@pytest.mark.parametrize("prior,outcome,expect", [
+    (None, "unchanged", "email"),               # the mark is rolled back to plain
+    ("unchanged", "not-sent", "email (outbound)"),  # the undo is rolled back to outbound
+])
+def test_a_capture_write_that_fails_rolls_the_entry_back(tmp_path, monkeypatch, prior, outcome, expect):
+    """Round 5, 9.F3: confirm marks the entry, then writes the capture. If that write fails,
+    the entry goes back to what it was, so networking and the capture still agree."""
+    cid = drafted(tmp_path)
+    if prior:
+        dc.confirm(cid, prior)
+    status_before = dc.read_meta(cid)["status"]
+
+    def boom(directory, meta):
+        raise OSError("disk full")
+
+    real = dc._write_meta
+    monkeypatch.setattr(dc, "_write_meta", boom)
+    with pytest.raises(dc.CaptureError, match="rolled back"):
+        dc.confirm(cid, outcome, force=bool(prior))
+    monkeypatch.setattr(dc, "_write_meta", real)
+    assert headers(tmp_path)[0] == f"#### 2026-06-20 | {expect} | {SUMMARY}"
+    assert dc.read_meta(cid)["status"] == status_before
+    assert not (dc.store_dir() / cid / "sent.txt").exists()
+
+
+def test_an_edited_confirm_that_fails_leaves_no_sent_file(tmp_path, monkeypatch):
+    cid = drafted(tmp_path)
+
+    def boom(directory, meta):
+        raise OSError("disk full")
+
+    real = dc._write_meta
+    monkeypatch.setattr(dc, "_write_meta", boom)
+    with pytest.raises(dc.CaptureError):
+        dc.confirm(cid, "edited", sent_text=DRAFT.replace("Thanks", "Many thanks"),
+                   no_lesson="typo only")
+    monkeypatch.setattr(dc, "_write_meta", real)
+    assert not (dc.store_dir() / cid / "sent.txt").exists()
+    assert headers(tmp_path)[0] == f"#### 2026-06-20 | email | {SUMMARY}"
+
+
+def test_a_forced_reconfirm_that_fails_keeps_the_earlier_sent_file(tmp_path, monkeypatch):
+    cid = drafted(tmp_path)
+    first = DRAFT.replace("Thanks", "Many thanks")
+    dc.confirm(cid, "edited", sent_text=first, no_lesson="typo only")
+
+    def boom(directory, meta):
+        raise OSError("disk full")
+
+    real = dc._write_meta
+    monkeypatch.setattr(dc, "_write_meta", boom)
+    with pytest.raises(dc.CaptureError):
+        dc.confirm(cid, "unchanged", force=True)
+    monkeypatch.setattr(dc, "_write_meta", real)
+    assert (dc.store_dir() / cid / "sent.txt").read_text(encoding="utf-8") == first
+    assert headers(tmp_path)[0] == f"#### 2026-06-20 | email (outbound) | {SUMMARY}"
 
 
 def test_mark_sent_dry_run_reports_and_writes_nothing(tmp_path):
