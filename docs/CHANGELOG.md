@@ -13,7 +13,7 @@ caption had been taken as a description of the video. Separately, the typed skil
 `CLAUDE.md` said 39 when there were 38, and the README and usage docs repeated it.
 
 **Changed**
-- **`/analyze-stream` Step 0 item 5 and Step 1 (bd-lessons-1103):** when the URL is a social
+- **`/analyze-stream` Step 0 item 5 and Step 1 (PR #15, bd-lessons-1103):** when the URL is a social
   repost of a video, find the original before `acquire`. Then, between `acquire` and
   `transcribe`, match a line from the reupload against the original's official captions. No
   pipeline subcommand transcribes a clip, so Step 1 cuts the first two minutes of the acquired
