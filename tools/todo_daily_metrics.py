@@ -23,13 +23,14 @@ Outputs JSON to stdout with keys:
   networking_activity[]  — contacts with pending follow-up (separator rows filtered)
   substantive_work{}     — artifact volume signal: outputs_today, reflections_today,
                            memories_today, inbox_entries_today, outreach_touches_today
-  shipped_today{}        — what landed on main during the logical day, from git history:
-                           { available, items: [{sha, time, pr, branch, title}], reason }.
-                           available=false means git could not be read; never read that
-                           as "nothing shipped".
-  waiting_to_merge{}     — local branches not merged into main with a commit in the last
-                           7 days: { available, items: [{branch, last_commit, ahead}],
-                           older_count }. Work held for review lives here, not in open PRs.
+  shipped_today{}        — what landed on origin/main during the logical day:
+                           { available, items: [{sha, time, pr, branch, title}], ref, fresh,
+                           as_of, fetch_error, reason }. available=false means git could not
+                           be read; never read that as "nothing shipped". fresh=false means
+                           no fetch this run: origin/main is as of `as_of`.
+  waiting_to_merge{}     — local branches not merged into that same ref with a commit in the
+                           last 7 days: { available, items: [{branch, last_commit, ahead}],
+                           older_count, ref, reason }. ahead is null when unreadable.
 
 Built 2026-05-13 with separator-row filtering + pipeline bucketing + streak fix for
 today-not-yet-in-log + substantive-work signal. Mirrors the /standup → todos_summary.py
@@ -72,6 +73,9 @@ def parse_args():
                         "day: before 04:00 local, yesterday (todo_read.logical_today).")
     p.add_argument("--repo-root", default=None,
                    help="Repository root path. Defaults to cwd.")
+    p.add_argument("--fetch", action="store_true",
+                   help="Fetch origin/main before reading what shipped. Off by default: "
+                        "the SSH key prompts for Touch ID.")
     return p.parse_args()
 
 
@@ -607,15 +611,65 @@ def scan_substantive_work(repo_root: Path, today: date) -> dict:
 
 
 
+_GIT_TIME = "%Y-%m-%d %H:%M:%S"
 _MERGE_RE = re.compile(r"^Merge pull request #(\d+) from [^/\s]+/(\S+)")
 
 
+def _git(repo_root: Path, *args, timeout: int = 20):
+    """Run one git command. Returns (ok, stdout, reason); never raises.
+
+    Every git call in this module goes through here, so none can be left outside the
+    error handling (r1 review 2026-11-04: the per-branch rev-list was, and a timeout
+    there killed the whole metrics script).
+    """
+    try:
+        proc = subprocess.run(["git", "-C", str(repo_root), *args], capture_output=True,
+                              encoding="utf-8", errors="replace",
+                              text=True, timeout=timeout)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return False, "", f"git not runnable: {e}"
+    if proc.returncode != 0:
+        msg = (proc.stderr or "").strip().splitlines()
+        return False, "", f"git {args[0]} failed: {msg[-1] if msg else proc.returncode}"
+    return True, proc.stdout, None
+
+
+def resolve_main(repo_root: Path, fetch: bool = False, branch: str = "main") -> dict:
+    """Pick the ref that records what shipped: `origin/main`, with its age.
+
+    PRs merge on GitHub. Local `main` moves only when Nick pulls in the checkout that has
+    it, so reading it reported a merged PR as not shipped and its branch as still waiting
+    (r1 review 2026-11-04, both reviewers). `origin/main` moves on any fetch or pull from
+    any worktree, so it is the better record, and `as_of` (when that ref last changed)
+    lets the reader see how stale it can be.
+
+    No fetch by default: fetching here goes over SSH through a hardware-backed key, which
+    prompts for Touch ID or fails unattended (measured 2026-11-04). `fetch=True` tries one;
+    `fresh` is True only when it succeeded. With no remote at all, local `main`.
+    """
+    fetch_error = "fetch skipped"
+    if fetch:
+        # _git returns reason None on success, so fetch_error is None exactly when it worked.
+        _, _, fetch_error = _git(repo_root, "fetch", "--quiet", "origin", branch, timeout=30)
+    remote = f"refs/remotes/origin/{branch}"
+    ok, _, _ = _git(repo_root, "rev-parse", "--verify", "--quiet", remote)
+    if not ok:
+        return {"ref": branch, "fresh": False, "as_of": None, "fetch_error": fetch_error}
+    _, out, _ = _git(repo_root, "log", "-g", "-1", "--date=format-local:%Y-%m-%d %H:%M",
+                     "--format=%gd", remote)
+    m = re.search(r"@\{(.+)\}", out)
+    return {"ref": f"origin/{branch}", "fresh": fetch_error is None,
+            "as_of": m.group(1) if m else None, "fetch_error": fetch_error}
+
+
 def parse_shipped_log(raw: str) -> list:
-    """Parse `git log --first-parent` records into shipped items.
+    """Parse `git log --first-parent --reverse` records into shipped items, in input order.
 
     Each record is `sha \x1f HH:MM \x1f subject \x1f body`, records separated by \x1e.
     A GitHub merge commit carries the PR number and branch in its subject and the PR title
     on the first body line; any other first-parent commit is a direct push to main.
+    Order is the order git emits, which with --reverse is landing order on the
+    first-parent chain; sorting the date-less HH:MM put 01:10 before 22:40 (r1 review).
     """
     items = []
     for rec in raw.split("\x1e"):
@@ -634,7 +688,6 @@ def parse_shipped_log(raw: str) -> list:
         else:
             items.append({"sha": sha[:8], "time": when, "pr": None, "branch": None,
                           "title": subject})
-    items.sort(key=lambda i: i["time"])
     return items
 
 
@@ -643,53 +696,48 @@ def shipped_today(repo_root: Path, today: date, ref: str = "main") -> dict:
 
     /checkout's System Changes reads docs/CHANGELOG.md only, so a day of merged PRs with
     no changelog entry rendered as an empty section (2026-11-03: five PRs merged, the
-    checkout showed none). This reads the record git already keeps.
+    checkout showed none). This reads the record git already keeps. `_run` passes the
+    ref from resolve_main (normally origin/main).
+
+    The window is [04:00:00, next 03:59:59], so a commit at 04:00 counts once. Time is the
+    committer date (what the window filters on) shown in local time.
 
     Returns {"available": False, "reason": ...} when git cannot be read, so a missing
     source is never rendered as "nothing shipped".
     """
     start = datetime(today.year, today.month, today.day, todo_read.ROLLOVER_HOUR)
-    end = start + timedelta(days=1)
-    cmd = ["git", "-C", str(repo_root), "log", ref, "--first-parent",
-           f"--since={start:%Y-%m-%d %H:%M}", f"--until={end:%Y-%m-%d %H:%M}",
-           "--date=format:%H:%M", "--pretty=format:%H%x1f%ad%x1f%s%x1f%b%x1e"]
-    try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
-    except (OSError, subprocess.TimeoutExpired) as e:
-        return {"available": False, "items": [], "reason": f"git not runnable: {e}"}
-    if proc.returncode != 0:
-        msg = (proc.stderr or "").strip().splitlines()
-        return {"available": False, "items": [],
-                "reason": f"git log {ref} failed: {msg[-1] if msg else proc.returncode}"}
-    return {"available": True, "items": parse_shipped_log(proc.stdout), "reason": None}
-
+    end = start + timedelta(days=1) - timedelta(seconds=1)
+    ok, out, reason = _git(repo_root, "log", ref, "--first-parent", "--reverse",
+                           "--since=" + start.strftime(_GIT_TIME),
+                           "--until=" + end.strftime(_GIT_TIME),
+                           "--date=format-local:%H:%M",
+                           "--pretty=format:%H%x1f%cd%x1f%s%x1f%b%x1e")
+    if not ok:
+        return {"available": False, "items": [], "ref": ref, "reason": reason}
+    return {"available": True, "items": parse_shipped_log(out), "ref": ref, "reason": None}
 
 
 def waiting_to_merge(repo_root: Path, today: date, ref: str = "main",
                      days: int = 7) -> dict:
     """Local branches not merged into `ref` with a commit in the last `days` days.
 
+    The window is `days` calendar dates ending today (7 days: 10-28 through 11-03).
     Work held for review lives on unpushed branches, not open PRs, so the open-PR list
     reads empty while a day's work is still queued (2026-11-03: zero open PRs, five
     branches from that day waiting on next-day reviews). Older unmerged branches are
     mostly snapshots and pre-merge copies, so they are counted, not listed.
+    `ahead` is None when its count could not be read.
 
     Returns {"available": False, ...} when git cannot be read.
     """
-    cmd = ["git", "-C", str(repo_root), "for-each-ref", "refs/heads/",
-           f"--no-merged={ref}", "--format=%(refname:short)%09%(committerdate:short)"]
-    try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
-    except (OSError, subprocess.TimeoutExpired) as e:
-        return {"available": False, "items": [], "older_count": 0,
-                "reason": f"git not runnable: {e}"}
-    if proc.returncode != 0:
-        msg = (proc.stderr or "").strip().splitlines()
-        return {"available": False, "items": [], "older_count": 0,
-                "reason": f"git for-each-ref failed: {msg[-1] if msg else proc.returncode}"}
-    cutoff = today - timedelta(days=days)
+    ok, out, reason = _git(repo_root, "for-each-ref", "refs/heads/", f"--no-merged={ref}",
+                           "--format=%(refname:short)%09%(committerdate:short)")
+    if not ok:
+        return {"available": False, "items": [], "older_count": 0, "ref": ref,
+                "reason": reason}
+    cutoff = today - timedelta(days=days - 1)
     items, older = [], 0
-    for line in proc.stdout.splitlines():
+    for line in out.splitlines():
         name, _, day = line.partition("\t")
         try:
             last = datetime.strptime(day.strip(), "%Y-%m-%d").date()
@@ -698,14 +746,12 @@ def waiting_to_merge(repo_root: Path, today: date, ref: str = "main",
         if last < cutoff:
             older += 1
             continue
-        ahead = subprocess.run(["git", "-C", str(repo_root), "rev-list", "--count",
-                                f"{ref}..{name}"], capture_output=True, text=True,
-                               timeout=20)
-        items.append({"branch": name, "last_commit": last.isoformat(),
-                      "ahead": int(ahead.stdout.strip() or 0)
-                      if ahead.returncode == 0 else None})
+        a_ok, a_out, _ = _git(repo_root, "rev-list", "--count", f"{ref}..{name}")
+        ahead = int(a_out.strip()) if a_ok and a_out.strip().isdigit() else None
+        items.append({"branch": name, "last_commit": last.isoformat(), "ahead": ahead})
     items.sort(key=lambda i: (i["last_commit"], i["branch"]), reverse=True)
-    return {"available": True, "items": items, "older_count": older, "reason": None}
+    return {"available": True, "items": items, "older_count": older, "ref": ref,
+            "reason": None}
 
 
 def main():
@@ -728,7 +774,8 @@ def main():
 
     try:
         _run(todos_content, daily_log_content, pipeline_content, networking_content,
-             outreach_content, changelog_content, output_dir, repo_root, today)
+             outreach_content, changelog_content, output_dir, repo_root, today,
+             fetch=args.fetch)
     except SchemaDriftError as e:
         print(json.dumps({"status": "error", "code": "schema_drift", "message": str(e)},
                           indent=2, ensure_ascii=False))
@@ -736,7 +783,7 @@ def main():
 
 
 def _run(todos_content, daily_log_content, pipeline_content, networking_content,
-         outreach_content, changelog_content, output_dir, repo_root, today):
+         outreach_content, changelog_content, output_dir, repo_root, today, fetch=False):
     # Process each source
     completed_today, active, overdue = parse_todos(todos_content, today)
     metrics = parse_daily_log(daily_log_content, today, today_completions_from_todos=len(completed_today))
@@ -761,8 +808,10 @@ def _run(todos_content, daily_log_content, pipeline_content, networking_content,
     upcoming_scheduled = parse_upcoming_scheduled(pipeline_content, today)
     networking = parse_networking_activity(networking_content, todos_content)
     substantive_work = scan_substantive_work(repo_root, today)
-    shipped = shipped_today(repo_root, today)
-    waiting = waiting_to_merge(repo_root, today)
+    base = resolve_main(repo_root, fetch=fetch)
+    shipped = shipped_today(repo_root, today, ref=base["ref"])
+    shipped.update({k: base[k] for k in ("fresh", "as_of", "fetch_error")})
+    waiting = waiting_to_merge(repo_root, today, ref=base["ref"])
 
     result = {
         "target_date": today.strftime("%Y-%m-%d"),
