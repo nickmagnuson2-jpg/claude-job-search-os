@@ -82,6 +82,7 @@ TOOLS = (
     "inbox_extract",
     "living_log_append",
     "my_world_synthesis",
+    "networking_direction_backfill",
     "networking_followup",
     "networking_read",
     "networking_write",

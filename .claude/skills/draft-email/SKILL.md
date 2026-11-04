@@ -459,7 +459,7 @@ Archive file format:
 
 
 **If recipient exists in `data/networking.md`:**
-1. Log the interaction:
+1. Log the interaction. The type stays plain `email`, with no `(outbound)`, on purpose, to keep the old meaning: before 2026-10-30 the morning page did not count these entries as sends (a thank-you, status update or intro request), while `/follow-up` and `/cold-outreach` entries were counted as sends, which is why those two templates record `(outbound)` and this one does not. Changing it is Nick's call (decided 2026-10-31; `tests/scripts/test_reply_classification_consistency.py` pins it).
    ```markdown
    #### YYYY-MM-DD | email | [Type] — [1-line summary]
 

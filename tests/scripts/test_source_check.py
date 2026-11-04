@@ -631,6 +631,18 @@ def test_a_retry_refuses_when_a_duplicate_live_row_exists(repo_with_writer: Path
     assert (repo / "data/notes.md").read_text(encoding="utf-8") == notes_before
 
 
+def test_an_in_progress_row_is_live_like_rotate_says():
+    """source_check and todo_write rotate agree on what is live: Pending OR In Progress under
+    ## Active. Before, an In Progress recurring row read as RETIRED here while rotate treated it
+    as live (final branch review 2026-10-30, Fable 21.F2)."""
+    in_progress = TODOS.replace("| 2026-09-05 | Pending | Recurring. |", "| 2026-09-05 | In Progress | Recurring. |")
+    rows = sc.live_pending_rows(in_progress, "Check ACME")
+    assert [r[3] for r in rows] == ["In Progress"]
+    assert sc.find_pending_row(in_progress, "Check ACME")[2] == "2026-09-05"
+    done_row = TODOS.replace("| 2026-09-05 | Pending | Recurring. |", "| 2026-09-05 | Done | Recurring. |")
+    assert sc.live_pending_rows(done_row, "Check ACME") == []
+
+
 def test_live_pending_rows_returns_every_live_match():
     two = TODOS.replace("| Unrelated task | Low | — | Pending | noise |",
                         "| Check ACME board for new job postings | Low | — | Pending | dup |")

@@ -51,13 +51,8 @@ PIPELINE_SEP    = "| --- | --- | --- | --- | --- | --- | --- | --- |"
 
 
 def is_data_row(line: str) -> bool:
-    if not line.startswith("|"):
-        return False
-    if is_sep_row(line):
-        return False
-    if re.match(r"^\|\s*Company\s*\|", line):
-        return False
-    return True
+    return (line.startswith("|") and not is_sep_row(line)
+            and not re.match(r"^\|\s*Company\s*\|", line))
 
 
 def fmt_row(company, role, stage, date_updated, next_action, cv_used, notes, url):

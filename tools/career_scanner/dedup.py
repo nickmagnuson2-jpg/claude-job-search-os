@@ -87,9 +87,9 @@ def find_match(role_title: str, role_company: str,
                pipeline_entries: list[dict]) -> dict | None:
     """The first entry at the same company (case-insensitive) whose role title is a fuzzy
     match (SequenceMatcher ratio >= 0.90 after _norm_title, D-10), else None."""
+    # No empty-company guard: pipe_read and both loaders drop rows with a blank company,
+    # so an empty role_company equals no entry's company and the loop returns None.
     company_lower = role_company.lower().strip()
-    if not company_lower:
-        return None
     for entry in pipeline_entries:
         if entry["company"].lower().strip() != company_lower:
             continue

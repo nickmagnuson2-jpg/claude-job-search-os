@@ -53,6 +53,8 @@ def repo(tmp_path):
     (root / "tools" / "hooks").mkdir(parents=True)
     _git(root, "init", "-q", "-b", "main")
     (root / "tools" / "concurrent_commit_guard.py").write_bytes(GUARD.read_bytes())
+    (root / "tools" / "shell_tokens.py").write_bytes(
+        (REPO_ROOT / "tools" / "shell_tokens.py").read_bytes())
     (root / "seed.txt").write_text("seed\n")
     _git(root, "add", "-A")
     _git(root, "commit", "-q", "-m", "seed", "--no-verify")
@@ -108,7 +110,8 @@ def test_broad_add_sweeping_another_sessions_file_is_refused(repo, cfg):
     assert "theirs.py" in r.stderr
     assert "mine.py" not in r.stderr.replace("theirs.py", "")
     assert g.WAIVE_ENV in r.stderr, "the refusal must print the exact override"
-    assert _committed(repo) == ["seed.txt", "tools/concurrent_commit_guard.py"]
+    assert _committed(repo) == ["seed.txt", "tools/concurrent_commit_guard.py",
+                                "tools/shell_tokens.py"]
 
 
 def test_plain_commit_over_an_index_someone_else_staged_is_refused(repo, cfg):
@@ -786,3 +789,298 @@ def test_a_broad_pathspec_does_not_attribute_a_file_the_message_names(repo, cfg)
 ])
 def test_commit_pathspecs(command, index, expected):
     assert g.commit_pathspecs(command, index) == expected
+
+
+# ---------------------------------------- a merge's incoming files (added 2026-11-02)
+
+def _merge_in_progress(repo, cfg):
+    """main gains upstream.py and a change to shared.py; branch `work` edits shared.py
+    too, so `git merge main` stops on a conflict that this session resolves."""
+    (repo / "shared.py").write_text("a = 1\n")
+    _git(repo, "add", "shared.py")
+    _git(repo, "commit", "-q", "-m", "shared", "--no-verify")
+    _git(repo, "checkout", "-q", "-b", "work")
+    (repo / "shared.py").write_text("a = 2\n")
+    _git(repo, "commit", "-q", "-am", "work", "--no-verify")
+    _git(repo, "checkout", "-q", "main")
+    (repo / "shared.py").write_text("a = 3\n")
+    (repo / "upstream.py").write_text("u = 1\n")
+    _git(repo, "add", "shared.py", "upstream.py")
+    _git(repo, "commit", "-q", "-m", "main moves", "--no-verify")
+    _git(repo, "checkout", "-q", "work")
+    _git(repo, "merge", "main", check=False)          # conflict in shared.py
+    (repo / "shared.py").write_text("a = 3\n")
+    _write_main(cfg,
+                _record("Bash", {"command": "git merge main"}),
+                _record("Write", {"file_path": str(repo / "shared.py"), "content": "a = 3\n"}),
+                _record("Bash", {"command": "git commit --no-edit"}))
+    _git(repo, "add", "shared.py")
+
+
+def test_a_merges_unchanged_incoming_file_needs_no_naming(repo, cfg):
+    """The 2026-11-02 refusal: main's own files arriving in a merge were 'never named'."""
+    _merge_in_progress(repo, cfg)
+    r = _git(repo, "commit", "--no-edit", env=_env(cfg), check=False)
+    assert r.returncode == 0, r.stderr
+    assert _git(repo, "rev-parse", "HEAD^2").returncode == 0, "a merge commit was made"
+
+
+def test_an_incoming_file_edited_after_the_merge_still_needs_naming(repo, cfg):
+    _merge_in_progress(repo, cfg)
+    (repo / "upstream.py").write_text("u = 2\n")      # no longer main's version
+    _git(repo, "add", "upstream.py")
+    r = _git(repo, "commit", "--no-edit", env=_env(cfg), check=False)
+    assert r.returncode != 0
+    assert "upstream.py" in r.stderr
+
+
+def test_another_sessions_file_staged_during_a_merge_is_still_refused(repo, cfg):
+    _merge_in_progress(repo, cfg)
+    (repo / "theirs.py").write_text("y = 2\n")
+    _git(repo, "add", "theirs.py")
+    r = _git(repo, "commit", "--no-edit", env=_env(cfg), check=False)
+    assert r.returncode != 0
+    assert "theirs.py" in r.stderr and "upstream.py" not in r.stderr
+
+
+def test_a_mode_change_on_an_incoming_file_still_needs_naming(repo, cfg):
+    _merge_in_progress(repo, cfg)
+    _git(repo, "update-index", "--chmod=+x", "upstream.py")
+    r = _git(repo, "commit", "--no-edit", env=_env(cfg), check=False)
+    assert r.returncode != 0
+    assert "upstream.py" in r.stderr
+
+
+def test_matching_another_branch_counts_for_nothing_outside_a_merge(repo, cfg):
+    """Without MERGE_HEAD, a file identical to some other branch is not exempt."""
+    _git(repo, "checkout", "-q", "-b", "other")
+    (repo / "upstream.py").write_text("u = 1\n")
+    _git(repo, "add", "upstream.py")
+    _git(repo, "commit", "-q", "-m", "other", "--no-verify")
+    _git(repo, "checkout", "-q", "main")
+    _git(repo, "checkout", "-q", "other", "--", "upstream.py")
+    _write_main(cfg, _record("Bash", {"command": "git commit -m x"}))
+    r = _git(repo, "commit", "-m", "x", env=_env(cfg), check=False)
+    assert r.returncode != 0
+    assert "upstream.py" in r.stderr
+
+
+def test_merged_unchanged_is_empty_on_a_git_error(repo, monkeypatch):
+    """Fails closed: an error can only make the guard refuse more."""
+    _git(repo, "checkout", "-q", "-b", "side")
+    (repo / "side.py").write_text("s\n")
+    _git(repo, "add", "side.py")
+    _git(repo, "commit", "-q", "-m", "side", "--no-verify")
+    _git(repo, "checkout", "-q", "main")
+    _git(repo, "merge", "--no-commit", "--no-ff", "side", check=False)
+    assert g.merged_unchanged(repo, ["side.py"]) == {"side.py"}
+    real = g._git
+
+    def broken(root, *args):
+        if args and args[-1:] != ("MERGE_HEAD",) and "ls-tree" in args:
+            raise RuntimeError("git ls-tree: boom")
+        return real(root, *args)
+    monkeypatch.setattr(g, "_git", broken)
+    assert g.merged_unchanged(repo, ["side.py"]) == set()
+    assert g.merged_unchanged(repo.parent / "not-a-repo", ["side.py"]) == set()
+
+
+def test_merged_unchanged_checks_every_head_of_an_octopus_merge(repo):
+    for name, body in (("one", "1\n"), ("two", "2\n")):
+        _git(repo, "checkout", "-q", "-b", name, "main")
+        (repo / f"{name}.py").write_text(body)
+        _git(repo, "add", f"{name}.py")
+        _git(repo, "commit", "-q", "-m", name, "--no-verify")
+    _git(repo, "checkout", "-q", "main")
+    _git(repo, "merge", "--no-commit", "one", "two", check=False)
+    (repo / "seed.txt").write_text("changed\n")       # staged, in neither head
+    _git(repo, "add", "seed.txt")
+    assert g.merged_unchanged(repo, ["one.py", "two.py", "seed.txt"]) == {
+        "one.py", "two.py"}
+
+
+def test_merged_unchanged_handles_more_paths_than_one_chunk(repo):
+    _git(repo, "checkout", "-q", "-b", "many")
+    for i in range(520):
+        (repo / f"f{i:03}.txt").write_text(f"{i}\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "many", "--no-verify")
+    _git(repo, "checkout", "-q", "main")
+    _git(repo, "merge", "--no-commit", "--no-ff", "many", check=False)
+    staged = [f"f{i:03}.txt" for i in range(520)]
+    assert g.merged_unchanged(repo, staged) == set(staged)
+
+
+def test_a_peers_restore_from_main_on_a_path_this_branch_changed_is_refused(repo, cfg):
+    """Review F1 (Codex and Fable, P0): equality with a merge head is not provenance.
+    work changed f.py and deleted del.py; main touched neither. A peer staging main's
+    versions would revert work's change and resurrect the deletion under this merge."""
+    (repo / "f.py").write_text("base\n")
+    (repo / "del.py").write_text("d\n")
+    _git(repo, "add", "f.py", "del.py")
+    _git(repo, "commit", "-q", "-m", "base", "--no-verify")
+    _git(repo, "checkout", "-q", "-b", "work")
+    (repo / "f.py").write_text("work-change\n")
+    _git(repo, "rm", "-q", "del.py")
+    _git(repo, "commit", "-q", "-am", "work", "--no-verify")
+    _git(repo, "checkout", "-q", "main")
+    (repo / "upstream.py").write_text("u\n")
+    _git(repo, "add", "upstream.py")
+    _git(repo, "commit", "-q", "-m", "main moves", "--no-verify")
+    _git(repo, "checkout", "-q", "work")
+    _git(repo, "merge", "--no-commit", "--no-ff", "main")
+    _git(repo, "checkout", "main", "--", "f.py", "del.py")     # the peer
+    _write_main(cfg, _record("Bash", {"command": "git merge --no-commit --no-ff main"}),
+                _record("Bash", {"command": "git commit --no-edit"}))
+    r = _git(repo, "commit", "--no-edit", env=_env(cfg), check=False)
+    assert r.returncode != 0
+    assert "f.py" in r.stderr and "del.py" in r.stderr
+    assert "upstream.py" not in r.stderr
+
+
+def test_a_peers_staging_of_main_on_a_conflicted_path_is_refused(repo, cfg):
+    """Review F5: the other session stages the merge head's version of the conflict."""
+    _merge_in_progress(repo, cfg)
+    _git(repo, "checkout", "main", "--", "shared.py")          # the peer, not this session
+    _write_main(cfg, _record("Bash", {"command": "git merge main"}),
+                _record("Bash", {"command": "git commit --no-edit"}))
+    r = _git(repo, "commit", "--no-edit", env=_env(cfg), check=False)
+    assert r.returncode != 0
+    assert "shared.py" in r.stderr and "upstream.py" not in r.stderr
+
+
+def test_a_merge_this_session_never_ran_gives_no_exemption(repo, cfg):
+    """Review F2: an unrelated commit must not silently complete another session's merge."""
+    _merge_in_progress(repo, cfg)
+    _write_main(cfg,
+                _record("Write", {"file_path": str(repo / "shared.py"), "content": "a = 3\n"}),
+                _record("Bash", {"command": "git commit --no-edit"}))
+    r = _git(repo, "commit", "--no-edit", env=_env(cfg), check=False)
+    assert r.returncode != 0
+    assert "upstream.py" in r.stderr
+
+
+@pytest.mark.parametrize("cmd,ran", [
+    ("git merge main", True), ("git pull --ff-only", True),
+    ("cd x && git -C y merge --no-commit main", True),
+    ("git merge-base HEAD main", False), ("git merge-tree --write-tree a b", False),
+    ("echo merge && git status", False), ("git log --merges", False),
+    ("git config pull.rebase false", False), ("git fetch origin pull/7/head", False),
+    ("git log --grep=merge", False), ("git diff -- docs/merge.md", False),
+    ('git commit -m "merge: tidy"', False), ("git log --oneline merge", False),
+    ("GIT_EDITOR=true git -c core.x=1 merge main", True),
+    ("x=$(git merge --no-commit main)", True), ("/usr/bin/git merge main", True),
+    ("git --no-pager merge main", True), ("git -p pull", True),
+    ("git --git-dir .git --work-tree . merge main", True),
+    ("git --exec-path pull", False), ("git --exec-path x pull", False),
+    ("git --version merge", False),
+])
+def test_only_a_git_merge_or_pull_command_counts_as_running_a_merge(cmd, ran):
+    assert g.ran_merge([cmd]) is ran
+
+
+def test_an_unmerged_paths_stages_are_not_read_as_its_index_entry():
+    """Review F4: ls-files -s lists stages 1-3 for a conflicted path; none is resolved."""
+    blob = "a" * 40
+    nul = "\x00"
+    out = nul.join([f"100644 {blob} {n}\tc.py" for n in (1, 2, 3)]
+                   + [f"100644 {blob} 0\tok.py", ""])
+    assert g._entries(out, 1) == {"ok.py": ("100644", blob)}
+
+
+def test_a_criss_cross_history_gives_no_exemption(repo):
+    """Review 2 (Fable F1): several best common ancestors leave no single base."""
+    _git(repo, "checkout", "-q", "-b", "a")
+    (repo / "a.txt").write_text("a\n"); _git(repo, "add", "a.txt")
+    _git(repo, "commit", "-q", "-m", "a", "--no-verify")
+    _git(repo, "checkout", "-q", "-b", "b", "main")
+    (repo / "b.txt").write_text("b\n"); _git(repo, "add", "b.txt")
+    _git(repo, "commit", "-q", "-m", "b", "--no-verify")
+    _git(repo, "merge", "-q", "--no-edit", "--no-verify", "a")      # b gets a
+    _git(repo, "checkout", "-q", "a")
+    _git(repo, "merge", "-q", "--no-edit", "--no-verify", "b~1")    # a gets old b
+    (repo / "new.txt").write_text("n\n"); _git(repo, "add", "new.txt")
+    _git(repo, "commit", "-q", "-m", "a2", "--no-verify")
+    _git(repo, "checkout", "-q", "b")
+    (repo / "up.txt").write_text("u\n"); _git(repo, "add", "up.txt")
+    _git(repo, "commit", "-q", "-m", "b2", "--no-verify")
+    _git(repo, "checkout", "-q", "a")
+    assert len(_git(repo, "merge-base", "--all", "HEAD", "b").stdout.split()) == 2
+    _git(repo, "merge", "--no-commit", "--no-ff", "b", check=False)
+    assert g.merged_unchanged(repo, ["up.txt"]) == set()
+
+
+def test_ran_merge_is_false_when_the_tokenizer_cannot_load(monkeypatch):
+    import builtins
+    real = builtins.__import__
+
+    def no_tokens(name, *a, **k):
+        if name == "shell_tokens":
+            raise ImportError(name)
+        return real(name, *a, **k)
+    monkeypatch.setattr(builtins, "__import__", no_tokens)
+    monkeypatch.delitem(sys.modules, "shell_tokens", raising=False)
+    assert g.ran_merge(["git merge main"]) is False
+
+
+def test_an_incoming_rename_is_still_refused_through_its_deletion(repo, cfg):
+    """Review 3/4 (Fable F1): a rename's target is never exempt (it can carry this
+    branch's edit), and the old path's deletion is never exempt either."""
+    (repo / "old.py").write_text("v1\n" * 20)
+    _git(repo, "add", "old.py")
+    _git(repo, "commit", "-q", "-m", "old", "--no-verify")
+    _git(repo, "checkout", "-q", "-b", "work")
+    (repo / "old.py").write_text("v1\n" * 19 + "work edit\n")
+    _git(repo, "commit", "-q", "-am", "work edits old", "--no-verify")
+    _git(repo, "checkout", "-q", "main")
+    _git(repo, "mv", "old.py", "new.py")
+    _git(repo, "commit", "-q", "-m", "main renames", "--no-verify")
+    _git(repo, "checkout", "-q", "work")
+    _git(repo, "merge", "--no-commit", "--no-ff", "main", check=False)
+    _git(repo, "checkout", "main", "--", "new.py")            # the peer
+    _write_main(cfg, _record("Bash", {"command": "git merge --no-commit --no-ff main"}),
+                _record("Bash", {"command": "git commit --no-edit"}))
+    r = _git(repo, "commit", "--no-edit", env=_env(cfg), check=False)
+    assert r.returncode != 0
+    assert "old.py" in r.stderr and "new.py" in r.stderr
+
+
+def test_a_rename_delete_conflicts_target_is_not_exempt(repo, cfg):
+    """Review 4 (Fable F1): this branch deleted old.py, main renamed it to new.py. No
+    deletion is staged, so only the rename rule stops a peer's staged new.py."""
+    (repo / "old.py").write_text("v1\n" * 20)
+    _git(repo, "add", "old.py")
+    _git(repo, "commit", "-q", "-m", "old", "--no-verify")
+    _git(repo, "checkout", "-q", "-b", "work")
+    _git(repo, "rm", "-q", "old.py")
+    _git(repo, "commit", "-q", "-m", "work deletes old", "--no-verify")
+    _git(repo, "checkout", "-q", "main")
+    _git(repo, "mv", "old.py", "new.py")
+    _git(repo, "commit", "-q", "-m", "main renames", "--no-verify")
+    _git(repo, "checkout", "-q", "work")
+    _git(repo, "merge", "--no-commit", "--no-ff", "main", check=False)
+    _git(repo, "checkout", "main", "--", "new.py")            # the peer
+    assert g.merged_unchanged(repo, ["new.py"]) == set()
+
+
+def test_rename_detection_ignores_a_low_rename_limit(repo, cfg):
+    """Review 5 (Fable F1): with diff.renameLimit tiny, a plain `diff -M` lists the
+    rename target as Added; the guard must still see the rename."""
+    _git(repo, "config", "diff.renameLimit", "1")
+    for i in range(3):
+        (repo / f"o{i}.py").write_text(f"{i}\n" * 30)
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "olds", "--no-verify")
+    _git(repo, "checkout", "-q", "-b", "work")
+    _git(repo, "rm", "-q", "o0.py")
+    _git(repo, "commit", "-q", "-m", "work deletes o0", "--no-verify")
+    _git(repo, "checkout", "-q", "main")
+    for i in range(3):
+        (repo / f"o{i}.py").write_text(f"{i}\n" * 29 + "tweak\n")
+        _git(repo, "mv", f"o{i}.py", f"n{i}.py")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "main renames and tweaks", "--no-verify")
+    _git(repo, "checkout", "-q", "work")
+    _git(repo, "merge", "--no-commit", "--no-ff", "main", check=False)
+    _git(repo, "checkout", "main", "--", "n0.py")            # the peer
+    assert g.merged_unchanged(repo, ["n0.py"]) == set()

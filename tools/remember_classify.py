@@ -8,7 +8,8 @@ Reads:
   output/                — known dossier slugs
 
 Classification priority order (first-match for primary; all matches returned):
-  1. outreach_reply   — known contact + reply keywords
+  1. (none)           — outreach_reply was removed 2026-10-30: a reply is never read
+                        from the note's wording (see contact_note and direction_needed)
   2. contact_note     — known contact name present
   3. pipeline_note    — known pipeline company + decision/status keywords
   4. company_note     — known company (pipeline or dossier) + observation content
@@ -32,8 +33,14 @@ Output JSON (stdout):
        "entity": "Acme AI", "slug": "acme-ai"}
     ],
     "ambiguous": false,
-    "warnings": []
+    "warnings": [],
+    "direction_needed": true
   }
+
+direction_needed is true whenever a contact_note is routed. Each contact_note carries
+"direction": null, and the /remember skill must ask Nick once ("Did they reach you, or did
+you reach them?") and set it to in / out / both / none before calling remember_apply.py, which
+refuses a contact_note without one. `in` also marks the contact's outreach-log row Replied.
 
 Usage:
   PYTHONIOENCODING=utf-8 python3 tools/remember_classify.py --note "text" [--repo-root PATH]
@@ -47,9 +54,6 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from slug import slugify as _slugify  # noqa: E402
 from pipe_read import parse_all_rows  # noqa: E402
-# Whether a note says a contact replied: the one rule, shared with networking_write and
-# day_check (review 3.F2, 2026-10-30: this file kept a third, bare-word copy).
-from reply_classify import is_reply  # noqa: E402
 
 # ── Keywords ──────────────────────────────────────────────────────────────────
 
@@ -250,6 +254,22 @@ def classify_note(
     pipeline_companies: list[str],
     dossier_slugs: list[tuple[str, str]],
 ) -> dict:
+    """Route the note. Every contact_note gets "direction": None, and direction_needed says
+    whether /remember must ask who reached whom before remember_apply.py will write it."""
+    result = _route(note, contacts, pipeline_companies, dossier_slugs)
+    for d in result["destinations"]:
+        if d["type"] == "contact_note":
+            d["direction"] = None
+    result["direction_needed"] = any(d["type"] == "contact_note" for d in result["destinations"])
+    return result
+
+
+def _route(
+    note: str,
+    contacts: list[str],
+    pipeline_companies: list[str],
+    dossier_slugs: list[tuple[str, str]],
+) -> dict:
     destinations = []
     warnings = []
 
@@ -276,20 +296,9 @@ def classify_note(
     matching_contacts = find_matching_contacts(note, contacts)
     matching_companies = find_matching_companies(note, pipeline_companies, dossier_slugs)
 
-    # ── 1. Outreach reply ─────────────────────────────────────────────────
-    if matching_contacts and is_reply("note", note):
-        for contact in matching_contacts:
-            destinations.append({
-                "type":         "outreach_reply",
-                "file":         "data/outreach-log.md",
-                "entity":       contact,
-                "matched_name": contact,
-            })
-        # An outreach reply often also contains contact-note content — fall through
-
     # ── 2. Contact note ───────────────────────────────────────────────────
-    # Always add contact_note when a known contact is present — even if
-    # outreach_reply was also added (the skill writes to both files).
+    # Always add contact_note when a known contact is present. Its direction is asked,
+    # never inferred from the wording (classify_note sets direction_needed).
     if matching_contacts:
         for contact in matching_contacts:
             already_contact_note = any(

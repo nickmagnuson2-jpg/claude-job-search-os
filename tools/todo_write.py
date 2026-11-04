@@ -446,6 +446,18 @@ def recurring_reason(task: str, notes: str, repo_root: Path) -> str:
                  if frag.strip() and frag.strip().lower() in task.lower()), "")
 
 
+def _refuse_if_recurring(task: str, notes: str, todos_path: Path) -> None:
+    """Exit with a refusal if `done` would close a recurring row. Both of cmd_done's paths
+    call this: the live row and the misfiled-row repair (Fable 21.F8, 2026-10-30)."""
+    why = recurring_reason(task, notes, todos_path.parent.parent)
+    if why:
+        out_error(f"Refusing to close a recurring row with `done`: {task!r} ({why}). Closing it "
+                  f"without its successor silently retires a lead source. Use "
+                  f"`source_check.py mark <id>` or `todo_write.py rotate <fragment> --due "
+                  f"YYYY-MM-DD`. To retire it on purpose, remove it from {REGISTRY_FILE}, or "
+                  f"`withdraw` it.", reason="recurring_row", task=task)
+
+
 def cmd_done(args: list[str], todos_path: Path) -> None:
     """Move a matching Active row to Completed."""
     if not args:
@@ -490,6 +502,7 @@ def cmd_done(args: list[str], todos_path: Path) -> None:
             # is the real notes payload.
             orig_due = cols[2].strip() if len(cols) > 2 else ""
             tail = " | ".join(cols[4:]).strip() if len(cols) > 4 else ""
+            _refuse_if_recurring(task, tail, todos_path)
             bits = [f"Completed {today_str}", "repaired misfiled row 2026-08-17"]
             if orig_due and orig_due != "—":
                 bits.append(f"was due {orig_due}")
@@ -511,13 +524,7 @@ def cmd_done(args: list[str], todos_path: Path) -> None:
     # Join extra cols back in case notes contained a pipe character
     notes = " | ".join(cols[4:]) if len(cols) > 4 else "—"
 
-    why = recurring_reason(task, notes, todos_path.parent.parent)
-    if why:
-        out_error(f"Refusing to close a recurring row with `done`: {task!r} ({why}). Closing it "
-                  f"without its successor silently retires a lead source. Use "
-                  f"`source_check.py mark <id>` or `todo_write.py rotate <fragment> --due "
-                  f"YYYY-MM-DD`. To retire it on purpose, remove it from {REGISTRY_FILE}, or "
-                  f"`withdraw` it.", reason="recurring_row", task=task)
+    _refuse_if_recurring(task, notes, todos_path)
 
     suffix = f"Completed {today_str}"
     completed_notes = suffix if notes in ("—", "") else f"{suffix} | {notes}"
@@ -945,7 +952,7 @@ def cmd_update(args: list[str], todos_path: Path) -> None:
 
     if "--notes" in fields:
         _stamp("notes", notes, fields["--notes"])
-        notes = fields["--notes"]
+        notes = fields["--notes"].strip()     # trimmed like every other Notes cell (Fable 24.F2)
         changed.append("notes")
     elif {"--notes-prepend", "--notes-append"} & set(fields):
         notes = merge_notes(notes, fields.get("--notes-prepend"), fields.get("--notes-append"))

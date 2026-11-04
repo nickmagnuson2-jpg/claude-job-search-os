@@ -378,6 +378,25 @@ def test_done_refuses_a_row_carrying_a_rotation_marker_without_a_registry(tmp_pa
     assert p.read_text(encoding="utf-8") == before
 
 
+def test_done_refuses_a_recurring_row_stranded_under_completed(tmp_path):
+    """A recurring row misfiled under ## Completed (still Pending) is refused like a live one.
+    Repairing it in place would close it with no successor, which is the exact loss the
+    refusal exists to prevent (final branch review 2026-10-30, Fable 21.F8)."""
+    p = _todos(tmp_path, STRANDED)
+    _registry(tmp_path)
+    out, code = _run(tmp_path, "done", "Check ACME")
+    assert code == 1 and out["reason"] == "recurring_row", out
+    assert p.read_text(encoding="utf-8") == STRANDED
+
+
+def test_done_still_repairs_an_ordinary_stranded_row(tmp_path):
+    """The repair path itself still works for a row that is not recurring."""
+    p = _todos(tmp_path, STRANDED)
+    out, code = _run(tmp_path, "done", "Check ACME")
+    assert code == 0 and out["action"] == "done", out
+    assert "repaired misfiled row" in p.read_text(encoding="utf-8")
+
+
 def test_done_still_closes_an_ordinary_row(tmp_path):
     _todos(tmp_path)
     _registry(tmp_path)

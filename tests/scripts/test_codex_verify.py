@@ -63,7 +63,9 @@ def test_environment_facts_are_gathered_in_the_real_shell(tmp_path):
     assert "loaded launchd jobs:" in facts
     assert "git HEAD:" in facts
     # The probe ran here, so it reports the real machine, not a sandbox.
-    assert "<empty>" not in facts.split("git HEAD:")[1][:80]
+    # Only the HEAD line: on a clean tree the next line reads "working tree: <empty>", which is
+    # true, and a fixed 80-character window reached it whenever the commit subject was short.
+    assert "<empty>" not in facts.split("git HEAD:")[1].splitlines()[0]
 
 
 def test_a_failing_probe_does_not_break_the_prompt(tmp_path, monkeypatch):
@@ -754,6 +756,23 @@ def _fake_repo(tmp_path):
     return tmp_path
 
 
+def _readable(repo_root, path) -> bool:
+    """Can a process jailed for a review of `repo_root` list `path`? Asked of the real
+    sandbox, so the tests check what the jail does, not how the profile is spelled."""
+    if sys.platform != "darwin" or not _shutil.which("sandbox-exec"):
+        pytest.skip("sandbox-exec is a macOS facility")
+    import tempfile
+    with tempfile.NamedTemporaryFile("w", suffix=".sb", delete=False) as fh:
+        fh.write(cv.sandbox_policy(repo_root))
+    try:
+        r = subprocess.run(["sandbox-exec", "-f", fh.name, "/bin/ls", str(path)],
+                           capture_output=True, text=True)
+    finally:
+        Path(fh.name).unlink()
+    assert "exceeds maximum" not in r.stderr, r.stderr      # an oversize profile is a failure
+    return r.returncode == 0
+
+
 @darwin_only
 @pytest.mark.parametrize("rel,readable", [
     ("data/secret.md", False),
@@ -761,7 +780,7 @@ def _fake_repo(tmp_path):
     # CHANGED 2026-09-16: output/ is now READABLE. It holds the deliverables a
     # cross-model run is dispatched to review, and denying it produced reports written
     # without opening a single file under review. The sealed material moved to
-    # sealed_subpaths(), which is narrower and is applied last.
+    # seal_rules(), which is narrower and is applied last.
     ("output/acme/dossier.md", True),
     (".git/HEAD", False),                   # git objects carry the deleted history
     ("tools/code.py", True),                # code under review must stay readable
@@ -1095,8 +1114,7 @@ def test_a_missing_sealed_conf_is_a_valid_state(tmp_path, monkeypatch):
     (repo / "output").mkdir(parents=True)
     (tmp_path / "peer").mkdir()
     monkeypatch.setattr(cv, "SEALED_CONF", tmp_path / "does-not-exist.conf")
-    pol = cv.sandbox_policy(repo)
-    assert f'(deny file-read* (subpath "{tmp_path / "peer"}"))' in pol
+    assert not _readable(repo, tmp_path / "peer")
 
 
 def test_peer_repos_are_sealed_and_this_repo_is_not(tmp_path):
@@ -1104,10 +1122,229 @@ def test_peer_repos_are_sealed_and_this_repo_is_not(tmp_path):
     (repo / "output").mkdir(parents=True)
     for peer in ("peer-one", "peer-two", "peer-three"):
         (tmp_path / peer).mkdir()
-    pol = cv.sandbox_policy(repo)
     for peer in ("peer-one", "peer-two", "peer-three"):
-        assert f'(deny file-read* (subpath "{tmp_path / peer}"))' in pol
-    assert f'(deny file-read* (subpath "{repo.resolve()}"))' not in pol
+        assert not _readable(repo, tmp_path / peer), peer
+    assert _readable(repo, repo / "output")
+    (tmp_path / "loose.md").write_text("x\n", encoding="utf-8")
+    assert not _readable(repo, tmp_path / "loose.md")       # a file beside the repo too
+
+
+def test_the_seal_does_not_grow_with_the_number_of_peers(tmp_path):
+    """One rule per parent folder. One rule per peer passed macOS's 64 KB profile limit once
+    a parent held a few thousand folders, and sandbox-exec refused to start (2026-11-02)."""
+    repo = tmp_path / "job-search"
+    (repo / "output").mkdir(parents=True)
+    (tmp_path / "peer-0").mkdir()
+    small = len(cv.sandbox_policy(repo))
+    for i in range(1, 3000):
+        (tmp_path / f"peer-{i}").mkdir()
+    assert len(cv.sandbox_policy(repo)) == small
+    assert _readable(repo, repo / "output")
+    assert not _readable(repo, tmp_path / "peer-2999")
+
+
+def test_a_review_from_a_linked_worktree_seals_the_main_checkout_and_its_peers(tmp_path, monkeypatch):
+    """Run from a linked worktree, repo_root.parent is the worktrees folder, so the peer-repo
+    deny used to miss the main checkout (its private trees), the main checkout's peer repos,
+    and the gitignored sealed-paths conf, which a worktree does not have (2026-10-30). The
+    main checkout is found through git, and all three are sealed."""
+    projects = tmp_path / "projects"
+    main = projects / "job-search"
+    (main / "tools").mkdir(parents=True)
+    (projects / "peer").mkdir()
+    secret = tmp_path / "elsewhere" / "private-tree"
+    secret.mkdir(parents=True)
+    (main / "tools" / ".sealed-paths.conf").write_text(f"{secret}\n", encoding="utf-8")
+    git = ["git", "-c", "user.name=t", "-c", "user.email=t@example.com"]
+    subprocess.run([*git, "init", "-q", str(main)], check=True)
+    (main / "README.md").write_text("x\n", encoding="utf-8")   # a checkout holds tracked files
+    subprocess.run([*git, "-C", str(main), "add", "README.md"], check=True)
+    subprocess.run([*git, "-C", str(main), "commit", "-q", "-m", "x"], check=True)
+    wt = tmp_path / "worktrees" / "branch-wt"
+    subprocess.run([*git, "-C", str(main), "worktree", "add", "-q", "--detach", str(wt)], check=True)
+    monkeypatch.setattr(cv, "SEALED_CONF", tmp_path / "worktree-has-no.conf")
+    # The sealed tree sits beside the main checkout as <repo name>-sealed (CLAUDE.md), and a
+    # second worktree beside this one. Both must stay unreadable (job-search-47, 2026-11-02).
+    sealed_home = projects / (main.name + "-sealed") / "data"
+    sealed_home.mkdir(parents=True)
+    other_wt = tmp_path / "worktrees" / "other-wt"
+    subprocess.run([*git, "-C", str(main), "worktree", "add", "-q", "--detach", str(other_wt)],
+                   check=True)
+    for path in (main, main / "README.md", projects / "peer", secret, sealed_home,
+                 other_wt, other_wt / "README.md"):
+        assert not _readable(wt, path), path    # secret: a conf entry, used as written
+    assert _readable(wt, wt / "README.md")
+
+
+def test_a_worktree_of_a_separate_git_dir_checkout_refuses(tmp_path, monkeypatch):
+    """With `git init --separate-git-dir`, git keeps no record of the main checkout's path, so
+    from a linked worktree nothing can find it to seal it (Codex infra-1031 F1, P0,
+    2026-11-01). The review refuses instead of running with the checkout readable."""
+    projects = tmp_path / "projects"
+    main = projects / "job-search"
+    main.mkdir(parents=True)
+    (tmp_path / "gitdirs").mkdir()
+    git = ["git", "-c", "user.name=t", "-c", "user.email=t@example.com"]
+    subprocess.run([*git, "init", "-q", "--separate-git-dir", str(tmp_path / "gitdirs" / "js"),
+                    str(main)], check=True)
+    (main / "README.md").write_text("x\n", encoding="utf-8")
+    subprocess.run([*git, "-C", str(main), "add", "README.md"], check=True)
+    subprocess.run([*git, "-C", str(main), "commit", "-q", "-m", "x"], check=True)
+    wt = tmp_path / "worktrees" / "branch-wt"
+    subprocess.run([*git, "-C", str(main), "worktree", "add", "-q", "--detach", str(wt)], check=True)
+    monkeypatch.setattr(cv, "SEALED_CONF", tmp_path / "worktree-has-no.conf")
+    with pytest.raises(RuntimeError, match="main checkout"):
+        cv.seal_rules(wt)
+
+
+def test_a_separate_git_dir_ending_in_dot_git_refuses(tmp_path, monkeypatch):
+    """--separate-git-dir aimed at <holder>/.git makes git name <holder> as the main checkout,
+    and <holder>/.git exists, so it looked like a checkout while the real one stayed readable
+    (Codex infra-1031 round 3 F1, P0, 2026-11-01). <holder> holds none of the repo's tracked
+    files, so the review refuses."""
+    main = tmp_path / "projects" / "job-search"
+    main.mkdir(parents=True)
+    (tmp_path / "holder").mkdir()
+    git = ["git", "-c", "user.name=t", "-c", "user.email=t@example.com"]
+    subprocess.run([*git, "init", "-q", "--separate-git-dir", str(tmp_path / "holder" / ".git"),
+                    str(main)], check=True)
+    (main / "README.md").write_text("x\n", encoding="utf-8")
+    subprocess.run([*git, "-C", str(main), "add", "README.md"], check=True)
+    subprocess.run([*git, "-C", str(main), "commit", "-q", "-m", "x"], check=True)
+    wt = tmp_path / "worktrees" / "branch-wt"
+    subprocess.run([*git, "-C", str(main), "worktree", "add", "-q", "--detach", str(wt)], check=True)
+    monkeypatch.setattr(cv, "SEALED_CONF", tmp_path / "worktree-has-no.conf")
+    with pytest.raises(RuntimeError, match="main checkout"):
+        cv.seal_rules(wt)
+
+
+def test_a_worktree_inside_its_main_checkout_is_not_sealed_off_from_itself(tmp_path, monkeypatch):
+    """A worktree at <main>/.worktrees/x used to get <main> sealed, and the last-match deny
+    covered the review root itself: a blind review that still recorded a verified row (Codex
+    infra-1031 round 3 F2, P0, 2026-11-01). The folders above the root are not sealed whole;
+    everything else in them is."""
+    projects = tmp_path / "projects"
+    main = projects / "job-search"
+    (main / "data").mkdir(parents=True)
+    (main / "CLAUDE.local.md").write_text("private\n", encoding="utf-8")
+    (projects / "peer").mkdir()
+    git = ["git", "-c", "user.name=t", "-c", "user.email=t@example.com"]
+    subprocess.run([*git, "init", "-q", str(main)], check=True)
+    (main / "README.md").write_text("x\n", encoding="utf-8")
+    subprocess.run([*git, "-C", str(main), "add", "README.md"], check=True)
+    subprocess.run([*git, "-C", str(main), "commit", "-q", "-m", "x"], check=True)
+    wt = main / ".worktrees" / "x"
+    subprocess.run([*git, "-C", str(main), "worktree", "add", "-q", "--detach", str(wt)], check=True)
+    (main / ".worktrees" / "other").mkdir()
+    monkeypatch.setattr(cv, "SEALED_CONF", tmp_path / "worktree-has-no.conf")
+    assert _readable(wt, wt / "README.md"), "a seal covers the root"
+    for path in (main / "data", main / "CLAUDE.local.md", main / ".worktrees" / "other",
+                 projects / "peer"):
+        assert not _readable(wt, path), path
+
+
+def test_a_git_dir_holder_with_one_of_the_repo_files_still_refuses(tmp_path, monkeypatch):
+    """One top-level name in the holder (a stray README) was enough to pass it as the main
+    checkout (Codex infra-1031 round 4 F1, P0, 2026-11-01). Every top-level name is required."""
+    main = tmp_path / "projects" / "job-search"
+    main.mkdir(parents=True)
+    holder = tmp_path / "holder"
+    holder.mkdir()
+    git = ["git", "-c", "user.name=t", "-c", "user.email=t@example.com"]
+    subprocess.run([*git, "init", "-q", "--separate-git-dir", str(holder / ".git"), str(main)],
+                   check=True)
+    for name in ("README.md", "tool.py"):
+        (main / name).write_text("x\n", encoding="utf-8")
+    subprocess.run([*git, "-C", str(main), "add", "."], check=True)
+    subprocess.run([*git, "-C", str(main), "commit", "-q", "-m", "x"], check=True)
+    (holder / "README.md").write_text("stray\n", encoding="utf-8")
+    wt = tmp_path / "worktrees" / "branch-wt"
+    subprocess.run([*git, "-C", str(main), "worktree", "add", "-q", "--detach", str(wt)], check=True)
+    monkeypatch.setattr(cv, "SEALED_CONF", tmp_path / "worktree-has-no.conf")
+    with pytest.raises(RuntimeError, match="main checkout"):
+        cv.seal_rules(wt)
+
+
+def test_a_worktree_on_an_orphan_branch_still_finds_its_main_checkout(tmp_path, monkeypatch):
+    """The tracked-name check read the WORKTREE's HEAD, so a worktree on an orphan branch
+    rejected its real main (Codex round 4 F2, Fable round 4 F3, 2026-11-01). It reads the
+    main checkout's own HEAD."""
+    main = tmp_path / "projects" / "job-search"
+    main.mkdir(parents=True)
+    git = ["git", "-c", "user.name=t", "-c", "user.email=t@example.com"]
+    subprocess.run([*git, "init", "-q", str(main)], check=True)
+    (main / "README.md").write_text("x\n", encoding="utf-8")
+    subprocess.run([*git, "-C", str(main), "add", "README.md"], check=True)
+    subprocess.run([*git, "-C", str(main), "commit", "-q", "-m", "x"], check=True)
+    wt = tmp_path / "worktrees" / "orphan-wt"
+    subprocess.run([*git, "-C", str(main), "worktree", "add", "-q", "--orphan", "-b", "o", str(wt)],
+                   check=True)
+    monkeypatch.setattr(cv, "SEALED_CONF", tmp_path / "worktree-has-no.conf")
+    assert not _readable(wt, main / "README.md")
+
+
+def test_a_failed_worktree_listing_is_not_trusted_even_if_it_prints(tmp_path, monkeypatch):
+    """git worktree list that exits non-zero is ignored even when it printed a worktree line;
+    trusting it would let a forged checkout pass (Codex and Fable infra-1031 round 7,
+    2026-11-01). The holder below passes every other check, so only the exit code stops it."""
+    wt = tmp_path / "worktrees" / "branch-wt"
+    wt.mkdir(parents=True)
+    (wt / ".git").write_text("gitdir: /nowhere\n", encoding="utf-8")
+    holder = tmp_path / "holder"
+    (holder / ".git").mkdir(parents=True)
+    (holder / "README.md").write_text("x\n", encoding="utf-8")
+
+    class Done:
+        def __init__(self, rc, out):
+            self.returncode, self.stdout, self.stderr = rc, out, ""
+
+    def fake(cmd, *a, **k):
+        if "worktree" in cmd:
+            return Done(1, f"worktree {holder}\n")
+        return Done(0, "README.md\n")             # ls-tree
+    monkeypatch.setattr(cv.subprocess, "run", fake)
+    with pytest.raises(RuntimeError, match="main checkout"):
+        cv._main_checkout(wt.resolve())
+
+
+def test_a_linked_worktree_whose_main_checkout_cannot_be_found_refuses(tmp_path, monkeypatch):
+    """A failed git call used to return None, and the review ran with the main checkout and
+    its conf unsealed (Fable infra-1031 F3, 2026-11-01). From a linked worktree (.git is a
+    file) that now refuses instead of running open."""
+    wt = tmp_path / "worktrees" / "branch-wt"
+    wt.mkdir(parents=True)
+    (wt / ".git").write_text("gitdir: /nowhere\n", encoding="utf-8")
+
+    def broken(*a, **k):
+        raise OSError("git not found")
+    monkeypatch.setattr(cv.subprocess, "run", broken)
+    with pytest.raises(RuntimeError, match="main checkout"):
+        cv.seal_rules(wt)
+
+
+def test_an_ordinary_checkout_with_no_git_is_not_a_refusal(tmp_path, monkeypatch):
+    repo = tmp_path / "projects" / "job-search"
+    repo.mkdir(parents=True)
+
+    def broken(*a, **k):
+        raise OSError("git not found")
+    monkeypatch.setattr(cv.subprocess, "run", broken)
+    monkeypatch.setattr(cv, "SEALED_CONF", tmp_path / "none.conf")
+    assert len(cv.seal_rules(repo)) == 1     # the peer rule alone: no refusal, no conf
+
+
+def test_a_sandbox_refusal_exits_cleanly_and_leaves_no_policy_file(tmp_path, monkeypatch):
+    """The main-checkout refusal used to raise after the policy temp file was created and
+    before the try/finally that removes it: a traceback and a leaked codex-jail-*.sb
+    (Fable infra-1031 round 2 F3, 2026-11-01)."""
+    def refuse(*a, **k):
+        raise RuntimeError("cannot find the main checkout of linked worktree x")
+    made = []
+    monkeypatch.setattr(cv, "sandbox_policy", refuse)
+    monkeypatch.setattr(cv.tempfile, "mkstemp", lambda *a, **k: made.append(1) or (0, str(tmp_path / "p.sb")))
+    with pytest.raises(SystemExit, match="main checkout"):
+        cv.run(REPO_ROOT, "t", [], "", tmp_path / "r.md", None, False, model="codex")
+    assert made == []
 
 
 def test_the_seal_is_the_last_word(tmp_path):
@@ -1118,8 +1355,9 @@ def test_the_seal_is_the_last_word(tmp_path):
     (tmp_path / "peer").mkdir()
     lines = cv.sandbox_policy(repo, extra_writable=[repo / "output"]).splitlines()
     last_allow = max(i for i, ln in enumerate(lines) if ln.startswith("(allow"))
-    seal_at = lines.index(f'(deny file-read* (subpath "{tmp_path / "peer"}"))')
-    assert seal_at > last_allow, "a seal before an allow can be overridden by it"
+    seals = cv.seal_rules(repo)
+    seal_at = min(lines.index(rule) for rule in seals)
+    assert seals and seal_at > last_allow, "a seal before an allow can be overridden by it"
 
 
 @pytest.mark.skipif(not _shutil.which("sandbox-exec"), reason="macOS seatbelt only")
@@ -1325,6 +1563,9 @@ def test_the_ledger_records_what_the_verifier_could_see(tmp_path, monkeypatch):
         returncode, stdout, stderr = 0, "", ""
 
     monkeypatch.setattr(cv.subprocess, "run", lambda *a, **k: _Done())
+    # The faked run() also answers the main-checkout lookup; that is not this test's
+    # question, and from a linked worktree a lookup that gets no answer refuses.
+    monkeypatch.setattr(cv, "_main_checkout", lambda root: None)
     monkeypatch.setattr(cv, "jailed_argv", lambda *a, **k: ["true"])
     cv.run(REPO_ROOT, "t", [], "", tmp_path / "r.md", None, False,
            model="codex", images=[img])
@@ -1393,10 +1634,9 @@ def test_a_comment_in_the_sealed_paths_conf_is_not_treated_as_a_path(tmp_path,
     conf = tmp_path / ".sealed-paths.conf"
     conf.write_text("# a comment\n\n/tmp/really-sealed\n", encoding="utf-8")
     monkeypatch.setattr(cv, "SEALED_CONF", conf)
-    sealed = cv.sealed_subpaths(REPO_ROOT)
-    assert "/tmp/really-sealed" in sealed
-    assert not any(p.lstrip().startswith("#") for p in sealed)
-    assert "" not in sealed
+    sealed = cv.seal_rules(REPO_ROOT)
+    assert '(deny file-read* (subpath "/tmp/really-sealed"))' in sealed
+    assert not any('(subpath "#' in rule or '(subpath "")' in rule for rule in sealed)
 
 
 def test_the_policy_opens_the_review_tree_for_reading():

@@ -93,20 +93,3 @@ def assert_schema(header_line: str | None, expected_columns: list[str]) -> None:
         f"cols[N] indices will silently read the wrong field for every row — "
         f"fix the parser's column indices to match the live order before trusting its output."
     )
-
-
-if __name__ == "__main__":
-    # Minimal self-check when run directly (not the full test suite — see
-    # tools/test_schema_guard.py for the real regression tests).
-    ok_header = "| Company | Role | Stage | Date Updated | Next Action | CV Used | Notes | URL |"
-    assert_schema(ok_header, ["Company", "Role", "Stage", "Date Updated",
-                              "Next Action", "CV Used", "Notes", "URL"])
-    try:
-        assert_schema(
-            "| Company | Role | Stage | Date Added | Date Updated | CV Used | URL | Notes |",
-            ["Company", "Role", "Stage", "Date Updated", "Next Action", "CV Used", "Notes", "URL"],
-        )
-        raise SystemExit("expected SchemaDriftError, got none")
-    except SchemaDriftError:
-        pass
-    print("schema_guard self-check OK")

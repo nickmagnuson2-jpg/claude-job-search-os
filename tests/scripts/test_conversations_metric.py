@@ -370,3 +370,16 @@ class TestMainOnAFixtureRepo:
 
 def test_a_closed_outreach_row_counts_as_sent():
     assert "closed" in cm.SENT_STATES and "drafted" not in cm.SENT_STATES
+
+
+def test_a_direction_suffix_counts_as_its_base_type(tmp_path):
+    """2026-10-30: `log --direction` appends " (inbound)" / " (outbound)" to the type."""
+    p = tmp_path / "networking.md"
+    p.write_text("#### 2026-01-07 | call (inbound) | a\n"
+                 "#### 2026-01-07 | email (outbound) | b\n"
+                 "#### 2026-01-07 | note (outbound) | c\n"
+                 "#### 2026-01-07 | video (two-way) | d\n", encoding="utf-8")
+    out = cm.count_conversations(p, date(2026, 1, 7))
+    assert out["counts"]["7d"] == 2
+    assert out["async_counts"]["7d"] == 1
+    assert out["unknown_types"] == []

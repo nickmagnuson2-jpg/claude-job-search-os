@@ -352,7 +352,7 @@ This is a structural guard, not a style check. It is a step inside the drafting 
 /networking                       # all contacts, stale ones flagged
 ```
 
-Logs interactions (calls, emails, coffee, events, LinkedIn), flags contacts with no activity in 14+ days, and auto-generates follow-up to-dos. When logging an interaction with reply-signal keywords (replied, call scheduled, etc.), automatically updates `data/outreach-log.md` status from "Sent" to "Replied". Adding a contact blocks on a fuzzy name match to someone already in the roster (a spelling variant of the same person), reporting the likely duplicate; re-run with `--force` once you've confirmed they're distinct.
+Logs interactions (calls, emails, coffee, events, LinkedIn), flags contacts with no activity in 14+ days, and auto-generates follow-up to-dos. Every logged interaction states who reached whom (in, out, both or none); the networking skill asks when it is not clear. Logging one where the contact reached you (in, or both) updates `data/outreach-log.md` status from "Sent" to "Replied". The note's wording is never read for this. Adding a contact blocks on a fuzzy name match to someone already in the roster (a spelling variant of the same person), reporting the likely duplicate; re-run with `--force` once you've confirmed they're distinct.
 
 ```
 /networking promote "Jamie Torres"

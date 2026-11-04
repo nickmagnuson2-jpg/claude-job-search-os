@@ -17,6 +17,14 @@ import booking_tracker as bt  # noqa: E402
 UTC = dt.timezone.utc
 
 
+@pytest.fixture(autouse=True)
+def no_unexpected_sleep(monkeypatch):
+    """A test that expects a wait stubs time.sleep itself; any other wait is a bug and fails fast."""
+    def sleep(s):
+        raise AssertionError(f"unexpected sleep({s})")
+    monkeypatch.setattr(bt.time, "sleep", sleep)
+
+
 def slot(sid, start, offering="Sauna Session", price=40, cap=30, res=0, rules=()):
     return {"id": sid, "datetime": start, "time": "6:00 PM", "offering_name": offering, "duration": 90,
             "price": price, "capacity": cap, "reservations": res, "waitlist_count": 0, "category": "shared",
@@ -491,6 +499,74 @@ def test_failed_page_read_is_retried_next_run(tmp_path):
     f, calls = counting_fetch(fake_fetch(payload(s), fail=("menu",)))
     r = bt.run_venue(v, fetch=f, now=t0 + dt.timedelta(minutes=70))   # 10 min later: still due, retried
     assert calls == ["api", "menu", "store"] and r["errors"] == [r["errors"][0]] and r["errors"][0].startswith("menu:")
+
+
+STRIPPED = {"handle": "examplespa"}
+
+
+def sequence_fetch(*props):
+    """Serves the given pageProps in order (the last one repeats) and records each read."""
+    calls = []
+    def fetch(url, headers=None):
+        calls.append(url)
+        return page(props[min(len(calls), len(props)) - 1])
+    return fetch, calls
+
+
+def test_is_stripped_means_only_the_handle():
+    assert bt.is_stripped(STRIPPED)
+    for pp in ({}, MENU, dict(MENU, handle="examplespa"), {"handle": "examplespa", "entries": []}, ["handle"], None):
+        assert not bt.is_stripped(pp)
+
+
+def test_fetch_props_rereads_a_stripped_page(monkeypatch):
+    sleeps = []
+    monkeypatch.setattr(bt.time, "sleep", sleeps.append)
+    f, calls = sequence_fetch(STRIPPED, MENU)
+    assert bt.fetch_props(f, "u") == MENU and len(calls) == 2 and sleeps == [10]
+    f, calls = sequence_fetch(MENU)
+    sleeps.clear()
+    assert bt.fetch_props(f, "u") == MENU and len(calls) == 1 and sleeps == []   # a full page is read once
+    f, calls = sequence_fetch(STRIPPED, STRIPPED, STORE)
+    assert bt.fetch_props(f, "u") == STORE and len(calls) == 3 and sleeps == [10, 10]
+
+
+def test_fetch_props_always_stripped_keeps_the_parser_error(monkeypatch):
+    sleeps = []
+    monkeypatch.setattr(bt.time, "sleep", sleeps.append)
+    f, calls = sequence_fetch(STRIPPED)
+    assert bt.fetch_props(f, "u") == STRIPPED
+    assert len(calls) == 3 and sleeps == [10, 10] and calls == ["u"] * 3   # bounded: 1 read + 2 retries
+    with pytest.raises(ValueError, match="booking page has no discovery filters"):
+        bt.menu_from_props(bt.fetch_props(f, "u"))
+    f, calls = sequence_fetch(STRIPPED)
+    bt.fetch_props(f, "u", retries=4, wait=3)
+    assert len(calls) == 5 and sleeps[-4:] == [3] * 4
+
+
+@pytest.mark.parametrize("part", ["menu", "store"])
+def test_run_venue_survives_one_stripped_page(tmp_path, monkeypatch, part):
+    sleeps = []
+    monkeypatch.setattr(bt.time, "sleep", sleeps.append)
+    v = dict(VENUE, data_dir=str(tmp_path))
+    served = {"menu": [STRIPPED, MENU], "store": [STRIPPED, STORE]}
+    inner = fake_fetch(payload([slot("A", "2026-01-06T01:00:00+0000")]))
+
+    def fetch(url, headers=None):
+        kind = "store" if url.endswith("/store") else "menu" if "/api/" not in url else None
+        if kind == part and served[part]:
+            return page(served[part].pop(0))
+        return inner(url, headers)
+    r = bt.run_venue(v, fetch=fetch, now=dt.datetime(2026, 1, 5, tzinfo=UTC))
+    assert not r["errors"] and sleeps == [10] and r["changes"] == 1
+
+
+def test_run_venue_always_stripped_reports_the_original_errors(tmp_path, monkeypatch):
+    monkeypatch.setattr(bt.time, "sleep", lambda s: None)
+    v = dict(VENUE, data_dir=str(tmp_path))
+    r = bt.run_venue(v, fetch=fake_fetch(payload([slot("A", "2026-01-06T01:00:00+0000")]), menu=STRIPPED, store=STRIPPED),
+                     now=dt.datetime(2026, 1, 5, tzinfo=UTC))
+    assert r["errors"] == ["menu: booking page has no discovery filters", "store: store page has no visible items"]
 
 
 def test_future_page_stamp_is_stale(tmp_path):
