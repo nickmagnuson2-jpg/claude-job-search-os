@@ -107,11 +107,9 @@ def scan_files(repo_root: Path) -> dict:
     """Validate every guarded file that exists. Returns {relpath: findings}."""
     out = {}
     for rel in GUARDED_FILES:
-        path = repo_root / rel
-        if not path.is_file():
-            continue
         try:
-            text = path.read_text(encoding="utf-8", errors="ignore")
+            # A missing file raises FileNotFoundError, an OSError, so no is_file() check.
+            text = (repo_root / rel).read_text(encoding="utf-8", errors="ignore")
         except OSError:
             continue
         findings = find_malformed_rows(text)
