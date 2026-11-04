@@ -465,7 +465,7 @@ Saved to `output/<company-slug>/MMDDYY-prep.md`. A debrief to-do is created auto
 
 ## Skills Reference
 
-Full list of all 38 skills in `.claude/skills/`:
+Full list of the skills in `.claude/skills/`:
 
 | Skill | Arguments | What it does |
 |---|---|---|

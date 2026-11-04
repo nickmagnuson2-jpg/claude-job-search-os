@@ -5,6 +5,80 @@ Format: newest entries at the top.
 
 Forked from raphaotten/claude-interview-coach (MIT / CC BY 4.0).
 
+## 2026-11-04: Check what a reposted video is before transcribing it, and no typed skill count
+
+**What prompted it.** On 11/02 a social repost captioned as an agents masterclass turned out to
+be a general talk on using LLMs, starting several minutes in, with no agent content. The
+caption had been taken as a description of the video. Separately, the typed skill count in
+`CLAUDE.md` said 39 when there were 38, and the README and usage docs repeated it.
+
+**Changed**
+- **`/analyze-stream` Step 0 item 5 and Step 1 (bd-lessons-1103):** when the URL is a social
+  repost of a video, find the original before `acquire`. Then, between `acquire` and
+  `transcribe`, match a line from the reupload against the original's official captions. No
+  pipeline subcommand transcribes a clip, so Step 1 cuts the first two minutes of the acquired
+  file with `ffmpeg` and runs `whisper-cli` on that alone. If nothing matches, or it matches a
+  different talk than the post claims, the skill stops before `transcribe`. A first version
+  offered `/analyze` on the original instead; review found that `/analyze` sends any recording
+  over about 45 minutes back to `/analyze-stream`, so that shortcut was removed.
+- **Skill counts:** `CLAUDE.md` now gives the command that produces the count
+  (`ls -d .claude/skills/*/ | wc -l`) instead of a number. The README and `docs/usage.md` drop
+  their typed counts too. Both skill tables were checked against the 38 skill directories and
+  list every one, `/check` included.
+
+**Open.** Parked review findings on item 5: it has no branch for an original that cannot be
+found; after a match it transcribes the reupload rather than acquiring the original; and it
+names no tool for fetching the original's captions (`tools/fetch_transcript.py` is
+YouTube-only). Nothing yet tests the docs against the skill tree.
+
+## 2026-11-03: Review sandbox size, guard exemption for merges, PermitSF, and mutation cleanup
+
+**What prompted it.** Five branches landed in order after the 11/01 merges (PRs #10-#14). Every
+branch's full suite showed the same 8 `codex_verify` failures that passed when the file ran
+alone; merge commits were refused by the concurrent-commit guard until every incoming path was
+named by hand; and the permit lookup missed every filing in the city's newer permit system.
+
+**Review sandbox (PR #10, `tools/codex_verify.py`)**
+- The sandbox wrote one seatbelt rule for each folder beside the review root. From a linked
+  worktree that was one rule per worktree, and in a full test run one per pytest tmp folder.
+  Past macOS's 64 KB profile limit, `sandbox-exec` refused to start, which caused the 8 failures.
+- `seal_rules()` writes ONE rule per parent folder: deny everything under it except the review
+  root and the folders on the path down to it. Configured private trees stay as subpath denies.
+  Profile size no longer depends on how many folders sit beside the repo (3,000 peers: same
+  size; the old code produced 468,128 bytes). A loose file beside the repo is now denied too.
+- Tests ask the real jail (`sandbox-exec ls`) whether a path is readable instead of asserting on
+  the rule list.
+
+**Booking tracker (PR #11, `tools/booking_tracker.py`)**
+- About 1 read in 25 returns a stripped page whose pageProps holds only the handle, which
+  failed the hourly check. `fetch_props()` re-reads such a page after 10 s, at most twice more,
+  for the booking and store pages. If every read is stripped it returns the last one, so a real
+  page change still surfaces as the parser's usual error.
+
+**Property records (PR #12, `tools/sf_property_records.py`)**
+- PermitSF (data.sf.gov `tyz3-vt28`), the city's newer permit system, is now queried.
+- `street_of()` is the one place that decides which street a row belongs to, so "MISSION" and
+  "MISSION BAY BLVD" stay separate. One street is decided for the whole report: an optional
+  suffix argument picks it, and when two suffixes share the house number (19TH ST and 19TH AVE)
+  every section says AMBIGUOUS and withholds its records.
+- `query()` pages with `$offset` past the old 200-row limit; quotes in a street name are doubled
+  for SoQL. Each section prints a count_report line, a failed query marks its section INCOMPLETE,
+  and the run exits 1. The tool had no tests before; it now has an offline suite.
+
+**Concurrent-commit guard (PR #13, `tools/concurrent_commit_guard.py`)**
+- A staged path is exempt as merge-incoming only when a merge is in progress, the session itself
+  ran `git merge` or `git pull`, the index entry equals the incoming head's entry (mode
+  included), the branch had not changed the path since the single merge base, and the path
+  exists there or is added on the incoming side. Anything else is refused as before, and git
+  errors fail closed. On the largest real merge, 708 of 789 incoming paths are exempt. Guard
+  edit approved by the owner.
+
+**Mutation cleanup (PR #14)**
+- Case-1 survivors from the mutation audit were closed by removing the redundant code they
+  exposed, not by allowlisting it, across `mutation_sweep`, `schema_guard`, `job_quiesce`,
+  `frame_write`, `check_pipeline_exit_status`, `check_workflow_scriptpath`,
+  `check_table_integrity` and `check_frame_integrity`. A test that could not fail was deleted.
+
 ## 2026-11-01: Gmail sync recovers missed mail, and fixes to the mutation and review tools
 
 **What prompted it.** Three branches landed after the 10/31 merges. A review of
