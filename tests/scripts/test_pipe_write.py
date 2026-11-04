@@ -768,6 +768,20 @@ def test_note_pads_a_short_row(tmp_path):
     assert _rows(tmp_path)[0] == "| Short | PM | x | — | — | — | n | — |"
 
 
+def test_note_refuses_an_over_wide_row_instead_of_dropping_its_cells(tmp_path):
+    """A stray '|' in a cell splits a row into 9+ cells. Padding to 8 and slicing used to drop
+    everything past the 8th; cmd_note must refuse, as cmd_update and cmd_remove do."""
+    wide = "| Wide | PM | Applied | 2026-01-01 | — | — | old a | old b | https://x.test |\n"
+    write_fixture(tmp_path, "data/job-pipeline.md",
+                  PIPELINE_MD.replace("| --- | --- | --- | --- | --- | --- | --- | --- |\n",
+                                      "| --- | --- | --- | --- | --- | --- | --- | --- |\n" + wide, 1))
+    before = (tmp_path / "data/job-pipeline.md").read_text(encoding="utf-8")
+    result, code = run_pipe_write("--repo-root", str(tmp_path), "note", "Wide", "--append", "n")
+    assert code != 0 and result["code"] == "malformed_row", result
+    assert result["column_count"] == 9
+    assert (tmp_path / "data/job-pipeline.md").read_text(encoding="utf-8") == before
+
+
 def test_note_dry_run_writes_nothing(tmp_path):
     write_fixture(tmp_path, "data/job-pipeline.md", PIPELINE_WITH_ROW)
     before = (tmp_path / "data/job-pipeline.md").read_text(encoding="utf-8")

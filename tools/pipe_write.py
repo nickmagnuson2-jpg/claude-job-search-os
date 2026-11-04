@@ -393,6 +393,12 @@ def cmd_note(args, pipeline_path: Path, dry_run: bool) -> None:
         out_error(f"{args.company} has more than one row; pass --role.", "ambiguous_match",
                   matches=[{"role": c[1] if len(c) > 1 else ""} for _, c in matches])
     row_idx, cols = matches[0]
+    if len(cols) > 8:
+        # Refused, as in cmd_update: the slice below would drop every cell past the 8th.
+        out_error(f"Row for {args.company} has {len(cols)} columns, expected 8 — a cell likely "
+                  f"contains an unescaped '|'. Fix the row by hand in {PIPELINE_FILE} before "
+                  f"retrying, or the note would drop the cells after the 8th.",
+                  "malformed_row", row=row_idx + 1, column_count=len(cols))
     cols = (cols + ["—"] * 8)[:8]   # a short row is padded, as fmt_row expects 8 cells
     new_notes = merge_notes(cols[6], append=sanitize_cell(args.append))
     row = fmt_row(*cols[:6], new_notes, cols[7])
