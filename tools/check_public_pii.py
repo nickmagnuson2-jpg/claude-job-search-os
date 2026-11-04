@@ -374,7 +374,7 @@ _SHELLS = frozenset({"sh", "bash", "zsh", "dash", "ksh", "su"})
 # is a script only when it is stdin). See scripts_run_by.
 _SCRIPT_RUNNERS = frozenset({"eval", "source", "."})
 _WRAPPERS = frozenset({"sudo", "env", "command", "exec", "builtin", "nice", "nohup",
-                       "time", "timeout", "stdbuf", "xargs", "caffeinate", "!",
+                       "time", "timeout", "stdbuf", "xargs", "caffeinate", "arch", "!",
                        "then", "do", "else", "elif", "if", "while", "until", "{"})
 _ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\+?=")   # NAME= and NAME+=
 _WRITE_REDIR = frozenset({">", ">>", ">|", "&>", "&>>", "<>"})
@@ -441,6 +441,11 @@ def _parse_wrapper_options(words: list[str], k: int, wrapper: str, positional_se
             skip = 1 if wrapper == "timeout" and not positional_seen else 0
             todo.append(("cmd", j + skip, "", False))
             break
+        if wrapper == "arch" and w == "-arch":
+            # macOS `arch -arch x86_64 cmd`: the value is an architecture name, never
+            # the command (Codex r10 group E F1). `-arm64` and the like are flags.
+            k += 2
+            continue
         if _ASSIGNMENT.match(w) or (w.startswith("-") and len(w) > 1):
             # A bare one-letter option, or a long option with no `=value`, may
             # take the next word as its value (`sudo --user nobody`); read both.

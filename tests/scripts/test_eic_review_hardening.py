@@ -368,6 +368,13 @@ def test_G_an_unreadable_store_folder_blocks(env):
     # Fable r9 52.F1, 52.F2: a path-named copy, and find's -exec copy.
     f"/bin/cp /tmp/p.md {VOICE}/110126-x-published.md",
     f"find /tmp -name p.md -exec cp {{}} {VOICE}/110126-x-published.md \\;",
+    # Codex r10 group E F1 (P0): macOS `arch` runs the next word as the command;
+    # `-arch <name>` takes a value, `-e NAME=value` sets the environment.
+    f"arch cp /tmp/p.md {VOICE}/110126-x-published.md",
+    f"arch -arm64 mv /tmp/p.md {VOICE}/110126-x-published.md",
+    f"arch -arch x86_64 cp /tmp/p.md {VOICE}/110126-x-published.md",
+    f"arch -e A=1 cp /tmp/p.md {VOICE}/110126-x-published.md",
+    f"/usr/bin/arch cp /tmp/p.md {VOICE}/110126-x-published.md",
 ])
 def test_J_the_eic_gate_follows_a_cd_in_the_command(command):
     sent_to()
