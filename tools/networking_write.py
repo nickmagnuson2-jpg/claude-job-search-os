@@ -5,8 +5,15 @@ networking_write.py — Atomic mutations for data/networking.md.
 Subcommands:
   add <name> [--company CO] [--role ROLE] [--relationship TYPE] [--force]
   log <name> --date DATE --type TYPE --summary SUMMARY --direction in|out|both|none
-             [--followup TEXT] [--content TEXT] [--no-todo]
+             [--followup TEXT] [--content TEXT] [--no-todo] [--capture ID]
+  mark-sent <name> --date DATE --type TYPE --summary SUMMARY [--undo]
   remove <name> [--role ROLE]
+
+A drafted message is logged PLAIN with `log --direction none --capture <id>` (the id that
+open_draft.py prints), and becomes `(outbound)` only when `draft_capture.py confirm <id>
+unchanged|edited` runs `mark-sent` on it (Nick, 2026-11-04; findings 8.F1, 4.F3, 5.F3).
+Logging it outbound at draft time closed the contact's open reply before anything was sent.
+If the capture is already confirmed sent when it is logged, the entry is written outbound.
 
 `add` blocks on a fuzzy name match to an existing contact (spelling variants like
 "Jordan Sample"/"Jordan Samples", nickname vs full name, accents) with code
@@ -42,7 +49,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from name_dedup import find_near_duplicates  # noqa: E402
 import outreach_status  # noqa: E402
 # The one "did they reply" rule, shared with day_check.py (no local copy here).
-from reply_classify import contact_lines, open_reply, with_direction  # noqa: E402
+from reply_classify import (base_type, contact_line_indices, contact_lines,  # noqa: E402
+                            direction, entry_header, open_reply, with_direction)
 from md_table import JsonArgumentParser, find_section, load_lines, is_sep_row, out_error, out_ok, parse_cols, read_file, table_insert_pos, write_atomic  # noqa: E402
 
 NETWORKING_FILE  = "data/networking.md"
@@ -268,8 +276,11 @@ def cmd_log(args, networking_path: Path, repo_root: Path, dry_run: bool) -> None
     refuse_wrong_weekdays(args.followup or "")
     today = date.today().strftime("%Y-%m-%d")
     log_date = args.date if args.date else today
+    send_direction = args.direction
+    if args.capture:
+        send_direction = capture_direction(args)
     try:
-        kind = with_direction(args.type, args.direction)
+        kind = with_direction(args.type, send_direction)
     except ValueError as e:
         out_error(str(e), "direction_conflict")
 
@@ -359,6 +370,17 @@ def cmd_log(args, networking_path: Path, repo_root: Path, dry_run: bool) -> None
 
     save_lines(networking_path, lines, content)
 
+    if args.capture:
+        import draft_capture
+        try:
+            draft_capture.link_networking(args.capture, {
+                "name": args.name, "date": log_date, "type": args.type,
+                "summary": args.summary, "repo_root": str(repo_root.resolve())})
+        except (draft_capture.CaptureError, OSError, ValueError) as e:
+            out_error(f"the entry was written but NOT linked to capture {args.capture} ({e}), "
+                      f"so confirming the send will not mark it outbound. Tell Nick.",
+                      "link_failed")
+
     # Follow-up todo via subprocess (non-fatal if todos file missing).
     # Supersede this contact's prior AUTO-generated follow-up first so repeated
     # logging keeps a single live "Follow up: <name> — ..." row instead of stacking
@@ -407,6 +429,71 @@ def cmd_log(args, networking_path: Path, repo_root: Path, dry_run: bool) -> None
            name=args.name, date=log_date,
            outreach_log_updated=outreach_updated,
            todo_added=todo_added, todos_file=TODOS_FILE)
+
+
+def capture_direction(args) -> str:
+    """The direction to write for a draft logged with --capture, after checking the capture.
+
+    The caller passes --direction none: a draft is not a send. It becomes one when
+    draft_capture.py confirm marks it (mark-sent), or here, when the capture was already
+    confirmed sent before the log (the /draft-email multi-round order). Exits on a capture
+    that does not exist, is already linked, or was not sent.
+    """
+    if args.direction != "none":
+        out_error("--capture logs a draft, which is not yet a send: pass --direction none. "
+                  "The entry is marked outbound when the send is confirmed "
+                  "(draft_capture.py confirm <id> unchanged|edited).", "capture_needs_plain")
+    import draft_capture
+    try:
+        meta = draft_capture.read_meta(args.capture)
+    except (OSError, ValueError):
+        out_error(f"no draft capture with id {args.capture!r} "
+                  f"(draft_capture.py pending lists them)", "capture_not_found")
+    if meta.get("networking"):
+        out_error(f"capture {args.capture} is already logged as {meta['networking']}; "
+                  f"do not log the same draft twice", "capture_already_linked",
+                  existing=meta["networking"])
+    status = meta.get("status")
+    if status == "not-sent":
+        out_error(f"capture {args.capture} is confirmed not sent, so there is nothing to log",
+                  "capture_not_sent")
+    return "out" if status in draft_capture.SENT_OUTCOMES else "none"
+
+
+def cmd_mark_sent(args, networking_path: Path, dry_run: bool) -> None:
+    """Mark one plain entry `(outbound)`, or with --undo put an outbound one back to plain.
+
+    Run by draft_capture.py confirm, never by hand: the entry is the draft logged with
+    --capture, found by its exact date, type and summary in the contact's sections. Exactly
+    one must match, or nothing is written. An entry that already says what is asked is left
+    as it is (changed: false); an entry that records a reply is refused.
+    """
+    content, lines = load_lines(networking_path)
+    found = []
+    for i in contact_line_indices(lines, args.name):
+        m = entry_header(lines[i])
+        if (m and m.group(1) == args.date and base_type(m.group(2)) == args.type
+                and m.group(3).strip() == args.summary.strip()):
+            found.append((i, m))
+    where = f"{args.name}: {args.date} | {args.type} | {args.summary}"
+    if not found:
+        out_error(f"no interaction entry for {where}", "entry_not_found")
+    if len(found) > 1:
+        out_error(f"{len(found)} interaction entries match {where}, so none was changed. "
+                  f"Remove the duplicate entry, then confirm again", "ambiguous_entry",
+                  lines=[i + 1 for i, _ in found])
+    i, m = found[0]
+    have, want = direction(m.group(2)), (None if args.undo else "out")
+    if have not in (None, "out"):
+        out_error(f"the entry for {where} records {m.group(2)!r}, a reply, so it is not "
+                  f"changed", "direction_conflict")
+    new_kind = args.type if args.undo else with_direction(args.type, "out")
+    changed = have != want
+    if changed and not dry_run:
+        lines[i] = lines[i][:m.start(2)] + new_kind + lines[i][m.end(2):]
+        save_lines(networking_path, lines, content)
+    out_ok("mark-sent", f"{'Would mark' if dry_run else 'Marked'} {where} as {new_kind}",
+           name=args.name, line=i + 1, type=new_kind, changed=changed, dry_run=dry_run)
 
 
 def cmd_update(args, networking_path: Path, dry_run: bool) -> None:
@@ -579,6 +666,21 @@ def parse_args():
                             "Follow-up line is still logged. Use when a session must "
                             "not touch the todos file.")
 
+    log_p.add_argument("--capture", default=None,
+                       help="The draft_capture id open_draft.py printed for this draft. "
+                            "Requires --direction none: the entry is logged plain and linked "
+                            "to the capture, and draft_capture.py confirm marks it outbound "
+                            "when the send is confirmed.")
+
+    mark_p = sub.add_parser("mark-sent")
+    mark_p.add_argument("name")
+    mark_p.add_argument("--date", required=True)
+    mark_p.add_argument("--type", required=True, help="The entry's type without a suffix.")
+    mark_p.add_argument("--summary", required=True)
+    mark_p.add_argument("--undo", action="store_true",
+                        help="Put an outbound entry back to plain (a send re-confirmed as "
+                             "not sent).")
+
     rem_p = sub.add_parser("remove")
     rem_p.add_argument("name")
 
@@ -599,6 +701,8 @@ def main() -> None:
         cmd_update(args, networking_path, args.dry_run)
     elif args.command == "log":
         cmd_log(args, networking_path, repo_root, args.dry_run)
+    elif args.command == "mark-sent":
+        cmd_mark_sent(args, networking_path, args.dry_run)
     elif args.command == "remove":
         cmd_remove(args, networking_path, args.dry_run)
     else:

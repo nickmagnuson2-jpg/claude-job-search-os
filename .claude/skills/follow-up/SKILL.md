@@ -460,17 +460,18 @@ Archive file format:
 
 **1. Log the interaction in `data/networking.md`:**
 
-Add an entry under the contact's Interaction Log section. The `(outbound)` in the type is what counts this as a send on the morning page (`tools/reply_classify.py` reads only the type, never the summary). Keep it.
+Log it PLAIN, linked to the draft's capture id (the `Draft captured as <id>` line `open_draft.py` printed in Step 8). Approval is not a send: logging `(outbound)` here closed the contact's open reply before anything was sent, so the same reply could be logged twice (finding 8.F1, Nick's fix 2026-11-04). The writer also updates Last Interaction.
 
-```markdown
-#### YYYY-MM-DD | [email/linkedin] (outbound) | Follow-up #N — [1-line summary]
-
-> [Full message text in blockquote]
-
-**Follow-up:** [Next action — e.g., "Wait for response, follow up in 5 days if no reply" or "—" if final attempt]
+```bash
+PYTHONIOENCODING=utf-8 python3 tools/networking_write.py --repo-root . log "<Name>" \
+  --date YYYY-MM-DD --type <email|linkedin> --summary "Follow-up #N — <1-line summary>" \
+  --content "<full message text>" --followup "<next action, or omit for a final attempt>" \
+  --direction none --capture <capture-id> --no-todo
 ```
 
-Update the contact's Last Interaction date in the Contacts table.
+`--no-todo` because item 2 below handles the to-do. When Nick says what happened to the draft, run the confirm line `open_draft.py` printed (`draft_capture.py confirm <capture-id> unchanged|edited|not-sent`). `unchanged` or `edited` marks this entry `(outbound)`, which is what counts it as a send and closes the contact's open reply; `not-sent` leaves it plain. If confirm errors (`entry_not_found`, `ambiguous_entry`, `direction_conflict`), nothing was recorded: show Nick the message and never mark the entry by hand.
+
+If `open_draft.py` printed `WARNING: draft was NOT captured`, there is no capture id. Log the entry with `--direction none` and no `--capture`, and tell Nick that this send stays plain and will not count as a send.
 
 **2. Update follow-up to-do in `data/job-todos.md`:**
 

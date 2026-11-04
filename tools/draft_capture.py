@@ -29,6 +29,16 @@ in the nightly backup):
 STATUS. `opened` means compose was opened and nothing else is known. It is NOT evidence of a
 send. Only `confirm` moves it: `unchanged`, `edited` or `not-sent`.
 
+THE NETWORKING ENTRY BECOMES A SEND ONLY HERE (2026-11-04, Nick's option (a); findings 8.F1,
+4.F3, 5.F3). The drafting skills log a draft's entry in data/networking.md PLAIN, with
+`networking_write.py log --direction none --capture <id>`, which records the entry's name,
+date, type and summary under `networking` in this capture's meta. `confirm <id> unchanged`
+or `edited` then marks that entry `(outbound)` through `networking_write.py mark-sent`, the
+only writer of that file; `not-sent` leaves it plain (and a forced `not-sent` after a send
+puts it back to plain). Logging it `(outbound)` at draft time closed the contact's open reply
+before anything was sent, so the same reply could be logged twice. If the one linked entry
+cannot be found, or is now a reply, confirm fails and records nothing.
+
 USAGE
     PYTHONIOENCODING=utf-8 python3 tools/draft_capture.py pending
     PYTHONIOENCODING=utf-8 python3 tools/draft_capture.py confirm latest unchanged
@@ -63,6 +73,7 @@ import hashlib
 import json
 import os
 import re
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -277,6 +288,40 @@ class CaptureError(Exception):
     """A confirmation that cannot be recorded as asked."""
 
 
+SENT_OUTCOMES = ("unchanged", "edited")
+
+
+def link_networking(capture_id: str, link: dict) -> None:
+    """Record which data/networking.md entry this draft was logged as. Called by
+    networking_write.py `log --capture` right after it writes the entry. One entry per
+    capture: a second link is refused, because it would mean the draft was logged twice."""
+    meta = read_meta(capture_id)
+    if meta.get("networking"):
+        raise CaptureError(f"{capture_id} is already linked to a networking entry "
+                           f"({meta['networking']})")
+    meta["networking"] = dict(link)
+    _write_meta(store_dir() / capture_id, meta)
+
+
+def _mark_networking(link: dict, undo: bool) -> None:
+    """Mark the linked entry outbound (or, with undo, plain) through networking_write.py.
+    Raises CaptureError with the writer's code when it cannot: never a silent skip."""
+    cmd = [sys.executable, str(Path(__file__).resolve().parent / "networking_write.py"),
+           "--repo-root", str(link["repo_root"]), "mark-sent", link["name"],
+           "--date", link["date"], "--type", link["type"], "--summary", link["summary"]]
+    if undo:
+        cmd.append("--undo")
+    r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
+                       env={**os.environ, "PYTHONIOENCODING": "utf-8"})
+    try:
+        out = json.loads(r.stdout)
+    except ValueError:
+        out = {"status": "error", "code": "no_output", "message": (r.stderr or "").strip()[-300:]}
+    if r.returncode != 0 or out.get("status") != "ok":
+        raise CaptureError(f"the networking entry for this draft was not marked "
+                           f"({out.get('code')}): {out.get('message')}. Nothing was recorded.")
+
+
 def resolve(capture_id: str) -> str:
     """`latest` is the most recently opened capture that is still unconfirmed."""
     if capture_id != "latest":
@@ -326,6 +371,14 @@ def confirm(capture_id: str, outcome: str, sent_text: str | None = None,
                 meta["lesson_ref"] = lesson_ref
             else:
                 meta["no_lesson_reason"] = no_lesson.strip()
+    # The networking entry goes last among the checks and first among the writes: if it
+    # cannot be marked, nothing below is written and the capture stays as it was.
+    link = meta.get("networking")
+    if link:
+        if outcome in SENT_OUTCOMES:
+            _mark_networking(link, undo=False)
+        elif meta.get("status") in SENT_OUTCOMES:
+            _mark_networking(link, undo=True)
     if outcome == "edited":
         sent_file.write_text(sent_text, encoding="utf-8")
         ratio = changed_word_ratio(draft_body, body_of(sent_text))

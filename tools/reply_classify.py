@@ -99,18 +99,30 @@ _ENTRY_RE = re.compile(r"^####\s+(\d{4}-\d{2}-\d{2})\s*\|\s*([^|]+?)\s*\|\s*(.*)
 _HEADING_RE = re.compile(r"^###\s+(?:\[ARCHIVED\]\s+)?(.+?)(?:\s+[—–]|$)")
 
 
-def contact_lines(lines: list[str], name: str) -> list[str]:
-    """Every line in every ### section for `name`, archived ([ARCHIVED]) or not. A contact
-    removed and re-added has two sections; a reply logged in either still counts."""
+def contact_line_indices(lines: list[str], name: str) -> list[int]:
+    """The index of every line in every ### section for `name`, archived ([ARCHIVED]) or
+    not. A contact removed and re-added has two sections; an entry in either belongs to
+    them. networking_write.py `mark-sent` uses the indices to rewrite one entry in place."""
     want, out, inside = name.strip().lower(), [], False
-    for line in lines:
+    for i, line in enumerate(lines):
         if line.startswith("## ") or line.startswith("### "):
             m = _HEADING_RE.match(line) if line.startswith("### ") else None
             inside = bool(m) and m.group(1).strip().lower() == want
             continue
         if inside:
-            out.append(line)
+            out.append(i)
     return out
+
+
+def contact_lines(lines: list[str], name: str) -> list[str]:
+    """Every line in every ### section for `name` (see contact_line_indices)."""
+    return [lines[i] for i in contact_line_indices(lines, name)]
+
+
+def entry_header(line: str):
+    """The re.Match of an interaction heading `#### <date> | <type> | <summary>`, or None.
+    Groups: 1 date, 2 type, 3 summary."""
+    return _ENTRY_RE.match(line)
 
 
 def open_reply(section_lines: list[str]) -> tuple[str, str, str] | None:
