@@ -558,3 +558,81 @@ def test_the_vault_location_comes_from_the_configured_vault_root(tmp_path):
     assert _run(root, "Read", {"file_path": str(sealed / "a.md")})[0] == 2
     assert _run(root, "Read", {"file_path": str(vault / "data" / "other.md")})[0] == 0
 
+
+
+# --- Codex round 3 (2026-11-03), two P0s fixed 2026-11-04 with Nick's guard-edit approval ---
+
+import pytest  # noqa: E402
+
+
+@pytest.mark.parametrize("cmd", [
+    # git reads the vault's tree or history: the walk is the repo git runs in.
+    "git -C ../personal grep x",
+    "git -C ../personal log -p",
+    "git -C ../personal log --patch -- data",
+    "git -C ../personal show HEAD",
+    "git -C ../personal archive HEAD",
+    "git -C ../personal ls-files",
+    "cd ../personal && git grep x",
+    "git --work-tree=../personal grep x",
+    "git --git-dir=../personal/.git log -p",
+    "git -C ../personal/data log -p",
+])
+def test_git_reading_the_vault_tree_or_history_blocks(tmp_path, cmd):
+    root, _ = _layout(tmp_path)
+    assert _run(root, "Bash", {"command": cmd})[0] == 2, cmd
+
+
+@pytest.mark.parametrize("cmd", [
+    "git -C ../personal status --short",
+    "git -C ../personal log --oneline -5",
+    "cd ../personal && git status",
+    "git grep x",
+    "git log -p -- tools/x.py",
+])
+def test_git_work_that_reads_no_vault_content_still_passes(tmp_path, cmd):
+    root, _ = _layout(tmp_path)
+    assert _run(root, "Bash", {"command": cmd})[0] == 0, cmd
+
+
+def test_the_vault_location_honours_PERSONAL_VAULT_ROOT_like_the_writer(tmp_path):
+    """vault_paths.vault_root() lets PERSONAL_VAULT_ROOT beat the config file, so a writer
+    run with it set writes there; the guard must protect the same folder."""
+    root = tmp_path / "job-search"
+    (root / "tools").mkdir(parents=True)
+    vault = tmp_path / "pv2"
+    sealed = vault / "data" / "alcove"
+    sealed.mkdir(parents=True)
+    (sealed / "a.md").write_text("x")
+    (root / "tools" / ".sealed-folders.conf").write_text("data/alcove\n")
+    env = {"PERSONAL_VAULT_ROOT": str(vault)}
+    assert _run(root, "Read", {"file_path": str(sealed / "a.md")}, env)[0] == 2
+    assert _run(root, "Bash", {"command": "cat ../pv2/data/alcove/a.md"}, env)[0] == 2
+    assert _run(root, "Read", {"file_path": str(vault / "data" / "other.md")}, env)[0] == 0
+
+
+# Mutation survivors on the 2026-11-04 git branch (handoff/mut-1104-check_sealed_read.txt).
+@pytest.mark.parametrize("cmd", [
+    "git --no-pager -C ../personal grep x",        # a flag global before the subcommand
+    "git -C ../personal diff",                      # diff prints content by default
+    "git -C ../personal diff HEAD~1 -- data",
+    "git -C ../personal log -Mp",                   # p inside a short-flag cluster
+])
+def test_git_content_reads_found_past_flags_and_by_default(tmp_path, cmd):
+    root, _ = _layout(tmp_path)
+    assert _run(root, "Bash", {"command": cmd})[0] == 2, cmd
+
+
+@pytest.mark.parametrize("cmd", [
+    "git -C ../personal diff --stat",
+    "git -C ../personal diff --stat=200",           # the =value form of a quiet flag
+    "git -C ../personal diff --name-only HEAD~1",
+    "git -C ../personal status -u",                 # -u means a patch only for log-like commands
+    "git -C ../personal log -M",
+    "git --namespace=../personal grep x",           # a value global that is not a directory
+    "git -C ../personal",                           # no subcommand at all
+    "git",
+])
+def test_git_without_content_or_without_a_vault_dir_passes(tmp_path, cmd):
+    root, _ = _layout(tmp_path)
+    assert _run(root, "Bash", {"command": cmd})[0] == 0, cmd

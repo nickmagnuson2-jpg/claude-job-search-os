@@ -92,10 +92,14 @@ SEALED_HOME = _root().name + SEALED_HOME_SUFFIX
 def _personal() -> str:
     """The vault, as a path beside the checkout. Read from the main checkout's
     tools/.personal-vault.conf, the file the writer's vault_paths.vault_root() reads, so the
-    guard protects the folder the writer writes to (Fable r2 17.F1); the env var is not read.
+    guard protects the folder the writer writes to (Fable r2 17.F1). PERSONAL_VAULT_ROOT
+    beats the file, exactly as in vault_root(): a writer run with it set writes there, so the
+    guard must protect it too (Codex r3 P0, fixed 2026-11-04 with Nick's guard-edit approval;
+    until then this read "the env var is not read").
     A vault that is not a sibling of the checkout keeps the default, so the folder-name
     matching below still holds."""
-    value = vault_paths._read_config(_root() / "tools" / ".personal-vault.conf")
+    value = (os.environ.get(vault_paths.ENV_VAR, "").strip()
+             or vault_paths._read_config(_root() / "tools" / ".personal-vault.conf"))
     vault = Path(os.path.expanduser(value)) if value else None
     if vault is not None and vault.is_absolute() and vault.parent.resolve() == _root().parent.resolve():
         return "../" + vault.name
@@ -976,6 +980,8 @@ def _walks(words: list, h: int) -> bool:
     flags = [w for w in words[h + 1:] if w.startswith("-")]
     if head in _WALKERS:
         return True
+    if head == "git":
+        return _git_reads_content(words[h + 1:])
     if head == "tar":
         return any(f == "--create" or (not f.startswith("--") and "c" in f) for f in flags)
     if head in _COPIERS:
@@ -1021,6 +1027,8 @@ def _walk_targets(words: list, h: int) -> list:
             if w.startswith("-") or w in ("(", "!", "\\("):
                 break
             targets.append(w)
+    elif head == "git":
+        targets = _git_repo_dirs(words[h + 1:])
     elif head == "fd":
         # `fd [pattern] [path...]`: the first positional is what is searched FOR (Codex
         # round 3 F1: `cd ../personal && fd x` read `x` as the path and missed the walk),
@@ -1030,6 +1038,68 @@ def _walk_targets(words: list, h: int) -> list:
     else:
         targets = [w for w in words[h + 1:] if not w.startswith("-")]
     return targets or ["."]
+
+
+# git (Codex r3 P0, 2026-11-04, with Nick's guard-edit approval): `git -C <vault> grep x`
+# read the vault's files while `grep -r` of the same folder was blocked. A git subcommand
+# that prints file content or history content walks the repository git runs in. `git status`
+# and `git log --oneline` print no content and still pass (the round-4 restraint replay).
+_GIT_CONTENT = {"grep", "show", "archive", "ls-files", "ls-tree", "cat-file", "blame",
+                "annotate", "format-patch", "bundle", "fast-export"}
+_GIT_PATCH_CMDS = {"log", "whatchanged", "reflog", "stash"}
+_GIT_DIFF_QUIET = {"--stat", "--shortstat", "--numstat", "--name-only", "--name-status",
+                   "--quiet", "--exit-code", "--summary", "--dirstat", "--raw"}
+_GIT_VALUE_GLOBALS = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path",
+                      "--config-env", "--super-prefix"}
+
+
+def _git_split(args: list) -> tuple:
+    """(global options as (name, value) pairs, subcommand, the rest)."""
+    opts, i = [], 0
+    while i < len(args):
+        w = args[i]
+        name, has_eq, value = w.partition("=")
+        if w.startswith("--") and has_eq and name in _GIT_VALUE_GLOBALS:
+            opts.append((name, value))
+        elif w in _GIT_VALUE_GLOBALS:
+            opts.append((w, args[i + 1] if i + 1 < len(args) else ""))
+            i += 1
+        elif not w.startswith("-"):
+            return opts, w, args[i + 1:]
+        i += 1
+    return opts, "", []
+
+
+def _git_reads_content(args: list) -> bool:
+    _, sub, rest = _git_split(args)
+    if sub in _GIT_CONTENT:
+        return True
+    if sub == "diff":
+        return not any(f in _GIT_DIFF_QUIET or f.split("=", 1)[0] in _GIT_DIFF_QUIET
+                       for f in rest)
+    if sub in _GIT_PATCH_CMDS:
+        return any(f in ("-p", "-u", "--patch") or f.startswith(("-S", "-G", "--word-diff"))
+                   or (re.fullmatch(r"-[A-Za-z]+", f) and "p" in f[1:])
+                   for f in rest)
+    return False
+
+
+def _git_repo_dirs(args: list) -> list:
+    """The directories whose repository git reads: -C (composed, in order), --work-tree,
+    and the folder holding --git-dir. None named means the current directory."""
+    opts, _, _ = _git_split(args)
+    out, c_path = [], None
+    for name, value in opts:
+        if name == "-C" and value:
+            c_path = value if c_path is None else os.path.join(c_path, value)
+        elif name == "--work-tree" and value:
+            out.append(value)
+        elif name == "--git-dir" and value:
+            v = value.rstrip("/")
+            out.append(os.path.dirname(v) or "." if os.path.basename(v) == ".git" else v)
+    if c_path is not None:
+        out.insert(0, c_path)
+    return out
 
 
 # fd options that take a value, short and long. Their value is never a pattern or a path,
