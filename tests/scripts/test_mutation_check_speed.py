@@ -464,6 +464,28 @@ def test_e2e_an_edit_made_during_a_subset_run_is_left_as_found(tmp_path, monkeyp
     assert sorted(store.glob("*" + mc.ASIDE_ORIGINAL))[0].read_text() == original
 
 
+def test_e2e_a_crash_kill_by_a_subset_gets_its_kind_from_the_old_tiers(tmp_path):
+    """--strict fails on weak kills, so a subset must not make a kill weaker than the old
+    path would. Here the file runs an ASSERTING test first; the subset (ids sorted by
+    name) would run the CRASHING one first. Measured on pipe_write before this existed:
+    3 mutants newly weak."""
+    src, t = _repo(tmp_path, tests=f"""\
+        import sys; sys.path.insert(0, r'{tmp_path / "tools"}')
+        from subject import classify, double
+        def test_z_asserts(): assert classify(1) == 'pos'
+        def test_a_crashes(): classify(1).upper()
+        def test_neg(): assert classify(-1) == 'neg'
+        def test_double(): assert double(3) == 6 and double(101) == -1
+    """)
+    d = json.loads(_run([str(src), "--whole-file", "--no-cache", "--tests", str(t),
+                         "--json"], tmp_path).stdout)
+    assert d["selection"]["subset_weak_rechecked"] >= 1, d["selection"]
+    plain = json.loads(_run([str(src), "--whole-file", "--no-line-map", "--no-cache",
+                             "--tests", str(t), "--json"], tmp_path).stdout)
+    assert sorted(w["key"] for w in d["weak_kills"]) == \
+        sorted(w["key"] for w in plain["weak_kills"])
+
+
 def test_e2e_the_sweep_argv_still_measures_the_whole_file(tmp_path):
     src, t = _repo(tmp_path)
     src.write_text(SUBJECT.replace("n > 100", "n >= 101"), encoding="utf-8")

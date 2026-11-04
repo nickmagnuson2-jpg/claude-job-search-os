@@ -2066,7 +2066,7 @@ def main() -> int:
     # Per-line selection and cache bookkeeping (see the Speed section).
     line_map, map_info = None, {"status": "skipped"}
     sel = {"subset_runs": 0, "subset_kills": 0, "subset_invalid": 0, "subsets_validated": 0,
-           "no_covering_test": 0}
+           "subset_weak_rechecked": 0, "no_covering_test": 0}
     subset_ok: dict[tuple, bool] = {}
     use_cache = not args.no_cache
     cache_ctx = cache_context(target, original, test_files, REPO_ROOT) if use_cache else None
@@ -2181,9 +2181,19 @@ def main() -> int:
                     passed, kind = run_tests(list(argv), args.timeout, target)
                     if not passed and kind != "timeout":
                         try:
-                            if subset_is_valid(argv):
+                            if subset_is_valid(argv) and kind == "assertion":
                                 decided = True
                                 sel["subset_kills"] += 1
+                            elif subset_ok.get(argv):
+                                # Killed, but by a crash, not an assertion. HOW a mutant is
+                                # killed depends on which test fails first under -x, and
+                                # --strict fails on weak kills, so the kind must come from the
+                                # same tiers as before. Measured on pipe_write: taking the
+                                # subset's kind made 3 mutants newly weak. The tiers below
+                                # decide this one. Validation may have put the unmutated
+                                # source back, so the mutant is written again first.
+                                sel["subset_weak_rechecked"] += 1
+                                write_mutant(target, original, mutated)
                             else:
                                 sel["subset_invalid"] += 1
                                 # The validation put the unmutated source back.
