@@ -135,6 +135,8 @@ If the script fails or classify returned empty destinations: fall back to writin
 
 A `possible_duplicate_reply` refusal (direction `in` or `both`; nothing in the call was written) means the contact's newest entry is already a reply with no message from Nick after it, shown in `existing`; nothing was written for that contact. Show Nick the entry. Because the call wrote nothing, always rerun it: without that contact note if the note is the same reply (it is already counted), with that destination as direction `out` if the refused direction was `both` (so Nick's message is still counted), or with `"new_reply": true` on it if Nick says it is a new message. Every other destination in the call is rerun unchanged. (This differs from `direction_required` above, where the other destinations were already written and only the refused note is rerun.) Rerun that one destination with `"new_reply": true` only if he says it is a new message from them.
 
+A `not_found` refusal on a `contact_note` means the contact is not in the Contacts table of `data/networking.md`: the note is logged through `networking_write.py log` (the only writer of that file, since 2026-11-04), which logs only to a listed contact, and nothing was written for it. This is not a script failure, so do not fall back to `data/notes.md`. Ask Nick whether to add the contact (`PYTHONIOENCODING=utf-8 python3 tools/networking_write.py --repo-root . add "<Name>" --company "<Company>"`), then rerun only that `contact_note`; in a multi-destination call the other destinations were already written.
+
 ### Step 4: Confirm
 
 Display a one-line confirmation:

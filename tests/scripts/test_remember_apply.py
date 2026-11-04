@@ -475,18 +475,18 @@ def run_apply_env(*args, env_extra=None):
 
 # --- contact_note -----------------------------------------------------------
 
-def test_contact_note_creates_section_when_contact_absent(tmp_path):
+def test_contact_note_for_a_contact_not_in_the_roster_is_refused(tmp_path):
+    """Since 2026-11-04 the note goes through networking_write.py log (finding 4.F1), which
+    logs only to a contact in the Contacts table. remember_classify routes contact_note only
+    for such contacts; a hand-built destination for anyone else is refused, nothing written."""
     write_fixture(tmp_path, "data/networking.md", NETWORKING_MD)
     result, code = run_apply(
         "--repo-root", str(tmp_path),
         "--note", "Met Rex Random at a meetup",
         "--destinations", dest_json({"type": "contact_note", "entity": "Rex Random", "direction": "none"}),
     )
-    assert code == 0, f"unknown contact should still succeed, got {result}"
-    content = (tmp_path / "data/networking.md").read_text(encoding="utf-8")
-    assert "### Rex Random" in content, "a new ### section must be appended for an unknown contact"
-    assert f"#### {_today()} | remember | Met Rex Random at a meetup" in content, \
-        "the entry must be a canonical #### interaction header"
+    assert code != 0 and result["code"] == "not_found", result
+    assert (tmp_path / "data/networking.md").read_text(encoding="utf-8") == NETWORKING_MD
 
 
 def test_contact_note_missing_networking_file_is_error(tmp_path):
@@ -516,21 +516,21 @@ def test_contact_note_collapses_multiline_note_into_one_header(tmp_path):
         "whitespace/newlines must be collapsed into a single header line"
 
 
-def test_contact_note_matches_archived_heading_and_preserves_trailing_newline(tmp_path):
-    write_fixture(tmp_path, "data/networking.md",
-                  "# Networking\n\n## Interaction Log\n\n### [ARCHIVED] Jane Doe — Acme\n\n")
+def test_contact_note_with_only_an_archived_section_gets_a_live_one(tmp_path):
+    """networking_write.py log never writes into an [ARCHIVED] section (round 2, F7): with
+    only an archived one, it creates the contact's live section and logs there."""
+    write_fixture(tmp_path, "data/networking.md", NETWORKING_MD.replace(
+        "### Jane Doe — Acme Corp\n", "### [ARCHIVED] Jane Doe — Acme\n"))
     _r, code = run_apply(
         "--repo-root", str(tmp_path),
         "--note", "archived contact resurfaced",
         "--destinations", dest_json({"type": "contact_note", "entity": "Jane Doe", "direction": "none"}),
     )
-    assert code == 0, "archived heading must still match"
+    assert code == 0, _r
     content = (tmp_path / "data/networking.md").read_text(encoding="utf-8")
     assert content.endswith("\n"), "a file that ended with a newline must still end with one"
-    idx_head = content.index("### [ARCHIVED] Jane Doe")
-    idx_entry = content.index("archived contact resurfaced")
-    assert idx_entry > idx_head, "entry must land inside the matched section"
-    assert "### Jane Doe\n" not in content, "must not append a duplicate section"
+    live = content.index("### Jane Doe — Acme Corp")
+    assert content.index("### [ARCHIVED] Jane Doe") < live < content.index("archived contact resurfaced")
 
 
 # --- contact_note, direction in (was outreach_reply) -------------------------
@@ -1311,8 +1311,12 @@ def test_write_atomic_creates_parents_and_leaves_no_tmp(tmp_path):
 
 
 def test_inbound_contact_note_surfaces_an_ambiguous_name_instead_of_no_open_row(tmp_path):
-    """An ambiguous name is not the same as no open row; the warning must say which."""
-    write_fixture(tmp_path, "data/networking.md", NETWORKING_MD)
+    """An ambiguous name is not the same as no open row; the warning must say which.
+    The entity must be in the roster now that the note goes through networking_write."""
+    write_fixture(tmp_path, "data/networking.md", NETWORKING_MD.replace(
+        "| Jane Doe | Acme Corp | PM | peer | 2026-01-01 | — | — |",
+        "| Jane Doe | Acme Corp | PM | peer | 2026-01-01 | — | — |\n"
+        "| Doe | — | — | peer | 2026-01-01 | — | — |"))
     write_fixture(tmp_path, "data/outreach-log.md",
                   "# Outreach Log\n\n"
                   "| Date | Skill | Channel | Recipient | Company | Subject / Summary | Status |\n"
@@ -1380,21 +1384,6 @@ def test_the_direction_is_written_into_the_type(tmp_path, direction, kind, flipp
 # blank line, an inserted separator, or a trailing-newline branch is caught.
 # ---------------------------------------------------------------------------
 
-def _contact(tmp_path, body, entity="Jane Doe", direction="none"):
-    (tmp_path / "data").mkdir(parents=True, exist_ok=True)
-    (tmp_path / "data" / "networking.md").write_text(body, encoding="utf-8")
-    result, code = run_apply(
-        "--repo-root", str(tmp_path), "--note", "met for coffee",
-        "--destinations", dest_json({"type": "contact_note", "entity": entity,
-                                     "file": "data/networking.md", "direction": direction}),
-    )
-    return result, code, (tmp_path / "data" / "networking.md").read_text(encoding="utf-8")
-
-
-def _entry():
-    return f"#### {_today()} | remember | met for coffee"
-
-
 def test_ensure_section_create_path_appends_blank_heading_blank():
     mod = _load_module()
     base = ["# T", "", "## Alpha", "a"]
@@ -1404,35 +1393,11 @@ def test_ensure_section_create_path_appends_blank_heading_blank():
     assert idx is not None and "## Gamma" in grow[idx:idx + 2], f"the index must locate the new heading, got {idx}"
 
 
-def test_contact_note_ignores_tab_separated_decoy_heading(tmp_path):
-    body = "# N\n\n###\tJane Doe\nx\n\n### Jane Doe — Acme Corp\n\nold\n"
-    _r, code, out = _contact(tmp_path, body)
-    assert code == 0, _r
-    assert out == f"# N\n\n###\tJane Doe\nx\n\n### Jane Doe — Acme Corp\n\n{_entry()}\n\nold\n", out
-
-
-def test_contact_note_absent_contact_exact_block(tmp_path):
-    _r, code, out = _contact(tmp_path, "# N\n", entity="Sam Example")
-    assert code == 0, _r
-    assert out == f"# N\n### Sam Example\n\n{_entry()}\n\n", out
-
-
-def test_contact_note_heading_followed_by_blank_line(tmp_path):
-    _r, code, out = _contact(tmp_path, "# N\n\n### Jane Doe\n\nold\n")
-    assert code == 0, _r
-    assert out == f"# N\n\n### Jane Doe\n\n{_entry()}\n\nold\n", out
-
-
-def test_contact_note_heading_followed_directly_by_text(tmp_path):
-    _r, code, out = _contact(tmp_path, "# N\n\n### Jane Doe\nold\n")
-    assert code == 0, _r
-    assert out == f"# N\n\n### Jane Doe\n{_entry()}\n\nold\n", out
-
-
-def test_contact_note_heading_is_last_line_without_trailing_newline(tmp_path):
-    _r, code, out = _contact(tmp_path, "# N\n\n### Jane Doe")
-    assert code == 0, _r
-    assert out == f"# N\n\n### Jane Doe\n{_entry()}\n", out
+# The five exact-layout tests of remember_apply's own section insertion (decoy heading,
+# absent contact, blank line or text after the heading, no trailing newline) were removed on
+# 2026-11-04: that code is gone, and networking_write.py log does the insertion
+# (tests/scripts/test_networking_write_layout.py; parity with remember in
+# tests/scripts/test_remember_apply_contact_via_writer.py).
 
 
 PIPE_HEAD = ("| Company | Role | Stage | Applied | Next | Contact | Notes | Link |\n"

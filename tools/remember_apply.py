@@ -13,7 +13,8 @@ Accepts:
 Destination types handled (11):
   personal_capture → <personal-vault>/data/inbox.md — #personal short-circuit;
                      writes NOTHING into this repo (see remember_classify step 0)
-  contact_note    → data/networking.md — append to contact's section. Needs "direction":
+  contact_note    → data/networking.md — logged through networking_write.py log (the only
+                    writer of that file; the contact must be in its Contacts table). Needs "direction":
                     in / out / both / none (who reached whom, asked by /remember, never
                     inferred). `in` and `both` also set the contact's newest open
                     outreach-log row to Replied.
@@ -40,14 +41,16 @@ Usage:
 """
 import argparse
 import json
+import os
 import re
+import subprocess
 from datetime import datetime
 from pathlib import Path
 import sys as _sys
 _sys.path.insert(0, str(Path(__file__).resolve().parent))
 import inbox_lock
 import outreach_status  # noqa: E402
-from reply_classify import contact_lines, open_reply, with_direction  # noqa: E402
+from reply_classify import contact_lines, open_reply  # noqa: E402
 from md_table import find_section, is_sep_row, out_error, out_ok, parse_cols, read_file, write_atomic  # noqa: E402
 
 NOTES_FILE      = "data/notes.md"
@@ -127,10 +130,17 @@ def duplicate_reply_refusal(dest: dict, lines: list[str]) -> dict | None:
 
 
 def apply_contact_note(note: str, dest: dict, repo_root: Path) -> dict:
-    """Append a `#### YYYY-MM-DD | remember<suffix> | <note>` interaction entry to the
-    matching contact's section in networking.md (parseable by the Interaction-Log
-    reconcilers, unlike the old bare `[date] note` line). The suffix records dest's
-    direction (reply_classify.with_direction); `in` also flips the outreach log."""
+    """Log the note as a `#### YYYY-MM-DD | remember<suffix> | <note>` interaction for the
+    contact, through `networking_write.py log`, the only writer of data/networking.md
+    (finding 4.F1, 2026-11-04). That writer picks the contact's live section (creating it
+    when missing), writes the canonical entry block, updates Last Interaction, and on
+    direction in or both sets the newest open outreach-log row Replied. A contact who is not
+    in the Contacts table is refused (`not_found`) and nothing is written.
+
+    The duplicate-reply check is NOT repeated here: apply_destinations' pre-flight is the one
+    place, so a reply note is passed with --new-reply. Checking again would refuse the second
+    of two notes in one call after the first was written.
+    """
     today = datetime.now().strftime("%Y-%m-%d")
     entity = dest.get("entity", "")
     path = repo_root / NETWORKING_FILE
@@ -140,56 +150,38 @@ def apply_contact_note(note: str, dest: dict, repo_root: Path) -> dict:
                 "message": "contact_note needs direction in, out, both or none: did they "
                            "reach Nick (in), did Nick reach them (out), both in this note "
                            "(both), or neither (none)?"}
-
-    content = read_file(path)
-    if not content:
+    if not read_file(path):
         return {"status": "error", "type": "contact_note",
-                "message": f"networking.md not found or empty"}
+                "message": "networking.md not found or empty"}
 
-    lines = [ln.rstrip("\n").rstrip("\r") for ln in content.splitlines(keepends=True)]
-
-    # Find contact's log section
-    name_lower = entity.lower().strip()
-    sec_start = -1
-    for i, line in enumerate(lines):
-        if not line.startswith("### "):
-            continue
-        m = re.match(r"^###\s+(?:\[ARCHIVED\]\s+)?(.+?)(?:\s+[—–]|$)", line)
-        if m and m.group(1).strip().lower() == name_lower:
-            sec_start = i
-            break
-
-    # Write a canonical interaction-log entry (`#### YYYY-MM-DD | remember | ...`)
-    # rather than a bare `[date] note` line, so the reconcilers that scan the
-    # Interaction Log can see it: outreach_pending.parse_networking_interactions
-    # and networking_read.build_interaction_counts both key off `#### ` date
-    # headers. A bare `[date]` line was invisible to them, so a /remember-captured
-    # reply stayed "awaiting response" in standup (fable-audit Theme 2, 2026-07-14).
-    summary = " ".join(note.split())  # collapse newlines/whitespace for the header
-    entry = f"#### {today} | {with_direction('remember', d)} | {summary}"
-
-    if sec_start == -1:
-        # Contact section not found — append note to general section or create
-        lines.append(f"### {entity}")
-        lines.append("")
-        lines.append(entry)
-        lines.append("")
-    else:
-        # Insert after heading (+ blank line)
-        insert_at = sec_start + 1
-        if insert_at < len(lines) and lines[insert_at].strip() == "":
-            insert_at += 1
-        lines.insert(insert_at, entry)
-        lines.insert(insert_at + 1, "")
-
-    new_content = "\n".join(lines)
-    if content.endswith("\n"):
-        new_content += "\n"
-    write_atomic(path, new_content)
+    summary = " ".join(note.split())  # one header line
+    cmd = [_sys.executable, str(Path(__file__).resolve().parent / "networking_write.py"),
+           "--repo-root", str(repo_root), "log", entity, f"--date={today}",
+           "--type=remember", f"--summary={summary}", f"--direction={d}", "--no-todo"]
+    if d in ("in", "both"):
+        cmd.append("--new-reply")
+    proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
+                          env={**os.environ, "PYTHONIOENCODING": "utf-8"})
+    try:
+        out = json.loads(proc.stdout)
+    except ValueError:
+        out = {"status": "error", "code": "writer_failed",
+               "message": (proc.stderr or "").strip()[-300:] or "networking_write.py gave no output"}
+    if proc.returncode != 0 or out.get("status") != "ok":
+        return {"status": "error", "type": "contact_note",
+                "code": out.get("code") or "writer_failed",
+                "message": f"networking_write.py log refused: {out.get('message')}"}
     result = {"status": "ok", "type": "contact_note", "file": str(path), "entity": entity,
               "direction": d}
     if d in ("in", "both"):
-        result.update(apply_outreach_reply(entity, repo_root))
+        if out.get("outreach_log_updated"):
+            result.update({"outreach_log_updated": True,
+                           "outreach_file": str(repo_root / OUTREACH_FILE)})
+        else:
+            # The writer set no row. Asking outreach_status the same question again gives
+            # the reason (no open row, an ambiguous name, no log) for the warning; it cannot
+            # set a row the writer could not.
+            result.update(apply_outreach_reply(entity, repo_root))
     return result
 
 
