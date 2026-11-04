@@ -34,10 +34,13 @@ Parse the JSON output. The script reads all source files and returns:
 - `pipeline_snapshot{}` — **BUCKETED**: `{ active_process: [], evaluation_backlog: [], terminal: [] }`. Use `active_process` for the displayed snapshot. `evaluation_backlog` is the "To Evaluate / To Apply / Researching" surface (count it, don't list it). `terminal` is Closed/Rejected/Withdrawn/Skipped/Archived (don't display).
 - `networking_activity[]` — contacts with pending todos (separator rows filtered)
 - `substantive_work{}` — `{ outputs_today, outputs_by_entity{}, outputs_paths_by_entity{}, reflections_today, reflections_paths[], memories_today, memories_names[], inbox_entries_today }`. **Treat this as a first-class progress signal**, not optional decoration — heavy work-up days (deep reviews, agent runs, memory captures, drafts) show up here when `completed_today` undercounts them.
+- `shipped_today{}` — `{ available, items: [{sha, time, pr, branch, title}], reason }`: every first-parent commit on `main` in the logical day (04:00 to 04:00), merged PRs with number, branch and title, direct pushes with `pr: null`. **`available: false` is never "nothing shipped"**: render `Shipped to main: unavailable (<reason>)`. Origin 2026-11-03: five PRs merged and the checkout showed none, because System Changes reads only `docs/CHANGELOG.md`.
+- `waiting_to_merge{}` — `{ available, items: [{branch, last_commit, ahead}], older_count, reason }`: local branches not merged into `main` with a commit in the last 7 days. Work held for review lives here, not in open PRs (2026-11-03: zero open PRs, five branches from that day waiting on next-day reviews). List the items; give `older_count` as one number.
 
 **Do not re-read the source files** — use these values directly in Steps 3–7. Specifically: **do NOT call Read on `data/job-todos.md` with a `limit:` parameter** — silent truncation past line 120 produces wrong rankings (origin: 2026-05-13 /standup miss + same-day /checkout fix; see `memory/feedback_todos_full_file_read_required.md`).
 
 Also read separately (not covered by the metrics script):
+- **Workstreams moved since the morning `/standup`:** run `PYTHONIOENCODING=utf-8 python3 tools/workstream_state.py --json` and read `summary.names` with each row's `previous` and `value`. **Never acknowledge here**: `/standup` owns the ack, so "moved" means moved since Nick last saw it. If `/standup` did not run today, say the comparison spans more than a day. A row in `error` is shown, never dropped.
 - `data/weekly-review-log.md` — for tomorrow's top 3 cross-reference (Step 6). Since 2026-10-29 its newest entry is written by Monday's `/standup` (Step 2w); `/weekly-review` was deleted.
 - `data/reflections/_longitudinal.md` (if present) — read the TOP entry only (newest). Surface 1-2 headline lines from its three axes (thinking patterns / decision biases / communication tendencies) as the longitudinal read in the checkout summary. This is the `/my-world` deep-pass output; skip silently if the file does not exist.
 
@@ -83,6 +86,19 @@ Write today's entry to `data/job-todos-daily-log.md` in this exact format:
 #### System Changes
 - [Entry title] — [one-line summary]
 (omit section entirely if no changelog entries match today)
+
+#### Shipped to Main
+- [HH:MM] PR #N [branch]: [title]   (or "[HH:MM] direct: [subject]" when pr is null)
+(from `shipped_today`; "unavailable (<reason>)" if `available` is false; "Nothing merged to main today." if available and empty)
+
+#### Waiting to Merge
+- [branch] — [ahead] commit(s) ahead, last commit [date]
+> [older_count] older unmerged branches (snapshots and pre-merge copies, not listed)
+(from `waiting_to_merge`; omit the section only when available and empty)
+
+#### Workstreams Moved
+- [name]: [previous] -> [value]
+(from `workstream_state.py --json` summary.names; omit when none moved and none errored)
 
 #### Artifacts Produced Today
 **Outputs (N files across M entities):**
@@ -324,6 +340,11 @@ If all five rows are zero, show: "> No substantive artifacts today — light day
 
 #### System Changes
 - [Changelog entry — omit section entirely if none]
+
+#### Shipped Today / Waiting to Merge
+- **Shipped to main:** [N] — [one line each: time, PR #, title]. "Unavailable (<reason>)" if git could not be read.
+- **Waiting to merge:** [N] branch(es) from the last 7 days — [branch (ahead)] ... · [older_count] older
+- **Workstreams moved since standup:** [name prev -> value, ...] or "none"
 
 #### State Audit (diagnose, don't close)
 - [Stuck Claude tasks, long-overdue todos, stalled pipeline, overdue networking follow-ups — see Step 4c. Omit section entirely if all audits clean.]
