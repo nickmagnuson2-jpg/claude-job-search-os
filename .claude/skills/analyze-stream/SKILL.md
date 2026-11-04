@@ -31,12 +31,20 @@ Check, and write down what each returned, before saying a recording does not exi
 2. Gmail: `search_threads` for the event name and "recording" in the last 7 days.
 3. The event page (Luma or vendor).
 4. The host's X account.
-5. **If the URL is a social repost of a video** (an X, LinkedIn or similar post whose video is not the poster's own recording), check what the video actually is before `acquire`: find the original (search the title and the speaker), then match one distinctive line from the start of the reupload against the original's official captions. A caption like "X dropped a 2-hour masterclass on Y" is a label, not evidence of content. If the original has official captions, offer `/analyze <original url>` on those first: it needs no Whisper and no chunk agents. Report the match (original id, offset, line) to Nick before spending on the pipeline. Origin 2026-11-02: an "agents masterclass" repost was Karpathy's early-2025 "How I use LLMs" from 7:01, with no agent content; see `feedback_a_url_slug_is_not_a_source`.
+5. **If the URL is a social repost of a video** (an X, LinkedIn or similar post whose video is not the poster's own recording), check what the video actually is before `transcribe`: find the original (search the title and the speaker) before `acquire`, then match one distinctive line from the start of the reupload against the original's official captions, in Step 1 between `acquire` and `transcribe`. A caption like "X dropped a 2-hour masterclass on Y" is a label, not evidence of content. Report the match (original id, offset, line) to Nick before spending on the pipeline. Origin 2026-11-02: an "agents masterclass" repost was Karpathy's early-2025 "How I use LLMs" from 7:01, with no agent content; see `feedback_a_url_slug_is_not_a_source`.
 
 ## Step 1: Acquire and transcribe
 
 ```bash
 PYTHONIOENCODING=utf-8 python3 tools/stream_pipeline.py acquire "<url>" --slug <slug> --date <date>
+```
+**Repost check (Step 0 item 5 only), before `transcribe`.** No subcommand transcribes a clip, so cut the first two minutes of the `media` file that `acquire` prints and run Whisper on that alone:
+```bash
+ffmpeg -hide_banner -loglevel error -y -t 120 -i "<media>" -ar 16000 -ac 1 -c:a pcm_s16le "<media>.head.wav"
+whisper-cli -m ~/.cache/whisper-cpp/ggml-large-v3-turbo.bin -f "<media>.head.wav" -l en -otxt -of "<media>.head" -np
+```
+Match one distinctive line from `<media>.head.txt` against the original's official captions and report the match to Nick. If nothing matches, or it matches a different talk than the post claims, stop here.
+```bash
 PYTHONIOENCODING=utf-8 python3 tools/stream_pipeline.py transcribe --slug <slug> --date <date>
 ```
 `acquire` tries without cookies. On HTTP 402/403, tell Nick and ask before retrying with browser cookies. `transcribe` runs in the background for long streams (about 25 min per 9 h on the current machine; segmented timing is still being measured). Report `failed` segments and `seam_recovered_cues` from its output.
