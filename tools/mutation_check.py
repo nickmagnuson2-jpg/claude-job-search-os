@@ -741,9 +741,11 @@ def _run_reaping_descendants(cmd: list[str], env: dict[str, str], timeout: int,
     return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
 
 
-def run_tests(test_files: list[Path], timeout: int,
+def run_tests(test_files: list, timeout: int,
               target: Path | None = None,
-              details: dict | None = None) -> tuple[bool, str]:
+              details: dict | None = None,
+              extra_args: list[str] | None = None,
+              extra_env: dict[str, str] | None = None) -> tuple[bool, str]:
     """(passed, kill_kind).
 
     kill_kind classifies HOW the suite noticed a mutation, which is the difference
@@ -768,8 +770,10 @@ def run_tests(test_files: list[Path], timeout: int,
     make the gate noisy, and a noisy gate gets disabled -- which is worse than no gate,
     because it still reads as protection.
     """
+    # `test_files` may hold node ids (`/abs/test_x.py::test_a`) as well as paths: the
+    # line-map tier passes the ids that execute a mutated line.
     cmd = [sys.executable, "-m", "pytest", "-q", "-x", "--no-header",
-           "--tb=line", "-rf", *map(str, test_files)]
+           "--tb=line", "-rf", *(extra_args or []), *map(str, test_files)]
     # tests/conftest.py refuses to run when a *.mutation_backup exists, because that means
     # the tree is mid-mutation and any pass/fail is measuring a file nobody meant to test
     # (2026-08-24 incident, see that fixture's docstring). These subprocesses are the ONE
@@ -801,6 +805,7 @@ def run_tests(test_files: list[Path], timeout: int,
     # (vault_paths.py 2026-08-19 and 2026-08-28, todo_write.py 2026-09-05).
     if target is not None:
         env["MUTATION_CHECK_TARGET"] = str(target.relative_to(REPO_ROOT))
+    env.update(extra_env or {})
     try:
         r = _run_reaping_descendants(cmd, env, timeout)
     except subprocess.TimeoutExpired:
@@ -825,6 +830,429 @@ def run_tests(test_files: list[Path], timeout: int,
         # than a missing signal, because it sends someone to rewrite a good test.
         return False, "unknown"
     return False, ("assertion" if kinds & _ASSERTION_KINDS else "error")
+
+
+# ---------------------------------------------------------------------------
+# Speed (2026-11-04): diff scope, per-line test selection, verdict cache
+# ---------------------------------------------------------------------------
+# WHY. check_public_pii took ~17s per mutant x 733 mutants (~3.5h) for a 6-line change, and
+# with three mutation slots per machine, sessions queued for a slot all day. Three changes,
+# each chosen by Nick on 2026-11-04, and each built so that it can only make a run FASTER,
+# never change a verdict:
+#
+#   1. DIFF SCOPE. By default only mutants on lines changed against a base are run. The
+#      overnight sweep keeps the whole file (see resolve_scope).
+#   2. PER-LINE SELECTION. One pass records which test ids execute which lines; a mutant
+#      runs first against the ids that reach it. A SURVIVED verdict is still only ever
+#      reached after the FULL mapped set has run, exactly as before, so selection can only
+#      speed up kills. A kill by a subset is trusted only after that same subset passes on
+#      the unmutated source (an order-dependent test fails alone, and would otherwise be a
+#      FALSE KILL, the one error this tool must never make).
+#   3. VERDICT CACHE. A mutant whose inputs are byte-identical to a measured one reuses its
+#      verdict. A cached SURVIVED is reported as a survivor, like a fresh one.
+
+def mutant_spans(tree: ast.AST) -> dict[tuple, tuple[int, int]]:
+    """{(lineno, col, op): (first line, last line)} of the code each mutant replaces.
+
+    For an `if`, the span is the `if` line through the end of its TEST, not its body: a
+    change inside the body is the body's own mutants' business, and an IF_TRUE mutant does
+    not alter a line in the body."""
+    spans: dict[tuple, tuple[int, int]] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.If):
+            end = getattr(node.test, "end_lineno", None) or node.lineno
+            for op in ("IF_FALSE", "IF_TRUE"):
+                spans[(node.lineno, node.col_offset, op)] = (node.lineno, end)
+        elif isinstance(node, (ast.Compare, ast.Return, ast.Expr, ast.Continue)):
+            end = getattr(node, "end_lineno", None) or node.lineno
+            for op in ("NEGATE_CMP", "RETURN_NONE", "DROP_CALL", "DROP_CONTINUE"):
+                spans[(node.lineno, node.col_offset, op)] = (node.lineno, end)
+    return spans
+
+
+def _git(args: list[str], root: Path, timeout: int = 30) -> subprocess.CompletedProcess | None:
+    """git in `root`, with GIT_* dropped (a run started from a hook must ask about the tree
+    it stands in). None when git cannot be asked at all."""
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    try:
+        return subprocess.run(["git", *args], cwd=str(root), env=env, capture_output=True,
+                              text=True, timeout=timeout)
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def resolve_base(root: Path, ref: str | None) -> str | None:
+    """The commit to diff against: `ref` if given, else merge-base(HEAD, origin/main).
+    None when git cannot resolve it (not a checkout, no origin/main, a bad ref)."""
+    if ref:
+        r = _git(["rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"], root)
+    else:
+        r = _git(["merge-base", "HEAD", "origin/main"], root)
+    if r is None or r.returncode != 0 or not r.stdout.strip():
+        return None
+    return r.stdout.strip().splitlines()[0]
+
+
+_HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@", re.M)
+
+
+def parse_hunks(diff_text: str) -> tuple[set[int], set[int]]:
+    """(changed, deleted_at) from `git diff -U0` output, in NEW-file line numbers.
+
+    `changed` is every added or modified line. A hunk that only deletes has a new-side
+    count of 0; git then names the line BEFORE the gap (0 for the top of the file), and
+    that line goes in `deleted_at`."""
+    changed: set[int] = set()
+    deleted_at: set[int] = set()
+    for m in _HUNK_RE.finditer(diff_text):
+        start = int(m.group(1))
+        count = 1 if m.group(2) is None else int(m.group(2))
+        if count == 0:
+            deleted_at.add(start)
+        else:
+            changed.update(range(start, start + count))
+    return changed, deleted_at
+
+
+def diff_scope(target: Path, base: str, root: Path) -> dict | None:
+    """What changed in `target` between `base` and the WORKING TREE (uncommitted edits
+    count: they are what this run mutates). None when git cannot answer.
+
+    A file that does not exist at `base` (new, untracked, or renamed) is `new_file`: every
+    mutant in it is in scope, because nothing about it was measured at the base."""
+    rel = target.resolve().relative_to(root.resolve()).as_posix()
+    exists = _git(["cat-file", "-e", f"{base}:{rel}"], root)
+    if exists is None:
+        return None
+    if exists.returncode != 0:
+        return {"new_file": True, "changed": set(), "deleted_at": set()}
+    r = _git(["diff", "-U0", "--no-color", "--no-ext-diff", base, "--", rel], root)
+    if r is None or r.returncode != 0:
+        return None
+    changed, deleted_at = parse_hunks(r.stdout)
+    return {"new_file": False, "changed": changed, "deleted_at": deleted_at}
+
+
+def _function_spans(tree: ast.AST) -> list[tuple[int, int]]:
+    return [(n.lineno, getattr(n, "end_lineno", n.lineno)) for n in ast.walk(tree)
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
+
+
+def in_scope(span: tuple[int, int], scope: dict, functions: list[tuple[int, int]]) -> bool:
+    """Is a mutant whose code spans `span` part of this diff?
+
+    CHANGED LINES: the mutant's own code overlaps one.
+    DELETED LINES: a deletion leaves no line to point at, but it changes what its
+    surroundings do (a removed guard leaves the code after it unguarded). So every mutant
+    in the innermost function enclosing the gap is in scope. The gap sits between line
+    `n` and `n + 1`; each of the two is checked, since a deletion at a function's edge
+    belongs to either side. A gap outside every function scopes the mutants on those two
+    lines only.
+    NEW FILE: everything (handled by the caller)."""
+    start, end = span
+    if any(start <= n <= end for n in scope["changed"]):
+        return True
+    for gap in scope["deleted_at"]:
+        for line in (gap, gap + 1):
+            enclosing = [f for f in functions if f[0] <= line <= f[1]]
+            if enclosing:
+                lo, hi = min(enclosing, key=lambda f: f[1] - f[0])
+                if lo <= start and end <= hi:
+                    return True
+            elif start <= line <= end:
+                return True
+    return False
+
+
+def changed_test_inputs(base: str, root: Path, test_files: list) -> list[str] | None:
+    """Test-side inputs of this target that differ between `base` and the working tree:
+    a mapped test file, a conftest.py under tests/ (pytest loads it implicitly), or a
+    non-test module under tests/ that a mapped test imports. Untracked files count.
+    None when git cannot answer."""
+    diff = _git(["diff", "--name-only", "--no-ext-diff", base, "--"], root)
+    untracked = _git(["ls-files", "--others", "--exclude-standard"], root)
+    if diff is None or untracked is None or diff.returncode != 0 \
+            or untracked.returncode != 0:
+        return None
+    changed = {p for p in (diff.stdout + untracked.stdout).splitlines() if p.strip()}
+
+    def rel(p) -> str | None:
+        try:
+            return Path(p).resolve().relative_to(root.resolve()).as_posix()
+        except (ValueError, OSError):
+            return None
+
+    mapped = {r for r in (rel(t) for t in test_files) if r}
+    imported: set[str] = set()
+    texts: list[str] = []
+    for t in test_files:
+        try:
+            text = Path(t).read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        texts.append(text)
+        imported |= set(_IMPORT_RE.findall(text))
+    hits = []
+    for p in sorted(changed):
+        name = Path(p).name
+        if p in mapped:
+            hits.append(p)
+        elif p.startswith("tests/") and name == "conftest.py":
+            hits.append(p)
+        elif p.startswith("tests/") and p.endswith(".py") and not name.startswith("test_") \
+                and Path(p).stem in imported:
+            hits.append(p)
+        elif p.startswith("tests/") and not name.startswith("test_") \
+                and any(name in text or p in text for text in texts):
+            # Fixture data a mapped test names (job-search-ee, 2026-11-04): a weakened
+            # fixture weakens the test like an edited assertion. Matched by name too, so a
+            # common name can over-trigger; that costs time, never coverage.
+            hits.append(p)
+    return hits
+
+
+def resolve_scope(args, target: Path, root: Path, test_files: list | None = None) -> dict:
+    """Which mutants this run measures. Returns {"mode", "base", "reason", ...}.
+
+    DEFAULT IS THE DIFF against merge-base(HEAD, origin/main), because the question a
+    session asks is "does the suite see what I just changed" (the 6-line change that took
+    3.5h). Two things keep the whole file:
+      --whole-file           explicit, any caller;
+      MUTATION_SWEEP_ACTIVE  set by mutation_sweep in every child it starts. The sweep
+                             measures the corpus, not a diff, and must keep doing so
+                             without its own code changing (its argv is
+                             `<tool> --isolation --json`).
+    --base REF picks the base explicitly and wins over the sweep default.
+
+    When the base cannot be resolved the run measures the WHOLE file and says why, never
+    zero mutants: an unanswerable scope must cost time, not coverage.
+
+    A CHANGED TEST also means the whole file (job-search-ee for Nick, 2026-11-04). The
+    diff of the code can be empty while the diff of its tests weakens them, and a diff-only
+    run would then report no_changed_mutants for exactly the commit the mutation rule
+    exists to catch. Weakening a test can expose a mutant on ANY line, so the scope is
+    every line."""
+    if args.whole_file:
+        return {"mode": "whole_file", "base": None, "reason": "--whole-file"}
+    if not args.base and os.environ.get(SWEEP_ENV):
+        return {"mode": "whole_file", "base": None, "reason": f"{SWEEP_ENV} (overnight sweep)"}
+    base = resolve_base(root, args.base)
+    if base is None:
+        what = f"--base {args.base}" if args.base else "merge-base(HEAD, origin/main)"
+        return {"mode": "whole_file", "base": None,
+                "reason": f"could not resolve {what}; measuring the whole file"}
+    d = diff_scope(target, base, root)
+    if d is None:
+        return {"mode": "whole_file", "base": base,
+                "reason": "git could not diff the target; measuring the whole file"}
+    if d["new_file"]:
+        return {"mode": "whole_file", "base": base,
+                "reason": "the target does not exist at the base (new, untracked or renamed)"}
+    tests_changed = changed_test_inputs(base, root, test_files or [])
+    if tests_changed is None:
+        return {"mode": "whole_file", "base": base,
+                "reason": "git could not list changed test files; measuring the whole file"}
+    if tests_changed:
+        return {"mode": "whole_file", "base": base, "tests_changed": tests_changed,
+                "reason": "test inputs changed since the base ("
+                          + ", ".join(tests_changed[:5])
+                          + (", ..." if len(tests_changed) > 5 else "")
+                          + "); a weakened test can expose a mutant on any line"}
+    return {"mode": "diff", "base": base, "reason": "diff against the base",
+            "changed": d["changed"], "deleted_at": d["deleted_at"]}
+
+
+# --- per-line selection -------------------------------------------------------------------
+
+LINEMAP_MODULE = Path(__file__).resolve().parent / "mutation_linemap.py"
+# Longest node-id argv the subset tier passes before it falls back to whole files.
+MAX_ID_ARGV_CHARS = 100_000
+
+
+def build_line_map(target: Path, test_files: list, timeout: int) -> tuple[dict | None, dict]:
+    """({line: {absolute test node ids}}, info) from one pass of the mapped tests with the
+    recorder loaded; (None, info) when no usable map came out.
+
+    The recorder (mutation_linemap.py) is COPIED into a scratch directory, with a
+    sitecustomize shim, and that directory goes on PYTHONPATH for this pass only, so Python
+    children that inherit the environment record too. The mutant runs never see it.
+
+    The pass runs the UNMUTATED source. If it is red, or records nothing, the map is
+    discarded and the run uses the file tier exactly as before: a map built from a failing
+    run cannot be trusted to name the tests that reach a line."""
+    info: dict = {"status": None, "seconds": 0.0, "lines": 0, "tests": 0}
+    started = time.monotonic()
+    try:
+        import mutation_linemap as lm
+    except Exception as e:
+        info.update(status=f"recorder_unavailable: {type(e).__name__}")
+        return None, info
+    with tempfile.TemporaryDirectory(prefix="mutation-linemap-") as d:
+        shim, out = Path(d) / "shim", Path(d) / "out"
+        shim.mkdir()
+        shutil.copyfile(LINEMAP_MODULE, shim / "_mutation_linemap.py")
+        (shim / "sitecustomize.py").write_text(lm.SITECUSTOMIZE, encoding="utf-8")
+        base_pp = _test_env_base().get("PYTHONPATH", "")
+        env = {"PYTHONPATH": os.pathsep.join(p for p in (str(shim), base_pp) if p),
+               lm.ENV_TARGET: str(target.resolve()), lm.ENV_OUT: str(out),
+               lm.ENV_TEST: lm.OUTSIDE}
+        details: dict = {}
+        passed, _ = run_tests(test_files, timeout, details=details,
+                              extra_args=["-p", "_mutation_linemap"], extra_env=env)
+        info["seconds"] = round(time.monotonic() - started, 1)
+        if not passed:
+            info.update(status="map_pass_failed" if not details.get("timed_out")
+                        else "map_pass_timed_out", failed=details.get("failed", []))
+            return None, info
+        mapping = lm.by_line(lm.read_records(str(out)))
+    if not mapping:
+        info.update(status="map_empty")
+        return None, info
+    info.update(status="ok", lines=len(mapping),
+                tests=len(set().union(*mapping.values())))
+    return mapping, info
+
+
+def covering_ids(span: tuple[int, int], line_map: dict) -> set[str]:
+    """Test ids that executed any line of a mutant's code."""
+    ids: set[str] = set()
+    for n in range(span[0], span[1] + 1):
+        ids |= line_map.get(n, set())
+    return ids
+
+
+def subset_argv(ids: set[str]) -> list[str]:
+    """The ids as pytest arguments; their files instead when the argv would be too long
+    (a coarser subset, still a subset, still validated the same way)."""
+    argv = sorted(ids)
+    if sum(len(a) + 1 for a in argv) > MAX_ID_ARGV_CHARS:
+        argv = sorted({a.partition("::")[0] for a in argv})
+    return argv
+
+
+# --- verdict cache ------------------------------------------------------------------------
+
+CACHE_DIR_ENV = "MUTATION_CACHE_DIR"
+CACHE_VERSION = 1
+_IMPORT_RE = re.compile(r"^\s*(?:import|from)\s+(\w+)", re.M)
+_TOOL_PATH_RE = re.compile(r"tools/(\w+)\.py")
+
+
+def cache_dir(root: Path | None = None) -> Path:
+    """Gitignored, inside the checkout (`.mutation-cache/`), so every tree, including the
+    throwaway repos the test suite builds, has its own. MUTATION_CACHE_DIR overrides."""
+    override = os.environ.get(CACHE_DIR_ENV)
+    return Path(override) if override else (root or REPO_ROOT) / ".mutation-cache"
+
+
+def _sha(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def _file_sha(path: Path) -> str:
+    try:
+        return _sha(path.read_bytes())
+    except OSError:
+        return "unreadable"
+
+
+def _local_deps(texts: list[str], tools_dir: Path) -> set[Path]:
+    """tools/*.py modules the given sources import or name as `tools/<x>.py`, followed
+    transitively through what those modules import."""
+    modules = {f.stem: f for f in tools_dir.glob("*.py")} if tools_dir.is_dir() else {}
+    pending = set()
+    for text in texts:
+        pending |= set(_IMPORT_RE.findall(text)) | set(_TOOL_PATH_RE.findall(text))
+    seen: set[str] = set()
+    while pending:
+        name = pending.pop()
+        if name in seen or name not in modules:
+            continue
+        seen.add(name)
+        try:
+            text = modules[name].read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        pending |= set(_IMPORT_RE.findall(text)) | set(_TOOL_PATH_RE.findall(text))
+    return {modules[n] for n in seen}
+
+
+def cache_context(target: Path, original: str, test_files: list, root: Path) -> str:
+    """One hash of everything a verdict depends on that this tool can name.
+
+    The WHOLE target file, not only the mutated function (Nick asked for at least the
+    function). A mutant in f is killed or not by what f CALLS, and a cached KILLED that a
+    callee edit made stale is a false kill. The mapped test files, by content. Every file
+    under tests/ that is not a test file (conftest.py, helpers, fixture data), because
+    any test can read them. The tools/ modules the target and the tests import or name,
+    transitively. This tool and its recorder, by content, and the Python version.
+
+    NOT covered, and the reason --no-cache exists: files outside tools/ and tests/ that a
+    test reads (docs, data), environment variables, the network, the clock."""
+    def rel(p: Path) -> str:
+        try:
+            return p.resolve().relative_to(root.resolve()).as_posix()
+        except ValueError:
+            return str(p)
+
+    tests = sorted({Path(t) for t in test_files}, key=str)
+    support: dict[str, str] = {}
+    tests_dir = root / "tests"
+    if tests_dir.is_dir():
+        for p in sorted(tests_dir.rglob("*")):
+            if not p.is_file() or "__pycache__" in p.parts or ".pytest_cache" in p.parts:
+                continue
+            if p.name.startswith("test_") and p.suffix == ".py":
+                continue                      # only the MAPPED test files count
+            support[rel(p)] = _file_sha(p)
+    texts = [original]
+    for t in tests:
+        try:
+            texts.append(t.read_text(encoding="utf-8", errors="ignore"))
+        except OSError:
+            pass
+    deps = _local_deps(texts, target.parent)
+    deps.discard(target)
+    ctx = {
+        "version": CACHE_VERSION,
+        "tool": _file_sha(SELF), "recorder": _file_sha(LINEMAP_MODULE),
+        "python": sys.version,
+        "target": rel(target), "target_sha": _sha(original.encode("utf-8")),
+        "tests": {rel(t): _file_sha(t) for t in tests},
+        "support": support,
+        "deps": {rel(p): _file_sha(p) for p in sorted(deps, key=str)},
+    }
+    return _sha(json.dumps(ctx, sort_keys=True).encode("utf-8"))
+
+
+def cache_key(context: str, entry: dict) -> str:
+    return _sha(f"{context}|{entry['line']}|{entry['col']}|{entry['op']}".encode("utf-8"))
+
+
+def cache_get(key: str, root: Path | None = None) -> dict | None:
+    path = cache_dir(root) / key[:2] / f"{key}.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict) or data.get("verdict") not in ("killed", "survived"):
+        return None
+    return data
+
+
+def cache_put(key: str, verdict: str, kind: str, root: Path | None = None) -> None:
+    """Record a FINAL verdict. Timeouts and unfinished mutants are never cached: nothing
+    was learned about them. Best effort and atomic (several slots may write at once)."""
+    path = cache_dir(root) / key[:2] / f"{key}.json"
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+        tmp.write_text(json.dumps({"verdict": verdict, "kind": kind,
+                                   "at": time.strftime("%Y-%m-%dT%H:%M:%S")}),
+                       encoding="utf-8")
+        os.replace(tmp, path)
+    except OSError:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -1475,6 +1903,18 @@ def main() -> int:
                     help="run in a throwaway linked worktree made from HEAD and removed "
                          "afterwards; the way to test a wired hook during a live session. "
                          "Refuses if the target or its mapped tests have uncommitted changes.")
+    ap.add_argument("--whole-file", action="store_true",
+                    help="measure every mutant in the file. The default measures only "
+                         "mutants on lines changed against --base; the overnight sweep "
+                         "(MUTATION_SWEEP_ACTIVE) defaults to the whole file.")
+    ap.add_argument("--base", default=None,
+                    help="git ref to diff against (default: merge-base of HEAD and "
+                         "origin/main). Implies diff scope, even under the sweep.")
+    ap.add_argument("--no-line-map", action="store_true",
+                    help="skip per-line test selection; every mutant runs against the "
+                         "file tier, then the full mapped set, as before 2026-11-04")
+    ap.add_argument("--no-cache", action="store_true",
+                    help="neither read nor write the verdict cache (.mutation-cache/)")
     args = ap.parse_args()
     if args.in_worktree and not _is_linked_worktree(REPO_ROOT):
         return run_in_worktree(sys.argv[1:], args)
@@ -1572,8 +2012,31 @@ def main() -> int:
                         "key": mutant_key(rel, func, op, line),
                         "source": line.strip()[:100]})
 
+    # Scope: the whole file, or the mutants on lines the diff touched (resolve_scope).
+    spans = mutant_spans(tree)
+    scope = resolve_scope(args, target, REPO_ROOT, test_files)
+    mutants_in_file = len(catalog)
+    if scope["mode"] == "diff":
+        functions = _function_spans(tree)
+        catalog = [e for e in catalog
+                   if in_scope(spans.get((e["line"], e["col"], e["op"]),
+                                         (e["line"], e["line"]), ),
+                               scope, functions)]
+    scope_out = {"mode": scope["mode"], "base": scope["base"], "reason": scope["reason"],
+                 "mutants_in_file": mutants_in_file, "mutants_in_scope": len(catalog)}
+    if scope.get("tests_changed"):
+        scope_out["tests_changed"] = scope["tests_changed"]
+    if scope["mode"] == "diff":
+        scope_out["changed_lines"] = sorted(scope["changed"])
+        scope_out["deleted_after_lines"] = sorted(scope["deleted_at"])
+    if scope["mode"] == "whole_file" and scope["reason"] != "--whole-file" \
+            and not os.environ.get(SWEEP_ENV):
+        print(f"mutation_check: scope: whole file ({scope['reason']})",
+              file=sys.stderr, flush=True)
+
     if args.list:
         print(json.dumps({"status": "ok", "target": rel, "mutants": len(catalog),
+                          "scope": scope_out,
                           "tests": [str(t) for t in test_files], "catalog": catalog},
                          indent=2))
         return 0
@@ -1600,6 +2063,15 @@ def main() -> int:
     unclassified, timed_out = [], []
     diverged = False
     fast, probe_seconds, full_reruns = None, 0.0, 0
+    # Per-line selection and cache bookkeeping (see the Speed section).
+    line_map, map_info = None, {"status": "skipped"}
+    sel = {"subset_runs": 0, "subset_kills": 0, "subset_invalid": 0, "subsets_validated": 0,
+           "no_covering_test": 0}
+    subset_ok: dict[tuple, bool] = {}
+    use_cache = not args.no_cache
+    cache_ctx = cache_context(target, original, test_files, REPO_ROOT) if use_cache else None
+    cache_stats = {"enabled": use_cache, "hits": 0, "writes": 0,
+                   "dir": str(cache_dir()) if use_cache else None}
     # A5 (plan, output/mutation-parallel-102826/plan.md): two runs went 8+ hours with no
     # output (2026-10-25, 2026-10-27). A progress line every PROGRESS_EVERY mutants, a
     # --max-hours stop, and the total wall time in the result.
@@ -1609,13 +2081,40 @@ def main() -> int:
         # only a mutant that survives them is run against every mapped file. A kill in
         # the first tier is a kill in the full set, and a survivor is only reported after
         # the full set has had its chance, so the verdicts match a full run.
+        # No mutants in scope: nothing to probe or map. The baseline above still ran, so a
+        # red suite is still reported, and --isolation below still runs.
         probe_started = time.monotonic()
-        try:
-            fast = files_that_run(target, original, test_files, args.timeout)
-        except TargetDiverged:
-            diverged = True
+        if catalog:
+            try:
+                fast = files_that_run(target, original, test_files, args.timeout)
+            except TargetDiverged:
+                diverged = True
         probe_seconds = round(time.monotonic() - probe_started, 1)
         tiered = bool(fast) and len(fast) < len(test_files)
+        # The per-line map is built on the unmutated source, after the probe has put it
+        # back (files_that_run writes an instrumented copy through write_mutant).
+        if catalog and not diverged and not args.no_line_map:
+            try:
+                write_mutant(target, original, original)
+                line_map, map_info = build_line_map(target, test_files, args.timeout)
+            except TargetDiverged:
+                diverged = True
+            if line_map is None and not diverged:
+                print(f"mutation_check: per-line selection off ({map_info['status']}); "
+                      f"every mutant runs the file tier, then the full mapped set",
+                      file=sys.stderr, flush=True)
+
+        def subset_is_valid(argv: tuple) -> bool:
+            """Does this subset pass on the UNMUTATED source? Asked once per subset. A
+            subset that fails without any mutation (an order-dependent test, an id pytest
+            cannot select) proves nothing about a mutant, so its kills are not trusted."""
+            if argv not in subset_ok:
+                write_mutant(target, original, original)
+                ok, _ = run_tests(list(argv), args.timeout)
+                subset_ok[argv] = ok
+                sel["subsets_validated"] += 1
+            return subset_ok[argv]
+
         for n, entry in enumerate([] if diverged else catalog):
             if args.max_hours is not None and \
                     time.monotonic() - run_started > args.max_hours * 3600:
@@ -1627,6 +2126,25 @@ def main() -> int:
                       f"{round(time.monotonic() - run_started)}s", file=sys.stderr, flush=True)
             done += 1
             key = entry["key"]
+            ck = cache_key(cache_ctx, entry) if use_cache else None
+            hit = cache_get(ck) if use_cache else None
+            if hit is not None:
+                # Identical inputs were measured before. Reported exactly like a fresh
+                # verdict: a cached SURVIVED is a survivor (and fails the run), and the
+                # allowlist is applied now, not when the verdict was stored.
+                cache_stats["hits"] += 1
+                if hit["verdict"] == "survived":
+                    if key in allow and str(allow[key]).strip():
+                        allowed.append({**entry, "reason": allow[key], "cached": True})
+                    else:
+                        survived.append({**entry, "cached": True})
+                else:
+                    killed += 1
+                    if hit.get("kind") == "error":
+                        weak.append({**entry, "killed_by": "error", "cached": True})
+                    elif hit.get("kind") == "unknown":
+                        unclassified.append({**entry, "killed_by": "unknown", "cached": True})
+                continue
             mut = _Mutator((entry["line"], entry["col"], entry["op"]))
             new_tree = mut.visit(ast.parse(original))
             if not mut.applied:
@@ -1649,10 +2167,41 @@ def main() -> int:
             # `target` is passed ONLY here, never on the baseline run above: at baseline
             # the file is unmutated, so a ratchet firing on it means real corruption and
             # must still turn the run baseline_red.
-            passed, kind = run_tests(fast if tiered else test_files, args.timeout, target)
-            if passed and tiered:
-                full_reruns += 1
-                passed, kind = run_tests(test_files, args.timeout, target)
+            decided = False
+            if line_map is not None:
+                ids = covering_ids(spans.get((entry["line"], entry["col"], entry["op"]),
+                                             (entry["line"], entry["line"])), line_map)
+                if not ids:
+                    # Nothing recorded for this line: not "no test reaches it", only "the
+                    # recorder did not see one". The tiers below decide it.
+                    sel["no_covering_test"] += 1
+                else:
+                    argv = tuple(subset_argv(ids))
+                    sel["subset_runs"] += 1
+                    passed, kind = run_tests(list(argv), args.timeout, target)
+                    if not passed and kind != "timeout":
+                        try:
+                            if subset_is_valid(argv):
+                                decided = True
+                                sel["subset_kills"] += 1
+                            else:
+                                sel["subset_invalid"] += 1
+                                # The validation put the unmutated source back.
+                                write_mutant(target, original, mutated)
+                        except TargetDiverged:
+                            diverged = True       # same handling as the write above
+                            break
+                    # A subset that PASSES, or times out, decides nothing: the tiers below
+                    # run, and a survivor is only ever reported after the full mapped set.
+            if not decided:
+                passed, kind = run_tests(fast if tiered else test_files, args.timeout,
+                                         target)
+                if passed and tiered:
+                    full_reruns += 1
+                    passed, kind = run_tests(test_files, args.timeout, target)
+            if use_cache and kind != "timeout":
+                cache_put(ck, "survived" if passed else "killed", kind)
+                cache_stats["writes"] += 1
             if passed:
                 if key in allow and str(allow[key]).strip():
                     allowed.append({**entry, "reason": allow[key]})
@@ -1709,10 +2258,18 @@ def main() -> int:
         # "incomplete" outranks "survivors": a run stopped by --max-hours has not looked at
         # every mutant, so its survivor list is a lower bound (Codex commit-3 review F2).
         # "ok" claims every mutant got a verdict, so timeouts are their own status.
+        # "no_changed_mutants": a diff-scoped run whose diff touched no mutable line. Its
+        # own status, never "ok", so that "nothing was measured" cannot read as "all killed".
         "status": ("incomplete" if unfinished
                    else "survivors" if survived
-                   else "mutants_timed_out" if timed_out else "ok"),
+                   else "mutants_timed_out" if timed_out
+                   else "no_changed_mutants" if not catalog else "ok"),
         "target": rel,
+        "scope": scope_out,
+        # Per-line selection (build_line_map). `no_covering_test` mutants ran the file tier
+        # and the full mapped set, as every mutant did before; it is said, not hidden.
+        "selection": {"line_map": map_info, **sel},
+        "cache": cache_stats,
         # True means: put back to the pre-run content AND read back. Not inferred.
         "target_restored": True,
         "target_matched_head_at_start": head_matched,

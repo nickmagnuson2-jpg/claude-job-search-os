@@ -1643,7 +1643,11 @@ def test_an_edit_made_on_top_of_a_mutant_is_not_overwritten_by_the_next_mutant(
     src, t = _fixture_whose_test_edits_the_target(tmp_path, "mutant_on_disk")
     original = src.read_text(encoding="utf-8")
 
-    r = _run([str(src), "--tests", str(t)], cwd=tmp_path)
+    # --no-line-map (2026-11-04): the "other session" here is a test that never executes
+    # the target, so per-line selection would never run it against a mutant and the edit
+    # this test needs would never happen. The file-tier path is the one this test was
+    # written for; the subset path has its own test in test_mutation_check_speed.py.
+    r = _run([str(src), "--tests", str(t), "--no-line-map"], cwd=tmp_path)
 
     left = src.read_text(encoding="utf-8")
     assert left.endswith(MARK) and left != original + MARK, \
