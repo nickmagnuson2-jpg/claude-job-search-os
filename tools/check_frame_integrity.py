@@ -930,11 +930,11 @@ def check_F14(frame, frame_path=None):
         if not str(spec.get(need, "")).strip():
             problems.append(f"{name}: disposition {disp!r} requires a non-empty {need!r}")
 
-    if enumerated:
-        undispositioned = [f for f in found if f not in declared]
-        if undispositioned:
-            problems.append(f"{len(undispositioned)} script(s) present but undispositioned: "
-                            + ", ".join(undispositioned))
+    # `found` is [] unless the tree was enumerated, so no separate `if enumerated:` is needed.
+    undispositioned = [f for f in found if f not in declared]
+    if undispositioned:
+        problems.append(f"{len(undispositioned)} script(s) present but undispositioned: "
+                        + ", ".join(undispositioned))
 
     # A `promote` or `superseded` target that does not exist is an UNFINISHED promotion.
     # Without this, "target: tools/foo.py" is a note-to-self: the disposition records a

@@ -151,7 +151,7 @@ PRIVATE_TREES = ("data", "memory", "coaching",
                  # and the wrapper still recorded verified=True. A verifier that cannot
                  # see the artifact is worse than no verifier, because its agreement
                  # gets counted. The sealed material that used to be protected by the
-                 # blanket `output` deny is now protected by SEALED_SUBPATHS below,
+                 # blanket `output` deny is now protected by seal_rules() below,
                  # which is narrower and is applied LAST so nothing can re-open it.
                  # .git holds every version ever committed, and data/ was committed 9
                  # times and memory/ 7 before they were gitignored. Those objects are
@@ -284,53 +284,42 @@ SEALED_CONF_NAME = ".sealed-paths.conf"
 SEALED_CONF = Path(__file__).resolve().parent / SEALED_CONF_NAME
 
 
-def sealed_subpaths(repo_root) -> list[str]:
-    """Absolute paths that are NEVER readable, appended LAST so no rule can re-open them.
+def seal_rules(repo_root) -> list[str]:
+    """Deny-read rules applied LAST, so no carve-out can re-open them.
 
-    Two sources, both discovered 2026-09-16 while widening `output` for review:
+    1. ANYTHING LISTED IN SEALED_CONF (and, from a linked worktree, the main checkout's
+       copy, which the worktree lacks because it is gitignored). Private trees whose paths
+       must not appear in a public file. Absent or empty is fine.
+    2. PEER REPOS. Everything beside the review root under its parent folder, and, from a
+       linked worktree, everything beside the main checkout too (2026-09-16, 2026-10-30).
+       None of it is material for reviewing this repo's work.
 
-    1. PEER REPOS. Everything beside this repo under the projects root. `sandbox_policy`
-       denied this repo's trees and ~/.claude and opened with `(allow default)`, so every
-       sibling repo was readable inside the jail the whole time. None of it is ever
-       material for reviewing this repo's work.
-    2. ANYTHING LISTED IN SEALED_CONF. Private trees whose paths should not appear in a
-       public file. Absent or empty is fine; the peer-repo deny already covers a sibling.
-
-    Derived from repo_root rather than hardcoded so this file carries no absolute path, and
-    so a peer repo added tomorrow is covered without an edit.
-    3. FROM A LINKED WORKTREE (2026-10-30): repo_root.parent is the worktrees folder, so 1
-       missed the main checkout and its peers, and 2 found no conf (it is gitignored). The
-       main checkout itself, its peers and its conf are sealed too.
+    One rule per parent folder: deny everything under it except the review root and the
+    folders on the way down to it (as themselves, not their contents, so `cd` still
+    works). It used to be one rule per sibling, so the profile grew with every folder
+    beside the repo and passed macOS's 64 KB profile limit once a parent held a few
+    thousand (2026-11-02). A worktree inside its main checkout stays readable (Codex
+    infra-1031 round 3 F2): its own path and its ancestors are the exceptions.
     """
     root = Path(repo_root).resolve()
     main = _main_checkout(root)
-    sealed: list[str] = []
+    rules: list[str] = []
     for conf in [SEALED_CONF] + ([main / "tools" / SEALED_CONF_NAME] if main else []):
         try:
             for line in conf.read_text(encoding="utf-8").splitlines():
                 line = line.strip()
                 if line and not line.startswith("#"):
-                    sealed.append(str(Path(line).expanduser()))
+                    rules.append(f'(deny file-read* (subpath "{Path(line).expanduser()}"))')
         except OSError:
             pass                  # no conf is a valid state, not an error
-    for projects in [root.parent] + ([main.parent] if main else []):
-        for sibling in sorted(p for p in projects.iterdir() if p.is_dir()):
-            _seal(sibling.resolve(), root, sealed)
-    return list(dict.fromkeys(sealed))
-
-
-def _seal(path: Path, root: Path, sealed: list[str]) -> None:
-    """Seal `path`, unless it is the review root or holds it. A folder that holds the root
-    (a worktree inside its main checkout) is never sealed whole, because the last-match deny
-    would cover the root and the reviewer would read nothing (Codex infra-1031 round 3 F2,
-    2026-11-01); everything in it except the way down to the root is sealed instead."""
-    if path == root:
-        return
-    if not root.is_relative_to(path):
-        sealed.append(str(path))
-        return
-    for child in sorted(path.iterdir()):
-        _seal(child.resolve(), root, sealed)
+    for parent in dict.fromkeys([root.parent] + ([main.parent] if main else [])):
+        # The parent itself, the root, and the folders on the way down to the root stay
+        # readable (as themselves, so `cd` works). Entries outside the parent never match a
+        # rule scoped to it, so the root's other ancestors can be listed without a filter.
+        keep = [f'(require-not (subpath "{root}"))'] + [
+            f'(require-not (literal "{d}"))' for d in dict.fromkeys([parent, *root.parents])]
+        rules.append(f'(deny file-read* (require-all (subpath "{parent}") {" ".join(keep)}))')
+    return list(dict.fromkeys(rules))
 
 
 def _main_checkout(root: Path) -> Path | None:
@@ -382,7 +371,7 @@ def sandbox_policy(repo_root, extra_writable=()) -> str:
     """A seatbelt profile denying everything private and all repo writes.
 
     Later rules override earlier ones, so the output/analysis carve-outs must follow
-    the broad denies -- and SEALED_SUBPATHS must follow everything.
+    the broad denies -- and seal_rules() must follow everything.
     """
     root = str(Path(repo_root).resolve())
     lines = ["(version 1)", "(allow default)"]
@@ -413,7 +402,7 @@ def sandbox_policy(repo_root, extra_writable=()) -> str:
     # SEALED, LAST. Seatbelt applies the last matching rule, so these deny-reads come
     # after every allow above and cannot be re-opened by a carve-out added later in
     # this function. The configured private trees come first.
-    lines += [f'(deny file-read* (subpath "{p}"))' for p in sealed_subpaths(repo_root)]
+    lines += seal_rules(repo_root)
     return "\n".join(lines) + "\n"
 
 

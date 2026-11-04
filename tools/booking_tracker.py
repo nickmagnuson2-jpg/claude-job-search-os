@@ -82,6 +82,26 @@ def page_props(html):
     return json.loads(m.group(1))["props"]["pageProps"]
 
 
+STRIPPED_RETRIES, STRIPPED_WAIT = 2, 10   # re-reads of a stripped page, and seconds before each
+
+
+def is_stripped(pp):
+    """About 1 read in 25, the site serves a short page whose pageProps holds only the handle."""
+    return isinstance(pp, dict) and set(pp) == {"handle"}
+
+
+def fetch_props(fetch, url, retries=STRIPPED_RETRIES, wait=STRIPPED_WAIT):
+    """page_props of url, read again while the page is stripped. Returns the last read even if it is
+    still stripped, so the caller's parser raises its usual error and a real page change still shows."""
+    pp = page_props(fetch(url))
+    for _ in range(retries):
+        if not is_stripped(pp):
+            break
+        time.sleep(wait)
+        pp = page_props(fetch(url))
+    return pp
+
+
 # ---------------------------------------------------------------- parsing (pure)
 def slots_from_payload(payload):
     """Slots in date order. Raises on a missing data dict, missing pagination, or a truncated
@@ -253,11 +273,11 @@ def run_venue(venue, fetch=get, now=None):
     menu, status, store = (old or {}).get("menu") or {}, (old or {}).get("page_status"), (old or {}).get("store") or {}
     if due:
         try:
-            menu, status = menu_from_props(page_props(fetch(f"{BASE}/c/{venue['handle']}")))
+            menu, status = menu_from_props(fetch_props(fetch, f"{BASE}/c/{venue['handle']}"))
         except Exception as e:   # keep last run's values: an outage is never reported as a change
             errors.append(f"menu: {e}")
         try:
-            store = store_from_props(page_props(fetch(f"{BASE}/c/{venue['handle']}/store")))
+            store = store_from_props(fetch_props(fetch, f"{BASE}/c/{venue['handle']}/store"))
         except Exception as e:
             errors.append(f"store: {e}")
         if not errors:   # a failed page read leaves the stamp alone, so the next run retries

@@ -82,14 +82,13 @@ def _candidate_roots(data: dict) -> list:
 def resolve_script_path(script_path: str, data: dict):
     """Return the first existing file this scriptPath names, or None.
 
-    Absolute paths are checked as given. Relative paths are tried against the
-    payload cwd, $CLAUDE_PROJECT_DIR, and the process cwd, in that order.
+    Tried against the payload cwd, $CLAUDE_PROJECT_DIR, and the process cwd, in that
+    order. An absolute path needs no special case: os.path.join(root, "/abs") is "/abs",
+    and the process cwd is always a candidate root, so the loop always tries it.
     """
     if not isinstance(script_path, str) or not script_path.strip():
         return None
     script_path = script_path.strip()
-    if os.path.isabs(script_path):
-        return script_path if os.path.isfile(script_path) else None
     for root in _candidate_roots(data):
         candidate = os.path.join(root, script_path)
         if os.path.isfile(candidate):
@@ -183,7 +182,6 @@ def main() -> None:
             )
         )
 
-    sys.exit(0)
 
 
 if __name__ == "__main__":
