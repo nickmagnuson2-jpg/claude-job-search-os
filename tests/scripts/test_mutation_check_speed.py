@@ -153,14 +153,59 @@ def test_a_file_missing_at_the_base_is_measured_whole(tmp_path):
     assert s["mode"] == "whole_file" and "does not exist at the base" in s["reason"]
 
 
-def test_a_changed_mapped_test_makes_the_scope_the_whole_file(tmp_path):
+def test_a_changed_mapped_test_scopes_the_lines_it_runs_not_nothing(tmp_path):
     """A commit that only weakens a test must not report no_changed_mutants: the mutation
-    rule exists for that commit (job-search-ee for Nick, 2026-11-04)."""
+    rule exists for that commit (job-search-ee for Nick, 2026-11-04). The scope becomes the
+    changed code plus the lines the changed tests execute, resolved after the line map."""
     src, t = _repo(tmp_path)
     t.write_text(t.read_text().replace("assert double(101) == -1", "double(101)"))
     s = mc.resolve_scope(_args(), src, tmp_path, [t])
-    assert s["mode"] == "whole_file"
-    assert s["tests_changed"] == ["tests/scripts/test_subject.py"]
+    assert s["mode"] == "diff" and s["changed"] == set()
+    assert s["pending_tests"] == ["tests/scripts/test_subject.py"]
+
+
+def test_an_edit_inside_one_test_names_only_that_test(tmp_path):
+    src, t = _repo(tmp_path)
+    t.write_text(t.read_text().replace("assert double(101) == -1", "double(101)"))
+    s = mc.resolve_scope(_args(), src, tmp_path, [t])
+    assert s["pending_test_names"] == {"tests/scripts/test_subject.py": {"test_double_cap"}}
+    t.write_text("import os\n" + t.read_text())          # module-level change too
+    s = mc.resolve_scope(_args(), src, tmp_path, [t])
+    assert s["pending_test_names"] == {"tests/scripts/test_subject.py": None}
+
+
+def test_resolve_test_lines_filters_by_test_name_and_strips_params(tmp_path):
+    a = tmp_path / "tests" / "test_a.py"
+    m = {3: {f"{a}::t1[x]"}, 4: {f"{a}::t2"}}
+    assert mc.resolve_test_lines(m, ["tests/test_a.py"], tmp_path,
+                                 {"tests/test_a.py": {"t1"}}) == {3}
+
+
+def test_a_deleted_test_file_forces_the_whole_file(tmp_path):
+    src, t = _repo(tmp_path)
+    extra = tmp_path / "tests" / "scripts" / "test_subject_extra.py"
+    extra.write_text("from subject import double\ndef test_cap(): assert double(101) == -1\n")
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-qm", "extra")
+    _git(tmp_path, "update-ref", "refs/remotes/origin/main", "HEAD")
+    extra.unlink()
+    s = mc.resolve_scope(_args(), src, tmp_path, [t])
+    assert s["mode"] == "whole_file" and "deleted test file" in s["reason"], s
+
+
+def test_a_test_function_removed_from_a_mapped_file_forces_the_whole_file(tmp_path):
+    """The lines a deleted test ran are in no CURRENT map, so they cannot bound it."""
+    src, t = _repo(tmp_path)
+    t.write_text(t.read_text().replace(
+        "def test_double_cap(): assert double(101) == -1\n", ""))
+    s = mc.resolve_scope(_args(), src, tmp_path, [t])
+    assert s["mode"] == "whole_file" and "test removed: test_double_cap" in s["reason"], s
+
+
+def test_resolve_test_lines_keeps_only_lines_the_changed_files_run(tmp_path):
+    a, b = tmp_path / "tests" / "test_a.py", tmp_path / "tests" / "test_b.py"
+    lm_ = {3: {f"{a}::t1"}, 4: {f"{b}::t2"}, 5: {f"{a}::t3", f"{b}::t4"}}
+    assert mc.resolve_test_lines(lm_, ["tests/test_a.py"], tmp_path) == {3, 5}
 
 
 def test_a_changed_conftest_or_imported_helper_makes_the_scope_the_whole_file(tmp_path):
@@ -340,15 +385,32 @@ def test_e2e_a_diff_run_measures_only_the_changed_function(tmp_path):
 
 
 def test_e2e_a_commit_that_only_weakens_a_test_still_finds_the_survivor(tmp_path):
+    """The weakened test runs line 9 (`return -1`) and no longer checks it. The scope is
+    the lines the changed test executes, so that survivor is found, and the lines no
+    changed test reaches are not measured."""
     src, t = _repo(tmp_path)
     t.write_text(t.read_text().replace("assert double(101) == -1", "double(101)"))
     _git(tmp_path, "commit", "-qam", "weaken the cap test")    # HEAD moves, base does not
     r = _run([str(src), "--tests", str(t), "--json"], tmp_path)
     d = json.loads(r.stdout)
-    assert d["scope"]["mode"] == "whole_file", d["scope"]
-    assert d["scope"]["tests_changed"] == ["tests/scripts/test_subject.py"]
+    assert d["scope"]["mode"] == "diff", d["scope"]
+    assert 9 in d["scope"]["test_lines"]
+    assert d["scope"]["mutants_in_scope"] < d["scope"]["mutants_in_file"]
     assert d["status"] == "survivors" and r.returncode == 2
     assert any(s["line"] == 9 for s in d["survivors"]), d["survivors"]
+
+
+def test_e2e_changed_tests_with_no_line_map_measure_the_whole_file(tmp_path):
+    """The map pass fails here (a test that refuses the recorder's environment) while the
+    baseline passes, and a mapped test changed: no map, no bound, so the whole file."""
+    src, t = _repo(tmp_path)
+    t.write_text(t.read_text() + "\nimport os\n"
+                 "def test_no_recorder(): assert 'MUTATION_LINEMAP_TARGET' not in os.environ\n")
+    d = json.loads(_run([str(src), "--tests", str(t), "--json"], tmp_path).stdout)
+    assert d["selection"]["line_map"]["status"] == "map_pass_failed"
+    assert d["scope"]["mode"] == "whole_file", d["scope"]
+    assert "line map could not be built" in d["scope"]["reason"]
+    assert d["scope"]["mutants_in_scope"] == d["scope"]["mutants_in_file"]
 
 
 def test_e2e_a_diff_with_no_mutable_line_is_not_reported_as_ok(tmp_path):

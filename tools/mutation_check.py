@@ -745,7 +745,8 @@ def run_tests(test_files: list, timeout: int,
               target: Path | None = None,
               details: dict | None = None,
               extra_args: list[str] | None = None,
-              extra_env: dict[str, str] | None = None) -> tuple[bool, str]:
+              extra_env: dict[str, str] | None = None,
+              stop_first: bool = True) -> tuple[bool, str]:
     """(passed, kill_kind).
 
     kill_kind classifies HOW the suite noticed a mutation, which is the difference
@@ -772,8 +773,10 @@ def run_tests(test_files: list, timeout: int,
     """
     # `test_files` may hold node ids (`/abs/test_x.py::test_a`) as well as paths: the
     # line-map tier passes the ids that execute a mutated line.
-    cmd = [sys.executable, "-m", "pytest", "-q", "-x", "--no-header",
-           "--tb=line", "-rf", *(extra_args or []), *map(str, test_files)]
+    # stop_first=False only for the kind recheck of a subset kill: there every failure's
+    # reason is wanted, not the first.
+    cmd = [sys.executable, "-m", "pytest", "-q", *(["-x"] if stop_first else []),
+           "--no-header", "--tb=line", "-rf", *(extra_args or []), *map(str, test_files)]
     # tests/conftest.py refuses to run when a *.mutation_backup exists, because that means
     # the tree is mid-mutation and any pass/fail is measuring a file nobody meant to test
     # (2026-08-24 incident, see that fixture's docstring). These subprocesses are the ONE
@@ -964,17 +967,65 @@ def in_scope(span: tuple[int, int], scope: dict, functions: list[tuple[int, int]
     return False
 
 
-def changed_test_inputs(base: str, root: Path, test_files: list) -> list[str] | None:
-    """Test-side inputs of this target that differ between `base` and the working tree:
-    a mapped test file, a conftest.py under tests/ (pytest loads it implicitly), or a
-    non-test module under tests/ that a mapped test imports. Untracked files count.
-    None when git cannot answer."""
-    diff = _git(["diff", "--name-only", "--no-ext-diff", base, "--"], root)
+def _test_sources(text: str) -> tuple[dict[str, str], str] | None:
+    """({test name: its source}, everything else) for a test file; None if it will not
+    parse. A test class counts as one unit per method, plus its other lines in "the rest"
+    of that class, which is folded into the module rest: a fixture or helper defined in the
+    file changes every test that may use it."""
+    try:
+        tree = ast.parse(text)
+    except (SyntaxError, ValueError):
+        return None
+    tests: dict[str, str] = {}
+    rest: list[str] = []
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) \
+                and node.name.startswith("test"):
+            tests[node.name] = ast.dump(node, include_attributes=False)
+        elif isinstance(node, ast.ClassDef):
+            other = []
+            for sub in node.body:
+                if isinstance(sub, (ast.FunctionDef, ast.AsyncFunctionDef)) \
+                        and sub.name.startswith("test"):
+                    tests[f"{node.name}::{sub.name}"] = ast.dump(sub, include_attributes=False)
+                else:
+                    other.append(ast.dump(sub, include_attributes=False))
+            rest.append(f"class {node.name}: " + "|".join(other)
+                        + "|" + "|".join(ast.dump(d) for d in node.decorator_list))
+        else:
+            rest.append(ast.dump(node, include_attributes=False))
+    return tests, "\n".join(rest)
+
+
+def changed_test_inputs(base: str, root: Path, test_files: list,
+                        stem: str = "") -> dict | None:
+    """Test-side inputs of this target that differ between `base` and the working tree.
+    Untracked files count. None when git cannot answer. Returns
+
+      whole  [(path, why)] inputs that can reach ANY test, so the scope is the whole file:
+             a changed conftest.py under tests/ (pytest loads it implicitly), a changed
+             non-test module a mapped test imports, a changed file under tests/ a mapped
+             test names (fixture data), a DELETED test file that named the target, and a
+             mapped test file that LOST a test function (its lines are in no current map).
+      tests  [path] mapped test files that changed without losing a test: added, edited.
+             Their effect is bounded by the lines their tests execute (resolve_test_lines).
+      test_names  {path: names or None}: for an edited file whose only change is inside
+             test functions, the tests that are new or edited; None means every test in
+             the file (a new file, or a change to its imports, fixtures or helpers).
+    """
+    status = _git(["diff", "--name-status", "--no-renames", "--no-ext-diff", base, "--"], root)
     untracked = _git(["ls-files", "--others", "--exclude-standard"], root)
-    if diff is None or untracked is None or diff.returncode != 0 \
+    if status is None or untracked is None or status.returncode != 0 \
             or untracked.returncode != 0:
         return None
-    changed = {p for p in (diff.stdout + untracked.stdout).splitlines() if p.strip()}
+    changed: dict[str, str] = {}
+    for line in status.stdout.splitlines():
+        parts = line.split("\t")
+        if len(parts) >= 2 and parts[0]:
+            changed[parts[-1]] = parts[0][0]
+    for p in untracked.stdout.splitlines():
+        if p.strip():
+            changed.setdefault(p, "A")
 
     def rel(p) -> str | None:
         try:
@@ -992,23 +1043,79 @@ def changed_test_inputs(base: str, root: Path, test_files: list) -> list[str] | 
             continue
         texts.append(text)
         imported |= set(_IMPORT_RE.findall(text))
-    hits = []
-    for p in sorted(changed):
+    stem_re = re.compile(r"\b%s\b" % re.escape(stem)) if stem else None
+
+    def at_base(p: str) -> str | None:
+        r = _git(["show", f"{base}:{p}"], root)
+        return r.stdout if r is not None and r.returncode == 0 else None
+
+    whole: list[tuple[str, str]] = []
+    tests: list[str] = []
+    test_names: dict[str, set[str] | None] = {}
+    for p, st in sorted(changed.items()):
         name = Path(p).name
+        if not p.startswith("tests/"):
+            continue
+        if st == "D":
+            if name.startswith("test_") and name.endswith(".py"):
+                old = at_base(p) or ""
+                if stem_re is None or stem_re.search(old) or name.startswith(f"test_{stem}"):
+                    whole.append((p, "deleted test file"))
+            continue
         if p in mapped:
-            hits.append(p)
-        elif p.startswith("tests/") and name == "conftest.py":
-            hits.append(p)
-        elif p.startswith("tests/") and p.endswith(".py") and not name.startswith("test_") \
-                and Path(p).stem in imported:
-            hits.append(p)
-        elif p.startswith("tests/") and not name.startswith("test_") \
-                and any(name in text or p in text for text in texts):
+            old = at_base(p)
+            names: set[str] | None = None        # None: every test in the file counts
+            if old is not None:
+                before = _test_sources(old)
+                now = _test_sources((root / p).read_text(encoding="utf-8", errors="ignore"))
+                if before is None or now is None:
+                    whole.append((p, "test file does not parse"))
+                    continue
+                gone = sorted(set(before[0]) - set(now[0]))
+                if gone:
+                    whole.append((p, "test removed: " + ", ".join(gone[:3])
+                                  + (", ..." if len(gone) > 3 else "")))
+                    continue
+                if before[1] == now[1]:
+                    # Only test bodies changed: the tests that are new or edited.
+                    names = {n for n, src in now[0].items() if before[0].get(n) != src}
+            tests.append(p)
+            test_names[p] = names
+        elif name == "conftest.py":
+            whole.append((p, "conftest changed"))
+        elif p.endswith(".py") and not name.startswith("test_") and Path(p).stem in imported:
+            whole.append((p, "imported helper changed"))
+        elif not name.startswith("test_") and any(name in text or p in text for text in texts):
             # Fixture data a mapped test names (job-search-ee, 2026-11-04): a weakened
             # fixture weakens the test like an edited assertion. Matched by name too, so a
             # common name can over-trigger; that costs time, never coverage.
-            hits.append(p)
-    return hits
+            whole.append((p, "referenced fixture changed"))
+    return {"whole": whole, "tests": tests, "test_names": test_names}
+
+
+def resolve_test_lines(line_map: dict, changed_tests: list[str], root: Path,
+                       names: dict | None = None) -> set[int]:
+    """Target lines executed by the changed tests: every test in a file of `changed_tests`,
+    or only the tests `names[file]` lists when it is a set (parametrized ids count as
+    their function)."""
+    wanted: dict[str, set[str] | None] = {}
+    for p in changed_tests:
+        wanted[str((root / p).resolve())] = (names or {}).get(p)
+    lines: set[int] = set()
+    for line, ids in line_map.items():
+        for tid in ids:
+            path, _, rest = tid.partition("::")
+            try:
+                path = str(Path(path).resolve())
+            except OSError:
+                pass
+            if path not in wanted:
+                continue
+            only = wanted[path]
+            if only is None or re.sub(r"\[.*\]$", "", rest) in only:
+                lines.add(line)
+                break
+    return lines
 
 
 def resolve_scope(args, target: Path, root: Path, test_files: list | None = None) -> dict:
@@ -1027,11 +1134,14 @@ def resolve_scope(args, target: Path, root: Path, test_files: list | None = None
     When the base cannot be resolved the run measures the WHOLE file and says why, never
     zero mutants: an unanswerable scope must cost time, not coverage.
 
-    A CHANGED TEST also means the whole file (job-search-ee for Nick, 2026-11-04). The
-    diff of the code can be empty while the diff of its tests weakens them, and a diff-only
-    run would then report no_changed_mutants for exactly the commit the mutation rule
-    exists to catch. Weakening a test can expose a mutant on ANY line, so the scope is
-    every line."""
+    A CHANGED TEST (job-search-ee for Nick, 2026-11-04). The diff of the code can be empty
+    while the diff of its tests weakens them, and a code-only scope would then report
+    no_changed_mutants for exactly the commit the mutation rule exists to catch. An edited
+    or added mapped test can only expose a mutant on a line that test EXECUTES, so the scope
+    becomes the changed code lines plus those lines (mode "diff", `pending_tests`; main()
+    resolves them from the line map, and measures the whole file if the map cannot be
+    built). Inputs that can reach any test (changed_test_inputs' `whole`) force the whole
+    file outright."""
     if args.whole_file:
         return {"mode": "whole_file", "base": None, "reason": "--whole-file"}
     if not args.base and os.environ.get(SWEEP_ENV):
@@ -1048,18 +1158,24 @@ def resolve_scope(args, target: Path, root: Path, test_files: list | None = None
     if d["new_file"]:
         return {"mode": "whole_file", "base": base,
                 "reason": "the target does not exist at the base (new, untracked or renamed)"}
-    tests_changed = changed_test_inputs(base, root, test_files or [])
-    if tests_changed is None:
+    t = changed_test_inputs(base, root, test_files or [], target.stem)
+    if t is None:
         return {"mode": "whole_file", "base": base,
                 "reason": "git could not list changed test files; measuring the whole file"}
-    if tests_changed:
-        return {"mode": "whole_file", "base": base, "tests_changed": tests_changed,
-                "reason": "test inputs changed since the base ("
-                          + ", ".join(tests_changed[:5])
-                          + (", ..." if len(tests_changed) > 5 else "")
-                          + "); a weakened test can expose a mutant on any line"}
-    return {"mode": "diff", "base": base, "reason": "diff against the base",
-            "changed": d["changed"], "deleted_at": d["deleted_at"]}
+    if t["whole"]:
+        listed = [f"{p} ({why})" for p, why in t["whole"]]
+        return {"mode": "whole_file", "base": base,
+                "tests_changed": [p for p, _ in t["whole"]] + t["tests"],
+                "reason": "test inputs that can reach any test changed since the base: "
+                          + "; ".join(listed[:5]) + ("; ..." if len(listed) > 5 else "")}
+    out = {"mode": "diff", "base": base, "reason": "diff against the base",
+           "changed": d["changed"], "deleted_at": d["deleted_at"]}
+    if t["tests"]:
+        out.update(pending_tests=t["tests"], tests_changed=t["tests"],
+                   pending_test_names=t["test_names"],
+                   reason="diff against the base, plus the target lines the changed "
+                          "tests execute")
+    return out
 
 
 # --- per-line selection -------------------------------------------------------------------
@@ -2016,7 +2132,16 @@ def main() -> int:
     spans = mutant_spans(tree)
     scope = resolve_scope(args, target, REPO_ROOT, test_files)
     mutants_in_file = len(catalog)
-    if scope["mode"] == "diff":
+    if scope.get("pending_tests") and (args.list or args.no_line_map):
+        # The changed tests' lines come from the line map, and neither path builds one.
+        why = "--list runs no tests" if args.list else "--no-line-map"
+        scope = {"mode": "whole_file", "base": scope["base"],
+                 "tests_changed": scope["tests_changed"],
+                 "reason": f"mapped tests changed and their lines need the line map "
+                           f"({why}); measuring the whole file"}
+    pending_tests = scope.get("pending_tests")
+    full_catalog = catalog
+    if scope["mode"] == "diff" and not pending_tests:
         functions = _function_spans(tree)
         catalog = [e for e in catalog
                    if in_scope(spans.get((e["line"], e["col"], e["op"]),
@@ -2066,7 +2191,8 @@ def main() -> int:
     # Per-line selection and cache bookkeeping (see the Speed section).
     line_map, map_info = None, {"status": "skipped"}
     sel = {"subset_runs": 0, "subset_kills": 0, "subset_invalid": 0, "subsets_validated": 0,
-           "subset_weak_rechecked": 0, "no_covering_test": 0}
+           "subset_weak_rechecked": 0, "subset_kind_from_full_subset": 0,
+           "no_covering_test": 0}
     subset_ok: dict[tuple, bool] = {}
     use_cache = not args.no_cache
     cache_ctx = cache_context(target, original, test_files, REPO_ROOT) if use_cache else None
@@ -2103,6 +2229,27 @@ def main() -> int:
                 print(f"mutation_check: per-line selection off ({map_info['status']}); "
                       f"every mutant runs the file tier, then the full mapped set",
                       file=sys.stderr, flush=True)
+        if pending_tests and not diverged:
+            # Changed tests: scope = changed code lines + target lines those tests execute.
+            # No map means no bound on what they reach: the whole file, and it is said.
+            if line_map is None:
+                scope_out.update(mode="whole_file", reason=(
+                    f"mapped tests changed and the line map could not be built "
+                    f"({map_info['status']}); measuring the whole file"))
+                scope_out.pop("changed_lines", None)
+                scope_out.pop("deleted_after_lines", None)
+                print(f"mutation_check: scope: whole file ({scope_out['reason']})",
+                      file=sys.stderr, flush=True)
+            else:
+                test_lines = resolve_test_lines(line_map, pending_tests, REPO_ROOT,
+                                                scope.get("pending_test_names"))
+                widened = {**scope, "changed": set(scope["changed"]) | test_lines}
+                functions = _function_spans(tree)
+                catalog = [e for e in full_catalog
+                           if in_scope(spans.get((e["line"], e["col"], e["op"]),
+                                                 (e["line"], e["line"])), widened, functions)]
+                scope_out["test_lines"] = sorted(test_lines)
+            scope_out["mutants_in_scope"] = len(catalog)
 
         def subset_is_valid(argv: tuple) -> bool:
             """Does this subset pass on the UNMUTATED source? Asked once per subset. A
@@ -2185,15 +2332,24 @@ def main() -> int:
                                 decided = True
                                 sel["subset_kills"] += 1
                             elif subset_ok.get(argv):
-                                # Killed, but by a crash, not an assertion. HOW a mutant is
-                                # killed depends on which test fails first under -x, and
-                                # --strict fails on weak kills, so the kind must come from the
-                                # same tiers as before. Measured on pipe_write: taking the
-                                # subset's kind made 3 mutants newly weak. The tiers below
-                                # decide this one. Validation may have put the unmutated
-                                # source back, so the mutant is written again first.
+                                # Killed, but the FIRST failure under -x was a crash, not an
+                                # assertion. --strict fails on weak kills, so a subset must not
+                                # call a kill weak that the old path would not (measured on
+                                # pipe_write: taking the subset's first failure made 3 mutants
+                                # newly weak). Step 1, cheap: the same subset WITHOUT -x; if
+                                # any of its tests failed on an assertion, the kill is an
+                                # assertion kill. Step 2, only when none did: the old tiers
+                                # decide, exactly as before (re-running the tiers for every
+                                # crash kill cost ~250s on pipe_write). Validation may have
+                                # put the unmutated source back, so the mutant goes back first.
                                 sel["subset_weak_rechecked"] += 1
                                 write_mutant(target, original, mutated)
+                                p2, k2 = run_tests(list(argv), args.timeout, target,
+                                                   stop_first=False)
+                                if not p2 and k2 == "assertion":
+                                    decided, kind = True, "assertion"
+                                    sel["subset_kills"] += 1
+                                    sel["subset_kind_from_full_subset"] += 1
                             else:
                                 sel["subset_invalid"] += 1
                                 # The validation put the unmutated source back.
