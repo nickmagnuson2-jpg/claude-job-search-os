@@ -279,3 +279,16 @@ def test_a_name_with_a_pipe_passes_the_preflight_and_is_logged(tmp_path):
     r, c = remember(tmp_path, note_dest(entity="Sam|Example"))
     assert c == 0, r
     assert f"| Sam/Example | Beta | VP | peer | 2026-01-01 | {today()} | — |" in read(tmp_path)
+
+
+def test_apply_contact_note_returns_the_writers_refusal_directly(tmp_path):
+    """Since round 5 the pre-flight refuses an unlisted contact before apply_contact_note
+    runs, so the call-level test above no longer reaches this branch. Called directly, a
+    refusal from networking_write.py log comes back as an error carrying the writer's code
+    (round-6 prep mutation: the branch could be dropped or return None unnoticed)."""
+    setup(tmp_path)
+    out = load().apply_contact_note(NOTE, note_dest(entity="Nobody Listed"), tmp_path)
+    assert out["status"] == "error" and out["type"] == "contact_note", out
+    assert out["code"] == "not_found", out
+    assert out["message"].startswith("networking_write.py log refused:"), out
+    assert "Nobody Listed" not in read(tmp_path)

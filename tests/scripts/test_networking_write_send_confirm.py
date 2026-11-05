@@ -554,3 +554,26 @@ def test_a_failed_write_on_an_unlinked_capture_reports_rolled_back(tmp_path, mon
         dc.confirm(cid, "unchanged")
     monkeypatch.setattr(dc, "_write_meta", real)
     assert dc.read_meta(cid)["status"] == "opened"
+
+
+def test_a_save_that_fails_without_a_capture_reports_write_failed(tmp_path):
+    """The unlink on a failed save is only for a linked draft (round-6 prep mutation:
+    cmd_log `if args.capture:` survived). Without --capture there is nothing to unlink, and
+    the failure must still come back as write_failed, not a crash."""
+    data = tmp_path / "data"
+    before = text(tmp_path)
+    data.chmod(0o500)
+    try:
+        r, c = nw(tmp_path, "log", "Jane Doe", "--date", "2026-06-20", "--type", "email",
+                  "--summary", "plain note", "--direction", "none", "--no-todo")
+    finally:
+        data.chmod(0o700)
+    assert c != 0 and r.get("code") == "write_failed", r
+    assert text(tmp_path) == before
+
+
+def test_a_file_with_no_contacts_table_is_not_found(tmp_path):
+    """find_contact_row with no ## Contacts section: the contact is not on the roster."""
+    write_fixture(tmp_path, "data/networking.md", "# Networking\n\n## Interaction Log\n")
+    r, c = log_reply(tmp_path)
+    assert c != 0 and r.get("code") == "not_found", r

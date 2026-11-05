@@ -94,9 +94,9 @@ def find_contact_row(lines: list, name: str) -> int:
     The one roster rule: `log` refuses a name it does not find here, and remember_apply's
     pre-flight asks the same question before it writes anything. The name is compared the
     way fmt_contact_row stores it (pipe_write.sanitize_cell), so both callers agree."""
+    # No Contacts section: find_section gives (-1, -1), so the loop below is empty and the
+    # answer is -1 without a separate branch (a redundant early return was an equivalent mutant).
     start, end = find_section(lines, r"^##\s+Contacts")
-    if start == -1:
-        return -1
     want = sanitize_cell(name).lower()
     for i in range(start, end):
         if is_data_row(lines[i]):
