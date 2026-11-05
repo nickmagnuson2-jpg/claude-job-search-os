@@ -39,22 +39,29 @@ Per `memory/feedback_nick_pii_redaction_boundary`:
 
 ## Steps
 
-### Step 0 — Check for non-main ref exposure on the public remote
+### Step 0 — Check for leftover branches on the public remote
+
+Read the remote refs through the read-only GitHub API. **Do not run `git ls-remote`**: every remote
+is SSH through a Touch ID key, so it raises a prompt Nick did not start (fired twice, see
+`memory/feedback_no_network_git_without_checking_touch_id_rule.md`).
 
 ```bash
-git ls-remote origin
+gh api repos/<owner>/<repo>/git/matching-refs/heads --jq '.[].ref'
 ```
 
-Only `HEAD` and `refs/heads/main` should be present. Any other ref — most
-commonly `refs/pull/N/head` from a merged/closed PR — can serve gitignored or
-sealed file content from that PR's tree/history even when `main` is clean,
-because deleting a branch or force-pushing `main` does **not** remove pull
-refs. If any non-`main` ref appears, flag it as a **blocking** finding: the
-only reliable fix is to delete and recreate the repo from the current clean
-`main` (pull refs do not survive repo recreation). A GitHub Support
-sensitive-data-removal request is the fallback if recreation isn't viable.
-Origin: 2026-07-07 fable-audit finding, confirmed live and remediated
-2026-07-08 via delete-and-recreate (`memory/audit-2026-07-07.md`).
+Only `refs/heads/main` should be listed, plus any branch with an open PR. Any other branch is a
+leftover: report it and ask Nick to delete it in the GitHub UI (the gh token is read-only). The
+repo setting "Automatically delete head branches" removes a branch when its PR merges.
+
+**Pull refs (`refs/pull/N/head`) are expected, not a finding.** GitHub creates one for every PR
+and keeps it permanently; nobody but GitHub Support can delete it, and it keeps that PR's commits
+reachable after the branch is gone. So anything pushed is public for good, and the protection is
+before the push: the pre-push denylist gate plus this skill's semantic pass on what is about to be
+pushed. Only a PII hit inside a PR's commits makes a pull ref matter; then the remedies are a
+GitHub Support sensitive-data-removal request or deleting and recreating the repo from a clean
+`main`. Origin: 2026-07-07 fable-audit finding, remediated 2026-07-08 by recreation
+(`memory/audit-2026-07-07.md`); rule narrowed 2026-11-05 (Nick) once every PR's ref was found
+to trip the old "any non-main ref is blocking" wording.
 
 ### Step 0b — Full-tree + history + remote-ref sweep (mandatory before any squash, filter-repo, or force-push)
 
