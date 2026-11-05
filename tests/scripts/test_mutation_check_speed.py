@@ -557,6 +557,7 @@ def test_e2e_the_cache_replays_verdicts_and_keeps_survivors(tmp_path):
     sel = a["selection"]
     assert sel["subsets_validated"] < sel["subset_kills"], "a subset is validated once"
     assert sel["subset_kind_from_full_subset"] == 0, "assertion kills decided directly"
+    assert sel["subset_weak_rechecked"] == 0, "no crash kill, so nothing to recheck"
     again = _run([str(src), "--whole-file", "--tests", str(t), "--json"], tmp_path)
     b = json.loads(again.stdout)
     assert b["cache"]["hits"] == a["cache"]["writes"]
@@ -624,6 +625,10 @@ def test_e2e_a_crash_kill_by_a_subset_gets_its_kind_from_the_old_tiers(tmp_path)
                              "--tests", str(t), "--json"], tmp_path).stdout)
     assert sorted(w["key"] for w in d["weak_kills"]) == \
         sorted(w["key"] for w in plain["weak_kills"])
+    # The recheck must run against the MUTANT: if it ran on the unmutated source (the
+    # validation run leaves that on disk), a crash kill would turn into a false survivor.
+    assert d["survived"] == plain["survived"] and d["killed"] == plain["killed"]
+    assert d["selection"]["subset_kind_from_full_subset"] >= 1, d["selection"]
 
 
 def test_e2e_the_sweep_argv_still_measures_the_whole_file(tmp_path):
@@ -877,13 +882,20 @@ def _seed_cache(tmp_path, src, t, verdicts):
 
 def test_e2e_cached_weak_and_unclassified_kills_are_replayed_as_such(tmp_path):
     src, t = _repo(tmp_path)
-    _seed_cache(tmp_path, src, t, lambda line, op: ("killed", "error" if line < 5 else "unknown"))
+    # Three kinds, so each replay branch has to pick out exactly its own.
+    kinds = lambda line, op: ("killed", "error" if line < 5 else
+                              "unknown" if line < 9 else "assertion")
+    _seed_cache(tmp_path, src, t, kinds)
+    import ast
+    seeded = [kinds(l, o)[1] for l, _, o in mc.enumerate_mutants(ast.parse(src.read_text()))]
     d = json.loads(_run([str(src), "--whole-file", "--tests", str(t), "--json"],
                         tmp_path).stdout)
     assert d["cache"]["hits"] == d["scope"]["mutants_in_file"] > 0
-    assert d["weak_kill_count"] > 0 and all(w["cached"] for w in d["weak_kills"])
-    assert d["unclassified_kills"] > 0
-    assert d["weak_kill_count"] + d["unclassified_kills"] == d["killed"]
+    assert d["killed"] == len(seeded)
+    assert d["weak_kill_count"] == seeded.count("error") > 0
+    assert all(w["cached"] for w in d["weak_kills"])
+    assert d["unclassified_kills"] == seeded.count("unknown") > 0
+    assert seeded.count("assertion") > 0, "the fixture must seed assertion kills too"
 
 
 def test_e2e_a_cached_survivor_on_the_allowlist_is_reported_allowlisted(tmp_path):
@@ -900,3 +912,41 @@ def test_e2e_a_cached_survivor_on_the_allowlist_is_reported_allowlisted(tmp_path
     assert [a["key"] for a in d["allowlisted_detail"]] == keys[:1]
     assert d["allowlisted_detail"][0]["cached"] is True
     assert {s["key"] for s in d["survivors"]} == set(keys[1:]), "the rest still fail"
+
+
+def test_e2e_a_kill_only_a_crash_sees_stays_weak(tmp_path):
+    """The 'pos' branch is executed only by a test that crashes on a mutant and asserts
+    nothing. Every kill there is weak on the old path, and must stay weak here: the
+    recheck may promote a kill to assertion only when an assertion actually failed."""
+    src, t = _repo(tmp_path, tests=f"""\
+        import sys; sys.path.insert(0, r'{tmp_path / "tools"}')
+        from subject import classify, double
+        def test_a_crashes(): classify(1).upper()
+        def test_neg(): assert classify(-1) == 'neg'
+        def test_double(): assert double(3) == 6 and double(101) == -1
+    """)
+    d = json.loads(_run([str(src), "--whole-file", "--no-cache", "--tests", str(t),
+                         "--json"], tmp_path).stdout)
+    plain = json.loads(_run([str(src), "--whole-file", "--no-line-map", "--no-cache",
+                             "--tests", str(t), "--json"], tmp_path).stdout)
+    weak = sorted(w["key"] for w in d["weak_kills"])
+    assert weak and weak == sorted(w["key"] for w in plain["weak_kills"]), (weak, plain)
+
+
+def test_e2e_a_mutant_only_an_unexecuting_file_sees_is_killed_by_the_full_set(tmp_path):
+    """The file tier holds only files that execute the target; a mutant that survives it
+    must still meet the file that only READS the source. Same property as the file-tier
+    test in test_mutation_check.py, here with the line map on."""
+    src, t = _repo(tmp_path, tests=f"""\
+        import sys; sys.path.insert(0, r'{tmp_path / "tools"}')
+        from subject import classify, double
+        def test_pos(): assert classify(1) == 'pos'
+        def test_double(): assert double(3) == 6 and double(101) == -1
+    """)
+    reads = tmp_path / "tests" / "scripts" / "test_reads_subject.py"
+    reads.write_text(f"def test_neg_written():\n"
+                     f"    assert \"return 'neg'\" in open(r'{src}').read()\n")
+    d = json.loads(_run([str(src), "--whole-file", "--no-cache", "--tests", str(t),
+                         str(reads), "--json"], tmp_path).stdout)
+    assert d["fast_tests"] == [str(t)] and d["full_reruns"] >= 1, d["fast_tests"]
+    assert not [s for s in d["survivors"] if "'neg'" in s["source"]], d["survivors"]
