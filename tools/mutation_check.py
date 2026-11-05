@@ -1083,23 +1083,20 @@ def changed_test_inputs(base: str, root: Path, test_files: list,
     # source on the target's own name dropped such a test, and a commit that deleted the
     # only test killing some mutants exited 0 on no_changed_mutants. The names are the
     # target plus every module that imports it transitively, in the working tree AND, for
-    # a tools/ module deleted in the same diff, at the base. Computed once, on demand.
-    reach: list[set[str]] = []
-
-    def reach_names() -> set[str]:
-        if not reach:
-            names = covering_names(stem, root / "tools") if stem else set()
-            gone = {Path(q).stem: at_base(q) or "" for q, s in changed.items()
-                    if s == "D" and q.startswith("tools/") and q.endswith(".py")}
-            grew = True
-            while grew:                  # fixpoint; `names` only grows
-                grew = False
-                for mod, src in gone.items():
-                    if mod not in names and _imported_names(src) & names:
-                        names.add(mod)
-                        grew = True
-            reach.append(names)
-        return reach[0]
+    # a tools/ module deleted in the same diff, at the base. Computed once per run, always
+    # (reading tools/*.py once costs milliseconds; a lazy memo would only add a branch
+    # whose mutants change nothing a test can see). With no stem, stem_re is None and
+    # every deleted test already forces the whole file, so these names go unused.
+    reach = covering_names(stem, root / "tools")
+    gone = {Path(q).stem: at_base(q) or "" for q, s in changed.items()
+            if s == "D" and q.startswith("tools/") and q.endswith(".py")}
+    grew = True
+    while grew:                          # fixpoint; `reach` only grows
+        grew = False
+        for mod, src in gone.items():
+            if mod not in reach and _imported_names(src) & reach:
+                reach.add(mod)
+                grew = True
 
     whole: list[tuple[str, str]] = []
     tests: list[str] = []
@@ -1112,7 +1109,7 @@ def changed_test_inputs(base: str, root: Path, test_files: list,
         if in_tests and st == "D" and name.startswith("test_") and name.endswith(".py"):
             old = at_base(p) or ""
             if stem_re is None or stem_re.search(old) or name.startswith(f"test_{stem}") \
-                    or _reached_through(old, reach_names()):
+                    or _reached_through(old, reach):
                 whole.append((p, "deleted test file"))
             continue
         # Any OTHER deleted file (a conftest, a helper, a fixture) goes through the same

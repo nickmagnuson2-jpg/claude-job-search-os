@@ -278,6 +278,17 @@ def test_the_same_holds_when_the_module_in_between_was_deleted_too(tmp_path):
     assert s["mode"] == "whole_file" and "tests/scripts/test_front.py" in s["reason"], s
 
 
+def test_reached_through_names_nothing_when_there_are_no_names():
+    """An empty name set would compile to `\\b(?:)\\b`, which matches every source, so the
+    helper must answer False itself rather than call every deleted test a reaching one."""
+    assert mc._reached_through("import json\ndef test_x(): pass\n", set()) is False
+    assert mc._reached_through("import front\n", {"front"}) is True
+    assert mc._reached_through("import json\n", {"front"}) is False
+    # A deleted test that does not parse cannot be ruled out: it counts as reaching, the
+    # way map_tests keeps an unparseable test file.
+    assert mc._reached_through("import json\ndef test_x(:\n", {"front"}) is True
+
+
 def test_a_deleted_test_that_never_reached_the_target_keeps_the_diff_scope(tmp_path):
     """Unrelated deletions must not turn every diff into a whole-file run."""
     src, t = _repo(tmp_path)
