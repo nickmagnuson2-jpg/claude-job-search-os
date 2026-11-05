@@ -1044,9 +1044,22 @@ def _walk_targets(words: list, h: int) -> list:
 # read the vault's files while `grep -r` of the same folder was blocked. A git subcommand
 # that prints file content or history content walks the repository git runs in. `git status`
 # and `git log --oneline` print no content and still pass (the round-4 restraint replay).
-_GIT_CONTENT = {"grep", "show", "archive", "ls-files", "ls-tree", "cat-file", "blame",
-                "annotate", "format-patch", "bundle", "fast-export"}
-_GIT_PATCH_CMDS = {"log", "whatchanged", "reflog", "stash"}
+#
+# FAIL CLOSED (Codex r4, 14 P0s on d37d8370, fixed the same day under the same approval):
+# a closed list of content subcommands missed `status -v`, `commit --dry-run -v`,
+# `diff-files -p` and every subcommand git adds later. So every subcommand counts as a
+# content read EXCEPT the ones below, which print no file content in the forms listed.
+_GIT_NO_CONTENT = {"branch", "tag", "remote", "rev-parse", "rev-list", "describe", "fetch",
+                   "pull", "push", "add", "rm", "mv", "restore", "checkout", "switch", "reset",
+                   "merge", "rebase", "init", "config", "worktree", "gc", "prune",
+                   "count-objects", "ls-remote", "symbolic-ref", "update-ref", "show-ref",
+                   "for-each-ref", "check-ignore", "var", "version", "help"}
+_GIT_VERBOSE_CONTENT = {"status", "commit"}       # content only with -v / --verbose
+_GIT_PATCH_CMDS = {"log", "whatchanged", "reflog", "shortlog", "stash"}
+# Flags that make diff/log print a patch. One of these wins over any summary flag
+# (`diff --stat -p` prints both).
+_GIT_PATCH_FLAGS = {"-p", "-u", "--patch", "--patch-with-stat", "--patch-with-raw",
+                    "--unified", "--cc", "--color-words", "--full-diff"}
 _GIT_DIFF_QUIET = {"--stat", "--shortstat", "--numstat", "--name-only", "--name-status",
                    "--quiet", "--exit-code", "--summary", "--dirstat", "--raw"}
 _GIT_VALUE_GLOBALS = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path",
@@ -1070,18 +1083,30 @@ def _git_split(args: list) -> tuple:
     return opts, "", []
 
 
+def _git_patch_flag(f: str) -> bool:
+    name = f.split("=", 1)[0]
+    return (name in _GIT_PATCH_FLAGS or name.startswith(("--word-diff", "--patch"))
+            or f.startswith(("-S", "-G", "-U"))
+            or bool(re.fullmatch(r"-[A-Za-z]+", f) and "p" in f[1:]))
+
+
 def _git_reads_content(args: list) -> bool:
     _, sub, rest = _git_split(args)
-    if sub in _GIT_CONTENT:
-        return True
+    if not sub:
+        return False
+    if sub in _GIT_NO_CONTENT:
+        return False
+    if sub in _GIT_VERBOSE_CONTENT:
+        return any(f in ("-v", "-vv", "--verbose") or bool(re.fullmatch(r"-[A-Za-z]*v[A-Za-z]*", f))
+                   for f in rest)
     if sub == "diff":
+        if any(_git_patch_flag(f) for f in rest):
+            return True
         return not any(f in _GIT_DIFF_QUIET or f.split("=", 1)[0] in _GIT_DIFF_QUIET
                        for f in rest)
     if sub in _GIT_PATCH_CMDS:
-        return any(f in ("-p", "-u", "--patch") or f.startswith(("-S", "-G", "--word-diff"))
-                   or (re.fullmatch(r"-[A-Za-z]+", f) and "p" in f[1:])
-                   for f in rest)
-    return False
+        return any(_git_patch_flag(f) for f in rest)
+    return True                     # unknown or content subcommand: fail closed
 
 
 def _git_repo_dirs(args: list) -> list:
@@ -1093,13 +1118,16 @@ def _git_repo_dirs(args: list) -> list:
         if name == "-C" and value:
             c_path = value if c_path is None else os.path.join(c_path, value)
         elif name == "--work-tree" and value:
-            out.append(value)
+            out.append(("tree", value))
         elif name == "--git-dir" and value:
             v = value.rstrip("/")
-            out.append(os.path.dirname(v) or "." if os.path.basename(v) == ".git" else v)
+            out.append(("dir", os.path.dirname(v) or "." if os.path.basename(v) == ".git" else v))
+    # A relative --git-dir / --work-tree is read from the -C directory (Codex r4 58.F3).
+    dirs = [v if c_path is None or os.path.isabs(os.path.expanduser(v)) else os.path.join(c_path, v)
+            for _, v in out]
     if c_path is not None:
-        out.insert(0, c_path)
-    return out
+        dirs.insert(0, c_path)
+    return dirs
 
 
 # fd options that take a value, short and long. Their value is never a pattern or a path,

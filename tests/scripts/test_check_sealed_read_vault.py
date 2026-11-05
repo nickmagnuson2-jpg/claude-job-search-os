@@ -636,3 +636,51 @@ def test_git_content_reads_found_past_flags_and_by_default(tmp_path, cmd):
 def test_git_without_content_or_without_a_vault_dir_passes(tmp_path, cmd):
     root, _ = _layout(tmp_path)
     assert _run(root, "Bash", {"command": cmd})[0] == 0, cmd
+
+
+# Codex round 4 (2026-11-04) on d37d8370: 14 P0s, three classes.
+@pytest.mark.parametrize("cmd", [
+    # 1. content-printing modes of subcommands outside the old content list (fail closed)
+    "git -C ../personal status -v",
+    "git -C ../personal status --verbose",
+    "git -C ../personal commit --dry-run -v",
+    "git -C ../personal diff-files -p",
+    "git -C ../personal diff-index -p HEAD",
+    "git -C ../personal diff-tree -p HEAD",
+    "git -C ../personal range-diff HEAD~2 HEAD~1 HEAD",
+    "git -C ../personal whatever-new-subcommand",
+    # 2. a patch flag wins over a summary flag
+    "git -C ../personal diff --stat -p",
+    "git -C ../personal diff --stat --patch",
+    "git -C ../personal diff --name-only -U3",
+    "git -C ../personal log --patch-with-stat",
+    "git -C ../personal log --stat -p",
+    "git -C ../personal show --stat",
+    # 3. relative --git-dir / --work-tree are read from the -C directory
+    "git -C .. --work-tree=personal grep x",
+    "git -C .. --git-dir=personal/.git log -p",
+])
+def test_round4_git_reads_of_the_vault_block(tmp_path, cmd):
+    root, _ = _layout(tmp_path)
+    assert _run(root, "Bash", {"command": cmd})[0] == 2, cmd
+
+
+@pytest.mark.parametrize("cmd", [
+    "git -C ../personal status",
+    "git -C ../personal status --short --branch",
+    "git -C ../personal log --oneline --stat",
+    "git -C ../personal log --name-only -5",
+    "git -C ../personal diff --stat",
+    "git -C ../personal branch -a",
+    "git -C ../personal rev-parse HEAD",
+    "git -C ../personal remote -v",
+    "git -C ../personal fetch",
+    "git -C ../personal add data/x.md",
+    "git -C ../personal commit -m msg",
+    "git -C ../personal push",
+    "git -C ../personal stash list",
+    "git -C ../personal worktree list",
+])
+def test_round4_git_work_that_prints_no_file_content_passes(tmp_path, cmd):
+    root, _ = _layout(tmp_path)
+    assert _run(root, "Bash", {"command": cmd})[0] == 0, cmd
