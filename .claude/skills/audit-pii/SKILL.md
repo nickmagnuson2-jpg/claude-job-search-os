@@ -50,8 +50,7 @@ gh api --paginate repos/<owner>/<repo>/git/matching-refs/heads --jq '.[].ref | s
 gh api --paginate 'repos/<owner>/<repo>/pulls?state=open' --jq '.[] | select(.head.repo.full_name == "<owner>/<repo>") | .head.ref'
 ```
 
-The first lists every branch by bare name (`--paginate`, or branches past the first page are
-missed); the second lists the branches in THIS repository that have an open PR (a fork's PR
+The first lists every branch by bare name; the second (paged, hence `--paginate`) lists the branches in THIS repository that have an open PR (a fork's PR
 with the same branch name does not count). Only `main` and the names in the second list should
 appear in the first. Any other branch is a leftover: report it and ask Nick to delete it in the GitHub UI (the gh token is read-only). The
 repo setting "Automatically delete head branches" removes a branch when its PR merges.
