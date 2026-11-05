@@ -950,3 +950,45 @@ def test_e2e_a_mutant_only_an_unexecuting_file_sees_is_killed_by_the_full_set(tm
                          str(reads), "--json"], tmp_path).stdout)
     assert d["fast_tests"] == [str(t)] and d["full_reruns"] >= 1, d["fast_tests"]
     assert not [s for s in d["survivors"] if "'neg'" in s["source"]], d["survivors"]
+
+
+def test_e2e_after_an_invalid_subset_the_full_set_measures_the_mutant(tmp_path):
+    """Validation leaves the UNMUTATED source on disk. When it rules a subset invalid, the
+    mutant must be written back before the full set runs, or the full set measures the
+    original and reports a false SURVIVED. The first mutant on the invalid subset here is
+    one the full set kills (test_double checks the cap), so a missing rewrite shows."""
+    src, t = _repo(tmp_path, tests=f"""\
+        import sys; sys.path.insert(0, r'{tmp_path / "tools"}')
+        from subject import classify, double
+        STATE = []
+        def test_a(): STATE.append(1); assert classify(1) == 'pos'
+        def test_neg(): assert classify(-1) == 'neg'
+        def test_double(): assert double(3) == 6 and double(101) == -1
+        def test_b():
+            assert STATE, 'needs test_a to have run first'
+            double(101)
+    """)
+    d = json.loads(_run([str(src), "--whole-file", "--no-cache", "--tests", str(t),
+                         "--json"], tmp_path).stdout)
+    plain = json.loads(_run([str(src), "--whole-file", "--no-line-map", "--no-cache",
+                             "--tests", str(t), "--json"], tmp_path).stdout)
+    assert d["selection"]["subset_invalid"] >= 1, d["selection"]
+    assert d["survived"] == plain["survived"] == 0, (d["survivors"], plain["survivors"])
+    assert d["killed"] == plain["killed"]
+
+
+def test_e2e_the_full_set_reruns_only_mutants_that_survive_the_file_tier(tmp_path):
+    src, t = _repo(tmp_path, tests=f"""\
+        import sys; sys.path.insert(0, r'{tmp_path / "tools"}')
+        from subject import classify, double
+        def test_pos(): assert classify(1) == 'pos'
+        def test_double(): assert double(3) == 6 and double(101) == -1
+    """)
+    reads = tmp_path / "tests" / "scripts" / "test_reads_subject.py"
+    reads.write_text(f"def test_neg_written():\n"
+                     f"    assert \"return 'neg'\" in open(r'{src}').read()\n")
+    d = json.loads(_run([str(src), "--whole-file", "--no-line-map", "--no-cache",
+                         "--tests", str(t), str(reads), "--json"], tmp_path).stdout)
+    total = d["killed"] + d["survived"] + d["allowlisted"]
+    assert d["fast_tests"] == [str(t)]
+    assert 1 <= d["full_reruns"] < total, (d["full_reruns"], total)
