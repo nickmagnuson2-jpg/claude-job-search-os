@@ -26,8 +26,8 @@ Decisions (Nick, 2026-11-05, org session):
 Network subcommands: fetch, pull, push, ls-remote, clone, fetch-pack, send-pack;
 `remote update|prune|show` (show without -n contacts the remote); `submodule update`.
 Exempt, because they make no SSH connection (restraint replay, 2026-11-05): `--help`/`-h`;
-fetch, pull, ls-remote or clone whose remote is an explicit `https://` URL; a clone from a
-local path. A push is never exempt.
+fetch, pull, ls-remote or clone whose remote is an explicit `https://` or `file://` URL; a
+clone from a local path (no `scheme://`, no `host:` prefix). A push is never exempt.
 
 Not covered (named, not hidden): a command built at runtime (`$cmd fetch`), `xargs git
 ...`, `find -exec git ...`, git aliases, and any script file. A non-SSH remote would not
@@ -54,6 +54,12 @@ KEYWORDS = {"if", "then", "else", "elif", "do", "while", "until", "!", "{", "}",
 WRAPPERS = {"env", "command", "exec", "nice", "nohup", "timeout", "caffeinate", "time"}
 GIT_VALUE_OPTS = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path",
                   "--config-env", "--super-prefix", "--list-cmds"}
+# Wrapper options that take the NEXT word as their value (Codex r1 F3: `env -C /tmp`,
+# `caffeinate -t 5`, `nice --adjustment 5` hid the git command that followed).
+_WRAPPER_VALUE_OPTS = {"-u", "--unset", "-C", "--chdir", "-S", "--split-string",   # env
+                       "-n", "--adjustment",                                       # nice
+                       "-s", "--signal", "-k", "--kill-after",                     # timeout
+                       "-t", "-w"}                                                 # caffeinate
 ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 MAX_DEPTH = 6
 
@@ -70,7 +76,7 @@ def _strip_prefix(words: list[str]) -> list[str]:
         if base in WRAPPERS:
             i += 1
             while i < len(words) and (words[i].startswith("-") or ASSIGNMENT.match(words[i])):
-                takes_value = words[i] in ("-u", "-n", "-s", "-k", "--signal", "--kill-after")
+                takes_value = words[i] in _WRAPPER_VALUE_OPTS
                 i += 2 if takes_value else 1
             if base == "timeout" and i < len(words) and re.fullmatch(r"[0-9.]+[smhd]?", words[i]):
                 i += 1          # the duration
@@ -103,9 +109,11 @@ def _no_prompt(sub: str, rest: list[str]) -> bool:
         if w.startswith("-"):
             i += 1
             continue
-        if w.startswith("https://"):
+        if w.startswith(("https://", "file://")):
             return True
-        return sub == "clone" and w.startswith(("/", "./", "../", "~"))
+        # A clone source with no `scheme://` and no `host:` prefix is a local path (Codex
+        # r1 F2: `git clone local-repo dest`). `host:path` is SSH shorthand and still blocks.
+        return sub == "clone" and "://" not in w and ":" not in w
     return False
 
 
@@ -114,6 +122,8 @@ def _git_network(args: list[str]) -> str | None:
     i = 0
     while i < len(args):
         w = args[i]
+        if w in ("--help", "-h"):
+            return None         # `git --help fetch` prints help (Codex r1 F1)
         if w in GIT_VALUE_OPTS:
             i += 2              # `-C dir`, `-c key=value`: the option and its value
             continue

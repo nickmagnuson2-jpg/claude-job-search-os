@@ -179,3 +179,28 @@ def test_importing_the_hook_does_not_run_it():
     sys.path.insert(0, str(SCRIPT.parent))
     spec.loader.exec_module(mod)            # raises SystemExit if main() ran on import
     assert mod.find_network_git("git fetch") and not mod.find_network_git("git status")
+
+
+# Codex r1 (2026-11-05): F1/F2 over-blocks, F3 value-taking wrapper options.
+@pytest.mark.parametrize("cmd", [
+    "git --help fetch",                       # F1: a help flag before the subcommand
+    "git -h fetch",
+    "git clone local-repo dest",              # F2: a bare relative path is local
+    "git clone repo",
+    "git clone file:///Users/x/repo copy",
+])
+def test_codex_r1_no_network_shapes_pass(cmd):
+    code, err = _run(cmd)
+    assert code == 0, (cmd, err)
+
+
+@pytest.mark.parametrize("cmd", [
+    "env -C /tmp git fetch",                  # F3: wrapper options that take a value
+    "caffeinate -t 5 git fetch",
+    "nice --adjustment 5 git fetch",
+    "nice --adjustment=5 git fetch",
+    "git clone host:owner/repo.git",          # SSH shorthand stays blocked
+    "git clone git://example.com/repo.git",
+])
+def test_codex_r1_network_shapes_block(cmd):
+    assert _run(cmd)[0] == 2, cmd
