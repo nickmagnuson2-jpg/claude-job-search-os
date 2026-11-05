@@ -106,19 +106,21 @@ Before determining follow-up type, check whether the contact has replied to prio
 2. If no matching rows found, skip silently — contact not in outreach-log, or status already updated.
 3. If matching rows exist, ask before proceeding:
    ```
-   Did [Name] reply to your [most recent matching date] message?
+   Did [Name] reply to your [most recent matching date] message ([that row's Status: Drafted or Sent])?
      Y — Yes, they replied
      N — No response yet
      S — Skip / don't update status now
    ```
+   If that newest row is `Drafted`, it was never sent, so a Yes would mark an unsent draft `Replied`. Ask which message the reply answers before step 4.
 4. **If Yes (replied):** First ask: "Briefly, what did they say? (goes into the reply entry and tailors the follow-up; press Enter to skip)". Then log the reply ONCE as an inbound interaction, with that answer in the summary. This also sets the most recent open matching row's Status to `Replied`, so the reply counts on the morning page:
    ```bash
    PYTHONIOENCODING=utf-8 python3 tools/networking_write.py --repo-root . log "<Name>" \
      --type <email|linkedin|text> --summary "Reply received to <the message it answers>[: <what they said>]" --direction in --no-todo
    ```
    This entry IS the reply's record and counts as one reply. Tell Nick it is logged, and never log the same reply again (not here, not through `/networking`), or it counts twice.
-   Do NOT also run the status script below for a Yes: `--direction in` already sets `Replied`, and a second write could mark an older open row. Two exceptions:
-   - `code == "not_found"` (the contact is not in `networking.md`): nothing was logged; set the status with the script below instead.
+   Do NOT also run the status script below for a Yes: `--direction in` already sets `Replied`, and a second write could mark an older open row. Three exceptions:
+   - `code == "not_found"`: nothing was logged. Step 1a.3 already stops for a contact absent from `networking.md`, so this almost always means the name passed differs from the roster's Name cell. Rerun the log with the roster's exact name. Only if the contact really is not in `networking.md`, set the status with the script below instead.
+   - `code == "possible_duplicate_reply"`: nothing was written. The contact's newest entry is already a reply with no message from Nick after it, shown in `existing`. Show it to Nick. If it is this same reply, do not log it again; run the status script below once with `--status Replied` so this row stops being asked about, then go on to Store below. Rerun with `--new-reply` only if Nick says it is a new message from them.
    - `outreach_log_updated` is `false`: the reply IS logged, but no row was set to `Replied` (no open row, an ambiguous recipient, or an unreadable log). Run the status script below with `--status Replied` once to set the row or get the `reason` and `candidates`, and show them to Nick. Do not log the reply again.
    Store `reply_status = "replied"` — this informs Step 3. If context was provided, carry it into Steps 3 and 6.
 5. **If No (no response):** Set the most recent matching row's Status to `No reply` with the same script. Store `reply_status = "no_reply"`.
@@ -458,17 +460,18 @@ Archive file format:
 
 **1. Log the interaction in `data/networking.md`:**
 
-Add an entry under the contact's Interaction Log section. The `(outbound)` in the type is what counts this as a send on the morning page (`tools/reply_classify.py` reads only the type, never the summary). Keep it.
+Log it PLAIN, linked to the draft's capture id (the `Draft captured as <id>` line `open_draft.py` printed in Step 8). Approval is not a send: logging `(outbound)` here closed the contact's open reply before anything was sent, so the same reply could be logged twice (finding 8.F1, Nick's fix 2026-11-04). The writer also updates Last Interaction.
 
-```markdown
-#### YYYY-MM-DD | [email/linkedin] (outbound) | Follow-up #N — [1-line summary]
-
-> [Full message text in blockquote]
-
-**Follow-up:** [Next action — e.g., "Wait for response, follow up in 5 days if no reply" or "—" if final attempt]
+```bash
+PYTHONIOENCODING=utf-8 python3 tools/networking_write.py --repo-root . log "<Name>" \
+  --date YYYY-MM-DD --type <email|linkedin> --summary "Follow-up #N — <1-line summary>" \
+  --content "<full message text>" --followup "<next action, or omit for a final attempt>" \
+  --direction none --capture <capture-id> --no-todo
 ```
 
-Update the contact's Last Interaction date in the Contacts table.
+`--no-todo` because item 2 below handles the to-do. When Nick says what happened to the draft, run the confirm line `open_draft.py` printed (`draft_capture.py confirm <capture-id> unchanged|edited|not-sent`). `unchanged` or `edited` marks this entry `(outbound)`, which is what counts it as a send and closes the contact's open reply; `not-sent` leaves it plain. If confirm errors (`entry_not_found`, `ambiguous_entry`, `direction_conflict`), nothing was recorded: show Nick the message and never mark the entry by hand.
+
+If `open_draft.py` printed `WARNING: draft was NOT captured`, there is no capture id. Log the entry with `--direction none` and no `--capture`, and tell Nick that this send stays plain and will not count as a send.
 
 **2. Update follow-up to-do in `data/job-todos.md`:**
 

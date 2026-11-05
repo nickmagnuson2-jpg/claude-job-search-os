@@ -29,6 +29,16 @@ in the nightly backup):
 STATUS. `opened` means compose was opened and nothing else is known. It is NOT evidence of a
 send. Only `confirm` moves it: `unchanged`, `edited` or `not-sent`.
 
+THE NETWORKING ENTRY BECOMES A SEND ONLY HERE (2026-11-04, Nick's option (a); findings 8.F1,
+4.F3, 5.F3). The drafting skills log a draft's entry in data/networking.md PLAIN, with
+`networking_write.py log --direction none --capture <id>`, which records the entry's name,
+date, type and summary under `networking` in this capture's meta. `confirm <id> unchanged`
+or `edited` then marks that entry `(outbound)` through `networking_write.py mark-sent`, the
+only writer of that file; `not-sent` leaves it plain (and a forced `not-sent` after a send
+puts it back to plain). Logging it `(outbound)` at draft time closed the contact's open reply
+before anything was sent, so the same reply could be logged twice. If the one linked entry
+cannot be found, or is now a reply, confirm fails and records nothing.
+
 USAGE
     PYTHONIOENCODING=utf-8 python3 tools/draft_capture.py pending
     PYTHONIOENCODING=utf-8 python3 tools/draft_capture.py confirm latest unchanged
@@ -63,11 +73,14 @@ import hashlib
 import json
 import os
 import re
+import subprocess
 import sys
 import time
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import eic_review  # noqa: E402
 
 DRAFT_NAME = "draft-v0.txt"
 SENT_NAME = "sent.txt"
@@ -277,6 +290,68 @@ class CaptureError(Exception):
     """A confirmation that cannot be recorded as asked."""
 
 
+SENT_OUTCOMES = ("unchanged", "edited")
+
+
+CLAIM_NAME = "networking.claim"
+
+
+def link_networking(capture_id: str, link: dict) -> None:
+    """Record which data/networking.md entry this draft was logged as. Called by
+    networking_write.py `log --capture` right BEFORE it saves the entry, so a link that
+    cannot be made leaves no entry (round 5, 9.F2). One entry per capture: the claim is a
+    directory made with mkdir, which only one caller can create, so two logs racing for the
+    same capture cannot both pass even before either has written the meta."""
+    directory = store_dir() / capture_id
+    meta = read_meta(capture_id)
+    if meta.get("networking"):
+        raise CaptureError(f"{capture_id} is already linked to a networking entry "
+                           f"({meta['networking']})")
+    try:
+        (directory / CLAIM_NAME).mkdir()
+    except FileExistsError:
+        raise CaptureError(f"{capture_id} is already linked: another log holds its claim")
+    meta["networking"] = dict(link)
+    try:
+        _write_meta(directory, meta)
+    except OSError:
+        (directory / CLAIM_NAME).rmdir()
+        raise
+
+
+def unlink_networking(capture_id: str) -> None:
+    """Undo link_networking, when the entry it described could not be saved."""
+    directory = store_dir() / capture_id
+    meta = read_meta(capture_id)
+    meta.pop("networking", None)
+    _write_meta(directory, meta)
+    try:
+        (directory / CLAIM_NAME).rmdir()
+    except FileNotFoundError:
+        pass
+
+
+def _mark_networking(link: dict, undo: bool) -> bool:
+    """Mark the linked entry outbound (or, with undo, plain) through networking_write.py.
+    True when the entry changed. Raises CaptureError with the writer's code when it cannot:
+    never a silent skip."""
+    cmd = [sys.executable, str(Path(__file__).resolve().parent / "networking_write.py"),
+           "--repo-root", str(link["repo_root"]), "mark-sent", link["name"],
+           "--date", link["date"], "--type", link["type"], "--summary", link["summary"]]
+    if undo:
+        cmd.append("--undo")
+    r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
+                       env={**os.environ, "PYTHONIOENCODING": "utf-8"})
+    try:
+        out = json.loads(r.stdout)
+    except ValueError:
+        out = {"status": "error", "code": "no_output", "message": (r.stderr or "").strip()[-300:]}
+    if r.returncode != 0 or out.get("status") != "ok":
+        raise CaptureError(f"the networking entry for this draft was not marked "
+                           f"({out.get('code')}): {out.get('message')}. Nothing was recorded.")
+    return out.get("changed") is True
+
+
 def resolve(capture_id: str) -> str:
     """`latest` is the most recently opened capture that is still unconfirmed."""
     if capture_id != "latest":
@@ -326,6 +401,48 @@ def confirm(capture_id: str, outcome: str, sent_text: str | None = None,
                 meta["lesson_ref"] = lesson_ref
             else:
                 meta["no_lesson_reason"] = no_lesson.strip()
+    # The networking entry goes last among the checks and first among the writes: if it
+    # cannot be marked, nothing below is written and the capture stays as it was.
+    # If a write below then fails, the mark is undone and sent.txt put back, so networking
+    # and the capture still agree (round 5, 9.F3).
+    # rollback: the undo flag that reverses what was marked, or None when nothing changed.
+    link, rollback = meta.get("networking"), None
+    if link:
+        if outcome in SENT_OUTCOMES:
+            rollback = True if _mark_networking(link, undo=False) else None
+        elif meta.get("status") in SENT_OUTCOMES:
+            rollback = False if _mark_networking(link, undo=True) else None
+    prev_sent = sent_file.read_text(encoding="utf-8") if sent_file.exists() else None
+    try:
+        _write_confirmation(directory, meta, outcome, sent_text, draft_body, edits, revised,
+                            screenshots, now)
+    except OSError as exc:
+        if prev_sent is None:
+            sent_file.unlink(missing_ok=True)
+        else:
+            sent_file.write_text(prev_sent, encoding="utf-8")
+        if rollback is not None:
+            _mark_networking(link, undo=rollback)
+        raise CaptureError(f"the capture could not be written ({exc}); the networking entry "
+                           f"and sent.txt were rolled back, so nothing changed")
+    # A sent email to the EIC opens a review that only her reply can close, and a send
+    # corrected to not sent cancels it (tools/eic_review.py). Reported in the result, not
+    # stored in the capture. It runs after the capture and the networking entry are both
+    # written, so its own failure is reported and rolls nothing back.
+    try:
+        if eic_review.open_for(meta, now=now):
+            return {**meta, "eic_review": "opened"}
+        if eic_review.cancel_for(meta, now=now):
+            return {**meta, "eic_review": "cancelled"}
+    except OSError as exc:
+        return {**meta, "eic_review": f"ERROR: could not update the EIC review: {exc}"}
+    return meta
+
+
+def _write_confirmation(directory: Path, meta: dict, outcome: str, sent_text: str | None,
+                        draft_body: str, edits: list[dict], revised: int,
+                        screenshots: list[str] | None, now: float | None) -> None:
+    sent_file = directory / SENT_NAME
     if outcome == "edited":
         sent_file.write_text(sent_text, encoding="utf-8")
         ratio = changed_word_ratio(draft_body, body_of(sent_text))
@@ -351,7 +468,6 @@ def confirm(capture_id: str, outcome: str, sent_text: str | None = None,
         "screenshots": list(screenshots or []),
     })
     _write_meta(directory, meta)
-    return meta
 
 
 def _check_lesson(revised: int, edit: float, lesson_ref: str | None,

@@ -337,6 +337,10 @@ REGISTRY: dict[tuple[str, str, str | None], object] = {
     ("day_check.py", "complete", None): [
         Branch("day_check.py", "main", reads="complete", closes="exit"),
         Text(".claude/skills/check/SKILL.md", r"Exit code 1 means at least one source was unreadable")],
+    ("eic_review.py", "unreadable", None): [
+        # An unreadable review record counts as an open review, so the publish gate
+        # (check_eic_review.py) blocks rather than letting a post through.
+        Branch("eic_review.py", "open_reviews", reads="unreadable")],
     ("conversations_metric.py", "unreadable_sources", None): [
         Text(STANDUP, r"unreadable: <unreadable_sources>")],
 
@@ -420,6 +424,12 @@ REGISTRY: dict[tuple[str, str, str | None], object] = {
         "an idempotent no-op: the meeting is already saved, nothing went unread"),
     ("mutation_trend.py", "status", "skipped"): NotCoverage(
         "an idempotent no-op: this baseline is already recorded"),
+    # selection.line_map.status (2026-11-04): whether the per-line test map was built.
+    ("mutation_check.py", "status", "skipped"): NotCoverage(
+        "a speed diagnostic, not a measurement: with no line map every mutant runs the "
+        "file tier and the full mapped set, as before 2026-11-04, so no verdict depends on "
+        "it (test_mutation_check_speed.py); the run's own coverage states stay in the "
+        "top-level status"),
     ("outreach_metrics.py", "coverage", None): NotCoverage(
         "a business metric (pipeline companies with outreach), not scan coverage"),
     ("transcript_exclusions.py", "coverage", None): NotCoverage(

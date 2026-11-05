@@ -37,6 +37,7 @@ TOOLS = (
     "check_derived_ratio",
     "check_draft_voice",
     "check_edit_safety",
+    "check_eic_review",
     "check_email_via_skill",
     "check_frozen_file",
     "check_calendar_mcp",
