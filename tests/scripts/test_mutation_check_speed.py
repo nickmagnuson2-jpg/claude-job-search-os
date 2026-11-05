@@ -278,6 +278,27 @@ def test_the_same_holds_when_the_module_in_between_was_deleted_too(tmp_path):
     assert s["mode"] == "whole_file" and "tests/scripts/test_front.py" in s["reason"], s
 
 
+def test_a_chain_through_a_deleted_module_below_a_live_one_is_still_followed(tmp_path):
+    """Codex round 4 F1: test_front imports LIVE front, front imports DELETED gone, gone
+    imports the target. The closure has to cross from the base graph back into the
+    working tree; a loop over deleted modules alone added gone and never revisited front."""
+    src, t = _repo(tmp_path)
+    tools = tmp_path / "tools"
+    (tools / "gone.py").write_text("import subject\ndef cap(n): return subject.double(n)\n")
+    (tools / "front.py").write_text("import gone\ndef cap(n): return gone.cap(n)\n")
+    ft = tmp_path / "tests" / "scripts" / "test_front.py"
+    ft.write_text("import front\ndef test_cap(): assert front.cap(101) == -1\n")
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-qm", "chain")
+    _git(tmp_path, "update-ref", "refs/remotes/origin/main", "HEAD")
+    ft.unlink()
+    (tools / "gone.py").unlink()                     # front.py stays, still `import gone`
+    got = mc.changed_test_inputs("HEAD", tmp_path, [t], "subject")
+    assert ("tests/scripts/test_front.py", "deleted test file") in got["whole"], got
+    s = mc.resolve_scope(_args(), src, tmp_path, [t])
+    assert s["mode"] == "whole_file" and "tests/scripts/test_front.py" in s["reason"], s
+
+
 def test_reached_through_names_nothing_when_there_are_no_names():
     """An empty name set would compile to `\\b(?:)\\b`, which matches every source, so the
     helper must answer False itself rather than call every deleted test a reaching one."""

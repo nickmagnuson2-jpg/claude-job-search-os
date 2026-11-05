@@ -1087,14 +1087,26 @@ def changed_test_inputs(base: str, root: Path, test_files: list,
     # (reading tools/*.py once costs milliseconds; a lazy memo would only add a branch
     # whose mutants change nothing a test can see). With no stem, stem_re is None and
     # every deleted test already forces the whole file, so these names go unused.
-    reach = covering_names(stem, root / "tools")
-    gone = {Path(q).stem: at_base(q) or "" for q, s in changed.items()
-            if s == "D" and q.startswith("tools/") and q.endswith(".py")}
+    # ONE graph and ONE fixpoint over it (Codex round 4 F1): a chain can alternate
+    # between the two trees (test -> live front -> deleted gone -> target), and a loop
+    # over deleted modules alone added gone without ever revisiting front. Imports are
+    # read with _imported_names (ast), a superset of covering_names' first-word regex,
+    # so the scope can only widen relative to map_tests' selection.
+    graph: dict[str, set[str]] = {}
+    for f in (root / "tools").glob("*.py"):
+        try:
+            graph[f.stem] = _imported_names(f.read_text(encoding="utf-8", errors="ignore"))
+        except OSError:
+            continue
+    for q, s in changed.items():
+        if s == "D" and q.startswith("tools/") and q.endswith(".py"):
+            graph[Path(q).stem] = _imported_names(at_base(q) or "")
+    reach = {stem}
     grew = True
     while grew:                          # fixpoint; `reach` only grows
         grew = False
-        for mod, src in gone.items():
-            if mod not in reach and _imported_names(src) & reach:
+        for mod, deps in graph.items():
+            if mod not in reach and deps & reach:
                 reach.add(mod)
                 grew = True
 
