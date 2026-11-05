@@ -59,13 +59,22 @@ def _draft_captures_go_to_a_throwaway_store(tmp_path_factory):
     minutes of the capture step being added. Set here, for the whole session and inherited
     by every child process, so a new test cannot forget it.
     """
-    previous = os.environ.get("DRAFT_CAPTURE_DIR")
-    os.environ["DRAFT_CAPTURE_DIR"] = str(tmp_path_factory.mktemp("draft-captures"))
+    # A confirmed send can also open an EIC review (tools/eic_review.py), so its store and its
+    # address list are redirected the same way. On 2026-10-30 mutation runs left 13 open
+    # reviews in the real store, each of which would block every published-post write.
+    isolated = {
+        "DRAFT_CAPTURE_DIR": str(tmp_path_factory.mktemp("draft-captures")),
+        "EIC_REVIEW_DIR": str(tmp_path_factory.mktemp("eic-reviews")),
+        "EIC_REVIEWERS_PATH": str(tmp_path_factory.mktemp("eic-config") / "absent.txt"),
+    }
+    previous = {name: os.environ.get(name) for name in isolated}
+    os.environ.update(isolated)
     yield
-    if previous is None:
-        os.environ.pop("DRAFT_CAPTURE_DIR", None)
-    else:
-        os.environ["DRAFT_CAPTURE_DIR"] = previous
+    for name, value in previous.items():
+        if value is None:
+            os.environ.pop(name, None)
+        else:
+            os.environ[name] = value
 
 
 # The owner's real tables. `data/` is gitignored and holds live state; in a scratch

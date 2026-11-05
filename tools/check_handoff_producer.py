@@ -67,11 +67,11 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from check_public_pii import (  # noqa: E402
-    extract_write_targets,
     mask_heredoc_bodies,
     _unquote,
 )
 from hook_runtime import read_payload  # noqa: E402
+import shell_writes  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -351,10 +351,6 @@ def copy_destinations(command: str) -> list[str]:
     return out
 
 
-def all_write_targets(command: str) -> list[str]:
-    """Every path this command may land a file at: redirect/tee/dd/sed -i, plus copy/move."""
-    return list(extract_write_targets(command)) + copy_destinations(command)
-
 
 ROUTE = """BLOCKED: this creates a NEW handoff-shaped file under output/.
 
@@ -387,13 +383,20 @@ The banner is what makes a retired handoff non-authoritative. Fix the dispositio
 deleting it."""
 
 
-def decide(tool_name: str, tool_input: dict, *, root: Path = REPO_ROOT) -> str | None:
-    """The BLOCK message for this tool call, or None to allow. Pure given the filesystem."""
+def decide(tool_name: str, tool_input: dict, *, root: Path = REPO_ROOT,
+           cwd: str = "") -> str | None:
+    """The BLOCK message for this tool call, or None to allow. Pure given the filesystem.
+
+    A relative Bash target is judged from every directory the shell could be in when it
+    writes: `root` (how it was read before 2026-11-01), the session `cwd` from the payload,
+    and wherever a `cd` in the command moves it (tools/shell_writes.py, finding J). Before
+    that, `cd output/analysis && echo x > a-handoff.md` created a handoff unchecked."""
     if not isinstance(tool_input, dict):
         return None
 
     if tool_name == "Bash":
-        for target in all_write_targets(tool_input.get("command") or ""):
+        for target in shell_writes.bash_write_targets(tool_input.get("command") or "", cwd,
+                                                       root):
             rel = relativize(target, root)
             if is_handoff_shaped(rel) and not (root / rel).exists():
                 return ROUTE.format(rel=rel)
@@ -438,7 +441,7 @@ def main() -> None:
             sys.exit(2)
         sys.exit(0)
 
-    message = decide(p.tool_name, p.tool_input)
+    message = decide(p.tool_name, p.tool_input, cwd=p.cwd)
     if message:
         print(message, file=sys.stderr)
         sys.exit(2)

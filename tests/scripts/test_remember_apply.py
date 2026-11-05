@@ -631,16 +631,6 @@ def test_pipeline_note_writes_dated_prefix_into_notes_column(tmp_path):
     assert cols[2] == "Researching", "the Stage cell must be untouched"
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "OPEN TOOL DEFECT (found 2026-08-26, remember_apply.py:288). apply_pipeline_note "
-    "appends with a literal ' | ' INSIDE a markdown table cell, which markdown reads as "
-    "a new column. A second note on the same company therefore emits a 9-cell row under "
-    "an 8-cell header and pushes the URL out of column 7 into column 8. Reproduced "
-    "end-to-end on a scratch pipeline; latent on the live file (0 rows currently carry "
-    "two dated notes). This test asserts the CORRECT behaviour and is expected to fail "
-    "until the tool escapes the separator (\\| or a non-pipe delimiter). strict=True, so "
-    "it turns RED the moment the tool is fixed and this marker must then be removed."
-))
 def test_pipeline_note_appends_to_existing_notes_with_separator(tmp_path):
     write_fixture(tmp_path, "data/job-pipeline.md", PIPELINE_MD.replace(
         "| Research | — | — | — |", "| Research | — | prior note | — |"))
@@ -653,8 +643,10 @@ def test_pipeline_note_appends_to_existing_notes_with_separator(tmp_path):
     row = [l for l in (tmp_path / "data/job-pipeline.md").read_text(encoding="utf-8").splitlines()
            if l.startswith("| Acme Corp |")][0]
     cols = [c.strip() for c in row.strip("|").split("|")]
-    assert cols[6] == f"prior note | [{_today()}]: new info", \
-        f"existing note must be preserved and separated, got {cols[6]!r}"
+    # Fixed 2026-11-03 (table-routing): the old ' | ' join split the row into 9 cells.
+    assert len(cols) == 8, row
+    assert cols[6] == f"prior note [{_today()}]: new info", \
+        f"existing note must be preserved, got {cols[6]!r}"
 
 
 def test_pipeline_note_unknown_company_is_error(tmp_path):
@@ -1452,18 +1444,19 @@ def _pipe(tmp_path, body, timeout=30):
 
 
 def test_pipeline_note_skips_prose_line_named_like_the_company(tmp_path):
-    body = "# Pipeline\n\nAcme Corp\n\n" + PIPE_HEAD + "| Acme Corp | PM | Applied | x | x | x | — | x |\n"
+    body = "# Pipeline\n\n## Active Pipeline\n\nAcme Corp\n\n" + PIPE_HEAD + "| Acme Corp | PM | Applied | x | x | x | — | x |\n"
     code, out = _pipe(tmp_path, body)
     assert code == 0
-    assert out == ("# Pipeline\n\nAcme Corp\n\n" + PIPE_HEAD +
+    assert out == ("# Pipeline\n\n## Active Pipeline\n\nAcme Corp\n\n" + PIPE_HEAD +
                    f"| Acme Corp | PM | Applied | x | x | x | [{_today()}]: offer call | x |\n"), out
 
 
 def test_pipeline_note_pads_a_short_row(tmp_path):
-    body = PIPE_HEAD + "| Acme Corp | PM | Applied | x | x | x |"
+    body = "## Active Pipeline\n\n" + PIPE_HEAD + "| Acme Corp | PM | Applied | x | x | x |"
     code, out = _pipe(tmp_path, body)
     assert code == 0
-    assert out == PIPE_HEAD + f"| Acme Corp | PM | Applied | x | x | x | [{_today()}]: offer call | — |", out
+    assert out == ("## Active Pipeline\n\n" + PIPE_HEAD +
+                   f"| Acme Corp | PM | Applied | x | x | x | [{_today()}]: offer call | — |"), out
 
 
 def test_company_note_inserts_blank_line_before_new_entry(tmp_path):
@@ -1528,3 +1521,77 @@ def test_personal_capture_adds_newline_when_existing_lacks_one(tmp_path):
 
 def test_personal_capture_no_extra_blank_when_existing_ends_with_newline(tmp_path):
     assert _personal(tmp_path, "# Inbox\n- old\n") == ["# Inbox", "- old"]
+
+
+# ---------------------------------------------------------------------------
+# Pipeline notes go through pipe_write.py note (table-writers, 2026-11-02)
+# ---------------------------------------------------------------------------
+
+def _pipe_dest(tmp_path, body, **dest):
+    (tmp_path / "data").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "data" / "job-pipeline.md").write_text(body, encoding="utf-8")
+    result, code = run_apply("--repo-root", str(tmp_path), "--note", "offer | call", "--destinations",
+                             dest_json({"type": "pipeline_note", "entity": "Acme Corp", **dest}))
+    return result, code, (tmp_path / "data" / "job-pipeline.md").read_text(encoding="utf-8")
+
+
+ACTIVE = "## Active Pipeline\n\n" + PIPE_HEAD
+
+
+def test_a_note_after_existing_notes_keeps_the_row_eight_wide(tmp_path):
+    """The old writer joined with a literal ' | ', which split the row (table audit 2026-10-25)."""
+    result, code, out = _pipe_dest(tmp_path, ACTIVE + "| Acme Corp | PM | Applied | d | n | c | old | u |\n")
+    assert code == 0, result
+    row = out.splitlines()[-1]
+    assert row == f"| Acme Corp | PM | Applied | d | n | c | old [{_today()}]: offer / call | u |"
+
+
+def test_two_rows_for_one_company_need_a_role(tmp_path):
+    body = ACTIVE + "| Acme Corp | PM | Applied | d | n | c | — | u |\n| Acme Corp | VP | Applied | d | n | c | — | u |\n"
+    result, code, out = _pipe_dest(tmp_path, body)
+    assert code != 0 and result["code"] == "ambiguous_match"
+    assert "pass --role" in result["message"]
+    assert out == body
+    result, code, out = _pipe_dest(tmp_path, body, role="VP")
+    assert code == 0, result
+    assert out.splitlines()[-1].endswith(f"| [{_today()}]: offer / call | u |")
+    assert out.splitlines()[-2].endswith("| — | u |")
+
+
+def test_a_note_about_an_archived_company_still_lands(tmp_path):
+    body = ACTIVE + "\n## Archived\n\n" + PIPE_HEAD + "| Acme Corp | PM | Withdrawn | d | n | c | — | u |\n"
+    result, code, out = _pipe_dest(tmp_path, body)
+    assert code == 0, result
+    assert out.splitlines()[-1].endswith(f"| [{_today()}]: offer / call | u |")
+
+
+def test_an_unknown_company_keeps_the_old_message(tmp_path):
+    result, code, _ = _pipe_dest(tmp_path, ACTIVE + "| Other | PM | Applied | d | n | c | — | u |\n")
+    assert code != 0 and result["message"] == "No pipeline entry found for: Acme Corp"
+
+
+def test_an_empty_pipeline_file_is_reported(tmp_path):
+    result, code, _ = _pipe_dest(tmp_path, "")
+    assert code != 0 and result["message"] == "job-pipeline.md not found or empty"
+
+
+def test_an_owner_that_prints_no_json_is_reported(tmp_path, monkeypatch):
+    mod = _load_module()
+
+    class P:
+        stdout, returncode = "", 1
+    monkeypatch.setattr(mod.subprocess, "run", lambda *a, **k: P())
+    (tmp_path / "data").mkdir(parents=True)
+    (tmp_path / "data" / "job-pipeline.md").write_text(ACTIVE, encoding="utf-8")
+    r = mod.apply_pipeline_note("n", {"entity": "Acme Corp"}, tmp_path)
+    assert r["status"] == "error" and r["code"] == "owner_failed"
+
+
+def test_an_ambiguous_company_relays_the_owners_role_list(tmp_path):
+    body = ACTIVE + "| Acme Corp | PM | Applied | d | n | c | — | u |\n| Acme Corp | VP | Applied | d | n | c | — | u |\n"
+    (tmp_path / "data").mkdir(parents=True)
+    (tmp_path / "data" / "job-pipeline.md").write_text(body, encoding="utf-8")
+    r = _load_module().apply_pipeline_note("n", {"entity": "Acme Corp"}, tmp_path)
+    assert r["code"] == "ambiguous_match" and r["matches"] == [{"role": "PM"}, {"role": "VP"}]
+    r = _load_module().apply_pipeline_note("n", {"entity": "Nobody"}, tmp_path)
+    assert r["code"] == "not_found" and "matches" not in r
