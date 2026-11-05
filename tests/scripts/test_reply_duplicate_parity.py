@@ -174,3 +174,34 @@ def test_check_mode_writes_nothing_and_reports_the_writers_verdict(tmp_path, mon
     out = json.loads(passed.stdout)
     assert passed.returncode == 0 and out["status"] == "ok" and out["checked"] is True, out
     assert (tmp_path / "data/networking.md").read_text(encoding="utf-8") == before
+
+
+def test_a_note_without_a_direction_is_still_checked_against_the_roster(tmp_path):
+    """check_log_sequence: a note whose direction is missing or invalid gets the roster check
+    only (remember refuses it later as direction_required), so an unlisted contact is refused
+    not_found before anything in the call is written."""
+    lines = networking([ROW_JANE], ANSWERED).splitlines()
+    for d in (None, "sideways"):
+        r = networking_write.check_log_sequence(
+            lines, [{"name": "Nobody Listed", "direction": d}],
+            log_date=today(), entry_type="remember", summary=SUMMARY)
+        assert r is not None and (r["code"], r["index"], r["name"]) == (
+            "not_found", 0, "Nobody Listed"), r
+        assert networking_write.check_log_sequence(
+            lines, [{"name": "Jane Doe", "direction": d}],
+            log_date=today(), entry_type="remember", summary=SUMMARY) is None
+
+
+def test_remember_refusal_messages_tell_nick_what_to_do(tmp_path):
+    """The pre-flight rewrites the writer's refusal into /remember's own instructions."""
+    content = networking([ROW_JANE], OPEN)
+    dup = remember_apply.contact_note_refusal(
+        SUMMARY, [{"type": "contact_note", "entity": "Jane  Doe", "direction": "in"}], content)
+    assert dup["code"] == "possible_duplicate_reply"
+    assert dup["message"].startswith("Jane Doe already has a reply logged"), dup
+    assert '"new_reply": true' in dup["message"] and "2026-01-12" in dup["message"], dup
+    missing = remember_apply.contact_note_refusal(
+        SUMMARY, [{"type": "contact_note", "entity": "Nobody Listed", "direction": "in"}], content)
+    assert missing["code"] == "not_found"
+    assert missing["message"] == ("Nobody Listed is not in the Contacts table of "
+                                  "data/networking.md, so the note cannot be logged there."), missing

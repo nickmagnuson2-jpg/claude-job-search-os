@@ -618,3 +618,14 @@ def test_a_lock_that_cannot_be_taken_is_an_error_code_not_a_crash(tmp_path, monk
         r, c = log_reply(tmp_path)
     assert c != 0 and r.get("code") == "locked", r
     assert text(tmp_path) == before
+
+
+def test_a_dry_run_does_not_wait_for_the_lock(tmp_path, monkeypatch):
+    """A dry run reads nothing it must protect, so it takes no lock: it answers at once even
+    while another writer holds networking.md."""
+    inbox_lock = _lock_env(tmp_path, monkeypatch)
+    monkeypatch.setenv("NETWORKING_LOCK_TIMEOUT", "0.2")
+    with inbox_lock.file_lock(tmp_path / "data/networking.md"):
+        r, c = nw(tmp_path, "--dry-run", "log", "Jane Doe", "--date", "2026-06-19", "--type",
+                  "email", "--summary", "x", "--direction", "out", "--no-todo")
+    assert c == 0 and r.get("dry_run") is True, r
