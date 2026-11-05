@@ -335,19 +335,32 @@ def test_an_import_the_old_regex_saw_still_links_a_live_module(tmp_path):
     assert ("tests/scripts/test_front.py", "deleted test file") in got["whole"], got
 
 
-def test_reached_through_names_nothing_when_there_are_no_names():
-    """An empty name set would compile to `\\b(?:)\\b`, which matches every source, so the
-    helper must answer False itself rather than call every deleted test a reaching one."""
-    assert mc._reached_through("import json\ndef test_x(): pass\n", set()) is False
-    assert mc._reached_through("import front\n", {"front"}) is True
-    assert mc._reached_through("import json\n", {"front"}) is False
-    # A deleted test that does not parse cannot be ruled out: it counts as reaching, the
-    # way map_tests keeps an unparseable test file.
-    assert mc._reached_through("import json\ndef test_x(:\n", {"front"}) is True
+def test_a_live_module_that_dropped_its_import_keeps_its_base_edge(tmp_path):
+    """Codex round 6 F1 (P0): front.py imported the target at the base and no longer
+    does; test_front.py, which reached the target through front, is deleted in the same
+    diff. At the base map_tests selected that test, so the deletion must force the whole
+    file. A graph built from front's CURRENT source alone loses the edge and drops it."""
+    src, t = _repo(tmp_path)
+    front = tmp_path / "tools" / "front.py"
+    front.write_text("import subject\ndef cap(n): return subject.double(n)\n")
+    ft = tmp_path / "tests" / "scripts" / "test_front.py"
+    ft.write_text("import front\ndef test_cap(): assert front.cap(101) == -1\n")
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-qm", "front imports subject")
+    _git(tmp_path, "update-ref", "refs/remotes/origin/main", "HEAD")
+    front.write_text("def cap(n): return -1\n")          # the import is gone
+    ft.unlink()
+    got = mc.changed_test_inputs("HEAD", tmp_path, [t], "subject")
+    assert ("tests/scripts/test_front.py", "deleted test file") in got["whole"], got
+    s = mc.resolve_scope(_args(), src, tmp_path, [t])
+    assert s["mode"] == "whole_file", s
 
 
-def test_a_deleted_test_that_never_reached_the_target_keeps_the_diff_scope(tmp_path):
-    """Unrelated deletions must not turn every diff into a whole-file run."""
+def test_any_deleted_test_file_forces_the_whole_file_even_an_unrelated_one(tmp_path):
+    """The flat rule (2026-11-05, replacing four rounds of import-graph inference: 8.F3,
+    11.F1, 12.F1, 13.F1): a deleted test file is never inferred to be irrelevant. Whole
+    file is a superset of the diff, so this costs time on a rare kind of diff, never a
+    verdict."""
     src, t = _repo(tmp_path)
     other = tmp_path / "tests" / "scripts" / "test_other.py"
     other.write_text("import json\ndef test_x(): assert json.loads('1') == 1\n")
@@ -356,7 +369,85 @@ def test_a_deleted_test_that_never_reached_the_target_keeps_the_diff_scope(tmp_p
     _git(tmp_path, "update-ref", "refs/remotes/origin/main", "HEAD")
     other.unlink()
     s = mc.resolve_scope(_args(), src, tmp_path, [t])
-    assert s["mode"] == "diff", s
+    assert s["mode"] == "whole_file", s
+    assert "tests/scripts/test_other.py" in s["reason"] and "deleted test file" in s["reason"]
+
+
+def _unmapped_repo(tmp_path, before):
+    """test_front.py is NOT in the mapped list; committed with `before` as the base."""
+    src, t = _repo(tmp_path)
+    (tmp_path / "tools" / "front.py").write_text(
+        "import subject\ndef cap(n): return subject.double(n)\n")
+    ft = tmp_path / "tests" / "scripts" / "test_front.py"
+    ft.write_text(before)
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-qm", "front")
+    _git(tmp_path, "update-ref", "refs/remotes/origin/main", "HEAD")
+    return src, t, ft
+
+
+FRONT_TESTS = ("import front\n"
+               "def test_cap(): assert front.cap(101) == -1\n"
+               "def test_small(): assert front.cap(3) == 6\n")
+
+
+def test_an_unmapped_test_file_that_lost_a_test_forces_the_whole_file(tmp_path):
+    """The edit shape of the same class: test_front.py drops `import front` and its cap
+    test. It no longer names front, so it is not mapped, and before this rule a changed
+    UNMAPPED test file fell through every branch and was ignored."""
+    src, t, ft = _unmapped_repo(tmp_path, FRONT_TESTS)
+    ft.write_text("def test_small(): assert 3 * 2 == 6\n")
+    got = mc.changed_test_inputs("HEAD", tmp_path, [t], "subject")
+    assert [w for w in got["whole"] if w[0] == "tests/scripts/test_front.py"], got
+    assert mc.resolve_scope(_args(), src, tmp_path, [t])["mode"] == "whole_file"
+
+
+def test_an_unmapped_test_file_with_an_edited_test_or_module_code_forces_the_whole_file(
+        tmp_path):
+    src, t, ft = _unmapped_repo(tmp_path, FRONT_TESTS)
+    ft.write_text(FRONT_TESTS.replace("front.cap(101) == -1", "True"))
+    got = mc.changed_test_inputs("HEAD", tmp_path, [t], "subject")
+    assert [w for w in got["whole"] if "test_cap" in w[1]], got
+    ft.write_text(FRONT_TESTS.replace("import front", "import front as f2\nimport front"))
+    got = mc.changed_test_inputs("HEAD", tmp_path, [t], "subject")
+    assert [w for w in got["whole"] if w[0] == "tests/scripts/test_front.py"], got
+
+
+def test_an_add_only_change_to_an_unmapped_test_file_keeps_the_diff_scope(tmp_path):
+    """Appending a test cannot remove coverage, so it must not cost a whole-file run."""
+    src, t, ft = _unmapped_repo(tmp_path, FRONT_TESTS)
+    ft.write_text(FRONT_TESTS + "def test_more(): assert front.cap(4) == 8\n")
+    got = mc.changed_test_inputs("HEAD", tmp_path, [t], "subject")
+    assert got["whole"] == [], got
+    assert mc.resolve_scope(_args(), src, tmp_path, [t])["mode"] == "diff"
+
+
+def test_a_new_unmapped_test_file_keeps_the_diff_scope(tmp_path):
+    src, t = _repo(tmp_path)
+    (tmp_path / "tests" / "scripts" / "test_new.py").write_text("def test_n(): pass\n")
+    assert mc.changed_test_inputs("HEAD", tmp_path, [t], "subject")["whole"] == []
+
+
+def test_an_unmapped_test_file_that_no_longer_parses_forces_the_whole_file(tmp_path):
+    src, t, ft = _unmapped_repo(tmp_path, FRONT_TESTS)
+    ft.write_text(FRONT_TESTS + "def broken(:\n")
+    got = mc.changed_test_inputs("HEAD", tmp_path, [t], "subject")
+    assert ("tests/scripts/test_front.py", "test file does not parse") in got["whole"], got
+
+
+def test_any_deleted_file_under_tests_forces_the_whole_file(tmp_path):
+    """A deleted fixture or helper that no mapped test names, and that is not a conftest:
+    the flat rule still measures the whole file rather than infer it was unused."""
+    src, t = _repo(tmp_path)
+    fx = tmp_path / "tests" / "fixtures" / "rows.json"
+    fx.parent.mkdir(parents=True)
+    fx.write_text("[]\n")
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-qm", "fixture")
+    _git(tmp_path, "update-ref", "refs/remotes/origin/main", "HEAD")
+    fx.unlink()
+    got = mc.changed_test_inputs("HEAD", tmp_path, [t], "subject")
+    assert ("tests/fixtures/rows.json", "file deleted under tests/") in got["whole"], got
 
 
 def test_e2e_deleting_the_only_indirect_test_never_exits_0_on_zero_mutants(tmp_path):
@@ -891,7 +982,9 @@ def test_a_deleted_conftest_forces_the_whole_file(tmp_path):
     assert s["mode"] == "whole_file" and "conftest changed (deleted)" in s["reason"], s
 
 
-def test_deleting_an_unrelated_test_or_data_file_keeps_the_diff(tmp_path):
+def test_deleting_an_unrelated_test_or_data_file_now_measures_the_whole_file(tmp_path):
+    """Inverted 2026-11-05 by the flat rule: "unrelated" was an inference, and four review
+    rounds each found a way it was wrong. A deletion under tests/ costs a whole-file run."""
     src, t = _repo(tmp_path)
     other = tmp_path / "tests" / "scripts" / "test_unrelated.py"
     other.write_text("def test_x(): assert 1\n")
@@ -903,7 +996,9 @@ def test_deleting_an_unrelated_test_or_data_file_keeps_the_diff(tmp_path):
     other.unlink(); data.unlink()
     src.write_text(SUBJECT.replace("n > 100", "n >= 101"), encoding="utf-8")
     s = mc.resolve_scope(_args(), src, tmp_path, [t])
-    assert s["mode"] == "diff" and s["changed"] == {8}, s
+    assert s["mode"] == "whole_file", s
+    assert s["tests_changed"] == ["tests/fixtures/unused.json",
+                                  "tests/scripts/test_unrelated.py"], s
 
 
 def test_a_new_mapped_test_file_counts_every_test_in_it(tmp_path):
