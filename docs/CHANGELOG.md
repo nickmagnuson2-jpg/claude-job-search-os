@@ -5,7 +5,7 @@ Format: newest entries at the top.
 
 Forked from raphaotten/claude-interview-coach (MIT / CC BY 4.0).
 
-## 2026-11-04: Check what a reposted video is before transcribing it, and no typed skill count
+## 2026-11-04: Repost check, no typed skill count, shipped/waiting in /checkout, table owners
 
 **What prompted it.** On 11/02 a social repost captioned as an agents masterclass turned out to
 be a general talk on using LLMs, starting several minutes in, with no agent content. The
@@ -25,6 +25,30 @@ caption had been taken as a description of the video. Separately, the typed skil
   (`ls -d .claude/skills/*/ | wc -l`) instead of a number. The README and `docs/usage.md` drop
   their typed counts too. Both skill tables were checked against the 38 skill directories and
   list every one, `/check` included.
+
+**Shipped and waiting in /checkout (PR #16, checkout-shipped)**
+- `/checkout`'s System Changes read only this file, so a day of merged PRs with no entry
+  rendered empty (11/03: PRs #10-#14 merged, checkout showed none). `todo_daily_metrics.py`
+  now reports `shipped_today` (first-parent commits on main in the logical day, 04:00 to
+  04:00, with PR number, branch and title) and `waiting_to_merge` (unmerged local branches
+  with a commit in the last 7 days, with ahead counts). Both read `origin/main`, with an
+  `as_of`, since local main moves only on pull; no fetch by default (`--fetch` opts in).
+  Unreadable git returns `available: false`, never an empty list.
+
+**Pipeline and contact writes go through their owners (PR #17, table-routing)**
+- `data/job-pipeline.md` is written only by `pipe_write.py`, and `data/networking.md` by
+  `networking_write.py` (one parked exception, `remember_apply.apply_contact_note`).
+  `fmt_row` and `fmt_contact_row` pass every cell through `sanitize_cell`, so a `|` in a
+  value cannot add a column.
+- New `pipe_write note <company> --append T [--role R]` changes only the Notes cell; it
+  refuses a row with more than 8 cells instead of dropping the cells after the 8th.
+  `pipe_write add` takes `--notes` and `--next-action`.
+- `act_apply pipeline-add` and `contact-add` call the owners by subprocess and relay their
+  JSON. `remember_apply`'s pipeline note calls `pipe_write note`; the old writer joined
+  notes with a literal " | ", which split the row.
+- **Retired:** `tools/networking_direction_backfill.py` (added 10/30, see that entry) and its
+  tests are deleted. It was applied on 11/02 and rewrote all of `networking.md`, so it was a
+  second writer of that table. It stays in git at `162260f9`.
 
 **Open.** Parked review findings on item 5: it has no branch for an original that cannot be
 found; after a match it transcribes the reupload rather than acquiring the original; and it
