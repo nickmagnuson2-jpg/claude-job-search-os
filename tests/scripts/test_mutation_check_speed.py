@@ -102,6 +102,42 @@ def test_an_if_mutant_spans_its_test_not_its_body():
     assert spans[(1, 0, "IF_TRUE")] == (1, 2)
 
 
+def test_diff_scope_is_unknown_when_git_cannot_be_asked_or_cannot_diff(tmp_path, monkeypatch):
+    """Both git-failure paths return None, which resolve_scope turns into the whole file.
+    Self-mutation survivors, 2026-11-04: with either check removed the code read the
+    failed call's output as an empty diff, i.e. no mutants in scope."""
+    src, _ = _repo(tmp_path)
+    monkeypatch.setattr(mc, "_git", lambda args, root, timeout=30: None)
+    assert mc.diff_scope(src, "HEAD", tmp_path) is None
+    def fake(args, root, timeout=30):              # the file exists, the diff fails
+        rc = 0 if args[0] == "cat-file" else 128
+        return subprocess.CompletedProcess(args, rc, "", "fatal")
+    monkeypatch.setattr(mc, "_git", fake)
+    assert mc.diff_scope(src, "HEAD", tmp_path) is None, "a failed diff is not an empty one"
+
+
+def test_function_spans_lists_every_def_including_nested_and_async():
+    import ast
+    tree = ast.parse(SUBJECT + "\nasync def g():\n    def h():\n        pass\n")
+    assert sorted(mc._function_spans(tree)) == [(1, 4), (7, 10), (12, 14), (13, 14)]
+
+
+def test_a_multi_line_call_or_return_is_in_scope_from_any_of_its_lines():
+    """A diff that touches only the 2nd or 3rd line of a call or a return must still
+    select its mutant (self-mutation survivor, 2026-11-04: with the span dropped, the
+    fallback (line, line) covers the first line only)."""
+    import ast
+    src = "def f(x):\n    g(\n        x,\n    )\n    return (x\n            + 1)\n"
+    tree = ast.parse(src)
+    spans = mc.mutant_spans(tree)
+    assert spans[(2, 4, "DROP_CALL")] == (2, 4)
+    assert spans[(5, 4, "RETURN_NONE")] == (5, 6)
+    funcs = mc._function_spans(tree)
+    only_tail = {"changed": {3, 6}, "deleted_at": set()}
+    assert mc.in_scope(spans[(2, 4, "DROP_CALL")], only_tail, funcs)
+    assert mc.in_scope(spans[(5, 4, "RETURN_NONE")], only_tail, funcs)
+
+
 def test_a_changed_line_scopes_only_mutants_overlapping_it():
     scope = {"changed": {9}, "deleted_at": set()}
     assert mc.in_scope((9, 9), scope, [(7, 10)])
