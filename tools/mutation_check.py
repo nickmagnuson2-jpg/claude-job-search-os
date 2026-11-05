@@ -1003,16 +1003,23 @@ def _test_sources(text: str) -> tuple[dict[str, str], str] | None:
     return tests, "\n".join(rest)
 
 
+# pytest reads these from the rootdir or an ancestor; a change to any of them can select
+# or deselect tests with no test file changing (Codex round 7 F1).
+_PYTEST_CONFIG_FILES = frozenset({"pytest.ini", "pyproject.toml", "setup.cfg", "tox.ini"})
+
+
 def changed_test_inputs(base: str, root: Path, test_files: list,
                         stem: str = "") -> dict | None:
     """Test-side inputs of this target that differ between `base` and the working tree.
     Untracked files count. None when git cannot answer. Returns
 
       whole  [(path, why)] inputs that can reach ANY test, so the scope is the whole file:
-             a changed conftest.py under tests/ (pytest loads it implicitly), a changed
+             a changed conftest.py (pytest loads it implicitly), a changed
              non-test module a mapped test imports, a changed file under tests/ a mapped
-             test names (fixture data), ANY file deleted under tests/, an UNMAPPED test file
-             changed other than by appending tests (no reachability inference), and a
+             test names (fixture data), ANY file deleted under tests/, an UNMAPPED .py under
+             tests/ changed other than by appending tests (no reachability inference), any
+             conftest.py anywhere, a pytest config file (pytest.ini, pyproject.toml,
+             setup.cfg, tox.ini), and a
              mapped test file that LOST a test function (its lines are in no current map).
       tests  [path] mapped test files that changed without losing a test: added, edited.
              Their effect is bounded by the lines their tests execute (resolve_test_lines).
@@ -1078,12 +1085,9 @@ def changed_test_inputs(base: str, root: Path, test_files: list,
         if p == target_rel or p.startswith(".mutation-cache/"):
             continue                  # the target's own diff is resolve_scope's business
         in_tests = p.startswith("tests/")
-        is_test = name.startswith("test_") and name.endswith(".py")
-        if in_tests and st == "D" and is_test:
-            whole.append((p, "deleted test file"))
-            continue
-        # Any OTHER deleted file (a conftest, a helper, a fixture) goes through the same
-        # checks as an edited one: deleting a conftest changes what every test does.
+        # A deleted file goes through the same checks as an edited one (deleting a
+        # conftest changes what every test does); a deleted .py under tests/ ends at the
+        # unmapped-module branch below, as "deleted test file".
         # (Before 2026-11-04 every deleted non-test file was skipped; found by
         # self-mutation, where removing that skip changed nothing any test saw.)
         gone_note = " (deleted)" if st == "D" else ""
@@ -1115,8 +1119,14 @@ def changed_test_inputs(base: str, root: Path, test_files: list,
                 names = {n for n in now[0] if n not in before[0]}
             tests.append(p)
             test_names[p] = names
-        elif in_tests and name == "conftest.py":
+        elif name == "conftest.py":
+            # ANY conftest.py, not only under tests/: a root one is loaded for every test
+            # below it and can deselect a killing test (Codex round 7 F1).
             whole.append((p, "conftest changed" + gone_note))
+        elif name in _PYTEST_CONFIG_FILES:
+            # `addopts = -k 'not test_cap'` deselects the only killing test with no test
+            # file changing (Codex round 7 F1). Any such file anywhere: time, not verdicts.
+            whole.append((p, "pytest configuration changed" + gone_note))
         elif p.endswith(".py") and not name.startswith("test_") and (
                 Path(p).stem in imported or p in reached):
             whole.append((p, "imported helper changed" + gone_note))
@@ -1125,10 +1135,16 @@ def changed_test_inputs(base: str, root: Path, test_files: list,
             # fixture weakens the test like an edited assertion. Matched by name too, so a
             # common name can over-trigger; that costs time, never coverage.
             whole.append((p, "referenced fixture changed" + gone_note))
-        elif in_tests and is_test:
-            # An UNMAPPED test file: map_tests does not select it NOW, but its base
+        elif in_tests and p.endswith(".py"):
+            # An UNMAPPED test module: map_tests does not select it NOW, but its base
             # version may have reached the target (it dropped `import front` along with
             # the test that killed a mutant). Only appended tests are safe to ignore.
+            # Any .py under tests/, not only test_*.py: pytest's python_files can
+            # collect other names (check_*.py; Codex round 7 F2). A helper module that
+            # changes here also widens the scope: time, never a verdict.
+            if st == "D":
+                whole.append((p, "deleted test file"))
+                continue
             old = at_base(p)
             if old is None:
                 continue                         # a new file: add-only by definition

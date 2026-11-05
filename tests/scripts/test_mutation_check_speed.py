@@ -428,6 +428,40 @@ def test_an_unmapped_test_file_names_up_to_three_lost_tests(tmp_path):
         "unmapped test file: test removed or edited: test_a")
 
 
+@pytest.mark.parametrize("rel", ["conftest.py", "pytest.ini", "pyproject.toml", "setup.cfg",
+                                 "tox.ini", "tools/conftest.py"])
+def test_a_changed_pytest_config_or_conftest_anywhere_forces_the_whole_file(tmp_path, rel):
+    """Codex round 7 F1 (P0): a root conftest.py, or `addopts = -k 'not test_cap'` in a
+    config file, can deselect the only killing test. Outside tests/ these were ignored."""
+    src, t = _repo(tmp_path)
+    f = tmp_path / rel
+    f.write_text("# deselects nothing yet\n")
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-qm", "config")
+    _git(tmp_path, "update-ref", "refs/remotes/origin/main", "HEAD")
+    f.write_text("[pytest]\naddopts = -k 'not test_double_cap'\n")
+    got = mc.changed_test_inputs("HEAD", tmp_path, [t], "subject")
+    assert [w for w in got["whole"] if w[0] == rel], got
+    assert mc.resolve_scope(_args(), src, tmp_path, [t])["mode"] == "whole_file"
+
+
+def test_an_unmapped_test_module_with_another_naming_pattern_is_checked_too(tmp_path):
+    """Codex round 7 F2 (P0): pytest can collect check_*.py (python_files). An unmapped
+    .py under tests/ is checked like a test_*.py, whatever its name."""
+    src, t = _repo(tmp_path)
+    ck = tmp_path / "tests" / "check_front.py"
+    ck.write_text(FRONT_TESTS)
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-qm", "check file")
+    _git(tmp_path, "update-ref", "refs/remotes/origin/main", "HEAD")
+    ck.write_text("def test_small(): assert 3 * 2 == 6\n")
+    got = mc.changed_test_inputs("HEAD", tmp_path, [t], "subject")
+    assert [w for w in got["whole"] if w[0] == "tests/check_front.py"], got
+    ck.unlink()
+    got = mc.changed_test_inputs("HEAD", tmp_path, [t], "subject")
+    assert ("tests/check_front.py", "deleted test file") in got["whole"], got
+
+
 def test_an_add_only_change_to_an_unmapped_test_file_keeps_the_diff_scope(tmp_path):
     """Appending a test cannot remove coverage, so it must not cost a whole-file run."""
     src, t, ft = _unmapped_repo(tmp_path, FRONT_TESTS)
