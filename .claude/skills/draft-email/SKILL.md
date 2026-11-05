@@ -459,15 +459,16 @@ Archive file format:
 
 
 **If recipient exists in `data/networking.md`:**
-1. Log the interaction. The type stays plain `email`, with no `(outbound)`, on purpose, to keep the old meaning: before 2026-10-30 the morning page did not count these entries as sends (a thank-you, status update or intro request), while `/follow-up` and `/cold-outreach` entries were counted as sends, which is why those two templates record `(outbound)` and this one does not. Changing it is Nick's call (decided 2026-10-31; `tests/scripts/test_reply_classification_consistency.py` pins it).
-   ```markdown
-   #### YYYY-MM-DD | email | [Type] — [1-line summary]
-
-   > [Full message text in blockquote]
-
-   **Follow-up:** [Next action or "—" for thank-you emails]
+1. Log the interaction PLAIN, linked to the draft's capture id (the `Draft captured as <id>` line `open_draft.py` printed). The writer also updates Last Interaction. Until 2026-11-04 this entry stayed plain for good, so a real send never closed the contact's open reply and their next genuine reply was refused as a possible duplicate (findings 4.F3, 5.F3). Nick's fix: plain at draft time, `(outbound)` once the send is confirmed, the same as `/follow-up` and `/cold-outreach`.
+   ```bash
+   PYTHONIOENCODING=utf-8 python3 tools/networking_write.py --repo-root . log "<Name>" \
+     --date YYYY-MM-DD --type email --summary "<Type> — <1-line summary>" \
+     --content "<full message text>" [--followup "<next action>"] \
+     --direction none --capture <capture-id> --no-todo
    ```
-2. Update the contact's Last Interaction date.
+   `--no-todo` because the follow-up to-dos below are written separately. In a multi-round edit cycle, log once, after Nick says what he sent, with the capture id of the final `open_draft.py` run; if that capture is already confirmed sent, the entry is written `(outbound)` directly. When Nick says what happened to the draft, run the confirm line `open_draft.py` printed (`draft_capture.py confirm <capture-id> unchanged|edited|not-sent`). `unchanged` or `edited` marks this entry `(outbound)`, which is what counts it as a send and closes the contact's open reply; `not-sent` leaves it plain. If confirm errors (`entry_not_found`, `ambiguous_entry`, `direction_conflict`), nothing was recorded: show Nick the message and never mark the entry by hand.
+
+   If `open_draft.py` printed `WARNING: draft was NOT captured`, there is no capture id. Log the entry with `--direction none` and no `--capture`, and tell Nick that this send stays plain and will not count as a send.
 
 **If recipient is NOT in `data/networking.md` and user wants to add:**
 1. Add contact to the Contacts table (infer company and role from context if possible).

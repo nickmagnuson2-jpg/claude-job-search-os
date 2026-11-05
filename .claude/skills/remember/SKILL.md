@@ -61,7 +61,7 @@ Parse the JSON output:
 - `ambiguous` — if `true`, default to `data/notes.md` and flag the routing as uncertain in the Step 4 confirmation
 - `direction_needed` — if `true`, every `contact_note` has `"direction": null` and Step 1.2 must fill it in. `remember_apply.py` refuses a `contact_note` without a direction.
 
-Proceed to Step 2 with the resolved `destinations[]`. If the script fails or returns an empty destinations list, fall back to `data/notes.md` as general_note. Never for a `direction_required` refusal: that means Step 1.2 was skipped, so go back to Step 1.2, ask the direction, and rerun with ONLY the refused `contact_note` destination, now carrying the direction (in a multi-destination call the other destinations were already written, so rerunning the whole list writes them twice); the note belongs in `networking.md`.
+Proceed to Step 2 with the resolved `destinations[]`. If the script fails or returns an empty destinations list, fall back to `data/notes.md` as general_note.
 
 ### Step 1.2: Record who reached whom (required for a contact note)
 
@@ -128,10 +128,16 @@ Or use `--destinations-file` on Windows to avoid shell-escaping issues:
 
 Parse the response:
 - Single destination: `{"status":"ok","action":"<type>","file":"..."}` — use `file` in confirmation
-- Multi destination: `{"status":"ok","action":"multi_write","results":[...]}` — surface any `warning` fields. If `has_errors` is `true`, some destinations were NOT written: surface each result whose `status` is `error` (for example `direction_required`, a contact note without a direction) and fix it before confirming
+- Multi destination: `{"status":"ok","action":"multi_write","results":[...]}` — surface any `warning` fields. If `has_errors` is `true`, some destinations were NOT written: surface each result whose `status` is `error` (for example `direction_required`, a contact note without a direction, or `possible_duplicate_reply`, below) and fix it before confirming
 - Error: `{"status":"error","message":"..."}` — surface to user with fallback suggestion
 
-If the script fails or classify returned empty destinations: fall back to writing `data/notes.md` as general_note. Never for a `direction_required` refusal: that means Step 1.2 was skipped, so go back to Step 1.2, ask the direction, and rerun with ONLY the refused `contact_note` destination, now carrying the direction (in a multi-destination call the other destinations were already written, so rerunning the whole list writes them twice); the note belongs in `networking.md`.
+If the script fails or classify returned empty destinations: fall back to writing `data/notes.md` as general_note. Never for a `direction_required` refusal: that means Step 1.2 was skipped, so go back to Step 1.2, ask the direction, and rerun with ONLY the refused `contact_note` destinations (every one, if the note names several contacts), now carrying the direction (in a multi-destination call the other destinations were already written, so rerunning the whole list writes them twice); the note belongs in `networking.md`.
+
+A `possible_duplicate_reply` refusal (direction `in` or `both`; nothing in the call was written) means the contact's newest entry is already a reply with no message from Nick after it, shown in `existing` (or that this same call already carries a reply note for that contact); nothing was written for that contact. Show Nick the entry. Because the call wrote nothing, always rerun it: without that contact note if the note is the same reply (it is already counted), with that destination as direction `out` if the refused direction was `both` (so Nick's message is still counted), or with `"new_reply": true` on it if Nick says it is a new message. Every other destination in the call is rerun unchanged. (This differs from `direction_required` above, where the other destinations were already written and only the refused note is rerun.) Rerun that one destination with `"new_reply": true` only if he says it is a new message from them.
+
+A `locked` refusal means another `/remember`, `/follow-up` or `/networking` held `data/networking.md` for 30 seconds. This call holds that lock from its pre-flight to its last destination, so nothing in it was written: rerun the whole call once the other writer has finished.
+
+A `not_found` refusal on a `contact_note` means the contact is not in the Contacts table of `data/networking.md`: the note is logged through `networking_write.py log` (the only writer of that file, since 2026-11-04), which logs only to a listed contact, and nothing was written for it. This is not a script failure, so do not fall back to `data/notes.md`. The refusal comes from the pre-flight, so nothing in the call was written (the same holds for `file_not_found`, a missing `networking.md`). Ask Nick whether to add the contact (`PYTHONIOENCODING=utf-8 python3 tools/networking_write.py --repo-root . add "<Name>" --company "<Company>"`), then rerun the whole call, or rerun it without that `contact_note` if he does not want the contact added.
 
 ### Step 4: Confirm
 

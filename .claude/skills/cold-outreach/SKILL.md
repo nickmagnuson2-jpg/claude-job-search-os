@@ -463,27 +463,29 @@ Archive file format:
 
 **1. Add/update contact in `data/networking.md`:**
 
-Read `data/networking.md`. If the contact doesn't exist in the Contacts table, add a new row:
+If the contact is not in the Contacts table, add them with the writer (it also creates their Interaction Log section, and refuses a likely duplicate of an existing contact with `possible_duplicate`):
 
-```markdown
-| [Name] | [Company] | [Role] | peer | [today] | — | — |
+```bash
+PYTHONIOENCODING=utf-8 python3 tools/networking_write.py --repo-root . add "<Name>" \
+  --company "<Company>" --role "<Role>" --relationship peer
 ```
 
-If they already exist (from Step 2 — found but no interactions), update the Last Interaction date.
+If they already exist (from Step 2, found but no interactions), the log below updates the Last Interaction date.
 
 **2. Log the interaction:**
 
-Add an entry under the contact's Interaction Log section (create the section if new contact). The `(outbound)` in the type is what counts this as a send on the morning page (`tools/reply_classify.py` reads only the type, never the summary). Keep it.
+Log it PLAIN, linked to the draft's capture id (the `Draft captured as <id>` line `open_draft.py` printed). A drafted message is not a send; it becomes one when the send is confirmed (findings 8.F1, 4.F3, 5.F3, Nick's fix 2026-11-04). The writer creates the contact's Interaction Log section if it is missing.
 
-```markdown
-### [Name] — [Company]
-
-#### YYYY-MM-DD | [email/linkedin] (outbound) | Cold outreach — [1-line summary]
-
-> [Full message text, line by line, in blockquote]
-
-**Follow-up:** Wait for response — follow up in 3–5 business days if no reply
+```bash
+PYTHONIOENCODING=utf-8 python3 tools/networking_write.py --repo-root . log "<Name>" \
+  --date YYYY-MM-DD --type <email|linkedin> --summary "Cold outreach — <1-line summary>" \
+  --content "<full message text>" --followup "Wait for response — follow up in 3–5 business days if no reply" \
+  --direction none --capture <capture-id> --no-todo
 ```
+
+`--no-todo` because item 3 below creates the to-do. When Nick says what happened to the draft, run the confirm line `open_draft.py` printed (`draft_capture.py confirm <capture-id> unchanged|edited|not-sent`). `unchanged` or `edited` marks this entry `(outbound)`, which is what counts it as a send and closes the contact's open reply; `not-sent` leaves it plain. If confirm errors (`entry_not_found`, `ambiguous_entry`, `direction_conflict`), nothing was recorded: show Nick the message and never mark the entry by hand.
+
+If `open_draft.py` printed `WARNING: draft was NOT captured`, there is no capture id. Log the entry with `--direction none` and no `--capture`, and tell Nick that this send stays plain and will not count as a send.
 
 **3. Create follow-up to-do in `data/job-todos.md`:**
 

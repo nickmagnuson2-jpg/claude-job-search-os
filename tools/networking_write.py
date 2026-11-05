@@ -5,8 +5,15 @@ networking_write.py — Atomic mutations for data/networking.md.
 Subcommands:
   add <name> [--company CO] [--role ROLE] [--relationship TYPE] [--force]
   log <name> --date DATE --type TYPE --summary SUMMARY --direction in|out|both|none
-             [--followup TEXT] [--content TEXT] [--no-todo]
+             [--followup TEXT] [--content TEXT] [--no-todo] [--capture ID]
+  mark-sent <name> --date DATE --type TYPE --summary SUMMARY [--undo]
   remove <name> [--role ROLE]
+
+A drafted message is logged PLAIN with `log --direction none --capture <id>` (the id that
+open_draft.py prints), and becomes `(outbound)` only when `draft_capture.py confirm <id>
+unchanged|edited` runs `mark-sent` on it (Nick, 2026-11-04; findings 8.F1, 4.F3, 5.F3).
+Logging it outbound at draft time closed the contact's open reply before anything was sent.
+If the capture is already confirmed sent when it is logged, the entry is written outbound.
 
 `add` blocks on a fuzzy name match to an existing contact (spelling variants like
 "Jordan Sample"/"Jordan Samples", nickname vs full name, accents) with code
@@ -29,20 +36,24 @@ Usage:
   PYTHONIOENCODING=utf-8 python3 tools/networking_write.py --repo-root . log "Jane Doe" --date 2026-02-28 --type email --summary "Asked for a call" --direction in
   PYTHONIOENCODING=utf-8 python3 tools/networking_write.py --repo-root . remove "Jane Doe"
 """
+import contextlib
 import json
 import os
 import re
 import subprocess
 import sys
+from contextlib import contextmanager
 from datetime import date, datetime
 from pathlib import Path
 
 # Sibling import: fuzzy name-duplicate guard (stdlib-only module in tools/).
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from name_dedup import find_near_duplicates  # noqa: E402
+import inbox_lock  # noqa: E402
 import outreach_status  # noqa: E402
 # The one "did they reply" rule, shared with day_check.py (no local copy here).
-from reply_classify import with_direction  # noqa: E402
+from reply_classify import (base_type, contact_line_indices, contact_lines,  # noqa: E402
+                            direction, entry_header, open_reply, with_direction)
 from pipe_write import sanitize_cell  # noqa: E402
 from md_table import JsonArgumentParser, find_section, load_lines, is_sep_row, out_error, out_ok, parse_cols, read_file, table_insert_pos, write_atomic  # noqa: E402
 
@@ -79,6 +90,23 @@ def fmt_contact_row(name, company, role, relationship, added, last_interaction, 
     caller's value cannot add a column, whichever command wrote the row."""
     cells = (name, company, role, relationship, added, last_interaction, email)
     return "| " + " | ".join(sanitize_cell(c) for c in cells) + " |"
+
+
+def find_contact_row(lines: list, name: str) -> int:
+    """Index of the contact's row in the ## Contacts table (case-insensitive name), or -1.
+    The one roster rule: `log` refuses a name it does not find here, and remember_apply's
+    pre-flight asks the same question before it writes anything. The name is compared the
+    way fmt_contact_row stores it (pipe_write.sanitize_cell), so both callers agree."""
+    # No Contacts section: find_section gives (-1, -1), so the loop below is empty and the
+    # answer is -1 without a separate branch (a redundant early return was an equivalent mutant).
+    start, end = find_section(lines, r"^##\s+Contacts")
+    want = sanitize_cell(name).lower()
+    for i in range(start, end):
+        if is_data_row(lines[i]):
+            cols = parse_cols(lines[i])
+            if cols and cols[0].lower() == want:
+                return i
+    return -1
 
 
 # ---------------------------------------------------------------------------
@@ -263,51 +291,35 @@ def cmd_add(args, networking_path: Path, dry_run: bool) -> None:
            name=args.name, company=company)
 
 
-def cmd_log(args, networking_path: Path, repo_root: Path, dry_run: bool) -> None:
-    # The follow-up becomes a todo through todo_write.py, which refuses a wrong weekday.
-    # Refuse here first: below, the old follow-up is superseded before the add, and the
-    # add's exit code is ignored, so a refused add would silently lose the follow-up.
-    from todo_write import refuse_wrong_weekdays
-    refuse_wrong_weekdays(args.followup or "")
-    today = date.today().strftime("%Y-%m-%d")
-    log_date = args.date if args.date else today
-    try:
-        kind = with_direction(args.type, args.direction)
-    except ValueError as e:
-        out_error(str(e), "direction_conflict")
 
-    # Build the entry block
-    header = f"#### {log_date} | {kind} | {args.summary}"
-    followup = args.followup if args.followup else "—"
-    entry_lines = [header, ""]
-    if args.content:
-        for content_line in args.content.splitlines():
-            entry_lines.append(f"> {content_line}" if content_line else ">")
-        entry_lines.append("")
-    entry_lines.append(f"**Follow-up:** {followup}")
-    entry_lines.append("")
+def apply_log(lines: list, name: str, log_date: str, entry_lines: list, direction: str,
+              new_reply: bool) -> dict | None:
+    """The writer's whole in-memory decision for one `log`, shared by every caller.
 
-    if dry_run:
-        out_ok("log", f"Would log interaction for {args.name}",
-               dry_run=True,
-               would_mutate=[{"file": str(networking_path), "entry": header}])
-        return
+    Returns the refusal ({"code", "message", ...}) and leaves `lines` untouched, or returns None
+    after inserting the entry into `lines` (Last Interaction updated; the contact's section
+    created if missing). Nothing is saved here. cmd_log saves the result; check_log_sequence
+    runs it on a copy for /remember's pre-flight, so the two cannot disagree (round 7: two
+    copies of the duplicate rule drifted twice, by name form and by timing).
 
-    content, lines = load_lines(networking_path)
-
-    # Verify contact exists in Contacts table
-    contacts_start, contacts_end = find_section(lines, r"^##\s+Contacts")
-    contact_row_idx = -1
-    if contacts_start != -1:
-        for i in range(contacts_start, contacts_end):
-            if is_data_row(lines[i]):
-                cols = parse_cols(lines[i])
-                if cols and cols[0].lower() == args.name.lower():
-                    contact_row_idx = i
-                    break
-
+    The duplicate-reply check reads every section for the contact, archived or not, BEFORE a
+    section is looked up or created. It used to run only when a live section existed, so a
+    reply still open in an archived section was logged again (found by the parity test).
+    """
+    contact_row_idx = find_contact_row(lines, name)
     if contact_row_idx == -1:
-        out_error(f"Contact not found: {args.name}", "not_found")
+        return {"code": "not_found", "message": f"Contact not found: {name}"}
+    # A reply when the newest directional entry is already an unanswered reply is usually the
+    # same reply logged a second time (reply_classify.open_reply).
+    if direction in ("in", "both") and not new_reply:
+        prev = open_reply(contact_lines(lines, name))
+        if prev:
+            return {"code": "possible_duplicate_reply",
+                    "existing": {"date": prev[0], "type": prev[1], "summary": prev[2]},
+                    "message": (f"{name} already has a reply logged with no message from Nick "
+                                f"after it ({prev[0]} | {prev[1]} | {prev[2][:80]}). If this is "
+                                f"that reply, do not log it again. If it is a new message from "
+                                f"them, rerun with --new-reply.")}
 
     # Update Last Interaction date in Contacts table
     cols = parse_cols(lines[contact_row_idx])
@@ -317,7 +329,7 @@ def cmd_log(args, networking_path: Path, repo_root: Path, dry_run: bool) -> None
     lines[contact_row_idx] = fmt_contact_row(*cols[:7])
 
     # Find the contact's section in Interaction Log
-    log_sec_start, log_sec_end = find_contact_log_section(lines, args.name)
+    log_sec_start, log_sec_end = find_contact_log_section(lines, name)
     if log_sec_start == -1:
         # Section missing — create it
         log_section_start, log_section_end = find_section(lines, r"^##\s+Interaction\s+Log")
@@ -348,8 +360,99 @@ def cmd_log(args, networking_path: Path, repo_root: Path, dry_run: bool) -> None
     # Insert entry lines in order
     for j, eline in enumerate(entry_lines):
         lines.insert(insert_at + j, eline)
+    return None
 
-    save_lines(networking_path, lines, content)
+
+def check_log_sequence(lines: list, notes: list, log_date: str, entry_type: str,
+                       summary: str) -> dict | None:
+    """/remember's pre-flight, run through the writer's own code: apply_log for each note in
+    call order on a copy of `lines`. Returns the first refusal with the note's `index` and
+    normalised `name`, or None. Writes nothing.
+
+    notes: [{"name", "direction", "new_reply"}]. Names go through sanitize_cell, as main()
+    does for every command. A note whose direction is not one of in/out/both/none is checked
+    for roster membership only; remember refuses it later as direction_required.
+    """
+    work = list(lines)
+    for i, n in enumerate(notes):
+        name = sanitize_cell(n.get("name") or "")
+        d = n.get("direction")
+        if d not in ("in", "out", "both", "none"):
+            if find_contact_row(work, name) == -1:
+                return {"code": "not_found", "message": f"Contact not found: {name}",
+                        "index": i, "name": name}
+            continue
+        entry = [f"#### {log_date} | {with_direction(entry_type, d)} | {summary}", "",
+                 "**Follow-up:** —", ""]
+        refusal = apply_log(work, name, log_date, entry, d, n.get("new_reply") is True)
+        if refusal:
+            return {**refusal, "index": i, "name": name}
+    return None
+
+
+def cmd_log(args, networking_path: Path, repo_root: Path, dry_run: bool) -> None:
+    # The follow-up becomes a todo through todo_write.py, which refuses a wrong weekday.
+    # Refuse here first: below, the old follow-up is superseded before the add, and the
+    # add's exit code is ignored, so a refused add would silently lose the follow-up.
+    from todo_write import refuse_wrong_weekdays
+    refuse_wrong_weekdays(args.followup or "")
+    today = date.today().strftime("%Y-%m-%d")
+    log_date = args.date if args.date else today
+    send_direction = args.direction
+    if args.capture:
+        send_direction = capture_direction(args)
+    try:
+        kind = with_direction(args.type, send_direction)
+    except ValueError as e:
+        out_error(str(e), "direction_conflict")
+
+    # Build the entry block
+    header = f"#### {log_date} | {kind} | {args.summary}"
+    followup = args.followup if args.followup else "—"
+    entry_lines = [header, ""]
+    if args.content:
+        for content_line in args.content.splitlines():
+            entry_lines.append(f"> {content_line}" if content_line else ">")
+        entry_lines.append("")
+    entry_lines.append(f"**Follow-up:** {followup}")
+    entry_lines.append("")
+
+    if dry_run:
+        out_ok("log", f"Would log interaction for {args.name}",
+               dry_run=True,
+               would_mutate=[{"file": str(networking_path), "entry": header}])
+        return
+
+    content, lines = load_lines(networking_path)
+
+    refusal = apply_log(lines, args.name, log_date, entry_lines, args.direction, args.new_reply)
+    if refusal:
+        out_error(refusal["message"], refusal["code"],
+                  **({"existing": refusal["existing"]} if "existing" in refusal else {}))
+    if args.check:
+        out_ok("log", f"Would log interaction for {args.name}: nothing refuses it",
+               checked=True, name=args.name, date=log_date)
+        return
+
+    # A draft is linked to its capture BEFORE the entry is saved, and the link is removed if
+    # the save fails: all or nothing, so a retry can never log the same draft twice (round 5,
+    # 9.F2). Every refusal above has already run, so nothing after this point refuses.
+    if args.capture:
+        import draft_capture
+        try:
+            draft_capture.link_networking(args.capture, {
+                "name": args.name, "date": log_date, "type": args.type,
+                "summary": args.summary, "repo_root": str(repo_root.resolve())})
+        except (draft_capture.CaptureError, OSError, ValueError) as e:
+            out_error(f"capture {args.capture} could not be linked ({e}), so nothing was "
+                      f"written", "link_failed")
+    try:
+        save_lines(networking_path, lines, content)
+    except OSError as e:
+        if args.capture:
+            draft_capture.unlink_networking(args.capture)
+        out_error(f"{networking_path} could not be written ({e}); nothing was logged",
+                  "write_failed")
 
     # Follow-up todo via subprocess (non-fatal if todos file missing).
     # Supersede this contact's prior AUTO-generated follow-up first so repeated
@@ -399,6 +502,71 @@ def cmd_log(args, networking_path: Path, repo_root: Path, dry_run: bool) -> None
            name=args.name, date=log_date,
            outreach_log_updated=outreach_updated,
            todo_added=todo_added, todos_file=TODOS_FILE)
+
+
+def capture_direction(args) -> str:
+    """The direction to write for a draft logged with --capture, after checking the capture.
+
+    The caller passes --direction none: a draft is not a send. It becomes one when
+    draft_capture.py confirm marks it (mark-sent), or here, when the capture was already
+    confirmed sent before the log (the /draft-email multi-round order). Exits on a capture
+    that does not exist, is already linked, or was not sent.
+    """
+    if args.direction != "none":
+        out_error("--capture logs a draft, which is not yet a send: pass --direction none. "
+                  "The entry is marked outbound when the send is confirmed "
+                  "(draft_capture.py confirm <id> unchanged|edited).", "capture_needs_plain")
+    import draft_capture
+    try:
+        meta = draft_capture.read_meta(args.capture)
+    except (OSError, ValueError):
+        out_error(f"no draft capture with id {args.capture!r} "
+                  f"(draft_capture.py pending lists them)", "capture_not_found")
+    if meta.get("networking"):
+        out_error(f"capture {args.capture} is already logged as {meta['networking']}; "
+                  f"do not log the same draft twice", "capture_already_linked",
+                  existing=meta["networking"])
+    status = meta.get("status")
+    if status == "not-sent":
+        out_error(f"capture {args.capture} is confirmed not sent, so there is nothing to log",
+                  "capture_not_sent")
+    return "out" if status in draft_capture.SENT_OUTCOMES else "none"
+
+
+def cmd_mark_sent(args, networking_path: Path, dry_run: bool) -> None:
+    """Mark one plain entry `(outbound)`, or with --undo put an outbound one back to plain.
+
+    Run by draft_capture.py confirm, never by hand: the entry is the draft logged with
+    --capture, found by its exact date, type and summary in the contact's sections. Exactly
+    one must match, or nothing is written. An entry that already says what is asked is left
+    as it is (changed: false); an entry that records a reply is refused.
+    """
+    content, lines = load_lines(networking_path)
+    found = []
+    for i in contact_line_indices(lines, args.name):
+        m = entry_header(lines[i])
+        if (m and m.group(1) == args.date and base_type(m.group(2)) == args.type
+                and m.group(3).strip() == args.summary.strip()):
+            found.append((i, m))
+    where = f"{args.name}: {args.date} | {args.type} | {args.summary}"
+    if not found:
+        out_error(f"no interaction entry for {where}", "entry_not_found")
+    if len(found) > 1:
+        out_error(f"{len(found)} interaction entries match {where}, so none was changed. "
+                  f"Remove the duplicate entry, then confirm again", "ambiguous_entry",
+                  lines=[i + 1 for i, _ in found])
+    i, m = found[0]
+    have, want = direction(m.group(2)), (None if args.undo else "out")
+    if have not in (None, "out"):
+        out_error(f"the entry for {where} records {m.group(2)!r}, a reply, so it is not "
+                  f"changed", "direction_conflict")
+    new_kind = args.type if args.undo else with_direction(args.type, "out")
+    changed = have != want
+    if changed and not dry_run:
+        lines[i] = lines[i][:m.start(2)] + new_kind + lines[i][m.end(2):]
+        save_lines(networking_path, lines, content)
+    out_ok("mark-sent", f"{'Would mark' if dry_run else 'Marked'} {where} as {new_kind}",
+           name=args.name, line=i + 1, type=new_kind, changed=changed, dry_run=dry_run)
 
 
 def cmd_update(args, networking_path: Path, dry_run: bool) -> None:
@@ -561,15 +729,68 @@ def parse_args():
                             "(' (outbound)', no flip). both: one note records a message "
                             "each way (' (two-way)', flips). none: neither, e.g. a note or "
                             "a meeting (type unchanged, no flip).")
+    log_p.add_argument("--check", action="store_true",
+                       help="Run every check the log would run (roster, duplicate reply, "
+                            "capture) under the networking.md lock and write nothing: exit 0 "
+                            "with checked=true, or the refusal the log would give.")
+    log_p.add_argument("--new-reply", dest="new_reply", action="store_true",
+                       help="Log a reply even though the contact's newest directional entry "
+                            "is already a reply with no message from Nick after it. Use "
+                            "only for a genuinely new message from them; without it the "
+                            "log refuses with code possible_duplicate_reply.")
     log_p.add_argument("--no-todo", action="store_true",
                        help="Do not write the follow-up todo to data/job-todos.md. The "
                             "Follow-up line is still logged. Use when a session must "
                             "not touch the todos file.")
 
+    log_p.add_argument("--capture", default=None,
+                       help="The draft_capture id open_draft.py printed for this draft. "
+                            "Requires --direction none: the entry is logged plain and linked "
+                            "to the capture, and draft_capture.py confirm marks it outbound "
+                            "when the send is confirmed.")
+
+    mark_p = sub.add_parser("mark-sent")
+    mark_p.add_argument("name")
+    mark_p.add_argument("--date", required=True)
+    mark_p.add_argument("--type", required=True, help="The entry's type without a suffix.")
+    mark_p.add_argument("--summary", required=True)
+    mark_p.add_argument("--undo", action="store_true",
+                        help="Put an outbound entry back to plain (a send re-confirmed as "
+                             "not sent).")
+
     rem_p = sub.add_parser("remove")
     rem_p.add_argument("name")
 
     return p.parse_args()
+
+
+@contextmanager
+def networking_lock(networking_path: Path, dry_run: bool):
+    """Hold the advisory lock on networking.md from the read to the save (round 7 F1).
+
+    `log` checks for an open reply and then saves; without a lock two writers could both
+    pass the check before either saved, and the reply was logged twice. Under the lock the
+    second writer reads the file only after the first has saved, sees the reply, and
+    refuses it. `mark-sent` takes the same lock so a confirm cannot overwrite a concurrent
+    log. A lock still held elsewhere after NETWORKING_LOCK_TIMEOUT seconds (default 30)
+    is refused with code `locked` and nothing is written. A dry run reads only."""
+    if dry_run:
+        yield
+        return
+    # remember_apply holds this lock for a whole call and runs `log` as its child; the child
+    # must not wait for its own parent (round 8). Only the real parent's pid counts, so the
+    # variable cannot open the file to an unrelated process.
+    if os.environ.get("NETWORKING_LOCK_HELD_BY") == str(os.getppid()):
+        yield
+        return
+    timeout = float(os.environ.get("NETWORKING_LOCK_TIMEOUT", "30"))
+    with contextlib.ExitStack() as stack:
+        try:
+            stack.enter_context(inbox_lock.file_lock(networking_path, timeout=timeout))
+        except inbox_lock.LockTimeout:
+            out_error(f"{networking_path} is locked by another writer (waited {timeout:g} s); "
+                      f"nothing was written, rerun the command", "locked")
+        yield
 
 
 def main() -> None:
@@ -589,7 +810,11 @@ def main() -> None:
     elif args.command == "update":
         cmd_update(args, networking_path, args.dry_run)
     elif args.command == "log":
-        cmd_log(args, networking_path, repo_root, args.dry_run)
+        with networking_lock(networking_path, args.dry_run):
+            cmd_log(args, networking_path, repo_root, args.dry_run)
+    elif args.command == "mark-sent":
+        with networking_lock(networking_path, args.dry_run):
+            cmd_mark_sent(args, networking_path, args.dry_run)
     elif args.command == "remove":
         cmd_remove(args, networking_path, args.dry_run)
     else:
