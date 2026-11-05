@@ -52,6 +52,7 @@ import inbox_lock
 import outreach_status  # noqa: E402
 from reply_classify import contact_lines, open_reply, with_direction  # noqa: E402
 from networking_write import find_contact_row  # noqa: E402
+from pipe_write import sanitize_cell  # noqa: E402
 from md_table import find_section, is_sep_row, out_error, out_ok, parse_cols, read_file, write_atomic  # noqa: E402
 
 NOTES_FILE      = "data/notes.md"
@@ -133,8 +134,12 @@ def contact_note_refusal(note: str, destinations: list, net_content: str) -> dic
         return {"code": "file_not_found",
                 "message": "networking.md not found or empty, so no contact note can be logged."}
     lines = net_content.splitlines()
+    # One name form, the writer's: networking_write stores and looks up every name through
+    # sanitize_cell (whitespace collapsed, '|' -> '/'). Keying the reply check on the raw name
+    # let 'Jane  Doe' miss Jane Doe's open reply, and remember then passed --new-reply, so the
+    # writer logged the reply twice (round 6 F1).
     for d in notes:
-        entity = (d.get("entity") or "").strip()
+        entity = sanitize_cell(d.get("entity") or "")
         if find_contact_row(lines, entity) == -1:
             return {"code": "not_found",
                     "message": f"{entity or '(no name)'} is not in the Contacts table of "
@@ -146,7 +151,7 @@ def contact_note_refusal(note: str, destinations: list, net_content: str) -> dic
         direction = d.get("direction")
         if direction not in ("in", "out", "both"):
             continue
-        entity = d.get("entity", "").strip()
+        entity = sanitize_cell(d.get("entity") or "")
         key = entity.lower()
         if key not in open_by:
             prev = open_reply(contact_lines(lines, entity))

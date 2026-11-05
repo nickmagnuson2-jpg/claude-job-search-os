@@ -292,3 +292,44 @@ def test_apply_contact_note_returns_the_writers_refusal_directly(tmp_path):
     assert out["code"] == "not_found", out
     assert out["message"].startswith("networking_write.py log refused:"), out
     assert "Nobody Listed" not in read(tmp_path)
+
+
+OPEN_REPLY = NETWORKING.replace("#### 2026-01-05 | email (outbound) | Intro",
+                                "#### 2026-01-12 | email (inbound) | Jane replied\n\n"
+                                "#### 2026-01-05 | email (outbound) | Intro")
+
+
+@pytest.mark.parametrize("alias", ["Jane  Doe", " Jane Doe ", "Jane\tDoe"])
+def test_an_open_reply_is_refused_under_a_name_the_writer_would_normalise(tmp_path, alias):
+    """Round 6 F1 (P0): networking_write stores and looks up a name through sanitize_cell
+    (whitespace collapsed, '|' -> '/'), but the duplicate-reply pre-flight used the raw name,
+    missed the open reply, and remember then passed --new-reply, so the reply was logged twice."""
+    setup(tmp_path, OPEN_REPLY)
+    before = read(tmp_path)
+    r, c = remember(tmp_path, note_dest("in", entity=alias))
+    assert c != 0 and r["code"] == "possible_duplicate_reply", r
+    assert read(tmp_path) == before
+
+
+def test_an_open_reply_is_refused_for_a_pipe_alias(tmp_path):
+    md = NETWORKING.replace(
+        "| Jane Doe | Acme Corp | PM | peer | 2026-01-01 | — | — |",
+        "| Jane Doe | Acme Corp | PM | peer | 2026-01-01 | — | — |\n"
+        "| Sam/Example | Beta | VP | peer | 2026-01-01 | — | — |") + (
+        "### Sam/Example — Beta\n\n#### 2026-01-12 | email (inbound) | Sam replied\n\n"
+        "**Follow-up:** —\n\n")
+    setup(tmp_path, md)
+    before = read(tmp_path)
+    r, c = remember(tmp_path, note_dest("in", entity="Sam|Example"))
+    assert c != 0 and r["code"] == "possible_duplicate_reply", r
+    assert read(tmp_path) == before
+
+
+def test_two_reply_notes_under_aliases_of_one_contact_are_refused(tmp_path):
+    """The in-call simulation keys contacts the way the writer stores them, so two spellings
+    of one contact in the same call are one contact."""
+    setup(tmp_path)
+    before = read(tmp_path)
+    r, c = remember(tmp_path, note_dest("in"), note_dest("in", entity="Jane  Doe"))
+    assert c != 0 and r["code"] == "possible_duplicate_reply", r
+    assert read(tmp_path) == before
