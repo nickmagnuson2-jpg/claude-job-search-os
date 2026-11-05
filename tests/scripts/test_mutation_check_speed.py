@@ -1145,3 +1145,15 @@ def test_a_helper_the_tests_reach_through_another_module_forces_the_whole_file(t
     deep.write_text("STRICT = False\n")
     s = mc.resolve_scope(_args(), src, tmp_path, [t])
     assert s["mode"] == "whole_file" and "imported helper changed" in s["reason"], s
+
+
+def test_a_long_prefix_falls_back_to_its_files_in_run_order(monkeypatch):
+    monkeypatch.setattr(mc, "MAX_ID_ARGV_CHARS", 30)
+    order = ["/r/t2.py::a", "/r/t1.py::b", "/r/t2.py::c", "/r/t3.py::d"]
+    assert mc.subset_argv({"/r/t2.py::c"}, order) == ["/r/t2.py", "/r/t1.py"], \
+        "first-appearance order, no duplicates, nothing after the last covering test"
+
+
+def test_repo_state_outside_git_is_unique_so_nothing_replays(tmp_path):
+    a, b = mc._repo_state(tmp_path), mc._repo_state(tmp_path)
+    assert a.startswith("unknown-") and a != b
