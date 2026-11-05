@@ -333,3 +333,22 @@ def test_two_reply_notes_under_aliases_of_one_contact_are_refused(tmp_path):
     r, c = remember(tmp_path, note_dest("in"), note_dest("in", entity="Jane  Doe"))
     assert c != 0 and r["code"] == "possible_duplicate_reply", r
     assert read(tmp_path) == before
+
+
+def test_the_writer_still_refuses_a_reply_that_landed_after_the_preflight(tmp_path):
+    """Round 7 F1 (P0): two overlapping /remember calls each passed the pre-flight, and every
+    reply note went to the writer with --new-reply, which skips its live check, so the second
+    call logged the same reply again. Calling apply_contact_note after the reply is already in
+    the file is exactly that second call: the writer must refuse it."""
+    setup(tmp_path, OPEN_REPLY)
+    before = read(tmp_path)
+    out = load().apply_contact_note(NOTE, note_dest("in"), tmp_path)
+    assert out["status"] == "error" and out["code"] == "possible_duplicate_reply", out
+    assert read(tmp_path) == before
+
+
+def test_new_reply_true_still_passes_the_writer(tmp_path):
+    setup(tmp_path, OPEN_REPLY)
+    out = load().apply_contact_note(NOTE, note_dest("in", new_reply=True), tmp_path)
+    assert out["status"] == "ok", out
+    assert f"#### {today()} | remember (inbound) | Jane asked for a call next week" in read(tmp_path)

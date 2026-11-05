@@ -577,3 +577,44 @@ def test_a_file_with_no_contacts_table_is_not_found(tmp_path):
     write_fixture(tmp_path, "data/networking.md", "# Networking\n\n## Interaction Log\n")
     r, c = log_reply(tmp_path)
     assert c != 0 and r.get("code") == "not_found", r
+
+
+def _lock_env(tmp_path, monkeypatch):
+    monkeypatch.setenv("JOBSEARCH_LOCK_DIR", str(tmp_path / "locks"))
+    sys.path.insert(0, str(TOOLS_DIR))
+    import inbox_lock
+    return inbox_lock
+
+
+def test_log_waits_for_the_networking_lock(tmp_path, monkeypatch):
+    """Round 7 F1: the open-reply check and the save happen under one lock on networking.md,
+    so a second writer reads the file only after the first has saved, sees the reply, and
+    refuses it instead of logging it twice."""
+    inbox_lock = _lock_env(tmp_path, monkeypatch)
+    cmd = [sys.executable, str(TOOLS_DIR / "networking_write.py"), "--repo-root", str(tmp_path),
+           "log", "Jane Doe", "--date", "2026-06-19", "--type", "email", "--summary", "Jane replied",
+           "--direction", "in", "--no-todo"]
+    env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
+    with inbox_lock.file_lock(tmp_path / "data/networking.md"):
+        p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                             env=env, cwd=str(REPO_ROOT))
+        try:
+            p.wait(timeout=2)
+            finished_while_locked = True
+        except subprocess.TimeoutExpired:
+            finished_while_locked = False
+    out, _ = p.communicate(timeout=30)
+    assert not finished_while_locked, out
+    assert json.loads(out)["status"] == "ok", out
+    r, c = log_reply(tmp_path)
+    assert c != 0 and r["code"] == "possible_duplicate_reply", r
+
+
+def test_a_lock_that_cannot_be_taken_is_an_error_code_not_a_crash(tmp_path, monkeypatch):
+    inbox_lock = _lock_env(tmp_path, monkeypatch)
+    monkeypatch.setenv("NETWORKING_LOCK_TIMEOUT", "0.2")
+    before = text(tmp_path)
+    with inbox_lock.file_lock(tmp_path / "data/networking.md"):
+        r, c = log_reply(tmp_path)
+    assert c != 0 and r.get("code") == "locked", r
+    assert text(tmp_path) == before

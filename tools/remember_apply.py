@@ -182,9 +182,10 @@ def apply_contact_note(note: str, dest: dict, repo_root: Path) -> dict:
     in the Contacts table is refused (`not_found`); apply_destinations' pre-flight refuses
     that, a missing networking.md and a duplicate reply before anything in the call is written.
 
-    The duplicate-reply check is NOT repeated here: apply_destinations' pre-flight is the one
-    place, so a reply note is passed with --new-reply. Checking again would refuse the second
-    of two notes in one call after the first was written.
+    Duplicate replies are checked twice, on purpose. apply_destinations' pre-flight refuses
+    the whole call before anything is written, including a second reply note for one contact
+    in the same call. The writer then checks again under its lock, which catches a reply that
+    another call logged after this pre-flight. Only a literal "new_reply": true skips both.
     """
     today = datetime.now().strftime("%Y-%m-%d")
     entity = dest.get("entity", "").strip()
@@ -199,7 +200,12 @@ def apply_contact_note(note: str, dest: dict, repo_root: Path) -> dict:
     cmd = [_sys.executable, str(Path(__file__).resolve().parent / "networking_write.py"),
            "--repo-root", str(repo_root), "log", entity, f"--date={today}",
            "--type=remember", f"--summary={summary}", f"--direction={d}", "--no-todo"]
-    if d in ("in", "both"):
+    # Only the user's literal "new_reply": true reaches the writer as --new-reply. Every other
+    # reply note keeps the writer's live open-reply check, so a reply that landed after this
+    # call's pre-flight (an overlapping /remember, round 7 F1) is refused, not logged twice.
+    # The pre-flight already refuses a second reply note for one contact in this call unless
+    # it says new_reply: true, so the writer cannot refuse one of this call's own notes.
+    if d in ("in", "both") and dest.get("new_reply") is True:
         cmd.append("--new-reply")
     proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
                           env={**os.environ, "PYTHONIOENCODING": "utf-8"})

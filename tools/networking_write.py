@@ -36,17 +36,20 @@ Usage:
   PYTHONIOENCODING=utf-8 python3 tools/networking_write.py --repo-root . log "Jane Doe" --date 2026-02-28 --type email --summary "Asked for a call" --direction in
   PYTHONIOENCODING=utf-8 python3 tools/networking_write.py --repo-root . remove "Jane Doe"
 """
+import contextlib
 import json
 import os
 import re
 import subprocess
 import sys
+from contextlib import contextmanager
 from datetime import date, datetime
 from pathlib import Path
 
 # Sibling import: fuzzy name-duplicate guard (stdlib-only module in tools/).
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from name_dedup import find_near_duplicates  # noqa: E402
+import inbox_lock  # noqa: E402
 import outreach_status  # noqa: E402
 # The one "did they reply" rule, shared with day_check.py (no local copy here).
 from reply_classify import (base_type, contact_line_indices, contact_lines,  # noqa: E402
@@ -705,6 +708,29 @@ def parse_args():
     return p.parse_args()
 
 
+@contextmanager
+def networking_lock(networking_path: Path, dry_run: bool):
+    """Hold the advisory lock on networking.md from the read to the save (round 7 F1).
+
+    `log` checks for an open reply and then saves; without a lock two writers could both
+    pass the check before either saved, and the reply was logged twice. Under the lock the
+    second writer reads the file only after the first has saved, sees the reply, and
+    refuses it. `mark-sent` takes the same lock so a confirm cannot overwrite a concurrent
+    log. A lock still held elsewhere after NETWORKING_LOCK_TIMEOUT seconds (default 30)
+    is refused with code `locked` and nothing is written. A dry run reads only."""
+    if dry_run:
+        yield
+        return
+    timeout = float(os.environ.get("NETWORKING_LOCK_TIMEOUT", "30"))
+    with contextlib.ExitStack() as stack:
+        try:
+            stack.enter_context(inbox_lock.file_lock(networking_path, timeout=timeout))
+        except inbox_lock.LockTimeout:
+            out_error(f"{networking_path} is locked by another writer (waited {timeout:g} s); "
+                      f"nothing was written, rerun the command", "locked")
+        yield
+
+
 def main() -> None:
     args = parse_args()
     if not args.command:
@@ -722,9 +748,11 @@ def main() -> None:
     elif args.command == "update":
         cmd_update(args, networking_path, args.dry_run)
     elif args.command == "log":
-        cmd_log(args, networking_path, repo_root, args.dry_run)
+        with networking_lock(networking_path, args.dry_run):
+            cmd_log(args, networking_path, repo_root, args.dry_run)
     elif args.command == "mark-sent":
-        cmd_mark_sent(args, networking_path, args.dry_run)
+        with networking_lock(networking_path, args.dry_run):
+            cmd_mark_sent(args, networking_path, args.dry_run)
     elif args.command == "remove":
         cmd_remove(args, networking_path, args.dry_run)
     else:
