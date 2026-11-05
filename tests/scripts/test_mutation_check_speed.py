@@ -1089,3 +1089,10 @@ def test_more_than_three_edited_tests_are_abbreviated(tmp_path):
     s = mc.resolve_scope(_args(), src, tmp_path, [t])
     assert s["mode"] == "whole_file", s
     assert "existing test edited: test_double, test_double_cap, test_neg, ..." in s["reason"], s
+
+
+def test_subset_argv_runs_the_file_prefix_in_order_and_keeps_unseen_ids():
+    order = ["/r/t1.py::a", "/r/t1.py::b", "/r/t1.py::c", "/r/t2.py::x", "/r/t2.py::y"]
+    argv = mc.subset_argv({"/r/t1.py::b", "/r/t2.py::x", "/r/t3.py::new"}, order)
+    assert argv == ["/r/t1.py::a", "/r/t1.py::b", "/r/t2.py::x", "/r/t3.py::new"], argv
+    assert mc.subset_argv({"/r/t1.py::c"}, []) == ["/r/t1.py::c"], "no order: ids as before"
