@@ -266,3 +266,16 @@ def test_apply_outreach_reply_reports_the_row_it_set(tmp_path):
     assert out == {"outreach_log_updated": True,
                    "outreach_file": str(tmp_path / "data/outreach-log.md")}
     assert read(tmp_path, "data/outreach-log.md").count("| Replied |") == 1
+
+
+def test_a_name_with_a_pipe_passes_the_preflight_and_is_logged(tmp_path):
+    """Merge of table-routing (2026-11-04): networking_write stores a name through
+    sanitize_cell ('|' -> '/'), so the pre-flight's roster check must compare the same way,
+    or it refuses a contact the writer would find."""
+    setup(tmp_path, NETWORKING.replace(
+        "| Jane Doe | Acme Corp | PM | peer | 2026-01-01 | — | — |",
+        "| Jane Doe | Acme Corp | PM | peer | 2026-01-01 | — | — |\n"
+        "| Sam/Example | Beta | VP | peer | 2026-01-01 | — | — |"))
+    r, c = remember(tmp_path, note_dest(entity="Sam|Example"))
+    assert c == 0, r
+    assert f"| Sam/Example | Beta | VP | peer | 2026-01-01 | {today()} | — |" in read(tmp_path)

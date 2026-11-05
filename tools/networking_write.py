@@ -51,6 +51,7 @@ import outreach_status  # noqa: E402
 # The one "did they reply" rule, shared with day_check.py (no local copy here).
 from reply_classify import (base_type, contact_line_indices, contact_lines,  # noqa: E402
                             direction, entry_header, open_reply, with_direction)
+from pipe_write import sanitize_cell  # noqa: E402
 from md_table import JsonArgumentParser, find_section, load_lines, is_sep_row, out_error, out_ok, parse_cols, read_file, table_insert_pos, write_atomic  # noqa: E402
 
 NETWORKING_FILE  = "data/networking.md"
@@ -82,21 +83,25 @@ def is_data_row(line: str) -> bool:
 
 
 def fmt_contact_row(name, company, role, relationship, added, last_interaction, email="—"):
-    return (f"| {name} | {company} | {role} | {relationship} | "
-            f"{added} | {last_interaction} | {email} |")
+    """One contact row. Every cell goes through pipe_write.sanitize_cell, so a '|' in a
+    caller's value cannot add a column, whichever command wrote the row."""
+    cells = (name, company, role, relationship, added, last_interaction, email)
+    return "| " + " | ".join(sanitize_cell(c) for c in cells) + " |"
 
 
 def find_contact_row(lines: list, name: str) -> int:
     """Index of the contact's row in the ## Contacts table (case-insensitive name), or -1.
     The one roster rule: `log` refuses a name it does not find here, and remember_apply's
-    pre-flight asks the same question before it writes anything."""
+    pre-flight asks the same question before it writes anything. The name is compared the
+    way fmt_contact_row stores it (pipe_write.sanitize_cell), so both callers agree."""
     start, end = find_section(lines, r"^##\s+Contacts")
     if start == -1:
         return -1
+    want = sanitize_cell(name).lower()
     for i in range(start, end):
         if is_data_row(lines[i]):
             cols = parse_cols(lines[i])
-            if cols and cols[0].lower() == name.lower():
+            if cols and cols[0].lower() == want:
                 return i
     return -1
 
@@ -171,8 +176,8 @@ def update_outreach_status(repo_root: Path, contact_name: str) -> bool:
 
 def cmd_add(args, networking_path: Path, dry_run: bool) -> None:
     today     = date.today().strftime("%Y-%m-%d")
-    company   = args.company      if args.company      else "—"
-    role      = args.role         if args.role         else "—"
+    company   = sanitize_cell(args.company) if args.company else "—"
+    role      = sanitize_cell(args.role)    if args.role    else "—"
     rel       = args.relationship if args.relationship else "peer"
     email     = (args.email or "").strip()
     if email:
@@ -707,6 +712,10 @@ def main() -> None:
 
     repo_root       = Path(args.repo_root) if args.repo_root else Path.cwd()
     networking_path = repo_root / NETWORKING_FILE
+    # The name is escaped the way fmt_contact_row stores it, once, for every command, so
+    # the row it writes and the row a later log or update looks up are the same text.
+    # Every subcommand takes a positional name.
+    args.name = sanitize_cell(args.name)
 
     if args.command == "add":
         cmd_add(args, networking_path, args.dry_run)

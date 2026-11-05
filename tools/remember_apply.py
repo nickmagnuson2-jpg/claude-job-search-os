@@ -247,48 +247,33 @@ def apply_outreach_reply(entity: str, repo_root: Path) -> dict:
 
 
 def apply_pipeline_note(note: str, dest: dict, repo_root: Path) -> dict:
-    """Append [date]: note to Notes cell for matching company in pipeline."""
+    """Append `[date]: note` to the matching company's Notes cell, through
+    `pipe_write.py note` (the pipeline's owner). It changes Notes only, so the note is not
+    counted as a pipeline move, and its cell escaping replaces the old " | " join, which
+    split the row whenever Notes was already non-empty (table-writers audit, 2026-10-25).
+    A company with several active rows needs `role` in dest; pipe_write refuses to guess."""
     today = datetime.now().strftime("%Y-%m-%d")
     entity = dest.get("entity", "")
-    path = repo_root / PIPELINE_FILE
-
-    content = read_file(path)
-    if not content:
+    if not read_file(repo_root / PIPELINE_FILE):
         return {"status": "error", "type": "pipeline_note",
                 "message": "job-pipeline.md not found or empty"}
-
-    lines = [ln.rstrip("\n").rstrip("\r") for ln in content.splitlines(keepends=True)]
-    entity_lower = entity.lower().strip()
-
-    updated = False
-    for i, line in enumerate(lines):
-        if not is_data_row_generic(line):
-            continue
-        cols = parse_cols(line)
-        if not cols or cols[0].lower() != entity_lower:
-            continue
-        # Notes is column 6 (0-indexed)
-        while len(cols) < 8:
-            cols.append("—")
-        existing = cols[6]
-        cols[6] = (
-            f"{existing} | [{today}]: {note}"
-            if existing not in ("—", "", "–")
-            else f"[{today}]: {note}"
-        )
-        lines[i] = "| " + " | ".join(cols) + " |"
-        updated = True
-        break
-
-    if not updated:
-        return {"status": "error", "type": "pipeline_note",
-                "message": f"No pipeline entry found for: {entity}"}
-
-    new_content = "\n".join(lines)
-    if content.endswith("\n"):
-        new_content += "\n"
-    write_atomic(path, new_content)
-    return {"status": "ok", "type": "pipeline_note", "file": str(path), "entity": entity}
+    cmd = [_sys.executable, str(Path(__file__).resolve().parent / "pipe_write.py"),
+           "--repo-root", str(repo_root), "note", entity, "--append", f"[{today}]: {note}"]
+    if dest.get("role"):
+        cmd += ["--role", dest["role"]]
+    proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
+                          env={**os.environ, "PYTHONIOENCODING": "utf-8"})
+    try:
+        result = json.loads(proc.stdout.strip().splitlines()[-1])
+    except (ValueError, IndexError):
+        return {"status": "error", "type": "pipeline_note", "code": "owner_failed",
+                "message": f"pipe_write.py returned no JSON (exit {proc.returncode})"}
+    if result.get("status") != "ok":   # not_found reads "No pipeline entry found for: <company>"
+        return {"status": "error", "type": "pipeline_note", "code": result.get("code"),
+                "message": result.get("message", "pipe_write.py note failed"),
+                **({"matches": result["matches"]} if "matches" in result else {})}
+    return {"status": "ok", "type": "pipeline_note", "file": str(repo_root / PIPELINE_FILE),
+            "entity": entity}
 
 
 def apply_company_note(note: str, dest: dict, repo_root: Path) -> dict:

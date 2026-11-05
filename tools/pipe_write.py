@@ -3,11 +3,14 @@
 pipe_write.py — Atomic mutations for data/job-pipeline.md.
 
 Subcommands:
-  add <company> <role> [--url URL] [--stage STAGE]
+  add <company> <role> [--url URL] [--stage STAGE] [--notes TEXT] [--next-action TEXT]
   update <company> <new-stage> [--role ROLE] [--new-role ROLE] [--next-action TEXT]
                                [--cv-used TEXT] [--notes TEXT | --notes-append TEXT
                                | --notes-prepend TEXT]
   remove <company> [--role ROLE]
+  note <company> --append TEXT [--role ROLE]
+                               adds to the Notes cell only; Stage and Date Updated stay,
+                               so a note is not counted as a pipeline move
 
 Options (all subcommands):
   --repo-root PATH   Repository root. Defaults to cwd.
@@ -56,7 +59,10 @@ def is_data_row(line: str) -> bool:
 
 
 def fmt_row(company, role, stage, date_updated, next_action, cv_used, notes, url):
-    return f"| {company} | {role} | {stage} | {date_updated} | {next_action} | {cv_used} | {notes} | {url} |"
+    """One pipeline row. Every cell goes through sanitize_cell, so a '|' in any caller's
+    value (company, role, URL, notes) cannot add a column, whichever command wrote it."""
+    cells = (company, role, stage, date_updated, next_action, cv_used, notes, url)
+    return "| " + " | ".join(sanitize_cell(c) for c in cells) + " |"
 
 
 FIT_VERDICTS = ("fit", "not-fit", "neutral", "unknown")
@@ -117,9 +123,10 @@ def cmd_add(args, pipeline_path: Path, dry_run: bool) -> None:
     today = date.today().strftime("%Y-%m-%d")
     stage = args.stage if args.stage else "Researching"
     url   = args.url   if args.url   else "—"
-    notes = "—"
+    next_action = getattr(args, "next_action", None) or "—"
+    notes = getattr(args, "notes", None) or "—"
     if getattr(args, "fit_reason", None):
-        notes = compose_fit_note("—", args.fit_reason, getattr(args, "fit_verdict", None), today)
+        notes = compose_fit_note(notes, args.fit_reason, getattr(args, "fit_verdict", None), today)
 
     content, lines = load_lines(pipeline_path)
 
@@ -143,7 +150,7 @@ def cmd_add(args, pipeline_path: Path, dry_run: bool) -> None:
                existing_roles=existing_roles)
         return
 
-    row = fmt_row(args.company, args.role, stage, today, "—", "—", notes, url)
+    row = fmt_row(args.company, args.role, stage, today, next_action, "—", notes, url)
     # Dry run after the duplicate check, so its preview matches what a real run does
     # (review 846.F3, 850.F3).
     if dry_run:
@@ -361,6 +368,49 @@ def cmd_remove(args, pipeline_path: Path, dry_run: bool) -> None:
 # Entry point
 # ---------------------------------------------------------------------------
 
+def cmd_note(args, pipeline_path: Path, dry_run: bool) -> None:
+    """Add text to one row's Notes cell, and nothing else. Stage and Date Updated are kept:
+    day_check counts a row whose Date Updated is today as a pipeline move, and a note is
+    not one. Looks in ## Active first, then ## Archived, so a note about a closed company
+    still lands. The owner path for /remember's pipeline notes (remember_apply)."""
+    if not (args.append or "").strip():
+        out_error("--append is empty", "empty_note")
+    content, lines = load_lines(pipeline_path)
+    matches = []
+    for heading in (r"^##\s+Active", r"^##\s+Archived"):
+        start, end = find_section(lines, heading)   # a missing section is (-1, -1): no rows
+        matches =[(i, parse_cols(lines[i])) for i in range(start, end)
+                   if is_data_row(lines[i]) and parse_cols(lines[i])
+                   and parse_cols(lines[i])[0].lower() == args.company.lower()]
+        if args.role:
+            matches = [(i, c) for i, c in matches if len(c) > 1 and c[1].lower() == args.role.lower()]
+        if matches:
+            break
+    if not matches:
+        out_error(f"No pipeline entry found for: {args.company}"
+                  + (f" / {args.role}" if args.role else ""), "not_found")
+    if len(matches) > 1:
+        out_error(f"{args.company} has more than one row; pass --role.", "ambiguous_match",
+                  matches=[{"role": c[1] if len(c) > 1 else ""} for _, c in matches])
+    row_idx, cols = matches[0]
+    if len(cols) > 8:
+        # Refused, as in cmd_update: the slice below would drop every cell past the 8th.
+        out_error(f"Row for {args.company} has {len(cols)} columns, expected 8 — a cell likely "
+                  f"contains an unescaped '|'. Fix the row by hand in {PIPELINE_FILE} before "
+                  f"retrying, or the note would drop the cells after the 8th.",
+                  "malformed_row", row=row_idx + 1, column_count=len(cols))
+    cols = (cols + ["—"] * 8)[:8]   # a short row is padded, as fmt_row expects 8 cells
+    new_notes = merge_notes(cols[6], append=sanitize_cell(args.append))
+    row = fmt_row(*cols[:6], new_notes, cols[7])
+    if dry_run:
+        out_ok("note", f"Would add a note to {args.company} | {cols[1]}", dry_run=True,
+               role=cols[1], would_mutate=[{"file": str(pipeline_path), "line": row_idx + 1, "row": row}])
+        return
+    lines[row_idx] = row
+    save_lines(pipeline_path, lines, content)
+    out_ok("note", f"Added a note to {args.company} | {cols[1]}", company=cols[0], role=cols[1])
+
+
 def parse_args():
     p = JsonArgumentParser(description="Atomic mutations for data/job-pipeline.md.")
     p.add_argument("--repo-root", default=None, help="Repository root. Defaults to cwd.")
@@ -373,6 +423,9 @@ def parse_args():
     add_p.add_argument("role")
     add_p.add_argument("--url", default=None)
     add_p.add_argument("--stage", default=None)
+    add_p.add_argument("--notes", default=None, help="Initial Notes cell.")
+    add_p.add_argument("--next-action", dest="next_action", default=None,
+                       help="Initial Next Action cell.")
     add_p.add_argument("--fit-reason", dest="fit_reason", default=None,
                        help="One-line fit rationale; appended to Notes as a [fit-reason ...] tag.")
     add_p.add_argument("--fit-verdict", dest="fit_verdict", default=None, choices=list(FIT_VERDICTS),
@@ -397,6 +450,12 @@ def parse_args():
     upd_p.add_argument("--fit-verdict", dest="fit_verdict", default=None, choices=list(FIT_VERDICTS),
                        help="Optional fit_verdict class for the fit-reason tag (feeds the scorer target).")
 
+    note_p = sub.add_parser("note")
+    note_p.add_argument("company")
+    note_p.add_argument("--role", default=None,
+                        help="Select WHICH row when a company has several.")
+    note_p.add_argument("--append", required=True, help="Text added to the end of Notes.")
+
     rem_p = sub.add_parser("remove")
     rem_p.add_argument("company")
     rem_p.add_argument("--role", default=None)
@@ -416,10 +475,15 @@ def parse_args():
 def main() -> None:
     args = parse_args()
     if not args.command:
-        out_error("Usage: pipe_write.py <add|update|remove> [args...]")
+        out_error("Usage: pipe_write.py <add|update|remove|note> [args...]")
 
     repo_root     = Path(args.repo_root) if args.repo_root else Path.cwd()
     pipeline_path = repo_root / PIPELINE_FILE
+    # Company and role are escaped the way fmt_row stores them, once, for every command, so
+    # a duplicate check or a row lookup compares the same text that was written.
+    for field in ("company", "role"):
+        if getattr(args, field, None):
+            setattr(args, field, sanitize_cell(getattr(args, field)))
 
     if args.command == "add":
         cmd_add(args, pipeline_path, args.dry_run)
@@ -427,6 +491,8 @@ def main() -> None:
         cmd_update(args, pipeline_path, args.dry_run)
     elif args.command == "remove":
         cmd_remove(args, pipeline_path, args.dry_run)
+    elif args.command == "note":
+        cmd_note(args, pipeline_path, args.dry_run)
     else:
         out_error(f"Unknown command: {args.command}")
 
