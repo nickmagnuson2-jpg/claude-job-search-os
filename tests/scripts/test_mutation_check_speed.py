@@ -299,6 +299,24 @@ def test_a_chain_through_a_deleted_module_below_a_live_one_is_still_followed(tmp
     assert s["mode"] == "whole_file" and "tests/scripts/test_front.py" in s["reason"], s
 
 
+def test_a_live_module_is_read_as_it_is_now_not_at_the_base(tmp_path):
+    """Only DELETED modules come from the base. front.py is edited in this diff to import
+    the target; a deleted test that imports front reaches the target through the CURRENT
+    front, so it forces the whole file (more measurement, the safe side)."""
+    src, t = _repo(tmp_path)
+    front = tmp_path / "tools" / "front.py"
+    front.write_text("def cap(n): return -1\n")
+    ft = tmp_path / "tests" / "scripts" / "test_front.py"
+    ft.write_text("import front\ndef test_cap(): assert front.cap(101) == -1\n")
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-qm", "front without subject")
+    _git(tmp_path, "update-ref", "refs/remotes/origin/main", "HEAD")
+    front.write_text("import subject\ndef cap(n): return subject.double(n)\n")
+    ft.unlink()
+    got = mc.changed_test_inputs("HEAD", tmp_path, [t], "subject")
+    assert ("tests/scripts/test_front.py", "deleted test file") in got["whole"], got
+
+
 def test_reached_through_names_nothing_when_there_are_no_names():
     """An empty name set would compile to `\\b(?:)\\b`, which matches every source, so the
     helper must answer False itself rather than call every deleted test a reaching one."""
