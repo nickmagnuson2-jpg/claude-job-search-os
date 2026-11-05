@@ -199,3 +199,6 @@ tools/.sealed-paths.conf
 tools/calendar_token*
 # Calendar write token (calendar_write.py, events.owned only), its own file
 tools/calendar_write_token*
+
+# mutation_check verdict cache (2026-11-04): content-keyed, rebuilt on demand
+/.mutation-cache/
