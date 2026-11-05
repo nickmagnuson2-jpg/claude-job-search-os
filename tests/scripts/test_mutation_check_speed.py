@@ -413,6 +413,21 @@ def test_an_unmapped_test_file_with_an_edited_test_or_module_code_forces_the_who
     assert [w for w in got["whole"] if w[0] == "tests/scripts/test_front.py"], got
 
 
+def test_an_unmapped_test_file_names_up_to_three_lost_tests(tmp_path):
+    """The reason names the tests that went, and says "..." only past three."""
+    five = "".join(f"def test_{c}(): pass\n" for c in "abcde")
+    src, t, ft = _unmapped_repo(tmp_path, five)
+    ft.write_text("def test_e(): pass\n")                     # four removed
+    why = dict(mc.changed_test_inputs("HEAD", tmp_path, [t], "subject")["whole"])
+    assert why["tests/scripts/test_front.py"] == (
+        "unmapped test file: test removed or edited: test_a, test_b, test_c, ...")
+    ft.write_text("def test_b(): pass\ndef test_c(): pass\ndef test_d(): pass\n"
+                  "def test_e(): pass\n")                     # one removed
+    why = dict(mc.changed_test_inputs("HEAD", tmp_path, [t], "subject")["whole"])
+    assert why["tests/scripts/test_front.py"] == (
+        "unmapped test file: test removed or edited: test_a")
+
+
 def test_an_add_only_change_to_an_unmapped_test_file_keeps_the_diff_scope(tmp_path):
     """Appending a test cannot remove coverage, so it must not cost a whole-file run."""
     src, t, ft = _unmapped_repo(tmp_path, FRONT_TESTS)
