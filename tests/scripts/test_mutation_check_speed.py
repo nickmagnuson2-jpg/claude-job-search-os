@@ -429,7 +429,9 @@ def test_an_unmapped_test_file_names_up_to_three_lost_tests(tmp_path):
 
 
 @pytest.mark.parametrize("rel", ["conftest.py", "pytest.ini", "pyproject.toml", "setup.cfg",
-                                 "tox.ini", "tools/conftest.py"])
+                                 "tox.ini", "tools/conftest.py",
+                                 # Codex round 8 F1: pytest 9 also reads these
+                                 "pytest.toml", ".pytest.toml", ".pytest.ini"])
 def test_a_changed_pytest_config_or_conftest_anywhere_forces_the_whole_file(tmp_path, rel):
     """Codex round 7 F1 (P0): a root conftest.py, or `addopts = -k 'not test_cap'` in a
     config file, can deselect the only killing test. Outside tests/ these were ignored."""

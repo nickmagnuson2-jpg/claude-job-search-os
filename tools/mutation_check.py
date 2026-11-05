@@ -1004,8 +1004,12 @@ def _test_sources(text: str) -> tuple[dict[str, str], str] | None:
 
 
 # pytest reads these from the rootdir or an ancestor; a change to any of them can select
-# or deselect tests with no test file changing (Codex round 7 F1).
-_PYTEST_CONFIG_FILES = frozenset({"pytest.ini", "pyproject.toml", "setup.cfg", "tox.ini"})
+# or deselect tests with no test file changing (Codex round 7 F1). The shared files by
+# name, and pytest's own by PREFIX (pytest.ini, pytest.toml, .pytest.ini, .pytest.toml in
+# pytest 9; Codex round 8 F1 found a hard-coded list of them already out of date), so a
+# future format is covered without editing this.
+_PYTEST_CONFIG_FILES = frozenset({"pyproject.toml", "setup.cfg", "tox.ini"})
+_PYTEST_CONFIG_PREFIXES = ("pytest.", ".pytest.")
 
 
 def changed_test_inputs(base: str, root: Path, test_files: list,
@@ -1018,8 +1022,8 @@ def changed_test_inputs(base: str, root: Path, test_files: list,
              non-test module a mapped test imports, a changed file under tests/ a mapped
              test names (fixture data), ANY file deleted under tests/, an UNMAPPED .py under
              tests/ changed other than by appending tests (no reachability inference), any
-             conftest.py anywhere, a pytest config file (pytest.ini, pyproject.toml,
-             setup.cfg, tox.ini), and a
+             conftest.py anywhere, a pytest config file (pyproject.toml, setup.cfg,
+             tox.ini, or any pytest.* / .pytest.* file), and a
              mapped test file that LOST a test function (its lines are in no current map).
       tests  [path] mapped test files that changed without losing a test: added, edited.
              Their effect is bounded by the lines their tests execute (resolve_test_lines).
@@ -1123,7 +1127,7 @@ def changed_test_inputs(base: str, root: Path, test_files: list,
             # ANY conftest.py, not only under tests/: a root one is loaded for every test
             # below it and can deselect a killing test (Codex round 7 F1).
             whole.append((p, "conftest changed" + gone_note))
-        elif name in _PYTEST_CONFIG_FILES:
+        elif name in _PYTEST_CONFIG_FILES or name.startswith(_PYTEST_CONFIG_PREFIXES):
             # `addopts = -k 'not test_cap'` deselects the only killing test with no test
             # file changing (Codex round 7 F1). Any such file anywhere: time, not verdicts.
             whole.append((p, "pytest configuration changed" + gone_note))
