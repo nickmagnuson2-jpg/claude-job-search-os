@@ -244,6 +244,70 @@ def test_a_deleted_test_file_forces_the_whole_file(tmp_path):
     assert s["mode"] == "whole_file" and "deleted test file" in s["reason"], s
 
 
+def _front_repo(tmp_path, delete_front=False, tests=None):
+    """Codex round 3, 8.F3: tools/front.py imports the target; tests/test_front.py imports
+    front and never spells the target's name. Committed as the base, then the test (and,
+    with delete_front, front.py too) is deleted and nothing else changes."""
+    src, t = _repo(tmp_path, tests=tests)
+    (tmp_path / "tools" / "front.py").write_text(
+        "import subject\ndef cap(n): return subject.double(n)\n")
+    ft = tmp_path / "tests" / "scripts" / "test_front.py"
+    ft.write_text(f"import sys; sys.path.insert(0, r'{tmp_path / 'tools'}')\n"
+                  "import front\ndef test_cap(): assert front.cap(101) == -1\n")
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-qm", "front")
+    _git(tmp_path, "update-ref", "refs/remotes/origin/main", "HEAD")
+    ft.unlink()
+    if delete_front:
+        (tmp_path / "tools" / "front.py").unlink()
+    return src, t
+
+
+def test_a_deleted_test_that_reached_the_target_through_another_module_forces_the_whole_file(
+        tmp_path):
+    src, t = _front_repo(tmp_path)
+    s = mc.resolve_scope(_args(), src, tmp_path, [t])
+    assert s["mode"] == "whole_file" and "deleted test file" in s["reason"], s
+    assert "tests/scripts/test_front.py" in s["reason"], s
+
+
+def test_the_same_holds_when_the_module_in_between_was_deleted_too(tmp_path):
+    """front.py is gone from the working tree, so only its BASE source shows the path."""
+    src, t = _front_repo(tmp_path, delete_front=True)
+    s = mc.resolve_scope(_args(), src, tmp_path, [t])
+    assert s["mode"] == "whole_file" and "tests/scripts/test_front.py" in s["reason"], s
+
+
+def test_a_deleted_test_that_never_reached_the_target_keeps_the_diff_scope(tmp_path):
+    """Unrelated deletions must not turn every diff into a whole-file run."""
+    src, t = _repo(tmp_path)
+    other = tmp_path / "tests" / "scripts" / "test_other.py"
+    other.write_text("import json\ndef test_x(): assert json.loads('1') == 1\n")
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-qm", "other")
+    _git(tmp_path, "update-ref", "refs/remotes/origin/main", "HEAD")
+    other.unlink()
+    s = mc.resolve_scope(_args(), src, tmp_path, [t])
+    assert s["mode"] == "diff", s
+
+
+def test_e2e_deleting_the_only_indirect_test_never_exits_0_on_zero_mutants(tmp_path):
+    """The exact shape from 8.F3: before the fix this run reported no_changed_mutants and
+    exited 0, on the commit that removed the only test that killed the cap mutants."""
+    src, t = _front_repo(tmp_path, tests=f"""\
+        import sys; sys.path.insert(0, r'{tmp_path / "tools"}')
+        from subject import classify, double
+        def test_pos(): assert classify(1) == 'pos'
+        def test_neg(): assert classify(-1) == 'neg'
+        def test_double(): assert double(3) == 6
+    """)                     # only test_front.py checked the cap branch, and it is deleted
+    r = _run([str(src), "--tests", str(t), "--json"], tmp_path, default=True)
+    d = json.loads(r.stdout)
+    assert d["status"] != "no_changed_mutants", d
+    assert d["scope"]["mode"] == "whole_file", d["scope"]
+    assert d["survived"] > 0 and r.returncode == 2, (d["survived"], r.returncode)
+
+
 def test_a_test_function_removed_from_a_mapped_file_forces_the_whole_file(tmp_path):
     """The lines a deleted test ran are in no CURRENT map, so they cannot bound it."""
     src, t = _repo(tmp_path)

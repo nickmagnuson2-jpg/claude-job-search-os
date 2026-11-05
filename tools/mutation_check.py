@@ -1003,6 +1003,21 @@ def _test_sources(text: str) -> tuple[dict[str, str], str] | None:
     return tests, "\n".join(rest)
 
 
+def _reached_through(source: str, names: set[str]) -> bool:
+    """map_tests' selection rule applied to one source: a test whose code names any of
+    `names` as an identifier, or as a module path in a string literal. A source that does
+    not parse counts as reaching (measure more rather than less, as map_tests does)."""
+    if not names:
+        return False
+    refs = code_refs(source)
+    if refs is None:
+        return True
+    identifiers, literals = refs
+    word = re.compile(r"\b(?:" + "|".join(re.escape(n) for n in sorted(names)) + r")\b")
+    literal = _literal_ref(names)
+    return bool(word.search(identifiers)) or any(literal.search(s) for s in literals)
+
+
 def changed_test_inputs(base: str, root: Path, test_files: list,
                         stem: str = "") -> dict | None:
     """Test-side inputs of this target that differ between `base` and the working tree.
@@ -1011,7 +1026,8 @@ def changed_test_inputs(base: str, root: Path, test_files: list,
       whole  [(path, why)] inputs that can reach ANY test, so the scope is the whole file:
              a changed conftest.py under tests/ (pytest loads it implicitly), a changed
              non-test module a mapped test imports, a changed file under tests/ a mapped
-             test names (fixture data), a DELETED test file that named the target, and a
+             test names (fixture data), a DELETED test file that named the target or a
+             tools/ module that imports it (map_tests' rule; 8.F3), and a
              mapped test file that LOST a test function (its lines are in no current map).
       tests  [path] mapped test files that changed without losing a test: added, edited.
              Their effect is bounded by the lines their tests execute (resolve_test_lines).
@@ -1062,6 +1078,29 @@ def changed_test_inputs(base: str, root: Path, test_files: list,
         r = _git(["show", f"{base}:{p}"], root)
         return r.stdout if r is not None and r.returncode == 0 else None
 
+    # A deleted test may reach the target only THROUGH another tools/ module, the way
+    # map_tests selects tests (covering_names). Codex round 3, 8.F3: matching the deleted
+    # source on the target's own name dropped such a test, and a commit that deleted the
+    # only test killing some mutants exited 0 on no_changed_mutants. The names are the
+    # target plus every module that imports it transitively, in the working tree AND, for
+    # a tools/ module deleted in the same diff, at the base. Computed once, on demand.
+    reach: list[set[str]] = []
+
+    def reach_names() -> set[str]:
+        if not reach:
+            names = covering_names(stem, root / "tools") if stem else set()
+            gone = {Path(q).stem: at_base(q) or "" for q, s in changed.items()
+                    if s == "D" and q.startswith("tools/") and q.endswith(".py")}
+            grew = True
+            while grew:                  # fixpoint; `names` only grows
+                grew = False
+                for mod, src in gone.items():
+                    if mod not in names and _imported_names(src) & names:
+                        names.add(mod)
+                        grew = True
+            reach.append(names)
+        return reach[0]
+
     whole: list[tuple[str, str]] = []
     tests: list[str] = []
     test_names: dict[str, set[str] | None] = {}
@@ -1072,7 +1111,8 @@ def changed_test_inputs(base: str, root: Path, test_files: list,
         in_tests = p.startswith("tests/")
         if in_tests and st == "D" and name.startswith("test_") and name.endswith(".py"):
             old = at_base(p) or ""
-            if stem_re is None or stem_re.search(old) or name.startswith(f"test_{stem}"):
+            if stem_re is None or stem_re.search(old) or name.startswith(f"test_{stem}") \
+                    or _reached_through(old, reach_names()):
                 whole.append((p, "deleted test file"))
             continue
         # Any OTHER deleted file (a conftest, a helper, a fixture) goes through the same
