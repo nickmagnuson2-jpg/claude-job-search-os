@@ -319,6 +319,29 @@ def test_the_line_map_attributes_lines_to_tests_including_a_subprocess(tmp_path)
     assert tid_a not in mapping.get(5, set())
 
 
+def test_nested_shims_reach_the_real_sitecustomize_and_still_record(tmp_path):
+    """A mapping pass whose tests run mutation_check starts a second pass, so two shim
+    directories sit on PYTHONPATH. Each must skip every shim directory, not only its own,
+    or the two run each other until startup fails (found 2026-11-04 measuring the recorder
+    with its own tests: the inner pass went red with no test named)."""
+    target = tmp_path / "m.py"
+    target.write_text("def f():\n    return 1\nf()\n", encoding="utf-8")
+    dirs = []
+    for name in ("inner", "outer"):
+        d = tmp_path / name
+        d.mkdir()
+        (d / "_mutation_linemap.py").write_bytes(Path(lm.__file__).read_bytes())
+        (d / "sitecustomize.py").write_text(lm.SITECUSTOMIZE, encoding="utf-8")
+        dirs.append(str(d))
+    out = tmp_path / "out"
+    env = {**os.environ, "PYTHONPATH": os.pathsep.join(dirs), lm.ENV_TARGET: str(target),
+           lm.ENV_OUT: str(out), lm.ENV_TEST: "/t.py::test_x"}
+    r = subprocess.run([sys.executable, str(target)], env=env, capture_output=True,
+                       text=True, timeout=60)
+    assert r.returncode == 0 and "Error in sitecustomize" not in r.stderr, r.stderr[-800:]
+    assert lm.read_records(str(out)).get("/t.py::test_x") == {1, 2, 3}   # def, body, call
+
+
 def test_a_red_mapping_pass_yields_no_map(tmp_path):
     tool = tmp_path / "m.py"
     tool.write_text("def f():\n    return 1\n", encoding="utf-8")

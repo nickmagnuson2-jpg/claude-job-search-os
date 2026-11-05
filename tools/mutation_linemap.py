@@ -167,10 +167,17 @@ def pytest_runtest_logfinish(nodeid, location):
 
 # Imports the real sitecustomize first (Homebrew's rewrites sys.executable, and skipping it
 # would change how every child of the mapping pass starts), then starts recording.
+#
+# NESTED PASSES (2026-11-04). A mapping pass whose tests run mutation_check starts a second
+# pass, so two shim directories sit on PYTHONPATH. Skipping only its OWN directory, each
+# shim found the other as "the real sitecustomize" and ran it, which ran the first again:
+# RecursionError at startup, the inner pass red with no test named, and a silent fall back
+# to the slow path (seen measuring this module with its own tests). Every directory that
+# holds a recorder copy is skipped, so the search always ends at the real one.
 SITECUSTOMIZE = '''\
 import importlib.machinery, importlib.util, os, sys
-_here = os.path.dirname(os.path.abspath(__file__))
-_path = [p for p in sys.path if os.path.abspath(p or ".") != _here]
+_path = [p for p in sys.path
+         if not os.path.exists(os.path.join(os.path.abspath(p or "."), "_mutation_linemap.py"))]
 _spec = importlib.machinery.PathFinder.find_spec("sitecustomize", _path)
 if _spec is not None and _spec.loader is not None:
     _mod = importlib.util.module_from_spec(_spec)
