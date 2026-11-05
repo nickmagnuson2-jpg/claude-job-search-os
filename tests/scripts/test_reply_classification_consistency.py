@@ -30,7 +30,10 @@ import reply_classify as rc  # noqa: E402
 
 CONSUMERS = {"networking_write.py": "from reply_classify import",
              "day_check.py": "from reply_classify import",
-             "remember_apply.py": "from reply_classify import"}
+             # Since round 7 (2026-11-04) remember_apply does not decide replies at all: its
+             # pre-flight runs the writer's own checks, which use reply_classify. Requiring the
+             # delegation keeps one rule; an unused reply_classify import would prove nothing.
+             "remember_apply.py": "from networking_write import check_log_sequence"}
 
 # Local definitions that were the two drifting copies. None may reappear outside
 # reply_classify.py, in any tool.

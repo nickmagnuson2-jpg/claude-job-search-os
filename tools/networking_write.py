@@ -291,6 +291,105 @@ def cmd_add(args, networking_path: Path, dry_run: bool) -> None:
            name=args.name, company=company)
 
 
+
+def apply_log(lines: list, name: str, log_date: str, entry_lines: list, direction: str,
+              new_reply: bool) -> dict | None:
+    """The writer's whole in-memory decision for one `log`, shared by every caller.
+
+    Returns the refusal ({"code", "message", ...}) and leaves `lines` untouched, or returns None
+    after inserting the entry into `lines` (Last Interaction updated; the contact's section
+    created if missing). Nothing is saved here. cmd_log saves the result; check_log_sequence
+    runs it on a copy for /remember's pre-flight, so the two cannot disagree (round 7: two
+    copies of the duplicate rule drifted twice, by name form and by timing).
+
+    The duplicate-reply check reads every section for the contact, archived or not, BEFORE a
+    section is looked up or created. It used to run only when a live section existed, so a
+    reply still open in an archived section was logged again (found by the parity test).
+    """
+    contact_row_idx = find_contact_row(lines, name)
+    if contact_row_idx == -1:
+        return {"code": "not_found", "message": f"Contact not found: {name}"}
+    # A reply when the newest directional entry is already an unanswered reply is usually the
+    # same reply logged a second time (reply_classify.open_reply).
+    if direction in ("in", "both") and not new_reply:
+        prev = open_reply(contact_lines(lines, name))
+        if prev:
+            return {"code": "possible_duplicate_reply",
+                    "existing": {"date": prev[0], "type": prev[1], "summary": prev[2]},
+                    "message": (f"{name} already has a reply logged with no message from Nick "
+                                f"after it ({prev[0]} | {prev[1]} | {prev[2][:80]}). If this is "
+                                f"that reply, do not log it again. If it is a new message from "
+                                f"them, rerun with --new-reply.")}
+
+    # Update Last Interaction date in Contacts table
+    cols = parse_cols(lines[contact_row_idx])
+    while len(cols) < 7:
+        cols.append("—")
+    cols[5] = log_date
+    lines[contact_row_idx] = fmt_contact_row(*cols[:7])
+
+    # Find the contact's section in Interaction Log
+    log_sec_start, log_sec_end = find_contact_log_section(lines, name)
+    if log_sec_start == -1:
+        # Section missing — create it
+        log_section_start, log_section_end = find_section(lines, r"^##\s+Interaction\s+Log")
+        if log_section_start == -1:
+            lines.append("")
+            lines.append("## Interaction Log")
+            lines.append("")
+            company_part = cols[1] if len(cols) > 1 and cols[1] not in ("—", "") else None
+            heading = f"### {cols[0]} — {company_part}" if company_part else f"### {cols[0]}"
+            lines.append(heading)
+            lines.append("")
+            insert_at = len(lines)
+        else:
+            insert_at = log_section_end
+            company_part = cols[1] if len(cols) > 1 and cols[1] not in ("—", "") else None
+            heading = f"### {cols[0]} — {company_part}" if company_part else f"### {cols[0]}"
+            lines.insert(insert_at, "")
+            lines.insert(insert_at + 1, heading)
+            lines.insert(insert_at + 2, "")
+            insert_at = insert_at + 3
+    else:
+        # Insert after section heading (+ blank line), i.e., newest first
+        insert_at = log_sec_start + 1
+        # Skip a blank line if present right after heading
+        if insert_at < log_sec_end and lines[insert_at].strip() == "":
+            insert_at += 1
+
+    # Insert entry lines in order
+    for j, eline in enumerate(entry_lines):
+        lines.insert(insert_at + j, eline)
+    return None
+
+
+def check_log_sequence(lines: list, notes: list, log_date: str, entry_type: str,
+                       summary: str) -> dict | None:
+    """/remember's pre-flight, run through the writer's own code: apply_log for each note in
+    call order on a copy of `lines`. Returns the first refusal with the note's `index` and
+    normalised `name`, or None. Writes nothing.
+
+    notes: [{"name", "direction", "new_reply"}]. Names go through sanitize_cell, as main()
+    does for every command. A note whose direction is not one of in/out/both/none is checked
+    for roster membership only; remember refuses it later as direction_required.
+    """
+    work = list(lines)
+    for i, n in enumerate(notes):
+        name = sanitize_cell(n.get("name") or "")
+        d = n.get("direction")
+        if d not in ("in", "out", "both", "none"):
+            if find_contact_row(work, name) == -1:
+                return {"code": "not_found", "message": f"Contact not found: {name}",
+                        "index": i, "name": name}
+            continue
+        entry = [f"#### {log_date} | {with_direction(entry_type, d)} | {summary}", "",
+                 "**Follow-up:** —", ""]
+        refusal = apply_log(work, name, log_date, entry, d, n.get("new_reply") is True)
+        if refusal:
+            return {**refusal, "index": i, "name": name}
+    return None
+
+
 def cmd_log(args, networking_path: Path, repo_root: Path, dry_run: bool) -> None:
     # The follow-up becomes a todo through todo_write.py, which refuses a wrong weekday.
     # Refuse here first: below, the old follow-up is superseded before the add, and the
@@ -326,61 +425,14 @@ def cmd_log(args, networking_path: Path, repo_root: Path, dry_run: bool) -> None
 
     content, lines = load_lines(networking_path)
 
-    # Verify contact exists in Contacts table
-    contact_row_idx = find_contact_row(lines, args.name)
-    if contact_row_idx == -1:
-        out_error(f"Contact not found: {args.name}", "not_found")
-
-    # Update Last Interaction date in Contacts table
-    cols = parse_cols(lines[contact_row_idx])
-    while len(cols) < 7:
-        cols.append("—")
-    cols[5] = log_date
-    lines[contact_row_idx] = fmt_contact_row(*cols[:7])
-
-    # Find the contact's section in Interaction Log
-    log_sec_start, log_sec_end = find_contact_log_section(lines, args.name)
-    if log_sec_start == -1:
-        # Section missing — create it
-        log_section_start, log_section_end = find_section(lines, r"^##\s+Interaction\s+Log")
-        if log_section_start == -1:
-            lines.append("")
-            lines.append("## Interaction Log")
-            lines.append("")
-            company_part = cols[1] if len(cols) > 1 and cols[1] not in ("—", "") else None
-            heading = f"### {cols[0]} — {company_part}" if company_part else f"### {cols[0]}"
-            lines.append(heading)
-            lines.append("")
-            insert_at = len(lines)
-        else:
-            insert_at = log_section_end
-            company_part = cols[1] if len(cols) > 1 and cols[1] not in ("—", "") else None
-            heading = f"### {cols[0]} — {company_part}" if company_part else f"### {cols[0]}"
-            lines.insert(insert_at, "")
-            lines.insert(insert_at + 1, heading)
-            lines.insert(insert_at + 2, "")
-            insert_at = insert_at + 3
-    else:
-        # A reply when the newest directional entry is already an unanswered reply is
-        # usually the same reply logged a second time (reply_classify.open_reply).
-        if args.direction in ("in", "both") and not args.new_reply:
-            prev = open_reply(contact_lines(lines, args.name))
-            if prev:
-                out_error(
-                    f"{args.name} already has a reply logged with no message from Nick after "
-                    f"it ({prev[0]} | {prev[1]} | {prev[2][:80]}). If this is that reply, do "
-                    f"not log it again. If it is a new message from them, rerun with "
-                    f"--new-reply.", "possible_duplicate_reply",
-                    existing={"date": prev[0], "type": prev[1], "summary": prev[2]})
-        # Insert after section heading (+ blank line), i.e., newest first
-        insert_at = log_sec_start + 1
-        # Skip a blank line if present right after heading
-        if insert_at < log_sec_end and lines[insert_at].strip() == "":
-            insert_at += 1
-
-    # Insert entry lines in order
-    for j, eline in enumerate(entry_lines):
-        lines.insert(insert_at + j, eline)
+    refusal = apply_log(lines, args.name, log_date, entry_lines, args.direction, args.new_reply)
+    if refusal:
+        out_error(refusal["message"], refusal["code"],
+                  **({"existing": refusal["existing"]} if "existing" in refusal else {}))
+    if args.check:
+        out_ok("log", f"Would log interaction for {args.name}: nothing refuses it",
+               checked=True, name=args.name, date=log_date)
+        return
 
     # A draft is linked to its capture BEFORE the entry is saved, and the link is removed if
     # the save fails: all or nothing, so a retry can never log the same draft twice (round 5,
@@ -677,6 +729,10 @@ def parse_args():
                             "(' (outbound)', no flip). both: one note records a message "
                             "each way (' (two-way)', flips). none: neither, e.g. a note or "
                             "a meeting (type unchanged, no flip).")
+    log_p.add_argument("--check", action="store_true",
+                       help="Run every check the log would run (roster, duplicate reply, "
+                            "capture) under the networking.md lock and write nothing: exit 0 "
+                            "with checked=true, or the refusal the log would give.")
     log_p.add_argument("--new-reply", dest="new_reply", action="store_true",
                        help="Log a reply even though the contact's newest directional entry "
                             "is already a reply with no message from Nick after it. Use "

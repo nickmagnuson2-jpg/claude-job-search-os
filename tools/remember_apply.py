@@ -50,9 +50,7 @@ import sys as _sys
 _sys.path.insert(0, str(Path(__file__).resolve().parent))
 import inbox_lock
 import outreach_status  # noqa: E402
-from reply_classify import contact_lines, open_reply, with_direction  # noqa: E402
-from networking_write import find_contact_row  # noqa: E402
-from pipe_write import sanitize_cell  # noqa: E402
+from networking_write import check_log_sequence, networking_lock  # noqa: E402
 from md_table import find_section, is_sep_row, out_error, out_ok, parse_cols, read_file, write_atomic  # noqa: E402
 
 NOTES_FILE      = "data/notes.md"
@@ -115,17 +113,18 @@ def section_end(lines: list, start: int) -> int:
 def contact_note_refusal(note: str, destinations: list, net_content: str) -> dict | None:
     """The refusal for this call's contact notes, or None. Checked once, by apply_destinations'
     pre-flight, BEFORE any destination is written, so a refusal writes nothing at all
-    (review round 2; round 5, 9.F1 and 11.F1). Three refusals:
+    (review round 2; round 5, 9.F1 and 11.F1).
 
       file_not_found            networking.md is missing or empty.
-      not_found                 a contact is not in the Contacts table (networking_write.py
-                                log, which writes the note, would refuse it).
+      not_found                 a contact is not in the Contacts table.
       possible_duplicate_reply  a reply note (in/both) for a contact whose newest
-                                directional entry is already an unanswered reply. The call
-                                is read in order, as the writer would see it: an earlier
-                                reply note for the same contact in this call leaves the
-                                reply open, an earlier out note closes it, and only a
-                                literal "new_reply": true passes.
+                                directional entry is already an unanswered reply, counting
+                                this call's earlier notes; only a literal "new_reply": true
+                                passes.
+
+    The rule is NOT reimplemented here: networking_write.check_log_sequence runs the writer's
+    own apply_log over the call's notes, in order, on a copy (round 7: two copies of the rule
+    drifted twice). The returned refusal names the note's `index` and its normalised `name`.
     """
     notes = [d for d in destinations if d.get("type") == "contact_note"]
     if not notes:
@@ -133,45 +132,22 @@ def contact_note_refusal(note: str, destinations: list, net_content: str) -> dic
     if not net_content:
         return {"code": "file_not_found",
                 "message": "networking.md not found or empty, so no contact note can be logged."}
-    lines = net_content.splitlines()
-    # One name form, the writer's: networking_write stores and looks up every name through
-    # sanitize_cell (whitespace collapsed, '|' -> '/'). Keying the reply check on the raw name
-    # let 'Jane  Doe' miss Jane Doe's open reply, and remember then passed --new-reply, so the
-    # writer logged the reply twice (round 6 F1).
-    for d in notes:
-        entity = sanitize_cell(d.get("entity") or "")
-        if find_contact_row(lines, entity) == -1:
-            return {"code": "not_found",
-                    "message": f"{entity or '(no name)'} is not in the Contacts table of "
-                               f"data/networking.md, so the note cannot be logged there."}
-    summary = " ".join(note.split())
-    today = datetime.now().strftime("%Y-%m-%d")
-    open_by: dict = {}
-    for d in notes:
-        direction = d.get("direction")
-        if direction not in ("in", "out", "both"):
-            continue
-        entity = sanitize_cell(d.get("entity") or "")
-        key = entity.lower()
-        if key not in open_by:
-            prev = open_reply(contact_lines(lines, entity))
-            open_by[key] = ({"date": prev[0], "type": prev[1], "summary": prev[2]}
-                            if prev else None)
-        if direction == "out":
-            open_by[key] = None
-            continue
-        existing = open_by[key]
-        if existing and d.get("new_reply") is not True:
-            return {"code": "possible_duplicate_reply", "existing": existing,
-                    "message": f"{entity} already has a reply logged with no message from "
-                               f"Nick after it ({existing['date']} | {existing['type']}). If "
-                               f"this note is that reply, it is already counted. If it is a "
-                               f"new message from them, rerun this destination with "
-                               f"\"new_reply\": true."}
-        open_by[key] = {"date": today, "type": with_direction("remember", direction),
-                        "summary": summary}
-    return None
-
+    refusal = check_log_sequence(
+        net_content.splitlines(),
+        [{"name": d.get("entity") or "", "direction": d.get("direction"),
+          "new_reply": d.get("new_reply") is True} for d in notes],
+        log_date=datetime.now().strftime("%Y-%m-%d"), entry_type="remember",
+        summary=" ".join(note.split()))
+    if refusal and refusal["code"] == "not_found":
+        refusal["message"] = (f"{refusal['name'] or '(no name)'} is not in the Contacts table "
+                              f"of data/networking.md, so the note cannot be logged there.")
+    elif refusal and refusal["code"] == "possible_duplicate_reply":
+        e = refusal["existing"]
+        refusal["message"] = (f"{refusal['name']} already has a reply logged with no message "
+                              f"from Nick after it ({e['date']} | {e['type']}). If this note is "
+                              f"that reply, it is already counted. If it is a new message from "
+                              f"them, rerun this destination with \"new_reply\": true.")
+    return refusal
 
 def apply_contact_note(note: str, dest: dict, repo_root: Path) -> dict:
     """Log the note as a `#### YYYY-MM-DD | remember<suffix> | <note>` interaction for the
@@ -628,10 +604,13 @@ def apply_destinations(note: str, destinations: list, repo_root: Path, dry_run: 
         out_error("No destinations provided", "no_destinations")
 
     # Pre-flight: if any contact note would be refused, write nothing, so a refusal never
-    # leaves the call's other destinations half applied (review round 2; round 5).
-    # (apply_contact_note does not check again: this is the one place.)
-    refusal = contact_note_refusal(note, destinations,
-                                   read_file(repo_root / NETWORKING_FILE) or "")
+    # leaves the call's other destinations half applied (review round 2; round 5). It reads
+    # networking.md under the writer's lock and runs the writer's own checks. The writer
+    # checks again when each note is logged, under the same lock, which catches a reply that
+    # another call logged after this pre-flight (round 7).
+    with networking_lock(repo_root / NETWORKING_FILE, False):
+        refusal = contact_note_refusal(note, destinations,
+                                       read_file(repo_root / NETWORKING_FILE) or "")
     if refusal:
         extra = {"existing": refusal["existing"]} if "existing" in refusal else {}
         out_error(refusal["message"] + " Nothing was written.", refusal["code"],
