@@ -429,11 +429,21 @@ def test_cache_context_changes_with_every_input_it_names(tmp_path):
     assert ctx() == first
 
 
-def test_an_unmapped_test_file_does_not_change_the_key(tmp_path):
+def test_any_file_in_the_checkout_changes_the_key_but_caches_do_not(tmp_path):
+    """A test can read any file in the checkout, so the key covers the checkout (round 2
+    A.F3/B.F2/C.F1/D.F2): a root-level fixture, an untracked file. The interpreter's and
+    this tool's own caches do not count, or no rerun could ever hit."""
     src, t = _repo(tmp_path)
-    first = mc.cache_context(src, src.read_text(), [t], tmp_path)
-    (tmp_path / "tests" / "scripts" / "test_unrelated.py").write_text("def test_x(): pass\n")
-    assert mc.cache_context(src, src.read_text(), [t], tmp_path) == first
+    ctx = lambda: mc.cache_context(src, src.read_text(), [t], tmp_path)
+    first = ctx()
+    (tmp_path / ".pytest_cache").mkdir(); (tmp_path / ".pytest_cache" / "v").write_text("1")
+    (tmp_path / ".mutation-cache").mkdir(); (tmp_path / ".mutation-cache" / "k").write_text("1")
+    assert ctx() == first
+    (tmp_path / "fixture.json").write_text("{}")
+    second = ctx()
+    assert second != first, "an untracked root-level file is an input"
+    (tmp_path / "fixture.json").write_text('{"a": 1}')
+    assert ctx() != second, "and so is its content"
 
 
 # --- end to end (one mutation_check process each) ----------------------------------------
@@ -535,7 +545,8 @@ def test_e2e_an_order_dependent_subset_cannot_produce_a_false_kill(tmp_path):
     d = json.loads(_run(args, tmp_path).stdout)
     plain = json.loads(_run(args[:-1] + ["--no-line-map", "--json"], tmp_path).stdout)
     assert d["selection"]["line_map"]["status"] == "ok"
-    assert d["selection"]["subset_invalid"] >= 1, d["selection"]
+    # The subset is a true prefix of the run, so test_a (other file) runs first: valid.
+    assert d["selection"]["subset_invalid"] == 0, d["selection"]
     assert {(x["line"], x["op"]) for x in d["survivors"]} == \
         {(x["line"], x["op"]) for x in plain["survivors"]}
     assert d["killed"] == plain["killed"]
@@ -885,9 +896,25 @@ def test_a_tool_that_only_a_test_imports_is_in_the_key(tmp_path):
     assert mc.cache_context(src, src.read_text(), [t], tmp_path) != first
 
 
-def _seed_cache(tmp_path, src, t, verdicts):
-    """Write cache entries for every mutant of `src`, keyed exactly as main() keys them."""
+def _run_env(cwd):
+    """The environment _run gives the child, which is what its cache key hashes."""
+    env = {k: v for k, v in os.environ.items()
+           if k not in ("MUTATION_CHECK_ACTIVE", "MUTATION_SWEEP_ACTIVE", "CLAUDECODE",
+                        mc.CACHE_DIR_ENV)}
+    env.update(PYTHONIOENCODING="utf-8", MUTATION_REPO_ROOT=str(cwd))
+    return env
+
+
+def _seed_cache(tmp_path, src, t, verdicts, monkeypatch):
+    """Write cache entries for every mutant of `src`, keyed exactly as main() keys them:
+    under the child's own environment, since the key includes it."""
     import ast
+    env = _run_env(tmp_path)
+    for k in list(os.environ):
+        if k not in env:
+            monkeypatch.delenv(k)
+    for k, v in env.items():
+        monkeypatch.setenv(k, v)
     original = src.read_text(encoding="utf-8")
     ctx = mc.cache_context(src, original, [t], tmp_path)
     store = tmp_path / ".mutation-cache"
@@ -898,12 +925,12 @@ def _seed_cache(tmp_path, src, t, verdicts):
     return store
 
 
-def test_e2e_cached_weak_and_unclassified_kills_are_replayed_as_such(tmp_path):
+def test_e2e_cached_weak_and_unclassified_kills_are_replayed_as_such(tmp_path, monkeypatch):
     src, t = _repo(tmp_path)
     # Three kinds, so each replay branch has to pick out exactly its own.
     kinds = lambda line, op: ("killed", "error" if line < 5 else
                               "unknown" if line < 9 else "assertion")
-    _seed_cache(tmp_path, src, t, kinds)
+    _seed_cache(tmp_path, src, t, kinds, monkeypatch)
     import ast
     seeded = [kinds(l, o)[1] for l, _, o in mc.enumerate_mutants(ast.parse(src.read_text()))]
     d = json.loads(_run([str(src), "--whole-file", "--tests", str(t), "--json"],
@@ -916,15 +943,16 @@ def test_e2e_cached_weak_and_unclassified_kills_are_replayed_as_such(tmp_path):
     assert seeded.count("assertion") > 0, "the fixture must seed assertion kills too"
 
 
-def test_e2e_a_cached_survivor_on_the_allowlist_is_reported_allowlisted(tmp_path):
+def test_e2e_a_cached_survivor_on_the_allowlist_is_reported_allowlisted(tmp_path, monkeypatch):
     src, t = _repo(tmp_path)
-    _seed_cache(tmp_path, src, t, lambda line, op: ("survived", "") if line == 9
-                else ("killed", "assertion"))
     listed = json.loads(_run([str(src), "--whole-file", "--tests", str(t), "--list"],
                              tmp_path).stdout)
     keys = [e["key"] for e in listed["catalog"] if e["line"] == 9]
+    # The allowlist is written BEFORE seeding: the cache key covers the checkout.
     (tmp_path / "tools" / "mutation-allow.json").write_text(
         json.dumps({keys[0]: "test: an equivalent mutant, reason written"}))
+    _seed_cache(tmp_path, src, t, lambda line, op: ("survived", "") if line == 9
+                else ("killed", "assertion"), monkeypatch)
     r = _run([str(src), "--whole-file", "--tests", str(t), "--json"], tmp_path)
     d = json.loads(r.stdout)
     assert [a["key"] for a in d["allowlisted_detail"]] == keys[:1]
@@ -980,7 +1008,6 @@ def test_e2e_after_an_invalid_subset_the_full_set_measures_the_mutant(tmp_path):
     args = [str(src), "--whole-file", "--no-cache", "--tests", *map(str, tests), "--json"]
     d = json.loads(_run(args, tmp_path).stdout)
     plain = json.loads(_run(args[:-1] + ["--no-line-map", "--json"], tmp_path).stdout)
-    assert d["selection"]["subset_invalid"] >= 1, d["selection"]
     assert d["survived"] == plain["survived"] == 0, (d["survivors"], plain["survivors"])
     assert d["killed"] == plain["killed"]
 
@@ -1094,5 +1121,27 @@ def test_more_than_three_edited_tests_are_abbreviated(tmp_path):
 def test_subset_argv_runs_the_file_prefix_in_order_and_keeps_unseen_ids():
     order = ["/r/t1.py::a", "/r/t1.py::b", "/r/t1.py::c", "/r/t2.py::x", "/r/t2.py::y"]
     argv = mc.subset_argv({"/r/t1.py::b", "/r/t2.py::x", "/r/t3.py::new"}, order)
-    assert argv == ["/r/t1.py::a", "/r/t1.py::b", "/r/t2.py::x", "/r/t3.py::new"], argv
+    assert argv == ["/r/t1.py::a", "/r/t1.py::b", "/r/t1.py::c", "/r/t2.py::x",
+                    "/r/t3.py::new"], argv    # a true prefix of the run, across files
     assert mc.subset_argv({"/r/t1.py::c"}, []) == ["/r/t1.py::c"], "no order: ids as before"
+
+
+def test_mutation_and_git_variables_are_in_the_cache_key(tmp_path, monkeypatch):
+    src, t = _repo(tmp_path)
+    ctx = lambda: mc.cache_context(src, src.read_text(), [t], tmp_path)
+    first = ctx()
+    monkeypatch.setenv("MUTATION_STRICT_ASSERTS", "1")
+    assert ctx() != first
+
+
+def test_a_helper_the_tests_reach_through_another_module_forces_the_whole_file(tmp_path):
+    src, t = _repo(tmp_path)
+    (tmp_path / "tools" / "front.py").write_text("import deep_policy\n")
+    deep = tmp_path / "tools" / "deep_policy.py"
+    deep.write_text("STRICT = True\n")
+    t.write_text("import front\n" + t.read_text())
+    _git(tmp_path, "add", "-A"); _git(tmp_path, "commit", "-qm", "deps")
+    _git(tmp_path, "update-ref", "refs/remotes/origin/main", "HEAD")
+    deep.write_text("STRICT = False\n")
+    s = mc.resolve_scope(_args(), src, tmp_path, [t])
+    assert s["mode"] == "whole_file" and "imported helper changed" in s["reason"], s

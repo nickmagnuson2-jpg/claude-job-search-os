@@ -1044,6 +1044,10 @@ def changed_test_inputs(base: str, root: Path, test_files: list,
         texts.append(text)
         imported |= _imported_names(text)
     stem_re = re.compile(r"\b%s\b" % re.escape(stem)) if stem else None
+    # tools/ modules the tests reach through other modules count too (round 2 A.F2).
+    reached = {p.resolve().relative_to(root.resolve()).as_posix()
+               for p in _local_deps(texts, root / "tools")
+               if root.resolve() in p.resolve().parents}
     # A helper or fixture OUTSIDE tests/ (a tools/ module a test imports, a root-level file
     # a test names) is checked too (Codex 110526 A.F3). The target itself is skipped here.
     target_rel = f"tools/{stem}.py" if stem else None
@@ -1100,7 +1104,8 @@ def changed_test_inputs(base: str, root: Path, test_files: list,
             test_names[p] = names
         elif in_tests and name == "conftest.py":
             whole.append((p, "conftest changed" + gone_note))
-        elif p.endswith(".py") and not name.startswith("test_") and Path(p).stem in imported:
+        elif p.endswith(".py") and not name.startswith("test_") and (
+                Path(p).stem in imported or p in reached):
             whole.append((p, "imported helper changed" + gone_note))
         elif not name.startswith("test_") and any(name in text or p in text for text in texts):
             # Fixture data a mapped test names (job-search-ee, 2026-11-04): a weakened
@@ -1256,29 +1261,29 @@ def covering_ids(span: tuple[int, int], line_map: dict) -> set[str]:
 
 
 def subset_argv(ids: set[str], order: list[str] | None = None) -> list[str]:
-    """The ids as pytest arguments, each WITH the tests before it in its file, in
-    collection order; their files instead when the argv would be too long.
-
-    WHY THE PREFIX (Codex 110526 A.F4 / B.F2). A test that never executes the target can
-    still set state the covering test depends on, and it is absent from the line map. Run
-    alone, the covering test can fail on a mutant that survives in the full order: a false
-    KILLED, which validation on unmutated source cannot see. With every earlier test of
-    the same file included, that state is present as in the full run. State set by an
-    earlier FILE is not covered, which is the same exposure the file tier always had.
-    With no order recorded, the ids run as before (sorted)."""
-    if order:
-        pos = {tid: i for i, tid in enumerate(order)}
-        last: dict[str, int] = {}
-        for tid in ids:
-            f = tid.partition("::")[0]
-            last[f] = max(last.get(f, -1), pos.get(tid, -1))
-        argv = [tid for tid in order if tid.partition("::")[0] in last
-                and pos[tid] <= last[tid.partition("::")[0]]]
-        argv += sorted(t for t in ids if t not in pos)        # unseen ids still run
-    else:
+    """The covering ids as pytest arguments: every test up to the LAST covering one, in
+    the full run's collection order, across files. The subset is then a true prefix of the
+    full run, so any test state the full run builds before those tests is there too, and a
+    failure in the subset is one the full run reaches as well: no false KILLED by
+    construction (Codex 110526 A.F4/B.F2; round 2 A.F1/B.F1/C.F2/D.F1 showed a per-file
+    prefix still missed state set by an EARLIER file). Too long for argv: the same prefix
+    as whole files, in order (a longer prefix of the same run, so the same guarantee).
+    With no order recorded, the ids run sorted, and validation is the only guard."""
+    if not order:
         argv = sorted(ids)
+        if sum(len(a) + 1 for a in argv) > MAX_ID_ARGV_CHARS:
+            argv = sorted({a.partition("::")[0] for a in argv})
+        return argv
+    pos = {tid: i for i, tid in enumerate(order)}
+    last = max((pos[t] for t in ids if t in pos), default=-1)
+    argv = order[:last + 1] + sorted(t for t in ids if t not in pos)   # unseen ids still run
     if sum(len(a) + 1 for a in argv) > MAX_ID_ARGV_CHARS:
-        argv = sorted({a.partition("::")[0] for a in argv})
+        files: list[str] = []
+        for a in argv:
+            f = a.partition("::")[0]
+            if f not in files:
+                files.append(f)
+        argv = files
     return argv
 
 
@@ -1363,8 +1368,10 @@ def cache_context(target: Path, original: str, test_files: list, root: Path) -> 
     The test environment too, minus variables known to change between shells
     (_env_fingerprint).
 
-    NOT covered, and the reason --no-cache exists: files outside tools/ and tests/ that a
-    test reads (docs, data), the network, the clock."""
+    And the checkout itself (_repo_state): a hit needs an identical tree.
+
+    NOT covered, and the reason --no-cache exists: gitignored trees, the network, the
+    clock."""
     def rel(p: Path) -> str:
         try:
             return p.resolve().relative_to(root.resolve()).as_posix()
@@ -1398,6 +1405,7 @@ def cache_context(target: Path, original: str, test_files: list, root: Path) -> 
         "tests": {rel(t): _file_sha(t) for t in tests},
         "support": support,
         "deps": {rel(p): _file_sha(p) for p in sorted(deps, key=str)},
+        "repo": _repo_state(root),
     }
     return _sha(json.dumps(ctx, sort_keys=True).encode("utf-8"))
 
@@ -1408,8 +1416,9 @@ def cache_context(target: Path, original: str, test_files: list, root: Path) -> 
 # environment variable enables made a cached KILLED replay after the variable changed).
 _VOLATILE_ENV = {"PWD", "OLDPWD", "SHLVL", "_", "COLUMNS", "LINES", "SECURITYSESSIONID",
                  "TERM_SESSION_ID", "LaunchInstanceID", "LOGNAME_SESSION"}
-_VOLATILE_PREFIXES = ("CLAUDE", "MUTATION_", "ITERM", "TERM_", "SSH_", "XPC_", "__CF",
-                      "Apple_", "OTEL_", "VSCODE_", "GIT_")
+_VOLATILE_PREFIXES = ("CLAUDE", "ITERM", "TERM_", "SSH_", "XPC_", "__CF",
+                      "Apple_", "OTEL_", "VSCODE_")
+# MUTATION_* and GIT_* are hashed (round 2 A.F4/C.F3/D.F4): a test can read them.
 
 
 def _env_fingerprint() -> str:
@@ -1417,6 +1426,25 @@ def _env_fingerprint() -> str:
     kept = sorted((k, v) for k, v in env.items()
                   if k not in _VOLATILE_ENV and not k.startswith(_VOLATILE_PREFIXES))
     return _sha(json.dumps(kept).encode("utf-8"))
+
+
+def _repo_state(root: Path) -> str:
+    """HEAD's tree, the working-tree diff against it, and every untracked, non-ignored
+    file's content. A test can read any file in the checkout (a root-level fixture, a doc),
+    so a cache hit must mean the checkout is identical (Codex 110526 round 2 A.F3/B.F2/
+    C.F1/D.F2). Gitignored trees (data/, output/) are not covered. Not a git checkout, or
+    git failing: a unique value, so nothing is ever replayed."""
+    tree = _git(["rev-parse", "HEAD^{tree}"], root)
+    diff = _git(["diff", "HEAD", "--binary", "--no-ext-diff"], root, timeout=120)
+    untracked = _git(["ls-files", "--others", "--exclude-standard", "-z"], root)
+    if not all(r is not None and r.returncode == 0 for r in (tree, diff, untracked)):
+        return f"unknown-{os.getpid()}-{time.time_ns()}"
+    parts = [tree.stdout.strip(), _sha(diff.stdout.encode("utf-8", "surrogateescape"))]
+    for rel_path in sorted(p for p in untracked.stdout.split("\0") if p):
+        if set(Path(rel_path).parts) & {".mutation-cache", ".pytest_cache", "__pycache__"}:
+            continue                     # this tool's cache and the interpreter's own
+        parts.append(f"{rel_path}:{_file_sha(root / rel_path)}")
+    return _sha("\n".join(parts).encode("utf-8"))
 
 
 def cache_key(context: str, entry: dict) -> str:
