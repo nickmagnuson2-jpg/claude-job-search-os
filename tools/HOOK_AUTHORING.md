@@ -134,6 +134,15 @@ between them. Three rules would have cut most of it:
 - [ ] **Run one mutation pass per advertised guarantee.** Break the behavior on purpose and
       confirm a test fails. Two of eighteen mutants survived a 124-test suite because every
       assertion checked internal consistency rather than coverage of known-present items.
+      **A hand mutation must purge bytecode when it restores.** CPython accepts a cached `.pyc`
+      when the source's size and mtime (whole seconds) match. A same-length mutant restored
+      within the same second leaves a `.pyc` that still matches, so the next run executes the
+      mutant while the file on disk reads correctly. In the `finally` that restores the file,
+      delete `<dir>/__pycache__/<module>.*.pyc`, or run every hand check and the suites after it
+      with `PYTHONDONTWRITEBYTECODE=1`. Prefer `tools/mutation_check.py`, which restores for you.
+      Treat any verdict from a run that may have loaded a stale `.pyc` as void: a KILLED may be
+      the mutant failing, and a SURVIVED may be a mutant that never loaded. (Fired twice: a
+      full-suite failure hours after a restore, and a voided suite run on 2026-11-05.)
 - [ ] **When a mutant SURVIVES, check reachability before blaming the test.** A guard can
       survive because the condition it checks cannot occur from the entry point — an upstream
       filter already prevents it. That guard is defence-in-depth against a future edit, and it
