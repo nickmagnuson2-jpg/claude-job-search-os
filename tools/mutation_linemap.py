@@ -41,6 +41,7 @@ ENV_TEST = "MUTATION_LINEMAP_TEST"       # the running test's absolute node id (
 # Code that runs outside any test (collection, imports, session fixtures) is recorded
 # under this id. mutation_check never selects it: it is not a test it could run.
 OUTSIDE = ""
+ORDER_FILE = "order.list"         # not *.json, so read_records never reads it as a record
 
 _state: dict = {"tool": None, "target": None, "out": None, "current": None,
                 "hits": {}, "names": {}, "rootpath": None}
@@ -149,6 +150,23 @@ def absolute_nodeid(nodeid: str, rootpath: str | None) -> str:
     return path + sep + rest
 
 
+def pytest_collection_finish(session):
+    """Write the collection order once: mutation_check runs a covering test together with
+    the tests before it in its file, so state they set is there as in the full run."""
+    out = _state["out"]
+    if not out:
+        return
+    try:
+        os.makedirs(out, exist_ok=True)
+        order = [absolute_nodeid(i.nodeid, _state["rootpath"]) for i in session.items]
+        tmp = os.path.join(out, "order.json.tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(order, f)
+        os.replace(tmp, os.path.join(out, ORDER_FILE))
+    except OSError:
+        pass
+
+
 def pytest_runtest_logstart(nodeid, location):
     tid = absolute_nodeid(nodeid, _state["rootpath"])
     _state["current"] = tid
@@ -213,6 +231,16 @@ def read_records(out: str) -> dict[str, set[int]]:
                 merged.setdefault(tid, set()).update(
                     n for n in lines if isinstance(n, int))
     return merged
+
+
+def read_order(out: str) -> list[str]:
+    """The pass's collection order; [] when it was not written (a gap: costs the prefix)."""
+    try:
+        with open(os.path.join(out, ORDER_FILE), encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return []
+    return [x for x in data if isinstance(x, str)] if isinstance(data, list) else []
 
 
 def by_line(records: dict[str, set[int]]) -> dict[int, set[str]]:

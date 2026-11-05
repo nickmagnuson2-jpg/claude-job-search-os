@@ -1238,6 +1238,7 @@ def build_line_map(target: Path, test_files: list, timeout: int) -> tuple[dict |
                         else "map_pass_timed_out", failed=details.get("failed", []))
             return None, info
         mapping = lm.by_line(lm.read_records(str(out)))
+        info["order"] = lm.read_order(str(out))
     if not mapping:
         info.update(status="map_empty")
         return None, info
@@ -1254,10 +1255,28 @@ def covering_ids(span: tuple[int, int], line_map: dict) -> set[str]:
     return ids
 
 
-def subset_argv(ids: set[str]) -> list[str]:
-    """The ids as pytest arguments; their files instead when the argv would be too long
-    (a coarser subset, still a subset, still validated the same way)."""
-    argv = sorted(ids)
+def subset_argv(ids: set[str], order: list[str] | None = None) -> list[str]:
+    """The ids as pytest arguments, each WITH the tests before it in its file, in
+    collection order; their files instead when the argv would be too long.
+
+    WHY THE PREFIX (Codex 110526 A.F4 / B.F2). A test that never executes the target can
+    still set state the covering test depends on, and it is absent from the line map. Run
+    alone, the covering test can fail on a mutant that survives in the full order: a false
+    KILLED, which validation on unmutated source cannot see. With every earlier test of
+    the same file included, that state is present as in the full run. State set by an
+    earlier FILE is not covered, which is the same exposure the file tier always had.
+    With no order recorded, the ids run as before (sorted)."""
+    if order:
+        pos = {tid: i for i, tid in enumerate(order)}
+        last: dict[str, int] = {}
+        for tid in ids:
+            f = tid.partition("::")[0]
+            last[f] = max(last.get(f, -1), pos.get(tid, -1))
+        argv = [tid for tid in order if tid.partition("::")[0] in last
+                and pos[tid] <= last[tid.partition("::")[0]]]
+        argv += sorted(t for t in ids if t not in pos)        # unseen ids still run
+    else:
+        argv = sorted(ids)
     if sum(len(a) + 1 for a in argv) > MAX_ID_ARGV_CHARS:
         argv = sorted({a.partition("::")[0] for a in argv})
     return argv
@@ -2249,6 +2268,7 @@ def main() -> int:
     fast, probe_seconds, full_reruns = None, 0.0, 0
     # Per-line selection and cache bookkeeping (see the Speed section).
     line_map, map_info = None, {"status": "skipped"}
+    line_order: list[str] = []
     sel = {"subset_runs": 0, "subset_kills": 0, "subset_invalid": 0, "subsets_validated": 0,
            "subset_weak_rechecked": 0, "subset_kind_from_full_subset": 0,
            "no_covering_test": 0}
@@ -2282,6 +2302,7 @@ def main() -> int:
             try:
                 write_mutant(target, original, original)
                 line_map, map_info = build_line_map(target, test_files, args.timeout)
+                line_order = map_info.pop("order", []) or []
             except TargetDiverged:
                 diverged = True
             if line_map is None and not diverged:
@@ -2382,7 +2403,7 @@ def main() -> int:
                     # recorder did not see one". The tiers below decide it.
                     sel["no_covering_test"] += 1
                 else:
-                    argv = tuple(subset_argv(ids))
+                    argv = tuple(subset_argv(ids, line_order))
                     sel["subset_runs"] += 1
                     passed, kind = run_tests(list(argv), args.timeout, target)
                     if not passed and kind != "timeout":

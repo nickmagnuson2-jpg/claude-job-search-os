@@ -499,36 +499,48 @@ def test_e2e_a_diff_with_no_mutable_line_is_not_reported_as_ok(tmp_path):
         "nothing in scope: neither the probe nor the mapping pass runs"
 
 
-def test_e2e_an_order_dependent_subset_cannot_produce_a_false_kill(tmp_path):
-    """The only way selection could make the verdict WORSE: a test that passes in the full
-    run but fails when run alone. Here test_b needs state test_a sets, and test_b is the
-    only test that executes `double`'s cap branch. Run alone it fails on unmutated code, so
-    without validation every mutant on that branch would be scored KILLED. The full set
-    cannot see the RETURN_NONE mutant on `return -1`, so the right verdict is SURVIVED."""
+
+def _cross_file_state_repo(tmp_path):
+    """State set by a test in ONE file that a test in ANOTHER file needs. Per-file prefixes
+    cannot see it (the file tier never could either), so a covering subset fails alone on
+    unmutated source: an invalid subset, decided by the full set."""
     src, t = _repo(tmp_path, tests=f"""\
         import sys; sys.path.insert(0, r'{tmp_path / "tools"}')
+        import shared_state
         from subject import classify, double
-        STATE = []
-        def test_a(): STATE.append(1); assert classify(1) == 'pos'
+        def test_a(): shared_state.READY.append(1); assert classify(1) == 'pos'
         def test_neg(): assert classify(-1) == 'neg'
         def test_double(): assert double(3) == 6
-        def test_b():
-            assert STATE, 'needs test_a to have run first'
-            double(101)
+        def test_reads_cap():   # sees cap mutants by READING the source, runs no cap line
+            text = open(r'{tmp_path / "tools" / "subject.py"}').read()
+            assert "if n > 100:\\n        return -1" in text
     """)
-    d = json.loads(_run([str(src), "--whole-file", "--tests", str(t), "--json"],
-                        tmp_path).stdout)
+    # Only test_b (the OTHER file) executes `return -1`, so that line's subset is test_b
+    # alone, which fails unmutated without test_a's state: an invalid subset.
+    (tmp_path / "tests" / "scripts" / "shared_state.py").write_text("READY = []\n")
+    later = tmp_path / "tests" / "scripts" / "test_subject_z_later.py"
+    later.write_text(f"import sys; sys.path.insert(0, r'{tmp_path / 'tools'}')\n"
+                     "import shared_state\nfrom subject import double\n"
+                     "def test_b():\n    assert shared_state.READY, 'needs test_a first'\n"
+                     "    double(101)\n")
+    return src, [t, later]
+
+
+def test_e2e_an_order_dependent_subset_cannot_produce_a_false_kill(tmp_path):
+    """test_b (another file) needs state test_a sets, and only test_b executes double()'s
+    cap branch. Alone it fails unmutated, so its subset is invalid and the full set decides:
+    verdicts must equal a --no-line-map run's."""
+    src, tests = _cross_file_state_repo(tmp_path)
+    args = [str(src), "--whole-file", "--no-cache", "--tests", *map(str, tests), "--json"]
+    d = json.loads(_run(args, tmp_path).stdout)
+    plain = json.loads(_run(args[:-1] + ["--no-line-map", "--json"], tmp_path).stdout)
     assert d["selection"]["line_map"]["status"] == "ok"
-    assert d["selection"]["subset_invalid"] >= 1
-    survived = {(s["line"], s["op"]) for s in d["survivors"]}
-    assert (9, "RETURN_NONE") in survived, d["survivors"]
-    plain = json.loads(_run([str(src), "--whole-file", "--no-line-map", "--no-cache",
-                             "--tests", str(t), "--json"], tmp_path).stdout)
-    assert {(s["line"], s["op"]) for s in plain["survivors"]} == survived
+    assert d["selection"]["subset_invalid"] >= 1, d["selection"]
+    assert {(x["line"], x["op"]) for x in d["survivors"]} == \
+        {(x["line"], x["op"]) for x in plain["survivors"]}
+    assert d["killed"] == plain["killed"]
     assert plain["selection"]["line_map"]["status"] == "skipped"
     assert plain["selection"]["subset_runs"] == 0, "--no-line-map means no subset runs"
-    assert plain["killed"] == d["killed"]
-
 
 def test_e2e_a_line_no_test_reaches_is_decided_by_the_full_set(tmp_path):
     """Never SURVIVED because selection ran zero tests: the only test that sees the 'neg'
@@ -612,31 +624,30 @@ def test_e2e_an_edit_made_during_a_subset_run_is_left_as_found(tmp_path, monkeyp
     assert sorted(store.glob("*" + mc.ASIDE_ORIGINAL))[0].read_text() == original
 
 
+
 def test_e2e_a_crash_kill_by_a_subset_gets_its_kind_from_the_old_tiers(tmp_path):
-    """--strict fails on weak kills, so a subset must not make a kill weaker than the old
-    path would. Here the file runs an ASSERTING test first; the subset (ids sorted by
-    name) would run the CRASHING one first. Measured on pipe_write before this existed:
-    3 mutants newly weak."""
+    """--strict fails on weak kills, so a subset must never make a kill WEAKER than the old
+    path. The crashing test runs first in the file, so the subset's first failure is a
+    crash; the recheck (same subset, no -x) finds the assertion. The old path stops at the
+    crash and calls it weak: the branch may be more lenient there, never stricter."""
     src, t = _repo(tmp_path, tests=f"""\
         import sys; sys.path.insert(0, r'{tmp_path / "tools"}')
         from subject import classify, double
-        def test_z_asserts(): assert classify(1) == 'pos'
         def test_a_crashes(): classify(1).upper()
+        def test_z_asserts(): assert classify(1) == 'pos'
         def test_neg(): assert classify(-1) == 'neg'
         def test_double(): assert double(3) == 6 and double(101) == -1
     """)
     d = json.loads(_run([str(src), "--whole-file", "--no-cache", "--tests", str(t),
                          "--json"], tmp_path).stdout)
-    assert d["selection"]["subset_weak_rechecked"] >= 1, d["selection"]
     plain = json.loads(_run([str(src), "--whole-file", "--no-line-map", "--no-cache",
                              "--tests", str(t), "--json"], tmp_path).stdout)
-    assert sorted(w["key"] for w in d["weak_kills"]) == \
-        sorted(w["key"] for w in plain["weak_kills"])
-    # The recheck must run against the MUTANT: if it ran on the unmutated source (the
-    # validation run leaves that on disk), a crash kill would turn into a false survivor.
-    assert d["survived"] == plain["survived"] and d["killed"] == plain["killed"]
+    assert d["selection"]["subset_weak_rechecked"] >= 1, d["selection"]
     assert d["selection"]["subset_kind_from_full_subset"] >= 1, d["selection"]
-
+    assert {w["key"] for w in d["weak_kills"]} <= {w["key"] for w in plain["weak_kills"]}
+    # The recheck must run against the MUTANT: on the unmutated source (which validation
+    # leaves on disk) a crash kill would turn into a false survivor.
+    assert d["survived"] == plain["survived"] and d["killed"] == plain["killed"]
 
 def test_e2e_the_sweep_argv_still_measures_the_whole_file(tmp_path):
     src, t = _repo(tmp_path)
@@ -959,30 +970,19 @@ def test_e2e_a_mutant_only_an_unexecuting_file_sees_is_killed_by_the_full_set(tm
     assert not [s for s in d["survivors"] if "'neg'" in s["source"]], d["survivors"]
 
 
+
 def test_e2e_after_an_invalid_subset_the_full_set_measures_the_mutant(tmp_path):
     """Validation leaves the UNMUTATED source on disk. When it rules a subset invalid, the
     mutant must be written back before the full set runs, or the full set measures the
-    original and reports a false SURVIVED. The first mutant on the invalid subset here is
-    one the full set kills (test_double checks the cap), so a missing rewrite shows."""
-    src, t = _repo(tmp_path, tests=f"""\
-        import sys; sys.path.insert(0, r'{tmp_path / "tools"}')
-        from subject import classify, double
-        STATE = []
-        def test_a(): STATE.append(1); assert classify(1) == 'pos'
-        def test_neg(): assert classify(-1) == 'neg'
-        def test_double(): assert double(3) == 6 and double(101) == -1
-        def test_b():
-            assert STATE, 'needs test_a to have run first'
-            double(101)
-    """)
-    d = json.loads(_run([str(src), "--whole-file", "--no-cache", "--tests", str(t),
-                         "--json"], tmp_path).stdout)
-    plain = json.loads(_run([str(src), "--whole-file", "--no-line-map", "--no-cache",
-                             "--tests", str(t), "--json"], tmp_path).stdout)
+    original and reports a false SURVIVED. Here every mutant on the invalid subset is one
+    the full set kills (test_double checks the cap), so a missing rewrite shows."""
+    src, tests = _cross_file_state_repo(tmp_path)
+    args = [str(src), "--whole-file", "--no-cache", "--tests", *map(str, tests), "--json"]
+    d = json.loads(_run(args, tmp_path).stdout)
+    plain = json.loads(_run(args[:-1] + ["--no-line-map", "--json"], tmp_path).stdout)
     assert d["selection"]["subset_invalid"] >= 1, d["selection"]
     assert d["survived"] == plain["survived"] == 0, (d["survivors"], plain["survivors"])
     assert d["killed"] == plain["killed"]
-
 
 def test_e2e_the_full_set_reruns_only_mutants_that_survive_the_file_tier(tmp_path):
     src, t = _repo(tmp_path, tests=f"""\
@@ -1055,3 +1055,37 @@ def test_the_cache_key_covers_the_test_environment_but_not_volatile_variables(tm
     monkeypatch.setenv("PWD", "/somewhere/else")
     monkeypatch.setenv("TERM_SESSION_ID", "x-123")
     assert ctx() == first, "shell bookkeeping must not empty the cache"
+
+
+def test_e2e_state_an_earlier_test_sets_cannot_turn_into_a_false_kill(tmp_path):
+    """Codex 110526 A.F4 / B.F2. test_a sets module state and never executes value(), so
+    the line map gives value()'s mutants to test_b alone. Alone, test_b fails on the
+    RETURN_NONE mutant (it passes unmutated, so the subset validates), but in the full
+    order test_a has set `ready` and the mutant SURVIVES. Running each covering test with
+    the tests before it in its file removes the false kill."""
+    src, t = _repo(tmp_path, source="ready = False\n\n\ndef value():\n    return 1\n",
+                   tests=f"""\
+        import sys; sys.path.insert(0, r'{tmp_path / "tools"}')
+        import subject
+        def test_a(): subject.ready = True
+        def test_b(): assert subject.value() == 1 or subject.ready
+    """)
+    d = json.loads(_run([str(src), "--whole-file", "--no-cache", "--tests", str(t),
+                         "--json"], tmp_path).stdout)
+    plain = json.loads(_run([str(src), "--whole-file", "--no-line-map", "--no-cache",
+                             "--tests", str(t), "--json"], tmp_path).stdout)
+    survived = {(s["line"], s["op"]) for s in plain["survivors"]}
+    assert (5, "RETURN_NONE") in survived, plain["survivors"]
+    assert {(s["line"], s["op"]) for s in d["survivors"]} == survived, d["survivors"]
+
+
+def test_more_than_three_edited_tests_are_abbreviated(tmp_path):
+    src, t = _repo(tmp_path)
+    text = t.read_text()
+    for a, b in (("== 'pos'", "== 'pos' or 1"), ("== 'neg'", "== 'neg' or 1"),
+                 ("== 6", "== 6 or 1"), ("== -1", "== -1 or 1")):
+        text = text.replace(a, b)
+    t.write_text(text)
+    s = mc.resolve_scope(_args(), src, tmp_path, [t])
+    assert s["mode"] == "whole_file", s
+    assert "existing test edited: test_double, test_double_cap, test_neg, ..." in s["reason"], s
