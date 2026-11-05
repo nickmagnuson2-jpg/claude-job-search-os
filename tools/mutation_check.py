@@ -1042,8 +1042,11 @@ def changed_test_inputs(base: str, root: Path, test_files: list,
         except OSError:
             continue
         texts.append(text)
-        imported |= set(_IMPORT_RE.findall(text))
+        imported |= _imported_names(text)
     stem_re = re.compile(r"\b%s\b" % re.escape(stem)) if stem else None
+    # A helper or fixture OUTSIDE tests/ (a tools/ module a test imports, a root-level file
+    # a test names) is checked too (Codex 110526 A.F3). The target itself is skipped here.
+    target_rel = f"tools/{stem}.py" if stem else None
 
     def at_base(p: str) -> str | None:
         r = _git(["show", f"{base}:{p}"], root)
@@ -1054,9 +1057,10 @@ def changed_test_inputs(base: str, root: Path, test_files: list,
     test_names: dict[str, set[str] | None] = {}
     for p, st in sorted(changed.items()):
         name = Path(p).name
-        if not p.startswith("tests/"):
-            continue
-        if st == "D" and name.startswith("test_") and name.endswith(".py"):
+        if p == target_rel or p.startswith(".mutation-cache/"):
+            continue                  # the target's own diff is resolve_scope's business
+        in_tests = p.startswith("tests/")
+        if in_tests and st == "D" and name.startswith("test_") and name.endswith(".py"):
             old = at_base(p) or ""
             if stem_re is None or stem_re.search(old) or name.startswith(f"test_{stem}"):
                 whole.append((p, "deleted test file"))
@@ -1066,7 +1070,7 @@ def changed_test_inputs(base: str, root: Path, test_files: list,
         # (Before 2026-11-04 every deleted non-test file was skipped; found by
         # self-mutation, where removing that skip changed nothing any test saw.)
         gone_note = " (deleted)" if st == "D" else ""
-        if p in mapped:
+        if in_tests and p in mapped:
             old = at_base(p)
             names: set[str] | None = None        # None: every test in the file counts
             if old is not None:
@@ -1080,12 +1084,21 @@ def changed_test_inputs(base: str, root: Path, test_files: list,
                     whole.append((p, "test removed: " + ", ".join(gone[:3])
                                   + (", ..." if len(gone) > 3 else "")))
                     continue
-                if before[1] == now[1]:
-                    # Only test bodies changed: the tests that are new or edited.
-                    names = {n for n, src in now[0].items() if before[0].get(n) != src}
+                # Only ADDED tests may narrow the scope. An edited existing test can stop
+                # executing a line its old version checked, and the line map is built from
+                # the edited version, so those lines would silently leave the scope (Codex
+                # 110526 A.F1). The same holds for the file's own fixtures and helpers.
+                edited = sorted(n for n in now[0] if n in before[0] and before[0][n] != now[0][n])
+                if edited or before[1] != now[1]:
+                    what = ("existing test edited: " + ", ".join(edited[:3])
+                            + (", ..." if len(edited) > 3 else "")) if edited \
+                        else "module-level test code changed"
+                    whole.append((p, what))
+                    continue
+                names = {n for n in now[0] if n not in before[0]}
             tests.append(p)
             test_names[p] = names
-        elif name == "conftest.py":
+        elif in_tests and name == "conftest.py":
             whole.append((p, "conftest changed" + gone_note))
         elif p.endswith(".py") and not name.startswith("test_") and Path(p).stem in imported:
             whole.append((p, "imported helper changed" + gone_note))
@@ -1258,6 +1271,27 @@ _IMPORT_RE = re.compile(r"^\s*(?:import|from)\s+(\w+)", re.M)
 _TOOL_PATH_RE = re.compile(r"tools/(\w+)\.py")
 
 
+def _imported_names(text: str) -> set[str]:
+    """Every module-name component a source imports: `import a.b` gives a and b, and
+    `from tools import x, y` gives tools, x and y. A first-word regex saw only `tools`
+    there, so a changed tools/x.py never reached the cache key (Codex 110526 A.F2).
+    A file that will not parse falls back to that regex: more names is the safe side."""
+    try:
+        tree = ast.parse(text)
+    except (SyntaxError, ValueError):
+        return set(_IMPORT_RE.findall(text))
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for a in node.names:
+                names.update(a.name.split("."))
+        elif isinstance(node, ast.ImportFrom):
+            names.update((node.module or "").split("."))
+            names.update(a.name for a in node.names)
+    names.discard("")
+    return names
+
+
 def cache_dir(root: Path | None = None) -> Path:
     """Gitignored, inside the checkout (`.mutation-cache/`), so every tree, including the
     throwaway repos the test suite builds, has its own. MUTATION_CACHE_DIR overrides."""
@@ -1282,7 +1316,7 @@ def _local_deps(texts: list[str], tools_dir: Path) -> set[Path]:
     modules = {f.stem: f for f in tools_dir.glob("*.py")} if tools_dir.is_dir() else {}
     pending = set()
     for text in texts:
-        pending |= set(_IMPORT_RE.findall(text)) | set(_TOOL_PATH_RE.findall(text))
+        pending |= _imported_names(text) | set(_TOOL_PATH_RE.findall(text))
     seen: set[str] = set()
     while pending:
         name = pending.pop()
@@ -1293,7 +1327,7 @@ def _local_deps(texts: list[str], tools_dir: Path) -> set[Path]:
             text = modules[name].read_text(encoding="utf-8", errors="ignore")
         except OSError:
             continue
-        pending |= set(_IMPORT_RE.findall(text)) | set(_TOOL_PATH_RE.findall(text))
+        pending |= _imported_names(text) | set(_TOOL_PATH_RE.findall(text))
     return {modules[n] for n in seen}
 
 
@@ -1307,8 +1341,11 @@ def cache_context(target: Path, original: str, test_files: list, root: Path) -> 
     any test can read them. The tools/ modules the target and the tests import or name,
     transitively. This tool and its recorder, by content, and the Python version.
 
+    The test environment too, minus variables known to change between shells
+    (_env_fingerprint).
+
     NOT covered, and the reason --no-cache exists: files outside tools/ and tests/ that a
-    test reads (docs, data), environment variables, the network, the clock."""
+    test reads (docs, data), the network, the clock."""
     def rel(p: Path) -> str:
         try:
             return p.resolve().relative_to(root.resolve()).as_posix()
@@ -1337,12 +1374,30 @@ def cache_context(target: Path, original: str, test_files: list, root: Path) -> 
         "version": CACHE_VERSION,
         "tool": _file_sha(SELF), "recorder": _file_sha(LINEMAP_MODULE),
         "python": sys.version,
+        "env": _env_fingerprint(),
         "target": rel(target), "target_sha": _sha(original.encode("utf-8")),
         "tests": {rel(t): _file_sha(t) for t in tests},
         "support": support,
         "deps": {rel(p): _file_sha(p) for p in sorted(deps, key=str)},
     }
     return _sha(json.dumps(ctx, sort_keys=True).encode("utf-8"))
+
+
+# Environment variables that change between shells and sessions without changing what a
+# test does. Anything not listed is hashed, so an unknown volatile variable costs cache
+# misses, never a replayed verdict (Codex 110526 B.F1: a test whose assertion an
+# environment variable enables made a cached KILLED replay after the variable changed).
+_VOLATILE_ENV = {"PWD", "OLDPWD", "SHLVL", "_", "COLUMNS", "LINES", "SECURITYSESSIONID",
+                 "TERM_SESSION_ID", "LaunchInstanceID", "LOGNAME_SESSION"}
+_VOLATILE_PREFIXES = ("CLAUDE", "MUTATION_", "ITERM", "TERM_", "SSH_", "XPC_", "__CF",
+                      "Apple_", "OTEL_", "VSCODE_", "GIT_")
+
+
+def _env_fingerprint() -> str:
+    env = _test_env_base()
+    kept = sorted((k, v) for k, v in env.items()
+                  if k not in _VOLATILE_ENV and not k.startswith(_VOLATILE_PREFIXES))
+    return _sha(json.dumps(kept).encode("utf-8"))
 
 
 def cache_key(context: str, entry: dict) -> str:

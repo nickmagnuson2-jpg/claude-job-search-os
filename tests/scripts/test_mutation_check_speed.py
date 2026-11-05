@@ -194,20 +194,27 @@ def test_a_changed_mapped_test_scopes_the_lines_it_runs_not_nothing(tmp_path):
     rule exists for that commit (job-search-ee for Nick, 2026-11-04). The scope becomes the
     changed code plus the lines the changed tests execute, resolved after the line map."""
     src, t = _repo(tmp_path)
-    t.write_text(t.read_text().replace("assert double(101) == -1", "double(101)"))
+    t.write_text(t.read_text() + "def test_cap_again(): assert double(102) == -1\n")
     s = mc.resolve_scope(_args(), src, tmp_path, [t])
     assert s["mode"] == "diff" and s["changed"] == set()
     assert s["pending_tests"] == ["tests/scripts/test_subject.py"]
+    assert s["pending_test_names"] == {"tests/scripts/test_subject.py": {"test_cap_again"}}
 
 
-def test_an_edit_inside_one_test_names_only_that_test(tmp_path):
+def test_editing_an_existing_test_measures_the_whole_file(tmp_path):
+    """The edited test may stop executing a line its old version checked, and the line
+    map only sees the new version (Codex 110526 A.F1): so the whole file."""
     src, t = _repo(tmp_path)
-    t.write_text(t.read_text().replace("assert double(101) == -1", "double(101)"))
+    t.write_text(t.read_text().replace("assert classify(-1) == 'neg'", "assert classify(1) == 'pos'"))
     s = mc.resolve_scope(_args(), src, tmp_path, [t])
-    assert s["pending_test_names"] == {"tests/scripts/test_subject.py": {"test_double_cap"}}
-    t.write_text("import os\n" + t.read_text())          # module-level change too
+    assert s["mode"] == "whole_file" and "existing test edited: test_neg" in s["reason"], s
+
+
+def test_a_module_level_change_in_a_test_file_measures_the_whole_file(tmp_path):
+    src, t = _repo(tmp_path)
+    t.write_text("import os\n" + t.read_text() + "def test_new(): assert double(4) == 8\n")
     s = mc.resolve_scope(_args(), src, tmp_path, [t])
-    assert s["pending_test_names"] == {"tests/scripts/test_subject.py": None}
+    assert s["mode"] == "whole_file" and "module-level test code changed" in s["reason"], s
 
 
 def test_resolve_test_lines_filters_by_test_name_and_strips_params(tmp_path):
@@ -455,10 +462,9 @@ def test_e2e_a_commit_that_only_weakens_a_test_still_finds_the_survivor(tmp_path
     _git(tmp_path, "commit", "-qam", "weaken the cap test")    # HEAD moves, base does not
     r = _run([str(src), "--tests", str(t), "--json"], tmp_path)
     d = json.loads(r.stdout)
-    assert d["scope"]["mode"] == "diff", d["scope"]
-    assert 9 in d["scope"]["test_lines"]
+    assert d["scope"]["mode"] == "whole_file", d["scope"]       # an EDITED test (A.F1)
+    assert "existing test edited: test_double_cap" in d["scope"]["reason"]
     assert d["scope"]["tests_changed"] == ["tests/scripts/test_subject.py"]
-    assert d["scope"]["mutants_in_scope"] < d["scope"]["mutants_in_file"]
     assert d["status"] == "survivors" and r.returncode == 2
     assert any(s["line"] == 9 for s in d["survivors"]), d["survivors"]
 
@@ -705,7 +711,7 @@ def test_a_plain_diff_says_plain_diff_and_has_no_pending_tests(tmp_path):
 
 def test_an_unreadable_mapped_test_file_does_not_break_the_listing(tmp_path):
     src, t = _repo(tmp_path)
-    t.write_text(t.read_text().replace("double(101) == -1", "double(102) == -1"))
+    t.write_text(t.read_text() + "def test_added(): assert double(102) == -1\n")
     out = mc.changed_test_inputs(mc.resolve_base(tmp_path, None), tmp_path,
                                  [tmp_path / "missing_test.py", t], "subject")
     assert out["tests"] == ["tests/scripts/test_subject.py"]
@@ -992,3 +998,59 @@ def test_e2e_the_full_set_reruns_only_mutants_that_survive_the_file_tier(tmp_pat
     total = d["killed"] + d["survived"] + d["allowlisted"]
     assert d["fast_tests"] == [str(t)]
     assert 1 <= d["full_reruns"] < total, (d["full_reruns"], total)
+
+
+# --- Codex 110526 P0 fixes -----------------------------------------------------------------
+
+def test_imported_names_reads_package_imports():
+    names = mc._imported_names("from tools import policy, other\nimport tools.helper\n"
+                               "from tools.deep import x\nimport plain\n")
+    assert {"policy", "other", "helper", "deep", "x", "plain", "tools"} <= names
+
+
+def test_local_deps_follows_tools_package_imports(tmp_path):
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    (tools / "policy.py").write_text("X = 1\n")
+    (tools / "helper.py").write_text("Y = 1\n")
+    deps = mc._local_deps(["from tools import policy\nimport tools.helper\n"], tools)
+    assert {p.name for p in deps} == {"policy.py", "helper.py"}
+
+
+def test_a_changed_tools_helper_a_test_imports_forces_the_whole_file(tmp_path):
+    src, t = _repo(tmp_path)
+    helper = tmp_path / "tools" / "policy_helper.py"
+    helper.write_text("STRICT = True\n")
+    t.write_text("import policy_helper\n" + t.read_text())
+    _git(tmp_path, "add", "-A"); _git(tmp_path, "commit", "-qm", "helper")
+    _git(tmp_path, "update-ref", "refs/remotes/origin/main", "HEAD")
+    helper.write_text("STRICT = False\n")
+    s = mc.resolve_scope(_args(), src, tmp_path, [t])
+    assert s["mode"] == "whole_file" and "imported helper changed" in s["reason"], s
+
+
+def test_a_changed_root_level_file_a_test_names_forces_the_whole_file(tmp_path):
+    src, t = _repo(tmp_path)
+    cfg = tmp_path / "subject_policy.json"
+    cfg.write_text("{}\n")
+    t.write_text(t.read_text() + "\nPOLICY = 'subject_policy.json'\n")
+    _git(tmp_path, "add", "-A"); _git(tmp_path, "commit", "-qm", "cfg")
+    _git(tmp_path, "update-ref", "refs/remotes/origin/main", "HEAD")
+    cfg.write_text('{"strict": false}\n')
+    s = mc.resolve_scope(_args(), src, tmp_path, [t])
+    assert s["mode"] == "whole_file" and "referenced fixture changed" in s["reason"], s
+
+
+def test_the_cache_key_covers_the_test_environment_but_not_volatile_variables(tmp_path,
+                                                                             monkeypatch):
+    src, t = _repo(tmp_path)
+
+    def ctx():
+        return mc.cache_context(src, src.read_text(), [t], tmp_path)
+    first = ctx()
+    monkeypatch.setenv("STRICT_VALUE", "1")
+    assert ctx() != first, "an environment variable a test reads is a verdict input"
+    monkeypatch.delenv("STRICT_VALUE")
+    monkeypatch.setenv("PWD", "/somewhere/else")
+    monkeypatch.setenv("TERM_SESSION_ID", "x-123")
+    assert ctx() == first, "shell bookkeeping must not empty the cache"
