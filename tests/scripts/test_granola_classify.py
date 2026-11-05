@@ -257,3 +257,30 @@ def test_with_no_config_passed_the_default_file_is_used(tmp_path, monkeypatch):
     monkeypatch.setattr(meeting_vocab, "DEFAULT_SEALED_CONFIG", cfg)
     titled = {"title": "Private session", "attendees": [{"name": "Sam Carter", "email": "sam@example.com"}]}
     assert classify_meeting(titled) == "sealed"
+
+
+import pytest  # noqa: E402
+
+
+@pytest.mark.parametrize("kind", ["invalid_utf8", "unreadable", "directory"])
+def test_an_unreadable_config_fails_closed_to_unknown(tmp_path, monkeypatch, kind):
+    """Codex r5 64.F1/66.F2 (P0): a config that exists but cannot be read must behave like a
+    missing one (None -> every meeting 'unknown'), never raise."""
+    import meeting_vocab
+    cfg = tmp_path / ".sealed-meetings.txt"
+    if kind == "invalid_utf8":
+        cfg.write_bytes(b"keyword: \xff\xfe private\n")
+    elif kind == "unreadable":
+        cfg.write_text("keyword: private session\n", encoding="utf-8")
+        cfg.chmod(0)
+    else:
+        cfg.mkdir()
+    try:
+        assert load_sealed_meetings_config(cfg) is None
+        monkeypatch.setattr(meeting_vocab, "DEFAULT_SEALED_CONFIG", cfg)
+        call = {"title": "Coffee", "attendees": [{"name": "Sam Carter", "email": "sam@example.com"}],
+                "transcript": "Me: hi"}
+        assert classify_meeting(call) == "unknown"
+    finally:
+        if kind == "unreadable":
+            cfg.chmod(0o644)

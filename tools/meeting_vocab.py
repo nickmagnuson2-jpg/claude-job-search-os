@@ -138,7 +138,13 @@ def load_sealed_meetings_config(path=None) -> dict:
     keywords: list = []
     if not path.is_file():
         return None
-    for line in path.read_text(encoding="utf-8-sig").splitlines():
+    try:
+        text = path.read_text(encoding="utf-8-sig")
+    except (OSError, UnicodeDecodeError):
+        # Codex r5 64.F1/66.F2: a config that exists but cannot be read is treated like a
+        # missing one, so classification fails closed to 'unknown' instead of raising.
+        return None
+    for line in text.splitlines():
         line = line.strip()
         if not line or line.startswith("#") or ":" not in line:
             continue
