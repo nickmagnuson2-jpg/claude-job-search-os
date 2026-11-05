@@ -30,7 +30,10 @@ import reply_classify as rc  # noqa: E402
 
 CONSUMERS = {"networking_write.py": "from reply_classify import",
              "day_check.py": "from reply_classify import",
-             "remember_apply.py": "from reply_classify import"}
+             # Since round 7 (2026-11-04) remember_apply does not decide replies at all: its
+             # pre-flight runs the writer's own checks, which use reply_classify. Requiring the
+             # delegation keeps one rule; an unused reply_classify import would prove nothing.
+             "remember_apply.py": "from networking_write import check_log_sequence"}
 
 # Local definitions that were the two drifting copies. None may reappear outside
 # reply_classify.py, in any tool.
@@ -269,12 +272,15 @@ _TEMPLATE_HEADING = re.compile(
     r"^\s*#### (?:YYYY-MM-DD|\[YYYY-MM-DD\]|\[date\]|\{date\}|<date>) \| ([^|]+?) \|", re.M | re.I)
 
 
-# The ONE stated exception (job-search-47 for Nick, 2026-10-31, review rounds 3-4): the
-# old meaning. The old summary rules gave a /draft-email entry (thank-you, status update,
-# intro request) no SEND verdict, while /follow-up and /cold-outreach entries ("Follow-up #N",
-# "Cold outreach") counted as sends. So /draft-email stays plain and the other two record
-# (outbound). The timing is NOT the reason: all three log when the draft opens.
-PLAIN_TEMPLATE_EXCEPTIONS = {"draft-email": "keep the old meaning: not counted before 2026-10-30"}
+# The drafting skills write NO heading by hand (2026-11-04, Nick's option (a); 8.F1, 4.F3,
+# 5.F3). /follow-up and /cold-outreach used to write `(outbound)` at draft approval, which
+# closed the contact's open reply before anything was sent, and /draft-email wrote plain
+# `email` for good, so its real sends never closed one. All three now log through
+# networking_write.py `log --direction none --capture <id>`, and draft_capture.py confirm marks
+# the entry outbound when the send is confirmed (tests/scripts/test_networking_write_send_confirm.py).
+DRAFTING_SKILLS = ("follow-up", "cold-outreach", "draft-email")
+_DRAFT_LOG = re.compile(
+    r"networking_write\.py --repo-root \. log .*?--direction none --capture <capture-id>", re.S)
 
 
 def _templates():
@@ -286,27 +292,33 @@ def _templates():
 
 
 def test_every_hand_written_heading_template_records_a_direction():
-    """/follow-up and /cold-outreach write their own interaction heading. A plain type there
-    makes every send they log count as nothing once the summary is not read (Fable round
-    2, F1-F2). Every such template must carry a direction suffix, except the stated ones."""
-    found = list(_templates())
-    plain = [f"{skill}: {kind!r}" for skill, kind in found
-             if rc.direction(kind) is None and skill not in PLAIN_TEMPLATE_EXCEPTIONS]
+    """A skill that writes its own interaction heading with a plain type makes every send it
+    logs count as nothing once the summary is not read (Fable round 2, F1-F2)."""
+    plain = [f"{skill}: {kind!r}" for skill, kind in _templates() if rc.direction(kind) is None]
     assert not plain, plain
-    assert {"follow-up", "cold-outreach", "draft-email"} <= {skill for skill, _ in found}
 
 
-def test_the_draft_email_template_stays_plain_and_says_why():
-    """The exception is pinned both ways: /draft-email's template must NOT record a
-    direction, and the step that holds it must give the reason (the old meaning) right
-    before the template, so nobody 'fixes' it back without seeing why."""
-    kinds = [kind for skill, kind in _templates() if skill == "draft-email"]
-    assert kinds and all(rc.direction(k) is None for k in kinds), kinds
-    text = (SKILLS_DIR / "draft-email" / "SKILL.md").read_text(encoding="utf-8")
-    m = _TEMPLATE_HEADING.search(text)
-    reason = text[max(0, m.start() - 700):m.start()].lower()
-    assert "keep the old meaning" in reason and "/follow-up" in reason, reason[-300:]
-    assert set(PLAIN_TEMPLATE_EXCEPTIONS) == {"draft-email"}
+def test_the_drafting_skills_write_no_heading_by_hand():
+    """A hand-written heading at draft time is either `(outbound)` before the send (8.F1)
+    or plain for good (4.F3). Neither is allowed in the three drafting skills."""
+    found = [f"{skill}: {kind!r}" for skill, kind in _templates() if skill in DRAFTING_SKILLS]
+    assert not found, found
+
+
+@pytest.mark.parametrize("skill", DRAFTING_SKILLS)
+def test_the_drafting_skills_log_a_draft_plain_and_linked_to_its_capture(skill):
+    text = (SKILLS_DIR / skill / "SKILL.md").read_text(encoding="utf-8")
+    assert _DRAFT_LOG.search(text), skill
+    assert "draft_capture.py confirm <capture-id> unchanged|edited|not-sent" in text, skill
+
+
+def test_the_draft_log_pattern_would_catch_an_outbound_draft_log():
+    assert _DRAFT_LOG.search(
+        "networking_write.py --repo-root . log \"X\" --direction none --capture <capture-id>")
+    assert not _DRAFT_LOG.search(
+        "networking_write.py --repo-root . log \"X\" --direction out --capture <capture-id>")
+    assert [m.group(1) for m in _TEMPLATE_HEADING.finditer(
+        "#### YYYY-MM-DD | email | Thanks\n")] == ["email"]
 
 
 def test_the_template_scan_would_catch_a_plain_type():

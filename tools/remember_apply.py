@@ -13,7 +13,8 @@ Accepts:
 Destination types handled (11):
   personal_capture → <personal-vault>/data/inbox.md — #personal short-circuit;
                      writes NOTHING into this repo (see remember_classify step 0)
-  contact_note    → data/networking.md — append to contact's section. Needs "direction":
+  contact_note    → data/networking.md — logged through networking_write.py log (the only
+                    writer of that file; the contact must be in its Contacts table). Needs "direction":
                     in / out / both / none (who reached whom, asked by /remember, never
                     inferred). `in` and `both` also set the contact's newest open
                     outreach-log row to Replied.
@@ -49,7 +50,7 @@ import sys as _sys
 _sys.path.insert(0, str(Path(__file__).resolve().parent))
 import inbox_lock
 import outreach_status  # noqa: E402
-from reply_classify import with_direction  # noqa: E402
+from networking_write import check_log_sequence, networking_lock  # noqa: E402
 from md_table import find_section, is_sep_row, out_error, out_ok, parse_cols, read_file, write_atomic  # noqa: E402
 
 NOTES_FILE      = "data/notes.md"
@@ -109,13 +110,61 @@ def section_end(lines: list, start: int) -> int:
 # Per-destination writers
 # ---------------------------------------------------------------------------
 
+def contact_note_refusal(note: str, destinations: list, net_content: str) -> dict | None:
+    """The refusal for this call's contact notes, or None. Checked once, by apply_destinations'
+    pre-flight, BEFORE any destination is written, so a refusal writes nothing at all
+    (review round 2; round 5, 9.F1 and 11.F1).
+
+      file_not_found            networking.md is missing or empty.
+      not_found                 a contact is not in the Contacts table.
+      possible_duplicate_reply  a reply note (in/both) for a contact whose newest
+                                directional entry is already an unanswered reply, counting
+                                this call's earlier notes; only a literal "new_reply": true
+                                passes.
+
+    The rule is NOT reimplemented here: networking_write.check_log_sequence runs the writer's
+    own apply_log over the call's notes, in order, on a copy (round 7: two copies of the rule
+    drifted twice). The returned refusal names the note's `index` and its normalised `name`.
+    """
+    notes = [d for d in destinations if d.get("type") == "contact_note"]
+    if not notes:
+        return None
+    if not net_content:
+        return {"code": "file_not_found",
+                "message": "networking.md not found or empty, so no contact note can be logged."}
+    refusal = check_log_sequence(
+        net_content.splitlines(),
+        [{"name": d.get("entity") or "", "direction": d.get("direction"),
+          "new_reply": d.get("new_reply") is True} for d in notes],
+        log_date=datetime.now().strftime("%Y-%m-%d"), entry_type="remember",
+        summary=" ".join(note.split()))
+    if refusal and refusal["code"] == "not_found":
+        refusal["message"] = (f"{refusal['name'] or '(no name)'} is not in the Contacts table "
+                              f"of data/networking.md, so the note cannot be logged there.")
+    elif refusal and refusal["code"] == "possible_duplicate_reply":
+        e = refusal["existing"]
+        refusal["message"] = (f"{refusal['name']} already has a reply logged with no message "
+                              f"from Nick after it ({e['date']} | {e['type']}). If this note is "
+                              f"that reply, it is already counted. If it is a new message from "
+                              f"them, rerun this destination with \"new_reply\": true.")
+    return refusal
+
 def apply_contact_note(note: str, dest: dict, repo_root: Path) -> dict:
-    """Append a `#### YYYY-MM-DD | remember<suffix> | <note>` interaction entry to the
-    matching contact's section in networking.md (parseable by the Interaction-Log
-    reconcilers, unlike the old bare `[date] note` line). The suffix records dest's
-    direction (reply_classify.with_direction); `in` also flips the outreach log."""
+    """Log the note as a `#### YYYY-MM-DD | remember<suffix> | <note>` interaction for the
+    contact, through `networking_write.py log`, the only writer of data/networking.md
+    (finding 4.F1, 2026-11-04). That writer picks the contact's live section (creating it
+    when missing), writes the canonical entry block, updates Last Interaction, and on
+    direction in or both sets the newest open outreach-log row Replied. A contact who is not
+    in the Contacts table is refused (`not_found`); apply_destinations' pre-flight refuses
+    that, a missing networking.md and a duplicate reply before anything in the call is written.
+
+    Duplicate replies are checked twice, on purpose. apply_destinations' pre-flight refuses
+    the whole call before anything is written, including a second reply note for one contact
+    in the same call. The writer then checks again under its lock, which catches a reply that
+    another call logged after this pre-flight. Only a literal "new_reply": true skips both.
+    """
     today = datetime.now().strftime("%Y-%m-%d")
-    entity = dest.get("entity", "")
+    entity = dest.get("entity", "").strip()
     path = repo_root / NETWORKING_FILE
     d = dest.get("direction")
     if d not in ("in", "out", "both", "none"):
@@ -123,56 +172,39 @@ def apply_contact_note(note: str, dest: dict, repo_root: Path) -> dict:
                 "message": "contact_note needs direction in, out, both or none: did they "
                            "reach Nick (in), did Nick reach them (out), both in this note "
                            "(both), or neither (none)?"}
-
-    content = read_file(path)
-    if not content:
+    summary = " ".join(note.split())  # one header line
+    cmd = [_sys.executable, str(Path(__file__).resolve().parent / "networking_write.py"),
+           "--repo-root", str(repo_root), "log", entity, f"--date={today}",
+           "--type=remember", f"--summary={summary}", f"--direction={d}", "--no-todo"]
+    # Only the user's literal "new_reply": true reaches the writer as --new-reply. Every other
+    # reply note keeps the writer's live open-reply check, so a reply that landed after this
+    # call's pre-flight (an overlapping /remember, round 7 F1) is refused, not logged twice.
+    # The pre-flight already refuses a second reply note for one contact in this call unless
+    # it says new_reply: true, so the writer cannot refuse one of this call's own notes.
+    if d in ("in", "both") and dest.get("new_reply") is True:
+        cmd.append("--new-reply")
+    proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
+                          env={**os.environ, "PYTHONIOENCODING": "utf-8"})
+    try:
+        out = json.loads(proc.stdout)
+    except ValueError:
+        out = {"status": "error", "code": "writer_failed",
+               "message": (proc.stderr or "").strip()[-300:] or "networking_write.py gave no output"}
+    if proc.returncode != 0 or out.get("status") != "ok":
         return {"status": "error", "type": "contact_note",
-                "message": f"networking.md not found or empty"}
-
-    lines = [ln.rstrip("\n").rstrip("\r") for ln in content.splitlines(keepends=True)]
-
-    # Find contact's log section
-    name_lower = entity.lower().strip()
-    sec_start = -1
-    for i, line in enumerate(lines):
-        if not line.startswith("### "):
-            continue
-        m = re.match(r"^###\s+(?:\[ARCHIVED\]\s+)?(.+?)(?:\s+[—–]|$)", line)
-        if m and m.group(1).strip().lower() == name_lower:
-            sec_start = i
-            break
-
-    # Write a canonical interaction-log entry (`#### YYYY-MM-DD | remember | ...`)
-    # rather than a bare `[date] note` line, so the reconcilers that scan the
-    # Interaction Log can see it: outreach_pending.parse_networking_interactions
-    # and networking_read.build_interaction_counts both key off `#### ` date
-    # headers. A bare `[date]` line was invisible to them, so a /remember-captured
-    # reply stayed "awaiting response" in standup (fable-audit Theme 2, 2026-07-14).
-    summary = " ".join(note.split())  # collapse newlines/whitespace for the header
-    entry = f"#### {today} | {with_direction('remember', d)} | {summary}"
-
-    if sec_start == -1:
-        # Contact section not found — append note to general section or create
-        lines.append(f"### {entity}")
-        lines.append("")
-        lines.append(entry)
-        lines.append("")
-    else:
-        # Insert after heading (+ blank line)
-        insert_at = sec_start + 1
-        if insert_at < len(lines) and lines[insert_at].strip() == "":
-            insert_at += 1
-        lines.insert(insert_at, entry)
-        lines.insert(insert_at + 1, "")
-
-    new_content = "\n".join(lines)
-    if content.endswith("\n"):
-        new_content += "\n"
-    write_atomic(path, new_content)
+                "code": out.get("code") or "writer_failed",
+                "message": f"networking_write.py log refused: {out.get('message')}"}
     result = {"status": "ok", "type": "contact_note", "file": str(path), "entity": entity,
               "direction": d}
     if d in ("in", "both"):
-        result.update(apply_outreach_reply(entity, repo_root))
+        if out.get("outreach_log_updated"):
+            result.update({"outreach_log_updated": True,
+                           "outreach_file": str(repo_root / OUTREACH_FILE)})
+        else:
+            # The writer set no row. Asking outreach_status the same question again gives
+            # the reason (no open row, an ambiguous name, no log) for the warning; it cannot
+            # set a row the writer could not.
+            result.update(apply_outreach_reply(entity, repo_root))
     return result
 
 
@@ -571,24 +603,44 @@ def apply_destinations(note: str, destinations: list, repo_root: Path, dry_run: 
     if not destinations:
         out_error("No destinations provided", "no_destinations")
 
-    results = []
-    for dest in destinations:
-        dtype = dest.get("type", "general_note")
-        handler = HANDLERS.get(dtype)
-        if handler is None:
-            results.append({"status": "error", "type": dtype,
-                            "message": f"Unknown destination type: {dtype}"})
-            continue
+    # The networking lock is held from the pre-flight to the last destination (round 8), so no
+    # other writer can log a reply in between: the writer then runs the same checks on the same
+    # file the pre-flight saw, and a refusal can no longer arrive after this call's earlier
+    # destinations were written. The pre-flight runs the writer's own checks; a refusal writes
+    # nothing (review round 2; round 5). The writer runs as a child and is told, through
+    # NETWORKING_LOCK_HELD_BY, that its parent holds the lock.
+    networking_path = repo_root / NETWORKING_FILE
+    with networking_lock(networking_path, False):
+        os.environ["NETWORKING_LOCK_HELD_BY"] = str(os.getpid())
         try:
-            result = handler(note, dest, repo_root)
-            results.append(result)
-        except Exception as e:
-            results.append({"status": "error", "type": dtype, "message": str(e)})
+            refusal = contact_note_refusal(note, destinations, read_file(networking_path) or "")
+            if refusal:
+                extra = {"existing": refusal["existing"]} if "existing" in refusal else {}
+                out_error(refusal["message"] + " Nothing was written.", refusal["code"],
+                          refused=1, written=0, **extra)
+
+            results = []
+            for dest in destinations:
+                dtype = dest.get("type", "general_note")
+                handler = HANDLERS.get(dtype)
+                if handler is None:
+                    results.append({"status": "error", "type": dtype,
+                                    "message": f"Unknown destination type: {dtype}"})
+                    continue
+                try:
+                    result = handler(note, dest, repo_root)
+                    results.append(result)
+                except Exception as e:
+                    results.append({"status": "error", "type": dtype, "message": str(e)})
+        finally:
+            os.environ.pop("NETWORKING_LOCK_HELD_BY", None)
 
     if len(results) == 1:
         r = results[0]
         if r["status"] == "error":
-            out_error(r["message"], r.get("code", "handler_error"))
+            out_error(r["message"], r.get("code", "handler_error"), **{
+                k: v for k, v in r.items() if k not in ("status", "type", "message", "code")
+            })
         else:
             out_ok(r["type"], f"Written to {r.get('file', r['type'])}", **{
                 k: v for k, v in r.items() if k not in ("status", "type")
