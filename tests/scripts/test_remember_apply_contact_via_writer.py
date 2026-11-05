@@ -352,3 +352,69 @@ def test_new_reply_true_still_passes_the_writer(tmp_path):
     out = load().apply_contact_note(NOTE, note_dest("in", new_reply=True), tmp_path)
     assert out["status"] == "ok", out
     assert f"#### {today()} | remember (inbound) | Jane asked for a call next week" in read(tmp_path)
+
+
+def test_a_reply_arriving_mid_call_cannot_split_the_call(tmp_path, monkeypatch, capsys):
+    """Round 8 F1: the pre-flight released the networking lock before the destinations were
+    written, so a reply another writer logged in between made the writer refuse this call's
+    contact note after its earlier destinations were written. The call now holds the lock
+    from the pre-flight to the last destination: the concurrent writer waits (here: gives up,
+    `locked`) and this call is written whole."""
+    monkeypatch.setenv("JOBSEARCH_LOCK_DIR", str(tmp_path / "locks"))
+    setup(tmp_path)
+    ra = load()
+    concurrent = {}
+    original = ra.HANDLERS["general_note"]
+
+    def general_then_a_concurrent_reply(n, d, r):
+        out = original(n, d, r)
+        p = subprocess.run(
+            [sys.executable, str(TOOLS_DIR / "networking_write.py"), "--repo-root", str(tmp_path),
+             "log", "Jane Doe", "--date=2026-06-19", "--type=email", "--summary=Jane replied",
+             "--direction=in", "--no-todo"],
+            capture_output=True, text=True, encoding="utf-8",
+            # Another session's writer: not this call's child, so it does not inherit the
+            # variable that tells remember's own writer its parent holds the lock.
+            env={**{k: v for k, v in os.environ.items() if k != "NETWORKING_LOCK_HELD_BY"},
+                 "PYTHONIOENCODING": "utf-8", "NETWORKING_LOCK_TIMEOUT": "0.3"},
+            cwd=str(REPO_ROOT))
+        concurrent.update(json.loads(p.stdout))
+        return out
+
+    monkeypatch.setitem(ra.HANDLERS, "general_note", general_then_a_concurrent_reply)
+    ra.apply_destinations(NOTE, [{"type": "general_note"}, note_dest("in")], tmp_path, False)
+    out = json.loads(capsys.readouterr().out)
+    assert concurrent.get("code") == "locked", concurrent
+    assert out["status"] == "ok" and out["has_errors"] is False, out
+    assert read(tmp_path).count("(inbound)") == 1
+
+
+def test_a_failing_destination_still_releases_the_lock(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("JOBSEARCH_LOCK_DIR", str(tmp_path / "locks"))
+    setup(tmp_path)
+    ra = load()
+
+    def boom(n, d, r):
+        raise RuntimeError("handler failed")
+
+    monkeypatch.setitem(ra.HANDLERS, "general_note", boom)
+    ra.apply_destinations(NOTE, [{"type": "general_note"}, note_dest("out")], tmp_path, False)
+    capsys.readouterr()
+    sys.path.insert(0, str(TOOLS_DIR))
+    import inbox_lock
+    with inbox_lock.file_lock(tmp_path / "data/networking.md", timeout=0):
+        pass
+
+
+def test_remember_waits_for_another_writer_and_writes_nothing_if_it_cannot(tmp_path, monkeypatch):
+    monkeypatch.setenv("JOBSEARCH_LOCK_DIR", str(tmp_path / "locks"))
+    monkeypatch.setenv("NETWORKING_LOCK_TIMEOUT", "0.2")
+    setup(tmp_path)
+    before = read(tmp_path)
+    sys.path.insert(0, str(TOOLS_DIR))
+    import inbox_lock
+    with inbox_lock.file_lock(tmp_path / "data/networking.md"):
+        r, c = remember(tmp_path, {"type": "general_note"}, note_dest("in"))
+    assert c != 0 and r["code"] == "locked", r
+    assert read(tmp_path) == before
+    assert not (tmp_path / "data/notes.md").exists()

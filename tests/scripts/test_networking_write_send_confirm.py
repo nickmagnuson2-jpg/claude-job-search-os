@@ -629,3 +629,18 @@ def test_a_dry_run_does_not_wait_for_the_lock(tmp_path, monkeypatch):
         r, c = nw(tmp_path, "--dry-run", "log", "Jane Doe", "--date", "2026-06-19", "--type",
                   "email", "--summary", "x", "--direction", "out", "--no-todo")
     assert c == 0 and r.get("dry_run") is True, r
+
+
+def test_the_lock_is_shared_only_with_the_process_that_holds_it(tmp_path, monkeypatch):
+    """remember_apply holds the networking lock for a whole call and runs the writer as a
+    child; NETWORKING_LOCK_HELD_BY=<its pid> lets that child skip the lock. Any other value
+    is ignored, so the variable cannot open the file to an unrelated process."""
+    inbox_lock = _lock_env(tmp_path, monkeypatch)
+    monkeypatch.setenv("NETWORKING_LOCK_TIMEOUT", "0.2")
+    with inbox_lock.file_lock(tmp_path / "data/networking.md"):
+        monkeypatch.setenv("NETWORKING_LOCK_HELD_BY", str(os.getpid() + 100000))
+        r, c = log_reply(tmp_path)
+        assert c != 0 and r.get("code") == "locked", r
+        monkeypatch.setenv("NETWORKING_LOCK_HELD_BY", str(os.getpid()))
+        r, c = log_reply(tmp_path)
+        assert c == 0 and r["status"] == "ok", r

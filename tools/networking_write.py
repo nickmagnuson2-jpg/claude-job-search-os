@@ -777,6 +777,12 @@ def networking_lock(networking_path: Path, dry_run: bool):
     if dry_run:
         yield
         return
+    # remember_apply holds this lock for a whole call and runs `log` as its child; the child
+    # must not wait for its own parent (round 8). Only the real parent's pid counts, so the
+    # variable cannot open the file to an unrelated process.
+    if os.environ.get("NETWORKING_LOCK_HELD_BY") == str(os.getppid()):
+        yield
+        return
     timeout = float(os.environ.get("NETWORKING_LOCK_TIMEOUT", "30"))
     with contextlib.ExitStack() as stack:
         try:

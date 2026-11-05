@@ -603,32 +603,37 @@ def apply_destinations(note: str, destinations: list, repo_root: Path, dry_run: 
     if not destinations:
         out_error("No destinations provided", "no_destinations")
 
-    # Pre-flight: if any contact note would be refused, write nothing, so a refusal never
-    # leaves the call's other destinations half applied (review round 2; round 5). It reads
-    # networking.md under the writer's lock and runs the writer's own checks. The writer
-    # checks again when each note is logged, under the same lock, which catches a reply that
-    # another call logged after this pre-flight (round 7).
-    with networking_lock(repo_root / NETWORKING_FILE, False):
-        refusal = contact_note_refusal(note, destinations,
-                                       read_file(repo_root / NETWORKING_FILE) or "")
-    if refusal:
-        extra = {"existing": refusal["existing"]} if "existing" in refusal else {}
-        out_error(refusal["message"] + " Nothing was written.", refusal["code"],
-                  refused=1, written=0, **extra)
-
-    results = []
-    for dest in destinations:
-        dtype = dest.get("type", "general_note")
-        handler = HANDLERS.get(dtype)
-        if handler is None:
-            results.append({"status": "error", "type": dtype,
-                            "message": f"Unknown destination type: {dtype}"})
-            continue
+    # The networking lock is held from the pre-flight to the last destination (round 8), so no
+    # other writer can log a reply in between: the writer then runs the same checks on the same
+    # file the pre-flight saw, and a refusal can no longer arrive after this call's earlier
+    # destinations were written. The pre-flight runs the writer's own checks; a refusal writes
+    # nothing (review round 2; round 5). The writer runs as a child and is told, through
+    # NETWORKING_LOCK_HELD_BY, that its parent holds the lock.
+    networking_path = repo_root / NETWORKING_FILE
+    with networking_lock(networking_path, False):
+        os.environ["NETWORKING_LOCK_HELD_BY"] = str(os.getpid())
         try:
-            result = handler(note, dest, repo_root)
-            results.append(result)
-        except Exception as e:
-            results.append({"status": "error", "type": dtype, "message": str(e)})
+            refusal = contact_note_refusal(note, destinations, read_file(networking_path) or "")
+            if refusal:
+                extra = {"existing": refusal["existing"]} if "existing" in refusal else {}
+                out_error(refusal["message"] + " Nothing was written.", refusal["code"],
+                          refused=1, written=0, **extra)
+
+            results = []
+            for dest in destinations:
+                dtype = dest.get("type", "general_note")
+                handler = HANDLERS.get(dtype)
+                if handler is None:
+                    results.append({"status": "error", "type": dtype,
+                                    "message": f"Unknown destination type: {dtype}"})
+                    continue
+                try:
+                    result = handler(note, dest, repo_root)
+                    results.append(result)
+                except Exception as e:
+                    results.append({"status": "error", "type": dtype, "message": str(e)})
+        finally:
+            os.environ.pop("NETWORKING_LOCK_HELD_BY", None)
 
     if len(results) == 1:
         r = results[0]
