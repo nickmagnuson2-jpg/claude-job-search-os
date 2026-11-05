@@ -9,7 +9,7 @@ one file. This tool writes both as a wiki-linked pair:
   <output>-summary.md  — cloud-generated (Granola AI summary)
 
 Voice classifications:
-  therapy     -> source-of-truth (transcript) | cloud-generated (summary), both sealed
+  sealed     -> source-of-truth (transcript) | cloud-generated (summary), both sealed
   recruiter   -> mixed-voice (transcript)     | cloud-generated (summary), not sealed
   networking  -> mixed-voice (transcript)     | cloud-generated (summary), not sealed
   general     -> not persisted; surface in chat only
@@ -25,26 +25,30 @@ JSON shape (passed via --input file or stdin):
     "transcript": "...",                    // verbatim (Me:/Them: or Speaker A/B)
     "summary": "...",                       // Granola's AI summary, markdown
     "private_notes": "..." (optional),       // Notes Nick typed in Granola (his voice)
-    "type": "therapy" | "recruiter" | "networking" | "general",
-    "session_desc": "...",                  // Free-text label (e.g. therapist name)
+    "type": "sealed" | "recruiter" | "networking" | "general",
+    "session_desc": "...",                  // Free-text label (e.g. sealed contact name)
     "speaker_note": "..." (optional)         // Free-text re: speaker labels
   }
 
 Example:
   echo '{...}' | PYTHONIOENCODING=utf-8 python3 tools/granola_save.py write \\
-    --output <personal-vault>/data/therapy/2026-01-01-private-session-transcript.md
+    --output <personal-vault>/<sealed folder>/2026-01-01-private-session-transcript.md
   # Writes both -transcript.md AND -transcript-summary.md, with wiki-links between them.
 """
 import json
+import os
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from meeting_vocab import split_transcript_turns  # noqa: E402
 from md_table import JsonArgumentParser, write_atomic  # noqa: E402
+import vault_paths  # noqa: E402
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
-SEALED_HEADER_THERAPY = """> **SEALED.** This is sensitive personal therapy material. Per `<personal-vault>/CLAUDE.md`, contents of `personal/data/therapy/` never appear in CVs, cover letters, recruiter prep, voice exports, networking notes, or any external-facing artifact. The verbatim transcript is preserved here as source-of-truth; do not paraphrase or excerpt outside this folder."""
+SEALED_HEADER_SESSION = """> **SEALED.** This is sensitive personal material. Per `<personal-vault>/CLAUDE.md`, contents of this sealed folder never appear in CVs, cover letters, recruiter prep, voice exports, networking notes, or any external-facing artifact. The verbatim transcript is preserved here as source-of-truth; do not paraphrase or excerpt outside this folder."""
 
 RECRUITER_HEADER = """> **Voice classification:** mixed-voice (Nick + counterpart, verbatim Granola transcript). Per `framework/two-tier-capture.md`. Synthesized debriefs live in `coaching/progress-recruiter/`; this file is the raw tier."""
 
@@ -53,21 +57,21 @@ NETWORKING_HEADER = """> **Voice classification:** mixed-voice (Nick + counterpa
 GENERAL_HEADER = """> **Voice classification:** Granola-captured meeting transcript. Per `framework/two-tier-capture.md`."""
 
 TRANSCRIPT_HEADERS = {
-    "therapy": SEALED_HEADER_THERAPY,
+    "sealed": SEALED_HEADER_SESSION,
     "recruiter": RECRUITER_HEADER,
     "networking": NETWORKING_HEADER,
     "general": GENERAL_HEADER,
 }
 
 TRANSCRIPT_VOICE = {
-    "therapy": "source-of-truth",
+    "sealed": "source-of-truth",
     "recruiter": "mixed-voice",
     "networking": "mixed-voice",
     "general": "mixed-voice",
 }
 
 SEALED_FLAG = {
-    "therapy": "true",
+    "sealed": "true",
     "recruiter": "false",
     "networking": "false",
     "general": "false",
@@ -135,11 +139,11 @@ def transcript_body(data: dict, summary_basename: str) -> str:
 
 def summary_body(data: dict, transcript_basename: str) -> str:
     type_ = data.get("type", "general")
-    if type_ == "therapy":
+    if type_ == "sealed":
         boundary = (
-            "> **SEALED.** This is sensitive personal therapy material. Per "
+            "> **SEALED.** This is sensitive personal material. Per "
             "`<personal-vault>/CLAUDE.md`, contents of "
-            "`personal/data/therapy/` never appear in CVs, cover letters, recruiter prep, "
+            "this sealed folder never appear in CVs, cover letters, recruiter prep, "
             "voice exports, networking notes, or any external-facing artifact."
         )
     else:
@@ -223,7 +227,47 @@ def attribution_warning(transcript: str) -> str | None:
             "than on speakerphone.")
 
 
+def output_refusal(output: Path, type_: str, repo_root: Path,
+                   sealed_folder: Path | None = None) -> str | None:
+    """Why `output` may not receive a transcript of `type_`, or None when it may.
+
+    A sealed transcript never lands inside the repo: it is public, and gitignored trees in
+    it are backed up to a second repo. Judged on the resolved path, so `..` and symlinks
+    count where they lead, against the checkout and, from a worktree, its main checkout.
+    The write primitive checks this itself, whatever its caller chose (Codex r1 g2a F1).
+    """
+    if type_ not in TRANSCRIPT_HEADERS:
+        return f"unknown meeting type {type_!r}; expected one of {sorted(TRANSCRIPT_HEADERS)}"
+    if type_ != "sealed":
+        return None
+    # Where the write LANDS: write_atomic's os.replace swaps a file in at the final name and
+    # never follows a link there, so resolve the parent and keep the name (Codex r7 g1c/g3a
+    # F1, P0: a link inside the repo aimed at the sealed folder resolved as "sealed" and the
+    # transcript was written into the repo). The summary is a sibling, so it shares this.
+    if Path(output).name in ("", ".", ".."):
+        return f"a transcript needs a file name, not {str(output)!r}"
+    target = Path(os.path.realpath(Path(output).parent)) / Path(output).name
+    for root in {Path(repo_root), vault_paths.main_checkout(Path(repo_root))}:
+        top = Path(os.path.realpath(root))
+        if target == top or top in target.parents:
+            return f"a sealed transcript may not be written inside the repo ({top})"
+    # And only into the configured sealed folder (Codex r2 F1, Fable r2 18.F3, 19.F5;
+    # Nick: strict). `sealed_folder` is for tests; callers leave it to the config.
+    try:
+        folder = sealed_folder or vault_paths.sealed_dir()
+    except (vault_paths.VaultRootMissing, vault_paths.SealedFolderMissing):
+        return "no sealed folder is configured, so a sealed transcript has nowhere to go"
+    folder = Path(os.path.realpath(folder))
+    if folder not in target.parents:
+        return f"a sealed transcript may only be written inside the sealed folder ({folder})"
+    return None
+
+
 def cmd_write(data: dict, output: Path, no_overwrite: bool = False) -> None:
+    refusal = output_refusal(output, data.get("type", "general"), REPO_ROOT)
+    if refusal:
+        print(json.dumps({"status": "refused", "reason": refusal, "requested_path": str(output)}))
+        sys.exit(2)
     output.parent.mkdir(parents=True, exist_ok=True)
     transcript_basename = output.stem
     summary_path = output.with_name(transcript_basename + "-summary.md")

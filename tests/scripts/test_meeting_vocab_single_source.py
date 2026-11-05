@@ -20,11 +20,11 @@ sys.path.insert(0, str(TOOLS))
 
 OWNED = {
     "classify_meeting",
-    "load_therapy_classifier_config",
+    "load_sealed_meetings_config",
     "load_personal_projects_config",
     "match_personal_project",
-    "_attendee_is_therapist",
-    "_transcript_names_therapist",
+    "_attendee_is_sealed_contact",
+    "_transcript_names_sealed_contact",
     "_is_nick",
 }
 
@@ -117,3 +117,50 @@ def test_every_reexported_symbol_actually_resolves_package_style():
             names |= {a.name for a in node.names}
     missing = [n for n in sorted(names) if not hasattr(mod, n)]
     assert not missing, f"re-exported but unresolvable package-style: {missing}"
+
+
+# --- review round 1 (Fable 10.F6), 2026-11-02 ----------------------------------------------
+# /checkout drops sealed meetings by title. It pipes the list through this filter instead of
+# opening the gitignored config, which also holds sealed contacts' names and addresses.
+
+import json as _json
+import subprocess as _subprocess
+
+
+def test_drop_sealed_titles_removes_only_keyword_titles():
+    import meeting_vocab as mv
+    config = {"attendees": set(), "names": [], "keywords": ["private"]}
+    meetings = [{"title": "Private catch-up"}, {"title": "Recruiter screen"}, {"title": None}]
+    assert mv.drop_sealed_titles(meetings, config) == [{"title": "Recruiter screen"},
+                                                      {"title": None}]
+
+
+def test_drop_sealed_cli_filters_stdin_and_refuses_without_config(tmp_path):
+    script = Path(__file__).resolve().parents[2] / "tools" / "meeting_vocab.py"
+    conf = tmp_path / "s.txt"
+    conf.write_text("keyword: private\n", encoding="utf-8")
+    meetings = _json.dumps([{"title": "Private catch-up"}, {"title": "Recruiter screen"}])
+    r = _subprocess.run([sys.executable, str(script), "drop-sealed", "--config", str(conf)],
+                        input=meetings, capture_output=True, text=True)
+    assert r.returncode == 0 and _json.loads(r.stdout) == [{"title": "Recruiter screen"}]
+    r = _subprocess.run([sys.executable, str(script), "drop-sealed",
+                         "--config", str(tmp_path / "absent.txt")],
+                        input=meetings, capture_output=True, text=True)
+    assert r.returncode == 2 and r.stdout == ""
+    assert "is missing" in r.stderr and "absent.txt" in r.stderr   # told what is missing
+
+
+def test_a_bom_in_the_sealed_meeting_config_does_not_hide_the_first_directive(tmp_path):
+    # Review round 2 (Fable 18.F4, 20.F3).
+    import meeting_vocab as mv
+    conf = tmp_path / "s.txt"
+    conf.write_text("﻿keyword: private\n", encoding="utf-8")
+    assert mv.load_sealed_meetings_config(conf)["keywords"] == ["private"]
+
+
+def test_drop_sealed_names_the_config_it_was_given(tmp_path):
+    script = Path(__file__).resolve().parents[2] / "tools" / "meeting_vocab.py"
+    missing = tmp_path / "given.txt"
+    r = _subprocess.run([sys.executable, str(script), "drop-sealed", "--config", str(missing)],
+                        input="[]", capture_output=True, text=True)
+    assert r.returncode == 2 and str(missing) in r.stderr       # Fable r2 F2 (19.F2)

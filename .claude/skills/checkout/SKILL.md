@@ -204,13 +204,13 @@ Origin: an external personal-OS system's `/eod` cascade (E3, build queue 2026-05
 
 **Steps:**
 
-1. List recent meetings:
+1. **List recent meetings, with private ones already removed.** Run exactly this one command and use only its output; never run `granola_cli.py list` on its own here, because its unfiltered output would put private meeting titles into context:
    ```bash
-   python3 tools/granola_cli.py list --hours 24 --format json
+   PYTHONIOENCODING=utf-8 python3 tools/granola_cli.py list --hours 24 --format json | PYTHONIOENCODING=utf-8 python3 tools/meeting_vocab.py drop-sealed
    ```
-   Parse the JSON array (each entry has `id`, `title`, `created_at`, `local_time`).
+   Parse the JSON array (each entry has `id`, `title`, `created_at`, `local_time`). The filter drops every meeting whose title holds a sealed-meeting keyword. Never open the gitignored config it reads: that file also holds sealed contacts' names.
 
-2. **Exclude private meetings silently.** A meeting whose title matches the private-meeting keyword list in `tools/granola_auto_debrief.py` (`THERAPY_TITLE_KEYWORDS`) is sealed personal context. Drop it from the cascade without listing it. Do not name it, count it, or hint at it in the checkout summary.
+2. **If the filter exits 2 (its config is missing), skip this whole cascade for today** and say only that the meeting check is unavailable. Do not name a dropped meeting, count it, or hint at it in the checkout summary.
 
 3. **Cross-reference each remaining meeting against existing debrief artifacts.** A meeting is "debriefed" if either:
    - a debrief file exists in `coaching/progress/` whose date matches the meeting's local date AND whose filename slug fuzzy-matches the meeting title (e.g. "recruiter screen" matches `2026-06-01-recruiter-acme.md`), OR

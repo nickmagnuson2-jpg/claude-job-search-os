@@ -198,7 +198,7 @@ def test_main_prints_window_and_normalized_events(monkeypatch, capsys):
     out = __import__("json").loads(capsys.readouterr().out)
     assert seen == {"creds": "creds", "cals": ["work"], "days": 2}
     assert [e["summary"] for e in out["events"]] == ["Call"]
-    assert set(out) == {"source", "sanitized", "generated_at", "window_start", "window_end", "events"}
+    assert set(out) == {"source", "sanitized", "private_hosts_configured", "generated_at", "window_start", "window_end", "events"}
     assert (out["source"], out["sanitized"]) == ("google-calendar", True)
 
 
@@ -265,24 +265,31 @@ def test_calendar_uses_the_one_gmail_sanitizer():
 
 
 # ── private appointments (2026-10-28) ─────────────────────────────────────────
-# Placeholder fixtures only: no real title, provider or link appears in this file.
+# Placeholder fixtures only: no real title, host or link appears in this file. The
+# private hosts come from a gitignored file (2026-11-01), so these tests set their own.
+FAKE_HOSTS = ("privatehost.example", "second-host.example")
+
+
+@pytest.fixture(autouse=True)
+def _fake_private_hosts(monkeypatch):
+    monkeypatch.setattr(cf, "PRIVATE_DOMAINS", FAKE_HOSTS)
 
 @pytest.mark.parametrize("field,value", [
-    ("location", "https://video.talkspace.com/appt-0000?origin=client"),
-    ("location", "video.talkspace.com/appt-0000"),          # no scheme
-    ("location", "TALKSPACE.COM"),                           # case
-    ("description", "Join at https://talkspace.com/x"),     # the domain itself
-    ("hangoutLink", "https://a.b.talkspace.com/"),
+    ("location", "https://video.privatehost.example/appt-0000?origin=client"),
+    ("location", "video.privatehost.example/appt-0000"),          # no scheme
+    ("location", "PRIVATEHOST.EXAMPLE"),                           # case
+    ("description", "Join at https://privatehost.example/x"),     # the domain itself
+    ("hangoutLink", "https://a.b.privatehost.example/"),
     # Codex calendar-gate r1 F1: other dot spellings and escapes of the same host
-    ("location", "https://video\u3002talkspace\u3002com/appt-0000"),
-    ("location", "https://video\uff0etalkspace\uff0ecom/appt-0000"),
-    ("location", "https://video\uff61talkspace\uff61com/appt-0000"),
-    ("location", "https://talkspace%2Ecom/appt-0000"),
-    ("location", "https://talkspace%252Ecom/appt-0000"),
-    ("location", "https://\uff53implepractice.com/appt-0000"),               # fullwidth s
+    ("location", "https://video\u3002privatehost\u3002example/appt-0000"),
+    ("location", "https://video\uff0eprivatehost\uff0eexample/appt-0000"),
+    ("location", "https://video\uff61privatehost\uff61example/appt-0000"),
+    ("location", "https://privatehost%2Eexample/appt-0000"),
+    ("location", "https://privatehost%252Eexample/appt-0000"),
+    ("location", "https://\uff53econd-host.example/appt-0000"),               # fullwidth s
 ])
 def test_an_event_naming_a_private_host_is_redacted(field, value):
-    item = _timed("Placeholder Provider LLC - Someone", "2026-10-28T15:00:00-07:00",
+    item = _timed("Placeholder Business LLC - Someone", "2026-10-28T15:00:00-07:00",
                   **{field: value})
     ev = cf.normalize_event(item, "primary")
     assert ev["summary"] == "Private appointment"
@@ -293,7 +300,7 @@ def test_an_event_naming_a_private_host_is_redacted(field, value):
     assert "Placeholder" not in str(ev) and "appt-0000" not in str(ev)
 
 
-@pytest.mark.parametrize("domain", cf.PRIVATE_DOMAINS)
+@pytest.mark.parametrize("domain", FAKE_HOSTS)
 def test_every_listed_domain_is_redacted(domain):
     ev = cf.normalize_event(_timed("Placeholder", "x", location=f"https://x.{domain}/a"),
                             "primary")
@@ -302,15 +309,15 @@ def test_every_listed_domain_is_redacted(domain):
 
 def test_a_conference_entry_point_naming_a_private_host_is_redacted():
     item = _timed("Placeholder", "x", conferenceData={"entryPoints": [
-        {"uri": "https://meet.google.com/aaa"}, {"uri": "https://video.talkspace.com/z"}]})
+        {"uri": "https://meet.google.com/aaa"}, {"uri": "https://video.privatehost.example/z"}]})
     assert cf.normalize_event(item, "primary")["summary"] == "Private appointment"
 
 
 @pytest.mark.parametrize("value", [
-    "https://nottalkspace.com/x",          # substring, different host
-    "https://talkspace.com.evil.example/",  # private name as a prefix label
+    "https://notprivatehost.example/x",          # substring, different host
+    "https://privatehost.example.evil.test/",  # private name as a prefix label
     "https://meet.google.com/abc-defg-hij",
-    "talkspace",                            # a word, not a host
+    "privatehost",                            # a word, not a host
 ])
 def test_a_host_that_only_resembles_a_private_one_is_not_redacted(value):
     ev = cf.normalize_event(_timed("Coffee", "x", location=value), "primary")
@@ -325,12 +332,12 @@ def test_an_event_with_no_text_fields_is_not_private():
 def test_redaction_reaches_the_printed_output(monkeypatch, capsys):
     monkeypatch.setattr(cf, "get_creds", lambda d, auth_mode=False: "creds")
     monkeypatch.setattr(cf, "fetch", lambda *a: {"primary": [
-        _timed("Placeholder Provider", "2026-10-28T15:00:00-07:00",
-               location="https://video.talkspace.com/appt-0000")]})
+        _timed("Placeholder Business", "2026-10-28T15:00:00-07:00",
+               location="https://video.privatehost.example/appt-0000")]})
     assert cf.main([]) == 0
     out = capsys.readouterr().out
     assert "Private appointment" in out
-    assert "Placeholder" not in out and "talkspace" not in out
+    assert "Placeholder" not in out and "privatehost" not in out
 
 
 # ── a refusal from Google is one line, not a traceback (2026-10-28) ───────────
@@ -419,3 +426,68 @@ def test_another_tool_can_keep_its_own_token_and_scope(tmp_path, fake_google, ca
     with pytest.raises(SystemExit) as e:
         cf.get_creds(tmp_path, token_file="absent.json", tool="calendar_write.py")
     assert "tools/calendar_write.py --auth" in str(e.value)
+
+
+@pytest.mark.parametrize("visibility", ["private", "confidential"])
+def test_an_event_google_marks_private_is_redacted(visibility):
+    """The host-free rule: an event marked private in Google Calendar is redacted
+    with no host configured at all."""
+    item = _timed("Placeholder", "2026-10-28T15:00:00-07:00", visibility=visibility)
+    ev = cf.normalize_event(item, "primary")
+    assert ev["summary"] == "Private appointment" and ev["private"] is True
+
+
+@pytest.mark.parametrize("visibility", ["default", "public", None])
+def test_an_event_with_ordinary_visibility_is_not_redacted(visibility):
+    item = _timed("Coffee", "x", **({"visibility": visibility} if visibility else {}))
+    assert cf.normalize_event(item, "primary")["private"] is False
+
+
+def test_private_hosts_load_from_the_gitignored_file(tmp_path):
+    f = tmp_path / ".private-calendar-domains.txt"
+    f.write_text("# hosts\n\nPrivateHost.Example\n  second-host.example.  \n", encoding="utf-8")
+    assert cf.load_private_domains(f) == ("privatehost.example", "second-host.example")
+
+
+def test_no_hosts_file_means_no_host_rule(tmp_path, monkeypatch):
+    assert cf.load_private_domains(tmp_path / "absent.txt") == ()
+    monkeypatch.setattr(cf, "PRIVATE_DOMAINS", ())
+    assert cf.is_private({"location": "https://privatehost.example/x"}) is False
+    assert cf.is_private({"location": "x", "visibility": "private"}) is True
+
+
+# --- review round 1 (Fable 10.F2, 10.F10), 2026-11-02 -------------------------------------
+
+def test_host_lines_are_read_the_way_event_text_is(tmp_path):
+    f = tmp_path / ".private-calendar-domains.txt"
+    f.write_text("﻿https://PrivateHost.Example/path  # the main one\n"
+                 "second-host。example\n", encoding="utf-8")
+    assert cf.load_private_domains(f) == ("privatehost.example", "second-host.example")
+
+
+def _main_output(monkeypatch, capsys):
+    monkeypatch.setattr(cf, "get_creds", lambda d, auth_mode=False: "creds")
+    monkeypatch.setattr(cf, "fetch", lambda creds, cals, start, end: {"primary": []})
+    assert cf.main(["--days", "1"]) == 0
+    got = capsys.readouterr()
+    return __import__("json").loads(got.out), got.err
+
+
+def test_the_output_says_when_the_host_rule_is_unconfigured(monkeypatch, capsys):
+    monkeypatch.setattr(cf, "PRIVATE_DOMAINS", ())
+    out, err = _main_output(monkeypatch, capsys)
+    assert out["private_hosts_configured"] is False
+    assert ".private-calendar-domains.txt" in err
+
+
+def test_the_output_says_when_the_host_rule_is_configured(monkeypatch, capsys):
+    monkeypatch.setattr(cf, "PRIVATE_DOMAINS", ("privatehost.example",))
+    out, err = _main_output(monkeypatch, capsys)
+    assert out["private_hosts_configured"] is True
+    assert ".private-calendar-domains.txt" not in err
+
+
+def test_a_host_line_with_a_leading_dot_or_wildcard_still_names_the_host(tmp_path):
+    f = tmp_path / ".private-calendar-domains.txt"
+    f.write_text(".privatehost.example\n*.second-host.example\n", encoding="utf-8")
+    assert cf.load_private_domains(f) == ("privatehost.example", "second-host.example")

@@ -157,7 +157,7 @@ USAGE_REMINDER = (
     "Pass bare values, NOT --flag names. Examples:\n"
     "\n"
     '  python3 tools/todo_write.py add "<task>" "<priority>" "<due>" "<notes>"\n'
-    '  python3 tools/todo_write.py add "Apply to Blueprints AI" "High" "2026-06-10" "warm intro via the case-runner"\n'
+    '  python3 tools/todo_write.py add "Apply to Acme AI" "High" "2026-06-10" "warm intro via a former colleague"\n'
     '  python3 tools/todo_write.py add "Quick task" "Low"   # priority only\n'
     '  python3 tools/todo_write.py add "Med task" "Med" "" "notes only, no due"\n'
     "\n"

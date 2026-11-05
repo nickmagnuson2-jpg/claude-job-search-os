@@ -8,7 +8,7 @@ meetings, family logistics). Two side-business transcripts had to be relocated b
 on 2026-08-06.
 
 Routing rules under test:
-  therapy   -> sealed vault, never inbox            (pre-existing, must not regress)
+  sealed   -> sealed vault, never inbox            (pre-existing, must not regress)
   personal  -> personal vault corpus + personal inbox, tagged with a project slug
   networking-> job-search corpus + job-search inbox (pre-existing, must not regress)
   unknown   -> fail closed, persist nowhere         (pre-existing, must not regress)
@@ -60,7 +60,7 @@ PARTNER_CONFIG = {
     ]
 }
 
-EMPTY_THERAPY = {"attendees": set(), "names": []}
+EMPTY_SEALED = {"attendees": set(), "names": []}
 
 
 # --- config loading -------------------------------------------------------
@@ -137,7 +137,7 @@ def test_first_matching_rule_wins():
 
 def test_personal_call_with_attendee_classifies_personal():
     meeting = {"title": "Check in", "attendees": [{"name": "Robin", "email": "robin@example.com"}]}
-    assert classify_meeting(meeting, EMPTY_THERAPY, PARTNER_CONFIG) == "personal"
+    assert classify_meeting(meeting, EMPTY_SEALED, PARTNER_CONFIG) == "personal"
 
 
 def test_in_person_personal_call_is_rescued_from_unknown():
@@ -151,32 +151,33 @@ def test_in_person_personal_call_is_rescued_from_unknown():
         "attendees": [],
         "transcript": "Speaker B: Robin Placeholder. three sessions. the payout from the platform was 120.",
     }
-    assert classify_meeting(meeting, EMPTY_THERAPY, PARTNER_CONFIG) == "personal"
+    assert classify_meeting(meeting, EMPTY_SEALED, PARTNER_CONFIG) == "personal"
 
 
-def test_therapy_still_wins_over_personal():
-    """Safety ordering: a therapy signal must never be downgraded to personal."""
-    therapy_cfg = {"attendees": {"doc@example.com"}, "names": []}
+def test_sealed_still_wins_over_personal():
+    """Safety ordering: a sealed signal must never be downgraded to personal."""
+    sealed_cfg = {"attendees": {"contact@example.com"}, "names": []}
     meeting = {
         "title": "Side Project sync",
-        "attendees": [{"name": "Doc", "email": "doc@example.com"}],
+        "attendees": [{"name": "Contact", "email": "contact@example.com"}],
     }
-    assert classify_meeting(meeting, therapy_cfg, PARTNER_CONFIG) == "therapy"
+    assert classify_meeting(meeting, sealed_cfg, PARTNER_CONFIG) == "sealed"
 
 
-def test_therapy_title_keyword_still_wins_over_personal():
-    meeting = {"title": "therapy session", "attendees": [{"name": "S", "email": "robin@example.com"}]}
-    assert classify_meeting(meeting, EMPTY_THERAPY, PARTNER_CONFIG) == "therapy"
+def test_sealed_title_keyword_still_wins_over_personal():
+    meeting = {"title": "sealed session", "attendees": [{"name": "S", "email": "robin@example.com"}]}
+    cfg = {**EMPTY_SEALED, "keywords": ["sealed session"]}
+    assert classify_meeting(meeting, cfg, PARTNER_CONFIG) == "sealed"
 
 
-def test_therapy_transcript_name_still_wins_in_person():
-    therapy_cfg = {"attendees": set(), "names": ["Marcus Therapist"]}
+def test_sealed_transcript_name_still_wins_in_person():
+    sealed_cfg = {"attendees": set(), "names": ["Marcus Contact"]}
     meeting = {
         "title": "Side Project",
         "attendees": [],
-        "transcript": "Marcus Therapist: how did that land for you?",
+        "transcript": "Marcus Contact: see you next week.",
     }
-    assert classify_meeting(meeting, therapy_cfg, PARTNER_CONFIG) == "therapy"
+    assert classify_meeting(meeting, sealed_cfg, PARTNER_CONFIG) == "sealed"
 
 
 def test_job_search_call_still_networking():
@@ -184,18 +185,18 @@ def test_job_search_call_still_networking():
         {"name": "Nick Magnuson", "email": "nick@example.com"},
         {"name": "Recruiter", "email": "r@activeco.example"},
     ]}
-    assert classify_meeting(meeting, EMPTY_THERAPY, PARTNER_CONFIG) == "networking"
+    assert classify_meeting(meeting, EMPTY_SEALED, PARTNER_CONFIG) == "networking"
 
 
 def test_unknown_still_fails_closed_without_project_match():
     meeting = {"title": "Untitled", "attendees": [], "transcript": "Speaker A: hello."}
-    assert classify_meeting(meeting, EMPTY_THERAPY, PARTNER_CONFIG) == "unknown"
+    assert classify_meeting(meeting, EMPTY_SEALED, PARTNER_CONFIG) == "unknown"
 
 
 def test_empty_personal_config_preserves_legacy_behavior():
     """No allowlist file => byte-identical routing to before this feature."""
     meeting = {"title": "Robin ", "attendees": [], "transcript": "Speaker B: three sessions."}
-    assert classify_meeting(meeting, EMPTY_THERAPY, {"rules": []}) == "unknown"
+    assert classify_meeting(meeting, EMPTY_SEALED, {"rules": []}) == "unknown"
 
 
 def test_classify_meeting_personal_config_defaults_to_none():
@@ -203,7 +204,7 @@ def test_classify_meeting_personal_config_defaults_to_none():
     meeting = {"title": "ActiveCo screen", "attendees": [
         {"name": "Recruiter", "email": "r@activeco.example"},
     ]}
-    assert classify_meeting(meeting, EMPTY_THERAPY) == "networking"
+    assert classify_meeting(meeting, EMPTY_SEALED) == "networking"
 
 
 # --- inbox entry ----------------------------------------------------------
@@ -365,49 +366,49 @@ def test_granola_cli_pull_produces_me_them_for_attribution_dicts():
 # --- sealed-material leak regression (adversarial review F1) ---------------
 
 NICK = {"name": "Nick Magnuson", "email": "nick@example.com"}
-THERAPY_NAMED = {"attendees": {"doc@example.com"}, "names": ["Marcus Therapist"]}
+SEALED_NAMED = {"attendees": {"contact@example.com"}, "names": ["Marcus Contact"]}
 TITLE_RULE = {"rules": [{"project": "side-project", "attendees": set(),
                          "names": [], "titles": ["studio", "side project"]}]}
 
 
-def test_solo_attendee_therapy_is_not_routed_personal():
-    """Granola listing ONLY Nick must not skip the therapist transcript scan.
+def test_solo_attendee_sealed_is_not_routed_personal():
+    """Granola listing ONLY Nick must not skip the sealed contact transcript scan.
 
     The scan used to be gated on `not attendees`, so a self-created calendar
     event (attendees == [Nick]) fell through to the project matcher. With a
-    project keyword in the auto-generated title, sealed therapy classified as
+    project keyword in the auto-generated title, a sealed session classified as
     'personal' and would have been written to the project folder, the personal
     inbox, to-dos, and an explicitly external-facing takeaways section.
     """
-    m = {"title": "the side project and stress", "attendees": [NICK],
-         "transcript": "Marcus Therapist: how did that land for you?"}
-    assert classify_meeting(m, THERAPY_NAMED, TITLE_RULE) == "therapy"
+    m = {"title": "the side project and the schedule", "attendees": [NICK],
+         "transcript": "Marcus Contact: see you next week."}
+    assert classify_meeting(m, SEALED_NAMED, TITLE_RULE) == "sealed"
 
 
-def test_no_attendee_therapy_still_sealed_with_project_keyword_present():
-    m = {"title": "the side project and stress", "attendees": [],
-         "transcript": "Marcus Therapist: say more about that."}
-    assert classify_meeting(m, THERAPY_NAMED, TITLE_RULE) == "therapy"
+def test_no_attendee_sealed_still_sealed_with_project_keyword_present():
+    m = {"title": "the side project and the schedule", "attendees": [],
+         "transcript": "Marcus Contact: same time Thursday."}
+    assert classify_meeting(m, SEALED_NAMED, TITLE_RULE) == "sealed"
 
 
 def test_real_multiparty_call_not_mis_sealed_by_passing_mention():
     """A call with a real external party must never be sealed just because a
-    therapist's name is spoken in passing."""
+    sealed contact's name is spoken in passing."""
     m = {"title": "vendor sync", "attendees": [NICK, {"name": "Vendor", "email": "v@vendor.com"}],
-         "transcript": "Speaker A: my friend Marcus Therapist recommended this place."}
-    assert classify_meeting(m, THERAPY_NAMED, TITLE_RULE) == "networking"
+         "transcript": "Speaker A: my friend Marcus Contact recommended this place."}
+    assert classify_meeting(m, SEALED_NAMED, TITLE_RULE) == "networking"
 
 
 def test_solo_attendee_personal_call_still_routes_personal():
-    """The rescue must survive the fix: no therapy signal, title match -> personal."""
+    """The rescue must survive the fix: no sealed signal, title match -> personal."""
     m = {"title": "side project working session", "attendees": [NICK],
          "transcript": "Speaker A: three sessions."}
-    assert classify_meeting(m, THERAPY_NAMED, TITLE_RULE) == "personal"
+    assert classify_meeting(m, SEALED_NAMED, TITLE_RULE) == "personal"
 
 
 def test_solo_attendee_no_signal_still_unknown():
     m = {"title": "untitled", "attendees": [NICK], "transcript": "Speaker A: hello."}
-    assert classify_meeting(m, THERAPY_NAMED, TITLE_RULE) == "unknown"
+    assert classify_meeting(m, SEALED_NAMED, TITLE_RULE) == "unknown"
 
 
 # --- vault seam + durability (review items) --------------------------------
@@ -427,16 +428,18 @@ def test_vault_directive_parsed_and_resolved(tmp_path):
 
 
 def test_session_with_no_longer_seals_business_calls():
-    """'Strategy session with the contractor' must not be sealed as therapy."""
+    """'Strategy session with the contractor' must not be sealed as sealed."""
     m = {"title": "Strategy session with the contractor", "attendees": [NICK],
          "transcript": "Speaker A: about the quote."}
-    assert classify_meeting(m, EMPTY_THERAPY, {"rules": []}) != "therapy"
+    assert classify_meeting(m, EMPTY_SEALED, {"rules": []}) != "sealed"
 
 
-def test_explicit_therapy_keywords_still_seal():
-    for t in ("therapy check-in", "psychiatrist appt", "counseling session"):
+def test_explicit_sealed_keywords_still_seal():
+    cfg = {**EMPTY_SEALED, "keywords": ["sealed check-in", "private appt", "weekly session"]}
+    for t in ("sealed check-in", "Private appt", "weekly session notes"):
         m = {"title": t, "attendees": [NICK], "transcript": "x"}
-        assert classify_meeting(m, EMPTY_THERAPY, {"rules": []}) == "therapy", t
+        assert classify_meeting(m, cfg, {"rules": []}) == "sealed", t
+        assert classify_meeting(m, EMPTY_SEALED, {"rules": []}) != "sealed", t
 
 
 def test_pending_classification_is_durable_and_deduped(tmp_path):
@@ -472,34 +475,34 @@ def test_meeting_id_dedup_across_different_filenames(tmp_path):
     assert find_existing_by_meeting_id(tmp_path, "") is None
 
 
-def test_therapist_first_name_as_passing_mention_does_not_seal():
-    """2026-08-07 regression: a therapist's first name appearing as an ordinary
-    third party in a business transcript sealed the whole call into the therapy
+def test_contact_first_name_as_passing_mention_does_not_seal():
+    """2026-08-07 regression: a sealed contact's first name appearing as an ordinary
+    third party in a business transcript sealed the whole call into the sealed
     vault. First-name evidence now requires a speaker-label position."""
-    cfg = {"attendees": set(), "names": ["Robin Therapist"]}
+    cfg = {"attendees": set(), "names": ["Robin Contact"]}
     m = {"title": "side project working session", "attendees": [NICK],
          "transcript": "Speaker B: Robin wants to teach every Friday. Speaker A: nice."}
     assert classify_meeting(m, cfg, TITLE_RULE) == "personal"
 
 
-def test_therapist_first_name_at_speaker_position_still_seals():
-    cfg = {"attendees": set(), "names": ["Robin Therapist"]}
+def test_contact_first_name_at_speaker_position_still_seals():
+    cfg = {"attendees": set(), "names": ["Robin Contact"]}
     m = {"title": "reflections", "attendees": [NICK],
-         "transcript": "Me: it was a hard week.\nRobin: tell me more about that."}
-    assert classify_meeting(m, cfg, TITLE_RULE) == "therapy"
+         "transcript": "Me: busy week.\nRobin: see you Thursday."}
+    assert classify_meeting(m, cfg, TITLE_RULE) == "sealed"
 
 
-def test_therapist_full_name_anywhere_still_seals():
-    cfg = {"attendees": set(), "names": ["Robin Therapist"]}
+def test_contact_full_name_anywhere_still_seals():
+    cfg = {"attendees": set(), "names": ["Robin Contact"]}
     m = {"title": "side project working session", "attendees": [NICK],
-         "transcript": "Speaker A: notes from my talk with Robin Therapist today."}
-    assert classify_meeting(m, cfg, TITLE_RULE) == "therapy"
+         "transcript": "Speaker A: notes from my talk with Robin Contact today."}
+    assert classify_meeting(m, cfg, TITLE_RULE) == "sealed"
 
 
 def test_vault_guard_names_the_vault_not_its_data_dir(tmp_path, monkeypatch, capsys):
     """The guard must report the vault root. Parent-walking got this wrong for
     personal calls (<vault>/data/voice-corpus/granola is one level deeper than
-    <vault>/data/therapy), naming <vault>/data instead."""
+    <vault>/data/sealed), naming <vault>/data instead."""
     import tools.granola_auto_debrief as g
     missing = tmp_path / "not-mounted-vault"
     res = g.persist_via_granola_save(

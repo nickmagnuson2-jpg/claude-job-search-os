@@ -51,7 +51,7 @@ Every time to-dos are displayed (by any command), cross-reference the task text 
 **Display format for links** (appended below each linked to-do in the list):
 
 ```
-  3. Prepare your "why mental health" narrative for Alex coffee chat [High | Due: 2026-02-25]
+  3. Prepare your "why this industry" narrative for Jordan Lee coffee chat [High | Due: 2026-02-25]
      > Pipeline: Acme AI — Strategy & Operations [Researching]
      > Contact: Jordan Lee — Product Lead @ Acme AI (peer) — last: 2026-02-18
 ```
@@ -216,13 +216,13 @@ Then read `data/job-todos.md` (it may have been updated by the sync) along with 
 **Completed today: 2** | Active remaining: 4 | Overdue: 0
 
 #### Done
-- [x] Read Quiet Capital's Acme investment thesis (Med)
+- [x] Read Globex Ventures' Acme investment thesis (Med)
 - [x] Update LinkedIn headline (High)
 
 #### Still Active
-- [ ] Prepare "why mental health" narrative [High | Due: 2026-02-25]
+- [ ] Prepare "why this industry" narrative [High | Due: 2026-02-25]
 - [ ] Follow up: Jordan Lee @ Acme AI [Med | Due: 2026-02-25]
-- [ ] Read Jordan Lee's care-retention white paper [Med | Due: 2026-02-25]
+- [ ] Read Jordan Lee's operations white paper [Med | Due: 2026-02-25]
 - [ ] Review Acme AI open roles [Med | Due: 2026-02-25]
 
 #### Research Completed
@@ -276,7 +276,7 @@ Use `Withdrawn` instead of `Done` for anything that did not result in real work 
 
 **Active: 5** | High: 1 | Med: 4 | Low: 0 | Overdue: 0
 
-1. Prepare your "why mental health" narrative for Alex coffee chat [High | Due: 2026-02-25 | Pending]
+1. Prepare your "why this industry" narrative for Jordan Lee coffee chat [High | Due: 2026-02-25 | Pending]
 
 2. Follow up: Jordan Lee @ Acme AI — Check for response [Med | Due: 2026-02-25 | Pending]
    > Pipeline: Acme AI — Strategy & Operations [Researching]
@@ -285,7 +285,7 @@ Use `Withdrawn` instead of `Done` for anything that did not result in real work 
 3. Read Jordan Lee's operations white paper [Med | Due: 2026-02-25 | Pending]
    > Contact: Jordan Lee — Product Lead @ Acme AI (peer) — last: 2026-02-18
 
-4. Read Quiet Capital's Acme investment thesis [Med | Due: 2026-02-25 | Pending]
+4. Read Globex Ventures' Acme investment thesis [Med | Due: 2026-02-25 | Pending]
 
 5. Review Acme AI open roles for fit [Med | Due: 2026-02-25 | Pending]
    > Pipeline: Acme AI — Strategy & Operations [Researching]

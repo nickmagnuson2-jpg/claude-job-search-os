@@ -5,7 +5,7 @@ personal-vault root.
 
 The property under test is not "does it return a path." It is: **an
 unconfigured vault must fail loudly, never fall back to a guess.** The root is
-private (this repo is public) and it hosts sealed therapy material, so a
+private (this repo is public) and it hosts sealed material, so a
 fallback would have to be either the real location — putting it back in public
 code, defeating the point — or a guess, which risks writing sealed content
 somewhere unintended. Both are worse than stopping.
@@ -110,7 +110,7 @@ def test_missing_root_error_tells_you_how_to_fix_it(tmp_path):
     assert "gitignored" in msg
 
 
-@pytest.mark.parametrize("fn", ["therapy_dir", "personal_inbox",
+@pytest.mark.parametrize("fn", ["personal_inbox",
                                 "personal_voice_corpus_dir", "personal_todos"])
 def test_every_named_location_refuses_when_unconfigured(tmp_path, fn):
     """No named location may silently resolve against a guessed root."""
@@ -127,7 +127,6 @@ def test_living_log_refuses_when_unconfigured(tmp_path):
 
 def test_named_locations_derive_from_the_configured_root(tmp_path):
     cfg = _conf(tmp_path, "/srv/vault\n")
-    assert vp.therapy_dir(cfg) == Path("/srv/vault/data/therapy")
     assert vp.personal_inbox(cfg) == Path("/srv/vault/data/inbox.md")
     assert vp.personal_voice_corpus_dir(cfg) == Path("/srv/vault/data/voice-corpus/granola")
     assert vp.personal_todos(cfg) == Path("/srv/vault/data/personal-todos.md")
@@ -209,3 +208,125 @@ def test_personal_mail_dir_raises_when_unconfigured(tmp_path):
     missing = tmp_path / "absent.conf"
     with pytest.raises(vp.VaultRootMissing):
         vp.personal_mail_dir(missing)
+
+
+# --- sealed folders ----------------------------------------------------------
+# Which vault folder is sealed is itself private (its name says what it holds), so it
+# comes from a gitignored file, as the root does. Unset means None; the guard that reads
+# it fails closed on None, and sealed_dir() refuses rather than guess a folder.
+
+def _sealed_conf(tmp_path: Path, body: str) -> Path:
+    p = tmp_path / ".sealed-folders.conf"
+    p.write_text(body, encoding="utf-8")
+    return p
+
+
+def test_sealed_rels_reads_every_line_skipping_comments_and_blanks(tmp_path):
+    cfg = _sealed_conf(tmp_path, "# sealed\n\ndata/alcove\n  data/other/  \n")
+    assert vp.sealed_rels(cfg) == ("data/alcove", "data/other")
+
+
+def test_sealed_rels_is_none_when_unconfigured(tmp_path):
+    assert vp.sealed_rels(tmp_path / "absent.conf") is None
+    assert vp.sealed_rels(_sealed_conf(tmp_path, "# nothing yet\n")) is None
+
+
+@pytest.mark.parametrize("bad", ["/abs/path", "../escape", "data/../../x", "."])
+def test_a_sealed_folder_outside_the_vault_is_refused(tmp_path, bad):
+    """A rel that leaves the vault would point the guard and the writer somewhere else."""
+    with pytest.raises(ValueError):
+        vp.sealed_rels(_sealed_conf(tmp_path, bad + "\n"))
+
+
+def test_sealed_dir_is_the_first_folder_under_the_root(tmp_path):
+    vault = tmp_path / "vault"
+    (vault / "data" / "alcove").mkdir(parents=True)
+    root = _conf(tmp_path, f"{vault}\n")
+    sealed = _sealed_conf(tmp_path, "data/alcove\ndata/other\n")
+    assert vp.sealed_dir(root, sealed) == vault / "data" / "alcove"
+
+
+# Review round 1 (Fable 2026-11-02): a folder that is not there, or a malformed config,
+# refuses instead of creating a shadow folder; a BOM or trailing comment still names it.
+
+def test_sealed_dir_refuses_a_folder_that_does_not_exist(tmp_path):
+    vault = tmp_path / "vault"
+    (vault / "data" / "alcove").mkdir(parents=True)
+    root = _conf(tmp_path, f"{vault}\n")
+    with pytest.raises(vp.SealedFolderMissing):
+        vp.sealed_dir(root, _sealed_conf(tmp_path, "data/sesions\n"))
+
+
+def test_sealed_dir_refuses_a_malformed_config(tmp_path):
+    root = _conf(tmp_path, f"{tmp_path}\n")
+    with pytest.raises(vp.SealedFolderMissing):
+        vp.sealed_dir(root, _sealed_conf(tmp_path, "../outside\n"))
+
+
+def test_sealed_rels_strips_a_bom_and_a_trailing_comment(tmp_path):
+    conf = tmp_path / "s.conf"
+    conf.write_text("\ufeffdata/alcove  # sealed\n# only a comment\ndata/other#x\n",
+                    encoding="utf-8")
+    assert vp.sealed_rels(conf) == ("data/alcove", "data/other")
+
+
+def test_main_checkout_follows_a_worktree_git_file(tmp_path):
+    main = tmp_path / "repo"
+    (main / ".git" / "worktrees" / "wt").mkdir(parents=True)
+    wt = tmp_path / "elsewhere" / "wt"
+    wt.mkdir(parents=True)
+    (wt / ".git").write_text(f"gitdir: {main / '.git' / 'worktrees' / 'wt'}\n")
+    assert vp.main_checkout(wt) == main
+    assert vp.main_checkout(main) == main               # a main checkout is itself
+
+
+def test_main_checkout_keeps_root_for_anything_it_cannot_read_as_a_worktree(tmp_path):
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    assert vp.main_checkout(plain) == plain             # no .git at all
+    (plain / ".git").write_text("not a gitdir line\n")
+    assert vp.main_checkout(plain) == plain
+    (plain / ".git").write_text(f"gitdir: {tmp_path / 'nowhere'}\n")
+    assert vp.main_checkout(plain) == plain             # names no .git component
+    (plain / ".git").write_text(f"gitdir: {tmp_path / 'gone' / '.git' / 'worktrees' / 'x'}\n")
+    assert vp.main_checkout(plain) == plain             # the main .git is not a directory
+
+
+def test_sealed_dir_refuses_when_no_folder_is_configured(tmp_path):
+    root = _conf(tmp_path, "/srv/vault\n")
+    with pytest.raises(vp.SealedFolderMissing) as exc:
+        vp.sealed_dir(root, tmp_path / "absent.conf")
+    assert ".sealed-folders.conf" in str(exc.value) and "gitignored" in str(exc.value)
+
+
+def test_sealed_dir_refuses_when_the_root_is_unconfigured(tmp_path):
+    sealed = _sealed_conf(tmp_path, "data/alcove\n")
+    with pytest.raises(vp.VaultRootMissing):
+        vp.sealed_dir(tmp_path / "absent.conf", sealed)
+
+
+def test_main_checkout_ignores_a_submodule_pointer_and_an_undecodable_file(tmp_path):
+    sup = tmp_path / "super"
+    (sup / ".git" / "modules" / "sub").mkdir(parents=True)
+    sub = sup / "sub"
+    sub.mkdir()
+    (sub / ".git").write_text(f"gitdir: {sup / '.git' / 'modules' / 'sub'}\n")
+    assert vp.main_checkout(sub) == sub          # a submodule is not a linked worktree
+    (sub / ".git").write_bytes(b"gitdir: \xff\xfe\n")
+    assert vp.main_checkout(sub) == sub
+
+
+def test_sealed_dir_refuses_a_folder_that_resolves_outside_the_vault(tmp_path):
+    vault = tmp_path / "vault"
+    (vault / "data").mkdir(parents=True)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (vault / "data" / "alcove").symlink_to(outside)
+    root = _conf(tmp_path, f"{vault}\n")
+    with pytest.raises(vp.SealedFolderMissing):
+        vp.sealed_dir(root, _sealed_conf(tmp_path, "data/alcove\n"))
+
+
+def test_the_vault_config_reads_past_a_bom(tmp_path):
+    root = _conf(tmp_path, f"﻿{tmp_path}\n")
+    assert vp.vault_root(root) == tmp_path

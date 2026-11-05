@@ -122,7 +122,7 @@ Use the Task tool to launch **six parallel subagents** (`subagent_type: "general
 >
 > **Freshness:** Prioritize sources from the last 12 months for news, trend, and growth claims. If using older sources, note why they remain relevant (e.g., founding date is a historical fact).
 >
-> **Self-reported metrics:** When citing outcome data from the company's own materials (readmission rates, NPS, retention, cost savings, growth rates), always tag as `[Self-reported]`. Do not present company-sourced outcome claims as independently verified unless corroborated by an external source (peer-reviewed study, government audit, independent analysis).
+> **Self-reported metrics:** When citing outcome data from the company's own materials (NPS, retention, cost savings, growth rates), always tag as `[Self-reported]`. Do not present company-sourced outcome claims as independently verified unless corroborated by an external source (peer-reviewed study, government audit, independent analysis).
 >
 > **Contradictions:** If two credible sources disagree on a fact, report both values with their sources and mark as `[Needs verification]`. Do not silently pick one or average them.
 
@@ -603,7 +603,7 @@ Create the output directory `output/<slug>/` if needed, then write to `output/<s
 
 ## Culture & Work Environment
 
-**[BLUF — the one-sentence culture read, e.g., "Mission-driven with high clinical rigor; hybrid model, SF-based"]**
+**[BLUF — the one-sentence culture read, e.g., "Mission-driven with high engineering rigor; hybrid model, SF-based"]**
 
 [From Agent 3]
 

@@ -51,8 +51,8 @@ IN_SCOPE_PATTERNS = [
 # over 37 real files: it fired on 18 of them (49%), scoring an onsite prep plan at 1,340h, a
 # diligence plan at 963h, and a morning-starter doc at 720h. What it was actually summing:
 #
-#   "Saves loan officers ~20 hrs/week"        a business metric
-#   "USDA sanction 5 days ago"                a date reference
+#   "Saves analysts ~20 hrs/week"             a business metric
+#   "Vendor audit 5 days ago"                 a date reference
 #   "My first 30 days would be discovery"     narrative  ("first 90 days" x85 in output/)
 #   "12.5 hours, against the 79 hours ..."    one sentence, counted twice
 #

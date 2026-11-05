@@ -20,10 +20,10 @@ Setup (once):
 Run:
   PYTHONIOENCODING=utf-8 python3 tools/calendar_fetch.py [--days 3] [--calendar primary]
 
-Prints {"source", "sanitized", "generated_at", "window_start", "window_end", "events": [...]}
+Prints {"source", "sanitized", "private_hosts_configured", "generated_at", "window_start", "window_end", "events": [...]}
 to stdout. Each event: start, end (ISO), all_day, summary, location, calendar; summary and
 location are sanitized (gmail_fetch.sanitize_text) because invites are stranger-written, and
-`private` is true for an event redacted to "Private appointment" (PRIVATE_DOMAINS). A refusal
+`private` is true for an event redacted to "Private appointment" (is_private). A refusal
 from Google prints one ERROR line to stderr and exits 1. Nothing is written
 to disk except the refreshed token. Caller: the read-only morning page producer
 (plan: output/codify-ui-102726/03-plan.md section 4); until it exists, run by hand.
@@ -54,15 +54,19 @@ def _clean(text: str) -> str:
     """Sanitized, on one line: a title or location has no paragraphs to keep."""
     return " ".join(sanitize_text(text, MAX_FIELD_CHARS).split())
 
-# Private appointments. An event whose location, description, or
-# conference links name one of these telehealth hosts is printed as "Private appointment"
-# with its times only: the morning page still shows the hour is taken. Matched by
-# hostname, the domain itself or a subdomain, never by substring, so
-# "not<host>.com" is not private. Nick approved 2026-10-28: "I like this fix".
-# A generic list of common platforms, so it names no one's provider.
-PRIVATE_DOMAINS = ("betterhelp.com", "doxy.me", "headway.co", "simplepractice.com",
-                   "sondermind.com", "talkspace.com", "therapynotes.com")
+# Private appointments, printed as "Private appointment" with their times only: the
+# morning page still shows the hour is taken (Nick approved 2026-10-28). An event is
+# private when Google marks it so (visibility "private" or "confidential", set on the
+# event in Google Calendar), or when its location, description, or conference links name
+# a host listed in the gitignored tools/.private-calendar-domains.txt, one per line.
+# Hosts match by hostname, the domain itself or a subdomain, never by substring, so
+# "not<host>.com" is not private. Since 2026-11-01 the hosts live in that file and not
+# here: a list of hosts in a public repo says what kind of appointment it hides.
+PRIVATE_DOMAINS_CONFIG = Path(__file__).resolve().parent / ".private-calendar-domains.txt"
+PRIVATE_VISIBILITY = ("private", "confidential")
 PRIVATE_SUMMARY = "Private appointment"
+
+
 _HOST_RE = re.compile(r"(?<![A-Za-z0-9.-])([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+)")
 
 
@@ -83,8 +87,30 @@ def _hosts(text: str) -> set[str]:
             for m in _HOST_RE.finditer(_normalize(text or ""))}
 
 
+def load_private_domains(path: Path = PRIVATE_DOMAINS_CONFIG) -> tuple[str, ...]:
+    """The configured private hosts, read the way event text is (_hosts: NFKC, every dot
+    spelling, a scheme or path ignored), so a host line cannot be silently inert where the
+    same host in an event would match (Fable r1 10.F10). A BOM and `#` comments are dropped.
+    No file means none, and the visibility rule still applies."""
+    try:
+        lines = path.read_text(encoding="utf-8-sig").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return ()
+    found: list[str] = []
+    for line in lines:
+        # `.host.example` and `*.host.example` mean the host and its subdomains, which is
+        # what a listed host already matches (Fable r2 F2).
+        found.extend(sorted(_hosts(line.split("#", 1)[0].strip().lstrip("*."))))
+    return tuple(dict.fromkeys(found))
+
+
+PRIVATE_DOMAINS = load_private_domains()
+
+
 def is_private(item: dict) -> bool:
-    """True when any field of the raw event names a PRIVATE_DOMAINS host."""
+    """True when Google marks the event private, or any field names a PRIVATE_DOMAINS host."""
+    if item.get("visibility") in PRIVATE_VISIBILITY:
+        return True
     texts = [item.get("location"), item.get("description"), item.get("hangoutLink")]
     texts += [ep.get("uri") for ep in (item.get("conferenceData") or {}).get("entryPoints") or []]
     for host in set().union(*(_hosts(t) for t in texts if isinstance(t, str))):
@@ -231,9 +257,15 @@ def main(argv=None) -> int:
             raise
         print(msg, file=sys.stderr)
         return 1
+    if not PRIVATE_DOMAINS:
+        # The visibility rule still applies, but a host-only private event would print in
+        # full, so say so rather than letting sanitized:true imply it (Fable r1 10.F2).
+        print(f"WARNING: no private hosts configured ({PRIVATE_DOMAINS_CONFIG.name} missing or "
+              f"empty); only events Google marks private are redacted.", file=sys.stderr)
     print(json.dumps({
         "source": SOURCE,
         "sanitized": True,
+        "private_hosts_configured": bool(PRIVATE_DOMAINS),
         "generated_at": now.isoformat(timespec="seconds"),
         "window_start": start.isoformat(),
         "window_end": end.isoformat(),

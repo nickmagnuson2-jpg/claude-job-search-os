@@ -71,7 +71,7 @@ Before any such operation, sweep three axes (not just the file you edited):
 
 1. **All tracked files, not just changed ones:** `git grep -in <name>` across the whole working tree for each denylist token and any newly-known real entity.
 2. **Git history, not just the working tree:** `git grep -in <name> $(git rev-list --all)` (inline `$(...)`, not a pre-expanded shell variable — that has silently returned empty before) and `git grep <name> origin/<branch>` per remote branch.
-3. **Contextual variants, not just exact tokens:** quoted strings, path-embedded fragments (e.g. `therapy-<name>-transcript.md`), case variants. For short single-word company/person tokens that could also appear as a substring of an unrelated common word, use word-boundary matching (`grep -wE "\b<token>\b"`) rather than plain substring — plain substring produces false positives that both cause false alarms and can corrupt unrelated content if fed into a `--replace-text` scrub.
+3. **Contextual variants, not just exact tokens:** quoted strings, path-embedded fragments (e.g. `<topic>-<name>-transcript.md`), case variants. For short single-word company/person tokens that could also appear as a substring of an unrelated common word, use word-boundary matching (`grep -wE "\b<token>\b"`) rather than plain substring — plain substring produces false positives that both cause false alarms and can corrupt unrelated content if fed into a `--replace-text` scrub.
 
 Surface every hit and triage by hand for a small set. Do not report "clean" from a changed-files-only scan when the operation touches the full history/tree.
 
