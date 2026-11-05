@@ -509,3 +509,48 @@ def test_mark_sent_with_nothing_to_change_leaves_the_file_untouched(tmp_path):
     r, c = mark(tmp_path)
     assert c == 0 and r["changed"] is False, r
     assert p.read_bytes() == raw
+
+
+# --- round-5 mutation review (2026-11-04) -----------------------------------------
+
+LINK = {"name": "Jane Doe", "date": "2026-06-20", "type": "email", "summary": "first",
+        "repo_root": "/nowhere"}
+
+
+def test_a_link_from_before_the_claim_existed_still_refuses(tmp_path):
+    """f47cb99f linked captures with no claim directory. The meta key alone must refuse."""
+    cid = dc.capture(DRAFT)
+    dc.link_networking(cid, LINK)
+    (dc.store_dir() / cid / dc.CLAIM_NAME).rmdir()
+    with pytest.raises(dc.CaptureError, match="already linked to a networking entry"):
+        dc.link_networking(cid, dict(LINK, summary="second"))
+
+
+def test_a_link_whose_meta_cannot_be_written_leaves_no_claim(tmp_path, monkeypatch):
+    cid = dc.capture(DRAFT)
+    real = dc._write_meta
+
+    def boom(directory, meta):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(dc, "_write_meta", boom)
+    with pytest.raises(OSError):
+        dc.link_networking(cid, LINK)
+    monkeypatch.setattr(dc, "_write_meta", real)
+    assert not (dc.store_dir() / cid / dc.CLAIM_NAME).exists()
+    dc.link_networking(cid, LINK)
+    assert dc.read_meta(cid)["networking"]["summary"] == "first"
+
+
+def test_a_failed_write_on_an_unlinked_capture_reports_rolled_back(tmp_path, monkeypatch):
+    cid = dc.capture(DRAFT)
+    real = dc._write_meta
+
+    def boom(directory, meta):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(dc, "_write_meta", boom)
+    with pytest.raises(dc.CaptureError, match="rolled back"):
+        dc.confirm(cid, "unchanged")
+    monkeypatch.setattr(dc, "_write_meta", real)
+    assert dc.read_meta(cid)["status"] == "opened"
