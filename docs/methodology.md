@@ -39,7 +39,7 @@ An open-source framework that turns Claude Code into an **end-to-end job search 
 | `data/profile.md` | Name, contact, compensation, availability, interests |
 | `data/goals.md` | Search thesis, role types, company stage, geography, compensation, current phase |
 
-**Skills covered:** `/generate-cv`, `/research-company`, `/research-industry`, `/prep-interview`, `/cold-outreach`, `/follow-up`, `/draft-email`, `/voice-export`, `/extract-identity`, `/review-cv`, `/review-cv-deep`, `/weekly-review`, `/scan-jobs`, `/standup`
+**Skills covered:** `/generate-cv`, `/research-company`, `/research-industry`, `/prep-interview`, `/cold-outreach`, `/follow-up`, `/draft-email`, `/voice-export`, `/extract-identity`, `/review-cv`, `/review-cv-deep`, `/scan-jobs`, `/standup`
 
 If either file is missing or all-TODOs, Claude stops immediately and tells you exactly what to do:
 - Missing `profile.md` → run `/import-cv` to populate it, or create it manually
@@ -607,7 +607,6 @@ memory/                          ← Persistent session context (auto-memory sys
   ├── personal-todo/              ← /personal-todo — personal-life to-do list (sibling of /todo)
   ├── standup/                    ← /standup — morning briefing
   ├── checkout/                   ← /checkout — end-of-day close-out, bookend to /standup
-  ├── weekly-review/              ← /weekly-review — weekly retrospective
   ├── act/                        ← /act — autonomous to-do execution
   ├── analyze/                    ← /analyze — artifact teardown vs. your systems + wisdom
   ├── critique-plan/              ← /critique-plan — six-agent plan critique + hybrid synthesis
@@ -664,7 +663,7 @@ Every data file mutation (pipeline, networking, notes, todos) goes through a ded
 
 | Script | Target file | Operations |
 |--------|-------------|------------|
-| `todo_write.py` | `data/job-todos.md` | add, done, withdraw, supersede, clear, sync |
+| `todo_write.py` | `data/job-todos.md` | add, done, withdraw, supersede, clear, sync, rotate |
 | `pipe_write.py` | `data/job-pipeline.md` | add, update, remove |
 | `networking_write.py` | `data/networking.md` + `data/outreach-log.md` | add, log (requires `--direction in|out|both|none`; only `in` and `both`, meaning the contact reached Nick, flip outreach status to Replied, via `outreach_status.py`, the only writer of that cell), remove |
 | `remember_apply.py` | 11 destinations (pipeline, networking, notes, profile, decisions, accomplishments, personal-vault, etc.) | route-and-write |

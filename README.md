@@ -52,7 +52,7 @@ A sample CV generated from the fictional demo profile: [`sample-cv-priya-anand.p
 | Layer | Where | What it holds |
 |---|---|---|
 | Data | `data/` (private, kept out of this public repo) | The user's profile, goals, pipeline, contacts, decisions, and per-project records that CVs are built from |
-| Skills | [`.claude/skills/`](.claude/skills/) | 39 slash commands, each a markdown file listing its steps and, for most, which data files it reads |
+| Skills | [`.claude/skills/`](.claude/skills/) | Slash commands, each a markdown file listing its steps and, for most, which data files it reads |
 | Hooks | `tools/check_*.py`, wired in [`.claude/settings.json`](.claude/settings.json) | Checks that run on tool calls and block known failures ([full list](docs/hooks.md)) |
 | Framework | [`framework/`](framework/) | Methodology the skills follow: the CV workflow and 20-point checklist, interview coaching protocol, recruiter-call answering strategies, style guide |
 
@@ -114,13 +114,13 @@ If you tried the demo, delete the demo files from `data/` and `output/` first, o
 
 ---
 
-## All 39 skills
+## All skills
 
 Argument syntax and worked examples for each: [docs/usage.md](docs/usage.md).
 
 | Area | Skills |
 |---|---|
-| Planning and tracking | `/standup` `/checkout` `/todo` `/personal-todo` `/act` `/pipe` |
+| Planning and tracking | `/standup` `/check` `/checkout` `/todo` `/personal-todo` `/act` `/pipe` |
 | Capture | `/wispr` `/remember` |
 | Research | `/research-industry` `/research-company` `/discover-companies` `/scan-companies` `/scan-jobs` `/analyze` `/analyze-stream` `/learn` |
 | Applications | `/generate-cv` `/apply` `/cover-letter` `/review-cv` `/review-cv-deep` |
@@ -135,7 +135,7 @@ Argument syntax and worked examples for each: [docs/usage.md](docs/usage.md).
 
 ```
 CLAUDE.md          Project instructions, loaded every Claude Code session
-.claude/skills/    The 39 skill definitions
+.claude/skills/    The skill definitions
 framework/         Methodology docs and templates
 tools/             Python scripts and hooks
 tests/             pytest suite for the tools and hooks

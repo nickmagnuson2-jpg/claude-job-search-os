@@ -5,6 +5,325 @@ Format: newest entries at the top.
 
 Forked from raphaotten/claude-interview-coach (MIT / CC BY 4.0).
 
+## 2026-11-05: One reply logged once, diff-scoped mutation runs, private names out of tracked files
+
+**One reply is logged once (PR #19, dedupe-inbound)**
+- A reply could be logged twice (once by `/follow-up`, again by `/networking` or `/remember`),
+  and `/follow-up` logged its entry as sent at draft approval, before any send. Now
+  `networking_write.py log` refuses a second open reply with `possible_duplicate_reply`
+  (`--new-reply` for a genuinely new message), and the rule has one implementation, which
+  `/remember` checks a whole call against before writing anything.
+- Writers hold a lock on `data/networking.md` from read to save, so two cannot interleave.
+- A draft is logged plain and linked to its capture (`--capture`); `draft_capture.py confirm`
+  marks it sent through the new `mark-sent` only when the send is confirmed.
+
+**Mutation runs measure only what a change can affect (PR #20, mutation-speed)**
+- `tools/mutation_check.py` runs only the mutants on lines changed against the merge-base
+  with origin/main by default (`--whole-file` for the old behaviour; the overnight sweep stays
+  whole-file). Changed tests, pytest config and deleted test files widen the scope to the whole
+  file by flat rules, after four rounds of review each found a gap in an import-graph inference.
+- Per-line test selection (`--line-map`) and a verdict cache (`--cache`) are opt-in and off by
+  default: selection measured slower than the file tier once it had to rule out false kills,
+  and the cache key has known gaps.
+
+**Private names out of tracked files; the vault-read guard fails closed (PR #21, pii-scrub-1101)**
+- The sealed folder's location, the private meeting keywords and the private calendar hosts
+  moved from tracked code into gitignored configs. The private meeting type is now `sealed`;
+  a missing or unreadable config classifies every meeting as `unknown`.
+- Sealed transcripts are written only inside the configured sealed folder, judged by where the
+  write lands, so a symlink inside the repo cannot route one into it.
+- In the vault repo, only a plain `git status` passes the read guard; every other git command
+  there counts as a content read. Three review rounds had each found a leak in the previous
+  allowlist of commands that "print no content".
+
+**Docs (this entry's PR, docs-1101)**
+- `/audit-pii` Step 0 reads the remote's refs through the read-only GitHub API instead of
+  `git ls-remote`, which raised an unprompted Touch ID prompt. Pull refs are expected and
+  permanent; only leftover branches are flagged.
+- `tools/HOOK_AUTHORING.md`: a hand mutation must purge bytecode when it restores, or the next
+  run can execute a same-length mutant restored within the same second.
+- `docs/tools-reference.md`: rows for the new `networking_write.py` flags and the
+  `mutation_check.py` scope flags.
+
+## 2026-11-04: Repost check, no typed skill count, shipped/waiting in /checkout, table owners
+
+**What prompted it.** On 11/02 a social repost captioned as an agents masterclass turned out to
+be a general talk on using LLMs, starting several minutes in, with no agent content. The
+caption had been taken as a description of the video. Separately, the typed skill count in
+`CLAUDE.md` said 39 when there were 38, and the README and usage docs repeated it.
+
+**Changed**
+- **`/analyze-stream` Step 0 item 5 and Step 1 (PR #15, bd-lessons-1103):** when the URL is a social
+  repost of a video, find the original before `acquire`. Then, between `acquire` and
+  `transcribe`, match a line from the reupload against the original's official captions. No
+  pipeline subcommand transcribes a clip, so Step 1 cuts the first two minutes of the acquired
+  file with `ffmpeg` and runs `whisper-cli` on that alone. If nothing matches, or it matches a
+  different talk than the post claims, the skill stops before `transcribe`. A first version
+  offered `/analyze` on the original instead; review found that `/analyze` sends any recording
+  over about 45 minutes back to `/analyze-stream`, so that shortcut was removed.
+- **Skill counts:** `CLAUDE.md` now gives the command that produces the count
+  (`ls -d .claude/skills/*/ | wc -l`) instead of a number. The README and `docs/usage.md` drop
+  their typed counts too. Both skill tables were checked against the 38 skill directories and
+  list every one, `/check` included.
+
+**Shipped and waiting in /checkout (PR #16, checkout-shipped)**
+- `/checkout`'s System Changes read only this file, so a day of merged PRs with no entry
+  rendered empty (11/03: PRs #10-#14 merged, checkout showed none). `todo_daily_metrics.py`
+  now reports `shipped_today` (first-parent commits on main in the logical day, 04:00 to
+  04:00, with PR number, branch and title) and `waiting_to_merge` (unmerged local branches
+  with a commit in the last 7 days, with ahead counts). Both read `origin/main`, with an
+  `as_of`, since local main moves only on pull; no fetch by default (`--fetch` opts in).
+  Unreadable git returns `available: false`, never an empty list.
+
+**Pipeline and contact writes go through their owners (PR #17, table-routing)**
+- `data/job-pipeline.md` is written only by `pipe_write.py`, and `data/networking.md` by
+  `networking_write.py` (one parked exception, `remember_apply.apply_contact_note`).
+  `fmt_row` and `fmt_contact_row` pass every cell through `sanitize_cell`, so a `|` in a
+  value cannot add a column.
+- New `pipe_write note <company> --append T [--role R]` changes only the Notes cell; it
+  refuses a row with more than 8 cells instead of dropping the cells after the 8th.
+  `pipe_write add` takes `--notes` and `--next-action`.
+- `act_apply pipeline-add` and `contact-add` call the owners by subprocess and relay their
+  JSON. `remember_apply`'s pipeline note calls `pipe_write note`; the old writer joined
+  notes with a literal " | ", which split the row.
+- **Retired:** `tools/networking_direction_backfill.py` (added 10/30, see that entry) and its
+  tests are deleted. It was applied on 11/02 and rewrote all of `networking.md`, so it was a
+  second writer of that table. It stays in git at `162260f9`.
+
+**Open.** Parked review findings on item 5: it has no branch for an original that cannot be
+found; after a match it transcribes the reupload rather than acquiring the original; and it
+names no tool for fetching the original's captions (`tools/fetch_transcript.py` is
+YouTube-only). Nothing yet tests the docs against the skill tree.
+
+## 2026-11-03: Review sandbox size, guard exemption for merges, PermitSF, and mutation cleanup
+
+**What prompted it.** Five branches landed in order after the 11/01 merges (PRs #10-#14). Every
+branch's full suite showed the same 8 `codex_verify` failures that passed when the file ran
+alone; merge commits were refused by the concurrent-commit guard until every incoming path was
+named by hand; and the permit lookup missed every filing in the city's newer permit system.
+
+**Review sandbox (PR #10, `tools/codex_verify.py`)**
+- The sandbox wrote one seatbelt rule for each folder beside the review root. From a linked
+  worktree that was one rule per worktree, and in a full test run one per pytest tmp folder.
+  Past macOS's 64 KB profile limit, `sandbox-exec` refused to start, which caused the 8 failures.
+- `seal_rules()` writes ONE rule per parent folder: deny everything under it except the review
+  root and the folders on the path down to it. Configured private trees stay as subpath denies.
+  Profile size no longer depends on how many folders sit beside the repo (3,000 peers: same
+  size; the old code produced 468,128 bytes). A loose file beside the repo is now denied too.
+- Tests ask the real jail (`sandbox-exec ls`) whether a path is readable instead of asserting on
+  the rule list.
+
+**Booking tracker (PR #11, `tools/booking_tracker.py`)**
+- About 1 read in 25 returns a stripped page whose pageProps holds only the handle, which
+  failed the hourly check. `fetch_props()` re-reads such a page after 10 s, at most twice more,
+  for the booking and store pages. If every read is stripped it returns the last one, so a real
+  page change still surfaces as the parser's usual error.
+
+**Property records (PR #12, `tools/sf_property_records.py`)**
+- PermitSF (data.sf.gov `tyz3-vt28`), the city's newer permit system, is now queried.
+- `street_of()` is the one place that decides which street a row belongs to, so "MAIN" and
+  "MAIN PARK BLVD" stay separate. One street is decided for the whole report: an optional
+  suffix argument picks it, and when two suffixes share the house number (10TH ST and 10TH AVE)
+  every section says AMBIGUOUS and withholds its records.
+- `query()` pages with `$offset` past the old 200-row limit; quotes in a street name are doubled
+  for SoQL. Each section prints a count_report line, a failed query marks its section INCOMPLETE,
+  and the run exits 1. The tool had no tests before; it now has an offline suite.
+
+**Concurrent-commit guard (PR #13, `tools/concurrent_commit_guard.py`)**
+- A staged path is exempt as merge-incoming only when a merge is in progress, the session itself
+  ran `git merge` or `git pull`, the index entry equals the incoming head's entry (mode
+  included), the branch had not changed the path since the single merge base, and the path
+  exists there or is added on the incoming side. Anything else is refused as before, and git
+  errors fail closed. On the largest real merge, 708 of 789 incoming paths are exempt. Guard
+  edit approved by the owner.
+
+**Mutation cleanup (PR #14)**
+- Case-1 survivors from the mutation audit were closed by removing the redundant code they
+  exposed, not by allowlisting it, across `mutation_sweep`, `schema_guard`, `job_quiesce`,
+  `frame_write`, `check_pipeline_exit_status`, `check_workflow_scriptpath`,
+  `check_table_integrity` and `check_frame_integrity`. A test that could not fail was deleted.
+
+## 2026-11-01: Gmail sync recovers missed mail, and fixes to the mutation and review tools
+
+**What prompted it.** Three branches landed after the 10/31 merges. A review of
+`gmail_fetch.py` found that an expired history cursor skipped the mail in between, and a run
+killed mid-write could lose or duplicate mail. While landing the 10/30 branches, a stale
+`.pyc` produced false kills in mutation runs, and a review run from a linked worktree could
+read the main checkout. The parked follow-ups from the overnight-1029 review were also closed.
+
+**Gmail sync (`tools/gmail_fetch.py`)**
+- Forward sync reads every history page (500 per page). The cursor moves only after the last
+  page, so a failure part-way leaves it where it was.
+- A message that fails to fetch or write is kept in `state["retry_ids"]` and retried on the
+  next run; it is dropped with a warning after 5 attempts.
+- An expired cursor (HTTP 404 or `invalidHistoryId`) now recovers the gap: it lists every
+  message since the last run's start minus 1 hour, in the same label scope, all pages. The
+  window is capped at 30 days, or 7 days when no last run is recorded, and a warning says
+  when older mail is not recovered. The check uses the HTTP status when there is one, so a
+  500 whose URL contains "404" is no longer read as an expired cursor.
+- Writes are idempotent by Gmail id: a message whose id is already on an inbox file's
+  Message-ID line or in `state["written_ids"]` (kept 30 days) is skipped, so a run killed
+  after writing and before saving state writes nothing new when it is replayed.
+- The state file and each inbox file are written to a temp file and renamed into place, so a
+  death mid-write leaves no partial file. Old inbox files are cleaned up only after the state
+  is saved. `last_refresh` is the time the run started. `--backfill` works on a throwaway copy
+  of the state and never saves it. A non-UTF-8 inbox file is skipped instead of crashing the
+  scan.
+- `.gitignore`: the token and both state files are ignored by stem globs
+  (`tools/gmail_token*`, `tools/.gmail_state*`), which cover the temp files a death leaves and
+  a Finder duplicate such as `gmail_token 2.json`. Two tests in
+  `test_gitignore_public_safety.py` check each name with `git check-ignore`.
+
+**Career scanner**
+- `career_scanner/dedup.py`: the fuzzy title match threshold is 0.90 (was 0.80), and "Sr." and
+  "Jr." are expanded before comparing, so different levels of one title at one company are no
+  longer merged as one role.
+
+**To-dos**
+- `todo_write.py done`: the repair path for a Pending row stranded under `## Completed` now
+  refuses a recurring row, as the live path already did. Both paths call one check.
+- `todo_write.py update --notes`: the value is trimmed like every other Notes cell.
+- `source_check.py`: an In Progress recurring row counts as live, not retired. It imports
+  `rotate`'s own status set, so the two tools cannot disagree about a row.
+
+**Mutation and review tools**
+- `mutation_check.py`: deletes the target's cached bytecode on every write (each mutant and
+  the restore). A test that starts a child with a fresh environment wrote the `.pyc` anyway,
+  and a same-size mutant written in the same second ran as the earlier mutant and was
+  reported KILLED. This replaces the manual `chmod a-w tools/__pycache__` workaround.
+- `codex_verify.py`: run from a linked worktree, it finds the main checkout through git and
+  seals the main checkout, its peer repos and the paths listed in the main checkout's
+  `tools/.sealed-paths.conf`. Before, it sealed only
+  the worktree's siblings in the worktrees folder.
+- Redundant code removed across 12 tools, so mutants that could never be killed no longer
+  exist: `pipe_write.is_data_row`, `allowlist_write`, `career_scanner/dedup.find_match`,
+  `friction_surface`, `scan_promotion_candidates`, `mutation_sweep`, `mutation_report`,
+  `conftest_guard`, `frame_write`, `coverage_invariant`, `todo_daily_metrics` (with its unused
+  `ACTIVE_PROCESS_STAGES`), and `schema_guard`, whose `__main__` self-check is deleted (its
+  tests cover the same cases). Allowlist entries for removed code are deleted and false
+  reasons rewritten in `tools/mutation-allow.json`.
+
+**Docs**
+- `CLAUDE.md`: the Self-Improvement Loop's Step 2 records a REOPEN gate in the rule file's
+  `reopen_gate` frontmatter, or in the owning `data/workstreams/` file, not as a parked to-do.
+  The `/memory-refresh` mentions are removed; the weekly `memory-promotion-scan` job is the
+  reader.
+
+## 2026-10-31: Calendar and inbox approvals behind Touch ID, a morning page, and one parser per data file
+
+**What prompted it.** The work from 10/23 to 10/31 merged to main as PRs #1 to #5 and
+five direct merges (overnight-deletions, overnight-simplicity, overnight-codify,
+overnight-inbox-signing, and the overnight-calendar follow-ons). The runs deleted unused
+tools, moved private parsers onto shared readers, codified the artifact workflow, and added
+calendar access behind Touch ID. Guard edits were approved by the owner.
+
+**Deleted**
+- `tools/linkedin-scanner/` (replaced by `contact_finder.py`), four June one-shot migration
+  tools, `/dashboard` (its only command had failed with an ImportError since July),
+  `tools/inbox_triage.py`, and `tools/check_checkout_status.sh` (its launchd job was not
+  installed).
+- `/weekly-review` (no invocations in 282 transcripts). On the first working day of a week,
+  `/standup` Step 2w writes the week's Top 5 to `data/weekly-review-log.md`, which `/checkout`
+  reads only when the entry is this week's. `/standup`'s allowed-tools grant Write for that
+  one file.
+- `/memory-refresh` archived; the weekly scan's to-do points at `memory/promotion-backlog.md`.
+- `check_edit_after_mutation.py` deleted and unwired: it exited 0 with a stdout warning the
+  model never sees.
+
+**New gates**
+- **`commit_msg_pii_guard.py` (run by `tools/hooks/commit-msg`)**: blocks a commit message
+  that contains a denylist name. The ambiguous and target-word tiers only warn. The pre-commit
+  gate now also blocks on the denylist only and warns on the other tiers.
+- **`check_build_log_present.py`**: blocks creating or editing a build file (HTML, code,
+  notebook, spreadsheet, deck) under `output/<company>/` until a `BUILD-LOG.md` on the path
+  to it has `reader_ask` filled and the company dossier exists. `copy_destinations` in
+  `check_handoff_producer.py` now reports each landed file for a copy into a folder, so `cp`,
+  `mv`, `install` and `rsync` into `output/` are judged too.
+- **`check_draft_artifact.py`**: opening a staged draft with an attachment or a non-bio link
+  needs an `ARTIFACT:` header naming a BUILD-LOG for that reader, or `none (<reason>)` for a
+  link. A rendered CV passes.
+- **`check_frozen_file.py`**: blocks a write to an existing file with no owner-write bit (a
+  build's `chmod a-w` freeze).
+- **`check_calendar_mcp.py`**: blocks Google Calendar connector reads (use
+  `calendar_fetch.py`), and allows a write only after a macOS dialog showing the event is
+  approved and a Touch ID signature over the exact call verifies. Each decision is logged by
+  hash only.
+- **`check_sealed_read.py`** also blocks reads and recursive walks of a sibling personal
+  repo's sealed folder.
+- **`tests/conftest.py`** fails any test that changes one of the four real data tables. Two
+  tests had been adding a "Memory refresh" row to the real to-do file on every run.
+
+**Artifact workflow**
+- `framework/artifact-workflow.md`, `framework/decision-tree.md` and
+  `framework/templates/build-log.md`: one workflow for every reader-facing build.
+- `build_check.py` checks every `output/**/BUILD-LOG.md` and renders the `/standup` Builds
+  line. `sent_artifact_check.py` flags any attachment or link in Gmail Sent that no BUILD-LOG
+  names; its launchd job stays in `tools/launchd/disarmed/`.
+- The outreach log gains an Artifact column, and `outreach_status.py --append` is the row
+  writer the outreach skills call.
+
+**Calendar and inbox**
+- `calendar_fetch.py` (read-only token) lists upcoming events and prints an event marked private,
+  or one naming a host on the gitignored private-hosts list, as "Private appointment" with its
+  times only. `calendar_write.py` creates, updates or deletes
+  one event with its own `calendar.events.owned` token, only after the dialog and a Touch ID
+  signature. Invitations go out only with `--attendee`.
+- `approval_signing.py`: an inbox-drain approval counts only with a Touch ID signature, which
+  covers the exact set of blocks and each block's command and destination. Any change voids
+  the approval.
+
+**Daily views**
+- `/check` and `day_check.py`: read-only midday counts of sends, replies, calls, applications,
+  pipeline moves and closed to-dos against the weekly targets. A source it cannot read is
+  null, never 0.
+- `morning_page.py`: a static HTML page rendered from read-only sources
+  (`standup_collect.py --read-only`, `day_check`, `calendar_fetch`). Its launchd job is armed.
+  The page scrolls at every window height, to-dos lead with their due tag, and `--demo` moves
+  the sample calendar to the render day.
+- New tools: `duet_snapshot.py` (a privacy-filtered daily snapshot of search state),
+  `booking_tracker.py` (public booking-page data for venues in a gitignored config),
+  `sf_property_records.py` (SF open-data records for one address), `cv_fixed_sections.py`
+  (blocks a CV render whose fixed sections came from an older CV), `coverage_invariant.py`
+  (every untracked file is backed up or listed as ephemeral).
+
+**One parser per data file**
+- Pipeline: six tools and `pipeline_staleness.py` read rows through `pipe_read.parse_all_rows`,
+  so "closed" means what `/pipe` means. An alignment separator row is no longer a company.
+  `webset_discover.py` uses `agent_core`'s helpers, so a rejected company is not re-proposed.
+- Outreach log: `outreach_read.parse_rows` is the one row reader.
+- To-dos: `todo_read.py` is the one reader. Overdue means due strictly before today, and
+  before 04:00 the run is about the previous day (`todo_read.py --logical-date`).
+- Replies: `reply_classify.py` is the one rule for "did the contact reply", used by
+  `networking_write.py`, `day_check.py` and `remember_classify.py`. It counts a reply only on
+  a positive signal, and a negated note ("never replied") is not a reply.
+  Superseded by PR #9 (the 10/30 entry below, merged after this one): `log` now
+  requires `--direction`, and `reply_classify.py` reads only the interaction type.
+- `todo_daily_metrics.py` reads `last_interaction` from the Last Interaction column through
+  `networking_read.parse_contacts`; it had read the Added column.
+
+**Writers**
+- `todo_write.py rotate <fragment> --due YYYY-MM-DD` closes a recurring row and recreates it in
+  one verified write; a failed check restores the file. `done` refuses a recurring row and
+  points to `rotate`; `withdraw` still retires one. `source_check.py mark` calls `rotate`.
+  `check_todo_write_kwargs.py` allows each subcommand only the exact flags it takes.
+- `networking_write.py log --followup` reports `todo_added` and `todos_file`; `--no-todo`
+  skips the to-do.
+- `open_draft.py` reply mode opens a Gmail search for the thread.
+- Outreach: a `Closed` status leaves the awaiting lists, and only rows newer than the last
+  Replied or Closed row decide whether a recipient is awaited.
+- `pipe_write.py add` checks duplicates on company and role, not company alone.
+
+**Review and mutation tools**
+- `codex_verify.py` prints the open-P0 count beside the GATE line, gives each default report a
+  run id, and diffs a branch with no upstream against origin. Until 2026-11-12 a Fable review
+  may fill one of a tier's slots in place of Grok.
+- `reader_review.py --panel` runs 3 to 5 real decision-maker seats, each in isolation.
+- `mutation_check.py`: `--in-worktree` runs in a throwaway linked worktree; `--max-hours`
+  stops starting mutants and reports status `incomplete`; each mutant runs first against the
+  test files that execute the target. Tests that need the owner's real data carry
+  `@pytest.mark.live_data` and skip in a linked worktree.
+- Mutation survivors were closed or allowlisted with reasons in most of the tools above.
+
 ## 2026-10-30: Reply and send direction is recorded, not guessed from the note
 
 **What prompted it.** Whether a networking note was a reply or a send was decided by
