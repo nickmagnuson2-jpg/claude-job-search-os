@@ -28,7 +28,7 @@ import mutation_check as mc  # noqa: E402
 import mutation_linemap as lm  # noqa: E402
 
 
-def _run(args, cwd, env_extra=None):
+def _run(args, cwd, env_extra=None, default=False):
     """Same deterministic environment as test_mutation_check._run: the ambient mutation
     flags and CLAUDECODE are stripped so a nested run measures the tool, not its caller."""
     env = {k: v for k, v in os.environ.items()
@@ -37,6 +37,10 @@ def _run(args, cwd, env_extra=None):
     env["PYTHONIOENCODING"] = "utf-8"
     env["MUTATION_REPO_ROOT"] = str(cwd)
     env.update(env_extra or {})
+    # Selection is opt-in since 2026-11-05; most tests here are ABOUT selection, so they
+    # opt in. _run_default runs the tool exactly as a caller with no flags does.
+    if "--no-line-map" not in args and "--list" not in args and not default:
+        args = [*args, "--line-map"]
     return subprocess.run([sys.executable, str(TOOL), *args], capture_output=True,
                           text=True, cwd=str(cwd), env=env)
 
@@ -1157,3 +1161,17 @@ def test_a_long_prefix_falls_back_to_its_files_in_run_order(monkeypatch):
 def test_repo_state_outside_git_is_unique_so_nothing_replays(tmp_path):
     a, b = mc._repo_state(tmp_path), mc._repo_state(tmp_path)
     assert a.startswith("unknown-") and a != b
+
+
+def test_e2e_by_default_no_subset_runs_but_changed_tests_still_get_their_map(tmp_path):
+    """Selection is OFF by default (2026-11-05): no subset runs. A test-first change still
+    builds the line map, because the scope needs the lines the added test executes."""
+    src, t = _repo(tmp_path)
+    src.write_text(SUBJECT.replace("n > 100", "n >= 101"), encoding="utf-8")
+    d = json.loads(_run([str(src), "--tests", str(t), "--json"], tmp_path, default=True).stdout)
+    assert d["selection"]["enabled"] is False and d["selection"]["subset_runs"] == 0
+    assert d["selection"]["line_map"]["status"] == "skipped", "a plain diff needs no map"
+    t.write_text(t.read_text() + "def test_added(): assert double(102) == -1\n")
+    d = json.loads(_run([str(src), "--tests", str(t), "--json"], tmp_path, default=True).stdout)
+    assert d["scope"]["mode"] == "diff" and d["scope"]["test_lines"], d["scope"]
+    assert d["selection"]["line_map"]["status"] == "ok" and d["selection"]["subset_runs"] == 0

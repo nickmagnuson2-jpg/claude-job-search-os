@@ -2132,9 +2132,14 @@ def main() -> int:
     ap.add_argument("--base", default=None,
                     help="git ref to diff against (default: merge-base of HEAD and "
                          "origin/main). Implies diff scope, even under the sweep.")
+    ap.add_argument("--line-map", action="store_true",
+                    help="OPT-IN per-line test selection: each mutant first runs the tests "
+                         "that execute its line (with every test before them). Off by default "
+                         "since 2026-11-05: on pipe_write it measured slower than the file tier "
+                         "once subsets became true prefixes of the run (see the PR).")
     ap.add_argument("--no-line-map", action="store_true",
-                    help="skip per-line test selection; every mutant runs against the "
-                         "file tier, then the full mapped set, as before 2026-11-04")
+                    help="build no line map at all, not even for changed-test scoping (a "
+                         "changed mapped test then measures the whole file)")
     ap.add_argument("--no-cache", action="store_true",
                     help="neither read nor write the verdict cache (.mutation-cache/)")
     args = ap.parse_args()
@@ -2326,7 +2331,11 @@ def main() -> int:
         tiered = bool(fast) and len(fast) < len(test_files)
         # The per-line map is built on the unmutated source, after the probe has put it
         # back (files_that_run writes an instrumented copy through write_mutant).
-        if catalog and not diverged and not args.no_line_map:
+            # The map is built for SELECTION (--line-map) or for changed-test SCOPING
+        # (pending_tests); --line-map only decides whether subsets are used.
+        use_selection = args.line_map and not args.no_line_map
+        sel["enabled"] = use_selection
+        if catalog and not diverged and not args.no_line_map and (use_selection or pending_tests):
             try:
                 write_mutant(target, original, original)
                 line_map, map_info = build_line_map(target, test_files, args.timeout)
@@ -2423,7 +2432,7 @@ def main() -> int:
             # the file is unmutated, so a ratchet firing on it means real corruption and
             # must still turn the run baseline_red.
             decided = False
-            if line_map is not None:
+            if line_map is not None and use_selection:
                 ids = covering_ids(spans.get((entry["line"], entry["col"], entry["op"]),
                                              (entry["line"], entry["line"])), line_map)
                 if not ids:
