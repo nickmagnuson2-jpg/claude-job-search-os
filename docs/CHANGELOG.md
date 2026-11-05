@@ -5,6 +5,46 @@ Format: newest entries at the top.
 
 Forked from raphaotten/claude-interview-coach (MIT / CC BY 4.0).
 
+## 2026-11-05: One reply logged once, diff-scoped mutation runs, private names out of tracked files
+
+**One reply is logged once (PR #19, dedupe-inbound)**
+- A reply could be logged twice (once by `/follow-up`, again by `/networking` or `/remember`),
+  and `/follow-up` logged its entry as sent at draft approval, before any send. Now
+  `networking_write.py log` refuses a second open reply with `possible_duplicate_reply`
+  (`--new-reply` for a genuinely new message), and the rule has one implementation, which
+  `/remember` checks a whole call against before writing anything.
+- Writers hold a lock on `data/networking.md` from read to save, so two cannot interleave.
+- A draft is logged plain and linked to its capture (`--capture`); `draft_capture.py confirm`
+  marks it sent through the new `mark-sent` only when the send is confirmed.
+
+**Mutation runs measure only what a change can affect (PR #20, mutation-speed)**
+- `tools/mutation_check.py` runs only the mutants on lines changed against the merge-base
+  with origin/main by default (`--whole-file` for the old behaviour; the overnight sweep stays
+  whole-file). Changed tests, pytest config and deleted test files widen the scope to the whole
+  file by flat rules, after four rounds of review each found a gap in an import-graph inference.
+- Per-line test selection (`--line-map`) and a verdict cache (`--cache`) are opt-in and off by
+  default: selection measured slower than the file tier once it had to rule out false kills,
+  and the cache key has known gaps.
+
+**Private names out of tracked files; the vault-read guard fails closed (PR #21, pii-scrub-1101)**
+- The sealed folder's location, the private meeting keywords and the private calendar hosts
+  moved from tracked code into gitignored configs. The private meeting type is now `sealed`;
+  a missing or unreadable config classifies every meeting as `unknown`.
+- Sealed transcripts are written only inside the configured sealed folder, judged by where the
+  write lands, so a symlink inside the repo cannot route one into it.
+- In the vault repo, only a plain `git status` passes the read guard; every other git command
+  there counts as a content read. Three review rounds had each found a leak in the previous
+  allowlist of commands that "print no content".
+
+**Docs (this entry's PR, docs-1101)**
+- `/audit-pii` Step 0 reads the remote's refs through the read-only GitHub API instead of
+  `git ls-remote`, which raised an unprompted Touch ID prompt. Pull refs are expected and
+  permanent; only leftover branches are flagged.
+- `tools/HOOK_AUTHORING.md`: a hand mutation must purge bytecode when it restores, or the next
+  run can execute a same-length mutant restored within the same second.
+- `docs/tools-reference.md`: rows for the new `networking_write.py` flags and the
+  `mutation_check.py` scope flags.
+
 ## 2026-11-04: Repost check, no typed skill count, shipped/waiting in /checkout, table owners
 
 **What prompted it.** On 11/02 a social repost captioned as an agents masterclass turned out to
