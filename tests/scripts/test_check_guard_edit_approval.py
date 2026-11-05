@@ -502,6 +502,9 @@ def test_empty_stdin_fails_open():
 
 _G = "tools/check_public_pii.py"
 _PY_PASSES = {
+    # control for feed_a_read_only_command_on_stdin: the same script, nothing fed
+    "run_a_read_only_command_with_nothing_fed":
+        f"python3 - <<'PY'\nimport subprocess\nsubprocess.run(['cat', 'x.txt'])\nopen('{_G}')\nopen('n', 'w')\nPY",
     # the 2026-10-21 fire: hash a guard, write a JSON report to a scratch path from argv
     "hash_guard_write_report_from_argv":
         f"SP=/tmp/scratch; python3 - \"$SP/replay.json\" <<'PY'\nimport hashlib, json, sys\n"
@@ -527,6 +530,10 @@ _PY_PASSES = {
         "Path('notes', 'copy.md').write_text(t)\nPY",
 }
 _PY_BLOCKS = {
+    # a read-only program fed on stdin may be fed a program: only this repo's own guard
+    # may take input (kills _run_targets::IF_FALSE::443ea2ec, 2026-10-30)
+    "feed_a_read_only_command_on_stdin":
+        f"python3 - <<'PY'\nimport subprocess\nsubprocess.run(['cat'], input='x', text=True)\nopen('{_G}')\nopen('n', 'w')\nPY",
     "write_guard_by_join": f"python3 - <<'PY'\nimport os\nopen(os.path.join('tools', 'check_public_pii.py'), 'w').write('{_G}')\nPY",
     "write_target_from_environ":
         f"python3 - <<'PY'\nimport os\nopen(os.environ['T'], 'w').write('{_G}')\nPY",

@@ -79,6 +79,8 @@ import time
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import eic_review  # noqa: E402
 
 DRAFT_NAME = "draft-v0.txt"
 SENT_NAME = "sent.txt"
@@ -423,6 +425,17 @@ def confirm(capture_id: str, outcome: str, sent_text: str | None = None,
             _mark_networking(link, undo=rollback)
         raise CaptureError(f"the capture could not be written ({exc}); the networking entry "
                            f"and sent.txt were rolled back, so nothing changed")
+    # A sent email to the EIC opens a review that only her reply can close, and a send
+    # corrected to not sent cancels it (tools/eic_review.py). Reported in the result, not
+    # stored in the capture. It runs after the capture and the networking entry are both
+    # written, so its own failure is reported and rolls nothing back.
+    try:
+        if eic_review.open_for(meta, now=now):
+            return {**meta, "eic_review": "opened"}
+        if eic_review.cancel_for(meta, now=now):
+            return {**meta, "eic_review": "cancelled"}
+    except OSError as exc:
+        return {**meta, "eic_review": f"ERROR: could not update the EIC review: {exc}"}
     return meta
 
 

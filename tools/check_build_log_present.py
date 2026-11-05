@@ -25,8 +25,11 @@ WHAT IT DOES NOT SEE, stated rather than buried:
   * Files a script writes from inside Python (`python build_deck.py` landing a .pptx): the
     target is not in the command text. The script itself is caught unless it sits under a
     `scripts/` or `data/` subfolder, which are exempt by the spec.
-  * A relative Bash target after `cd output/x &&` resolves against the repo root, the same
-    limitation `check_handoff_producer.py` has, whose target parser this reuses.
+  * A cd the walk cannot read (a path built from a command substitution, or one assembled
+    from variables the command does not assign). Relative targets after an ordinary `cd`
+    are judged from that directory too, through tools/shell_writes.py (2026-11-01), including
+    a cd inside a group, an if/elif/for/while body or a case arm, and one silenced with
+    >/dev/null, 2>/dev/null or &>/dev/null.
   * In a Bash copy, a glob or variable (`cp *.html output/acme/`, `cp $X output/acme/`), a
     source that does not exist yet when the hook runs, and the contents of a source folder
     past the parser's walk cap (`check_handoff_producer.WALK_MAX_DEPTH`, `WALK_MAX_FILES`).
@@ -46,8 +49,9 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from build_check import ask_state  # noqa: E402
-from check_handoff_producer import all_write_targets, relativize  # noqa: E402
+from check_handoff_producer import relativize  # noqa: E402
 from hook_runtime import read_payload  # noqa: E402
+import shell_writes  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -128,12 +132,16 @@ No dossier at output/{slug}/{slug}.md. Every company Nick builds for gets one: r
 """
 
 
-def decide(tool_name: str, tool_input: dict, *, root: Path = REPO_ROOT) -> str | None:
-    """The BLOCK message for this tool call, or None to allow. Pure given the filesystem."""
+def decide(tool_name: str, tool_input: dict, *, root: Path = REPO_ROOT,
+           cwd: str = "") -> str | None:
+    """The BLOCK message for this tool call, or None to allow. Pure given the filesystem.
+
+    A relative Bash target is judged from the repo root, the session `cwd` and wherever a
+    `cd` in the command moves the shell (tools/shell_writes.py, 2026-11-01)."""
     if not isinstance(tool_input, dict):
         return None
     if tool_name == "Bash":
-        targets = all_write_targets(tool_input.get("command") or "")
+        targets = shell_writes.bash_write_targets(tool_input.get("command") or "", cwd, root)
     elif tool_name in TARGET_FIELD:
         targets = [tool_input.get(TARGET_FIELD[tool_name]) or ""]
     else:
@@ -169,7 +177,7 @@ def main() -> None:
                   "write could not be checked. Split the write.", file=sys.stderr)
             sys.exit(2)
         sys.exit(0)
-    message = decide(p.tool_name, p.tool_input)
+    message = decide(p.tool_name, p.tool_input, cwd=p.cwd)
     if message:
         print(message, file=sys.stderr)
         sys.exit(2)
