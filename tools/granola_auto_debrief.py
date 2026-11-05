@@ -50,38 +50,38 @@ DEFAULT_REPO_ROOT = SCRIPT_DIR.parent
 # granola_cli.py and the test suite -- keeps working unchanged.
 try:
     from meeting_vocab import (  # noqa: F401
-        THERAPY_TITLE_KEYWORDS,
         NICK_IDENTIFIERS,
-        DEFAULT_THERAPY_CONFIG,
+        DEFAULT_SEALED_CONFIG,
         DEFAULT_OWNER_IDENTITY_CONFIG,
         DEFAULT_PERSONAL_PROJECTS_CONFIG,
         _load_owner_identifiers,
-        load_therapy_classifier_config,
+        load_sealed_meetings_config,
+        unclassified_reason,
         load_personal_projects_config,
         match_personal_project,
         _speaker_label,
         _transcript_text,
         _is_nick,
-        _attendee_is_therapist,
-        _transcript_names_therapist,
+        _attendee_is_sealed_contact,
+        _transcript_names_sealed_contact,
         classify_meeting,
     )
 except ModuleNotFoundError:  # imported as a `tools.` package module
     from tools.meeting_vocab import (  # noqa: F401
-        THERAPY_TITLE_KEYWORDS,
         NICK_IDENTIFIERS,
-        DEFAULT_THERAPY_CONFIG,
+        DEFAULT_SEALED_CONFIG,
         DEFAULT_OWNER_IDENTITY_CONFIG,
         DEFAULT_PERSONAL_PROJECTS_CONFIG,
         _load_owner_identifiers,
-        load_therapy_classifier_config,
+        load_sealed_meetings_config,
+        unclassified_reason,
         load_personal_projects_config,
         match_personal_project,
         _speaker_label,
         _transcript_text,
         _is_nick,
-        _attendee_is_therapist,
-        _transcript_names_therapist,
+        _attendee_is_sealed_contact,
+        _transcript_names_sealed_contact,
         classify_meeting,
     )
 
@@ -101,24 +101,10 @@ from tools import vault_paths
 
 import re
 
-# Generic, non-PII therapy title markers. Real therapist identities (names + emails)
-# live in the gitignored tools/.therapy-classifier.txt — this repo is public.
-# "session with" was removed 2026-08-07: as a bare substring it sealed ordinary
-# business calls ("Strategy session with the contractor") into the therapy vault,
-# where they vanish from every surface with only a line in an unread log.
-
-# Nick's own handle — used to find EXTERNAL attendees. The NAME is fork-safe public
-# identity; a live email ADDRESS is not (in a public repo it is a scrape surface, and
-# hardcoding it here contradicted the pattern used for therapist and personal-project
-# identities below). Additional identifiers — email addresses, alternate handles — load
-# from the gitignored tools/.owner-identity.txt, one per line, '#' comments allowed.
-# With no config file present the name alone is used, so forks work unchanged.
-
-
-
-
-
-# Gitignored allowlist of real therapist identities.
+# Sealed-meeting identities and title keywords live in the gitignored
+# tools/.sealed-meetings.txt and the owner's identifiers in tools/.owner-identity.txt; both are
+# read by tools/meeting_vocab.py (this repo is public). The title markers and the owner handle
+# that these comments used to describe moved there (Fable r1 8.F9).
 
 VOICE_CORPUS_DIR = DEFAULT_REPO_ROOT / "data/voice-corpus/granola"
 
@@ -132,11 +118,11 @@ VOICE_CORPUS_DIR = DEFAULT_REPO_ROOT / "data/voice-corpus/granola"
 # here. These are functions, not module constants, deliberately: an unconfigured
 # vault must fail where a path is USED, not at import, or the module becomes
 # unimportable and the test suite dies with it. There is no fallback path --
-# guessing a destination for sealed therapy content is worse than stopping.
+# guessing a destination for sealed content is worse than stopping.
 
 
-def vault_therapy_dir() -> Path:
-    return vault_paths.therapy_dir()
+def vault_sealed_dir() -> Path:
+    return vault_paths.sealed_dir()
 
 
 def personal_vault() -> Path:
@@ -208,7 +194,9 @@ def resolve_destination(meeting: dict, meeting_type: str, project: str = None,
     title = meeting.get("title", "Untitled")
     type_ = meeting_type
     created_at = meeting.get("created_at", "")
-    vault_root = Path(vault_root) if vault_root else personal_vault()
+    # Only the personal route lands under vault_root; the sealed route has its own folder and
+    # the rest land in the repo, so they never need the personal vault (Fable r1 8.F1/9.F1).
+    vault_root = Path(vault_root) if vault_root else None
 
     # Convert UTC timestamp to local time for date extraction.
     # Granola REST returns ISO-8601 UTC (e.g. "2026-05-05T00:04:58.303Z").
@@ -235,19 +223,27 @@ def resolve_destination(meeting: dict, meeting_type: str, project: str = None,
         local_iso = ""
 
     # Pick destination per type
-    if type_ == "therapy":
-        # Therapy filename: YYYY-MM-DD-therapy-{therapist}-transcript.md (matches existing convention)
-        therapist_slug = slugify(title.lower().replace("therapy", "").replace("session with", ""))
-        if not therapist_slug or therapist_slug == "untitled":
-            therapist_slug = slugify(title)
-        filename = f"{date_part}-therapy-{therapist_slug}-transcript.md"
-        output_path = vault_therapy_dir() / filename
-        session_desc = f"{title} (auto-classified as therapy by title; verify therapist name)"
+    if type_ == "sealed":
+        # Filename: YYYY-MM-DD-sealed-{contact}-transcript.md, the contact taken from the title
+        # with the configured keywords and "session with" removed. Files written before
+        # 2026-11-01 carry an older prefix; nothing reads a sealed file back by name.
+        name = title.lower()
+        for kw in (load_sealed_meetings_config() or {}).get("keywords", ()):
+            name = name.replace(kw, "")
+        # A keyword may itself hold "session" ("x session with Jordan" leaves "with Jordan"),
+        # so drop a leftover leading "with" too (Fable r1 8.F6).
+        name = re.sub(r"^\W*with\b", "", name.replace("session with", "").strip())
+        contact_slug = slugify(name)
+        if not contact_slug or contact_slug == "untitled":
+            contact_slug = slugify(title)
+        filename = f"{date_part}-sealed-{contact_slug}-transcript.md"
+        output_path = vault_sealed_dir() / filename
+        session_desc = f"{title} (auto-classified as sealed by title; verify sealed contact name)"
     elif type_ == "personal":
         # Personal-OS (or any non-job-search vault): same two-tier filename
         # convention, destination resolved per project via the `vault:` seam.
         filename = f"{date_part}{time_part}-{slugify(title)}.md"
-        output_path = vault_root / "data/voice-corpus/granola" / filename
+        output_path = (vault_root or personal_vault()) / "data/voice-corpus/granola" / filename
         proj = f" [{project}]" if project else ""
         session_desc = f"{title}{proj} (personal-OS; auto-routed by granola_auto_debrief)"
         # granola_save.py has no 'personal' type; 'general' carries exactly the
@@ -274,7 +270,7 @@ def persist_via_granola_save(meeting: dict, summary: str, private_notes: str,
 
     Idempotent — uses --no-overwrite, skips if file exists.
 
-    meeting_type is the already-computed classification ('therapy' | 'personal' |
+    meeting_type is the already-computed classification ('sealed' | 'personal' |
     'networking'); the orchestrator classifies once (with attendees) and passes it
     down so routing and persistence can never disagree. 'unknown' meetings are
     never persisted — the caller fails closed before reaching this function.
@@ -286,7 +282,15 @@ def persist_via_granola_save(meeting: dict, summary: str, private_notes: str,
     """
     import subprocess
     title = meeting.get("title", "Untitled")
-    dest = resolve_destination(meeting, meeting_type, project, vault_root)
+    try:
+        dest = resolve_destination(meeting, meeting_type, project, vault_root)
+    except (vault_paths.VaultRootMissing, vault_paths.SealedFolderMissing) as exc:
+        # Unconfigured vault or sealed folder (sealed and personal routes only): refuse, the
+        # same as a missing vault below, so the CLI callers, which do not catch, report it
+        # instead of crashing.
+        print(f"  [error] {exc.args[0].splitlines()[0]}; '{title}' NOT persisted.",
+              file=sys.stderr)
+        return {"status": "error", "reason": "vault-missing", "expected_vault": "unconfigured"}
     output_path = dest["output_path"]
     session_desc = dest["session_desc"]
     type_ = dest["save_type"]
@@ -316,7 +320,7 @@ def persist_via_granola_save(meeting: dict, summary: str, private_notes: str,
     # Vault-existence guard. granola_save.py mkdirs its parent, so an unmounted or
     # renamed vault would silently grow a shadow tree that Obsidian and every skill
     # ignore — transcripts landing where nothing will ever look. Fail closed instead.
-    # Gate on the DESTINATION, not the type. Only therapy and personal land in the
+    # Gate on the DESTINATION, not the type. Only sealed and personal land in the
     # vault; recruiter/networking/general land in the repo at VOICE_CORPUS_DIR, and
     # `personal` is remapped to `general` inside resolve_destination, so any
     # type-keyed test is both wrong and defeatable by that remap. Keying on the
@@ -326,7 +330,9 @@ def persist_via_granola_save(meeting: dict, summary: str, private_notes: str,
     # is None whenever the personal vault is unconfigured (which vault_paths
     # deliberately allows, failing loud rather than guessing).
     if not str(output_path).startswith(str(VOICE_CORPUS_DIR)):
-        vault_marker = vault_therapy_dir().parent.parent if type_ == "therapy" else vault_root
+        # For sealed, the vault root itself, not a parent walk from the sealed folder: the
+        # folder comes from config (tools/vault_paths.py) and may sit at any depth.
+        vault_marker = personal_vault() if type_ == "sealed" else vault_root
         if vault_marker is None or not vault_marker.is_dir():
             print(f"  [error] vault not found at {vault_marker} — refusing to create it. "
                   f"'{title}' NOT persisted.", file=sys.stderr)
@@ -345,7 +351,9 @@ def persist_via_granola_save(meeting: dict, summary: str, private_notes: str,
             env={**os.environ, "PYTHONIOENCODING": "utf-8"},
         )
         if result.returncode != 0:
-            print(f"granola_save.py error for '{title}': {result.stderr}", file=sys.stderr)
+            # A refusal is a JSON line on stdout, not stderr (Fable r2 F6).
+            print(f"granola_save.py error for '{title}': {result.stderr or result.stdout}",
+                  file=sys.stderr)
             return {"status": "error", "stderr": result.stderr}
         try:
             return json.loads(result.stdout)
@@ -423,15 +431,17 @@ def pull_single_meeting(meeting_id: str, force_type: str = None, project: str = 
         meeting_type = force_type
         print(f"  [info] classification forced to '{force_type}'", file=sys.stderr)
     else:
-        meeting_type = classify_meeting(meeting, load_therapy_classifier_config(),
+        meeting_type = classify_meeting(meeting, load_sealed_meetings_config(),
                                         load_personal_projects_config())
 
     if meeting_type == "unknown":
         return {
             "status": "error", "meeting_id": meeting_id, "type": "unknown",
             "reason": "unclassified",
-            "message": ("Fail-closed: no attendees, no therapy signal, no project match. "
-                        "Re-run with --force-type once you have confirmed what this call is."),
+            "message": (f"Fail-closed: {unclassified_reason()}. "
+                        + ("Re-run with --force-type once you have confirmed what this call is."
+                           if load_sealed_meetings_config() is not None else
+                           "Restore the config; --force-type would bypass the sealed check.")),
         }
 
     if meeting_type == "personal":
@@ -443,7 +453,11 @@ def pull_single_meeting(meeting_id: str, force_type: str = None, project: str = 
         vault_root = None
 
     if dry_run:
-        dest = resolve_destination(meeting, meeting_type, project, vault_root)
+        try:
+            dest = resolve_destination(meeting, meeting_type, project, vault_root)
+        except (vault_paths.VaultRootMissing, vault_paths.SealedFolderMissing) as exc:
+            return {"status": "error", "meeting_id": meeting_id, "type": meeting_type,
+                    "reason": "vault-missing", "message": exc.args[0].splitlines()[0]}
         out = dest["output_path"]
         print(f"  [dry-run] would persist '{meeting['title']}' as {meeting_type}"
               + (f" [{project}]" if project else ""), file=sys.stderr)
@@ -593,7 +607,7 @@ def format_inbox_entry(meeting: dict, analysis: dict, meeting_type: str = "netwo
         heading = f"## Call Debrief: {title} #both"
         corpus_line = (
             "Raw transcript persisted via `tools/granola_save.py` to "
-            "`data/voice-corpus/granola/` (or `personal/data/therapy/` if therapy-classified)."
+            "`data/voice-corpus/granola/` (or the personal vault's sealed folder if sealed-classified)."
         )
         project_line = ""
         cta = (
@@ -683,7 +697,7 @@ def auto_debrief_new_calls(dry_run: bool = False, hours: int = None,
         return 0
 
     # Analyze each meeting with non-empty transcript
-    config = load_therapy_classifier_config()
+    config = load_sealed_meetings_config()
     pconfig = load_personal_projects_config()
     entries = []
     personal_entries = {}   # vault root -> [entry, ...]; one bucket per destination vault
@@ -724,11 +738,11 @@ def auto_debrief_new_calls(dry_run: bool = False, hours: int = None,
         project = match_personal_project(meeting, pconfig) if meeting_type == "personal" else None
         vault_root = vault_for_project(project, pconfig) if meeting_type == "personal" else None
 
-        # FAIL-CLOSED: an unclassifiable meeting (no attendees, no therapy signal) may be
-        # mis-titled sealed therapy started cold from the phone. Persist NOWHERE (not even
+        # FAIL-CLOSED: an unclassifiable meeting (no attendees, no sealed signal) may be
+        # mis-titled sealed session started cold from the phone. Persist NOWHERE (not even
         # voice-corpus, also a non-sealed surface) and never post to inbox; flag for manual pull.
         if meeting_type == "unknown":
-            print(f"  [info] '{title}' could not be classified (no attendees, no therapy signal) — "
+            print(f"  [info] '{title}' could not be classified ({unclassified_reason()}) — "
                   f"fail-closed: not persisted, not posted. Run /granola-pull to classify manually.",
                   file=sys.stderr)
             flagged.append({"id": meeting.get("id", ""), "title": meeting.get("title", "")})
@@ -756,9 +770,9 @@ def auto_debrief_new_calls(dry_run: bool = False, hours: int = None,
                 persist_results.append({"title": meeting.get("title", ""), "status": "error",
                                         "exception": str(e)})
 
-        # Therapy: sealed material persisted to vault, never inbox.
-        if meeting_type == "therapy":
-            print(f"  [info] '{title}' classified as therapy — persisted to vault, skipping inbox", file=sys.stderr)
+        # Sealed: sealed material persisted to vault, never inbox.
+        if meeting_type == "sealed":
+            print(f"  [info] '{title}' classified as sealed — persisted to vault, skipping inbox", file=sys.stderr)
             continue
 
         # Networking: the only class that reaches inbox.
@@ -789,7 +803,7 @@ def auto_debrief_new_calls(dry_run: bool = False, hours: int = None,
 
     if not total:
         # No inbox entries to write — but persistence/flagging may have happened. Print summary so cron logs show it.
-        print("No inbox entries to write (all calls were therapy, unknown, or had no transcripts)", file=sys.stderr)
+        print("No inbox entries to write (all calls were sealed, unknown, or had no transcripts)", file=sys.stderr)
         if persist_results or flagged:
             summary = {"processed": 0, "persisted": persist_results, "flagged": flagged}
             print(json.dumps(summary, ensure_ascii=False, indent=2))
@@ -869,7 +883,7 @@ def main():
     )
     parser.add_argument(
         "--force-type",
-        choices=("personal", "networking", "therapy"),
+        choices=("personal", "networking", "sealed"),
         default=None,
         help="With --meeting-id: override classification (use when it fails closed to unknown)",
     )

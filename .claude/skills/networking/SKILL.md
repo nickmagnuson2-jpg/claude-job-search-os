@@ -229,22 +229,20 @@ Each contact gets a section with entries in reverse chronological order (newest 
 
 #### 2026-02-18 | email (outbound) | Cold outreach — Tuck alum, coffee chat
 
-> Hi Alex,
+> Hi Jordan,
 >
-> We never officially crossed paths at Tuck, but I'm a T'22 and also based
-> in San Francisco.
+> We haven't met, but we're both Tuck alums and I'm also based in
+> San Francisco.
 >
 > Most recently I was Chief of Staff to the Head of Product & Technology at
-> Zuora after a stint at McKinsey, and I'm currently exploring what's next
-> with a focus on mission-driven work, particularly in mental health.
+> Zuora after a stint at McKinsey, and I'm now looking at operating roles
+> at early-stage companies.
 >
-> I saw that you're at Acme AI and would love to buy you a coffee and
-> learn more about the platform and what you're doing to increase access to
-> care.
+> I saw that you're at Acme AI and would like to hear how the team runs
+> its customer rollouts.
 >
 > Would you have 20 minutes for coffee in the next couple weeks?
 >
-> Hope you are staying dry!
 > Nick
 
 **Follow-up:** Wait for response, schedule coffee chat

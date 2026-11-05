@@ -15,7 +15,7 @@ This is the `tools/stage_vocab.py` shape named in CLAUDE.md: one module owns a
 domain rule, every consumer imports it, and a guard test keeps a second copy from
 appearing.
 
-WHAT LIVES HERE: the therapy/personal/networking/unknown classifier, the therapist
+WHAT LIVES HERE: the sealed/personal/networking/unknown classifier, the sealed contact
 allowlist and personal-project config loaders, the owner-identity list, and the
 attendee/transcript predicates the classifier is built from.
 
@@ -89,9 +89,6 @@ def _speaker_label(seg: dict) -> str:
         return str(sp)
     return "Speaker"
 
-THERAPY_TITLE_KEYWORDS = (
-    "therapy", "couples", "psychiatrist", "psychotherapy", "counseling",
-)
 def _load_owner_identifiers(config_path=None) -> tuple:
     """Owner identifiers: the public name plus any gitignored private ones.
 
@@ -100,7 +97,7 @@ def _load_owner_identifiers(config_path=None) -> tuple:
     ids = ["nick magnuson"]
     path = config_path or DEFAULT_OWNER_IDENTITY_CONFIG
     try:
-        for line in Path(path).read_text(encoding="utf-8").splitlines():
+        for line in Path(path).read_text(encoding="utf-8-sig").splitlines():
             tok = line.strip().lower()
             if tok and not tok.startswith("#"):
                 ids.append(tok)
@@ -108,24 +105,46 @@ def _load_owner_identifiers(config_path=None) -> tuple:
         pass
     return tuple(ids)
 NICK_IDENTIFIERS = _load_owner_identifiers()
-DEFAULT_THERAPY_CONFIG = DEFAULT_REPO_ROOT / "tools" / ".therapy-classifier.txt"
-def load_therapy_classifier_config(path=None) -> dict:
-    """Load the gitignored therapist allowlist.
+DEFAULT_SEALED_CONFIG = DEFAULT_REPO_ROOT / "tools" / ".sealed-meetings.txt"
+def unclassified_reason() -> str:
+    """Why a meeting classified "unknown", for the operator. A missing sealed-meeting config
+    makes EVERY meeting unknown, and saying "no sealed signal" then would invite a --type
+    override on a meeting that may be sealed (Fable r1 8.F2/10.F4)."""
+    if load_sealed_meetings_config() is None:
+        return ("the sealed-meeting config tools/.sealed-meetings.txt is missing, so no "
+                "meeting can be classified; restore that gitignored file before persisting")
+    return "no attendees, no sealed signal, no project match"
+
+
+def load_sealed_meetings_config(path=None) -> dict:
+    """Load the gitignored sealed-meeting config.
 
     Format (one directive per line; '#' comments and blanks ignored):
       attendee: <name-or-email>   matched against meeting attendees (virtual sessions)
       name: <full name>           matched against transcript text (in-person sessions)
+      keyword: <text>             matched as a substring of the lowercased title
 
-    Returns {'attendees': set[str lowercased], 'names': list[str]}.
-    A missing file yields an empty config. The fail-closed default still protects
-    safety on its own: an attendee-less, signal-less meeting is 'unknown' regardless.
+    Returns {'attendees': set[str lowercased], 'names': list[str], 'keywords': list[str]}.
+
+    A MISSING FILE RETURNS None, and classify_meeting then fails closed ('unknown',
+    persisted nowhere). Since 2026-11-01 the title keywords live here too, because they
+    name what a sealed meeting is and this repo is public; without the file there is no
+    way to recognize one, so guessing 'networking' could post one to the inbox. An EMPTY
+    file is a deliberate "no sealed meetings" and classifies normally.
     """
-    path = Path(path) if path else DEFAULT_THERAPY_CONFIG
+    path = Path(path) if path else DEFAULT_SEALED_CONFIG
     attendees: set = set()
     names: list = []
+    keywords: list = []
     if not path.is_file():
-        return {"attendees": attendees, "names": names}
-    for line in path.read_text(encoding="utf-8").splitlines():
+        return None
+    try:
+        text = path.read_text(encoding="utf-8-sig")
+    except (OSError, UnicodeDecodeError):
+        # Codex r5 64.F1/66.F2: a config that exists but cannot be read is treated like a
+        # missing one, so classification fails closed to 'unknown' instead of raising.
+        return None
+    for line in text.splitlines():
         line = line.strip()
         if not line or line.startswith("#") or ":" not in line:
             continue
@@ -137,7 +156,9 @@ def load_therapy_classifier_config(path=None) -> dict:
             attendees.add(val.lower())
         elif key == "name":
             names.append(val)
-    return {"attendees": attendees, "names": names}
+        elif key == "keyword":
+            keywords.append(val.lower())
+    return {"attendees": attendees, "names": names, "keywords": keywords}
 def load_personal_projects_config(path=None) -> dict:
     """Load the gitignored personal-OS project allowlist.
 
@@ -158,7 +179,7 @@ def load_personal_projects_config(path=None) -> dict:
     if not path.is_file():
         return {"rules": rules}
     current = None
-    for line in path.read_text(encoding="utf-8").splitlines():
+    for line in path.read_text(encoding="utf-8-sig").splitlines():
         line = line.strip()
         if not line or line.startswith("#") or ":" not in line:
             continue
@@ -196,7 +217,7 @@ def match_personal_project(meeting: dict, pconfig: dict = None):
     Checks, per rule in file order: attendee identity, then a title keyword,
     then (only when the meeting has no attendees, the in-person case) a name in
     the transcript text. The transcript scan is deliberately scoped the same way
-    the therapy one is: a call that HAS attendees is never routed on a passing
+    the sealed one is: a call that HAS attendees is never routed on a passing
     mention of someone's name.
     """
     if not pconfig:
@@ -224,7 +245,7 @@ def _transcript_text(transcript) -> str:
     """Normalize a transcript (str or list of segment dicts) to plain text.
 
     Speaker labels are included — in a Granola transcript the speaker label may BE
-    the therapist's name, which is exactly the in-person signal we want to catch.
+    the sealed contact's name, which is exactly the in-person signal we want to catch.
     """
     if isinstance(transcript, list):
         parts = []
@@ -232,7 +253,7 @@ def _transcript_text(transcript) -> str:
             if isinstance(seg, dict):
                 # "Speaker: text", one per line. The colon and the line break are
                 # load-bearing: speaker-position detection (see
-                # _transcript_names_therapist) needs to tell a speaker label from a
+                # _transcript_names_sealed_contact) needs to tell a speaker label from a
                 # passing mention, and a space-joined blob erases that distinction.
                 parts.append(f"{_speaker_label(seg)}: {seg.get('text', '')}")
             else:
@@ -243,26 +264,26 @@ def _is_nick(attendee: dict) -> bool:
     name = str(attendee.get("name", "")).lower()
     email = str(attendee.get("email", "")).lower()
     return any(tok in name or tok in email for tok in NICK_IDENTIFIERS)
-def _attendee_is_therapist(attendee: dict, config: dict) -> bool:
+def _attendee_is_sealed_contact(attendee: dict, config: dict) -> bool:
     name = str(attendee.get("name", "")).lower()
     email = str(attendee.get("email", "")).lower()
     for ident in config.get("attendees", set()):
         if ident and (ident == email or ident == name or ident in name):
             return True
     return False
-def _transcript_names_therapist(text: str, config: dict) -> bool:
-    """Guard: does the transcript indicate a therapist was actually IN this session?
+def _transcript_names_sealed_contact(text: str, config: dict) -> bool:
+    """Guard: does the transcript indicate a sealed contact was actually IN this session?
 
     Two tiers of evidence, because the two have very different false-positive rates:
 
-    - **Full name anywhere** ("Inperson Therapist") — strong. Coincidence is unlikely,
+    - **Full name anywhere** ("Inperson Contact") — strong. Coincidence is unlikely,
       so a passing mention counts.
     - **First name alone** — weak, and only counts at a SPEAKER-LABEL position
       (`Firstname:` at the start of a line). A first name is common enough that a
-      passing mention proves nothing: on 2026-08-07 a therapist's first name appeared
+      passing mention proves nothing: on 2026-08-07 a sealed contact's first name appeared
       as an ordinary third party in a side-business transcript, and bare first-name
-      matching sealed the entire business call into the therapy vault. In a real
-      session the therapist speaks, so requiring the speaker position keeps the
+      matching sealed the entire business call into the sealed folder. In a real
+      session the sealed contact speaks, so requiring the speaker position keeps the
       signal and drops the coincidences.
     """
     low = text.lower()
@@ -282,21 +303,21 @@ def _transcript_names_therapist(text: str, config: dict) -> bool:
 def classify_meeting(meeting: dict, config: dict = None, pconfig: dict = None) -> str:
     """Four-way, fail-closed classification of a Granola meeting.
 
-    Returns 'therapy' | 'personal' | 'networking' | 'unknown':
-      therapy    -> seal to the personal vault, never inbox
+    Returns 'sealed' | 'personal' | 'networking' | 'unknown':
+      sealed    -> seal to the personal vault, never inbox
       personal   -> personal-OS: personal vault corpus + personal inbox
       networking -> job-search corpus + job-search inbox
       unknown    -> fail-closed: persist nowhere, flag for manual /granola-pull
 
     Signals, in priority order:
-      1. an attendee matches the therapist allowlist             -> therapy
-      2. the title matches a generic therapy keyword             -> therapy
-      3. (no-attendee branch only) the transcript names a therapist -> therapy
+      1. an attendee matches the sealed-contact allowlist             -> sealed
+      2. the title matches a generic sealed keyword             -> sealed
+      3. (no-attendee branch only) the transcript names a sealed contact -> sealed
       4. the meeting matches a personal-OS project rule          -> personal
-      5. an external (non-Nick, non-therapist) attendee          -> networking
+      5. an external (non-Nick, non-sealed contact) attendee          -> networking
       6. otherwise                                               -> unknown
 
-    Therapy always outranks personal: a therapy signal can never be downgraded
+    Sealed always outranks personal: a sealed signal can never be downgraded
     by a project keyword. Personal outranks networking so a side-business call
     with a real attendee stops landing in the job-search inbox.
 
@@ -304,7 +325,9 @@ def classify_meeting(meeting: dict, config: dict = None, pconfig: dict = None) -
     predate project routing keep their exact previous behavior.
     """
     if config is None:
-        config = load_therapy_classifier_config()
+        config = load_sealed_meetings_config()
+    if config is None:
+        return "unknown"        # no sealed-meeting config: cannot tell, so persist nowhere
     if pconfig is None:
         pconfig = {"rules": []}
 
@@ -312,35 +335,35 @@ def classify_meeting(meeting: dict, config: dict = None, pconfig: dict = None) -
     attendees = [a for a in (meeting.get("attendees") or []) if isinstance(a, dict)]
     text = _transcript_text(meeting.get("transcript", ""))
 
-    # 1. Therapist on the attendee list (the virtual-session pattern: attendees populate).
-    if any(_attendee_is_therapist(a, config) for a in attendees):
-        return "therapy"
+    # 1. Contact on the attendee list (the virtual-session pattern: attendees populate).
+    if any(_attendee_is_sealed_contact(a, config) for a in attendees):
+        return "sealed"
 
-    # 2. Generic therapy keyword in the title.
-    if any(kw in title for kw in THERAPY_TITLE_KEYWORDS):
-        return "therapy"
+    # 2. A configured sealed keyword in the title.
+    if any(kw in title for kw in config.get("keywords", ())):
+        return "sealed"
 
-    # An EXTERNAL party (not Nick, not a known therapist) is what makes a meeting
+    # An EXTERNAL party (not Nick, not a known sealed contact) is what makes a meeting
     # verifiably a real multi-party call. Granola populates attendees from the
     # calendar, so an in-person session has either no attendees at all OR just
     # Nick (a self-created event). Both mean "nobody external is on record."
-    external = [a for a in attendees if not _is_nick(a) and not _attendee_is_therapist(a, config)]
+    external = [a for a in attendees if not _is_nick(a) and not _attendee_is_sealed_contact(a, config)]
 
-    # 3. No external attendee on record: scan the transcript for a therapist name.
+    # 3. No external attendee on record: scan the transcript for a sealed contact name.
     #    Gated on `external`, NOT on `attendees`. Gating on `attendees` skipped this
     #    scan whenever Granola listed Nick as sole attendee, so a solo-attendee
-    #    therapy session fell through to the project matcher and could be routed
-    #    'personal' with the therapist's name sitting in the transcript. Before
+    #    sealed session fell through to the project matcher and could be routed
+    #    'personal' with the sealed contact's name sitting in the transcript. Before
     #    project routing existed that case merely fell to 'unknown' (safe); adding
     #    step 4 turned a fail-closed hole into a sealed-material leak.
     #    Confined to the no-external case so a real multi-party call can never be
     #    mis-sealed by a passing mention of someone's name.
-    if not external and _transcript_names_therapist(text, config):
-        return "therapy"
+    if not external and _transcript_names_sealed_contact(text, config):
+        return "sealed"
 
     # 4. Personal-OS project match beats the networking default, and rescues the
     #    in-person case that would otherwise fail closed and be dropped entirely
-    #    (the 2026-08-06 in-person regression). Reached only after every therapy
+    #    (the 2026-08-06 in-person regression). Reached only after every sealed
     #    signal above has been given its chance.
     if match_personal_project(meeting, pconfig):
         return "personal"
@@ -349,7 +372,7 @@ def classify_meeting(meeting: dict, config: dict = None, pconfig: dict = None) -
     if external:
         return "networking"
 
-    # 6. No external party, no therapy signal, no project match -> fail closed.
+    # 6. No external party, no sealed signal, no project match -> fail closed.
     return "unknown"
 
 
@@ -616,3 +639,35 @@ def split_transcript_turns(text: str) -> tuple[list[str], list[str]]:
             continue
         (owner if canon == "Me" else other).append(body)
     return owner, other
+
+
+def drop_sealed_titles(meetings: list, config: dict) -> list:
+    """`meetings` without those whose title holds a configured sealed keyword. For a caller
+    that must hide sealed meetings by title without opening the config, which also holds
+    sealed contacts' names and addresses (Fable r1 10.F6)."""
+    keywords = config.get("keywords", ())
+    return [m for m in meetings
+            if not any(kw in (m.get("title") or "").lower() for kw in keywords)]
+
+
+def main(argv=None) -> int:
+    import argparse
+    import sys
+    ap = argparse.ArgumentParser(description="Meeting classification helpers.")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    d = sub.add_parser("drop-sealed", help="read a JSON list of meetings on stdin; print it "
+                                           "without the ones whose title is sealed")
+    d.add_argument("--config", type=Path, default=None, help=argparse.SUPPRESS)
+    a = ap.parse_args(argv)
+    config = load_sealed_meetings_config(a.config)
+    if config is None:
+        # Without the config no title can be judged; printing the list would show them all.
+        print(f"ERROR: the sealed-meeting config {a.config or DEFAULT_SEALED_CONFIG} is "
+              f"missing; no title can be judged, so nothing is printed", file=sys.stderr)
+        return 2
+    print(json.dumps(drop_sealed_titles(json.load(sys.stdin), config)))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

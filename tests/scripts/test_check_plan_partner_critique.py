@@ -59,8 +59,8 @@ def test_annotations_accumulate_across_a_document():
 # ---------------------------------------------------------------- prose must NOT count
 
 @pytest.mark.parametrize("text", [
-    "Saves loan officers ~20 hrs/week.",                      # a business metric
-    "USDA sanction 5 days ago (the Monday grenade)",          # a date reference
+    "Saves analysts ~20 hrs/week.",                      # a business metric
+    "Vendor audit 5 days ago (the Friday surprise)",          # a date reference
     "My first 30 days would be discovery",                    # narrative, x85 in output/
     "first 90 days",
     "3 days/week in the office",                              # a rate, x28 in output/
@@ -76,7 +76,7 @@ def test_prose_durations_are_not_effort(text):
 
 
 def test_a_document_of_pure_prose_durations_scores_zero():
-    doc = ("Saves loan officers ~20 hrs/week.\nUSDA sanction 5 days ago.\n"
+    doc = ("Saves analysts ~20 hrs/week.\nVendor audit 5 days ago.\n"
            "My first 30 days would be discovery.\n3 days/week onsite.\n")
     total, ev = pc.estimate_hours(doc)
     assert total == 0.0 and ev == []

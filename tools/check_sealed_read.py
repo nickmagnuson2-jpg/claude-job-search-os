@@ -58,6 +58,7 @@ import tokenize
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from hook_runtime import read_payload  # noqa: E402
 from shell_tokens import simple_commands  # noqa: E402
+import vault_paths  # noqa: E402
 from pathlib import Path
 
 SEALED_REL = "data/project-background"
@@ -65,8 +66,11 @@ SEALED_NAME = "project-background"
 
 
 def _root() -> Path:
+    """The checkout judged from. In a linked worktree, the main checkout: the vault, the
+    -sealed tree and the gitignored config all sit beside or inside it (Fable r1 7.F1)."""
     env = os.environ.get("SEAL_REPO_ROOT")
-    return Path(env).resolve() if env else Path(__file__).resolve().parent.parent
+    here = Path(env).resolve() if env else Path(__file__).resolve().parent.parent
+    return vault_paths.main_checkout(here)
 
 
 # The sibling directory that holds the sealed tree: the repo's own name plus this
@@ -74,31 +78,88 @@ def _root() -> Path:
 SEALED_HOME_SUFFIX = "-sealed"
 SEALED_HOME = _root().name + SEALED_HOME_SUFFIX
 
-# The therapy vault in the sibling personal repo. personal/CLAUDE.md labels it SEALED, under
-# the same rule as the in-repo sealed tree. Personal-repo sessions read it; a job-search
-# session never does. Added 2026-10-27, approved by Nick: "definitely fix the block of
-# reading the personal therapy files". In command text it counts only path-shaped (followed by
-# `/`, or after `data/`): unlike the in-repo name it is an ordinary English word, and a
+# Sealed folders in the sibling personal repo (the "vault"). The personal repo labels them
+# SEALED, under the same rule as the in-repo sealed tree. Personal-repo sessions read them; a
+# job-search session never does. Added 2026-10-27 with Nick's approval. Which folders they
+# are is private, since a folder's name says what it holds, so since 2026-11-01 they come from
+# the gitignored tools/.sealed-folders.conf through vault_paths.sealed_rels(), read under
+# the repo root this hook judges from. In command text a folder name counts only
+# path-shaped (followed by `/`, or after its parent): a name can be an ordinary word, and a
 # restraint replay over 282 transcripts found about a dozen bare-word false blocks.
-THERAPY_NAME = "therapy"
-THERAPY_REL = "../personal/data/therapy"
-# Unlike the in-repo tree, which moved to a sibling home of its own, the vault still sits
-# under readable directories of the personal repo, so a recursive search of either one
-# walks into it without spelling its name (cross-model review of 2026-10-27, Codex F1 and
-# Grok F1-F3). Both parents are therefore targets in their own right: Grep, Glob or Read
-# aimed at one, or a Bash word that is a path to one (`cd`, `grep -r`, `find`, `ls -R`).
-# A named file beside the vault, such as ../personal/data/<log>.md, is not a parent.
-THERAPY_PARENTS = ("../personal/data", "../personal")   # direct parent first
+#
+# FAIL CLOSED. With no config, or one that names a folder outside the vault, the hook
+# cannot tell which folder is sealed, so everything under the vault's data/ counts.
+def _personal() -> str:
+    """The vault, as a path beside the checkout. Read from the main checkout's
+    tools/.personal-vault.conf, the file the writer's vault_paths.vault_root() reads, so the
+    guard protects the folder the writer writes to (Fable r2 17.F1). PERSONAL_VAULT_ROOT
+    beats the file, exactly as in vault_root(): a writer run with it set writes there, so the
+    guard must protect it too (Codex r3 P0, fixed 2026-11-04 with Nick's guard-edit approval;
+    until then this read "the env var is not read").
+    A vault that is not a sibling of the checkout keeps the default, so the folder-name
+    matching below still holds."""
+    value = (os.environ.get(vault_paths.ENV_VAR, "").strip()
+             or vault_paths._read_config(_root() / "tools" / ".personal-vault.conf"))
+    vault = Path(os.path.expanduser(value)) if value else None
+    if vault is not None and vault.is_absolute() and vault.parent.resolve() == _root().parent.resolve():
+        return "../" + vault.name
+    return "../" + "personal"
 
-# The vault's direct parent spelled as a path that ENDS at it: `personal/data`,
+
+PERSONAL = _personal()
+_VAULT_BASE = PERSONAL.rsplit("/", 1)[-1]
+
+
+def _vault_rels() -> tuple:
+    try:
+        rels = vault_paths.sealed_rels(_root() / "tools" / ".sealed-folders.conf")
+    except ValueError:
+        rels = None
+    return tuple(r.lower() for r in rels) if rels else ()
+
+
+VAULT_RELS = _vault_rels()
+# A configured folder that is not a directory is a typo or a rename; the real folder is then
+# unnamed, so fail closed as well (Fable r1 F2). A stat, not a read of the folder.
+FAIL_CLOSED = not VAULT_RELS or not all(os.path.isdir(_root() / PERSONAL / r)
+                                        for r in VAULT_RELS)
+VAULT_DIRS = (tuple(PERSONAL + "/" + r for r in VAULT_RELS)
+              + ((PERSONAL + "/data",) if FAIL_CLOSED else ()))
+# (name, the name of the folder it sits in) for each sealed folder: the name counts in
+# command text when it is path-shaped, as `<parent>/<name>` or `<name>/`.
+VAULT_NAMES = tuple((r.rsplit("/", 1)[-1], r.rsplit("/", 1)[0].rsplit("/", 1)[-1] if "/" in r
+                     else "") for r in VAULT_RELS)
+# Unlike the in-repo tree, which moved to a sibling home of its own, the vault still sits
+# under readable directories of the personal repo, so a recursive search of one walks into
+# it without spelling its name (cross-model review of 2026-10-27, Codex F1 and Grok F1-F3).
+# Every directory above a sealed folder is therefore a target in its own right: Grep, Glob or
+# Read aimed at one, or a Bash word that is a path to one (`cd`, `grep -r`, `find`, `ls -R`).
+# A named file beside a sealed folder, such as ../personal/data/<log>.md, is not a parent.
+_parents: list = []
+for _d in VAULT_DIRS:                 # "../personal/a/b" has parents ../personal/a, ../personal
+    _p = os.path.dirname(_d)
+    while len(_p) >= len(PERSONAL):
+        _parents.append(_p)
+        _p = os.path.dirname(_p)
+VAULT_PARENTS = tuple(sorted(set(_parents), key=len, reverse=True))   # direct parent first
+
+# A direct parent of a sealed folder spelled as a path that ENDS at it: `personal/data`,
 # `<anything>/personal/data/`, or `personal/data/*`. A file beside the vault
-# (`personal/data/<log>.md`) does not match. The personal repo ROOT is not in this regex:
-# a restraint replay found most mentions of it are ordinary personal-repo work (cd, git,
+# (`personal/data/<log>.md`) does not match, unless the hook is failing closed, when every
+# path under the vault's data/ does. The personal repo ROOT is not in this regex: a
+# restraint replay found most mentions of it are ordinary personal-repo work (cd, git,
 # named files), so it counts only for a command that walks directories (_walks).
 # Cross-model review 2026-10-27, Grok round 2 F2: the parents must sit in this regex, where
 # the wrapper, assignment and heredoc handling already applies, not only in a whole-word test.
 _PARENT_END = r"(?=$|[^\w./-])"
-_PARENT_TEXT = r"personal/data/*" + _PARENT_END
+_VAULT_ALTS = [re.escape(p[len("../"):]) + "/*" + _PARENT_END
+               for p in VAULT_PARENTS if p != PERSONAL]
+if FAIL_CLOSED:
+    _VAULT_ALTS += [r"personal/data/*" + _PARENT_END, r"personal/data/[\w.-]+"]
+for _name, _parent in VAULT_NAMES:
+    _VAULT_ALTS.append(re.escape(_name) + "(?=/)")
+    if _parent:
+        _VAULT_ALTS.append("(?<=%s/)%s" % (re.escape(_parent), re.escape(_name)))
 
 # The directory's own name as a whole path component, in any case (this volume is
 # case-insensitive). Matched after quote and backslash removal, so a quote or a
@@ -106,8 +167,8 @@ _PARENT_TEXT = r"personal/data/*" + _PARENT_END
 # `cd data && cat project-background/x.md` reads the same files. The sibling home's
 # name counts the same way: everything in it is sealed.
 _SEALED_RE = re.compile(
-    r"(?<![\w-])(?:project-background|therapy(?=/)|(?<=data/)therapy|%s|%s)(?![\w-])(?!\.\w)" % (
-        re.escape(SEALED_HOME), _PARENT_TEXT), re.I)
+    r"(?<![\w-])(?:%s)(?![\w-])(?!\.\w)" % "|".join(
+        ["project-background", re.escape(SEALED_HOME)] + _VAULT_ALTS), re.I)
 _SHELL_QUOTING = re.compile(r"""["'\\]""")
 
 # The inline override, as a whole word. It counts only as an assignment in front of the
@@ -176,9 +237,14 @@ def _repo_tool_index(words: list, h: int):
 def _is_a_sealed_path(word: str) -> bool:
     """Read as ONE path, does this word point under the sealed directory?"""
     parts = [p.lower() for p in os.path.normpath(word).split("/")]
+    names = [(SEALED_NAME, "data")] + list(VAULT_NAMES)
+    # Fail closed, every folder under the vault's data/ is sealed (Fable r1 6.F1/7.F3).
+    if FAIL_CLOSED and any(parts[k - 2:k] == [_VAULT_BASE, "data"]
+                           for k in range(2, len(parts))):
+        return True
     return SEALED_HOME.lower() in parts or any(
-        p in (SEALED_NAME, THERAPY_NAME) and (k == 0 or parts[k - 1] == "data")
-        for k, p in enumerate(parts))
+        p == n and (k == 0 or parts[k - 1] == pa)
+        for k, p in enumerate(parts) for n, pa in names)
 
 
 def _is_prose(word: str, quoted: bool) -> bool:
@@ -778,7 +844,7 @@ def _command_reads(c, py_ok: bool = False) -> bool:
         return True            # a shell, an interpreter, xargs or a loop is fed the name
     if _reaches_vault(words, h):
         return True            # into the vault from a directory the call is in, or a walk
-                               # of a directory that contains it (THERAPY_PARENTS)
+                               # of a directory that contains it (VAULT_PARENTS)
     kinds = _mentions(words, c.quoted, h, c.fed_by is not None, py_ok and _plain_output(c))
     return any(_names_sealed(w) and i not in kinds for i, w in enumerate(words) if i > h)
 
@@ -829,7 +895,7 @@ def _bash_reads_sealed(command: str, depth: int = 0, intent: bool = False,
     if depth == 0:
         intent = _any_override(cmds)
         py_ok = True
-        _CWDS.clear()
+        _CWDS[:] = _START_CWDS
     _note_cds(cmds)
     py_ok = py_ok and _no_process_substitution(cmds)
     for c in cmds:
@@ -873,6 +939,7 @@ def _wrapped_scripts(c) -> list:
 # before any word is judged. Grok round 2 F1: `cd .. && grep -r x personal/data` names the
 # parent relative to the NEW directory, which resolving from the root alone misses.
 _CWDS: list = []
+_START_CWDS: list = []     # the call's own cwd, which every top-level reset keeps
 
 
 def _note_cds(cmds) -> None:
@@ -913,6 +980,8 @@ def _walks(words: list, h: int) -> bool:
     flags = [w for w in words[h + 1:] if w.startswith("-")]
     if head in _WALKERS:
         return True
+    if head == "git":
+        return _git_reads_content(words[h + 1:])
     if head == "tar":
         return any(f == "--create" or (not f.startswith("--") and "c" in f) for f in flags)
     if head in _COPIERS:
@@ -958,6 +1027,8 @@ def _walk_targets(words: list, h: int) -> list:
             if w.startswith("-") or w in ("(", "!", "\\("):
                 break
             targets.append(w)
+    elif head == "git":
+        targets = _git_repo_dirs(words[h + 1:])
     elif head == "fd":
         # `fd [pattern] [path...]`: the first positional is what is searched FOR (Codex
         # round 3 F1: `cd ../personal && fd x` read `x` as the path and missed the walk),
@@ -967,6 +1038,76 @@ def _walk_targets(words: list, h: int) -> list:
     else:
         targets = [w for w in words[h + 1:] if not w.startswith("-")]
     return targets or ["."]
+
+
+# git (Codex r3 P0, 2026-11-04, with Nick's guard-edit approval): `git -C <vault> grep x`
+# read the vault's files while `grep -r` of the same folder was blocked. A git subcommand
+# that prints file content or history content walks the repository git runs in. Since the
+# status-only rule below, only a plain `git status` still passes in the vault repo.
+#
+# STATUS-ONLY RULE (Nick's guard-edit approval, 2026-11-05). Rounds 4, 5 and 6 each found
+# the no-content allowlist leaking (r6: add/checkout/restore/reset -p, commit -v, config
+# --includes, --format on for-each-ref/branch/tag/rev-list), so the allowlist is gone. In a
+# repo the call reaches into the vault, every git command counts as a content read EXCEPT a
+# plain `git status` with only the flags below. The only global options allowed are the ones
+# that name the repo (-C, --git-dir, --work-tree) and --no-pager. Over-blocking git work in
+# the personal repo from a job-search session is the accepted cost; that work runs from the
+# personal repo's own sessions, or with SEAL_READ_OK when Nick means it.
+_GIT_STATUS_FLAGS = {"-s", "--short", "-b", "--branch", "--porcelain"}
+_GIT_STATUS_GLOBALS = {"-C", "--git-dir", "--work-tree", "--no-pager"}
+_GIT_VALUE_GLOBALS = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path",
+                      "--config-env", "--super-prefix"}
+
+
+def _git_split(args: list) -> tuple:
+    """(global options as (name, value) pairs, subcommand, the rest)."""
+    opts, i = [], 0
+    while i < len(args):
+        w = args[i]
+        name, has_eq, value = w.partition("=")
+        if w.startswith("--") and has_eq and name in _GIT_VALUE_GLOBALS:
+            opts.append((name, value))
+        elif w in _GIT_VALUE_GLOBALS:
+            opts.append((w, args[i + 1] if i + 1 < len(args) else ""))
+            i += 1
+        elif not w.startswith("-"):
+            return opts, w, args[i + 1:]
+        i += 1
+    return opts, "", []
+
+
+def _git_reads_content(args: list) -> bool:
+    """True unless this is a plain `git status` (status-only rule, Nick 2026-11-05)."""
+    opts, sub, rest = _git_split(args)
+    if not sub:
+        return False
+    head = args[:len(args) - len(rest) - 1]
+    if any(w.startswith("-") and w.split("=", 1)[0] not in _GIT_STATUS_GLOBALS for w in head):
+        return True
+    if sub != "status":
+        return True
+    return not all(f in _GIT_STATUS_FLAGS or bool(re.fullmatch(r"-[sb]+", f)) for f in rest)
+
+
+def _git_repo_dirs(args: list) -> list:
+    """The directories whose repository git reads: -C (composed, in order), --work-tree,
+    and the folder holding --git-dir. None named means the current directory."""
+    opts, _, _ = _git_split(args)
+    out, c_path = [], None
+    for name, value in opts:
+        if name == "-C" and value:
+            c_path = value if c_path is None else os.path.join(c_path, value)
+        elif name == "--work-tree" and value:
+            out.append(("tree", value))
+        elif name == "--git-dir" and value:
+            v = value.rstrip("/")
+            out.append(("dir", os.path.dirname(v) or "." if os.path.basename(v) == ".git" else v))
+    # A relative --git-dir / --work-tree is read from the -C directory (Codex r4 58.F3).
+    dirs = [v if c_path is None or os.path.isabs(os.path.expanduser(v)) else os.path.join(c_path, v)
+            for _, v in out]
+    if c_path is not None:
+        dirs.insert(0, c_path)
+    return dirs
 
 
 # fd options that take a value, short and long. Their value is never a pattern or a path,
@@ -1021,19 +1162,26 @@ def _reaches_vault(words: list, h: int) -> bool:
     """A word that resolves into the vault (`cd ../personal/data && ls <vault name>`), or a
     walking command whose target is a directory that contains it (`cd .. && ls -R personal`).
     A walk of another folder in the personal repo, or a named file there, passes."""
-    vault = THERAPY_REL.lower()
-    if any(_resolves_to(w, lambda r: r == vault or r.startswith(vault + "/"))
-           for w in words[h + 1:]):
+    if any(_resolves_to(w, _in_vault) for w in words[h + 1:]):
         return True
-    return _walks(words, h) and any(_resolves_to(w, lambda r: r in THERAPY_PARENTS)
+    return _walks(words, h) and any(_resolves_to(w, lambda r: r in VAULT_PARENTS)
                                     for w in _walk_targets(words, h))
+
+
+def _in_vault(rel: str) -> bool:
+    """Is this repo-relative, lowercased path a sealed vault folder or a path in one?"""
+    return any(rel == d or rel.startswith(d + "/") for d in VAULT_DIRS)
 
 
 def _under_sealed(root: Path, p: str) -> bool:
     """Is p the sealed directory or a path in it, at the old in-tree place or anywhere
     in the sibling home, or the vault, a path in it, or a directory above it in the
     personal repo?"""
-    p = os.path.join(str(root), os.path.expanduser(p))   # an absolute p stays as it is
+    return any(_under_sealed_from(root, os.path.join(base, os.path.expanduser(p)))
+               for base in [str(root)] + list(_CWDS))   # an absolute p stays as it is
+
+
+def _under_sealed_from(root: Path, p: str) -> bool:
     # Resolved on both sides, so a symlink into the sealed tree, or a second spelling of
     # the same directory (/var and /private/var), is judged by where it leads.
     here = os.path.realpath(str(root))
@@ -1041,8 +1189,7 @@ def _under_sealed(root: Path, p: str) -> bool:
     home = "../" + (os.path.basename(here) + SEALED_HOME_SUFFIX).lower()
     return (rel == SEALED_REL or rel.startswith(SEALED_REL + "/")
             or rel == home or rel.startswith(home + "/")
-            or rel == THERAPY_REL or rel.startswith(THERAPY_REL + "/")
-            or rel in THERAPY_PARENTS)
+            or _in_vault(rel) or rel in VAULT_PARENTS)
 
 
 def _overridden() -> bool:
@@ -1059,6 +1206,13 @@ def main() -> None:
     tool = data.get("tool_name", "")
     ti = data.get("tool_input", {}) or {}
     root = _root()
+    # A relative path means what it means where the call runs. Since the root is the main
+    # checkout (a worktree's own .git file leads there), the call's cwd is a base as well
+    # (Fable r2 F1): one more candidate, so it can only add a block.
+    cwd = data.get("cwd") or ""
+    if os.path.isabs(cwd) and os.path.realpath(cwd) != os.path.realpath(str(root)):
+        _START_CWDS.append(os.path.realpath(cwd))
+        _CWDS[:] = _START_CWDS
 
     targets = []
     if tool == "Read":
@@ -1091,8 +1245,11 @@ def main() -> None:
 
     msg = [
         f"BLOCKED: this {tool} targets the SEALED directory {SEALED_REL}/ "
-        f"(kept outside the repo, in ../{SEALED_HOME}/), or the personal therapy vault "
-        f"{THERAPY_REL}/ or a directory above it ({', '.join(THERAPY_PARENTS)}).",
+        f"(kept outside the repo, in ../{SEALED_HOME}/), or a sealed folder in the personal "
+        f"vault ({PERSONAL}/, set in tools/.sealed-folders.conf) or a directory above one.",
+        *(["No sealed folder is configured, so everything under "
+           f"{PERSONAL}/data/ is treated as sealed until tools/.sealed-folders.conf names an existing vault folder."]
+          if FAIL_CLOSED else []),
         "",
         "Sealed content (Zuora/McKinsey raw materials, personal captures) must never",
         "enter context that could reach an external-facing artifact (CV, cover letter,",

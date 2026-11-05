@@ -69,7 +69,7 @@ def _stub_fetch(monkeypatch, *, transcript=SEGMENTS, note=None):
 
 def _stub_configs(monkeypatch, pconfig=None):
     """Neutralize the gitignored allowlists so tests are hermetic."""
-    monkeypatch.setattr(gad, "load_therapy_classifier_config",
+    monkeypatch.setattr(gad, "load_sealed_meetings_config",
                         lambda *a, **k: {"attendees": set(), "names": []})
     monkeypatch.setattr(gad, "load_personal_projects_config",
                         lambda *a, **k: pconfig or {"rules": []})
@@ -292,7 +292,7 @@ CLI_STUBS_OK = (
     "gad.fetch_note_full = lambda mid: {'id': mid, 'title': 'Intro chat',"
     " 'created_at': '2026-08-06T21:34:00Z', 'summary_markdown': 's',"
     " 'attendees': [{'name': 'Robin Placeholder', 'email': 'robin@example.com'}]}\n"
-    "gad.load_therapy_classifier_config = lambda *a, **k: {'attendees': set(), 'names': []}\n"
+    "gad.load_sealed_meetings_config = lambda *a, **k: {'attendees': set(), 'names': []}\n"
     "gad.load_personal_projects_config = lambda *a, **k: {'rules': []}\n"
 )
 
@@ -328,3 +328,81 @@ def test_cli_without_meeting_id_still_runs_the_collector_path():
     r = _run_cli([], stubs)
     assert r.returncode == 0
     assert "No new calls found" in r.stderr
+
+
+# --- review round 1 (Fable 8.F2/10.F4): every unclassified path names the reason ----------
+# meeting_vocab.unclassified_reason says when the sealed-meeting config is missing; each
+# caller must print it rather than its own fixed text.
+
+REASON = "SENTINEL-REASON"
+
+
+def test_meeting_id_mode_reports_the_unclassified_reason(monkeypatch):
+    _stub_fetch(monkeypatch, note={"id": NOT_ID, "title": "Untitled",
+                                   "created_at": "2026-08-06T21:34:00Z", "attendees": []})
+    _stub_configs(monkeypatch)
+    monkeypatch.setattr(gad, "unclassified_reason", lambda: REASON)
+    assert REASON in gad.pull_single_meeting(NOT_ID)["message"]
+
+
+def test_the_batch_run_reports_the_unclassified_reason(monkeypatch, tmp_path, capsys):
+    meeting = {"id": NOT_ID, "title": "Untitled", "created_at": "2026-08-06T21:34:00Z",
+               "transcript": "Me: hi\nThem: hello"}
+    monkeypatch.setattr(gad, "fetch_new_since_last_run", lambda: [meeting])
+    monkeypatch.setattr(gad, "fetch_note_full", lambda mid: {"attendees": []})
+    monkeypatch.setattr(gad, "extract_summary_and_notes", lambda note: ("", ""))
+    monkeypatch.setattr(gad, "PENDING_CLASSIFICATION", tmp_path / "pending.json")
+    _stub_configs(monkeypatch)
+    monkeypatch.setattr(gad, "unclassified_reason", lambda: REASON)
+    gad.auto_debrief_new_calls(dry_run=True, repo_root=str(tmp_path))
+    assert REASON in capsys.readouterr().err
+
+
+def _cli_pull_unknown(monkeypatch, capsys, config):
+    import argparse
+    from tools import granola_cli as cli
+    monkeypatch.setattr(cli, "resolve_ref", lambda ref: NOT_ID)
+    monkeypatch.setattr(cli, "fetch_note_full", lambda mid: {"title": "Untitled",
+                                                             "transcript": "Me: hi"})
+    monkeypatch.setattr(cli, "extract_summary_and_notes", lambda note: ("", ""))
+    monkeypatch.setattr(cli, "load_sealed_meetings_config", lambda: config)
+    monkeypatch.setattr(cli, "classify_meeting", lambda m, c: "unknown")
+    monkeypatch.setattr(cli, "unclassified_reason", lambda: REASON)
+    rc = cli.cmd_pull(argparse.Namespace(ref="1", type=None, no_persist=False))
+    return rc, capsys.readouterr().err
+
+
+def test_cli_pull_names_the_reason_and_offers_type_only_with_a_config(monkeypatch, capsys):
+    rc, err = _cli_pull_unknown(monkeypatch, capsys, {"attendees": set(), "names": []})
+    assert rc == 2 and REASON in err and "--type" in err
+    rc, err = _cli_pull_unknown(monkeypatch, capsys, None)
+    assert rc == 2 and REASON in err and "--type" not in err
+
+
+def test_personal_route_falls_back_to_the_personal_vault(monkeypatch, tmp_path):
+    monkeypatch.setattr(gad, "personal_vault", lambda: tmp_path / "vault")
+    dest = gad.resolve_destination({"title": "Partner call", "created_at": "2026-08-06T21:34:00Z"},
+                                   "personal")
+    assert dest["output_path"].parent == tmp_path / "vault" / "data/voice-corpus/granola"
+
+
+# --- review round 2 (Fable 18.F5, 19.F4) ---------------------------------------------------
+
+def test_dry_run_with_no_vault_returns_vault_missing_not_a_traceback(monkeypatch):
+    _stub_fetch(monkeypatch)
+    _stub_configs(monkeypatch)
+    monkeypatch.setattr(gad, "classify_meeting", lambda *a, **k: "sealed")
+    def missing():
+        raise gad.vault_paths.SealedFolderMissing()
+    monkeypatch.setattr(gad, "vault_sealed_dir", missing)
+    out = gad.pull_single_meeting(NOT_ID, dry_run=True)
+    assert out["status"] == "error" and out["reason"] == "vault-missing"
+
+
+def test_with_no_sealed_config_the_unknown_message_does_not_offer_force_type(monkeypatch):
+    _stub_fetch(monkeypatch, note={"id": NOT_ID, "title": "Untitled",
+                                   "created_at": "2026-08-06T21:34:00Z", "attendees": []})
+    _stub_configs(monkeypatch)
+    monkeypatch.setattr(gad, "load_sealed_meetings_config", lambda *a, **k: None)
+    msg = gad.pull_single_meeting(NOT_ID)["message"]
+    assert "--force-type would bypass" in msg and "Re-run with --force-type" not in msg
