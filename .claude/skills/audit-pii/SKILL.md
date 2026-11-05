@@ -46,13 +46,14 @@ is SSH through a Touch ID key, so it raises a prompt Nick did not start (fired t
 `memory/feedback_no_network_git_without_checking_touch_id_rule.md`).
 
 ```bash
-gh api --paginate repos/<owner>/<repo>/git/matching-refs/heads --jq '.[].ref'
-gh api --paginate 'repos/<owner>/<repo>/pulls?state=open' --jq '.[].head.ref'
+gh api --paginate repos/<owner>/<repo>/git/matching-refs/heads --jq '.[].ref | sub("^refs/heads/"; "")'
+gh api --paginate 'repos/<owner>/<repo>/pulls?state=open' --jq '.[] | select(.head.repo.full_name == "<owner>/<repo>") | .head.ref'
 ```
 
-The first lists every branch (`--paginate`, or branches past the first page are missed); the
-second lists the branches that have an open PR. Only `refs/heads/main` and the branches in the
-second list should appear in the first. Any other branch is a leftover: report it and ask Nick to delete it in the GitHub UI (the gh token is read-only). The
+The first lists every branch by bare name (`--paginate`, or branches past the first page are
+missed); the second lists the branches in THIS repository that have an open PR (a fork's PR
+with the same branch name does not count). Only `main` and the names in the second list should
+appear in the first. Any other branch is a leftover: report it and ask Nick to delete it in the GitHub UI (the gh token is read-only). The
 repo setting "Automatically delete head branches" removes a branch when its PR merges.
 
 **Pull refs (`refs/pull/N/head`) are expected, not a finding.** GitHub creates one for every PR

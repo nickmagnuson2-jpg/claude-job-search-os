@@ -121,9 +121,9 @@ named by hand; and the permit lookup missed every filing in the city's newer per
 
 **Property records (PR #12, `tools/sf_property_records.py`)**
 - PermitSF (data.sf.gov `tyz3-vt28`), the city's newer permit system, is now queried.
-- `street_of()` is the one place that decides which street a row belongs to, so "MISSION" and
-  "MISSION BAY BLVD" stay separate. One street is decided for the whole report: an optional
-  suffix argument picks it, and when two suffixes share the house number (19TH ST and 19TH AVE)
+- `street_of()` is the one place that decides which street a row belongs to, so "MAIN" and
+  "MAIN PARK BLVD" stay separate. One street is decided for the whole report: an optional
+  suffix argument picks it, and when two suffixes share the house number (10TH ST and 10TH AVE)
   every section says AMBIGUOUS and withholds its records.
 - `query()` pages with `$offset` past the old 200-row limit; quotes in a street name are doubled
   for SoQL. Each section prints a count_report line, a failed query marks its section INCOMPLETE,
@@ -263,8 +263,9 @@ calendar access behind Touch ID. Guard edits were approved by the owner.
   writer the outreach skills call.
 
 **Calendar and inbox**
-- `calendar_fetch.py` (read-only token) lists upcoming events and prints a telehealth event as
-  "Private appointment" with its times only. `calendar_write.py` creates, updates or deletes
+- `calendar_fetch.py` (read-only token) lists upcoming events and prints an event marked private,
+  or one naming a host on the gitignored private-hosts list, as "Private appointment" with its
+  times only. `calendar_write.py` creates, updates or deletes
   one event with its own `calendar.events.owned` token, only after the dialog and a Touch ID
   signature. Invitations go out only with `--attendee`.
 - `approval_signing.py`: an inbox-drain approval counts only with a Touch ID signature, which
