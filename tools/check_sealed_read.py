@@ -1094,6 +1094,11 @@ def _git_reads_content(args: list) -> bool:
     _, sub, rest = _git_split(args)
     if not sub:
         return False
+    if sub == "config" and any(f in ("--blob", "--file", "-f") or f.startswith(("--blob=", "--file="))
+                               for f in rest):
+        # Codex r5 61.F1/66.F1 (P0), Nick approved 2026-11-05: config --blob/--file prints
+        # the named blob or file, which a hash or a path outside the sealed name can reach.
+        return True
     if sub in _GIT_NO_CONTENT:
         return False
     if sub in _GIT_VERBOSE_CONTENT:

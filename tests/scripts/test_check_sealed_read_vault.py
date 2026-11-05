@@ -684,3 +684,22 @@ def test_round4_git_reads_of_the_vault_block(tmp_path, cmd):
 def test_round4_git_work_that_prints_no_file_content_passes(tmp_path, cmd):
     root, _ = _layout(tmp_path)
     assert _run(root, "Bash", {"command": cmd})[0] == 0, cmd
+
+
+@pytest.mark.parametrize("cmd", [
+    # Codex r5 61.F1/66.F1 (P0): git config reading a blob or file prints its content
+    # A blob named by its hash names no sealed path, so only the subcommand rule can see it.
+    "git -C ../personal config --blob 3f2a9c1e --list",
+    "git -C ../personal config --blob=3f2a9c1e --list",
+    "git -C ../personal config --get-regexp . --blob 3f2a9c1e",
+    "git -C ../personal config --file .git/info/notes --list",
+    "git -C ../personal config -f .git/info/notes --list",
+])
+def test_round5_git_config_reading_a_file_blocks(tmp_path, cmd):
+    root, _ = _layout(tmp_path)
+    assert _run(root, "Bash", {"command": cmd})[0] == 2, cmd
+
+
+def test_round5_plain_git_config_still_passes(tmp_path):
+    root, _ = _layout(tmp_path)
+    assert _run(root, "Bash", {"command": "git -C ../personal config user.name"})[0] == 0
