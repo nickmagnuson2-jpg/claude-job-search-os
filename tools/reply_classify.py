@@ -29,10 +29,11 @@ No other tool may keep its own copy of these rules
 History. Until 2026-10-30 this module read the summary: five rules of structured English
 ("Sam replied", "INBOUND 9:12", "Follow-up #1 SENT", ...). Every review round found one more
 phrasing those rules got wrong, so the rules never converged. They were replaced by the
-recorded field, after tools/networking_direction_backfill.py labelled every existing entry
-with the verdict the old rules gave it. No reply or send verdict was lost; replies that also
+recorded field, after a one-off backfill (applied 2026-11-02, retired 2026-11-04; in git at
+162260f9:tools/networking_direction_backfill.py) labelled every existing entry with the
+verdict the old rules gave it. No reply or send verdict was lost; replies that also
 recorded a message from Nick became two-way, so they count as a send too. The old rules are in git at
-dfccc00:tools/reply_classify.py, which is also the classifier the backfill reads.
+dfccc00:tools/reply_classify.py, which is also the classifier the backfill read.
 """
 from __future__ import annotations
 

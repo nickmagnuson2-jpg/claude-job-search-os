@@ -728,3 +728,25 @@ def test_a_second_followup_replaces_the_first_auto_row(tmp_path):
     active = todos.split("## Completed")[0]
     assert "Follow up: Jane Doe — Call her Monday instead" in active
     assert "Follow up: Jane Doe — Wait for her reply" not in active
+
+
+# ---------------------------------------------------------------------------
+# One cell format for the contacts table (table-writers, 2026-11-02)
+# ---------------------------------------------------------------------------
+
+def test_fmt_contact_row_escapes_a_pipe_in_every_cell():
+    import importlib, sys as _s
+    _s.path.insert(0, str(TOOLS_DIR)); nw = importlib.import_module("networking_write")
+    row = nw.fmt_contact_row("A|B", "C|o", "R", "peer", "2026-01-01", "—", "a@b.test")
+    assert row == "| A/B | C/o | R | peer | 2026-01-01 | — | a@b.test |"
+
+
+def test_a_name_with_a_pipe_is_stored_and_found_the_same_way(tmp_path):
+    write_fixture(tmp_path, "data/networking.md", NETWORKING_EMPTY)
+    r1, c1 = run_nw_write("--repo-root", str(tmp_path), "add", "Sam|Example", "--company", "Beta|Inc")
+    assert c1 == 0, r1
+    r2, c2 = run_nw_write("--repo-root", str(tmp_path), "log", "Sam|Example", "--date", "2026-06-19",
+                          "--type", "email", "--summary", "Hi", "--direction", "none", "--no-todo")
+    assert c2 == 0, r2
+    text = (tmp_path / "data/networking.md").read_text(encoding="utf-8")
+    assert "| Sam/Example | Beta/Inc |" in text and "### Sam/Example — Beta/Inc" in text

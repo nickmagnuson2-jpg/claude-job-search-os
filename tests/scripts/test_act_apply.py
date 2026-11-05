@@ -419,3 +419,134 @@ def test_dry_run_returns_no_file_change(tmp_path):
     assert result["dry_run"] is True
     after = (tmp_path / "data/job-pipeline.md").read_text(encoding="utf-8")
     assert after == original
+
+
+# ---------------------------------------------------------------------------
+# act_apply writes the pipeline and networking tables only through their owners
+# (table-writers, 2026-11-02)
+# ---------------------------------------------------------------------------
+
+import ast  # noqa: E402
+
+
+def test_act_apply_no_longer_writes_the_owned_tables_itself():
+    """The adoption gate: neither command body calls write_atomic; pipe_write.py and
+    networking_write.py own those tables."""
+    tree = ast.parse((TOOLS_DIR / "act_apply.py").read_text(encoding="utf-8"))
+    for fn in (n for n in tree.body if isinstance(n, ast.FunctionDef)
+               and n.name in ("cmd_pipeline_add", "cmd_contact_add")):
+        calls = {c.func.id for c in ast.walk(fn) if isinstance(c, ast.Call) and isinstance(c.func, ast.Name)}
+        assert "write_atomic" not in calls, fn.name
+        assert "_owner" in calls, fn.name
+
+
+def test_pipeline_add_writes_notes_and_next_action_through_pipe_write(tmp_path):
+    write_fixture(tmp_path, "data/job-pipeline.md", PIPELINE_MD)
+    result, code = run_act_apply("--repo-root", str(tmp_path), "pipeline-add", "North|wind",
+                                 "--role", "CoS", "--notes", "via | referral", "--source-file", "a|b.md")
+    assert code == 0 and result["action"] == "pipeline_add", result
+    row = [l for l in (tmp_path / "data/job-pipeline.md").read_text(encoding="utf-8").splitlines()
+           if l.startswith("| North/wind |")][0]
+    cells = [c.strip() for c in row.strip("|").split("|")]
+    assert len(cells) == 8
+    assert cells[4] == "Run /research-company, then /generate-cv"
+    assert cells[6] == "via / referral - Added from inbox/a/b.md"
+
+
+def test_pipeline_add_without_a_role_writes_a_dash(tmp_path):
+    write_fixture(tmp_path, "data/job-pipeline.md", PIPELINE_MD)
+    result, code = run_act_apply("--repo-root", str(tmp_path), "pipeline-add", "Northwind")
+    assert code == 0 and result["role"] == "—"
+
+
+def test_pipeline_add_reports_the_owners_duplicate_and_writes_nothing(tmp_path):
+    write_fixture(tmp_path, "data/job-pipeline.md", PIPELINE_MD)
+    run_act_apply("--repo-root", str(tmp_path), "pipeline-add", "Northwind", "--role", "CoS")
+    before = (tmp_path / "data/job-pipeline.md").read_text(encoding="utf-8")
+    result, code = run_act_apply("--repo-root", str(tmp_path), "pipeline-add", "northwind", "--role", "cos")
+    assert code == 0 and result["action"] == "duplicate_warning", result
+    assert result["existing_roles"] == ["CoS"]
+    assert (tmp_path / "data/job-pipeline.md").read_text(encoding="utf-8") == before
+
+
+def test_pipeline_add_dry_run_previews_the_owners_row(tmp_path):
+    write_fixture(tmp_path, "data/job-pipeline.md", PIPELINE_MD)
+    before = (tmp_path / "data/job-pipeline.md").read_text(encoding="utf-8")
+    result, code = run_act_apply("--repo-root", str(tmp_path), "--dry-run", "pipeline-add", "Northwind")
+    assert code == 0 and result["dry_run"] is True
+    assert result["would_mutate"][0]["row"].startswith("| Northwind | — | Researching |")
+    assert (tmp_path / "data/job-pipeline.md").read_text(encoding="utf-8") == before
+
+
+def test_pipeline_add_relays_the_owners_error(tmp_path):
+    write_fixture(tmp_path, "data/job-pipeline.md", "# Job Pipeline\n\nno sections\n")
+    result, code = run_act_apply("--repo-root", str(tmp_path), "pipeline-add", "Northwind")
+    assert code != 0 and result["code"] == "missing_section"
+
+
+def test_contact_add_goes_through_networking_write_add_and_log(tmp_path):
+    write_fixture(tmp_path, "data/networking.md", NETWORKING_MD)
+    result, code = run_act_apply("--repo-root", str(tmp_path), "contact-add", "Sam|Example",
+                                 "--company", "Beta|Inc", "--content", "Hello there",
+                                 "--source-file", "s.md")
+    assert code == 0 and result["action"] == "contact_add", result
+    text = (tmp_path / "data/networking.md").read_text(encoding="utf-8")
+    row = [l for l in text.splitlines() if l.startswith("| Sam/Example |")][0]
+    assert len([c for c in row.strip("|").split("|")]) == 7
+    assert "| other |" in row
+    assert "#### " in text and "| other | Captured from inbox/s.md" in text
+    assert "> Hello there" in text
+    assert "**Follow-up:** Review and update relationship type, add outreach if appropriate." in text
+
+
+def test_contact_add_reports_a_failed_log_as_a_partial_write(tmp_path, monkeypatch):
+    import importlib, sys as _s
+    _s.path.insert(0, str(TOOLS_DIR)); aa = importlib.import_module("act_apply")
+    seq = iter([{"status": "ok", "action": "add"}, {"status": "error", "message": "boom"}])
+    monkeypatch.setattr(aa, "_owner", lambda *a, **k: next(seq))
+    out = []
+    monkeypatch.setattr(aa, "out_error", lambda msg, code="error", **kw: (_ for _ in ()).throw(SystemExit((msg, code, kw))))
+    args = type("A", (), {"name": "Sam", "company": None, "role": None, "source_file": None,
+                          "content": None, "force": False})()
+    with pytest.raises(SystemExit) as e:
+        aa.cmd_contact_add(args, tmp_path / "data" / "networking.md", False)
+    msg, code, kw = e.value.code
+    assert code == "partial_write" and kw == {"contact_added": True} and "boom" in msg
+
+
+def test_owner_without_json_is_an_owner_failed_error(tmp_path, monkeypatch):
+    import importlib, sys as _s
+    _s.path.insert(0, str(TOOLS_DIR)); aa = importlib.import_module("act_apply")
+
+    class P:
+        stdout, stderr, returncode = "", "Traceback: boom", 1
+    monkeypatch.setattr(aa.subprocess, "run", lambda *a, **k: P())
+    r = aa._owner("pipe_write.py", ["add", "X", "Y"], tmp_path, False)
+    assert r["status"] == "error" and r["code"] == "owner_failed" and "boom" in r["message"]
+
+
+def test_pipeline_add_without_a_url_writes_a_dash(tmp_path):
+    write_fixture(tmp_path, "data/job-pipeline.md", PIPELINE_MD)
+    result, code = run_act_apply("--repo-root", str(tmp_path), "pipeline-add", "Northwind")
+    assert code == 0, result
+    row = [l for l in (tmp_path / "data/job-pipeline.md").read_text(encoding="utf-8").splitlines()
+           if l.startswith("| Northwind |")][0]
+    assert [c.strip() for c in row.strip("|").split("|")][7] == "—"
+
+
+def test_contact_add_dry_run_previews_and_writes_nothing(tmp_path):
+    write_fixture(tmp_path, "data/networking.md", NETWORKING_MD)
+    before = (tmp_path / "data/networking.md").read_text(encoding="utf-8")
+    result, code = run_act_apply("--repo-root", str(tmp_path), "--dry-run", "contact-add", "Sam Example",
+                                 "--content", "Hello there")
+    assert code == 0 and result["action"] == "contact_add" and result["dry_run"] is True, result
+    assert result["would_mutate"]
+    assert (tmp_path / "data/networking.md").read_text(encoding="utf-8") == before
+
+
+def test_contact_add_without_content_writes_no_quote(tmp_path):
+    write_fixture(tmp_path, "data/networking.md", NETWORKING_MD)
+    result, code = run_act_apply("--repo-root", str(tmp_path), "contact-add", "Sam Example")
+    assert code == 0, result
+    text = (tmp_path / "data/networking.md").read_text(encoding="utf-8")
+    assert "Captured from inbox" in text and not [l for l in text.splitlines() if l.startswith(">")]

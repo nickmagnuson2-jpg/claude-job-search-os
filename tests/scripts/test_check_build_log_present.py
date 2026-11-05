@@ -339,3 +339,24 @@ def test_a_log_above_the_company_folder_does_not_count(repo):
     put(repo, "BUILD-LOG.md", FILLED)
     assert write(repo, "output/acme/page.html")
 
+
+
+# --- the shell's working directory (finding J, extended 2026-11-01) --------------
+
+@pytest.mark.parametrize("command", [
+    "cd output/acme && echo '<html>' > 110126-demo.html",
+    "cd output; cp /tmp/page.html acme/",
+])
+def test_a_build_write_after_a_cd_is_gated(repo, command):
+    msg = cbl.decide("Bash", {"command": command}, root=repo)
+    assert msg and "BLOCKED check_build_log_present" in msg
+
+
+def test_a_build_write_from_the_session_cwd_is_gated(repo):
+    msg = cbl.decide("Bash", {"command": "echo '<html>' > 110126-demo.html"}, root=repo,
+                     cwd=str(repo / "output" / "acme"))
+    assert msg and "BLOCKED check_build_log_present" in msg
+
+
+def test_a_cd_out_of_the_repo_is_not_gated(repo):
+    assert cbl.decide("Bash", {"command": "cd /tmp && echo x > page.html"}, root=repo) is None

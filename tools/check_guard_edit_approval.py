@@ -80,8 +80,12 @@ from hook_runtime import read_payload  # noqa: E402
 # to pass, so a change to either changes a guard verdict.
 # vault_paths (2026-11-01, Nick approved): check_sealed_read reads the sealed vault folders
 # from vault_paths.sealed_rels(), so a change there changes which reads the guard blocks.
+# eic_review (2026-10-30, Nick approved): check_eic_review blocks the published-post record
+# exactly while eic_review.open_reviews() is non-empty, so a change to it changes a verdict.
+# shell_writes (2026-11-01, Nick approved): the Bash write-target walk with cwd tracking that
+# check_eic_review, check_handoff_producer and check_public_pii all judge from.
 HOOK_LIBRARIES = ("shell_tokens", "hook_runtime", "hook_command_lint", "approval_signing",
-                  "calendar_approval", "vault_paths")
+                  "calendar_approval", "vault_paths", "eic_review", "shell_writes")
 # Imported by a guard but deliberately NOT guarded (Nick's call, 2026-10-01: "just the
 # hook libraries"). Each is domain logic or tooling that ordinary work edits.
 NOT_HOOK_LIBRARIES = {
@@ -105,6 +109,10 @@ NOT_HOOK_LIBRARIES = {
     "slug": "slug helper, imported via the Gmail tooling",
     "count_report": "reach-line formatter for counted output, imported via build_check "
                     "and sent_artifact_check; formatting, never a decision",
+    "draft_capture": "draft/sent record store, imported via eic_review's manual `open` "
+                     "command; it decides when a review opens, never what the hook blocks, "
+                     "and test_eic_review covers that opening step (2026-10-30, Nick "
+                     "approved)",
 }
 
 # Guard infrastructure. Repo-relative, matched against the tail of the path so an
