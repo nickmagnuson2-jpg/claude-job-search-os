@@ -41,6 +41,10 @@ def _run(args, cwd, env_extra=None, default=False):
     # opt in. _run_default runs the tool exactly as a caller with no flags does.
     if "--no-line-map" not in args and "--list" not in args and not default:
         args = [*args, "--line-map"]
+    # The cache is opt-in too (Nick, 2026-11-05 06:30). Same treatment: the tests written
+    # for it opt in; `default=True` runs the tool with neither flag.
+    if "--no-cache" not in args and "--list" not in args and not default:
+        args = [*args, "--cache"]
     return subprocess.run([sys.executable, str(TOOL), *args], capture_output=True,
                           text=True, cwd=str(cwd), env=env)
 
@@ -1175,3 +1179,37 @@ def test_e2e_by_default_no_subset_runs_but_changed_tests_still_get_their_map(tmp
     d = json.loads(_run([str(src), "--tests", str(t), "--json"], tmp_path, default=True).stdout)
     assert d["scope"]["mode"] == "diff" and d["scope"]["test_lines"], d["scope"]
     assert d["selection"]["line_map"]["status"] == "ok" and d["selection"]["subset_runs"] == 0
+
+
+def test_e2e_by_default_the_cache_is_neither_read_nor_written(tmp_path, monkeypatch):
+    """The cache is OFF by default (Nick, 2026-11-05 06:30): a seeded cache that says every
+    mutant was killed must not hide a survivor, and the run must not create the cache dir.
+    --cache reads the same seeded entries; --no-cache wins over --cache."""
+    src, t = _repo(tmp_path, tests=f"""\
+        import sys; sys.path.insert(0, r'{tmp_path / "tools"}')
+        from subject import classify, double
+        def test_pos(): assert classify(1) == 'pos'
+        def test_neg(): assert classify(-1) == 'neg'
+        def test_double(): assert double(3) == 6
+    """)                                               # nothing checks the cap branch
+    store = _seed_cache(tmp_path, src, t, lambda line, op: ("killed", "assertion"),
+                        monkeypatch)
+    before = sorted(p.name for p in store.iterdir())
+    args = [str(src), "--whole-file", "--tests", str(t), "--json"]
+    plain = _run(args, tmp_path, default=True)
+    d = json.loads(plain.stdout)
+    assert d["cache"] == {"enabled": False, "hits": 0, "writes": 0, "dir": None}, d["cache"]
+    assert d["survived"] > 0 and plain.returncode == 2, "the seeded KILLED was not read"
+    assert sorted(p.name for p in store.iterdir()) == before, "and nothing was written"
+    on = json.loads(_run([*args, "--cache"], tmp_path, default=True).stdout)
+    assert on["cache"]["enabled"] is True
+    assert on["cache"]["hits"] == on["scope"]["mutants_in_file"] > 0
+    both = json.loads(_run([*args, "--cache", "--no-cache"], tmp_path, default=True).stdout)
+    assert both["cache"]["enabled"] is False and both["cache"]["hits"] == 0
+
+
+def test_e2e_a_default_run_creates_no_cache_directory(tmp_path):
+    src, t = _repo(tmp_path)
+    r = _run([str(src), "--whole-file", "--tests", str(t), "--json"], tmp_path, default=True)
+    assert r.returncode in (0, 2), r.stderr
+    assert not (tmp_path / ".mutation-cache").exists()

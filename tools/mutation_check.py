@@ -853,6 +853,12 @@ def run_tests(test_files: list, timeout: int,
 #      FALSE KILL, the one error this tool must never make).
 #   3. VERDICT CACHE. A mutant whose inputs are byte-identical to a measured one reuses its
 #      verdict. A cached SURVIVED is reported as a survivor, like a fresh one.
+#
+# DEFAULTS (Nick, 2026-11-05): diff scope ON. Per-line selection is OPT-IN (--line-map):
+# once subsets became true prefixes of the run it measured slower than the file tier. The
+# cache is OPT-IN (--cache): Codex round 3 found inputs its key misses (gitignored test
+# inputs, --timeout, volatile environment), and a stale cached KILLED is a false kill. The
+# key has to be made safe before the cache is defaulted on.
 
 def mutant_spans(tree: ast.AST) -> dict[tuple, tuple[int, int]]:
     """{(lineno, col, op): (first line, last line)} of the code each mutant replaces.
@@ -1370,8 +1376,9 @@ def cache_context(target: Path, original: str, test_files: list, root: Path) -> 
 
     And the checkout itself (_repo_state): a hit needs an identical tree.
 
-    NOT covered, and the reason --no-cache exists: gitignored trees, the network, the
-    clock."""
+    NOT covered, and the reason the cache is opt-in (--cache) since 2026-11-05:
+    gitignored trees, --timeout, environment variables _env_fingerprint drops, the
+    network, the clock."""
     def rel(p: Path) -> str:
         try:
             return p.resolve().relative_to(root.resolve()).as_posix()
@@ -2140,8 +2147,14 @@ def main() -> int:
     ap.add_argument("--no-line-map", action="store_true",
                     help="build no line map at all, not even for changed-test scoping (a "
                          "changed mapped test then measures the whole file)")
+    ap.add_argument("--cache", action="store_true",
+                    help="OPT-IN verdict cache (.mutation-cache/): replay a verdict whose "
+                         "inputs are unchanged and store new ones. Off by default since "
+                         "2026-11-05: its key does not yet cover gitignored test inputs, "
+                         "--timeout or volatile environment, and a stale KILLED is a false "
+                         "kill. Make the key safe before defaulting it on.")
     ap.add_argument("--no-cache", action="store_true",
-                    help="neither read nor write the verdict cache (.mutation-cache/)")
+                    help="neither read nor write the verdict cache; wins over --cache")
     args = ap.parse_args()
     if args.in_worktree and not _is_linked_worktree(REPO_ROOT):
         return run_in_worktree(sys.argv[1:], args)
@@ -2306,7 +2319,7 @@ def main() -> int:
            "subset_weak_rechecked": 0, "subset_kind_from_full_subset": 0,
            "no_covering_test": 0}
     subset_ok: dict[tuple, bool] = {}
-    use_cache = not args.no_cache
+    use_cache = args.cache and not args.no_cache
     cache_ctx = cache_context(target, original, test_files, REPO_ROOT) if use_cache else None
     cache_stats = {"enabled": use_cache, "hits": 0, "writes": 0,
                    "dir": str(cache_dir()) if use_cache else None}
