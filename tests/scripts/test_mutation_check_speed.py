@@ -317,6 +317,24 @@ def test_a_live_module_is_read_as_it_is_now_not_at_the_base(tmp_path):
     assert ("tests/scripts/test_front.py", "deleted test file") in got["whole"], got
 
 
+def test_an_import_the_old_regex_saw_still_links_a_live_module(tmp_path):
+    """Codex round 5 F1: an import inside a string run by exec() is invisible to ast but
+    was seen by covering_names' regex. The graph must never hold fewer edges than the
+    regex gave, or a deleted test reaching the target that way is dropped."""
+    src, t = _repo(tmp_path)
+    (tmp_path / "tools" / "front.py").write_text(
+        'code = """\nimport subject\n"""\nexec(code)\n'
+        "def cap(n): return subject.double(n)\n")
+    ft = tmp_path / "tests" / "scripts" / "test_front.py"
+    ft.write_text("import front\ndef test_cap(): assert front.cap(101) == -1\n")
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-qm", "exec import")
+    _git(tmp_path, "update-ref", "refs/remotes/origin/main", "HEAD")
+    ft.unlink()
+    got = mc.changed_test_inputs("HEAD", tmp_path, [t], "subject")
+    assert ("tests/scripts/test_front.py", "deleted test file") in got["whole"], got
+
+
 def test_reached_through_names_nothing_when_there_are_no_names():
     """An empty name set would compile to `\\b(?:)\\b`, which matches every source, so the
     helper must answer False itself rather than call every deleted test a reaching one."""

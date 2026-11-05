@@ -1089,18 +1089,24 @@ def changed_test_inputs(base: str, root: Path, test_files: list,
     # every deleted test already forces the whole file, so these names go unused.
     # ONE graph and ONE fixpoint over it (Codex round 4 F1): a chain can alternate
     # between the two trees (test -> live front -> deleted gone -> target), and a loop
-    # over deleted modules alone added gone without ever revisiting front. Imports are
-    # read with _imported_names (ast), a superset of covering_names' first-word regex,
-    # so the scope can only widen relative to map_tests' selection.
+    # over deleted modules alone added gone without ever revisiting front. Edges are the
+    # UNION of _imported_names (ast: `from tools import x` gives x) and _IMPORT_RE, the
+    # same first-word regex covering_names uses. ast alone is NOT a superset: an import
+    # inside a string run by exec() is seen only by the regex (Codex round 5 F1). With
+    # the union, the graph holds every edge map_tests' selection had, so the scope can
+    # only widen.
+    def edges(text: str) -> set[str]:
+        return _imported_names(text) | set(_IMPORT_RE.findall(text))
+
     graph: dict[str, set[str]] = {}
     for f in (root / "tools").glob("*.py"):
         try:
-            graph[f.stem] = _imported_names(f.read_text(encoding="utf-8", errors="ignore"))
+            graph[f.stem] = edges(f.read_text(encoding="utf-8", errors="ignore"))
         except OSError:
             continue
     for q, s in changed.items():
         if s == "D" and q.startswith("tools/") and q.endswith(".py"):
-            graph[Path(q).stem] = _imported_names(at_base(q) or "")
+            graph[Path(q).stem] = edges(at_base(q) or "")
     reach = {stem}
     grew = True
     while grew:                          # fixpoint; `reach` only grows
