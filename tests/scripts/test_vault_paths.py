@@ -254,7 +254,7 @@ def test_sealed_dir_refuses_a_folder_that_does_not_exist(tmp_path):
     (vault / "data" / "alcove").mkdir(parents=True)
     root = _conf(tmp_path, f"{vault}\n")
     with pytest.raises(vp.SealedFolderMissing):
-        vp.sealed_dir(root, _sealed_conf(tmp_path, "data/sesions\n"))
+        vp.sealed_dir(root, _sealed_conf(tmp_path, "data/alcvoe\n"))
 
 
 def test_sealed_dir_refuses_a_malformed_config(tmp_path):

@@ -232,8 +232,11 @@ def output_refusal(output: Path, type_: str, repo_root: Path,
     """Why `output` may not receive a transcript of `type_`, or None when it may.
 
     A sealed transcript never lands inside the repo: it is public, and gitignored trees in
-    it are backed up to a second repo. Judged on the resolved path, so `..` and symlinks
-    count where they lead, against the checkout and, from a worktree, its main checkout.
+    it are backed up to a second repo. Judged where the write LANDS: the resolved parent
+    directory plus the final name, because os.replace swaps a file in at that name and never
+    follows a link there. So `..` and a symlinked directory count where they lead, while a
+    symlink at the final name counts where it sits. Checked against the checkout and, from a
+    worktree, its main checkout.
     The write primitive checks this itself, whatever its caller chose (Codex r1 g2a F1).
     """
     if type_ not in TRANSCRIPT_HEADERS:
