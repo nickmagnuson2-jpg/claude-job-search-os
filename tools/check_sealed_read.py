@@ -1042,26 +1042,19 @@ def _walk_targets(words: list, h: int) -> list:
 
 # git (Codex r3 P0, 2026-11-04, with Nick's guard-edit approval): `git -C <vault> grep x`
 # read the vault's files while `grep -r` of the same folder was blocked. A git subcommand
-# that prints file content or history content walks the repository git runs in. `git status`
-# and `git log --oneline` print no content and still pass (the round-4 restraint replay).
+# that prints file content or history content walks the repository git runs in. Since the
+# status-only rule below, only a plain `git status` still passes in the vault repo.
 #
-# FAIL CLOSED (Codex r4, 14 P0s on d37d8370, fixed the same day under the same approval):
-# a closed list of content subcommands missed `status -v`, `commit --dry-run -v`,
-# `diff-files -p` and every subcommand git adds later. So every subcommand counts as a
-# content read EXCEPT the ones below, which print no file content in the forms listed.
-_GIT_NO_CONTENT = {"branch", "tag", "remote", "rev-parse", "rev-list", "describe", "fetch",
-                   "pull", "push", "add", "rm", "mv", "restore", "checkout", "switch", "reset",
-                   "merge", "rebase", "init", "config", "worktree", "gc", "prune",
-                   "count-objects", "ls-remote", "symbolic-ref", "update-ref", "show-ref",
-                   "for-each-ref", "check-ignore", "var", "version", "help"}
-_GIT_VERBOSE_CONTENT = {"status", "commit"}       # content only with -v / --verbose
-_GIT_PATCH_CMDS = {"log", "whatchanged", "reflog", "shortlog", "stash"}
-# Flags that make diff/log print a patch. One of these wins over any summary flag
-# (`diff --stat -p` prints both).
-_GIT_PATCH_FLAGS = {"-p", "-u", "--patch", "--patch-with-stat", "--patch-with-raw",
-                    "--unified", "--cc", "--color-words", "--full-diff"}
-_GIT_DIFF_QUIET = {"--stat", "--shortstat", "--numstat", "--name-only", "--name-status",
-                   "--quiet", "--exit-code", "--summary", "--dirstat", "--raw"}
+# STATUS-ONLY RULE (Nick's guard-edit approval, 2026-11-05). Rounds 4, 5 and 6 each found
+# the no-content allowlist leaking (r6: add/checkout/restore/reset -p, commit -v, config
+# --includes, --format on for-each-ref/branch/tag/rev-list), so the allowlist is gone. In a
+# repo the call reaches into the vault, every git command counts as a content read EXCEPT a
+# plain `git status` with only the flags below. The only global options allowed are the ones
+# that name the repo (-C, --git-dir, --work-tree) and --no-pager. Over-blocking git work in
+# the personal repo from a job-search session is the accepted cost; that work runs from the
+# personal repo's own sessions, or with SEAL_READ_OK when Nick means it.
+_GIT_STATUS_FLAGS = {"-s", "--short", "-b", "--branch", "--porcelain"}
+_GIT_STATUS_GLOBALS = {"-C", "--git-dir", "--work-tree", "--no-pager"}
 _GIT_VALUE_GLOBALS = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path",
                       "--config-env", "--super-prefix"}
 
@@ -1083,35 +1076,17 @@ def _git_split(args: list) -> tuple:
     return opts, "", []
 
 
-def _git_patch_flag(f: str) -> bool:
-    name = f.split("=", 1)[0]
-    return (name in _GIT_PATCH_FLAGS or name.startswith(("--word-diff", "--patch"))
-            or f.startswith(("-S", "-G", "-U"))
-            or bool(re.fullmatch(r"-[A-Za-z]+", f) and "p" in f[1:]))
-
-
 def _git_reads_content(args: list) -> bool:
-    _, sub, rest = _git_split(args)
+    """True unless this is a plain `git status` (status-only rule, Nick 2026-11-05)."""
+    opts, sub, rest = _git_split(args)
     if not sub:
         return False
-    if sub == "config" and any(f in ("--blob", "--file", "-f") or f.startswith(("--blob=", "--file="))
-                               for f in rest):
-        # Codex r5 61.F1/66.F1 (P0), Nick approved 2026-11-05: config --blob/--file prints
-        # the named blob or file, which a hash or a path outside the sealed name can reach.
+    head = args[:len(args) - len(rest) - 1]
+    if any(w.startswith("-") and w.split("=", 1)[0] not in _GIT_STATUS_GLOBALS for w in head):
         return True
-    if sub in _GIT_NO_CONTENT:
-        return False
-    if sub in _GIT_VERBOSE_CONTENT:
-        return any(f in ("-v", "-vv", "--verbose") or bool(re.fullmatch(r"-[A-Za-z]*v[A-Za-z]*", f))
-                   for f in rest)
-    if sub == "diff":
-        if any(_git_patch_flag(f) for f in rest):
-            return True
-        return not any(f in _GIT_DIFF_QUIET or f.split("=", 1)[0] in _GIT_DIFF_QUIET
-                       for f in rest)
-    if sub in _GIT_PATCH_CMDS:
-        return any(_git_patch_flag(f) for f in rest)
-    return True                     # unknown or content subcommand: fail closed
+    if sub != "status":
+        return True
+    return not all(f in _GIT_STATUS_FLAGS or bool(re.fullmatch(r"-[sb]+", f)) for f in rest)
 
 
 def _git_repo_dirs(args: list) -> list:

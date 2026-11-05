@@ -585,7 +585,6 @@ def test_git_reading_the_vault_tree_or_history_blocks(tmp_path, cmd):
 
 @pytest.mark.parametrize("cmd", [
     "git -C ../personal status --short",
-    "git -C ../personal log --oneline -5",
     "cd ../personal && git status",
     "git grep x",
     "git log -p -- tools/x.py",
@@ -624,11 +623,6 @@ def test_git_content_reads_found_past_flags_and_by_default(tmp_path, cmd):
 
 
 @pytest.mark.parametrize("cmd", [
-    "git -C ../personal diff --stat",
-    "git -C ../personal diff --stat=200",           # the =value form of a quiet flag
-    "git -C ../personal diff --name-only HEAD~1",
-    "git -C ../personal status -u",                 # -u means a patch only for log-like commands
-    "git -C ../personal log -M",
     "git --namespace=../personal grep x",           # a value global that is not a directory
     "git -C ../personal",                           # no subcommand at all
     "git",
@@ -668,18 +662,6 @@ def test_round4_git_reads_of_the_vault_block(tmp_path, cmd):
 @pytest.mark.parametrize("cmd", [
     "git -C ../personal status",
     "git -C ../personal status --short --branch",
-    "git -C ../personal log --oneline --stat",
-    "git -C ../personal log --name-only -5",
-    "git -C ../personal diff --stat",
-    "git -C ../personal branch -a",
-    "git -C ../personal rev-parse HEAD",
-    "git -C ../personal remote -v",
-    "git -C ../personal fetch",
-    "git -C ../personal add data/x.md",
-    "git -C ../personal commit -m msg",
-    "git -C ../personal push",
-    "git -C ../personal stash list",
-    "git -C ../personal worktree list",
 ])
 def test_round4_git_work_that_prints_no_file_content_passes(tmp_path, cmd):
     root, _ = _layout(tmp_path)
@@ -700,6 +682,80 @@ def test_round5_git_config_reading_a_file_blocks(tmp_path, cmd):
     assert _run(root, "Bash", {"command": cmd})[0] == 2, cmd
 
 
-def test_round5_plain_git_config_still_passes(tmp_path):
+# Status-only rule (Nick's guard-edit approval, 2026-11-05, after Codex r6 found 8 more
+# P0s in the no-content allowlist): in the vault repo only a plain `git status` passes,
+# with -s/--short/-b/--branch/--porcelain and nothing else; every other git command there
+# counts as a content read.
+@pytest.mark.parametrize("cmd", [
+    # Codex r6 shapes (67-72.F1/F2, 70.F2, 71.F1)
+    "git -C ../personal add -p",
+    "git -C ../personal add -e",
+    "git -C ../personal add --patch data/x.md",
+    "git -C ../personal checkout -p",
+    "git -C ../personal restore -p data/x.md",
+    "git -C ../personal reset -p",
+    "git -C ../personal commit -v",
+    "git -C ../personal commit --verbose -m msg",
+    "git -C ../personal config --includes --list",
+    "git -C ../personal for-each-ref --format=%(contents)",
+    "git -C ../personal branch --format=%(contents)",
+    "git -C ../personal tag --format=%(contents)",
+    "git -C ../personal rev-list --format=%B HEAD",
+    # status with anything beyond the allowed flags
+    "git -C ../personal status -v",
+    "git -C ../personal status -sv",
+    "git -C ../personal status -u",
+    "git -C ../personal status --porcelain=v2",
+    "git -C ../personal status data/x.md",
+    "git -C ../personal status --",
+    "git -C ../personal -c status.showUntrackedFiles=all status",
+    "git -c core.pager=cat -C ../personal status",
+    "git -C ../personal --paginate status",
+    # commands that used to pass because they print no file content
+    "git -C ../personal config user.name",
+    "git -C ../personal log --oneline -5",
+    "git -C ../personal log --oneline --stat",
+    "git -C ../personal log --name-only -5",
+    "git -C ../personal log -M",
+    "git -C ../personal diff --stat",
+    "git -C ../personal diff --stat=200",
+    "git -C ../personal diff --name-only HEAD~1",
+    "git -C ../personal branch -a",
+    "git -C ../personal rev-parse HEAD",
+    "git -C ../personal remote -v",
+    "git -C ../personal fetch",
+    "git -C ../personal add data/x.md",
+    "git -C ../personal commit -m msg",
+    "git -C ../personal push",
+    "git -C ../personal stash list",
+    "git -C ../personal worktree list",
+    "cd ../personal && git log --oneline",
+    "git --git-dir=../personal/.git rev-parse HEAD",
+])
+def test_status_only_rule_every_other_git_command_in_the_vault_blocks(tmp_path, cmd):
     root, _ = _layout(tmp_path)
-    assert _run(root, "Bash", {"command": "git -C ../personal config user.name"})[0] == 0
+    assert _run(root, "Bash", {"command": cmd})[0] == 2, cmd
+
+
+@pytest.mark.parametrize("cmd", [
+    "git -C ../personal status",
+    "git -C ../personal status -s",
+    "git -C ../personal status --short",
+    "git -C ../personal status -b",
+    "git -C ../personal status --branch",
+    "git -C ../personal status --porcelain",
+    "git -C ../personal status -sb",
+    "git -C ../personal status -s -b",
+    "git -C ../personal status --short --branch --porcelain",
+    "git --no-pager -C ../personal status -sb",
+    "cd ../personal && git status -sb",
+    "git --work-tree=../personal status",
+    # outside the vault, git work is untouched by the rule
+    "git log --oneline -5",
+    "git add -p",
+    "git config user.name",
+    "git -C tools log -p",
+])
+def test_status_only_rule_plain_status_and_non_vault_git_pass(tmp_path, cmd):
+    root, _ = _layout(tmp_path)
+    assert _run(root, "Bash", {"command": cmd})[0] == 0, cmd
