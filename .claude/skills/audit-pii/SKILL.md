@@ -46,11 +46,13 @@ is SSH through a Touch ID key, so it raises a prompt Nick did not start (fired t
 `memory/feedback_no_network_git_without_checking_touch_id_rule.md`).
 
 ```bash
-gh api repos/<owner>/<repo>/git/matching-refs/heads --jq '.[].ref'
+gh api --paginate repos/<owner>/<repo>/git/matching-refs/heads --jq '.[].ref'
+gh api --paginate 'repos/<owner>/<repo>/pulls?state=open' --jq '.[].head.ref'
 ```
 
-Only `refs/heads/main` should be listed, plus any branch with an open PR. Any other branch is a
-leftover: report it and ask Nick to delete it in the GitHub UI (the gh token is read-only). The
+The first lists every branch (`--paginate`, or branches past the first page are missed); the
+second lists the branches that have an open PR. Only `refs/heads/main` and the branches in the
+second list should appear in the first. Any other branch is a leftover: report it and ask Nick to delete it in the GitHub UI (the gh token is read-only). The
 repo setting "Automatically delete head branches" removes a branch when its PR merges.
 
 **Pull refs (`refs/pull/N/head`) are expected, not a finding.** GitHub creates one for every PR
