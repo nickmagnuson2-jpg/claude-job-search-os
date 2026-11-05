@@ -374,7 +374,7 @@ _SHELLS = frozenset({"sh", "bash", "zsh", "dash", "ksh", "su"})
 # is a script only when it is stdin). See scripts_run_by.
 _SCRIPT_RUNNERS = frozenset({"eval", "source", "."})
 _WRAPPERS = frozenset({"sudo", "env", "command", "exec", "builtin", "nice", "nohup",
-                       "time", "timeout", "stdbuf", "xargs", "caffeinate", "!",
+                       "time", "timeout", "stdbuf", "xargs", "caffeinate", "arch", "!",
                        "then", "do", "else", "elif", "if", "while", "until", "{"})
 _ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\+?=")   # NAME= and NAME+=
 _WRITE_REDIR = frozenset({">", ">>", ">|", "&>", "&>>", "<>"})
@@ -441,6 +441,11 @@ def _parse_wrapper_options(words: list[str], k: int, wrapper: str, positional_se
             skip = 1 if wrapper == "timeout" and not positional_seen else 0
             todo.append(("cmd", j + skip, "", False))
             break
+        if wrapper == "arch" and w == "-arch":
+            # macOS `arch -arch x86_64 cmd`: the value is an architecture name, never
+            # the command (Codex r10 group E F1). `-arm64` and the like are flags.
+            k += 2
+            continue
         if _ASSIGNMENT.match(w) or (w.startswith("-") and len(w) > 1):
             # A bare one-letter option, or a long option with no `=value`, may
             # take the next word as its value (`sudo --user nobody`); read both.
@@ -1822,30 +1827,16 @@ def main():
               resolve_public_targets([tool_input.get("notebook_path", "")], root), root)
     elif tool_name == "Bash":
         command = tool_input.get("command", "")
-        # Assignments in one segment reach the next (`OUT=docs/f; echo x > "$OUT"`).
-        env = command_assignments(command)
-        pairs = segments_with_separators(command)
-        cwds = start_cwds([str(data.get("cwd") or ""), os.environ.get("PWD", "")])
-        exact = cwd_tracking_is_exact(command, pairs, cwds)
-        for segment, before in pairs:
-            operand = pure_cd_operand(segment)
-            if operand is not None:
-                cwds = apply_cd(cwds, operand,
-                                certain=exact and before <= {";", "\n"})
-                continue                                # a bare cd writes nothing
-            # `dir=tools; cd "$dir"` moves the shell to every value the command gives
-            # dir. Each is ADDED (never certain), so the old directories stay. HEAD
-            # allowed `... > data/x.py` there (Codex review, 2026-10-13). A variable the
-            # command does not assign adds nothing, as before tracking existed.
-            text = cd_operand_text(segment)
-            if text is not None and _VAR_REF.search(text):
-                for value in _expand_vars(text, env):
-                    if (value and value[0] not in "-+"
-                            and not _CD_OPERAND_UNSAFE.search(value)):
-                        cwds = apply_cd(cwds, value, certain=False)
-                continue
-            # When tracking is not exact no cd is `certain`, so apply_cd only ever adds
-            # candidates and the session cwd is still among them, as before this existed.
+        # The segment walk with the shell's working directory tracked is shared with the
+        # other Bash write gates (tools/shell_writes.py, 2026-11-01). Assignments in one
+        # segment reach the next (`OUT=docs/f; echo x > "$OUT"`), and `dir=tools; cd
+        # "$dir"` widens the candidate directories (Codex review, 2026-10-13).
+        # Run as a script this module is __main__; register it under its own name so
+        # shell_writes uses this copy instead of loading a second one.
+        sys.modules.setdefault("check_public_pii", sys.modules[__name__])
+        import shell_writes
+        typed = [str(data.get("cwd") or ""), os.environ.get("PWD", "")]
+        for segment, env, cwds in shell_writes.walk(command, start_cwds(typed)):
             targets = resolve_public_targets(extract_write_targets(segment, env), root,
                                              skip_binary=False, cwds=cwds)
             if targets:

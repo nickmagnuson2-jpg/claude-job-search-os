@@ -21,6 +21,7 @@ __pycache__/
 # Glob, not exact names: a Finder duplicate ('.pending-draft.txt 2.txt') slipped past the exact list (2026-09-28)
 tools/.pending-draft*
 tools/.personal-recipients.txt
+tools/.eic-reviewers.txt
 # Stem globs, not exact names. gmail_fetch writes the token and both state files via a
 # '<name>.tmp.<pid>' temp + os.replace and removes the temp on any handled error, but a
 # death it cannot handle (SIGKILL, power loss) leaves it behind (the token temp holds OAuth
