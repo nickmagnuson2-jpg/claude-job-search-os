@@ -1056,12 +1056,16 @@ def changed_test_inputs(base: str, root: Path, test_files: list,
         name = Path(p).name
         if not p.startswith("tests/"):
             continue
-        if st == "D":
-            if name.startswith("test_") and name.endswith(".py"):
-                old = at_base(p) or ""
-                if stem_re is None or stem_re.search(old) or name.startswith(f"test_{stem}"):
-                    whole.append((p, "deleted test file"))
+        if st == "D" and name.startswith("test_") and name.endswith(".py"):
+            old = at_base(p) or ""
+            if stem_re is None or stem_re.search(old) or name.startswith(f"test_{stem}"):
+                whole.append((p, "deleted test file"))
             continue
+        # Any OTHER deleted file (a conftest, a helper, a fixture) goes through the same
+        # checks as an edited one: deleting a conftest changes what every test does.
+        # (Before 2026-11-04 every deleted non-test file was skipped; found by
+        # self-mutation, where removing that skip changed nothing any test saw.)
+        gone_note = " (deleted)" if st == "D" else ""
         if p in mapped:
             old = at_base(p)
             names: set[str] | None = None        # None: every test in the file counts
@@ -1082,14 +1086,14 @@ def changed_test_inputs(base: str, root: Path, test_files: list,
             tests.append(p)
             test_names[p] = names
         elif name == "conftest.py":
-            whole.append((p, "conftest changed"))
+            whole.append((p, "conftest changed" + gone_note))
         elif p.endswith(".py") and not name.startswith("test_") and Path(p).stem in imported:
-            whole.append((p, "imported helper changed"))
+            whole.append((p, "imported helper changed" + gone_note))
         elif not name.startswith("test_") and any(name in text or p in text for text in texts):
             # Fixture data a mapped test names (job-search-ee, 2026-11-04): a weakened
             # fixture weakens the test like an edited assertion. Matched by name too, so a
             # common name can over-trigger; that costs time, never coverage.
-            whole.append((p, "referenced fixture changed"))
+            whole.append((p, "referenced fixture changed" + gone_note))
     return {"whole": whole, "tests": tests, "test_names": test_names}
 
 

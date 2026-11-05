@@ -441,6 +441,9 @@ def test_e2e_a_diff_run_measures_only_the_changed_function(tmp_path):
     assert 0 < d["scope"]["mutants_in_scope"] < d["scope"]["mutants_in_file"]
     assert d["status"] == "ok" and r.returncode == 0
     assert src.read_text() == SUBJECT.replace("n > 100", "n >= 101"), "restored"
+    # Neither fallback happened, so neither is said (the notes are only for fallbacks).
+    assert "scope: whole file" not in r.stderr and "per-line selection off" not in r.stderr
+    assert d["fast_tests"] is not None, "the file-tier probe ran"
 
 
 def test_e2e_a_commit_that_only_weakens_a_test_still_finds_the_survivor(tmp_path):
@@ -454,6 +457,7 @@ def test_e2e_a_commit_that_only_weakens_a_test_still_finds_the_survivor(tmp_path
     d = json.loads(r.stdout)
     assert d["scope"]["mode"] == "diff", d["scope"]
     assert 9 in d["scope"]["test_lines"]
+    assert d["scope"]["tests_changed"] == ["tests/scripts/test_subject.py"]
     assert d["scope"]["mutants_in_scope"] < d["scope"]["mutants_in_file"]
     assert d["status"] == "survivors" and r.returncode == 2
     assert any(s["line"] == 9 for s in d["survivors"]), d["survivors"]
@@ -465,11 +469,18 @@ def test_e2e_changed_tests_with_no_line_map_measure_the_whole_file(tmp_path):
     src, t = _repo(tmp_path)
     t.write_text(t.read_text() + "\nimport os\n"
                  "def test_no_recorder(): assert 'MUTATION_LINEMAP_TARGET' not in os.environ\n")
-    d = json.loads(_run([str(src), "--tests", str(t), "--json"], tmp_path).stdout)
+    r = _run([str(src), "--tests", str(t), "--json"], tmp_path)
+    d = json.loads(r.stdout)
     assert d["selection"]["line_map"]["status"] == "map_pass_failed"
     assert d["scope"]["mode"] == "whole_file", d["scope"]
     assert "line map could not be built" in d["scope"]["reason"]
     assert d["scope"]["mutants_in_scope"] == d["scope"]["mutants_in_file"]
+    # Said on stderr, both the selection fallback and the scope fallback.
+    assert "per-line selection off (map_pass_failed)" in r.stderr, r.stderr[-600:]
+    assert "scope: whole file (mapped tests changed and the line map could not be built" \
+        in r.stderr, r.stderr[-600:]
+    # A whole-file scope carries no diff-only fields that would read as a diff.
+    assert "changed_lines" not in d["scope"] and "deleted_after_lines" not in d["scope"]
 
 
 def test_e2e_a_diff_with_no_mutable_line_is_not_reported_as_ok(tmp_path):
@@ -477,6 +488,8 @@ def test_e2e_a_diff_with_no_mutable_line_is_not_reported_as_ok(tmp_path):
     src.write_text(SUBJECT + "\n# a comment only\n", encoding="utf-8")
     d = json.loads(_run([str(src), "--tests", str(t), "--json"], tmp_path).stdout)
     assert d["status"] == "no_changed_mutants" and d["scope"]["mutants_in_scope"] == 0
+    assert d["fast_tests"] is None and d["selection"]["line_map"]["status"] == "skipped", \
+        "nothing in scope: neither the probe nor the mapping pass runs"
 
 
 def test_e2e_an_order_dependent_subset_cannot_produce_a_false_kill(tmp_path):
@@ -505,6 +518,8 @@ def test_e2e_an_order_dependent_subset_cannot_produce_a_false_kill(tmp_path):
     plain = json.loads(_run([str(src), "--whole-file", "--no-line-map", "--no-cache",
                              "--tests", str(t), "--json"], tmp_path).stdout)
     assert {(s["line"], s["op"]) for s in plain["survivors"]} == survived
+    assert plain["selection"]["line_map"]["status"] == "skipped"
+    assert plain["selection"]["subset_runs"] == 0, "--no-line-map means no subset runs"
     assert plain["killed"] == d["killed"]
 
 
@@ -536,8 +551,12 @@ def test_e2e_the_cache_replays_verdicts_and_keeps_survivors(tmp_path):
     """)                                               # nothing checks the cap branch
     first = _run([str(src), "--whole-file", "--tests", str(t), "--json"], tmp_path)
     a = json.loads(first.stdout)
+    assert "scope: whole file" not in first.stderr, "asked for, so not a fallback"
     assert a["cache"]["hits"] == 0 and a["cache"]["writes"] > 0
     assert a["survived"] > 0 and first.returncode == 2
+    sel = a["selection"]
+    assert sel["subsets_validated"] < sel["subset_kills"], "a subset is validated once"
+    assert sel["subset_kind_from_full_subset"] == 0, "assertion kills decided directly"
     again = _run([str(src), "--whole-file", "--tests", str(t), "--json"], tmp_path)
     b = json.loads(again.stdout)
     assert b["cache"]["hits"] == a["cache"]["writes"]
@@ -615,3 +634,269 @@ def test_e2e_the_sweep_argv_still_measures_the_whole_file(tmp_path):
     d = json.loads(r.stdout)
     assert d["scope"]["mode"] == "whole_file"
     assert d["scope"]["mutants_in_scope"] == d["scope"]["mutants_in_file"]
+    assert "scope: whole file" not in r.stderr, "the sweep's whole file is not a fallback"
+
+
+def test_e2e_an_unresolvable_base_measures_the_whole_file_and_says_so(tmp_path):
+    """No origin/main ref: the default base cannot be resolved. The run must measure the
+    whole file AND say so on stderr, never measure nothing quietly."""
+    src, t = _repo(tmp_path)
+    _git(tmp_path, "update-ref", "-d", "refs/remotes/origin/main")
+    src.write_text(SUBJECT.replace("n > 100", "n >= 101"), encoding="utf-8")
+    r = _run([str(src), "--tests", str(t), "--json"], tmp_path)
+    d = json.loads(r.stdout)
+    assert d["scope"]["mode"] == "whole_file"
+    assert "scope: whole file (could not resolve merge-base" in r.stderr, r.stderr[-600:]
+
+
+def test_e2e_changed_tests_with_no_map_path_measure_the_whole_file(tmp_path):
+    """--list and --no-line-map build no line map, so changed tests cannot be bounded by
+    the lines they run: the whole file, with the reason. --list also prints the scope."""
+    src, t = _repo(tmp_path)
+    t.write_text(t.read_text().replace("assert double(101) == -1", "double(101)"))
+    listed = _run([str(src), "--tests", str(t), "--list"], tmp_path)
+    d = json.loads(listed.stdout)
+    assert d["scope"]["mode"] == "whole_file" and "--list runs no tests" in d["scope"]["reason"]
+    assert d["mutants"] == d["scope"]["mutants_in_file"] > 0
+    nomap = json.loads(_run([str(src), "--tests", str(t), "--no-line-map", "--json"],
+                            tmp_path).stdout)
+    assert nomap["scope"]["mode"] == "whole_file"
+    assert "(--no-line-map)" in nomap["scope"]["reason"]
+
+
+# --- self-mutation batch (a): fallback and error paths (2026-11-04) ----------------------
+
+def test_a_deletion_scopes_a_mutant_away_from_the_gap_in_the_same_function():
+    # The function rule, not the neighbour rule: line 10 is two lines from the gap.
+    assert mc.in_scope((10, 10), {"changed": set(), "deleted_at": {8}}, [(7, 10)])
+
+
+def test_changed_test_inputs_is_unknown_when_git_cannot_list(tmp_path, monkeypatch):
+    src, t = _repo(tmp_path)
+    monkeypatch.setattr(mc, "_git", lambda args, root, timeout=30: None)
+    assert mc.changed_test_inputs("HEAD", tmp_path, [t], "subject") is None
+    monkeypatch.setattr(mc, "_git", lambda args, root, timeout=30:
+                        subprocess.CompletedProcess(args, 128, "", "fatal"))
+    assert mc.changed_test_inputs("HEAD", tmp_path, [t], "subject") is None
+
+
+def test_resolve_scope_measures_the_whole_file_when_git_cannot_answer(tmp_path, monkeypatch):
+    src, t = _repo(tmp_path)
+    monkeypatch.setattr(mc, "diff_scope", lambda *a: None)
+    s = mc.resolve_scope(_args(), src, tmp_path, [t])
+    assert s["mode"] == "whole_file" and "could not diff" in s["reason"]
+    monkeypatch.undo()
+    monkeypatch.setattr(mc, "changed_test_inputs", lambda *a, **k: None)
+    s = mc.resolve_scope(_args(), src, tmp_path, [t])
+    assert s["mode"] == "whole_file" and "could not list changed test files" in s["reason"]
+
+
+def test_a_plain_diff_says_plain_diff_and_has_no_pending_tests(tmp_path):
+    src, t = _repo(tmp_path)
+    src.write_text(SUBJECT.replace("n > 100", "n >= 101"), encoding="utf-8")
+    s = mc.resolve_scope(_args(), src, tmp_path, [t])
+    assert s["reason"] == "diff against the base" and "pending_tests" not in s
+
+
+def test_an_unreadable_mapped_test_file_does_not_break_the_listing(tmp_path):
+    src, t = _repo(tmp_path)
+    t.write_text(t.read_text().replace("double(101) == -1", "double(102) == -1"))
+    out = mc.changed_test_inputs(mc.resolve_base(tmp_path, None), tmp_path,
+                                 [tmp_path / "missing_test.py", t], "subject")
+    assert out["tests"] == ["tests/scripts/test_subject.py"]
+
+
+def test_a_deleted_conftest_forces_the_whole_file(tmp_path):
+    src, t = _repo(tmp_path)
+    conf = tmp_path / "tests" / "conftest.py"
+    conf.write_text("X = 1\n")
+    _git(tmp_path, "add", "-A"); _git(tmp_path, "commit", "-qm", "conftest")
+    _git(tmp_path, "update-ref", "refs/remotes/origin/main", "HEAD")
+    conf.unlink()
+    s = mc.resolve_scope(_args(), src, tmp_path, [t])
+    assert s["mode"] == "whole_file" and "conftest changed (deleted)" in s["reason"], s
+
+
+def test_deleting_an_unrelated_test_or_data_file_keeps_the_diff(tmp_path):
+    src, t = _repo(tmp_path)
+    other = tmp_path / "tests" / "scripts" / "test_unrelated.py"
+    other.write_text("def test_x(): assert 1\n")
+    data = tmp_path / "tests" / "fixtures" / "unused.json"
+    data.parent.mkdir(parents=True)
+    data.write_text("{}\n")
+    _git(tmp_path, "add", "-A"); _git(tmp_path, "commit", "-qm", "extra")
+    _git(tmp_path, "update-ref", "refs/remotes/origin/main", "HEAD")
+    other.unlink(); data.unlink()
+    src.write_text(SUBJECT.replace("n > 100", "n >= 101"), encoding="utf-8")
+    s = mc.resolve_scope(_args(), src, tmp_path, [t])
+    assert s["mode"] == "diff" and s["changed"] == {8}, s
+
+
+def test_a_new_mapped_test_file_counts_every_test_in_it(tmp_path):
+    src, t = _repo(tmp_path)
+    new = tmp_path / "tests" / "scripts" / "test_subject_more.py"
+    new.write_text("from subject import classify\ndef test_more(): assert classify(2)\n")
+    s = mc.resolve_scope(_args(), src, tmp_path, [t, new])
+    assert s["pending_tests"] == ["tests/scripts/test_subject_more.py"]
+    assert s["pending_test_names"] == {"tests/scripts/test_subject_more.py": None}
+
+
+def test_a_mapped_test_file_that_no_longer_parses_forces_the_whole_file(tmp_path):
+    src, t = _repo(tmp_path)
+    t.write_text(t.read_text() + "\ndef broken(:\n")
+    s = mc.resolve_scope(_args(), src, tmp_path, [t])
+    assert s["mode"] == "whole_file" and "does not parse" in s["reason"], s
+    assert s["tests_changed"] == ["tests/scripts/test_subject.py"]
+
+
+def test_many_removed_tests_are_abbreviated_and_the_file_is_listed_once(tmp_path):
+    src, t = _repo(tmp_path, tests=f"""\
+        import sys; sys.path.insert(0, r'{tmp_path / "tools"}')
+        from subject import classify, double
+        def test_a(): assert classify(1) == 'pos'
+        def test_b(): assert classify(-1) == 'neg'
+        def test_c(): assert double(3) == 6
+        def test_d(): assert double(101) == -1
+        def test_e(): assert double(0) == 0
+    """)
+    t.write_text("\n".join(l for l in t.read_text().splitlines()
+                           if not l.startswith(("def test_a", "def test_b", "def test_c",
+                                                "def test_d"))) + "\n")
+    s = mc.resolve_scope(_args(), src, tmp_path, [t])
+    assert "test removed: test_a, test_b, test_c, ..." in s["reason"], s["reason"]
+    assert s["tests_changed"] == ["tests/scripts/test_subject.py"]
+
+
+def test_more_than_five_wholesale_inputs_are_abbreviated(tmp_path):
+    src, t = _repo(tmp_path)
+    for i in range(6):
+        d = tmp_path / "tests" / f"pkg{i}"
+        d.mkdir()
+        (d / "conftest.py").write_text("X = 1\n")
+    s = mc.resolve_scope(_args(), src, tmp_path, [t])
+    assert s["reason"].endswith("; ...") and len(s["tests_changed"]) == 6
+
+
+def test_test_classes_are_tracked_per_method_and_by_their_other_lines():
+    plain = "class TestX:\n    def test_a(self):\n        assert 1\n    def test_b(self):\n        assert 2\n"
+    tests, rest = mc._test_sources(plain)
+    assert set(tests) == {"TestX::test_a", "TestX::test_b"}
+    edited, rest2 = mc._test_sources(plain.replace("assert 2", "assert 3"))
+    assert edited["TestX::test_a"] == tests["TestX::test_a"]
+    assert edited["TestX::test_b"] != tests["TestX::test_b"] and rest2 == rest
+    _, rest3 = mc._test_sources(plain.replace("class TestX:\n", "class TestX:\n    K = 1\n"))
+    assert rest3 != rest, "a class attribute is the class's other code"
+    _, rest4 = mc._test_sources("import pytest\n@pytest.mark.slow\n" + plain)
+    assert rest4 != mc._test_sources("import pytest\n" + plain)[1], "decorators count"
+
+
+def test_the_recorder_being_unimportable_means_no_map(tmp_path, monkeypatch):
+    monkeypatch.setitem(sys.modules, "mutation_linemap", None)     # import raises
+    tool = tmp_path / "m.py"
+    tool.write_text("X = 1\n")
+    t = tmp_path / "test_m.py"
+    t.write_text("def test_x(): assert True\n")
+    mapping, info = mc.build_line_map(tool, [t], timeout=60)
+    assert mapping is None and info["status"].startswith("recorder_unavailable")
+
+
+def test_a_green_pass_that_never_runs_the_target_yields_no_map(tmp_path):
+    tool = tmp_path / "m.py"
+    tool.write_text("def f():\n    return 1\n")
+    t = tmp_path / "test_m.py"
+    t.write_text(f"def test_reads(): assert 'return 1' in open(r'{tool}').read()\n")
+    mapping, info = mc.build_line_map(tool, [t], timeout=60)
+    assert mapping is None and info["status"] == "map_empty"
+
+
+def test_file_sha_of_a_missing_file_is_a_fixed_marker(tmp_path):
+    assert mc._file_sha(tmp_path / "nope") == "unreadable"
+
+
+def test_local_deps_skips_an_unreadable_module(tmp_path):
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    (tools / "a.py").write_text("import b\n")
+    (tools / "b.py").write_text("import c\n")
+    (tools / "c.py").write_text("X = 1\n")
+    os.chmod(tools / "b.py", 0)
+    try:
+        deps = mc._local_deps(["import a\n"], tools)
+    finally:
+        os.chmod(tools / "b.py", 0o644)
+    assert {p.name for p in deps} == {"a.py", "b.py"}, "b is a dep; c is not reachable"
+
+
+def test_cache_context_tells_apart_every_support_and_outside_root_file(tmp_path):
+    src, t = _repo(tmp_path)
+    s1 = tmp_path / "tests" / "aaa_helpers.py"; s1.write_text("A = 1\n")
+    s2 = tmp_path / "tests" / "zzz_data.txt"; s2.write_text("z")
+    outside = tmp_path.parent / f"{tmp_path.name}-outside"
+    outside.mkdir()
+    o1, o2 = outside / "test_o1.py", outside / "test_o2.py"
+    o1.write_text("def test_1(): pass\n"); o2.write_text("def test_2(): pass\n")
+    tests = [t, o1, o2]
+
+    def ctx():
+        return mc.cache_context(src, src.read_text(), tests, tmp_path)
+    first = ctx()
+    for path, text in ((s1, "A = 2\n"), (o1, "def test_1(): assert 1\n")):
+        before = path.read_text()
+        path.write_text(text)
+        assert ctx() != first, f"{path.name} must count on its own"
+        path.write_text(before)
+    cache = tmp_path / "tests" / "__pycache__"
+    cache.mkdir()
+    (cache / "x.cpython-314.pyc").write_bytes(b"\0")
+    (tmp_path / "tests" / "subdir_only").mkdir()
+    assert ctx() == first, "bytecode and bare directories are not inputs"
+
+
+def test_a_tool_that_only_a_test_imports_is_in_the_key(tmp_path):
+    src, t = _repo(tmp_path)
+    helper = tmp_path / "tools" / "only_tests_use_me.py"
+    helper.write_text("X = 1\n")
+    t.write_text("import only_tests_use_me\n" + t.read_text())
+    first = mc.cache_context(src, src.read_text(), [t], tmp_path)
+    helper.write_text("X = 2\n")
+    assert mc.cache_context(src, src.read_text(), [t], tmp_path) != first
+
+
+def _seed_cache(tmp_path, src, t, verdicts):
+    """Write cache entries for every mutant of `src`, keyed exactly as main() keys them."""
+    import ast
+    original = src.read_text(encoding="utf-8")
+    ctx = mc.cache_context(src, original, [t], tmp_path)
+    store = tmp_path / ".mutation-cache"
+    for line, col, op in mc.enumerate_mutants(ast.parse(original)):
+        verdict, kind = verdicts(line, op)
+        key = mc.cache_key(ctx, {"line": line, "col": col, "op": op})
+        mc.cache_put(key, verdict, kind, root=tmp_path)
+    return store
+
+
+def test_e2e_cached_weak_and_unclassified_kills_are_replayed_as_such(tmp_path):
+    src, t = _repo(tmp_path)
+    _seed_cache(tmp_path, src, t, lambda line, op: ("killed", "error" if line < 5 else "unknown"))
+    d = json.loads(_run([str(src), "--whole-file", "--tests", str(t), "--json"],
+                        tmp_path).stdout)
+    assert d["cache"]["hits"] == d["scope"]["mutants_in_file"] > 0
+    assert d["weak_kill_count"] > 0 and all(w["cached"] for w in d["weak_kills"])
+    assert d["unclassified_kills"] > 0
+    assert d["weak_kill_count"] + d["unclassified_kills"] == d["killed"]
+
+
+def test_e2e_a_cached_survivor_on_the_allowlist_is_reported_allowlisted(tmp_path):
+    src, t = _repo(tmp_path)
+    _seed_cache(tmp_path, src, t, lambda line, op: ("survived", "") if line == 9
+                else ("killed", "assertion"))
+    listed = json.loads(_run([str(src), "--whole-file", "--tests", str(t), "--list"],
+                             tmp_path).stdout)
+    keys = [e["key"] for e in listed["catalog"] if e["line"] == 9]
+    (tmp_path / "tools" / "mutation-allow.json").write_text(
+        json.dumps({keys[0]: "test: an equivalent mutant, reason written"}))
+    r = _run([str(src), "--whole-file", "--tests", str(t), "--json"], tmp_path)
+    d = json.loads(r.stdout)
+    assert [a["key"] for a in d["allowlisted_detail"]] == keys[:1]
+    assert d["allowlisted_detail"][0]["cached"] is True
+    assert {s["key"] for s in d["survivors"]} == set(keys[1:]), "the rest still fail"
