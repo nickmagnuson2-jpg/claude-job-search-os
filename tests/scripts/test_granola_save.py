@@ -170,3 +170,41 @@ def test_a_sealed_folder_configured_inside_the_repo_is_still_refused(tmp_path):
     inside.mkdir(parents=True)
     refusal = gs.output_refusal(inside / "t.md", "sealed", repo, sealed_folder=inside)
     assert refusal and "inside the repo" in refusal
+
+
+def test_a_final_symlink_inside_the_repo_aimed_at_the_sealed_folder_is_refused(tmp_path):
+    """Codex r7 g1c/g3a F1 (P0): os.replace swaps a file in AT the link, so the write lands
+    where the link sits (inside the repo), not where it points. Judge the resolved parent
+    plus the name, which is where the write actually lands; the summary shares that parent."""
+    repo, sealed = tmp_path / "repo", tmp_path / "vault" / "sealed"
+    (repo / "data").mkdir(parents=True)
+    sealed.mkdir(parents=True)
+    (sealed / "t.md").write_text("old", encoding="utf-8")
+    link = repo / "data" / "t.md"
+    link.symlink_to(sealed / "t.md")
+    refusal = gs.output_refusal(link, "sealed", repo, sealed_folder=sealed)
+    assert refusal and "inside the repo" in refusal
+    dangling = repo / "data" / "new.md"
+    dangling.symlink_to(sealed / "new.md")             # a link to a file not yet written
+    assert gs.output_refusal(dangling, "sealed", repo, sealed_folder=sealed)
+
+
+def test_a_link_inside_the_sealed_folder_is_judged_by_where_it_sits(tmp_path):
+    """The mirror case: a link in the sealed folder pointing into the repo is replaced in
+    place, so the transcript stays in the sealed folder and the write is allowed."""
+    repo, sealed = tmp_path / "repo", tmp_path / "vault" / "sealed"
+    (repo / "data").mkdir(parents=True)
+    sealed.mkdir(parents=True)
+    (repo / "data" / "x.md").write_text("x", encoding="utf-8")
+    link = sealed / "t.md"
+    link.symlink_to(repo / "data" / "x.md")
+    assert gs.output_refusal(link, "sealed", repo, sealed_folder=sealed) is None
+
+
+def test_a_sealed_output_with_no_file_name_is_refused(tmp_path):
+    sealed = tmp_path / "vault" / "sealed"
+    (sealed / "sub").mkdir(parents=True)
+    assert "needs a file name" in gs.output_refusal(sealed / "sub" / "..", "sealed",
+                                                    tmp_path / "repo", sealed_folder=sealed)
+    # pathlib folds `sealed/.` into `sealed` itself, which the folder check already refuses.
+    assert gs.output_refusal(sealed / ".", "sealed", tmp_path / "repo", sealed_folder=sealed)

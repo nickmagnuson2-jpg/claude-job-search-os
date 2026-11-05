@@ -240,7 +240,13 @@ def output_refusal(output: Path, type_: str, repo_root: Path,
         return f"unknown meeting type {type_!r}; expected one of {sorted(TRANSCRIPT_HEADERS)}"
     if type_ != "sealed":
         return None
-    target = Path(os.path.realpath(output))
+    # Where the write LANDS: write_atomic's os.replace swaps a file in at the final name and
+    # never follows a link there, so resolve the parent and keep the name (Codex r7 g1c/g3a
+    # F1, P0: a link inside the repo aimed at the sealed folder resolved as "sealed" and the
+    # transcript was written into the repo). The summary is a sibling, so it shares this.
+    if Path(output).name in ("", ".", ".."):
+        return f"a transcript needs a file name, not {str(output)!r}"
+    target = Path(os.path.realpath(Path(output).parent)) / Path(output).name
     for root in {Path(repo_root), vault_paths.main_checkout(Path(repo_root))}:
         top = Path(os.path.realpath(root))
         if target == top or top in target.parents:
