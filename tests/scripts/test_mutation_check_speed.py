@@ -473,8 +473,9 @@ def test_e2e_changed_tests_with_no_line_map_measure_the_whole_file(tmp_path):
     """The map pass fails here (a test that refuses the recorder's environment) while the
     baseline passes, and a mapped test changed: no map, no bound, so the whole file."""
     src, t = _repo(tmp_path)
-    t.write_text(t.read_text() + "\nimport os\n"
-                 "def test_no_recorder(): assert 'MUTATION_LINEMAP_TARGET' not in os.environ\n")
+    # An ADDED test (so the scope waits on the map), with no module-level change.
+    t.write_text(t.read_text() + "\ndef test_no_recorder():\n    import os\n"
+                 "    assert 'MUTATION_LINEMAP_TARGET' not in os.environ\n")
     r = _run([str(src), "--tests", str(t), "--json"], tmp_path)
     d = json.loads(r.stdout)
     assert d["selection"]["line_map"]["status"] == "map_pass_failed"
@@ -664,7 +665,7 @@ def test_e2e_changed_tests_with_no_map_path_measure_the_whole_file(tmp_path):
     """--list and --no-line-map build no line map, so changed tests cannot be bounded by
     the lines they run: the whole file, with the reason. --list also prints the scope."""
     src, t = _repo(tmp_path)
-    t.write_text(t.read_text().replace("assert double(101) == -1", "double(101)"))
+    t.write_text(t.read_text() + "def test_added(): assert double(102) == -1\n")
     listed = _run([str(src), "--tests", str(t), "--list"], tmp_path)
     d = json.loads(listed.stdout)
     assert d["scope"]["mode"] == "whole_file" and "--list runs no tests" in d["scope"]["reason"]
