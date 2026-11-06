@@ -24,7 +24,7 @@ finding once it arrives, which lives in `framework/review-findings-protocol.md`.
 | `tools/.cross-model-ledger.jsonl` | The record: every run, every finding, every disposition, every waiver | - | - |
 | `tools/finding_write.py` | The only writer of dispositions and acceptances; `list --open` is the workstream probe | the ledger | the ledger (whole-file rewrite) |
 | `tools/cross_model_gate.py` | The pre-push gate, and `summary()` for `/standup` | the ledger, the push's `--numstat` | waiver rows |
-| `tools/hooks/pre-push` | Calls the gate with the newest pushed commit's time as `--since` | - | - |
+| `tools/hooks/pre-push` | Calls the gate for the last non-deletion ref in the push, with that ref's commit time as `--since` | - | - |
 | `/standup` | Prints `cross_model_gate.summary()` whenever it is non-empty | the ledger | - |
 
 The flow is one direction: a run writes a row, the gate and `/standup` read rows, and
@@ -190,9 +190,13 @@ edit the file by hand.
 
 ## `cross_model_gate.py`: the push gate
 
-`tools/hooks/pre-push` pipes `git diff --numstat` for the pushed range into the gate with `--since`
-set to the commit time of the newest pushed commit. A review recorded before that time does not
-count.
+`tools/hooks/pre-push` reads the ref lines git passes it and keeps only the last one that is not a
+deletion. It pipes `git diff --numstat` for that ref's range into the gate, with `--since` set to
+the commit time of that ref's head. A review recorded before that time does not count.
+
+**A push of several refs is checked on its last ref only.** On `git push origin a b`, a governed
+path or an open P0 present only on `a` never reaches the gate, and the hook can exit 0. Push one
+ref at a time.
 
 ### Blast-radius tiers
 
@@ -254,7 +258,7 @@ Before any finding is relayed or acted on, it goes through `framework/review-fin
 ## Known drift
 
 `.claude/skills/verify/SKILL.md`, section "The sandbox", still describes codex running under
-`--sandbox workspace-write`. The code replaced that with the seatbelt profile above, with each
+`--sandbox workspace-write`. The code replaced that with the seatbelt profile above, with the
 Codex and Grok sandboxes disabled inside it. The reasoning in that section (do not hand an external model
 an unrestricted shell; run environment probes in the real shell) still holds.
 
