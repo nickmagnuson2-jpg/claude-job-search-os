@@ -241,3 +241,11 @@ def test_nesting_deeper_than_the_bound_fails_closed():
 def test_codex_r2_local_clones_still_pass(cmd):
     code, err = _run(cmd)
     assert code == 0, (cmd, err)
+
+
+@pytest.mark.parametrize("cmd", [
+    "env -S git fetch origin",            # the words after the -S value continue the command
+    "env --split-string=git fetch",       # the = form: the value is in the same word
+])
+def test_words_after_the_split_string_value_continue_the_command(cmd):
+    assert _run(cmd)[0] == 2, cmd     # mutation survivor, 2026-11-05 r3 chain
