@@ -204,3 +204,40 @@ def test_codex_r1_no_network_shapes_pass(cmd):
 ])
 def test_codex_r1_network_shapes_block(cmd):
     assert _run(cmd)[0] == 2, cmd
+
+
+# Codex r2 (2026-11-05): F1/F2 under-blocks, F3 deep nesting fails closed.
+@pytest.mark.parametrize("cmd", [
+    "env -S 'git push origin x'",                        # F1: -S carries a command line
+    "env --split-string='git fetch origin'",
+    "env -S 'FOO=1 git pull'",
+    "git clone -c advice.detachedHead=false git@host:owner/repo.git",   # F2
+    "git clone --template /tmp/t git@github.com:owner/repo.git",
+    "git clone --unknown-option value host:repo",
+])
+def test_codex_r2_shapes_block(cmd):
+    assert _run(cmd)[0] == 2, cmd
+
+
+def test_nesting_deeper_than_the_bound_fails_closed():
+    """F3: past MAX_DEPTH the hook cannot see what runs, so it blocks rather than pass."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("cng_depth_probe", SCRIPT)
+    mod = importlib.util.module_from_spec(spec)
+    sys.path.insert(0, str(SCRIPT.parent))
+    spec.loader.exec_module(mod)
+    deep = "echo hi"
+    for _ in range(mod.MAX_DEPTH + 2):
+        deep = "eval " + __import__("shlex").quote(deep)
+    assert mod.find_network_git(deep)                   # blocks: too deep to judge
+    shallow = "eval " + __import__("shlex").quote("echo hi")
+    assert mod.find_network_git(shallow) is None
+
+
+@pytest.mark.parametrize("cmd", [
+    "git clone -c core.autocrlf=false local-repo dest",  # an option value with no ':' stays local
+    "git clone --depth 1 ./repo copy",
+])
+def test_codex_r2_local_clones_still_pass(cmd):
+    code, err = _run(cmd)
+    assert code == 0, (cmd, err)

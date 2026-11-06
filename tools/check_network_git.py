@@ -56,7 +56,7 @@ GIT_VALUE_OPTS = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec
                   "--config-env", "--super-prefix", "--list-cmds"}
 # Wrapper options that take the NEXT word as their value (Codex r1 F3: `env -C /tmp`,
 # `caffeinate -t 5`, `nice --adjustment 5` hid the git command that followed).
-_WRAPPER_VALUE_OPTS = {"-u", "--unset", "-C", "--chdir", "-S", "--split-string",   # env
+_WRAPPER_VALUE_OPTS = {"-u", "--unset", "-C", "--chdir",                         # env
                        "-n", "--adjustment",                                       # nice
                        "-s", "--signal", "-k", "--kill-after",                     # timeout
                        "-t", "-w"}                                                 # caffeinate
@@ -76,8 +76,14 @@ def _strip_prefix(words: list[str]) -> list[str]:
         if base in WRAPPERS:
             i += 1
             while i < len(words) and (words[i].startswith("-") or ASSIGNMENT.match(words[i])):
-                takes_value = words[i] in _WRAPPER_VALUE_OPTS
-                i += 2 if takes_value else 1
+                w = words[i]
+                if base == "env" and (w in ("-S", "--split-string") or w.startswith("--split-string=")):
+                    # The value IS a command line (Codex r2 F1): judge it, then what follows.
+                    value = w.split("=", 1)[1] if "=" in w else (words[i + 1] if i + 1 < len(words) else "")
+                    after = words[i + 1:] if "=" in w else words[i + 2:]
+                    inner = simple_commands(value)
+                    return _strip_prefix((inner[0].words if inner else []) + after)
+                i += 2 if w in _WRAPPER_VALUE_OPTS else 1
             if base == "timeout" and i < len(words) and re.fullmatch(r"[0-9.]+[smhd]?", words[i]):
                 i += 1          # the duration
             continue
@@ -99,6 +105,12 @@ def _no_prompt(sub: str, rest: list[str]) -> bool:
     if "--help" in rest or "-h" in rest:
         return True
     if sub not in ("fetch", "pull", "ls-remote", "clone"):
+        return False
+    if sub == "clone" and any(":" in a and not a.startswith(("https://", "file://"))
+                              for a in rest if not a.startswith("-")):
+        # Conservative (Codex r2 F2): any argument that could be a remote (`host:path`,
+        # `ssh://`, `git://`) blocks, so an option value the table below does not know can
+        # only cause an over-block, never let an SSH clone through.
         return False
     i = 0
     while i < len(rest):
@@ -146,7 +158,9 @@ def _git_network(args: list[str]) -> str | None:
 def find_network_git(command: str, depth: int = 0) -> str | None:
     """The first network git command in `command`, as text for the message, or None."""
     if depth > MAX_DEPTH:
-        return None
+        # Too deep to see what runs: block rather than pass (Codex r2 F3). No ordinary
+        # command nests bash -c / eval / $() this far.
+        return "(command nested too deep to check)"
     for sc in simple_commands(command):
         words = _strip_prefix(sc.words)
         if words:
