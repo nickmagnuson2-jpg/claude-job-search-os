@@ -242,3 +242,89 @@ def test_a_manual_run_reports_a_present_record(repo):
     r = guard(repo, "")
     assert r.returncode == 0 and "clean /audit-pii record" in r.stderr
     assert "no clean /audit-pii record" not in r.stderr
+
+
+# --- mutation round 1 (2026-11-05): survivors killed ---------------------------------------
+
+def test_record_prints_its_result_as_json(repo):
+    sha = commit(repo, "a.md", "ok\n")
+    out = json.loads(record_tool(repo, "record", "--tip", sha).stdout)
+    assert out["status"] == "ok" and out["action"] == "record" and out["tip"] == sha
+
+
+def test_check_reports_an_unreadable_ledger_with_exit_2(repo):
+    sha = commit(repo, "a.md", "ok\n")
+    write_row(repo, {"kind": "audit", "verdict": "clean", "tree": tree(repo, sha)})
+    with (repo / LEDGER).open("a", encoding="utf-8") as f:
+        f.write("{not json\n")
+    r = record_tool(repo, "check", "--tip", sha)
+    assert r.returncode == 2 and json.loads(r.stdout)["code"] == "ledger_unreadable"
+
+
+def test_a_ledger_row_that_is_not_an_object_is_unreadable(repo):
+    sha = commit(repo, "a.md", "ok\n")
+    (repo / LEDGER).write_text("[1, 2]\n", encoding="utf-8")
+    r = record_tool(repo, "check", "--tip", sha)
+    assert r.returncode == 2 and json.loads(r.stdout)["code"] == "ledger_unreadable"
+
+
+def test_blank_lines_in_the_ledger_are_skipped(repo):
+    sha = commit(repo, "a.md", "ok\n")
+    (repo / LEDGER).write_text("\n   \n", encoding="utf-8")
+    record_tool(repo, "record", "--tip", sha)
+    with (repo / LEDGER).open("a", encoding="utf-8") as f:
+        f.write("\n")
+    assert record_tool(repo, "check", "--tip", sha).returncode == 0
+
+
+def test_record_creates_the_tools_folder_when_missing(tmp_path):
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "config", "user.email", "t@example.com")
+    _git(tmp_path, "config", "user.name", "Test")
+    sha = commit(tmp_path, "a.md", "ok\n")
+    assert not (tmp_path / "tools").exists()
+    assert record_tool(tmp_path, "record", "--tip", sha).returncode == 0
+    assert len(rows(tmp_path)) == 1
+
+
+def test_the_pii_override_on_a_hit_still_needs_the_record(repo):
+    sha = commit(repo, "a.md", "Zorptech is here\n")
+    r = guard(repo, push_line(sha), {"PUSH_PII_OVERRIDE": "1"})
+    assert r.returncode == 1 and "no clean /audit-pii record" in r.stderr
+    record_tool(repo, "record", "--tip", sha)
+    assert guard(repo, push_line(sha), {"PUSH_PII_OVERRIDE": "1"}).returncode == 0
+
+
+def test_a_pushed_sha_that_is_not_a_commit_is_named(repo):
+    (repo / "tools" / ".pii-denylist.txt").unlink()
+    commit(repo, "a.md", "ok\n")
+    r = guard(repo, push_line("ab" * 20))
+    assert r.returncode == 1 and "is not a commit" in r.stderr
+
+
+def test_a_manual_run_names_an_unreadable_ledger(repo):
+    commit(repo, "a.md", "ok\n")
+    (repo / LEDGER).write_text("{not json\n", encoding="utf-8")
+    r = guard(repo, "")
+    assert r.returncode == 0 and "audit ledger unreadable" in r.stderr
+
+
+def test_a_clean_push_with_a_denylist_does_not_claim_the_denylist_is_missing(repo):
+    sha = commit(repo, "a.md", "ok\n")
+    record_tool(repo, "record", "--tip", sha)
+    r = guard(repo, push_line(sha))
+    assert r.returncode == 0 and "no denylist" not in r.stderr and "scan clean" in r.stderr
+
+
+def test_a_missing_denylist_never_claims_the_scan_was_clean(repo):
+    (repo / "tools" / ".pii-denylist.txt").unlink()
+    sha = commit(repo, "a.md", "ok\n")
+    record_tool(repo, "record", "--tip", sha)
+    r = guard(repo, push_line(sha))
+    assert r.returncode == 0 and "scan clean" not in r.stderr
+
+
+def test_a_deletion_only_push_prints_no_record_report(repo):
+    commit(repo, "a.md", "ok\n")
+    r = guard(repo, push_line(ZERO_SHA))
+    assert r.returncode == 0 and "/audit-pii record" not in r.stderr
