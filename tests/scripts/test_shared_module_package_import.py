@@ -47,6 +47,7 @@ TOOLS = (
     "check_heredoc_quoting",
     "check_living_log_purity",
     "check_module_imports",
+    "check_network_git",
     "check_new_toplevel_dir_protected",
     "check_no_confabulation",
     "check_pipe_close_via_update",

@@ -472,7 +472,7 @@ def test_in_a_worktree_the_main_checkout_anchors_the_vault_and_config(tmp_path):
 
 def test_a_configured_folder_that_is_not_a_directory_keeps_fail_closed_on(tmp_path):
     root, vault = _layout(tmp_path)
-    (root / "tools" / ".sealed-folders.conf").write_text("data/sesions\n")    # a typo
+    (root / "tools" / ".sealed-folders.conf").write_text("data/alcvoe\n")    # a typo
     assert _run(root, "Read", {"file_path": str(vault / "2026-01-01-note.md")})[0] == 2
     beside = {"file_path": str(tmp_path / "personal" / "data" / "practice-log.md")}
     assert _run(root, "Read", beside)[0] == 2
@@ -488,9 +488,9 @@ def test_a_bom_or_trailing_comment_in_the_config_still_names_the_folder(tmp_path
 
 
 def test_an_absolute_or_escaping_or_missing_config_folder_fails_closed_at_the_guard(tmp_path):
-    # data/../sesions normalizes to an in-vault folder that does not exist: fail closed
+    # data/../alcvoe normalizes to an in-vault folder that does not exist: fail closed
     # because it is missing, not because it escapes (Fable r2 F2).
-    for i, text in enumerate(("/abs/path\n", "data/../../x\n", "data/../sesions\n")):
+    for i, text in enumerate(("/abs/path\n", "data/../../x\n", "data/../alcvoe\n")):
         root, _ = _layout(tmp_path / str(i))
         (root / "tools" / ".sealed-folders.conf").write_text(text)
         beside = {"file_path": str(tmp_path / str(i) / "personal" / "data" / "practice-log.md")}
