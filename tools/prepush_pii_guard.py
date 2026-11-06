@@ -141,6 +141,13 @@ def new_blobs(root: Path, pairs):
             yield rel, _git_bytes(root, "cat-file", "blob", oid).decode("utf-8", "replace")
 
 
+def _tree_or_blank(root: Path, sha: str) -> str:
+    try:
+        return rec.tree_of(root, sha) or ""
+    except Exception:
+        return ""
+
+
 def record_gate(root: Path, pairs) -> int:
     """Check 2: every pushed tip's tree needs a clean /audit-pii record, or a waiver."""
     missing, problem = [], None
@@ -151,18 +158,27 @@ def record_gate(root: Path, pairs) -> int:
                 raise GitReadError(f"pushed sha {local} is not a commit here")
             if not rec.has_clean_record(root, tree):
                 missing.append((local, tree))
-    except rec.LedgerError as e:
-        # Unreadable is not "no record" and not "recorded": block, naming the cause.
-        problem = f"the audit ledger is unreadable: {e}"
-        missing = [(local, rec.tree_of(root, local) or "") for local, _ in pairs]
+    except Exception as e:
+        # ANY failure here blocks, and is caught HERE rather than by the top-level handler,
+        # because that handler lets PUSH_PII_OVERRIDE turn an exception into "allow"
+        # (Codex r1 F1, P0, 2026-11-05). Unreadable is not "recorded"; only AUDIT_PII_WAIVE
+        # passes this check.
+        problem = f"the record check could not run: {e}"
+        missing = [(local, _tree_or_blank(root, local)) for local, _ in pairs]
     if not missing:
         print("prepush_pii_guard: every pushed tree has a clean /audit-pii record.",
               file=sys.stderr)
         return 0
     reason = os.environ.get("AUDIT_PII_WAIVE", "").strip()
     if reason:
-        for local, tree in missing:
-            rec.append_waiver(root, tree, local, reason)
+        try:
+            for local, tree in missing:
+                rec.append_waiver(root, tree, local, reason)
+        except Exception as e:
+            # An unrecorded waiver is not a waiver: the record is what makes it count.
+            print(f"\nBLOCKED: AUDIT_PII_WAIVE is set but the waiver could not be recorded: "
+                  f"{e}\n", file=sys.stderr)
+            return 1
         print(f"prepush_pii_guard: AUDIT_PII_WAIVE used ({reason}); recorded for "
               + ", ".join(local[:8] for local, _ in missing) + ".", file=sys.stderr)
         return 0

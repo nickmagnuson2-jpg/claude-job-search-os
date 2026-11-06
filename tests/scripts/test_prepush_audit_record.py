@@ -324,6 +324,31 @@ def test_a_missing_denylist_never_claims_the_scan_was_clean(repo):
     assert r.returncode == 0 and "scan clean" not in r.stderr
 
 
+# --- Codex r1 F1 (P0, 2026-11-05): an error inside the record check must block -------------
+# The top-level handler lets PUSH_PII_OVERRIDE turn any exception into "allow". The record
+# check must therefore catch its own errors, so only AUDIT_PII_WAIVE can pass it.
+
+def test_the_pii_override_cannot_pass_a_pushed_sha_that_is_not_a_commit(repo):
+    (repo / "tools" / ".pii-denylist.txt").unlink()
+    commit(repo, "a.md", "ok\n")
+    r = guard(repo, push_line("ab" * 20), {"PUSH_PII_OVERRIDE": "1"})
+    assert r.returncode == 1 and "is not a commit" in r.stderr
+
+
+def test_the_pii_override_cannot_pass_a_ledger_that_cannot_be_opened(repo):
+    sha = commit(repo, "a.md", "ok\n")
+    (repo / LEDGER).mkdir(parents=True)
+    r = guard(repo, push_line(sha), {"PUSH_PII_OVERRIDE": "1"})
+    assert r.returncode == 1 and "no clean /audit-pii record" in r.stderr
+
+
+def test_a_waiver_that_cannot_be_recorded_does_not_pass(repo):
+    sha = commit(repo, "a.md", "ok\n")
+    (repo / LEDGER).mkdir(parents=True)
+    r = guard(repo, push_line(sha), {"AUDIT_PII_WAIVE": "hotfix"})
+    assert r.returncode == 1 and "could not be recorded" in r.stderr
+
+
 def test_a_deletion_only_push_prints_no_record_report(repo):
     commit(repo, "a.md", "ok\n")
     r = guard(repo, push_line(ZERO_SHA))
