@@ -270,3 +270,11 @@ def test_codex_r3_shapes_block(cmd):
 def test_codex_r3_lookups_pass(cmd):
     code, err = _run(cmd)
     assert code == 0, (cmd, err)
+
+
+@pytest.mark.parametrize("cmd", [
+    "command git push -v origin main",        # Codex r4 F1: git's own -v is not command -v
+    "command git fetch -V",
+])
+def test_codex_r4_git_flags_are_not_command_lookup_flags(cmd):
+    assert _run(cmd)[0] == 2, cmd

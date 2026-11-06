@@ -76,8 +76,12 @@ def _strip_prefix(words: list[str]) -> list[str]:
         base = os.path.basename(w)
         if base in WRAPPERS:
             i += 1
-            if base == "command" and any(w in ("-v", "-V") for w in words[i:]
-                                         if w.startswith("-")):
+            own = []                        # command's OWN options: the dash words before
+            for w in words[i:]:             # the command name (Codex r4 F1: git's `-v` is not one)
+                if not w.startswith("-"):
+                    break
+                own.append(w)
+            if base == "command" and any(w in ("-v", "-V") for w in own):
                 return []       # `command -v git`: a lookup, nothing runs (Codex r3 F2)
             while i < len(words) and (words[i].startswith("-") or ASSIGNMENT.match(words[i])):
                 w = words[i]
