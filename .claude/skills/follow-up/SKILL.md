@@ -475,6 +475,8 @@ If `open_draft.py` printed `WARNING: draft was NOT captured`, there is no captur
 
 **2. Update follow-up to-do in `data/job-todos.md`:**
 
+**If the log command's JSON has `"backdated": true`, skip this to-do step.** The entry is older than the contact's newest interaction (for example, their reply was logged first), so it records history and the live follow-up belongs to the newer interaction. The writer skipped its own to-do for the same reason.
+
 - If a pending follow-up to-do exists for this contact: update the due date to the next follow-up window (based on sequence position), or mark complete if this was the final attempt (5th+).
 - If no pending to-do exists: create one with the next follow-up date.
 - **Task:** `Follow up: [Name] @ [Company] — [next action]`
