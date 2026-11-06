@@ -5,8 +5,8 @@ The model's only job in /scan-jobs is to fetch listings and copy each one into t
 schema below. Everything after that is here, so the same ads always get the same verdict:
 
   assess   stdin: JSON array of ads. Dedupes against the cache, applies the hard location
-           gate, scores with the career scanner's scorer, assigns a status, and lists
-           shortlisted companies not yet in the pipeline. Writes nothing.
+           gate, ranks by the career scanner's score, labels pipeline history, and lists
+           the roles to propose, highest score first. Writes nothing.
   record   stdin: the `new` array from `assess`. Appends those rows to the cache and
            stamps "Last updated". Refuses an ad already in the cache.
 
@@ -14,10 +14,14 @@ Ad schema (one object per listing; copy text verbatim, do not summarize):
   {"title", "company", "location", "description", "url", "ad_date", "department", "team"}
   title and company are required; the rest may be "" when the listing does not show them.
 
-Status comes from the score with fixed cutoffs (STATUS_CUTOFFS), calibrated 2026-10-22 on
-72 labeled pipeline roles: score >= 7 had 60% precision, 5-6 61%, <= 4 38% (base rate 50%).
-`data/calibration/fit-spec.yaml` may override them under `status_cutoffs`. An ad with a
-blank description is capped at 'maybe' and tagged `title_only`: a title is not a posting.
+THE SCORE ONLY RANKS (Nick, 2026-11-06). It used to set the status through cutoffs
+(shortlisted >= 7, maybe 5-6, skip <= 4), and only shortlisted roles were proposed. On the
+back-test that day it separated roles Nick wanted from roles he passed on at AUC 0.60 (172
+pipeline rows), and 16 of 28 wanted roles with posting text scored skip. Until a rebuilt
+score clears the back-test, status is `listed` for every role that passes the location gate
+and `excluded` for one that does not; proposals are every listed role, highest score first,
+except one already in the pipeline and a title-only ad (blank description, tagged
+`title_only`: a title is not a posting).
 
 Usage:
   ... | PYTHONIOENCODING=utf-8 python3 tools/scan_jobs.py assess [--repo-root .]
@@ -35,17 +39,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from md_table import JsonArgumentParser, out_error, out_ok, parse_cols, read_file, safe_cell, write_atomic  # noqa: E402
 from name_dedup import normalize_name  # noqa: E402
 from slug import slugify  # noqa: E402
-from tools.career_scanner.company_scorer import location_band  # noqa: E402
 from tools.pipeline_history import history, load_history  # noqa: E402
 from tools.career_scanner.scanner import geo_ok  # noqa: E402
 from tools.career_scanner.scorer import load_scoring_context, score_role  # noqa: E402
 
 CACHE = Path(".claude/skills/scan-jobs/cache.md")
-STATUS_CUTOFFS = {"shortlisted": 7, "maybe": 5}
 REQUIRED = ("title", "company")
-# Bump when the judging LOGIC changes (scorer, gates, status rules). Data-driven rules
-# (fit-spec.yaml, its status_cutoffs) are hashed in rules_version directly.
-RULES_LOGIC = "2026-11-06"
+# Bump when the judging LOGIC changes (scorer, gates, status rules). fit-spec.yaml, which
+# the scorer reads, is hashed in rules_version directly.
+RULES_LOGIC = "2026-11-06 ranking-only"
 FIT_SPEC = Path("data/calibration/fit-spec.yaml")
 # A row this script wrote: "(scan_jobs.py)" or "(scan_jobs.py rules:<8 hex>)".
 _MACHINE_NOTE = re.compile(r"\(scan_jobs\.py(?: rules:([0-9a-f]{8}))?\)")
@@ -94,11 +96,11 @@ def cached_index(cache_text: str) -> tuple[set, set, set]:
 
 
 def rules_version(root: Path) -> str:
-    """The version of the rules a verdict was judged under: 8 hex of the logic version,
-    the default cutoffs and fit-spec.yaml's text. A cached verdict from another version
-    is re-checked when its ad is seen again (scan-drops-1106, Codex 940.F2 / Grok 941.F4)."""
+    """The version of the rules a verdict was judged under: 8 hex of the logic version and
+    fit-spec.yaml's text. A cached verdict from another version is re-checked when its ad
+    is seen again (scan-drops-1106, Codex 940.F2 / Grok 941.F4)."""
     spec = read_file(Path(root) / FIT_SPEC) or ""
-    basis = "\n".join([RULES_LOGIC, json.dumps(STATUS_CUTOFFS, sort_keys=True), spec])
+    basis = "\n".join([RULES_LOGIC, spec])
     return hashlib.sha1(basis.encode("utf-8")).hexdigest()[:8]
 
 
@@ -150,15 +152,8 @@ def index_add(row: dict, keys: set, keys_no_url: set, urls: set) -> None:
         keys_no_url.add(k)
 
 
-def status_for(score: int, cutoffs: dict) -> str:
-    if score >= cutoffs["shortlisted"]:
-        return "shortlisted"
-    return "maybe" if score >= cutoffs["maybe"] else "skip"
-
-
 def assess(ads: list, root: Path) -> dict:
     ctx = load_scoring_context(root)
-    cutoffs = {**STATUS_CUTOFFS, **((ctx.get("fit_spec") or {}).get("status_cutoffs") or {})}
     cache_text = read_file(root / CACHE)
     keys, keys_no_url, urls = cached_index(cache_text)
     version = rules_version(root)
@@ -184,21 +179,22 @@ def assess(ads: list, root: Path) -> dict:
         role = {f: ad.get(f, "") for f in ("title", "company", "location", "description",
                                            "department", "team")}
         score = score_role(role, ctx)
-        # The nightly scanner's own location rule: outside the Bay or on the Peninsula /
-        # South Bay fails; an unknown location does not.
+        # The nightly scanner's own location rule: outside the Bay, Peninsula / South Bay
+        # only, or remote-only fails; an unknown location does not. The ONLY hard cut here:
+        # the score ranks and never sets the status (see the module docstring).
         located = geo_ok(ad.get("location", ""))
-        status = status_for(score, cutoffs) if located else "skip"
+        status = "listed" if located else "excluded"
         reason = f"score {score}/10" if located else "location excluded"
-        if located and location_band(ad.get("location", "")) == "remote":
-            reason += " (remote)"   # a remote seat passes, flagged (Nick, 2026-11-06)
         # A title is not a posting: the same title names opposite jobs (the team doing the
-        # work vs the team supporting it). With no description copied, cap at 'maybe' so a
-        # title-only ad is never shortlisted or proposed for the pipeline.
-        if located and not str(ad.get("description") or "").strip():
-            status = "maybe" if status == "shortlisted" else status
+        # work vs the team supporting it). With no description copied, the ad is listed,
+        # tagged, and never proposed for the pipeline.
+        title_only = located and not str(ad.get("description") or "").strip()
+        if title_only:
             reason += " (title_only)"
         row = {**{f: ad.get(f, "") for f in ("title", "company", "location", "url", "ad_date")},
                "score": score, "status": status, "reason": reason}
+        if title_only:
+            row["title_only"] = True
         if was is not None:
             if status == was:
                 rechecked_unchanged += 1
@@ -220,9 +216,10 @@ def assess(ads: list, root: Path) -> dict:
         new.append(row)
     # A role already in the pipeline as the same role is not proposed again; a different
     # role at a company with history is, carrying its label.
-    propose = [r for r in new if r["status"] == "shortlisted" and not r.get("already_in_pipeline")]
+    propose = sorted((r for r in new if r["status"] == "listed" and not r.get("title_only")
+                      and not r.get("already_in_pipeline")), key=lambda r: -r["score"])
     return {"found": len(ads), "cached": cached, "new": new, "propose_for_pipeline": propose,
-            "cutoffs": cutoffs, "rules_version": version,
+            "rules_version": version,
             "rechecked_unchanged": rechecked_unchanged, "skipped_repeats": repeats}
 
 

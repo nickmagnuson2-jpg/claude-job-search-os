@@ -93,15 +93,15 @@ def title_matches(title: str, includes: list, excludes: list | None = None,
     return title_cut_reason(title, includes, excludes, allow_engineer) is None
 
 
-ROLE_LOCATION_PASS = ("sf", "bay", "remote", "unknown")
+ROLE_LOCATION_PASS = ("sf", "bay", "unknown")   # remote-only is dropped (goals.md hard filter)
 
 
 def geo_ok(location: str) -> bool:
     """Whether a role's location clears the goals.md SF hard filter.
 
-    Drops anything outside the Bay AND anything on the Peninsula / South Bay only.
-    An SF office anywhere in a multi-office string passes. A remote seat passes
-    (Nick, 2026-11-06), and callers flag it from location_band. An empty location is
+    Drops anything outside the Bay, anything on the Peninsula / South Bay only, and
+    remote-only (goals.md hard filter; Nick, 2026-11-06). An SF office anywhere in a
+    multi-office string passes ("San Francisco or Remote" too). An empty location is
     NOT dropped: unknown is not the same as disqualifying.
     """
     from tools.career_scanner.company_scorer import location_band

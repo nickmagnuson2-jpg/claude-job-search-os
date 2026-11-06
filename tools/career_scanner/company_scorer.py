@@ -87,8 +87,8 @@ def geo_gate(location: str) -> dict:
     and Peninsula (0.6) bands: most unknowns in practice are not SF (12 of 44 screened
     failed geography outright).
 
-    Remote stays excluded for a company (unchanged 2026-11-06); Nick's ruling that a
-    remote seat passes applies to roles, in scanner.geo_ok.
+    Remote-only is excluded for a company and, in scanner.geo_ok, for a role (goals.md
+    hard filter; Nick, 2026-11-06).
     """
     band = location_band(location)
     return {"band": band, **_COMPANY_GATE[band]}

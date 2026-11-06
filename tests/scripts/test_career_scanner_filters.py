@@ -108,9 +108,10 @@ def test_outside_bay_is_dropped():
     assert geo_ok("Austin, Texas") is False
 
 
-def test_remote_passes_the_role_gate():
-    # Nick, 2026-11-06: a remote seat is not a commute problem; it shows, flagged remote.
-    assert geo_ok("Remote") is True
+def test_remote_is_dropped():
+    # goals.md hard filter: skip remote-only (Nick, 2026-11-06).
+    assert geo_ok("Remote") is False
+    assert geo_ok("San Francisco or Remote") is True
 
 
 def test_east_bay_passes():

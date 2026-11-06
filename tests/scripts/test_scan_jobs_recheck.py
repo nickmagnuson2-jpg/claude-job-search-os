@@ -74,7 +74,7 @@ def test_an_old_version_row_whose_status_changed_resurfaces_labelled(tmp_path, m
     out = sj.assess([AD], root)
     assert out["cached"] == []
     [r] = out["new"]
-    assert r["status"] == "shortlisted" and r["rechecked"] is True
+    assert r["status"] == "listed" and r["rechecked"] is True
     assert r["reason"] == "score 9/10 (re-checked under new rules; was skip)"
 
 
@@ -85,7 +85,7 @@ def test_a_pre_version_row_counts_as_old(tmp_path, monkeypatch):
 
 
 def test_an_old_version_row_whose_status_held_is_counted_not_shown(tmp_path, monkeypatch):
-    root = make_root(tmp_path, [machine_row(AD["title"], AD["company"], "skip", AD["url"], "00000000")])
+    root = make_root(tmp_path, [machine_row(AD["title"], AD["company"], "listed", AD["url"], "00000000")])
     monkeypatch.setattr(sj, "score_role", lambda role, ctx: 2)
     out = sj.assess([AD], root)
     assert out["new"] == [] and out["rechecked_unchanged"] == 1
@@ -114,7 +114,7 @@ def test_record_replaces_a_rechecked_row_in_place(tmp_path, monkeypatch):
     sj.record([r], root)
     rows = [l for l in (root / sj.CACHE).read_text().splitlines() if l.startswith("| ") and "Title" not in l]
     assert len(rows) == 2
-    assert "| shortlisted |" in rows[0] and f"rules:{sj.rules_version(root)}" in rows[0]
+    assert "| listed |" in rows[0] and f"rules:{sj.rules_version(root)}" in rows[0]
     assert rows[1] == other.rstrip("\n")
 
 

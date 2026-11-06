@@ -9,8 +9,8 @@ Peninsula town anywhere in a multi-office string dropped the role. Found by Grok
 `company_scorer.location_band` classifies a location string once. The company gate
 (`geo_gate`) and the role gate (`geo_ok`) each map that band to their own policy, so the
 two cannot drift: the company gate penalises the Peninsula, the role gate drops it.
-Nick, 2026-11-06: a remote role passes the role gate, flagged; the company gate is
-unchanged for remote.
+Remote-only is dropped by both gates (goals.md hard filter; Nick, 2026-11-06, which
+reversed a same-day "pass, flagged"). A location that also names SF passes.
 """
 import sys
 from pathlib import Path
@@ -59,9 +59,9 @@ def test_sf_must_be_a_whole_word(loc):
 
 
 @pytest.mark.parametrize("loc", ["Remote", "Remote (US)", "remote - united states", "Fully remote"])
-def test_remote_passes_the_role_gate_but_not_the_company_gate(loc):
+def test_remote_only_is_its_own_band_and_both_gates_drop_it(loc):
     assert location_band(loc) == "remote"
-    assert geo_ok(loc) is True
+    assert geo_ok(loc) is False
     g = geo_gate(loc)
     assert g["band"] == "remote" and g["excluded"] is True
 
