@@ -194,10 +194,10 @@ def record_gate(root: Path, pairs) -> int:
 
 def report_head_record(root: Path) -> None:
     """Manual run: say whether HEAD's tree has a record. Never blocks."""
-    tree = rec.tree_of(root, "HEAD")
     try:
+        tree = rec.tree_of(root, "HEAD")
         ok = tree is not None and rec.has_clean_record(root, tree)
-    except rec.LedgerError as e:
+    except Exception as e:  # never blocks: any read error is reported, not raised
         print(f"prepush_pii_guard: audit ledger unreadable: {e}", file=sys.stderr)
         return
     if ok:
@@ -213,6 +213,26 @@ def main() -> int:
                        capture_output=True, text=True).stdout.strip()
         or "."
     )
+    stdin_present, pairs = read_prepush_stdin()
+    try:
+        if deterministic_scan(root, stdin_present, pairs):
+            return 1
+    except Exception as e:
+        # Fail CLOSED (Nick, 2026-10-13: "Block the push until it gets worked"). The
+        # override lets the push past THIS scan only: the /audit-pii record check below
+        # still runs (Codex pushgate r2 F1, P0, 2026-11-05).
+        if os.environ.get("PUSH_PII_OVERRIDE") != "1":
+            print(f"\nBLOCKED: prepush_pii_guard could not scan this push: {e}\n"
+                  "Fix the cause and re-push. To push past the deterministic scan anyway:\n"
+                  "  PUSH_PII_OVERRIDE=1 git push ...\n", file=sys.stderr)
+            return 1
+        print(f"prepush_pii_guard error, PUSH_PII_OVERRIDE=1 -- allowing UNSCANNED push "
+              f"past the deterministic scan: {e}", file=sys.stderr)
+    return record_gate(root, pairs) if pairs else _manual_report(root, stdin_present)
+
+
+def deterministic_scan(root: Path, stdin_present: bool, pairs) -> int:
+    """Check 1. 1 = block (a denylist hit not overridden), 0 = continue to check 2."""
     tokens = cp.load_denylist(root)
     if not tokens:
         # No denylist: skip ONLY the deterministic scan (warn loudly; a missing denylist
@@ -222,7 +242,6 @@ def main() -> int:
 
     target_words = cp.load_target_words(root) if tokens else []
     hits = {}
-    stdin_present, pairs = read_prepush_stdin()
     if not tokens:
         pass
     elif pairs:
@@ -249,14 +268,14 @@ def main() -> int:
         if tokens:
             print("prepush_pii_guard: deterministic PII scan clean "
                   f"({len(tokens)} tokens).", file=sys.stderr)
-        return record_gate(root, pairs) if pairs else _manual_report(root, stdin_present)
+        return 0
 
     if os.environ.get("PUSH_PII_OVERRIDE") == "1":
         print("prepush_pii_guard: PII hits present but PUSH_PII_OVERRIDE=1 — allowing.",
               file=sys.stderr)
         for rel, toks in hits.items():
             print(f"  (overridden) {rel}: {', '.join(toks)}", file=sys.stderr)
-        return record_gate(root, pairs) if pairs else _manual_report(root, stdin_present)
+        return 0
 
     print("\nBLOCKED: push to the PUBLIC repo carries real PII (denylist hits).\n",
           file=sys.stderr)
@@ -285,15 +304,8 @@ if __name__ == "__main__":
     except SystemExit:
         raise
     except Exception as e:
-        # Fail CLOSED (Nick, 2026-10-13: "Block the push until it gets worked").
-        # A scan that could not run has not shown the push is clean, and this is the
-        # last check before a PUBLIC remote. The one way past is the same deliberate
-        # override as for a false positive.
-        if os.environ.get("PUSH_PII_OVERRIDE") == "1":
-            print(f"prepush_pii_guard error, PUSH_PII_OVERRIDE=1 -- allowing UNSCANNED "
-                  f"push: {e}", file=sys.stderr)
-            sys.exit(0)
+        # Both checks handle their own errors; anything reaching here blocks, and
+        # PUSH_PII_OVERRIDE does not apply (it covers the deterministic scan only).
         print(f"\nBLOCKED: prepush_pii_guard could not scan this push: {e}\n"
-              "Fix the cause and re-push. To push unscanned anyway:\n"
-              "  PUSH_PII_OVERRIDE=1 git push ...\n", file=sys.stderr)
+              "Fix the cause and re-push.\n", file=sys.stderr)
         sys.exit(1)

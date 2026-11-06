@@ -372,6 +372,56 @@ def test_tree_or_blank_never_raises(repo, monkeypatch):
     assert g._tree_or_blank(repo, "HEAD") == ""
 
 
+# --- Codex r2 F1 (P0) / F2 (P1), 2026-11-05 -------------------------------------------------
+# The override covers the deterministic scan only; a scan EXCEPTION with the override set
+# must still reach the record check. A manual run never blocks, whatever the ledger is.
+
+def _main_with_scan_error(repo, monkeypatch, capsys, stdin, env):
+    import io
+    g = _import_guard()
+    def boom(*_a, **_k):
+        raise g.GitReadError("simulated scan failure")
+    monkeypatch.setattr(g, "new_blobs", boom)
+    monkeypatch.chdir(repo)
+    monkeypatch.setattr(sys, "stdin", io.StringIO(stdin))
+    for k in ("PUSH_PII_OVERRIDE", "AUDIT_PII_WAIVE"):
+        monkeypatch.delenv(k, raising=False)
+    for k, v in env.items():
+        monkeypatch.setenv(k, v)
+    rc = g.main()
+    return rc, capsys.readouterr().err
+
+
+def test_a_scan_error_with_the_override_still_needs_the_record(repo, monkeypatch, capsys):
+    sha = commit(repo, "a.md", "ok\n")
+    rc, err = _main_with_scan_error(repo, monkeypatch, capsys, push_line(sha),
+                                    {"PUSH_PII_OVERRIDE": "1"})
+    assert "allowing UNSCANNED push" in err
+    assert rc == 1 and "no clean /audit-pii record" in err
+
+
+def test_a_scan_error_with_the_override_and_a_record_passes(repo, monkeypatch, capsys):
+    sha = commit(repo, "a.md", "ok\n")
+    record_tool(repo, "record", "--tip", sha)
+    rc, err = _main_with_scan_error(repo, monkeypatch, capsys, push_line(sha),
+                                    {"PUSH_PII_OVERRIDE": "1"})
+    assert rc == 0 and "allowing UNSCANNED push" in err
+
+
+def test_a_scan_error_without_the_override_blocks(repo, monkeypatch, capsys):
+    sha = commit(repo, "a.md", "ok\n")
+    record_tool(repo, "record", "--tip", sha)
+    rc, err = _main_with_scan_error(repo, monkeypatch, capsys, push_line(sha), {})
+    assert rc == 1 and "could not scan this push" in err
+
+
+def test_a_manual_run_with_an_unopenable_ledger_does_not_block(repo):
+    commit(repo, "a.md", "ok\n")
+    (repo / LEDGER).mkdir(parents=True)
+    r = guard(repo, "")
+    assert r.returncode == 0 and "audit ledger unreadable" in r.stderr
+
+
 def test_a_deletion_only_push_prints_no_record_report(repo):
     commit(repo, "a.md", "ok\n")
     r = guard(repo, push_line(ZERO_SHA))

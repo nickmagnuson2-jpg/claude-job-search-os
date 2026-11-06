@@ -484,11 +484,14 @@ def test_a_git_failure_blocks_the_push(repo):
     assert "scan clean" not in r.stderr
 
 
-def test_the_override_lets_an_unscanned_push_through_and_says_so(repo):
+def test_the_override_lets_an_unscanned_push_past_the_scan_only(repo):
+    """Since 2026-11-05 (Codex pushgate r2 F1, P0) the override covers the deterministic
+    scan ONLY: the /audit-pii record check still runs after it. This sha is not a commit,
+    so the record check blocks it. The real-commit case is in test_prepush_audit_record.py."""
     commit(repo, "framework/a.md", "clean\n")
     r = run(repo, push_line("f" * 40), env={"PUSH_PII_OVERRIDE": "1"})
-    assert r.returncode == 0
     assert "allowing UNSCANNED push" in r.stderr
+    assert r.returncode == 1 and "is not a commit" in r.stderr
 
 
 @pytest.mark.parametrize("value", ["0", "", "true", "yes"])
