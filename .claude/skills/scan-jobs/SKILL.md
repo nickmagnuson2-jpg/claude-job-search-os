@@ -152,7 +152,9 @@ One JSON object per listing. **Copy, never summarize or judge**: `description` i
 PYTHONIOENCODING=utf-8 python3 tools/scan_jobs.py assess < output/scan-jobs/ads.json
 ```
 
-It returns `found`, `cached` (already evaluated, skipped), `new` (each with `score` 1-10, `status`, `reason`), `propose_for_pipeline`, and the `cutoffs` it used. Status cutoffs: **shortlisted at 7+, maybe at 5-6, skip at 4 and below**, calibrated 2026-10-22 on 72 labeled pipeline roles (see the script's docstring for the numbers and their limits). A role whose location fails the nightly scanner's location rule (outside the Bay, or on the Peninsula / South Bay) is `skip` whatever its score; an unknown location is not. Report the numbers exactly as returned. If `new` is empty, say so and stop.
+It returns `found`, `cached` (already evaluated, skipped), `new` (each with `score` 1-10, `status`, `reason`), `propose_for_pipeline`, and the `cutoffs` it used. Status cutoffs: **shortlisted at 7+, maybe at 5-6, skip at 4 and below**, calibrated 2026-10-22 on 72 labeled pipeline roles (see the script's docstring for the numbers and their limits). A role whose location fails the nightly scanner's location rule (outside the Bay, or on the Peninsula / South Bay with no SF office also listed) is `skip` whatever its score; an unknown location is not, and an SF office anywhere in a multi-office string passes. Report the numbers exactly as returned. If `new` is empty, say so and stop.
+
+Two labels can appear in a `reason`. `(remote)` marks a remote seat, which passes the location rule but is flagged. `(re-checked under new rules; was <status>)` marks a cached verdict this script wrote under older rules (`rules_version`) whose status has changed; `rechecked_unchanged` counts the ones whose status held. Rows written by hand in the cache are never re-judged. `record` writes a re-checked row over its old one, never as a second row.
 
 ### Step 7: Output
 
