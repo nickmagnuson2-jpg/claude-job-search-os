@@ -202,3 +202,6 @@ tools/calendar_write_token*
 
 # mutation_check verdict cache (2026-11-04): content-keyed, rebuilt on demand
 /.mutation-cache/
+
+# /audit-pii clean-pass records (tools/audit_pii_record.py); local, never pushed
+tools/.audit-pii-ledger.jsonl

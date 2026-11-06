@@ -61,7 +61,24 @@ def commit(repo, rel, content):
     return _git(repo, "rev-parse", "HEAD").stdout.strip()
 
 
+def _record_pushed(repo, stdin):
+    """This file pins the DETERMINISTIC scan's decision. Since 2026-11-05 a push also
+    needs a clean /audit-pii record for each pushed tree (tested in
+    test_prepush_audit_record.py), so record one for every pushed sha first."""
+    import json
+    ledger = repo / "tools" / ".audit-pii-ledger.jsonl"
+    ledger.parent.mkdir(parents=True, exist_ok=True)
+    for line in stdin.splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and set(parts[1]) != {"0"}:
+            tree = _git(repo, "rev-parse", f"{parts[1]}^{{tree}}", check=False).stdout.strip()
+            with ledger.open("a", encoding="utf-8") as f:
+                f.write(json.dumps({"kind": "audit", "verdict": "clean", "tree": tree,
+                                    "tip": parts[1]}) + "\n")
+
+
 def run(repo, stdin="", env=None):
+    _record_pushed(repo, stdin)
     return subprocess.run(
         [sys.executable, str(GUARD)], input=stdin, capture_output=True, text=True,
         cwd=str(repo), env={**os.environ, **(env or {})})
@@ -467,11 +484,14 @@ def test_a_git_failure_blocks_the_push(repo):
     assert "scan clean" not in r.stderr
 
 
-def test_the_override_lets_an_unscanned_push_through_and_says_so(repo):
+def test_the_override_lets_an_unscanned_push_past_the_scan_only(repo):
+    """Since 2026-11-05 (Codex pushgate r2 F1, P0) the override covers the deterministic
+    scan ONLY: the /audit-pii record check still runs after it. This sha is not a commit,
+    so the record check blocks it. The real-commit case is in test_prepush_audit_record.py."""
     commit(repo, "framework/a.md", "clean\n")
     r = run(repo, push_line("f" * 40), env={"PUSH_PII_OVERRIDE": "1"})
-    assert r.returncode == 0
     assert "allowing UNSCANNED push" in r.stderr
+    assert r.returncode == 1 and "is not a commit" in r.stderr
 
 
 @pytest.mark.parametrize("value", ["0", "", "true", "yes"])

@@ -38,7 +38,25 @@ def _commit(repo, rel, content):
     return _git(repo, "rev-parse", "HEAD").stdout.strip()
 
 
+def _record_pushed(repo, stdin):
+    """These tests pin the DETERMINISTIC scan. Since 2026-11-05 a push also needs a clean
+    /audit-pii record for each pushed tree (tested in test_prepush_audit_record.py), so
+    record one for every pushed sha before running the guard."""
+    import json
+    ledger = repo / "tools" / ".audit-pii-ledger.jsonl"
+    ledger.parent.mkdir(parents=True, exist_ok=True)
+    for line in stdin.splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and set(parts[1]) != {"0"}:
+            tree = subprocess.run(["git", "-C", str(repo), "rev-parse", f"{parts[1]}^{{tree}}"],
+                                  capture_output=True, text=True).stdout.strip()
+            with ledger.open("a", encoding="utf-8") as f:
+                f.write(json.dumps({"kind": "audit", "verdict": "clean", "tree": tree,
+                                    "tip": parts[1]}) + "\n")
+
+
 def _run(repo, stdin):
+    _record_pushed(repo, stdin)
     return subprocess.run(
         [sys.executable, str(GUARD)],
         input=stdin, capture_output=True, text=True, cwd=str(repo),
