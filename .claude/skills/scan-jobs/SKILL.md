@@ -179,7 +179,7 @@ where `output/scan-jobs/new.json` holds the `new` array from Step 6. It appends 
 
 ### Step 9: Pipeline proposals
 
-For each entry in `propose_for_pipeline`, ask: `[Company] — [Role] (score N/10) — add to pipeline? (Y/N)`. If the entry has `possible_match`, say so first: `([Company] may be [possible_match], already in the pipeline)`. On Y:
+For each entry in `propose_for_pipeline`, ask: `[Company] — [Role] (score N/10) — add to pipeline? (Y/N)`. If the entry has a non-empty `history`, say it first: `(history: [history])`, e.g. "they declined you 10/03 (Ops Lead)"; a role at a company with history is proposed with its label, never hidden (Nick, 2026-11-06). If it has `possible_match`, say so: `([Company] may be [possible_match], already in the pipeline)`. A `new` row with `already_in_pipeline` is the same role already being pursued and is not proposed. List each `skipped_repeats` entry with its `history`: an exact repeat of a posting Nick passed on, held back, never silently. On Y:
 
 ```bash
 PYTHONIOENCODING=utf-8 python3 tools/pipe_write.py --repo-root . add "<Company>" "<Role>" --url "<url>" --stage Researching

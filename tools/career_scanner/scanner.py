@@ -232,8 +232,7 @@ def scan_all_targets(repo_root: Path, dry_run: bool = False) -> dict:
     from tools.career_scanner.scorer import score_role, load_scoring_context
     from tools.career_scanner.dedup import (
         load_seen, save_seen, split_new_and_standing)
-    from tools.career_scanner.dedup import (load_pipeline_entries, filter_duplicates,
-                                            load_closed_entries, tag_previously_closed)
+    from tools.career_scanner.dedup import load_closed_entries, tag_previously_closed
 
     targets = load_targets(repo_root)
     if not targets:
@@ -252,7 +251,6 @@ def scan_all_targets(repo_root: Path, dry_run: bool = False) -> dict:
         return summary
 
     scoring_ctx = load_scoring_context(repo_root)
-    pipeline_entries = load_pipeline_entries(repo_root)
 
     all_roles = []
     errors = []
@@ -275,8 +273,23 @@ def scan_all_targets(repo_root: Path, dry_run: bool = False) -> dict:
     for role in all_roles:
         role["score"] = score_role(role, scoring_ctx)
 
-    # Dedup against pipeline
-    new_roles, skipped = filter_duplicates(all_roles, pipeline_entries)
+    # Pipeline history (Nick, 2026-11-06), the SAME check /scan-jobs runs: every role is
+    # labelled; the same role already active in the pipeline is a duplicate (counted in
+    # skipped_dupes, as before); an exact repeat of a posting he passed on moves to
+    # skipped_repeats. One definition for both scanners (the dedup.filter_duplicates
+    # path read active rows through a pipe_read subprocess, a second definition).
+    from tools.pipeline_history import history, load_history
+    past = load_history(repo_root)
+    new_roles, repeats, skipped = [], [], 0
+    for role in all_roles:
+        h = history(role, past)
+        role["history"] = h["label"]
+        if h["already_in_pipeline"]:
+            skipped += 1
+        elif h["declined_repeat"]:
+            repeats.append({f: role.get(f, "") for f in ("title", "company", "url", "history")})
+        else:
+            new_roles.append(role)
     previously_closed = tag_previously_closed(new_roles, load_closed_entries(repo_root))
 
     # Sort by score descending (D-05)
@@ -302,6 +315,7 @@ def scan_all_targets(repo_root: Path, dry_run: bool = False) -> dict:
         # Roles the title filters or the location gate dropped at fetch, each listed
         # in the queue with its reason (scan-drops-1106).
         "cut_at_fetch": len(cuts),
+        "skipped_repeats": len(repeats),
         "roles": new_roles,
     }
 
@@ -316,7 +330,7 @@ def scan_all_targets(repo_root: Path, dry_run: bool = False) -> dict:
     # an acknowledgement stick.
     if not dry_run:
         with _queue_lock(repo_root):
-            _write_role_queue_locked(repo_root, truly_new, standing, errors, cuts)
+            _write_role_queue_locked(repo_root, truly_new, standing, errors, cuts, repeats)
             save_seen(repo_root, seen)
 
     # NO LONGER WRITES data/inbox.md (2026-09-02). That file is 7,000+ lines, is under
@@ -544,7 +558,8 @@ def write_role_queue(repo_root: Path, new_roles: list[dict],
 
 def _write_role_queue_locked(repo_root: Path, new_roles: list[dict],
                              standing: list[dict], errors: list[dict],
-                             cuts: list[dict] | None = None) -> Path:
+                             cuts: list[dict] | None = None,
+                             repeats: list[dict] | None = None) -> Path:
     """The merge itself. Caller MUST already hold _queue_lock."""
     from tools.career_scanner.dedup import role_key
 
@@ -554,10 +569,13 @@ def _write_role_queue_locked(repo_root: Path, new_roles: list[dict],
     # only the pending log (615.F1).
     tagged_now = {role_key(r): r["previously_closed"]
                   for r in [*new_roles, *standing] if r.get("previously_closed")}
+    labelled_now = {role_key(r): r["history"] for r in [*new_roles, *standing] if "history" in r}
     for role in pending:
         tag = tagged_now.get(role_key(role))
         if tag:
             role["previously_closed"] = tag
+        if role_key(role) in labelled_now:   # the label reflects the pipeline as of THIS scan
+            role["history"] = labelled_now[role_key(role)]
     have = {role_key(r) for r in pending}
     for role in new_roles:
         key = role_key(role)
@@ -566,12 +584,13 @@ def _write_role_queue_locked(repo_root: Path, new_roles: list[dict],
         have.add(key)
         pending.append(role)
     return write_queue_payload(repo_root, _queue_payload(
-        pending, new_roles, standing, errors, cuts))
+        pending, new_roles, standing, errors, cuts, repeats))
 
 
 def _queue_payload(pending: list[dict], new_roles: list[dict],
                    standing: list[dict], errors: list[dict],
-                   cuts: list[dict] | None = None) -> dict:
+                   cuts: list[dict] | None = None,
+                   repeats: list[dict] | None = None) -> dict:
     from datetime import datetime, timezone
 
     return {
@@ -590,4 +609,7 @@ def _queue_payload(pending: list[dict], new_roles: list[dict],
         # exists so a cut is never silent, not as a backlog to work through.
         "cut_at_fetch_count": len(cuts or []),
         "cut_at_fetch": list(cuts or []),
+        # THIS scan's exact repeats of postings Nick passed on, held back with their
+        # history label (pipeline_history), never silently.
+        "skipped_repeats": list(repeats or []),
     }

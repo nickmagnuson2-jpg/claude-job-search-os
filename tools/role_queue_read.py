@@ -41,7 +41,7 @@ STALE_AFTER_HOURS = 36
 # of it puts tens of kilobytes of job-description prose into the briefing for no gain.
 # The full record stays in the queue file for /apply to use.
 SUMMARY_FIELDS = ("title", "company", "location", "url", "apply_url",
-                  "score", "published_at", "first_seen", "previously_closed")
+                  "score", "published_at", "first_seen", "previously_closed", "history")
 
 
 def _summarise(role: dict) -> dict:

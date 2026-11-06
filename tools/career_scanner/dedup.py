@@ -89,9 +89,9 @@ def find_match(role_title: str, role_company: str,
     match (SequenceMatcher ratio >= 0.90 after _norm_title, D-10), else None."""
     # No empty-company guard: pipe_read and both loaders drop rows with a blank company,
     # so an empty role_company equals no entry's company and the loop returns None.
-    company_lower = role_company.lower().strip()
+    from tools.pipeline_history import same_company   # the one company matcher
     for entry in pipeline_entries:
-        if entry["company"].lower().strip() != company_lower:
+        if not same_company(role_company, entry["company"]):
             continue
         if SequenceMatcher(None, _norm_title(role_title), _norm_title(entry["role"])).ratio() >= _FUZZY_THRESHOLD:
             return entry

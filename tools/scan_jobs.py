@@ -36,11 +36,11 @@ from md_table import JsonArgumentParser, out_error, out_ok, parse_cols, read_fil
 from name_dedup import normalize_name  # noqa: E402
 from slug import slugify  # noqa: E402
 from tools.career_scanner.company_scorer import location_band  # noqa: E402
+from tools.pipeline_history import history, load_history  # noqa: E402
 from tools.career_scanner.scanner import geo_ok  # noqa: E402
 from tools.career_scanner.scorer import load_scoring_context, score_role  # noqa: E402
 
 CACHE = Path(".claude/skills/scan-jobs/cache.md")
-PIPELINE = Path("data/job-pipeline.md")
 STATUS_CUTOFFS = {"shortlisted": 7, "maybe": 5}
 REQUIRED = ("title", "company")
 # Bump when the judging LOGIC changes (scorer, gates, status rules). Data-driven rules
@@ -158,35 +158,6 @@ def status_for(score: int, cutoffs: dict) -> str:
     return "maybe" if score >= cutoffs["maybe"] else "skip"
 
 
-def pipeline_companies(text: str) -> list:
-    out = []
-    for line in text.splitlines():
-        if line.startswith("|") and not re.match(r"^\|[-: |]+\|$", line):
-            cols = parse_cols(line)
-            if cols and cols[0] not in ("Company", "---"):
-                out.append(cols[0].lower())
-    return out
-
-
-def tracked_match(company: str, tracked: list) -> str:
-    """"tracked" when the company's normalized name equals a pipeline company's; the
-    pipeline name when one is a whole-word part of the other ("Acme" / "Acme AI");
-    "" otherwise. Bidirectional substring matching silently dropped a distinct company
-    whose name merely contained a tracked one's (613.F1)."""
-    name = normalize_name(company)
-    near = ""
-    for c in tracked:
-        other = normalize_name(c)
-        if not name or not other:
-            continue
-        if name == other:
-            return "tracked"
-        if not near and (re.search(rf"\b{re.escape(other)}\b", name)
-                         or re.search(rf"\b{re.escape(name)}\b", other)):
-            near = c
-    return near
-
-
 def assess(ads: list, root: Path) -> dict:
     ctx = load_scoring_context(root)
     cutoffs = {**STATUS_CUTOFFS, **((ctx.get("fit_spec") or {}).get("status_cutoffs") or {})}
@@ -194,8 +165,8 @@ def assess(ads: list, root: Path) -> dict:
     keys, keys_no_url, urls = cached_index(cache_text)
     version = rules_version(root)
     verdicts = machine_verdicts(cache_text)
-    tracked = pipeline_companies(read_file(root / PIPELINE))
-    cached, new, done = [], [], set()
+    past = load_history(root)
+    cached, new, done, repeats = [], [], set(), []
     rechecked_unchanged = 0
     for ad in ads:
         ids = _ad_ids(ad)
@@ -237,20 +208,24 @@ def assess(ads: list, root: Path) -> dict:
                 continue
             row["reason"] = f"{reason} (re-checked under new rules; was {was})"
             row["rechecked"] = True
+        # Pipeline history (Nick, 2026-11-06): every role shows, labelled; only an exact
+        # repeat of a posting he passed on is held back, onto skipped_repeats.
+        h = history(ad, past)
+        row["history"] = h["label"]
+        if h["declined_repeat"]:
+            repeats.append({f: row[f] for f in ("title", "company", "url", "history")})
+            continue
+        if h["already_in_pipeline"]:
+            row["already_in_pipeline"] = True
+        if h["possible_match"]:
+            row["possible_match"] = h["possible_match"]   # Nick decides, never dropped
         new.append(row)
-    propose = []
-    for r in new:
-        if r["status"] != "shortlisted":
-            continue
-        verdict = tracked_match(r["company"], tracked)
-        if verdict == "tracked":
-            continue
-        if verdict:
-            r["possible_match"] = verdict   # whole-word overlap: Nick decides, never dropped
-        propose.append(r)
+    # A role already in the pipeline as the same role is not proposed again; a different
+    # role at a company with history is, carrying its label.
+    propose = [r for r in new if r["status"] == "shortlisted" and not r.get("already_in_pipeline")]
     return {"found": len(ads), "cached": cached, "new": new, "propose_for_pipeline": propose,
             "cutoffs": cutoffs, "rules_version": version,
-            "rechecked_unchanged": rechecked_unchanged}
+            "rechecked_unchanged": rechecked_unchanged, "skipped_repeats": repeats}
 
 
 def record(rows: list, root: Path) -> dict:
