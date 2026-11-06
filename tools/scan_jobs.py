@@ -104,7 +104,7 @@ def rules_version(root: Path) -> str:
 
 def _row_ids(cols: list) -> list:
     """The ids a stored row answers to: its URL, else its title+company key."""
-    m = URL_IN_CELL.search(cols[5]) if len(cols) > 5 else None
+    m = URL_IN_CELL.search(cols[5])   # callers pass only rows of 7+ columns
     return [("u", m.group(1).strip())] if m else [("k", key(cols[0], cols[1]))]
 
 
@@ -120,12 +120,10 @@ def machine_verdicts(cache_text: str) -> dict:
     carries no marker and is absent: his verdicts are never re-judged."""
     out = {}
     for line in cache_text.splitlines():
-        if not line.startswith("|") or re.match(r"^\|[-: |]+\|$", line):
-            continue
-        cols = parse_cols(line)
-        if len(cols) < 7 or cols[0] == "Title":
-            continue
-        m = _MACHINE_NOTE.search(cols[6])
+        # The header and separator rows never carry the marker, so the marker test alone
+        # selects machine rows (mutation round 1: separate skips for them were redundant).
+        cols = parse_cols(line) if line.startswith("|") else []
+        m = _MACHINE_NOTE.search(cols[6]) if len(cols) >= 7 else None
         if m:
             for i in _row_ids(cols):
                 out[i] = {"status": cols[3].strip(), "version": m.group(1) or ""}
@@ -275,11 +273,8 @@ def _machine_line(lines: list, r: dict):
     """Index of the machine-written row this re-checked row re-judged, or None."""
     want = set(_ad_ids(r))
     for i, line in enumerate(lines):
-        if not line.startswith("|") or re.match(r"^\|[-: |]+\|$", line):
-            continue
-        cols = parse_cols(line)
-        if len(cols) >= 7 and cols[0] != "Title" and _MACHINE_NOTE.search(cols[6]) \
-                and want & set(_row_ids(cols)):
+        cols = parse_cols(line) if line.startswith("|") else []
+        if len(cols) >= 7 and _MACHINE_NOTE.search(cols[6]) and want & set(_row_ids(cols)):
             return i
     return None
 

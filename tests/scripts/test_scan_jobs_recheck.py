@@ -122,3 +122,46 @@ def test_record_still_refuses_a_plain_duplicate(tmp_path):
     root = make_root(tmp_path, [machine_row(AD["title"], AD["company"], "skip", AD["url"], "00000000")])
     with pytest.raises(SystemExit):
         sj.record([{**AD, "score": 4, "status": "skip", "reason": "x", "ad_date": ""}], root)
+
+
+# ---------- mutation round 1 killers ----------
+
+def test_two_rows_with_one_title_are_told_apart_by_url(tmp_path, monkeypatch):
+    other = {**AD, "url": "https://example.com/2"}
+    root = make_root(tmp_path, [machine_row(AD["title"], AD["company"], "skip", AD["url"], None),
+                                machine_row(AD["title"], AD["company"], "maybe", other["url"], "00000000")])
+    (root / sj.CACHE).write_text((root / sj.CACHE).read_text().replace(
+        "(scan_jobs.py)", f"(scan_jobs.py rules:{sj.rules_version(root)})"))
+    monkeypatch.setattr(sj, "score_role", lambda role, ctx: 9)
+    out = sj.assess([dict(AD), dict(other)], root)
+    assert [r["url"] for r in out["new"]] == [other["url"]]
+    assert out["new"][0]["reason"].endswith("was maybe)")
+
+
+def test_a_rechecked_ad_repeated_in_one_scan_is_assessed_once(tmp_path, monkeypatch):
+    root = make_root(tmp_path, [machine_row(AD["title"], AD["company"], "skip", AD["url"], "00000000")])
+    monkeypatch.setattr(sj, "score_role", lambda role, ctx: 9)
+    out = sj.assess([dict(AD), dict(AD)], root)
+    assert len(out["new"]) == 1 and len(out["cached"]) == 1
+
+
+def test_a_url_less_ad_covers_the_same_title_with_a_url_in_one_scan(tmp_path, monkeypatch):
+    root = make_root(tmp_path, [])
+    monkeypatch.setattr(sj, "score_role", lambda role, ctx: 9)
+    out = sj.assess([{**AD, "url": ""}, dict(AD)], root)
+    assert len(out["new"]) == 1 and len(out["cached"]) == 1
+
+
+def test_record_refuses_a_rechecked_row_with_nothing_to_replace(tmp_path):
+    root = make_root(tmp_path, [hand_row(AD["title"], AD["company"], "skip", AD["url"])])
+    r = {**AD, "score": 9, "status": "shortlisted", "reason": "x", "ad_date": "", "rechecked": True}
+    with pytest.raises(SystemExit):
+        sj.record([r], root)
+
+
+def test_record_refuses_two_rechecked_rows_for_one_cache_row(tmp_path):
+    root = make_root(tmp_path, [machine_row(AD["title"], AD["company"], "skip", AD["url"], "00000000")])
+    r = {**AD, "score": 9, "status": "shortlisted", "reason": "x", "ad_date": "", "rechecked": True}
+    with pytest.raises(SystemExit):
+        sj.record([r, dict(r)], root)
+    assert "| skip |" in (root / sj.CACHE).read_text(), "nothing written on refusal"

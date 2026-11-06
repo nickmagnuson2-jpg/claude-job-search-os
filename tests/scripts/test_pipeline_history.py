@@ -214,3 +214,28 @@ def test_parity_the_same_ad_gets_the_same_label_and_hold_back_from_both(tmp_path
     shared = set(lab(sj_out["new"])) & set(lab(nightly["new"]))
     assert shared and all(lab(sj_out["new"])[k] == lab(nightly["new"])[k] for k in shared)
     assert lab(sj_out["skipped_repeats"]) == lab(nightly["skipped_repeats"])
+
+
+# ---------- mutation round 1 killers ----------
+
+def test_the_same_url_is_the_same_role_whatever_the_title(rows):
+    # The posting was retitled; its URL is its identity.
+    h = ph.history(role("Senior Deployment Strategist II", "Northwind Labs", "https://n.example/1"), rows)
+    assert h["already_in_pipeline"] is True
+
+
+def test_a_closed_row_is_labelled_closed_with_its_stage():
+    row = {"outcome": "closed", "date": "2026-07-01", "role": "Chief of Staff", "stage": "Closed - filled"}
+    assert ph._phrase(row) == "closed 07/01: Closed - filled (Chief of Staff)"
+
+
+def test_a_pending_role_from_an_earlier_scan_gets_this_scans_label(tmp_path, monkeypatch):
+    from tools.career_scanner import scanner
+    from tools.career_scanner.dedup import role_key
+    (tmp_path / "data").mkdir()
+    pend = {"title": "Strategy Lead", "company": "Beacon AI", "url": "https://b.example/9", "history": "old"}
+    scanner.write_queue_payload(tmp_path, scanner._queue_payload([pend], [pend], [], []))
+    fresh = {**pend, "history": "they declined you 10/03 (Ops Lead)"}
+    scanner._write_role_queue_locked(tmp_path, [], [fresh], [])
+    [p] = scanner.read_queue_payload(tmp_path)["new"]
+    assert role_key(p) == role_key(pend) and p["history"] == "they declined you 10/03 (Ops Lead)"
