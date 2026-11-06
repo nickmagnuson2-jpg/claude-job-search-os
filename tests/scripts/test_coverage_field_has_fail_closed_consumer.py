@@ -303,6 +303,14 @@ REGISTRY: dict[tuple[str, str, str | None], object] = {
                    r'fully_covered=" \+ str\(payload\["fully_covered"\]\)'),
         enforced=Branch("check_deck_craft.py", "main", reads="under_floor",
                         closes="exit")),
+    ("networking_write.py", "skipped", None): Displayed(
+        "the side-effect steps a BACKDATED log did not run (follow-up to-do, outreach "
+        "status check), reported so the caller can see them; skipping them is the "
+        "decision, made on `backdated`, so failing on this list would be a second check "
+        "of the same condition. The skills read `backdated` (networking, follow-up, "
+        "cold-outreach, draft-email to-do steps)",
+        shown=Text("tools/networking_write.py", r'"skipped": \[s for s, on in'),
+        enforced=Branch("networking_write.py", "cmd_log", reads="backdated")),
     ("frame_write.py", "fully_covered", None): Displayed(
         "a faithful copy of what the checker reported, written to the frame's check_log "
         "and returned to the caller; the writer refuses a write on what the checker "
@@ -443,7 +451,7 @@ MAX_KNOWN_GAPS = 0
 # A Displayed row takes a field OUT of the gap count without giving it a consumer, so
 # it has a ceiling of its own. Raising this is the owner's decision that one more field
 # is informational, made here where a reviewer sees it, not by retyping a Gap row.
-MAX_DISPLAYED = 6
+MAX_DISPLAYED = 7
 
 
 def registry_problems(root: Path, registry: dict) -> list[str]:

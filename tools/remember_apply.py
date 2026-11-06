@@ -196,7 +196,9 @@ def apply_contact_note(note: str, dest: dict, repo_root: Path) -> dict:
                 "message": f"networking_write.py log refused: {out.get('message')}"}
     result = {"status": "ok", "type": "contact_note", "file": str(path), "entity": entity,
               "direction": d}
-    if d in ("in", "both"):
+    # A backdated log records history: the writer skipped the outreach step on purpose, so
+    # the fallback below must not run it (review of e644b586, Codex F1, 2026-11-06).
+    if d in ("in", "both") and not out.get("backdated"):
         if out.get("outreach_log_updated"):
             result.update({"outreach_log_updated": True,
                            "outreach_file": str(repo_root / OUTREACH_FILE)})

@@ -477,7 +477,7 @@ Archive file format:
 
 **Follow-up to-dos** (all types except thank-you):
 
-**If the log command's JSON has `"backdated": true`, skip this to-do step.** The entry is older than the contact's newest interaction (for example, their reply was logged first), so it records history and the live follow-up belongs to the newer interaction. The writer skipped its own to-do for the same reason.
+**If the log command's JSON has `"backdated": true`, skip this to-do step.** The entry is older than the contact's newest interaction (for example, their reply was logged first), so it records history and the live follow-up belongs to the newer interaction.
 
 - Read `data/job-todos.md`, add:
   - **Task:** `Follow up: [Name] — [action based on email type]`

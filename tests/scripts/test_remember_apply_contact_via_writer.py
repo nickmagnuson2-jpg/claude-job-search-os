@@ -418,3 +418,17 @@ def test_remember_waits_for_another_writer_and_writes_nothing_if_it_cannot(tmp_p
     assert c != 0 and r["code"] == "locked", r
     assert read(tmp_path) == before
     assert not (tmp_path / "data/notes.md").exists()
+
+
+def test_a_backdated_reply_note_runs_no_outreach_fallback(tmp_path):
+    """Review of e644b586, Codex F1: when the contact holds a newer (here future-dated)
+    entry, today's note is backdated; the writer skips the outreach step on purpose, so
+    remember_apply's fallback must not mark the row Replied itself."""
+    future = NETWORKING.replace("#### 2026-01-05 | email (outbound) | Intro",
+                                "#### 2099-01-01 | email (outbound) | Planned\n\n"
+                                "**Follow-up:** —\n\n#### 2026-01-05 | email (outbound) | Intro")
+    setup(tmp_path, networking=future)
+    r, c = remember(tmp_path, note_dest("in"))
+    assert c == 0 and r["status"] == "ok", r
+    assert read(tmp_path, "data/outreach-log.md") == OUTREACH
+    assert "outreach_log_updated" not in r and "warning" not in r, r
