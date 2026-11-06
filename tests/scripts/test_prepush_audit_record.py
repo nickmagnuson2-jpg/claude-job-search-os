@@ -422,6 +422,16 @@ def test_a_manual_run_with_an_unopenable_ledger_does_not_block(repo):
     assert r.returncode == 0 and "audit ledger unreadable" in r.stderr
 
 
+def test_a_manual_run_survives_the_first_tracked_file_missing_from_disk(repo):
+    """Mutation round 4: the fallback's `except OSError: continue` must skip the file. With
+    the FIRST tracked file missing, dropping it reads an unbound name and crashes."""
+    commit(repo, "a.md", "ok\n")
+    commit(repo, "b.md", "ok\n")
+    (repo / "a.md").unlink()
+    r = guard(repo, "")
+    assert r.returncode == 0, r.stderr
+
+
 def test_a_deletion_only_push_prints_no_record_report(repo):
     commit(repo, "a.md", "ok\n")
     r = guard(repo, push_line(ZERO_SHA))
