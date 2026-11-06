@@ -489,6 +489,8 @@ If `open_draft.py` printed `WARNING: draft was NOT captured`, there is no captur
 
 **3. Create follow-up to-do in `data/job-todos.md`:**
 
+**If the log command's JSON has `"backdated": true`, skip this to-do step.** The entry is older than the contact's newest interaction (for example, their reply was logged first), so it records history and the live follow-up belongs to the newer interaction.
+
 Read `data/job-todos.md`, then add:
 
 - **Task:** `Follow up: [Name] @ [Company] — check for response`

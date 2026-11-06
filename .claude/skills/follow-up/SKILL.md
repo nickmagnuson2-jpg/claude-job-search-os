@@ -121,7 +121,7 @@ Before determining follow-up type, check whether the contact has replied to prio
    Do NOT also run the status script below for a Yes: `--direction in` already sets `Replied`, and a second write could mark an older open row. Three exceptions:
    - `code == "not_found"`: nothing was logged. Step 1a.3 already stops for a contact absent from `networking.md`, so this almost always means the name passed differs from the roster's Name cell. Rerun the log with the roster's exact name. Only if the contact really is not in `networking.md`, set the status with the script below instead.
    - `code == "possible_duplicate_reply"`: nothing was written. The contact's newest entry is already a reply with no message from Nick after it, shown in `existing`. Show it to Nick. If it is this same reply, do not log it again; run the status script below once with `--status Replied` so this row stops being asked about, then go on to Store below. Rerun with `--new-reply` only if Nick says it is a new message from them.
-   - `outreach_log_updated` is `false`: the reply IS logged, but no row was set to `Replied` (no open row, an ambiguous recipient, or an unreadable log). Run the status script below with `--status Replied` once to set the row or get the `reason` and `candidates`, and show them to Nick. Do not log the reply again.
+   - `outreach_log_updated` is `false` and the JSON has no `"backdated": true`: the reply IS logged, but no row was set to `Replied` (no open row, an ambiguous recipient, or an unreadable log). When `backdated` is true the writer skipped the outreach step on purpose (the entry is older than the contact's newest interaction): run nothing here. Run the status script below with `--status Replied` once to set the row or get the `reason` and `candidates`, and show them to Nick. Do not log the reply again.
    Store `reply_status = "replied"` — this informs Step 3. If context was provided, carry it into Steps 3 and 6.
 5. **If No (no response):** Set the most recent matching row's Status to `No reply` with the same script. Store `reply_status = "no_reply"`.
 
@@ -474,6 +474,8 @@ PYTHONIOENCODING=utf-8 python3 tools/networking_write.py --repo-root . log "<Nam
 If `open_draft.py` printed `WARNING: draft was NOT captured`, there is no capture id. Log the entry with `--direction none` and no `--capture`, and tell Nick that this send stays plain and will not count as a send.
 
 **2. Update follow-up to-do in `data/job-todos.md`:**
+
+**If the log command's JSON has `"backdated": true`, skip this to-do step.** The entry is older than the contact's newest interaction (for example, their reply was logged first), so it records history and the live follow-up belongs to the newer interaction.
 
 - If a pending follow-up to-do exists for this contact: update the due date to the next follow-up window (based on sequence position), or mark complete if this was the final attempt (5th+).
 - If no pending to-do exists: create one with the next follow-up date.

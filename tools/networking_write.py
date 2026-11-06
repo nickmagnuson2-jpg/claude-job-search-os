@@ -64,6 +64,8 @@ OUTREACH_FILE    = "data/outreach-log.md"
 CONTACTS_HEADER = "| Name | Company | Role | Relationship | Added | Last Interaction | Email |"
 CONTACTS_SEP    = "| --- | --- | --- | --- | --- | --- | --- |"
 
+ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
+
 
 # ---------------------------------------------------------------------------
 # I/O helpers (self-contained — no cross-script imports)
@@ -137,6 +139,37 @@ def find_contact_log_section(lines: list, name: str) -> tuple:
             end = i
             break
     return (start, end)
+
+
+def is_date(s: str) -> bool:
+    """A real calendar date written YYYY-MM-DD. "2026-13-40" has the shape and is not one, and
+    as a string it would outrank every real date (cross-model review 2026-11-06, r2 F1/F2)."""
+    if not ISO_DATE.fullmatch(s):
+        return False
+    try:
+        date.fromisoformat(s)
+    except ValueError:
+        return False
+    return True
+
+
+def section_entry_dates(lines: list, start: int, end: int) -> list:
+    """[(line index, date)] for each interaction heading in lines[start:end] whose date is a
+    real date, in file order. Parsed by reply_classify.entry_header, the one parser for
+    `#### date | type | summary`. A missing section comes back from find_contact_log_section as
+    (-1, -1), an empty range."""
+    return [(i, m.group(1)) for i in range(start, end)
+            if (m := entry_header(lines[i])) and is_date(m.group(1))]
+
+
+def newest_entry_date(lines: list, name: str) -> str | None:
+    """The newest real interaction date across EVERY ### section for the contact, archived ones
+    included (reply_classify.contact_lines, the reader the duplicate-reply check uses), or None.
+    A re-added contact's archived section can hold the newest interaction (post-commit review
+    2026-11-06, Codex F1 / Grok F1)."""
+    dates = [m.group(1) for line in contact_lines(lines, name)
+             if (m := entry_header(line)) and is_date(m.group(1))]
+    return max(dates) if dates else None
 
 
 # ---------------------------------------------------------------------------
@@ -321,15 +354,19 @@ def apply_log(lines: list, name: str, log_date: str, entry_lines: list, directio
                                 f"that reply, do not log it again. If it is a new message from "
                                 f"them, rerun with --new-reply.")}
 
-    # Update Last Interaction date in Contacts table
-    cols = parse_cols(lines[contact_row_idx])
-    while len(cols) < 7:
-        cols.append("—")
-    cols[5] = log_date
-    lines[contact_row_idx] = fmt_contact_row(*cols[:7])
-
     # Find the contact's section in Interaction Log
     log_sec_start, log_sec_end = find_contact_log_section(lines, name)
+    dated = section_entry_dates(lines, log_sec_start, log_sec_end)
+
+    # Last Interaction is the newest interaction, not the latest write (friction ledger
+    # 2026-11-06: a backdated --date rewound it): the newest of the logged date, the contact's
+    # entry dates in every section, and the cell itself when it holds a date ("—" does not).
+    cols = (parse_cols(lines[contact_row_idx]) + ["—"] * 7)[:7]
+    newest = newest_entry_date(lines, name)
+    cols[5] = max([log_date] + ([newest] if newest else [])
+                  + ([cols[5]] if is_date(cols[5]) else []))
+    lines[contact_row_idx] = fmt_contact_row(*cols)
+
     if log_sec_start == -1:
         # Section missing — create it
         log_section_start, log_section_end = find_section(lines, r"^##\s+Interaction\s+Log")
@@ -351,11 +388,19 @@ def apply_log(lines: list, name: str, log_date: str, entry_lines: list, directio
             lines.insert(insert_at + 2, "")
             insert_at = insert_at + 3
     else:
-        # Insert after section heading (+ blank line), i.e., newest first
-        insert_at = log_sec_start + 1
-        # Skip a blank line if present right after heading
-        if insert_at < log_sec_end and lines[insert_at].strip() == "":
-            insert_at += 1
+        # Newest first. The entry goes directly below the LAST entry newer than it, so it sits
+        # below every newer entry even in a section that is already out of order (11 of 190 on
+        # 2026-11-06). With no newer entry it goes on top, right after the heading (+ blank
+        # line), so a same-day entry still lands above that day's earlier ones.
+        newer = [k for k, (_, d) in enumerate(dated) if d > log_date]
+        if newer:
+            k = newer[-1] + 1
+            insert_at = dated[k][0] if k < len(dated) else log_sec_end
+        else:
+            insert_at = log_sec_start + 1
+            # Skip a blank line if present right after heading
+            if insert_at < log_sec_end and lines[insert_at].strip() == "":
+                insert_at += 1
 
     # Insert entry lines in order
     for j, eline in enumerate(entry_lines):
@@ -398,6 +443,9 @@ def cmd_log(args, networking_path: Path, repo_root: Path, dry_run: bool) -> None
     refuse_wrong_weekdays(args.followup or "")
     today = date.today().strftime("%Y-%m-%d")
     log_date = args.date if args.date else today
+    if not is_date(log_date):
+        out_error(f"--date {log_date!r} is not a real date written YYYY-MM-DD; nothing was "
+                  f"logged", "invalid_date")
     send_direction = args.direction
     if args.capture:
         send_direction = capture_direction(args)
@@ -424,6 +472,11 @@ def cmd_log(args, networking_path: Path, repo_root: Path, dry_run: bool) -> None
         return
 
     content, lines = load_lines(networking_path)
+    # A log older than the contact's newest entry records history. It must not act on the
+    # present: the live follow-up to-do and the newest outreach row belong to the newer
+    # interaction (cross-model review 2026-11-06, Codex F1 and Grok F2/F3).
+    prior_newest = newest_entry_date(lines, args.name)
+    backdated = prior_newest is not None and log_date < prior_newest
 
     refusal = apply_log(lines, args.name, log_date, entry_lines, args.direction, args.new_reply)
     if refusal:
@@ -463,45 +516,56 @@ def cmd_log(args, networking_path: Path, repo_root: Path, dry_run: bool) -> None
     # The todo is a write to a SECOND file, so its outcome is reported in the output
     # (todo_added), and --no-todo turns it off for a caller barred from that file.
     todo_added = False
-    if args.followup and not getattr(args, "no_todo", False):
-        todos_path = repo_root / TODOS_FILE
-        if todos_path.exists():
-            todo_write = str(Path(__file__).parent / "todo_write.py")
-            todo_env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
+    # Whether the to-do and outreach steps would run without the backdate guard. One value
+    # each, read by the step and by the backdated report, so the two cannot disagree (r3 F1).
+    # The report names STEPS not run, not effects: the outreach step only looks for an open row
+    # and may change nothing, which is not knowable without running it (r4 F1).
+    todos_path = repo_root / TODOS_FILE
+    would_todo = (bool(args.followup) and not getattr(args, "no_todo", False)
+                  and todos_path.exists())
+    would_flip = args.direction in ("in", "both")
+    if would_todo and not backdated:
+        todo_write = str(Path(__file__).parent / "todo_write.py")
+        todo_env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
+        try:
+            subprocess.run(
+                [sys.executable, todo_write, "--repo-root", str(repo_root),
+                 "supersede", f"Follow up: {args.name} —"],
+                capture_output=True, text=True, encoding="utf-8", env=todo_env,
+                cwd=str(repo_root),
+            )
+            todo_task = f"Follow up: {args.name} — {args.followup}"
+            from datetime import timedelta
+            due = (date.today() + timedelta(days=7)).strftime("%Y-%m-%d")
+            added = subprocess.run(
+                [sys.executable, todo_write,
+                 "add", todo_task, "Med", due, f"From networking log on {log_date}"],
+                capture_output=True, text=True, encoding="utf-8", env=todo_env,
+                cwd=str(repo_root),
+            )
             try:
-                subprocess.run(
-                    [sys.executable, todo_write, "--repo-root", str(repo_root),
-                     "supersede", f"Follow up: {args.name} —"],
-                    capture_output=True, text=True, encoding="utf-8", env=todo_env,
-                    cwd=str(repo_root),
-                )
-                todo_task = f"Follow up: {args.name} — {args.followup}"
-                from datetime import timedelta
-                due = (date.today() + timedelta(days=7)).strftime("%Y-%m-%d")
-                added = subprocess.run(
-                    [sys.executable, todo_write,
-                     "add", todo_task, "Med", due, f"From networking log on {log_date}"],
-                    capture_output=True, text=True, encoding="utf-8", env=todo_env,
-                    cwd=str(repo_root),
-                )
-                try:
-                    todo_added = (added.returncode == 0
-                                  and json.loads(added.stdout).get("status") == "ok")
-                except ValueError:
-                    todo_added = False
-            except Exception:
-                pass  # todo creation is best-effort
+                todo_added = (added.returncode == 0
+                              and json.loads(added.stdout).get("status") == "ok")
+            except ValueError:
+                todo_added = False
+        except Exception:
+            pass  # todo creation is best-effort
 
     # Auto-update outreach-log.md only when the caller said the contact reached Nick
     # (--direction in or both). The summary is never read for this.
     outreach_updated = False
-    if args.direction in ("in", "both"):
+    if would_flip and not backdated:
         outreach_updated = update_outreach_status(repo_root, args.name)
 
+    extra = {}
+    if backdated:
+        extra = {"backdated": True, "newest_entry": prior_newest,
+                 "skipped": [s for s, on in (("follow-up to-do", would_todo),
+                                             ("outreach status check", would_flip)) if on]}
     out_ok("log", f"Logged interaction for {args.name}: {args.summary}",
            name=args.name, date=log_date,
            outreach_log_updated=outreach_updated,
-           todo_added=todo_added, todos_file=TODOS_FILE)
+           todo_added=todo_added, todos_file=TODOS_FILE, **extra)
 
 
 def capture_direction(args) -> str:
