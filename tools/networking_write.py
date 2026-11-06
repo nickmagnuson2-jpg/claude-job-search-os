@@ -163,8 +163,12 @@ def section_entry_dates(lines: list, start: int, end: int) -> list:
 
 
 def newest_entry_date(lines: list, name: str) -> str | None:
-    """The newest interaction date in the contact's log section, or None if it has none."""
-    dates = [d for _, d in section_entry_dates(lines, *find_contact_log_section(lines, name))]
+    """The newest real interaction date across EVERY ### section for the contact, archived ones
+    included (reply_classify.contact_lines, the reader the duplicate-reply check uses), or None.
+    A re-added contact's archived section can hold the newest interaction (post-commit review
+    2026-11-06, Codex F1 / Grok F1)."""
+    dates = [m.group(1) for line in contact_lines(lines, name)
+             if (m := entry_header(line)) and is_date(m.group(1))]
     return max(dates) if dates else None
 
 
@@ -355,10 +359,11 @@ def apply_log(lines: list, name: str, log_date: str, entry_lines: list, directio
     dated = section_entry_dates(lines, log_sec_start, log_sec_end)
 
     # Last Interaction is the newest interaction, not the latest write (friction ledger
-    # 2026-11-06: a backdated --date rewound it): the newest of the logged date, the section's
-    # entry dates, and the cell itself when it holds a date ("—" does not).
+    # 2026-11-06: a backdated --date rewound it): the newest of the logged date, the contact's
+    # entry dates in every section, and the cell itself when it holds a date ("—" does not).
     cols = (parse_cols(lines[contact_row_idx]) + ["—"] * 7)[:7]
-    cols[5] = max([log_date, *(d for _, d in dated)]
+    newest = newest_entry_date(lines, name)
+    cols[5] = max([log_date] + ([newest] if newest else [])
                   + ([cols[5]] if is_date(cols[5]) else []))
     lines[contact_row_idx] = fmt_contact_row(*cols)
 

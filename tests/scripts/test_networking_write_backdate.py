@@ -306,3 +306,35 @@ def test_backdated_log_with_no_todos_file_reports_no_skipped_todo(tmp_path):
         env={**os.environ, "PYTHONIOENCODING": "utf-8"}, cwd=str(REPO_ROOT))
     out = json.loads(r.stdout)
     assert out["backdated"] is True and out["skipped"] == []
+
+
+# --- Archived sections (post-commit review: Codex F1 / Grok F1) -----------------------------
+
+ARCHIVED = "### [ARCHIVED] Jane Doe — Acme Corp\n\n" + _entry("2026-12-01", "archived newest")
+
+
+def test_newest_entry_date_reads_archived_sections_too():
+    lines = (_text("—", ("2026-11-05", "a")) + "\n" + ARCHIVED).split("\n")
+    assert nw.newest_entry_date(lines, "Jane Doe") == "2026-12-01"
+
+
+def test_archived_newer_entry_keeps_last_interaction_and_placement_stays_live():
+    lines = (_text("—", ("2026-11-05", "a")) + "\n" + ARCHIVED).split("\n")
+    lines = _log(lines, "2026-11-06")
+    assert _last_interaction(lines) == "2026-12-01"
+    assert _jane_dates(lines) == ["2026-11-06", "2026-11-05"]
+
+
+def test_log_older_than_an_archived_entry_is_backdated(tmp_path):
+    write_fixture(tmp_path, "data/networking.md",
+                  _text("2026-11-05", ("2026-11-05", "a")) + "\n" + ARCHIVED)
+    write_fixture(tmp_path, "data/job-todos.md", TODOS)
+    r = subprocess.run(
+        [sys.executable, str(TOOLS_DIR / "networking_write.py"), "--repo-root", str(tmp_path),
+         "log", "Jane Doe", "--date", "2026-11-20", "--type", "email", "--summary", "s",
+         "--direction", "none", "--followup", "x"],
+        capture_output=True, text=True, encoding="utf-8",
+        env={**os.environ, "PYTHONIOENCODING": "utf-8"}, cwd=str(REPO_ROOT))
+    out = json.loads(r.stdout)
+    assert out["backdated"] is True and out["newest_entry"] == "2026-12-01"
+    assert (tmp_path / "data/job-todos.md").read_text(encoding="utf-8") == TODOS
