@@ -349,6 +349,29 @@ def test_a_waiver_that_cannot_be_recorded_does_not_pass(repo):
     assert r.returncode == 1 and "could not be recorded" in r.stderr
 
 
+def _import_guard():
+    import importlib
+    sys.path.insert(0, str(ROOT / "tools"))
+    return importlib.import_module("prepush_pii_guard")
+
+
+def test_tree_or_blank_returns_the_real_tree(repo):
+    g = _import_guard()
+    sha = commit(repo, "a.md", "ok\n")
+    assert g._tree_or_blank(repo, sha) == tree(repo, sha)
+
+
+def test_tree_or_blank_never_raises(repo, monkeypatch):
+    """It runs inside record_gate's error path; an exception escaping it would reach the
+    top-level handler that PUSH_PII_OVERRIDE turns into allow (Codex r1 F1)."""
+    g = _import_guard()
+
+    def boom(*_a, **_k):
+        raise OSError("git missing")
+    monkeypatch.setattr(g.rec, "tree_of", boom)
+    assert g._tree_or_blank(repo, "HEAD") == ""
+
+
 def test_a_deletion_only_push_prints_no_record_report(repo):
     commit(repo, "a.md", "ok\n")
     r = guard(repo, push_line(ZERO_SHA))
