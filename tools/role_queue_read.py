@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from collections import Counter
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -105,6 +106,7 @@ def read_queue(repo_root: Path, top: int = 5) -> dict:
     new.sort(key=lambda r: (r.get("score") or 0, r.get("published_at") or ""),
              reverse=True)
 
+    cuts = [c for c in (payload.get("cut_at_fetch") or []) if isinstance(c, dict)]
     return {
         "exists": True,
         "scanned_at": scanned_at,
@@ -120,6 +122,10 @@ def read_queue(repo_root: Path, top: int = 5) -> dict:
         "fetch_failures": payload.get("fetch_failures", 0),
         "fetch_failure_detail": payload.get("fetch_failure_detail", []),
         "pending_overflow": bool(payload.get("pending_overflow")),
+        # Roles this scan's title filters and location gate dropped at fetch. The full
+        # list, each with its reason, is in the queue file (scan-drops-1106).
+        "cut_at_fetch_count": len(cuts),
+        "cut_at_fetch_by_reason": dict(Counter(c.get("reason", "") for c in cuts)),
         "roles": [_summarise(r) for r in new[:top]],
         # The reader acknowledges BY KEY, never by count. Acking "the top 5" would
         # silently consume whatever a scan inserted between the read and the ack.
