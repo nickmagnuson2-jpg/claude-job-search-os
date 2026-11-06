@@ -10,7 +10,8 @@ diffs against the last locked version) or by the compounding loop.
 WHY EACH GUARANTEE EXISTS -- all four are paid for by a specific past failure:
 
   1. VALIDATE BEFORE REPLACING. The candidate is serialised to a temp file and run
-     through tools/check_frame_integrity.py. Structural errors REFUSE the write.
+     through tools/check_frame_integrity.py, with --deck when the frame names one in
+     its `deck` field (see deck_argv). Structural errors REFUSE the write.
      A frame that fails the schema gate never reaches disk, so `frame.yaml` is
      always parseable and always schema-valid.
 
@@ -245,7 +246,37 @@ def deep_merge(old, new):
     return new
 
 
-def run_checker(candidate: Path) -> tuple:
+def deck_argv(frame_path: Path, payload: dict) -> list:
+    """The `--deck` argument for the checker, read from the frame's own `deck` field.
+
+    WHY. F15 reads what a surface PRINTS, and the checker can only see that when it is
+    handed the rendered deck. Every governed write called it without one, so F15 was
+    CANNOT_RUN on every write and its observation row recorded that (closeout build
+    row B6, decided 2026-09-23). The frame now names its deck and this passes it.
+
+    A relative path resolves against the FRAME'S directory, where the deck lives, never
+    the caller's cwd. A declared deck that is blank or missing REFUSES the write: passing
+    it through would put F15 back to CANNOT_RUN, the state this field exists to end,
+    while the frame claims a deck.
+    """
+    deck = payload.get("deck")
+    if deck is None:
+        return []
+    if not isinstance(deck, str) or not deck.strip():
+        die("`deck` must be the path of the rendered deck, relative to the frame's "
+            "directory; it is blank or not a string. Remove it with a null or name the "
+            "file. Nothing was written.", deck=deck)
+    path = Path(deck)
+    if not path.is_absolute():
+        path = frame_path.parent / path
+    if not path.is_file():
+        die(f"`deck` names {deck}, which is not a file at {path}. F15 would read no deck "
+            "and report CANNOT_RUN while the frame claims one. Nothing was written.",
+            deck=deck, resolved=str(path))
+    return ["--deck", str(path)]
+
+
+def run_checker(candidate: Path, extra=()) -> tuple:
     """Validate a candidate frame. Structural errors refuse the write; rule FAILs do not.
 
     A frame mid-run legitimately fails rules -- that is what the gate is FOR, and
@@ -261,7 +292,8 @@ def run_checker(candidate: Path) -> tuple:
     Returns (returncode, verdict). The caller decides; this only reports.
     """
     r = subprocess.run(
-        [sys.executable, str(CHECKER), str(candidate), "--schema", str(SCHEMA), "--json"],
+        [sys.executable, str(CHECKER), str(candidate), "--schema", str(SCHEMA), "--json",
+         *extra],
         capture_output=True, text=True,
         env={**os.environ, "PYTHONIOENCODING": "utf-8"},
     )
@@ -441,11 +473,14 @@ def write_frame(frame_path: Path, new: dict, expect: int, segment=None,
             die("--complete-segment requires --segment; nothing was written")
 
         tmp = frame_path.with_suffix(".yaml.candidate")
+        # Resolved before any byte is written: a refusal here leaves no candidate file.
+        # Phase 2 adds only check_log, so one resolution covers both checks.
+        deck = deck_argv(frame_path, new)
 
         def check(payload: dict):
             tmp.write_text(yaml.safe_dump(payload, sort_keys=False, allow_unicode=True),
                            encoding="utf-8")
-            rc, v = run_checker(tmp)
+            rc, v = run_checker(tmp, deck)
             refusal = verdict_refuses(rc, v)
             if refusal:
                 die(f"candidate frame REFUSED by the schema gate ({refusal}); nothing was written",
@@ -481,7 +516,8 @@ def write_frame(frame_path: Path, new: dict, expect: int, segment=None,
 
     return {"status": "ok", "version": new["version"], "snapshot": f"frame.v{actual}.yaml",
             "clean": verdict.get("clean"), "fully_covered": verdict.get("fully_covered"),
-            "counts": verdict.get("counts"), "observed": len(new["check_log"])}
+            "counts": verdict.get("counts"), "observed": len(new["check_log"]),
+            "deck": deck[1] if deck else None}
 
 
 # ---------------------------------------------------------------- init

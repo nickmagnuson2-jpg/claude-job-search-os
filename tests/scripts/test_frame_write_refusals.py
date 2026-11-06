@@ -311,9 +311,9 @@ def test_a_verdict_that_changes_when_recorded_is_refused(monkeypatch, tmp_path):
     calls = {"n": 0}
     real = fw.run_checker
 
-    def unstable(p):
+    def unstable(p, *extra):
         calls["n"] += 1
-        rc, v = real(p)
+        rc, v = real(p, *extra)
         if calls["n"] > 1:                     # second look differs from the first
             v = {**v, "counts": {"pass": 999, "fail": 0, "cannot_run": 0}}
         return rc, v
@@ -487,9 +487,9 @@ def test_the_verdict_changed_guard_fires_with_ITS_OWN_message(monkeypatch, tmp_p
     calls = {"n": 0}
     real = fw.run_checker
 
-    def unstable(p):
+    def unstable(p, *extra):
         calls["n"] += 1
-        rc, v = real(p)
+        rc, v = real(p, *extra)
         if calls["n"] > 1:
             v = {**v, "counts": {"pass": 999, "fail": 0, "cannot_run": 0}}
         return rc, v

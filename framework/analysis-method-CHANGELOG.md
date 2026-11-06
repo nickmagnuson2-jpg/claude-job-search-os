@@ -1,5 +1,16 @@
 # Analysis Method — Changelog
 
+## 2026-11-06 — `deck`: the frame names its deck, so F15 runs on governed writes
+
+**No rule changed.** F15 needs the rendered deck. `frame_write.py` ran the checker without
+`--deck`, so F15 reported CANNOT_RUN on every governed write and every `check_log` row recorded
+that. The frame schema gains an optional `deck` field (a path relative to the frame's
+directory); `frame_write` passes it as `--deck`, and refuses a write whose declared deck is
+blank or not a file, because passing a missing deck would put F15 back to CANNOT_RUN while the
+frame claims a deck. No `schema_version` bump: the field is optional. Decided by Nick
+2026-09-23 as part of closeout build row B6. The other two parts of that row
+(`fit_chart_viewbox` invocation, `deck_to_pdf` refusal without a recorded waiver) are not built.
+
 ## 2026-10-06 — Pointer correction: the execution layer is not a workflow script
 
 **No rule changed.** The layers table in `analysis-method.md` named
