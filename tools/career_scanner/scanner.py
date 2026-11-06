@@ -87,18 +87,19 @@ def title_matches(title: str, includes: list, excludes: list | None = None,
     return any(f.lower() in t.lower() for f in includes)
 
 
+ROLE_LOCATION_PASS = ("sf", "bay", "remote", "unknown")
+
+
 def geo_ok(location: str) -> bool:
     """Whether a role's location clears the goals.md SF hard filter.
 
-    Drops anything outside the Bay AND anything on the Peninsula / South Bay.
-    An empty location is NOT dropped: unknown is not the same as disqualifying,
-    and geo_gate flags it for review rather than excluding it.
+    Drops anything outside the Bay AND anything on the Peninsula / South Bay only.
+    An SF office anywhere in a multi-office string passes. A remote seat passes
+    (Nick, 2026-11-06), and callers flag it from location_band. An empty location is
+    NOT dropped: unknown is not the same as disqualifying.
     """
-    from tools.career_scanner.company_scorer import geo_gate, is_peninsula
-    loc = location or ""
-    if geo_gate(loc)["excluded"]:
-        return False
-    return not is_peninsula(loc)
+    from tools.career_scanner.company_scorer import location_band
+    return location_band(location) in ROLE_LOCATION_PASS
 
 
 def fetch_company_roles(target: dict, errors: list | None = None) -> list[dict]:

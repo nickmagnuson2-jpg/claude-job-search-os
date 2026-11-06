@@ -286,3 +286,30 @@ def test_a_placeholder_pipeline_name_matches_nothing():
     """A row whose company normalizes to nothing (an em dash placeholder) must not mark
     every candidate as a possible match."""
     assert sj.tracked_match("Beacon AI", ["—"]) == ""
+
+
+# ---------- scan-drops-1106: SF spellings pass; a remote seat passes, flagged ----------
+
+@pytest.mark.parametrize("location", ["SF", "SF, CA", "NYC / SF", "Hybrid (3 days in SF)",
+                                      "San Francisco, Palo Alto"])
+def test_sf_spellings_and_multi_office_strings_are_not_location_excluded(root, monkeypatch, location):
+    monkeypatch.setattr(sj, "score_role", lambda role, ctx: 10)
+    out = sj.assess([{"title": "Deployment Strategist", "company": "Beacon AI",
+                      "location": location, "description": "Lead deployments."}], root)
+    assert out["new"][0]["status"] == "shortlisted"
+    assert "location excluded" not in out["new"][0]["reason"]
+
+
+def test_a_remote_seat_passes_and_its_reason_says_remote(root, monkeypatch):
+    monkeypatch.setattr(sj, "score_role", lambda role, ctx: 10)
+    out = sj.assess([{"title": "Deployment Strategist", "company": "Beacon AI",
+                      "location": "Remote (US)", "description": "Lead deployments."}], root)
+    assert out["new"][0]["status"] == "shortlisted"
+    assert out["new"][0]["reason"] == "score 10/10 (remote)"
+
+
+def test_an_sf_seat_reason_does_not_say_remote(root, monkeypatch):
+    monkeypatch.setattr(sj, "score_role", lambda role, ctx: 10)
+    out = sj.assess([{"title": "Deployment Strategist", "company": "Beacon AI",
+                      "location": "San Francisco or Remote", "description": "Lead deployments."}], root)
+    assert out["new"][0]["reason"] == "score 10/10"

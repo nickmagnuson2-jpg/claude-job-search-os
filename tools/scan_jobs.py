@@ -34,6 +34,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from md_table import JsonArgumentParser, out_error, out_ok, parse_cols, read_file, safe_cell, write_atomic  # noqa: E402
 from name_dedup import normalize_name  # noqa: E402
 from slug import slugify  # noqa: E402
+from tools.career_scanner.company_scorer import location_band  # noqa: E402
 from tools.career_scanner.scanner import geo_ok  # noqa: E402
 from tools.career_scanner.scorer import load_scoring_context, score_role  # noqa: E402
 
@@ -159,6 +160,8 @@ def assess(ads: list, root: Path) -> dict:
         located = geo_ok(ad.get("location", ""))
         status = status_for(score, cutoffs) if located else "skip"
         reason = f"score {score}/10" if located else "location excluded"
+        if located and location_band(ad.get("location", "")) == "remote":
+            reason += " (remote)"   # a remote seat passes, flagged (Nick, 2026-11-06)
         # A title is not a posting: the same title names opposite jobs (the team doing the
         # work vs the team supporting it). With no description copied, cap at 'maybe' so a
         # title-only ad is never shortlisted or proposed for the pipeline.
