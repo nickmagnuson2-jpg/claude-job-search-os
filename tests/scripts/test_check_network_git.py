@@ -278,3 +278,12 @@ def test_codex_r3_lookups_pass(cmd):
 ])
 def test_codex_r4_git_flags_are_not_command_lookup_flags(cmd):
     assert _run(cmd)[0] == 2, cmd
+
+
+@pytest.mark.parametrize("cmd", [
+    "env -S'git fetch origin'",               # Codex r5 F1: value attached to -S
+    "env -iS'git push origin x'",             # -S inside a short-flag cluster
+    "env -iS 'git pull'",
+])
+def test_codex_r5_attached_split_string_blocks(cmd):
+    assert _run(cmd)[0] == 2, cmd

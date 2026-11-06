@@ -85,10 +85,17 @@ def _strip_prefix(words: list[str]) -> list[str]:
                 return []       # `command -v git`: a lookup, nothing runs (Codex r3 F2)
             while i < len(words) and (words[i].startswith("-") or ASSIGNMENT.match(words[i])):
                 w = words[i]
-                if base == "env" and (w in ("-S", "--split-string") or w.startswith("--split-string=")):
+                short_s = re.fullmatch(r"-[A-Za-z]*S(.*)", w, re.S) if not w.startswith("--") else None
+                if base == "env" and (short_s or w == "--split-string" or w.startswith("--split-string=")):
                     # The value IS a command line (Codex r2 F1): judge it, then what follows.
-                    value = w.split("=", 1)[1] if "=" in w else (words[i + 1] if i + 1 < len(words) else "")
-                    after = words[i + 1:] if "=" in w else words[i + 2:]
+                    # Short form in any spelling: `-S x`, `-S'x'`, `-iS'x'` (Codex r5 F1).
+                    if w.startswith("--split-string="):
+                        value, after = w.split("=", 1)[1], words[i + 1:]
+                    elif short_s and short_s.group(1):
+                        value, after = short_s.group(1), words[i + 1:]
+                    else:
+                        value = words[i + 1] if i + 1 < len(words) else ""
+                        after = words[i + 2:]
                     inner = simple_commands(value)
                     # Parsed as env's own arguments, since the value may start with more env
                     # options (`env -S '-i git push'`, Codex r3 F1).
