@@ -34,12 +34,22 @@ I4  exit_path present     => `reopen_gate` names a NUMBER ("3rd fire"), never th
 I5  a grandfather entry   => carries a non-empty written reason.
 I6  promoted              => its leading token is in the vocabulary, never invented.
 I7  exit_path == exit2    => the rule is named in MEMORY.md, the channel exit2 MEANS.
+I8  a COMPLETED exit1     => `exit1_gate` names a concrete gate (an executable file in the
+    (exit1 + any promoted    repo: .py, .sh, or an executable hook) AND `exit1_evidence`
+     value but no/not/false) names a collectable pytest node (`tests/...py::test_name`) whose
+                             own body reaches that gate and asserts. I8 does not RUN the test:
+                             it binds the claim "this gate blocks the origin" to one node the
+                             suite executes, instead of to prose nobody can run.
 
 I1 and I2 are waived for files listed in the grandfather file, which records promotions
 made before the field existed. The waiver is deliberately noisy: the legacy debt is
 counted and named rather than hidden, the same discipline tools/mutation-allow.json uses
 for surviving mutants. I3 and I4 are NEVER waived -- they govern promotions made from now
 on, and waiving them would rebuild the escape hatch this module exists to close.
+I8 is never waived either, for the reason it exists: before it, `exit_path: exit1` was an
+enum value anyone could write, and the archive measured what that bought -- all 30 exit-1
+agents claimed their check blocked the origin, and independent replay found 16 did not
+(workstream memory-hygiene, v2 codex F1). A waived I8 is that relabel with a permit.
 
 Exit codes
 ----------
@@ -51,7 +61,9 @@ Exit codes
 from __future__ import annotations
 
 import argparse
+import ast
 import json
+import os
 import re
 import sys
 from datetime import date
@@ -109,6 +121,16 @@ _NUMBER_IN_GATE = re.compile(
 
 _ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
+# I8. A gate is a file the interpreter or the hook runner executes: Python, shell, or an
+# extensionless executable hook (tools/hooks/pre-push). A document is the "written down
+# and followed" tier, which CLAUDE.md says is not built yet, and a data file (an allowlist
+# JSON, a config) is something a gate READS, so neither is a gate.
+_GATE_SUFFIXES = (".py", ".sh", "")
+# The evidence is a pytest node id: a test file, then `::`, then the test, optionally inside
+# a class and optionally parametrized. `tests/scripts/test_x.py::test_y[case]`.
+_EVIDENCE_NODE = re.compile(r"^(?P<path>tests/[^\s:]+\.py)::(?:(?P<cls>[A-Za-z_]\w*)::)?"
+                            r"(?P<test>test\w*)(?P<param>\[[^\]]*\])?$")
+
 
 def parse_frontmatter(text: str) -> dict:
     """Flat key/value scrape of the YAML frontmatter block.
@@ -161,6 +183,20 @@ def parse_frontmatter(text: str) -> dict:
     return out
 
 
+def claims_a_landed_gate(value: str) -> bool:
+    """True for every `promoted:` value that says some enforcement LANDED, which is the
+    population I8 holds.
+
+    It is the union of two readers. scan_promotion_candidates.is_promoted fails OPEN:
+    only no/not/false read as unpromoted, so `promoted: hook` and every bare tier leave the
+    backlog, and a bare tier must not be a route around I8. It also keeps `partial` IN the
+    backlog, but a partial claims that half of a gate landed (is_promoted_value, I1/I2), and
+    the half that landed is exactly what I8 asks to see.
+    """
+    v = (value or "").strip()
+    return bool(v) and promoted_token(v) not in ("no", "not", "false")
+
+
 def is_promoted_value(value: str) -> bool:
     """True for `yes` and `partial`. Both are promotions and both need a record.
 
@@ -195,8 +231,363 @@ def load_grandfather(path: Path) -> dict:
     return data
 
 
+def _gate_path(gate: str) -> str:
+    """The file part of an `exit1_gate` value: its first token, before any `::` suffix."""
+    first = (gate or "").strip().split()
+    return first[0].split("::", 1)[0].strip("`") if first else ""
+
+
+def _escapes_repo(rel: str) -> bool:
+    """True for an absolute path or one that climbs out with `..`: neither names a repo file."""
+    p = Path(rel)
+    return p.is_absolute() or rel.startswith("~") or ".." in p.parts
+
+
+def _module_is_gate(module: str, gate_file: str) -> bool:
+    """True when a dotted import names THIS gate file: the bare stem (the repo puts tools/
+    on sys.path, so `import check_x` is the house style), or a dotted path that is a
+    suffix of the gate's path. `vendor.check_x` shares the stem and is a different module."""
+    gate_mod = Path(gate_file).with_suffix("").as_posix()
+    dotted = module.replace(".", "/")
+    return dotted == Path(gate_file).stem or gate_mod == dotted or gate_mod.endswith("/" + dotted)
+
+
+def _visible(tree: ast.Module, node) -> list:
+    """The statements whose bindings the cited node can see: the module's own top level
+    (descending into if/try/with blocks, never into another function or class), plus the
+    node itself. An import inside a SIBLING test binds nothing here; using it raises
+    NameError before the gate is reached."""
+    out, stack = [], list(tree.body)
+    while stack:
+        st = stack.pop()
+        if isinstance(st, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            continue
+        out.append(st)
+        for field in ("body", "orelse", "finalbody", "handlers"):
+            stack.extend(getattr(st, field, None) or [])
+    return out + [node]
+
+
+def _gate_refs(tree: ast.Module, gate_file: str, node) -> tuple[set[str], set[str]]:
+    """What a test may use to reach a .py gate. Returns (names, chains): a NAME bound
+    directly to the gate module or to something imported from it, and an attribute CHAIN
+    (`tools.check_x`) for a dotted import, which binds only its top package -- a use of
+    `tools.other` is not a use of the gate."""
+    names: set[str] = set()
+    chains: set[str] = set()
+    gate_assigns: set[int] = set()
+    scope = _visible(tree, node)
+    # Imports come from the flattened top-level statements themselves (never a walk into
+    # them, which would enter a function defined inside an `if`), plus anything in the node.
+    found = scope[:-1] + list(ast.walk(node))
+    # A module-level constant that names the gate path (`HOOK = REPO / "tools/x.py"`) is
+    # how a test that runs a hook or script usually reaches it. Adjacent string pieces are
+    # joined with "/", so `REPO / "tools" / "x.py"` names the path too.
+    for st in scope:
+        if isinstance(st, ast.Assign) and st is not node:
+            consts = sorted((c for c in ast.walk(st.value)
+                             if isinstance(c, ast.Constant) and isinstance(c.value, str)),
+                            key=lambda c: (c.lineno, c.col_offset))
+            pieces = [c.value for c in consts]
+            if _names_a_path("/".join(pieces), gate_file) or any(
+                    _names_a_path(x, gate_file) for x in pieces):
+                names.update(t.id for t in st.targets if isinstance(t, ast.Name))
+                gate_assigns.add(id(st))
+    if gate_file.endswith(".py"):
+        _add_gate_imports(found, gate_file, names, chains)
+    # A name the MODULE binds again to something else (an assignment, a def, a non-gate
+    # import, an `except ... as`) may not hold the gate when the test runs. Order is not
+    # modelled, so any second binding drops the name: fail closed.
+    other = _module_rebindings(tree, scope[:-1], gate_file, gate_assigns)
+    names -= other
+    chains = {c for c in chains if c.split(".")[0] not in other}
+    return names, chains
+
+
+def _add_gate_imports(found, gate_file: str, names: set[str], chains: set[str]) -> None:
+    for imp in found:
+        if isinstance(imp, ast.Import):
+            for a in imp.names:
+                if not _module_is_gate(a.name, gate_file):
+                    continue
+                if a.asname or "." not in a.name:
+                    names.add(a.asname or a.name)
+                else:
+                    chains.add(a.name)
+        elif isinstance(imp, ast.ImportFrom) and _module_is_gate(imp.module or "", gate_file):
+            names.update(a.asname or a.name for a in imp.names)
+
+
+_BLOCK_FIELDS = ("body", "orelse", "finalbody", "handlers")
+
+
+def _module_rebindings(tree: ast.Module, stmts: list, gate_file: str,
+                       gate_assigns: set[int]) -> set[str]:
+    """Names the module binds to something OTHER than the gate. `stmts` is the flattened
+    top level from _visible, so a compound statement contributes only its HEADER (a for
+    target, a with-as, a walrus in a test); its body is already in the list and is never
+    walked into twice."""
+    other: set[str] = set()
+    for st in (x for x in stmts if id(x) not in gate_assigns):
+        if isinstance(st, (ast.Import, ast.ImportFrom)):
+            gate_from = isinstance(st, ast.ImportFrom) and _module_is_gate(st.module or "",
+                                                                           gate_file)
+            other |= {a.asname or a.name.split(".")[0] for a in st.names
+                      if not (gate_from or (isinstance(st, ast.Import)
+                                            and _module_is_gate(a.name, gate_file)))}
+        else:
+            other |= {getattr(st, "name", None)} - {None}      # `except ... as name`
+            header = [v for f, v in ast.iter_fields(st) if f not in _BLOCK_FIELDS]
+            for part in (x for v in header for x in (v if isinstance(v, list) else [v])):
+                if isinstance(part, ast.AST):
+                    other |= {n.id for n in ast.walk(part)
+                              if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store)}
+    # Module-level defs and classes, including those inside a top-level block, but never
+    # a method or a nested def: those bind inside their own scope.
+    stack = list(tree.body)
+    while stack:
+        st = stack.pop()
+        if isinstance(st, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            other.add(st.name)
+        else:
+            stack.extend(x for f in _BLOCK_FIELDS for x in (getattr(st, f, None) or []))
+    return other
+
+
+def _names_a_path(value: str, gate_file: str) -> bool:
+    """A string names the gate when one of its whitespace tokens IS the gate path or ends
+    in `/<gate path>` (an absolute spelling of the same file). A shared basename is not
+    the same file: `tests/scripts/test_check_x.py` and `/tmp/check_x.py` both contain
+    `check_x.py`."""
+    toks = (t.strip("'\"`,;()[]") for t in value.split())
+    return any(t == gate_file or t.endswith("/" + gate_file) for t in toks)
+
+
+def _reaches_gate(node, tree: ast.Module, gate_file: str) -> bool:
+    names, chains = _gate_refs(tree, gate_file, node)
+    # A name the test rebinds locally (an argument, an assignment) is not the import.
+    local = {n.id for n in ast.walk(node) if isinstance(n, ast.Name)
+             and isinstance(n.ctx, ast.Store)}
+    local |= {a.arg for a in ast.walk(node.args) if isinstance(a, ast.arg)}
+    names -= local
+    chains = {c for c in chains if c.split(".")[0] not in local}
+    def uses_gate(n) -> bool:
+        return bool(
+            (isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load) and n.id in names)
+            or (isinstance(n, ast.Attribute)
+                and any(ast.unparse(n) == c or ast.unparse(n).startswith(c + ".")
+                        for c in chains))
+            or (isinstance(n, ast.Constant) and isinstance(n.value, str)
+                and _names_a_path(n.value, gate_file)))
+
+    # The BODY only: a decorator's strings (a parametrize list naming the gate path) are
+    # arguments the test receives, not code that reaches the gate.
+    return any(uses_gate(n) for st in node.body for n in ast.walk(st))
+
+
+def _is_parametrize(dec) -> bool:
+    return (isinstance(dec, ast.Call) and isinstance(dec.func, ast.Attribute)
+            and dec.func.attr == "parametrize")
+
+
+def _scalar_id(v) -> str | None:
+    if isinstance(v, ast.Constant) and (v.value is None or
+                                        isinstance(v.value, (bool, int, float))):
+        return str(v.value)
+    if isinstance(v, ast.Constant) and isinstance(v.value, str) and v.value.isascii():
+        return v.value
+    return None
+
+
+def _param_ids(node) -> set[str] | None:
+    """The parameter ids pytest generates for this test, or None when they cannot be
+    read statically. Only the common case is resolved: ONE parametrize decorator whose
+    ids are a literal `ids=[...]` list, or whose values are literal scalars, tuples of
+    scalars, or `pytest.param(..., id="x")`. Anything else is None, and None fails
+    closed: an unverifiable node id is not a collectable one. The node WITHOUT an id
+    (`::test_x`) always collects every case, so citing that is never blocked."""
+    decs = [d for d in node.decorator_list if _is_parametrize(d)]
+    if len(decs) != 1 or len(decs[0].args) < 2:
+        return None
+    dec = decs[0]
+    ids_kw = next((k.value for k in dec.keywords if k.arg == "ids"), None)
+    if ids_kw is not None:
+        if isinstance(ids_kw, (ast.List, ast.Tuple)) and all(
+                isinstance(e, ast.Constant) and isinstance(e.value, str) for e in ids_kw.elts):
+            given_ids = [e.value for e in ids_kw.elts]
+            return set(given_ids) if len(set(given_ids)) == len(given_ids) else None
+        return None
+    values = dec.args[1]
+    if not isinstance(values, (ast.List, ast.Tuple)):
+        return None
+    ids: set[str] = set()
+    for v in values.elts:
+        if isinstance(v, ast.Call) and isinstance(v.func, ast.Attribute) \
+                and v.func.attr == "param":
+            given = next((k.value for k in v.keywords if k.arg == "id"), None)
+            if isinstance(given, ast.Constant) and isinstance(given.value, str):
+                ids.add(given.value)
+                continue
+            parts = v.args
+        elif isinstance(v, (ast.Tuple, ast.List)):
+            parts = v.elts
+        else:
+            parts = [v]
+        bits = [_scalar_id(x) for x in parts]
+        if any(b is None for b in bits):
+            return None
+        ids.add("-".join(bits))
+    # pytest renames duplicate ids (it appends an index), so a repeated id is not a node
+    # under that name. A set would silently collapse the duplicates; fail closed instead.
+    if len(ids) != len(values.elts):
+        return None
+    return ids
+
+
+def _is_skip(dec) -> bool:
+    """`pytest.mark.skip` or `pytest.mark.skip(...)`. `skipif` is conditional and allowed."""
+    target = dec.func if isinstance(dec, ast.Call) else dec
+    return isinstance(target, ast.Attribute) and target.attr == "skip"
+
+
+def _always_skipped(tree: ast.Module, node, cls: str | None) -> bool:
+    """A skip on the test, on its class, or in a module-level `pytestmark`."""
+    decorators = list(node.decorator_list)
+    owner = next((n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == cls), None)
+    if owner is not None:
+        decorators += owner.decorator_list
+    for st in tree.body:
+        if isinstance(st, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "pytestmark"
+                                              for t in st.targets):
+            value = st.value
+            decorators += value.elts if isinstance(value, (ast.List, ast.Tuple)) else [value]
+    return any(_is_skip(d) for d in decorators)
+
+
+def _find_node(tree: ast.Module, cls: str | None, test: str):
+    """The exact pytest node: a module-level test, or a method of the named class. Under
+    pytest's default collection a class is collected only when its name starts `Test`."""
+    body = tree.body
+    if cls:
+        if not cls.startswith("Test"):
+            return None
+        owner = next((n for n in body if isinstance(n, ast.ClassDef) and n.name == cls), None)
+        if owner is None:
+            return None
+        # pytest skips a Test class that defines __init__ or __new__ (PytestCollectionWarning).
+        if any(isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+               and n.name in ("__init__", "__new__") for n in owner.body):
+            return None
+        body = owner.body
+    return next((n for n in body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+                 and n.name == test), None)
+
+
+def _check_exit1_evidence(name: str, fm: dict, repo_root: Path | None) -> list[str]:
+    """I8 violations for one completed exit1 record. Empty list means it passed.
+
+    What passing establishes, and what it does not: the gate is an executable file in the
+    repo, and the named test is a real, collectable pytest node whose OWN body reaches that
+    gate and asserts something. It does not run the test. Whether the assertion is about the
+    rule's origin is the author's claim; I8 makes that claim point at one runnable node the
+    suite executes, instead of at prose.
+
+    `repo_root` None means the repo is not visible. Unknowable is not a pass: presence and
+    shape are still checked, and the record is then reported as unverified, never proven.
+    """
+    out: list[str] = []
+    gate = fm.get("exit1_gate", "").strip()
+    evidence = fm.get("exit1_evidence", "").strip().strip("`")
+
+    gate_file = _gate_path(gate)
+    gate_ok = False
+    if not gate_file:
+        out.append(
+            f"{name}: I8 exit_path is exit1 and promoted, but exit1_gate is missing. A "
+            "completed exit1 names the gate that blocks; without it the record is a relabel")
+    elif _escapes_repo(gate_file):
+        out.append(
+            f"{name}: I8 exit1_gate {gate_file!r} is not a repo-relative path, so it names "
+            "no gate this repo can run")
+    elif Path(gate_file).suffix.lower() not in _GATE_SUFFIXES:
+        out.append(
+            f"{name}: I8 exit1_gate {gate_file!r} is not executable code. A document or data "
+            "file (an allowlist, a config) is read by a gate; it is not one")
+    elif repo_root is not None and not (repo_root / gate_file).is_file():
+        out.append(
+            f"{name}: I8 exit1_gate {gate_file!r} does not resolve to a file in the repo, so "
+            "the gate it names cannot be shown to exist")
+    elif (repo_root is not None and not Path(gate_file).suffix
+          and not os.access(repo_root / gate_file, os.X_OK)):
+        out.append(
+            f"{name}: I8 exit1_gate {gate_file!r} has no suffix and is not executable, so "
+            "nothing runs it as a gate")
+    else:
+        gate_ok = True
+
+    if not evidence:
+        out.append(
+            f"{name}: I8 exit_path is exit1 and promoted, but exit1_evidence is missing. A "
+            "completed exit1 names the test that replays its origin against the gate")
+        return out
+    m = _EVIDENCE_NODE.match(evidence)
+    if not m or _escapes_repo(m.group("path")):
+        out.append(
+            f"{name}: I8 exit1_evidence {evidence!r} is not a test node id "
+            "(tests/<path>.py::test_<name>), so there is nothing to run")
+        return out
+    if repo_root is None:
+        out.append(
+            f"{name}: I8 exit1_evidence cannot be resolved without the repo, so this record "
+            "is unverified, not proven")
+        return out
+    test_file = repo_root / m.group("path")
+    if not test_file.is_file():
+        out.append(f"{name}: I8 exit1_evidence file {m.group('path')!r} does not exist")
+        return out
+    try:
+        tree = ast.parse(test_file.read_text(encoding="utf-8", errors="replace"))
+    except SyntaxError:
+        out.append(f"{name}: I8 exit1_evidence file {m.group('path')!r} does not parse")
+        return out
+    node = _find_node(tree, m.group("cls"), m.group("test"))
+    where = f"{m.group('cls')}::" if m.group("cls") else ""
+    if node is None:
+        out.append(
+            f"{name}: I8 exit1_evidence names {where}{m.group('test')}, which pytest cannot "
+            f"collect from {m.group('path')}")
+        return out
+    if m.group("param"):
+        ids = _param_ids(node)
+        if ids is None or m.group("param")[1:-1] not in ids:
+            out.append(
+                f"{name}: I8 exit1_evidence {m.group('test')}{m.group('param')} is not a "
+                "parameter id this test can be shown to generate, so the node may not exist. "
+                f"Cite {m.group('test')} without the id to cover every case")
+    if _always_skipped(tree, node, m.group("cls")):
+        out.append(
+            f"{name}: I8 exit1_evidence {m.group('test')} is skipped unconditionally "
+            "(pytest.mark.skip), so its assertion never runs")
+    if not any(isinstance(n, ast.Assert) or
+               (isinstance(n, ast.Attribute) and n.attr == "raises")
+               for st in node.body for n in ast.walk(st)):
+        out.append(
+            f"{name}: I8 exit1_evidence {m.group('test')} asserts nothing, so it cannot "
+            "show the gate blocking anything")
+    # The node's OWN body must reach this gate: an import elsewhere in the file, or a
+    # sibling test that uses it, is not evidence about the node the record cites.
+    if gate_ok:
+        if not _reaches_gate(node, tree, gate_file):
+            out.append(
+                f"{name}: I8 exit1_evidence {m.group('test')} never reaches the gate "
+                f"{gate_file!r} (no use of a name importing it, no string naming it), so it "
+                "cannot be the evidence that this gate blocks the origin")
+    return out
+
+
 def check_file(name: str, fm: dict, grandfathered: bool,
-               in_memory_md: bool | None = None) -> list[str]:
+               in_memory_md: bool | None = None,
+               repo_root: Path | None = REPO_ROOT) -> list[str]:
     """Return the list of invariant violations for one file. Empty list means clean."""
     violations: list[str] = []
     promoted = fm.get("promoted", "no")
@@ -231,6 +622,13 @@ def check_file(name: str, fm: dict, grandfathered: bool,
         violations.append(
             f"{name}: I2 exit_path {exit_path!r} is not one of {'|'.join(VALID_EXIT_PATHS)}"
         )
+
+    # I8. A COMPLETED exit1 must carry its gate and the evidence that the gate blocks the
+    # rule's own origin. Without this, `exit_path: exit1` is an enum value, and flipping a
+    # rule to it records the rule as handled with nothing delivered -- the relabeling
+    # loophole v3 step 1 of the memory-hygiene workstream exists to close.
+    if exit_path == "exit1" and claims_a_landed_gate(promoted):
+        violations.extend(_check_exit1_evidence(name, fm, repo_root))
 
     # I3 and I4 are never waived. See the module docstring.
     # I7. exit2 is defined at the top of this file as "a principle no gate can express,
@@ -268,7 +666,7 @@ def check_file(name: str, fm: dict, grandfathered: bool,
     return violations
 
 
-def scan(memory_dir: Path, grandfather: dict) -> dict:
+def scan(memory_dir: Path, grandfather: dict, repo_root: Path | None = REPO_ROOT) -> dict:
     files = sorted(p for p in memory_dir.glob("feedback_*.md") if p.is_file())
     if not files:
         # An empty scan is an error, never a clean bill of health. A guard with no failing
@@ -286,6 +684,9 @@ def scan(memory_dir: Path, grandfather: dict) -> dict:
     with_date = 0
     with_exit_path = 0
     by_exit: dict[str, int] = {}
+    # I8 reach, stated so the pass/fail split is never reported without its denominator.
+    exit1_completed = 0
+    exit1_proven = 0
 
     for p in files:
         fm = parse_frontmatter(p.read_text(encoding="utf-8", errors="replace"))
@@ -299,8 +700,13 @@ def scan(memory_dir: Path, grandfather: dict) -> dict:
         if ep:
             with_exit_path += 1
             by_exit[ep] = by_exit.get(ep, 0) + 1
-        violations.extend(check_file(name, fm, grandfathered=name in grandfather,
-                                     in_memory_md=in_md))
+        file_violations = check_file(name, fm, grandfathered=name in grandfather,
+                                     in_memory_md=in_md, repo_root=repo_root)
+        if ep == "exit1" and claims_a_landed_gate(fm.get("promoted", "no")):
+            exit1_completed += 1
+            if not any(": I8 " in v for v in file_violations):
+                exit1_proven += 1
+        violations.extend(file_violations)
 
     for name, reason in grandfather.items():
         if not str(reason).strip():
@@ -316,6 +722,8 @@ def scan(memory_dir: Path, grandfather: dict) -> dict:
         "with_exit_path": with_exit_path,
         "by_exit_path": by_exit,
         "grandfathered": len(grandfather),
+        "exit1_completed": exit1_completed,
+        "exit1_proven": exit1_proven,
         "violations": violations,
         "ok": not violations,
     }
@@ -344,7 +752,8 @@ def main(argv: list[str]) -> int:
         print(
             f"scanned {report['scanned']} rules | promoted {report['promoted_total']} "
             f"({report['promoted_with_date']} dated) | dispositioned {report['with_exit_path']} "
-            f"{report['by_exit_path']} | grandfathered {report['grandfathered']}"
+            f"{report['by_exit_path']} | grandfathered {report['grandfathered']} | "
+            f"exit1 proven {report['exit1_proven']} of {report['exit1_completed']} completed"
         )
         for v in report["violations"]:
             print(f"  VIOLATION {v}")

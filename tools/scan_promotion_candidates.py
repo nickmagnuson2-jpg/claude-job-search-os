@@ -715,7 +715,9 @@ def main(argv: list[str]) -> None:
         # violations against the CLI's 48 -- a second, stricter answer to the same
         # question, which is how two readings of one gate start disagreeing.
         _rep = _ps.scan(memory_dir, _ps.load_grandfather(_ps.DEFAULT_GRANDFATHER))
-        _viol = _rep.get("violations") or []
+        # I8 (an unproven exit1) is two lines per record and arrives in bulk, so it is
+        # listed AFTER the other invariants: the 40-line cap below must not hide I1-I7.
+        _viol = sorted(_rep.get("violations") or [], key=lambda v: ": I8 " in v)
         schema_lines = [
             "",
             "## Schema violations",
@@ -725,6 +727,10 @@ def main(argv: list[str]) -> None:
             "date or exit path is not an observable event, and a reopen gate naming no "
             "number can never trip on a count.",
         ]
+        if "exit1_completed" in _rep:
+            schema_lines.append(
+                f"- exit1 proven (I8): {_rep['exit1_proven']} of {_rep['exit1_completed']} "
+                "completed exit1 records name a gate and a test node that reaches it.")
         schema_lines += [f"  - {v}" for v in _viol[:40]]
         if len(_viol) > 40:
             schema_lines.append(f"  - ...and {len(_viol) - 40} more")
