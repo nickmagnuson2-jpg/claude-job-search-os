@@ -59,7 +59,8 @@ GIT_VALUE_OPTS = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec
 _WRAPPER_VALUE_OPTS = {"-u", "--unset", "-C", "--chdir",                         # env
                        "-n", "--adjustment",                                       # nice
                        "-s", "--signal", "-k", "--kill-after",                     # timeout
-                       "-t", "-w"}                                                 # caffeinate
+                       "-t", "-w",                                                 # caffeinate
+                       "-a"}                                                       # exec -a NAME (r3 F3)
 ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 MAX_DEPTH = 6
 
@@ -75,6 +76,9 @@ def _strip_prefix(words: list[str]) -> list[str]:
         base = os.path.basename(w)
         if base in WRAPPERS:
             i += 1
+            if base == "command" and any(w in ("-v", "-V") for w in words[i:]
+                                         if w.startswith("-")):
+                return []       # `command -v git`: a lookup, nothing runs (Codex r3 F2)
             while i < len(words) and (words[i].startswith("-") or ASSIGNMENT.match(words[i])):
                 w = words[i]
                 if base == "env" and (w in ("-S", "--split-string") or w.startswith("--split-string=")):
@@ -82,7 +86,9 @@ def _strip_prefix(words: list[str]) -> list[str]:
                     value = w.split("=", 1)[1] if "=" in w else (words[i + 1] if i + 1 < len(words) else "")
                     after = words[i + 1:] if "=" in w else words[i + 2:]
                     inner = simple_commands(value)
-                    return _strip_prefix((inner[0].words if inner else []) + after)
+                    # Parsed as env's own arguments, since the value may start with more env
+                    # options (`env -S '-i git push'`, Codex r3 F1).
+                    return _strip_prefix(["env"] + (inner[0].words if inner else []) + after)
                 i += 2 if w in _WRAPPER_VALUE_OPTS else 1
             if base == "timeout" and i < len(words) and re.fullmatch(r"[0-9.]+[smhd]?", words[i]):
                 i += 1          # the duration

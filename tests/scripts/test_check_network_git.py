@@ -249,3 +249,24 @@ def test_codex_r2_local_clones_still_pass(cmd):
 ])
 def test_words_after_the_split_string_value_continue_the_command(cmd):
     assert _run(cmd)[0] == 2, cmd     # mutation survivor, 2026-11-05 r3 chain
+
+
+# Codex r3 (2026-11-05).
+@pytest.mark.parametrize("cmd", [
+    "env -S '-i git push origin x'",          # F1: the -S value starts with env options
+    "env -S '-u HOME git fetch'",
+    "env -S '--chdir=/tmp git pull'",
+    "exec -a mygit git push origin x",         # F3: exec -a takes a value
+])
+def test_codex_r3_shapes_block(cmd):
+    assert _run(cmd)[0] == 2, cmd
+
+
+@pytest.mark.parametrize("cmd", [
+    "command -v git",                          # F2: a lookup, not an execution
+    "command -V git fetch",
+    "command -v git && git status",
+])
+def test_codex_r3_lookups_pass(cmd):
+    code, err = _run(cmd)
+    assert code == 0, (cmd, err)
