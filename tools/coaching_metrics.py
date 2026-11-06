@@ -41,6 +41,14 @@ unclassified or unparsed. It is never resolved by looking elsewhere in the row.
 Ledger mode covers the hypothesis test logs only. Anti-pattern tallies and the
 session counts in _summary.md are not computed here.
 
+TABLE SHAPE (table_shape)
+-------------------------
+The guard behind ledger mode (W2 in data/workstreams/coaching-ledger-integrity.md):
+every table row whose cell count differs from its own header row, split with the same
+_cells() the ledger reads with, so the guard and the parser cannot disagree about what
+a cell is. tests/scripts/test_coaching_metrics_table_shape.py runs it over every
+coaching/**/*.md and fails on any mismatched row it does not list as known-bad.
+
 Usage:
   PYTHONIOENCODING=utf-8 python3 tools/coaching_metrics.py [--repo-root PATH] [--out FILE]
   PYTHONIOENCODING=utf-8 python3 tools/coaching_metrics.py --ledger [--repo-root PATH] [--out FILE]
@@ -222,6 +230,38 @@ def _verdict(cell: str) -> tuple[str | None, str]:
     if m:
         return m.group(1).capitalize(), m.group(1).capitalize()
     return None, _LABEL_END.split(text, 1)[0].strip()
+
+
+def table_shape(content: str) -> dict:
+    """Every table row whose cell count differs from its own header.
+
+    A table starts at a "|" line followed by a separator line, and ends at the first
+    line that does not start with "|". A "|" run with no separator under its first
+    line is not a table. Inside a table every line after the header's separator is a
+    data row, as in GFM: a separator-shaped line there is a row, and a new table needs
+    a non-"|" line before it. Line numbers are 1-based file lines.
+    """
+    tables, rows, mismatched = 0, 0, []
+    lines = content.splitlines()
+    header_cells = body_start = None
+    for i, line in enumerate(lines):
+        if not line.startswith("|"):
+            header_cells = None
+            continue
+        if header_cells is None:
+            if i + 1 < len(lines) and _is_separator(lines[i + 1]):
+                header_cells = len(_cells(line))
+                body_start = i + 2
+                tables += 1
+            continue
+        if i < body_start:
+            continue
+        rows += 1
+        n = len(_cells(line))
+        if n != header_cells:
+            mismatched.append({"line": i + 1, "cells": n, "header_cells": header_cells,
+                               "text": line})
+    return {"tables": tables, "rows": rows, "mismatched": mismatched}
 
 
 def compute_ledger(content: str) -> dict:
