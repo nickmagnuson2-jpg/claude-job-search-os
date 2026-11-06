@@ -288,7 +288,30 @@ right six times out of six has not been observed yet (2026-08-14: two of six wer
   the subagent's say-so — the failure mode this guards against is a confidently-wrong
   all-clear, which is worse than no check at all. See
   `memory/feedback_pii_subagents_rationalize_examples.md`.
-- **All clean** → report `✅ PII audit clean — safe to commit.` and stop.
+- **All clean** → report `✅ PII audit clean — safe to commit.`, then do Step 3b.
+
+### Step 3b — Record the clean pass (mandatory, and ONLY on an all-clean verdict)
+
+The pre-push guard (`tools/prepush_pii_guard.py`) BLOCKS a push to the public repo whose
+pushed tip tree has no clean record (Nick, 2026-11-05). After an all-clean Step 3, and only
+then, record it for the commit that will be pushed:
+
+```bash
+PYTHONIOENCODING=utf-8 python3 tools/audit_pii_record.py record --tip "$(git rev-parse HEAD)" \
+  --files <N scanned> [--accept FILE:TOKEN ...]
+```
+
+- `--tip` is the commit being pushed. The record is keyed to its TREE, so rewording a commit
+  message keeps it, and any content change after the audit needs a new pass. Audit after the
+  last commit, not before it.
+- `--accept` repeats each ambiguous entry you passed to `--accept-ambiguous` in Step 1.
+- Never write a record for a pass with any SCRUB or unresolved AMBIGUOUS finding, for a pass
+  whose semantic subagent did not run, or for a tree you did not scan.
+- Check with `python3 tools/audit_pii_record.py check --tip <sha>` (exit 0 = recorded).
+- The only way past the guard without a record is Nick typing `AUDIT_PII_WAIVE='<reason>' git push`,
+  which is recorded. Never set it yourself.
+- Limit: you write the record, so it proves the pass ran to a clean verdict on that tree. It
+  does not prove the pass was any good; the cross-checks in Step 3 are what make it so.
 
 ### Step 4 — On fix-and-recommit
 
@@ -298,7 +321,8 @@ each Write/Edit as a backstop.
 
 ## Notes
 
-- This skill READS and proposes; it does not commit or push.
+- This skill READS and proposes; it does not commit or push. Its one write is the clean-pass
+  record in Step 3b, to the gitignored `tools/.audit-pii-ledger.jsonl`.
 - The denylist is regenerated each run so newly-added contacts/pipeline rows are covered
   by the deterministic layer immediately.
 - Origin: 2026-06-11, hook+subagent promotion of `feedback_generalize_examples_in_public_artifacts`.

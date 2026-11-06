@@ -15,13 +15,20 @@ shipped real names for weeks (see memory project_phase6_history_clean_done /
 the 2026-06-15 reconcile); a tip-clean working tree is not enough — every push
 must be gated.
 
-Scope: deterministic only (high precision). The semantic catch-all for NEW names
-the denylist does not yet carry is the `/audit-pii` skill — this guard prints a
-reminder to run it, but cannot replace it.
+Two checks, in order:
+  1. Deterministic denylist scan (high precision). Override a confirmed false
+     positive with PUSH_PII_OVERRIDE=1. A missing denylist skips only this scan.
+  2. The /audit-pii record (Nick, 2026-11-05). Every pushed tip's TREE must have a
+     clean record from tools/audit_pii_record.py, written by /audit-pii on a clean
+     semantic pass, which catches NEW names the denylist does not carry. Waive one
+     push with AUDIT_PII_WAIVE='<reason>' (appended to the audit ledger). An
+     unreadable ledger blocks. PUSH_PII_OVERRIDE does not clear this check.
+     Limit: Claude writes the record, so it proves the pass ran, not that it was good.
+A manual run (no pre-push stdin) scans the working tree and REPORTS whether HEAD's
+tree has a record, without blocking on it. Deletion-only pushes pass both checks.
 
-Exit 0 = clean (allow push). Exit 1 = denylist hit, or the scan could not run
-(block; a guard error fails CLOSED since 2026-10-13).
-Override a confirmed false positive with PUSH_PII_OVERRIDE=1.
+Exit 0 = allow. Exit 1 = a denylist hit, a missing record, or the scan could not
+run (block; a guard error fails CLOSED since 2026-10-13).
 
 Wired via .git/hooks/pre-push (fires only for the public claude-job-search-os
 remote). Reuses check_public_pii.py's denylist + matcher (single source of truth).
@@ -33,6 +40,7 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import check_public_pii as cp  # noqa: E402
+import audit_pii_record as rec  # noqa: E402
 
 
 ZERO = "0" * 40
@@ -133,6 +141,56 @@ def new_blobs(root: Path, pairs):
             yield rel, _git_bytes(root, "cat-file", "blob", oid).decode("utf-8", "replace")
 
 
+def record_gate(root: Path, pairs) -> int:
+    """Check 2: every pushed tip's tree needs a clean /audit-pii record, or a waiver."""
+    missing, problem = [], None
+    try:
+        for local, _remote in pairs:
+            tree = rec.tree_of(root, local)
+            if tree is None:
+                raise GitReadError(f"pushed sha {local} is not a commit here")
+            if not rec.has_clean_record(root, tree):
+                missing.append((local, tree))
+    except rec.LedgerError as e:
+        # Unreadable is not "no record" and not "recorded": block, naming the cause.
+        problem = f"the audit ledger is unreadable: {e}"
+        missing = [(local, rec.tree_of(root, local) or "") for local, _ in pairs]
+    if not missing:
+        print("prepush_pii_guard: every pushed tree has a clean /audit-pii record.",
+              file=sys.stderr)
+        return 0
+    reason = os.environ.get("AUDIT_PII_WAIVE", "").strip()
+    if reason:
+        for local, tree in missing:
+            rec.append_waiver(root, tree, local, reason)
+        print(f"prepush_pii_guard: AUDIT_PII_WAIVE used ({reason}); recorded for "
+              + ", ".join(local[:8] for local, _ in missing) + ".", file=sys.stderr)
+        return 0
+    print("\nBLOCKED: no clean /audit-pii record for the pushed tree"
+          + (f" ({problem})" if problem else "") + ":", file=sys.stderr)
+    for local, _tree in missing:
+        print(f"  ⛔ {local[:8]}", file=sys.stderr)
+    print("\nFix: run /audit-pii on this branch; on a clean verdict it records the tree, "
+          "then re-push.\nTo push this once without it (recorded):\n"
+          "  AUDIT_PII_WAIVE='<reason>' git push ...\n", file=sys.stderr)
+    return 1
+
+
+def report_head_record(root: Path) -> None:
+    """Manual run: say whether HEAD's tree has a record. Never blocks."""
+    tree = rec.tree_of(root, "HEAD")
+    try:
+        ok = tree is not None and rec.has_clean_record(root, tree)
+    except rec.LedgerError as e:
+        print(f"prepush_pii_guard: audit ledger unreadable: {e}", file=sys.stderr)
+        return
+    if ok:
+        print("prepush_pii_guard: HEAD's tree has a clean /audit-pii record.", file=sys.stderr)
+    else:
+        print("prepush_pii_guard: HEAD's tree has no clean /audit-pii record; a push of it "
+              "will be blocked until /audit-pii records one.", file=sys.stderr)
+
+
 def main() -> int:
     root = Path(
         subprocess.run(["git", "rev-parse", "--show-toplevel"],
@@ -141,16 +199,17 @@ def main() -> int:
     )
     tokens = cp.load_denylist(root)
     if not tokens:
-        # No denylist -> nothing to enforce. Fail open (matches the hook's design),
-        # but warn loudly: a missing denylist is itself suspicious before a public push.
+        # No denylist: skip ONLY the deterministic scan (warn loudly; a missing denylist
+        # is itself suspicious). The /audit-pii record check below still applies.
         print("prepush_pii_guard: no denylist found — skipping deterministic gate "
               "(regenerate with tools/gen_pii_denylist.py).", file=sys.stderr)
-        return 0
 
-    target_words = cp.load_target_words(root)
+    target_words = cp.load_target_words(root) if tokens else []
     hits = {}
     stdin_present, pairs = read_prepush_stdin()
-    if pairs:
+    if not tokens:
+        pass
+    elif pairs:
         # Scan what is actually being pushed: every new blob in every pushed commit.
         for rel, content in new_blobs(root, pairs):
             found = cp.find_pii(content, tokens) + cp.find_target_words(content, target_words)
@@ -171,17 +230,17 @@ def main() -> int:
                 hits[rel] = sorted(set(found))
 
     if not hits:
-        print("prepush_pii_guard: deterministic PII scan clean "
-              f"({len(tokens)} tokens). Reminder: run /audit-pii for the semantic "
-              "pass (new names the denylist does not carry).", file=sys.stderr)
-        return 0
+        if tokens:
+            print("prepush_pii_guard: deterministic PII scan clean "
+                  f"({len(tokens)} tokens).", file=sys.stderr)
+        return record_gate(root, pairs) if pairs else _manual_report(root, stdin_present)
 
     if os.environ.get("PUSH_PII_OVERRIDE") == "1":
         print("prepush_pii_guard: PII hits present but PUSH_PII_OVERRIDE=1 — allowing.",
               file=sys.stderr)
         for rel, toks in hits.items():
             print(f"  (overridden) {rel}: {', '.join(toks)}", file=sys.stderr)
-        return 0
+        return record_gate(root, pairs) if pairs else _manual_report(root, stdin_present)
 
     print("\nBLOCKED: push to the PUBLIC repo carries real PII (denylist hits).\n",
           file=sys.stderr)
@@ -195,6 +254,13 @@ def main() -> int:
         file=sys.stderr,
     )
     return 1
+
+
+def _manual_report(root: Path, stdin_present: bool) -> int:
+    """No pushed refs: a deletion-only push passes silently; a manual run reports."""
+    if not stdin_present:
+        report_head_record(root)
+    return 0
 
 
 if __name__ == "__main__":
