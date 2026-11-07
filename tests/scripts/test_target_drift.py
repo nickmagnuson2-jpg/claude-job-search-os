@@ -269,3 +269,59 @@ def test_role_queue_read_on_an_old_queue_reports_no_drift_block(tmp_path):
     scanner.write_queue_payload(tmp_path, scanner._queue_payload([], [], [], []))
     out = rq.read_queue(tmp_path)
     assert out["target_drift"] is None and out["goals_stale"] is None
+
+
+# ---------- mutation round 1 (killers on the changed lines) ----------
+
+def test_an_open_to_work_line_outside_target_criteria_is_never_read():
+    text = ("# Goals\n\n## Target Criteria\n\n- nothing\n\n## History (superseded)\n\n"
+            "- **Open to Work titles (LinkedIn):** Old Title.\n")
+    assert scorer._extract_target_titles(text) == []
+
+
+@pytest.mark.parametrize("ctx,expected", [
+    ({"goals_age_days": None, "goals_last_reviewed": None},
+     "unranked: goals.md last reviewed unknown (no valid date; limit 14)"),
+    ({"goals_age_days": 50, "goals_last_reviewed": "2026-10-01"},
+     "unranked: goals.md last reviewed 2026-10-01 (50 days; limit 14)"),
+])
+def test_unranked_reason(ctx, expected):
+    assert scorer.unranked_reason(ctx) == expected
+
+
+def test_a_cut_is_named_with_its_reach_in_problems(tmp_path):
+    _, out = run(make(tmp_path, titles="Deployment Strategist; Head of Business Operations"))
+    assert "'Head of Business Operations' is cut at fetch by 1 of 2 scanned targets" in out["problems"]
+    assert out["targets_checked"] == 2
+    assert "population 2 | included 2" in out["reach"]
+
+
+def test_a_bad_date_is_named_in_problems(tmp_path):
+    _, out = run(make(tmp_path, reviewed="soon"))
+    assert any("goals.md last reviewed soon (no valid date; limit 14)" in p for p in out["problems"])
+
+
+@pytest.mark.parametrize("targets,spec", [
+    ("companies: 3\n", SPEC),            # companies is not a list
+    (TARGETS, "- a\n- b\n"),             # fit-spec is not a mapping
+])
+def test_a_wrong_shaped_input_exits_2_with_an_error(tmp_path, targets, spec):
+    code, out = run(make(tmp_path, targets=targets, spec=spec))
+    assert code == 2 and out["error"]
+
+
+def test_unreadable_input_reports_the_error(tmp_path):
+    code, out = run(make(tmp_path, targets="companies: [unclosed\n"))
+    assert code == 2 and "scan-targets.yaml" in out["error"]
+
+
+def test_a_bad_today_exits_2(tmp_path):
+    code, out = run(make(tmp_path), today="2026-13-40")
+    assert code == 2 and "bad --today" in out["error"]
+
+
+def test_nightly_records_an_unreadable_input_as_drift(tmp_path):
+    from tools import target_drift as td
+    root = make(tmp_path, targets="companies: [unclosed\n")
+    out = td.nightly(root, TODAY)
+    assert out["drift"] is True and out["problems"][0].startswith("unreadable input:")

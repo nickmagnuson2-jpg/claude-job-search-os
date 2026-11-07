@@ -29,8 +29,7 @@ from datetime import date
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from count_report import format_line  # noqa: E402
+from tools.count_report import format_line  # noqa: E402
 from tools.career_scanner.scanner import title_cut_reason  # noqa: E402
 from tools.career_scanner.scorer import (  # noqa: E402
     GOALS_FRESH_DAYS, _extract_target_titles, goals_freshness)

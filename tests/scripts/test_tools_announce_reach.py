@@ -235,15 +235,20 @@ def prints_counts(text: str) -> bool:
     return False
 
 
+HELPER_MODULES = ("count_report", "tools.count_report")
+
+
 def uses_helper(text: str) -> bool:
     try:
         tree = ast.parse(text)
     except SyntaxError:
         return False
     for node in ast.walk(tree):
-        if isinstance(node, ast.Import) and any(a.name == "count_report" for a in node.names):
+        # Both import forms in use: `count_report` with tools/ on sys.path, and the
+        # package form `tools.count_report` (tools/build_check.py, tools/target_drift.py).
+        if isinstance(node, ast.Import) and any(a.name in HELPER_MODULES for a in node.names):
             return True
-        if isinstance(node, ast.ImportFrom) and node.module == "count_report":
+        if isinstance(node, ast.ImportFrom) and node.module in HELPER_MODULES:
             return True
         if (isinstance(node, ast.Constant) and isinstance(node.value, str)
                 and HELPER in node.value):
@@ -427,3 +432,17 @@ def test_gitignored_tool_is_outside_the_gate(tmp_path):
     (tools / "public_tool.py").write_text(body, encoding="utf-8")
     (tmp_path / ".gitignore").write_text("tools/private_tool.py\n", encoding="utf-8")
     assert flagged_tools(tools) == ["tools/public_tool.py"]
+
+
+@pytest.mark.parametrize("src", [
+    "import count_report\n",
+    "from count_report import report\n",
+    "from tools.count_report import format_line\n",
+    "import tools.count_report\n",
+])
+def test_both_import_forms_count_as_the_helper(src):
+    assert uses_helper(src)
+
+
+def test_an_unrelated_import_is_not_the_helper():
+    assert not uses_helper("from tools.count_reporter import x\nimport json\n")
