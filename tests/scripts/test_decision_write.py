@@ -354,8 +354,8 @@ def test_approval_payload_is_the_v2_signing_seam(main, capsys):
     q = dw.open_questions(dw.load_events(dw.paths(main)["questions"]))["Q1"]
     ruling = {"option": "a", "window": "aa"}
     payload = dw.approval_payload(q, ruling)
-    assert json.loads(payload) == {"question_hash": q["question_hash"], "option": "a",
-                                   "owner": "alpha-work", "window": "aa"}
+    assert json.loads(payload) == {"namespace": "decision-approval", "question_hash": q["question_hash"],
+                                   "option": "a", "owner": "alpha-work", "window": "aa"}
     assert payload == dw.approval_payload(dict(q), dict(ruling))   # deterministic bytes
     assert dw.SIGNING_NAMESPACE == "decision-approval"
     rule(main, "alpha-work", "RULING Q1 | option: a | reason: ok | window: aa")
@@ -627,21 +627,62 @@ Prose ends the table.
 """
 
 
-def test_board_reads_only_the_first_workstreams_table(tmp_path):
+CLEAN_EDGES = """# Board
+
+Intro prose mentioning workstreams.
+
+| Other | Table |
+|---|---|
+| **zz** | alpha-work |
+
+| Session | Owns | Workstreams |
+|---|---|---|
+| **aa** | a | alpha-work |
+| **cc** | c | - |
+| **dd** | d | delta-work, |
+Prose ends the table.
+| **ee** | e | alpha-work |
+"""
+
+
+def test_board_reads_the_workstreams_table_and_stops_at_prose(tmp_path):
+    f = tmp_path / "SESSIONS.md"
+    f.write_text(CLEAN_EDGES)
+    rows, status = dw.read_board(f)
+    assert status == "ok"
+    assert [(s, ws) for _, s, ws in rows] == [("aa", ["alpha-work"]), ("cc", []), ("dd", ["delta-work"])]
+
+
+def test_a_jagged_row_or_a_second_table_makes_the_board_unreadable(tmp_path):
+    """Code review r1 (Grok F1): a dropped row could hide a second holder, so nothing is guessed."""
     f = tmp_path / "SESSIONS.md"
     f.write_text(BOARD_EDGES)
-    rows = dw.read_board(f)
-    assert [(s, ws) for _, s, ws in rows] == [("aa", ["alpha-work"]), ("cc", []), ("dd", ["delta-work"])]
+    rows, status = dw.read_board(f)
+    assert rows is None and status == "unreadable: more than one Workstreams table"
+    f.write_text("| Session | Owns | Workstreams |\n|---|---|---|\n| **aa** | a | alpha-work |\n"
+                 "| **bb** | missing a cell |\n")
+    rows, status = dw.read_board(f)
+    assert rows is None and status == "unreadable: line 4 has 2 cells, the header has 3"
 
 
 def test_board_without_a_separator_or_the_column_is_unreadable(tmp_path):
     f = tmp_path / "SESSIONS.md"
     f.write_text("| Session | Workstreams |\n| **aa** | alpha-work |\n")
-    assert dw.read_board(f) is None
+    assert dw.read_board(f) == (None, "unreadable: no separator under the Workstreams header")
     f.write_text("| Session | Owns |\n|---|---|\n| **aa** | alpha-work |\n")
-    assert dw.read_board(f) is None
+    assert dw.read_board(f) == (None, "unreadable: no Workstreams table")
     f.write_text("| Session | Workstreams |")
-    assert dw.read_board(f) is None
+    assert dw.read_board(f) == (None, "unreadable: no separator under the Workstreams header")
+    assert dw.read_board(tmp_path / "absent.md") == (None, "missing")
+
+
+def test_an_unreadable_board_unroutes_every_question_loudly(main, capsys):
+    b = main / "output" / "overnight-merge-back" / "SESSIONS.md"
+    b.write_text(b.read_text() + "| **zz** | broken |\n")
+    add(main, capsys)
+    code, data, _, _ = run(main, "list", "--json", capsys=capsys)
+    assert data["board"].startswith("unreadable: line")
+    assert data["open"][0]["route"] == f"UNROUTED: board {data['board']}"
 
 
 def test_list_text_prints_each_option_and_a_count(main, capsys):
@@ -711,3 +752,87 @@ def test_resolve_main_contract(main, worktree, tmp_path):
             dw.resolve_main(root)
         assert isinstance(e.value, Exception)
         assert e.value.code == "no_main_checkout" and str(root) in e.value.message and e.value.extra == {}
+
+
+
+# ------------------------------------------------------------------ code review r1 fixes (Codex F2-F4)
+
+def edit_event(root, n, **changes):
+    p = root / "data" / "run-manifest" / "questions.jsonl"
+    lines = p.read_text().splitlines()
+    ev = json.loads(lines[n])
+    ev.update(changes)
+    lines[n] = json.dumps(ev)
+    p.write_text("\n".join(lines) + "\n")
+
+
+@pytest.mark.parametrize("n,change", [(0, {"kind": "design"}), (0, {"at": "2020-01-01T00:00:00+00:00"}),
+                                      (0, {"by": "someone"}), (1, {"approval": "approved"}),
+                                      (1, {"signature": "forged"}), (1, {"outcome": "agree"}),
+                                      (1, {"window": "zz"})])
+def test_check_sees_any_edit_to_any_event_field(main, capsys, n, change):
+    add(main, capsys, cls="push")
+    rule(main, "alpha-work", "RULING Q1 | option: b | reason: x | window: aa")
+    run(main, "resolve", "Q1", capsys=capsys)
+    assert run(main, "check", capsys=capsys)[0] == 0
+    edit_event(main, n, **change)
+    code, data, _, _ = run(main, "check", capsys=capsys)
+    assert code == 1 and any("record edited outside the tool" in x for x in data["problems"])
+
+
+@pytest.mark.parametrize("field,val", [("at", "2020-01-01T00:00:00+00:00"), ("blind", False)])
+def test_check_sees_an_edit_to_any_prediction_field(main, capsys, field, val):
+    add(main, capsys)
+    p = main / "data" / "run-manifest" / "predictions.jsonl"
+    pred = json.loads(p.read_text())
+    pred[field] = val
+    p.write_text(json.dumps(pred) + "\n")
+    code, data, _, _ = run(main, "check", capsys=capsys)
+    assert code == 1 and data["problems"] == ["Q1: prediction changed after it was made"]
+
+
+def test_an_orphan_prediction_id_is_never_reused_and_is_reported(main, capsys):
+    """An add interrupted between its two appends leaves a prediction with no question."""
+    p = main / "data" / "run-manifest" / "predictions.jsonl"
+    p.parent.mkdir(parents=True)
+    p.write_text(json.dumps({"id": "Q1", "option": "a", "reason": "r"}) + "\n")
+    code, data, _, _ = add(main, capsys)
+    assert code == 0 and data["question"]["id"] == "Q2"
+    code, data, _, _ = run(main, "check", capsys=capsys)
+    assert code == 1 and data["problems"] == ["Q1: prediction with no question (an interrupted add)"]
+
+
+def test_a_duplicate_prediction_is_refused_and_reported(main, capsys):
+    add(main, capsys)
+    p = main / "data" / "run-manifest" / "predictions.jsonl"
+    p.write_text(p.read_text() * 2)
+    rule(main, "alpha-work", "RULING Q1 | option: b | reason: x | window: aa")
+    code, data, _, _ = run(main, "resolve", "Q1", capsys=capsys)
+    assert code == 1 and data["code"] == "prediction_duplicate"
+    code, data, _, _ = run(main, "check", capsys=capsys)
+    assert code == 1 and data["problems"] == ["Q1: duplicate prediction"]
+
+
+def test_the_window_is_recorded_beside_the_route_and_never_enforced(main, capsys):
+    """Codex code r1 F1 rejected: requiring window == route would make a typed name evidence again."""
+    add(main, capsys)
+    rule(main, "alpha-work", "RULING Q1 | option: b | reason: relayed | window: org")
+    code, data, _, _ = run(main, "resolve", "Q1", capsys=capsys)
+    assert code == 0
+    ev = events(main)[-1]
+    assert ev["window"] == "org" and ev["route_at_resolve"] == "aa" and ev["approval"] == "none"
+
+
+def test_ids_skip_anything_that_is_not_a_q_number(main, capsys):
+    p = main / "data" / "run-manifest" / "predictions.jsonl"
+    p.parent.mkdir(parents=True)
+    p.write_text(json.dumps({"id": "X9"}) + "\n" + json.dumps({"id": None}) + "\n")
+    code, data, _, _ = add(main, capsys)
+    assert data["question"]["id"] == "Q1"
+
+
+def test_ids_come_from_questions_even_when_predictions_are_lost(main, capsys):
+    add(main, capsys)
+    (main / "data" / "run-manifest" / "predictions.jsonl").write_text("")
+    code, data, _, _ = add(main, capsys, question="After the loss?")
+    assert code == 0 and data["question"]["id"] == "Q2"

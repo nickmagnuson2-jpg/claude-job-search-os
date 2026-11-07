@@ -167,13 +167,25 @@ def question_hash(q: dict) -> str:
 
 
 def prediction_hash(pred: dict) -> str:
-    return sha(canonical({k: pred.get(k) for k in ("id", "option", "reason", "question_hash")}))
+    """The whole prediction record: a change to any field, `at` and `blind` included, shows."""
+    return sha(canonical(pred))
+
+
+def record_hash(event: dict) -> str:
+    """Every field of an event but this one, so `check` sees any edit made outside the tool,
+    including an `approval` changed from "none"."""
+    return sha(canonical({k: v for k, v in event.items() if k != "record_hash"}))
+
+
+def sealed(event: dict) -> dict:
+    return dict(event, record_hash=record_hash(event))
 
 
 def approval_payload(q: dict, ruling: dict) -> bytes:
-    """The exact bytes a v2 Touch ID signature would cover (namespace SIGNING_NAMESPACE)."""
-    return canonical({"question_hash": q["question_hash"], "option": ruling["option"],
-                      "owner": q["owner"], "window": ruling["window"]})
+    """The exact bytes a v2 Touch ID signature would cover. The namespace is inside the payload,
+    so a signature made for this purpose can never verify as an inbox or calendar approval."""
+    return canonical({"namespace": SIGNING_NAMESPACE, "question_hash": q["question_hash"],
+                      "option": ruling["option"], "owner": q["owner"], "window": ruling["window"]})
 
 
 # ---------------------------------------------------------------- the board
@@ -185,39 +197,45 @@ def cells(line: str) -> list:
     return [c.strip() for c in line.strip().strip("|").split("|")]
 
 
-def read_board(path: Path):
-    """[(first cell, session, workstreams)] from the first table whose header has a 'Workstreams'
-    cell, or None when the board or that table is missing. The table is the header, a separator
-    line, then consecutive '|' rows; a row with the wrong cell count is skipped."""
+def read_board(path: Path) -> tuple:
+    """(rows, status). rows = [(first cell, session, workstreams)] from THE table whose header has a
+    'Workstreams' cell: the header, a separator line, then consecutive '|' rows. rows is None, and
+    status says why, when the board is missing, has no such table, has two, or has a row with the
+    wrong cell count: a dropped row could hide a second holder, so nothing is guessed."""
     if not path.exists():
-        return None
+        return None, "missing"
     lines = path.read_text(encoding="utf-8").splitlines()
-    start = next((i for i, line in enumerate(lines) if "Workstreams" in cells(line)), None)
-    if start is None or start + 1 >= len(lines) or not re.fullmatch(r"[|\-: ]+", lines[start + 1].strip()):
-        return None
+    starts = [i for i, line in enumerate(lines) if "Workstreams" in cells(line)]
+    if len(starts) != 1:
+        return None, ("unreadable: no Workstreams table" if not starts
+                      else "unreadable: more than one Workstreams table")
+    start = starts[0]
+    if start + 1 >= len(lines) or not re.fullmatch(r"[|\-: ]+", lines[start + 1].strip()):
+        return None, "unreadable: no separator under the Workstreams header"
     header, rows = cells(lines[start]), []
     col = header.index("Workstreams")
-    for line in lines[start + 2:]:
+    for n, line in enumerate(lines[start + 2:], start + 3):
         if not line.strip().startswith("|"):
             break
         c = cells(line)
-        if len(c) == len(header):
-            rows.append((c[0], session_name(c[0]),
-                         [w.strip() for w in c[col].split(",") if w.strip() not in ("", "-")]))
-    return rows
+        if len(c) != len(header):
+            return None, f"unreadable: line {n} has {len(c)} cells, the header has {len(header)}"
+        rows.append((c[0], session_name(c[0]),
+                     [w.strip() for w in c[col].split(",") if w.strip() not in ("", "-")]))
+    return rows, "ok"
 
 
 def routing(p: dict):
     """THE ownership lookup: (owner -> route, source status). Every route shown anywhere comes from
     here, so moving ownership off the board (to a workstream Owner row, if Nick supersedes R7) is
     a change to this one function."""
-    board = read_board(p["board"])
-    return (lambda owner: route(owner, board)), ("missing" if board is None else "ok")
+    board, status = read_board(p["board"])
+    return (lambda owner: route(owner, board, status)), status
 
 
-def route(owner: str, board) -> str:
+def route(owner: str, board, status: str = "missing") -> str:
     if board is None:
-        return "UNROUTED: no board"
+        return f"UNROUTED: board {status}"
     hits = [s for _, s, ws in board if (s == ORG if owner == ORG else owner in ws)]
     if len(hits) == 1:
         return hits[0]
@@ -289,11 +307,15 @@ def cmd_add(p: dict, a) -> dict:
         raise Refusal("bad_prediction", f"--predict must be one of {labels}")
     usd = parse_usd(a.cls, a.usd)
 
-    def build(events: list) -> tuple[dict, dict]:
+    def build(events: list, preds: list) -> tuple[dict, dict]:
         for q in open_questions(events).values():
             if q["owner"] == owner and norm(q["question"]) == norm(a.question):
                 raise Refusal("duplicate_question", f"{q['id']} already asks this", existing=q["id"])
-        n = 1 + max([int(e["id"][1:]) for e in events if e.get("type") == "asked"], default=0)
+        # Ids come from BOTH files: an add interrupted between its two appends leaves a prediction
+        # with no question, and its id must never be handed out again.
+        used = [e["id"] for e in events if e.get("type") == "asked"] + [x.get("id") for x in preds]
+        n = 1 + max([int(i[1:]) for i in used if isinstance(i, str) and re.fullmatch(r"Q\d+", i)],
+                    default=0)
         q = {"type": "asked", "id": f"Q{n}", "at": now(), "by": a.by, "owner": owner,
              "class": a.cls, "kind": kind_of(a.cls, usd, a.commitment), "question": a.question.strip(),
              "options": [o.strip() for o in a.option], "acts": a.acts.strip(), "usd": usd}
@@ -301,13 +323,13 @@ def cmd_add(p: dict, a) -> dict:
         pred = {"id": q["id"], "at": q["at"], "option": a.predict, "reason": a.predict_reason.strip(),
                 "blind": True, "question_hash": q["question_hash"]}
         q["prediction_hash"] = prediction_hash(pred)
-        return q, pred
+        return sealed(q), pred
 
     if a.dry_run:
-        q, _ = build(load_events(p["questions"]))
+        q, _ = build(load_events(p["questions"]), load_events(p["predictions"]))
         return {"status": "ok", "dry_run": True, "question": public_view(q)}
     with inbox_lock.file_lock(p["questions"]):
-        q, pred = build(load_events(p["questions"]))
+        q, pred = build(load_events(p["questions"]), load_events(p["predictions"]))
         append(p["predictions"], pred)          # first, so an asked event never lacks one
         append(p["questions"], q)
     return {"status": "ok", "question": public_view(q)}
@@ -356,13 +378,14 @@ def find_ruling(p: dict, q: dict) -> dict:
 
 
 def find_prediction(p: dict, q: dict) -> dict:
-    preds, _ = read_lines(p["predictions"])
-    for pred in preds:
-        if pred.get("id") == q["id"]:
-            if prediction_hash(pred) != q.get("prediction_hash"):
-                raise Refusal("prediction_changed", f"{q['id']}: the prediction changed after it was made")
-            return pred
-    raise Refusal("prediction_missing", f"{q['id']}: no prediction recorded")
+    mine = [x for x in load_events(p["predictions"]) if x.get("id") == q["id"]]
+    if not mine:
+        raise Refusal("prediction_missing", f"{q['id']}: no prediction recorded")
+    if len(mine) > 1:
+        raise Refusal("prediction_duplicate", f"{q['id']}: {len(mine)} predictions recorded; run `check`")
+    if prediction_hash(mine[0]) != q.get("prediction_hash"):
+        raise Refusal("prediction_changed", f"{q['id']}: the prediction changed after it was made")
+    return mine[0]
 
 
 def cmd_resolve(p: dict, a) -> dict:
@@ -390,11 +413,13 @@ def cmd_resolve(p: dict, a) -> dict:
             raise Refusal("reason_comparison_required",
                           "same option as predicted: pass --same-reason or --new-reason (D6)")
         payload = approval_payload(q, ruling)
-        append(p["questions"], {"type": "resolved", "id": a.id, "at": now(), "option": ruling["option"],
-                                "reason": ruling["reason"], "window": ruling["window"],
-                                "file": ruling["file"], "line": ruling["line"],
-                                "line_hash": ruling["line_hash"], "outcome": outcome,
-                                "approval": "none", "payload_hash": sha(payload), "signature": None})
+        # The window is what the ruling line says; it is recorded beside the route the board gave
+        # at that moment, never checked against it: a typed session name is not evidence.
+        append(p["questions"], sealed({
+            "type": "resolved", "id": a.id, "at": now(), "option": ruling["option"],
+            "reason": ruling["reason"], "window": ruling["window"], "route_at_resolve": routing(p)[0](q["owner"]),
+            "file": ruling["file"], "line": ruling["line"], "line_hash": ruling["line_hash"],
+            "outcome": outcome, "approval": "none", "payload_hash": sha(payload), "signature": None}))
     note = (f"routed only, not an approval: act only under the existing gate ({q['class']})"
             if q["kind"] == "big" else "design call recorded")
     return {"status": "ok", "summary": f"{a.id} resolved: {note}", "question": public_view(q),
@@ -407,12 +432,12 @@ def org_names(first_cell: str) -> set:
 
 
 def cmd_takeover(p: dict, a) -> dict:
-    board = read_board(p["board"]) or []
-    org_rows = [c for c, s, _ in board if s == ORG]
+    board, _ = read_board(p["board"])
+    org_rows = [c for c, s, _ in board or [] if s == ORG]
     if len(org_rows) != 1 or a.org not in org_names(org_rows[0]):
         raise Refusal("board_disagrees", f"the board's org row does not name {a.org!r}; update it first")
     qs, _ = listing(p)                     # refuses a corrupt queue before anything is written
-    append(p["questions"], {"type": "takeover", "id": None, "at": now(), "org": a.org})
+    append(p["questions"], sealed({"type": "takeover", "id": None, "at": now(), "org": a.org}))
     return {"status": "ok", "org": a.org,
             "org_questions": [q for q in qs if q["owner"] == ORG],
             "unrouted": [q for q in qs if q["route"].startswith("UNROUTED")]}
@@ -423,19 +448,25 @@ def cmd_check(p: dict) -> tuple[dict, int]:
     preds, pred_problems = read_lines(p["predictions"])
     problems += pred_problems
     by_id = {}
-    for e in events:
+    for n, e in enumerate(events, 1):
+        if record_hash(e) != e.get("record_hash"):
+            problems.append(f"event {n} ({e.get('type')} {e.get('id')}): record edited outside the tool")
         if e.get("type") == "asked":
             if e["id"] in by_id:
                 problems.append(f"duplicate id {e['id']}")
             by_id[e["id"]] = e
-    pred_by_id = {x.get("id"): x for x in preds}
+    pred_ids = [x.get("id") for x in preds]
+    for i in sorted({i for i in pred_ids if pred_ids.count(i) > 1}, key=str):
+        problems.append(f"{i}: duplicate prediction")
+    for i in sorted({i for i in pred_ids if i not in by_id}, key=str):
+        problems.append(f"{i}: prediction with no question (an interrupted add)")
     for i, q in by_id.items():
         if question_hash(q) != q.get("question_hash"):
             problems.append(f"{i}: question changed after it was asked")
-        pred = pred_by_id.get(i)
-        if pred is None:
+        mine = [x for x in preds if x.get("id") == i]
+        if not mine:
             problems.append(f"{i}: prediction missing")
-        elif prediction_hash(pred) != q.get("prediction_hash"):
+        elif prediction_hash(mine[0]) != q.get("prediction_hash"):
             problems.append(f"{i}: prediction changed after it was made")
     for e in events:
         if e.get("type") != "resolved":
