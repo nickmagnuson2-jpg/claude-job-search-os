@@ -552,3 +552,26 @@ def test_on_fresh_goals_rows_left_unscored_by_a_stale_scan_come_first(tmp_path):
     assert out["roles"][0]["title"] == "Deployment Strategist"
     assert [r["title"] for r in out["roles"][1:]] == ["Old 0", "Old 1", "Old 2", "Old 3"]
     assert out["order"].startswith("unranked first")
+
+
+# ---------- the catch-all stays visible (4c, 2026-11-07) ----------
+
+def test_a_caught_drift_exception_is_named_in_the_scan_companies_output(tmp_path, monkeypatch, capsys):
+    """nightly() swallows every exception so the scan still writes its queue. That is only
+    safe if the exception is SHOWN: the career-scanner CLI (what /scan-companies runs)
+    must print it, by type and message, in target_drift.problems."""
+    from tools import target_drift as td
+    from tools.career_scanner import cli, scanner
+    root = make(tmp_path)
+
+    def boom(r, today):
+        raise TypeError("an input shape nobody anticipated")
+    monkeypatch.setattr(td, "check", boom)
+    monkeypatch.setattr(scanner, "load_targets", lambda r: [{"name": "Open Board Co", "ats": "ashby"}])
+    monkeypatch.setattr(scanner, "fetch_company_roles", lambda target, errors=None, cuts=None: [])
+    monkeypatch.setattr(sys, "argv", ["cli.py", "--repo-root", str(root), "--dry-run"])
+    cli.main()
+    out = json.loads(capsys.readouterr().out)
+    assert out["target_drift"]["drift"] is True
+    assert out["target_drift"]["problems"] == [
+        "drift check failed: TypeError: an input shape nobody anticipated"]
