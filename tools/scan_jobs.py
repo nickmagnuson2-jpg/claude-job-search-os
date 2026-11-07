@@ -95,10 +95,14 @@ def cached_index(cache_text: str) -> tuple[set, set, set]:
     return keys, keys_no_url, urls
 
 
-def _cached(ad: dict, past: list) -> dict:
-    """A cached ad, with the same history label the nightly scanner gives it (Codex F1 /
-    Grok F2, review r1: a cache hit returned before history ran)."""
-    return {"title": ad["title"], "company": ad["company"], "history": history(ad, past)["label"]}
+def _cached(ad: dict, past: list, cached: list, repeats: list) -> None:
+    """File a cached ad, with the same history verdict the nightly scanner gives it: an exact
+    repeat of a posting Nick passed on goes to the visible held-back list, not `cached`, which
+    the skill reports as a count (Codex F1 / Grok F2 r1; Codex F1 r2)."""
+    h = history(ad, past)
+    row = {"title": ad["title"], "company": ad["company"], "history": h["label"]}
+    (repeats if h["declined_repeat"] else cached).append(
+        {**row, "url": ad.get("url", "")} if h["declined_repeat"] else row)
 
 
 def rules_version(root: Path) -> str:
@@ -170,14 +174,14 @@ def assess(ads: list, root: Path) -> dict:
     for ad in ads:
         ids = _ad_ids(ad)
         if ids[0] in done:   # a listing repeated within one scan is assessed once
-            cached.append(_cached(ad, past))
+            _cached(ad, past, cached, repeats)
             continue
         done.add(ids[0])
         was = None
         if is_cached(ad, keys, keys_no_url, urls):
             prior = next((verdicts[i] for i in ids if i in verdicts), None)
             if prior is None or prior["version"] == version:
-                cached.append(_cached(ad, past))
+                _cached(ad, past, cached, repeats)
                 continue
             was = prior["status"]   # judged under other rules: re-check once
         else:
@@ -204,7 +208,7 @@ def assess(ads: list, root: Path) -> dict:
         if was is not None:
             if status == was:
                 rechecked_unchanged += 1
-                cached.append(_cached(ad, past))
+                _cached(ad, past, cached, repeats)
                 continue
             row["reason"] = f"{reason} (re-checked under new rules; was {was})"
             row["rechecked"] = True

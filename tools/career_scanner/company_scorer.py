@@ -34,7 +34,8 @@ _BAY_TERMS = ["bay area", "oakland", "berkeley", "alameda", "emeryville"]
 # (not "SFO", "asf"). scan-drops-1106, 2026-11-06: only the substring "san francisco"
 # used to count, so "SF", "SF, CA", "NYC / SF" and "Hybrid (3 days in SF)" were
 # dropped as outside the Bay (Grok 941.F3, confirmed by running geo_ok on main).
-_SF = re.compile(r"(?<!south )\b(?:san francisco|sf)\b|(?<![a-z.])s\.f\.")   # "S.F." too (review r1)
+_SF = re.compile(r"(?<!south )\b(?:san francisco|sf)\b")
+_DOTTED_SF = re.compile(r"(?<![a-z.])s\.f\.")   # "S.F." reads as "san francisco" (r1, r2)
 _REMOTE = re.compile(r"\b(?:remote|anywhere|work from home|wfh)\b")
 
 
@@ -47,9 +48,11 @@ def location_band(location) -> str:
     is named. geo_gate (companies) and scanner.geo_ok (roles) map this band to their
     own policy; neither classifies on its own.
     """
-    # Hyphens and dashes read as spaces, so "South-San Francisco" is the Peninsula town
-    # (Codex F2 / Grok F4, review r1).
-    loc = " ".join(re.sub(r"[-–—]", " ", location or "").split()).lower()
+    # Punctuation other than "." reads as a space, so "South-San Francisco" and "South, San
+    # Francisco" are the Peninsula town (Codex F2 / Grok F4 r1; Codex F2 r2). Offices split by
+    # commas or slashes still each match ("Austin, San Francisco" is SF).
+    loc = " ".join(re.sub(r"[^\w.]+", " ", location or "").split()).lower()
+    loc = _DOTTED_SF.sub("san francisco", loc)
     if not loc:
         return "unknown"
     if _SF.search(loc):

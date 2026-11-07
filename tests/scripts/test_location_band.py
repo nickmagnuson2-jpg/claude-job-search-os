@@ -105,3 +105,15 @@ def test_hyphenated_south_san_francisco_is_peninsula(loc):
 @pytest.mark.parametrize("loc", ["S.F.", "S.F., CA", "Hybrid, S.F."])
 def test_dotted_sf_is_sf(loc):
     assert location_band(loc) == "sf"
+
+
+# ---------- review r2 (Codex F2 / Grok F1) ----------
+
+@pytest.mark.parametrize("loc", ["South, San Francisco", "South S.F.", "South-S.F.", "south  ,  san francisco"])
+def test_punctuated_south_san_francisco_is_peninsula(loc):
+    assert location_band(loc) == "peninsula"
+
+
+@pytest.mark.parametrize("loc", ["Austin, San Francisco", "San Francisco, CA", "S.F.", "NYC / SF"])
+def test_offices_split_by_commas_still_find_sf(loc):
+    assert location_band(loc) == "sf"

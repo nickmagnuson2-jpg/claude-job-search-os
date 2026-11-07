@@ -328,3 +328,19 @@ def test_role_queue_read_forwards_the_held_back_repeats(tmp_path):
     scanner.write_queue_payload(tmp_path, scanner._queue_payload([], [], [], [], None, rep))
     out = rq.read_queue(tmp_path)
     assert out["skipped_repeats"] == rep
+
+
+def test_a_cached_exact_declined_repeat_goes_to_skipped_repeats(tmp_path, monkeypatch):
+    """Codex r2 F1: a cached exact repeat of a posting Nick passed on sat in `cached`, which the
+    skill shows only as a count, instead of the visible held-back list."""
+    sys.path.insert(0, str(REPO / "tools"))
+    import scan_jobs as sj
+    root = _scan_jobs_root(tmp_path)
+    ad = dict(ADS[1])   # Lantern Works Strategy Lead at the URL he withdrew from
+    cache = root / ".claude/skills/scan-jobs/cache.md"
+    cache.write_text(cache.read_text() + f"| {ad['title']} | {ad['company']} | 5/10 | listed | — | "
+                     f"[Listing]({ad['url']}) | by hand |\n", encoding="utf-8")
+    monkeypatch.setattr(sj, "score_role", lambda r, ctx: 9)
+    out = sj.assess([ad], root)
+    assert out["cached"] == []
+    assert [r["company"] for r in out["skipped_repeats"]] == ["Lantern Works"]
