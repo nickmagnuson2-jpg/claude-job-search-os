@@ -1504,3 +1504,11 @@ def test_scanner_and_I8_agree_on_every_value(repo, value):
     assert in_backlog or held_by_i8, value
     assert held_by_i8 is ps.claims_a_landed_gate(value)
     assert spc._ps_reads_as_unpromoted is ps.reads_as_unpromoted  # one definition, imported
+
+
+def test_asserts_returns_a_bool():
+    """_asserts is a predicate: False, not a falsy None, when the body asserts nothing."""
+    import ast
+    tree = ast.parse("def test_a():\n    f()\n\ndef test_b():\n    assert f()\n")
+    a, b = tree.body
+    assert ps._asserts(a) is False and ps._asserts(b) is True
