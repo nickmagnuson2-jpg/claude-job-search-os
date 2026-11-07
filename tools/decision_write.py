@@ -46,6 +46,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import inbox_lock  # noqa: E402
+from count_report import report  # noqa: E402
 from vault_paths import main_checkout  # noqa: E402
 
 # Decision classes, codified (Nick, 2026-11-07: "The decision class should be codified here").
@@ -338,16 +339,15 @@ def cmd_add(p: dict, a) -> dict:
     return {"status": "ok", "question": public_view(q)}
 
 
-def listing(p: dict, owner=None) -> tuple[list, str]:
+def listing(p: dict) -> tuple[list, str]:
     events = load_events(p["questions"])
     to, status = routing(p)
-    out = [dict(public_view(q), route=to(q["owner"])) for q in open_questions(events).values()
-           if not owner or q["owner"] == owner]
-    return out, status
+    return [dict(public_view(q), route=to(q["owner"])) for q in open_questions(events).values()], status
 
 
 def cmd_list(p: dict, a) -> None:
-    qs, board = listing(p, a.owner)
+    every, board = listing(p)
+    qs = [q for q in every if not a.owner or q["owner"] == a.owner]
     if a.json:
         emit({"status": "ok", "board": board, "open": qs})
         return
@@ -359,7 +359,9 @@ def cmd_list(p: dict, a) -> None:
         print(f"{q['id']} [{q['class']}] {q['question']} -> {where}")
         for opt in q["options"]:
             print(f"    {opt}")
-    print(f"{len(qs)} open question(s); board {board}")
+    print(f"board: {board}")
+    report(f"open questions in {QUESTIONS_REL.as_posix()}", population=len(every), included=len(qs),
+           excluded={f"owner is not {a.owner}": len(every) - len(qs)} if a.owner else {})
 
 
 def find_ruling(p: dict, q: dict) -> dict:

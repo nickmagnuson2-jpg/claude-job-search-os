@@ -689,7 +689,16 @@ def test_list_text_prints_each_option_and_a_count(main, capsys):
     add(main, capsys)
     code, _, out, _ = run(main, "list", capsys=capsys)
     assert "    a: ship it now\n    b: wait for part two\n" in out
-    assert out.rstrip().endswith("1 open question(s); board ok")
+    assert out.rstrip().endswith("board: ok\nscope: open questions in data/run-manifest/questions.jsonl"
+                                 " | population 1 | included 1 | excluded: none")
+
+
+def test_list_text_states_how_many_the_owner_filter_left_out(main, capsys):
+    add(main, capsys, owner="alpha-work", question="one?")
+    add(main, capsys, owner="beta-work", question="two?")
+    add(main, capsys, owner="beta-work", question="three?")
+    code, _, out, _ = run(main, "list", "--owner", "alpha-work", capsys=capsys)
+    assert out.rstrip().endswith("population 3 | included 1 | excluded: owner is not alpha-work 2")
 
 
 def test_resolving_a_later_question_finds_its_own_prediction(main, capsys):
