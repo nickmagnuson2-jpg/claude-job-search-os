@@ -93,3 +93,15 @@ def test_unknown_is_unknown(loc):
 
 def test_is_peninsula_is_false_when_sf_is_also_listed():
     assert is_peninsula("San Francisco, Palo Alto") is False
+
+
+# ---------- review r1 (Codex F2 / Grok F4) ----------
+
+@pytest.mark.parametrize("loc", ["South-San Francisco, CA", "South–San Francisco"])
+def test_hyphenated_south_san_francisco_is_peninsula(loc):
+    assert location_band(loc) == "peninsula"
+
+
+@pytest.mark.parametrize("loc", ["S.F.", "S.F., CA", "Hybrid, S.F."])
+def test_dotted_sf_is_sf(loc):
+    assert location_band(loc) == "sf"

@@ -245,7 +245,8 @@ def scan_all_targets(repo_root: Path, dry_run: bool = False) -> dict:
         summary = {"total_fetched": 0, "new_roles": 0, "skipped_dupes": 0,
                    "companies_scanned": 0, "fetch_failures": len(errors),
                    "fetch_failure_detail": errors, "new_since_last_scan": 0,
-                   "standing": 0, "previously_closed": 0, "roles": []}
+                   "standing": 0, "previously_closed": 0, "cut_at_fetch": 0,
+                   "skipped_repeats": 0, "skipped_repeat_roles": [], "roles": []}
         if not dry_run:
             write_role_queue(repo_root, [], [], errors)
         return summary
@@ -316,6 +317,9 @@ def scan_all_targets(repo_root: Path, dry_run: bool = False) -> dict:
         # in the queue with its reason (scan-drops-1106).
         "cut_at_fetch": len(cuts),
         "skipped_repeats": len(repeats),
+        # The held-back repeats themselves, with their labels, so /scan-companies can list
+        # them (Grok F1, review r1): a count alone hides which roles they were.
+        "skipped_repeat_roles": repeats,
         "roles": new_roles,
     }
 

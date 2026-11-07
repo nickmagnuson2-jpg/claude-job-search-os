@@ -219,7 +219,7 @@ def test_a_listing_with_a_url_repeated_in_one_scan_is_assessed_once(root):
     ad = {"title": "Deployment Strategist", "company": "Beacon AI", "location": "San Francisco",
           "url": "https://example.com/role/9"}
     _, out = run(root, "assess", [ad, dict(ad)])
-    assert len(out["new"]) == 1 and out["cached"] == [{"title": ad["title"], "company": ad["company"]}]
+    assert len(out["new"]) == 1 and out["cached"] == [{"title": ad["title"], "company": ad["company"], "history": ""}]
 
 
 def test_record_treats_a_url_less_row_as_covering_the_same_role_with_a_url(root):

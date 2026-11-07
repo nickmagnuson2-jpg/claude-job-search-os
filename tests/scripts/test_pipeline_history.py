@@ -4,6 +4,7 @@ Nick, 2026-11-06: a role at a company with history ALWAYS shows, labelled; only 
 repeat of a posting he passed on is held back, onto a visible list. Spec:
 output/infra-backlog/110626-pipeline-history-check-spec.md.
 """
+import json
 import sys
 from pathlib import Path
 
@@ -239,3 +240,91 @@ def test_a_pending_role_from_an_earlier_scan_gets_this_scans_label(tmp_path, mon
     scanner._write_role_queue_locked(tmp_path, [], [fresh], [])
     [p] = scanner.read_queue_payload(tmp_path)["new"]
     assert role_key(p) == role_key(pend) and p["history"] == "they declined you 10/03 (Ops Lead)"
+
+
+# ---------- review r1 P0s ----------
+
+def test_scan_jobs_labels_a_cached_ad_too(tmp_path, monkeypatch):
+    """Codex F1 / Grok F2: a current cache hit returned before history ran."""
+    sys.path.insert(0, str(REPO / "tools"))
+    import scan_jobs as sj
+    root = _scan_jobs_root(tmp_path)
+    ad = dict(ADS[0])
+    cache = root / ".claude/skills/scan-jobs/cache.md"
+    cache.write_text(cache.read_text() + f"| {ad['title']} | {ad['company']} | 5/10 | listed | — | "
+                     f"[Listing]({ad['url']}) | by hand |\n", encoding="utf-8")
+    monkeypatch.setattr(sj, "score_role", lambda r, ctx: 9)
+    out = sj.assess([ad], root)
+    assert out["cached"] == [{"title": ad["title"], "company": ad["company"],
+                              "history": "they declined you 10/03 (Ops Lead)"}]
+
+
+def test_parity_every_ad_gets_the_same_verdict_from_both(tmp_path, monkeypatch):
+    """Grok F3: compare every ad, not the intersection. The one designed difference: the same
+    role already active in the pipeline is listed and flagged by /scan-jobs, and counted as a
+    duplicate (absent from the queue) by the nightly scanner."""
+    sys.path.insert(0, str(REPO / "tools"))
+    import scan_jobs as sj
+    from tools.career_scanner import scanner
+    a, b = tmp_path / "a", tmp_path / "b"
+    _scan_jobs_root(a)
+    (b / "data").mkdir(parents=True)
+    (b / "data" / "job-pipeline.md").write_text(PIPE, encoding="utf-8")
+    monkeypatch.setattr(sj, "score_role", lambda r, ctx: 9)
+    sj_out = sj.assess([dict(x) for x in ADS], a)
+    monkeypatch.setattr(scanner, "load_targets", lambda r: [{"name": "x", "ats": "ashby", "slug": "x"}])
+    monkeypatch.setattr(scanner, "fetch_company_roles",
+                        lambda t, errors=None, cuts=None: [dict(x) for x in ADS])
+    monkeypatch.setattr(scanner.time, "sleep", lambda *_: None)
+    summary = scanner.scan_all_targets(b)
+    q = scanner.read_queue_payload(b)
+    key = lambda r: (r["company"], r["title"])
+    sj_new = {key(r): r for r in sj_out["new"]}
+    nightly = {key(r): r for r in q["new"]}
+    for ad in ADS:
+        k = key(ad)
+        if k in {key(r) for r in sj_out["skipped_repeats"]}:
+            assert k in {key(r) for r in q["skipped_repeats"]} and k not in nightly
+        elif sj_new[k].get("already_in_pipeline"):
+            assert k not in nightly
+        else:
+            assert nightly[k]["history"] == sj_new[k]["history"]
+    assert summary["skipped_dupes"] == sum(bool(r.get("already_in_pipeline")) for r in sj_out["new"])
+    assert ({(key(r), r["history"]) for r in sj_out["skipped_repeats"]}
+            == {(key(r), r["history"]) for r in q["skipped_repeats"]})
+
+
+def test_the_nightly_summary_lists_the_held_back_repeats(tmp_path, monkeypatch):
+    """Grok F1: the /scan-companies CLI exposed only a count."""
+    from tools.career_scanner import scanner
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "job-pipeline.md").write_text(PIPE, encoding="utf-8")
+    monkeypatch.setattr(scanner, "load_targets", lambda r: [{"name": "x", "ats": "ashby", "slug": "x"}])
+    monkeypatch.setattr(scanner, "fetch_company_roles",
+                        lambda t, errors=None, cuts=None: [dict(x) for x in ADS])
+    monkeypatch.setattr(scanner.time, "sleep", lambda *_: None)
+    s = scanner.scan_all_targets(tmp_path, dry_run=True)
+    assert [r["company"] for r in s["skipped_repeat_roles"]] == ["Lantern Works"]
+    assert s["skipped_repeats"] == 1
+
+
+def test_the_cli_top_roles_carry_the_history_label(tmp_path, monkeypatch, capsys):
+    from tools.career_scanner import cli, scanner
+    monkeypatch.setattr(scanner, "scan_all_targets", lambda root, dry_run=False: {
+        "roles": [{"title": "T", "company": "C", "score": 5, "url": "u", "history": "they declined you 10/03 (Ops Lead)"}],
+        "skipped_repeats": 1, "skipped_repeat_roles": [{"title": "R", "company": "L", "url": "v", "history": "you passed 09/12 (R)"}]})
+    monkeypatch.setattr(sys, "argv", ["cli.py", "--repo-root", str(tmp_path)])
+    cli.main()
+    out = json.loads(capsys.readouterr().out)
+    assert out["top_roles"][0]["history"] == "they declined you 10/03 (Ops Lead)"
+    assert out["skipped_repeat_roles"][0]["company"] == "L"
+
+
+def test_role_queue_read_forwards_the_held_back_repeats(tmp_path):
+    """Grok F6."""
+    import tools.role_queue_read as rq
+    from tools.career_scanner import scanner
+    rep = [{"title": "R", "company": "L", "url": "v", "history": "you passed 09/12 (R)"}]
+    scanner.write_queue_payload(tmp_path, scanner._queue_payload([], [], [], [], None, rep))
+    out = rq.read_queue(tmp_path)
+    assert out["skipped_repeats"] == rep

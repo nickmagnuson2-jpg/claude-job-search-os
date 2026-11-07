@@ -126,6 +126,8 @@ def read_queue(repo_root: Path, top: int = 5) -> dict:
         # list, each with its reason, is in the queue file (scan-drops-1106).
         "cut_at_fetch_count": len(cuts),
         "cut_at_fetch_by_reason": dict(Counter(c.get("reason", "") for c in cuts)),
+        # Exact repeats of postings Nick passed on, held back WITH their labels (Grok F6).
+        "skipped_repeats": [r for r in (payload.get("skipped_repeats") or []) if isinstance(r, dict)],
         "roles": [_summarise(r) for r in new[:top]],
         # The reader acknowledges BY KEY, never by count. Acking "the top 5" would
         # silently consume whatever a scan inserted between the read and the ack.

@@ -95,6 +95,12 @@ def cached_index(cache_text: str) -> tuple[set, set, set]:
     return keys, keys_no_url, urls
 
 
+def _cached(ad: dict, past: list) -> dict:
+    """A cached ad, with the same history label the nightly scanner gives it (Codex F1 /
+    Grok F2, review r1: a cache hit returned before history ran)."""
+    return {"title": ad["title"], "company": ad["company"], "history": history(ad, past)["label"]}
+
+
 def rules_version(root: Path) -> str:
     """The version of the rules a verdict was judged under: 8 hex of the logic version and
     fit-spec.yaml's text. A cached verdict from another version is re-checked when its ad
@@ -164,14 +170,14 @@ def assess(ads: list, root: Path) -> dict:
     for ad in ads:
         ids = _ad_ids(ad)
         if ids[0] in done:   # a listing repeated within one scan is assessed once
-            cached.append({"title": ad["title"], "company": ad["company"]})
+            cached.append(_cached(ad, past))
             continue
         done.add(ids[0])
         was = None
         if is_cached(ad, keys, keys_no_url, urls):
             prior = next((verdicts[i] for i in ids if i in verdicts), None)
             if prior is None or prior["version"] == version:
-                cached.append({"title": ad["title"], "company": ad["company"]})
+                cached.append(_cached(ad, past))
                 continue
             was = prior["status"]   # judged under other rules: re-check once
         else:
@@ -198,7 +204,7 @@ def assess(ads: list, root: Path) -> dict:
         if was is not None:
             if status == was:
                 rechecked_unchanged += 1
-                cached.append({"title": ad["title"], "company": ad["company"]})
+                cached.append(_cached(ad, past))
                 continue
             row["reason"] = f"{reason} (re-checked under new rules; was {was})"
             row["rechecked"] = True

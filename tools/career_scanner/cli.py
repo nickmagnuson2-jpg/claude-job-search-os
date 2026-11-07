@@ -98,6 +98,7 @@ def main():
             "new": r.get("new", False),
             "first_seen": r.get("first_seen", ""),
             "previously_closed": r.get("previously_closed", ""),
+            "history": r.get("history", ""),
         }
         # Every role, not the first ten: /scan-companies shows all roles (D-05;
         # 614.F2/625.F5).
