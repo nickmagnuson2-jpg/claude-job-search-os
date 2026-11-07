@@ -74,8 +74,8 @@ def load_scoring_context(repo_root: Path, today: date | None = None) -> dict:
 
     # Parse goals.md
     goals_path = data_dir / "goals.md"
-    if goals_path.exists():
-        goals_text = goals_path.read_text(encoding="utf-8")
+    goals_text = _read_text(goals_path)
+    if goals_text is not None:
         result.update(goals_freshness(goals_text, today or date.today()))
         result["target_titles"] = _extract_target_titles(goals_text)
         result["target_seniority"] = _extract_target_seniority(goals_text)
@@ -90,15 +90,27 @@ def load_scoring_context(repo_root: Path, today: date | None = None) -> dict:
         )
 
     # Parse profile.md
-    profile_path = data_dir / "profile.md"
-    if profile_path.exists():
-        profile_text = profile_path.read_text(encoding="utf-8")
+    profile_text = _read_text(data_dir / "profile.md")
+    if profile_text is not None:
         result["skills"] = _extract_skills(profile_text)
 
     # Revealed-fit overlay (deterministic; distilled from Nick's 52 hand-labels).
     result["fit_spec"] = load_fit_spec(repo_root)
 
     return result
+
+
+def _read_text(path: Path):
+    """A file's text, or None when it is missing or unreadable (bad bytes included).
+
+    An unreadable goals.md is treated like a missing one: no titles, and stale, so the
+    scan lists every role and ranks none. A non-UTF-8 byte used to raise out of the
+    nightly scan (Codex F2, review r2).
+    """
+    try:
+        return path.read_text(encoding="utf-8") if path.exists() else None
+    except (OSError, UnicodeError):
+        return None
 
 
 def load_fit_spec(repo_root: Path) -> dict:
@@ -122,7 +134,12 @@ def load_fit_spec(repo_root: Path) -> dict:
 
 # The colon may sit inside or just outside the bold (Grok F7, review r1).
 _OPEN_TO_WORK = re.compile(r"\*\*Open to Work titles[^*]*(?::\*\*|\*\*:)(.*)$", re.IGNORECASE)
-_SENTENCE_END = re.compile(r"(?<=\w{4})\.(?=\s|$)")
+# A word, then a period, then whitespace or the line's end: a candidate sentence end.
+_PERIOD_AFTER_WORD = re.compile(r"(\w+)\.(?=\s|$)")
+# Title abbreviations of 4+ letters, whose period is part of the title (Grok F2, review r2).
+# Shorter ones ("Sr.", "VP.", "Mgr.") never end the list.
+_TITLE_ABBREVIATIONS = {"asst", "assoc", "exec", "dept", "corp", "intl", "govt", "mgmt",
+                        "admin", "mktg", "coord", "supv", "engr", "prog", "tech", "natl"}
 _LAST_REVIEWED = re.compile(r"^Last reviewed:\s*(\S+)", re.MULTILINE)
 # Days goals.md may go unreviewed before the scorer refuses to rank (Nick, 2026-11-06:
 # "14 days"). target-drift-1106.
@@ -148,16 +165,21 @@ def _extract_target_titles(text: str) -> list[str]:
     Nothing else in the file is read: until target-drift-1106 a "Role types" heading
     anywhere in goals.md started a list, so the June ranked list kept feeding the scorer
     for 17 days after the 10/20 thesis refresh. Titles are semicolon-separated. The list
-    ends at a sentence-ending period: one after a word of 4+ letters, followed by a space or
-    the line's end ("Lead. Every scanner ..."). A period after a shorter abbreviation
-    ("Sr. Director", "U.S.", "Mgr.") is part of the title: ending at the first ". " dropped
-    every title after it (Codex F1 / Grok F7, review r1).
+    ends at a sentence-ending period: one after a word of 4+ letters that is not a title
+    abbreviation (_TITLE_ABBREVIATIONS), followed by a space or the line's end ("Lead. Every
+    scanner ..."). A period after a shorter abbreviation ("Sr. Director", "U.S.", "Mgr.") or
+    a listed one ("Exec. Director") is part of the title: ending at the first ". " dropped
+    every title after it (Codex F1 / Grok F7, review r1; Grok F2, review r2).
     """
     for line in _target_criteria(text):
         m = _OPEN_TO_WORK.search(line)
         if m:
-            end = _SENTENCE_END.search(m.group(1))
-            body = m.group(1)[:end.start()] if end else m.group(1)
+            body = m.group(1)
+            for end in _PERIOD_AFTER_WORD.finditer(body):
+                word = end.group(1)
+                if len(word) >= 4 and word.lower() not in _TITLE_ABBREVIATIONS:
+                    body = body[:end.end(1)]
+                    break
             body = body.rstrip()
             body = body[:-1] if body.endswith(".") else body   # the list's own final period
             # A TODO placeholder (framework/templates/goals.md) is not a title.

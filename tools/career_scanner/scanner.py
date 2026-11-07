@@ -49,7 +49,11 @@ def load_targets(repo_root: Path) -> list[dict]:
         return []
     with open(config_path, "r", encoding="utf-8") as f:
         data = yaml.safe_load(f)
-    if not data or not isinstance(data.get("companies"), list):
+    # A valid YAML file of the wrong shape (a list, a string, a number at the top) has no
+    # targets: the scan then records "no scannable targets" as a fetch failure, and the
+    # drift check exits 2 on it. data.get on a list used to crash the scan (Codex F1 /
+    # Grok F3, review r2).
+    if not isinstance(data, dict) or not isinstance(data.get("companies"), list):
         return []
     return [c for c in data["companies"] if scannable(c)]
 
@@ -253,7 +257,7 @@ def scan_all_targets(repo_root: Path, dry_run: bool = False, today=None) -> dict
     try:
         targets = load_targets(repo_root)
         load_error = None
-    except (OSError, yaml.YAMLError) as e:
+    except (OSError, UnicodeError, yaml.YAMLError) as e:   # bad bytes too (Codex F2, r2)
         # Unreadable scan-targets.yaml: record it as a fetch failure and still write the
         # queue with the drift report, instead of dying with no queue (Grok F4, review r1).
         targets, load_error = [], f"scan-targets.yaml unreadable: {e}"

@@ -437,3 +437,58 @@ def test_the_template_and_the_example_parse():
 def test_trailing_prose_ends_the_list_but_an_abbreviation_does_not(line, expected):
     text = f"## Target Criteria\n\n- **Open to Work titles (LinkedIn):** {line}\n"
     assert scorer._extract_target_titles(text) == expected
+
+
+# ---------- review r2 (Codex F1-F2 / Grok F1-F3) ----------
+
+@pytest.mark.parametrize("targets", ["- name: X\n  ats: ashby\n", "just a string\n", "42\n"])
+def test_a_valid_yaml_file_of_the_wrong_shape_does_not_crash_the_nightly_scan(tmp_path, targets):
+    from tools.career_scanner import scanner
+    root = make(tmp_path, targets=targets)
+    assert scanner.load_targets(root) == []
+    s = scanner.scan_all_targets(root, today=TODAY)
+    assert s["fetch_failures"] == 1
+    payload = scanner.read_queue_payload(root)
+    assert payload["target_drift"]["drift"] is True and payload["fetch_failures"] == 1
+
+
+@pytest.mark.parametrize("which", ["targets", "spec", "goals"])
+def test_non_utf8_input_exits_2_and_never_crashes_the_nightly_scan(tmp_path, which):
+    from tools.career_scanner import scanner
+    root = make(tmp_path)
+    path = {"targets": root / "data" / "scan-targets.yaml",
+            "spec": root / "data" / "calibration" / "fit-spec.yaml",
+            "goals": root / "data" / "goals.md"}[which]
+    path.write_bytes(b"companies:\n  - name: \xff\xfe bad\n")
+    code, out = run(root)
+    assert code == 2 and out["error"]
+    s = scanner.scan_all_targets(root, today=TODAY)      # must not raise
+    assert scanner.read_queue_payload(root)["target_drift"]["drift"] is True
+
+
+def test_unreadable_goals_is_stale_not_a_crash(tmp_path):
+    root = make(tmp_path)
+    (root / "data" / "goals.md").write_bytes(b"Last reviewed: 2026-11-10\n\xff\n")
+    ctx = scorer.load_scoring_context(root, today=TODAY)
+    assert ctx["goals_stale"] is True and ctx["target_titles"] == []
+
+
+def test_on_stale_goals_an_undated_new_role_sorts_by_first_seen(tmp_path):
+    import tools.role_queue_read as rq
+    old = [{"title": f"Old {i}", "company": "X", "url": f"u{i}", "score": 7, "published_at": "2026-10-01",
+            "first_seen": "2026-10-02"} for i in range(5)]
+    new = [{"title": "Deployment Strategist", "company": "Acme", "url": "n", "score": None,
+            "published_at": "", "first_seen": "2026-11-19"}]
+    _queue(tmp_path, True, old + new)
+    assert rq.read_queue(tmp_path, top=5)["roles"][0]["title"] == "Deployment Strategist"
+
+
+@pytest.mark.parametrize("line,expected", [
+    ("Exec. Director of Operations; Chief of Staff", ["Exec. Director of Operations", "Chief of Staff"]),
+    ("Asst. Chief of Staff; Dept. Operations Lead; Corp. Strategy Lead. Every scanner must pass each one.",
+     ["Asst. Chief of Staff", "Dept. Operations Lead", "Corp. Strategy Lead"]),
+    ("Assoc. Director; Intl. Operations Lead", ["Assoc. Director", "Intl. Operations Lead"]),
+])
+def test_four_letter_title_abbreviations_do_not_end_the_list(line, expected):
+    text = f"## Target Criteria\n\n- **Open to Work titles (LinkedIn):** {line}\n"
+    assert scorer._extract_target_titles(text) == expected

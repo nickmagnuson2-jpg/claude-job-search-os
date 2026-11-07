@@ -47,7 +47,7 @@ def _yaml(path: Path):
     import yaml
     try:
         return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    except (OSError, yaml.YAMLError) as e:
+    except (OSError, UnicodeError, yaml.YAMLError) as e:   # bad bytes too (Codex F2, r2)
         raise Unreadable(f"{path.name}: {e}") from e
 
 
@@ -81,7 +81,7 @@ def check(root: Path, today: date) -> dict:
     root = Path(root)
     try:
         goals_text = (root / GOALS).read_text(encoding="utf-8")
-    except OSError as e:
+    except (OSError, UnicodeError) as e:
         raise Unreadable(f"{GOALS.name}: {e}") from e
     targets, reach = _targets(root)
     spec = _yaml(root / FIT_SPEC)

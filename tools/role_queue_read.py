@@ -108,8 +108,10 @@ def read_queue(repo_root: Path, top: int = 5) -> dict:
     # roles below every leftover (Codex F3 / Grok F1, review r1). Posting date alone,
     # Nick's secondary key, is the order then, and `order` says so.
     if payload.get("goals_stale") is True:
-        order = "posting date, newest first (goals.md stale: not ranked by fit)"
-        new.sort(key=lambda r: r.get("published_at") or "", reverse=True)
+        order = "posting date (else first seen), newest first (goals.md stale: not ranked by fit)"
+        # An undated posting (generic boards write none) sorts by the day the scan first
+        # saw it, so tonight's undated roles do not sink below dated leftovers (Grok F1, r2).
+        new.sort(key=lambda r: r.get("published_at") or r.get("first_seen") or "", reverse=True)
     else:
         order = "score, then posting date"
         new.sort(key=lambda r: (r.get("score") or 0, r.get("published_at") or ""),
