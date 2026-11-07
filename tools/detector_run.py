@@ -230,7 +230,8 @@ _CORPUS_MARKER = re.compile(r"^\s*node_type:\s*memory\s*$", re.MULTILINE)
 # one level down.
 _CORPUS_KEY_LINE = re.compile(
     r"^\s*(?:name|description|node_type|type|occurrences|promoted|promoted_date|exit_path"
-    r"|detector_signature|detector_control|reopen_gate|last_cited|originSessionId|modified)\s*:"
+    r"|detector_signature|detector_control|exit1_gate|exit1_evidence|reopen_gate|last_cited"
+    r"|originSessionId|modified)\s*:"
 )
 
 

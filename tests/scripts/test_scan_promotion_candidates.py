@@ -985,6 +985,32 @@ def test_schema_violation_list_is_truncated_with_a_count(tmp_path):
     assert text.count("  - feedback_v") == 40, "the cap must actually cap"
 
 
+def test_schema_section_lists_I8_last_and_states_its_denominator(tmp_path):
+    """I8 arrives two lines per unproven exit1 record, 150 on the live tier on 2026-11-06.
+    Listed first it would fill the 40-line cap and hide every other invariant, and the
+    exit1 proven count must reach the file Nick reads, not only the CLI."""
+    import subprocess, sys as _s
+    mem = tmp_path / "memory"; mem.mkdir()
+    for i in range(25):                      # each file trips I8 twice
+        (mem / f"feedback_e{i:02d}.md").write_text(
+            f"---\nname: feedback_e{i:02d}\nmetadata:\n  occurrences: 2\n"
+            "  promoted: yes\n  exit_path: exit1\n  promoted_date: 2026-11-01\n"
+            "  reopen_gate: \"3rd fire\"\n  last_cited: 2026-09-01\n---\n\nbody\n",
+            encoding="utf-8")
+    (mem / "feedback_zz_stray.md").write_text(
+        "---\nname: feedback_zz_stray\nmetadata:\n  occurrences: 2\n"
+        "  promoted: n/a -- stray\n  reopen_gate: \"3rd fire\"\n"
+        "  last_cited: 2026-09-01\n---\n\nbody\n", encoding="utf-8")
+    subprocess.run(
+        [_s.executable, str(Path(spc.__file__)), "--memory-dir", str(mem),
+         "--repo-root", str(tmp_path), "--mode", "cron"], capture_output=True, text=True)
+    text = (mem / "promotion-backlog.md").read_text(encoding="utf-8")
+    assert "- exit1 proven (I8): 0 of 25 completed" in text
+    shown = [ln for ln in text.splitlines() if ln.startswith("  - feedback_")]
+    assert shown[0].startswith("  - feedback_zz_stray.md: I6"), shown[:2]
+    assert all(": I8 " in ln for ln in shown[1:])
+
+
 def _fake_todo_write(tmp_path, open_tasks):
     """A todo_write.py stand-in: `list` answers with `open_tasks`, `add` is recorded."""
     (tmp_path / "tools").mkdir(exist_ok=True)

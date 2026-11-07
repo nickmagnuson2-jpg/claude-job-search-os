@@ -62,7 +62,11 @@ ALLOWED_KEYS = {"occurrences", "promoted", "needs_review", "reopen_gate",
                 # not an observable event, so the drain rate cannot be measured: only 37 of
                 # 149 promoted files carried a date anywhere. Enforced by
                 # tools/promotion_schema.py, which BLOCKS a promoted rule missing them.
-                "promoted_date", "exit_path", "detector_signature", "detector_control"}
+                "promoted_date", "exit_path", "detector_signature", "detector_control",
+                # The exit1 record (I8, 2026-11-06): the gate that blocks and the pytest node
+                # that shows it blocking. promotion_schema.py BLOCKS a completed exit1
+                # without both.
+                "exit1_gate", "exit1_evidence"}
 
 # Keys whose value is free prose and must therefore be emitted as an explicitly
 # quoted YAML scalar, then re-parsed with a STRICT reader before the write is
@@ -70,7 +74,8 @@ ALLOWED_KEYS = {"occurrences", "promoted", "needs_review", "reopen_gate",
 # a colon, a `#`, or a quote -- all of which the in-house regex parser reads happily
 # and yaml.safe_load rejects. Verifying with the convenient reader instead of the
 # strictest one is the 2026-08-20 failure; this is the guard against repeating it.
-QUOTED_KEYS = {"description", "detector_signature", "detector_control"}
+QUOTED_KEYS = {"description", "detector_signature", "detector_control", "exit1_gate",
+               "exit1_evidence"}
 
 # Keys that may be CREATED when absent, rather than only overwritten. Deliberately
 # narrow: `occurrences` missing from a file is a schema defect worth surfacing as
@@ -81,7 +86,9 @@ INSERTABLE_KEYS = {"terminal", "terminal_reason",
                    # These three are new as of 2026-08-25, so EVERY pre-existing file
                    # legitimately lacks them -- the same situation `terminal` was in.
                    "promoted_date", "exit_path", "detector_signature",
-                   "detector_control"}
+                   "detector_control",
+                   # New 2026-11-06 (I8), so every existing exit1 record lacks them too.
+                   "exit1_gate", "exit1_evidence"}
 
 # Where a newly created key is placed, in preference order per key. This yields
 # promoted -> terminal -> terminal_reason, matching the 17 files that already carry
@@ -93,6 +100,8 @@ INSERT_AFTER = {
     "exit_path": ("promoted_date", "promoted", "occurrences", "type"),
     "detector_signature": ("exit_path", "promoted_date", "promoted", "occurrences", "type"),
     "detector_control": ("detector_signature", "exit_path", "promoted_date", "promoted", "occurrences", "type"),
+    "exit1_gate": ("exit_path", "promoted_date", "promoted", "occurrences", "type"),
+    "exit1_evidence": ("exit1_gate", "exit_path", "promoted_date", "promoted", "occurrences", "type"),
 }
 FRONTMATTER_RE = re.compile(r"\A---\n(.*?\n)---\n", re.DOTALL)
 

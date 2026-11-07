@@ -627,3 +627,12 @@ def test_a_genuinely_non_matching_signature_is_STILL_refused(tmp_path):
     proven, refused = dr.validate(dr.load_detectors(tmp_path))
     assert proven == []
     assert len(refused) == 1 and "does not fire on its own control" in refused[0]["why"]
+
+
+@pytest.mark.parametrize("key", ["exit1_gate", "exit1_evidence"])
+def test_an_exit1_record_line_never_counts_as_a_fire(tmp_path, key):
+    """The exit1 record keys (I8, 2026-11-06) are frontmatter like detector_control: a
+    rule file read into a session must not fire on its own record line."""
+    rule(tmp_path, "feedback_a.md", sig=r"\bNEEDLE\b", control="NEEDLE here")
+    t = _transcript(tmp_path, "s1.jsonl", f"  {key}: tests/scripts/x.py NEEDLE")
+    assert dr.scan(tmp_path, [t])["fires"] == []

@@ -607,9 +607,14 @@ def test_tokens_the_promoted_readers_branch_on_are_in_the_enforced_vocabulary():
     src = (REPO_ROOT / "tools" / "scan_promotion_candidates.py").read_text(encoding="utf-8")
     tree = ast.parse(src)
     funcs = {n.name: n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
+    # is_promoted's no/not/false test moved into promotion_schema.reads_as_unpromoted
+    # (2026-11-06, one definition shared with I8), so that reader is read too.
+    ps_tree = ast.parse((REPO_ROOT / "tools" / "promotion_schema.py").read_text(encoding="utf-8"))
+    funcs.update({n.name: n for n in ast.walk(ps_tree) if isinstance(n, ast.FunctionDef)
+                  and n.name == "reads_as_unpromoted"})
     tokens: set[str] = set()
-    for fname in ("is_promoted", "is_partially_promoted"):
-        assert fname in funcs, f"scan_promotion_candidates.{fname} is gone; re-anchor this test"
+    for fname in ("is_promoted", "is_partially_promoted", "reads_as_unpromoted"):
+        assert fname in funcs, f"{fname} is gone; re-anchor this test"
         for n in ast.walk(funcs[fname]):
             if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) \
                     and n.func.attr == "startswith" and n.args \

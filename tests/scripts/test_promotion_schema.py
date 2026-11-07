@@ -559,3 +559,956 @@ def test_scan_without_a_memory_md_does_not_invent_I7(tmp_path):
         encoding="utf-8")
     rep = ps.scan(mem, {})
     assert not any("I7" in v for v in rep["violations"]), rep["violations"]
+
+
+# ---------------------------------------------------------------- I8 a completed exit1 is proven
+#
+# memory-hygiene v3 step 1: an exit1 record must name a concrete gate and carry evidence
+# that the gate blocks its own origin. Every name below is a placeholder.
+
+GATE = "tools/check_example.py"
+TESTS = "tests/scripts/test_check_example.py"
+EVIDENCE = f"{TESTS}::test_blocks_its_origin"
+
+EVIDENCE_FILE = """\
+import pytest
+import check_example
+import check_example as ce
+
+
+def run(argv):
+    return 2
+
+
+def test_blocks_its_origin():
+    assert check_example.check('origin') == 2
+
+
+def test_via_alias():
+    assert ce.check('origin') == 2
+
+
+def test_runs_the_hook_as_a_subprocess():
+    assert run(['tools/check_example.py', 'origin']) == 2
+
+
+def test_asserts_nothing():
+    check_example.check('origin')
+
+
+def test_never_reaches_the_gate():
+    assert 1 + 1 == 2
+
+
+def test_raises_counts_as_an_assertion():
+    with pytest.raises(TypeError):
+        check_example.check()
+
+
+@pytest.mark.parametrize("x", ["origin"])
+def test_param(x):
+    assert check_example.check(x) == 2
+
+
+class TestCases:
+    def test_in_a_class(self):
+        assert check_example.check('origin') == 2
+
+
+async def test_async_case():
+    assert check_example.check('origin') == 2
+"""
+
+
+def _make_repo(tmp_path):
+    """A throwaway repo holding gates of each kind and one evidence file."""
+    root = tmp_path / "repo"
+    (root / "tools" / "hooks").mkdir(parents=True)
+    (root / "tests" / "scripts").mkdir(parents=True)
+    (root / GATE).write_text("def check(x):\n    return 2\n", encoding="utf-8")
+    (root / TESTS).write_text(EVIDENCE_FILE, encoding="utf-8")
+    # I8 runs pytest on the cited node, so the throwaway repo resolves `import check_example`
+    # the way this repo does: tools/ on the path, set by a conftest.
+    (root / "tests/scripts/conftest.py").write_text(
+        "import sys\nfrom pathlib import Path\n"
+        "sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools'))\n",
+        encoding="utf-8")
+    hook = root / "tools/hooks/pre-example"
+    hook.write_text("#!/bin/sh\nexit 2\n", encoding="utf-8")
+    hook.chmod(0o755)
+    (root / "tools/hooks/not-executable").write_text("x\n", encoding="utf-8")
+    (root / "tools/example-allow.json").write_text("{}\n", encoding="utf-8")
+    (root / "framework").mkdir()
+    (root / "framework/example.md").write_text("prose\n", encoding="utf-8")
+    return root
+
+
+@pytest.fixture()
+def live_repo(tmp_path):
+    """The throwaway repo with I8 asking real pytest whether the cited node collects and
+    passes. Every test about collection, parameter ids, skips, or the run result uses this."""
+    return _make_repo(tmp_path)
+
+
+@pytest.fixture()
+def repo(tmp_path, monkeypatch):
+    """The throwaway repo with pytest's verdict stubbed to "collects and passes", for tests
+    about the gate's shape, the static reach check, and the assertion check. Each of those
+    counterexamples is then rejected for the reason it names and nothing else; many are not
+    runnable code (a string naming the gate path), and need not be. A stubbed verdict never
+    ACCEPTS a node on its own: every clean expectation here is also a reach claim."""
+    monkeypatch.setattr(ps, "_pytest_verdict", lambda root, node: None)
+    return _make_repo(tmp_path)
+
+
+def exit1(**extra):
+    fm = {"promoted": "yes", "exit_path": "exit1", "promoted_date": "2026-11-06",
+          "reopen_gate": "3rd fire"}
+    fm.update(extra)
+    return fm
+
+
+def i8(fm, repo_root):
+    return [v for v in ps.check_file("feedback_x.md", fm, grandfathered=False,
+                                     repo_root=repo_root) if ": I8 " in v]
+
+
+def test_I8_a_completed_exit1_without_gate_or_evidence_is_two_violations(repo):
+    v = i8(exit1(), repo)
+    assert len(v) == 2
+    assert any("exit1_gate is missing" in x for x in v)
+    assert any("exit1_evidence is missing" in x for x in v)
+
+
+def test_I8_a_proven_exit1_is_clean(live_repo):
+    assert ps.check_file("feedback_x.md", exit1(exit1_gate=GATE, exit1_evidence=EVIDENCE),
+                         grandfathered=False, repo_root=live_repo) == []
+
+
+def test_I8_a_gate_with_a_suffix_and_prose_resolves_to_its_file(repo):
+    gate = f"`{GATE}::rule_B11` blocks the origin shape"
+    assert i8(exit1(exit1_gate=gate, exit1_evidence=f"`{EVIDENCE}`"), repo) == []
+
+
+@pytest.mark.parametrize("gate", ["framework/example.md", "notes.TXT",
+                                  "tools/example-allow.json"])
+def test_I8_a_document_or_data_file_is_not_a_gate(repo, gate):
+    # Exactly one violation: a gate that already failed is not ALSO reported as
+    # unreached by the evidence, which would double-count one defect.
+    v = i8(exit1(exit1_gate=gate, exit1_evidence=EVIDENCE), repo)
+    assert len(v) == 1 and "is not executable code" in v[0]
+
+
+def test_I8_an_executable_extensionless_hook_is_a_gate(repo):
+    ev = f"{TESTS}::test_runs_the_hook_as_a_subprocess"
+    (repo / TESTS).write_text(EVIDENCE_FILE.replace("tools/check_example.py",
+                                                    "tools/hooks/pre-example"), "utf-8")
+    assert i8(exit1(exit1_gate="tools/hooks/pre-example", exit1_evidence=ev), repo) == []
+
+
+def test_I8_an_extensionless_file_that_is_not_executable_is_not_a_gate(repo):
+    v = i8(exit1(exit1_gate="tools/hooks/not-executable", exit1_evidence=EVIDENCE), repo)
+    assert len(v) == 1 and "is not executable, so nothing runs it" in v[0]
+
+
+def test_I8_a_gate_that_does_not_exist_is_a_violation(repo):
+    v = i8(exit1(exit1_gate="tools/check_missing.py", exit1_evidence=EVIDENCE), repo)
+    assert len(v) == 1 and "does not resolve to a file" in v[0]
+
+
+@pytest.mark.parametrize("gate", ["/etc/hosts.py", "../repo/tools/check_example.py",
+                                  "~/tools/check_example.py"])
+def test_I8_a_gate_outside_the_repo_is_a_violation(repo, gate):
+    v = i8(exit1(exit1_gate=gate, exit1_evidence=EVIDENCE), repo)
+    assert len(v) == 1 and "not a repo-relative path" in v[0]
+
+
+@pytest.mark.parametrize("evidence", [
+    "ran a replay, all blocked",
+    TESTS,
+    "tools/check_example.py::test_blocks_its_origin",
+    f"{TESTS}::helper",
+    "tests/../x/test_check_example.py::test_blocks_its_origin",
+])
+def test_I8_evidence_that_is_not_a_test_node_is_a_violation(repo, evidence):
+    v = i8(exit1(exit1_gate=GATE, exit1_evidence=evidence), repo)
+    assert len(v) == 1 and "is not a test node id" in v[0]
+
+
+@pytest.mark.parametrize("evidence", [
+    f"{TESTS}::test_param[origin]",
+    f"{TESTS}::TestCases::test_in_a_class",
+    f"{TESTS}::test_param",
+    f"{TESTS}::test_via_alias",
+    f"{TESTS}::test_runs_the_hook_as_a_subprocess",
+    f"{TESTS}::test_raises_counts_as_an_assertion",
+])
+def test_I8_every_collectable_node_shape_that_reaches_the_gate_passes(live_repo, evidence):
+    assert i8(exit1(exit1_gate=GATE, exit1_evidence=evidence), live_repo) == []
+
+
+def test_I8_an_async_test_without_a_plugin_is_not_evidence(live_repo):
+    """pytest's answer, not a guess: with no async plugin the coroutine never runs its
+    assertion, so pytest does not report it passed."""
+    v = i8(exit1(exit1_gate=GATE, exit1_evidence=f"{TESTS}::test_async_case"), live_repo)
+    assert len(v) == 1 and "pytest does not pass it" in v[0]
+
+
+def test_I8_a_class_qualified_node_must_name_the_real_class(repo):
+    """codex F2: the class segment was matched and then ignored, so a renamed class
+    left a stale node reading as proven."""
+    v = i8(exit1(exit1_gate=GATE,
+                 exit1_evidence=f"{TESTS}::Nonexistent::test_in_a_class"), repo)
+    assert len(v) == 1 and "is not defined in" in v[0]
+
+
+def test_I8_a_method_is_not_found_at_module_level(repo):
+    v = i8(exit1(exit1_gate=GATE, exit1_evidence=f"{TESTS}::test_in_a_class"), repo)
+    assert len(v) == 1 and "is not defined in" in v[0]
+
+
+def test_I8_a_parameter_id_on_an_unparametrized_test_is_a_violation(live_repo):
+    v = i8(exit1(exit1_gate=GATE, exit1_evidence=EVIDENCE + "[case-1]"), live_repo)
+    assert len(v) == 1 and "pytest does not collect it" in v[0]
+
+
+def test_I8_evidence_that_asserts_nothing_is_a_violation(repo):
+    v = i8(exit1(exit1_gate=GATE, exit1_evidence=f"{TESTS}::test_asserts_nothing"), repo)
+    assert len(v) == 1 and "asserts nothing" in v[0]
+
+
+def test_I8_evidence_whose_own_body_never_reaches_the_gate_is_a_violation(repo):
+    """codex F1 / grok F1: the module imports the gate and a sibling test uses it, and
+    neither is evidence about THIS node."""
+    v = i8(exit1(exit1_gate=GATE, exit1_evidence=f"{TESTS}::test_never_reaches_the_gate"),
+           repo)
+    assert len(v) == 1 and "never reaches the gate" in v[0]
+
+
+def test_I8_a_test_of_another_module_is_not_evidence_for_this_gate(repo):
+    (repo / "tools/check_other.py").write_text("x = 1\n", encoding="utf-8")
+    v = i8(exit1(exit1_gate="tools/check_other.py", exit1_evidence=EVIDENCE), repo)
+    assert len(v) == 1 and "never reaches the gate 'tools/check_other.py'" in v[0]
+
+
+def test_I8_a_gate_name_that_only_prefixes_the_imported_module_does_not_count(repo):
+    # "check_ex" is a prefix of "check_example", which is what the test imports.
+    (repo / "tools/check_ex.py").write_text("x = 1\n", encoding="utf-8")
+    v = i8(exit1(exit1_gate="tools/check_ex.py", exit1_evidence=EVIDENCE), repo)
+    assert len(v) == 1 and "never reaches the gate" in v[0]
+
+
+def test_I8_from_import_names_count_as_reaching_the_gate(repo):
+    (repo / TESTS).write_text(
+        "from tools.check_example import check as chk\n\n"
+        "def test_blocks_its_origin():\n    assert chk('origin') == 2\n", "utf-8")
+    assert i8(exit1(exit1_gate=GATE, exit1_evidence=EVIDENCE), repo) == []
+
+
+def test_I8_a_dotted_import_binds_its_top_package(repo):
+    (repo / TESTS).write_text(
+        "import tools.check_example\n\n"
+        "def test_blocks_its_origin():\n"
+        "    assert tools.check_example.check('origin') == 2\n", "utf-8")
+    assert i8(exit1(exit1_gate=GATE, exit1_evidence=EVIDENCE), repo) == []
+
+
+def test_I8_an_unrelated_import_alias_does_not_reach_the_gate(repo):
+    (repo / TESTS).write_text(
+        "import other_module as check_example_like\nimport json as ce\n\n"
+        "def test_blocks_its_origin():\n    assert ce.dumps(1)\n", "utf-8")
+    v = i8(exit1(exit1_gate=GATE, exit1_evidence=EVIDENCE), repo)
+    assert len(v) == 1 and "never reaches the gate" in v[0]
+
+
+def test_I8_an_import_of_a_module_whose_stem_differs_is_not_bound(repo):
+    (repo / TESTS).write_text(
+        "from pkg.other import check_example\n\n"
+        "def test_blocks_its_origin():\n    assert check_example('origin') == 2\n", "utf-8")
+    v = i8(exit1(exit1_gate=GATE, exit1_evidence=EVIDENCE), repo)
+    assert len(v) == 1 and "never reaches the gate" in v[0]
+
+
+def test_I8_a_string_naming_another_file_does_not_reach_the_gate(repo):
+    (repo / TESTS).write_text(
+        "def test_blocks_its_origin():\n    assert run(['tools/other.py']) == 2\n", "utf-8")
+    v = i8(exit1(exit1_gate=GATE, exit1_evidence=EVIDENCE), repo)
+    assert len(v) == 1 and "never reaches the gate" in v[0]
+
+
+def test_I8_evidence_file_that_does_not_parse_is_a_violation(repo):
+    (repo / TESTS).write_text("def test_blocks_its_origin(:\n", "utf-8")
+    v = i8(exit1(exit1_gate=GATE, exit1_evidence=EVIDENCE), repo)
+    assert len(v) == 1 and "does not parse" in v[0]
+
+
+def test_I8_an_evidence_file_that_does_not_exist_is_a_violation(repo):
+    v = i8(exit1(exit1_gate=GATE,
+                 exit1_evidence="tests/scripts/test_gone.py::test_blocks_its_origin"), repo)
+    assert len(v) == 1 and "does not exist" in v[0]
+
+
+def test_I8_an_evidence_test_that_is_not_defined_is_a_violation(repo):
+    v = i8(exit1(exit1_gate=GATE, exit1_evidence=f"{TESTS}::test_never_written"), repo)
+    assert len(v) == 1 and "is not defined in" in v[0]
+
+
+def test_I8_partial_is_held_too(repo):
+    assert len(i8(exit1(promoted="partial -- one rule of a family"), repo)) == 2
+
+
+def test_I8_grandfathering_CANNOT_waive_it(repo):
+    v = ps.check_file("feedback_x.md", exit1(), grandfathered=True, repo_root=repo)
+    assert sum(": I8 " in x for x in v) == 2
+
+
+def test_I8_a_proposed_exit1_is_not_a_completed_one(repo):
+    assert i8(exit1(promoted="no"), repo) == []
+
+
+@pytest.mark.parametrize("ep", ["exit2", "terminal"])
+def test_I8_does_not_fire_off_exit1(repo, ep):
+    assert i8(exit1(exit_path=ep), repo) == []
+
+
+def test_I8_without_a_repo_is_unverified_never_proven():
+    """codex F3: with no repo the node cannot be resolved, and unknowable is not a pass."""
+    assert len(i8(exit1(), None)) == 2
+    v = i8(exit1(exit1_gate=GATE, exit1_evidence=EVIDENCE), None)
+    assert len(v) == 1 and "unverified, not proven" in v[0]
+    assert len(i8(exit1(exit1_gate=GATE, exit1_evidence="a replay"), None)) == 1
+    assert len(i8(exit1(exit1_gate="framework/x.md", exit1_evidence="a replay"), None)) == 2
+
+
+def test_I8_check_file_defaults_to_the_real_repo():
+    v = ps.check_file("feedback_x.md", exit1(exit1_gate=GATE, exit1_evidence=EVIDENCE),
+                      grandfathered=False)
+    assert any("does not resolve to a file" in x for x in v)
+
+
+def test_I8_a_real_gate_in_this_repo_resolves():
+    """The same check against the real tree. If the module or this test moves, the
+    exemplar a reader copies from breaks here first."""
+    fm = exit1(exit1_gate="tools/promotion_schema.py",
+               exit1_evidence="tests/scripts/test_promotion_schema.py::"
+                              "test_I8_the_exemplar_node_reaches_its_gate")
+    assert i8(fm, REPO_ROOT) == []
+
+
+def test_I8_the_exemplar_node_reaches_its_gate():
+    """Evidence for the exemplar above: this body names the module it tests."""
+    import promotion_schema
+    assert promotion_schema.check_file(
+        "feedback_x.md", exit1(), grandfathered=False, repo_root=None)
+
+
+def test_scan_reports_exit1_reach_and_the_summary_names_its_denominator(tmp_path, repo, capsys):
+    mem = tmp_path / "mem"
+    mem.mkdir()
+    write_rule(mem, "feedback_proven.md", **exit1(exit1_gate=GATE, exit1_evidence=EVIDENCE))
+    write_rule(mem, "feedback_unproven.md", **exit1())
+    write_rule(mem, "feedback_proposed.md", **exit1(promoted="no"))
+    write_rule(mem, "feedback_other.md", **exit1(exit_path="terminal"))
+    report = ps.scan(mem, {}, repo_root=repo)
+    assert (report["exit1_completed"], report["exit1_proven"]) == (2, 1)
+    assert sum(": I8 " in v for v in report["violations"]) == 2
+    assert all(v.startswith("feedback_unproven.md") for v in report["violations"])
+
+    gf = tmp_path / "gf.json"
+    gf.write_text("{}", encoding="utf-8")
+    # main() resolves against the real repo, where the placeholder gate does not exist,
+    # so the proven record fails there: the summary line must count it as unproven.
+    assert ps.main(["--memory-dir", str(mem), "--grandfather", str(gf)]) == 2
+    assert "exit1 proven 0 of 2 completed" in capsys.readouterr().out
+
+
+def test_I8_a_shell_gate_is_not_reached_by_importing_a_python_module_of_its_stem(repo):
+    """Only a .py gate can be imported. A test that imports a Python module sharing the
+    stem of a shell gate tests that module, not the script."""
+    (repo / "tools/check_example.sh").write_text("#!/bin/sh\nexit 2\n", encoding="utf-8")
+    v = i8(exit1(exit1_gate="tools/check_example.sh", exit1_evidence=EVIDENCE), repo)
+    assert len(v) == 1 and "never reaches the gate" in v[0]
+
+
+
+# ---- round 2 of /verify (codex F1-F5, grok F1-F3): the static reach and collectability
+# approximations were looser than the node they claimed to resolve.
+
+def _body(repo, body, header=""):
+    (repo / TESTS).write_text(header + "\n\ndef test_blocks_its_origin():\n" + body, "utf-8")
+    return i8(exit1(exit1_gate=GATE, exit1_evidence=EVIDENCE), repo)
+
+
+@pytest.mark.parametrize("path", [
+    "tests/scripts/test_check_example.py",   # the test's own file shares the basename
+    "tools/not_check_example.py",
+    "/tmp/check_example.py",
+])
+def test_I8_a_string_sharing_only_the_basename_does_not_reach_the_gate(repo, path):
+    v = _body(repo, f"    assert run([{path!r}]) == 2\n")
+    assert len(v) == 1 and "never reaches the gate" in v[0]
+
+
+@pytest.mark.parametrize("path", ["tools/check_example.py",
+                                  "/abs/repo/tools/check_example.py",
+                                  "python3 tools/check_example.py --x"])
+def test_I8_a_string_naming_the_gate_path_reaches_it(repo, path):
+    assert _body(repo, f"    assert run({path!r}) == 2\n") == []
+
+
+def test_I8_a_same_stem_module_from_another_package_is_not_the_gate(repo):
+    v = _body(repo, "    assert ce.check('origin') == 2\n",
+              "import vendor.check_example as ce")
+    assert len(v) == 1 and "never reaches the gate" in v[0]
+
+
+def test_I8_a_dotted_import_used_only_through_its_package_does_not_reach_the_gate(repo):
+    v = _body(repo, "    assert tools.unrelated.helper() == 1\n", "import tools.check_example")
+    assert len(v) == 1 and "never reaches the gate" in v[0]
+
+
+@pytest.mark.parametrize("header", ["from check_example import check",
+                                    "from tools.check_example import check"])
+def test_I8_a_from_import_of_the_gate_reaches_it(repo, header):
+    assert _body(repo, "    assert check('origin') == 2\n", header) == []
+
+
+def test_I8_a_locally_rebound_name_is_not_the_imported_gate(repo):
+    v = _body(repo, "    check_example = object()\n    assert check_example\n",
+              "import check_example")
+    assert len(v) == 1 and "never reaches the gate" in v[0]
+
+
+def test_I8_an_argument_that_shadows_the_import_is_not_the_gate(repo):
+    (repo / TESTS).write_text(
+        "import check_example\n\ndef test_blocks_its_origin(check_example):\n"
+        "    assert check_example\n", "utf-8")
+    v = i8(exit1(exit1_gate=GATE, exit1_evidence=EVIDENCE), repo)
+    assert len(v) == 1 and "never reaches the gate" in v[0]
+
+
+def test_I8_a_class_pytest_does_not_collect_is_not_a_node(live_repo):
+    (live_repo / TESTS).write_text(
+        "import check_example\n\nclass Cases:\n    def test_blocks_its_origin(self):\n"
+        "        assert check_example.check('origin') == 2\n", "utf-8")
+    v = i8(exit1(exit1_gate=GATE,
+                 exit1_evidence=f"{TESTS}::Cases::test_blocks_its_origin"), live_repo)
+    assert len(v) == 1 and "pytest does not collect it" in v[0]
+
+
+PARAM_FILE = """\
+import pytest
+import check_example
+
+CASES = [1, 2]
+IDS = ["a"]
+
+@pytest.mark.parametrize("x", ["origin", 3, None])
+def test_values(x):
+    assert check_example.check(x)
+
+@pytest.mark.parametrize("a,b", [("origin", 1), ("other", 2)])
+def test_tuples(a, b):
+    assert check_example.check(a)
+
+@pytest.mark.parametrize("x", [1, 2], ids=["first", "second"])
+def test_ids(x):
+    assert check_example.check(x)
+
+@pytest.mark.parametrize("x", [pytest.param(1, id="named"), pytest.param(2)])
+def test_param_objects(x):
+    assert check_example.check(x)
+
+@pytest.mark.parametrize("x", CASES)
+def test_non_literal(x):
+    assert check_example.check(x)
+
+@pytest.mark.parametrize("x", [1])
+@pytest.mark.parametrize("y", [2])
+def test_stacked(x, y):
+    assert check_example.check(x)
+
+@pytest.mark.flaky(reason="do not parametrize this")
+def test_skipped(x):
+    assert check_example.check(x)
+
+@pytest.mark.parametrize("x", [{"k": 1}])
+def test_dict_value(x):
+    assert check_example.check(x)
+
+@pytest.mark.parametrize("x", [1], ids=IDS)
+def test_non_literal_ids(x):
+    assert check_example.check(x)
+"""
+
+
+@pytest.mark.parametrize("node", ["test_values[origin]", "test_values[3]",
+                                  "test_values[None]", "test_tuples[origin-1]",
+                                  "test_ids[second]", "test_param_objects[named]",
+                                  "test_param_objects[2]", "test_non_literal",
+                                  "test_stacked",
+                                  # Read from pytest itself. The static check had to fail
+                                  # closed on these; pytest generates them.
+                                  "test_non_literal[1]", "test_stacked[2-1]",
+                                  "test_dict_value[x0]", "test_non_literal_ids[a]"])
+def test_I8_a_parameter_id_pytest_generates_is_accepted(live_repo, node):
+    (live_repo / TESTS).write_text(PARAM_FILE, "utf-8")
+    assert i8(exit1(exit1_gate=GATE, exit1_evidence=f"{TESTS}::{node}"), live_repo) == []
+
+
+@pytest.mark.parametrize("node", ["test_values[windows]", "test_tuples[origin]",
+                                  "test_ids[1]", "test_param_objects[1]",
+                                  "test_non_literal[x]", "test_stacked[1-2]",
+                                  "test_skipped[x]"])
+def test_I8_a_parameter_id_that_cannot_be_shown_to_exist_fails_closed(live_repo, node):
+    (live_repo / TESTS).write_text(PARAM_FILE, "utf-8")
+    v = i8(exit1(exit1_gate=GATE, exit1_evidence=f"{TESTS}::{node}"), live_repo)
+    assert len(v) == 1 and "pytest does not collect it" in v[0]
+
+
+def test_I8_a_non_ascii_string_id_is_not_guessed(live_repo):
+    (live_repo / TESTS).write_text(
+        "import pytest\nimport check_example\n\n"
+        "@pytest.mark.parametrize('x', ['caf\\u00e9'])\n"
+        "def test_blocks_its_origin(x):\n    assert check_example.check(x)\n", "utf-8")
+    v = i8(exit1(exit1_gate=GATE, exit1_evidence=EVIDENCE + "[café]"), live_repo)
+    assert len(v) == 1 and "pytest does not collect it" in v[0]
+
+
+def test_I8_a_test_class_that_does_not_exist_is_not_a_node(repo):
+    v = i8(exit1(exit1_gate=GATE, exit1_evidence=f"{TESTS}::TestMissing::test_in_a_class"),
+           repo)
+    assert len(v) == 1 and "is not defined in" in v[0]
+
+
+def test_I8_a_relative_import_of_an_unrelated_name_does_not_bind_the_gate(repo):
+    v = _body(repo, "    assert check('origin') == 2\n", "from . import check")
+    assert len(v) == 1 and "never reaches the gate" in v[0]
+
+
+def test_I8_an_attribute_or_constant_that_is_not_the_gate_does_not_reach_it(repo):
+    v = _body(repo, "    assert other.attr == 2 and 3 == 3\n", "import tools.check_example")
+    assert len(v) == 1 and "never reaches the gate" in v[0]
+
+
+
+# ---- round 3 of /verify (codex F1-F2, grok F1-F2)
+
+def test_I8_an_import_inside_a_sibling_test_binds_nothing_in_the_cited_node(repo):
+    (repo / TESTS).write_text(
+        "def test_sibling():\n    import check_example\n    assert check_example\n\n"
+        "def test_blocks_its_origin():\n    assert check_example.check('origin') == 2\n",
+        "utf-8")
+    v = i8(exit1(exit1_gate=GATE, exit1_evidence=EVIDENCE), repo)
+    assert len(v) == 1 and "never reaches the gate" in v[0]
+
+
+def test_I8_an_import_inside_the_cited_node_binds(repo):
+    assert _body(repo, "    import check_example\n    assert check_example.check(1)\n") == []
+
+
+def test_I8_a_module_level_import_inside_a_try_block_binds(repo):
+    header = "try:\n    import check_example\nexcept ImportError:\n    pass"
+    assert _body(repo, "    assert check_example.check(1)\n", header) == []
+
+
+def test_I8_an_import_inside_a_class_binds_nothing_at_module_level(repo):
+    header = "class Helper:\n    import check_example"
+    v = _body(repo, "    assert check_example.check(1)\n", header)
+    assert len(v) == 1 and "never reaches the gate" in v[0]
+
+
+@pytest.mark.parametrize("header", [
+    'HOOK = REPO / "tools" / "check_example.py"',
+    'HOOK = "tools/check_example.py"',
+    'HOOK = Path(__file__).parents[2] / "tools/check_example.py"',
+])
+def test_I8_a_module_constant_naming_the_gate_path_reaches_it(repo, header):
+    assert _body(repo, "    assert run([HOOK, 'origin']) == 2\n", header) == []
+
+
+def test_I8_a_module_constant_naming_another_path_does_not_reach_the_gate(repo):
+    v = _body(repo, "    assert run([HOOK, 'origin']) == 2\n",
+              'HOOK = REPO / "tools" / "other.py"')
+    assert len(v) == 1 and "never reaches the gate" in v[0]
+
+
+def test_I8_a_constant_assigned_inside_the_node_is_not_a_module_binding(repo):
+    v = _body(repo, '    HOOK = "unrelated"\n    assert run(HOOK) == 2\n',
+              'HOOK = "tools/check_example.py"')
+    assert len(v) == 1 and "never reaches the gate" in v[0]
+
+
+@pytest.mark.parametrize("decorator,node", [
+    ('@pytest.mark.parametrize("x", [1, 1])', "test_blocks_its_origin[1]"),
+    ('@pytest.mark.parametrize("x", [1, 2], ids=["a", "a"])', "test_blocks_its_origin[a]"),
+])
+def test_I8_a_duplicated_parameter_id_fails_closed(live_repo, decorator, node):
+    (live_repo / TESTS).write_text(
+        f"import pytest\nimport check_example\n\n{decorator}\n"
+        "def test_blocks_its_origin(x):\n    assert check_example.check(x)\n", "utf-8")
+    v = i8(exit1(exit1_gate=GATE, exit1_evidence=f"{TESTS}::{node}"), live_repo)
+    assert len(v) == 1 and "pytest does not collect it" in v[0]
+
+
+@pytest.mark.parametrize("promoted", ["hook", "skill -- landed", "n/a -- reference",
+                                      "schema"])
+def test_I8_holds_every_value_the_scanner_reads_as_completed(repo, promoted):
+    """grok r3 F1: scan_promotion_candidates reads a bare tier as a completed promotion,
+    so a bare tier on an exit1 was a way around I8."""
+    assert len(i8(exit1(promoted=promoted), repo)) == 2
+
+
+@pytest.mark.parametrize("promoted", ["no", "not yet", "false", "", "  "])
+def test_I8_skips_values_the_scanner_reads_as_unpromoted(repo, promoted):
+    assert i8(exit1(promoted=promoted), repo) == []
+
+
+def test_I8_population_covers_everything_the_weekly_scanner_counts_as_done():
+    """Every value the scanner drops from the backlog must be held by I8, or a record can
+    leave the backlog unproven. `partial` stays in the backlog AND is held by I8."""
+    sys.path.insert(0, str(REPO_ROOT / "tools"))
+    import scan_promotion_candidates as spc
+    for v in ["yes", "partial", "partial -- half", "hook", "skill x", "n/a", "no",
+              "not", "false x", "no -- CORRECTED"]:
+        if spc.is_promoted({"promoted": v}):
+            assert ps.claims_a_landed_gate(v), v
+    assert ps.claims_a_landed_gate("partial") and not spc.is_promoted({"promoted": "partial"})
+    assert not ps.claims_a_landed_gate("no -- CORRECTED")
+
+
+def test_scan_counts_a_bare_tier_exit1_as_completed(tmp_path, repo):
+    mem = tmp_path / "mem"
+    mem.mkdir()
+    write_rule(mem, "feedback_tier.md", **exit1(promoted="hook"))
+    report = ps.scan(mem, {}, repo_root=repo)
+    assert (report["exit1_completed"], report["exit1_proven"]) == (1, 0)
+
+
+def test_I8_a_function_defined_inside_a_module_level_if_binds_nothing(repo):
+    header = "if True:\n    def helper():\n        import check_example"
+    v = _body(repo, "    assert check_example.check(1)\n", header)
+    assert len(v) == 1 and "never reaches the gate" in v[0]
+
+
+def test_I8_a_module_constant_inside_a_try_block_binds(repo):
+    header = 'try:\n    HOOK = "tools/check_example.py"\nexcept Exception:\n    pass'
+    assert _body(repo, "    assert run([HOOK]) == 2\n", header) == []
+
+
+# ---- round 4 of /verify (codex F1-F2)
+
+@pytest.mark.parametrize("rebind", [
+    "check_example = object()",
+    "def check_example():\n    return 1",
+    "class check_example:\n    pass",
+    "from other import check_example",
+    "import other as check_example",
+    "for check_example in []:\n    pass",
+    "with open('x') as check_example:\n    pass",
+    "try:\n    pass\nexcept Exception as check_example:\n    pass",
+    "try:\n    import check_example\nexcept ImportError:\n    check_example = None",
+    "if True:\n    check_example = 1",
+    "if True:\n    def check_example():\n        return 1",
+    "if (check_example := 1):\n    pass",
+])
+def test_I8_a_module_level_rebinding_of_the_import_does_not_reach_the_gate(repo, rebind):
+    v = _body(repo, "    assert check_example.check(1)\n", "import check_example\n" + rebind)
+    assert len(v) == 1 and "never reaches the gate" in v[0]
+
+
+def test_I8_a_module_level_rebinding_of_a_dotted_package_drops_its_chain(repo):
+    v = _body(repo, "    assert tools.check_example.check(1)\n",
+              "import tools.check_example\ntools = object()")
+    assert len(v) == 1 and "never reaches the gate" in v[0]
+
+
+def test_I8_unrelated_module_bindings_leave_the_gate_name_alone(repo):
+    header = ("import os, check_example\nfrom json import dumps\nX = 1\n"
+              "for i in []:\n    pass\nwith open('x') as fh:\n    pass\n"
+              "try:\n    pass\nexcept Exception as err:\n    pass\n"
+              "try:\n    pass\nexcept Exception:\n    pass\n"
+              "while False:\n    pass\nif X:\n    Y = 2\n"
+              "def helper():\n    return 1\nclass Other:\n    pass")
+    assert _body(repo, "    assert check_example.check(1)\n", header) == []
+
+
+def test_I8_a_gate_path_constant_is_not_dropped_as_a_rebinding(repo):
+    header = 'import check_example\nHOOK = "tools/check_example.py"'
+    assert _body(repo, "    assert run([HOOK]) == 2\n", header) == []
+
+
+def test_I8_a_test_class_with_init_is_not_collected(live_repo):
+    (live_repo / TESTS).write_text(
+        "import check_example\n\nclass TestCases:\n    def __init__(self):\n        pass\n"
+        "    def test_blocks_its_origin(self):\n        assert check_example.check(1)\n",
+        "utf-8")
+    v = i8(exit1(exit1_gate=GATE,
+                 exit1_evidence=f"{TESTS}::TestCases::test_blocks_its_origin"), live_repo)
+    assert len(v) == 1 and "pytest does not collect it" in v[0]
+
+
+def test_I8_an_unrelated_import_inside_the_node_does_not_reach_the_gate(repo):
+    v = _body(repo, "    import json as ce\n    assert ce.dumps(1)\n")
+    assert len(v) == 1 and "never reaches the gate" in v[0]
+
+
+def test_I8_a_method_or_nested_def_named_like_the_import_is_not_a_module_rebinding(repo):
+    header = ("import check_example\nclass Other:\n    def check_example(self):\n"
+              "        return 1\ndef helper():\n    def check_example():\n        return 1")
+    assert _body(repo, "    assert check_example.check(1)\n", header) == []
+
+
+# ---- round 5 of /verify (codex F1-F2, grok F1). These fixes postdate the last review.
+
+def test_I8_a_test_class_with_new_is_not_collected(live_repo):
+    (live_repo / TESTS).write_text(
+        "import check_example\n\nclass TestCases:\n    def __new__(cls):\n"
+        "        return object.__new__(cls)\n"
+        "    def test_blocks_its_origin(self):\n        assert check_example.check(1)\n",
+        "utf-8")
+    v = i8(exit1(exit1_gate=GATE,
+                 exit1_evidence=f"{TESTS}::TestCases::test_blocks_its_origin"), live_repo)
+    assert len(v) == 1 and "pytest does not collect it" in v[0]
+
+
+@pytest.mark.parametrize("src,node", [
+    ("@pytest.mark.skip\ndef test_blocks_its_origin():\n    assert check_example.check(1)\n",
+     EVIDENCE),
+    ("@pytest.mark.skip(reason='later')\ndef test_blocks_its_origin():\n"
+     "    assert check_example.check(1)\n", EVIDENCE),
+    ("pytestmark = pytest.mark.skip\n\ndef test_blocks_its_origin():\n"
+     "    assert check_example.check(1)\n", EVIDENCE),
+    ("pytestmark = [pytest.mark.slow, pytest.mark.skip('x')]\n\n"
+     "def test_blocks_its_origin():\n    assert check_example.check(1)\n", EVIDENCE),
+    ("@pytest.mark.skip\nclass TestCases:\n    def test_blocks_its_origin(self):\n"
+     "        assert check_example.check(1)\n", f"{TESTS}::TestCases::test_blocks_its_origin"),
+])
+def test_I8_an_unconditionally_skipped_test_is_not_evidence(live_repo, src, node):
+    (live_repo / TESTS).write_text("import pytest\nimport check_example\n\n" + src, "utf-8")
+    v = i8(exit1(exit1_gate=GATE, exit1_evidence=node), live_repo)
+    assert len(v) == 1 and "pytest does not pass it (1 skipped)" in v[0]
+
+
+@pytest.mark.parametrize("src", [
+    "@pytest.mark.skipif(sys.platform == 'win32', reason='posix')\n"
+    "def test_blocks_its_origin():\n    assert check_example.check(1)\n",
+    "pytestmark = pytest.mark.slow\n\ndef test_blocks_its_origin():\n"
+    "    assert check_example.check(1)\n",
+    "OTHER = pytest.mark.skip\n\ndef test_blocks_its_origin():\n"
+    "    assert check_example.check(1)\n",
+    "@pytest.mark.skip\nclass TestOther:\n    pass\n\n"
+    "def test_blocks_its_origin():\n    assert check_example.check(1)\n",
+])
+def test_I8_a_conditional_skip_or_an_unrelated_mark_is_not_a_skip(live_repo, src):
+    (live_repo / TESTS).write_text("import sys\nimport pytest\nimport check_example\n\n" + src,
+                                   "utf-8")
+    assert i8(exit1(exit1_gate=GATE, exit1_evidence=EVIDENCE), live_repo) == []
+
+
+def test_I8_a_decorator_string_naming_the_gate_is_not_the_body_reaching_it(repo):
+    """grok r5 F1: a parametrize list naming the gate path made any node in the file
+    'reach' it, while the body never touched the gate."""
+    (repo / TESTS).write_text(
+        "import pytest\n\n@pytest.mark.parametrize('p', ['tools/check_example.py'])\n"
+        "def test_blocks_its_origin(p):\n    assert p\n", "utf-8")
+    v = i8(exit1(exit1_gate=GATE, exit1_evidence=EVIDENCE + "[tools/check_example.py]"), repo)
+    assert any("never reaches the gate" in x for x in v)
+
+
+def test_I8_an_assert_only_in_a_decorator_is_not_an_assertion(repo):
+    (repo / TESTS).write_text(
+        "import pytest\nimport check_example\n\n"
+        "@pytest.mark.parametrize('x', [pytest.raises])\n"
+        "def test_blocks_its_origin(x):\n    check_example.check(x)\n", "utf-8")
+    v = i8(exit1(exit1_gate=GATE, exit1_evidence=EVIDENCE), repo)
+    assert len(v) == 1 and "asserts nothing" in v[0]
+
+
+# ---- I8 asks pytest (Nick's decision 2026-11-06), which retires the static-guess class ----
+
+def _live(live_repo, src, node=EVIDENCE):
+    (live_repo / TESTS).write_text("import pytest\nimport check_example\n\n" + src, "utf-8")
+    return i8(exit1(exit1_gate=GATE, exit1_evidence=node), live_repo)
+
+
+def test_I8_a_fixture_named_test_is_not_a_node(live_repo):
+    """11.F1 (r6): a @pytest.fixture named test_* parsed as a test. pytest does not collect
+    a fixture, so the static guess called a non-node proven."""
+    v = _live(live_repo, "@pytest.fixture\ndef test_blocks_its_origin():\n"
+                         "    assert check_example.check(1)\n")
+    assert len(v) == 1 and "pytest does not collect it" in v[0]
+
+
+@pytest.mark.parametrize("cond", ["True", "1 == 1", "'True'"])
+def test_I8_a_literal_true_skipif_is_not_evidence(live_repo, cond):
+    """11.F2 (r6): skipif was read as conditional and allowed, but a literal-true
+    condition skips every run, so the assertion never executes."""
+    v = _live(live_repo, f"@pytest.mark.skipif({cond}, reason='x')\n"
+                         "def test_blocks_its_origin():\n    assert check_example.check(1)\n")
+    assert len(v) == 1 and "pytest does not pass it (1 skipped)" in v[0]
+
+
+@pytest.mark.parametrize("body", [
+    "    check_example.check(pytest.raises)\n",
+    "    r = check_example.raises if hasattr(check_example, 'raises') else None\n"
+    "    check_example.check(r)\n",
+    "    check_example.check(1)\n    pytest.raises\n",
+])
+def test_I8_an_attribute_named_raises_is_not_an_assertion(repo, body):
+    """11.F3 (r6): any attribute named `raises` counted as an assertion. Only an assert
+    statement or a pytest.raises(...) CALL is one."""
+    v = _body(repo, body, header="import pytest\nimport check_example")
+    assert len(v) == 1 and "asserts nothing" in v[0]
+
+
+def test_I8_a_pytest_raises_call_without_with_is_an_assertion(repo):
+    assert _body(repo, "    pytest.raises(TypeError, check_example.check)\n",
+                 header="import pytest\nimport check_example") == []
+
+
+def test_I8_a_raises_call_on_another_object_is_not_an_assertion(repo):
+    v = _body(repo, "    check_example.check(1)\n    other.raises(TypeError)\n",
+              header="import check_example\nimport other")
+    assert len(v) == 1 and "asserts nothing" in v[0]
+
+
+def test_I8_a_failing_test_is_not_evidence(live_repo):
+    v = _live(live_repo, "def test_blocks_its_origin():\n    assert check_example.check(1) == 0\n")
+    assert len(v) == 1 and "pytest does not pass it (1 failed)" in v[0]
+
+
+def test_I8_a_setup_error_is_not_evidence(live_repo):
+    v = _live(live_repo, "@pytest.fixture\ndef broken():\n    raise RuntimeError('x')\n\n"
+                         "def test_blocks_its_origin(broken):\n"
+                         "    assert check_example.check(1)\n")
+    assert len(v) == 1 and "pytest does not pass it (1 error)" in v[0]
+
+
+def test_I8_an_xfailed_test_is_not_evidence(live_repo):
+    v = _live(live_repo, "@pytest.mark.xfail\ndef test_blocks_its_origin():\n"
+                         "    assert check_example.check(1) == 0\n")
+    assert len(v) == 1 and "pytest does not pass it (1 xfailed)" in v[0]
+
+
+def test_I8_an_xpassed_test_is_not_evidence(live_repo):
+    """An xfail that happens to pass reports `xpassed`, not `passed`: the author expected
+    it to fail, so it is not a claim that the gate blocks."""
+    v = _live(live_repo, "@pytest.mark.xfail\ndef test_blocks_its_origin():\n"
+                         "    assert check_example.check(1)\n")
+    assert len(v) == 1 and "pytest does not pass it" in v[0]
+
+
+def test_I8_an_idless_parametrized_node_with_one_skipped_case_is_not_evidence(live_repo):
+    v = _live(live_repo, "@pytest.mark.parametrize('x', [1, pytest.param(2, marks="
+                         "pytest.mark.skip)])\ndef test_blocks_its_origin(x):\n"
+                         "    assert check_example.check(x)\n")
+    assert len(v) == 1 and "pytest does not pass it (1 skipped)" in v[0]
+
+
+def test_I8_a_module_that_fails_to_collect_is_not_evidence(live_repo):
+    v = _live(live_repo, "@pytest.mark.parametrize('x', ids=['a'])\n"
+                         "def test_blocks_its_origin(x):\n    assert check_example.check(x)\n")
+    assert len(v) == 1 and "pytest does not collect it" in v[0]
+
+
+def test_I8_a_fixture_error_on_an_unparametrized_test_is_not_evidence(live_repo):
+    (live_repo / TESTS).write_text(PARAM_FILE, "utf-8")
+    v = i8(exit1(exit1_gate=GATE, exit1_evidence=f"{TESTS}::test_skipped"), live_repo)
+    assert len(v) == 1 and "pytest does not pass it" in v[0]
+
+
+def test_I8_output_a_passing_test_prints_is_not_read_as_the_result(live_repo):
+    """Only pytest's final summary line is the result. -rA echoes captured stdout, so a
+    passing test that prints "3 failed" must not be rejected."""
+    assert _live(live_repo, "def test_blocks_its_origin():\n    print('3 failed, 2 skipped')\n"
+                            "    assert check_example.check(1)\n") == []
+
+
+def test_I8_the_callers_PYTEST_ADDOPTS_does_not_change_the_answer(live_repo, monkeypatch):
+    """-qq makes --collect-only print per-file counts instead of node ids, which read as
+    "not collected"; -x or -n change the run. The caller's options are not the node's."""
+    monkeypatch.setenv("PYTEST_ADDOPTS", "-qq")
+    assert i8(exit1(exit1_gate=GATE, exit1_evidence=EVIDENCE), live_repo) == []
+
+
+@pytest.mark.parametrize("phase", [0, 1])
+def test_I8_pytest_that_cannot_run_is_unverified_never_proven(live_repo, monkeypatch, phase):
+    real = ps._pytest
+    calls = []
+
+    def fake(root, *args):
+        calls.append(args)
+        return (-1, "timed out") if len(calls) > phase else real(root, *args)
+    monkeypatch.setattr(ps, "_pytest", fake)
+    v = i8(exit1(exit1_gate=GATE, exit1_evidence=EVIDENCE), live_repo)
+    assert len(v) == 1 and "pytest could not run (timed out)" in v[0] and "unverified" in v[0]
+
+
+def test_I8_pytest_is_run_in_the_repo_with_a_timeout(live_repo, monkeypatch):
+    seen = {}
+
+    def fake_run(cmd, **kw):
+        seen.update(kw, cmd=cmd)
+        raise ps.subprocess.TimeoutExpired(cmd, kw.get("timeout"))
+    monkeypatch.setattr(ps.subprocess, "run", fake_run)
+    rc, _ = ps._pytest(live_repo, "--collect-only", "-q", EVIDENCE)
+    assert rc == -1
+    assert seen["cwd"] == str(live_repo) and seen["timeout"] == ps.PYTEST_TIMEOUT > 0
+    assert seen["cmd"][:3] == [sys.executable, "-m", "pytest"] and seen["cmd"][-1] == EVIDENCE
+
+
+def test_I8_a_nonzero_exit_with_a_passed_count_is_not_evidence(live_repo, monkeypatch):
+    outputs = iter([(0, f"{EVIDENCE}\n1 test collected"), (1, "1 passed in 0.01s")])
+    monkeypatch.setattr(ps, "_pytest", lambda root, *a: next(outputs))
+    v = i8(exit1(exit1_gate=GATE, exit1_evidence=EVIDENCE), live_repo)
+    assert len(v) == 1 and "pytest does not pass it (exit 1)" in v[0]
+
+
+def test_I8_a_run_that_reports_no_passed_test_is_not_evidence(live_repo, monkeypatch):
+    outputs = iter([(0, f"{EVIDENCE}\n1 test collected"), (0, "1 deselected in 0.01s")])
+    monkeypatch.setattr(ps, "_pytest", lambda root, *a: next(outputs))
+    v = i8(exit1(exit1_gate=GATE, exit1_evidence=EVIDENCE), live_repo)
+    assert len(v) == 1 and "pytest does not pass it" in v[0]
+
+
+def test_I8_a_listed_node_that_only_prefixes_the_cited_one_is_not_it(live_repo, monkeypatch):
+    """`test_x_more` listed is not `test_x`; only `test_x` or `test_x[...]` is."""
+    outputs = iter([(0, f"{EVIDENCE}_more\n1 test collected")])
+    monkeypatch.setattr(ps, "_pytest", lambda root, *a: next(outputs))
+    v = i8(exit1(exit1_gate=GATE, exit1_evidence=EVIDENCE), live_repo)
+    assert len(v) == 1 and "pytest does not collect it" in v[0]
+
+
+# ---- reads_as_unpromoted: the one definition the backlog and I8 share ----
+
+@pytest.mark.parametrize("value,unpromoted", [
+    ("no", True), ("No", True), ("not", True), ("false", True), ("no -- CORRECTED", True),
+    ("not yet", True), ("not_yet", False), ("", True), ("   ", True), ("0", True),
+    (None, True), ("none", False), ("notation", False), ("nothing landed", False),
+    ("yes", False), ("hook", False), ("partial", False), ("falsehood", False),
+])
+def test_reads_as_unpromoted(value, unpromoted):
+    assert ps.reads_as_unpromoted(value) is unpromoted
+
+
+@pytest.mark.parametrize("value", ["no", "not yet", "not_yet", "none", "notation",
+                                   "no -- reason", "false", "", "0", "yes", "hook",
+                                   "partial -- half", "skill x"])
+def test_scanner_and_I8_agree_on_every_value(repo, value):
+    """Grok r6 P1: `not_yet` left the backlog yet skipped I8. Now a value either stays in
+    the backlog or is held by I8 (partial is both), never neither."""
+    import scan_promotion_candidates as spc
+    in_backlog = not spc.is_promoted({"promoted": value})
+    held_by_i8 = len(i8(exit1(promoted=value), repo)) > 0
+    assert in_backlog or held_by_i8, value
+    assert held_by_i8 is ps.claims_a_landed_gate(value)
+    assert spc._ps_reads_as_unpromoted is ps.reads_as_unpromoted  # one definition, imported
+
+
+def test_asserts_returns_a_bool():
+    """_asserts is a predicate: False, not a falsy None, when the body asserts nothing."""
+    import ast
+    tree = ast.parse("def test_a():\n    f()\n\ndef test_b():\n    assert f()\n")
+    a, b = tree.body
+    assert ps._asserts(a) is False and ps._asserts(b) is True

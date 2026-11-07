@@ -41,6 +41,9 @@ import sys
 from datetime import date, datetime
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from promotion_schema import reads_as_unpromoted as _ps_reads_as_unpromoted  # noqa: E402
+
 FRONTMATTER_RE = re.compile(r"^---\n(.*?)\n---\n", re.DOTALL)
 KV_RE = re.compile(r"^(\s*)([A-Za-z_][A-Za-z0-9_]*):\s*(.*)$")
 
@@ -189,7 +192,9 @@ def is_promoted(fm: dict) -> bool:
     #
     # `\b` keeps this from swallowing a real tier that merely starts with these letters:
     # "none" and "notation" do not match, "no -- reason" and "not promoted" do.
-    if re.match(r"^(?:no|not|false)\b", v) or v in ("", "0"):
+    # The one definition lives in promotion_schema, which I8 reads too, so the backlog and
+    # I8 cannot disagree about a value (Grok r6 P1, 2026-11-06).
+    if _ps_reads_as_unpromoted(v):
         return False
     # FAILS OPEN, DELIBERATELY, and this was re-checked 2026-09-21 before being changed.
     # An unrecognised value is taken for a promotion TIER, because tier names are
@@ -715,7 +720,9 @@ def main(argv: list[str]) -> None:
         # violations against the CLI's 48 -- a second, stricter answer to the same
         # question, which is how two readings of one gate start disagreeing.
         _rep = _ps.scan(memory_dir, _ps.load_grandfather(_ps.DEFAULT_GRANDFATHER))
-        _viol = _rep.get("violations") or []
+        # I8 (an unproven exit1) is two lines per record and arrives in bulk, so it is
+        # listed AFTER the other invariants: the 40-line cap below must not hide I1-I7.
+        _viol = sorted(_rep.get("violations") or [], key=lambda v: ": I8 " in v)
         schema_lines = [
             "",
             "## Schema violations",
@@ -725,6 +732,10 @@ def main(argv: list[str]) -> None:
             "date or exit path is not an observable event, and a reopen gate naming no "
             "number can never trip on a count.",
         ]
+        if "exit1_completed" in _rep:
+            schema_lines.append(
+                f"- exit1 proven (I8): {_rep['exit1_proven']} of {_rep['exit1_completed']} "
+                "completed exit1 records name a gate and a test node that reaches it.")
         schema_lines += [f"  - {v}" for v in _viol[:40]]
         if len(_viol) > 40:
             schema_lines.append(f"  - ...and {len(_viol) - 40} more")
