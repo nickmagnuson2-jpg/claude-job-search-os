@@ -30,48 +30,83 @@ _PENINSULA_SOUTHBAY = [
 _BAY_TERMS = ["bay area", "oakland", "berkeley", "alameda", "emeryville"]
 
 
+# SF proper as a whole word: "San Francisco" (not "South San Francisco") or "SF"
+# (not "SFO", "asf"). scan-drops-1106, 2026-11-06: only the substring "san francisco"
+# used to count, so "SF", "SF, CA", "NYC / SF" and "Hybrid (3 days in SF)" were
+# dropped as outside the Bay (Grok 941.F3, confirmed by running geo_ok on main).
+_SF = re.compile(r"(?<!south )\b(?:san francisco|sf)\b")
+_DOTTED_SF = re.compile(r"(?<![a-z.])s\.f\.")   # "S.F." reads as "san francisco" (r1, r2)
+_REMOTE = re.compile(r"\b(?:remote|anywhere|work from home|wfh)\b")
+
+
+def location_band(location) -> str:
+    """The ONE location classifier: sf | peninsula | bay | remote | excluded | unknown.
+
+    A multi-office string ("NYC / SF", "San Francisco, Palo Alto") is SF when SF proper
+    appears ANYWHERE in it, checked before the Peninsula: a Peninsula office listed
+    beside SF used to drop the role (Grok 941.F2). Remote only when no office in the Bay
+    is named. geo_gate (companies) and scanner.geo_ok (roles) map this band to their
+    own policy; neither classifies on its own.
+    """
+    # Punctuation other than "." reads as a space, so "South-San Francisco" and "South, San
+    # Francisco" are the Peninsula town (Codex F2 / Grok F4 r1; Codex F2 r2). Offices split by
+    # commas or slashes still each match ("Austin, San Francisco" is SF).
+    loc = " ".join(re.sub(r"[^\w.]+", " ", location or "").split()).lower()
+    loc = _DOTTED_SF.sub("san francisco", loc)
+    if not loc:
+        return "unknown"
+    if _SF.search(loc):
+        return "sf"
+    if any(t in loc for t in _PENINSULA_SOUTHBAY):
+        return "peninsula"
+    if any(t in loc for t in _BAY_TERMS):
+        return "bay"
+    if _REMOTE.search(loc):
+        return "remote"
+    return "excluded"
+
+
 def is_peninsula(location: str) -> bool:
-    """True if the location is a Peninsula / South-Bay commute town.
+    """True if the location is a Peninsula / South-Bay commute town and not SF.
 
     Exposed separately from geo_gate because the two consumers want different
     behaviour for the same fact. The company-discovery path wants Peninsula
     *flagged* (penalty 0.6, still scored); the nightly role scan wants it
-    *dropped*, per the goals.md hard filter. Splitting the predicate out lets
-    the role path apply the stricter rule without changing geo_gate's return
-    contract, which discovery depends on.
+    *dropped*, per the goals.md hard filter.
     """
-    return any(t in (location or "").strip().lower() for t in _PENINSULA_SOUTHBAY)
+    return location_band(location) == "peninsula"
 
 
 def geo_gate(location: str) -> dict:
-    """Hard geography gate.
+    """Hard geography gate for a COMPANY, mapped from location_band.
 
     Returns dict: pass (bool), penalty (0-1 multiplier subtracted),
-    flag (bool, surface for review), excluded (bool, floor score to 1).
+    flag (bool, surface for review), excluded (bool, floor score to 1), band.
+
+    Unknown location: don't exclude, but do NOT score it as San Francisco. Until
+    2026-09-14 this returned penalty 0.0, byte-identical to the SF branch, so a company
+    with no location data sorted as if it were verified local. That is how a New York
+    company reached score 5 and led a 45-company triage. It is not excluded, because
+    enrichment genuinely misses the location of real SF companies and excluding would
+    trade a fail-open for a silent fail-closed. The penalty sits between the Bay (0.2)
+    and Peninsula (0.6) bands: most unknowns in practice are not SF (12 of 44 screened
+    failed geography outright).
+
+    Remote-only is excluded for a company and, in scanner.geo_ok, for a role (goals.md
+    hard filter; Nick, 2026-11-06).
     """
-    loc = (location or "").strip().lower()
-    if not loc:
-        # Unknown location: don't exclude, but do NOT score it as San Francisco.
-        # Until 2026-09-14 this returned penalty 0.0, byte-identical to the SF branch,
-        # so a company with no location data sorted as if it were verified local. That
-        # is how a New York company reached score 5 and led a 45-company triage. It is
-        # not excluded, because enrichment genuinely misses the location of real SF
-        # companies and excluding would trade a fail-open for a silent fail-closed.
-        # The penalty sits between the Bay (0.2) and Peninsula (0.6) bands: most
-        # unknowns in practice are not SF (12 of 44 screened failed geography outright).
-        return {"pass": True, "penalty": _UNKNOWN_LOCATION_PENALTY, "flag": True,
-                "excluded": False, "band": "unknown"}
-    if any(t in loc for t in _PENINSULA_SOUTHBAY):
-        return {"pass": True, "penalty": 0.6, "flag": True, "excluded": False,
-                "band": "peninsula"}
-    if "san francisco" in loc:
-        return {"pass": True, "penalty": 0.0, "flag": False, "excluded": False,
-                "band": "sf"}
-    if any(t in loc for t in _BAY_TERMS):
-        return {"pass": True, "penalty": 0.2, "flag": True, "excluded": False,
-                "band": "bay"}
-    return {"pass": False, "penalty": 1.0, "flag": True, "excluded": True,
-            "band": "excluded"}
+    band = location_band(location)
+    return {"band": band, **_COMPANY_GATE[band]}
+
+
+_COMPANY_GATE = {
+    "unknown": {"pass": True, "penalty": _UNKNOWN_LOCATION_PENALTY, "flag": True, "excluded": False},
+    "sf": {"pass": True, "penalty": 0.0, "flag": False, "excluded": False},
+    "peninsula": {"pass": True, "penalty": 0.6, "flag": True, "excluded": False},
+    "bay": {"pass": True, "penalty": 0.2, "flag": True, "excluded": False},
+    "remote": {"pass": False, "penalty": 1.0, "flag": True, "excluded": True},
+    "excluded": {"pass": False, "penalty": 1.0, "flag": True, "excluded": True},
+}
 
 
 # Funding stage ladder. Target band is Series B/C/D; center = Series C (4).

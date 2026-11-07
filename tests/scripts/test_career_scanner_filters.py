@@ -109,7 +109,9 @@ def test_outside_bay_is_dropped():
 
 
 def test_remote_is_dropped():
+    # goals.md hard filter: skip remote-only (Nick, 2026-11-06).
     assert geo_ok("Remote") is False
+    assert geo_ok("San Francisco or Remote") is True
 
 
 def test_east_bay_passes():

@@ -66,9 +66,9 @@ def load_targets(repo_root: Path) -> list[dict]:
 _ENGINEER_HEAD = re.compile(r"\bengineer(s|ing)?\b", re.IGNORECASE)
 
 
-def title_matches(title: str, includes: list, excludes: list | None = None,
-                  allow_engineer: bool = False) -> bool:
-    """Whether a role title survives the configured title filters.
+def title_cut_reason(title: str, includes: list, excludes: list | None = None,
+                     allow_engineer: bool = False):
+    """Why the title filters cut this title, or None when it survives.
 
     Empty `includes` means "no title filter" and everything passes, matching the
     prior contract. Order matters: the engineer head-noun test and the explicit
@@ -78,30 +78,38 @@ def title_matches(title: str, includes: list, excludes: list | None = None,
     t = title or ""
     head = t.split(",")[0]
     if not allow_engineer and _ENGINEER_HEAD.search(head):
-        return False
+        return "engineer title"
     for bad in (excludes or []):
         if bad.lower() in t.lower():
-            return False
-    if not includes:
-        return True
-    return any(f.lower() in t.lower() for f in includes)
+            return f"title matches role_excludes '{bad}'"
+    if includes and not any(f.lower() in t.lower() for f in includes):
+        return "title not in the target's role_filters"
+    return None
+
+
+def title_matches(title: str, includes: list, excludes: list | None = None,
+                  allow_engineer: bool = False) -> bool:
+    """Whether a role title survives the configured title filters (no cut reason)."""
+    return title_cut_reason(title, includes, excludes, allow_engineer) is None
+
+
+ROLE_LOCATION_PASS = ("sf", "bay", "unknown")   # remote-only is dropped (goals.md hard filter)
 
 
 def geo_ok(location: str) -> bool:
     """Whether a role's location clears the goals.md SF hard filter.
 
-    Drops anything outside the Bay AND anything on the Peninsula / South Bay.
-    An empty location is NOT dropped: unknown is not the same as disqualifying,
-    and geo_gate flags it for review rather than excluding it.
+    Drops anything outside the Bay, anything on the Peninsula / South Bay only, and
+    remote-only (goals.md hard filter; Nick, 2026-11-06). An SF office anywhere in a
+    multi-office string passes ("San Francisco or Remote" too). An empty location is
+    NOT dropped: unknown is not the same as disqualifying.
     """
-    from tools.career_scanner.company_scorer import geo_gate, is_peninsula
-    loc = location or ""
-    if geo_gate(loc)["excluded"]:
-        return False
-    return not is_peninsula(loc)
+    from tools.career_scanner.company_scorer import location_band
+    return location_band(location) in ROLE_LOCATION_PASS
 
 
-def fetch_company_roles(target: dict, errors: list | None = None) -> list[dict]:
+def fetch_company_roles(target: dict, errors: list | None = None,
+                        cuts: list | None = None) -> list[dict]:
     """Fetch roles for a single company using the appropriate parser.
 
     Dispatches to the correct ATS parser based on target config.
@@ -114,6 +122,10 @@ def fetch_company_roles(target: dict, errors: list | None = None) -> list[dict]:
             out-parameter rather than a changed return type on purpose: every parser
             returns [] on HTTP error, and callers plus ~8 tests already assert == [] on
             the failure paths. Changing the return type would break them for no gain.
+        cuts: Optional list. Each role the title filters or the location gate drop is
+            appended as {company, title, location, url, rule, reason} (scan-drops-1106,
+            2026-11-06): those drops used to leave no record, so a founding Chief of
+            Staff on a lane-filtered board never reached any list.
 
     Returns:
         List of standardized role dicts. [] means "no matching roles" and says NOTHING
@@ -188,15 +200,22 @@ def fetch_company_roles(target: dict, errors: list | None = None) -> list[dict]:
     filters = target.get("role_filters", [])
     excludes = target.get("role_excludes", [])
     allow_eng = bool(target.get("allow_engineer_titles", False))
-    roles = [r for r in roles
-             if title_matches(r.get("title", ""), filters, excludes, allow_eng)]
-
-    # Geography. On by default per the goals.md SF hard filter; a target can opt
-    # out with geo_filter: false if it should be watched regardless of location.
-    if target.get("geo_filter", True):
-        roles = [r for r in roles if geo_ok(r.get("location", ""))]
-
-    return roles
+    from tools.career_scanner.company_scorer import location_band
+    geo = target.get("geo_filter", True)
+    kept = []
+    for r in roles:
+        reason, rule = title_cut_reason(r.get("title", ""), filters, excludes, allow_eng), "title_filter"
+        # Geography. On by default per the goals.md SF hard filter; a target can opt
+        # out with geo_filter: false if it should be watched regardless of location.
+        if reason is None and geo and not geo_ok(r.get("location", "")):
+            reason, rule = f"location: {location_band(r.get('location', ''))}", "location"
+        if reason is None:
+            kept.append(r)
+        elif cuts is not None:
+            cuts.append({"company": r.get("company") or name, "title": r.get("title", ""),
+                         "location": r.get("location", ""), "url": r.get("url", ""),
+                         "rule": rule, "reason": reason})
+    return kept
 
 
 def scan_all_targets(repo_root: Path, dry_run: bool = False) -> dict:
@@ -213,8 +232,7 @@ def scan_all_targets(repo_root: Path, dry_run: bool = False) -> dict:
     from tools.career_scanner.scorer import score_role, load_scoring_context
     from tools.career_scanner.dedup import (
         load_seen, save_seen, split_new_and_standing)
-    from tools.career_scanner.dedup import (load_pipeline_entries, filter_duplicates,
-                                            load_closed_entries, tag_previously_closed)
+    from tools.career_scanner.dedup import load_closed_entries, tag_previously_closed
 
     targets = load_targets(repo_root)
     if not targets:
@@ -227,21 +245,22 @@ def scan_all_targets(repo_root: Path, dry_run: bool = False) -> dict:
         summary = {"total_fetched": 0, "new_roles": 0, "skipped_dupes": 0,
                    "companies_scanned": 0, "fetch_failures": len(errors),
                    "fetch_failure_detail": errors, "new_since_last_scan": 0,
-                   "standing": 0, "previously_closed": 0, "roles": []}
+                   "standing": 0, "previously_closed": 0, "cut_at_fetch": 0,
+                   "skipped_repeats": 0, "skipped_repeat_roles": [], "roles": []}
         if not dry_run:
             write_role_queue(repo_root, [], [], errors)
         return summary
 
     scoring_ctx = load_scoring_context(repo_root)
-    pipeline_entries = load_pipeline_entries(repo_root)
 
     all_roles = []
     errors = []
+    cuts = []
     for i, target in enumerate(targets):
         name = target.get("name", "?")
         ats = target.get("ats", "?")
         print(f"Scanning {name} ({ats})...", file=sys.stderr)
-        roles = fetch_company_roles(target, errors=errors)
+        roles = fetch_company_roles(target, errors=errors, cuts=cuts)
         if roles:
             all_roles.extend(roles)
             print(f"  Found {len(roles)} matching roles", file=sys.stderr)
@@ -255,8 +274,23 @@ def scan_all_targets(repo_root: Path, dry_run: bool = False) -> dict:
     for role in all_roles:
         role["score"] = score_role(role, scoring_ctx)
 
-    # Dedup against pipeline
-    new_roles, skipped = filter_duplicates(all_roles, pipeline_entries)
+    # Pipeline history (Nick, 2026-11-06), the SAME check /scan-jobs runs: every role is
+    # labelled; the same role already active in the pipeline is a duplicate (counted in
+    # skipped_dupes, as before); an exact repeat of a posting he passed on moves to
+    # skipped_repeats. One definition for both scanners (the dedup.filter_duplicates
+    # path read active rows through a pipe_read subprocess, a second definition).
+    from tools.pipeline_history import history, load_history
+    past = load_history(repo_root)
+    new_roles, repeats, skipped = [], [], 0
+    for role in all_roles:
+        h = history(role, past)
+        role["history"] = h["label"]
+        if h["already_in_pipeline"]:
+            skipped += 1
+        elif h["declined_repeat"]:
+            repeats.append({f: role.get(f, "") for f in ("title", "company", "url", "history")})
+        else:
+            new_roles.append(role)
     previously_closed = tag_previously_closed(new_roles, load_closed_entries(repo_root))
 
     # Sort by score descending (D-05)
@@ -279,6 +313,13 @@ def scan_all_targets(repo_root: Path, dry_run: bool = False) -> dict:
         "new_since_last_scan": len(truly_new),
         "standing": len(standing),
         "previously_closed": previously_closed,
+        # Roles the title filters or the location gate dropped at fetch, each listed
+        # in the queue with its reason (scan-drops-1106).
+        "cut_at_fetch": len(cuts),
+        "skipped_repeats": len(repeats),
+        # The held-back repeats themselves, with their labels, so /scan-companies can list
+        # them (Grok F1, review r1): a count alone hides which roles they were.
+        "skipped_repeat_roles": repeats,
         "roles": new_roles,
     }
 
@@ -293,7 +334,7 @@ def scan_all_targets(repo_root: Path, dry_run: bool = False) -> dict:
     # an acknowledgement stick.
     if not dry_run:
         with _queue_lock(repo_root):
-            _write_role_queue_locked(repo_root, truly_new, standing, errors)
+            _write_role_queue_locked(repo_root, truly_new, standing, errors, cuts, repeats)
             save_seen(repo_root, seen)
 
     # NO LONGER WRITES data/inbox.md (2026-09-02). That file is 7,000+ lines, is under
@@ -520,7 +561,9 @@ def write_role_queue(repo_root: Path, new_roles: list[dict],
 
 
 def _write_role_queue_locked(repo_root: Path, new_roles: list[dict],
-                             standing: list[dict], errors: list[dict]) -> Path:
+                             standing: list[dict], errors: list[dict],
+                             cuts: list[dict] | None = None,
+                             repeats: list[dict] | None = None) -> Path:
     """The merge itself. Caller MUST already hold _queue_lock."""
     from tools.career_scanner.dedup import role_key
 
@@ -530,10 +573,13 @@ def _write_role_queue_locked(repo_root: Path, new_roles: list[dict],
     # only the pending log (615.F1).
     tagged_now = {role_key(r): r["previously_closed"]
                   for r in [*new_roles, *standing] if r.get("previously_closed")}
+    labelled_now = {role_key(r): r["history"] for r in [*new_roles, *standing] if "history" in r}
     for role in pending:
         tag = tagged_now.get(role_key(role))
         if tag:
             role["previously_closed"] = tag
+        if role_key(role) in labelled_now:   # the label reflects the pipeline as of THIS scan
+            role["history"] = labelled_now[role_key(role)]
     have = {role_key(r) for r in pending}
     for role in new_roles:
         key = role_key(role)
@@ -542,11 +588,13 @@ def _write_role_queue_locked(repo_root: Path, new_roles: list[dict],
         have.add(key)
         pending.append(role)
     return write_queue_payload(repo_root, _queue_payload(
-        pending, new_roles, standing, errors))
+        pending, new_roles, standing, errors, cuts, repeats))
 
 
 def _queue_payload(pending: list[dict], new_roles: list[dict],
-                   standing: list[dict], errors: list[dict]) -> dict:
+                   standing: list[dict], errors: list[dict],
+                   cuts: list[dict] | None = None,
+                   repeats: list[dict] | None = None) -> dict:
     from datetime import datetime, timezone
 
     return {
@@ -561,4 +609,11 @@ def _queue_payload(pending: list[dict], new_roles: list[dict],
         "pending_overflow": len(pending) > PENDING_WARN_AT,
         "new": pending,
         "standing": standing[:25],
+        # THIS scan's fetch-time cuts, replaced each scan like `standing`: the list
+        # exists so a cut is never silent, not as a backlog to work through.
+        "cut_at_fetch_count": len(cuts or []),
+        "cut_at_fetch": list(cuts or []),
+        # THIS scan's exact repeats of postings Nick passed on, held back with their
+        # history label (pipeline_history), never silently.
+        "skipped_repeats": list(repeats or []),
     }

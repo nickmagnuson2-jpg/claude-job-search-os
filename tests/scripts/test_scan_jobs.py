@@ -58,15 +58,29 @@ def test_a_listing_repeated_in_one_scan_is_assessed_once(root):
     assert len(out["new"]) == 1
 
 
-@pytest.mark.parametrize("score,status", [(10, "shortlisted"), (7, "shortlisted"),
-                                          (6, "maybe"), (5, "maybe"), (4, "skip"), (1, "skip")])
-def test_status_cutoffs(score, status):
-    assert sj.status_for(score, sj.STATUS_CUTOFFS) == status
+@pytest.mark.parametrize("score", [10, 7, 5, 4, 1])
+def test_the_score_ranks_and_never_sets_the_status(root, monkeypatch, score):
+    """Nick, 2026-11-06: the score only ranks. It failed the back-test (AUC 0.60 on 172
+    pipeline rows; 16 of 28 wanted roles with posting text scored skip)."""
+    monkeypatch.setattr(sj, "score_role", lambda role, ctx: score)
+    out = sj.assess([{"title": "Strategist", "company": "Beacon AI", "location": "San Francisco",
+                      "description": "Run strategy.", "url": "https://example.com/s"}], root)
+    assert out["new"][0]["status"] == "listed"
+    assert [r["company"] for r in out["propose_for_pipeline"]] == ["Beacon AI"]
 
 
-@pytest.mark.parametrize("location,status", [("New York, NY", "skip"), ("San Mateo, CA", "skip"),
-                                             ("Palo Alto", "skip"), ("San Francisco, CA", "shortlisted"),
-                                             ("", "shortlisted")])
+def test_proposals_are_ordered_by_score(root, monkeypatch):
+    scores = {"A Co": 3, "B Co": 9, "C Co": 6}
+    monkeypatch.setattr(sj, "score_role", lambda role, ctx: scores[role["company"]])
+    out = sj.assess([{"title": "Strategist", "company": c, "location": "San Francisco",
+                      "description": "Run strategy.", "url": f"https://example.com/{c}"} for c in scores], root)
+    assert [r["company"] for r in out["propose_for_pipeline"]] == ["B Co", "C Co", "A Co"]
+    assert "cutoffs" not in out
+
+
+@pytest.mark.parametrize("location,status", [("New York, NY", "excluded"), ("San Mateo, CA", "excluded"),
+                                             ("Palo Alto", "excluded"), ("Remote", "excluded"),
+                                             ("San Francisco, CA", "listed"), ("", "listed")])
 def test_the_nightly_scanners_location_rule_applies(root, monkeypatch, location, status):
     """Outside the Bay or on the Peninsula fails whatever the score; unknown does not."""
     monkeypatch.setattr(sj, "score_role", lambda role, ctx: 10)
@@ -80,7 +94,11 @@ def test_only_untracked_shortlisted_companies_are_proposed(root, monkeypatch):
     ads = [{"title": "Strategist", "company": c, "location": "San Francisco",
             "description": "Run strategy."} for c in ("Northwind Labs", "Beacon AI")]
     out = sj.assess(ads, root)
-    assert [r["company"] for r in out["propose_for_pipeline"]] == ["Beacon AI"]
+    # Nick, 2026-11-06: a different role at a company with history is proposed, labelled.
+    got = {r["company"]: r for r in out["propose_for_pipeline"]}
+    assert set(got) == {"Northwind Labs", "Beacon AI"}
+    assert got["Northwind Labs"]["history"] == "in pipeline: Researching (PM)"
+    assert got["Beacon AI"]["history"] == ""
 
 
 def test_record_appends_rows_and_stamps_the_date(root):
@@ -159,16 +177,18 @@ def test_a_title_only_ad_is_never_shortlisted_or_proposed(root, monkeypatch, bla
     out = sj.assess([{**ad, "url": "https://example.com/read", "description": "Lead deployments."},
                      {**ad, "url": "https://example.com/blank", "description": blank}], root)
     read, title_only = out["new"]
-    assert read["status"] == "shortlisted" and "title_only" not in read["reason"]
-    assert title_only["status"] == "maybe" and "title_only" in title_only["reason"]
+    assert read["status"] == "listed" and "title_only" not in read["reason"]
+    assert title_only["status"] == "listed" and "title_only" in title_only["reason"]
     assert [r["url"] for r in out["propose_for_pipeline"]] == ["https://example.com/read"]
 
 
-def test_a_title_only_ad_below_the_maybe_cutoff_stays_skip(root, monkeypatch):
-    """The cap only lowers a status; it never lifts a skip to maybe. The tag is still recorded."""
+def test_a_title_only_ad_is_listed_tagged_and_not_proposed_whatever_its_score(root, monkeypatch):
+    """The score no longer sets the status (2026-11-06), so a low score is still listed."""
     monkeypatch.setattr(sj, "score_role", lambda role, ctx: 1)
     out = sj.assess([{"title": "Ops", "company": "Beacon AI", "location": "San Francisco"}], root)
-    assert out["new"][0]["status"] == "skip" and "title_only" in out["new"][0]["reason"]
+    r = out["new"][0]
+    assert r["status"] == "listed" and r["title_only"] is True and "title_only" in r["reason"]
+    assert out["propose_for_pipeline"] == []
 
 
 @pytest.mark.parametrize("second", [
@@ -199,7 +219,7 @@ def test_a_listing_with_a_url_repeated_in_one_scan_is_assessed_once(root):
     ad = {"title": "Deployment Strategist", "company": "Beacon AI", "location": "San Francisco",
           "url": "https://example.com/role/9"}
     _, out = run(root, "assess", [ad, dict(ad)])
-    assert len(out["new"]) == 1 and out["cached"] == [{"title": ad["title"], "company": ad["company"]}]
+    assert len(out["new"]) == 1 and out["cached"] == [{"title": ad["title"], "company": ad["company"], "history": ""}]
 
 
 def test_record_treats_a_url_less_row_as_covering_the_same_role_with_a_url(root):
@@ -254,19 +274,24 @@ def test_the_script_imports_its_libraries_from_any_working_directory(tmp_path):
     assert p.returncode == 0, p.stderr
 
 
-@pytest.mark.parametrize("company,proposed,mark", [
-    ("Northwind Labs", False, None),                 # tracked exactly (case and spacing fold)
-    ("NORTHWIND  labs", False, None),
-    ("Northwindtech", True, None),                    # 613.F1: substring is not a match
-    ("Northwind Labs Europe", True, "northwind labs"),  # whole-word overlap is marked, not dropped
-    ("Beacon AI", True, None),
+@pytest.mark.parametrize("company,title,proposed,mark", [
+    # The same role at the same company (case and spacing fold) is already in the pipeline.
+    ("Northwind Labs", "PM", False, None),
+    ("NORTHWIND  labs", "PM", False, None),
+    # A different role there is proposed, labelled (Nick, 2026-11-06).
+    ("Northwind Labs", "Strategist", True, None),
+    ("Northwindtech", "PM", True, None),                      # 613.F1: substring is not a match
+    ("Northwind Labs Europe", "PM", True, "Northwind Labs"),  # whole-word overlap is marked, not dropped
+    ("Beacon AI", "PM", True, None),
 ])
-def test_proposals_drop_only_an_exact_pipeline_company(root, monkeypatch, company, proposed, mark):
+def test_proposals_hold_back_only_the_same_role_already_in_the_pipeline(root, monkeypatch, company,
+                                                                       title, proposed, mark):
     monkeypatch.setattr(sj, "score_role", lambda role, ctx: 8)
-    out = sj.assess([{"title": "Strategist", "company": company, "location": "San Francisco",
+    out = sj.assess([{"title": title, "company": company, "location": "San Francisco",
                       "description": "Run strategy."}], root)
     got = out["propose_for_pipeline"]
     assert bool(got) is proposed
+    assert len(out["new"]) == 1, "held back from proposals, never from the scan's list"
     if proposed:
         assert got[0].get("possible_match") == mark
 
@@ -285,4 +310,33 @@ def test_pipeline_headings_and_header_row_are_not_tracked_companies(root, monkey
 def test_a_placeholder_pipeline_name_matches_nothing():
     """A row whose company normalizes to nothing (an em dash placeholder) must not mark
     every candidate as a possible match."""
-    assert sj.tracked_match("Beacon AI", ["—"]) == ""
+    from tools.pipeline_history import company_overlap, same_company
+    assert not same_company("Beacon AI", "—") and not company_overlap("Beacon AI", "—")
+
+
+# ---------- scan-drops-1106: SF spellings pass; remote-only is excluded ----------
+
+@pytest.mark.parametrize("location", ["SF", "SF, CA", "NYC / SF", "Hybrid (3 days in SF)",
+                                      "San Francisco, Palo Alto"])
+def test_sf_spellings_and_multi_office_strings_are_not_location_excluded(root, monkeypatch, location):
+    monkeypatch.setattr(sj, "score_role", lambda role, ctx: 10)
+    out = sj.assess([{"title": "Deployment Strategist", "company": "Beacon AI",
+                      "location": location, "description": "Lead deployments."}], root)
+    assert out["new"][0]["status"] == "listed"
+    assert "location excluded" not in out["new"][0]["reason"]
+
+
+def test_a_remote_only_seat_is_location_excluded(root, monkeypatch):
+    monkeypatch.setattr(sj, "score_role", lambda role, ctx: 10)
+    out = sj.assess([{"title": "Deployment Strategist", "company": "Beacon AI",
+                      "location": "Remote (US)", "description": "Lead deployments."}], root)
+    assert out["new"][0]["status"] == "excluded"
+    assert out["new"][0]["reason"] == "location excluded"
+    assert out["propose_for_pipeline"] == []
+
+
+def test_an_sf_seat_reason_does_not_say_remote(root, monkeypatch):
+    monkeypatch.setattr(sj, "score_role", lambda role, ctx: 10)
+    out = sj.assess([{"title": "Deployment Strategist", "company": "Beacon AI",
+                      "location": "San Francisco or Remote", "description": "Lead deployments."}], root)
+    assert out["new"][0]["reason"] == "score 10/10"

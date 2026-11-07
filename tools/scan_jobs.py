@@ -5,8 +5,8 @@ The model's only job in /scan-jobs is to fetch listings and copy each one into t
 schema below. Everything after that is here, so the same ads always get the same verdict:
 
   assess   stdin: JSON array of ads. Dedupes against the cache, applies the hard location
-           gate, scores with the career scanner's scorer, assigns a status, and lists
-           shortlisted companies not yet in the pipeline. Writes nothing.
+           gate, ranks by the career scanner's score, labels pipeline history, and lists
+           the roles to propose, highest score first. Writes nothing.
   record   stdin: the `new` array from `assess`. Appends those rows to the cache and
            stamps "Last updated". Refuses an ad already in the cache.
 
@@ -14,15 +14,20 @@ Ad schema (one object per listing; copy text verbatim, do not summarize):
   {"title", "company", "location", "description", "url", "ad_date", "department", "team"}
   title and company are required; the rest may be "" when the listing does not show them.
 
-Status comes from the score with fixed cutoffs (STATUS_CUTOFFS), calibrated 2026-10-22 on
-72 labeled pipeline roles: score >= 7 had 60% precision, 5-6 61%, <= 4 38% (base rate 50%).
-`data/calibration/fit-spec.yaml` may override them under `status_cutoffs`. An ad with a
-blank description is capped at 'maybe' and tagged `title_only`: a title is not a posting.
+THE SCORE ONLY RANKS (Nick, 2026-11-06). It used to set the status through cutoffs
+(shortlisted >= 7, maybe 5-6, skip <= 4), and only shortlisted roles were proposed. On the
+back-test that day it separated roles Nick wanted from roles he passed on at AUC 0.60 (172
+pipeline rows), and 16 of 28 wanted roles with posting text scored skip. Until a rebuilt
+score clears the back-test, status is `listed` for every role that passes the location gate
+and `excluded` for one that does not; proposals are every listed role, highest score first,
+except one already in the pipeline and a title-only ad (blank description, tagged
+`title_only`: a title is not a posting).
 
 Usage:
   ... | PYTHONIOENCODING=utf-8 python3 tools/scan_jobs.py assess [--repo-root .]
   ... | PYTHONIOENCODING=utf-8 python3 tools/scan_jobs.py record [--repo-root .]
 """
+import hashlib
 import json
 import re
 import sys
@@ -34,13 +39,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from md_table import JsonArgumentParser, out_error, out_ok, parse_cols, read_file, safe_cell, write_atomic  # noqa: E402
 from name_dedup import normalize_name  # noqa: E402
 from slug import slugify  # noqa: E402
+from tools.pipeline_history import history, load_history  # noqa: E402
 from tools.career_scanner.scanner import geo_ok  # noqa: E402
 from tools.career_scanner.scorer import load_scoring_context, score_role  # noqa: E402
 
 CACHE = Path(".claude/skills/scan-jobs/cache.md")
-PIPELINE = Path("data/job-pipeline.md")
-STATUS_CUTOFFS = {"shortlisted": 7, "maybe": 5}
 REQUIRED = ("title", "company")
+# Bump when the judging LOGIC changes (scorer, gates, status rules). fit-spec.yaml, which
+# the scorer reads, is hashed in rules_version directly.
+RULES_LOGIC = "2026-11-06 ranking-only"
+FIT_SPEC = Path("data/calibration/fit-spec.yaml")
+# A row this script wrote: "(scan_jobs.py)" or "(scan_jobs.py rules:<8 hex>)".
+_MACHINE_NOTE = re.compile(r"\(scan_jobs\.py(?: rules:([0-9a-f]{8}))?\)")
 
 
 def _norm(text: str) -> str:
@@ -85,6 +95,53 @@ def cached_index(cache_text: str) -> tuple[set, set, set]:
     return keys, keys_no_url, urls
 
 
+def _cached(ad: dict, past: list, cached: list, repeats: list) -> None:
+    """File a cached ad, with the same history verdict the nightly scanner gives it: an exact
+    repeat of a posting Nick passed on goes to the visible held-back list, not `cached`, which
+    the skill reports as a count (Codex F1 / Grok F2 r1; Codex F1 r2)."""
+    h = history(ad, past)
+    row = {"title": ad["title"], "company": ad["company"], "history": h["label"]}
+    (repeats if h["declined_repeat"] else cached).append(
+        {**row, "url": ad.get("url", "")} if h["declined_repeat"] else row)
+
+
+def rules_version(root: Path) -> str:
+    """The version of the rules a verdict was judged under: 8 hex of the logic version and
+    fit-spec.yaml's text. A cached verdict from another version is re-checked when its ad
+    is seen again (scan-drops-1106, Codex 940.F2 / Grok 941.F4)."""
+    spec = read_file(Path(root) / FIT_SPEC) or ""
+    basis = "\n".join([RULES_LOGIC, spec])
+    return hashlib.sha1(basis.encode("utf-8")).hexdigest()[:8]
+
+
+def _row_ids(cols: list) -> list:
+    """The ids a stored row answers to: its URL, else its title+company key."""
+    m = URL_IN_CELL.search(cols[5])   # callers pass only rows of 7+ columns
+    return [("u", m.group(1).strip())] if m else [("k", key(cols[0], cols[1]))]
+
+
+def _ad_ids(ad: dict) -> list:
+    """The ids an ad can match, in is_cached's order: its URL, then title+company."""
+    url = cell_url(ad.get("url"))
+    k = ("k", key(ad["title"], ad["company"]))
+    return [("u", url), k] if url else [k]
+
+
+def machine_verdicts(cache_text: str) -> dict:
+    """id -> {status, version} for each row THIS SCRIPT wrote. A row Nick wrote by hand
+    carries no marker and is absent: his verdicts are never re-judged."""
+    out = {}
+    for line in cache_text.splitlines():
+        # The header and separator rows never carry the marker, so the marker test alone
+        # selects machine rows (mutation round 1: separate skips for them were redundant).
+        cols = parse_cols(line) if line.startswith("|") else []
+        m = _MACHINE_NOTE.search(cols[6]) if len(cols) >= 7 else None
+        if m:
+            for i in _row_ids(cols):
+                out[i] = {"status": cols[3].strip(), "version": m.group(1) or ""}
+    return out
+
+
 def is_cached(ad: dict, keys: set, keys_no_url: set, urls: set) -> bool:
     """With a URL: that URL is cached, or a URL-less row has this title+company. Without
     one: title+company. So one title at one company in two offices is two roles."""
@@ -105,80 +162,75 @@ def index_add(row: dict, keys: set, keys_no_url: set, urls: set) -> None:
         keys_no_url.add(k)
 
 
-def status_for(score: int, cutoffs: dict) -> str:
-    if score >= cutoffs["shortlisted"]:
-        return "shortlisted"
-    return "maybe" if score >= cutoffs["maybe"] else "skip"
-
-
-def pipeline_companies(text: str) -> list:
-    out = []
-    for line in text.splitlines():
-        if line.startswith("|") and not re.match(r"^\|[-: |]+\|$", line):
-            cols = parse_cols(line)
-            if cols and cols[0] not in ("Company", "---"):
-                out.append(cols[0].lower())
-    return out
-
-
-def tracked_match(company: str, tracked: list) -> str:
-    """"tracked" when the company's normalized name equals a pipeline company's; the
-    pipeline name when one is a whole-word part of the other ("Acme" / "Acme AI");
-    "" otherwise. Bidirectional substring matching silently dropped a distinct company
-    whose name merely contained a tracked one's (613.F1)."""
-    name = normalize_name(company)
-    near = ""
-    for c in tracked:
-        other = normalize_name(c)
-        if not name or not other:
-            continue
-        if name == other:
-            return "tracked"
-        if not near and (re.search(rf"\b{re.escape(other)}\b", name)
-                         or re.search(rf"\b{re.escape(name)}\b", other)):
-            near = c
-    return near
-
-
 def assess(ads: list, root: Path) -> dict:
     ctx = load_scoring_context(root)
-    cutoffs = {**STATUS_CUTOFFS, **((ctx.get("fit_spec") or {}).get("status_cutoffs") or {})}
-    keys, keys_no_url, urls = cached_index(read_file(root / CACHE))
-    tracked = pipeline_companies(read_file(root / PIPELINE))
-    cached, new = [], []
+    cache_text = read_file(root / CACHE)
+    keys, keys_no_url, urls = cached_index(cache_text)
+    version = rules_version(root)
+    verdicts = machine_verdicts(cache_text)
+    past = load_history(root)
+    cached, new, done, repeats = [], [], set(), []
+    rechecked_unchanged = 0
     for ad in ads:
-        if is_cached(ad, keys, keys_no_url, urls):
-            cached.append({"title": ad["title"], "company": ad["company"]})
+        ids = _ad_ids(ad)
+        if ids[0] in done:   # a listing repeated within one scan is assessed once
+            _cached(ad, past, cached, repeats)
             continue
-        index_add(ad, keys, keys_no_url, urls)   # a listing repeated within one scan is assessed once
+        done.add(ids[0])
+        was = None
+        if is_cached(ad, keys, keys_no_url, urls):
+            prior = next((verdicts[i] for i in ids if i in verdicts), None)
+            if prior is None or prior["version"] == version:
+                _cached(ad, past, cached, repeats)
+                continue
+            was = prior["status"]   # judged under other rules: re-check once
+        else:
+            index_add(ad, keys, keys_no_url, urls)
         role = {f: ad.get(f, "") for f in ("title", "company", "location", "description",
                                            "department", "team")}
         score = score_role(role, ctx)
-        # The nightly scanner's own location rule: outside the Bay or on the Peninsula /
-        # South Bay fails; an unknown location does not.
+        # The nightly scanner's own location rule: outside the Bay, Peninsula / South Bay
+        # only, or remote-only fails; an unknown location does not. The ONLY hard cut here:
+        # the score ranks and never sets the status (see the module docstring).
         located = geo_ok(ad.get("location", ""))
-        status = status_for(score, cutoffs) if located else "skip"
+        status = "listed" if located else "excluded"
         reason = f"score {score}/10" if located else "location excluded"
         # A title is not a posting: the same title names opposite jobs (the team doing the
-        # work vs the team supporting it). With no description copied, cap at 'maybe' so a
-        # title-only ad is never shortlisted or proposed for the pipeline.
-        if located and not str(ad.get("description") or "").strip():
-            status = "maybe" if status == "shortlisted" else status
+        # work vs the team supporting it). With no description copied, the ad is listed,
+        # tagged, and never proposed for the pipeline.
+        title_only = located and not str(ad.get("description") or "").strip()
+        if title_only:
             reason += " (title_only)"
-        new.append({**{f: ad.get(f, "") for f in ("title", "company", "location", "url", "ad_date")},
-                    "score": score, "status": status, "reason": reason})
-    propose = []
-    for r in new:
-        if r["status"] != "shortlisted":
+        row = {**{f: ad.get(f, "") for f in ("title", "company", "location", "url", "ad_date")},
+               "score": score, "status": status, "reason": reason}
+        if title_only:
+            row["title_only"] = True
+        if was is not None:
+            if status == was:
+                rechecked_unchanged += 1
+                _cached(ad, past, cached, repeats)
+                continue
+            row["reason"] = f"{reason} (re-checked under new rules; was {was})"
+            row["rechecked"] = True
+        # Pipeline history (Nick, 2026-11-06): every role shows, labelled; only an exact
+        # repeat of a posting he passed on is held back, onto skipped_repeats.
+        h = history(ad, past)
+        row["history"] = h["label"]
+        if h["declined_repeat"]:
+            repeats.append({f: row[f] for f in ("title", "company", "url", "history")})
             continue
-        verdict = tracked_match(r["company"], tracked)
-        if verdict == "tracked":
-            continue
-        if verdict:
-            r["possible_match"] = verdict   # whole-word overlap: Nick decides, never dropped
-        propose.append(r)
+        if h["already_in_pipeline"]:
+            row["already_in_pipeline"] = True
+        if h["possible_match"]:
+            row["possible_match"] = h["possible_match"]   # Nick decides, never dropped
+        new.append(row)
+    # A role already in the pipeline as the same role is not proposed again; a different
+    # role at a company with history is, carrying its label.
+    propose = sorted((r for r in new if r["status"] == "listed" and not r.get("title_only")
+                      and not r.get("already_in_pipeline")), key=lambda r: -r["score"])
     return {"found": len(ads), "cached": cached, "new": new, "propose_for_pipeline": propose,
-            "cutoffs": cutoffs}
+            "rules_version": version,
+            "rechecked_unchanged": rechecked_unchanged, "skipped_repeats": repeats}
 
 
 def record(rows: list, root: Path) -> dict:
@@ -187,26 +239,51 @@ def record(rows: list, root: Path) -> dict:
     if not text:
         out_error(f"cache not found or empty: {path}", "file_not_found")
     keys, keys_no_url, urls = cached_index(text)
+    version = rules_version(root)
+    lines = text.rstrip("\n").split("\n")
     # Each accepted row joins the index, so the same role twice in ONE call is refused
-    # like a role already in the cache (565.F3).
-    dupes = []
+    # like a role already in the cache (565.F3). A re-checked row REPLACES the machine
+    # row it re-judged, in place; one with no such row to replace is refused.
+    dupes, replace = [], {}
     for r in rows:
-        if is_cached(r, keys, keys_no_url, urls):
+        if r.get("rechecked"):
+            at = _machine_line(lines, r)
+            if at is None or at in replace:
+                dupes.append(r["title"])
+            else:
+                replace[at] = r
+        elif is_cached(r, keys, keys_no_url, urls):
             dupes.append(r["title"])
         else:
             index_add(r, keys, keys_no_url, urls)
     if dupes:
         out_error(f"already in the cache: {dupes}", "duplicate")
-    lines = text.rstrip("\n").split("\n")
+    for at, r in replace.items():
+        lines[at] = _cache_line(r, version)
     for r in rows:
-        url = f"[Listing]({cell_url(r['url'])})" if cell_url(r.get("url")) else "—"
-        lines.append(f"| {safe_cell(r['title'])} | {safe_cell(r['company'])} | {r['score']}/10 | "
-                     f"{r['status']} | {r.get('ad_date') or '—'} | {url} | "
-                     f"{safe_cell(r['reason'])} (scan_jobs.py) |")
+        if not r.get("rechecked"):
+            lines.append(_cache_line(r, version))
     out = re.sub(r"^Last updated: .*$", f"Last updated: {date.today().isoformat()}",
                  "\n".join(lines) + "\n", count=1, flags=re.M)
     write_atomic(path, out)
-    return {"appended": len(rows)}
+    return {"appended": len(rows) - len(replace), "replaced": len(replace)}
+
+
+def _cache_line(r: dict, version: str) -> str:
+    url = f"[Listing]({cell_url(r['url'])})" if cell_url(r.get("url")) else "—"
+    return (f"| {safe_cell(r['title'])} | {safe_cell(r['company'])} | {r['score']}/10 | "
+            f"{r['status']} | {r.get('ad_date') or '—'} | {url} | "
+            f"{safe_cell(r['reason'])} (scan_jobs.py rules:{version}) |")
+
+
+def _machine_line(lines: list, r: dict):
+    """Index of the machine-written row this re-checked row re-judged, or None."""
+    want = set(_ad_ids(r))
+    for i, line in enumerate(lines):
+        cols = parse_cols(line) if line.startswith("|") else []
+        if len(cols) >= 7 and _MACHINE_NOTE.search(cols[6]) and want & set(_row_ids(cols)):
+            return i
+    return None
 
 
 def main(argv=None) -> int:

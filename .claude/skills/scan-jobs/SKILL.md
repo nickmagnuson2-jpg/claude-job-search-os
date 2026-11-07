@@ -152,7 +152,9 @@ One JSON object per listing. **Copy, never summarize or judge**: `description` i
 PYTHONIOENCODING=utf-8 python3 tools/scan_jobs.py assess < output/scan-jobs/ads.json
 ```
 
-It returns `found`, `cached` (already evaluated, skipped), `new` (each with `score` 1-10, `status`, `reason`), `propose_for_pipeline`, and the `cutoffs` it used. Status cutoffs: **shortlisted at 7+, maybe at 5-6, skip at 4 and below**, calibrated 2026-10-22 on 72 labeled pipeline roles (see the script's docstring for the numbers and their limits). A role whose location fails the nightly scanner's location rule (outside the Bay, or on the Peninsula / South Bay) is `skip` whatever its score; an unknown location is not. Report the numbers exactly as returned. If `new` is empty, say so and stop.
+It returns `found`, `cached` (already evaluated, skipped), `new` (each with `score` 1-10, `status`, `reason`), `propose_for_pipeline`, `skipped_repeats`, `rechecked_unchanged` and `rules_version`. **The score only ranks (Nick, 2026-11-06).** It failed the back-test that day (AUC 0.60 separating roles Nick wanted from roles he passed on), so it never sets a status and never holds a role back. `status` is `listed` for every role that passes the location rule and `excluded` for one that fails it: outside the Bay, Peninsula / South Bay only, or remote-only. An unknown location passes, and an SF office anywhere in a multi-office string passes. Report the numbers exactly as returned. If `new` and `skipped_repeats` are both empty, say so and stop; a scan whose only hits are held-back repeats still lists them (Step 9).
+
+`(re-checked under new rules; was <status>)` in a `reason` marks a cached verdict this script wrote under older rules (`rules_version`) whose status has changed. `rechecked_unchanged` counts the ones whose status held. Rows written by hand in the cache are never re-judged. `record` writes a re-checked row over its old one, never as a second row.
 
 ### Step 7: Output
 
@@ -177,7 +179,7 @@ where `output/scan-jobs/new.json` holds the `new` array from Step 6. It appends 
 
 ### Step 9: Pipeline proposals
 
-For each entry in `propose_for_pipeline`, ask: `[Company] — [Role] (score N/10) — add to pipeline? (Y/N)`. If the entry has `possible_match`, say so first: `([Company] may be [possible_match], already in the pipeline)`. On Y:
+`propose_for_pipeline` is every listed role, highest score first, except a title-only ad and a role already in the pipeline. For each entry, ask: `[Company] — [Role] (score N/10) — add to pipeline? (Y/N)`. If the entry has a non-empty `history`, say it first: `(history: [history])`, e.g. "they declined you 10/03 (Ops Lead)"; a role at a company with history is proposed with its label, never hidden (Nick, 2026-11-06). If it has `possible_match`, say so: `([Company] may be [possible_match], already in the pipeline)`. A `new` row with `already_in_pipeline` is the same role already being pursued and is not proposed. List each `skipped_repeats` entry with its `history`: an exact repeat of a posting Nick passed on, held back, never silently. On Y:
 
 ```bash
 PYTHONIOENCODING=utf-8 python3 tools/pipe_write.py --repo-root . add "<Company>" "<Role>" --url "<url>" --stage Researching
@@ -185,4 +187,4 @@ PYTHONIOENCODING=utf-8 python3 tools/pipe_write.py --repo-root . add "<Company>"
 
 ### Step 10: Summary
 
-New ads found, how many shortlisted, and which were added to the pipeline. No trend commentary unless the lookback spans several days and N is large enough to mean something.
+New ads found, how many listed and excluded, and which were added to the pipeline. No trend commentary unless the lookback spans several days and N is large enough to mean something.
