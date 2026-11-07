@@ -34,7 +34,8 @@ def _call(expr: str, timeout: float = 20.0):
     code = ("import json, sys; sys.path.insert(0, sys.argv[1]); "
             "import check_public_pii as m; "
             f"print(json.dumps({expr}))")
-    r = subprocess.run([sys.executable, "-c", code, str(TOOLS)],
+    # -B: never write tools/__pycache__ (a stale .pyc can make a mutant run as old code).
+    r = subprocess.run([sys.executable, "-B", "-c", code, str(TOOLS)],
                        capture_output=True, text=True, timeout=timeout)
     assert r.returncode == 0, r.stderr
     return json.loads(r.stdout)
