@@ -38,6 +38,7 @@ Usage:
 import argparse
 import hashlib
 import json
+import math
 import re
 import sys
 from datetime import datetime, timezone
@@ -100,14 +101,14 @@ def canonical(obj) -> bytes:
 def resolve_main(root: Path) -> Path:
     """The main checkout for `root`. main_checkout() falls back to its input, so refuse unless
     the result holds a .git DIRECTORY: a worktree must never use its own copies."""
-    main = main_checkout(Path(root))
+    main = main_checkout(Path(root).resolve())
     if not (main / ".git").is_dir():
         raise Refusal("no_main_checkout", f"{root} is not a main checkout or a worktree of one")
     return main
 
 
 def paths(main: Path) -> dict:
-    return {"questions": main / QUESTIONS_REL, "predictions": main / PREDICTIONS_REL,
+    return {"main": main, "questions": main / QUESTIONS_REL, "predictions": main / PREDICTIONS_REL,
             "workstreams": main / WORKSTREAMS_REL, "board": main / BOARD_REL}
 
 
@@ -220,6 +221,8 @@ def read_board(path: Path) -> tuple:
         c = cells(line)
         if len(c) != len(header):
             return None, f"unreadable: line {n} has {len(c)} cells, the header has {len(header)}"
+        if not session_name(c[0]):
+            return None, f"unreadable: line {n} has no session name"
         rows.append((c[0], session_name(c[0]),
                      [w.strip() for w in c[col].split(",") if w.strip() not in ("", "-")]))
     return rows, "ok"
@@ -279,8 +282,8 @@ def parse_usd(cls: str, raw):
         usd = float(raw)
     except ValueError:
         raise Refusal("bad_usd", f"--usd must be a number or 'unknown', got {raw!r}") from None
-    if usd < 0:
-        raise Refusal("bad_usd", "--usd cannot be negative")
+    if not math.isfinite(usd) or usd < 0:
+        raise Refusal("bad_usd", f"--usd must be a finite amount of 0 or more, got {raw!r}")
     return usd
 
 
@@ -373,7 +376,8 @@ def find_ruling(p: dict, q: dict) -> dict:
     if not m or m.group(2) not in labels or not m.group(3) or not m.group(4):
         raise Refusal("bad_ruling", f"{f}:{n} needs 'RULING {q['id']} | option: <one of {labels}> "
                                     "| reason: <why> | window: <session>'")
-    return {"file": str(f), "line": n, "line_hash": sha(line), "option": m.group(2),
+    # Stored relative to the main checkout, so `check` reads the same file from any checkout.
+    return {"file": f.relative_to(p["main"]).as_posix(), "line": n, "line_hash": sha(line), "option": m.group(2),
             "reason": m.group(3), "window": m.group(4)}
 
 
@@ -471,7 +475,7 @@ def cmd_check(p: dict) -> tuple[dict, int]:
     for e in events:
         if e.get("type") != "resolved":
             continue
-        f = Path(e["file"])
+        f = p["main"] / e["file"]
         lines = f.read_text(encoding="utf-8").splitlines() if f.is_file() else []
         if not any(l.startswith(f"RULING {e['id']} |") and sha(l) == e["line_hash"] for l in lines):
             problems.append(f"{e['id']}: ruling line changed or missing in {f}")

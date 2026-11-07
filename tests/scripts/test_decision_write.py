@@ -735,8 +735,8 @@ def test_takeover_accepts_the_session_named_in_the_org_row(main, capsys):
 # workstream-backlog-1107, which imports it; agreed with ee 2026-11-07)
 
 def test_resolve_main_contract(main, worktree, tmp_path):
-    assert dw.resolve_main(main) == main and isinstance(dw.resolve_main(str(main)), Path)
-    assert dw.resolve_main(worktree) == main
+    assert dw.resolve_main(main) == main.resolve() and isinstance(dw.resolve_main(str(main)), Path)
+    assert dw.resolve_main(worktree) == main.resolve() and dw.resolve_main(main).is_absolute()
     bad = [tmp_path / "plain"]
     bad[0].mkdir()
     sub = tmp_path / "sub"
@@ -836,3 +836,31 @@ def test_ids_come_from_questions_even_when_predictions_are_lost(main, capsys):
     (main / "data" / "run-manifest" / "predictions.jsonl").write_text("")
     code, data, _, _ = add(main, capsys, question="After the loss?")
     assert code == 0 and data["question"]["id"] == "Q2"
+
+
+# ------------------------------------------------------------------ code review r2 fixes
+
+@pytest.mark.parametrize("raw", ["nan", "NaN", "inf", "-inf"])
+def test_a_non_finite_spend_is_refused(main, capsys, raw):
+    code, data, _, _ = add(main, capsys, f"--usd={raw}", cls="spend")
+    assert code == 1 and data["code"] == "bad_usd"
+
+
+def test_a_row_with_no_session_name_makes_the_board_unreadable(tmp_path):
+    f = tmp_path / "SESSIONS.md"
+    f.write_text("| Session | Owns | Workstreams |\n|---|---|---|\n| **aa** | a | alpha-work |\n"
+                 "|  | b | beta-work |\n")
+    assert dw.read_board(f) == (None, "unreadable: line 4 has no session name")
+
+
+def test_a_ruling_resolved_with_a_relative_root_checks_clean_from_a_worktree(main, worktree, capsys,
+                                                                            monkeypatch):
+    add(main, capsys)
+    rule(main, "alpha-work", "RULING Q1 | option: b | reason: x | window: aa")
+    monkeypatch.chdir(main)
+    assert dw.main(["resolve", "Q1"]) == 0                      # default --repo-root "."
+    capsys.readouterr()
+    assert events(main)[-1]["file"] == "data/workstreams/alpha-work.md"
+    monkeypatch.chdir(worktree)
+    code, data, _, _ = run(Path("."), "check", capsys=capsys)
+    assert code == 0 and data["problems"] == []
