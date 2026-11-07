@@ -103,8 +103,17 @@ def read_queue(repo_root: Path, top: int = 5) -> dict:
     # Nick's stated ordering, 2026-09-02: "ranked by fit, and then secondarily by when
     # they were published." Score first, recency as the tiebreaker. Sorting by date
     # alone floated a 3/10 SEO role above every in-lane role on the first live run.
-    new.sort(key=lambda r: (r.get("score") or 0, r.get("published_at") or ""),
-             reverse=True)
+    # On stale goals (target-drift-1106) no score is trusted, including scores pending rows
+    # kept from earlier scans: ordering by them, with an unscored role as 0, put tonight's
+    # roles below every leftover (Codex F3 / Grok F1, review r1). Posting date alone,
+    # Nick's secondary key, is the order then, and `order` says so.
+    if payload.get("goals_stale") is True:
+        order = "posting date, newest first (goals.md stale: not ranked by fit)"
+        new.sort(key=lambda r: r.get("published_at") or "", reverse=True)
+    else:
+        order = "score, then posting date"
+        new.sort(key=lambda r: (r.get("score") or 0, r.get("published_at") or ""),
+                 reverse=True)
 
     cuts = [c for c in (payload.get("cut_at_fetch") or []) if isinstance(c, dict)]
     return {
@@ -132,6 +141,7 @@ def read_queue(repo_root: Path, top: int = 5) -> dict:
         # None on a queue written before that branch.
         "target_drift": payload["target_drift"] if isinstance(payload.get("target_drift"), dict) else None,
         "goals_stale": payload.get("goals_stale"),
+        "order": order,
         "roles": [_summarise(r) for r in new[:top]],
         # The reader acknowledges BY KEY, never by count. Acking "the top 5" would
         # silently consume whatever a scan inserted between the read and the ack.

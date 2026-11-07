@@ -51,10 +51,16 @@ def load_targets(repo_root: Path) -> list[dict]:
         data = yaml.safe_load(f)
     if not data or not isinstance(data.get("companies"), list):
         return []
-    return [
-        c for c in data["companies"]
-        if c.get("active", True) and c.get("ats")
-    ]
+    return [c for c in data["companies"] if scannable(c)]
+
+
+def scannable(c) -> bool:
+    """Whether a scan-targets.yaml entry is one the nightly scan fetches: a mapping, active
+    (or active unset), with an `ats`. tools/target_drift.py selects with this same function,
+    so the drift check and the fetch cannot disagree about which targets exist. An entry
+    that is not a mapping is skipped here (it used to crash the scan with AttributeError)
+    and makes the drift check exit 2 (Codex F2 / Grok F4, review r1)."""
+    return isinstance(c, dict) and bool(c.get("active", True)) and bool(c.get("ats"))
 
 
 # A title whose ROLE PROPER (the text before the first comma) is an engineering
@@ -244,14 +250,20 @@ def scan_all_targets(repo_root: Path, dry_run: bool = False, today=None) -> dict
     stale = scoring_ctx["goals_stale"]
     drift = {**target_drift(repo_root, today), "goals_stale": stale}
 
-    targets = load_targets(repo_root)
+    try:
+        targets = load_targets(repo_root)
+        load_error = None
+    except (OSError, yaml.YAMLError) as e:
+        # Unreadable scan-targets.yaml: record it as a fetch failure and still write the
+        # queue with the drift report, instead of dying with no queue (Grok F4, review r1).
+        targets, load_error = [], f"scan-targets.yaml unreadable: {e}"
     if not targets:
         # A config that yields no targets is a FAILURE, not a quiet clean scan. Before
         # 2026-09-02 this path returned early without a queue or a fetch_failures key,
         # so /standup kept rendering the last good queue while the scanner examined
         # nothing at all -- the false-zero defect one layer above the parsers.
         errors = [{"company": "-", "ats": "-",
-                   "reason": "no scannable targets in scan-targets.yaml"}]
+                   "reason": load_error or "no scannable targets in scan-targets.yaml"}]
         summary = {"total_fetched": 0, "new_roles": 0, "skipped_dupes": 0,
                    "companies_scanned": 0, "fetch_failures": len(errors),
                    "fetch_failure_detail": errors, "new_since_last_scan": 0,

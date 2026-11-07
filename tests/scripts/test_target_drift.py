@@ -31,7 +31,7 @@ Thesis text.
 ## Target Criteria
 
 - **Family A, deployment:** deployment strategist.
-- **Open to Work titles (LinkedIn, live since 2026-10-20):** {titles}. Every scanner must pass each one.
+- **Open to Work titles (LinkedIn, live since 2026-10-20):** {titles}.
 
 ## History (superseded)
 
@@ -325,3 +325,115 @@ def test_nightly_records_an_unreadable_input_as_drift(tmp_path):
     root = make(tmp_path, targets="companies: [unclosed\n")
     out = td.nightly(root, TODAY)
     assert out["drift"] is True and out["problems"][0].startswith("unreadable input:")
+
+
+# ---------- review r1 (Codex F1-F4 / Grok F1, F4-F7) ----------
+
+@pytest.mark.parametrize("line,expected", [
+    ("Sr. Director of Operations; Chief of Staff", ["Sr. Director of Operations", "Chief of Staff"]),
+    ("Chief of Staff; Sr. Director", ["Chief of Staff", "Sr. Director"]),
+    ("A; B.", ["A", "B"]),
+])
+def test_periods_inside_titles_are_kept(line, expected):
+    text = f"## Target Criteria\n\n- **Open to Work titles (LinkedIn):** {line}\n"
+    assert scorer._extract_target_titles(text) == expected
+
+
+def test_a_colon_outside_the_bold_is_read():
+    text = "## Target Criteria\n\n- **Open to Work titles (LinkedIn)**: A; B.\n"
+    assert scorer._extract_target_titles(text) == ["A", "B"]
+
+
+def test_a_company_entry_that_is_not_a_mapping_exits_2(tmp_path):
+    targets = TARGETS.replace("companies:\n", "companies:\n  - 7\n")
+    code, out = run(make(tmp_path, targets=targets))
+    assert code == 2 and "not a mapping" in out["error"]
+
+
+def test_the_check_and_the_scan_select_targets_with_one_function():
+    from tools import target_drift as td
+    from tools.career_scanner import scanner
+    assert td.scannable is scanner.scannable
+    cs = [{"name": "A", "ats": "ashby"}, {"name": "B", "ats": "ashby", "active": False}, {"name": "C"}]
+    assert [c["name"] for c in cs if scanner.scannable(c)] == ["A"]
+
+
+def test_load_targets_skips_a_non_mapping_entry_instead_of_crashing(tmp_path):
+    from tools.career_scanner import scanner
+    root = make(tmp_path, targets="companies:\n  - 7\n  - name: X\n    ats: ashby\n")
+    assert [t["name"] for t in scanner.load_targets(root)] == ["X"]
+
+
+def test_nightly_on_unreadable_targets_writes_the_drift_and_a_failure(tmp_path, monkeypatch):
+    from tools.career_scanner import scanner
+    root = make(tmp_path, targets="companies: [unclosed\n")
+    s = scanner.scan_all_targets(root, today=TODAY)
+    assert s["fetch_failures"] == 1 and "scan-targets.yaml" in s["fetch_failure_detail"][0]["reason"]
+    payload = scanner.read_queue_payload(root)
+    assert payload["target_drift"]["drift"] is True
+    assert payload["fetch_failures"] == 1
+
+
+@pytest.mark.parametrize("spec", [
+    'positive_title_patterns: "strategist"\nnot_fit_title_patterns: []\n',
+    'positive_title_patterns: ["strategist"]\nnot_fit_title_patterns: "head of growth"\n',
+])
+def test_a_scalar_pattern_field_exits_2(tmp_path, spec):
+    code, out = run(make(tmp_path, spec=spec))
+    assert code == 2 and "not a list" in out["error"]
+
+
+def _queue(tmp_path, goals_stale, roles):
+    from tools.career_scanner import scanner
+    p = scanner._queue_payload(roles, roles, [], [], drift={"drift": goals_stale, "goals_stale": goals_stale})
+    scanner.write_queue_payload(tmp_path, p)
+
+
+def test_on_stale_goals_the_queue_is_ordered_by_posting_date_not_by_old_scores(tmp_path):
+    import tools.role_queue_read as rq
+    old = [{"title": f"Old {i}", "company": "X", "url": f"u{i}", "score": s, "published_at": "2026-10-01"}
+           for i, s in enumerate((7, 6, 5, 4, 3))]
+    new = [{"title": "Deployment Strategist", "company": "Acme", "url": "n", "score": None,
+            "published_at": "2026-11-19"}]
+    _queue(tmp_path, True, old + new)
+    out = rq.read_queue(tmp_path, top=5)
+    assert out["roles"][0]["title"] == "Deployment Strategist"
+    assert out["order"].startswith("posting date")
+
+
+def test_on_fresh_goals_the_queue_is_ranked_by_score(tmp_path):
+    import tools.role_queue_read as rq
+    roles = [{"title": "Low", "company": "X", "url": "a", "score": 3, "published_at": "2026-11-19"},
+             {"title": "High", "company": "X", "url": "b", "score": 8, "published_at": "2026-10-01"}]
+    _queue(tmp_path, False, roles)
+    out = rq.read_queue(tmp_path)
+    assert [r["title"] for r in out["roles"]] == ["High", "Low"]
+    assert out["order"].startswith("score")
+
+
+def test_todo_placeholders_are_not_titles():
+    text = "## Target Criteria\n\n- **Open to Work titles (LinkedIn):** TODO; Chief of Staff; todo (e.g., X).\n"
+    assert scorer._extract_target_titles(text) == ["Chief of Staff"]
+
+
+def test_the_template_and_the_example_parse():
+    """The file that generates goals.md must produce the format the extractor reads (Grok F6)."""
+    tpl = (REPO / "framework/templates/goals.md").read_text(encoding="utf-8")
+    assert scorer._extract_target_titles(tpl) == []                 # TODO placeholders only
+    assert scorer.goals_freshness(tpl, TODAY)["goals_stale"] is True  # YYYY-MM-DD is not a date
+    ex = (REPO / "examples/data/goals.md").read_text(encoding="utf-8")
+    assert len(scorer._extract_target_titles(ex)) == 4
+    assert scorer.goals_freshness(ex, date(2026, 11, 7))["goals_stale"] is False
+
+
+@pytest.mark.parametrize("line,expected", [
+    # The live shape: titles, then a sentence about them after a sentence-ending period.
+    ("A Strategist; Operations Lead. Every scanner must pass each one; the check reads this line.",
+     ["A Strategist", "Operations Lead"]),
+    ("Sr. Director; U.S. Operations Lead. Every scanner must pass each one.",
+     ["Sr. Director", "U.S. Operations Lead"]),
+    ("Mgr. Partnerships; Chief of Staff", ["Mgr. Partnerships", "Chief of Staff"]),
+])
+def test_trailing_prose_ends_the_list_but_an_abbreviation_does_not(line, expected):
+    text = f"## Target Criteria\n\n- **Open to Work titles (LinkedIn):** {line}\n"
+    assert scorer._extract_target_titles(text) == expected

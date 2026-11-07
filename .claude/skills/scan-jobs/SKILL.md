@@ -167,7 +167,7 @@ Found: X | Already evaluated: Z | **New: N**
 |---|------|---------|----------|-------|--------|--------|------|
 ```
 
-One row per `new` entry, sorted by score, highest first. Every value comes from the script's output.
+One row per `new` entry, sorted by score, highest first; when `goals_stale`, in the order returned, with `unranked` in the score column. Every value comes from the script's output.
 
 ### Step 8: Record
 

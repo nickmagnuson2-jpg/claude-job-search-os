@@ -120,7 +120,9 @@ def load_fit_spec(repo_root: Path) -> dict:
         return {}
 
 
-_OPEN_TO_WORK = re.compile(r"\*\*Open to Work titles[^*]*:\*\*(.*)$", re.IGNORECASE)
+# The colon may sit inside or just outside the bold (Grok F7, review r1).
+_OPEN_TO_WORK = re.compile(r"\*\*Open to Work titles[^*]*(?::\*\*|\*\*:)(.*)$", re.IGNORECASE)
+_SENTENCE_END = re.compile(r"(?<=\w{4})\.(?=\s|$)")
 _LAST_REVIEWED = re.compile(r"^Last reviewed:\s*(\S+)", re.MULTILINE)
 # Days goals.md may go unreviewed before the scorer refuses to rank (Nick, 2026-11-06:
 # "14 days"). target-drift-1106.
@@ -145,14 +147,22 @@ def _extract_target_titles(text: str) -> list[str]:
     That line is the one source for target titles (Nick, 2026-11-06: "LinkedIn is true").
     Nothing else in the file is read: until target-drift-1106 a "Role types" heading
     anywhere in goals.md started a list, so the June ranked list kept feeding the scorer
-    for 17 days after the 10/20 thesis refresh. Titles are semicolon-separated and the
-    list ends at the first sentence-ending period.
+    for 17 days after the 10/20 thesis refresh. Titles are semicolon-separated. The list
+    ends at a sentence-ending period: one after a word of 4+ letters, followed by a space or
+    the line's end ("Lead. Every scanner ..."). A period after a shorter abbreviation
+    ("Sr. Director", "U.S.", "Mgr.") is part of the title: ending at the first ". " dropped
+    every title after it (Codex F1 / Grok F7, review r1).
     """
     for line in _target_criteria(text):
         m = _OPEN_TO_WORK.search(line)
         if m:
-            body = re.split(r"\.(?:\s|$)", m.group(1), maxsplit=1)[0]
-            return [t.strip() for t in body.split(";") if t.strip()]
+            end = _SENTENCE_END.search(m.group(1))
+            body = m.group(1)[:end.start()] if end else m.group(1)
+            body = body.rstrip()
+            body = body[:-1] if body.endswith(".") else body   # the list's own final period
+            # A TODO placeholder (framework/templates/goals.md) is not a title.
+            return [t.strip() for t in body.split(";")
+                    if t.strip() and not t.strip().upper().startswith("TODO")]
     return []
 
 

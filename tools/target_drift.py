@@ -30,7 +30,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from tools.count_report import format_line  # noqa: E402
-from tools.career_scanner.scanner import title_cut_reason  # noqa: E402
+from tools.career_scanner.scanner import scannable, title_cut_reason  # noqa: E402
 from tools.career_scanner.scorer import (  # noqa: E402
     GOALS_FRESH_DAYS, _extract_target_titles, goals_freshness)
 
@@ -57,19 +57,23 @@ def _targets(root: Path) -> tuple:
     companies = data.get("companies") if isinstance(data, dict) else None
     if not isinstance(companies, list):
         raise Unreadable(f"{TARGETS.name}: no companies list")
-    # The same selection the nightly scan makes (scanner.load_targets).
-    entries = [c for c in companies if isinstance(c, dict)]
-    inactive = [c for c in entries if not c.get("active", True)]
-    no_ats = [c for c in entries if c.get("active", True) and not c.get("ats")]
-    targets = [c for c in entries if c.get("active", True) and c.get("ats")]
+    bad = [i for i, c in enumerate(companies) if not isinstance(c, dict)]
+    if bad:
+        raise Unreadable(f"{TARGETS.name}: companies entries {bad} are not a mapping")
+    # The same selection the nightly scan makes: scanner.scannable, one function for both.
+    targets = [c for c in companies if scannable(c)]
+    inactive = [c for c in companies if not c.get("active", True)]
+    no_ats = [c for c in companies if c.get("active", True) and not c.get("ats")]
     reach = format_line(f"companies in {TARGETS}", population=len(companies), included=len(targets),
-                        excluded={"inactive": len(inactive), "no ats (outreach-only)": len(no_ats),
-                                  "not a mapping": len(companies) - len(entries)})
+                        excluded={"inactive": len(inactive), "no ats (outreach-only)": len(no_ats)})
     return targets, reach
 
 
 def _patterns(spec: dict, key: str) -> list:
-    return [str(p).lower().strip() for p in (spec.get(key) or []) if str(p).strip()]
+    value = spec.get(key) or []
+    if not isinstance(value, list):   # a scalar would be read character by character (Codex F4)
+        raise Unreadable(f"{FIT_SPEC.name}: {key} is not a list")
+    return [str(p).lower().strip() for p in value if str(p).strip()]
 
 
 def check(root: Path, today: date) -> dict:
