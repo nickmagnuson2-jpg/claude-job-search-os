@@ -492,3 +492,63 @@ def test_on_stale_goals_an_undated_new_role_sorts_by_first_seen(tmp_path):
 def test_four_letter_title_abbreviations_do_not_end_the_list(line, expected):
     text = f"## Target Criteria\n\n- **Open to Work titles (LinkedIn):** {line}\n"
     assert scorer._extract_target_titles(text) == expected
+
+
+# ---------- review r3 (Codex F1-F2 / Grok F1-F3) ----------
+
+@pytest.mark.parametrize("spec", ["- a\n- b\n", "just a string\n", "42\n"])
+def test_a_fit_spec_that_is_not_a_mapping_reads_as_missing(tmp_path, spec):
+    root = make(tmp_path, spec=spec)
+    assert scorer.load_fit_spec(root) == {}
+    role = {"title": "Strategist", "company": "A", "location": "San Francisco", "description": "x"}
+    assert isinstance(scorer.score_role(role, scorer.load_scoring_context(root, today=TODAY)), int)
+
+
+def test_nightly_on_fresh_goals_and_a_list_fit_spec_still_writes_the_queue(tmp_path, monkeypatch):
+    from tools.career_scanner import scanner
+    root = make(tmp_path, spec="- a\n- b\n")
+    monkeypatch.setattr(scanner, "load_targets", lambda r: [{"name": "Open Board Co", "ats": "ashby"}])
+    monkeypatch.setattr(scanner, "fetch_company_roles", lambda target, errors=None, cuts=None: [
+        {"title": "Strategist", "company": "A", "location": "San Francisco", "url": "u", "description": "x"}])
+    s = scanner.scan_all_targets(root, today=TODAY)
+    assert len(s["roles"]) == 1 and scanner.read_queue_payload(root)["target_drift"]["drift"] is True
+
+
+@pytest.mark.parametrize("field", ["role_filters", "role_excludes"])
+def test_a_filter_field_that_is_not_a_list_exits_2(tmp_path, field):
+    targets = f"companies:\n  - name: X\n    ats: ashby\n    {field}: 7\n"
+    code, out = run(make(tmp_path, targets=targets))
+    assert code == 2 and "not a list" in out["error"]
+
+
+def test_a_filter_field_that_is_not_a_list_is_a_fetch_failure_not_a_crash(monkeypatch):
+    from tools.career_scanner import scanner
+    import tools.career_scanner.ashby as ashby   # the parser fetch_company_roles imports
+    monkeypatch.setattr(ashby, "fetch_ashby", lambda slug, errors=None: [
+        {"title": "Strategist", "company": "X", "location": "San Francisco", "url": "u"}])
+    errors, cuts = [], []
+    roles = scanner.fetch_company_roles({"name": "X", "ats": "ashby", "slug": "x", "role_filters": 7},
+                                        errors=errors, cuts=cuts)
+    assert roles == [] and "role_filters is not a list" in errors[0]["reason"]
+
+
+def test_nightly_never_raises(tmp_path, monkeypatch):
+    from tools import target_drift as td
+    def boom(root, today):
+        raise TypeError("unexpected")
+    monkeypatch.setattr(td, "check", boom)
+    out = td.nightly(tmp_path, TODAY)
+    assert out["drift"] is True and "TypeError" in out["problems"][0]
+
+
+def test_on_fresh_goals_rows_left_unscored_by_a_stale_scan_come_first(tmp_path):
+    import tools.role_queue_read as rq
+    old = [{"title": f"Old {i}", "company": "X", "url": f"u{i}", "score": 7 - i, "published_at": "2026-10-01"}
+           for i in range(5)]
+    unranked = [{"title": "Deployment Strategist", "company": "Acme", "url": "n", "score": None,
+                 "published_at": "2026-11-10"}]
+    _queue(tmp_path, False, old + unranked)
+    out = rq.read_queue(tmp_path, top=5)
+    assert out["roles"][0]["title"] == "Deployment Strategist"
+    assert [r["title"] for r in out["roles"][1:]] == ["Old 0", "Old 1", "Old 2", "Old 3"]
+    assert out["order"].startswith("unranked first")

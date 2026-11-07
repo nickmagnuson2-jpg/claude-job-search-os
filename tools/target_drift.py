@@ -69,6 +69,14 @@ def _targets(root: Path) -> tuple:
     return targets, reach
 
 
+def _filter_list(target: dict, key: str) -> list:
+    """A target's role_filters / role_excludes, which must be a list (Codex F2, review r3)."""
+    value = target.get(key) or []
+    if not isinstance(value, list):
+        raise Unreadable(f"{TARGETS.name}: {target.get('name', '?')} {key} is not a list")
+    return value
+
+
 def _patterns(spec: dict, key: str) -> list:
     value = spec.get(key) or []
     if not isinstance(value, list):   # a scalar would be read character by character (Codex F4)
@@ -99,7 +107,7 @@ def check(root: Path, today: date) -> dict:
         low = title.lower()
         cuts = []
         for t in targets:
-            reason = title_cut_reason(title, t.get("role_filters") or [], t.get("role_excludes") or [],
+            reason = title_cut_reason(title, _filter_list(t, "role_filters"), _filter_list(t, "role_excludes"),
                                       bool(t.get("allow_engineer_titles", False)))
             if reason:
                 cuts.append({"target": t.get("name", "?"), "reason": reason})
@@ -124,12 +132,20 @@ def check(root: Path, today: date) -> dict:
 
 
 def nightly(root: Path, today: date) -> dict:
-    """For the nightly scan: never raises. An unreadable input is recorded as drift."""
+    """For the nightly scan: never raises. An unreadable input is recorded as drift.
+
+    Any other exception is recorded too: three review rounds each found a new input shape
+    that escaped the Unreadable guard and killed the scan before it wrote the queue, so the
+    contract is enforced here for every exception, not per shape (review r3).
+    """
     try:
         return check(root, today)
     except Unreadable as e:
         return {"drift": True, "problems": [f"unreadable input: {e}"], "titles": [],
                 "today": today.isoformat(), "error": str(e)}
+    except Exception as e:   # noqa: BLE001 -- the nightly scan must still write its queue
+        return {"drift": True, "problems": [f"drift check failed: {type(e).__name__}: {e}"],
+                "titles": [], "today": today.isoformat(), "error": f"{type(e).__name__}: {e}"}
 
 
 def main(argv=None) -> int:

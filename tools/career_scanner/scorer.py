@@ -127,9 +127,12 @@ def load_fit_spec(repo_root: Path) -> dict:
         return {}
     try:
         import yaml  # PyYAML — already a repo dep (cv themes, discover presets)
-        return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        spec = yaml.safe_load(path.read_text(encoding="utf-8"))
     except Exception:
         return {}
+    # A valid YAML file whose top level is not a mapping is no overlay: score_role calls
+    # .get on it, and a list crashed the nightly scan (Codex F1 / Grok F1, review r3).
+    return spec if isinstance(spec, dict) else {}
 
 
 # The colon may sit inside or just outside the bold (Grok F7, review r1).

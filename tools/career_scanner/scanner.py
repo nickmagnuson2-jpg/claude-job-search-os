@@ -207,8 +207,17 @@ def fetch_company_roles(target: dict, errors: list | None = None,
         return []
 
     # Title filters. Empty role_filters = all roles (unchanged contract).
-    filters = target.get("role_filters", [])
-    excludes = target.get("role_excludes", [])
+    filters = target.get("role_filters") or []
+    excludes = target.get("role_excludes") or []
+    # A filter field that is not a list (a number, a bare string) cannot be applied: a
+    # number crashed the scan and a string matched by single letters. The target is a
+    # fetch failure, never a silent pass or a crash (Codex F2 / Grok F2, review r3).
+    for field, value in (("role_filters", filters), ("role_excludes", excludes)):
+        if not isinstance(value, list):
+            if errors is not None:
+                errors.append({"company": name, "ats": ats,
+                               "reason": f"{field} is not a list in scan-targets.yaml"})
+            return []
     allow_eng = bool(target.get("allow_engineer_titles", False))
     from tools.career_scanner.company_scorer import location_band
     geo = target.get("geo_filter", True)

@@ -113,8 +113,13 @@ def read_queue(repo_root: Path, top: int = 5) -> dict:
         # saw it, so tonight's undated roles do not sink below dated leftovers (Grok F1, r2).
         new.sort(key=lambda r: r.get("published_at") or r.get("first_seen") or "", reverse=True)
     else:
-        order = "score, then posting date"
-        new.sort(key=lambda r: (r.get("score") or 0, r.get("published_at") or ""),
+        # A row a stale scan left unscored is never rescored, and as 0 it sank below every
+        # scored leftover once goals were fresh again (Grok F3, review r3). Unranked rows
+        # come first, newest first, then the ranked ones.
+        order = ("unranked first (scored while goals.md was stale), then score, then posting date"
+                 if any(r.get("score") is None for r in new) else "score, then posting date")
+        new.sort(key=lambda r: (r.get("score") is None, r.get("score") or 0,
+                                r.get("published_at") or r.get("first_seen") or ""),
                  reverse=True)
 
     cuts = [c for c in (payload.get("cut_at_fetch") or []) if isinstance(c, dict)]
