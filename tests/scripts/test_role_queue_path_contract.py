@@ -184,7 +184,7 @@ def _run_scan(tmp_path, monkeypatch, roles, targets=None):
                         lambda target, errors=None, cuts=None: [dict(r) for r in roles])
     monkeypatch.setattr(sc.time, "sleep", lambda *_: None)
     import tools.career_scanner.scorer as scorer
-    monkeypatch.setattr(scorer, "load_scoring_context", lambda root: {})
+    monkeypatch.setattr(scorer, "load_scoring_context", lambda root, today=None: {"goals_stale": False})
     monkeypatch.setattr(scorer, "score_role", lambda role, ctx: 7)
     import tools.career_scanner.dedup as dd
     monkeypatch.setattr(dd, "load_pipeline_entries", lambda root: [])
@@ -443,7 +443,7 @@ def test_a_dry_run_writes_no_queue(tmp_path, monkeypatch):
                         lambda t, errors=None, cuts=None: [dict(_r("https://b/1"))])
     monkeypatch.setattr(sc.time, "sleep", lambda *_: None)
     import tools.career_scanner.scorer as scorer
-    monkeypatch.setattr(scorer, "load_scoring_context", lambda root: {})
+    monkeypatch.setattr(scorer, "load_scoring_context", lambda root, today=None: {"goals_stale": False})
     monkeypatch.setattr(scorer, "score_role", lambda role, ctx: 7)
     import tools.career_scanner.dedup as dd
     monkeypatch.setattr(dd, "load_pipeline_entries", lambda root: [])
@@ -489,7 +489,7 @@ def test_the_scan_ranks_by_score(tmp_path, monkeypatch):
     monkeypatch.setattr(sc, "fetch_company_roles", lambda t, errors=None, cuts=None: [
         dict(_r("https://b/low")), dict(_r("https://b/high"))])
     monkeypatch.setattr(sc.time, "sleep", lambda *_: None)
-    monkeypatch.setattr(scorer, "load_scoring_context", lambda root: {})
+    monkeypatch.setattr(scorer, "load_scoring_context", lambda root, today=None: {"goals_stale": False})
     monkeypatch.setattr(scorer, "score_role", lambda role, ctx: scores[role["url"]])
     import tools.career_scanner.dedup as dd
     monkeypatch.setattr(dd, "load_pipeline_entries", lambda root: [])
@@ -571,7 +571,7 @@ def test_the_scan_logs_its_per_company_progress(tmp_path, monkeypatch, capsys):
                         lambda t, errors=None, cuts=None: hits[t["name"]])
     monkeypatch.setattr(sc.time, "sleep", lambda *_: None)
     import tools.career_scanner.scorer as scorer
-    monkeypatch.setattr(scorer, "load_scoring_context", lambda root: {})
+    monkeypatch.setattr(scorer, "load_scoring_context", lambda root, today=None: {"goals_stale": False})
     monkeypatch.setattr(scorer, "score_role", lambda role, ctx: 7)
     import tools.career_scanner.dedup as dd
     monkeypatch.setattr(dd, "load_pipeline_entries", lambda root: [])
@@ -593,7 +593,7 @@ def test_the_scan_rate_limits_between_companies_but_not_after_the_last(tmp_path,
     monkeypatch.setattr(sc, "fetch_company_roles", lambda t, errors=None, cuts=None: [])
     monkeypatch.setattr(sc.time, "sleep", lambda s: calls.append(s))
     import tools.career_scanner.scorer as scorer
-    monkeypatch.setattr(scorer, "load_scoring_context", lambda root: {})
+    monkeypatch.setattr(scorer, "load_scoring_context", lambda root, today=None: {"goals_stale": False})
     monkeypatch.setattr(scorer, "score_role", lambda role, ctx: 0)
     import tools.career_scanner.dedup as dd
     monkeypatch.setattr(dd, "load_pipeline_entries", lambda root: [])

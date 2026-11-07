@@ -13,6 +13,7 @@ Per D-05: All roles get scores, no filtering threshold.
 """
 import re
 import statistics
+from datetime import date
 from difflib import SequenceMatcher
 from pathlib import Path
 
@@ -53,10 +54,12 @@ _W_KEYWORD = 0.20
 # Context loading
 # ---------------------------------------------------------------------------
 
-def load_scoring_context(repo_root: Path) -> dict:
+def load_scoring_context(repo_root: Path, today: date | None = None) -> dict:
     """Extract scoring context from profile.md and goals.md.
 
-    Returns dict with keys: target_titles, target_seniority, target_industries, skills.
+    Returns dict with keys: target_titles, target_seniority, target_industries, skills,
+    and goals_last_reviewed / goals_age_days / goals_stale (goals_freshness against
+    `today`, default the current date; a missing goals.md is stale).
     Gracefully returns empty values if files are missing.
     """
     data_dir = repo_root / "data"
@@ -67,11 +70,13 @@ def load_scoring_context(repo_root: Path) -> dict:
         "target_industries": [],
         "skills": [],
     }
+    result.update(goals_freshness("", today or date.today()))
 
     # Parse goals.md
     goals_path = data_dir / "goals.md"
     if goals_path.exists():
         goals_text = goals_path.read_text(encoding="utf-8")
+        result.update(goals_freshness(goals_text, today or date.today()))
         result["target_titles"] = _extract_target_titles(goals_text)
         result["target_seniority"] = _extract_target_seniority(goals_text)
         result["target_industries"] = _extract_target_industries(goals_text)
@@ -115,38 +120,67 @@ def load_fit_spec(repo_root: Path) -> dict:
         return {}
 
 
-def _extract_target_titles(text: str) -> list[str]:
-    """Extract target role titles from goals.md.
+_OPEN_TO_WORK = re.compile(r"\*\*Open to Work titles[^*]*:\*\*(.*)$", re.IGNORECASE)
+_LAST_REVIEWED = re.compile(r"^Last reviewed:\s*(\S+)", re.MULTILINE)
+# Days goals.md may go unreviewed before the scorer refuses to rank (Nick, 2026-11-06:
+# "14 days"). target-drift-1106.
+GOALS_FRESH_DAYS = 14
 
-    Looks for numbered list items under 'Role types' or 'Target Criteria' sections.
-    Patterns: '1. Chief of Staff', '2. Head of Operations (remote ok)', etc.
-    """
-    titles = []
-    in_role_section = False
+
+def _target_criteria(text: str) -> list[str]:
+    """The lines of the `## Target Criteria` section only, up to the next `## ` heading."""
+    out, inside = [], False
     for line in text.splitlines():
-        lower = line.lower().strip()
-        # Detect role types section
-        if "role type" in lower or "target role" in lower:
-            in_role_section = True
+        if line.startswith("## "):
+            inside = line[3:].strip().lower() == "target criteria"
             continue
-        # End section on next heading or blank line after collecting
-        if in_role_section and (line.startswith("**") and ":" in line and "role" not in lower):
-            in_role_section = False
-            continue
-        if in_role_section and line.startswith("#"):
-            in_role_section = False
-            continue
-        if in_role_section:
-            # Match numbered list: '1. Chief of Staff' or '- Chief of Staff'
-            m = re.match(r"^\s*(?:\d+\.|[-*])\s+(.+)", line)
-            if m:
-                title = m.group(1).strip()
-                # Remove parenthetical qualifiers
-                title = re.sub(r"\s*\(.*?\)\s*$", "", title)
-                # Skip TODO placeholders
-                if title and not title.upper().startswith("TODO"):
-                    titles.append(title)
-    return titles
+        if inside:
+            out.append(line)
+    return out
+
+
+def _extract_target_titles(text: str) -> list[str]:
+    """The titles on the Open to Work line inside goals.md `## Target Criteria`.
+
+    That line is the one source for target titles (Nick, 2026-11-06: "LinkedIn is true").
+    Nothing else in the file is read: until target-drift-1106 a "Role types" heading
+    anywhere in goals.md started a list, so the June ranked list kept feeding the scorer
+    for 17 days after the 10/20 thesis refresh. Titles are semicolon-separated and the
+    list ends at the first sentence-ending period.
+    """
+    for line in _target_criteria(text):
+        m = _OPEN_TO_WORK.search(line)
+        if m:
+            body = re.split(r"\.(?:\s|$)", m.group(1), maxsplit=1)[0]
+            return [t.strip() for t in body.split(";") if t.strip()]
+    return []
+
+
+def goals_freshness(text: str, today: date) -> dict:
+    """Whether goals.md was reviewed within GOALS_FRESH_DAYS of `today`.
+
+    A missing, unparseable or future date is stale: a check that cannot read the date
+    must not pass (a typo in the future would otherwise hide staleness for good).
+    """
+    m = _LAST_REVIEWED.search(text or "")
+    try:
+        reviewed = date.fromisoformat(m.group(1)) if m else None
+    except ValueError:
+        reviewed = None
+    if reviewed is None or reviewed > today:
+        return {"goals_last_reviewed": m.group(1) if m else None, "goals_age_days": None,
+                "goals_stale": True}
+    age = (today - reviewed).days
+    return {"goals_last_reviewed": reviewed.isoformat(), "goals_age_days": age,
+            "goals_stale": age > GOALS_FRESH_DAYS}
+
+
+def unranked_reason(ctx: dict) -> str:
+    """The reason a role carries when goals.md is stale and nothing is ranked."""
+    age = ctx.get("goals_age_days")
+    days = f"{age} days" if age is not None else "no valid date"
+    return (f"unranked: goals.md last reviewed {ctx.get('goals_last_reviewed') or 'unknown'} "
+            f"({days}; limit {GOALS_FRESH_DAYS})")
 
 
 def _extract_target_seniority(text: str) -> str:

@@ -17,7 +17,7 @@ REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
 from tools.career_scanner import scorer  # noqa: E402
 
-SCRIPT = REPO / "tools" / "check_target_drift.py"
+SCRIPT = REPO / "tools" / "target_drift.py"
 TODAY = date(2026, 11, 20)
 
 GOALS = """# Job Search Goals & Thesis

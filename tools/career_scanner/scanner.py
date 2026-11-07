@@ -218,12 +218,13 @@ def fetch_company_roles(target: dict, errors: list | None = None,
     return kept
 
 
-def scan_all_targets(repo_root: Path, dry_run: bool = False) -> dict:
+def scan_all_targets(repo_root: Path, dry_run: bool = False, today=None) -> dict:
     """Full pipeline: load targets -> fetch -> score -> dedup -> write the role queue.
 
     Args:
         repo_root: Path to repository root.
         dry_run: If True, skip writing the role queue and the seen-set.
+        today: The date goals.md freshness is judged against (default: the current date).
 
     Returns:
         Summary dict with keys: total_fetched, new_roles, skipped_dupes,
@@ -233,6 +234,15 @@ def scan_all_targets(repo_root: Path, dry_run: bool = False) -> dict:
     from tools.career_scanner.dedup import (
         load_seen, save_seen, split_new_and_standing)
     from tools.career_scanner.dedup import load_closed_entries, tag_previously_closed
+
+    from datetime import date
+    from tools.target_drift import nightly as target_drift
+    today = today or date.today()
+    # goals.md freshness and the target-drift check (target-drift-1106). On stale goals
+    # every role is still listed and none is ranked; the drift report rides the queue.
+    scoring_ctx = load_scoring_context(repo_root, today=today)
+    stale = scoring_ctx["goals_stale"]
+    drift = {**target_drift(repo_root, today), "goals_stale": stale}
 
     targets = load_targets(repo_root)
     if not targets:
@@ -246,12 +256,12 @@ def scan_all_targets(repo_root: Path, dry_run: bool = False) -> dict:
                    "companies_scanned": 0, "fetch_failures": len(errors),
                    "fetch_failure_detail": errors, "new_since_last_scan": 0,
                    "standing": 0, "previously_closed": 0, "cut_at_fetch": 0,
-                   "skipped_repeats": 0, "skipped_repeat_roles": [], "roles": []}
+                   "skipped_repeats": 0, "skipped_repeat_roles": [], "roles": [],
+                   "goals_stale": stale, "target_drift": drift}
         if not dry_run:
-            write_role_queue(repo_root, [], [], errors)
+            with _queue_lock(repo_root):
+                _write_role_queue_locked(repo_root, [], [], errors, drift=drift)
         return summary
-
-    scoring_ctx = load_scoring_context(repo_root)
 
     all_roles = []
     errors = []
@@ -272,7 +282,7 @@ def scan_all_targets(repo_root: Path, dry_run: bool = False) -> dict:
 
     # Score all roles
     for role in all_roles:
-        role["score"] = score_role(role, scoring_ctx)
+        role["score"] = None if stale else score_role(role, scoring_ctx)
 
     # Pipeline history (Nick, 2026-11-06), the SAME check /scan-jobs runs: every role is
     # labelled; the same role already active in the pipeline is a duplicate (counted in
@@ -294,7 +304,9 @@ def scan_all_targets(repo_root: Path, dry_run: bool = False) -> dict:
     previously_closed = tag_previously_closed(new_roles, load_closed_entries(repo_root))
 
     # Sort by score descending (D-05)
-    new_roles.sort(key=lambda r: r.get("score", 0), reverse=True)
+    # Stale goals: input order, never a faked ranking (target-drift-1106).
+    if not stale:
+        new_roles.sort(key=lambda r: r.get("score", 0), reverse=True)
 
     # Split on the ROLE-LEVEL seen-set. filter_duplicates above answered "is this in
     # the pipeline"; this answers "have I shown Nick this before". Conflating the two
@@ -320,6 +332,8 @@ def scan_all_targets(repo_root: Path, dry_run: bool = False) -> dict:
         # The held-back repeats themselves, with their labels, so /scan-companies can list
         # them (Grok F1, review r1): a count alone hides which roles they were.
         "skipped_repeat_roles": repeats,
+        "goals_stale": stale,
+        "target_drift": drift,
         "roles": new_roles,
     }
 
@@ -334,7 +348,8 @@ def scan_all_targets(repo_root: Path, dry_run: bool = False) -> dict:
     # an acknowledgement stick.
     if not dry_run:
         with _queue_lock(repo_root):
-            _write_role_queue_locked(repo_root, truly_new, standing, errors, cuts, repeats)
+            _write_role_queue_locked(repo_root, truly_new, standing, errors, cuts, repeats,
+                                     drift=drift)
             save_seen(repo_root, seen)
 
     # NO LONGER WRITES data/inbox.md (2026-09-02). That file is 7,000+ lines, is under
@@ -563,7 +578,8 @@ def write_role_queue(repo_root: Path, new_roles: list[dict],
 def _write_role_queue_locked(repo_root: Path, new_roles: list[dict],
                              standing: list[dict], errors: list[dict],
                              cuts: list[dict] | None = None,
-                             repeats: list[dict] | None = None) -> Path:
+                             repeats: list[dict] | None = None,
+                             drift: dict | None = None) -> Path:
     """The merge itself. Caller MUST already hold _queue_lock."""
     from tools.career_scanner.dedup import role_key
 
@@ -588,13 +604,14 @@ def _write_role_queue_locked(repo_root: Path, new_roles: list[dict],
         have.add(key)
         pending.append(role)
     return write_queue_payload(repo_root, _queue_payload(
-        pending, new_roles, standing, errors, cuts, repeats))
+        pending, new_roles, standing, errors, cuts, repeats, drift))
 
 
 def _queue_payload(pending: list[dict], new_roles: list[dict],
                    standing: list[dict], errors: list[dict],
                    cuts: list[dict] | None = None,
-                   repeats: list[dict] | None = None) -> dict:
+                   repeats: list[dict] | None = None,
+                   drift: dict | None = None) -> dict:
     from datetime import datetime, timezone
 
     return {
@@ -616,4 +633,8 @@ def _queue_payload(pending: list[dict], new_roles: list[dict],
         # THIS scan's exact repeats of postings Nick passed on, held back with their
         # history label (pipeline_history), never silently.
         "skipped_repeats": list(repeats or []),
+        # THIS scan's target-drift report (tools/target_drift.py) and goals.md staleness.
+        # On stale goals no role in this scan was ranked (target-drift-1106).
+        "target_drift": drift,
+        "goals_stale": (drift or {}).get("goals_stale"),
     }

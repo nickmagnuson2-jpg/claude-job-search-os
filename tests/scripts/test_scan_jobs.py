@@ -1,6 +1,7 @@
 """tools/scan_jobs.py: the deterministic half of /scan-jobs (dedupe, gate, score, status,
 cache write). The same ads must always get the same verdict."""
 import json
+from datetime import date
 import subprocess
 import sys
 from pathlib import Path
@@ -38,6 +39,8 @@ def root(tmp_path):
     (tmp_path / ".claude/skills/scan-jobs/cache.md").write_text(CACHE, encoding="utf-8")
     (tmp_path / "data").mkdir()
     (tmp_path / "data/job-pipeline.md").write_text(PIPE, encoding="utf-8")
+    # Fresh goals, so the score ranks (target-drift-1106: stale goals rank nothing).
+    (tmp_path / "data/goals.md").write_text(f"Last reviewed: {date.today().isoformat()}\n", encoding="utf-8")
     return tmp_path
 
 

@@ -128,6 +128,10 @@ def read_queue(repo_root: Path, top: int = 5) -> dict:
         "cut_at_fetch_by_reason": dict(Counter(c.get("reason", "") for c in cuts)),
         # Exact repeats of postings Nick passed on, held back WITH their labels (Grok F6).
         "skipped_repeats": [r for r in (payload.get("skipped_repeats") or []) if isinstance(r, dict)],
+        # The target-drift report and goals.md staleness from THIS scan (target-drift-1106);
+        # None on a queue written before that branch.
+        "target_drift": payload["target_drift"] if isinstance(payload.get("target_drift"), dict) else None,
+        "goals_stale": payload.get("goals_stale"),
         "roles": [_summarise(r) for r in new[:top]],
         # The reader acknowledges BY KEY, never by count. Acking "the top 5" would
         # silently consume whatever a scan inserted between the read and the ack.
