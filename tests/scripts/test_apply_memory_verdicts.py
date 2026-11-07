@@ -431,3 +431,24 @@ def test_strict_roundtrip_rejects_a_wrong_nested_value():
 
 def test_strict_roundtrip_rejects_a_key_that_is_absent_everywhere():
     assert amv.strict_roundtrip_ok(NESTED_FM, "not_a_key", "v") is False
+
+
+def test_the_exit1_record_keys_are_insertable_and_quoted(corpus, tmp_path):
+    """I8 (2026-11-06) requires exit1_gate + exit1_evidence on a completed exit1, and no
+    existing file has them, so the verdict applier must be able to add them. The gate value
+    may carry prose with a colon, so both are emitted quoted and re-read strictly."""
+    v = tmp_path / "v.txt"
+    v.write_text('feedback_example.md\texit1_gate=tools/check_x.py: blocks the origin'
+                 '\texit1_evidence=tests/scripts/test_x.py::test_blocks\n', encoding="utf-8")
+    rc, rep = run(corpus, v, "--apply")
+    assert rc == 0 and rep["changed"] == 1, rep
+    text = (corpus / "feedback_example.md").read_text(encoding="utf-8")
+    assert '  exit1_gate: "tools/check_x.py: blocks the origin"' in text
+    assert '  exit1_evidence: "tests/scripts/test_x.py::test_blocks"' in text
+    assert {"exit1_gate", "exit1_evidence"} <= amv.QUOTED_KEYS
+
+
+def test_every_insertable_key_has_an_insertion_anchor():
+    """An insertable key with no INSERT_AFTER entry crashed with KeyError on its first
+    insert (found adding the exit1 keys, 2026-11-06)."""
+    assert amv.INSERTABLE_KEYS <= set(amv.INSERT_AFTER)

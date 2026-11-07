@@ -576,6 +576,10 @@ import check_example
 import check_example as ce
 
 
+def run(argv):
+    return 2
+
+
 def test_blocks_its_origin():
     assert check_example.check('origin') == 2
 
@@ -597,8 +601,8 @@ def test_never_reaches_the_gate():
 
 
 def test_raises_counts_as_an_assertion():
-    with pytest.raises(SystemExit):
-        check_example.check('origin')
+    with pytest.raises(TypeError):
+        check_example.check()
 
 
 @pytest.mark.parametrize("x", ["origin"])
@@ -616,14 +620,19 @@ async def test_async_case():
 """
 
 
-@pytest.fixture()
-def repo(tmp_path):
+def _make_repo(tmp_path):
     """A throwaway repo holding gates of each kind and one evidence file."""
     root = tmp_path / "repo"
     (root / "tools" / "hooks").mkdir(parents=True)
     (root / "tests" / "scripts").mkdir(parents=True)
     (root / GATE).write_text("def check(x):\n    return 2\n", encoding="utf-8")
     (root / TESTS).write_text(EVIDENCE_FILE, encoding="utf-8")
+    # I8 runs pytest on the cited node, so the throwaway repo resolves `import check_example`
+    # the way this repo does: tools/ on the path, set by a conftest.
+    (root / "tests/scripts/conftest.py").write_text(
+        "import sys\nfrom pathlib import Path\n"
+        "sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools'))\n",
+        encoding="utf-8")
     hook = root / "tools/hooks/pre-example"
     hook.write_text("#!/bin/sh\nexit 2\n", encoding="utf-8")
     hook.chmod(0o755)
@@ -632,6 +641,24 @@ def repo(tmp_path):
     (root / "framework").mkdir()
     (root / "framework/example.md").write_text("prose\n", encoding="utf-8")
     return root
+
+
+@pytest.fixture()
+def live_repo(tmp_path):
+    """The throwaway repo with I8 asking real pytest whether the cited node collects and
+    passes. Every test about collection, parameter ids, skips, or the run result uses this."""
+    return _make_repo(tmp_path)
+
+
+@pytest.fixture()
+def repo(tmp_path, monkeypatch):
+    """The throwaway repo with pytest's verdict stubbed to "collects and passes", for tests
+    about the gate's shape, the static reach check, and the assertion check. Each of those
+    counterexamples is then rejected for the reason it names and nothing else; many are not
+    runnable code (a string naming the gate path), and need not be. A stubbed verdict never
+    ACCEPTS a node on its own: every clean expectation here is also a reach claim."""
+    monkeypatch.setattr(ps, "_pytest_verdict", lambda root, node: None)
+    return _make_repo(tmp_path)
 
 
 def exit1(**extra):
@@ -653,9 +680,9 @@ def test_I8_a_completed_exit1_without_gate_or_evidence_is_two_violations(repo):
     assert any("exit1_evidence is missing" in x for x in v)
 
 
-def test_I8_a_proven_exit1_is_clean(repo):
+def test_I8_a_proven_exit1_is_clean(live_repo):
     assert ps.check_file("feedback_x.md", exit1(exit1_gate=GATE, exit1_evidence=EVIDENCE),
-                         grandfathered=False, repo_root=repo) == []
+                         grandfathered=False, repo_root=live_repo) == []
 
 
 def test_I8_a_gate_with_a_suffix_and_prose_resolves_to_its_file(repo):
@@ -711,13 +738,20 @@ def test_I8_evidence_that_is_not_a_test_node_is_a_violation(repo, evidence):
 @pytest.mark.parametrize("evidence", [
     f"{TESTS}::test_param[origin]",
     f"{TESTS}::TestCases::test_in_a_class",
-    f"{TESTS}::test_async_case",
+    f"{TESTS}::test_param",
     f"{TESTS}::test_via_alias",
     f"{TESTS}::test_runs_the_hook_as_a_subprocess",
     f"{TESTS}::test_raises_counts_as_an_assertion",
 ])
-def test_I8_every_collectable_node_shape_that_reaches_the_gate_passes(repo, evidence):
-    assert i8(exit1(exit1_gate=GATE, exit1_evidence=evidence), repo) == []
+def test_I8_every_collectable_node_shape_that_reaches_the_gate_passes(live_repo, evidence):
+    assert i8(exit1(exit1_gate=GATE, exit1_evidence=evidence), live_repo) == []
+
+
+def test_I8_an_async_test_without_a_plugin_is_not_evidence(live_repo):
+    """pytest's answer, not a guess: with no async plugin the coroutine never runs its
+    assertion, so pytest does not report it passed."""
+    v = i8(exit1(exit1_gate=GATE, exit1_evidence=f"{TESTS}::test_async_case"), live_repo)
+    assert len(v) == 1 and "pytest does not pass it" in v[0]
 
 
 def test_I8_a_class_qualified_node_must_name_the_real_class(repo):
@@ -725,17 +759,17 @@ def test_I8_a_class_qualified_node_must_name_the_real_class(repo):
     left a stale node reading as proven."""
     v = i8(exit1(exit1_gate=GATE,
                  exit1_evidence=f"{TESTS}::Nonexistent::test_in_a_class"), repo)
-    assert len(v) == 1 and "pytest cannot collect" in v[0]
+    assert len(v) == 1 and "is not defined in" in v[0]
 
 
 def test_I8_a_method_is_not_found_at_module_level(repo):
     v = i8(exit1(exit1_gate=GATE, exit1_evidence=f"{TESTS}::test_in_a_class"), repo)
-    assert len(v) == 1 and "pytest cannot collect" in v[0]
+    assert len(v) == 1 and "is not defined in" in v[0]
 
 
-def test_I8_a_parameter_id_on_an_unparametrized_test_is_a_violation(repo):
-    v = i8(exit1(exit1_gate=GATE, exit1_evidence=EVIDENCE + "[case-1]"), repo)
-    assert len(v) == 1 and "is not a parameter id this test can be shown to generate" in v[0]
+def test_I8_a_parameter_id_on_an_unparametrized_test_is_a_violation(live_repo):
+    v = i8(exit1(exit1_gate=GATE, exit1_evidence=EVIDENCE + "[case-1]"), live_repo)
+    assert len(v) == 1 and "pytest does not collect it" in v[0]
 
 
 def test_I8_evidence_that_asserts_nothing_is_a_violation(repo):
@@ -816,7 +850,7 @@ def test_I8_an_evidence_file_that_does_not_exist_is_a_violation(repo):
 
 def test_I8_an_evidence_test_that_is_not_defined_is_a_violation(repo):
     v = i8(exit1(exit1_gate=GATE, exit1_evidence=f"{TESTS}::test_never_written"), repo)
-    assert len(v) == 1 and "pytest cannot collect" in v[0]
+    assert len(v) == 1 and "is not defined in" in v[0]
 
 
 def test_I8_partial_is_held_too(repo):
@@ -953,18 +987,21 @@ def test_I8_an_argument_that_shadows_the_import_is_not_the_gate(repo):
     assert len(v) == 1 and "never reaches the gate" in v[0]
 
 
-def test_I8_a_class_pytest_does_not_collect_is_not_a_node(repo):
-    (repo / TESTS).write_text(
+def test_I8_a_class_pytest_does_not_collect_is_not_a_node(live_repo):
+    (live_repo / TESTS).write_text(
         "import check_example\n\nclass Cases:\n    def test_blocks_its_origin(self):\n"
         "        assert check_example.check('origin') == 2\n", "utf-8")
     v = i8(exit1(exit1_gate=GATE,
-                 exit1_evidence=f"{TESTS}::Cases::test_blocks_its_origin"), repo)
-    assert len(v) == 1 and "pytest cannot collect" in v[0]
+                 exit1_evidence=f"{TESTS}::Cases::test_blocks_its_origin"), live_repo)
+    assert len(v) == 1 and "pytest does not collect it" in v[0]
 
 
 PARAM_FILE = """\
 import pytest
 import check_example
+
+CASES = [1, 2]
+IDS = ["a"]
 
 @pytest.mark.parametrize("x", ["origin", 3, None])
 def test_values(x):
@@ -999,10 +1036,6 @@ def test_skipped(x):
 def test_dict_value(x):
     assert check_example.check(x)
 
-@pytest.mark.parametrize("x", ids=["a"])
-def test_too_few_args(x):
-    assert check_example.check(x)
-
 @pytest.mark.parametrize("x", [1], ids=IDS)
 def test_non_literal_ids(x):
     assert check_example.check(x)
@@ -1013,36 +1046,39 @@ def test_non_literal_ids(x):
                                   "test_values[None]", "test_tuples[origin-1]",
                                   "test_ids[second]", "test_param_objects[named]",
                                   "test_param_objects[2]", "test_non_literal",
-                                  "test_stacked"])
-def test_I8_a_parameter_id_pytest_generates_is_accepted(repo, node):
-    (repo / TESTS).write_text(PARAM_FILE, "utf-8")
-    assert i8(exit1(exit1_gate=GATE, exit1_evidence=f"{TESTS}::{node}"), repo) == []
+                                  "test_stacked",
+                                  # Read from pytest itself. The static check had to fail
+                                  # closed on these; pytest generates them.
+                                  "test_non_literal[1]", "test_stacked[2-1]",
+                                  "test_dict_value[x0]", "test_non_literal_ids[a]"])
+def test_I8_a_parameter_id_pytest_generates_is_accepted(live_repo, node):
+    (live_repo / TESTS).write_text(PARAM_FILE, "utf-8")
+    assert i8(exit1(exit1_gate=GATE, exit1_evidence=f"{TESTS}::{node}"), live_repo) == []
 
 
 @pytest.mark.parametrize("node", ["test_values[windows]", "test_tuples[origin]",
                                   "test_ids[1]", "test_param_objects[1]",
                                   "test_non_literal[x]", "test_stacked[1-2]",
-                                  "test_skipped[x]", "test_dict_value[x0]",
-                                  "test_too_few_args[a]", "test_non_literal_ids[a]"])
-def test_I8_a_parameter_id_that_cannot_be_shown_to_exist_fails_closed(repo, node):
-    (repo / TESTS).write_text(PARAM_FILE, "utf-8")
-    v = i8(exit1(exit1_gate=GATE, exit1_evidence=f"{TESTS}::{node}"), repo)
-    assert len(v) == 1 and "is not a parameter id this test can be shown" in v[0]
+                                  "test_skipped[x]"])
+def test_I8_a_parameter_id_that_cannot_be_shown_to_exist_fails_closed(live_repo, node):
+    (live_repo / TESTS).write_text(PARAM_FILE, "utf-8")
+    v = i8(exit1(exit1_gate=GATE, exit1_evidence=f"{TESTS}::{node}"), live_repo)
+    assert len(v) == 1 and "pytest does not collect it" in v[0]
 
 
-def test_I8_a_non_ascii_string_id_is_not_guessed(repo):
-    (repo / TESTS).write_text(
+def test_I8_a_non_ascii_string_id_is_not_guessed(live_repo):
+    (live_repo / TESTS).write_text(
         "import pytest\nimport check_example\n\n"
         "@pytest.mark.parametrize('x', ['caf\\u00e9'])\n"
         "def test_blocks_its_origin(x):\n    assert check_example.check(x)\n", "utf-8")
-    v = i8(exit1(exit1_gate=GATE, exit1_evidence=EVIDENCE + "[café]"), repo)
-    assert len(v) == 1 and "can be shown" in v[0]
+    v = i8(exit1(exit1_gate=GATE, exit1_evidence=EVIDENCE + "[café]"), live_repo)
+    assert len(v) == 1 and "pytest does not collect it" in v[0]
 
 
 def test_I8_a_test_class_that_does_not_exist_is_not_a_node(repo):
     v = i8(exit1(exit1_gate=GATE, exit1_evidence=f"{TESTS}::TestMissing::test_in_a_class"),
            repo)
-    assert len(v) == 1 and "pytest cannot collect" in v[0]
+    assert len(v) == 1 and "is not defined in" in v[0]
 
 
 def test_I8_a_relative_import_of_an_unrelated_name_does_not_bind_the_gate(repo):
@@ -1107,12 +1143,12 @@ def test_I8_a_constant_assigned_inside_the_node_is_not_a_module_binding(repo):
     ('@pytest.mark.parametrize("x", [1, 1])', "test_blocks_its_origin[1]"),
     ('@pytest.mark.parametrize("x", [1, 2], ids=["a", "a"])', "test_blocks_its_origin[a]"),
 ])
-def test_I8_a_duplicated_parameter_id_fails_closed(repo, decorator, node):
-    (repo / TESTS).write_text(
+def test_I8_a_duplicated_parameter_id_fails_closed(live_repo, decorator, node):
+    (live_repo / TESTS).write_text(
         f"import pytest\nimport check_example\n\n{decorator}\n"
         "def test_blocks_its_origin(x):\n    assert check_example.check(x)\n", "utf-8")
-    v = i8(exit1(exit1_gate=GATE, exit1_evidence=f"{TESTS}::{node}"), repo)
-    assert len(v) == 1 and "can be shown" in v[0]
+    v = i8(exit1(exit1_gate=GATE, exit1_evidence=f"{TESTS}::{node}"), live_repo)
+    assert len(v) == 1 and "pytest does not collect it" in v[0]
 
 
 @pytest.mark.parametrize("promoted", ["hook", "skill -- landed", "n/a -- reference",
@@ -1202,14 +1238,14 @@ def test_I8_a_gate_path_constant_is_not_dropped_as_a_rebinding(repo):
     assert _body(repo, "    assert run([HOOK]) == 2\n", header) == []
 
 
-def test_I8_a_test_class_with_init_is_not_collected(repo):
-    (repo / TESTS).write_text(
+def test_I8_a_test_class_with_init_is_not_collected(live_repo):
+    (live_repo / TESTS).write_text(
         "import check_example\n\nclass TestCases:\n    def __init__(self):\n        pass\n"
         "    def test_blocks_its_origin(self):\n        assert check_example.check(1)\n",
         "utf-8")
     v = i8(exit1(exit1_gate=GATE,
-                 exit1_evidence=f"{TESTS}::TestCases::test_blocks_its_origin"), repo)
-    assert len(v) == 1 and "pytest cannot collect" in v[0]
+                 exit1_evidence=f"{TESTS}::TestCases::test_blocks_its_origin"), live_repo)
+    assert len(v) == 1 and "pytest does not collect it" in v[0]
 
 
 def test_I8_an_unrelated_import_inside_the_node_does_not_reach_the_gate(repo):
@@ -1225,15 +1261,15 @@ def test_I8_a_method_or_nested_def_named_like_the_import_is_not_a_module_rebindi
 
 # ---- round 5 of /verify (codex F1-F2, grok F1). These fixes postdate the last review.
 
-def test_I8_a_test_class_with_new_is_not_collected(repo):
-    (repo / TESTS).write_text(
+def test_I8_a_test_class_with_new_is_not_collected(live_repo):
+    (live_repo / TESTS).write_text(
         "import check_example\n\nclass TestCases:\n    def __new__(cls):\n"
         "        return object.__new__(cls)\n"
         "    def test_blocks_its_origin(self):\n        assert check_example.check(1)\n",
         "utf-8")
     v = i8(exit1(exit1_gate=GATE,
-                 exit1_evidence=f"{TESTS}::TestCases::test_blocks_its_origin"), repo)
-    assert len(v) == 1 and "pytest cannot collect" in v[0]
+                 exit1_evidence=f"{TESTS}::TestCases::test_blocks_its_origin"), live_repo)
+    assert len(v) == 1 and "pytest does not collect it" in v[0]
 
 
 @pytest.mark.parametrize("src,node", [
@@ -1248,10 +1284,10 @@ def test_I8_a_test_class_with_new_is_not_collected(repo):
     ("@pytest.mark.skip\nclass TestCases:\n    def test_blocks_its_origin(self):\n"
      "        assert check_example.check(1)\n", f"{TESTS}::TestCases::test_blocks_its_origin"),
 ])
-def test_I8_an_unconditionally_skipped_test_is_not_evidence(repo, src, node):
-    (repo / TESTS).write_text("import pytest\nimport check_example\n\n" + src, "utf-8")
-    v = i8(exit1(exit1_gate=GATE, exit1_evidence=node), repo)
-    assert len(v) == 1 and "skipped unconditionally" in v[0]
+def test_I8_an_unconditionally_skipped_test_is_not_evidence(live_repo, src, node):
+    (live_repo / TESTS).write_text("import pytest\nimport check_example\n\n" + src, "utf-8")
+    v = i8(exit1(exit1_gate=GATE, exit1_evidence=node), live_repo)
+    assert len(v) == 1 and "pytest does not pass it (1 skipped)" in v[0]
 
 
 @pytest.mark.parametrize("src", [
@@ -1264,9 +1300,10 @@ def test_I8_an_unconditionally_skipped_test_is_not_evidence(repo, src, node):
     "@pytest.mark.skip\nclass TestOther:\n    pass\n\n"
     "def test_blocks_its_origin():\n    assert check_example.check(1)\n",
 ])
-def test_I8_a_conditional_skip_or_an_unrelated_mark_is_not_a_skip(repo, src):
-    (repo / TESTS).write_text("import pytest\nimport check_example\n\n" + src, "utf-8")
-    assert i8(exit1(exit1_gate=GATE, exit1_evidence=EVIDENCE), repo) == []
+def test_I8_a_conditional_skip_or_an_unrelated_mark_is_not_a_skip(live_repo, src):
+    (live_repo / TESTS).write_text("import sys\nimport pytest\nimport check_example\n\n" + src,
+                                   "utf-8")
+    assert i8(exit1(exit1_gate=GATE, exit1_evidence=EVIDENCE), live_repo) == []
 
 
 def test_I8_a_decorator_string_naming_the_gate_is_not_the_body_reaching_it(repo):
@@ -1286,3 +1323,184 @@ def test_I8_an_assert_only_in_a_decorator_is_not_an_assertion(repo):
         "def test_blocks_its_origin(x):\n    check_example.check(x)\n", "utf-8")
     v = i8(exit1(exit1_gate=GATE, exit1_evidence=EVIDENCE), repo)
     assert len(v) == 1 and "asserts nothing" in v[0]
+
+
+# ---- I8 asks pytest (Nick's decision 2026-11-06), which retires the static-guess class ----
+
+def _live(live_repo, src, node=EVIDENCE):
+    (live_repo / TESTS).write_text("import pytest\nimport check_example\n\n" + src, "utf-8")
+    return i8(exit1(exit1_gate=GATE, exit1_evidence=node), live_repo)
+
+
+def test_I8_a_fixture_named_test_is_not_a_node(live_repo):
+    """11.F1 (r6): a @pytest.fixture named test_* parsed as a test. pytest does not collect
+    a fixture, so the static guess called a non-node proven."""
+    v = _live(live_repo, "@pytest.fixture\ndef test_blocks_its_origin():\n"
+                         "    assert check_example.check(1)\n")
+    assert len(v) == 1 and "pytest does not collect it" in v[0]
+
+
+@pytest.mark.parametrize("cond", ["True", "1 == 1", "'True'"])
+def test_I8_a_literal_true_skipif_is_not_evidence(live_repo, cond):
+    """11.F2 (r6): skipif was read as conditional and allowed, but a literal-true
+    condition skips every run, so the assertion never executes."""
+    v = _live(live_repo, f"@pytest.mark.skipif({cond}, reason='x')\n"
+                         "def test_blocks_its_origin():\n    assert check_example.check(1)\n")
+    assert len(v) == 1 and "pytest does not pass it (1 skipped)" in v[0]
+
+
+@pytest.mark.parametrize("body", [
+    "    check_example.check(pytest.raises)\n",
+    "    r = check_example.raises if hasattr(check_example, 'raises') else None\n"
+    "    check_example.check(r)\n",
+    "    check_example.check(1)\n    pytest.raises\n",
+])
+def test_I8_an_attribute_named_raises_is_not_an_assertion(repo, body):
+    """11.F3 (r6): any attribute named `raises` counted as an assertion. Only an assert
+    statement or a pytest.raises(...) CALL is one."""
+    v = _body(repo, body, header="import pytest\nimport check_example")
+    assert len(v) == 1 and "asserts nothing" in v[0]
+
+
+def test_I8_a_pytest_raises_call_without_with_is_an_assertion(repo):
+    assert _body(repo, "    pytest.raises(TypeError, check_example.check)\n",
+                 header="import pytest\nimport check_example") == []
+
+
+def test_I8_a_raises_call_on_another_object_is_not_an_assertion(repo):
+    v = _body(repo, "    check_example.check(1)\n    other.raises(TypeError)\n",
+              header="import check_example\nimport other")
+    assert len(v) == 1 and "asserts nothing" in v[0]
+
+
+def test_I8_a_failing_test_is_not_evidence(live_repo):
+    v = _live(live_repo, "def test_blocks_its_origin():\n    assert check_example.check(1) == 0\n")
+    assert len(v) == 1 and "pytest does not pass it (1 failed)" in v[0]
+
+
+def test_I8_a_setup_error_is_not_evidence(live_repo):
+    v = _live(live_repo, "@pytest.fixture\ndef broken():\n    raise RuntimeError('x')\n\n"
+                         "def test_blocks_its_origin(broken):\n"
+                         "    assert check_example.check(1)\n")
+    assert len(v) == 1 and "pytest does not pass it (1 error)" in v[0]
+
+
+def test_I8_an_xfailed_test_is_not_evidence(live_repo):
+    v = _live(live_repo, "@pytest.mark.xfail\ndef test_blocks_its_origin():\n"
+                         "    assert check_example.check(1) == 0\n")
+    assert len(v) == 1 and "pytest does not pass it (1 xfailed)" in v[0]
+
+
+def test_I8_an_xpassed_test_is_not_evidence(live_repo):
+    """An xfail that happens to pass reports `xpassed`, not `passed`: the author expected
+    it to fail, so it is not a claim that the gate blocks."""
+    v = _live(live_repo, "@pytest.mark.xfail\ndef test_blocks_its_origin():\n"
+                         "    assert check_example.check(1)\n")
+    assert len(v) == 1 and "pytest does not pass it" in v[0]
+
+
+def test_I8_an_idless_parametrized_node_with_one_skipped_case_is_not_evidence(live_repo):
+    v = _live(live_repo, "@pytest.mark.parametrize('x', [1, pytest.param(2, marks="
+                         "pytest.mark.skip)])\ndef test_blocks_its_origin(x):\n"
+                         "    assert check_example.check(x)\n")
+    assert len(v) == 1 and "pytest does not pass it (1 skipped)" in v[0]
+
+
+def test_I8_a_module_that_fails_to_collect_is_not_evidence(live_repo):
+    v = _live(live_repo, "@pytest.mark.parametrize('x', ids=['a'])\n"
+                         "def test_blocks_its_origin(x):\n    assert check_example.check(x)\n")
+    assert len(v) == 1 and "pytest does not collect it" in v[0]
+
+
+def test_I8_a_fixture_error_on_an_unparametrized_test_is_not_evidence(live_repo):
+    (live_repo / TESTS).write_text(PARAM_FILE, "utf-8")
+    v = i8(exit1(exit1_gate=GATE, exit1_evidence=f"{TESTS}::test_skipped"), live_repo)
+    assert len(v) == 1 and "pytest does not pass it" in v[0]
+
+
+def test_I8_output_a_passing_test_prints_is_not_read_as_the_result(live_repo):
+    """Only pytest's final summary line is the result. -rA echoes captured stdout, so a
+    passing test that prints "3 failed" must not be rejected."""
+    assert _live(live_repo, "def test_blocks_its_origin():\n    print('3 failed, 2 skipped')\n"
+                            "    assert check_example.check(1)\n") == []
+
+
+def test_I8_the_callers_PYTEST_ADDOPTS_does_not_change_the_answer(live_repo, monkeypatch):
+    """-qq makes --collect-only print per-file counts instead of node ids, which read as
+    "not collected"; -x or -n change the run. The caller's options are not the node's."""
+    monkeypatch.setenv("PYTEST_ADDOPTS", "-qq")
+    assert i8(exit1(exit1_gate=GATE, exit1_evidence=EVIDENCE), live_repo) == []
+
+
+@pytest.mark.parametrize("phase", [0, 1])
+def test_I8_pytest_that_cannot_run_is_unverified_never_proven(live_repo, monkeypatch, phase):
+    real = ps._pytest
+    calls = []
+
+    def fake(root, *args):
+        calls.append(args)
+        return (-1, "timed out") if len(calls) > phase else real(root, *args)
+    monkeypatch.setattr(ps, "_pytest", fake)
+    v = i8(exit1(exit1_gate=GATE, exit1_evidence=EVIDENCE), live_repo)
+    assert len(v) == 1 and "pytest could not run (timed out)" in v[0] and "unverified" in v[0]
+
+
+def test_I8_pytest_is_run_in_the_repo_with_a_timeout(live_repo, monkeypatch):
+    seen = {}
+
+    def fake_run(cmd, **kw):
+        seen.update(kw, cmd=cmd)
+        raise ps.subprocess.TimeoutExpired(cmd, kw.get("timeout"))
+    monkeypatch.setattr(ps.subprocess, "run", fake_run)
+    rc, _ = ps._pytest(live_repo, "--collect-only", "-q", EVIDENCE)
+    assert rc == -1
+    assert seen["cwd"] == str(live_repo) and seen["timeout"] == ps.PYTEST_TIMEOUT > 0
+    assert seen["cmd"][:3] == [sys.executable, "-m", "pytest"] and seen["cmd"][-1] == EVIDENCE
+
+
+def test_I8_a_nonzero_exit_with_a_passed_count_is_not_evidence(live_repo, monkeypatch):
+    outputs = iter([(0, f"{EVIDENCE}\n1 test collected"), (1, "1 passed in 0.01s")])
+    monkeypatch.setattr(ps, "_pytest", lambda root, *a: next(outputs))
+    v = i8(exit1(exit1_gate=GATE, exit1_evidence=EVIDENCE), live_repo)
+    assert len(v) == 1 and "pytest does not pass it (exit 1)" in v[0]
+
+
+def test_I8_a_run_that_reports_no_passed_test_is_not_evidence(live_repo, monkeypatch):
+    outputs = iter([(0, f"{EVIDENCE}\n1 test collected"), (0, "1 deselected in 0.01s")])
+    monkeypatch.setattr(ps, "_pytest", lambda root, *a: next(outputs))
+    v = i8(exit1(exit1_gate=GATE, exit1_evidence=EVIDENCE), live_repo)
+    assert len(v) == 1 and "pytest does not pass it" in v[0]
+
+
+def test_I8_a_listed_node_that_only_prefixes_the_cited_one_is_not_it(live_repo, monkeypatch):
+    """`test_x_more` listed is not `test_x`; only `test_x` or `test_x[...]` is."""
+    outputs = iter([(0, f"{EVIDENCE}_more\n1 test collected")])
+    monkeypatch.setattr(ps, "_pytest", lambda root, *a: next(outputs))
+    v = i8(exit1(exit1_gate=GATE, exit1_evidence=EVIDENCE), live_repo)
+    assert len(v) == 1 and "pytest does not collect it" in v[0]
+
+
+# ---- reads_as_unpromoted: the one definition the backlog and I8 share ----
+
+@pytest.mark.parametrize("value,unpromoted", [
+    ("no", True), ("No", True), ("not", True), ("false", True), ("no -- CORRECTED", True),
+    ("not yet", True), ("not_yet", False), ("", True), ("   ", True), ("0", True),
+    (None, True), ("none", False), ("notation", False), ("nothing landed", False),
+    ("yes", False), ("hook", False), ("partial", False), ("falsehood", False),
+])
+def test_reads_as_unpromoted(value, unpromoted):
+    assert ps.reads_as_unpromoted(value) is unpromoted
+
+
+@pytest.mark.parametrize("value", ["no", "not yet", "not_yet", "none", "notation",
+                                   "no -- reason", "false", "", "0", "yes", "hook",
+                                   "partial -- half", "skill x"])
+def test_scanner_and_I8_agree_on_every_value(repo, value):
+    """Grok r6 P1: `not_yet` left the backlog yet skipped I8. Now a value either stays in
+    the backlog or is held by I8 (partial is both), never neither."""
+    import scan_promotion_candidates as spc
+    in_backlog = not spc.is_promoted({"promoted": value})
+    held_by_i8 = len(i8(exit1(promoted=value), repo)) > 0
+    assert in_backlog or held_by_i8, value
+    assert held_by_i8 is ps.claims_a_landed_gate(value)
+    assert spc._ps_reads_as_unpromoted is ps.reads_as_unpromoted  # one definition, imported

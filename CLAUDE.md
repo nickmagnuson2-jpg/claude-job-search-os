@@ -59,6 +59,8 @@ After any user correction, run the **full tiered protocol** — not just a lesso
      promoted_date: YYYY-MM-DD   # these 3 set on exit only; promotion_schema.py BLOCKS
      exit_path: exit1            # exit1 | exit2 | terminal
      detector_signature: "..."   # REQUIRED for exit2
+     exit1_gate: tools/check_x.py   # REQUIRED for a completed exit1: the gate that blocks
+     exit1_evidence: tests/scripts/test_x.py::test_blocks_origin   # pytest node I8 runs
    ---
    ```
 
@@ -88,7 +90,7 @@ When the REOPEN gate condition is met (2nd occurrence, threshold crossed, etc.):
 
 **Two exits, NOT equal.** **`exit1`** (BLOCKing hook / schema field / check) is verifiable and **must be tried first**; a PRESENCE-only check is not a valid exit1. **`exit2`** (always-loaded) is **the residual**, priced by a `detector_signature` (**never waived**; validate via `tools/detector_probe.py`), an eviction, and a probation review. `promotion_schema.py` BLOCKS on all three. Detail: `output/analysis/082526-self-learning-loop-plan.md`.
 
-Record `promoted_date` + `exit_path`, or the promotion is unobservable and the drain rate cannot be measured.
+Record `promoted_date` + `exit_path` (and for `exit1`, `exit1_gate` + `exit1_evidence`), or the promotion is unobservable and the drain rate cannot be measured.
 
 - **Trace to source before building a guard (mandatory).** Before adding a hook or any forward-guard, ask: *what artifact or instruction generated this bad input?* If a doc, skill, template, or printed-help string prescribes the failing pattern, fix THAT in the same pass. A forward-guard over a poisoned source leaves the recurrence intact — the guard just trips on every run while the source keeps emitting the bad pattern. (2026-06-02: `check_bare_python.py` was built to block bare `python` while 13 skill docs + tool docstrings still prescribed it.)
 - **Back-propagate to existing artifacts (mandatory for greppable rules).** A newly-learned rule is enforced FORWARD by default; the artifacts that ALREADY violate it must be swept in the same pass. When the rule has a greppable violation signature, run `PYTHONIOENCODING=utf-8 python3 tools/audit_rule_violations.py --pattern '<signature>'` and sweep or surface every existing hit. Skipping this is how a rule sits "captured" for weeks while broken artifacts accumulate.

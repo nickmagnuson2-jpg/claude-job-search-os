@@ -36,10 +36,10 @@ I6  promoted              => its leading token is in the vocabulary, never inven
 I7  exit_path == exit2    => the rule is named in MEMORY.md, the channel exit2 MEANS.
 I8  a COMPLETED exit1     => `exit1_gate` names a concrete gate (an executable file in the
     (exit1 + any promoted    repo: .py, .sh, or an executable hook) AND `exit1_evidence`
-     value but no/not/false) names a collectable pytest node (`tests/...py::test_name`) whose
-                             own body reaches that gate and asserts. I8 does not RUN the test:
-                             it binds the claim "this gate blocks the origin" to one node the
-                             suite executes, instead of to prose nobody can run.
+     value but no/not/false) names a pytest node (`tests/...py::test_name`) that pytest
+                             itself collects and passes (I8 RUNS it), whose own body reaches
+                             that gate and asserts. It binds the claim "this gate blocks the
+                             origin" to one passing node, instead of to prose nobody can run.
 
 I1 and I2 are waived for files listed in the grandfather file, which records promotions
 made before the field existed. The waiver is deliberately noisy: the legacy debt is
@@ -65,6 +65,7 @@ import ast
 import json
 import os
 import re
+import subprocess
 import sys
 from datetime import date
 from pathlib import Path
@@ -193,8 +194,22 @@ def claims_a_landed_gate(value: str) -> bool:
     backlog, but a partial claims that half of a gate landed (is_promoted_value, I1/I2), and
     the half that landed is exactly what I8 asks to see.
     """
-    v = (value or "").strip()
-    return bool(v) and promoted_token(v) not in ("no", "not", "false")
+    return not reads_as_unpromoted(value)
+
+
+def reads_as_unpromoted(value: str) -> bool:
+    """True when a `promoted:` value says nothing landed: it opens with the WORD no, not or
+    false (an annotated "no -- reason" included), or it is empty or "0".
+
+    The one definition. tools/scan_promotion_candidates.is_promoted imports it, so the
+    backlog and I8 cannot disagree about a value. They did: I8 read the leading token, which
+    stops at "_" or a digit, while the scanner used a word boundary, so `promoted: not_yet`
+    left the backlog and skipped I8 (Grok r6 P1, 2026-11-06). `\\b` keeps a tier that merely
+    starts with those letters ("none", "notation") promoted, and fails OPEN on purpose: tier
+    names are open-ended.
+    """
+    v = str(value or "").strip().lower()
+    return bool(re.match(r"^(?:no|not|false)\b", v)) or v in ("", "0")
 
 
 def is_promoted_value(value: str) -> bool:
@@ -385,112 +400,93 @@ def _reaches_gate(node, tree: ast.Module, gate_file: str) -> bool:
     return any(uses_gate(n) for st in node.body for n in ast.walk(st))
 
 
-def _is_parametrize(dec) -> bool:
-    return (isinstance(dec, ast.Call) and isinstance(dec.func, ast.Attribute)
-            and dec.func.attr == "parametrize")
-
-
-def _scalar_id(v) -> str | None:
-    if isinstance(v, ast.Constant) and (v.value is None or
-                                        isinstance(v.value, (bool, int, float))):
-        return str(v.value)
-    if isinstance(v, ast.Constant) and isinstance(v.value, str) and v.value.isascii():
-        return v.value
-    return None
-
-
-def _param_ids(node) -> set[str] | None:
-    """The parameter ids pytest generates for this test, or None when they cannot be
-    read statically. Only the common case is resolved: ONE parametrize decorator whose
-    ids are a literal `ids=[...]` list, or whose values are literal scalars, tuples of
-    scalars, or `pytest.param(..., id="x")`. Anything else is None, and None fails
-    closed: an unverifiable node id is not a collectable one. The node WITHOUT an id
-    (`::test_x`) always collects every case, so citing that is never blocked."""
-    decs = [d for d in node.decorator_list if _is_parametrize(d)]
-    if len(decs) != 1 or len(decs[0].args) < 2:
-        return None
-    dec = decs[0]
-    ids_kw = next((k.value for k in dec.keywords if k.arg == "ids"), None)
-    if ids_kw is not None:
-        if isinstance(ids_kw, (ast.List, ast.Tuple)) and all(
-                isinstance(e, ast.Constant) and isinstance(e.value, str) for e in ids_kw.elts):
-            given_ids = [e.value for e in ids_kw.elts]
-            return set(given_ids) if len(set(given_ids)) == len(given_ids) else None
-        return None
-    values = dec.args[1]
-    if not isinstance(values, (ast.List, ast.Tuple)):
-        return None
-    ids: set[str] = set()
-    for v in values.elts:
-        if isinstance(v, ast.Call) and isinstance(v.func, ast.Attribute) \
-                and v.func.attr == "param":
-            given = next((k.value for k in v.keywords if k.arg == "id"), None)
-            if isinstance(given, ast.Constant) and isinstance(given.value, str):
-                ids.add(given.value)
-                continue
-            parts = v.args
-        elif isinstance(v, (ast.Tuple, ast.List)):
-            parts = v.elts
-        else:
-            parts = [v]
-        bits = [_scalar_id(x) for x in parts]
-        if any(b is None for b in bits):
-            return None
-        ids.add("-".join(bits))
-    # pytest renames duplicate ids (it appends an index), so a repeated id is not a node
-    # under that name. A set would silently collapse the duplicates; fail closed instead.
-    if len(ids) != len(values.elts):
-        return None
-    return ids
-
-
-def _is_skip(dec) -> bool:
-    """`pytest.mark.skip` or `pytest.mark.skip(...)`. `skipif` is conditional and allowed."""
-    target = dec.func if isinstance(dec, ast.Call) else dec
-    return isinstance(target, ast.Attribute) and target.attr == "skip"
-
-
-def _always_skipped(tree: ast.Module, node, cls: str | None) -> bool:
-    """A skip on the test, on its class, or in a module-level `pytestmark`."""
-    decorators = list(node.decorator_list)
-    owner = next((n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == cls), None)
-    if owner is not None:
-        decorators += owner.decorator_list
-    for st in tree.body:
-        if isinstance(st, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "pytestmark"
-                                              for t in st.targets):
-            value = st.value
-            decorators += value.elts if isinstance(value, (ast.List, ast.Tuple)) else [value]
-    return any(_is_skip(d) for d in decorators)
-
-
 def _find_node(tree: ast.Module, cls: str | None, test: str):
-    """The exact pytest node: a module-level test, or a method of the named class. Under
-    pytest's default collection a class is collected only when its name starts `Test`."""
+    """The source of the named test: a module-level def, or a method of the named class.
+    Only its body is read here (reach and assertion). Whether pytest collects it is
+    pytest's answer, asked by _pytest_verdict, not guessed from the AST."""
     body = tree.body
     if cls:
-        if not cls.startswith("Test"):
-            return None
         owner = next((n for n in body if isinstance(n, ast.ClassDef) and n.name == cls), None)
         if owner is None:
-            return None
-        # pytest skips a Test class that defines __init__ or __new__ (PytestCollectionWarning).
-        if any(isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
-               and n.name in ("__init__", "__new__") for n in owner.body):
             return None
         body = owner.body
     return next((n for n in body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
                  and n.name == test), None)
 
 
+PYTEST_TIMEOUT = 120
+_SUMMARY_COUNT = re.compile(r"(\d+) (passed|failed|skipped|errors?|xfailed|xpassed|deselected)")
+
+
+def _pytest(repo_root: Path, *args: str) -> tuple[int, str]:
+    """Run pytest on this repo's tests. (exit code, combined output). -1 when it could not
+    run at all (timeout, interpreter missing): unknowable, which the caller fails closed on."""
+    try:
+        # PYTEST_ADDOPTS from the caller (-x, -n, -qq) would change what the output means.
+        env = {k: v for k, v in os.environ.items() if k != "PYTEST_ADDOPTS"}
+        p = subprocess.run([sys.executable, "-m", "pytest", "-p", "no:cacheprovider", *args],
+                           cwd=str(repo_root), capture_output=True, text=True, env=env,
+                           encoding="utf-8", errors="replace", timeout=PYTEST_TIMEOUT)
+    except (subprocess.TimeoutExpired, OSError) as e:
+        return -1, str(e)
+    return p.returncode, (p.stdout or "") + (p.stderr or "")
+
+
+def _pytest_verdict(repo_root: Path, node_id: str) -> str | None:
+    """Ask pytest itself whether the cited node exists and passes. None when it does; else
+    the reason. Replaces six rounds of static guessing at pytest's collection rules
+    (fixtures named test_*, __init__/__new__ classes, parameter ids, skip and skipif marks),
+    each round of which found a case the guess got wrong (Nick's decision, 2026-11-06).
+
+    Collected: `--collect-only -q` must list the node itself, or for an id-less parametrized
+    test at least one `node[...]` case. Passes: a run must report passed tests and no
+    skipped, failed or errored ones, so an unconditional or literal-true skip, a missing
+    async plugin, and a failing assertion are all not evidence.
+    """
+    rc, out = _pytest(repo_root, "--collect-only", "-q", node_id)
+    if rc == -1:
+        return f"pytest could not run ({out[:120]}), so the node is unverified, not proven"
+    listed = [ln.strip() for ln in out.splitlines() if "::" in ln]
+    if not any(ln == node_id or ln.startswith(node_id + "[") for ln in listed):
+        return "pytest does not collect it"
+    rc, out = _pytest(repo_root, "-q", "-rA", node_id)
+    if rc == -1:
+        return f"pytest could not run ({out[:120]}), so the node is unverified, not proven"
+    # Only pytest's own final summary line counts. Captured output that -rA prints (a test
+    # that logs "3 failed") must not be read as the result.
+    summary = next((ln for ln in reversed(out.splitlines()) if _SUMMARY_COUNT.search(ln)), "")
+    counts = {}
+    for n, kind in _SUMMARY_COUNT.findall(summary):
+        counts[kind.rstrip("s") if kind.startswith("error") else kind] = int(n)
+    bad = {k: v for k, v in counts.items() if k in ("failed", "skipped", "error", "xfailed")}
+    if rc != 0 or not counts.get("passed") or bad:
+        what = ", ".join(f"{v} {k}" for k, v in bad.items()) or f"exit {rc}"
+        return f"pytest does not pass it ({what})"
+    return None
+
+
+def _asserts(node) -> bool:
+    """An `assert` statement, or a `pytest.raises(...)` call (as a context manager or not),
+    in the node's own body. An attribute merely NAMED raises is not one (Codex r6 F3)."""
+    for st in node.body:
+        for n in ast.walk(st):
+            if isinstance(n, ast.Assert):
+                return True
+            if (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+                    and n.func.attr == "raises" and isinstance(n.func.value, ast.Name)
+                    and n.func.value.id == "pytest"):
+                return True
+    return False
+
+
 def _check_exit1_evidence(name: str, fm: dict, repo_root: Path | None) -> list[str]:
     """I8 violations for one completed exit1 record. Empty list means it passed.
 
     What passing establishes, and what it does not: the gate is an executable file in the
-    repo, and the named test is a real, collectable pytest node whose OWN body reaches that
-    gate and asserts something. It does not run the test. Whether the assertion is about the
-    rule's origin is the author's claim; I8 makes that claim point at one runnable node the
-    suite executes, instead of at prose.
+    repo, and the named test is a node pytest collects and passes (pytest is run on it), whose
+    OWN body reaches that gate and asserts something. Whether the assertion is about the
+    rule's origin is the author's claim; I8 makes that claim point at one passing node,
+    instead of at prose.
 
     `repo_root` None means the repo is not visible. Unknowable is not a pass: presence and
     shape are still checked, and the record is then reported as unverified, never proven.
@@ -554,23 +550,14 @@ def _check_exit1_evidence(name: str, fm: dict, repo_root: Path | None) -> list[s
     where = f"{m.group('cls')}::" if m.group("cls") else ""
     if node is None:
         out.append(
-            f"{name}: I8 exit1_evidence names {where}{m.group('test')}, which pytest cannot "
-            f"collect from {m.group('path')}")
+            f"{name}: I8 exit1_evidence names {where}{m.group('test')}, which is not defined "
+            f"in {m.group('path')}")
         return out
-    if m.group("param"):
-        ids = _param_ids(node)
-        if ids is None or m.group("param")[1:-1] not in ids:
-            out.append(
-                f"{name}: I8 exit1_evidence {m.group('test')}{m.group('param')} is not a "
-                "parameter id this test can be shown to generate, so the node may not exist. "
-                f"Cite {m.group('test')} without the id to cover every case")
-    if _always_skipped(tree, node, m.group("cls")):
-        out.append(
-            f"{name}: I8 exit1_evidence {m.group('test')} is skipped unconditionally "
-            "(pytest.mark.skip), so its assertion never runs")
-    if not any(isinstance(n, ast.Assert) or
-               (isinstance(n, ast.Attribute) and n.attr == "raises")
-               for st in node.body for n in ast.walk(st)):
+    verdict = _pytest_verdict(repo_root, evidence)
+    if verdict:
+        out.append(f"{name}: I8 exit1_evidence {evidence}: {verdict}, so it is not evidence "
+                   "that the gate blocks anything")
+    if not _asserts(node):
         out.append(
             f"{name}: I8 exit1_evidence {m.group('test')} asserts nothing, so it cannot "
             "show the gate blocking anything")
