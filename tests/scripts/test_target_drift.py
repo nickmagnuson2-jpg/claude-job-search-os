@@ -199,3 +199,73 @@ def test_stale_goals_list_every_role_unranked(tmp_path, monkeypatch):
     assert [r["score"] for r in out["new"]] == [None, None]
     assert all(r["reason"].startswith("unranked: goals.md last reviewed 2026-10-01") for r in out["new"])
     assert [r["company"] for r in out["propose_for_pipeline"]] == ["B Co", "A Co"]
+
+
+def test_a_stale_row_is_recorded_with_no_score(tmp_path, monkeypatch):
+    """An unranked row writes '—' in the Fit column, never 'None/10'."""
+    sys.path.insert(0, str(REPO / "tools"))
+    import scan_jobs as sj
+    line = sj._cache_line({"title": "T", "company": "C", "score": None, "status": "listed",
+                           "url": "", "reason": "unranked: goals.md last reviewed 2026-10-01"}, "abcd1234")
+    assert "| — | listed |" in line and "None" not in line
+
+
+def test_fresh_goals_still_rank(tmp_path, monkeypatch):
+    sys.path.insert(0, str(REPO / "tools"))
+    import scan_jobs as sj
+    root = make(tmp_path, reviewed="2026-11-10")
+    (root / ".claude/skills/scan-jobs").mkdir(parents=True)
+    (root / ".claude/skills/scan-jobs/cache.md").write_text(CACHE, encoding="utf-8")
+    (root / "data" / "job-pipeline.md").write_text("# Job Pipeline\n", encoding="utf-8")
+    monkeypatch.setattr(sj, "TODAY", lambda: TODAY, raising=False)
+    out = sj.assess([{"title": "Strategist", "company": "A Co", "location": "San Francisco",
+                      "description": "x", "url": "https://example.com/a"}], root)
+    assert out["goals_stale"] is False
+    assert isinstance(out["new"][0]["score"], int)
+
+
+# ---------- nightly: the queue carries goals_stale and target_drift ----------
+
+def _nightly(tmp_path, monkeypatch, reviewed):
+    from tools.career_scanner import scanner
+    root = make(tmp_path, reviewed=reviewed)
+    monkeypatch.setattr(scanner, "load_targets", lambda r: [{"name": "Open Board Co", "ats": "ashby"}])
+    roles = [{"title": "Strategist", "company": c, "location": "San Francisco", "url": f"u-{c}",
+              "description": "x"} for c in ("B Co", "A Co")]
+    monkeypatch.setattr(scanner, "fetch_company_roles",
+                        lambda target, errors=None, cuts=None: [dict(r) for r in roles])
+    monkeypatch.setattr(scanner.time, "sleep", lambda s: None)
+    return scanner, root, scanner.scan_all_targets(root, today=TODAY)
+
+
+def test_nightly_on_stale_goals_lists_every_role_unranked(tmp_path, monkeypatch):
+    scanner, root, s = _nightly(tmp_path, monkeypatch, "2026-10-01")
+    assert [r["score"] for r in s["roles"]] == [None, None]
+    assert [r["company"] for r in s["roles"]] == ["B Co", "A Co"]   # input order, not ranked
+    assert s["goals_stale"] is True
+    assert s["target_drift"]["drift"] is True and s["target_drift"]["goals_age_days"] == 50
+    payload = scanner.read_queue_payload(root)
+    assert payload["goals_stale"] is True
+    assert payload["target_drift"]["goals_stale"] is True
+
+
+def test_nightly_on_fresh_goals_ranks_and_reports_no_drift(tmp_path, monkeypatch):
+    scanner, root, s = _nightly(tmp_path, monkeypatch, "2026-11-10")
+    assert all(isinstance(r["score"], int) for r in s["roles"])
+    assert s["goals_stale"] is False and s["target_drift"]["drift"] is False
+
+
+def test_role_queue_read_reports_target_drift(tmp_path, monkeypatch):
+    import tools.role_queue_read as rq
+    scanner, root, _ = _nightly(tmp_path, monkeypatch, "2026-10-01")
+    out = rq.read_queue(root)
+    assert out["goals_stale"] is True
+    assert out["target_drift"]["drift"] is True
+
+
+def test_role_queue_read_on_an_old_queue_reports_no_drift_block(tmp_path):
+    import tools.role_queue_read as rq
+    from tools.career_scanner import scanner
+    scanner.write_queue_payload(tmp_path, scanner._queue_payload([], [], [], []))
+    out = rq.read_queue(tmp_path)
+    assert out["target_drift"] is None and out["goals_stale"] is None

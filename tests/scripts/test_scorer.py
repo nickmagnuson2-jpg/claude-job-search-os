@@ -311,6 +311,8 @@ class TestLoadScoringContext:
 
 ## Target Criteria
 
+- **Open to Work titles (LinkedIn):** Chief of Staff; Head of Operations; Strategy & Operations Lead.
+
 **Role types** (ranked, most to least preferred):
 1. Chief of Staff
 2. Head of Operations
