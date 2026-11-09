@@ -2298,3 +2298,52 @@ def test_a_test_run_never_mirrors_into_a_real_ledger(monkeypatch, tmp_path, caps
     assert cv.mirror_to_main(tmp_path, tmp_path / "nope.md", row) is False
     assert wrote == []
     assert "real ledger" in capsys.readouterr().err
+
+
+def test_ignored_entries_lists_an_ignored_directory_on_success(tmp_path):
+    """The success path: the sandbox seals what git ignores, so an empty answer from a
+    working `git ls-files` would silently unseal every ignored tree."""
+    _git(tmp_path, "init", "-q")
+    (tmp_path / ".gitignore").write_text("secret/\n", encoding="utf-8")
+    (tmp_path / "secret").mkdir()
+    (tmp_path / "secret" / "a.txt").write_text("x", encoding="utf-8")
+    assert cv.ignored_entries(tmp_path) == ["secret"]
+
+
+def test_real_ledger_roots_of_a_main_checkout_is_only_itself(main_and_worktree, monkeypatch):
+    main, _wt = main_and_worktree
+    monkeypatch.setattr(cv, "REPO_ROOT", main)                     # .git is a directory
+    assert cv._real_ledger_roots() == {main}
+
+
+def test_real_ledger_roots_of_a_worktree_adds_its_main(main_and_worktree, monkeypatch):
+    main, wt = main_and_worktree
+    monkeypatch.setattr(cv, "REPO_ROOT", wt)
+    assert cv._real_ledger_roots() == {wt, main}
+
+
+@pytest.mark.parametrize("content", ["not a pointer\n", "gitdir: /elsewhere/.git/modules/sub\n"])
+def test_real_ledger_roots_ignores_a_git_file_that_names_no_worktree(tmp_path, monkeypatch,
+                                                                   content):
+    """A .git file without a gitdir line, or one pointing at a submodule's git dir, names
+    no main checkout."""
+    (tmp_path / ".git").write_text(content, encoding="utf-8")
+    monkeypatch.setattr(cv, "REPO_ROOT", tmp_path)
+    assert cv._real_ledger_roots() == {tmp_path.resolve()}
+
+
+def test_outside_a_worktree_the_mirror_asks_no_resolver(tmp_path, monkeypatch):
+    """Not a linked worktree: nothing to mirror, no git call, and None rather than the
+    False that would mean a failed copy."""
+    (tmp_path / ".git").mkdir()
+
+    def boom(root):
+        raise AssertionError("resolver called outside a worktree")
+    monkeypatch.setattr(cv, "_main_checkout", boom)
+    assert cv.mirror_to_main(tmp_path, tmp_path / "r.md", {"report": "r"}) is None
+
+
+def test_a_worktree_with_no_main_checkout_mirrors_nothing(tmp_path, monkeypatch):
+    (tmp_path / ".git").write_text("gitdir: /x/.git/worktrees/y\n", encoding="utf-8")
+    monkeypatch.setattr(cv, "_main_checkout", lambda root: None)
+    assert cv.mirror_to_main(tmp_path, tmp_path / "r.md", {"report": "r"}) is None
