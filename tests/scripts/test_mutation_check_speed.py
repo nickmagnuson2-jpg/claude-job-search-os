@@ -28,6 +28,19 @@ import mutation_check as mc  # noqa: E402
 import mutation_linemap as lm  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def _no_ambient_sweep():
+    """resolve_scope reads SWEEP_ENV from os.environ. Under the nightly sweep this file's
+    tests inherit it, and the default-scope test then sees whole_file instead of diff.
+    Tests that are about the sweep set it themselves.
+
+    Its own MonkeyPatch, not the test's: a test that calls monkeypatch.undo() midway would
+    otherwise put the flag back (it did, in the git-cannot-answer test)."""
+    with pytest.MonkeyPatch.context() as mp:
+        mp.delenv(mc.SWEEP_ENV, raising=False)
+        yield
+
+
 def _run(args, cwd, env_extra=None, default=False):
     """Same deterministic environment as test_mutation_check._run: the ambient mutation
     flags and CLAUDECODE are stripped so a nested run measures the tool, not its caller."""

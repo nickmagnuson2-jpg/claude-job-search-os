@@ -164,6 +164,30 @@ def test_the_main_checkout_keeps_its_whole_environment(tmp_path):
     assert mc._test_env_base(env, tmp_path / "repo") == env
 
 
+def test_the_sweep_flag_never_reaches_a_test_in_the_main_checkout(tmp_path):
+    (tmp_path / "repo" / ".git").mkdir(parents=True)
+    env = {mc.SWEEP_ENV: "1", mc.LOCK_HELD_ENV: "1", "X": "1"}
+    assert mc._test_env_base(env, tmp_path / "repo") == {mc.LOCK_HELD_ENV: "1", "X": "1"}
+    assert env[mc.SWEEP_ENV] == "1", "the caller's mapping is not modified"
+
+
+def test_the_sweep_flag_never_reaches_a_test_in_a_worktree(tmp_path):
+    main, wt = _main_and_worktree(tmp_path)
+    env = {mc.SWEEP_ENV: "1", "X": "1"}
+    assert mc._test_env_base(env, wt) == {"X": "1"}
+
+
+def test_a_mutant_run_under_the_sweep_passes_the_lock_signal_but_not_the_sweep_flag(
+        tmp_path, monkeypatch):
+    monkeypatch.setenv(mc.SWEEP_ENV, "1")
+    seen = {}
+    monkeypatch.setattr(mc, "_run_reaping_descendants",
+                        lambda cmd, env, timeout: seen.update(env) or
+                        subprocess.CompletedProcess(cmd, 0, "", ""))
+    mc.run_tests([tmp_path / "t.py"], 5)
+    assert mc.SWEEP_ENV not in seen and seen[mc.LOCK_HELD_ENV] == "1"
+
+
 def test_test_subprocesses_use_the_scrubbed_environment(tmp_path, monkeypatch):
     seen = {}
     monkeypatch.setattr(mc, "_test_env_base", lambda: {"MARK": "scrubbed"})

@@ -674,9 +674,15 @@ def _test_env_base(environ=None, root: Path | None = None) -> dict:
     known case: hooks and tools resolve the repo from it, so a worker mutating its own copy
     would otherwise test the live checkout. Dropping by value, not by name, also covers the
     tool-specific overrides (SEAL_REPO_ROOT, PII_REPO_ROOT, FRICTION_LEDGER, ...) that a
-    session may have set. In the main checkout nothing is dropped.
+    session may have set. In the main checkout nothing else is dropped.
+
+    SWEEP_ENV is dropped everywhere. mutation_sweep sets it for the mutation_check it
+    spawns, not for that run's tests: a test that inherits it sees acquire_run_lock return
+    success without a lock and resolve_scope switch to whole_file, so a scope test fails
+    under the sweep and passes everywhere else (baseline_red, 2026-11-08).
     """
     environ = dict(os.environ if environ is None else environ)
+    environ.pop(SWEEP_ENV, None)
     main = _main_checkout(root or REPO_ROOT)
     if main is None:
         return environ
