@@ -1013,11 +1013,15 @@ def test_every_live_workstream_has_a_valid_header_or_is_exempt():
     assert rep["problems"] == []
 
 
-@pytest.mark.skip(reason="[integration, after rebase] needs the real decision_write.py "
-                         "from question-queue-1106")
 def test_real_resolve_main_import():
+    """The real decision_write.py (on main since #32), imported the way run_backlog imports
+    it. Skips only on a clean clone, where resolve_main refuses."""
     import decision_write as dw
-    assert ws.backlog_sources(ws.REPO_ROOT)["main"] == dw.resolve_main(ws.REPO_ROOT)
+    try:
+        expected = dw.resolve_main(ws.REPO_ROOT)
+    except dw.Refusal as exc:
+        pytest.skip(f"no main checkout: {exc.message}")
+    assert ws.backlog_sources(ws.REPO_ROOT)["main"] == expected
 
 
 # ---------------------------------------------------------------- mutation survivors (2026-11-09)
