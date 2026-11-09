@@ -77,6 +77,11 @@ class FakeRunner:
             label = PREFIX + Path(cmd[3]).name[len(PREFIX):-len(".plist")]
             if label in self.fail_on:
                 return subprocess.CompletedProcess(cmd, 3, "", "boom")
+            if label in self.loaded:
+                # Real launchctl refuses to bootstrap a service that is already loaded
+                # ("Bootstrap failed: 5: Input/output error", observed 2026-11-09).
+                return subprocess.CompletedProcess(
+                    cmd, 5, "", "Bootstrap failed: 5: Input/output error")
             self.loaded.add(label)
             return subprocess.CompletedProcess(cmd, 0, "", "")
         return subprocess.CompletedProcess(cmd, 0, "", "")
@@ -215,6 +220,84 @@ def test_a_failed_restore_KEEPS_the_marker_so_the_next_pass_retries(repo, tmp_pa
     r = FakeRunner(loaded=[PREFIX + "gmail-fetch"])
     jq.quiesce(repo, marker, runner=r)
     r.fail_on = {PREFIX + "gmail-fetch"}
+    res = jq.restore(repo, marker, runner=r)
+    assert res["failed"] == [PREFIX + "gmail-fetch"]
+    assert marker.exists()
+
+
+def test_restore_counts_an_ALREADY_LOADED_job_as_restored_and_clears_the_marker(repo, tmp_path):
+    """Origin 2026-11-09: all 11 jobs were reloaded by `install.sh install`, but every
+    later restore pass ran `bootstrap` on them, got error 5 (already loaded), recorded
+    them as failed and kept the marker. The health check then reported 'STILL DOWN'
+    for jobs that were running. A job that is up is restored, however it got there."""
+    marker = tmp_path / "m.json"
+    marker.write_text(json.dumps({"labels": [PREFIX + "gmail-fetch",
+                                             PREFIX + "granola-auto-debrief"]}),
+                      encoding="utf-8")
+    r = FakeRunner(loaded=[PREFIX + "gmail-fetch", PREFIX + "granola-auto-debrief"])
+    res = jq.restore(repo, marker, runner=r)
+    assert res["failed"] == []
+    assert sorted(res["restored"]) == [PREFIX + "gmail-fetch", PREFIX + "granola-auto-debrief"]
+    assert not marker.exists()
+
+
+def test_restore_mixes_already_loaded_and_down_jobs_correctly(repo, tmp_path):
+    marker = tmp_path / "m.json"
+    marker.write_text(json.dumps({"labels": [PREFIX + "gmail-fetch",
+                                             PREFIX + "granola-auto-debrief"]}),
+                      encoding="utf-8")
+    r = FakeRunner(loaded=[PREFIX + "gmail-fetch"])
+    res = jq.restore(repo, marker, runner=r)
+    assert sorted(res["restored"]) == [PREFIX + "gmail-fetch", PREFIX + "granola-auto-debrief"]
+    assert r.loaded == {PREFIX + "gmail-fetch", PREFIX + "granola-auto-debrief"}
+    assert not marker.exists()
+
+
+def test_restore_does_not_assume_loaded_when_launchctl_list_is_unreadable(repo, tmp_path):
+    """The already-loaded shortcut must come from evidence. If `launchctl list` cannot
+    be read and bootstrap fails, the job is reported down and the marker is kept."""
+    class NoList(FakeRunner):
+        def __call__(self, cmd, **kw):
+            if cmd[:2] == ["launchctl", "list"]:
+                raise OSError("no launchctl list")
+            return super().__call__(cmd, **kw)
+
+    marker = tmp_path / "m.json"
+    marker.write_text(json.dumps({"labels": [PREFIX + "gmail-fetch"]}), encoding="utf-8")
+    r = NoList(fail_on=[PREFIX + "gmail-fetch"])
+    res = jq.restore(repo, marker, runner=r)
+    assert res["failed"] == [PREFIX + "gmail-fetch"]
+    assert marker.exists()
+
+
+def test_an_already_loaded_job_with_no_installed_plist_is_NOT_restored(repo, tmp_path):
+    """Codex F1, 2026-11-09: a label in `launchctl list` is only evidence of OUR job if
+    the plist we install is there. Loaded with nothing in LaunchAgents means something
+    else put it there, so the debt stays recorded."""
+    marker = tmp_path / "m.json"
+    marker.write_text(json.dumps({"labels": [PREFIX + "orphan-job"]}), encoding="utf-8")
+    r = FakeRunner(loaded=[PREFIX + "orphan-job"])
+    res = jq.restore(repo, marker, runner=r)
+    assert res["failed"] == [PREFIX + "orphan-job"]
+    assert res["restored"] == []
+    assert marker.exists()
+
+
+def test_a_failed_launchctl_list_is_not_evidence_even_with_stdout(repo, tmp_path):
+    """Codex F2 / Grok F3: a nonzero `launchctl list` that still printed a label must not
+    let restore() skip bootstrap and delete the marker."""
+    class FailingList(FakeRunner):
+        def __call__(self, cmd, **kw):
+            if cmd[:2] == ["launchctl", "list"]:
+                self.calls.append(list(cmd))
+                return subprocess.CompletedProcess(
+                    cmd, 1, f"-\t0\t{PREFIX}gmail-fetch\n", "I/O error")
+            return super().__call__(cmd, **kw)
+
+    assert jq.loaded_labels(runner=FailingList()) == set()
+    marker = tmp_path / "m.json"
+    marker.write_text(json.dumps({"labels": [PREFIX + "gmail-fetch"]}), encoding="utf-8")
+    r = FailingList(fail_on=[PREFIX + "gmail-fetch"])
     res = jq.restore(repo, marker, runner=r)
     assert res["failed"] == [PREFIX + "gmail-fetch"]
     assert marker.exists()

@@ -102,6 +102,10 @@ def loaded_labels(runner=subprocess.run) -> set[str]:
         out = runner(["launchctl", "list"], capture_output=True, text=True, timeout=15)
     except (OSError, subprocess.SubprocessError):
         return set()
+    if out.returncode != 0:
+        # A failed list can still print partial rows; they are not evidence of what is
+        # loaded (Codex F2 / Grok F3, 2026-11-09).
+        return set()
     found = set()
     for line in (out.stdout or "").splitlines():
         cols = line.split("\t")
@@ -197,8 +201,18 @@ def restore(repo_root: Path, marker: Path, runner=subprocess.run) -> dict:
 
     labels, notes = _read_marker(marker)
     restored, failed = [], []
+    # A job that is already loaded is restored, however it got there (a manual
+    # `install.sh install`, a prior pass). Bootstrapping it again fails with error 5,
+    # which used to be recorded as "still down" and kept the marker forever while the
+    # job ran (2026-11-09). Evidence only: an unreadable or failed `launchctl list` is
+    # the empty set, so nothing is assumed loaded. The installed plist must exist too: a
+    # loaded label with nothing in LaunchAgents is not the job we install (Codex F1).
+    already = loaded_labels(runner=runner)
     for label in labels:
         plist = LAUNCH_AGENTS / f"{label}.plist"
+        if label in already and plist.exists():
+            restored.append(label)
+            continue
         if not plist.exists():
             failed.append(label)
             notes.append(f"{label}: no plist at {plist}; cannot restore it. Reinstall "
