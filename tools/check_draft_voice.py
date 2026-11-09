@@ -367,8 +367,6 @@ def load_personal_recipients() -> set:
     never produces a provenance marker. Returns a lowercased set. Missing/unreadable
     file → empty set (fail-safe: no file means nothing is exempt, gate stays on).
     """
-    if not PERSONAL_RECIPIENTS_FILE.exists():
-        return set()
     try:
         lines = PERSONAL_RECIPIENTS_FILE.read_text(encoding="utf-8").splitlines()
     except Exception:
@@ -476,13 +474,10 @@ def main():
     if not is_open_draft_invocation(command):
         sys.exit(0)
 
-    if not DRAFT_FILE.exists():
-        sys.exit(0)  # fail-open: no draft to check
-
     try:
         content = DRAFT_FILE.read_text(encoding="utf-8", errors="ignore")
     except Exception:
-        sys.exit(0)  # fail-open on read errors
+        sys.exit(0)  # fail-open: no draft, or unreadable
 
     # Personal correspondence (family, friends on the allowlist) has no job-search
     # drafting skill, so it has no provenance marker. Skip the provenance gate for a
@@ -502,8 +497,6 @@ def main():
             sys.exit(2)
 
     body = extract_body(content)
-    if not body.strip():
-        sys.exit(0)
 
     violations = []
 
