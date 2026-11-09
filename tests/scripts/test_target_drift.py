@@ -575,3 +575,43 @@ def test_a_caught_drift_exception_is_named_in_the_scan_companies_output(tmp_path
     assert out["target_drift"]["drift"] is True
     assert out["target_drift"]["problems"] == [
         "drift check failed: TypeError: an input shape nobody anticipated"]
+
+
+# ---------- r4 P0s (Grok r4 F1 / F2): wrong-typed elements inside a valid container ----------
+
+_NON_STRING_FILTERS = {
+    "a number": "[7]",
+    "a dangling list item": "\n      - strategist\n      -\n",
+}
+
+
+@pytest.mark.parametrize("field", ["role_filters", "role_excludes"])
+@pytest.mark.parametrize("value", list(_NON_STRING_FILTERS.values()), ids=list(_NON_STRING_FILTERS))
+def test_a_filter_list_with_a_non_string_element_exits_2(tmp_path, field, value):
+    targets = f"companies:\n  - name: X\n    ats: ashby\n    {field}: {value}\n"
+    code, out = run(make(tmp_path, targets=targets))
+    assert code == 2 and "not a list of strings" in out["error"]
+
+
+@pytest.mark.parametrize("field", ["role_filters", "role_excludes"])
+@pytest.mark.parametrize("value", [[7], ["strategist", None]], ids=["a number", "a dangling list item"])
+def test_a_filter_list_with_a_non_string_element_is_a_fetch_failure_not_a_crash(monkeypatch, field, value):
+    from tools.career_scanner import scanner
+    import tools.career_scanner.ashby as ashby
+    monkeypatch.setattr(ashby, "fetch_ashby", lambda slug, errors=None: [
+        {"title": "Strategist", "company": "X", "location": "San Francisco", "url": "u"}])
+    errors, cuts = [], []
+    roles = scanner.fetch_company_roles({"name": "X", "ats": "ashby", "slug": "x", field: value},
+                                        errors=errors, cuts=cuts)
+    assert roles == [] and f"{field} is not a list of strings" in errors[0]["reason"]
+
+
+@pytest.mark.parametrize("weights", ["7", "[1]", "high", "{in_lane_title: high}"])
+def test_fit_spec_weights_that_are_not_a_mapping_of_numbers_exit_2(tmp_path, weights):
+    code, out = run(make(tmp_path, spec=SPEC + f"weights: {weights}\n"))
+    assert code == 2 and "weights" in out["error"]
+
+
+def test_fit_spec_numeric_weights_still_pass(tmp_path):
+    code, out = run(make(tmp_path, spec=SPEC + "weights: {in_lane_title: 2.5, not_fit_title: -4}\n"))
+    assert code == 0, out

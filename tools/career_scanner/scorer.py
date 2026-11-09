@@ -377,7 +377,12 @@ def _fit_overlay_adjustment(role: dict, fit_spec: dict) -> float:
     def any_in(patterns, hay):
         return any(str(p).lower() in hay for p in (patterns or []))
 
-    w = fit_spec.get("weights") or {}
+    # r4 (Grok F2): weights that is not a mapping (7, [1], "high") or holds a non-number crashed
+    # scoring. Keep only numeric entries; a missing key falls back to its documented default.
+    # target_drift reports the same file as unreadable, so the bad value is not silent.
+    raw_w = fit_spec.get("weights")
+    w = {k: v for k, v in raw_w.items()
+         if isinstance(v, (int, float)) and not isinstance(v, bool)} if isinstance(raw_w, dict) else {}
     pos_title = any_in(fit_spec.get("positive_title_patterns"), title)
     scope_dq = any_in(fit_spec.get("scope_disqualifiers"), title_and_desc)
     notfit_title = any_in(fit_spec.get("not_fit_title_patterns"), title)

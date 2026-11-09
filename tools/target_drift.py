@@ -72,9 +72,24 @@ def _targets(root: Path) -> tuple:
 def _filter_list(target: dict, key: str) -> list:
     """A target's role_filters / role_excludes, which must be a list (Codex F2, review r3)."""
     value = target.get(key) or []
-    if not isinstance(value, list):
-        raise Unreadable(f"{TARGETS.name}: {target.get('name', '?')} {key} is not a list")
+    # r4 (Grok F1): the elements must be strings too; [7] or a dangling "-" crashed the scan.
+    if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+        raise Unreadable(f"{TARGETS.name}: {target.get('name', '?')} {key} is not a list of strings")
     return value
+
+
+def _weights(spec: dict) -> None:
+    """r4 (Grok F2): weights, when present, must be a mapping of numbers. The scorer ignores a
+    bad value rather than crash; this makes the bad file visible instead of silently defaulted."""
+    w = spec.get("weights")
+    if w is None:
+        return
+    if not isinstance(w, dict) or not all(_is_number(v) for v in w.values()):
+        raise Unreadable(f"{FIT_SPEC.name}: weights is not a mapping of numbers")
+
+
+def _is_number(v) -> bool:
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
 
 
 def _patterns(spec: dict, key: str) -> list:
@@ -95,6 +110,7 @@ def check(root: Path, today: date) -> dict:
     spec = _yaml(root / FIT_SPEC)
     if not isinstance(spec, dict):
         raise Unreadable(f"{FIT_SPEC.name}: not a mapping")
+    _weights(spec)
     positive = _patterns(spec, "positive_title_patterns")
     not_fit = _patterns(spec, "not_fit_title_patterns")
 
