@@ -329,7 +329,7 @@ MAIN_BRANCH = "main"
 # slug therefore means lowering this number in the same change. A swap (one slug out, one
 # in) keeps the length and is not caught here; the private data backup shows it.
 EXEMPT_FILE = "backlog-exempt.json"
-EXEMPT_CEILING = 18
+EXEMPT_CEILING = 14
 
 
 class ExemptFileError(ValueError):
