@@ -458,11 +458,17 @@ def write(root, slug, text):
     (root / "data" / "workstreams" / f"{slug}.md").write_text(text, encoding="utf-8")
 
 
-def run_backlog(root, *, questions=None, branches=None, board=None):
+def run_backlog(root, *, questions=None, branches=None, board=None, ceiling=None):
+    """ceiling None: the exempt list's own length, so tests about other properties are not
+    tripped by the shrink-only ratchet. Ratchet tests pass ceiling explicitly."""
     board = board or {}
-    return ws.backlog(root / "data" / "workstreams", today=TODAY, root=root,
+    registry = root / "data" / "workstreams"
+    if ceiling is None:
+        listed = ws.load_exemptions(registry)[1]
+        ceiling = len(listed)
+    return ws.backlog(registry, today=TODAY, root=root,
                       board_owner=lambda slug: board.get(slug, "UNROUTED: no session holds it"),
-                      **lookups(questions, branches))
+                      exempt_ceiling=ceiling, **lookups(questions, branches))
 
 
 def slugs(report):
@@ -553,6 +559,47 @@ def test_terminal_workstreams_are_excluded_and_counted(root):
 def test_table_less_terminal_is_still_terminal(root):
     write(root, "done", ws_text(status="TERMINAL", table=False, block=False))
     assert run_backlog(root)["terminal"] == ["done"]
+
+
+def no_header_status(text):
+    """ws_text() without its header Status row (Status is not a required row)."""
+    out = text.replace("| **Status** | ACTIVE |\n", "", 1)
+    assert out != text
+    return out
+
+
+def test_status_row_below_the_header_does_not_make_it_terminal(root):
+    """Codex F2 / Grok F2: a TERMINAL row in a later table is not the workstream's Status."""
+    text = no_header_status(ws_text(body="| **Status** | TERMINAL |"))
+    assert check(text, root)["terminal"] is False
+    assert check(text, root)["reasons"] == []
+    write(root, "parent", text)
+    rep = run_backlog(root)
+    assert (rep["terminal"], slugs(rep)) == ([], ["parent"])
+
+
+def test_status_row_above_the_header_does_not_override_it(root):
+    text = ws_text().replace("# Workstream: placeholder\n",
+                             "# Workstream: placeholder\n\n| **Status** | TERMINAL |\n", 1)
+    write(root, "parent", text)
+    rep = run_backlog(root)
+    assert (rep["terminal"], slugs(rep)) == ([], ["parent"])
+
+
+def test_header_terminal_with_a_date_suffix_is_terminal(root):
+    write(root, "done", ws_text(status="TERMINAL (2026-11-06)", block=False,
+                                drop=tuple(VALID_ROWS)))
+    assert run_backlog(root)["terminal"] == ["done"]
+
+
+def test_lowercase_header_terminal_is_terminal(root):
+    write(root, "done", ws_text(status="terminal", block=False, drop=tuple(VALID_ROWS)))
+    assert run_backlog(root)["terminal"] == ["done"]
+
+
+def test_terminal_header_is_not_checked_for_backlog_rows(root):
+    r = check(ws_text(status="TERMINAL", block=False, drop=tuple(VALID_ROWS)), root)
+    assert (r["terminal"], r["reasons"]) == (True, [])
 
 
 def test_invalid_workstreams_are_listed_with_reasons_and_not_ranked(root):
@@ -677,6 +724,56 @@ def test_listed_slug_with_no_workstream_file_is_a_problem(root):
     write(root, "old", ws_text(drop=("Size",)))
     assert run_backlog(root)["problems"] == [
         "gone: listed in backlog-exempt.json but has no workstream file; remove it"]
+
+
+def test_exempt_list_shorter_than_the_ceiling_is_a_problem(root):
+    """Codex F1 / Grok F1: a well-formed file listing a slug that was never exempt passes
+    unless the list's length is pinned in tracked code. Their repro: one slug, `fresh`."""
+    exempt_file(root, ["fresh"])
+    write(root, "fresh", ws_text(drop=("Size",)))
+    assert run_backlog(root, ceiling=2)["problems"] == [
+        "backlog-exempt.json lists 1 slugs but EXEMPT_CEILING is 2; the list only shrinks, "
+        "so lower EXEMPT_CEILING in tools/workstream_state.py to 1"]
+
+
+def test_exempt_list_longer_than_the_ceiling_is_a_problem(root):
+    exempt_file(root, ["old", "fresh"])
+    write(root, "old", ws_text(drop=("Size",)))
+    write(root, "fresh", ws_text(drop=("Size",)))
+    assert run_backlog(root, ceiling=1)["problems"] == [
+        "backlog-exempt.json lists 2 slugs but EXEMPT_CEILING is 1; the list only shrinks, "
+        "so a slug was added"]
+
+
+def test_exempt_list_at_the_ceiling_is_not_a_problem(root):
+    exempt_file(root, ["old"])
+    write(root, "old", ws_text(drop=("Size",)))
+    assert run_backlog(root, ceiling=1)["problems"] == []
+
+
+def test_missing_exempt_file_has_no_ceiling_problem(root):
+    write(root, "good", ws_text())
+    assert run_backlog(root, ceiling=5)["problems"] == []
+
+
+def test_backlog_defaults_to_the_module_ceiling(root):
+    names = [f"old{n}" for n in range(ws.EXEMPT_CEILING)]
+    exempt_file(root, names)
+    for name in names:
+        write(root, name, ws_text(drop=("Size",)))
+    kw = dict(today=TODAY, root=root, board_owner=lambda slug: "UNROUTED", **lookups())
+    assert ws.backlog(root / "data" / "workstreams", **kw)["problems"] == []
+    exempt_file(root, names[1:])
+    assert has(ws.backlog(root / "data" / "workstreams", **kw)["problems"], "EXEMPT_CEILING")
+
+
+def test_exempt_ceiling_matches_the_live_exempt_file():
+    """The tracked ceiling equals the length of the real (gitignored) list."""
+    from vault_paths import main_checkout
+    registry = main_checkout(ws.REPO_ROOT) / "data" / "workstreams"
+    if not (registry / ws.EXEMPT_FILE).is_file():
+        pytest.skip("no backlog-exempt.json readable from here")
+    assert len(ws.load_exemptions(registry)[1]) == ws.EXEMPT_CEILING
 
 
 def test_backlog_reports_a_malformed_exempt_file_without_traceback(root, cli, capsys):

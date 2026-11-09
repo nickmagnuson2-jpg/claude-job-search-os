@@ -324,7 +324,12 @@ MAIN_BRANCH = "main"
 # SHRINK-ONLY: never add a slug. backlog() reports an exempt workstream that gains a
 # `## YYYY-MM-DD` heading dated after the cutover while still invalid, an exempt one that
 # became valid, and a listed slug with no workstream file. No file means no exemptions.
+# The data file is mutable, so the list's LENGTH is pinned here, in tracked code, without
+# naming any slug: a list longer or shorter than EXEMPT_CEILING is a problem. Removing a
+# slug therefore means lowering this number in the same change. A swap (one slug out, one
+# in) keeps the length and is not caught here; the private data backup shows it.
 EXEMPT_FILE = "backlog-exempt.json"
+EXEMPT_CEILING = 18
 
 
 class ExemptFileError(ValueError):
@@ -462,6 +467,16 @@ def _check_files(value: str, root: Path) -> tuple[list[str], list[str]]:
     return paths, reasons
 
 
+def _header_status(header: dict, text: str) -> str:
+    """Status from the header table's own Status row. Only a file with no Field|Value table
+    falls back to the first Status row anywhere (the table-less legacy form); a header
+    without a Status row is ACTIVE whatever later tables say."""
+    if not header["table"]:
+        return _parse_status(text)
+    m = re.match(r"[A-Za-z-]+", header["rows"].get("Status", ""))
+    return m.group(0).upper() if m else "ACTIVE"
+
+
 def check_workstream(slug: str, text: str, *, today: _dt.date, root: Path,
                      question_state, branch_state) -> dict:
     """Check one workstream's backlog header. `reasons` empty means valid.
@@ -473,13 +488,13 @@ def check_workstream(slug: str, text: str, *, today: _dt.date, root: Path,
     heading_dates = [d for d in (_date(m.group(1)) for m in map(DATED_HEADING_RE.match, lines)
                                  if m) if d]
     newest_heading = max(heading_dates).isoformat() if heading_dates else None
-    r = {"slug": slug, "terminal": _parse_status(text) == "TERMINAL", "reasons": [],
+    header = read_header(text)
+    r = {"slug": slug, "terminal": _header_status(header, text) == "TERMINAL", "reasons": [],
          "newest_heading": newest_heading, "value": None, "evidence": None, "size": None,
          "files": [], "next": [], "oldest": None, "newest": None, "blockers": [],
          "stale_blockers": [], "owner": None}
     if r["terminal"]:
         return r
-    header = read_header(text)
     if not header["table"]:
         r["reasons"] = ["no-header-table"]
         return r
@@ -589,11 +604,18 @@ def _shared(a: list[str], b: list[str]) -> list[str]:
 
 
 def backlog(registry: Path, *, today: _dt.date, root: Path, question_state, branch_state,
-            board_owner) -> dict:
+            board_owner, exempt_ceiling: int | None = None) -> dict:
     """The backlog report over one registry. Reads only; runs no probe; writes nothing."""
     files = sorted(p for p in registry.glob("*.md") if not p.name.startswith("."))
     cutover, exempt_slugs = load_exemptions(registry)
     terminal, invalid, ranked, problems = [], [], [], []
+    ceiling = EXEMPT_CEILING if exempt_ceiling is None else exempt_ceiling
+    if cutover is not None and len(exempt_slugs) != ceiling:
+        n = len(exempt_slugs)
+        problems.append(f"{EXEMPT_FILE} lists {n} slugs but EXEMPT_CEILING is {ceiling}; "
+                        "the list only shrinks, so "
+                        + ("a slug was added" if n > ceiling else
+                           f"lower EXEMPT_CEILING in tools/workstream_state.py to {n}"))
     for p in files:
         r = check_workstream(p.stem, p.read_text(encoding="utf-8"), today=today, root=root,
                              question_state=question_state, branch_state=branch_state)
