@@ -53,7 +53,7 @@ Status messages appear on stderr (scanning progress per company).
 
 ### Step 3: Present Results
 
-Parse the JSON output. Present results as a formatted table sorted by score descending:
+Parse the JSON output. Present results as a formatted table. When `goals_stale` is false, sort it by score descending. When `goals_stale` is true every score is null and the tool returns roles in the order it found them: keep that order and do not sort (target-drift-1106).
 
 ```markdown
 ## Scan Results - [date]
