@@ -30,8 +30,8 @@ Thesis text.
 
 ## Target Criteria
 
-- **Family A, deployment:** deployment strategist.
-- **Open to Work titles (LinkedIn, live since 2026-10-20):** {titles}.
+- **Role family A:** placeholder.
+- **Open to Work titles (LinkedIn):** {titles}.
 
 ## History (superseded)
 
