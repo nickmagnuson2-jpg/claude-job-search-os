@@ -1018,3 +1018,134 @@ def test_every_live_workstream_has_a_valid_header_or_is_exempt():
 def test_real_resolve_main_import():
     import decision_write as dw
     assert ws.backlog_sources(ws.REPO_ROOT)["main"] == dw.resolve_main(ws.REPO_ROOT)
+
+
+# ---------------------------------------------------------------- mutation survivors (2026-11-09)
+# Each test below names the line it pins. They were written against the 27 survivors of the
+# 2026-11-09 mutation run on 992878da, not for coverage in general.
+
+def test_today_is_the_real_date():
+    """_today (line 340): the CLI's only clock. Every other test monkeypatches it."""
+    before = dt.date.today()
+    got = ws._today()
+    assert before <= got <= dt.date.today()
+
+
+def test_a_row_repeated_three_times_is_one_duplicate():
+    """read_header (line 372): the third copy must not add the name a second time."""
+    text = ("| Field | Value |\n|---|---|\n| **Owner** | s1 |\n| **Owner** | s2 |\n"
+            "| **Owner** | s3 |\n")
+    h = ws.read_header(text)
+    assert h["duplicates"] == ["Owner"]
+    assert h["rows"]["Owner"] == "s1"
+
+
+def test_unclosed_next_block_is_reported_as_unclosed(root):
+    """_read_next (lines 416-417): an unclosed fence is its own reason, not a JSON error."""
+    body = json.dumps([{"date": "2026-11-08", "action": GOOD_ACTION}])
+    text = ws_text(block=f"```json next\n{body}")
+    assert reasons(text, root) == ["next block is not closed"]
+
+
+def test_empty_files_row_is_reported_as_empty(root):
+    """_check_files (line 445): an empty row says so, not "'' is not one backticked path"."""
+    assert reasons(ws_text(rows={"Files": ""}), root) == ["Files is empty"]
+
+
+@pytest.mark.parametrize("files", ["`/etc/x.py`", "`../x.py`", "`~/x.py`"])
+def test_a_refused_files_path_is_not_kept_or_checked_further(root, files):
+    """_check_files (line 456): a refused path gets one reason and is not returned."""
+    r = check(ws_text(rows={"Files": files}), root)
+    assert r["files"] == []
+    assert len(r["reasons"]) == 1 and "repo-relative" in r["reasons"][0]
+
+
+def test_shared_covers_a_file_under_a_directory_in_either_argument():
+    """_shared (lines 601-602): the directory entry may be in the second list."""
+    assert ws._shared(["tools/a.py"], ["tools/"]) == ["tools/a.py"]
+    assert ws._shared(["tools/"], ["tools/a.py"]) == ["tools/a.py"]
+    assert ws._shared(["toolsx/a.py"], ["tools/"]) == []
+
+
+def test_overlaps_are_sorted_by_slug_pair_not_by_rank(root):
+    """backlog (line 659): rank order is z, a, m; overlaps come back in slug order."""
+    write(root, "z", ws_text(rows={"Value": r"V4 \| evidence: docs/x.md"}))
+    write(root, "a", ws_text(rows={"Value": "V2"}))
+    write(root, "m", ws_text(rows={"Value": "V1"}))
+    rep = run_backlog(root)
+    assert slugs(rep) == ["z", "a", "m"]
+    assert [(o["a"], o["b"]) for o in rep["overlaps"]] == [("a", "m"), ("a", "z"), ("m", "z")]
+
+
+def test_backlog_sources_uses_the_module_it_is_given(root, tmp_path, monkeypatch):
+    """backlog_sources (line 682): a passed module is used; nothing is imported."""
+    monkeypatch.setitem(sys.modules, "decision_write", None)   # any import now fails
+    src = ws.backlog_sources(tmp_path / "wt", fake_dw(root))
+    assert src["main"] == root
+
+
+def test_question_state_counts_only_asked_events_as_asked(root, tmp_path):
+    """backlog_sources (line 688): an id seen only in a non-asked event was never asked."""
+    events = [{"type": "asked", "id": "Q1"}, {"type": "asked", "id": "Q2"},
+              {"type": "resolved", "id": "Q2"}, {"type": "resolved", "id": "Q7"}]
+    qs = ws.backlog_sources(tmp_path / "wt", fake_dw(root, events=events))["question_state"]
+    assert [qs(q) for q in ("Q1", "Q2", "Q7", "Q9")] == ["open", "resolved", None, None]
+
+
+def test_plain_mode_error_is_one_text_line(root, cli, capsys):
+    """_backlog_error (line 698): without --json the error is text, not a JSON object."""
+    cli(refuse=True)
+    code, out = run_cli(capsys)
+    wt = ws.REPO_ROOT
+    assert (code, out) == (2, f"backlog: error no_main_checkout: {wt} is not a main checkout\n")
+
+
+def test_plain_mode_report_is_text_not_json(root, cli, capsys):
+    """run_backlog (line 750): without --json the report is the text layout."""
+    cli()
+    write(root, "a", ws_text())
+    out = run_cli(capsys)[1]
+    assert out.startswith(f"backlog {TODAY} from {root / 'data' / 'workstreams'}\n")
+
+
+def test_print_backlog_layout_is_pinned(capsys):
+    """_print_backlog (lines 706-730): the full text layout, every section and branch."""
+    item = {"slug": "alpha", "value": "V4", "size": "S", "group": "blocked",
+            "blockers": ["question:Q1"], "stale_blockers": ["branch:old"], "owner": "s1",
+            "board_owner": "s2", "owner_drift": True, "evidence": "docs/x.md",
+            "next": [{"date": "2026-11-08", "action": GOOD_ACTION}]}
+    plain = {"slug": "beta", "value": "V1", "size": "M", "group": "free", "blockers": [],
+             "stale_blockers": [], "owner": "unheld", "board_owner": "UNROUTED: x",
+             "owner_drift": False, "evidence": None,
+             "next": [{"date": "2026-11-07", "action": GOOD_ACTION}]}
+    rep = {"today": "2026-11-08", "registry": "/reg",
+           "invalid": [{"slug": "gamma", "exempt": True, "reasons": ["r1", "r2"]},
+                       {"slug": "delta", "exempt": False, "reasons": ["r3"]}],
+           "ranked": [item, plain],
+           "overlaps": [{"a": "alpha", "b": "beta", "shared": ["tools/a.py", "tools/b.py"],
+                         "blocked": True},
+                        {"a": "beta", "b": "zeta", "shared": ["docs/x.md"], "blocked": False}],
+           "terminal": ["omega", "psi"],
+           "value_counts": {"V1": 1, "V2": 0, "V3": 0, "V4": 1},
+           "problems": ["p1", "p2"]}
+    ws._print_backlog(rep)
+    assert capsys.readouterr().out == (
+        "backlog 2026-11-08 from /reg\n"
+        "\ninvalid (2):\n"
+        "  gamma [exempt]: r1; r2\n"
+        "  delta: r3\n"
+        "\nranked (2):\n"
+        "   1. alpha  V4 S blocked  blockers: question:Q1  stale blocker: branch:old"
+        "  owner-drift: row s1, board s2\n"
+        "      evidence: docs/x.md\n"
+        f"      next 2026-11-08: {GOOD_ACTION}\n"
+        "   2. beta  V1 M free  owner unheld\n"
+        f"      next 2026-11-07: {GOOD_ACTION}\n"
+        "\noverlaps (2):\n"
+        "  alpha and beta: tools/a.py, tools/b.py [blocked]\n"
+        "  beta and zeta: docs/x.md\n"
+        "\nterminal (2): omega, psi\n"
+        "values: V1 1, V2 0, V3 0, V4 1\n"
+        "problems (2):\n"
+        "  p1\n"
+        "  p2\n")
