@@ -41,7 +41,7 @@ from name_dedup import normalize_name  # noqa: E402
 from slug import slugify  # noqa: E402
 from tools.pipeline_history import history, load_history  # noqa: E402
 from tools.career_scanner.scanner import geo_ok  # noqa: E402
-from tools.career_scanner.scorer import load_scoring_context, score_role  # noqa: E402
+from tools.career_scanner.scorer import load_scoring_context, score_role, unranked_reason  # noqa: E402
 
 CACHE = Path(".claude/skills/scan-jobs/cache.md")
 REQUIRED = ("title", "company")
@@ -50,6 +50,13 @@ REQUIRED = ("title", "company")
 RULES_LOGIC = "2026-11-06 ranking-only"
 FIT_SPEC = Path("data/calibration/fit-spec.yaml")
 # A row this script wrote: "(scan_jobs.py)" or "(scan_jobs.py rules:<8 hex>)".
+
+
+def TODAY() -> date:
+    """The date goals.md freshness is judged against (a seam for tests)."""
+    return date.today()
+
+
 _MACHINE_NOTE = re.compile(r"\(scan_jobs\.py(?: rules:([0-9a-f]{8}))?\)")
 
 
@@ -163,7 +170,10 @@ def index_add(row: dict, keys: set, keys_no_url: set, urls: set) -> None:
 
 
 def assess(ads: list, root: Path) -> dict:
-    ctx = load_scoring_context(root)
+    ctx = load_scoring_context(root, today=TODAY())
+    # goals.md older than 14 days (target-drift-1106): every role is still listed, none is
+    # ranked. The score never fakes an order on stale targets.
+    stale = ctx["goals_stale"]
     cache_text = read_file(root / CACHE)
     keys, keys_no_url, urls = cached_index(cache_text)
     version = rules_version(root)
@@ -188,13 +198,16 @@ def assess(ads: list, root: Path) -> dict:
             index_add(ad, keys, keys_no_url, urls)
         role = {f: ad.get(f, "") for f in ("title", "company", "location", "description",
                                            "department", "team")}
-        score = score_role(role, ctx)
+        score = None if stale else score_role(role, ctx)
         # The nightly scanner's own location rule: outside the Bay, Peninsula / South Bay
         # only, or remote-only fails; an unknown location does not. The ONLY hard cut here:
         # the score ranks and never sets the status (see the module docstring).
         located = geo_ok(ad.get("location", ""))
         status = "listed" if located else "excluded"
-        reason = f"score {score}/10" if located else "location excluded"
+        if not located:
+            reason = "location excluded"
+        else:
+            reason = unranked_reason(ctx) if stale else f"score {score}/10"
         # A title is not a posting: the same title names opposite jobs (the team doing the
         # work vs the team supporting it). With no description copied, the ad is listed,
         # tagged, and never proposed for the pipeline.
@@ -226,10 +239,14 @@ def assess(ads: list, root: Path) -> dict:
         new.append(row)
     # A role already in the pipeline as the same role is not proposed again; a different
     # role at a company with history is, carrying its label.
-    propose = sorted((r for r in new if r["status"] == "listed" and not r.get("title_only")
-                      and not r.get("already_in_pipeline")), key=lambda r: -r["score"])
+    propose = [r for r in new if r["status"] == "listed" and not r.get("title_only")
+               and not r.get("already_in_pipeline")]
+    if not stale:
+        propose.sort(key=lambda r: -r["score"])
     return {"found": len(ads), "cached": cached, "new": new, "propose_for_pipeline": propose,
             "rules_version": version,
+            "goals_stale": stale, "goals_last_reviewed": ctx["goals_last_reviewed"],
+            "goals_age_days": ctx["goals_age_days"],
             "rechecked_unchanged": rechecked_unchanged, "skipped_repeats": repeats}
 
 
@@ -271,7 +288,8 @@ def record(rows: list, root: Path) -> dict:
 
 def _cache_line(r: dict, version: str) -> str:
     url = f"[Listing]({cell_url(r['url'])})" if cell_url(r.get("url")) else "—"
-    return (f"| {safe_cell(r['title'])} | {safe_cell(r['company'])} | {r['score']}/10 | "
+    fit = "—" if r.get("score") is None else f"{r['score']}/10"   # unranked: stale goals
+    return (f"| {safe_cell(r['title'])} | {safe_cell(r['company'])} | {fit} | "
             f"{r['status']} | {r.get('ad_date') or '—'} | {url} | "
             f"{safe_cell(r['reason'])} (scan_jobs.py rules:{version}) |")
 

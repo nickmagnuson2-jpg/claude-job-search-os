@@ -1,11 +1,15 @@
 # Job Search Goals & Thesis
 <!-- Example data for the fictional candidate "Priya Anand." Copy this structure to your own data/goals.md (gitignored) and fill it in. -->
 
+Last reviewed: 2026-11-07
+
 ## Search Thesis
 
 > Quota-carrying enterprise Account Executive or Sales Engineer at a technical B2B SaaS company (developer tools, data infrastructure, or AI-native workflow) in SF, leveraging an engineer → consultant → PM background to win the technical buyers other sellers can't.
 
 ## Target Criteria
+
+- **Open to Work titles (LinkedIn):** Enterprise Account Executive; Sales Engineer; Solutions Engineer; Technical Account Executive.
 
 **Role types** (ranked, most to least preferred):
 1. Enterprise Account Executive (technical SaaS)

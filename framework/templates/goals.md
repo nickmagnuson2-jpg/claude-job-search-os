@@ -5,6 +5,10 @@
      This file captures only what identity doesn't cover: comp, stage, geography, phase, and the
      deployable one-sentence thesis Claude uses when tailoring CVs and coaching. -->
 
+Last reviewed: YYYY-MM-DD
+<!-- The scanners read this date. Older than 14 days (or missing), they list every role
+     but rank none until you review this file and update the date. -->
+
 ## Search Thesis
 
 > One sentence: role title + company type + narrative hook.
@@ -14,6 +18,11 @@
 TODO: Write your one-sentence search thesis here.
 
 ## Target Criteria
+
+- **Open to Work titles (LinkedIn):** TODO; TODO; TODO.
+<!-- The ONLY line the scanners read for target titles: the titles you advertise, separated
+     by semicolons, nothing else on the line. tools/target_drift.py checks every one passes
+     the fetch filters and the fit spec. The list below is for you; no tool reads it. -->
 
 **Role types** (ranked, most to least preferred):
 1. TODO (e.g., Chief of Staff)

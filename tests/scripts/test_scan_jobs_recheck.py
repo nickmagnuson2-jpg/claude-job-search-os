@@ -8,6 +8,7 @@ version is re-assessed once; it re-surfaces only when its status changed, labell
 the old one. Rows Nick wrote by hand (no "(scan_jobs.py" marker) are never re-judged.
 """
 import sys
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -34,6 +35,8 @@ def make_root(tmp_path, rows, spec="weights: {}\n"):
     (tmp_path / "data/calibration").mkdir(parents=True)
     (tmp_path / "data/job-pipeline.md").write_text(PIPE, encoding="utf-8")
     (tmp_path / "data/calibration/fit-spec.yaml").write_text(spec, encoding="utf-8")
+    # Fresh goals, so the score ranks (target-drift-1106: stale goals rank nothing).
+    (tmp_path / "data/goals.md").write_text(f"Last reviewed: {date.today().isoformat()}\n", encoding="utf-8")
     return tmp_path
 
 

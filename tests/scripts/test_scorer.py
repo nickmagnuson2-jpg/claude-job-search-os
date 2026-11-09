@@ -311,6 +311,8 @@ class TestLoadScoringContext:
 
 ## Target Criteria
 
+- **Open to Work titles (LinkedIn):** Chief of Staff; Head of Operations; Strategy & Operations Lead.
+
 **Role types** (ranked, most to least preferred):
 1. Chief of Staff
 2. Head of Operations
@@ -545,3 +547,17 @@ def test_short_usable_terms_still_match_and_score():
     score = _score_keyword_overlap(
         {"description_plain": "Basic SQL literacy. Familiarity with LLMs, APIs, JSON."}, ctx)
     assert score > 3.0, f"three usable terms matched but scored {score}"
+
+
+# r4 P0 (Grok r4 F2): a mapping fit-spec whose weights is not a mapping of numbers crashed scoring.
+@pytest.mark.parametrize("weights", [7, [1], "high", True])
+def test_overlay_ignores_weights_that_are_not_a_mapping(weights):
+    role = {"title": "Deployment Strategist", "description_plain": "x"}
+    spec = {**_FIT_SPEC, "weights": weights}
+    assert _fit_overlay_adjustment(role, spec) == 2.0   # the documented default in_lane_title
+
+
+def test_overlay_ignores_a_non_numeric_weight_value_but_keeps_the_numeric_ones():
+    role = {"title": "Deployment Strategist", "description_plain": "x"}
+    spec = {**_FIT_SPEC, "weights": {"in_lane_title": "high", "max_adjustment": 1.5}}
+    assert _fit_overlay_adjustment(role, spec) == 1.5   # default 2.0, clamped by the numeric max
