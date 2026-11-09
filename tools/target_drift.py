@@ -5,9 +5,9 @@ Read-only. target-drift-1106 (2026-11-06); spec: the target-drift spec in infra-
 Not a hook (hence not named check_*.py): the nightly career scan calls nightly() and writes
 the result into the role queue that /standup reads.
 
-The 10/20 thesis refresh updated goals.md, professional-identity.md and LinkedIn together
-and none of the tools that read them. For 17 days the scorer read the June role list, and
-the fetch filter on 29 targets cut 4 of the 8 titles on Nick's LinkedIn Open to Work.
+A thesis refresh updated goals.md and LinkedIn but none of the tools that read them: the
+scorer kept reading a superseded role list, and the fetch filters cut half the titles Nick
+advertises.
 Nothing compared what Nick advertises with what the tools accept. This does.
 
 For each title on the goals.md Open to Work line it reports:

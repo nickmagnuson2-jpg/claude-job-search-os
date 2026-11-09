@@ -166,8 +166,8 @@ def _extract_target_titles(text: str) -> list[str]:
 
     That line is the one source for target titles (Nick, 2026-11-06: "LinkedIn is true").
     Nothing else in the file is read: until target-drift-1106 a "Role types" heading
-    anywhere in goals.md started a list, so the June ranked list kept feeding the scorer
-    for 17 days after the 10/20 thesis refresh. Titles are semicolon-separated. The list
+    anywhere in goals.md started a list, so a superseded ranked list kept feeding the
+    scorer after a thesis refresh. Titles are semicolon-separated. The list
     ends at a sentence-ending period: one after a word of 4+ letters that is not a title
     abbreviation (_TITLE_ABBREVIATIONS), followed by a space or the line's end ("Lead. Every
     scanner ..."). A period after a shorter abbreviation ("Sr. Director", "U.S.", "Mgr.") or
