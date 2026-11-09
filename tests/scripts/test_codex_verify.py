@@ -2139,3 +2139,162 @@ def test_diff_base_prefers_the_upstream_over_origin_main(tmp_path):
     (repo / "a.py").write_text("unpushed\n")
     git("commit", "-qam", "unpushed work")
     assert cv.diff_base(repo) == pushed != old
+
+
+# --- evidence mirrored to the main checkout (codex-evidence-main-1109) ----------
+# Run from a linked worktree, a review used to leave its report and ledger row ONLY in
+# that worktree's gitignored files, so removing the worktree deleted them (lost:
+# question-queue-1106's reports, 2026-11-09). The worktree copies stay, because the
+# push gate reads them; main also gets each report and row.
+
+_REAL_RUN = subprocess.run
+_FINDINGS = '## FINDINGS (machine-readable)\n[{"id":"F1","severity":"P2","summary":"x"}]'
+
+
+def _git(cwd, *args):
+    _REAL_RUN(["git", "-C", str(cwd), *args], check=True, capture_output=True, text=True)
+
+
+@pytest.fixture
+def main_and_worktree(tmp_path):
+    """A real main checkout with one commit, and a linked worktree of it."""
+    main = tmp_path / "main"
+    (main / "tools").mkdir(parents=True)
+    (main / "tools" / "x.py").write_text("x = 1\n", encoding="utf-8")
+    _git(main.parent, "init", "-q", "-b", "main", str(main))
+    _git(main, "add", "-A")
+    _git(main, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "one")
+    wt = tmp_path / "wt"
+    _git(main, "worktree", "add", "-q", "-b", "feature", str(wt))
+    return main.resolve(), wt.resolve()
+
+
+def _fake_model(report_text=_FINDINGS):
+    """Stands in for the verifier; git calls still reach real git."""
+    def fake(cmd, **kw):
+        if isinstance(cmd, list) and cmd and cmd[0] == "git":
+            return _REAL_RUN(cmd, **kw)
+        fake.calls += 1
+        fake.report.parent.mkdir(parents=True, exist_ok=True)
+        fake.report.write_text(report_text, encoding="utf-8")
+        return subprocess.CompletedProcess(cmd, 0, "closing message", "")
+    fake.calls = 0
+    return fake
+
+
+def _review(monkeypatch, root, report, text=_FINDINGS):
+    fake = _fake_model(text)
+    fake.report = report
+    monkeypatch.setattr(cv.subprocess, "run", fake)
+    monkeypatch.setattr(cv, "gather_env_facts", lambda r: "FACTS")
+    return cv.run(root, "the change", ["tools/x.py"], "", report, None, False)
+
+
+def test_a_worktree_review_mirrors_its_report_and_row_to_main(main_and_worktree, monkeypatch):
+    main, wt = main_and_worktree
+    report = wt / "output" / "analysis" / "110926-codex-the-change-120000abcd.md"
+    out = _review(monkeypatch, wt, report)
+    assert out["status"] == "ok" and out["mirrored"] is True
+
+    wt_rows, main_rows = gate.read_ledger(wt), gate.read_ledger(main)
+    assert len(wt_rows) == 1 and "worktree" not in wt_rows[0]    # the gate's copy, unchanged
+    assert len(main_rows) == 1
+    assert main_rows[0] == {**wt_rows[0], "worktree": str(wt)}
+    rel = "output/analysis/110926-codex-the-change-120000abcd.md"
+    assert main_rows[0]["report"] == rel
+    assert (main / rel).read_bytes() == report.read_bytes()      # the full report, not a stub
+
+
+def test_a_review_in_the_main_checkout_writes_one_row(main_and_worktree, monkeypatch):
+    main, _wt = main_and_worktree
+    out = _review(monkeypatch, main, main / "output" / "analysis" / "r.md")
+    assert out["status"] == "ok" and out["mirrored"] is None
+    assert len(gate.read_ledger(main)) == 1
+
+
+def test_the_same_row_mirrored_twice_is_appended_once(main_and_worktree):
+    main, wt = main_and_worktree
+    report = wt / "output" / "analysis" / "r.md"
+    report.parent.mkdir(parents=True)
+    report.write_text(_FINDINGS, encoding="utf-8")
+    row = {"recorded": "2026-11-09T20:00:00+00:00", "report": "output/analysis/r.md",
+           "model": "codex", "paths": ["tools/x.py"]}
+    assert cv.mirror_to_main(wt, report, row) is True
+    assert cv.mirror_to_main(wt, report, row) is True
+    assert len(gate.read_ledger(main)) == 1
+
+
+def test_two_runs_reusing_one_report_path_both_reach_main(main_and_worktree):
+    """An explicit --report reused across runs gives two rows the same report and model.
+    Both are real runs, so main keeps both, and holds the second run's report."""
+    main, wt = main_and_worktree
+    report = wt / "output" / "analysis" / "r.md"
+    report.parent.mkdir(parents=True)
+    base = {"report": "output/analysis/r.md", "model": "codex", "paths": ["tools/x.py"]}
+    report.write_text("first run", encoding="utf-8")
+    cv.mirror_to_main(wt, report, {**base, "recorded": "2026-11-09T20:00:00+00:00"})
+    report.write_text("second run", encoding="utf-8")
+    cv.mirror_to_main(wt, report, {**base, "recorded": "2026-11-09T20:05:00+00:00"})
+    assert [r["recorded"] for r in gate.read_ledger(main)] == [
+        "2026-11-09T20:00:00+00:00", "2026-11-09T20:05:00+00:00"]
+    assert (main / "output" / "analysis" / "r.md").read_text(encoding="utf-8") == "second run"
+
+
+def test_a_report_outside_the_worktree_mirrors_the_row_only(main_and_worktree, tmp_path):
+    main, wt = main_and_worktree
+    report = tmp_path / "elsewhere" / "r.md"
+    report.parent.mkdir()
+    report.write_text(_FINDINGS, encoding="utf-8")
+    row = {"recorded": "2026-11-09T20:00:00+00:00", "report": str(report), "model": "codex"}
+    assert cv.mirror_to_main(wt, report, row) is True
+    assert [r["report"] for r in gate.read_ledger(main)] == [str(report)]
+    assert not (main / "output").exists()
+
+
+def test_a_mirror_failure_never_fails_the_review(main_and_worktree, monkeypatch, capsys):
+    main, wt = main_and_worktree
+
+    def boom(root):
+        raise RuntimeError("cannot find the main checkout")
+    real_main_checkout = cv._main_checkout
+    report = wt / "output" / "analysis" / "r.md"
+    fake = _fake_model()
+    fake.report = report
+    monkeypatch.setattr(cv.subprocess, "run", fake)
+    monkeypatch.setattr(cv, "gather_env_facts", lambda r: "FACTS")
+    # The sandbox is built with the real resolver; only the mirror's call fails.
+    monkeypatch.setattr(cv, "sandbox_policy",
+                        lambda root, extra_writable=(): "(version 1)")
+    monkeypatch.setattr(cv, "_main_checkout", boom)
+    out = cv.run(wt, "the change", ["tools/x.py"], "", report, None, False)
+    assert real_main_checkout(wt) == main
+    assert out["status"] == "ok" and out["verified"] is True and out["mirrored"] is False
+    assert len(gate.read_ledger(wt)) == 1 and gate.read_ledger(main) == []
+    assert "could not mirror" in capsys.readouterr().err
+
+
+def test_real_ledger_roots_name_this_checkout_and_its_main():
+    """Run from a linked worktree (as on a build branch), the real main checkout is a
+    second real ledger; both must be named."""
+    roots = cv._real_ledger_roots()
+    assert cv.REPO_ROOT.resolve() in roots
+    git = cv.REPO_ROOT / ".git"
+    if git.is_file():
+        gitdir = Path(git.read_text(encoding="utf-8").split("gitdir:", 1)[1].strip())
+        assert gitdir.resolve().parents[2] in roots
+
+
+@pytest.mark.parametrize("which", [0, -1])
+def test_a_test_run_never_mirrors_into_a_real_ledger(monkeypatch, tmp_path, capsys, which):
+    """The interlock's other half: inside pytest, a mirror that resolves to this repo's
+    own checkout, or to its main checkout, writes nothing."""
+    target = sorted(cv._real_ledger_roots())[which]
+    monkeypatch.setattr(cv, "_is_linked_worktree", lambda r: True)
+    monkeypatch.setattr(cv, "_main_checkout", lambda root: target)
+    wrote = []
+    monkeypatch.setattr(gate, "append_row", lambda root, row: wrote.append(root))
+    monkeypatch.setattr(cv, "_REAL_APPEND_ROW", gate.append_row)   # as if it were real
+    row = {"recorded": "t", "report": "r", "model": "codex"}
+    assert cv.mirror_to_main(tmp_path, tmp_path / "nope.md", row) is False
+    assert wrote == []
+    assert "real ledger" in capsys.readouterr().err

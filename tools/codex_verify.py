@@ -820,6 +820,71 @@ def refuse_dispatch_inside_tests(argv: list[str]) -> None:
                          "stub jailed_argv or run() in the test.")
 
 
+def _is_linked_worktree(root: Path) -> bool:
+    """A linked worktree has a .git FILE; a main checkout has a .git directory."""
+    return (Path(root) / ".git").is_file()
+
+
+def _real_ledger_roots() -> set[Path]:
+    """This checkout and, when it is a linked worktree, its main checkout: the two real
+    ledgers a test must never write. Read from the .git file, so no git call is needed."""
+    roots = {REPO_ROOT.resolve()}
+    git = REPO_ROOT / ".git"
+    if git.is_file():
+        text = git.read_text(encoding="utf-8")
+        if "gitdir:" in text:
+            gitdir = Path(text.split("gitdir:", 1)[1].strip()).resolve()
+            if gitdir.parent.name == "worktrees":     # <main>/.git/worktrees/<name>
+                roots.add(gitdir.parents[2])
+    return roots
+
+
+def mirror_to_main(repo_root: Path, report: Path, row: dict) -> bool | None:
+    """Copy a worktree review's evidence into the main checkout. None: not a worktree.
+
+    WHY (2026-11-09). A review run from a linked worktree wrote its report and ledger row
+    only into that worktree's gitignored files, and the Codex sandbox cannot write the
+    main checkout. Removing the worktree after merge deleted the only copy (lost:
+    question-queue-1106's Codex and Grok reports and rows). The worktree copies stay as
+    they are, because the push gate reads them; this adds the report, under the same
+    relative path, and the row, plus a "worktree" field, to the main checkout. Runs in
+    this process after the verifier exits, so the jail is not involved.
+
+    A row's identity is (report, model, recorded): the same run mirrored twice is
+    appended once, while two runs reusing one --report path are both kept.
+    Never raises: a review that verified is not failed by its copy. False means the copy
+    did not happen, with the reason on stderr.
+    """
+    root = Path(repo_root).resolve()
+    if not _is_linked_worktree(root):
+        return None
+    try:
+        main = _main_checkout(root)
+        if main is None:
+            return None
+        main = main.resolve()
+        if (os.environ.get("PYTEST_CURRENT_TEST") and gate.append_row is _REAL_APPEND_ROW
+                and main in _real_ledger_roots()):
+            print("codex_verify: not mirroring into a real ledger inside a test run; "
+                  "use a tmp main checkout or stub gate.append_row.", file=sys.stderr)
+            return False
+        src = Path(report).resolve()
+        if src.is_file() and src.is_relative_to(root):
+            dest = main / src.relative_to(root)
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dest)
+        key = (row.get("report"), row.get("model"), row.get("recorded"))
+        if any((r.get("report"), r.get("model"), r.get("recorded")) == key
+               for r in gate.read_ledger(main)):
+            return True
+        gate.append_row(main, {**row, "worktree": str(root)})
+        return True
+    except Exception as e:      # the review stands; only its copy is missing
+        print(f"codex_verify: warning: could not mirror the review to the main checkout: "
+              f"{e}", file=sys.stderr)
+        return False
+
+
 def run(repo_root: Path, target: str, paths: list[str], question: str,
         report: Path, prior: str | None, print_only: bool,
         mode: str = "verify", claims: list[str] | None = None,
@@ -912,13 +977,15 @@ def run(repo_root: Path, target: str, paths: list[str], question: str,
         raise SystemExit("codex_verify: refusing to write the real ledger inside a test run; "
                          "pass a tmp repo_root or stub gate.append_row.")
     gate.append_row(repo_root, row)
+    mirrored = mirror_to_main(repo_root, report, row)
     status = "ok" if verified else (
         "no_report_written" if not report_fresh else "run_failed")
     return {"status": status, "verified": verified,
             "rc": proc.returncode, "report": row["report"],
             "findings": len(findings),
             "open_findings": len([f for f in findings if not f["disposition"]]),
-            "stderr_tail": proc.stderr[-500:] if proc.returncode else ""}
+            "stderr_tail": proc.stderr[-500:] if proc.returncode else "",
+            "mirrored": mirrored}
 
 
 def _mutation_run_alive(repo_root: Path) -> bool:
