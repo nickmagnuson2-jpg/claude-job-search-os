@@ -125,7 +125,7 @@ def test_passing_branch_records_and_check_exits_0(sr, repo, tmp_parent, capsys):
     assert row["base_sha"] == _git(repo, "rev-parse", "main").stdout.strip()
     assert row["collected"] == 2 and row["passed"] == 2
     assert row["tool_version"] == sr.TOOL_VERSION
-    for key in ("merged_commit", "duration_s", "recorded", "failed", "errors", "skipped"):
+    for key in ("merged_commit", "duration_s", "recorded_at", "failed", "errors", "skipped"):
         assert key in row
     # The merged commit has both parents and the merged tree.
     parents = _git(repo, "rev-list", "--parents", "-n", "1", row["merged_commit"]).stdout.split()
