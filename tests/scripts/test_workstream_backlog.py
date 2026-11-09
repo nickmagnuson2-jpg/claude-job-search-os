@@ -719,6 +719,23 @@ def test_exempt_workstream_that_became_valid_must_leave_the_list(root):
     assert has(run_backlog(root)["problems"], "old: header is valid; remove it from backlog-exempt.json")
 
 
+@pytest.mark.parametrize("table", [True, False])
+def test_exempt_workstream_that_became_terminal_must_leave_the_list(root, table):
+    """r2 Codex F1 / Grok F2: closing an exempt workstream is when its slot retires. It
+    used to be skipped before the exempt check, so the report said ok and the slot stayed."""
+    exempt_file(root, ["old"])
+    write(root, "old", ws_text(status="TERMINAL", table=table))
+    rep = run_backlog(root)
+    assert rep["terminal"] == ["old"]
+    assert rep["problems"] == ["old: workstream is terminal; remove it from backlog-exempt.json"]
+    assert rep["status"] == "invalid"
+
+
+def test_terminal_workstream_not_exempt_is_not_a_problem(root):
+    exempt_file(root, [])
+    write(root, "old", ws_text(status="TERMINAL"))
+    assert run_backlog(root)["problems"] == []
+
 def test_listed_slug_with_no_workstream_file_is_a_problem(root):
     exempt_file(root, ["gone", "old"])
     write(root, "old", ws_text(drop=("Size",)))

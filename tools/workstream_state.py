@@ -623,6 +623,8 @@ def backlog(registry: Path, *, today: _dt.date, root: Path, question_state, bran
         exempt = slug in exempt_slugs
         if r["terminal"]:
             terminal.append(slug)
+            if exempt:      # closing a workstream is when its exemption slot retires
+                problems.append(f"{slug}: workstream is terminal; remove it from {EXEMPT_FILE}")
             continue
         if r["reasons"]:
             invalid.append({"slug": slug, "reasons": r["reasons"], "exempt": exempt})
