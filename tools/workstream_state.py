@@ -42,15 +42,29 @@ CONTRACT (output/analysis/091426-workstreams-build-spec.md, D1 and D3):
     by this module. If a render crashes, the next run re-surfaces: the failure direction is
     "shown twice", never "silently dropped".
 
+BACKLOG (`--backlog`, rubric: output/infra-backlog/110726-workstream-backlog-rubric.md).
+Reads headers only: it never runs a probe and never writes. Every non-TERMINAL workstream
+carries five rows in its first `| Field | Value |` table (Owner, Value, Size, Blocker,
+Files) and a fenced ```json next block between that table and the first heading, holding a
+list of {"date": "YYYY-MM-DD", "action": "..."} items. check_workstream() returns the
+reasons a file is refused; backlog() ranks the valid ones (free before blocked, then Value
+descending, Size ascending, OLDEST next date, slug) and lists overlapping Files. Staleness
+compares the NEWEST next date with the newest heading that STARTS with a date
+(`## YYYY-MM-DD ...`); updates written as bullets under an older heading, or headings like
+`## Fixed 2026-09-14`, do not count. The default scan does not check these rows.
+The queue, the board and the main checkout come from decision_write.py, imported lazily.
+
 Usage:
   PYTHONIOENCODING=utf-8 python3 tools/workstream_state.py            # report, no writes
   PYTHONIOENCODING=utf-8 python3 tools/workstream_state.py --render   # update STATE-BLOCKs
   PYTHONIOENCODING=utf-8 python3 tools/workstream_state.py --json
+  PYTHONIOENCODING=utf-8 python3 tools/workstream_state.py --backlog [--json]
 """
 from __future__ import annotations
 
 import argparse
 import datetime as _dt
+import importlib
 import json
 import os
 import re
@@ -58,6 +72,9 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from check_guard_edit_approval import is_guarded  # noqa: E402  (read-only import)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 REGISTRY = REPO_ROOT / "data" / "workstreams"
@@ -280,16 +297,454 @@ def summary(rows: list[dict]) -> dict:
         "names": [r["name"] for r in surfacing],
     }
 
+# ---------------------------------------------------------------- backlog header
+
+FIELD_VALUE_RE = re.compile(r"^\|\s*Field\s*\|\s*Value\s*\|$")
+SEPARATOR_RE = re.compile(r"^\|[\s|:-]+\|$")
+HEADER_ROW_RE = re.compile(r"^\|\s*\*\*([^*|]+)\*\*\s*\|(.*)\|$")
+HEADING_RE = re.compile(r"^#{1,6} ")
+DATED_HEADING_RE = re.compile(r"^## (\d{4}-\d{2}-\d{2})")
+DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
+NEXT_FENCE = "```json next"
+VALUE_RE = re.compile(r"^(V[1-4])(?:\s*\|\s*evidence:(.*))?$")
+BLOCKER_RE = re.compile(r"^(?:question:Q[1-9]\d*|branch:[A-Za-z0-9._/-]+)$")
+FILE_RE = re.compile(r"^`(new:)?([^`\s]+)`$")
+OWNER_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+
+REQUIRED_ROWS = ("Owner", "Value", "Size", "Blocker", "Files")
+VALUES = ("V1", "V2", "V3", "V4")
+SIZES = ("S", "M", "L")
+SIZE_MAX_FILES = {"S": 3, "M": 10}
+MIN_ACTION = 15
+MAIN_BRANCH = "main"
+
+# Migration (rubric section 6 rule 1). The exemption list lives in the registry as
+# backlog-exempt.json, {"cutover": "YYYY-MM-DD", "exempt": [slug, ...]}, gitignored with the
+# rest of data/ because some slugs name real organisations and this repo is public.
+# SHRINK-ONLY: never add a slug. backlog() reports an exempt workstream that gains a
+# `## YYYY-MM-DD` heading dated after the cutover while still invalid, an exempt one that
+# became valid, and a listed slug with no workstream file. No file means no exemptions.
+EXEMPT_FILE = "backlog-exempt.json"
+
+
+class ExemptFileError(ValueError):
+    """backlog-exempt.json exists but is not the documented shape."""
+
+
+def _today() -> _dt.date:
+    return _dt.date.today()
+
+
+def _visible_lines(text: str) -> list[str]:
+    """The file's lines with the STATE-BLOCK (markers included) blanked, so a row or a
+    next block inside it is never read and line numbers still match the file."""
+    out, inside = [], False
+    for line in text.splitlines():
+        if line.strip() == BEGIN:
+            inside = True
+        out.append("" if inside else line)
+        if inside and line.strip() == END:
+            inside = False
+    return out
+
+
+def read_header(text: str) -> dict:
+    """Rows of the FIRST `| Field | Value |` table, which ends at the first line that does
+    not start with `|`. Only rows whose first cell is bold are rows. A backslash-escaped
+    pipe in a cell is a literal pipe. `line` is 1-based; `end` is the 0-based index just after the table."""
+    lines = _visible_lines(text)
+    out = {"table": False, "rows": {}, "duplicates": [], "line": {}, "end": None}
+    for i, line in enumerate(lines):
+        if not FIELD_VALUE_RE.match(line.strip()):
+            continue
+        out["table"] = True
+        j = i + 1
+        while j < len(lines) and lines[j].lstrip().startswith("|"):
+            m = HEADER_ROW_RE.match(lines[j].strip())
+            if m:
+                name, value = m.group(1).strip(), m.group(2).strip().replace("\\|", "|")
+                if name in out["rows"]:
+                    if name not in out["duplicates"]:
+                        out["duplicates"].append(name)
+                else:
+                    out["rows"][name] = value
+                    out["line"][name] = j + 1
+            j += 1
+        out["end"] = j
+        break
+    return out
+
+
+def _date(value) -> _dt.date | None:
+    if not isinstance(value, str) or not DATE_RE.fullmatch(value):
+        return None
+    try:
+        return _dt.date.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def _strict_object(pairs):
+    keys = [k for k, _ in pairs]
+    if len(keys) != len(set(keys)):
+        raise ValueError("duplicate key in an object")
+    return dict(pairs)
+
+
+def _no_constant(name):
+    raise ValueError(f"{name} is not strict JSON")
+
+
+def _read_next(lines: list[str], table_end: int, today: _dt.date) -> tuple[list, list]:
+    """(items, reasons) for the ```json next block."""
+    starts = [i for i, line in enumerate(lines) if line.strip() == NEXT_FENCE]
+    if not starts:
+        return [], ["missing next block (```json next under the header table)"]
+    if len(starts) > 1:
+        return [], ["more than one next block"]
+    start = starts[0]
+    first_heading = next((i for i in range(table_end, len(lines))
+                          if HEADING_RE.match(lines[i])), len(lines))
+    if not table_end <= start < first_heading:
+        return [], ["next block must sit between the header table and the first ## heading"]
+    close = next((k for k in range(start + 1, len(lines)) if lines[k].strip() == "```"), None)
+    if close is None:
+        return [], ["next block is not closed"]
+    try:
+        items = json.loads("\n".join(lines[start + 1:close]),
+                           object_pairs_hook=_strict_object, parse_constant=_no_constant)
+    except ValueError as exc:
+        return [], [f"next block is not strict JSON: {exc}"]
+    if not isinstance(items, list):
+        return [], ["next block must be a JSON list of {date, action} objects"]
+    if not items:
+        return [], ["next block must hold at least one item"]
+    reasons = []
+    for n, item in enumerate(items, 1):
+        if not isinstance(item, dict) or set(item) != {"date", "action"}:
+            reasons.append(f"next item {n}: must be an object with exactly date and action")
+            continue
+        d = _date(item["date"])
+        if d is None:
+            reasons.append(f"next item {n}: date {item['date']!r} is not YYYY-MM-DD")
+        elif d > today:
+            reasons.append(f"next item {n}: date {d} is after today ({today})")
+        action = item["action"]
+        if not isinstance(action, str) or len(action.strip()) < MIN_ACTION:
+            reasons.append(f"next item {n}: action must be at least {MIN_ACTION} characters")
+    return items, reasons
+
+
+def _check_files(value: str, root: Path) -> tuple[list[str], list[str]]:
+    """(paths without the new: prefix, reasons)."""
+    if not value:
+        return [], ["Files is empty"]
+    paths, reasons = [], []
+    for entry in (e.strip() for e in value.split(",")):
+        m = FILE_RE.fullmatch(entry)
+        if not m:
+            reasons.append(f"Files entry {entry!r} is not one backticked path")
+            continue
+        new, path = bool(m.group(1)), m.group(2)
+        if path.startswith(("/", "~")) or ".." in path.split("/"):
+            reasons.append(f"Files entry {path} must be repo-relative (no absolute path, ~ or ..)")
+            continue
+        paths.append(path)
+        target, is_dir = root / path, path.endswith("/")
+        if new:
+            if target.exists():
+                reasons.append(f"Files entry new:{path} already exists; drop the new: prefix")
+        elif not target.exists():
+            reasons.append(f"Files entry {path} does not exist; prefix new: if not created yet")
+        elif is_dir != target.is_dir():
+            reasons.append(f"Files entry {path} is not a directory" if is_dir
+                           else f"Files entry {path} is a directory; end it with /")
+    return paths, reasons
+
+
+def check_workstream(slug: str, text: str, *, today: _dt.date, root: Path,
+                     question_state, branch_state) -> dict:
+    """Check one workstream's backlog header. `reasons` empty means valid.
+
+    question_state(id) and branch_state(name) return "open", "resolved"/"merged", or None
+    for an id or branch that does not exist. They are injected so tests need no git and no
+    queue file."""
+    lines = _visible_lines(text)
+    heading_dates = [d for d in (_date(m.group(1)) for m in map(DATED_HEADING_RE.match, lines)
+                                 if m) if d]
+    newest_heading = max(heading_dates).isoformat() if heading_dates else None
+    r = {"slug": slug, "terminal": _parse_status(text) == "TERMINAL", "reasons": [],
+         "newest_heading": newest_heading, "value": None, "evidence": None, "size": None,
+         "files": [], "next": [], "oldest": None, "newest": None, "blockers": [],
+         "stale_blockers": [], "owner": None}
+    if r["terminal"]:
+        return r
+    header = read_header(text)
+    if not header["table"]:
+        r["reasons"] = ["no-header-table"]
+        return r
+    rows, reasons = header["rows"], r["reasons"]
+    reasons += [f"duplicate row: {name}" for name in header["duplicates"]]
+    reasons += [f"missing row: {name}" for name in REQUIRED_ROWS if name not in rows]
+    if "Next" in rows:
+        reasons.append("Next is a json next block under the header table, not a table row")
+
+    items, next_reasons = _read_next(lines, header["end"], today)
+    reasons += next_reasons
+    dates = sorted(d for d in (_date(i.get("date")) for i in items if isinstance(i, dict)) if d)
+    if not next_reasons:
+        r["next"] = items
+        r["oldest"], r["newest"] = dates[0].isoformat(), dates[-1].isoformat()
+        if newest_heading and r["newest"] < newest_heading:
+            reasons.append(f"newest next item {r['newest']} is older than the newest "
+                           f"dated section ({newest_heading})")
+
+    if "Owner" in rows:
+        r["owner"] = rows["Owner"]
+        if not OWNER_RE.fullmatch(rows["Owner"]):
+            reasons.append(f"Owner {rows['Owner']!r} is not a session name or unheld")
+
+    if "Value" in rows:
+        m = VALUE_RE.fullmatch(rows["Value"])
+        if not m:
+            reasons.append(f"Value {rows['Value']!r} is not one of V1..V4 "
+                           "(V3 and V4 as 'V4 \\| evidence: <pointer>')")
+        else:
+            r["value"], r["evidence"] = m.group(1), (m.group(2) or "").strip() or None
+            if r["value"] in ("V3", "V4") and not r["evidence"]:
+                reasons.append(f"Value {r['value']} needs an evidence pointer")
+
+    if "Files" in rows:
+        r["files"], file_reasons = _check_files(rows["Files"], root)
+        reasons += file_reasons
+
+    if "Size" in rows:
+        size = rows["Size"]
+        if size not in SIZES:
+            reasons.append(f"Size {size!r} is not one of S, M, L")
+        else:
+            r["size"] = size
+            limit = SIZE_MAX_FILES.get(size)
+            if limit is not None and len(r["files"]) > limit:
+                reasons.append(f"Size {size} allows at most {limit} Files entries, "
+                               f"found {len(r['files'])}")
+            for path in r["files"]:
+                if size != "L" and is_guarded(path):
+                    reasons.append(f"Files entry {path} is guarded, so Size must be L")
+
+    if "Blocker" in rows:
+        value = rows["Blocker"]
+        parts = [] if value == "none" else value.split(", ")
+        if value != "none" and not all(BLOCKER_RE.fullmatch(p) for p in parts):
+            reasons.append(f"Blocker {value!r}: each entry is question:Q<n> or "
+                           "branch:<name>, joined by ', ', or the word none")
+            parts = []
+        for part in parts:
+            kind, name = part.split(":", 1)
+            state = question_state(name) if kind == "question" else branch_state(name)
+            if state is None:
+                reasons.append(f"Blocker {part}: {name} was never allocated" if kind == "question"
+                               else f"Blocker {part}: branch {name} does not exist")
+            elif state in ("resolved", "merged"):
+                r["stale_blockers"].append(part)
+            else:
+                r["blockers"].append(part)
+    return r
+
+
+def load_exemptions(registry: Path) -> tuple[_dt.date | None, set[str]]:
+    """(cutover, exempt slugs) from the registry's backlog-exempt.json. A missing file is
+    (None, set()), so every invalid workstream counts. Raises ExemptFileError otherwise."""
+    path = registry / EXEMPT_FILE
+    if not path.exists():
+        return None, set()
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"),
+                          object_pairs_hook=_strict_object, parse_constant=_no_constant)
+    except (OSError, ValueError) as exc:
+        raise ExemptFileError(f"{EXEMPT_FILE} is not strict JSON: {exc}") from None
+    if not isinstance(data, dict) or set(data) != {"cutover", "exempt"}:
+        raise ExemptFileError(f"{EXEMPT_FILE} must be an object with exactly cutover and exempt")
+    cutover = _date(data["cutover"])
+    if cutover is None:
+        raise ExemptFileError(f"{EXEMPT_FILE}: cutover {data['cutover']!r} is not YYYY-MM-DD")
+    slugs = data["exempt"]
+    if (not isinstance(slugs, list) or not all(isinstance(x, str) and x for x in slugs)
+            or len(set(slugs)) != len(slugs)):
+        raise ExemptFileError(f"{EXEMPT_FILE}: exempt must be a list of distinct non-empty "
+                              "slug strings")
+    return cutover, set(slugs)
+
+
+def _shared(a: list[str], b: list[str]) -> list[str]:
+    """Paths two Files lists share. A directory entry (ending in /) covers paths under it."""
+    out = set()
+    for pa in a:
+        for pb in b:
+            if pa == pb or (pa.endswith("/") and pb.startswith(pa)):
+                out.add(pb)
+            elif pb.endswith("/") and pa.startswith(pb):
+                out.add(pa)
+    return sorted(out)
+
+
+def backlog(registry: Path, *, today: _dt.date, root: Path, question_state, branch_state,
+            board_owner) -> dict:
+    """The backlog report over one registry. Reads only; runs no probe; writes nothing."""
+    files = sorted(p for p in registry.glob("*.md") if not p.name.startswith("."))
+    cutover, exempt_slugs = load_exemptions(registry)
+    terminal, invalid, ranked, problems = [], [], [], []
+    for p in files:
+        r = check_workstream(p.stem, p.read_text(encoding="utf-8"), today=today, root=root,
+                             question_state=question_state, branch_state=branch_state)
+        slug = r["slug"]
+        exempt = slug in exempt_slugs
+        if r["terminal"]:
+            terminal.append(slug)
+            continue
+        if r["reasons"]:
+            invalid.append({"slug": slug, "reasons": r["reasons"], "exempt": exempt})
+            if not exempt:
+                problems.append(f"{slug}: header is invalid and the workstream is not exempt")
+            elif r["newest_heading"] and r["newest_heading"] > cutover.isoformat():
+                problems.append(f"{slug}: dated section {r['newest_heading']} is after the "
+                                f"cutover ({cutover}); fill the backlog rows")
+            continue
+        if exempt:
+            problems.append(f"{slug}: header is valid; remove it from {EXEMPT_FILE}")
+        board = board_owner(slug)
+        drift = not (r["owner"] == board
+                     or (r["owner"] == "unheld" and board.startswith("UNROUTED")))
+        ranked.append({
+            "slug": slug, "group": "blocked" if r["blockers"] else "free",
+            "value": r["value"], "evidence": r["evidence"], "size": r["size"],
+            "next": r["next"], "oldest": r["oldest"], "newest": r["newest"],
+            "blockers": r["blockers"], "stale_blockers": r["stale_blockers"],
+            "files": r["files"], "owner": r["owner"], "board_owner": board,
+            "owner_drift": drift})
+    problems += [f"{slug}: listed in {EXEMPT_FILE} but has no workstream file; remove it"
+                 for slug in sorted(exempt_slugs - {p.stem for p in files})]
+    ranked.sort(key=lambda i: (i["group"] != "free", -VALUES.index(i["value"]),
+                               SIZES.index(i["size"]), i["oldest"], i["slug"]))
+    overlaps = []
+    for x, a in enumerate(ranked):
+        for b in ranked[x + 1:]:
+            shared = _shared(a["files"], b["files"])
+            if shared:
+                lo, hi = sorted((a, b), key=lambda i: i["slug"])
+                overlaps.append({"a": lo["slug"], "b": hi["slug"], "shared": shared,
+                                 "blocked": "blocked" in (a["group"], b["group"])})
+    overlaps.sort(key=lambda o: (o["a"], o["b"]))
+    return {"status": "invalid" if problems else "ok", "today": today.isoformat(),
+            "registry": str(registry), "terminal": terminal, "invalid": invalid,
+            "ranked": ranked, "overlaps": overlaps,
+            "value_counts": {v: sum(1 for i in ranked if i["value"] == v) for v in VALUES},
+            "problems": problems}
+
+
+def _git_branch_state(main: Path, name: str) -> str | None:
+    """"open", "merged" (an ancestor of main), or None when no such local branch exists."""
+    ref = f"refs/heads/{name}"
+    found = subprocess.run(["git", "-C", str(main), "for-each-ref", "--format=%(refname)", ref],
+                           capture_output=True, text=True)
+    if found.returncode != 0 or found.stdout.strip() != ref:
+        return None
+    merged = subprocess.run(["git", "-C", str(main), "merge-base", "--is-ancestor", ref,
+                             MAIN_BRANCH], capture_output=True, text=True)
+    return "merged" if merged.returncode == 0 else "open"
+
+
+def backlog_sources(repo_root: Path, dw=None) -> dict:
+    """The main checkout's registry, queue and board, through decision_write.py, so a
+    worktree reads the main checkout's files and never its own. Raises dw.Refusal."""
+    if dw is None:
+        dw = importlib.import_module("decision_write")
+    main = dw.resolve_main(repo_root)
+    p = dw.paths(main)
+    events = dw.load_events(p["questions"])
+    open_ids = set(dw.open_questions(events))
+    asked = {e.get("id") for e in events if e.get("type") == "asked"}
+    route, _status = dw.routing(p)
+    return {"main": main, "registry": p["workstreams"],
+            "question_state": lambda q: ("open" if q in open_ids
+                                         else "resolved" if q in asked else None),
+            "branch_state": lambda b: _git_branch_state(main, b),
+            "board_owner": route}
+
+
+def _backlog_error(as_json: bool, code: str, message: str) -> int:
+    if as_json:
+        print(json.dumps({"status": "error", "code": code, "message": message}, indent=2))
+    else:
+        print(f"backlog: error {code}: {message}")
+    return 2
+
+
+def _print_backlog(rep: dict) -> None:
+    print(f"backlog {rep['today']} from {rep['registry']}")
+    print(f"\ninvalid ({len(rep['invalid'])}):")
+    for i in rep["invalid"]:
+        print(f"  {i['slug']}{' [exempt]' if i['exempt'] else ''}: {'; '.join(i['reasons'])}")
+    print(f"\nranked ({len(rep['ranked'])}):")
+    for n, i in enumerate(rep["ranked"], 1):
+        print(f"  {n:2}. {i['slug']}  {i['value']} {i['size']} {i['group']}"
+              + (f"  blockers: {', '.join(i['blockers'])}" if i["blockers"] else "")
+              + (f"  stale blocker: {', '.join(i['stale_blockers'])}"
+                 if i["stale_blockers"] else "")
+              + (f"  owner-drift: row {i['owner']}, board {i['board_owner']}"
+                 if i["owner_drift"] else f"  owner {i['owner']}"))
+        if i["evidence"]:
+            print(f"      evidence: {i['evidence']}")
+        for item in i["next"]:
+            print(f"      next {item['date']}: {item['action']}")
+    print(f"\noverlaps ({len(rep['overlaps'])}):")
+    for o in rep["overlaps"]:
+        print(f"  {o['a']} and {o['b']}: {', '.join(o['shared'])}"
+              + (" [blocked]" if o["blocked"] else ""))
+    print(f"\nterminal ({len(rep['terminal'])}): {', '.join(rep['terminal'])}")
+    print("values: " + ", ".join(f"{v} {c}" for v, c in rep["value_counts"].items()))
+    print(f"problems ({len(rep['problems'])}):")
+    for p in rep["problems"]:
+        print(f"  {p}")
+
+
+def run_backlog(repo_root: Path, as_json: bool) -> int:
+    """--backlog: exit 0 when no problems, 1 when any, 2 when the sources or the exemption
+    file are unreadable."""
+    try:
+        dw = importlib.import_module("decision_write")
+    except ImportError as exc:
+        return _backlog_error(as_json, "decision_write_missing", str(exc))
+    try:
+        src = backlog_sources(repo_root, dw)
+    except dw.Refusal as exc:
+        return _backlog_error(as_json, exc.code, exc.message)
+    try:
+        rep = backlog(src["registry"], today=_today(), root=src["main"],
+                      question_state=src["question_state"], branch_state=src["branch_state"],
+                      board_owner=src["board_owner"])
+    except ExemptFileError as exc:
+        return _backlog_error(as_json, "bad_exempt_file", str(exc))
+    if as_json:
+        print(json.dumps(rep, indent=2))
+    else:
+        _print_backlog(rep)
+    return 1 if rep["problems"] else 0
+
 
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawTextHelpFormatter)
     ap.add_argument("--render", action="store_true", help="write each STATE-BLOCK in place")
     ap.add_argument("--json", action="store_true")
+    ap.add_argument("--backlog", action="store_true",
+                    help="check backlog headers and rank (main checkout registry; no probes)")
     ap.add_argument("--registry", type=Path, default=REGISTRY)
     ap.add_argument("--repo-root", type=Path, default=REPO_ROOT)
     args = ap.parse_args(argv)
 
+    if args.backlog:
+        return run_backlog(args.repo_root, args.json)
     if args.render:
         files = sorted(p for p in args.registry.glob("*.md") if not p.name.startswith("."))
         rows = [render(p, repo_root=args.repo_root) for p in files]
