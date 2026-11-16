@@ -353,12 +353,13 @@ def test_a_mention_of_pipefail_or_pipestatus_does_not_exempt(command):
 @pytest.mark.parametrize("command", [
     "set -euo pipefail; cmd | tail -5 || echo FAILED",
     "set -eo pipefail\ncmd | tail -5\necho $?",
+    # zsh's status read in its own statement reads no `$?`, so it passes without any
+    # exemption (the whole-command exemption was removed, Q13, Grok q13-r2 F1)
     "cmd | tail -1; echo \"$pipestatus[1]\"",
     "cmd | tail -1; echo \"${pipestatus[1]}\"",
-    "cmd | tail -1; s=$pipestatus; echo $?",
-    "cmd | tail -1 || echo failed $pipestatus[1]",
+    "cmd | tail -1; s=$pipestatus[1]; [ \"$s\" -eq 0 ] || echo FAILED",
 ])
-def test_effective_pipefail_or_a_pipestatus_read_still_exempts(command):
+def test_effective_pipefail_or_a_zsh_status_read_passes(command):
     assert _run(command) == 0, command
 
 
@@ -409,6 +410,25 @@ def test_bash_pipestatus_inside_literals_is_not_a_read(command):
     "echo \"\\$pipestatus[1] is zsh\"; false | tail -1; echo $?",
 ])
 def test_a_literal_lowercase_pipestatus_does_not_exempt(command):
+    assert _run(command) == 2, command
+
+
+# Grok q13-r2 F1: a `$pipestatus` read on the `||` branch of the pipeline does not make
+# that `||` live, and a read anywhere in the command no longer exempts it.
+@pytest.mark.parametrize("command", [
+    "cmd | tail -1 || echo failed $pipestatus[1]",
+    "cmd | tail -1; echo $?; echo $pipestatus[1]",
+])
+def test_a_zsh_status_read_elsewhere_does_not_exempt(command):
+    assert _run(command) == 2, command
+
+
+# Codex q13-r2 F1: `\\$` is a literal backslash followed by a REAL expansion.
+@pytest.mark.parametrize("command", [
+    "echo \"\\\\${PIPESTATUS[0]}\"",
+    "echo \\\\$PIPESTATUS",
+])
+def test_an_even_backslash_run_does_not_escape_the_read(command):
     assert _run(command) == 2, command
 
 

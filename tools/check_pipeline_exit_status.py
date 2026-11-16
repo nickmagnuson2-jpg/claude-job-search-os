@@ -49,15 +49,17 @@ Two consumption shapes are flagged, both taken verbatim from the two fires:
 formatter list: their exit status IS informative, so `cmd | grep -q x || echo
 missing` is a legitimate verdict and must stay clean.
 
-ALLOWLIST — the two correct ways to keep the pipe
--------------------------------------------------
+ALLOWLIST — the correct way to keep the pipe
+--------------------------------------------
 The hook exits 0 when the author handles pipeline status: `set -o pipefail` is in
 effect for the statement (set in command position, not turned off again by
-`set +o pipefail`), or zsh's `$pipestatus` array is actually read. A mere mention, in
-a comment, a quoted string, or `echo set -o pipefail`, no longer exempts (Codex review
-of the hook wiring, run 15, F2). Bash's uppercase `$PIPESTATUS` does NOT exempt: it
-expands EMPTY in zsh, the shell Claude Code runs here, so a command that reads it has
-not handled the status (Q13, Nick 2026-11-16; Codex 1.F1 + Grok 2.F1 on a149eea3).
+`set +o pipefail`). A mere mention, in a comment, a quoted string, or
+`echo set -o pipefail`, does not exempt (Codex review of the hook wiring, run 15, F2).
+Reading zsh's `$pipestatus[1]` needs no exemption: a status check in its own statement
+does not read `$?`, so it never matched. The whole-command `$pipestatus` exemption was
+removed (Q13, Nick 2026-11-16): it changed no verdict across 60 real commands and it
+blessed `cmd | tail || echo $pipestatus[1]`, whose `||` can never fire (Grok q13-r2 F1).
+Bash's uppercase `$PIPESTATUS` is its own violation, see find_violation.
 
 BLOCK tier (exit 2) per feedback_warn_vs_block_hook_design.md: an exit-0 WARN on
 PreToolUse is never surfaced by Claude Code, and this pattern has a single
@@ -69,7 +71,7 @@ Hook input: JSON via stdin from Claude Code. {"tool_input": {"command": "..."}}
 
 Exit codes:
   0 — clean (no formatter-terminated pipeline feeding a verdict, pipefail in
-      effect or zsh $pipestatus read, or parse failure -> fail-open)
+      effect, or parse failure -> fail-open)
   2 — verdict taken from a pipeline's exit status, tool call BLOCKED
 
 Origin: memory/feedback_pipeline_masks_the_exit_status_you_are_testing.md
@@ -99,7 +101,7 @@ FORMATTERS = frozenset(
 
 # The author is handling pipeline status only if pipefail is IN EFFECT for the
 # pipeline (`set -o pipefail`, `set -euo pipefail`, and not turned off again by
-# `set +o pipefail`) or zsh's `$pipestatus` is actually READ. A bare mention in a
+# `set +o pipefail`). A bare mention in a
 # comment, a quoted string, or `set +o pipefail` exempted the whole command (Codex
 # review of the hook wiring, run 15, F2).
 # `set` in command position (statement start, after && / || / a group opener, or
@@ -109,17 +111,14 @@ FORMATTERS = frozenset(
 _SET_OPTS = r"(?:^|&&|\|\||[({]|\b(?:then|do|else)\b)\s*set\s+(?:[-+]\w+\s+(?:(?!pipefail\b)[a-z]\w*\s+)?)*"
 _PIPEFAIL_ON = re.compile(_SET_OPTS + r"-[a-zA-Z]*o\s+pipefail\b")
 _PIPEFAIL_OFF = re.compile(_SET_OPTS + r"\+[a-zA-Z]*o\s+pipefail\b")
-# zsh only, case-sensitive: `$pipestatus[1]`, `${pipestatus[1]}`, `$pipestatus`. The bash
-# spelling `${PIPESTATUS[0]}` is unset in zsh and expands empty (verified with
-# zsh -f, 2026-11-16), so it must not exempt (Q13).
-# `(?<!\\)`: an escaped `\$` is printed, not expanded (Codex/Grok q13-r1 F2).
-_PIPESTATUS_READ = re.compile(r"(?<!\\)\$\{?pipestatus\b")
 # Bash's spelling, read where zsh EXPANDS it (outside single quotes and quoted
 # heredocs). It is always empty in zsh, so the read reports no status at all: its own
 # block, not just a lost exemption. 111 real commands read it; 89 expanded it, e.g.
 # `git push ... | tail; echo "push exit: ${PIPESTATUS[0]}"` printed an empty code
-# (Q13 scope, Nick 2026-11-16: "Add the rule").
-_BASH_PIPESTATUS = re.compile(r"(?<!\\)\$\{?PIPESTATUS\b")
+# (Q13 scope, Nick 2026-11-16: "Add the rule"). The `$` must be preceded by an EVEN
+# run of backslashes (none, or `\\\\` = a literal backslash, then expansion); an odd run
+# escapes the `$` and zsh prints it (q13-r1 F2, q13-r2 Codex F1).
+_BASH_PIPESTATUS = re.compile(r"(?<!\\)(?:\\\\)*\$\{?PIPESTATUS\b")
 _COMMENT = re.compile(r"(?:^|(?<=\s))#[^\n]*")
 
 _VAR_PREFIX = re.compile(r"^\s*(?:\w+=\S*\s+)*")
@@ -152,12 +151,6 @@ def find_violation(command: str) -> tuple[str, str] | None:
     text = _COMMENT.sub("", strip_literals(text))
     if _BASH_PIPESTATUS.search(text):
         return "PIPESTATUS", "PIPESTATUS"
-
-    # A real zsh $pipestatus read exempts. Read from the SAME literal-stripped text as
-    # every other check: a second stripping path that removed only single quotes let a
-    # mention inside a quoted heredoc exempt the whole command (Codex/Grok q13-r1 F1).
-    if _PIPESTATUS_READ.search(text):
-        return None
 
     # Statements: top-level `;` / newline. `||` and `&&` contain neither, so
     # and-or lists survive intact inside a statement.
