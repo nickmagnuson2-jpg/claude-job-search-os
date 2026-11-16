@@ -2,9 +2,14 @@
 
 What must hold:
   - the value is BANDED, so /standup surfaces it on a real shift, not daily noise;
-  - one Bash call = one burst of PreToolUse:Bash finish lines, and its wall is the SLOWEST
-    hook in the burst (hooks run in parallel), never the sum;
-  - a status-2 line followed by "can't open file" is a crash, not a block;
+  - one Bash call = the PreToolUse:Bash finish lines up to the call's TERMINATOR, the
+    `[Stall] tool_dispatch_start tool=Bash` line (the call ran) or `Bash tool permission
+    denied` (it did not); its wall is the SLOWEST hook (hooks run in parallel), never the sum;
+  - calls and blocks are counted from terminators and `Hook denied tool use for Bash`, so
+    overlapping calls cannot inflate or mix them; a segment that holds more than one call
+    is left out of wall and hooks/call, never split into invented calls (Codex r2 F1);
+  - a hook denial whose only status-2 lines are "can't open file" crashes of THAT exact
+    file (basename equality, Codex r2 F2) is a crash, not a block;
   - a reading that cannot be taken is exit 2 with {"error": ...}, never a 0.
 Fixtures are synthetic debug-log lines in the real format.
 """
@@ -32,13 +37,23 @@ def line(offset_s, ms, status=0, hook="check_a.py"):
             f"$CLAUDE_PROJECT_DIR/tools/{hook}] finished with status {status} ({ms}ms)\n")
 
 
+def start(offset_s, uid="toolu_X"):
+    return f"{ts(offset_s)} [INFO] [Stall] tool_dispatch_start tool=Bash toolUseId={uid} permissionDecisionMs=5\n"
+
+
+def denied(offset_s, by_hook=True):
+    out = [f"{ts(offset_s)} [DEBUG] Hook denied tool use for Bash\n"] if by_hook else []
+    return out + [f"{ts(offset_s)} [DEBUG] Bash tool permission denied\n"]
+
+
 def call(offset_s, walls, status=None):
-    """One Bash call: one finish line per hook, all within the same second."""
+    """One Bash call: one finish line per hook, then its terminator (denied when a hook
+    returned 2, else dispatched), as the real debug log writes it."""
     out = []
     for i, ms in enumerate(walls):
         st = status[i] if status else 0
         out.append(line(offset_s + i * 0.01, ms, st, f"check_{i}.py"))
-    return out
+    return out + (denied(offset_s + 0.5) if status and 2 in status else [start(offset_s + 0.5)])
 
 
 def write_log(tmp_path, name, lines, mtime=NOW):
@@ -61,7 +76,7 @@ def test_wall_is_the_slowest_hook_in_a_call_not_the_sum(tmp_path, capsys):
     assert "bash_wall_p50=140ms" in out["value"]
 
 
-def test_calls_more_than_3s_apart_are_separate_bursts(tmp_path, capsys):
+def test_each_terminator_closes_one_call(tmp_path, capsys):
     lines = call(-100, [100, 100]) + call(-90, [300, 300]) + call(-80, [300, 300])
     write_log(tmp_path, "cc-debug-1.log", lines)
     code, out = run(tmp_path, capsys, "--raw")
@@ -91,7 +106,7 @@ def test_block_rate_is_per_100_calls_and_banded(tmp_path, capsys):
 
 def test_a_crash_is_not_counted_as_a_block(tmp_path, capsys):
     crash = [line(-100, 40, 2), f"{ts(-100)} [ERROR] stderr: Python: can't open file '/x/tools/check_a.py'\n"]  # the crashed hook itself
-    write_log(tmp_path, "cc-debug-1.log", crash + call(-50, [40]))
+    write_log(tmp_path, "cc-debug-1.log", crash + denied(-99) + call(-50, [40]))
     code, out = run(tmp_path, capsys, "--raw")
     assert "blocks_per_100=0.00" in out["value"]
 
@@ -186,7 +201,7 @@ def test_a_call_blocked_by_two_hooks_is_one_blocked_call(tmp_path, capsys):
 def test_a_crash_line_only_cancels_the_hook_it_names(tmp_path, capsys):
     """Codex P0 on fc56db23: a parallel hook's crash must not erase a real block."""
     lines = [line(-100, 40, 2, "check_0.py"),
-             f"{ts(-100)} [ERROR] Python: can't open file '/x/tools/check_9.py'\n"]
+             f"{ts(-100)} [ERROR] Python: can't open file '/x/tools/check_9.py'\n"] + denied(-99)
     write_log(tmp_path, "cc-debug-1.log", lines)
     code, out = run(tmp_path, capsys, "--raw")
     assert "blocks_per_100=100.00" in out["value"]
@@ -203,3 +218,73 @@ def test_an_unreadable_log_is_exit_2_json(tmp_path, capsys, monkeypatch):
     monkeypatch.setattr("builtins.open", boom)
     code, out = run(tmp_path, capsys)
     assert code == 2 and "error" in out
+
+
+# --- Codex r2 (8f72d6b6) ---------------------------------------------------------------
+
+def test_interleaved_overlapping_calls_are_never_split_into_mixed_calls(tmp_path, capsys):
+    """r2 F1: call 1 a, call 2 a, call 1 b, call 2 b, then both terminators. That segment
+    holds two calls whose hooks cannot be told apart: it counts as 2 calls, contributes no
+    wall or hooks/call sample, and is reported as ambiguous. No 3-call mixed reading."""
+    lines = [line(-100, 10, 0, "a.py"), line(-100, 100, 0, "a.py"),
+             line(-100, 200, 0, "b.py"), line(-100, 20, 0, "b.py"),
+             start(-99, "toolu_1"), start(-99, "toolu_2")] + call(-50, [60, 60])
+    write_log(tmp_path, "cc-debug-1.log", lines)
+    code, out = run(tmp_path, capsys, "--raw")
+    v = out["value"]
+    assert "calls=3" in v and "ambiguous=1" in v
+    assert "bash_wall_p50=60ms" in v and "hooks/call=2" in v
+
+
+def test_a_partial_interleave_with_one_terminator_is_ambiguous_not_a_call_sample(tmp_path, capsys):
+    """Call 2's first hook finishes before call 1's terminator: a repeated hook inside a
+    one-terminator segment. It still counts as one call, but gives no wall sample."""
+    lines = [line(-100, 10, 0, "a.py"), line(-100, 500, 0, "a.py"), start(-99, "toolu_1"),
+             line(-99, 30, 0, "b.py"), start(-98, "toolu_2")]
+    write_log(tmp_path, "cc-debug-1.log", lines)
+    code, out = run(tmp_path, capsys, "--raw")
+    v = out["value"]
+    assert "calls=2" in v and "ambiguous=1" in v and "bash_wall_p50=30ms" in v
+
+
+def test_a_block_inside_overlapping_calls_counts_once_per_denied_call(tmp_path, capsys):
+    lines = [line(-100, 10, 2, "a.py"), line(-100, 10, 0, "a.py"),
+             line(-100, 10, 0, "b.py"), line(-100, 10, 0, "b.py")] + denied(-99) + [start(-99)]
+    write_log(tmp_path, "cc-debug-1.log", lines + call(-50, [60]))
+    code, out = run(tmp_path, capsys, "--raw")
+    v = out["value"]
+    assert "calls=3" in v and "blocks_per_100=33.33" in v
+
+
+def test_a_denial_that_is_not_from_a_hook_is_a_call_but_not_a_block(tmp_path, capsys):
+    """48 of 243 Bash denials in the 30 days to 2026-11-16 had no 'Hook denied' line
+    (classifier or user). They count as calls, never as hook blocks."""
+    lines = call(-100, [40]) [:-1] + denied(-99, by_hook=False) + call(-50, [40])
+    write_log(tmp_path, "cc-debug-1.log", lines)
+    code, out = run(tmp_path, capsys, "--raw")
+    assert "calls=2" in out["value"] and "blocks_per_100=0.00" in out["value"]
+
+
+def test_a_crash_of_a_file_whose_name_contains_the_hook_name_does_not_erase_the_block(tmp_path, capsys):
+    """r2 F2: 'check.py' blocked; 'precheck.py' could not be opened. Substring matching
+    erased the real block; basename equality keeps it."""
+    lines = [line(-100, 40, 2, "check.py"),
+             f"{ts(-100)} [ERROR] Python: can't open file '/x/tools/precheck.py'\n"] + denied(-99)
+    write_log(tmp_path, "cc-debug-1.log", lines)
+    code, out = run(tmp_path, capsys, "--raw")
+    assert "blocks_per_100=100.00" in out["value"]
+
+
+def test_hook_lines_with_no_terminator_are_not_a_call(tmp_path, capsys):
+    """A session that ends mid-call leaves finish lines with no terminator: not a call."""
+    write_log(tmp_path, "cc-debug-1.log", call(-100, [50]) + [line(-50, 900)])
+    code, out = run(tmp_path, capsys, "--raw")
+    assert "calls=1" in out["value"] and "bash_wall_p50=50ms" in out["value"]
+
+
+def test_a_call_is_kept_when_a_later_line_is_stamped_after_now(tmp_path, capsys):
+    """A live log gains lines after the probe takes `now`. The in-window call before them
+    must still give its wall sample, not be dropped with the out-of-window line."""
+    write_log(tmp_path, "cc-debug-1.log", call(-100, [70]) + call(+50, [900]))
+    code, out = run(tmp_path, capsys, "--raw")
+    assert "calls=1" in out["value"] and "bash_wall_p50=70ms" in out["value"]

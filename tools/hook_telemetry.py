@@ -10,11 +10,24 @@ each. RULING Q8 (data/workstreams/hooks.md, Nick, 2026-11-16) made it a standing
 
 WHAT IT READS. The Claude Code debug logs, ~/cc-debug-*.log, which exist only for sessions
 launched with --debug. Only files modified inside the window are opened, and only lines
-timestamped inside the window count. One Bash call is one BURST of
-`Hooks: PreToolUse:Bash [...] finished with status N (Nms)` lines within 3 s of the
-burst's first line. Hooks run in PARALLEL, so a call's wall is the SLOWEST hook in its
-burst, never the sum. A status-2 line followed within three lines by "can't open file" is
-a crash (the 2026-10-14 macOS permission failure), not a block.
+timestamped inside the window count.
+
+HOW CALLS ARE FOUND. The finish lines (`Hooks: PreToolUse:Bash [...] finished with status N
+(Nms)`) carry no call id, so they are never grouped by time. Each Bash call instead ends
+with one TERMINATOR line the log does write per call: `[Stall] tool_dispatch_start
+tool=Bash toolUseId=...` when it ran, `Bash tool permission denied` when it did not
+(present in every log with Bash hooks, 84 of 84 in the 30 days to 2026-11-16, v2.1.296+).
+  - calls  = terminators inside the window (exact, whatever overlaps);
+  - blocks = `Hook denied tool use for Bash` lines inside the window, minus crashes;
+  - wall and hooks/call come from SEGMENTS (the finish lines since the previous
+    terminator) closed by exactly one terminator with no hook repeated. Hooks run in
+    PARALLEL, so a call's wall is the SLOWEST hook, never the sum. A segment holding
+    overlapping calls cannot be split by any id the log carries, so it is counted as
+    `ambiguous` and left out, never split into invented calls (Codex r2 F1 on 8f72d6b6;
+    about 1 in 30 segments on real logs).
+A hook denial whose only status-2 finishes are each followed within three lines by
+"can't open file" naming THAT file (basename equality, Codex r2 F2) is a crash (the
+2026-10-14 macOS permission failure), not a block.
 
 WHAT IT PRINTS. One JSON object in the workstream_probe contract.
   default:  {"value": "bash_wall=200-299ms | blocks=2.0-2.9/100 | hooks/call=24"}
@@ -42,13 +55,14 @@ import sys
 import time
 
 DEFAULT_GLOB = "~/cc-debug-*.log"
-BURST_GAP_S = 3.0
 WALL_BAND_MS = 100
 BLOCK_BAND = 1.0
 
 LINE_RE = re.compile(
     r"^(\S+?)Z \[DEBUG\] Hooks: PreToolUse:Bash \[.*\] finished with status (\d+) \((\d+)ms\)")
-CRASH_TAIL = "can't open file"
+CRASH_RE = re.compile(r"can't open file '([^']+)'")
+TERMINATOR_RE = re.compile(r"^(\S+?)Z .*(?:\[Stall\] tool_dispatch_start tool=Bash |Bash tool permission denied)")
+HOOK_DENIED_RE = re.compile(r"^(\S+?)Z .*Hook denied tool use for Bash")
 
 
 def _epoch(stamp: str) -> float:
@@ -58,51 +72,64 @@ def _epoch(stamp: str) -> float:
 HOOK_RE = re.compile(r"tools/([A-Za-z0-9_]+\.py)")
 
 
-def read(pattern: str, now: float, days: int):
-    """(files read, per-call walls ms, per-call hook counts, blocked calls) inside the window.
+def _crashed(lines: list[str], i: int, hook: str) -> bool:
+    """True when one of the three lines after line i says THIS hook file could not be opened."""
+    return any(os.path.basename(m.group(1)) == hook
+               for m in map(CRASH_RE.search, lines[i + 1:i + 4]) if m)
 
-    One call = one burst. A new burst starts after a gap over BURST_GAP_S OR when a hook
-    already seen in the current burst fires again (each call runs each hook once; Codex P0
-    on fc56db23: two calls within 3 s were merged). A call counts as blocked once, however
-    many hooks blocked it, so the rate is bounded by 100. A status-2 line is a crash, not a
-    block, only when a following line names THAT hook's file as unopenable.
+
+def read(pattern: str, now: float, days: int):
+    """(files read, per-call walls ms, per-call hook counts, calls, blocked calls, ambiguous
+    segments) inside the window. See the module docstring for how calls are found.
     Raises OSError / ValueError on an unreadable log; main turns that into exit 2."""
     cutoff = now - days * 86400
     files = sorted(f for f in glob.glob(os.path.expanduser(pattern))
                    if os.path.getmtime(f) >= cutoff)
     walls: list[int] = []
     counts: list[int] = []
-    blocked = 0
+    calls = blocked = ambiguous = 0
     for f in files:
         with open(f, encoding="utf-8", errors="replace") as fh:
             lines = fh.readlines()
-        burst = None  # [start epoch, hooks seen, max ms, any block]
+        seg: list[tuple[str, int, bool | None]] = []   # (hook, ms, crashed-if-status-2) since the last terminator
+        closing: list | None = None             # the segment the latest terminator(s) closed
+        terminators = 0
 
-        def flush():
-            nonlocal blocked
-            if burst:
-                counts.append(len(burst[1])); walls.append(burst[2]); blocked += burst[3]
+        def settle():
+            nonlocal ambiguous
+            if closing is None:
+                return
+            hooks = [h for h, _, _ in closing]
+            if terminators == 1 and len(hooks) == len(set(hooks)):
+                walls.append(max(ms for _, ms, _ in closing)); counts.append(len(hooks))
+            else:
+                ambiguous += 1
 
         for i, text in enumerate(lines):
-            m = LINE_RE.match(text)
-            if not m:
-                continue
-            t = _epoch(m.group(1))
-            if t < cutoff or t > now:
-                continue
-            status, ms = m.group(2), int(m.group(3))
-            hm = HOOK_RE.search(text)
-            hook = hm.group(1) if hm else text
-            if status == "2" and hm and any(CRASH_TAIL in x and hook in x for x in lines[i + 1:i + 4]):
-                continue
-            if burst is None or t - burst[0] > BURST_GAP_S or hook in burst[1]:
-                flush()
-                burst = [t, set(), 0, False]
-            burst[1].add(hook)
-            burst[2] = max(burst[2], ms)
-            burst[3] = burst[3] or status == "2"
-        flush()
-    return files, walls, counts, blocked
+            if m := LINE_RE.match(text):
+                hm = HOOK_RE.search(text)
+                hook = hm.group(1) if hm else text
+                status_2 = m.group(2) == "2"
+                seg.append((hook, int(m.group(3)), status_2 and bool(hm) and _crashed(lines, i, hook)
+                            if status_2 else None))
+            elif d := HOOK_DENIED_RE.match(text):
+                # Third field: None = status 0, True = status 2 that crashed, False = real 2.
+                twos = [c for _, _, c in (seg or closing or []) if c is not None]
+                if cutoff <= _epoch(d.group(1)) <= now and not (twos and all(twos)):
+                    blocked += 1
+            elif tm := TERMINATOR_RE.match(text):
+                if not (cutoff <= _epoch(tm.group(1)) <= now):
+                    settle()
+                    seg, closing, terminators = [], None, 0
+                elif seg:
+                    calls += 1
+                    settle()
+                    closing, seg, terminators = seg, [], 1
+                else:
+                    calls += 1
+                    terminators += 1
+        settle()
+    return files, walls, counts, calls, blocked, ambiguous
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -114,7 +141,7 @@ def main(argv: list[str] | None = None) -> int:
     a = ap.parse_args(argv)
     now = a.now if a.now is not None else time.time()
     try:
-        files, walls, counts, blocks = read(a.logs_glob, now, a.days)
+        files, walls, counts, calls, blocks, ambiguous = read(a.logs_glob, now, a.days)
     except (OSError, ValueError) as e:
         print(json.dumps({"error": f"could not read the debug logs: {e!r}"}))
         return 2
@@ -124,10 +151,10 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     p50 = statistics.median(walls)
     per_call = statistics.median(counts)
-    rate = 100 * blocks / len(walls)
+    rate = 100 * blocks / calls
     if a.raw:
         value = (f"bash_wall_p50={p50:.0f}ms | blocks_per_100={rate:.2f} | hooks/call={per_call:.0f}"
-                 f" | calls={len(walls)} | logs={len(files)}")
+                 f" | calls={calls} | ambiguous={ambiguous} | logs={len(files)}")
     else:
         lo = int(p50 // WALL_BAND_MS) * WALL_BAND_MS
         b = int(rate // BLOCK_BAND) * BLOCK_BAND
