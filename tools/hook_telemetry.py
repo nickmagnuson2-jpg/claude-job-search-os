@@ -55,18 +55,34 @@ def _epoch(stamp: str) -> float:
     return dt.datetime.fromisoformat(stamp).replace(tzinfo=dt.timezone.utc).timestamp()
 
 
+HOOK_RE = re.compile(r"tools/([A-Za-z0-9_]+\.py)")
+
+
 def read(pattern: str, now: float, days: int):
-    """(files read, per-call walls ms, per-call hook counts, blocks) inside the window."""
+    """(files read, per-call walls ms, per-call hook counts, blocked calls) inside the window.
+
+    One call = one burst. A new burst starts after a gap over BURST_GAP_S OR when a hook
+    already seen in the current burst fires again (each call runs each hook once; Codex P0
+    on fc56db23: two calls within 3 s were merged). A call counts as blocked once, however
+    many hooks blocked it, so the rate is bounded by 100. A status-2 line is a crash, not a
+    block, only when a following line names THAT hook's file as unopenable.
+    Raises OSError / ValueError on an unreadable log; main turns that into exit 2."""
     cutoff = now - days * 86400
     files = sorted(f for f in glob.glob(os.path.expanduser(pattern))
                    if os.path.getmtime(f) >= cutoff)
     walls: list[int] = []
     counts: list[int] = []
-    blocks = 0
+    blocked = 0
     for f in files:
         with open(f, encoding="utf-8", errors="replace") as fh:
             lines = fh.readlines()
-        burst = None  # [start epoch, hooks, max ms]
+        burst = None  # [start epoch, hooks seen, max ms, any block]
+
+        def flush():
+            nonlocal blocked
+            if burst:
+                counts.append(len(burst[1])); walls.append(burst[2]); blocked += burst[3]
+
         for i, text in enumerate(lines):
             m = LINE_RE.match(text)
             if not m:
@@ -75,18 +91,18 @@ def read(pattern: str, now: float, days: int):
             if t < cutoff or t > now:
                 continue
             status, ms = m.group(2), int(m.group(3))
-            if status == "2" and any(CRASH_TAIL in x for x in lines[i + 1:i + 4]):
+            hm = HOOK_RE.search(text)
+            hook = hm.group(1) if hm else text
+            if status == "2" and hm and any(CRASH_TAIL in x and hook in x for x in lines[i + 1:i + 4]):
                 continue
-            if burst is None or t - burst[0] > BURST_GAP_S:
-                if burst:
-                    counts.append(burst[1]); walls.append(burst[2])
-                burst = [t, 0, 0]
-            burst[1] += 1
+            if burst is None or t - burst[0] > BURST_GAP_S or hook in burst[1]:
+                flush()
+                burst = [t, set(), 0, False]
+            burst[1].add(hook)
             burst[2] = max(burst[2], ms)
-            blocks += status == "2"
-        if burst:
-            counts.append(burst[1]); walls.append(burst[2])
-    return files, walls, counts, blocks
+            burst[3] = burst[3] or status == "2"
+        flush()
+    return files, walls, counts, blocked
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -97,7 +113,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--now", type=float, default=None, help=argparse.SUPPRESS)
     a = ap.parse_args(argv)
     now = a.now if a.now is not None else time.time()
-    files, walls, counts, blocks = read(a.logs_glob, now, a.days)
+    try:
+        files, walls, counts, blocks = read(a.logs_glob, now, a.days)
+    except (OSError, ValueError) as e:
+        print(json.dumps({"error": f"could not read the debug logs: {e!r}"}))
+        return 2
     if not walls:
         print(json.dumps({"error": f"no PreToolUse:Bash timing in {len(files)} debug log(s) "
                                    f"from the last {a.days} day(s); is Claude Code launched with --debug?"}))

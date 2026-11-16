@@ -90,7 +90,7 @@ def test_block_rate_is_per_100_calls_and_banded(tmp_path, capsys):
 
 
 def test_a_crash_is_not_counted_as_a_block(tmp_path, capsys):
-    crash = [line(-100, 40, 2), f"{ts(-100)} [ERROR] stderr: Python: can't open file '/x/tools/check_0.py'\n"]
+    crash = [line(-100, 40, 2), f"{ts(-100)} [ERROR] stderr: Python: can't open file '/x/tools/check_a.py'\n"]  # the crashed hook itself
     write_log(tmp_path, "cc-debug-1.log", crash + call(-50, [40]))
     code, out = run(tmp_path, capsys, "--raw")
     assert "blocks_per_100=0.00" in out["value"]
@@ -167,3 +167,39 @@ def test_the_command_line_entry_point_runs_and_keeps_the_exit_2_contract(tmp_pat
     r = subprocess.run([sys.executable, str(script), "--logs-glob", str(tmp_path / "cc-debug-*.log"),
                         "--now", str(NOW)], capture_output=True, text=True, timeout=60)
     assert r.returncode == 0 and json.loads(r.stdout)["value"].startswith("bash_wall=0-99ms")
+
+
+def test_two_calls_within_three_seconds_are_two_calls(tmp_path, capsys):
+    """Codex P0 on fc56db23: a new call starts when a hook repeats, not only after 3 s."""
+    write_log(tmp_path, "cc-debug-1.log", call(-100, [50, 60]) + call(-99.5, [300, 300]))
+    code, out = run(tmp_path, capsys, "--raw")
+    assert "calls=2" in out["value"]
+
+
+def test_a_call_blocked_by_two_hooks_is_one_blocked_call(tmp_path, capsys):
+    """Codex P0 on fc56db23: the rate counts blocked CALLS, so it can never exceed 100."""
+    write_log(tmp_path, "cc-debug-1.log", call(-100, [50, 50], status=[2, 2]))
+    code, out = run(tmp_path, capsys, "--raw")
+    assert "blocks_per_100=100.00" in out["value"]
+
+
+def test_a_crash_line_only_cancels_the_hook_it_names(tmp_path, capsys):
+    """Codex P0 on fc56db23: a parallel hook's crash must not erase a real block."""
+    lines = [line(-100, 40, 2, "check_0.py"),
+             f"{ts(-100)} [ERROR] Python: can't open file '/x/tools/check_9.py'\n"]
+    write_log(tmp_path, "cc-debug-1.log", lines)
+    code, out = run(tmp_path, capsys, "--raw")
+    assert "blocks_per_100=100.00" in out["value"]
+
+
+def test_an_unreadable_log_is_exit_2_json(tmp_path, capsys, monkeypatch):
+    """Codex P1 on fc56db23: a read failure keeps the exit-2 JSON contract."""
+    write_log(tmp_path, "cc-debug-1.log", call(-100, [50]))
+    real_open = open
+    def boom(path, *a, **k):
+        if str(path).endswith(".log"):
+            raise OSError("Operation not permitted")
+        return real_open(path, *a, **k)
+    monkeypatch.setattr("builtins.open", boom)
+    code, out = run(tmp_path, capsys)
+    assert code == 2 and "error" in out
