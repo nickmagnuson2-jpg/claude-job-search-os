@@ -148,6 +148,8 @@ def test_a_cp_destination_counts_as_a_write(tmp_path):
         _result("b1"),
         _say("Copied to `output/x/brief.md`."),
     ], cwd=root)
+    (tmp_path / "far" / "output" / "x").mkdir(parents=True)
+    (tmp_path / "far" / "output" / "x" / "brief.md").write_text("x")
     assert _run(t, root).returncode == 0
 
 
@@ -224,6 +226,8 @@ def test_session_write_targets_reads_write_edit_and_bash(tmp_path):
         _assistant_tool("w2", "Write", {"file_path": "/abs/failed.md", "content": "x"}),
         _result("w2", is_error=True),
     ], cwd=root)
+    (root / "out").mkdir()
+    (root / "out" / "c.md").write_text("hi")
     got = csc.session_write_targets(str(t), root)
     assert "/abs/a.md" in got and "/abs/b.md" in got
     assert str(root / "out" / "c.md") in got
@@ -306,8 +310,10 @@ def test_a_non_bash_tool_with_a_command_field_adds_no_target(tmp_path):
     """Only Bash commands are parsed for writes; another tool's `command` input is not run
     by a shell."""
     root = _repo(tmp_path)
+    on_disk = tmp_path / "exists.md"
+    on_disk.write_text("x")  # on disk, so only the tool-name check can keep it out
     t = _transcript(tmp_path, [
-        _assistant_tool("m1", "Monitor", {"command": "echo x > /abs/never.md"}), _result("m1"),
+        _assistant_tool("m1", "Monitor", {"command": f"echo x > {on_disk}"}), _result("m1"),
     ], cwd=root)
     assert csc.session_write_targets(str(t), root) == []
 
@@ -346,3 +352,31 @@ def test_a_backup_of_the_claimed_name_does_not_clear_it(tmp_path):
 def test_a_name_that_is_the_tail_of_a_longer_written_name_does_not_match():
     """F2: 'notes.md' is not 'meeting-notes.md'."""
     assert csc.claim_matches_write("notes.md", ["/r/meeting-notes.md"]) is False
+
+
+# ---------- Codex + Grok r2 P0 ----------
+
+def test_a_bash_redirect_that_never_ran_does_not_clear_the_claim(tmp_path):
+    """r2 F1: the Bash target parser lists what a command MAY write. `false && cat > X`
+    exits 0 under `|| true` and writes nothing; X absent must still block."""
+    root = _repo(tmp_path)
+    cmd = "false && cat > output/acme/brief.md <<'EOF'\nx\nEOF\ntrue"
+    t = _transcript(tmp_path, [
+        _user("save the brief"),
+        _assistant_tool("b1", "Bash", {"command": cmd}), _result("b1"),
+        _say("Saved to `output/acme/brief.md`."),
+    ], cwd=root)
+    assert _run(t, root).returncode == 2
+
+
+def test_a_bash_target_counts_only_when_the_file_is_on_disk(tmp_path):
+    root = _repo(tmp_path)
+    t = _transcript(tmp_path, [
+        _assistant_tool("b1", "Bash", {"command": "echo hi > out/kept.md; echo hi > out/never.md"}),
+        _result("b1"),
+    ], cwd=root)
+    (root / "out").mkdir()
+    (root / "out" / "kept.md").write_text("hi")
+    got = csc.session_write_targets(str(t), root)
+    assert str(root / "out" / "kept.md") in got
+    assert str(root / "out" / "never.md") not in got

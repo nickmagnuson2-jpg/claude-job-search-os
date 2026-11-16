@@ -368,8 +368,9 @@ _ELISION = re.compile(r"^(?:\.{1,3}/|\u2026/)+")
 
 
 def session_write_targets(transcript_path: str, root) -> list[str]:
-    """Every file the session wrote: Write/Edit/MultiEdit/NotebookEdit paths and Bash write
-    targets, from tool calls whose tool_result arrived and was not an error. A call with no
+    """Every file the session wrote: Write/Edit/MultiEdit/NotebookEdit paths, and Bash write
+    targets that are files on disk now, from tool calls whose tool_result arrived and was
+    not an error. A call with no
     result (interrupted, or not flushed yet) is not proof of a write: counting it cleared a
     claim for a file that never landed (Codex + Grok r1 F1, P0). A relative path is joined to
     the record's `cwd` (else root). An unreadable transcript yields []."""
@@ -410,10 +411,16 @@ def session_write_targets(transcript_path: str, root) -> list[str]:
             # Imported here: shell_writes pulls in check_public_pii, and most turns never
             # reach this line.
             import shell_writes
+            # bash_write_targets is the blocking gates' MAY-write superset: every cwd a `cd`
+            # could reach, and redirects that a `&&`/`||` may never have run. A superset
+            # is safe for a gate that blocks and unsafe for one that clears, so a Bash
+            # target counts only where a file is actually on disk now, an observed effect
+            # (Codex + Grok r2 F1, P0).
             try:
-                out.extend(shell_writes.bash_write_targets(inp["command"], base, root))
+                cands = shell_writes.bash_write_targets(inp["command"], base, root)
             except Exception:  # an unparseable command clears nothing
-                pass
+                cands = []
+            out.extend(c for c in cands if os.path.isfile(c))
     return list(dict.fromkeys(os.path.normpath(t) for t in out))
 
 
