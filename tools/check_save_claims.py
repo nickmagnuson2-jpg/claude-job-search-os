@@ -31,6 +31,19 @@ WHAT IT DOES
   "in ./memory", "at that path"), since a scoped claim may be true.
   Origin: feedback_two_memory_locations_check_both_before_absence (4 fires).
 
+  A claimed path that is not on disk is then checked against the session's ACTUAL
+  writes before it blocks (redesign 2026-11-16, Nick's Q2 ruling, option a). A
+  debug-log audit found 0 true positives in 21 real blocks (2026-08-31..11-09): most
+  were files that WERE written but whose prose path did not resolve (a sibling repo
+  reached by `cd`, a path elided with `...`, a tokenizer cut, a write made in an
+  earlier turn). Every successful Write/Edit/MultiEdit/NotebookEdit and every Bash
+  write target (tools/shell_writes.py, the parser the Bash write gates share) in the
+  session transcript counts; a failed tool call does not. A claim matches a write by
+  exact path, by path suffix, or as a prefix or suffix of 8+ characters of the
+  written file's name (the two ends a tokenizer cut keeps). The transcript is read
+  only when a claim is missing, so a clean turn costs nothing extra.
+  Evidence: output/infra-backlog/111626-telemetry/hook-audit.md (Q1, gitignored).
+
 WHAT IT DOES NOT DO
   - Does not fire on future/conditional phrasing ("I'll save this to X",
     "that would go in X", "drop it in X"). Only completed claims.
@@ -52,6 +65,7 @@ EXIT CODES
 
 Override: SAVE_CLAIMS_OVERRIDE=1
 """
+import json
 import os
 import re
 import sys
@@ -182,7 +196,10 @@ def extract_claimed_paths(text: str):
         # A line opening with a "File:" label also ends the window: /lessons-learned lists
         # proposed target files that way, and a claim verb above it ("I copied it") is not
         # about that file (2nd ledger fire, 2026-10-21; promotion drain build 296).
-        cut = re.search(r"(?<=[.!?])\s+[A-Z]|\n[ \t]*\n|\n[ \t]*File:", window)
+        # The label may sit in a list item and in emphasis ("- *File:* `x.md`"), which is
+        # how /lessons-learned printed it on 2026-10-21 (debug-log replay, 2026-11-16).
+        cut = re.search(r"(?<=[.!?])\s+[A-Z]|\n[ \t]*\n|\n[ \t]*(?:[-*+][ \t]+)?[*_]{0,2}File:",
+                        window)
         if cut:
             window = window[:cut.start()]
         # Tokens come from the FULL text and must lie wholly inside the window. Matching
@@ -344,6 +361,81 @@ def exists_anywhere(tok: str, root: Path, home: Path | None = None) -> bool:
     return False
 
 
+WRITE_TOOLS = {"Write", "Edit", "MultiEdit", "NotebookEdit"}
+# A tokenizer cut keeps one end of a name, so a fragment must be a prefix or a suffix of the
+# written name, and long enough not to match by accident ("a.md" is the tail of "data.md").
+MIN_FRAGMENT = 8
+_ELISION = re.compile(r"^(?:\.{1,3}/|\u2026/)+")
+
+
+def session_write_targets(transcript_path: str, root) -> list[str]:
+    """Every file the session wrote: Write/Edit/MultiEdit/NotebookEdit paths and Bash write
+    targets, from tool calls whose result was not an error. A relative path is joined to the
+    record's `cwd` (else root). A tool call with no result yet counts: an interrupted call may
+    have written, and counting it can only clear a claim, never add a block.
+    An unreadable transcript yields []."""
+    uses: dict = {}
+    failed: set = set()
+    try:
+        fh = open(transcript_path, encoding="utf-8")
+    except OSError:
+        return []
+    with fh:
+        for line in fh:
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            msg = rec.get("message") if isinstance(rec, dict) else None
+            content = msg.get("content") if isinstance(msg, dict) else None
+            if not isinstance(content, list):
+                continue
+            for block in content:
+                if not isinstance(block, dict):
+                    continue
+                if block.get("type") == "tool_use" and block.get("id"):
+                    uses[block["id"]] = (block.get("name"), block.get("input"),
+                                         rec.get("cwd") or "")
+                elif block.get("type") == "tool_result" and block.get("is_error"):
+                    failed.add(block.get("tool_use_id"))
+    out: list[str] = []
+    for tid, (name, inp, cwd) in uses.items():
+        if tid in failed or not isinstance(inp, dict):
+            continue
+        base = cwd if isinstance(cwd, str) and os.path.isabs(cwd) else str(root)
+        if name in WRITE_TOOLS:
+            path = inp.get("file_path") or inp.get("notebook_path")
+            if isinstance(path, str) and path:
+                out.append(path if os.path.isabs(path) else os.path.join(base, path))
+        elif name == "Bash" and isinstance(inp.get("command"), str):
+            # Imported here: shell_writes pulls in check_public_pii, and most turns never
+            # reach this line.
+            import shell_writes
+            try:
+                out.extend(shell_writes.bash_write_targets(inp["command"], base, root))
+            except Exception:  # an unparseable command clears nothing
+                pass
+    return list(dict.fromkeys(os.path.normpath(t) for t in out))
+
+
+def claim_matches_write(tok: str, targets) -> bool:
+    """True if the claimed path names one of `targets`: the same path, a path suffix of it
+    (after dropping a leading ./, ../ or .../), or a prefix or suffix of 8+ characters of the
+    written file's name in a matching directory."""
+    claim = _ELISION.sub("", tok.strip()).strip("/")
+    cdir, _, cbase = claim.rpartition("/")
+    for target in targets:
+        t = os.path.normpath(str(target))
+        if t == claim or t.endswith("/" + claim):
+            return True
+        tdir, tbase = os.path.dirname(t), os.path.basename(t)
+        if (len(cbase) >= MIN_FRAGMENT and cbase != tbase
+                and (tbase.startswith(cbase) or tbase.endswith(cbase))
+                and (not cdir or tdir.endswith("/" + cdir))):
+            return True
+    return False
+
+
 def main() -> int:
     if os.environ.get(OVERRIDE_ENV) == "1":
         return 0
@@ -364,6 +456,9 @@ def main() -> int:
 
     root = project_root()
     missing = [t for t in extract_claimed_paths(text) if not exists_anywhere(t, root)]
+    if missing:
+        writes = session_write_targets(transcript, root)
+        missing = [t for t in missing if not claim_matches_write(t, writes)]
     present = [t for t in extract_absence_claims(text) if exists_anywhere(t, root)]
 
     if not missing and not present:
