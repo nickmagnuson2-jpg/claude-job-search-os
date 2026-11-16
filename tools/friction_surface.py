@@ -89,6 +89,9 @@ _ERROR_SIGNAL_RE = re.compile(
     # and would have been dropped by the Bash-lane gate: macOS permission refusals on
     # grep/sed/ls, and the harness's "Command timed out after 2m 0s" (exit 143).
     r"operation not permitted|timed out|"
+    # Codex + Grok P0 on 1a6c4750: fatal ends carried no signal and were dropped.
+    r"killed|segmentation fault|no space left on device|out of memory|bus error|"
+    r"exit code (?:12[89]|1[3-9]\d|2[0-5]\d)|"
     r"ignored by one of your \.gitignore files)\b",
     re.IGNORECASE,
 )
@@ -313,10 +316,29 @@ def harness_kind(error_text: str) -> str:
     return ""
 
 
+# A hook that CRASHED also gets the harness header. A crash is the hook's own friction
+# (script-patch ladder), not a designed block (Codex + Grok P0 on 1a6c4750).
+_HOOK_CRASH_RE = re.compile(r"can't open file|Traceback \(most recent call last\)|"
+                            r"ModuleNotFoundError|SyntaxError:|ImportError", re.IGNORECASE)
+
+
 def hook_block(error_text: str) -> str:
-    """The hook file named in a harness block header at the start of the text, else ''."""
-    m = _HOOK_HEADER_RE.match((error_text or "").lstrip())
-    return m.group(1).lower() if m else ""
+    """The hook file named in a harness block header at the start of the text, else ''.
+    A header followed by a crash is returned by hook_crash instead."""
+    text = (error_text or "").lstrip()
+    m = _HOOK_HEADER_RE.match(text)
+    if not m or _HOOK_CRASH_RE.search(text[m.end():m.end() + 2000]):
+        return ""
+    return m.group(1).lower()
+
+
+def hook_crash(error_text: str) -> str:
+    """The hook file named in a harness header when the hook itself crashed, else ''."""
+    text = (error_text or "").lstrip()
+    m = _HOOK_HEADER_RE.match(text)
+    if m and _HOOK_CRASH_RE.search(text[m.end():m.end() + 2000]):
+        return m.group(1).lower()
+    return ""
 
 
 def derive_surface(tool_name: str, command: str, error_text: str = "") -> str:
@@ -336,6 +358,9 @@ def derive_surface(tool_name: str, command: str, error_text: str = "") -> str:
     hook = hook_block(error_text)
     if hook:
         return f"block:{hook}"
+    crashed = hook_crash(error_text)
+    if crashed:
+        return crashed
     tool_name = (tool_name or "").strip()
     if tool_name != "Bash":
         return f"tool:{tool_name}" if tool_name else "tool:unknown"

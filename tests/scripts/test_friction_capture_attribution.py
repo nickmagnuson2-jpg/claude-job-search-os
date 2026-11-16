@@ -174,3 +174,32 @@ def test_real_failures_without_a_classic_error_word_are_still_logged(tmp_path, c
     t = _transcript(tmp_path, [_use("t1", "grep -rn x tools/"), _result("t1", text)])
     _, logged, _ = st.scan(t, 0)
     assert logged == 1
+
+
+@pytest.mark.parametrize("text", [
+    "Exit code 137\nKilled: 9",
+    "Exit code 139\nzsh: segmentation fault  python3 tools/x.py",
+    "Exit code 1\nOSError: [Errno 28] No space left on device",
+])
+def test_fatal_results_are_logged(tmp_path, captured, text):
+    """Codex + Grok P0 on 1a6c4750: fatal ends carried no classic error word."""
+    t = _transcript(tmp_path, [_use("t1", "python3 tools/pipe_write.py add x"), _result("t1", text)])
+    _, logged, _ = st.scan(t, 0)
+    assert logged == 1
+
+
+def test_a_hook_crash_is_the_hook_s_friction_not_a_designed_block():
+    """Codex + Grok P0 on 1a6c4750: a crashed hook also gets the harness header."""
+    err = ("PreToolUse:Bash hook error: " + HOOK.format("check_bare_python.py")
+           + ": /opt/homebrew/bin/python3: can't open file '/x/tools/check_bare_python.py': "
+             "[Errno 1] Operation not permitted")
+    assert fs.derive_surface("Bash", "ls", err) == "check_bare_python.py"
+
+
+def test_dedup_keeps_surfaces_apart_even_for_identical_natures(tmp_path, monkeypatch):
+    rows = [{"surface": "harness:classifier", "nature": "classifier gave no verdict auto mode",
+             "date": "2026-11-01", "fix": "-", "occurrences": "12", "promotion": "x", "_raw": "a"},
+            {"surface": "check_public_pii.py", "nature": "classifier gave no verdict auto mode",
+             "date": "2026-11-02", "fix": "-", "occurrences": "1", "promotion": "x", "_raw": "b"}]
+    kw = fl.keywords(rows[0]["nature"])
+    assert fl.match_score(rows[1], rows[0]["surface"], kw) == 0.0

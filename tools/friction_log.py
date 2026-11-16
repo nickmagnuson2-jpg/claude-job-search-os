@@ -548,16 +548,18 @@ def cmd_dedup(args: argparse.Namespace) -> None:
     for p in parsed:
         (dropped if is_false_positive(p["nature"], p.get("fix", "")) else kept).append(p)
 
-    # Cluster on nature similarity ALONE — surface is contextual metadata, not the
-    # friction's identity. The bare-`python` interpreter error recurs across many
-    # surfaces (pipeline_staleness.py, networking_write.py, bash:cd, ...); keying on
-    # surface fragmented it into single-count rows so the promotion ladder never
-    # fired. DEDUP_THRESHOLD (0.6) is strict enough that distinct errors stay apart.
-    clusters: list[dict] = []  # {"rows": [...], "kw": set}
+    # Cluster on nature similarity WITHIN one surface (RULING Q10, 2026-11-16). This used
+    # to cluster across surfaces, so dedup summed occurrences onto one representative
+    # surface and its promotion ladder: the same cross-surface merge Q10 removed from
+    # append (Codex + Grok P0 on 1a6c4750). Each surface keeps its own count.
+    # DEDUP_THRESHOLD (0.6) is strict enough that distinct errors stay apart.
+    clusters: list[dict] = []  # {"rows": [...], "kw": set, "surface": str}
     for p in kept:
         p_kw = keywords(p["nature"])
         placed = False
         for c in clusters:
+            if normalize_surface(c["surface"]) != normalize_surface(p["surface"]):
+                continue
             if not p_kw or not c["kw"]:
                 continue
             jac = len(p_kw & c["kw"]) / len(p_kw | c["kw"])
@@ -566,7 +568,7 @@ def cmd_dedup(args: argparse.Namespace) -> None:
                 placed = True
                 break
         if not placed:
-            clusters.append({"rows": [p], "kw": p_kw})
+            clusters.append({"rows": [p], "kw": p_kw, "surface": p["surface"]})
 
     collapsed = []
     for c in clusters:

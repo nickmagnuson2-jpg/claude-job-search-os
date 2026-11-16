@@ -80,8 +80,9 @@ def _rows(led, *lines):
     return led
 
 
-def test_dedup_collapses_same_nature_across_surfaces(tmp_path):
-    """The same error on different surfaces is ONE logical friction."""
+def test_dedup_never_merges_across_surfaces(tmp_path):
+    """RULING Q10 (2026-11-16): each surface keeps its own count; dedup used to sum the same
+    nature across surfaces onto one representative row (Codex + Grok P0 on 1a6c4750)."""
     led = _rows(
         tmp_path / "friction-log.md",
         "| 2026-06-02 | pipeline_staleness.py | (eval):1: command not found: python | — | 1 | — |",
@@ -90,9 +91,8 @@ def test_dedup_collapses_same_nature_across_surfaces(tmp_path):
         "| 2026-05-27 | networking_write.py | (eval):1: command not found: python | — | 1 | — |",
     )
     rep = _dedup(led)
-    assert rep["rows_after"] == 1
-    assert rep["clusters"][0]["occurrences"] == 4
-    assert "script-patch" in rep["clusters"][0]["promotion"]
+    assert rep["rows_after"] == 4
+    assert all(c["occurrences"] == 1 for c in rep["clusters"])
     assert rep["reconciles"] is True  # all 4 source rows accounted for
 
 
@@ -101,8 +101,9 @@ def test_dedup_sums_existing_counts(tmp_path):
     led = _rows(
         tmp_path / "friction-log.md",
         "| 2026-05-27..2026-06-01 | tool:Edit | File has not been read yet. Read it first before writing | — | 3 | script-patch (mandatory) |",
-        "| 2026-05-27..2026-06-01 | tool:Write | File has not been read yet. Read it first before writing | — | 2 | memory (do now) |",
+        "| 2026-05-20..2026-05-26 | tool:Edit | File has not been read yet. Read it first before writing | — | 2 | memory (do now) |",
     )
+    # Same surface on both rows: dedup no longer merges across surfaces (RULING Q10).
     rep = _dedup(led)
     assert rep["rows_after"] == 1
     assert rep["clusters"][0]["occurrences"] == 5  # 3 + 2, not 2
