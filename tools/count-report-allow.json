@@ -28,7 +28,6 @@
   "tools/check_pipe_close_via_update.py": "pre-existing at 2026-10-23, convert when next touched",
   "tools/check_plan_partner_critique.py": "pre-existing at 2026-10-23, convert when next touched",
   "tools/check_prep_doc_format.py": "pre-existing at 2026-10-23, convert when next touched",
-  "tools/check_probe_prompt.py": "pre-existing at 2026-10-23, convert when next touched",
   "tools/check_public_pii.py": "pre-existing at 2026-10-23, convert when next touched",
   "tools/check_replace_all_safety.py": "pre-existing at 2026-10-23, convert when next touched",
   "tools/check_save_claims.py": "pre-existing at 2026-10-23, convert when next touched",
