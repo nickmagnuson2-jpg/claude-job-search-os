@@ -857,3 +857,55 @@ def test_a_command_that_is_not_read_only_blocks(cmd):
 def test_a_read_only_command_passes(cmd):
     code, err = _bash(f"python3 - <<'PY'\nimport subprocess\nsubprocess.run({cmd!r})\nprint(open('{_G}').read())\nopen('/tmp/o.txt', 'w')\nPY")
     assert code == 0, err
+
+
+# `cd X && <script>` (Nick approved, 2026-11-16). A `cd` kept the earlier directory as a
+# possible cwd, because a cd can fail. After `&&` it cannot: a failed cd stops the chain,
+# so a script editing ANOTHER checkout's copy of a guard was blocked as if it edited this
+# repo's (6 of 28 replayed "python3 script naming a guard path" blocks). Only `&&` and a
+# pipe carry the new directory; `;`, newline, `||`, `&` and `)` keep today's union.
+_EDIT_COPY = ("python3 - <<'PY'\np = 'tools/check_public_pii.py'\ns = open(p).read()\n"
+              "open(p, 'w').write(s)\nPY")
+_REPO = SCRIPT.parents[1]
+
+
+def _other_checkout(tmp_path):
+    (tmp_path / "tools").mkdir()
+    (tmp_path / "tools" / "check_public_pii.py").write_text("x = 1\n")
+    return tmp_path
+
+
+@pytest.mark.parametrize("glue", ["{d} && ", "{d} && true && ", "{d} && echo x | "])
+def test_cd_and_chain_into_another_checkout_edits_only_that_copy(tmp_path, glue):
+    d = _other_checkout(tmp_path)
+    assert _bash_in(_REPO, "cd " + glue.format(d=d) + _EDIT_COPY) == 0
+
+
+@pytest.mark.parametrize("glue", [
+    "cd {d} ; ",                     # the cd may fail and the script still runs here
+    "cd {d}\n",
+    "cd {d} && true || ",            # the || branch runs when the cd failed
+    "(cd {d} && true) && ",          # a subshell's cd does not reach the next command
+    "cd {d} && cd - && ",            # back to where it started
+    "cd -P {d} && ",                 # an option, not a directory: judged as before
+    "cd {d} & ",
+])
+def test_a_cd_that_may_not_hold_still_blocks_this_repos_guard(tmp_path, glue):
+    d = _other_checkout(tmp_path)
+    assert _bash_in(_REPO, glue.format(d=d) + _EDIT_COPY) == 2
+
+
+def test_cd_and_chain_inside_this_repo_still_blocks():
+    assert _bash_in(_REPO, "cd tests && " + _EDIT_COPY.replace("'tools/", "'../tools/")) == 2
+    assert _bash_in(_REPO, f"cd {_REPO} && " + _EDIT_COPY) == 2
+
+
+@pytest.mark.parametrize("cmd", [
+    "a && b | c ; d", "cd x && (y) || z", "echo hi > f && cat <<'E' | wc\nbody\nE\n",
+    "( cd x ) && y", "a 2>&1 && b &", "", "x=1 && y",
+])
+def test_following_ops_lines_up_with_simple_commands(cmd):
+    sys.path.insert(0, str(SCRIPT.parent))
+    import check_guard_edit_approval as g
+    from shell_tokens import simple_commands
+    assert len(g._following_ops(cmd)) == len(simple_commands(cmd))
