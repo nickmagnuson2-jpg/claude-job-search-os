@@ -395,11 +395,11 @@ def session_write_targets(transcript_path: str, root) -> list[str]:
                     continue
                 if block.get("type") == "tool_use" and block.get("id"):
                     uses[block["id"]] = (block.get("name"), block.get("input"),
-                                         rec.get("cwd") or "")
+                                         rec.get("cwd") or "", rec.get("timestamp"))
                 elif block.get("type") == "tool_result" and not block.get("is_error"):
                     succeeded.add(block.get("tool_use_id"))
     out: list[str] = []
-    for tid, (name, inp, cwd) in uses.items():
+    for tid, (name, inp, cwd, stamp) in uses.items():
         if tid not in succeeded or not isinstance(inp, dict):
             continue
         base = cwd if isinstance(cwd, str) and os.path.isabs(cwd) else str(root)
@@ -414,14 +414,43 @@ def session_write_targets(transcript_path: str, root) -> list[str]:
             # bash_write_targets is the blocking gates' MAY-write superset: every cwd a `cd`
             # could reach, and redirects that a `&&`/`||` may never have run. A superset
             # is safe for a gate that blocks and unsafe for one that clears, so a Bash
-            # target counts only where a file is actually on disk now, an observed effect
-            # (Codex + Grok r2 F1, P0).
+            # target counts only where a file is on disk AND was modified at or after the
+            # call, an observed effect of this session (Codex + Grok r2 F1, r3 F1, P0: a
+            # file that was already there at an untaken redirect is not a write).
+            since = _epoch(stamp)
+            if since is None:
+                continue
             try:
                 cands = shell_writes.bash_write_targets(inp["command"], base, root)
             except Exception:  # an unparseable command clears nothing
                 cands = []
-            out.extend(c for c in cands if os.path.isfile(c))
+            out.extend(c for c in cands if _modified_since(c, since))
     return list(dict.fromkeys(os.path.normpath(t) for t in out))
+
+
+# Filesystem mtimes and transcript timestamps come from different clocks and
+# resolutions; a write that lands in the same second as the call must still count.
+MTIME_SLACK_S = 2.0
+
+
+def _epoch(stamp) -> float | None:
+    """A transcript ISO-8601 timestamp ("2026-11-16T21:51:14.123Z") as epoch seconds, or
+    None when it is missing or unreadable."""
+    if not isinstance(stamp, str) or not stamp:
+        return None
+    try:
+        from datetime import datetime
+        return datetime.fromisoformat(stamp.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
+def _modified_since(path: str, since: float) -> bool:
+    try:
+        st = os.stat(path)
+    except OSError:
+        return False
+    return os.path.isfile(path) and st.st_mtime >= since - MTIME_SLACK_S
 
 
 def claim_matches_write(tok: str, targets) -> bool:

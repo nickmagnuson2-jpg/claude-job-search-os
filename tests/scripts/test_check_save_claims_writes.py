@@ -20,8 +20,10 @@ Every fixture is a generic replica of a real false block; no real names (public 
 """
 import importlib.util
 import json
+import os
 import subprocess
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -53,12 +55,20 @@ def _say(text):
         {"type": "text", "text": text}]}}
 
 
-def _transcript(tmp_path, records, cwd=None):
+# Real transcript records carry an ISO timestamp; a Bash write counts only for a file
+# modified at or after its call. A minute ago keeps fixture files written after the
+# transcript inside that window.
+_STAMP = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat().replace("+00:00", "Z")
+
+
+def _transcript(tmp_path, records, cwd=None, stamp=_STAMP):
     tpath = tmp_path / "t.jsonl"
     with tpath.open("w", encoding="utf-8") as fh:
         for r in records:
             if cwd:
                 r = dict(r, cwd=str(cwd))
+            if stamp:
+                r = dict(r, timestamp=stamp)
             fh.write(json.dumps(r) + "\n")
     return tpath
 
@@ -380,3 +390,46 @@ def test_a_bash_target_counts_only_when_the_file_is_on_disk(tmp_path):
     got = csc.session_write_targets(str(t), root)
     assert str(root / "out" / "kept.md") in got
     assert str(root / "out" / "never.md") not in got
+
+
+# ---------- Codex + Grok r3 P0 ----------
+
+def test_a_file_already_at_an_untaken_redirect_target_does_not_clear_the_claim(tmp_path):
+    """r3 F1: a peer-repo file that predates the session sits at a redirect the command
+    never ran. Its existence is not a write by this session."""
+    root = _repo(tmp_path)
+    old = root.parent / "peer-repo" / "output" / "acme" / "brief.md"
+    old.parent.mkdir(parents=True)
+    old.write_text("from last month")
+    os.utime(old, (1_700_000_000, 1_700_000_000))
+    cmd = "false && cat > ../peer-repo/output/acme/brief.md <<'EOF'\nx\nEOF\ntrue"
+    t = _transcript(tmp_path, [
+        _user("save the brief"),
+        _assistant_tool("b1", "Bash", {"command": cmd}), _result("b1"),
+        _say("Saved to `output/acme/brief.md`."),
+    ], cwd=root)
+    assert _run(t, root).returncode == 2
+
+
+def test_a_bash_call_with_no_timestamp_proves_no_write(tmp_path):
+    root = _repo(tmp_path)
+    (root / "out").mkdir()
+    (root / "out" / "c.md").write_text("hi")
+    t = _transcript(tmp_path, [
+        _assistant_tool("b1", "Bash", {"command": "echo hi > out/c.md"}), _result("b1"),
+    ], cwd=root, stamp=None)
+    assert csc.session_write_targets(str(t), root) == []
+
+
+def test_epoch_reads_iso_and_rejects_junk():
+    assert csc._epoch("2026-11-16T21:51:14Z") == 1794865874.0
+    assert csc._epoch("not a time") is None
+    assert csc._epoch(None) is None
+
+
+def test_modified_since_is_a_bool(tmp_path):
+    f = tmp_path / "f.md"
+    f.write_text("x")
+    assert csc._modified_since(str(tmp_path / "missing.md"), 0.0) is False
+    assert csc._modified_since(str(f), 0.0) is True
+    assert csc._modified_since(str(f), f.stat().st_mtime + 60) is False
