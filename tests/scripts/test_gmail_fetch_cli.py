@@ -496,9 +496,50 @@ def test_backfill_skips_messages_already_in_the_inbox(env, capsys):
     names = sorted(p.name for p in env.inbox.glob("*.md"))
     assert len(names) == 2 and set(first) < set(names)
     out = capsys.readouterr().out
-    assert "Skipped m1: already written" in out
+    assert "Skipped m1: file already present in" in out
     assert "Backfill done. Wrote 1 inbox file(s). Forward-sync state unchanged." in out
     assert env.read_state() == {"historyId": "100"}
+
+
+def test_backfill_into_another_folder_ignores_forward_sync_state(env, tmp_path, capsys):
+    # 2026-11-16: the forward sync recorded m1 in written_ids for the repo inbox/. A backfill
+    # into a different folder skipped it anyway, so that folder never got the message.
+    from datetime import datetime
+    env.write_state({"historyId": "100", "written_ids": {"m1": datetime.now().isoformat()}})
+    scratch = tmp_path / "scratch"
+    env.labeled_messages = [_msg("m1"), _msg("m2", subject="Second")]
+    env.run("--backfill", "--label-id", "Label_X", "--inbox-dir", str(scratch))
+    assert len(list(scratch.glob("*.md"))) == 2
+    out = capsys.readouterr().out
+    assert "Backfill done. Wrote 2 inbox file(s)." in out
+    assert "dedupe: files in" in out
+    env.labeled_messages = [_msg("m1"), _msg("m2", subject="Second")]
+    env.run("--backfill", "--label-id", "Label_X", "--inbox-dir", str(scratch))
+    out = capsys.readouterr().out
+    assert "Skipped m1: file already present in" in out
+    assert "Backfill done. Wrote 0 inbox file(s)." in out
+
+
+def test_backfill_dry_run_counts_what_the_real_run_writes(env, tmp_path, capsys):
+    from datetime import datetime
+    env.write_state({"historyId": "100", "written_ids": {"m1": datetime.now().isoformat()}})
+    scratch = tmp_path / "scratch"
+    env.labeled_messages = [_msg("m1"), _msg("m2", subject="Second")]
+    env.run("--backfill", "--label-id", "Label_X", "--inbox-dir", str(scratch), "--dry-run")
+    would = capsys.readouterr().out.count("[dry-run] Would write:")
+    env.labeled_messages = [_msg("m1"), _msg("m2", subject="Second")]
+    env.run("--backfill", "--label-id", "Label_X", "--inbox-dir", str(scratch))
+    assert would == len(list(scratch.glob("*.md"))) == 2
+
+
+def test_backfill_into_the_default_inbox_still_honors_forward_sync_state(env, capsys):
+    from datetime import datetime
+    env.write_state({"historyId": "100", "written_ids": {"m1": datetime.now().isoformat()}})
+    env.labeled_messages = [_msg("m1")]
+    env.run("--backfill", "--label-id", "Label_X")
+    assert not env.inbox.exists() or list(env.inbox.glob("*.md")) == []
+    out = capsys.readouterr().out
+    assert "Skipped m1: id already in state written_ids" in out
 
 
 def test_a_rerun_more_than_48h_after_a_killed_run_writes_nothing_new(env, monkeypatch, capsys):
