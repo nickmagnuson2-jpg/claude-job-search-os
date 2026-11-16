@@ -112,7 +112,7 @@ def test_block_message_names_the_masking_command():
     err = _stderr(ORIGIN_2)
     assert "BLOCKED: pipeline masks the exit status" in err
     assert "tail" in err
-    assert "PIPESTATUS" in err
+    assert "$pipestatus[1]" in err
 
 
 # --- should BLOCK (exit 2) ---------------------------------------------------
@@ -378,3 +378,39 @@ def test_set_pipefail_as_an_argument_is_not_set():
 def test_set_after_a_compound_keyword_is_in_command_position(command):
     """Codex and Grok reviews of 7f43845: a false block."""
     assert _run(command) == 0, command
+
+
+# --- the printed remedies must work in the shell Claude Code runs (zsh) ---------
+# 2026-11-16: the message recommended ${PIPESTATUS[0]}, which is EMPTY in zsh, so the
+# most-repeated block class printed a fix that cannot work (RULING Q6, hooks.md).
+
+def _remedies(fmt_cmd: str = "cmd | tail -5; echo $?") -> list[str]:
+    err = _stderr(fmt_cmd)
+    lines = err.split("Correct forms:\n", 1)[1].split("\n\n", 1)[0].splitlines()
+    return [l.strip() for l in lines if l.strip()]
+
+
+def test_message_prints_no_bash_only_pipestatus():
+    for r in _remedies():
+        assert "PIPESTATUS" not in r, r
+
+
+def test_message_offers_the_zsh_pipestatus_form():
+    assert any("$pipestatus[1]" in r for r in _remedies())
+
+
+@pytest.mark.skipif(not Path("/bin/zsh").exists(), reason="zsh not installed")
+@pytest.mark.parametrize("rc,should_fail", [(1, True), (0, False)])
+def test_every_printed_remedy_reports_the_real_status_under_zsh(rc, should_fail):
+    """Each printed form, run under zsh with a command exiting rc, must signal failure
+    exactly when rc != 0: 'FAILED' printed, 'exit=1' printed, or a nonzero shell exit."""
+    for form in _remedies():
+        script = f"cmd() {{ echo out; return {rc}; }}\nX=x\n{form.replace('...', '')}\n"
+        r = subprocess.run(["/bin/zsh", "-f", "-c", script], capture_output=True, text=True, timeout=30)
+        failed = ("FAILED" in r.stdout) or ("exit=1" in r.stdout) or r.returncode != 0
+        assert failed is should_fail, (form, rc, r.stdout, r.stderr, r.returncode)
+
+
+def test_the_hook_does_not_block_its_own_printed_remedies():
+    for form in _remedies():
+        assert _run(form.replace("...", "")) == 0, form

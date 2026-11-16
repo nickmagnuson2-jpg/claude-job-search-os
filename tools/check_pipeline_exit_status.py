@@ -59,7 +59,9 @@ of the hook wiring, run 15, F2).
 
 BLOCK tier (exit 2) per feedback_warn_vs_block_hook_design.md: an exit-0 WARN on
 PreToolUse is never surfaced by Claude Code, and this pattern has a single
-deterministic correction (unpipe the command under test, or use PIPESTATUS).
+deterministic correction (unpipe the command under test, or read the pipeline
+status array: `$pipestatus[1]` in zsh, the shell Claude Code runs here; bash's
+`${PIPESTATUS[0]}` is empty in zsh, 2026-11-16).
 
 Hook input: JSON via stdin from Claude Code. {"tool_input": {"command": "..."}}
 
@@ -201,7 +203,7 @@ def main() -> None:
         "  if cmd \"$X\"; then echo '  ok'; else echo '  FAILED'; fi\n"
         "  out=$(cmd \"$X\") || { echo '  FAILED'; exit 1; }\n"
         "  cmd \"$X\" > /tmp/o.txt 2>/tmp/e.txt; echo \"exit=$?\"\n"
-        f"  cmd \"$X\" | {fmt} ...; [ \"${{PIPESTATUS[0]}}\" -eq 0 ] || echo FAILED\n"
+        f"  cmd \"$X\" | {fmt} ...; [ \"$pipestatus[1]\" -eq 0 ] || echo FAILED   # zsh\n"
         "\n"
         "When the EXIT STATUS is the thing under test, the command must not be "
         "in a pipeline at all. Format after the verdict is computed, not in the "
