@@ -398,6 +398,15 @@ def scan(transcript_path: Path, start_line: int, logged_ids: "set[str]" = None) 
         if any(p.search(err_text) for p in GRACEFUL_EMPTY_PATTERNS):
             continue
         surface = derive_surface(tool_name, tu, err_text)
+        # A harness event is not tooling friction; a non-block BASH result with no error
+        # signal (a grep or diff exiting 1 by design, printing data) is not friction either.
+        # A non-Bash tool error (Edit refusing an unread file) is a real refusal and is logged
+        # (RULING Q10, 2026-11-16: 370 of 726 automatic rows were not friction).
+        if surface.startswith("harness:"):
+            continue
+        if (tool_name == "Bash" and not surface.startswith("block:")
+                and not fs.looks_like_real_error(err_text)):
+            continue
         # For a masked SHELL failure the informative text is the error LINE, not
         # the whole (successful-looking) output; pass just that to derive_nature.
         shell_line = masked_shell_error_line(err_text)

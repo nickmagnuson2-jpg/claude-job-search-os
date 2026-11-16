@@ -131,15 +131,17 @@ def test_dedup_drops_broadened_fp_rows(tmp_path):
     assert rep["reconciles"] is True  # 1 dropped + 1 clustered == 2 source rows
 
 
-def test_append_merges_same_nature_new_surface(tmp_path):
-    """A recurring interpreter error on a NEW surface increments, not fragments."""
+def test_append_never_merges_across_surfaces(tmp_path):
+    """RULING Q10 (2026-11-16): the same nature on a NEW surface opens its own row. A
+    cross-surface merge moved occurrences onto another surface's promotion count (an
+    auto-mode classifier timeout counted 12 times against check_public_pii.py)."""
     led = _rows(
         tmp_path / "friction-log.md",
         "| 2026-06-01 | remember_classify.py | (eval):1: command not found: python | — | 1 | — |",
     )
     out = _append(led, "pipeline_staleness.py", "(eval):1: command not found: python")
-    assert out["action"] == "updated"
-    assert out["occurrences"] == 2
+    assert out["action"] == "appended"
+    assert out["occurrences"] == 1
 
 
 # --- integration: append rejects FP natures, keeps real ones ----------------

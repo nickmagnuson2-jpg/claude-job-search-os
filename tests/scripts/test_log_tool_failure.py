@@ -203,9 +203,12 @@ def test_a_non_bash_tool_failure_is_recorded_under_a_tool_prefixed_surface(ledge
 
 
 @pytest.mark.parametrize("command,error,expected", [
+    # RULING Q10 (2026-11-16): BLOCKED without the harness header is output, not a hook
+    # block. This lane never sees real blocks (a blocked tool never runs): 0 of 252 [auto]
+    # rows in memory/friction-log.md carry one. Hook blocks are the Stop lane's, as block:<hook>.
     ("git commit -m x",
      "[python3 /repo/tools/check_x.py]: BLOCKED: todo_write.py invoked with --priority",
-     "todo_write.py"),
+     "bash:git"),
     ('python3 -c "import networking_write; networking_write.go()"',
      'Traceback (most recent call last):\n  File "<string>", line 1\nNameError: nope',
      "networking_write.py"),
@@ -453,3 +456,17 @@ def test_the_ledger_destination_is_redirectable_and_the_real_one_is_untouched(tm
     alt.write_text(LEDGER_SEED, encoding="utf-8")
     run(bash_failure("python3 tools/pipe_write.py add"), alt)
     assert len(rows(alt)) == 1
+
+
+@pytest.mark.parametrize("error", [
+    "Permission to use Bash with command git push origin main has been denied.",
+    "Permission for this action was denied by the Claude Code auto mode classifier. Reason: x",
+    "The user doesn't want to proceed with this tool use. The tool use was rejected.",
+])
+def test_a_harness_event_writes_no_row(error, ledger):
+    """RULING Q10 (2026-11-16): a harness event is not tooling friction, in this lane too."""
+    before = rows(ledger)
+    r = run({"tool_name": "Bash", "tool_input": {"command": "python3 tools/pipe_write.py add x"},
+             "failure_details": {"exit_code": 1, "error_type": error}}, ledger)
+    assert r.returncode == 0
+    assert rows(ledger) == before

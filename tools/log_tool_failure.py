@@ -154,6 +154,12 @@ def main() -> int:
     surface = derive_surface(tool_name, tool_input, error_text)
     nature = derive_nature(error_text)
 
+    # A harness event (classifier, permission denial, user rejection) is not tooling
+    # friction (RULING Q10, 2026-11-16); the shared predicate is friction_surface.harness_kind.
+    if surface.startswith("harness:"):
+        trace("log_tool_failure SKIP harness event")
+        return 0
+
     # Pre-flight: skip if surface is unparseable (defensive)
     if not surface or surface == "bash:":
         trace(f"log_tool_failure SKIP unparseable surface")
