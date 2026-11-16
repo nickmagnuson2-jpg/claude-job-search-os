@@ -9,9 +9,9 @@ session's ACTUAL Write/Edit/Bash write targets, not only the prose path.
 
 Contract under test:
   - A claimed path that is not on disk PASSES when any successful write in the session
-    targeted it: same path, the claim is a path-suffix of the target, or the claim is a
-    fragment (8+ chars) of the written file's name.
-  - A failed write (tool_result is_error) is not a write.
+    targeted it: same path, or the claim is a path-suffix of the target.
+  - A failed write (tool_result is_error) is not a write, and neither is a request that
+    never got a result.
   - The true case still BLOCKS: "Saved to X", X not on disk, and nothing in the session
     wrote X, even when other files were written.
   - A "- *File:* x.md" proposal label ends the claim window (narrow fix, ruled same day).
@@ -151,19 +151,6 @@ def test_a_cp_destination_counts_as_a_write(tmp_path):
     assert _run(t, root).returncode == 0
 
 
-def test_a_tokenizer_fragment_of_a_written_name_clears_the_claim(tmp_path):
-    """Real shape (2026-09-01): the claimed token was the tail of a written file's name."""
-    assert csc.claim_matches_write(
-        "_share_links.md", ["/x/feedback_js_rendered_share_links.md"])
-
-
-def test_a_truncated_dotted_name_matches_its_write(tmp_path):
-    """Real shape (2026-10-26): 'job-todos.pre-cleanup-102526.md' read as 'job-todos.p'."""
-    assert csc.claim_matches_write(
-        "output/table-audit/job-todos.p",
-        ["/r/output/table-audit/job-todos.pre-cleanup-102526.md"])
-
-
 def test_a_proposal_file_label_is_not_a_claim():
     """Real shape (2026-10-21, /lessons-learned): 'I copied ...' above a '- *File:* x.md'
     proposal line. The file correctly does not exist yet."""
@@ -213,7 +200,7 @@ def test_a_failed_write_does_not_clear_the_claim(tmp_path):
 
 
 def test_a_short_fragment_does_not_match():
-    """Under 8 characters a fragment matches too much ('a.md' is inside 'data.md')."""
+    """A fragment of a written name is not that name ('a.md' is inside 'data.md')."""
     assert not csc.claim_matches_write("a.md", ["/r/data.md"])
 
 
@@ -280,11 +267,6 @@ def test_claim_matches_write_returns_a_bool():
     assert csc.claim_matches_write("output/acme/brief.md", ["/r/output/acme/brief.md"]) is True
 
 
-def test_a_fragment_in_the_wrong_directory_does_not_match():
-    assert csc.claim_matches_write(
-        "output/acme/job-todos.p", ["/r/output/other/job-todos.pre-cleanup.md"]) is False
-
-
 def _main_with(monkeypatch, root, tpath, writes_fn):
     """Run main() in process with a real Payload, so the test reaches the claim logic
     (a StringIO stdin has no fd, and read_payload would fail open before it)."""
@@ -328,3 +310,39 @@ def test_a_non_bash_tool_with_a_command_field_adds_no_target(tmp_path):
         _assistant_tool("m1", "Monitor", {"command": "echo x > /abs/never.md"}), _result("m1"),
     ], cwd=root)
     assert csc.session_write_targets(str(t), root) == []
+
+
+# ---------- Codex + Grok r1 P0s ----------
+
+def test_a_write_request_with_no_result_does_not_clear_the_claim(tmp_path):
+    """F1: an interrupted Write (no tool_result) followed by a later 'Saved to X', with X
+    absent, must still block."""
+    root = _repo(tmp_path)
+    t = _transcript(tmp_path, [
+        _user("save the brief"),
+        _assistant_tool("w1", "Write", {"file_path": str(root / "output/acme/brief.md"),
+                                        "content": "x"}),
+        _user("[Request interrupted by user]"),
+        _user("is it saved?"),
+        _say("Saved to `output/acme/brief.md`."),
+    ], cwd=root)
+    assert _run(t, root).returncode == 2
+
+
+def test_a_backup_of_the_claimed_name_does_not_clear_it(tmp_path):
+    """F2: writing report.md.bak is not writing report.md."""
+    root = _repo(tmp_path)
+    t = _transcript(tmp_path, [
+        _user("save the report"),
+        _assistant_tool("w1", "Write", {"file_path": str(root / "output/acme/report.md.bak"),
+                                        "content": "x"}), _result("w1"),
+        _say("Saved to `output/acme/report.md`."),
+    ], cwd=root)
+    (root / "output" / "acme").mkdir(parents=True)
+    (root / "output" / "acme" / "report.md.bak").write_text("x")
+    assert _run(t, root).returncode == 2
+
+
+def test_a_name_that_is_the_tail_of_a_longer_written_name_does_not_match():
+    """F2: 'notes.md' is not 'meeting-notes.md'."""
+    assert csc.claim_matches_write("notes.md", ["/r/meeting-notes.md"]) is False

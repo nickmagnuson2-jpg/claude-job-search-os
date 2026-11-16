@@ -38,10 +38,12 @@ WHAT IT DOES
   reached by `cd`, a path elided with `...`, a tokenizer cut, a write made in an
   earlier turn). Every successful Write/Edit/MultiEdit/NotebookEdit and every Bash
   write target (tools/shell_writes.py, the parser the Bash write gates share) in the
-  session transcript counts; a failed tool call does not. A claim matches a write by
-  exact path, by path suffix, or as a prefix or suffix of 8+ characters of the
-  written file's name (the two ends a tokenizer cut keeps). The transcript is read
-  only when a claim is missing, so a clean turn costs nothing extra.
+  session transcript counts, and only once its tool_result arrived without an error:
+  a request with no result yet, or a failed one, proves nothing was written. A claim
+  matches a write by exact path or by path suffix (after dropping a leading `.../`).
+  No fragment matching: it equated report.md with report.md.bak (Codex + Grok r1, P0),
+  and the tokenizer cuts it was meant for are fixed in extraction. The write walk runs
+  only when a claim is missing, so a turn with no missing claim adds no second pass.
   Evidence: output/infra-backlog/111626-telemetry/hook-audit.md (Q1, gitignored).
 
 WHAT IT DOES NOT DO
@@ -362,20 +364,17 @@ def exists_anywhere(tok: str, root: Path, home: Path | None = None) -> bool:
 
 
 WRITE_TOOLS = {"Write", "Edit", "MultiEdit", "NotebookEdit"}
-# A tokenizer cut keeps one end of a name, so a fragment must be a prefix or a suffix of the
-# written name, and long enough not to match by accident ("a.md" is the tail of "data.md").
-MIN_FRAGMENT = 8
 _ELISION = re.compile(r"^(?:\.{1,3}/|\u2026/)+")
 
 
 def session_write_targets(transcript_path: str, root) -> list[str]:
     """Every file the session wrote: Write/Edit/MultiEdit/NotebookEdit paths and Bash write
-    targets, from tool calls whose result was not an error. A relative path is joined to the
-    record's `cwd` (else root). A tool call with no result yet counts: an interrupted call may
-    have written, and counting it can only clear a claim, never add a block.
-    An unreadable transcript yields []."""
+    targets, from tool calls whose tool_result arrived and was not an error. A call with no
+    result (interrupted, or not flushed yet) is not proof of a write: counting it cleared a
+    claim for a file that never landed (Codex + Grok r1 F1, P0). A relative path is joined to
+    the record's `cwd` (else root). An unreadable transcript yields []."""
     uses: dict = {}
-    failed: set = set()
+    succeeded: set = set()
     try:
         fh = open(transcript_path, encoding="utf-8")
     except OSError:
@@ -396,11 +395,11 @@ def session_write_targets(transcript_path: str, root) -> list[str]:
                 if block.get("type") == "tool_use" and block.get("id"):
                     uses[block["id"]] = (block.get("name"), block.get("input"),
                                          rec.get("cwd") or "")
-                elif block.get("type") == "tool_result" and block.get("is_error"):
-                    failed.add(block.get("tool_use_id"))
+                elif block.get("type") == "tool_result" and not block.get("is_error"):
+                    succeeded.add(block.get("tool_use_id"))
     out: list[str] = []
     for tid, (name, inp, cwd) in uses.items():
-        if tid in failed or not isinstance(inp, dict):
+        if tid not in succeeded or not isinstance(inp, dict):
             continue
         base = cwd if isinstance(cwd, str) and os.path.isabs(cwd) else str(root)
         if name in WRITE_TOOLS:
@@ -419,19 +418,12 @@ def session_write_targets(transcript_path: str, root) -> list[str]:
 
 
 def claim_matches_write(tok: str, targets) -> bool:
-    """True if the claimed path names one of `targets`: the same path, a path suffix of it
-    (after dropping a leading ./, ../ or .../), or a prefix or suffix of 8+ characters of the
-    written file's name in a matching directory."""
+    """True if the claimed path names one of `targets`: the same path, or a path suffix of it
+    (after dropping a leading ./, ../ or .../)."""
     claim = _ELISION.sub("", tok.strip()).strip("/")
-    cdir, _, cbase = claim.rpartition("/")
     for target in targets:
         t = os.path.normpath(str(target))
         if t == claim or t.endswith("/" + claim):
-            return True
-        tdir, tbase = os.path.dirname(t), os.path.basename(t)
-        if (len(cbase) >= MIN_FRAGMENT and cbase != tbase
-                and (tbase.startswith(cbase) or tbase.endswith(cbase))
-                and (not cdir or tdir.endswith("/" + cdir))):
             return True
     return False
 
