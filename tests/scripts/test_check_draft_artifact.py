@@ -272,7 +272,7 @@ def test_a_log_with_no_reader_line_does_not_clear_the_draft(repo):
 
 def test_a_first_name_inside_another_word_does_not_match(repo):
     """grok, 2026-10-26: a log for Dan must not clear a draft to jordan@."""
-    rel = log(repo, 'reader: Dan Lee, CTO\nreader_ask: "x y" (s)\n')
+    rel = log(repo, 'reader: Dan Quillon, CTO\nreader_ask: "x y" (s)\n')
     text = draft("Hi Jordan,\n", attach=["/tmp/p.pdf"], artifact=rel).replace(
         "TO: casey@acme.example", "TO: jordan@acme.example")
     assert cda.decide(text, repo)
@@ -405,3 +405,30 @@ def test_a_cc_line_in_the_body_is_not_a_recipient(repo):
     text = draft("Hi Jordan,\nCC: sam@other.example\n", attach=["/tmp/p.pdf"], artifact=rel).replace(
         "TO: casey@acme.example", "TO: jordan@acme.example")
     assert cda.decide(text, repo) is None
+
+
+def test_loading_the_hook_does_not_load_gmail_fetch_or_bs4():
+    """The hook runs on EVERY Bash call; only a staged draft needs sent_artifact_check, whose
+    import chain (gmail_fetch -> bs4) cost 61 of the hook's ~105 ms (2026-11-16 telemetry,
+    output/infra-backlog/111626-telemetry/111626-synthesis.md). Loading the module must not pull it in."""
+    code = ("import sys; sys.path.insert(0, sys.argv[1]); import check_draft_artifact; "
+            "print(sorted(m for m in ('sent_artifact_check', 'gmail_fetch', 'bs4') if m in sys.modules))")
+    out = subprocess.run([sys.executable, "-c", code, str(SCRIPT.parent)],
+                         capture_output=True, text=True, timeout=60)
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.strip() == "[]"
+
+
+def test_the_entry_point_on_a_non_draft_command_does_not_load_gmail_fetch():
+    """The common path: an ordinary Bash command reaches main() and must exit 0 without the
+    import chain."""
+    code = ("import sys, io, json, runpy; sys.path.insert(0, sys.argv[1]); "
+            "sys.stdin = io.StringIO(json.dumps({'tool_name': 'Bash', 'hook_event_name': 'PreToolUse', "
+            "'tool_input': {'command': 'ls'}}));\n"
+            "try:\n    runpy.run_path(sys.argv[1] + '/check_draft_artifact.py', run_name='__main__')\n"
+            "except SystemExit as e:\n    assert not e.code, e.code\n"
+            "print(sorted(m for m in ('sent_artifact_check', 'gmail_fetch', 'bs4') if m in sys.modules))")
+    out = subprocess.run([sys.executable, "-c", code, str(SCRIPT.parent)],
+                         capture_output=True, text=True, timeout=60)
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.strip().splitlines()[-1] == "[]"
