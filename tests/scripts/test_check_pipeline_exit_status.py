@@ -142,7 +142,7 @@ def test_blocks(command):
     # the three correct forms from the rule
     'if cmd -q "$X"; then echo "  ok"; else echo "  FAILED"; fi',
     'out=$(cmd "$X") || { echo "  FAILED"; exit 1; }',
-    "cmd \"$X\" | sed 's/a/b/'; [ \"${PIPESTATUS[0]}\" -eq 0 ] || echo FAILED",
+    "cmd \"$X\" | sed 's/a/b/'; [ \"$pipestatus[1]\" -eq 0 ] || echo FAILED",
     "set -o pipefail; cmd | tail -5 || echo FAILED",
     # informative-status final stages — a real verdict, not a masked one
     "cmd | grep -q foo || echo 'not found'",
@@ -353,12 +353,102 @@ def test_a_mention_of_pipefail_or_pipestatus_does_not_exempt(command):
 @pytest.mark.parametrize("command", [
     "set -euo pipefail; cmd | tail -5 || echo FAILED",
     "set -eo pipefail\ncmd | tail -5\necho $?",
-    "cmd | tail -1; echo \"${PIPESTATUS[0]}\"",
-    "cmd | tail -1; s=$PIPESTATUS; echo $?",
-    "cmd | tail -1 || echo failed ${PIPESTATUS[0]}",
+    "cmd | tail -1; echo \"$pipestatus[1]\"",
+    "cmd | tail -1; echo \"${pipestatus[1]}\"",
+    "cmd | tail -1; s=$pipestatus; echo $?",
+    "cmd | tail -1 || echo failed $pipestatus[1]",
 ])
 def test_effective_pipefail_or_a_pipestatus_read_still_exempts(command):
     assert _run(command) == 0, command
+
+
+# --- Q13 (Nick, 2026-11-16; Codex 1.F1 + Grok 2.F1 on a149eea3) ---------------------
+# zsh, the shell Claude Code runs here, has `pipestatus` (lowercase, 1-indexed). The
+# bash spelling `${PIPESTATUS[0]}` expands EMPTY in zsh, so a command that reads it has
+# not handled the pipeline status at all. It must not exempt the command.
+# Verified: zsh -f -c 'false | true; echo "[${PIPESTATUS[0]}] [$pipestatus[1]]"' -> [] [1]
+
+@pytest.mark.parametrize("command", [
+    "cmd | tail -1; echo \"${PIPESTATUS[0]}\"",
+    "cmd | tail -1; s=$PIPESTATUS; echo $?",
+    "cmd | tail -1 || echo failed ${PIPESTATUS[0]}",
+    "cmd | sed 's/a/b/' || echo FAILED; [ \"${PIPESTATUS[0]}\" -eq 0 ]",
+    "out=$(cmd 2>&1 | tail -5); echo \"rc=$? first=${PIPESTATUS[0]}\"",
+    # the real shapes behind the rule (generic stand-ins for 89 transcript commands)
+    "git push origin main 2>&1 | tail -12; echo \"push exit=${PIPESTATUS[0]}\"",
+    "bash tools/backup.sh 2>&1 | tail -6; echo exit=${PIPESTATUS[0]}",
+    "a | python3 tools/gate.py --numstat - 2>&1 | head -40; echo \"exit=${PIPESTATUS[1]}\"",
+    "echo ${PIPESTATUS[0]}",
+    # an expanded read is broken even when zsh's array is ALSO read
+    "cmd | tail -1; echo \"$pipestatus[1] ${PIPESTATUS[0]}\"",
+])
+# Known gap, not pinned: an UNQUOTED heredoc body expands `${PIPESTATUS[0]}` too, but
+# strip_literals blanks a body that holds no `$(` or backtick, so the read is not seen.
+# Same blind spot as the heredoc-body proposal in the private infra backlog; the
+# shell_tokens rebuild of strip_literals is where it closes.
+def test_bash_uppercase_pipestatus_does_not_exempt_in_zsh(command):
+    assert _run(command) == 2, command
+
+
+@pytest.mark.parametrize("command", [
+    # where zsh does NOT expand it, it is text, not a read
+    "zsh -c 'false | cat; echo \"[${PIPESTATUS[0]}]\"'",
+    "echo 'bash uses ${PIPESTATUS[0]}'",
+    "cat > /tmp/t.py <<'EOF'\nassert '${PIPESTATUS[0]}' not in out\nEOF",
+    "echo 'see PIPESTATUS docs'",
+])
+def test_bash_pipestatus_inside_literals_is_not_a_read(command):
+    assert _run(command) == 0, command
+
+
+# Codex + Grok q13-r1, F1: the exemption must read the same literal-stripped text as every
+# other check, so a lowercase mention inside a quoted heredoc is text and exempts nothing.
+@pytest.mark.parametrize("command", [
+    "cat <<'EOF'\n$pipestatus[1]\nEOF\nfalse | tail -1\necho $?",
+    "echo 'use $pipestatus[1]'; false | tail -1; echo $?",
+    "echo \"\\$pipestatus[1] is zsh\"; false | tail -1; echo $?",
+])
+def test_a_literal_lowercase_pipestatus_does_not_exempt(command):
+    assert _run(command) == 2, command
+
+
+# F2: an escaped `\$` is printed, not expanded, so it is not a read in either spelling.
+@pytest.mark.parametrize("command", [
+    "printf '%s\\n' \"\\${PIPESTATUS[0]}\"",
+    "echo \"bash spells it \\$PIPESTATUS\"",
+    "bash -c \"false | true; echo \\${PIPESTATUS[0]}\"",
+])
+def test_an_escaped_bash_pipestatus_is_not_a_read(command):
+    assert _run(command) == 0, command
+
+
+def _bash_pipestatus_remedies():
+    r = subprocess.run([sys.executable, str(SCRIPT)], capture_output=True, text=True,
+                       env=_env(), input=json.dumps({"tool_input": {
+                           "command": "cmd | tail -1; echo ${PIPESTATUS[0]}"}}))
+    assert r.returncode == 2
+    return r.stderr, [ln.strip() for ln in r.stderr.splitlines() if ln.startswith("  ")]
+
+
+def test_bash_pipestatus_message_names_zsh_and_offers_lowercase():
+    err, remedies = _bash_pipestatus_remedies()
+    assert "zsh" in err and "EMPTY" in err
+    assert remedies and all("PIPESTATUS" not in r for r in remedies)
+    assert any("$pipestatus[1]" in r for r in remedies)
+
+
+@pytest.mark.parametrize("rc", [0, 1])
+def test_bash_pipestatus_message_remedies_report_the_real_status_in_zsh(rc, tmp_path):
+    # Every printed remedy, run in zsh with the command under test exiting rc, must
+    # report rc (or print FAILED exactly when rc != 0).
+    _, remedies = _bash_pipestatus_remedies()
+    for line in remedies:
+        script = line.replace('cmd "$X"', f"(exit {rc})").replace("/tmp/o.txt", str(tmp_path / "o.txt"))
+        out = subprocess.run(["/bin/zsh", "-f", "-c", script], capture_output=True, text=True).stdout
+        if "FAILED" in line:
+            assert ("FAILED" in out) == (rc != 0), (line, out)
+        else:
+            assert f"exit={rc}" in out, (line, out)
 
 
 # --- round-five review of 663a887 (Grok run 252, F4) --------------------------
