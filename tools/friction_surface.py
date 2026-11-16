@@ -307,38 +307,55 @@ _HOOK_HEADER_RE = re.compile(
     r"^(?:Exit code \d+\s*)?PreToolUse:\w+ hook error: \[[^\]\n]*?tools/([A-Za-z0-9_]+\.py)[^\]\n]*\]")
 
 
+# A harness message OPENS the tool result; the phrase must start within this many characters
+# ("ls in '<path>' was blocked" puts a path first). Searching the whole result filed a real
+# failure that quoted a denial as a harness event and dropped it (Codex r2 3.F2, P0).
+_HARNESS_PHRASE_WITHIN = 300
+
+
 def harness_kind(error_text: str) -> str:
-    """'classifier' | 'permission' | 'user' when the text is a harness event, else ''."""
-    head = (error_text or "")[:600]
+    """'classifier' | 'permission' | 'user' when the text is a harness event, else ''.
+
+    A Bash result opens with "Exit code N" and is the command's own output; in 1,020+ real
+    harness results none did, so such a result is never a harness event, whatever it quotes.
+    Otherwise a harness phrase must start near the opening of the text."""
+    head = (error_text or "").lstrip()
+    if head.startswith("Exit code"):
+        return ""
+    head = head[:_HARNESS_PHRASE_WITHIN + 300]
     for kind, rx in _HARNESS_KINDS:
-        if rx.search(head):
+        m = rx.search(head)
+        if m and m.start() <= _HARNESS_PHRASE_WITHIN:
             return kind
     return ""
 
 
-# A hook that CRASHED also gets the harness header. A crash is the hook's own friction
-# (script-patch ladder), not a designed block (Codex + Grok P0 on 1a6c4750).
-_HOOK_CRASH_RE = re.compile(r"can't open file|Traceback \(most recent call last\)|"
-                            r"ModuleNotFoundError|SyntaxError:|ImportError", re.IGNORECASE)
+# A designed block is the hook's own message, and every real one (1,021 of 1,021 header
+# results in the transcripts, 2026-11-16) opens its stderr with BLOCKED. Anything else after
+# the header is the hook dying: argparse, IndentationError, Killed, a segfault, empty stderr.
+# Crash is the default; a fixed list of crash phrases missed all of those (r2 3.F1, 4.F1, P0).
+_BLOCK_SIGNAL_RE = re.compile(r"[\s:]*BLOCKED\b")
+
+
+def _hook_header(error_text: str):
+    """(hook, is_designed_block) for a harness hook header at the start of the text, else None."""
+    text = (error_text or "").lstrip()
+    m = _HOOK_HEADER_RE.match(text)
+    if not m:
+        return None
+    return m.group(1).lower(), bool(_BLOCK_SIGNAL_RE.match(text, m.end()))
 
 
 def hook_block(error_text: str) -> str:
-    """The hook file named in a harness block header at the start of the text, else ''.
-    A header followed by a crash is returned by hook_crash instead."""
-    text = (error_text or "").lstrip()
-    m = _HOOK_HEADER_RE.match(text)
-    if not m or _HOOK_CRASH_RE.search(text[m.end():m.end() + 2000]):
-        return ""
-    return m.group(1).lower()
+    """The hook named in a harness header whose stderr opens with BLOCKED, else ''."""
+    h = _hook_header(error_text)
+    return h[0] if h and h[1] else ""
 
 
 def hook_crash(error_text: str) -> str:
-    """The hook file named in a harness header when the hook itself crashed, else ''."""
-    text = (error_text or "").lstrip()
-    m = _HOOK_HEADER_RE.match(text)
-    if m and _HOOK_CRASH_RE.search(text[m.end():m.end() + 2000]):
-        return m.group(1).lower()
-    return ""
+    """The hook named in a harness header whose stderr does NOT open with BLOCKED, else ''."""
+    h = _hook_header(error_text)
+    return h[0] if h and not h[1] else ""
 
 
 def derive_surface(tool_name: str, command: str, error_text: str = "") -> str:

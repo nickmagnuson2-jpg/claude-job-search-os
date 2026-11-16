@@ -203,3 +203,69 @@ def test_dedup_keeps_surfaces_apart_even_for_identical_natures(tmp_path, monkeyp
              "date": "2026-11-02", "fix": "-", "occurrences": "1", "promotion": "x", "_raw": "b"}]
     kw = fl.keywords(rows[0]["nature"])
     assert fl.match_score(rows[1], rows[0]["surface"], kw) == 0.0
+
+
+# --- r2 P0s (3.F1, 4.F1, 3.F2): crash is the default, harness is anchored -----------
+
+HEADER = "PreToolUse:Bash hook error: " + HOOK.format("check_x_demo.py") + ": "
+
+
+@pytest.mark.parametrize("body", [
+    "usage: check_x_demo.py [-h] [--strict]\ncheck_x_demo.py: error: unrecognized arguments: -q",
+    '  File "tools/check_x_demo.py", line 12\n    return x\nIndentationError: unexpected indent',
+    "Killed: 9",
+    "zsh: segmentation fault  python3 tools/check_x_demo.py",
+    "",
+])
+def test_a_hook_header_without_its_blocked_signal_is_a_crash_not_a_block(body):
+    """3.F1 / 4.F1: only an explicit BLOCKED makes a designed block; any other hook death
+    is the hook's own friction (script-patch ladder), never block:<hook>."""
+    err = HEADER + body
+    assert fs.hook_block(err) == ""
+    assert fs.hook_crash(err) == "check_x_demo.py"
+    assert fs.derive_surface("Bash", "ls", err) == "check_x_demo.py"
+
+
+def test_a_hook_header_with_its_blocked_signal_is_a_block():
+    err = HEADER + "BLOCKED: unquoted glob in '--include=*'."
+    assert fs.hook_block(err) == "check_x_demo.py"
+    assert fs.hook_crash(err) == ""
+
+
+def test_a_blocked_word_deep_in_a_crash_dump_does_not_make_it_a_block():
+    """The signal is the hook's own message at the start of its stderr, not a word that a
+    traceback or echoed input happens to contain later."""
+    err = HEADER + "Traceback (most recent call last):\n" + "  frame\n" * 80 + "ValueError: BLOCKED"
+    assert fs.hook_block(err) == ""
+    assert fs.hook_crash(err) == "check_x_demo.py"
+
+
+@pytest.mark.parametrize("text", [
+    "Exit code 1\nTraceback (most recent call last):\nRuntimeError: Permission to use Bash "
+    "with command git push has been denied.",
+    "Exit code 2\nlog line: The user doesn't want to proceed with this tool use.",
+    "Exit code 1\nquoting: the auto mode classifier gave no verdict earlier",
+])
+def test_a_command_failure_that_quotes_a_harness_message_is_not_harness(text):
+    """3.F2: a Bash result starts with its exit code; a harness denial never does. A real
+    failure whose output quotes a denial stays the script's friction."""
+    assert fs.harness_kind(text) == ""
+    assert fs.derive_surface("Bash", "python3 tools/pipe_write.py update x", text) == "pipe_write.py"
+
+
+def test_a_harness_phrase_far_into_a_non_bash_result_is_not_harness():
+    text = "Error fetching URL: " + "x" * 400 + " This command requires approval"
+    assert fs.harness_kind(text) == ""
+
+
+@pytest.mark.parametrize("text,kind", [
+    ("This command requires approval", "permission"),
+    ("Permission to use Bash with command cd /x && ls\nwith more lines has been denied.", "permission"),
+    ("ls in '/Users/someone/.claude/commands' was blocked. For security, Claude Code may only "
+     "list files in the allowed working directories", "permission"),
+    ("<tool_use_error>Blocked: sleep 45 followed by tail</tool_use_error>", "permission"),
+    ("Permission for this action was denied by the Claude Code auto mode classifier.", "classifier"),
+    ("  The user doesn't want to proceed with this tool use.", "user"),
+])
+def test_real_harness_openings_still_classify(text, kind):
+    assert fs.harness_kind(text) == kind
