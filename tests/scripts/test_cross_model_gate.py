@@ -1567,3 +1567,12 @@ def test_codex_plus_grok_does_not_mention_the_exception(tmp_path, monkeypatch):
     _row(tmp_path, paths=["CLAUDE.md"], model="grok")
     v = g.check(tmp_path, [("CLAUDE.md", 3, 1)], since=0)
     assert v.blocked is False and "Fable" not in v.message
+
+
+def test_a_mirrored_row_with_worktree_fields_still_clears_the_gate(tmp_path):
+    """findings-durable-1116 (Part B amendment 2): main's mirror rows carry "worktree" and
+    "worktree_run". The gate must read such a row exactly as it reads any other."""
+    _row(tmp_path, paths=["tools/career_scanner/scanner.py"],
+         worktree="/x/claude-worktrees/some-branch", worktree_run=7, model="codex")
+    v = g.check(tmp_path, [("tools/career_scanner/scanner.py", 200, 40)], since=0)
+    assert v.blocked is False

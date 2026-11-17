@@ -1567,7 +1567,8 @@ def test_the_ledger_records_what_the_verifier_could_see(tmp_path, monkeypatch):
     # question, and from a linked worktree a lookup that gets no answer refuses.
     monkeypatch.setattr(cv, "_main_checkout", lambda root: None)
     monkeypatch.setattr(cv, "jailed_argv", lambda *a, **k: ["true"])
-    cv.run(REPO_ROOT, "t", [], "", tmp_path / "r.md", None, False,
+    # A tmp root: run() refuses a real ledger root inside pytest even with append stubbed.
+    cv.run(tmp_path, "t", [], "", tmp_path / "r.md", None, False,
            model="codex", images=[img])
     assert rows and rows[0]["images"] == [str(img)]
 
@@ -2056,9 +2057,15 @@ def test_a_test_run_never_writes_the_real_ledger(tmp_path, monkeypatch):
     the gate and /standup would then read as reviews (22 such rows, 2026-09-18..10-24)."""
     monkeypatch.setattr(cv, "jailed_argv", lambda *a, **k: ["true"])
     monkeypatch.setattr(cv, "gather_env_facts", lambda root: "")
+    # The append is stubbed, so a MUTATED guard cannot write the real ledger either: on
+    # 2026-11-16 a mutation run of this file let this very test write the worktree's
+    # real ledger (row 1 of findings-durable-1116). The guard must refuse anyway.
+    wrote = []
+    monkeypatch.setattr(gate, "append_row", lambda root, row: wrote.append(root))
     with pytest.raises(SystemExit) as exc:
         cv.run(REPO_ROOT, "t", [], "", tmp_path / "r.md", None, False, model="codex")
     assert "real ledger" in str(exc.value)
+    assert wrote == []
 
 
 def test_diff_base_falls_back_to_origin_main_without_an_upstream(tmp_path):
@@ -2139,3 +2146,444 @@ def test_diff_base_prefers_the_upstream_over_origin_main(tmp_path):
     (repo / "a.py").write_text("unpushed\n")
     git("commit", "-qam", "unpushed work")
     assert cv.diff_base(repo) == pushed != old
+
+
+# --- evidence mirrored to the main checkout (codex-evidence-main-1109) ----------
+# Run from a linked worktree, a review used to leave its report and ledger row ONLY in
+# that worktree's gitignored files, so removing the worktree deleted them (lost:
+# question-queue-1106's reports, 2026-11-09). The worktree copies stay, because the
+# push gate reads them; main also gets each report and row.
+
+_REAL_RUN = subprocess.run
+_FINDINGS = '## FINDINGS (machine-readable)\n[{"id":"F1","severity":"P2","summary":"x"}]'
+
+
+def _git(cwd, *args):
+    _REAL_RUN(["git", "-C", str(cwd), *args], check=True, capture_output=True, text=True)
+
+
+@pytest.fixture
+def main_and_worktree(tmp_path):
+    """A real main checkout with one commit, and a linked worktree of it."""
+    main = tmp_path / "main"
+    (main / "tools").mkdir(parents=True)
+    (main / "tools" / "x.py").write_text("x = 1\n", encoding="utf-8")
+    _git(main.parent, "init", "-q", "-b", "main", str(main))
+    _git(main, "add", "-A")
+    _git(main, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "one")
+    wt = tmp_path / "wt"
+    _git(main, "worktree", "add", "-q", "-b", "feature", str(wt))
+    return main.resolve(), wt.resolve()
+
+
+def _fake_model(report_text=_FINDINGS):
+    """Stands in for the verifier; git calls still reach real git."""
+    def fake(cmd, **kw):
+        if isinstance(cmd, list) and cmd and cmd[0] == "git":
+            return _REAL_RUN(cmd, **kw)
+        fake.calls += 1
+        fake.report.parent.mkdir(parents=True, exist_ok=True)
+        fake.report.write_text(report_text, encoding="utf-8")
+        return subprocess.CompletedProcess(cmd, 0, "closing message", "")
+    fake.calls = 0
+    return fake
+
+
+def _review(monkeypatch, root, report, text=_FINDINGS):
+    fake = _fake_model(text)
+    fake.report = report
+    monkeypatch.setattr(cv.subprocess, "run", fake)
+    monkeypatch.setattr(cv, "gather_env_facts", lambda r: "FACTS")
+    return cv.run(root, "the change", ["tools/x.py"], "", report, None, False)
+
+
+def test_a_worktree_review_mirrors_its_report_and_row_to_main(main_and_worktree, monkeypatch):
+    main, wt = main_and_worktree
+    report = wt / "output" / "analysis" / "110926-codex-the-change-120000abcd.md"
+    out = _review(monkeypatch, wt, report)
+    assert out["status"] == "ok" and out["mirrored"] is True
+
+    wt_rows, main_rows = gate.read_ledger(wt), gate.read_ledger(main)
+    assert len(wt_rows) == 1 and "worktree" not in wt_rows[0]    # the gate's copy, unchanged
+    assert len(main_rows) == 1
+    assert main_rows[0] == {**wt_rows[0], "worktree": str(wt), "worktree_run": 1}
+    rel = "output/analysis/110926-codex-the-change-120000abcd.md"
+    assert main_rows[0]["report"] == rel
+    assert (main / rel).read_bytes() == report.read_bytes()      # the full report, not a stub
+
+
+def test_a_review_in_the_main_checkout_writes_one_row(main_and_worktree, monkeypatch):
+    main, _wt = main_and_worktree
+    out = _review(monkeypatch, main, main / "output" / "analysis" / "r.md")
+    assert out["status"] == "ok" and out["mirrored"] is None
+    assert len(gate.read_ledger(main)) == 1
+
+
+def test_the_same_row_mirrored_twice_is_appended_once(main_and_worktree):
+    main, wt = main_and_worktree
+    report = wt / "output" / "analysis" / "r.md"
+    report.parent.mkdir(parents=True)
+    report.write_text(_FINDINGS, encoding="utf-8")
+    row = {"recorded": "2026-11-09T20:00:00+00:00", "report": "output/analysis/r.md",
+           "model": "codex", "paths": ["tools/x.py"]}
+    assert cv.mirror_to_main(wt, report, row) is True
+    assert cv.mirror_to_main(wt, report, row) is True
+    assert len(gate.read_ledger(main)) == 1
+
+
+def test_two_runs_reusing_one_report_path_both_reach_main(main_and_worktree):
+    """An explicit --report reused across runs gives two rows the same report and model.
+    Both are real runs, so main keeps both, and holds the second run's report."""
+    main, wt = main_and_worktree
+    report = wt / "output" / "analysis" / "r.md"
+    report.parent.mkdir(parents=True)
+    base = {"report": "output/analysis/r.md", "model": "codex", "paths": ["tools/x.py"]}
+    report.write_text("first run", encoding="utf-8")
+    cv.mirror_to_main(wt, report, {**base, "recorded": "2026-11-09T20:00:00+00:00"})
+    report.write_text("second run", encoding="utf-8")
+    cv.mirror_to_main(wt, report, {**base, "recorded": "2026-11-09T20:05:00+00:00"})
+    assert [r["recorded"] for r in gate.read_ledger(main)] == [
+        "2026-11-09T20:00:00+00:00", "2026-11-09T20:05:00+00:00"]
+    assert (main / "output" / "analysis" / "r.md").read_text(encoding="utf-8") == "second run"
+
+
+def test_a_report_outside_the_worktree_mirrors_the_row_only(main_and_worktree, tmp_path):
+    main, wt = main_and_worktree
+    report = tmp_path / "elsewhere" / "r.md"
+    report.parent.mkdir()
+    report.write_text(_FINDINGS, encoding="utf-8")
+    row = {"recorded": "2026-11-09T20:00:00+00:00", "report": str(report), "model": "codex"}
+    assert cv.mirror_to_main(wt, report, row) is True
+    assert [r["report"] for r in gate.read_ledger(main)] == [str(report)]
+    assert not (main / "output").exists()
+
+
+def test_a_mirror_failure_never_fails_the_review(main_and_worktree, monkeypatch, capsys):
+    main, wt = main_and_worktree
+
+    def boom(root):
+        raise RuntimeError("cannot find the main checkout")
+    real_main_checkout = cv._main_checkout
+    report = wt / "output" / "analysis" / "r.md"
+    fake = _fake_model()
+    fake.report = report
+    monkeypatch.setattr(cv.subprocess, "run", fake)
+    monkeypatch.setattr(cv, "gather_env_facts", lambda r: "FACTS")
+    # The sandbox is built with the real resolver; only the mirror's call fails.
+    monkeypatch.setattr(cv, "sandbox_policy",
+                        lambda root, extra_writable=(): "(version 1)")
+    monkeypatch.setattr(cv, "_main_checkout", boom)
+    out = cv.run(wt, "the change", ["tools/x.py"], "", report, None, False)
+    assert real_main_checkout(wt) == main
+    assert out["status"] == "ok" and out["verified"] is True and out["mirrored"] is False
+    assert len(gate.read_ledger(wt)) == 1 and gate.read_ledger(main) == []
+    assert "could not mirror" in capsys.readouterr().err
+
+
+def test_real_ledger_roots_name_this_checkout_and_its_main():
+    """Run from a linked worktree (as on a build branch), the real main checkout is a
+    second real ledger; both must be named."""
+    roots = cv._real_ledger_roots()
+    assert cv.REPO_ROOT.resolve() in roots
+    git = cv.REPO_ROOT / ".git"
+    if git.is_file():
+        gitdir = Path(git.read_text(encoding="utf-8").split("gitdir:", 1)[1].strip())
+        assert gitdir.resolve().parents[2] in roots
+
+
+@pytest.mark.parametrize("which", [0, -1])
+def test_a_test_run_never_mirrors_into_a_real_ledger(monkeypatch, tmp_path, capsys, which):
+    """The interlock's other half: inside pytest, a mirror that resolves to this repo's
+    own checkout, or to its main checkout, writes nothing."""
+    target = sorted(cv._real_ledger_roots())[which]
+    monkeypatch.setattr(cv, "_is_linked_worktree", lambda r: True)
+    monkeypatch.setattr(cv, "_main_checkout", lambda root: target)
+    wrote = []
+    monkeypatch.setattr(gate, "append_row", lambda root, row: wrote.append(root))
+    monkeypatch.setattr(cv, "_REAL_APPEND_ROW", gate.append_row)   # as if it were real
+    row = {"recorded": "t", "report": "r", "model": "codex"}
+    assert cv.mirror_to_main(tmp_path, tmp_path / "nope.md", row) is False
+    assert wrote == []
+    assert "real ledger" in capsys.readouterr().err
+
+
+def test_ignored_entries_lists_an_ignored_directory_on_success(tmp_path):
+    """The success path: the sandbox seals what git ignores, so an empty answer from a
+    working `git ls-files` would silently unseal every ignored tree."""
+    _git(tmp_path, "init", "-q")
+    (tmp_path / ".gitignore").write_text("secret/\n", encoding="utf-8")
+    (tmp_path / "secret").mkdir()
+    (tmp_path / "secret" / "a.txt").write_text("x", encoding="utf-8")
+    assert cv.ignored_entries(tmp_path) == ["secret"]
+
+
+def test_real_ledger_roots_of_a_main_checkout_is_only_itself(main_and_worktree, monkeypatch):
+    main, _wt = main_and_worktree
+    monkeypatch.setattr(cv, "REPO_ROOT", main)                     # .git is a directory
+    assert cv._real_ledger_roots() == {main}
+
+
+def test_real_ledger_roots_of_a_worktree_adds_its_main(main_and_worktree, monkeypatch):
+    main, wt = main_and_worktree
+    monkeypatch.setattr(cv, "REPO_ROOT", wt)
+    assert cv._real_ledger_roots() == {wt, main}
+
+
+@pytest.mark.parametrize("content", ["not a pointer\n", "gitdir: /elsewhere/.git/modules/sub\n"])
+def test_real_ledger_roots_ignores_a_git_file_that_names_no_worktree(tmp_path, monkeypatch,
+                                                                   content):
+    """A .git file without a gitdir line, or one pointing at a submodule's git dir, names
+    no main checkout."""
+    (tmp_path / ".git").write_text(content, encoding="utf-8")
+    monkeypatch.setattr(cv, "REPO_ROOT", tmp_path)
+    assert cv._real_ledger_roots() == {tmp_path.resolve()}
+
+
+def test_outside_a_worktree_the_mirror_asks_no_resolver(tmp_path, monkeypatch):
+    """Not a linked worktree: nothing to mirror, no git call, and None rather than the
+    False that would mean a failed copy."""
+    (tmp_path / ".git").mkdir()
+
+    def boom(root):
+        raise AssertionError("resolver called outside a worktree")
+    monkeypatch.setattr(cv, "_main_checkout", boom)
+    assert cv.mirror_to_main(tmp_path, tmp_path / "r.md", {"report": "r"}) is None
+
+
+def test_a_worktree_with_no_main_checkout_mirrors_nothing(tmp_path, monkeypatch):
+    (tmp_path / ".git").write_text("gitdir: /x/.git/worktrees/y\n", encoding="utf-8")
+    monkeypatch.setattr(cv, "_main_checkout", lambda root: None)
+    assert cv.mirror_to_main(tmp_path, tmp_path / "r.md", {"report": "r"}) is None
+
+
+# --- 11/09 review of the mirror, parked P1s fixed under RULING Q20 (2026-11-16) ------------
+
+def _rel_report(wt, text):
+    rel = "output/analysis/111626-codex-mirror-r1.md"
+    (wt / rel).parent.mkdir(parents=True, exist_ok=True)
+    (wt / rel).write_text(text, encoding="utf-8")
+    return rel
+
+
+def test_a_row_already_in_main_does_not_overwrite_mains_report(main_and_worktree):
+    """Codex 3.F1 (codex-evidence-main-1109): the duplicate check ran AFTER the copy, so
+    mirroring a row main already holds replaced main's report with the worktree's bytes."""
+    main, wt = main_and_worktree
+    rel = _rel_report(wt, "OLD worktree bytes")
+    row = {"recorded": "2026-11-16T00:00:00+00:00", "report": rel, "model": "codex"}
+    gate.append_row(main, {**row, "worktree": str(wt)})
+    (main / rel).parent.mkdir(parents=True, exist_ok=True)
+    (main / rel).write_text("NEWER main bytes", encoding="utf-8")
+    assert cv.mirror_to_main(wt, wt / rel, row) is True
+    assert (main / rel).read_text(encoding="utf-8") == "NEWER main bytes"
+    assert len(gate.read_ledger(main)) == 1
+
+
+def test_the_duplicate_check_and_the_append_share_one_lock(main_and_worktree, monkeypatch):
+    """Codex 3.F2: read-then-append outside one lock let two mirrors of one run both append.
+    The read and the append must both happen inside the main ledger's file lock."""
+    import contextlib
+    import inbox_lock
+    main, wt = main_and_worktree
+    rel = _rel_report(wt, "r")
+    events, held = [], []
+
+    @contextlib.contextmanager
+    def fake_lock(path, *a, **k):
+        held.append(Path(path).resolve()); events.append(("enter", Path(path).resolve()))
+        try:
+            yield
+        finally:
+            held.pop(); events.append("exit")
+    real_read, real_append = gate.read_ledger, gate.append_row
+    monkeypatch.setattr(inbox_lock, "file_lock", fake_lock)
+    monkeypatch.setattr(gate, "read_ledger",
+                        lambda r: events.append(("read", bool(held))) or real_read(r))
+    monkeypatch.setattr(gate, "append_row",
+                        lambda r, row: events.append(("append", bool(held))) or real_append(r, row))
+    row = {"recorded": "2026-11-16T00:00:01+00:00", "report": rel, "model": "codex"}
+    assert cv.mirror_to_main(wt, wt / rel, row) is True
+    assert ("read", True) in events and ("append", True) in events
+    assert ("read", False) not in events and ("append", False) not in events
+    first = events.index(("enter", gate.ledger_path(main).resolve()))   # main's ledger lock
+    assert events.index(("read", True)) > first and events.index(("append", True)) > first
+
+
+def test_a_stubbed_append_inside_a_test_still_never_copies_into_a_real_checkout(
+        main_and_worktree, monkeypatch, capsys):
+    """Grok 4.F3: the interlock returned early only when gate.append_row was real, so a test
+    that stubbed append_row (as the warning advises) and left the resolver real could copy a
+    report into a real checkout's output/. Real report file, real .git pointer."""
+    main, wt = main_and_worktree
+    rel = _rel_report(wt, "report body")
+    monkeypatch.setattr(cv, "_real_ledger_roots", lambda: {main})
+    appended = []
+    monkeypatch.setattr(gate, "append_row", lambda r, row: appended.append(r))
+    row = {"recorded": "2026-11-16T00:00:02+00:00", "report": rel, "model": "codex"}
+    assert cv.mirror_to_main(wt, wt / rel, row) is False
+    assert not (main / rel).exists()
+    assert appended == []
+    assert "real ledger" in capsys.readouterr().err
+
+
+
+# --- Codex findings-durable r1 (2026-11-16): F3 and F2 -------------------------------------
+
+def test_a_test_run_never_writes_the_main_checkouts_real_ledger_either(main_and_worktree,
+                                                                       monkeypatch, tmp_path):
+    """F3: run()'s guard compared only REPO_ROOT, so from a linked worktree a test could
+    run() against its real MAIN checkout and append there. Both roots are real."""
+    main, wt = main_and_worktree
+    monkeypatch.setattr(cv, "REPO_ROOT", wt)
+    monkeypatch.setattr(cv, "_real_ledger_roots", lambda: {wt, main})
+    monkeypatch.setattr(cv, "jailed_argv", lambda *a, **k: ["true"])
+    monkeypatch.setattr(cv, "gather_env_facts", lambda root: "")
+    wrote = []
+    monkeypatch.setattr(gate, "append_row", lambda root, row: wrote.append(root))
+    with pytest.raises(SystemExit) as exc:
+        cv.run(main, "t", [], "", tmp_path / "r.md", None, False, model="codex")
+    assert "real ledger" in str(exc.value) and wrote == []
+
+
+def _f(i, summary):
+    return {"id": i, "severity": "P1", "summary": summary, "location": "x.py:1", "disposition": None}
+
+
+def test_two_runs_sharing_report_model_and_second_are_both_mirrored(main_and_worktree):
+    """F2: `recorded` has whole seconds, so two runs with one explicit --report path in one
+    second share (report, model, recorded). The dedupe also compares the findings, so the
+    second run is appended, not dropped as a retry."""
+    main, wt = main_and_worktree
+    rel = _rel_report(wt, "r")
+    base = {"recorded": "2026-11-16T00:00:03+00:00", "report": rel, "model": "codex"}
+    assert cv.mirror_to_main(wt, wt / rel, {**base, "findings": [_f("F1", "first")]}) is True
+    assert cv.mirror_to_main(wt, wt / rel, {**base, "findings": [_f("F1", "second")]}) is True
+    assert [r["findings"][0]["summary"] for r in gate.read_ledger(main)] == ["first", "second"]
+
+
+def test_the_same_run_mirrored_twice_after_a_disposition_appends_once(main_and_worktree):
+    """The signature covers only fields no disposition changes, so main's copy that has
+    since been dispositioned still dedupes against the same run."""
+    main, wt = main_and_worktree
+    rel = _rel_report(wt, "r")
+    row = {"recorded": "2026-11-16T00:00:04+00:00", "report": rel, "model": "codex",
+           "findings": [_f("F1", "one")]}
+    assert cv.mirror_to_main(wt, wt / rel, row) is True
+    import json as _json
+    p = gate.ledger_path(main)
+    stored = _json.loads(p.read_text(encoding="utf-8").splitlines()[0])
+    stored["findings"][0].update(disposition="parked", why="w", dispositioned="t")
+    p.write_text(_json.dumps(stored) + "\n", encoding="utf-8")
+    assert cv.mirror_to_main(wt, wt / rel, row) is True
+    assert len(gate.read_ledger(main)) == 1
+
+
+def test_two_zero_finding_runs_with_one_key_dedupe_harmlessly(main_and_worktree):
+    """b2's edge case (i): with no findings the signature is empty, so two such runs in one
+    second dedupe to one row. Harmless: there is no finding a disposition could reach."""
+    main, wt = main_and_worktree
+    rel = _rel_report(wt, "r")
+    row = {"recorded": "2026-11-16T00:00:05+00:00", "report": rel, "model": "codex", "findings": []}
+    assert cv.mirror_to_main(wt, wt / rel, row) is True
+    assert cv.mirror_to_main(wt, wt / rel, {**row, "target": "another run"}) is True
+    assert len(gate.read_ledger(main)) == 1
+
+
+def test_findings_signature_ignores_disposition_fields():
+    a = {"findings": [_f("F1", "s")]}
+    b = {"findings": [{**_f("F1", "s"), "disposition": "fixed", "why": "w", "dispositioned": "t",
+                       "accepted_by": "o", "accepted_at": "t", "accepted_why": "w"}]}
+    assert cv.findings_signature(a) == cv.findings_signature(b)
+    assert cv.findings_signature(a) != cv.findings_signature({"findings": [_f("F1", "other")]})
+    assert cv.row_identity({**a, "report": "r", "model": "m", "recorded": "t"}) == \
+        ("r", "m", "t", cv.findings_signature(a))
+
+
+# --- Codex findings-durable r2 F1 (2026-11-16): a run is identified by its position --------
+
+def _frozen_clock(monkeypatch):
+    from datetime import datetime as _dt, timezone as _tz
+
+    class _Frozen(_dt):
+        @classmethod
+        def now(cls, tz=None):
+            return _dt(2026, 11, 16, 12, 0, 0, tzinfo=_tz.utc)
+    monkeypatch.setattr(cv, "datetime", _Frozen)
+
+
+def test_two_identical_runs_in_one_second_are_both_mirrored_and_set_apart(main_and_worktree,
+                                                                          monkeypatch, capsys):
+    """Codex r2 F1, the production sequence: two run() calls, one explicit --report path,
+    one second, identical findings. Content cannot tell them apart; their position in the
+    worktree ledger can. Both are mirrored, and a set on run 2 reaches only run 2's mirror."""
+    import finding_write as fw_mod
+    main, wt = main_and_worktree
+    _frozen_clock(monkeypatch)
+    report = wt / "output" / "analysis" / "111626-codex-same-r1.md"
+    assert _review(monkeypatch, wt, report)["mirrored"] is True
+    assert _review(monkeypatch, wt, report)["mirrored"] is True
+    rows = gate.read_ledger(main)
+    assert [r.get("worktree_run") for r in rows] == [1, 2]
+    assert rows[0]["recorded"] == rows[1]["recorded"]
+    assert cv.row_identity(rows[0]) == cv.row_identity(rows[1])
+    out = fw_mod.set_disposition(wt, "2.F1", "parked", "run two only")
+    assert out["mirrored"] is True
+    rows = gate.read_ledger(main)
+    assert rows[0]["findings"][0].get("disposition") is None
+    assert rows[1]["findings"][0]["why"] == "run two only"
+
+
+def test_worktree_run_counts_lines_the_way_finding_write_addresses_them(main_and_worktree,
+                                                                       monkeypatch):
+    """A malformed line still holds a run number in finding_write's addressing, so the mirror
+    must count it too, or worktree_run and the address disagree."""
+    main, wt = main_and_worktree
+    p = gate.ledger_path(wt)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text("{not json\n", encoding="utf-8")
+    report = wt / "output" / "analysis" / "111626-codex-after-malformed.md"
+    assert _review(monkeypatch, wt, report)["mirrored"] is True
+    assert gate.read_ledger(main)[0]["worktree_run"] == 2
+
+
+def test_a_mirror_made_without_a_position_keeps_the_legacy_shape(main_and_worktree):
+    """worktree_run is written only when run() supplies it. A mirror without one stays
+    shaped like the rows mirrored before Part B amendment 2 (no key, not a null), which
+    is what finding_write's identity-only path matches."""
+    main, wt = main_and_worktree
+    rel = _rel_report(wt, "r")
+    row = {"recorded": "2026-11-16T00:00:06+00:00", "report": rel, "model": "codex", "findings": []}
+    assert cv.mirror_to_main(wt, wt / rel, row) is True
+    assert "worktree_run" not in gate.read_ledger(main)[0]
+    assert cv.mirror_to_main(wt, wt / rel, {**row, "recorded": "2026-11-16T00:00:07+00:00"},
+                             worktree_run=3) is True
+    assert gate.read_ledger(main)[1]["worktree_run"] == 3
+
+
+def test_run_holds_the_worktree_lock_through_the_first_mirror(main_and_worktree, monkeypatch):
+    """Codex findings-durable r3 F1: run() released the worktree ledger lock after the append
+    and before mirror_to_main, so a `set` in that gap updated the worktree, found no mirror
+    yet, and the mirror then copied the stale pre-set row. The lock is now held through the
+    first mirror (worktree lock, then main lock: finding_write's order)."""
+    import contextlib
+    main, wt = main_and_worktree
+    held, at_mirror = [], []
+    real_lock, real_mirror = gate.inbox_lock.file_lock, cv.mirror_to_main
+
+    @contextlib.contextmanager
+    def tracking_lock(path, *a, **k):
+        with real_lock(path, *a, **k):
+            held.append(Path(path).resolve())
+            try:
+                yield
+            finally:
+                held.remove(Path(path).resolve())
+
+    def tracking_mirror(*a, **k):
+        at_mirror.append(list(held))
+        return real_mirror(*a, **k)
+    monkeypatch.setattr(gate.inbox_lock, "file_lock", tracking_lock)
+    monkeypatch.setattr(cv, "mirror_to_main", tracking_mirror)
+    report = wt / "output" / "analysis" / "111626-codex-lock-r1.md"
+    assert _review(monkeypatch, wt, report)["mirrored"] is True
+    assert at_mirror and gate.ledger_path(wt).resolve() in at_mirror[0]

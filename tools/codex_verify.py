@@ -820,6 +820,101 @@ def refuse_dispatch_inside_tests(argv: list[str]) -> None:
                          "stub jailed_argv or run() in the test.")
 
 
+def _is_linked_worktree(root: Path) -> bool:
+    """A linked worktree has a .git FILE; a main checkout has a .git directory."""
+    return (Path(root) / ".git").is_file()
+
+
+def _real_ledger_roots() -> set[Path]:
+    """This checkout and, when it is a linked worktree, its main checkout: the two real
+    ledgers a test must never write. Read from the .git file, so no git call is needed."""
+    roots = {REPO_ROOT.resolve()}
+    git = REPO_ROOT / ".git"
+    if git.is_file():
+        text = git.read_text(encoding="utf-8")
+        if "gitdir:" in text:
+            gitdir = Path(text.split("gitdir:", 1)[1].strip()).resolve()
+            if gitdir.parent.name == "worktrees":     # <main>/.git/worktrees/<name>
+                roots.add(gitdir.parents[2])
+    return roots
+
+
+# The fields of a finding that no disposition changes. A review row's identity is its
+# (report, model, recorded) plus these, in order, for every finding: `recorded` has whole
+# seconds, so two runs reusing one --report path in one second share the first three
+# (Codex findings-durable r1 F2). finding_write matches main's mirror by the same identity.
+SIGNATURE_FIELDS = ("id", "severity", "summary", "location")
+
+
+def findings_signature(row: dict) -> tuple:
+    return tuple(tuple(f.get(k) for k in SIGNATURE_FIELDS)
+                 for f in (row.get("findings") or []) if isinstance(f, dict))
+
+
+def row_identity(row: dict) -> tuple:
+    """(report, model, recorded, findings signature): what makes two ledger rows one run."""
+    return (row.get("report"), row.get("model"), row.get("recorded"), findings_signature(row))
+
+
+def mirror_to_main(repo_root: Path, report: Path, row: dict,
+                   worktree_run: int | None = None) -> bool | None:
+    """Copy a worktree review's evidence into the main checkout. None: not a worktree.
+
+    WHY (2026-11-09). A review run from a linked worktree wrote its report and ledger row
+    only into that worktree's gitignored files, and the Codex sandbox cannot write the
+    main checkout. Removing the worktree after merge deleted the only copy (lost:
+    question-queue-1106's Codex and Grok reports and rows). The worktree copies stay as
+    they are, because the push gate reads them; this adds the report, under the same
+    relative path, and the row, plus a "worktree" field, to the main checkout. Runs in
+    this process after the verifier exits, so the jail is not involved.
+
+    A row's identity is row_identity(): the same run mirrored twice is appended once,
+    while two runs reusing one --report path, even in one second, are both kept.
+    Never raises: a review that verified is not failed by its copy. False means the copy
+    did not happen, with the reason on stderr.
+    """
+    root = Path(repo_root).resolve()
+    if not _is_linked_worktree(root):
+        return None
+    try:
+        main = _main_checkout(root)
+        if main is None:
+            return None
+        main = main.resolve()
+        # Inside pytest, a real checkout gets NEITHER the copy NOR the row, whether or not
+        # append_row is stubbed (Grok 4.F3, 11/09: a stubbed append let the copy through).
+        if os.environ.get("PYTEST_CURRENT_TEST") and main in _real_ledger_roots():
+            print("codex_verify: not mirroring into a real ledger inside a test run; "
+                  "use a tmp main checkout.", file=sys.stderr)
+            return False
+        key = row_identity(row)
+        mirror = {**row, "worktree": str(root)}
+        if worktree_run is not None:
+            mirror["worktree_run"] = worktree_run
+
+        def _same_run(r: dict) -> bool:
+            # The position tells apart two runs whose content is identical (r2 F1).
+            return (row_identity(r) == key and r.get("worktree_run") == worktree_run
+                    and bool(r.get("worktree")) and Path(r["worktree"]).resolve() == root)
+        # One lock around the duplicate check, the copy and the append (Codex 3.F2), and
+        # the check FIRST, so a row main already holds never overwrites main's report with
+        # older bytes (Codex 3.F1). append_row takes the same lock; it is reentrant.
+        with gate.inbox_lock.file_lock(gate.ledger_path(main)):
+            if any(_same_run(r) for r in gate.read_ledger(main)):
+                return True
+            src = Path(report).resolve()
+            if src.is_file() and src.is_relative_to(root):
+                dest = main / src.relative_to(root)
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, dest)
+            gate.append_row(main, mirror)
+        return True
+    except Exception as e:      # the review stands; only its copy is missing
+        print(f"codex_verify: warning: could not mirror the review to the main checkout: "
+              f"{e}", file=sys.stderr)
+        return False
+
+
 def run(repo_root: Path, target: str, paths: list[str], question: str,
         report: Path, prior: str | None, print_only: bool,
         mode: str = "verify", claims: list[str] | None = None,
@@ -905,20 +1000,36 @@ def run(repo_root: Path, target: str, paths: list[str], question: str,
         "report_fresh": report_fresh,
         "verified": verified,
     }
-    if (os.environ.get("PYTEST_CURRENT_TEST") and gate.append_row is _REAL_APPEND_ROW
-            and Path(repo_root).resolve() == REPO_ROOT.resolve()):
+    # Both real roots (this checkout and, from a linked worktree, its main checkout), and
+    # whether or not append_row is stubbed: a stub-only exemption let a mutated guard write
+    # the worktree's real ledger on 2026-11-16 (Codex findings-durable r1 F3).
+    if (os.environ.get("PYTEST_CURRENT_TEST")
+            and Path(repo_root).resolve() in _real_ledger_roots()):
         # The second half of the test interlock: between 2026-09-18 and 10-24 every mutation
         # run of this file let a test write rows into the real ledger (22 of them).
         raise SystemExit("codex_verify: refusing to write the real ledger inside a test run; "
-                         "pass a tmp repo_root or stub gate.append_row.")
-    gate.append_row(repo_root, row)
+                         "pass a tmp repo_root.")
+    # Append and read the row's position under one hold of this ledger's lock (reentrant;
+    # append_row takes it too), so a concurrent append cannot shift the number. The position
+    # is finding_write's run number: what identifies this run when content cannot (Codex
+    # findings-durable r2 F1, Part B amendment 2).
+    from tools import finding_write as _fw
+    # The first mirror stays inside the same hold (Codex findings-durable r3 F1): released
+    # earlier, a `set` on this run could land between the append and the mirror, find no
+    # mirror yet, and the mirror would then copy this pre-set row into main as stale. Order is
+    # worktree lock, then main lock, the same as finding_write's set/accept, so no deadlock.
+    with gate.inbox_lock.file_lock(gate.ledger_path(repo_root)):
+        gate.append_row(repo_root, row)
+        position = len(_fw.read_lines(_fw.ledger_path(Path(repo_root))))
+        mirrored = mirror_to_main(repo_root, report, row, worktree_run=position)
     status = "ok" if verified else (
         "no_report_written" if not report_fresh else "run_failed")
     return {"status": status, "verified": verified,
             "rc": proc.returncode, "report": row["report"],
             "findings": len(findings),
             "open_findings": len([f for f in findings if not f["disposition"]]),
-            "stderr_tail": proc.stderr[-500:] if proc.returncode else ""}
+            "stderr_tail": proc.stderr[-500:] if proc.returncode else "",
+            "mirrored": mirrored}
 
 
 def _mutation_run_alive(repo_root: Path) -> bool:
