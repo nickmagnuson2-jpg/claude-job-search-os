@@ -156,14 +156,16 @@ def main(argv=None) -> int:
 def write_atomic(target: Path, text: str) -> None:
     """Write via a fresh, exclusively created temp file in the target's directory, then
     rename over the target. A fixed `<target>.tmp` name would follow a symlink left at
-    that path and overwrite whatever it points at (Codex 205323e051 F1)."""
+    that path and overwrite whatever it points at (Codex 205323e051 F1).
+
+    No fsync, on purpose: the guarantee is that a reader never sees a half-written file,
+    not durability across power loss, which git's own merge-file does not give either.
+    An fsync here could not be observed by any test, so it would be untested code."""
     fd, tmp = tempfile.mkstemp(prefix=f".{target.name}.", suffix=".tmp",
                                dir=str(target.parent))
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(text)
-            fh.flush()
-            os.fsync(fh.fileno())
         os.replace(tmp, target)
     except BaseException:
         Path(tmp).unlink(missing_ok=True)
