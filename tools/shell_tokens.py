@@ -54,6 +54,12 @@ class Token:
     subs: list[str] = field(default_factory=list)
     start: int = 0     # span in the source: s[start:end]
     end: int = 0
+    # Source spans of this word's quoted segments and substitution bodies, as
+    # (kind, start, end): "sq" single-quoted or $'...' (never expands), "dq"
+    # double-quoted with no `$` or backtick inside (nothing expands), "dqx"
+    # double-quoted with one, "sub" the BODY of a `$( )` or backtick. Per segment,
+    # not per word: `--include="*.md"` mixes quoting (strip_literals, Q11).
+    spans: list[tuple[str, int, int]] = field(default_factory=list)
 
 
 @dataclass
@@ -102,6 +108,30 @@ def _read_balanced(s: str, i: int, open_ch: str, close_ch: str) -> int:
                 return i + 1
         i += 1
     return n
+
+
+def _param_sub_spans(s: str, i: int, end: int) -> list[tuple[str, int, int]]:
+    """"sub" spans for the `$( )` / backtick bodies inside a `${...}` body s[i:end].
+    They run when the expansion does (`${x:-$(cmd)}`), so a caller that scans every
+    command must see them (Codex/Grok q11-r1 F2). Only Token.spans records them;
+    Token.subs stays as it was."""
+    out = []
+    while i < end:
+        if s[i] == "\\":
+            i += 2
+        elif s[i] == "'":
+            j = s.find("'", i + 1)
+            i = end if j == -1 else j + 1
+        elif s.startswith("$(", i):
+            inner, j = _paren_sub(s, i)
+            out.append(("sub", i + 2, i + 2 + len(inner)))
+            i = j
+        elif s[i] == "`":
+            out.append(("sub", i + 1, _closing_backtick(s, i)))
+            i = _closing_backtick(s, i) + 1
+        else:
+            i += 1
+    return out
 
 
 def _closing_backtick(s: str, i: int) -> int:
@@ -232,6 +262,7 @@ def tokenize(s: str) -> list[Token]:
     toks: list[Token] = []
     word: list[str] = []
     subs: list[str] = []
+    spans: list[tuple[str, int, int]] = []
     in_word = False            # a word has started (even if empty, e.g. '')
     quoted = False             # any quote in the word
     escaped = False            # any backslash escape in the word
@@ -247,15 +278,15 @@ def tokenize(s: str) -> list[Token]:
             in_word, wstart = True, at
 
     def end_word(at: int) -> None:
-        nonlocal word, in_word, quoted, escaped, subs, heredoc_op
+        nonlocal word, in_word, quoted, escaped, subs, spans, heredoc_op
         if in_word:
             text = "".join(word)
-            toks.append(Token("word", text, quoted, subs, wstart, at))
+            toks.append(Token("word", text, quoted, subs, wstart, at, spans))
             if heredoc_op is not None:
                 # Any quoting in the delimiter turns expansion of the body off.
                 pending.append((text, heredoc_op == "<<-", not (quoted or escaped)))
                 heredoc_op = None
-        word, in_word, quoted, escaped, subs = [], False, False, False, []
+        word, in_word, quoted, escaped, subs, spans = [], False, False, False, [], []
 
     while i < n:
         ch = s[i]
@@ -297,12 +328,14 @@ def tokenize(s: str) -> list[Token]:
             j = s.find("'", i + 1)
             j = n if j == -1 else j
             word.append(s[i + 1:j])
+            spans.append(("sq", i, min(j + 1, n)))
             quoted = True
             i = j + 1
             continue
 
         if ch == '"':
             start_word(i)
+            dq_start, dq_exp = i, False
             i += 1
             while i < n and s[i] != '"':
                 if s[i] == "\\" and i + 1 < n and s[i + 1] in '\\"$`\n':
@@ -313,24 +346,33 @@ def tokenize(s: str) -> list[Token]:
                 if s.startswith("$(", i):              # runs inside double quotes
                     inner, j = _paren_sub(s, i)
                     subs.append(inner)
+                    spans.append(("sub", i + 2, i + 2 + len(inner)))
                     word.append(s[i:j])
+                    dq_exp = True
                     i = j
                     continue
                 if s[i] == "`":
                     inner, j = _backtick_sub(s, i)
                     subs.append(inner)
+                    spans.append(("sub", i + 1, _closing_backtick(s, i)))
                     word.append(s[i:j])
+                    dq_exp = True
                     i = j
                     continue
+                if s[i] == "$":
+                    dq_exp = True
                 word.append(s[i])
                 i += 1
             i += 1                                   # closing quote (or past the end)
+            spans.append(("dqx" if dq_exp else "dq", dq_start, min(i, n)))
             quoted = True
             continue
 
         if s.startswith("$'", i):                     # ANSI-C quoting (bash)
             start_word(i)
+            sq_start = i
             text, i = _ansi_c(s, i + 2)
+            spans.append(("sq", sq_start, min(i, n)))
             word.append(text)
             quoted = True
             continue
@@ -344,6 +386,7 @@ def tokenize(s: str) -> list[Token]:
             start_word(i)
             inner, j = _paren_sub(s, i)
             subs.append(inner)
+            spans.append(("sub", i + 2, i + 2 + len(inner)))
             word.append(s[i:j])
             i = j
             continue
@@ -351,6 +394,7 @@ def tokenize(s: str) -> list[Token]:
         if s.startswith("${", i):                      # parameter expansion, not a command
             start_word(i)
             j = _read_balanced(s, i + 1, "{", "}")
+            spans.extend(_param_sub_spans(s, i + 2, j - 1))
             word.append(s[i:j])
             i = j
             continue
@@ -359,6 +403,7 @@ def tokenize(s: str) -> list[Token]:
             start_word(i)
             inner, j = _backtick_sub(s, i)
             subs.append(inner)
+            spans.append(("sub", i + 1, _closing_backtick(s, i)))
             word.append(s[i:j])
             i = j
             continue

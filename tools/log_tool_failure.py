@@ -89,6 +89,21 @@ def extract_failure_text(data: dict) -> str:
     return "tool failed (no parseable error text)"
 
 
+def text_is_process_output(data: dict) -> bool:
+    """True when extract_failure_text's text came from the process's own stderr/stdout (same
+    field order), i.e. the command RAN. A harness denial never runs the command, so such text
+    is never a harness event, whatever it quotes (Codex r3 F1, P0, 2026-11-16)."""
+    fd = data.get("failure_details") or {}
+    if isinstance(fd, dict):
+        for key in ("stderr", "stdout", "error_type"):
+            if fd.get(key):
+                return key != "error_type"
+    if data.get("error"):
+        return False
+    resp = data.get("tool_response") or {}
+    return isinstance(resp, dict) and any(resp.get(k) for k in ("stderr", "stdout"))
+
+
 def extract_exit_code(data: dict) -> str:
     fd = data.get("failure_details") or {}
     if isinstance(fd, dict) and "exit_code" in fd:
@@ -151,8 +166,19 @@ def main() -> int:
         trace("log_tool_failure SKIP unresolved-exit + no error signal (likely masked benign nonzero)")
         return 0
 
-    surface = derive_surface(tool_name, tool_input, error_text)
+    # Process output reaches the shared deriver in the transcript's shape, "Exit code N" first,
+    # which friction_surface.harness_kind never reads as a harness event.
+    surface_text = error_text
+    if text_is_process_output(data) and not error_text.lstrip().startswith("Exit code"):
+        surface_text = f"Exit code {exit_code}\n{error_text}"
+    surface = derive_surface(tool_name, tool_input, surface_text)
     nature = derive_nature(error_text)
+
+    # A harness event (classifier, permission denial, user rejection) is not tooling
+    # friction (RULING Q10, 2026-11-16); the shared predicate is friction_surface.harness_kind.
+    if surface.startswith("harness:"):
+        trace("log_tool_failure SKIP harness event")
+        return 0
 
     # Pre-flight: skip if surface is unparseable (defensive)
     if not surface or surface == "bash:":

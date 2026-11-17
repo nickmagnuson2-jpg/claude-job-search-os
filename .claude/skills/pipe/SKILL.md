@@ -16,6 +16,7 @@ Track job applications through a stage-based pipeline with auto-generated action
   - `add <company> <role> [url]` — add a new application
   - `update <company> <new-stage>` — advance an application to a new stage
   - `remove <company>` — remove/archive an application
+  - `restage <company> --stage <stage>` — correct the terminal stage of an already-archived row
 
 Examples:
 - `/pipe` — show pipeline summary and what needs attention
@@ -123,6 +124,19 @@ All pipeline data lives in `data/job-pipeline.md`.
 3. If `code == "ambiguous_match"`: show `matches[]` and ask user which role to remove. A company with
    two roles can have two different outcomes; resolve each separately.
 4. On success: confirm the archive (moved to `## Archived` under the chosen terminal stage).
+
+### Command: `restage <company> --stage <stage>` — fix an archived row's terminal stage
+
+`remove` reads `## Active` only, and `update` with a terminal stage is blocked, so a row archived
+under the wrong outcome is corrected with `restage`, never by hand-editing the file. The same rule
+as `remove` step 1 applies: **ask Nick which stage, do not derive it from Notes.**
+```bash
+PYTHONIOENCODING=utf-8 python3 tools/pipe_write.py --repo-root . restage "<company>" \
+  [--role ROLE] --stage Withdrawn|Rejected|Accepted
+```
+Date Updated is kept (a correction is not a pipeline move) and Notes gets
+`[restaged <date>: Old -> New]`. Codes: `not_found` (no archived row; an active row closes with
+`remove`), `ambiguous_match` (pass `--role`), `unchanged_stage`, `invalid_stage`.
 
 ## Pipeline Stages
 

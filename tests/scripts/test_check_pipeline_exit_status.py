@@ -112,7 +112,7 @@ def test_block_message_names_the_masking_command():
     err = _stderr(ORIGIN_2)
     assert "BLOCKED: pipeline masks the exit status" in err
     assert "tail" in err
-    assert "PIPESTATUS" in err
+    assert "$pipestatus[1]" in err
 
 
 # --- should BLOCK (exit 2) ---------------------------------------------------
@@ -142,7 +142,7 @@ def test_blocks(command):
     # the three correct forms from the rule
     'if cmd -q "$X"; then echo "  ok"; else echo "  FAILED"; fi',
     'out=$(cmd "$X") || { echo "  FAILED"; exit 1; }',
-    "cmd \"$X\" | sed 's/a/b/'; [ \"${PIPESTATUS[0]}\" -eq 0 ] || echo FAILED",
+    "cmd \"$X\" | sed 's/a/b/'; [ \"$pipestatus[1]\" -eq 0 ] || echo FAILED",
     "set -o pipefail; cmd | tail -5 || echo FAILED",
     # informative-status final stages — a real verdict, not a masked one
     "cmd | grep -q foo || echo 'not found'",
@@ -353,12 +353,122 @@ def test_a_mention_of_pipefail_or_pipestatus_does_not_exempt(command):
 @pytest.mark.parametrize("command", [
     "set -euo pipefail; cmd | tail -5 || echo FAILED",
     "set -eo pipefail\ncmd | tail -5\necho $?",
+    # zsh's status read in its own statement reads no `$?`, so it passes without any
+    # exemption (the whole-command exemption was removed, Q13, Grok q13-r2 F1)
+    "cmd | tail -1; echo \"$pipestatus[1]\"",
+    "cmd | tail -1; echo \"${pipestatus[1]}\"",
+    "cmd | tail -1; s=$pipestatus[1]; [ \"$s\" -eq 0 ] || echo FAILED",
+])
+def test_effective_pipefail_or_a_zsh_status_read_passes(command):
+    assert _run(command) == 0, command
+
+
+# --- Q13 (Nick, 2026-11-16; Codex 1.F1 + Grok 2.F1 on a149eea3) ---------------------
+# zsh, the shell Claude Code runs here, has `pipestatus` (lowercase, 1-indexed). The
+# bash spelling `${PIPESTATUS[0]}` expands EMPTY in zsh, so a command that reads it has
+# not handled the pipeline status at all. It must not exempt the command.
+# Verified: zsh -f -c 'false | true; echo "[${PIPESTATUS[0]}] [$pipestatus[1]]"' -> [] [1]
+
+@pytest.mark.parametrize("command", [
     "cmd | tail -1; echo \"${PIPESTATUS[0]}\"",
     "cmd | tail -1; s=$PIPESTATUS; echo $?",
     "cmd | tail -1 || echo failed ${PIPESTATUS[0]}",
+    "cmd | sed 's/a/b/' || echo FAILED; [ \"${PIPESTATUS[0]}\" -eq 0 ]",
+    "out=$(cmd 2>&1 | tail -5); echo \"rc=$? first=${PIPESTATUS[0]}\"",
+    # the real shapes behind the rule (generic stand-ins for 89 transcript commands)
+    "git push origin main 2>&1 | tail -12; echo \"push exit=${PIPESTATUS[0]}\"",
+    "bash tools/backup.sh 2>&1 | tail -6; echo exit=${PIPESTATUS[0]}",
+    "a | python3 tools/gate.py --numstat - 2>&1 | head -40; echo \"exit=${PIPESTATUS[1]}\"",
+    "echo ${PIPESTATUS[0]}",
+    # an expanded read is broken even when zsh's array is ALSO read
+    "cmd | tail -1; echo \"$pipestatus[1] ${PIPESTATUS[0]}\"",
 ])
-def test_effective_pipefail_or_a_pipestatus_read_still_exempts(command):
+# Known gap, not pinned: an UNQUOTED heredoc body expands `${PIPESTATUS[0]}` too, but
+# strip_literals blanks a body that holds no `$(` or backtick, so the read is not seen.
+# Same blind spot as the heredoc-body proposal in the private infra backlog; the
+# shell_tokens rebuild of strip_literals is where it closes.
+def test_bash_uppercase_pipestatus_does_not_exempt_in_zsh(command):
+    assert _run(command) == 2, command
+
+
+@pytest.mark.parametrize("command", [
+    # where zsh does NOT expand it, it is text, not a read
+    "zsh -c 'false | cat; echo \"[${PIPESTATUS[0]}]\"'",
+    "echo 'bash uses ${PIPESTATUS[0]}'",
+    "cat > /tmp/t.py <<'EOF'\nassert '${PIPESTATUS[0]}' not in out\nEOF",
+    "echo 'see PIPESTATUS docs'",
+])
+def test_bash_pipestatus_inside_literals_is_not_a_read(command):
     assert _run(command) == 0, command
+
+
+# Codex + Grok q13-r1, F1: the exemption must read the same literal-stripped text as every
+# other check, so a lowercase mention inside a quoted heredoc is text and exempts nothing.
+@pytest.mark.parametrize("command", [
+    "cat <<'EOF'\n$pipestatus[1]\nEOF\nfalse | tail -1\necho $?",
+    "echo 'use $pipestatus[1]'; false | tail -1; echo $?",
+    "echo \"\\$pipestatus[1] is zsh\"; false | tail -1; echo $?",
+])
+def test_a_literal_lowercase_pipestatus_does_not_exempt(command):
+    assert _run(command) == 2, command
+
+
+# Grok q13-r2 F1: a `$pipestatus` read on the `||` branch of the pipeline does not make
+# that `||` live, and a read anywhere in the command no longer exempts it.
+@pytest.mark.parametrize("command", [
+    "cmd | tail -1 || echo failed $pipestatus[1]",
+    "cmd | tail -1; echo $?; echo $pipestatus[1]",
+])
+def test_a_zsh_status_read_elsewhere_does_not_exempt(command):
+    assert _run(command) == 2, command
+
+
+# Codex q13-r2 F1: `\\$` is a literal backslash followed by a REAL expansion.
+@pytest.mark.parametrize("command", [
+    "echo \"\\\\${PIPESTATUS[0]}\"",
+    "echo \\\\$PIPESTATUS",
+])
+def test_an_even_backslash_run_does_not_escape_the_read(command):
+    assert _run(command) == 2, command
+
+
+# F2: an escaped `\$` is printed, not expanded, so it is not a read in either spelling.
+@pytest.mark.parametrize("command", [
+    "printf '%s\\n' \"\\${PIPESTATUS[0]}\"",
+    "echo \"bash spells it \\$PIPESTATUS\"",
+    "bash -c \"false | true; echo \\${PIPESTATUS[0]}\"",
+])
+def test_an_escaped_bash_pipestatus_is_not_a_read(command):
+    assert _run(command) == 0, command
+
+
+def _bash_pipestatus_remedies():
+    r = subprocess.run([sys.executable, str(SCRIPT)], capture_output=True, text=True,
+                       env=_env(), input=json.dumps({"tool_input": {
+                           "command": "cmd | tail -1; echo ${PIPESTATUS[0]}"}}))
+    assert r.returncode == 2
+    return r.stderr, [ln.strip() for ln in r.stderr.splitlines() if ln.startswith("  ")]
+
+
+def test_bash_pipestatus_message_names_zsh_and_offers_lowercase():
+    err, remedies = _bash_pipestatus_remedies()
+    assert "zsh" in err and "EMPTY" in err
+    assert remedies and all("PIPESTATUS" not in r for r in remedies)
+    assert any("$pipestatus[1]" in r for r in remedies)
+
+
+@pytest.mark.parametrize("rc", [0, 1])
+def test_bash_pipestatus_message_remedies_report_the_real_status_in_zsh(rc, tmp_path):
+    # Every printed remedy, run in zsh with the command under test exiting rc, must
+    # report rc (or print FAILED exactly when rc != 0).
+    _, remedies = _bash_pipestatus_remedies()
+    for line in remedies:
+        script = line.replace('cmd "$X"', f"(exit {rc})").replace("/tmp/o.txt", str(tmp_path / "o.txt"))
+        out = subprocess.run(["/bin/zsh", "-f", "-c", script], capture_output=True, text=True).stdout
+        if "FAILED" in line:
+            assert ("FAILED" in out) == (rc != 0), (line, out)
+        else:
+            assert f"exit={rc}" in out, (line, out)
 
 
 # --- round-five review of 663a887 (Grok run 252, F4) --------------------------
@@ -378,3 +488,39 @@ def test_set_pipefail_as_an_argument_is_not_set():
 def test_set_after_a_compound_keyword_is_in_command_position(command):
     """Codex and Grok reviews of 7f43845: a false block."""
     assert _run(command) == 0, command
+
+
+# --- the printed remedies must work in the shell Claude Code runs (zsh) ---------
+# 2026-11-16: the message recommended ${PIPESTATUS[0]}, which is EMPTY in zsh, so the
+# most-repeated block class printed a fix that cannot work (RULING Q6, hooks.md).
+
+def _remedies(fmt_cmd: str = "cmd | tail -5; echo $?") -> list[str]:
+    err = _stderr(fmt_cmd)
+    lines = err.split("Correct forms:\n", 1)[1].split("\n\n", 1)[0].splitlines()
+    return [l.strip() for l in lines if l.strip()]
+
+
+def test_message_prints_no_bash_only_pipestatus():
+    for r in _remedies():
+        assert "PIPESTATUS" not in r, r
+
+
+def test_message_offers_the_zsh_pipestatus_form():
+    assert any("$pipestatus[1]" in r for r in _remedies())
+
+
+@pytest.mark.skipif(not Path("/bin/zsh").exists(), reason="zsh not installed")
+@pytest.mark.parametrize("rc,should_fail", [(1, True), (0, False)])
+def test_every_printed_remedy_reports_the_real_status_under_zsh(rc, should_fail):
+    """Each printed form, run under zsh with a command exiting rc, must signal failure
+    exactly when rc != 0: 'FAILED' printed, 'exit=1' printed, or a nonzero shell exit."""
+    for form in _remedies():
+        script = f"cmd() {{ echo out; return {rc}; }}\nX=x\n{form.replace('...', '')}\n"
+        r = subprocess.run(["/bin/zsh", "-f", "-c", script], capture_output=True, text=True, timeout=30)
+        failed = ("FAILED" in r.stdout) or ("exit=1" in r.stdout) or r.returncode != 0
+        assert failed is should_fail, (form, rc, r.stdout, r.stderr, r.returncode)
+
+
+def test_the_hook_does_not_block_its_own_printed_remedies():
+    for form in _remedies():
+        assert _run(form.replace("...", "")) == 0, form

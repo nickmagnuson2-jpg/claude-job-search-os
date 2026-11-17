@@ -37,7 +37,6 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from build_check import ask_state  # noqa: E402
 from check_draft_voice import extract_body, is_open_draft_invocation, read_hook_command  # noqa: E402
-from sent_artifact_check import URL_RE, cv_index, is_bio, load_bio  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DRAFT_FILE = Path(__file__).parent / ".pending-draft.txt"
@@ -70,6 +69,10 @@ def _is_rendered_cv(path: str, cvs: set[str]) -> bool:
 
 def artifact_items(content: str, root: Path) -> list[str]:
     """Attachments that are not a rendered CV, and links that are not a bio link."""
+    # Imported here, not at module level: sent_artifact_check pulls in gmail_fetch and
+    # bs4 (~60 ms), and this hook runs on every Bash call while only a staged draft
+    # with attachments or links reaches this function.
+    from sent_artifact_check import URL_RE, cv_index, is_bio, load_bio
     attach, _, subject = headers(content)
     cvs = cv_index(root)
     bio, _err = load_bio(root / "tools")

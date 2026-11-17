@@ -43,7 +43,9 @@ def test_block_attributes_to_operand_script():
     )
     # Compound command whose first token is git, so tools/ parse misses.
     cmd = "cd ~/proj && git rev-parse && python3 todo_write.py add 'x' --priority High"
-    assert fs.derive_surface("Bash", cmd, err) == "todo_write.py"
+    # RULING Q9 (2026-11-16): a hook that blocked as designed is filed on its own
+    # block:<hook> surface (model-habit ladder); the operand stays in the nature text.
+    assert fs.derive_surface("Bash", cmd, err) == "block:check_todo_write_kwargs.py"
 
 
 def test_block_falls_back_to_check_script():
@@ -52,8 +54,9 @@ def test_block_falls_back_to_check_script():
         "BLOCKED: bare `python` invocation detected."
     )
     cmd = "cd ~/proj && python tools/pipeline_staleness.py"
-    # tools/pipeline_staleness.py is present and non-excluded -> step 2 wins first.
-    assert fs.derive_surface("Bash", cmd, err) == "pipeline_staleness.py"
+    # RULING Q10 (2026-11-16): the harness header names the hook and wins over a
+    # tools/*.py named in the command (SCRIPT_RE used to win).
+    assert fs.derive_surface("Bash", cmd, err) == "block:check_bare_python.py"
 
 
 def test_block_check_script_when_no_tools_in_command():
@@ -62,7 +65,7 @@ def test_block_check_script_when_no_tools_in_command():
         "BLOCKED: bare `python` invocation detected."
     )
     cmd = "python somescript.py"  # no tools/, no BLOCKED operand .py
-    assert fs.derive_surface("Bash", cmd, err) == "check_bare_python.py"
+    assert fs.derive_surface("Bash", cmd, err) == "block:check_bare_python.py"
 
 
 # --- NEW: inline python -c attribution (was bash:cd Traceback) ---

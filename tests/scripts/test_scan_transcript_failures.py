@@ -145,7 +145,7 @@ def test_real_shell_error_is_left_to_the_normal_path():
 # --- extract_text -----------------------------------------------------------
 
 def test_extract_text_passes_a_string_through():
-    assert st.extract_text("boom") == "boom"
+    assert st.extract_text("Error: boom") == "Error: boom"
 
 
 def test_extract_text_joins_text_blocks():
@@ -239,7 +239,7 @@ def test_scan_logs_an_errored_tool_result(tmp_path, captured):
 
 def test_scan_ignores_results_at_or_before_the_cursor(tmp_path, captured):
     t = _transcript(tmp_path, [_use("t1", "python3 tools/pipe_write.py"),
-                               _result("t1", "boom")])
+                               _result("t1", "Error: boom")])
     _, logged, _ = st.scan(t, start_line=2)
     assert logged == 0
     assert captured == []
@@ -249,7 +249,7 @@ def test_scan_does_not_relog_an_id_already_logged(tmp_path, captured):
     """What makes the deliberate overlap re-scan safe: without this, every rescan
     re-appends the same error and inflates friction_log's occurrence count."""
     t = _transcript(tmp_path, [_use("t1", "python3 tools/pipe_write.py"),
-                               _result("t1", "boom")])
+                               _result("t1", "Error: boom")])
     _, logged, _ = st.scan(t, 0, logged_ids={"t1"})
     assert logged == 0
     assert captured == []
@@ -272,7 +272,7 @@ def test_scan_catches_a_masked_python_crash_that_reported_success(tmp_path, capt
 
 def test_scan_skips_friction_infrastructure_commands(tmp_path, captured):
     t = _transcript(tmp_path, [_use("t1", "python3 tools/friction_log.py --help"),
-                               _result("t1", "boom")])
+                               _result("t1", "Error: boom")])
     _, logged, _ = st.scan(t, 0)
     assert logged == 0
 
@@ -280,7 +280,7 @@ def test_scan_skips_friction_infrastructure_commands(tmp_path, captured):
 def test_scan_tolerates_malformed_jsonl_lines(tmp_path, captured):
     p = tmp_path / "s.jsonl"
     p.write_text("not json\n" + json.dumps(_use("t1", "python3 tools/x.py")) + "\n"
-                 + json.dumps(_result("t1", "boom")) + "\n", encoding="utf-8")
+                 + json.dumps(_result("t1", "Error: boom")) + "\n", encoding="utf-8")
     _, logged, _ = st.scan(p, 0)
     assert logged == 1, "one bad line must not abort the whole scan"
 
@@ -312,7 +312,7 @@ def test_scan_skips_malformed_entries_without_logging_or_crashing(tmp_path, capt
     isinstance checks can all be inverted and the suite stays green."""
     t = _transcript(tmp_path, [entry,
                                _use("t1", "python3 tools/x.py"),
-                               _result("t1", "boom")])
+                               _result("t1", "Error: boom")])
     _, logged, _ = st.scan(t, 0)
     assert logged == 1, "the malformed entry must be skipped, the real error still logged"
     assert len(captured) == 1
@@ -325,7 +325,7 @@ def test_a_tool_use_without_an_id_is_not_indexed(tmp_path, captured):
         {"message": {"content": [{"type": "tool_use", "name": "Bash",
                                   "input": {"command": "python3 tools/ghost.py"}}]}},
         _use("t1", "python3 tools/real.py"),
-        _result("t1", "boom")])
+        _result("t1", "Error: boom")])
     _, logged, _ = st.scan(t, 0)
     assert logged == 1
     assert "ghost" not in captured[0][0], "must not attribute the error to the id-less use"
@@ -354,7 +354,7 @@ def test_an_unattributable_error_is_skipped_rather_than_logged_as_bare_bash(tmp_
                                                                             captured):
     """`if not surface or surface == "bash:"` — a row with no identifiable surface is
     useless in the ledger and cannot be deduped against anything."""
-    t = _transcript(tmp_path, [_use("t1", ""), _result("t1", "something went wrong")])
+    t = _transcript(tmp_path, [_use("t1", ""), _result("t1", "Error: something went wrong")])
     _, logged, _ = st.scan(t, 0)
     assert all(s and s != "bash:" for s, _ in captured), \
         "no row may be logged with an empty or bare 'bash:' surface"
@@ -382,7 +382,7 @@ def test_a_python_crash_keeps_its_own_nature_not_the_shell_path(tmp_path, captur
                                _result("t1", REAL_CRASH, is_error=False)])
     _, logged, _ = st.scan(t, 0)
     assert logged == 1
-    assert "NameError" in captured[0][1] or "boom" in captured[0][1]
+    assert "NameError" in captured[0][1] or "Error: boom" in captured[0][1]
 
 
 # --- resolve_transcript_path (issue #44450 worktree fallback) ----------------
@@ -514,7 +514,7 @@ def _write_transcript(p: Path, n_errors: int = 1) -> Path:
     rows = []
     for i in range(n_errors):
         rows.append(_use(f"t{i}", "python3 tools/pipe_write.py"))
-        rows.append(_result(f"t{i}", "boom"))
+        rows.append(_result(f"t{i}", "Error: boom"))
     p.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
     return p
 

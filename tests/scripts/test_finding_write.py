@@ -522,3 +522,349 @@ def test_cli_accept(repo):
 def test_cli_accept_on_an_open_P0_exits_2(repo):
     r = run_cli(repo, "accept", "1.F1", "--why", "ship")
     assert r.returncode == 2 and "Park it first" in r.stderr
+
+
+# --- RULING Q20 (2026-11-16): a disposition written in a linked worktree also reaches the
+# mirrored row in the MAIN checkout's ledger, so it survives `git worktree remove`. -------
+
+import codex_verify as cv  # noqa: E402  (the same module object finding_write imports)
+
+_REAL_RUN = subprocess.run
+W_ROW = {
+    "recorded": "2026-11-16T12:00:00+00:00", "model": "codex", "target": "t",
+    "report": "output/analysis/111626-codex-x-r1.md", "paths": ["tools/x.py"],
+    "findings": [
+        {"id": "F1", "severity": "P0", "summary": "a P0", "disposition": "parked", "why": "later"},
+        {"id": "F2", "severity": "P1", "summary": "a P1", "disposition": None},
+    ],
+    "waived": False,
+}
+MAIN_OWN = {**ROW_1, "model": "codex"}       # main's own review: no worktree field
+
+
+def _git(cwd, *args):
+    _REAL_RUN(["git", "-C", str(cwd), *args], check=True, capture_output=True, text=True)
+
+
+def _write_ledger(root: Path, rows) -> Path:
+    p = root / "tools" / fw.LEDGER_NAME
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+    return p
+
+
+@pytest.fixture()
+def mirrored(tmp_path):
+    """A real git main checkout and linked worktree. The worktree's ledger holds W_ROW;
+    main's holds its own review and the mirror of W_ROW (as codex_verify writes it)."""
+    main = tmp_path / "main"
+    (main / "tools").mkdir(parents=True)
+    (main / "tools" / "x.py").write_text("x = 1\n", encoding="utf-8")
+    _git(main.parent, "init", "-q", "-b", "main", str(main))
+    _git(main, "add", "-A")
+    _git(main, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "one")
+    wt = tmp_path / "wt"
+    _git(main, "worktree", "add", "-q", "-b", "feature", str(wt))
+    main, wt = main.resolve(), wt.resolve()
+    _write_ledger(wt, [W_ROW])
+    _write_ledger(main, [MAIN_OWN, {**W_ROW, "worktree": str(wt)}])
+    return main, wt
+
+
+def _rows(root):
+    return [json.loads(ln) for ln in fw.read_lines(fw.ledger_path(root))]
+
+
+def _cli(capsys, root, *args):
+    rc = fw.main(["--repo-root", str(root), *args])
+    cap = capsys.readouterr()
+    return rc, (json.loads(cap.out) if cap.out.strip() else None), cap.err
+
+
+def test_set_in_a_worktree_updates_the_mirrored_row_in_main(mirrored, capsys):
+    main, wt = mirrored
+    before_main_own = fw.read_lines(fw.ledger_path(main))[0]
+    rc, out, err = _cli(capsys, wt, "set", "1.F2", "--disposition", "parked", "--why", "freeze")
+    assert rc == 0 and out["mirrored"] is True
+    w = _rows(wt)[0]["findings"][1]
+    m = _rows(main)[1]["findings"][1]
+    assert (m["disposition"], m["why"], m["dispositioned"]) == ("parked", "freeze", w["dispositioned"])
+    assert fw.read_lines(fw.ledger_path(main))[0] == before_main_own       # main's own row untouched
+    assert _rows(main)[1]["findings"][0] == W_ROW["findings"][0]           # the other finding untouched
+
+
+def test_accept_in_a_worktree_reaches_main_and_a_later_set_clears_it_there(mirrored, capsys):
+    main, wt = mirrored
+    rc, out, _ = _cli(capsys, wt, "accept", "1.F1", "--why", "ship it")
+    assert rc == 0 and out["mirrored"] is True
+    w, m = _rows(wt)[0]["findings"][0], _rows(main)[1]["findings"][0]
+    for k in fw.ACCEPT_FIELDS:
+        assert m[k] == w[k]
+    rc, out, _ = _cli(capsys, wt, "set", "1.F1", "--disposition", "fixed", "--why", "done", "--force")
+    assert rc == 0 and out["mirrored"] is True
+    m = _rows(main)[1]["findings"][0]
+    assert m["disposition"] == "fixed" and not any(k in m for k in fw.ACCEPT_FIELDS)
+
+
+def _main_unchanged_after_set(capsys, main, wt, expect_in_err):
+    before = fw.ledger_path(main).read_bytes() if fw.ledger_path(main).exists() else None
+    rc, out, err = _cli(capsys, wt, "set", "1.F2", "--disposition", "parked", "--why", "w")
+    assert rc == 0 and out["mirrored"] is False
+    assert _rows(wt)[0]["findings"][1]["disposition"] == "parked"          # the worktree write stands
+    after = fw.ledger_path(main).read_bytes() if fw.ledger_path(main).exists() else None
+    assert after == before
+    for s in expect_in_err:
+        assert s in err
+
+
+def test_no_mirrored_row_warns_with_the_rows_identity_and_changes_nothing(mirrored, capsys):
+    main, wt = mirrored
+    _write_ledger(main, [MAIN_OWN])
+    _main_unchanged_after_set(capsys, main, wt,
+                              [W_ROW["report"], W_ROW["model"], W_ROW["recorded"]])
+
+
+def test_mains_own_review_with_the_same_identity_is_never_overwritten(mirrored, capsys):
+    main, wt = mirrored
+    _write_ledger(main, [MAIN_OWN, dict(W_ROW)])                           # no worktree field
+    _main_unchanged_after_set(capsys, main, wt, [W_ROW["report"]])
+
+
+def test_another_worktrees_mirror_is_not_touched(mirrored, capsys, tmp_path):
+    main, wt = mirrored
+    _write_ledger(main, [MAIN_OWN, {**W_ROW, "worktree": str(tmp_path / "other")}])
+    _main_unchanged_after_set(capsys, main, wt, [W_ROW["report"]])
+
+
+def test_two_matching_mirrors_are_ambiguous_and_change_nothing(mirrored, capsys):
+    main, wt = mirrored
+    mirror = {**W_ROW, "worktree": str(wt)}
+    _write_ledger(main, [MAIN_OWN, mirror, mirror])
+    _main_unchanged_after_set(capsys, main, wt, [W_ROW["report"]])
+
+
+def test_a_mirror_without_that_finding_id_changes_nothing(mirrored, capsys):
+    main, wt = mirrored
+    _write_ledger(main, [MAIN_OWN, {**W_ROW, "worktree": str(wt),
+                                    "findings": [W_ROW["findings"][0]]}])
+    _main_unchanged_after_set(capsys, main, wt, ["F2"])
+
+
+def test_a_missing_main_ledger_is_not_created(mirrored, capsys):
+    main, wt = mirrored
+    fw.ledger_path(main).unlink()
+    _main_unchanged_after_set(capsys, main, wt, [W_ROW["report"]])
+    assert not fw.ledger_path(main).exists()
+
+
+def test_a_worktree_recorded_through_a_symlink_still_matches(mirrored, capsys, tmp_path):
+    main, wt = mirrored
+    link = tmp_path / "wt-link"
+    link.symlink_to(wt)
+    _write_ledger(main, [MAIN_OWN, {**W_ROW, "worktree": str(link)}])
+    rc, out, _ = _cli(capsys, wt, "set", "1.F2", "--disposition", "parked", "--why", "w")
+    assert rc == 0 and out["mirrored"] is True
+    assert _rows(main)[1]["findings"][1]["disposition"] == "parked"
+
+
+def test_outside_a_worktree_no_resolver_runs_and_mirrored_is_null(repo, capsys, monkeypatch):
+    def boom(root):
+        raise AssertionError("resolver called outside a worktree")
+    monkeypatch.setattr(cv, "_main_checkout", boom)
+    rc, out, _ = _cli(capsys, repo, "set", "1.F2", "--disposition", "parked", "--why", "w")
+    assert rc == 0 and out["mirrored"] is None
+
+
+def test_a_resolver_failure_warns_and_the_worktree_write_stands(mirrored, capsys, monkeypatch):
+    main, wt = mirrored
+    def boom(root):
+        raise RuntimeError("cannot find the main checkout")
+    monkeypatch.setattr(cv, "_main_checkout", boom)
+    _main_unchanged_after_set(capsys, main, wt, ["cannot find the main checkout"])
+
+
+def test_inside_a_test_run_a_real_main_ledger_is_never_written(mirrored, capsys, monkeypatch):
+    main, wt = mirrored
+    monkeypatch.setattr(cv, "_real_ledger_roots", lambda: {main})
+    _main_unchanged_after_set(capsys, main, wt, ["real ledger"])
+
+
+def test_a_failed_worktree_write_never_reaches_main(mirrored, capsys):
+    main, wt = mirrored
+    before = fw.ledger_path(main).read_bytes()
+    rc, out, err = _cli(capsys, wt, "set", "1.F9", "--disposition", "parked", "--why", "w")
+    assert rc == 2 and out is None
+    assert fw.ledger_path(main).read_bytes() == before
+
+
+def test_a_resolver_that_finds_no_main_checkout_means_no_mirror(mirrored, capsys, monkeypatch):
+    """codex_verify's mirror treats a None main checkout as 'nothing to mirror' (None, no
+    warning); the disposition sync agrees."""
+    main, wt = mirrored
+    before = fw.ledger_path(main).read_bytes()
+    monkeypatch.setattr(cv, "_main_checkout", lambda root: None)
+    rc, out, err = _cli(capsys, wt, "set", "1.F2", "--disposition", "parked", "--why", "w")
+    assert rc == 0 and out["mirrored"] is None and err == ""
+    assert fw.ledger_path(main).read_bytes() == before
+
+
+def test_a_malformed_main_line_after_the_mirror_is_kept_and_does_not_double_match(mirrored, capsys):
+    main, wt = mirrored
+    p = fw.ledger_path(main)
+    p.write_text(p.read_text(encoding="utf-8") + MALFORMED + "\n", encoding="utf-8")
+    rc, out, _ = _cli(capsys, wt, "set", "1.F2", "--disposition", "parked", "--why", "w")
+    assert rc == 0 and out["mirrored"] is True
+    assert fw.read_lines(p)[-1] == MALFORMED
+    assert json.loads(fw.read_lines(p)[1])["findings"][1]["disposition"] == "parked"
+
+
+def test_duplicate_finding_ids_in_mains_mirror_are_never_resolved_first_match(mirrored, capsys):
+    """The same rule _edit_finding keeps: two findings with one id do not identify a record."""
+    main, wt = mirrored
+    dup = W_ROW["findings"][1]
+    _write_ledger(main, [MAIN_OWN, {**W_ROW, "worktree": str(wt),
+                                    "findings": [W_ROW["findings"][0], dup, dict(dup)]}])
+    # Main's findings differ from the worktree row's, so the signature does not match: the
+    # set warns and writes nothing, never picking the first F2.
+    _main_unchanged_after_set(capsys, main, wt, ["0 mirrored rows"])
+
+
+
+# --- Codex findings-durable r1 (2026-11-16): F1 and F2 -------------------------------------
+
+def test_the_worktree_lock_is_held_while_main_is_updated(mirrored, capsys, monkeypatch):
+    """F1: the worktree lock was released before the main update, so two sessions could
+    interleave and an older captured disposition could win in main. The worktree write and
+    the main update now happen under one hold of the worktree ledger's lock."""
+    import contextlib
+    import inbox_lock
+    main, wt = mirrored
+    held, seen = [], []
+    real_lock, real_update = inbox_lock.file_lock, inbox_lock.atomic_update
+
+    @contextlib.contextmanager
+    def tracking_lock(path, *a, **k):
+        with real_lock(path, *a, **k):
+            held.append(Path(path).resolve())
+            try:
+                yield
+            finally:
+                held.remove(Path(path).resolve())
+
+    def tracking_update(path, transform, *a, **k):
+        seen.append((Path(path).resolve(), list(held)))
+        return real_update(path, transform, *a, **k)
+    monkeypatch.setattr(inbox_lock, "file_lock", tracking_lock)
+    monkeypatch.setattr(inbox_lock, "atomic_update", tracking_update)
+    rc, out, _ = _cli(capsys, wt, "set", "1.F2", "--disposition", "parked", "--why", "w")
+    assert rc == 0 and out["mirrored"] is True
+    main_updates = [h for p, h in seen if p == fw.ledger_path(main).resolve()]
+    assert main_updates and fw.ledger_path(wt).resolve() in main_updates[0]
+
+
+def _two_runs(wt, main, s1, s2, mirror_both=True):
+    r1 = {**W_ROW, "findings": [{"id": "F1", "severity": "P1", "summary": s1, "disposition": None}]}
+    r2 = {**W_ROW, "findings": [{"id": "F1", "severity": "P1", "summary": s2, "disposition": None}]}
+    _write_ledger(wt, [r1, r2])
+    mirrors = [{**r1, "worktree": str(wt)}] + ([{**r2, "worktree": str(wt)}] if mirror_both else [])
+    _write_ledger(main, [MAIN_OWN] + mirrors)
+
+
+def test_runs_sharing_a_key_each_reach_only_their_own_mirror(mirrored, capsys):
+    """F2: two runs with one (report, model, recorded) are told apart by their findings."""
+    main, wt = mirrored
+    _two_runs(wt, main, "first", "second")
+    rc, out, _ = _cli(capsys, wt, "set", "2.F1", "--disposition", "parked", "--why", "run two")
+    assert rc == 0 and out["mirrored"] is True
+    rows = _rows(main)
+    assert rows[1]["findings"][0].get("disposition") is None          # run one untouched
+    assert rows[2]["findings"][0]["why"] == "run two"
+
+
+def test_a_set_never_lands_on_another_runs_mirror_with_the_same_key(mirrored, capsys):
+    """F2, Codex's reproduction: main holds only run one's mirror (as the old dedupe left
+    it). A set on run two must not be written onto run one's finding."""
+    main, wt = mirrored
+    _two_runs(wt, main, "first", "second", mirror_both=False)
+    _main_unchanged_after_set_addr(capsys, main, wt, "2.F1", [W_ROW["report"]])
+
+
+def test_two_runs_with_identical_findings_are_ambiguous(mirrored, capsys):
+    main, wt = mirrored
+    _two_runs(wt, main, "same", "same")
+    _main_unchanged_after_set_addr(capsys, main, wt, "2.F1", ["2 mirrored rows"])
+
+
+def test_a_disposition_on_one_run_leaves_the_other_runs_match_intact(mirrored, capsys):
+    """b2's edge case (ii): dispositions are not in the signature, so after run one is
+    dispositioned (in both copies) run two still matches only its own mirror, and run one
+    still matches its own on a later --force."""
+    main, wt = mirrored
+    _two_runs(wt, main, "first", "second")
+    for args in (("1.F1", "parked", "one"), ("2.F1", "parked", "two"), ("1.F1", "fixed", "one again")):
+        rc, out, _ = _cli(capsys, wt, "set", args[0], "--disposition", args[1], "--why", args[2], "--force")
+        assert rc == 0 and out["mirrored"] is True
+    rows = _rows(main)
+    assert (rows[1]["findings"][0]["why"], rows[2]["findings"][0]["why"]) == ("one again", "two")
+
+
+def _main_unchanged_after_set_addr(capsys, main, wt, addr, expect_in_err):
+    before = fw.ledger_path(main).read_bytes()
+    rc, out, err = _cli(capsys, wt, "set", addr, "--disposition", "parked", "--why", "w")
+    assert rc == 0 and out["mirrored"] is False
+    assert fw.ledger_path(main).read_bytes() == before
+    for s in expect_in_err:
+        assert s in err
+
+
+# --- Part B amendment 2 (org, 2026-11-16): mirrors carry worktree_run; fail closed ---------
+
+def _pos_mirror(wt, row, run):
+    return {**row, "worktree": str(wt), "worktree_run": run}
+
+
+def test_a_positioned_mirror_is_matched_by_its_run_number(mirrored, capsys):
+    main, wt = mirrored
+    _write_ledger(main, [MAIN_OWN, _pos_mirror(wt, W_ROW, 1)])
+    rc, out, _ = _cli(capsys, wt, "set", "1.F2", "--disposition", "parked", "--why", "w")
+    assert rc == 0 and out["mirrored"] is True
+    assert _rows(main)[1]["findings"][1]["disposition"] == "parked"
+
+
+def test_a_legacy_mirror_without_worktree_run_still_syncs_by_identity(mirrored, capsys):
+    """Rows mirrored before amendment 2 (main row 951 on 2026-11-16) have no worktree_run;
+    they keep the identity-only match."""
+    main, wt = mirrored
+    assert "worktree_run" not in _rows(main)[1]
+    rc, out, _ = _cli(capsys, wt, "set", "1.F2", "--disposition", "parked", "--why", "w")
+    assert rc == 0 and out["mirrored"] is True
+
+
+def test_two_colliding_legacy_mirrors_still_warn_and_write_nothing(mirrored, capsys):
+    """Defensive: two legacy mirrors with one identity (no position to tell them apart)."""
+    main, wt = mirrored
+    m = {**W_ROW, "worktree": str(wt)}
+    _write_ledger(main, [MAIN_OWN, m, m])
+    _main_unchanged_after_set(capsys, main, wt, ["2 mirrored rows"])
+
+
+def test_a_position_past_the_end_of_the_worktree_ledger_refuses(mirrored, capsys):
+    """Fail closed: a mirror pointing past the worktree ledger means positions shifted."""
+    main, wt = mirrored
+    _write_ledger(main, [MAIN_OWN, _pos_mirror(wt, W_ROW, 1), _pos_mirror(wt, W_ROW, 5)])
+    _main_unchanged_after_set(capsys, main, wt, ["REFUSED", "past the end"])
+
+
+def test_a_position_whose_identity_differs_refuses(mirrored, capsys):
+    main, wt = mirrored
+    other = {**W_ROW, "report": "output/analysis/someone-else.md"}
+    _write_ledger(main, [MAIN_OWN, _pos_mirror(wt, other, 1)])
+    _main_unchanged_after_set(capsys, main, wt, ["REFUSED", "identity"])
+
+
+def test_this_runs_identity_at_another_position_refuses(mirrored, capsys):
+    """The run's identity is mirrored, but at run 2 while the address is run 1: a shift."""
+    main, wt = mirrored
+    _write_ledger(wt, [W_ROW, dict(ROW_2)])
+    _write_ledger(main, [MAIN_OWN, _pos_mirror(wt, W_ROW, 2)])
+    _main_unchanged_after_set(capsys, main, wt, ["REFUSED", "run 2"])

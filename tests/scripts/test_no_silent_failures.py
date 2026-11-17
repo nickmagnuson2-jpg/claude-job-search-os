@@ -190,13 +190,6 @@ NON_HOOK_CHECKERS = {
     # make authoring impossible. It is invoked as a gate before an artifact ships,
     # the same shape as check_prep_doc.py.
     "check_frame_integrity.py",
-    # Run on demand against a finished voice-sim probe prompt, before a rep. Not a hook:
-    # a probe prompt is INCOMPLETE for most of its authoring life (the probe block is
-    # written before the follow-ups, the handshake before either), so a per-edit gate
-    # would block every intermediate save. Same gate-before-it-ships shape as
-    # check_prep_doc.py and check_frame_integrity.py. Property 8 (position) is not
-    # file-checkable at all, so no hook could close this rule anyway.
-    "check_probe_prompt.py",
 }
 
 

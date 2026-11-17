@@ -226,7 +226,10 @@ def match_score(existing: dict, surface: str, nature_kw: set[str]) -> float:
     jac = overlap / len(ex_kw | nature_kw)  # Jaccard
     if normalize_surface(existing["surface"]) == normalize_surface(surface):
         return jac
-    return jac if jac >= CROSS_SURFACE_MATCH else 0.0
+    # Never across surfaces (RULING Q10, 2026-11-16): a near-identical nature on another
+    # surface moved occurrences onto the wrong promotion count, e.g. an auto-mode classifier
+    # timeout counted 12 times against check_public_pii.py. Each surface keeps its own count.
+    return 0.0
 
 
 def find_matches(rows: list[dict], surface: str, nature: str, threshold: float = 0.25):
@@ -310,11 +313,18 @@ def date_cell(first: str, last: str) -> str:
     return first if first == last else f"{first}..{last}"
 
 
-def promotion_for(occurrences: int) -> str:
+MODEL_HABIT_RUNG = "model-habit (rewrite or teach; not a hook patch)"
+
+
+def promotion_for(occurrences: int, surface: str = "") -> str:
+    """The ladder rung for a row. A `block:<hook>` row is a hook that blocked AS DESIGNED, so
+    it rides the model-habit ladder and never demands a patch to the hook (RULING Q9)."""
     if occurrences <= 1:
         return "—"
     if occurrences == 2:
         return "memory (do now)"
+    if (surface or "").startswith("block:"):
+        return MODEL_HABIT_RUNG
     return "script-patch (mandatory)"
 
 
@@ -357,7 +367,7 @@ def cmd_append(args: argparse.Namespace) -> None:
             "nature": best["nature"],
             "fix": fix if args.fix else best["fix"],
             "occurrences": str(occurrences),
-            "promotion": promotion_for(occurrences),
+            "promotion": promotion_for(occurrences, best["surface"]),
         }
         # Drop the old matched row, re-add the updated one at the top.
         new_rows = [format_row(new_row)] + [r for r in data_rows if r != best["_raw"]]
@@ -370,7 +380,7 @@ def cmd_append(args: argparse.Namespace) -> None:
             "nature": nature,
             "fix": fix,
             "occurrences": "1",
-            "promotion": promotion_for(1),
+            "promotion": promotion_for(1, surface),
         }
         new_rows = [format_row(new_row)] + data_rows
         matched_raw = []
@@ -383,9 +393,12 @@ def cmd_append(args: argparse.Namespace) -> None:
 
     atomic_write(LEDGER, body)
 
+    # Same ladder as the stored Promotion cell: a block:<hook> row tops out at model-habit, so
+    # the consumer is never told to patch a hook that worked (Codex r3 F2, P0, 2026-11-16).
     promotion_action = (
         "none" if occurrences == 1
         else "memory" if occurrences == 2
+        else "model-habit" if new_row["surface"].startswith("block:")
         else "script-patch"
     )
     ok({
@@ -538,16 +551,18 @@ def cmd_dedup(args: argparse.Namespace) -> None:
     for p in parsed:
         (dropped if is_false_positive(p["nature"], p.get("fix", "")) else kept).append(p)
 
-    # Cluster on nature similarity ALONE — surface is contextual metadata, not the
-    # friction's identity. The bare-`python` interpreter error recurs across many
-    # surfaces (pipeline_staleness.py, networking_write.py, bash:cd, ...); keying on
-    # surface fragmented it into single-count rows so the promotion ladder never
-    # fired. DEDUP_THRESHOLD (0.6) is strict enough that distinct errors stay apart.
-    clusters: list[dict] = []  # {"rows": [...], "kw": set}
+    # Cluster on nature similarity WITHIN one surface (RULING Q10, 2026-11-16). This used
+    # to cluster across surfaces, so dedup summed occurrences onto one representative
+    # surface and its promotion ladder: the same cross-surface merge Q10 removed from
+    # append (Codex + Grok P0 on 1a6c4750). Each surface keeps its own count.
+    # DEDUP_THRESHOLD (0.6) is strict enough that distinct errors stay apart.
+    clusters: list[dict] = []  # {"rows": [...], "kw": set, "surface": str}
     for p in kept:
         p_kw = keywords(p["nature"])
         placed = False
         for c in clusters:
+            if normalize_surface(c["surface"]) != normalize_surface(p["surface"]):
+                continue
             if not p_kw or not c["kw"]:
                 continue
             jac = len(p_kw & c["kw"]) / len(p_kw | c["kw"])
@@ -556,7 +571,7 @@ def cmd_dedup(args: argparse.Namespace) -> None:
                 placed = True
                 break
         if not placed:
-            clusters.append({"rows": [p], "kw": p_kw})
+            clusters.append({"rows": [p], "kw": p_kw, "surface": p["surface"]})
 
     collapsed = []
     for c in clusters:
@@ -584,7 +599,7 @@ def cmd_dedup(args: argparse.Namespace) -> None:
             "nature": rep_nature,
             "fix": rep_fix,
             "occurrences": str(occ),
-            "promotion": promotion_for(occ),
+            "promotion": promotion_for(occ, rep_surface),
             "_occ": occ,
             "_last": last,
         })
