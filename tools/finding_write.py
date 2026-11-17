@@ -34,6 +34,18 @@ tried (2026-10-14) was bypassed in three straight review rounds and deleted. The
 is that every push needs Nick's Touch ID (2026-10-15), so `accept` is workflow state he
 sees at push time, not a lock. Changing a finding's disposition clears any acceptance,
 so a re-park needs a fresh one.
+
+A DISPOSITION WRITTEN IN A LINKED WORKTREE ALSO REACHES MAIN (RULING Q20, 2026-11-16). A
+worktree's ledger is gitignored and is deleted with the worktree. codex_verify mirrors each
+review row into the main checkout's ledger with a "worktree" field (mirror_to_main), but a
+disposition written later stayed in the worktree, so main kept the finding open forever
+(main rows 946/947: 5 findings open in main, parked in their worktree). After a successful
+worktree write, `set` and `accept` copy the finding's resolved fields onto the matching
+mirrored row in main. The match is the row identity (report, model, recorded) plus the
+finding id, and only a main row whose "worktree" names THIS worktree: never the run number,
+which differs per ledger, and never main's own review. No match, an ambiguous match or any
+error warns on stderr and leaves the worktree write standing; the result carries
+"mirrored": true, false, or null outside a linked worktree.
 """
 import argparse
 import json
@@ -57,6 +69,9 @@ ACCEPT_FIELDS = ("accepted_by", "accepted_at", "accepted_why")
 # accepted_by for the P0s that were parked before acceptance existed, grandfathered
 # in one pass on Nick's decision (2026-10-14) so core files did not all start blocking.
 LEGACY_ACCEPTOR = "legacy-2026-10-14"
+# What set/accept write on a finding: copied verbatim onto main's mirror, never recomputed,
+# so the two copies cannot differ by a timestamp. A field absent here is removed there.
+MIRRORED_FIELDS = ("disposition", "why", "dispositioned") + ACCEPT_FIELDS
 
 
 def ledger_path(repo_root: Path) -> Path:
@@ -133,9 +148,10 @@ def collect(repo_root: Path, only_open: bool = False,
     return out
 
 
-def _edit_finding(repo_root: Path, addr: str, apply) -> None:
+def _edit_finding(repo_root: Path, addr: str, apply) -> tuple:
     """Resolve `addr` to exactly one finding and let `apply(finding)` change it in place,
     under the ledger lock. `apply` raises to abort; nothing is written on any error.
+    Returns the edited row's identity (report, model, recorded).
     """
     run_no, fid = parse_addr(addr)
     path = ledger_path(repo_root)
@@ -199,10 +215,13 @@ def _edit_finding(repo_root: Path, addr: str, apply) -> None:
                 f"does not identify one record. Fix the duplicate ids in the ledger row "
                 f"before dispositioning it.")
         apply(matches[0])
+        ident["row"] = (row.get("report"), row.get("model"), row.get("recorded"))
         lines[run_no - 1] = json.dumps(row, ensure_ascii=False)
         return "\n".join(lines) + "\n"
 
+    ident: dict = {}
     inbox_lock.atomic_update(path, _transform)
+    return ident["row"]
 
 
 def set_disposition(repo_root: Path, addr: str, disposition: str, why: str,
@@ -234,13 +253,13 @@ def set_disposition(repo_root: Path, addr: str, disposition: str, why: str,
         # including parking again, needs a new one.
         for k in ACCEPT_FIELDS:
             target.pop(k, None)
+        captured["fields"] = {k: target[k] for k in MIRRORED_FIELDS if k in target}
         captured["result"] = {
             "addr": addr, "severity": target.get("severity"),
             "summary": target.get("summary"), "disposition": disposition,
             "why": target["why"], "dispositioned": target["dispositioned"]}
 
-    _edit_finding(repo_root, addr, _apply)
-    return captured["result"]
+    return _with_mirror(repo_root, addr, _edit_finding(repo_root, addr, _apply), captured)
 
 
 def accept(repo_root: Path, addr: str, why: str, by: str = "owner") -> dict:
@@ -267,13 +286,84 @@ def accept(repo_root: Path, addr: str, why: str, by: str = "owner") -> dict:
         target["accepted_by"] = by
         target["accepted_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
         target["accepted_why"] = why.strip()
+        captured["fields"] = {k: target[k] for k in MIRRORED_FIELDS if k in target}
         captured["result"] = {
             "addr": addr, "severity": target.get("severity"),
             "summary": target.get("summary"), "disposition": disp,
             **{k: target[k] for k in ACCEPT_FIELDS}}
 
-    _edit_finding(repo_root, addr, _apply)
-    return captured["result"]
+    return _with_mirror(repo_root, addr, _edit_finding(repo_root, addr, _apply), captured)
+
+
+class _NotMirrored(Exception):
+    """The main checkout has no single mirrored row and finding to update."""
+
+
+def _with_mirror(repo_root: Path, addr: str, ident: tuple, captured: dict) -> dict:
+    """Mirror the worktree write to main and add what happened to the result."""
+    _run, fid = parse_addr(addr)
+    report, model, recorded = ident
+    return {**captured["result"],
+            "row": {"report": report, "model": model, "recorded": recorded},
+            "mirrored": mirror_to_main(repo_root, ident, fid, captured["fields"])}
+
+
+def mirror_to_main(repo_root: Path, ident: tuple, fid: str, fields: dict) -> bool | None:
+    """Copy a worktree finding's resolved fields onto main's mirror of the same row.
+
+    None: `repo_root` is not a linked worktree, so there is no other copy. True: main's
+    mirror was updated. False: it was not, and stderr says why. Never raises, because the
+    worktree write has already happened and stands on its own.
+    """
+    import codex_verify as cv     # its resolver and test interlock; no second copy of either
+    root = Path(repo_root).resolve()
+    if not cv._is_linked_worktree(root):
+        return None
+    report, model, recorded = ident
+    where = f"report={report!r} model={model!r} recorded={recorded!r} finding {fid}"
+    try:
+        main = cv._main_checkout(root)
+        if main is None:
+            return None
+        main = Path(main).resolve()
+        if os.environ.get("PYTEST_CURRENT_TEST") and main in cv._real_ledger_roots():
+            raise _NotMirrored("not writing a real ledger inside a test run; "
+                               "use a tmp main checkout")
+
+        def _transform(text: str) -> str:
+            lines = [ln for ln in text.splitlines() if ln.strip()]
+            hits = []
+            for i, line in enumerate(lines):
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if (isinstance(row, dict) and row.get("worktree")
+                        and (row.get("report"), row.get("model"), row.get("recorded")) == ident
+                        and Path(row["worktree"]).resolve() == root):
+                    hits.append((i, row))
+            if len(hits) != 1:
+                raise _NotMirrored(f"{len(hits)} mirrored rows from this worktree match in "
+                                   f"main's ledger (rows reviewed before the mirror have none)")
+            i, row = hits[0]
+            found = [f for f in row.get("findings") or []
+                     if isinstance(f, dict) and str(f.get("id")) == fid]
+            if len(found) != 1:
+                raise _NotMirrored(f"main's mirrored row has {len(found)} findings with id {fid!r}")
+            for k in MIRRORED_FIELDS:
+                if k in fields:
+                    found[0][k] = fields[k]
+                else:
+                    found[0].pop(k, None)
+            lines[i] = json.dumps(row, ensure_ascii=False)
+            return "\n".join(lines) + "\n"
+
+        inbox_lock.atomic_update(ledger_path(main), _transform)
+        return True
+    except Exception as exc:      # the worktree write stands; only main's copy is stale
+        print(f"finding_write: warning: disposition not mirrored to the main checkout "
+              f"({where}): {exc}", file=sys.stderr)
+        return False
 
 
 def main(argv=None) -> int:
