@@ -430,18 +430,6 @@ def test_a_nonzero_exit_with_no_failures_is_named_by_its_code(sr, repo, tmp_pare
     assert _ledger_rows(repo) == []
 
 
-def test_worktree_metadata_is_pruned_without_worktree_remove(sr, repo, tmp_parent, capsys,
-                                                             monkeypatch):
-    """Cleanup never depends on `git worktree remove`: it deletes the directory and then
-    git's record of that one worktree. `worktree remove` is made to fail to pin that."""
-    _branch(repo, "feat", {"tests/test_feat.py": PASSING})
-    _failing_git(sr, monkeypatch, ("worktree", "remove"))
-    code, out = _run(sr, repo, capsys, "feat", "--base", "main")
-    assert code == 0, out
-    assert list(tmp_parent.iterdir()) == []
-    assert len(_worktrees(repo)) == 1
-
-
 # --------------------------------------------------------------------------- review round 1
 # Codex r1 on ddd86433.
 

@@ -117,17 +117,19 @@ def admin_dir(wt: Path, common: Path) -> Path | None:
         text = (wt / ".git").read_text(encoding="utf-8").strip()
     except OSError:
         return None
-    if not text.startswith("gitdir: "):
-        return None
-    admin = Path(text[len("gitdir: "):]).resolve()
+    admin = Path(text.removeprefix("gitdir: ")).resolve()
     return admin if admin.parent == (common / "worktrees").resolve() else None
 
 
 def read_rows(path: Path) -> list[dict]:
     if not path.exists():
         return []
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as e:
+        raise LedgerError(f"{path} cannot be read ({e})") from None
     rows = []
-    for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+    for n, line in enumerate(text.splitlines(), 1):
         if not line.strip():
             continue
         try:
@@ -170,7 +172,11 @@ def _run_pytest(wt: Path, junit: Path, log: Path, timeout: int) -> int | None:
     """pytest's returncode, or None on timeout (the whole process group is killed)."""
     argv = [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider",
             f"--junitxml={junit}"]
-    env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
+    # The caller's PYTEST_ADDOPTS (-k, -x, --deselect) would run part of the suite and record
+    # it as the whole; PYTHONPATH could import from the caller's checkout instead of the
+    # merged tree. Same rule as promotion_schema._pytest, which drops PYTEST_ADDOPTS.
+    env = {k: v for k, v in os.environ.items() if k not in ("PYTEST_ADDOPTS", "PYTHONPATH")}
+    env["PYTHONIOENCODING"] = "utf-8"
     with log.open("wb") as out:
         proc = subprocess.Popen(argv, cwd=wt, env=env, stdout=out, stderr=subprocess.STDOUT,
                                 stdin=subprocess.DEVNULL, start_new_session=True)
