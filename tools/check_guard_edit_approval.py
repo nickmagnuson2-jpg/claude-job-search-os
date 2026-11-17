@@ -615,6 +615,47 @@ def _one_value(word: str, env: dict) -> str:
         else _UNKNOWN
 
 
+# `cd X && cmd`: a failed cd stops the chain, so cmd runs only in X. Only `&&`, and a pipe
+# inside such a chain (it binds tighter than `&&`), carry X forward; `;`, a newline, `||`,
+# `&` and `)` return to the union of every directory seen. Before this, a script editing
+# ANOTHER checkout's copy of a guard after `cd <worktree> &&` was blocked as if it edited
+# this repo's (Nick approved, 2026-11-16; a replay of 39,816 past commands cleared 5 such
+# blocks and blocked nothing new). A chain starts only at a cd that is certain to run in
+# the shell itself: not right of `||` (it may be skipped), not in a pipe (a subshell). A
+# command that may move the shell (popd, source, `.`, eval, ...) ends the chain. Review
+# round 1, Codex F2 and Grok F1-F3.
+_CHAIN_OPS = ("&&", "|", "|&")
+_CERTAIN_BEFORE = (None, ";", "\n", "&&", "&")
+_MOVES_SHELL = {"cd", "pushd", "popd", "source", ".", "eval", "builtin", "command", "exec"}
+# An operand naming a place by history, not by path: `-`, an option, a directory-stack
+# entry (`+1`, `-1`, `~1`, `~+1`) or OLDPWD (`~-`). It can name the starting directory,
+# so it never starts a chain (review round 2, Codex F1 and Grok F1).
+_NOT_A_PATH = re.compile(r"^(?:[-+]|~[-+0-9])")
+
+
+def _following_ops(command: str) -> list:
+    """The control operator after each simple command of `command` (None after the last),
+    one to one with shell_tokens.simple_commands: the same boundary rule, a command ends
+    at an operator once it has a word or a redirection."""
+    from shell_tokens import tokenize as sh_tokenize
+    ops: list = []
+    content = False
+    toks = sh_tokenize(command)
+    k = 0
+    while k < len(toks):
+        t = toks[k]
+        if t.kind == "op":
+            if content:
+                ops.append(t.text)
+                content = False
+        elif t.kind in ("redir", "word"):              # a redirection's target is a word:
+            content = True                            # it changes nothing either way
+        k += 1
+    if content:
+        ops.append(None)
+    return ops
+
+
 def bash_guard_writes(command: str, cwd: str = ".", _depth: int = 0) -> list[str]:
     """Guard files a Bash command would write, rename, delete or restore.
 
@@ -641,14 +682,29 @@ def bash_guard_writes(command: str, cwd: str = ".", _depth: int = 0) -> list[str
         literal = {t.text for t in sh_tokenize(command) if t.kind == "heredoc" and t.quoted}
     except Exception:
         literal = set()
-    for cmd in simple_commands(command):
+    cmds = simple_commands(command)
+    ops = _following_ops(command)
+    if len(ops) != len(cmds):
+        ops = [None] * len(cmds)                      # cannot align: no chains, the union
+    chain: list[str] | None = None                    # set: the next command runs only here
+    for n, (cmd, op) in enumerate(zip(cmds, ops)):
+        here = chain if chain is not None else cwds
+        certain = cmd.fed_by is None and (ops[n - 1] if n else None) in _CERTAIN_BEFORE
         lead = [w for w in cmd.words if not re.match(r"[A-Za-z_]\w*=", w)]
         if lead[:1] in (["cd"], ["pushd"]) and cwds is not None:
             to = _one_value(lead[1], env) if len(lead) > 1 else _UNKNOWN
+            moved = None if _UNKNOWN in to else [
+                os.path.abspath(os.path.join(c, os.path.expanduser(to))) for c in here]
             cwds = None if _UNKNOWN in to else list(dict.fromkeys(
                 cwds + [os.path.abspath(os.path.join(c, os.path.expanduser(to))) for c in cwds]))
             if cwds is not None and len(cwds) > 8:
                 cwds = None                           # too many places: the heuristic
+            chain = (list(dict.fromkeys(moved)) if op == "&&" and certain and moved is not None
+                     and cwds is not None and not _NOT_A_PATH.match(to) else None)
+        else:
+            moves = {os.path.basename(cmd.words[i]) for i in _all_command_positions(cmd.words)}
+            chain = (chain if chain is not None and op in _CHAIN_OPS
+                     and not moves & _MOVES_SHELL else None)
         for inner in cmd.subs:
             hits += bash_guard_writes(inner, cwd, _depth + 1)
         words = cmd.words
@@ -681,7 +737,7 @@ def bash_guard_writes(command: str, cwd: str = ".", _depth: int = 0) -> list[str
             scripts = (_shell_script_files(rest) if name in _SHELLS
                        else rest[:1] if name in ("source", ".") else [])
             for script in scripts:
-                for c in cwds or [cwd]:               # the directory a cd moved to
+                for c in here or [cwd]:               # the directory a cd moved to
                     hits += bash_guard_writes(_read_script(script, c), c, _depth + 1)
             if _INTERPRETER.match(name):
                 texts = list(_stdin_texts(cmd))
@@ -713,15 +769,15 @@ def bash_guard_writes(command: str, cwd: str = ".", _depth: int = 0) -> list[str
                         argv = rest[k:]
                         break
                     if not a.startswith("-"):
-                        texts += [_read_script(a, c) for c in cwds or [cwd]]
+                        texts += [_read_script(a, c) for c in here or [cwd]]
                         argv = rest[k:]
                         break
                 py_argv = [_one_value(w, env) for w in argv] if name.startswith("python") \
                     else None
                 if any(_script_rewrites_a_guard(
-                        t, c, None if cwds is None or t in expandable and re.search(r"[$`]", t)
+                        t, c, None if here is None or t in expandable and re.search(r"[$`]", t)
                         else py_argv)
-                        for t in texts for c in (cwds or [cwd])):
+                        for t in texts for c in (here or [cwd])):
                     hits.append(f"{name} script naming a guard path")
     return list(dict.fromkeys(hits))
 

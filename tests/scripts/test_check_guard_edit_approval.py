@@ -857,3 +857,86 @@ def test_a_command_that_is_not_read_only_blocks(cmd):
 def test_a_read_only_command_passes(cmd):
     code, err = _bash(f"python3 - <<'PY'\nimport subprocess\nsubprocess.run({cmd!r})\nprint(open('{_G}').read())\nopen('/tmp/o.txt', 'w')\nPY")
     assert code == 0, err
+
+
+# `cd X && <script>` (Nick approved, 2026-11-16). A `cd` kept the earlier directory as a
+# possible cwd, because a cd can fail. After `&&` it cannot: a failed cd stops the chain,
+# so a script editing ANOTHER checkout's copy of a guard was blocked as if it edited this
+# repo's (in a replay of 39,816 past commands it cleared 5 blocks, all edits of another
+# worktree's copy, and blocked nothing new). Only `&&` and a
+# pipe carry the new directory; `;`, newline, `||`, `&` and `)` keep today's union.
+_EDIT_COPY = ("python3 - <<'PY'\np = 'tools/check_public_pii.py'\ns = open(p).read()\n"
+              "open(p, 'w').write(s)\nPY")
+_REPO = SCRIPT.parents[1]
+
+
+def _other_checkout(tmp_path):
+    (tmp_path / "tools").mkdir()
+    (tmp_path / "tools" / "check_public_pii.py").write_text("x = 1\n")
+    return tmp_path
+
+
+@pytest.mark.parametrize("glue", ["cd {d} && ", "cd {d} && true && ", "cd {d} && echo x | ",
+                                  "true && cd {d} && ", "true; cd {d} && "])
+def test_cd_and_chain_into_another_checkout_edits_only_that_copy(tmp_path, glue):
+    d = _other_checkout(tmp_path)
+    assert _bash_in(_REPO, glue.format(d=d) + _EDIT_COPY) == 0
+
+
+@pytest.mark.parametrize("glue", [
+    "cd {d} ; ",                     # the cd may fail and the script still runs here
+    "cd {d}\n",
+    "cd {d} && true || ",            # the || branch runs when the cd failed
+    "(cd {d} && true) && ",          # a subshell's cd does not reach the next command
+    "cd {d} && cd - && ",            # back to where it started
+    "cd -P {d} && ",                 # an option, not a directory: judged as before
+    "cd {d} & ",
+    # Review round 1 (Codex F2, Grok F1-F3, 2026-11-16): a cd that does not run, or
+    # does not move the shell, or is undone, must not narrow the next command.
+    "true || cd {d} && ",            # the cd is skipped when `true` succeeds
+    "true | cd {d} && ",             # a pipeline element runs in a subshell
+    "cd {r} && true | cd {d} && ",   # same, after a chain was already open
+    "pushd {d} && popd && ",         # popd returns to the starting directory
+    "cd {d} && source /dev/null && ",  # a sourced file may cd anywhere
+    "cd {d} && {{ cd {r}; }} && ",    # a cd inside a group moves the shell too
+    # Review round 2 (Codex F1, Grok F1): a directory-stack or OLDPWD operand is not a
+    # path, and can lead straight back to the starting directory.
+    "cd {d} && cd ~- && ",
+    "pushd {d} && pushd +1 && ",
+    "pushd {d} && cd ~1 && ",
+])
+def test_a_cd_that_may_not_hold_still_blocks_this_repos_guard(tmp_path, glue):
+    d = _other_checkout(tmp_path)
+    assert _bash_in(_REPO, glue.format(d=d, r=_REPO) + _EDIT_COPY) == 2
+
+
+def test_cd_and_chain_inside_this_repo_still_blocks():
+    assert _bash_in(_REPO, "cd tests && " + _EDIT_COPY.replace("'tools/", "'../tools/")) == 2
+    assert _bash_in(_REPO, f"cd {_REPO} && " + _EDIT_COPY) == 2
+
+
+@pytest.mark.parametrize("cmd", [
+    "a && b | c ; d", "cd x && (y) || z", "echo hi > f && cat <<'E' | wc\nbody\nE\n",
+    "( cd x ) && y", "a 2>&1 && b &", "", "x=1 && y",
+    # From the mutation run (2026-11-16): a redirection whose next token is not a word,
+    # and a heredoc that opens after `&` with no body, each split commands differently
+    # when the redir or word branch of _following_ops was broken.
+    "x\n< <(y)", "cat <<'E' &",
+])
+def test_following_ops_lines_up_with_simple_commands(cmd):
+    sys.path.insert(0, str(SCRIPT.parent))
+    import check_guard_edit_approval as g
+    from shell_tokens import simple_commands
+    assert len(g._following_ops(cmd)) == len(simple_commands(cmd))
+
+
+def test_when_ops_and_commands_disagree_no_chain_is_used(tmp_path, monkeypatch):
+    """The length fallback: if _following_ops ever drifts from simple_commands, zip would
+    drop commands; instead every command is judged against the union, as before the chain."""
+    sys.path.insert(0, str(SCRIPT.parent))
+    import check_guard_edit_approval as g
+    d = _other_checkout(tmp_path)
+    cmd = f"cd {d} && " + _EDIT_COPY
+    assert g.bash_guard_writes(cmd, str(_REPO)) == []          # the chain applies
+    monkeypatch.setattr(g, "_following_ops", lambda c: [])
+    assert g.bash_guard_writes(cmd, str(_REPO)) != []          # the union, which blocks
