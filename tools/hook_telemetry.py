@@ -30,8 +30,11 @@ A hook denial whose only status-2 finishes are each followed within three lines 
 2026-10-14 macOS permission failure), not a block.
 
 WHAT IT PRINTS. One JSON object in the workstream_probe contract.
-  default:  {"value": "bash_wall=200-299ms | blocks=2.0-2.9/100 | hooks/call=24"}
+  default:  {"value": "bash_wall=200-299ms | blocks=2.0-2.9/100 | hooks/call=24", "reach": ...}
   --raw:    unbanded numbers plus calls= and logs=, for a person.
+`reach` is a tools/count_report.py line naming the logs the reading came from: the logs the
+glob matched, the logs read, and the logs left out as not modified inside the window. It is
+a separate key, so workstream_state.py, which lifts `value` only, never sees it change.
 The default value is BANDED (100 ms; 1.0 blocks per 100 calls) because
 workstream_state.py surfaces a workstream whenever its value changes: 50 ms bands put the
 2026-11-16 p50 (244 ms) on a band edge, which would surface daily as noise.
@@ -53,6 +56,10 @@ import re
 import statistics
 import sys
 import time
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from tools.count_report import format_line  # noqa: E402
 
 DEFAULT_GLOB = "~/cc-debug-*.log"
 WALL_BAND_MS = 100
@@ -79,12 +86,13 @@ def _crashed(lines: list[str], i: int, hook: str) -> bool:
 
 
 def read(pattern: str, now: float, days: int):
-    """(files read, per-call walls ms, per-call hook counts, calls, blocked calls, ambiguous
-    segments) inside the window. See the module docstring for how calls are found.
-    Raises OSError / ValueError on an unreadable log; main turns that into exit 2."""
+    """(logs the glob matched, files read, per-call walls ms, per-call hook counts, calls,
+    blocked calls, ambiguous segments) inside the window. See the module docstring for how
+    calls are found. Raises OSError / ValueError on an unreadable log; main turns that into
+    exit 2."""
     cutoff = now - days * 86400
-    files = sorted(f for f in glob.glob(os.path.expanduser(pattern))
-                   if os.path.getmtime(f) >= cutoff)
+    matched = glob.glob(os.path.expanduser(pattern))
+    files = sorted(f for f in matched if os.path.getmtime(f) >= cutoff)
     walls: list[int] = []
     counts: list[int] = []
     calls = blocked = ambiguous = 0
@@ -129,7 +137,7 @@ def read(pattern: str, now: float, days: int):
                     calls += 1
                     terminators += 1
         settle()
-    return files, walls, counts, calls, blocked, ambiguous
+    return len(matched), files, walls, counts, calls, blocked, ambiguous
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -141,13 +149,17 @@ def main(argv: list[str] | None = None) -> int:
     a = ap.parse_args(argv)
     now = a.now if a.now is not None else time.time()
     try:
-        files, walls, counts, calls, blocks, ambiguous = read(a.logs_glob, now, a.days)
+        matched, files, walls, counts, calls, blocks, ambiguous = read(a.logs_glob, now, a.days)
     except (OSError, ValueError) as e:
         print(json.dumps({"error": f"could not read the debug logs: {e!r}"}))
         return 2
+    reach = format_line(f"debug logs matching {a.logs_glob}", population=matched,
+                        included=len(files),
+                        excluded={f"modified before the {a.days}-day window": matched - len(files)})
     if not walls:
-        print(json.dumps({"error": f"no PreToolUse:Bash timing in {len(files)} debug log(s) "
-                                   f"from the last {a.days} day(s); is Claude Code launched with --debug?"}))
+        # workstream_state.py shows only `error`, so the reach goes inside it too.
+        print(json.dumps({"error": f"no PreToolUse:Bash timing ({reach}); "
+                                   f"is Claude Code launched with --debug?", "reach": reach}))
         return 2
     p50 = statistics.median(walls)
     per_call = statistics.median(counts)
@@ -160,7 +172,7 @@ def main(argv: list[str] | None = None) -> int:
         b = int(rate // BLOCK_BAND) * BLOCK_BAND
         value = (f"bash_wall={lo}-{lo + WALL_BAND_MS - 1}ms | blocks={b:.1f}-{b + BLOCK_BAND - 0.1:.1f}/100"
                  f" | hooks/call={per_call:.0f}")
-    print(json.dumps({"value": value}))
+    print(json.dumps({"value": value, "reach": reach}))
     return 0
 
 

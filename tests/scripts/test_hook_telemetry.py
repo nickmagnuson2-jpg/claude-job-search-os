@@ -288,3 +288,38 @@ def test_a_call_is_kept_when_a_later_line_is_stamped_after_now(tmp_path, capsys)
     write_log(tmp_path, "cc-debug-1.log", call(-100, [70]) + call(+50, [900]))
     code, out = run(tmp_path, capsys, "--raw")
     assert "calls=1" in out["value"] and "bash_wall_p50=70ms" in out["value"]
+
+
+# --- reach line (tools/count_report.py), 2026-11-16 -------------------------------------
+# A reading names the logs it was taken from: how many matched the glob, how many were
+# read, and how many were skipped as untouched since the window. The banded `value` is
+# unchanged, so workstream_state (which lifts `value` only) does not surface a change.
+
+def _reach(tmp_path, population, included, days=7):
+    return (f"scope: debug logs matching {tmp_path / 'cc-debug-*.log'} | population {population}"
+            f" | included {included} | excluded: modified before the {days}-day window"
+            f" {population - included}")
+
+
+@pytest.mark.parametrize("args", [(), ("--raw",)])
+def test_a_reading_carries_its_reach_line(tmp_path, capsys, args):
+    write_log(tmp_path, "cc-debug-old.log", call(-100, [900]), mtime=NOW - 30 * 86400)
+    write_log(tmp_path, "cc-debug-new.log", call(-100, [50]))
+    code, out = run(tmp_path, capsys, *args)
+    assert code == 0 and out["reach"] == _reach(tmp_path, 2, 1)
+
+
+def test_the_reach_line_uses_the_window_given(tmp_path, capsys):
+    write_log(tmp_path, "cc-debug-old.log", call(-100, [900]), mtime=NOW - 3 * 86400)
+    write_log(tmp_path, "cc-debug-new.log", call(-100, [50]))
+    code, out = run(tmp_path, capsys, "--days", "2")
+    assert code == 0 and out["reach"] == _reach(tmp_path, 2, 1, days=2)
+
+
+def test_no_reading_states_the_reach_of_the_logs_it_looked_at(tmp_path, capsys):
+    write_log(tmp_path, "cc-debug-old.log", call(-100, [900]), mtime=NOW - 30 * 86400)
+    write_log(tmp_path, "cc-debug-new.log", [f"{ts(-100)} [DEBUG] nothing here\n"])
+    code, out = run(tmp_path, capsys)
+    assert code == 2 and "value" not in out
+    assert out["reach"] == _reach(tmp_path, 2, 1)
+    assert "no PreToolUse:Bash timing" in out["error"] and out["reach"] in out["error"]
