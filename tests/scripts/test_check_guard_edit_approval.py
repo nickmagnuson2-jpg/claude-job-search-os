@@ -899,6 +899,11 @@ def test_cd_and_chain_into_another_checkout_edits_only_that_copy(tmp_path, glue)
     "pushd {d} && popd && ",         # popd returns to the starting directory
     "cd {d} && source /dev/null && ",  # a sourced file may cd anywhere
     "cd {d} && {{ cd {r}; }} && ",    # a cd inside a group moves the shell too
+    # Review round 2 (Codex F1, Grok F1): a directory-stack or OLDPWD operand is not a
+    # path, and can lead straight back to the starting directory.
+    "cd {d} && cd ~- && ",
+    "pushd {d} && pushd +1 && ",
+    "pushd {d} && cd ~1 && ",
 ])
 def test_a_cd_that_may_not_hold_still_blocks_this_repos_guard(tmp_path, glue):
     d = _other_checkout(tmp_path)

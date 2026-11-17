@@ -627,6 +627,10 @@ def _one_value(word: str, env: dict) -> str:
 _CHAIN_OPS = ("&&", "|", "|&")
 _CERTAIN_BEFORE = (None, ";", "\n", "&&", "&")
 _MOVES_SHELL = {"cd", "pushd", "popd", "source", ".", "eval", "builtin", "command", "exec"}
+# An operand naming a place by history, not by path: `-`, an option, a directory-stack
+# entry (`+1`, `-1`, `~1`, `~+1`) or OLDPWD (`~-`). It can name the starting directory,
+# so it never starts a chain (review round 2, Codex F1 and Grok F1).
+_NOT_A_PATH = re.compile(r"^(?:[-+]|~[-+0-9])")
 
 
 def _following_ops(command: str) -> list:
@@ -695,9 +699,8 @@ def bash_guard_writes(command: str, cwd: str = ".", _depth: int = 0) -> list[str
                 cwds + [os.path.abspath(os.path.join(c, os.path.expanduser(to))) for c in cwds]))
             if cwds is not None and len(cwds) > 8:
                 cwds = None                           # too many places: the heuristic
-            # `cd -` and `cd -P x` are not a plain directory: never a chain.
             chain = (list(dict.fromkeys(moved)) if op == "&&" and certain and moved is not None
-                     and cwds is not None and not to.startswith("-") else None)
+                     and cwds is not None and not _NOT_A_PATH.match(to) else None)
         else:
             moves = {os.path.basename(cmd.words[i]) for i in _all_command_positions(cmd.words)}
             chain = (chain if chain is not None and op in _CHAIN_OPS
