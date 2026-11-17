@@ -815,3 +815,56 @@ def _main_unchanged_after_set_addr(capsys, main, wt, addr, expect_in_err):
     assert fw.ledger_path(main).read_bytes() == before
     for s in expect_in_err:
         assert s in err
+
+
+# --- Part B amendment 2 (org, 2026-11-16): mirrors carry worktree_run; fail closed ---------
+
+def _pos_mirror(wt, row, run):
+    return {**row, "worktree": str(wt), "worktree_run": run}
+
+
+def test_a_positioned_mirror_is_matched_by_its_run_number(mirrored, capsys):
+    main, wt = mirrored
+    _write_ledger(main, [MAIN_OWN, _pos_mirror(wt, W_ROW, 1)])
+    rc, out, _ = _cli(capsys, wt, "set", "1.F2", "--disposition", "parked", "--why", "w")
+    assert rc == 0 and out["mirrored"] is True
+    assert _rows(main)[1]["findings"][1]["disposition"] == "parked"
+
+
+def test_a_legacy_mirror_without_worktree_run_still_syncs_by_identity(mirrored, capsys):
+    """Rows mirrored before amendment 2 (main row 951 on 2026-11-16) have no worktree_run;
+    they keep the identity-only match."""
+    main, wt = mirrored
+    assert "worktree_run" not in _rows(main)[1]
+    rc, out, _ = _cli(capsys, wt, "set", "1.F2", "--disposition", "parked", "--why", "w")
+    assert rc == 0 and out["mirrored"] is True
+
+
+def test_two_colliding_legacy_mirrors_still_warn_and_write_nothing(mirrored, capsys):
+    """Defensive: two legacy mirrors with one identity (no position to tell them apart)."""
+    main, wt = mirrored
+    m = {**W_ROW, "worktree": str(wt)}
+    _write_ledger(main, [MAIN_OWN, m, m])
+    _main_unchanged_after_set(capsys, main, wt, ["2 mirrored rows"])
+
+
+def test_a_position_past_the_end_of_the_worktree_ledger_refuses(mirrored, capsys):
+    """Fail closed: a mirror pointing past the worktree ledger means positions shifted."""
+    main, wt = mirrored
+    _write_ledger(main, [MAIN_OWN, _pos_mirror(wt, W_ROW, 1), _pos_mirror(wt, W_ROW, 5)])
+    _main_unchanged_after_set(capsys, main, wt, ["REFUSED", "past the end"])
+
+
+def test_a_position_whose_identity_differs_refuses(mirrored, capsys):
+    main, wt = mirrored
+    other = {**W_ROW, "report": "output/analysis/someone-else.md"}
+    _write_ledger(main, [MAIN_OWN, _pos_mirror(wt, other, 1)])
+    _main_unchanged_after_set(capsys, main, wt, ["REFUSED", "identity"])
+
+
+def test_this_runs_identity_at_another_position_refuses(mirrored, capsys):
+    """The run's identity is mirrored, but at run 2 while the address is run 1: a shift."""
+    main, wt = mirrored
+    _write_ledger(wt, [W_ROW, dict(ROW_2)])
+    _write_ledger(main, [MAIN_OWN, _pos_mirror(wt, W_ROW, 2)])
+    _main_unchanged_after_set(capsys, main, wt, ["REFUSED", "run 2"])

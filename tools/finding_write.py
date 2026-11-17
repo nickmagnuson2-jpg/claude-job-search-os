@@ -153,7 +153,8 @@ def collect(repo_root: Path, only_open: bool = False,
 def _edit_finding(repo_root: Path, addr: str, apply) -> dict:
     """Resolve `addr` to exactly one finding and let `apply(finding)` change it in place,
     under the ledger lock. `apply` raises to abort; nothing is written on any error.
-    Returns a copy of the edited row, from which the mirror reads its identity.
+    Returns {"row": a copy of the edited row, "lines": the ledger's run count}, from which
+    the mirror reads the run's identity and checks main's recorded positions.
     """
     run_no, fid = parse_addr(addr)
     path = ledger_path(repo_root)
@@ -218,12 +219,13 @@ def _edit_finding(repo_root: Path, addr: str, apply) -> dict:
                 f"before dispositioning it.")
         apply(matches[0])
         ident["row"] = json.loads(json.dumps(row))      # a copy: the identity is read later
+        ident["lines"] = len(lines)
         lines[run_no - 1] = json.dumps(row, ensure_ascii=False)
         return "\n".join(lines) + "\n"
 
     ident: dict = {}
     inbox_lock.atomic_update(path, _transform)
-    return ident["row"]
+    return ident
 
 
 def set_disposition(repo_root: Path, addr: str, disposition: str, why: str,
@@ -311,15 +313,22 @@ class _NotMirrored(Exception):
     """The main checkout has no single mirrored row and finding to update."""
 
 
-def _with_mirror(repo_root: Path, addr: str, row: dict, captured: dict) -> dict:
+def _with_mirror(repo_root: Path, addr: str, edited: dict, captured: dict) -> dict:
     """Mirror the worktree write to main and add what happened to the result."""
-    _run, fid = parse_addr(addr)
+    run_no, fid = parse_addr(addr)
+    row = edited["row"]
     return {**captured["result"],
             "row": {k: row.get(k) for k in ("report", "model", "recorded")},
-            "mirrored": mirror_to_main(repo_root, row, fid, captured["fields"])}
+            "mirrored": mirror_to_main(repo_root, row, fid, captured["fields"],
+                                       run_no=run_no, wt_runs=edited["lines"])}
 
 
-def mirror_to_main(repo_root: Path, wt_row: dict, fid: str, fields: dict) -> bool | None:
+class _PositionMismatch(_NotMirrored):
+    """Main's recorded worktree_run disagrees with this worktree's ledger: fail closed."""
+
+
+def mirror_to_main(repo_root: Path, wt_row: dict, fid: str, fields: dict,
+                   run_no: int | None = None, wt_runs: int | None = None) -> bool | None:
     """Copy a worktree finding's resolved fields onto main's mirror of the same row.
 
     None: `repo_root` is not a linked worktree, so there is no other copy. True: main's
@@ -344,16 +353,37 @@ def mirror_to_main(repo_root: Path, wt_row: dict, fid: str, fields: dict) -> boo
 
         def _transform(text: str) -> str:
             lines = [ln for ln in text.splitlines() if ln.strip()]
-            hits = []
+            ours = []                     # every mirror row from THIS worktree
             for i, line in enumerate(lines):
                 try:
                     row = json.loads(line)
                 except json.JSONDecodeError:
                     continue
                 if (isinstance(row, dict) and row.get("worktree")
-                        and cv.row_identity(row) == ident
                         and Path(row["worktree"]).resolve() == root):
-                    hits.append((i, row))
+                    ours.append((i, row))
+            # Part B amendment 2: a mirror made since then records its run's position in this
+            # worktree's ledger (worktree_run), the only thing that tells apart two runs with
+            # identical content (Codex findings-durable r2 F1). A position that disagrees
+            # with this ledger means positions shifted, so the sync fails closed.
+            placed = [(i, r) for i, r in ours if r.get("worktree_run") is not None]
+            past = [r["worktree_run"] for _, r in placed if r["worktree_run"] > wt_runs]
+            if past:
+                raise _PositionMismatch(f"main records worktree_run {past[0]}, past the end "
+                                        f"of this worktree's {wt_runs}-run ledger")
+            at_run = [(i, r) for i, r in placed if r["worktree_run"] == run_no]
+            if at_run:
+                if len(at_run) > 1 or cv.row_identity(at_run[0][1]) != ident:
+                    raise _PositionMismatch(f"main's mirror at run {run_no} has a different "
+                                            f"identity from this worktree's run {run_no}")
+                hits = at_run
+            else:
+                moved = [r["worktree_run"] for _, r in placed if cv.row_identity(r) == ident]
+                if moved:
+                    raise _PositionMismatch(f"main records this run at run {moved[0]}, but "
+                                            f"the address is run {run_no}")
+                hits = [(i, r) for i, r in ours
+                        if r.get("worktree_run") is None and cv.row_identity(r) == ident]
             if len(hits) != 1:
                 raise _NotMirrored(f"{len(hits)} mirrored rows from this worktree match in "
                                    f"main's ledger (rows reviewed before the mirror have none)")
@@ -373,6 +403,11 @@ def mirror_to_main(repo_root: Path, wt_row: dict, fid: str, fields: dict) -> boo
 
         inbox_lock.atomic_update(ledger_path(main), _transform)
         return True
+    except _PositionMismatch as exc:
+        print(f"finding_write: REFUSED: main's mirror not updated, its recorded position "
+              f"disagrees with this worktree ({where}): {exc}. Nothing written to main; "
+              f"the worktree write stands.", file=sys.stderr)
+        return False
     except Exception as exc:      # the worktree write stands; only main's copy is stale
         print(f"finding_write: warning: disposition not mirrored to the main checkout "
               f"({where}): {exc}", file=sys.stderr)

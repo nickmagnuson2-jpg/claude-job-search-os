@@ -856,7 +856,8 @@ def row_identity(row: dict) -> tuple:
     return (row.get("report"), row.get("model"), row.get("recorded"), findings_signature(row))
 
 
-def mirror_to_main(repo_root: Path, report: Path, row: dict) -> bool | None:
+def mirror_to_main(repo_root: Path, report: Path, row: dict,
+                   worktree_run: int | None = None) -> bool | None:
     """Copy a worktree review's evidence into the main checkout. None: not a worktree.
 
     WHY (2026-11-09). A review run from a linked worktree wrote its report and ledger row
@@ -887,18 +888,26 @@ def mirror_to_main(repo_root: Path, report: Path, row: dict) -> bool | None:
                   "use a tmp main checkout.", file=sys.stderr)
             return False
         key = row_identity(row)
+        mirror = {**row, "worktree": str(root)}
+        if worktree_run is not None:
+            mirror["worktree_run"] = worktree_run
+
+        def _same_run(r: dict) -> bool:
+            # The position tells apart two runs whose content is identical (r2 F1).
+            return (row_identity(r) == key and r.get("worktree_run") == worktree_run
+                    and bool(r.get("worktree")) and Path(r["worktree"]).resolve() == root)
         # One lock around the duplicate check, the copy and the append (Codex 3.F2), and
         # the check FIRST, so a row main already holds never overwrites main's report with
         # older bytes (Codex 3.F1). append_row takes the same lock; it is reentrant.
         with gate.inbox_lock.file_lock(gate.ledger_path(main)):
-            if any(row_identity(r) == key for r in gate.read_ledger(main)):
+            if any(_same_run(r) for r in gate.read_ledger(main)):
                 return True
             src = Path(report).resolve()
             if src.is_file() and src.is_relative_to(root):
                 dest = main / src.relative_to(root)
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(src, dest)
-            gate.append_row(main, {**row, "worktree": str(root)})
+            gate.append_row(main, mirror)
         return True
     except Exception as e:      # the review stands; only its copy is missing
         print(f"codex_verify: warning: could not mirror the review to the main checkout: "
@@ -1000,8 +1009,15 @@ def run(repo_root: Path, target: str, paths: list[str], question: str,
         # run of this file let a test write rows into the real ledger (22 of them).
         raise SystemExit("codex_verify: refusing to write the real ledger inside a test run; "
                          "pass a tmp repo_root.")
-    gate.append_row(repo_root, row)
-    mirrored = mirror_to_main(repo_root, report, row)
+    # Append and read the row's position under one hold of this ledger's lock (reentrant;
+    # append_row takes it too), so a concurrent append cannot shift the number. The position
+    # is finding_write's run number: what identifies this run when content cannot (Codex
+    # findings-durable r2 F1, Part B amendment 2).
+    from tools import finding_write as _fw
+    with gate.inbox_lock.file_lock(gate.ledger_path(repo_root)):
+        gate.append_row(repo_root, row)
+        position = len(_fw.read_lines(_fw.ledger_path(Path(repo_root))))
+    mirrored = mirror_to_main(repo_root, report, row, worktree_run=position)
     status = "ok" if verified else (
         "no_report_written" if not report_fresh else "run_failed")
     return {"status": status, "verified": verified,

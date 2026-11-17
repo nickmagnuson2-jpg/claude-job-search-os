@@ -2206,7 +2206,7 @@ def test_a_worktree_review_mirrors_its_report_and_row_to_main(main_and_worktree,
     wt_rows, main_rows = gate.read_ledger(wt), gate.read_ledger(main)
     assert len(wt_rows) == 1 and "worktree" not in wt_rows[0]    # the gate's copy, unchanged
     assert len(main_rows) == 1
-    assert main_rows[0] == {**wt_rows[0], "worktree": str(wt)}
+    assert main_rows[0] == {**wt_rows[0], "worktree": str(wt), "worktree_run": 1}
     rel = "output/analysis/110926-codex-the-change-120000abcd.md"
     assert main_rows[0]["report"] == rel
     assert (main / rel).read_bytes() == report.read_bytes()      # the full report, not a stub
@@ -2497,3 +2497,50 @@ def test_findings_signature_ignores_disposition_fields():
     assert cv.findings_signature(a) != cv.findings_signature({"findings": [_f("F1", "other")]})
     assert cv.row_identity({**a, "report": "r", "model": "m", "recorded": "t"}) == \
         ("r", "m", "t", cv.findings_signature(a))
+
+
+# --- Codex findings-durable r2 F1 (2026-11-16): a run is identified by its position --------
+
+def _frozen_clock(monkeypatch):
+    from datetime import datetime as _dt, timezone as _tz
+
+    class _Frozen(_dt):
+        @classmethod
+        def now(cls, tz=None):
+            return _dt(2026, 11, 16, 12, 0, 0, tzinfo=_tz.utc)
+    monkeypatch.setattr(cv, "datetime", _Frozen)
+
+
+def test_two_identical_runs_in_one_second_are_both_mirrored_and_set_apart(main_and_worktree,
+                                                                          monkeypatch, capsys):
+    """Codex r2 F1, the production sequence: two run() calls, one explicit --report path,
+    one second, identical findings. Content cannot tell them apart; their position in the
+    worktree ledger can. Both are mirrored, and a set on run 2 reaches only run 2's mirror."""
+    import finding_write as fw_mod
+    main, wt = main_and_worktree
+    _frozen_clock(monkeypatch)
+    report = wt / "output" / "analysis" / "111626-codex-same-r1.md"
+    assert _review(monkeypatch, wt, report)["mirrored"] is True
+    assert _review(monkeypatch, wt, report)["mirrored"] is True
+    rows = gate.read_ledger(main)
+    assert [r.get("worktree_run") for r in rows] == [1, 2]
+    assert rows[0]["recorded"] == rows[1]["recorded"]
+    assert cv.row_identity(rows[0]) == cv.row_identity(rows[1])
+    out = fw_mod.set_disposition(wt, "2.F1", "parked", "run two only")
+    assert out["mirrored"] is True
+    rows = gate.read_ledger(main)
+    assert rows[0]["findings"][0].get("disposition") is None
+    assert rows[1]["findings"][0]["why"] == "run two only"
+
+
+def test_worktree_run_counts_lines_the_way_finding_write_addresses_them(main_and_worktree,
+                                                                       monkeypatch):
+    """A malformed line still holds a run number in finding_write's addressing, so the mirror
+    must count it too, or worktree_run and the address disagree."""
+    main, wt = main_and_worktree
+    p = gate.ledger_path(wt)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text("{not json\n", encoding="utf-8")
+    report = wt / "output" / "analysis" / "111626-codex-after-malformed.md"
+    assert _review(monkeypatch, wt, report)["mirrored"] is True
+    assert gate.read_ledger(main)[0]["worktree_run"] == 2
