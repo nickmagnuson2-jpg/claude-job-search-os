@@ -2242,6 +2242,7 @@ _STUB = (
     "Path(os.environ['STUB_RECORD']).write_text(json.dumps({\n"
     "    'cwd': os.getcwd(), 'argv': sys.argv[1:],\n"
     "    'repo_root': os.environ.get('MUTATION_REPO_ROOT'),\n"
+    "    'marker': os.environ.get('MUTATION_IN_WORKTREE_CHILD'),\n"
     "    'target_text': Path('tools/plain.py').read_text()}))\n")
 
 
@@ -2311,12 +2312,39 @@ def test_an_abbreviated_flag_from_a_linked_worktree_runs_once_in_a_fresh_one(tmp
 
 
 def test_a_child_never_dispatches_again_even_if_the_flag_reaches_it(tmp_path):
-    """Backstop independent of argv parsing: the child env carries a marker."""
+    """Backstop independent of argv parsing: the child env carries a marker naming the
+    child's own tree, which is its REPO_ROOT."""
     wt = _linked_wt_with_stub(tmp_path)
     r = _run(["tools/plain.py", "--in-worktree", "--list"], cwd=wt,
-             env_extra={mc.IN_WORKTREE_CHILD_ENV: "1"})
+             env_extra={mc.IN_WORKTREE_CHILD_ENV: str(wt)})
     assert r.returncode == 0, r.stdout + r.stderr
     assert json.loads(r.stdout)["status"] == "ok"           # ran here, did not dispatch
+
+
+@pytest.mark.parametrize("marker", ["1", "OTHER"])
+def test_an_inherited_child_marker_for_another_tree_does_not_disable_the_flag(tmp_path, marker):
+    """Codex 10272694f2 F1: a child's pytest run, and anything else it starts, inherits the
+    marker. A bare marker made --in-worktree a silent no-op there, so a nested run from a
+    linked worktree mutated that tree in place. Only a marker naming this REPO_ROOT counts."""
+    wt = _linked_wt_with_stub(tmp_path)
+    record = tmp_path / "record.json"
+    value = str(tmp_path / "repo") if marker == "OTHER" else marker
+    r = _run(["tools/plain.py", "--in-worktree"], cwd=wt,
+             env_extra={"STUB_RECORD": str(record), mc.IN_WORKTREE_CHILD_ENV: value})
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert record.exists(), "the flag was ignored: the run happened in the caller's tree"
+    child = Path(json.loads(record.read_text())["cwd"]).resolve()
+    assert child != wt.resolve()
+
+
+def test_the_child_marker_names_the_new_worktree(tmp_path):
+    wt = _linked_wt_with_stub(tmp_path)
+    record = tmp_path / "record.json"
+    r = _run(["tools/plain.py", "--in-worktree"], cwd=wt,
+             env_extra={"STUB_RECORD": str(record)})
+    assert r.returncode == 0, r.stdout + r.stderr
+    got = json.loads(record.read_text())
+    assert Path(got["marker"]).resolve() == Path(got["cwd"]).resolve()
 
 
 def test_a_stray_git_dir_does_not_change_which_head_the_worktree_is_made_from(tmp_path):

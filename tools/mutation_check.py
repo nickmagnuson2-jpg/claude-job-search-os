@@ -2054,9 +2054,18 @@ def _in_repo(arg: str) -> str:
 
 
 IN_WORKTREE_FLAG = "--in-worktree"
-# Set in the env of the child a worktree run starts. The child IS the throwaway tree, so
-# it never dispatches again, whatever its argv says (Grok 214344b883 F1 backstop).
+# Set in the env of the child a worktree run starts, to the child's own tree. The child IS
+# the throwaway tree, so it never dispatches again, whatever its argv says (Grok
+# 214344b883 F1 backstop). The value is the tree, not a bare "1": everything the child
+# starts inherits the variable, its pytest run included, and a bare marker made
+# --in-worktree a silent no-op in any nested run from another tree (Codex 10272694f2 F1).
 IN_WORKTREE_CHILD_ENV = "MUTATION_IN_WORKTREE_CHILD"
+
+
+def _is_worktree_child() -> bool:
+    """True only in the child a worktree run started: the marker names this REPO_ROOT."""
+    marker = os.environ.get(IN_WORKTREE_CHILD_ENV)
+    return bool(marker) and Path(marker).resolve() == REPO_ROOT.resolve()
 
 
 def _is_in_worktree_flag(arg: str) -> bool:
@@ -2132,7 +2141,7 @@ def run_in_worktree(argv: list[str], args) -> int:
     try:
         # MUTATION_REPO_ROOT is pinned to the new worktree: inherited, it would point the
         # child back at the caller's tree and mutate it in place after all.
-        env = {**git_env, "MUTATION_REPO_ROOT": str(wt), IN_WORKTREE_CHILD_ENV: "1"}
+        env = {**git_env, "MUTATION_REPO_ROOT": str(wt), IN_WORKTREE_CHILD_ENV: str(wt)}
         return subprocess.run([sys.executable, str(wt / "tools" / "mutation_check.py")]
                               + child_argv, cwd=str(wt), env=env).returncode
     finally:
@@ -2237,7 +2246,7 @@ def main() -> int:
     # skipped there, so the run mutated the caller's worktree in place and froze it (one
     # froze ~8 h). The child never sees the flag (worktree_argv drops it in any
     # abbreviation), and the child env marker stops a second dispatch regardless.
-    if args.in_worktree and not os.environ.get(IN_WORKTREE_CHILD_ENV):
+    if args.in_worktree and not _is_worktree_child():
         return run_in_worktree(sys.argv[1:], args)
 
     target = Path(args.target)
