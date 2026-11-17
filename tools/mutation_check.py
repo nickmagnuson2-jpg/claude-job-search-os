@@ -2341,7 +2341,7 @@ def main() -> int:
                                scope, functions)]
     scope_out = {"mode": scope["mode"], "base": scope["base"], "reason": scope["reason"],
                  "mutants_in_file": mutants_in_file, "mutants_in_scope": len(catalog)}
-    changed_ids: set[int] | None = None   # set when changed_first reorders (whole file)
+    changed_ids: set[int] = set()   # mutants on changed lines (changed_first)
     if scope.get("tests_changed"):
         scope_out["tests_changed"] = scope["tests_changed"]
     if scope["mode"] == "diff":
@@ -2450,10 +2450,11 @@ def main() -> int:
                 scope_out["test_lines"] = sorted(test_lines)
             scope_out["mutants_in_scope"] = len(catalog)
 
-        if scope_out["mode"] == "whole_file" and scope.get("changed") is not None:
-            catalog, n_changed = changed_first(catalog, spans, scope, _function_spans(tree))
-            changed_ids = {id(e) for e in catalog[:n_changed]}
-            scope_out["changed_mutants"] = n_changed
+        # Always: without a diff the order is kept and the count is 0; in diff mode every
+        # mutant in scope is on a changed line, so the order is kept and the count is all.
+        catalog, n_changed = changed_first(catalog, spans, scope, _function_spans(tree))
+        changed_ids = {id(e) for e in catalog[:n_changed]}
+        scope_out["changed_mutants"] = n_changed
 
         def subset_is_valid(argv: tuple) -> bool:
             """Does this subset pass on the UNMUTATED source? Asked once per subset. A
@@ -2618,8 +2619,7 @@ def main() -> int:
             "tests": [str(t) for t in test_files]}))
         return 1
 
-    if changed_ids is not None:
-        scope_out["changed_mutants_unfinished"] = sum(id(e) in changed_ids for e in unfinished)
+    scope_out["changed_mutants_unfinished"] = sum(id(e) in changed_ids for e in unfinished)
     audit = audit_test_quality(test_files)
     result = {
         "recovered_stranded_file": recovered,
