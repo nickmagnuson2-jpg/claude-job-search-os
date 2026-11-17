@@ -1038,11 +1038,41 @@ def is_gitignored(root: Path, rel: str) -> bool:
         return False
 
 
-def _load_list(root: Path, rel: str) -> list[str]:
-    """One token per line; blank lines and # comments skipped. A missing or unreadable
-    file is an empty list (fail open), the same for every tier."""
+def _main_checkout(root: Path) -> Path | None:
+    """The main checkout of the repository `root` is a LINKED worktree of, else None.
+
+    The lists are gitignored, so `git worktree add` never copies them, and every PII
+    gate run from a new worktree used to read them as empty and pass (process gap #5,
+    2026-11-16: 36 worktrees, lists copied by hand). Worktrees now read only these. The main checkout is the parent of
+    the common git dir; a primary checkout's common dir is its own `.git`."""
     try:
-        lines = (root / rel).read_text(encoding="utf-8").splitlines()
+        r = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "--path-format=absolute",
+             "--git-common-dir"], capture_output=True, text=True, timeout=5)
+    except Exception:
+        return None
+    common = Path(r.stdout.strip()) if r.returncode == 0 and r.stdout.strip() else None
+    if common is None or common.name != ".git":
+        return None
+    main = common.parent
+    try:
+        return None if main.resolve() == root.resolve() else main
+    except OSError:
+        return None
+
+
+def _load_list(root: Path, rel: str) -> list[str]:
+    """One token per line; blank lines and # comments skipped. A linked worktree (its
+    `.git` is a file) always reads the main checkout's list: one source, so a copy made
+    in a worktree can never go stale and hide names added later (Nick, 2026-11-17: cut
+    the bloat). Missing or unreadable is an empty list (fail open), for every tier."""
+    path = root / rel
+    if (root / ".git").is_file():
+        main = _main_checkout(root)
+        if main is not None:
+            path = main / rel
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
     except (FileNotFoundError, PermissionError):
         return []
     return [ln.strip() for ln in lines if ln.strip() and not ln.startswith("#")]

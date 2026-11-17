@@ -120,6 +120,71 @@ def test_allows_when_no_denylist(tmp_path):
     assert code == 0
 
 
+def _linked_worktree(tmp_path, main_lists=True, wt_lists=False):
+    """A main checkout and a linked worktree of it. The lists are gitignored, so a new
+    worktree never has them (2026-11-16: 36 worktrees had their lists copied by hand)."""
+    main, wt = tmp_path / "main", tmp_path / "wt"
+    main.mkdir()
+    for a in (["init", "-q"], ["config", "user.email", "t@example.com"],
+              ["config", "user.name", "T"], ["commit", "-q", "--allow-empty", "-m", "x"],
+              ["worktree", "add", "-q", str(wt)]):
+        subprocess.run(["git", "-C", str(main), *a], check=True, capture_output=True)
+    for root, on in ((main, main_lists), (wt, wt_lists)):
+        if on:
+            dl = root / "tools" / ".pii-denylist.txt"
+            dl.parent.mkdir(parents=True, exist_ok=True)
+            dl.write_text("# fixture\n" + ("Zorptech\n" if root == main else "Mirvelo\n"),
+                          encoding="utf-8")
+    return main, wt
+
+
+def test_a_linked_worktree_without_lists_uses_the_main_checkouts(tmp_path):
+    """F6 / process gap #5: a worktree with no lists passed every PII scan vacuously."""
+    _, wt = _linked_worktree(tmp_path)
+    code, err = _run(wt, "tests/scripts/test_x.py", "Zorptech", with_denylist=False)
+    assert code == 2, err
+
+
+@pytest.mark.parametrize("main_lists,wt_lists,expected", [
+    (True, False, ["Zorptech"]),     # a worktree reads the main checkout's list
+    (True, True, ["Zorptech"]),      # a stale worktree copy is never read
+    (False, False, []),              # none anywhere: fail open, as before
+    (False, True, []),               # worktree copies are never read, even alone
+])
+def test_list_lookup_order_in_a_linked_worktree(tmp_path, main_lists, wt_lists, expected):
+    sys.path.insert(0, str(SCRIPT.parent))
+    import check_public_pii as cpp
+    _, wt = _linked_worktree(tmp_path, main_lists, wt_lists)
+    assert cpp.load_denylist(wt) == expected
+
+
+def test_a_worktree_copy_made_before_a_denylist_update_cannot_mask_it(tmp_path):
+    """2026-11-17 (Nick: cut the bloat): one source for the lists. The denylist is
+    regenerated as contacts are added, so a copy in a worktree goes stale; reading it
+    first would miss every name added after the copy."""
+    _, wt = _linked_worktree(tmp_path, main_lists=True, wt_lists=True)
+    code, err = _run(wt, "tests/scripts/test_x.py", "Zorptech", with_denylist=False)
+    assert code == 2, err
+
+
+def test_a_main_checkout_does_not_ask_git_where_main_is(tmp_path, monkeypatch):
+    """Only a linked worktree (whose .git is a file) looks up the main checkout, so the
+    hook adds no git process to every call in the main checkout."""
+    sys.path.insert(0, str(SCRIPT.parent))
+    import check_public_pii as cpp
+    main, _ = _linked_worktree(tmp_path, main_lists=True)
+    monkeypatch.setattr(cpp, "_main_checkout",
+                        lambda root: (_ for _ in ()).throw(AssertionError("called")))
+    assert cpp.load_denylist(main) == ["Zorptech"]
+
+
+def test_a_main_checkout_without_lists_does_not_look_elsewhere(tmp_path):
+    sys.path.insert(0, str(SCRIPT.parent))
+    import check_public_pii as cpp
+    main, _ = _linked_worktree(tmp_path, main_lists=False, wt_lists=True)
+    assert cpp.load_denylist(main) == []
+
+
 def test_ignores_non_write_edit_tool(tmp_path):
     payload = json.dumps({"tool_name": "Read",
                           "tool_input": {"file_path": "tests/x.py"}})

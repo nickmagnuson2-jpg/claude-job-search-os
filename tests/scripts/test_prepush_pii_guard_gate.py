@@ -201,6 +201,19 @@ def test_a_missing_denylist_fails_open_but_says_so_loudly(repo):
     assert "gen_pii_denylist.py" in r.stderr, "name the fix, not just the problem"
 
 
+def test_a_linked_worktree_without_lists_scans_with_the_main_checkouts(repo, tmp_path):
+    """F6 / process gap #5: the push from a worktree with no lists used to print `no
+    denylist` and skip the scan."""
+    commit(repo, "README.md", "x\n")
+    wt = tmp_path / "wt"
+    _git(repo, "worktree", "add", "-q", str(wt))
+    assert not (wt / "tools" / ".pii-denylist.txt").exists()
+    sha = commit(wt, "framework/leak.md", "Contact: Pat Zorp\n")
+    r = run(wt, push_line(sha))
+    assert r.returncode == 1, r.stderr
+    assert "no denylist" not in r.stderr
+
+
 def test_a_comments_only_denylist_counts_as_missing(repo):
     """An all-comment file parses to zero tokens. Treating it as a live denylist would
     report `clean (0 tokens)` -- a pass that checked nothing, worded like a result."""
