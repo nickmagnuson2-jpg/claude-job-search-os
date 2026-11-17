@@ -557,3 +557,24 @@ def _merged_tree_clean_env(repo, base, tip):
     return subprocess.run(["git", "-C", str(repo), "merge-tree", "--write-tree", base, tip],
                           capture_output=True, text=True, env=env, check=True
                           ).stdout.splitlines()[0]
+
+
+# Codex r3 F2 / Grok r3 F1 on 38b6a96c.
+
+RETARGET = ("import pathlib\n\n\ndef test_retarget():\n"
+            "    g = pathlib.Path('.git')\n"
+            "    admin = pathlib.Path(g.read_text().split('gitdir: ', 1)[1].strip())\n"
+            "    g.write_text('gitdir: ' + str(admin.parent / 'elsewhere') + '\\n')\n")
+
+
+def test_cleanup_target_is_fixed_before_the_suite_runs(sr, repo, tmp_path, tmp_parent, capsys):
+    """Code in the merged tree runs with write access to the temp worktree, so cleanup must
+    not ask that worktree's .git file what to delete after pytest has run."""
+    other = tmp_path / "elsewhere"
+    _git(repo, "worktree", "add", "-q", "--detach", str(other), "main")
+    _branch(repo, "retarget", {"tests/test_retarget.py": RETARGET})
+    code, out = _run(sr, repo, capsys, "retarget", "--base", "main")
+    assert code == 0, out
+    assert sorted(p.name for p in (repo / ".git" / "worktrees").iterdir()) == ["elsewhere"]
+    assert len(_worktrees(repo)) == 2
+    assert list(tmp_parent.iterdir()) == []
