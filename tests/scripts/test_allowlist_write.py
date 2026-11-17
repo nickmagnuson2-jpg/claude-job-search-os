@@ -254,3 +254,20 @@ def test_cli_get_of_an_absent_key_exits_2(repo):
 def test_cli_add_of_a_malformed_key_exits_2(repo):
     proc = run_cli(repo, "add", "nonsense", "--why", "a reason")
     assert proc.returncode == 2
+
+
+# --- the live file is a fixed point of the writer (allowlist-sort-1116) ----------------
+# _dump sorts on purpose, so two sessions adding different keys touch different lines and
+# git's own merge (GitHub's included, which runs no merge driver) succeeds. That only
+# holds if the file on disk is ALREADY in the writer's format: on 2026-11-16 main's file
+# had 22 order breaks from hand appends, so the first `add` re-sorted dozens of lines and
+# every add became a large conflict. This pins the live file to exactly what _dump emits.
+
+def test_the_live_allowlist_is_byte_identical_to_what_the_writer_emits(tmp_path):
+    live = aw.allow_path(TOOLS_DIR.parent)
+    (tmp_path / "tools").mkdir()
+    aw._dump(tmp_path, aw.load(TOOLS_DIR.parent))
+    assert aw.allow_path(tmp_path).read_bytes() == live.read_bytes(), (
+        "tools/mutation-allow.json is not in the writer's format (sorted keys, indent 2, "
+        "raw UTF-8, trailing newline). Add entries with tools/allowlist_write.py, not by "
+        "hand; to repair the file, rewrite it through allowlist_write._dump.")
