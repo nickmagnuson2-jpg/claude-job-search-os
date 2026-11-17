@@ -311,6 +311,7 @@ _HOOK_HEADER_RE = re.compile(
 # ("ls in '<path>' was blocked" puts a path first). Searching the whole result filed a real
 # failure that quoted a denial as a harness event and dropped it (Codex r2 3.F2, P0).
 _HARNESS_PHRASE_WITHIN = 300
+_HARNESS_SCAN_CAP = 50_000
 
 
 def harness_kind(error_text: str) -> str:
@@ -322,7 +323,11 @@ def harness_kind(error_text: str) -> str:
     head = (error_text or "").lstrip()
     if head.startswith("Exit code"):
         return ""
-    head = head[:_HARNESS_PHRASE_WITHIN + 300]
+    # The phrase must START near the opening, but may run long: "Permission to use Bash with
+    # command <the whole command> has been denied" ends after the command, so cutting the text
+    # short filed a long denial as the script's friction (Codex + Grok r4 F1, P0). The cap only
+    # bounds the regex's work on a huge result.
+    head = head[:_HARNESS_SCAN_CAP]
     for kind, rx in _HARNESS_KINDS:
         m = rx.search(head)
         if m and m.start() <= _HARNESS_PHRASE_WITHIN:

@@ -269,3 +269,13 @@ def test_a_harness_phrase_far_into_a_non_bash_result_is_not_harness():
 ])
 def test_real_harness_openings_still_classify(text, kind):
     assert fs.harness_kind(text) == kind
+
+
+def test_a_denial_with_a_long_embedded_command_is_still_harness():
+    """Codex + Grok r4 F1 (P0): the harness text was cut to 600 characters, so the closing
+    'has been denied' of a long command was never seen and the denial was filed as the
+    script's friction."""
+    cmd = "python3 tools/pipe_write.py update acme " + "--notes x " * 300
+    text = f"Permission to use Bash with command {cmd} has been denied."
+    assert fs.harness_kind(text) == "permission"
+    assert fs.derive_surface("Bash", cmd, text) == "harness:permission"
