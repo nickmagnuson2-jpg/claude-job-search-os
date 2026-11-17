@@ -441,3 +441,47 @@ def test_worktree_metadata_is_pruned_without_worktree_remove(sr, repo, tmp_paren
     assert code == 0, out
     assert list(tmp_parent.iterdir()) == []
     assert len(_worktrees(repo)) == 1
+
+
+# --------------------------------------------------------------------------- review round 1
+# Codex r1 on ddd86433.
+
+def test_exit_0_with_failures_in_the_report_does_not_record(sr, repo, tmp_parent, capsys):
+    """F1 (P0): a hook can force exit 0 while the JUnit report holds a failure. The report
+    is the evidence; the exit code alone is not."""
+    conftest = ("def pytest_sessionfinish(session, exitstatus):\n"
+                "    session.exitstatus = 0\n")
+    _branch(repo, "launder", {"conftest.py": conftest, "tests/test_bad.py": FAILING})
+    code, out = _run(sr, repo, capsys, "launder", "--base", "main")
+    assert code == 1 and out["returncode"] == 0
+    assert out["failed"] == 1 and out["passed"] == 1
+    assert out["code"] == "tests_failed"
+    assert _ledger_rows(repo) == []
+
+
+def test_exit_0_with_errors_in_the_report_does_not_record(sr, repo, tmp_parent, capsys):
+    conftest = ("import pytest\n\n\n@pytest.fixture\ndef broken():\n"
+                "    raise RuntimeError('setup')\n\n\n"
+                "def pytest_sessionfinish(session, exitstatus):\n"
+                "    session.exitstatus = 0\n")
+    erroring = "def test_uses(broken):\n    pass\n"
+    _branch(repo, "err", {"conftest.py": conftest, "tests/test_err.py": erroring})
+    code, out = _run(sr, repo, capsys, "err", "--base", "main")
+    assert code == 1 and out["returncode"] == 0 and out["errors"] == 1
+    assert out["code"] == "tests_failed"
+    assert _ledger_rows(repo) == []
+
+
+def test_cleanup_leaves_other_worktrees_alone(sr, repo, tmp_path, tmp_parent, capsys):
+    """F2 (P1): another worktree whose directory is absent (an unmounted volume, say) keeps
+    its record. Only this tool's own worktree is cleaned up."""
+    other = tmp_path / "elsewhere"
+    _git(repo, "worktree", "add", "-q", "--detach", str(other), "main")
+    import shutil
+    shutil.rmtree(other)
+    _branch(repo, "feat", {"tests/test_feat.py": PASSING})
+    code, out = _run(sr, repo, capsys, "feat", "--base", "main")
+    assert code == 0, out
+    assert list(tmp_parent.iterdir()) == []
+    listed = _worktrees(repo)
+    assert len(listed) == 2 and any(str(other) in ln for ln in listed)
