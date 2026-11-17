@@ -2544,3 +2544,17 @@ def test_worktree_run_counts_lines_the_way_finding_write_addresses_them(main_and
     report = wt / "output" / "analysis" / "111626-codex-after-malformed.md"
     assert _review(monkeypatch, wt, report)["mirrored"] is True
     assert gate.read_ledger(main)[0]["worktree_run"] == 2
+
+
+def test_a_mirror_made_without_a_position_keeps_the_legacy_shape(main_and_worktree):
+    """worktree_run is written only when run() supplies it. A mirror without one stays
+    shaped like the rows mirrored before Part B amendment 2 (no key, not a null), which
+    is what finding_write's identity-only path matches."""
+    main, wt = main_and_worktree
+    rel = _rel_report(wt, "r")
+    row = {"recorded": "2026-11-16T00:00:06+00:00", "report": rel, "model": "codex", "findings": []}
+    assert cv.mirror_to_main(wt, wt / rel, row) is True
+    assert "worktree_run" not in gate.read_ledger(main)[0]
+    assert cv.mirror_to_main(wt, wt / rel, {**row, "recorded": "2026-11-16T00:00:07+00:00"},
+                             worktree_run=3) is True
+    assert gate.read_ledger(main)[1]["worktree_run"] == 3
