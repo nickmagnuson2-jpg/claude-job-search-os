@@ -13,9 +13,10 @@ claim, and refuses every way that run can look green without being green:
 
   - pytest runs from an argv LIST (no shell, no word-splitting) and its returncode is read
     directly (no pipe can hide it);
-  - a pass is recorded ONLY IF returncode == 0 AND collected > 0. The collected count comes
-    from pytest's own JUnit XML report, not from parsing terminal text;
-  - every other outcome (timeout, zero collected, exit 5, failures, merge conflict, git
+  - a pass is recorded ONLY IF returncode == 0 AND collected > 0 AND not every collected
+    test skipped. The counts come from pytest's own JUnit XML report, not from parsing
+    terminal text;
+  - every other outcome (timeout, zero collected, all skipped, exit 5, failures, merge conflict, git
     error, missing report) prints a JSON object naming itself and exits 1.
 
 The merged tree is built with `git merge-tree --write-tree` (no checkout is touched), turned
@@ -226,6 +227,9 @@ def cmd_run(root: Path, branch: str, base: str, timeout: int) -> int:
             return _fail(f"pytest_exit_{rc}", f"pytest exit {rc}", **common)
         if counts["collected"] <= 0:
             return _fail("zero_collected", "collected 0 tests", **common)
+        if counts["skipped"] >= counts["collected"]:
+            return _fail("all_skipped", f"all {counts['collected']} collected tests skipped",
+                         **common)
         row = {"kind": "suite", "verdict": "pass", **ids, **counts, "duration_s": duration,
                "recorded_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                "tool_version": TOOL_VERSION}
