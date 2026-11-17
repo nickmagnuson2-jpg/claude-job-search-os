@@ -2110,8 +2110,11 @@ def run_in_worktree(argv: list[str], args) -> int:
                           "message": add.stderr.strip()}))
         return 1
     try:
+        # MUTATION_REPO_ROOT is pinned to the new worktree: inherited, it would point the
+        # child back at the caller's tree and mutate it in place after all.
+        env = {**os.environ, "MUTATION_REPO_ROOT": str(wt)}
         return subprocess.run([sys.executable, str(wt / "tools" / "mutation_check.py")]
-                              + child_argv, cwd=str(wt)).returncode
+                              + child_argv, cwd=str(wt), env=env).returncode
     finally:
         rm = subprocess.run(["git", "worktree", "remove", "--force", str(wt)],
                             capture_output=True, text=True, cwd=str(REPO_ROOT))
@@ -2182,7 +2185,9 @@ def main() -> int:
                          "when no session is issuing tool calls; prefer a linked worktree.")
     ap.add_argument("--in-worktree", action="store_true",
                     help="run in a throwaway linked worktree made from HEAD and removed "
-                         "afterwards; the way to test a wired hook during a live session. "
+                         "afterwards, also when this checkout is itself a linked worktree "
+                         "(then from its HEAD); the way to test a wired hook during a live "
+                         "session. "
                          "Refuses if the target or its mapped tests have uncommitted changes.")
     ap.add_argument("--whole-file", action="store_true",
                     help="measure every mutant in the file. The default measures only "
@@ -2208,7 +2213,10 @@ def main() -> int:
     ap.add_argument("--no-cache", action="store_true",
                     help="neither read nor write the verdict cache; wins over --cache")
     args = ap.parse_args()
-    if args.in_worktree and not _is_linked_worktree(REPO_ROOT):
+    # Honored from anywhere, a linked worktree included (FT:26, 2026-11-16). It used to be
+    # skipped there, so the run mutated the caller's worktree in place and froze it (one
+    # froze ~8 h). The child never sees the flag (worktree_argv drops it), so no loop.
+    if args.in_worktree:
         return run_in_worktree(sys.argv[1:], args)
 
     target = Path(args.target)

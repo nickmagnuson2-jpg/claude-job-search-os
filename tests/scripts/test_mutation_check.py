@@ -2231,6 +2231,66 @@ def test_only_the_runs_own_inputs_block_when_scoped(tmp_path):
     assert mc.uncommitted_inputs(repo, only={"tools/g.py"}) == []
 
 
+# --- --in-worktree from inside a linked worktree (FT:26, 2026-11-16) -------------------
+# The flag used to be skipped when the caller was already in a linked worktree, so the
+# run mutated that worktree in place and froze it: 5+ fires, one worktree frozen ~8 h
+# (output/overnight-merge-back/110726-swarm-failure-table.md row 7). The flag's help
+# promises a throwaway worktree made from HEAD, so it is honored from anywhere.
+
+_STUB = (
+    "import json, os, sys\nfrom pathlib import Path\n"
+    "Path(os.environ['STUB_RECORD']).write_text(json.dumps({\n"
+    "    'cwd': os.getcwd(), 'argv': sys.argv[1:],\n"
+    "    'repo_root': os.environ.get('MUTATION_REPO_ROOT'),\n"
+    "    'target_text': Path('tools/plain.py').read_text()}))\n")
+
+
+def _linked_wt_with_stub(tmp_path):
+    """A repo whose committed tools/mutation_check.py is a stub that records where it ran,
+    plus a linked worktree one commit ahead of the main checkout."""
+    repo = tmp_path / "repo"
+    tool, test = _hook_repo(repo, name="plain.py", wire=False)
+    (repo / "tools" / "mutation_check.py").write_text(_STUB, encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "stub")
+    wt = tmp_path / "wt"
+    _git(repo, "worktree", "add", "-q", "-b", "side", str(wt))
+    (wt / "tools" / "plain.py").write_text(_HOOK_SRC + "# side\n", encoding="utf-8")
+    _git(wt, "commit", "-qam", "side")
+    return wt
+
+
+def test_in_worktree_from_a_linked_worktree_runs_in_a_fresh_one(tmp_path):
+    wt = _linked_wt_with_stub(tmp_path)
+    before = (wt / "tools" / "plain.py").read_bytes()
+    record = tmp_path / "record.json"
+    r = _run(["tools/plain.py", "--in-worktree", "--isolation"], cwd=wt,
+             env_extra={"STUB_RECORD": str(record)})
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert record.exists(), "the flag was ignored: the run happened in the caller's tree"
+    got = json.loads(record.read_text())
+    child = Path(got["cwd"]).resolve()
+    assert child != wt.resolve() and child != (tmp_path / "repo").resolve()
+    assert got["argv"] == ["tools/plain.py", "--isolation"]
+    assert got["target_text"].endswith("# side\n")        # made from the CALLER'S HEAD
+    assert Path(got["repo_root"]).resolve() == child       # never pointed back at wt
+    assert (wt / "tools" / "plain.py").read_bytes() == before
+    assert not child.exists()                              # and removed afterwards
+
+
+def test_in_worktree_from_a_linked_worktree_refuses_uncommitted_inputs(tmp_path):
+    """Honoring the flag includes its refusal: a dirty target is not mutated in place."""
+    wt = _linked_wt_with_stub(tmp_path)
+    (wt / "tools" / "plain.py").write_text(_HOOK_SRC + "# dirty\n", encoding="utf-8")
+    record = tmp_path / "record.json"
+    r = _run(["tools/plain.py", "--in-worktree"], cwd=wt,
+             env_extra={"STUB_RECORD": str(record)})
+    assert r.returncode == 1
+    assert _code(r) == "uncommitted_inputs"
+    assert not record.exists()
+    assert (wt / "tools" / "plain.py").read_text() == _HOOK_SRC + "# dirty\n"
+
+
 # --- review round 4 (2026-10-27, runs 744/746) -------------------------------------------
 
 def test_an_absolute_target_inside_the_repo_is_made_relative():
