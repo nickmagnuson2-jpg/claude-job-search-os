@@ -523,8 +523,11 @@ def test_the_inner_pytest_sees_only_the_allowed_environment(sr, repo, tmp_parent
     allowed = sorted(sr.CHILD_ENV_KEEP)
     probe = ("import os\n\ndef test_env():\n"
              f"    allowed = set({allowed!r})\n"
-             "    extra = {k for k in os.environ if k not in allowed and not k.startswith('LC_')\n"
-             "             and k not in ('PYTHONIOENCODING', 'PYTEST_CURRENT_TEST')}\n"
+             # set by the child itself, not inherited: pytest's own two, and macOS's
+             # per-process text encoding
+             "    own = {'PYTHONIOENCODING', 'PYTEST_CURRENT_TEST', 'PYTEST_VERSION'}\n"
+             "    extra = {k for k in os.environ if k not in allowed and k not in own\n"
+             "             and not k.startswith(('LC_', '__CF_'))}\n"
              "    assert extra == set(), extra\n"
              "    assert os.environ['PATH']\n")
     _branch(repo, "envprobe", {"tests/test_env.py": probe})

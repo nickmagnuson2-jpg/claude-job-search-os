@@ -75,9 +75,26 @@ class Conflict(Exception):
         self.paths = paths
 
 
+# The child pytest gets these from the caller and nothing else (plus LC_*, and
+# PYTHONIOENCODING set here). Any other variable can change what runs: PYTEST_ADDOPTS (-k),
+# PYTEST_PLUGINS (a plugin that deselects tests), PYTHONPATH, GIT_DIR, or a tool's own
+# override switch. A list of variables to remove misses the next one; this is the list kept.
+CHILD_ENV_KEEP = frozenset({"PATH", "HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "TERM",
+                            "TZ", "LANG"})
+
+
+def child_env() -> dict:
+    env = {k: v for k, v in os.environ.items() if k in CHILD_ENV_KEEP or k.startswith("LC_")}
+    env["PYTHONIOENCODING"] = "utf-8"
+    return env
+
+
 def _git(root: Path, *args: str, env: dict | None = None) -> subprocess.CompletedProcess:
+    """git in `root`, with GIT_* dropped: a GIT_DIR exported by a hook would otherwise
+    override -C (the same rule as mutation_check._git)."""
+    base = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
     return subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True,
-                          env=env)
+                          env={**base, **(env or {})})
 
 
 def resolve_commit(root: Path, ref: str) -> str | None:
@@ -172,11 +189,7 @@ def _run_pytest(wt: Path, junit: Path, log: Path, timeout: int) -> int | None:
     """pytest's returncode, or None on timeout (the whole process group is killed)."""
     argv = [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider",
             f"--junitxml={junit}"]
-    # The caller's PYTEST_ADDOPTS (-k, -x, --deselect) would run part of the suite and record
-    # it as the whole; PYTHONPATH could import from the caller's checkout instead of the
-    # merged tree. Same rule as promotion_schema._pytest, which drops PYTEST_ADDOPTS.
-    env = {k: v for k, v in os.environ.items() if k not in ("PYTEST_ADDOPTS", "PYTHONPATH")}
-    env["PYTHONIOENCODING"] = "utf-8"
+    env = child_env()
     with log.open("wb") as out:
         proc = subprocess.Popen(argv, cwd=wt, env=env, stdout=out, stderr=subprocess.STDOUT,
                                 stdin=subprocess.DEVNULL, start_new_session=True)
@@ -217,7 +230,7 @@ def cmd_run(root: Path, branch: str, base: str, timeout: int) -> int:
     except GitError as e:
         return _fail("git_error", str(e))
     ct = _git(root, "commit-tree", tree, "-p", base_sha, "-p", tip_sha, "-m",
-              f"suite_record: merge {branch} into {base}", env={**os.environ, **_IDENT})
+              f"suite_record: merge {branch} into {base}", env=_IDENT)
     if ct.returncode != 0:
         return _fail("git_error", f"git commit-tree failed: {ct.stderr.strip()}")
     merged_commit = ct.stdout.strip()
