@@ -150,6 +150,22 @@ PYTHONIOENCODING=utf-8 python3 tools/role_queue_read.py --repo-root . --ack '<ke
 Ack **by key, never by count**: keys identify what was actually put in front of Nick,
 so a role a scan inserted between the read and the ack is not silently consumed.
 
+**New companies (from `results.company_queue.data`, `tools/company_queue.py`) — MONDAYS (first working day of the week) only, or whenever `oldest_first_seen` is more than 7 days old.**
+
+The weekly discovery job writes here, not to the inbox (funnel-intake decision 3, Nick 2026-11-06). Before this queue it left 44 unread blocks in `data/inbox.md`. Render at most 4 lines:
+
+```
+🏢 **New companies:** [pending_companies] waiting ([pending_people] people) · oldest [oldest_first_seen]
+- [Name] ([score]) — [description, ~10 words] [· possible match: X] [· location unverified]
+```
+
+- `exists: false` is NOT zero: say `⚠️ discovery queue unreadable: <reason>`.
+- Nick decides each one in plain words; run the decision for him, one company at a time:
+  `PYTHONIOENCODING=utf-8 python3 tools/company_queue.py --repo-root . decide --name "<Name>" --accept` (or `--reject --reason "<his words>"`).
+  Accept checks for a public Ashby / Greenhouse / Lever board and adds a scan target (outreach-only when no board is found, and say so). Reject records it so the collector never proposes it again (funnel-intake decision 1).
+- Reading never consumes; nothing is acknowledged. A company leaves the queue only when decided.
+- Zero pending renders nothing.
+
 **Cross-model findings (from `cross_model_gate.py`) — surface whenever non-empty.**
 
 ```bash

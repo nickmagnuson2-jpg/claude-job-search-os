@@ -10,6 +10,8 @@ from tools.agent_core import (load_dotenv, make_client, run_agent, _norm_name,
                               filter_known, load_known_names)
 from tools.agent_discover import struct_to_candidates, load_preset, score_company_candidates
 
+import company_queue
+QUEUE_ROOT = _REPO_ROOT   # the queue lives at <root>/tools/.company-queue.json
 SEEN_PATH = _REPO_ROOT / "tools" / ".agent_seen.json"
 INBOX = _REPO_ROOT / "data" / "inbox.md"
 PIPELINE = _REPO_ROOT / "data" / "job-pipeline.md"
@@ -119,6 +121,18 @@ def append_inbox(block):
     return written
 
 
+def queue_fresh(preset, entity, candidates, today):
+    """Write proposals to the discovery queue (tools/company_queue.py). False on failure,
+    so the caller leaves them unseen and the next run proposes them again."""
+    try:
+        company_queue.add(QUEUE_ROOT, preset, entity, candidates, today)
+    except Exception as exc:  # noqa: BLE001 -- lock timeout, unreadable queue
+        print(f"ERROR: discovery queue not updated ({exc}) — proposals NOT written",
+              file=sys.stderr)
+        return False
+    return True
+
+
 def main():
     import argparse
     ap = argparse.ArgumentParser()
@@ -146,8 +160,10 @@ def main():
             cands = reconcile_candidates(cands, PIPELINE)
             cands = score_company_candidates(cands, weights, preset.get("keywords"))
         fresh, updated = diff_unseen(cands, set(seen.get(name, [])))
-        if fresh and not append_inbox(render_inbox_block({"preset": name, "entity": entity},
-                                                         fresh, args.today)):
+        # Decision 3, funnel-intake.md (Nick, 2026-11-06): discovery output goes to the
+        # queue /standup reads, not the inbox. The inbox was a drain nothing read:
+        # 36 unreviewed blocks on 10/19, 44 on 11/17.
+        if fresh and not queue_fresh(name, entity, fresh, args.today):
             # Not written, so not seen: marking them seen here lost them for good, since
             # the next run would treat every one as already proposed (582-588.F2).
             summary[name] = {"new": 0, "unwritten": len(fresh), "cost": res.get("cost")}
