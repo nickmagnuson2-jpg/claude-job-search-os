@@ -724,4 +724,94 @@ def test_duplicate_finding_ids_in_mains_mirror_are_never_resolved_first_match(mi
     dup = W_ROW["findings"][1]
     _write_ledger(main, [MAIN_OWN, {**W_ROW, "worktree": str(wt),
                                     "findings": [W_ROW["findings"][0], dup, dict(dup)]}])
-    _main_unchanged_after_set(capsys, main, wt, ["2 findings with id 'F2'"])
+    # Main's findings differ from the worktree row's, so the signature does not match: the
+    # set warns and writes nothing, never picking the first F2.
+    _main_unchanged_after_set(capsys, main, wt, ["0 mirrored rows"])
+
+
+
+# --- Codex findings-durable r1 (2026-11-16): F1 and F2 -------------------------------------
+
+def test_the_worktree_lock_is_held_while_main_is_updated(mirrored, capsys, monkeypatch):
+    """F1: the worktree lock was released before the main update, so two sessions could
+    interleave and an older captured disposition could win in main. The worktree write and
+    the main update now happen under one hold of the worktree ledger's lock."""
+    import contextlib
+    import inbox_lock
+    main, wt = mirrored
+    held, seen = [], []
+    real_lock, real_update = inbox_lock.file_lock, inbox_lock.atomic_update
+
+    @contextlib.contextmanager
+    def tracking_lock(path, *a, **k):
+        with real_lock(path, *a, **k):
+            held.append(Path(path).resolve())
+            try:
+                yield
+            finally:
+                held.remove(Path(path).resolve())
+
+    def tracking_update(path, transform, *a, **k):
+        seen.append((Path(path).resolve(), list(held)))
+        return real_update(path, transform, *a, **k)
+    monkeypatch.setattr(inbox_lock, "file_lock", tracking_lock)
+    monkeypatch.setattr(inbox_lock, "atomic_update", tracking_update)
+    rc, out, _ = _cli(capsys, wt, "set", "1.F2", "--disposition", "parked", "--why", "w")
+    assert rc == 0 and out["mirrored"] is True
+    main_updates = [h for p, h in seen if p == fw.ledger_path(main).resolve()]
+    assert main_updates and fw.ledger_path(wt).resolve() in main_updates[0]
+
+
+def _two_runs(wt, main, s1, s2, mirror_both=True):
+    r1 = {**W_ROW, "findings": [{"id": "F1", "severity": "P1", "summary": s1, "disposition": None}]}
+    r2 = {**W_ROW, "findings": [{"id": "F1", "severity": "P1", "summary": s2, "disposition": None}]}
+    _write_ledger(wt, [r1, r2])
+    mirrors = [{**r1, "worktree": str(wt)}] + ([{**r2, "worktree": str(wt)}] if mirror_both else [])
+    _write_ledger(main, [MAIN_OWN] + mirrors)
+
+
+def test_runs_sharing_a_key_each_reach_only_their_own_mirror(mirrored, capsys):
+    """F2: two runs with one (report, model, recorded) are told apart by their findings."""
+    main, wt = mirrored
+    _two_runs(wt, main, "first", "second")
+    rc, out, _ = _cli(capsys, wt, "set", "2.F1", "--disposition", "parked", "--why", "run two")
+    assert rc == 0 and out["mirrored"] is True
+    rows = _rows(main)
+    assert rows[1]["findings"][0].get("disposition") is None          # run one untouched
+    assert rows[2]["findings"][0]["why"] == "run two"
+
+
+def test_a_set_never_lands_on_another_runs_mirror_with_the_same_key(mirrored, capsys):
+    """F2, Codex's reproduction: main holds only run one's mirror (as the old dedupe left
+    it). A set on run two must not be written onto run one's finding."""
+    main, wt = mirrored
+    _two_runs(wt, main, "first", "second", mirror_both=False)
+    _main_unchanged_after_set_addr(capsys, main, wt, "2.F1", [W_ROW["report"]])
+
+
+def test_two_runs_with_identical_findings_are_ambiguous(mirrored, capsys):
+    main, wt = mirrored
+    _two_runs(wt, main, "same", "same")
+    _main_unchanged_after_set_addr(capsys, main, wt, "2.F1", ["2 mirrored rows"])
+
+
+def test_a_disposition_on_one_run_leaves_the_other_runs_match_intact(mirrored, capsys):
+    """b2's edge case (ii): dispositions are not in the signature, so after run one is
+    dispositioned (in both copies) run two still matches only its own mirror, and run one
+    still matches its own on a later --force."""
+    main, wt = mirrored
+    _two_runs(wt, main, "first", "second")
+    for args in (("1.F1", "parked", "one"), ("2.F1", "parked", "two"), ("1.F1", "fixed", "one again")):
+        rc, out, _ = _cli(capsys, wt, "set", args[0], "--disposition", args[1], "--why", args[2], "--force")
+        assert rc == 0 and out["mirrored"] is True
+    rows = _rows(main)
+    assert (rows[1]["findings"][0]["why"], rows[2]["findings"][0]["why"]) == ("one again", "two")
+
+
+def _main_unchanged_after_set_addr(capsys, main, wt, addr, expect_in_err):
+    before = fw.ledger_path(main).read_bytes()
+    rc, out, err = _cli(capsys, wt, "set", addr, "--disposition", "parked", "--why", "w")
+    assert rc == 0 and out["mirrored"] is False
+    assert fw.ledger_path(main).read_bytes() == before
+    for s in expect_in_err:
+        assert s in err

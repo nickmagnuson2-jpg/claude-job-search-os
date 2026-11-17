@@ -1567,7 +1567,8 @@ def test_the_ledger_records_what_the_verifier_could_see(tmp_path, monkeypatch):
     # question, and from a linked worktree a lookup that gets no answer refuses.
     monkeypatch.setattr(cv, "_main_checkout", lambda root: None)
     monkeypatch.setattr(cv, "jailed_argv", lambda *a, **k: ["true"])
-    cv.run(REPO_ROOT, "t", [], "", tmp_path / "r.md", None, False,
+    # A tmp root: run() refuses a real ledger root inside pytest even with append stubbed.
+    cv.run(tmp_path, "t", [], "", tmp_path / "r.md", None, False,
            model="codex", images=[img])
     assert rows and rows[0]["images"] == [str(img)]
 
@@ -2056,9 +2057,15 @@ def test_a_test_run_never_writes_the_real_ledger(tmp_path, monkeypatch):
     the gate and /standup would then read as reviews (22 such rows, 2026-09-18..10-24)."""
     monkeypatch.setattr(cv, "jailed_argv", lambda *a, **k: ["true"])
     monkeypatch.setattr(cv, "gather_env_facts", lambda root: "")
+    # The append is stubbed, so a MUTATED guard cannot write the real ledger either: on
+    # 2026-11-16 a mutation run of this file let this very test write the worktree's
+    # real ledger (row 1 of findings-durable-1116). The guard must refuse anyway.
+    wrote = []
+    monkeypatch.setattr(gate, "append_row", lambda root, row: wrote.append(root))
     with pytest.raises(SystemExit) as exc:
         cv.run(REPO_ROOT, "t", [], "", tmp_path / "r.md", None, False, model="codex")
     assert "real ledger" in str(exc.value)
+    assert wrote == []
 
 
 def test_diff_base_falls_back_to_origin_main_without_an_upstream(tmp_path):
@@ -2417,3 +2424,76 @@ def test_a_stubbed_append_inside_a_test_still_never_copies_into_a_real_checkout(
     assert not (main / rel).exists()
     assert appended == []
     assert "real ledger" in capsys.readouterr().err
+
+
+
+# --- Codex findings-durable r1 (2026-11-16): F3 and F2 -------------------------------------
+
+def test_a_test_run_never_writes_the_main_checkouts_real_ledger_either(main_and_worktree,
+                                                                       monkeypatch, tmp_path):
+    """F3: run()'s guard compared only REPO_ROOT, so from a linked worktree a test could
+    run() against its real MAIN checkout and append there. Both roots are real."""
+    main, wt = main_and_worktree
+    monkeypatch.setattr(cv, "REPO_ROOT", wt)
+    monkeypatch.setattr(cv, "_real_ledger_roots", lambda: {wt, main})
+    monkeypatch.setattr(cv, "jailed_argv", lambda *a, **k: ["true"])
+    monkeypatch.setattr(cv, "gather_env_facts", lambda root: "")
+    wrote = []
+    monkeypatch.setattr(gate, "append_row", lambda root, row: wrote.append(root))
+    with pytest.raises(SystemExit) as exc:
+        cv.run(main, "t", [], "", tmp_path / "r.md", None, False, model="codex")
+    assert "real ledger" in str(exc.value) and wrote == []
+
+
+def _f(i, summary):
+    return {"id": i, "severity": "P1", "summary": summary, "location": "x.py:1", "disposition": None}
+
+
+def test_two_runs_sharing_report_model_and_second_are_both_mirrored(main_and_worktree):
+    """F2: `recorded` has whole seconds, so two runs with one explicit --report path in one
+    second share (report, model, recorded). The dedupe also compares the findings, so the
+    second run is appended, not dropped as a retry."""
+    main, wt = main_and_worktree
+    rel = _rel_report(wt, "r")
+    base = {"recorded": "2026-11-16T00:00:03+00:00", "report": rel, "model": "codex"}
+    assert cv.mirror_to_main(wt, wt / rel, {**base, "findings": [_f("F1", "first")]}) is True
+    assert cv.mirror_to_main(wt, wt / rel, {**base, "findings": [_f("F1", "second")]}) is True
+    assert [r["findings"][0]["summary"] for r in gate.read_ledger(main)] == ["first", "second"]
+
+
+def test_the_same_run_mirrored_twice_after_a_disposition_appends_once(main_and_worktree):
+    """The signature covers only fields no disposition changes, so main's copy that has
+    since been dispositioned still dedupes against the same run."""
+    main, wt = main_and_worktree
+    rel = _rel_report(wt, "r")
+    row = {"recorded": "2026-11-16T00:00:04+00:00", "report": rel, "model": "codex",
+           "findings": [_f("F1", "one")]}
+    assert cv.mirror_to_main(wt, wt / rel, row) is True
+    import json as _json
+    p = gate.ledger_path(main)
+    stored = _json.loads(p.read_text(encoding="utf-8").splitlines()[0])
+    stored["findings"][0].update(disposition="parked", why="w", dispositioned="t")
+    p.write_text(_json.dumps(stored) + "\n", encoding="utf-8")
+    assert cv.mirror_to_main(wt, wt / rel, row) is True
+    assert len(gate.read_ledger(main)) == 1
+
+
+def test_two_zero_finding_runs_with_one_key_dedupe_harmlessly(main_and_worktree):
+    """b2's edge case (i): with no findings the signature is empty, so two such runs in one
+    second dedupe to one row. Harmless: there is no finding a disposition could reach."""
+    main, wt = main_and_worktree
+    rel = _rel_report(wt, "r")
+    row = {"recorded": "2026-11-16T00:00:05+00:00", "report": rel, "model": "codex", "findings": []}
+    assert cv.mirror_to_main(wt, wt / rel, row) is True
+    assert cv.mirror_to_main(wt, wt / rel, {**row, "target": "another run"}) is True
+    assert len(gate.read_ledger(main)) == 1
+
+
+def test_findings_signature_ignores_disposition_fields():
+    a = {"findings": [_f("F1", "s")]}
+    b = {"findings": [{**_f("F1", "s"), "disposition": "fixed", "why": "w", "dispositioned": "t",
+                       "accepted_by": "o", "accepted_at": "t", "accepted_why": "w"}]}
+    assert cv.findings_signature(a) == cv.findings_signature(b)
+    assert cv.findings_signature(a) != cv.findings_signature({"findings": [_f("F1", "other")]})
+    assert cv.row_identity({**a, "report": "r", "model": "m", "recorded": "t"}) == \
+        ("r", "m", "t", cv.findings_signature(a))

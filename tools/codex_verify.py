@@ -839,6 +839,23 @@ def _real_ledger_roots() -> set[Path]:
     return roots
 
 
+# The fields of a finding that no disposition changes. A review row's identity is its
+# (report, model, recorded) plus these, in order, for every finding: `recorded` has whole
+# seconds, so two runs reusing one --report path in one second share the first three
+# (Codex findings-durable r1 F2). finding_write matches main's mirror by the same identity.
+SIGNATURE_FIELDS = ("id", "severity", "summary", "location")
+
+
+def findings_signature(row: dict) -> tuple:
+    return tuple(tuple(f.get(k) for k in SIGNATURE_FIELDS)
+                 for f in (row.get("findings") or []) if isinstance(f, dict))
+
+
+def row_identity(row: dict) -> tuple:
+    """(report, model, recorded, findings signature): what makes two ledger rows one run."""
+    return (row.get("report"), row.get("model"), row.get("recorded"), findings_signature(row))
+
+
 def mirror_to_main(repo_root: Path, report: Path, row: dict) -> bool | None:
     """Copy a worktree review's evidence into the main checkout. None: not a worktree.
 
@@ -850,8 +867,8 @@ def mirror_to_main(repo_root: Path, report: Path, row: dict) -> bool | None:
     relative path, and the row, plus a "worktree" field, to the main checkout. Runs in
     this process after the verifier exits, so the jail is not involved.
 
-    A row's identity is (report, model, recorded): the same run mirrored twice is
-    appended once, while two runs reusing one --report path are both kept.
+    A row's identity is row_identity(): the same run mirrored twice is appended once,
+    while two runs reusing one --report path, even in one second, are both kept.
     Never raises: a review that verified is not failed by its copy. False means the copy
     did not happen, with the reason on stderr.
     """
@@ -869,13 +886,12 @@ def mirror_to_main(repo_root: Path, report: Path, row: dict) -> bool | None:
             print("codex_verify: not mirroring into a real ledger inside a test run; "
                   "use a tmp main checkout.", file=sys.stderr)
             return False
-        key = (row.get("report"), row.get("model"), row.get("recorded"))
+        key = row_identity(row)
         # One lock around the duplicate check, the copy and the append (Codex 3.F2), and
         # the check FIRST, so a row main already holds never overwrites main's report with
         # older bytes (Codex 3.F1). append_row takes the same lock; it is reentrant.
         with gate.inbox_lock.file_lock(gate.ledger_path(main)):
-            if any((r.get("report"), r.get("model"), r.get("recorded")) == key
-                   for r in gate.read_ledger(main)):
+            if any(row_identity(r) == key for r in gate.read_ledger(main)):
                 return True
             src = Path(report).resolve()
             if src.is_file() and src.is_relative_to(root):
@@ -975,12 +991,15 @@ def run(repo_root: Path, target: str, paths: list[str], question: str,
         "report_fresh": report_fresh,
         "verified": verified,
     }
-    if (os.environ.get("PYTEST_CURRENT_TEST") and gate.append_row is _REAL_APPEND_ROW
-            and Path(repo_root).resolve() == REPO_ROOT.resolve()):
+    # Both real roots (this checkout and, from a linked worktree, its main checkout), and
+    # whether or not append_row is stubbed: a stub-only exemption let a mutated guard write
+    # the worktree's real ledger on 2026-11-16 (Codex findings-durable r1 F3).
+    if (os.environ.get("PYTEST_CURRENT_TEST")
+            and Path(repo_root).resolve() in _real_ledger_roots()):
         # The second half of the test interlock: between 2026-09-18 and 10-24 every mutation
         # run of this file let a test write rows into the real ledger (22 of them).
         raise SystemExit("codex_verify: refusing to write the real ledger inside a test run; "
-                         "pass a tmp repo_root or stub gate.append_row.")
+                         "pass a tmp repo_root.")
     gate.append_row(repo_root, row)
     mirrored = mirror_to_main(repo_root, report, row)
     status = "ok" if verified else (
