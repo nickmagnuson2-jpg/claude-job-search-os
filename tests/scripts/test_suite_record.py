@@ -183,6 +183,17 @@ def test_zero_collected_with_exit_0_does_not_record(sr, repo, tmp_parent, capsys
     assert _ledger_rows(repo) == []
 
 
+def test_all_skipped_does_not_record(sr, repo, tmp_parent, capsys):
+    """pytest exits 0 when every collected test skips; nothing ran, so it is not a pass."""
+    skipping = "import pytest\n\n\n@pytest.mark.skip\ndef test_a():\n    pass\n"
+    _branch(repo, "allskip", {"tests/test_base.py": skipping})
+    code, out = _run(sr, repo, capsys, "allskip", "--base", "main")
+    assert code == 1
+    assert out["returncode"] == 0 and out["collected"] == 1 and out["skipped"] == 1
+    assert out["code"] == "all_skipped"
+    assert _ledger_rows(repo) == []
+
+
 def test_timeout_does_not_record_and_cleans_up(sr, repo, tmp_parent, capsys):
     slow = "import time\n\ndef test_slow():\n    time.sleep(60)\n"
     _branch(repo, "slow", {"tests/test_slow.py": slow})
