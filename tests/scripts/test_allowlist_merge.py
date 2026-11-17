@@ -222,6 +222,10 @@ def test_it_works_as_a_registered_git_merge_driver(tmp_path):
     git("checkout", "-q", "main")
     _write(allow, {K1: "a", K2: "b"})
     git("commit", "-qam", "main")
+    # without the driver, git's line merge conflicts on this history (the 11-16 shape)
+    plain = git("merge", "-q", "--no-edit", "side")
+    assert plain.returncode != 0 and "CONFLICT" in plain.stdout + plain.stderr
+    git("merge", "--abort")
     (tmp_path / ".git" / "info" / "attributes").write_text("allow.json merge=allowlist\n")
     git("config", "merge.allowlist.driver",
         f"{sys.executable} {SCRIPT} %O %A %B")
