@@ -49,23 +49,29 @@ Two consumption shapes are flagged, both taken verbatim from the two fires:
 formatter list: their exit status IS informative, so `cmd | grep -q x || echo
 missing` is a legitimate verdict and must stay clean.
 
-ALLOWLIST — the two correct ways to keep the pipe
--------------------------------------------------
+ALLOWLIST — the correct way to keep the pipe
+--------------------------------------------
 The hook exits 0 when the author handles pipeline status: `set -o pipefail` is in
 effect for the statement (set in command position, not turned off again by
-`set +o pipefail`), or a `$PIPESTATUS` value is actually read. A mere mention, in a
-comment, a quoted string, or `echo set -o pipefail`, no longer exempts (Codex review
-of the hook wiring, run 15, F2).
+`set +o pipefail`). A mere mention, in a comment, a quoted string, or
+`echo set -o pipefail`, does not exempt (Codex review of the hook wiring, run 15, F2).
+Reading zsh's `$pipestatus[1]` needs no exemption: a status check in its own statement
+does not read `$?`, so it never matched. The whole-command `$pipestatus` exemption was
+removed (Q13, Nick 2026-11-16): it changed no verdict across 60 real commands and it
+blessed `cmd | tail || echo $pipestatus[1]`, whose `||` can never fire (Grok q13-r2 F1).
+Bash's uppercase `$PIPESTATUS` is its own violation, see find_violation.
 
 BLOCK tier (exit 2) per feedback_warn_vs_block_hook_design.md: an exit-0 WARN on
 PreToolUse is never surfaced by Claude Code, and this pattern has a single
-deterministic correction (unpipe the command under test, or use PIPESTATUS).
+deterministic correction (unpipe the command under test, or read the pipeline
+status array: `$pipestatus[1]` in zsh, the shell Claude Code runs here; bash's
+`${PIPESTATUS[0]}` is empty in zsh, 2026-11-16).
 
 Hook input: JSON via stdin from Claude Code. {"tool_input": {"command": "..."}}
 
 Exit codes:
   0 — clean (no formatter-terminated pipeline feeding a verdict, pipefail in
-      effect or $PIPESTATUS read, or parse failure -> fail-open)
+      effect, or parse failure -> fail-open)
   2 — verdict taken from a pipeline's exit status, tool call BLOCKED
 
 Origin: memory/feedback_pipeline_masks_the_exit_status_you_are_testing.md
@@ -95,7 +101,7 @@ FORMATTERS = frozenset(
 
 # The author is handling pipeline status only if pipefail is IN EFFECT for the
 # pipeline (`set -o pipefail`, `set -euo pipefail`, and not turned off again by
-# `set +o pipefail`) or a `$PIPESTATUS` value is actually READ. A bare mention in a
+# `set +o pipefail`). A bare mention in a
 # comment, a quoted string, or `set +o pipefail` exempted the whole command (Codex
 # review of the hook wiring, run 15, F2).
 # `set` in command position (statement start, after && / || / a group opener, or
@@ -105,8 +111,14 @@ FORMATTERS = frozenset(
 _SET_OPTS = r"(?:^|&&|\|\||[({]|\b(?:then|do|else)\b)\s*set\s+(?:[-+]\w+\s+(?:(?!pipefail\b)[a-z]\w*\s+)?)*"
 _PIPEFAIL_ON = re.compile(_SET_OPTS + r"-[a-zA-Z]*o\s+pipefail\b")
 _PIPEFAIL_OFF = re.compile(_SET_OPTS + r"\+[a-zA-Z]*o\s+pipefail\b")
-_PIPESTATUS_READ = re.compile(r"\$\{?PIPESTATUS\b")
-_SINGLE_QUOTED = re.compile(r"'[^']*'")
+# Bash's spelling, read where zsh EXPANDS it (outside single quotes and quoted
+# heredocs). It is always empty in zsh, so the read reports no status at all: its own
+# block, not just a lost exemption. 111 real commands read it; 89 expanded it, e.g.
+# `git push ... | tail; echo "push exit: ${PIPESTATUS[0]}"` printed an empty code
+# (Q13 scope, Nick 2026-11-16: "Add the rule"). The `$` must be preceded by an EVEN
+# run of backslashes (none, or `\\\\` = a literal backslash, then expansion); an odd run
+# escapes the `$` and zsh prints it (q13-r1 F2, q13-r2 Codex F1).
+_BASH_PIPESTATUS = re.compile(r"(?<!\\)(?:\\\\)*\$\{?PIPESTATUS\b")
 _COMMENT = re.compile(r"(?:^|(?<=\s))#[^\n]*")
 
 _VAR_PREFIX = re.compile(r"^\s*(?:\w+=\S*\s+)*")
@@ -133,14 +145,12 @@ def _terminal_formatter(element: str) -> str | None:
 
 def find_violation(command: str) -> tuple[str, str] | None:
     """Return (formatter, shape) for the first masked-exit-status verdict, else
-    None. `shape` is "||" (fire 1) or "$?" (fire 2)."""
-    # A real $PIPESTATUS read: double quotes still expand it, single quotes and
-    # comments do not.
-    if _PIPESTATUS_READ.search(_COMMENT.sub("", _SINGLE_QUOTED.sub("''", command))):
-        return None
-
+    None. `shape` is "||" (fire 1), "$?" (fire 2), or "PIPESTATUS" (an expanded read
+    of bash's array, which is empty in zsh; formatter is then "PIPESTATUS")."""
     text = _LINE_CONT.sub(" ", command)
     text = _COMMENT.sub("", strip_literals(text))
+    if _BASH_PIPESTATUS.search(text):
+        return "PIPESTATUS", "PIPESTATUS"
 
     # Statements: top-level `;` / newline. `||` and `&&` contain neither, so
     # and-or lists survive intact inside a statement.
@@ -188,6 +198,21 @@ def main() -> None:
         sys.exit(0)
 
     fmt, shape = hit
+    if shape == "PIPESTATUS":
+        print(
+            "BLOCKED: `$PIPESTATUS` is bash's array. In zsh, the shell Claude Code runs "
+            "here, it is unset and expands EMPTY, so this reads no exit status at all "
+            "(`echo \"exit=${PIPESTATUS[0]}\"` prints `exit=`).\n"
+            "\n"
+            "zsh's array is lowercase and 1-indexed:\n"
+            "  cmd \"$X\" | tail -5; echo \"exit=$pipestatus[1]\"\n"
+            "  cmd \"$X\" | tail -5; [ \"$pipestatus[1]\" -eq 0 ] || echo FAILED\n"
+            "\n"
+            "Or keep the command under test out of the pipeline:\n"
+            "  cmd \"$X\" > /tmp/o.txt 2>&1; echo \"exit=$?\"; tail -5 /tmp/o.txt\n",
+            file=sys.stderr,
+        )
+        sys.exit(2)
     consumer = "`||`" if shape == "||" else "`$?`"
     print(
         f"BLOCKED: pipeline masks the exit status you are testing "
@@ -201,7 +226,7 @@ def main() -> None:
         "  if cmd \"$X\"; then echo '  ok'; else echo '  FAILED'; fi\n"
         "  out=$(cmd \"$X\") || { echo '  FAILED'; exit 1; }\n"
         "  cmd \"$X\" > /tmp/o.txt 2>/tmp/e.txt; echo \"exit=$?\"\n"
-        f"  cmd \"$X\" | {fmt} ...; [ \"${{PIPESTATUS[0]}}\" -eq 0 ] || echo FAILED\n"
+        f"  cmd \"$X\" | {fmt} ...; [ \"$pipestatus[1]\" -eq 0 ] || echo FAILED   # zsh\n"
         "\n"
         "When the EXIT STATUS is the thing under test, the command must not be "
         "in a pipeline at all. Format after the verdict is computed, not in the "
