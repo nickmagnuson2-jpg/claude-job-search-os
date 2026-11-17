@@ -248,3 +248,31 @@ def test_main_returns_zero_on_a_clean_merge(sides, tmp_path):
     """The in-process API land_branch.py may call: a clean merge returns 0, not None."""
     o, a, b = sides
     assert am.main([str(o), str(a), str(b), "-o", str(tmp_path / "x.json")]) == 0
+
+
+def test_a_non_string_key_is_refused():
+    """{1: .., "1": ..} serializes to two members named "1"; a reload keeps one."""
+    with pytest.raises(ValueError):
+        am.merge({}, {1: "integer reason", "1": "string reason"}, {})
+
+
+def test_a_symlink_at_the_old_fixed_temp_name_is_not_followed(sides, tmp_path):
+    """The write must not go through a symlink planted at <target>.tmp."""
+    o, a, b = sides
+    victim = tmp_path / "victim.txt"
+    victim.write_text("untouched", encoding="utf-8")
+    (a.parent / (a.name + ".tmp")).symlink_to(victim)
+    assert _run(o, a, b).returncode == 0
+    assert victim.read_text(encoding="utf-8") == "untouched"
+    assert not a.is_symlink()
+    assert set(json.loads(a.read_text(encoding="utf-8"))) == {K1, K2, K3}
+
+
+def test_a_failed_write_leaves_the_target_and_no_temp_file(sides, monkeypatch):
+    o, a, b = sides
+    before = a.read_text(encoding="utf-8")
+    monkeypatch.setattr(am.os, "replace", lambda *x: (_ for _ in ()).throw(OSError("boom")))
+    with pytest.raises(OSError):
+        am.write_atomic(a, "{}\n")
+    assert a.read_text(encoding="utf-8") == before
+    assert sorted(p.name for p in a.parent.iterdir() if p.name.endswith(".tmp")) == []

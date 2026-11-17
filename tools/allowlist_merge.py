@@ -10,7 +10,7 @@ output/overnight-merge-back/110726-orchestration-design.md, section E (FT:37).
 
 RULES, per key:
   - added on either side: kept;
-  - removed on one side and unchanged on the other: removed;
+  - removed on one side and unchanged on the other: removed; removed on both: removed;
   - changed on one side only: that side's reason;
   - the same change on both sides: kept once;
   - two different results for one key (two reasons, or a rewrite against a removal):
@@ -36,7 +36,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
+import tempfile
 from pathlib import Path
 
 _MISSING = object()
@@ -56,6 +58,10 @@ def _check(side: str, data) -> dict:
     if not isinstance(data, dict):
         raise ValueError(f"{side} is not a JSON object")
     for key, why in data.items():
+        if not isinstance(key, str):
+            # {1: ..., "1": ...} would serialize to two members named "1", and a JSON
+            # reload keeps only the last: a silent loss (Codex 205323e051 F2).
+            raise ValueError(f"{side}: key {key!r} is not a string")
         if not isinstance(why, str) or not why.strip():
             raise ValueError(f"{side}: {key} has an empty or non-string reason")
     return data
@@ -143,10 +149,25 @@ def main(argv=None) -> int:
         return 2
 
     target = Path(args.output) if args.output else Path(args.ours)
-    tmp = target.with_name(target.name + ".tmp")
-    tmp.write_text(dumps(merged), encoding="utf-8")
-    tmp.replace(target)
+    write_atomic(target, dumps(merged))
     return 0
+
+
+def write_atomic(target: Path, text: str) -> None:
+    """Write via a fresh, exclusively created temp file in the target's directory, then
+    rename over the target. A fixed `<target>.tmp` name would follow a symlink left at
+    that path and overwrite whatever it points at (Codex 205323e051 F1)."""
+    fd, tmp = tempfile.mkstemp(prefix=f".{target.name}.", suffix=".tmp",
+                               dir=str(target.parent))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(text)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, target)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
 
 
 if __name__ == "__main__":
