@@ -2558,3 +2558,32 @@ def test_a_mirror_made_without_a_position_keeps_the_legacy_shape(main_and_worktr
     assert cv.mirror_to_main(wt, wt / rel, {**row, "recorded": "2026-11-16T00:00:07+00:00"},
                              worktree_run=3) is True
     assert gate.read_ledger(main)[1]["worktree_run"] == 3
+
+
+def test_run_holds_the_worktree_lock_through_the_first_mirror(main_and_worktree, monkeypatch):
+    """Codex findings-durable r3 F1: run() released the worktree ledger lock after the append
+    and before mirror_to_main, so a `set` in that gap updated the worktree, found no mirror
+    yet, and the mirror then copied the stale pre-set row. The lock is now held through the
+    first mirror (worktree lock, then main lock: finding_write's order)."""
+    import contextlib
+    main, wt = main_and_worktree
+    held, at_mirror = [], []
+    real_lock, real_mirror = gate.inbox_lock.file_lock, cv.mirror_to_main
+
+    @contextlib.contextmanager
+    def tracking_lock(path, *a, **k):
+        with real_lock(path, *a, **k):
+            held.append(Path(path).resolve())
+            try:
+                yield
+            finally:
+                held.remove(Path(path).resolve())
+
+    def tracking_mirror(*a, **k):
+        at_mirror.append(list(held))
+        return real_mirror(*a, **k)
+    monkeypatch.setattr(gate.inbox_lock, "file_lock", tracking_lock)
+    monkeypatch.setattr(cv, "mirror_to_main", tracking_mirror)
+    report = wt / "output" / "analysis" / "111626-codex-lock-r1.md"
+    assert _review(monkeypatch, wt, report)["mirrored"] is True
+    assert at_mirror and gate.ledger_path(wt).resolve() in at_mirror[0]

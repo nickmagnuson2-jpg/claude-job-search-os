@@ -1014,10 +1014,14 @@ def run(repo_root: Path, target: str, paths: list[str], question: str,
     # is finding_write's run number: what identifies this run when content cannot (Codex
     # findings-durable r2 F1, Part B amendment 2).
     from tools import finding_write as _fw
+    # The first mirror stays inside the same hold (Codex findings-durable r3 F1): released
+    # earlier, a `set` on this run could land between the append and the mirror, find no
+    # mirror yet, and the mirror would then copy this pre-set row into main as stale. Order is
+    # worktree lock, then main lock, the same as finding_write's set/accept, so no deadlock.
     with gate.inbox_lock.file_lock(gate.ledger_path(repo_root)):
         gate.append_row(repo_root, row)
         position = len(_fw.read_lines(_fw.ledger_path(Path(repo_root))))
-    mirrored = mirror_to_main(repo_root, report, row, worktree_run=position)
+        mirrored = mirror_to_main(repo_root, report, row, worktree_run=position)
     status = "ok" if verified else (
         "no_report_written" if not report_fresh else "run_failed")
     return {"status": status, "verified": verified,
