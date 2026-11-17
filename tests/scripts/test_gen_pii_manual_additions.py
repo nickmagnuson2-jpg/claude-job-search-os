@@ -182,4 +182,7 @@ def test_a_real_run_from_a_linked_worktree_writes_the_main_checkouts_lists(tmp_p
     assert r.returncode == 0, r.stderr
     written = (main / "tools" / ".pii-denylist.txt").read_text(encoding="utf-8")
     assert "Thessaly Quorne" in written
-    assert not list((wt / "tools").glob(".pii-denylist*")) if (wt / "tools").exists() else True
+    for name in (".pii-denylist.txt", ".pii-denylist-ambiguous.txt",
+                 ".pii-denylist-retired.txt", ".pii-denylist-targetwords.txt"):
+        assert (main / "tools" / name).is_file(), name   # Codex 5.F1 / Grok 6.F1: all four
+    assert not list(wt.rglob(".pii-denylist*")), "a list was written into the worktree"
