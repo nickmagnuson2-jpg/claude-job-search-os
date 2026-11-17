@@ -32,6 +32,7 @@ import re
 from pathlib import Path
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from vault_paths import main_checkout  # noqa: E402
 from slug import slugify as _slugify  # noqa: E402
 
 OUTPUT_REL = "tools/.pii-denylist.txt"
@@ -796,7 +797,10 @@ def main():
                     help="Print the list as JSON instead of writing the file.")
     args = ap.parse_args()
 
-    root = Path(args.repo_root) if args.repo_root else Path.cwd()
+    # A linked worktree has no data/ (gitignored) and every PII gate reads the MAIN checkout's
+    # lists from one (check_public_pii.list_path), so a run started there reads and writes the
+    # main checkout. A copy written into the worktree would be read by nothing (2026-11-17).
+    root = main_checkout(Path(args.repo_root) if args.repo_root else Path.cwd())
     networking = read_file(root / "data" / "networking.md")
     pipeline = read_file(root / "data" / "job-pipeline.md")
 
