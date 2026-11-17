@@ -487,18 +487,6 @@ def test_caller_pytest_addopts_cannot_shrink_the_suite(sr, repo, tmp_parent, cap
     assert _ledger_rows(repo) == []
 
 
-def test_inner_pytest_gets_no_caller_pytest_addopts_or_pythonpath(sr, repo, tmp_parent,
-                                                                  capsys, monkeypatch):
-    monkeypatch.setenv("PYTEST_ADDOPTS", "-p no:randomly")
-    monkeypatch.setenv("PYTHONPATH", str(repo))
-    probe = ("import os\n\ndef test_env():\n"
-             "    assert 'PYTEST_ADDOPTS' not in os.environ\n"
-             "    assert 'PYTHONPATH' not in os.environ\n")
-    _branch(repo, "envprobe", {"tests/test_env.py": probe})
-    code, out = _run(sr, repo, capsys, "envprobe", "--base", "main")
-    assert code == 0, out
-
-
 def test_an_unreadable_ledger_is_named_not_a_traceback(sr, repo, tmp_parent, capsys):
     _branch(repo, "feat", {"tests/test_feat.py": PASSING})
     (repo / LEDGER).mkdir(parents=True)          # a directory where the file should be
@@ -508,3 +496,61 @@ def test_an_unreadable_ledger_is_named_not_a_traceback(sr, repo, tmp_parent, cap
     (repo / LEDGER).write_bytes(b"\xff\xfe not utf-8\n")
     code, out = _check(sr, repo, capsys, "feat")
     assert code == 2 and out["code"] == "ledger_unreadable"
+
+
+# Codex r2 and Grok r2 on 23b945bb: removing named variables is not a boundary.
+
+NARROW = ("def pytest_collection_modifyitems(items):\n"
+          "    items[:] = [i for i in items if i.name == 'test_ok']\n")
+
+
+def test_a_caller_plugin_cannot_deselect_failing_tests(sr, repo, tmp_parent, capsys,
+                                                       monkeypatch):
+    """r2 F1 (P0): PYTEST_PLUGINS names a module in the tree that drops every failing test."""
+    monkeypatch.setenv("PYTEST_PLUGINS", "narrow")
+    _branch(repo, "narrow", {"narrow.py": NARROW, "tests/test_ok.py": PASSING,
+                             "tests/test_bad.py": FAILING})
+    code, out = _run(sr, repo, capsys, "narrow", "--base", "main")
+    assert code == 1 and out["code"] == "tests_failed" and out["failed"] == 1
+    assert _ledger_rows(repo) == []
+
+
+def test_the_inner_pytest_sees_only_the_allowed_environment(sr, repo, tmp_parent, capsys,
+                                                            monkeypatch):
+    for k in ("PYTEST_ADDOPTS", "PYTEST_PLUGINS", "PYTHONPATH", "PYTHONSTARTUP",
+              "DRAFT_OVERRIDE", "SOME_TOOL_SWITCH"):
+        monkeypatch.setenv(k, "x")
+    allowed = sorted(sr.CHILD_ENV_KEEP)
+    probe = ("import os\n\ndef test_env():\n"
+             f"    allowed = set({allowed!r})\n"
+             "    extra = {k for k in os.environ if k not in allowed and not k.startswith('LC_')\n"
+             "             and k not in ('PYTHONIOENCODING', 'PYTEST_CURRENT_TEST')}\n"
+             "    assert extra == set(), extra\n"
+             "    assert os.environ['PATH']\n")
+    _branch(repo, "envprobe", {"tests/test_env.py": probe})
+    code, out = _run(sr, repo, capsys, "envprobe", "--base", "main")
+    assert code == 0, out.get("output_tail", out)
+
+
+def test_a_stray_git_dir_does_not_redirect_the_run(sr, repo, tmp_path, tmp_parent, capsys,
+                                                   monkeypatch):
+    """r2 F2 (P1): a hook exports GIT_DIR; `git -C <root>` must still mean <root>, and the
+    inner suite must not inherit it either."""
+    other = tmp_path / "other"
+    other.mkdir()
+    _git(other, "init", "-q", "-b", "main")
+    _branch(repo, "feat", {"tests/test_feat.py": PASSING})
+    monkeypatch.setenv("GIT_DIR", str(other / ".git"))
+    monkeypatch.setenv("GIT_WORK_TREE", str(other))
+    code, out = _run(sr, repo, capsys, "feat", "--base", "main")
+    assert code == 0, out
+    assert out["tree"] == _merged_tree_clean_env(repo, "main", "feat")
+    assert len(_ledger_rows(repo)) == 1
+
+
+def _merged_tree_clean_env(repo, base, tip):
+    import os
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    return subprocess.run(["git", "-C", str(repo), "merge-tree", "--write-tree", base, tip],
+                          capture_output=True, text=True, env=env, check=True
+                          ).stdout.splitlines()[0]
