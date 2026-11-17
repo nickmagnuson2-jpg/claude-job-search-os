@@ -356,7 +356,7 @@ def test_suite_skipped_with_notice_when_tool_absent(repo):
     branch(repo, "feat", {"f.py": "x = 1\n"})
     r = by_name(lb.check(repo["root"], ["feat"], want_suite=True, gh=gh_local_main(repo)))["feat"]
     assert r["ready"]
-    assert r["steps"]["suite"]["skipped"]
+    assert r["steps"]["suite"]["rc"] is None and "suite step skipped" in r["steps"]["suite"]["note"]
 
 
 def test_suite_failure_refuses_when_tool_present(repo, monkeypatch):
@@ -691,7 +691,8 @@ def test_render_exact():
         "A hand-resolved conflict is not landed until the merged file is checked on GitHub main:",
         "  - m.json: parses as JSON (python3 -m json.tool) and keeps every key from both sides",
         "",
-        "Push commands and PR pages (2; gh is read-only by design, so open each page and click Create):",
+        "scope: branches named on the command line | population 2 | included 1 | excluded: not ready 1",
+        "Push commands and PR pages, one per ready branch (gh is read-only by design, so open each page and click Create):",
         "  P1  [already on GitHub at this tip]",
         "    U1",
         "  P2",
@@ -719,7 +720,8 @@ def test_render_exact_no_conflicts_github_down():
         "READY      ok1  aaaaaaaa  pii=ok(rc 0) suite=FAIL(rc 1)", "",
         "Pairwise conflicts: none", "",
         "Merge order (on GitHub, no rebase):", "  1. ok1", "",
-        "Push commands and PR pages (0; gh is read-only by design, so open each page and click Create):",
+        "scope: branches named on the command line | population 1 | included 1 | excluded: not ready 0",
+        "Push commands and PR pages, one per ready branch (gh is read-only by design, so open each page and click Create):",
         "", "ALL READY"])
 
 

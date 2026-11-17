@@ -55,6 +55,9 @@ import sys
 import urllib.parse
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from count_report import format_line  # noqa: E402  (a count states its reach)
+
 ZERO = "0" * 40
 # Env vars that turn a gate dry run into a recorded waiver. A read-only check must never
 # carry them through, or running it from a shell that has one set would write a ledger row.
@@ -332,7 +335,7 @@ def suite_check(tools: Path | None, wt: Path, tip: str) -> dict:
     if tool.is_file():
         rc, out, err = run([sys.executable, str(tool), "check", "--tip", tip], cwd=wt)
         return {"rc": rc, "ok": rc == 0, "tool": str(tool), "tail": tail(out + err)}
-    return {"rc": None, "ok": True, "skipped": True,
+    return {"rc": None, "ok": True,
             "note": "suite_record.py not in the main checkout (suite-gate-1109 not landed); "
                     "suite step skipped"}
 
@@ -589,7 +592,10 @@ def render(rep: dict) -> str:
                    "resolve the second after the first lands)")
     out += post_merge_checks(rep["conflicts"])
     out.append("")
-    out.append(f"Push commands and PR pages ({len(rep['landing'])}; gh is read-only by design, "
+    ready = sum(1 for r in rep["branches"] if r["ready"])
+    out.append(format_line("branches named on the command line", len(rep["branches"]), ready,
+                           {"not ready": len(rep["branches"]) - ready}))
+    out.append("Push commands and PR pages, one per ready branch (gh is read-only by design, "
                "so open each page and click Create):")
     for x in rep["landing"]:
         state = "  [already on GitHub at this tip]" if x["pushed"] else ""
