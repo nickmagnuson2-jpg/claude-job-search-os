@@ -17,11 +17,20 @@ For each branch:
      Otherwise the check falls back to local origin/main and says so. Each branch is then
      merge-tree'd against that main, and every pair of branches against each other.
   5. The push gate dry run: the pre-push hook git would run (`git rev-parse --git-path hooks`),
-     called from the branch's worktree with the refs line git would hand it.
-  6. `tools/audit_pii_record.py check --tip <sha>` from the worktree.
+     called from the branch's worktree with the refs line and push URL git would hand it.
+     That hook runs the BRANCH'S OWN tools/cross_model_gate.py, exactly as a real push does,
+     so this step is as trustworthy as the push itself and no more.
+  6. `tools/audit_pii_record.py check --tip <sha>`, pointed at the worktree.
   7. `tools/check_public_pii.py --scan --stdin-paths` over the branch's added/modified files.
   8. Optional (--suite): `tools/suite_record.py check --tip <sha>` when that tool exists;
      skipped with a notice when it does not.
+
+Steps 6 to 8 run the MAIN CHECKOUT's copies of those tools, never the branch's: a branch that
+edits its own audit or PII scanner must not get to judge itself (Codex r1 F1, P0).
+
+A branch is also refused when GitHub already has it at a sha that is not an ancestor of the
+local tip (the printed push would be rejected as non-fast-forward), and when the merge check
+could only run against a local origin/main that differs from GitHub main.
 
 Then it prints a push command with an explicit refspec for each ready branch, and a merge
 order: branches in no conflicting pair first, then each conflicting pair with its files.
@@ -48,6 +57,7 @@ ZERO = "0" * 40
 # Env vars that turn a gate dry run into a recorded waiver. A read-only check must never
 # carry them through, or running it from a shell that has one set would write a ledger row.
 WAIVER_ENV = ("CODEX_VERIFY_WAIVE", "AUDIT_PII_WAIVE", "PUSH_PII_OVERRIDE")
+SHA_RE = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
 MAIN_NAMES = {"main", "origin/main", "refs/heads/main", "refs/remotes/origin/main"}
 
 
@@ -90,6 +100,25 @@ def repo_slug(url: str) -> str | None:
 
 def upstream_is_main(upstream: str) -> bool:
     return upstream.strip() in MAIN_NAMES or upstream.strip().endswith("/main")
+
+
+def configured_upstream(wt: Path, branch: str) -> str | None:
+    """`<remote>/<branch>` from git config. Read from config, not `@{upstream}`: that fails
+    when the remote-tracking ref is absent, and a bare push still targets the configured
+    merge ref then (Codex r1 tests F2)."""
+    rc, merge, _ = git(["config", "--get", f"branch.{branch}.merge"], wt)
+    if rc != 0 or not merge.strip():
+        return None
+    rc, remote, _ = git(["config", "--get", f"branch.{branch}.remote"], wt)
+    remote = remote.strip() if rc == 0 and remote.strip() else "."
+    return f"{remote}/{merge.strip().removeprefix('refs/heads/')}"
+
+
+def trusted_tools(root: Path) -> Path:
+    """tools/ in the main checkout: the parent of the common git dir, the same for every
+    worktree. Steps 6 to 8 run from here so a candidate branch never runs its own judge."""
+    rc, common, _ = git(["rev-parse", "--path-format=absolute", "--git-common-dir"], root)
+    return Path(common.strip()).parent / "tools" if rc == 0 else root / "tools"
 
 
 # ---------------------------------------------------------------- GitHub (read-only)
@@ -178,7 +207,7 @@ def merge_check(root: Path, a: str, b: str) -> dict:
     lines = [ln for ln in out.splitlines() if ln.strip()]
     # rc 1 means conflict ONLY when a tree sha was printed: git also exits 1 for a ref it
     # cannot resolve ("not something we can merge"), with nothing on stdout.
-    if rc not in (0, 1) or not lines:
+    if rc not in (0, 1) or not lines or not SHA_RE.fullmatch(lines[0]):
         return {"clean": False, "error": err.strip()[:300] or f"merge-tree rc {rc}", "files": []}
     return {"clean": rc == 0, "tree": lines[0] if lines else None,
             "files": sorted(set(lines[1:])) if rc == 1 else []}
@@ -206,13 +235,13 @@ def gate_reason(text: str) -> str:
     return (blocked or lines or ["(no output)"])[0]
 
 
-def audit_check(wt: Path, tip: str) -> dict:
-    tool = wt / "tools" / "audit_pii_record.py"
+def audit_check(tools: Path, wt: Path, tip: str) -> dict:
+    tool = tools / "audit_pii_record.py"
     if not tool.is_file():
         return {"rc": None, "ok": False, "error": f"missing {tool}"}
     rc, out, err = run([sys.executable, str(tool), "--repo-root", str(wt), "check", "--tip", tip],
                        cwd=wt)
-    return {"rc": rc, "ok": rc == 0, "tail": tail(out + err)}
+    return {"rc": rc, "ok": rc == 0, "tool": str(tool), "tail": tail(out + err)}
 
 
 def changed_files(wt: Path, base: str, tip: str) -> list[str]:
@@ -223,10 +252,10 @@ def changed_files(wt: Path, base: str, tip: str) -> list[str]:
     return [ln for ln in out.splitlines() if ln.strip()] if rc == 0 else []
 
 
-def pii_scan(wt: Path, files: list[str]) -> dict:
+def pii_scan(tools: Path, wt: Path, files: list[str]) -> dict:
     if not files:
         return {"rc": None, "ok": True, "hits": [], "ambiguous": [], "note": "no A/M files"}
-    tool = wt / "tools" / "check_public_pii.py"
+    tool = tools / "check_public_pii.py"
     if not tool.is_file():
         return {"rc": None, "ok": False, "hits": [], "ambiguous": [], "error": f"missing {tool}"}
     paths = "\n".join(str(wt / f) for f in files) + "\n"
@@ -252,13 +281,14 @@ def pii_scan(wt: Path, files: list[str]) -> dict:
     return res
 
 
-def suite_check(main_root: Path, wt: Path, tip: str) -> dict:
-    for cand in (wt / "tools" / "suite_record.py", main_root / "tools" / "suite_record.py"):
-        if cand.is_file():
-            rc, out, err = run([sys.executable, str(cand), "check", "--tip", tip], cwd=wt)
-            return {"rc": rc, "ok": rc == 0, "tool": str(cand), "tail": tail(out + err)}
+def suite_check(tools: Path, wt: Path, tip: str) -> dict:
+    tool = tools / "suite_record.py"
+    if tool.is_file():
+        rc, out, err = run([sys.executable, str(tool), "check", "--tip", tip], cwd=wt)
+        return {"rc": rc, "ok": rc == 0, "tool": str(tool), "tail": tail(out + err)}
     return {"rc": None, "ok": True, "skipped": True,
-            "note": "suite_record.py not found (suite-gate-1109 not landed); suite step skipped"}
+            "note": "suite_record.py not in the main checkout (suite-gate-1109 not landed); "
+                    "suite step skipped"}
 
 
 def tail(text: str, n: int = 6) -> str:
@@ -266,7 +296,8 @@ def tail(text: str, n: int = 6) -> str:
 
 
 def check_branch(root: Path, branch: str, worktrees: dict, gh_state: dict | None,
-                 main_ref: str | None, remote_url: str, want_suite: bool) -> dict:
+                 main_ref: str | None, remote_url: str, want_suite: bool,
+                 stale_base: str | None = None) -> dict:
     r = {"branch": branch, "ready": False, "refusals": [], "steps": {}}
     if branch == "main":
         r["refusals"].append("refusing to land main itself")
@@ -285,7 +316,8 @@ def check_branch(root: Path, branch: str, worktrees: dict, gh_state: dict | None
     r["tip"] = tip
     remote_sha = (gh_state or {}).get("heads", {}).get(branch, ZERO)
     r["github_tip"] = None if remote_sha == ZERO else remote_sha
-    rc, st, err = git(["status", "--porcelain", "--untracked-files=no"], wt)
+    rc, st, err = git(["--no-optional-locks", "status", "--porcelain", "--untracked-files=no"],
+                      wt)
     if rc != 0:
         r["refusals"].append(f"git status failed in worktree: {err.strip()[:200]}")
     elif st.strip():
@@ -294,12 +326,22 @@ def check_branch(root: Path, branch: str, worktrees: dict, gh_state: dict | None
                  if r["github_tip"] == tip else "tip is not on GitHub at this sha")
         r["refusals"].append(f"worktree has uncommitted changes: {', '.join(dirty)} "
                              f"(not in tip {short(tip)}; {where})")
-    rc, up, _ = git(["rev-parse", "--abbrev-ref", f"{branch}@{{upstream}}"], wt)
-    r["upstream"] = up.strip() if rc == 0 else None
-    if rc == 0 and upstream_is_main(up):
-        r["refusals"].append(f"upstream is {up.strip()}: a bare `git push` would push main")
+    up = configured_upstream(wt, branch)
+    r["upstream"] = up
+    if up and upstream_is_main(up):
+        r["refusals"].append(f"upstream is {up}: a bare `git push` would push main")
     if r["github_tip"] and r["github_tip"] != tip:
-        r["notes"] = [f"GitHub has {branch} at {short(remote_sha)}, local is {short(tip)}"]
+        ff = git(["merge-base", "--is-ancestor", remote_sha, tip], wt)[0] == 0
+        if ff:
+            r["notes"] = [f"GitHub has {branch} at {short(remote_sha)}, behind local "
+                          f"{short(tip)}; the push fast-forwards"]
+        else:
+            r["refusals"].append(
+                f"GitHub has {branch} at {short(remote_sha)}, which is not an ancestor of local "
+                f"{short(tip)} (or is not in the local object store): the push would be "
+                "rejected as non-fast-forward. Never force it; find out which tip is right")
+    if stale_base:
+        r["refusals"].append(stale_base)
     if main_ref:
         m = merge_check(root, main_ref, tip)
         r["steps"]["merge_main"] = m
@@ -312,11 +354,12 @@ def check_branch(root: Path, branch: str, worktrees: dict, gh_state: dict | None
     r["steps"]["gate"] = g
     if not g["ok"]:
         r["refusals"].append(f"push gate rc {g['rc']}: {g.get('reason') or g.get('error')}")
-    a = audit_check(wt, tip)
+    tools = trusted_tools(root)
+    a = audit_check(tools, wt, tip)
     r["steps"]["audit"] = a
     if not a["ok"]:
         r["refusals"].append(f"audit_pii_record check rc {a['rc']}")
-    p = pii_scan(wt, changed_files(wt, main_ref or "origin/main", tip))
+    p = pii_scan(tools, wt, changed_files(wt, main_ref or "origin/main", tip))
     r["steps"]["pii"] = p
     if p["hits"]:
         r["refusals"].append(f"PII denylist hits: {len(p['hits'])}")
@@ -327,7 +370,7 @@ def check_branch(root: Path, branch: str, worktrees: dict, gh_state: dict | None
         r["refusals"].append(f"ambiguous PII matches with no clean audit record: "
                              f"{len(p['ambiguous'])}")
     if want_suite:
-        s = suite_check(root, wt, tip)
+        s = suite_check(tools, wt, tip)
         r["steps"]["suite"] = s
         if not s["ok"]:
             r["refusals"].append(f"suite_record check rc {s['rc']}")
@@ -391,7 +434,8 @@ def merge_order(results: list[dict], conflicts: list[dict]) -> dict:
 def check(root: Path, branches: list[str], want_suite: bool = False, gh=gh_json) -> dict:
     rc, porcelain, err = git(["worktree", "list", "--porcelain"], root)
     worktrees = parse_worktrees(porcelain) if rc == 0 else {}
-    rc, url, _ = git(["remote", "get-url", "origin"], root)
+    # The PUSH url: the hook receives it on a real push, and it can differ from the fetch url.
+    rc, url, _ = git(["remote", "get-url", "--push", "origin"], root)
     remote_url = url.strip() if rc == 0 else ""
     slug = repo_slug(remote_url)
     gh_state, gh_error = None, None
@@ -404,8 +448,13 @@ def check(root: Path, branches: list[str], want_suite: bool = False, gh=gh_json)
     main = resolve_main_ref(root, gh_state)
     if gh_error:
         main["warnings"].insert(0, f"GitHub read failed: {gh_error}")
-    results = [check_branch(root, b, worktrees, gh_state, main["ref"], remote_url, want_suite)
-               for b in branches]
+    stale = None
+    if gh_state is not None and main["method"] == "fallback" and \
+            main["ref"] != main["github_main"]:
+        stale = (f"checked against local origin/main {short(main['ref'])}, not GitHub main "
+                 f"{short(main['github_main'])}: a clean result here proves nothing about GitHub")
+    results = [check_branch(root, b, worktrees, gh_state, main["ref"], remote_url, want_suite,
+                            stale) for b in branches]
     tips = {r["branch"]: r["tip"] for r in results if r.get("tip")}
     conflicts = []
     for a, b in itertools.combinations([r["branch"] for r in results if r.get("tip")], 2):

@@ -21,10 +21,13 @@ def sh(cwd, *args):
                           text=True).stdout.strip()
 
 
-AUDIT_STUB = "import os, sys\nsys.exit(int(os.environ.get('LB_AUDIT_RC', '0')))\n"
+AUDIT_STUB = ("import json, os, sys\n"
+              "open(os.environ['LB_ARGV_LOG'], 'a').write(json.dumps(['audit', *sys.argv[1:]]) + '\\n')\n"
+              "sys.exit(int(os.environ.get('LB_AUDIT_RC', '0')))\n")
 PII_STUB = """import json, os, sys
 mode = os.environ.get('LB_PII_MODE', 'clean')
-sys.stdin.read()
+paths = sys.stdin.read().split()
+open(os.environ['LB_ARGV_LOG'], 'a').write(json.dumps(['pii', *sys.argv[1:], *paths]) + '\\n')
 r = {'scanned': 1, 'hits': [], 'ambiguous_unresolved': [], 'skipped': [], 'unreadable': []}
 if mode == 'hit':
     r['hits'] = [{'file': 'x.py', 'tokens': ['Realname']}]
@@ -45,7 +48,7 @@ print(json.dumps(r)); sys.exit(0)
 SUITE_STUB = "import os, sys\nsys.exit(int(os.environ.get('LB_SUITE_RC', '0')))\n"
 HOOK_STUB = """#!/bin/bash
 cat > "$LB_HOOK_LOG"
-echo "waive=${CODEX_VERIFY_WAIVE:-unset} remote=$1 url=$2" >> "$LB_HOOK_LOG"
+echo "waive=${CODEX_VERIFY_WAIVE:-unset}/${AUDIT_PII_WAIVE:-unset}/${PUSH_PII_OVERRIDE:-unset} remote=$1 url=$2" >> "$LB_HOOK_LOG"
 if [ "${LB_GATE_RC:-0}" != 0 ]; then
   echo "prepush: checking"
   echo "BLOCKED: stub gate says no for refs/heads/x" >&2
@@ -76,6 +79,7 @@ def repo(tmp_path, monkeypatch):
     hook.write_text(HOOK_STUB)
     hook.chmod(0o755)
     monkeypatch.setenv("LB_HOOK_LOG", str(tmp_path / "hook.log"))
+    monkeypatch.setenv("LB_ARGV_LOG", str(tmp_path / "argv.log"))
     for k in ("LB_AUDIT_RC", "LB_PII_MODE", "LB_GATE_RC", "LB_SUITE_RC"):
         monkeypatch.delenv(k, raising=False)
     return {"root": root, "base": base, "tmp": tmp_path}
@@ -263,14 +267,15 @@ def test_pairwise_conflict_named_and_ordered_last(repo):
     assert "a1 x b1: shared.json" in out
 
 
-def test_gate_receives_git_refs_line_and_no_waiver(repo, monkeypatch):
+@pytest.mark.parametrize("var", lb.WAIVER_ENV)
+def test_gate_receives_git_refs_line_and_no_waiver(repo, monkeypatch, var):
     _, tip = branch(repo, "feat", {"f.py": "x = 1\n"})
-    monkeypatch.setenv("CODEX_VERIFY_WAIVE", "should never reach the hook")
+    monkeypatch.setenv(var, "should never reach the hook")
     lb.check(repo["root"], ["feat"], gh=gh_local_main(repo))
-    log = Path(os.environ["LB_HOOK_LOG"]).read_text()
-    assert f"refs/heads/feat {tip} refs/heads/feat {'0' * 40}" in log
-    assert "waive=unset" in log
-    assert "remote=origin url=git@github.com:owner/repo.git" in log
+    log = Path(os.environ["LB_HOOK_LOG"]).read_text().splitlines()
+    assert log[0] == f"refs/heads/feat {tip} refs/heads/feat {'0' * 40}"
+    assert "waive=unset/unset/unset" in log[1]
+    assert "remote=origin url=git@github.com:owner/repo.git" in log[1]
 
 
 def test_gate_uses_remote_sha_when_branch_exists_on_github(repo):
@@ -278,9 +283,11 @@ def test_gate_uses_remote_sha_when_branch_exists_on_github(repo):
     gh = gh_for({"main": repo["base"], "feat": repo["base"]},
                 {repo["base"]: {"parents": [], "commit": {"tree": {"sha": "0" * 40}}}})
     r = by_name(lb.check(repo["root"], ["feat"], gh=gh))["feat"]
-    assert f"refs/heads/feat {repo['base']}" in Path(os.environ["LB_HOOK_LOG"]).read_text()
+    first = Path(os.environ["LB_HOOK_LOG"]).read_text().splitlines()[0]
+    assert first == f"refs/heads/feat {tip} refs/heads/feat {repo['base']}"
     assert r["github_tip"] == repo["base"]
-    assert r["notes"]
+    assert r["ready"], r["refusals"]
+    assert "the push fast-forwards" in r["notes"][0]
 
 
 def test_gate_failure_refuses(repo, monkeypatch):
@@ -327,7 +334,7 @@ def test_pii_scan_is_given_only_added_or_modified_files(repo, monkeypatch, tmp_p
     wt, tip = branch(repo, "feat", {"new.py": "n = 1\n", "shared.json": '{"a": 5}\n'})
     seen = {}
 
-    def fake_scan(w, files):
+    def fake_scan(t, w, files):
         seen["files"] = files
         return {"rc": 0, "ok": True, "hits": [], "ambiguous": []}
     monkeypatch.setattr(lb, "pii_scan", fake_scan)
@@ -343,7 +350,8 @@ def test_suite_skipped_with_notice_when_tool_absent(repo):
 
 
 def test_suite_failure_refuses_when_tool_present(repo, monkeypatch):
-    branch(repo, "feat", {"f.py": "x = 1\n", "tools/suite_record.py": SUITE_STUB})
+    branch(repo, "feat", {"f.py": "x = 1\n"})
+    (repo["root"] / "tools" / "suite_record.py").write_text(SUITE_STUB)
     monkeypatch.setenv("LB_SUITE_RC", "1")
     r = by_name(lb.check(repo["root"], ["feat"], want_suite=True, gh=gh_local_main(repo)))["feat"]
     assert "suite_record check rc 1" in r["refusals"]
@@ -513,8 +521,8 @@ def test_missing_hook_and_tools_each_refuse(repo):
     wt, _ = branch(repo, "feat", {"f.py": "x = 1\n"})
     hook = Path(sh(repo["root"], "rev-parse", "--path-format=absolute", "--git-path", "hooks"))
     (hook / "pre-push").unlink()
-    (wt / "tools" / "audit_pii_record.py").unlink()
-    (wt / "tools" / "check_public_pii.py").unlink()
+    (repo["root"] / "tools" / "audit_pii_record.py").unlink()
+    (repo["root"] / "tools" / "check_public_pii.py").unlink()
     r = by_name(lb.check(repo["root"], ["feat"], gh=gh_local_main(repo)))["feat"]
     s = r["steps"]
     assert s["gate"]["error"] == "no pre-push hook installed" and s["gate"]["rc"] is None
@@ -538,13 +546,13 @@ def test_changed_files_bad_base_is_empty(repo):
 def test_pii_scan_result_shapes(repo, monkeypatch, mode, ok, key, value):
     wt, _ = branch(repo, "feat", {"f.py": "x = 1\n"})
     monkeypatch.setenv("LB_PII_MODE", mode)
-    res = lb.pii_scan(wt, ["f.py"])
+    res = lb.pii_scan(repo["root"] / "tools", wt, ["f.py"])
     assert res["ok"] is ok
     assert res.get(key) == value
 
 
 def test_pii_scan_with_no_files_is_ok_without_running():
-    res = lb.pii_scan(Path("/nonexistent"), [])
+    res = lb.pii_scan(Path("/nonexistent"), Path("/nonexistent"), [])
     assert res["ok"] is True and res["rc"] is None and res["note"] == "no A/M files"
 
 
@@ -569,7 +577,7 @@ def test_unresolvable_branch_refuses(repo):
 def test_git_status_failure_refuses(repo, monkeypatch):
     branch(repo, "feat", {"f.py": "x = 1\n"})
     real = lb.git
-    monkeypatch.setattr(lb, "git", lambda a, c: (128, "", "status broke") if a[0] == "status"
+    monkeypatch.setattr(lb, "git", lambda a, c: (128, "", "status broke") if "status" in a[:2]
                         else real(a, c))
     r = by_name(lb.check(repo["root"], ["feat"], gh=gh_local_main(repo)))["feat"]
     assert "git status failed in worktree: status broke" in r["refusals"]
@@ -590,7 +598,8 @@ def test_no_main_ref_refuses(repo):
 
 
 def test_suite_step_absent_unless_asked(repo):
-    branch(repo, "feat", {"f.py": "x = 1\n", "tools/suite_record.py": SUITE_STUB})
+    branch(repo, "feat", {"f.py": "x = 1\n"})
+    (repo["root"] / "tools" / "suite_record.py").write_text(SUITE_STUB)
     r = by_name(lb.check(repo["root"], ["feat"], gh=gh_local_main(repo)))["feat"]
     assert "suite" not in r["steps"]
 
@@ -601,7 +610,7 @@ def test_pr_body_without_conflict_has_no_merge_note(repo):
     assert "Merge note" not in _decode(rep["landing"][0]["compare_url"])[1]["body"]
 
 
-def test_conflict_pair_of_unready_branches_is_not_in_merge_order(repo):
+def test_conflict_pair_listed_when_either_side_is_ready(repo):
     branch(repo, "a1", {"shared.json": '{\n  "a": 1,\n  "x": 1\n}\n'}, upstream="origin/main")
     branch(repo, "b1", {"shared.json": '{\n  "a": 1,\n  "y": 1\n}\n'}, upstream="origin/main")
     branch(repo, "c1", {"shared.json": '{\n  "a": 1,\n  "z": 1\n}\n'})
@@ -750,7 +759,7 @@ def test_failed_merge_base_never_falls_through_to_head(repo):
 def test_ok_pii_scan_carries_no_error(repo, monkeypatch, mode):
     wt, _ = branch(repo, "feat", {"f.py": "x = 1\n"})
     monkeypatch.setenv("LB_PII_MODE", mode)
-    res = lb.pii_scan(wt, ["f.py"])
+    res = lb.pii_scan(repo["root"] / "tools", wt, ["f.py"])
     assert res["ok"] is True and "error" not in res
 
 
@@ -758,3 +767,113 @@ def test_readable_github_adds_no_warning(repo):
     branch(repo, "feat", {"f.py": "x = 1\n"})
     rep = lb.check(repo["root"], ["feat"], gh=gh_local_main(repo))
     assert rep["main"]["warnings"] == []
+
+
+# ---------------------------------------------------------------- cross-model round 1
+def short_(sha):
+    return sha[:8]
+
+
+def test_branch_cannot_judge_itself_with_its_own_tools(repo, monkeypatch):
+    """Codex r1 F1 (P0): a branch that rewrites its own audit, PII and suite tools must still
+    be judged by the main checkout's copies."""
+    forged_audit = "import sys\nsys.exit(0)\n"
+    forged_pii = ("import json, sys\nsys.stdin.read()\nprint(json.dumps({'scanned': 1, "
+                  "'hits': [], 'ambiguous_unresolved': []}))\n")
+    branch(repo, "feat", {"tools/audit_pii_record.py": forged_audit,
+                          "tools/check_public_pii.py": forged_pii,
+                          "tools/suite_record.py": "import sys\nsys.exit(0)\n"})
+    (repo["root"] / "tools" / "suite_record.py").write_text(SUITE_STUB)
+    monkeypatch.setenv("LB_AUDIT_RC", "1")
+    monkeypatch.setenv("LB_PII_MODE", "hit")
+    monkeypatch.setenv("LB_SUITE_RC", "1")
+    r = by_name(lb.check(repo["root"], ["feat"], want_suite=True, gh=gh_local_main(repo)))["feat"]
+    assert not r["ready"]
+    assert "audit_pii_record check rc 1" in r["refusals"]
+    assert "PII denylist hits: 1" in r["refusals"]
+    assert "suite_record check rc 1" in r["refusals"]
+    trusted = str((repo["root"] / "tools").resolve())
+    assert all(str(Path(r["steps"][k]["tool"]).resolve()).startswith(trusted)
+               for k in ("audit", "suite"))
+
+
+def test_trusted_tools_get_the_worktree_and_tip(repo):
+    wt, tip = branch(repo, "feat", {"f.py": "x = 1\n"})
+    lb.check(repo["root"], ["feat"], gh=gh_local_main(repo))
+    rows = [json.loads(x) for x in Path(os.environ["LB_ARGV_LOG"]).read_text().splitlines()]
+    assert ["audit", "--repo-root", str(wt), "check", "--tip", tip] in rows
+    assert ["pii", "--scan", "--stdin-paths", str(wt / "f.py")] in rows
+
+
+def test_trusted_tools_resolve_to_main_checkout_from_a_worktree(repo):
+    wt, _ = branch(repo, "feat", {"f.py": "x = 1\n"})
+    assert lb.trusted_tools(wt).resolve() == (repo["root"] / "tools").resolve()
+    assert lb.trusted_tools(repo["tmp"]) == repo["tmp"] / "tools"
+
+
+def test_diverged_github_branch_is_refused_as_non_fast_forward(repo):
+    _, side = branch(repo, "side", {"side.txt": "s\n"})
+    branch(repo, "feat", {"f.py": "x = 1\n"})
+    base_c = {repo["base"]: {"parents": [], "commit": {"tree": {"sha": "0" * 40}}}}
+    for remote in (side, FAKE_SHA):
+        r = by_name(lb.check(repo["root"], ["feat"],
+                             gh=gh_for({"main": repo["base"], "feat": remote}, base_c)))["feat"]
+        assert not r["ready"]
+        assert any("rejected as non-fast-forward" in x and short_(remote) in x
+                   for x in r["refusals"]), r["refusals"]
+
+
+def test_fallback_against_stale_main_refuses_every_branch(repo):
+    _, side = branch(repo, "side", {"side.txt": "s\n"})
+    branch(repo, "feat", {"f.py": "x = 1\n"})
+    rep = lb.check(repo["root"], ["feat"],
+                   gh=gh_main_at(FAKE_SHA, [repo["base"], side], "1" * 40))
+    assert rep["main"]["method"] == "fallback"
+    r = by_name(rep)["feat"]
+    assert any(x.startswith(f"checked against local origin/main {short_(repo['base'])}, not "
+                            f"GitHub main {short_(FAKE_SHA)}") for x in r["refusals"])
+    assert not rep["all_ready"] and rep["landing"] == []
+
+
+def test_github_main_present_locally_is_not_stale(repo):
+    branch(repo, "feat", {"f.py": "x = 1\n"})
+    rep = lb.check(repo["root"], ["feat"], gh=gh_local_main(repo))
+    assert rep["main"]["method"] == "local"
+    assert by_name(rep)["feat"]["ready"]
+
+
+def test_upstream_main_refused_even_without_a_tracking_ref(repo):
+    wt, _ = branch(repo, "feat", {"f.py": "x = 1\n"})
+    sh(wt, "config", "branch.feat.remote", "nosuchremote")
+    sh(wt, "config", "branch.feat.merge", "refs/heads/main")
+    r = by_name(lb.check(repo["root"], ["feat"], gh=gh_local_main(repo)))["feat"]
+    assert r["upstream"] == "nosuchremote/main"
+    assert any(x.startswith("upstream is nosuchremote/main") for x in r["refusals"])
+
+
+def test_upstream_without_remote_config_is_local(repo):
+    wt, _ = branch(repo, "feat", {"f.py": "x = 1\n"})
+    sh(wt, "config", "branch.feat.merge", "refs/heads/main")
+    assert lb.configured_upstream(wt, "feat") == "./main"
+
+
+def test_gate_gets_the_push_url_not_the_fetch_url(repo):
+    branch(repo, "feat", {"f.py": "x = 1\n"})
+    sh(repo["root"], "remote", "set-url", "--push", "origin", "git@github.com:owner/repo-push.git")
+    lb.check(repo["root"], ["feat"], gh=gh_local_main(repo))
+    assert "url=git@github.com:owner/repo-push.git" in Path(os.environ["LB_HOOK_LOG"]).read_text()
+
+
+def test_merge_check_rc1_without_a_tree_line_is_an_error(repo, monkeypatch):
+    monkeypatch.setattr(lb, "git", lambda a, c: (1, "fatal: something odd\n", ""))
+    m = lb.merge_check(repo["root"], "a", "b")
+    assert m["clean"] is False and m["error"] == "merge-tree rc 1"
+
+
+def test_status_runs_without_optional_locks(repo, monkeypatch):
+    branch(repo, "feat", {"f.py": "x = 1\n"})
+    seen = []
+    real = lb.git
+    monkeypatch.setattr(lb, "git", lambda a, c: (seen.append(a), real(a, c))[1])
+    lb.check(repo["root"], ["feat"], gh=gh_local_main(repo))
+    assert ["--no-optional-locks", "status", "--porcelain", "--untracked-files=no"] in seen
