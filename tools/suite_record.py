@@ -13,15 +13,16 @@ claim, and refuses every way that run can look green without being green:
 
   - pytest runs from an argv LIST (no shell, no word-splitting) and its returncode is read
     directly (no pipe can hide it);
-  - a pass is recorded ONLY IF returncode == 0 AND collected > 0 AND not every collected
-    test skipped. The counts come from pytest's own JUnit XML report, not from parsing
-    terminal text;
-  - every other outcome (timeout, zero collected, all skipped, exit 5, failures, merge conflict, git
-    error, missing report) prints a JSON object naming itself and exits 1.
+  - a pass is recorded ONLY IF returncode == 0 AND the report shows no failures and no
+    errors AND collected > 0 AND not every collected test skipped. The counts come from
+    pytest's own JUnit XML report, not from parsing terminal text;
+  - every other outcome (timeout, zero collected, all skipped, exit 5, failures, merge
+    conflict, git error, missing report) prints a JSON object naming itself and exits 1.
 
 The merged tree is built with `git merge-tree --write-tree` (no checkout is touched), turned
 into a commit with `git commit-tree`, and run in a NEW detached worktree under a fresh
-tempfile.mkdtemp() directory, which is always deleted and pruned in a finally block.
+tempfile.mkdtemp() directory. A finally block deletes that directory and git's record of
+that one worktree, and touches no other worktree.
 
 Rows are keyed to the merged TREE, so rewording a commit keeps its record while any content
 change on either side needs a new run. The ledger is <main checkout>/tools/.suite-ledger.jsonl
@@ -97,11 +98,29 @@ def merged_tree(root: Path, base_sha: str, tip_sha: str) -> str:
     return lines[0].strip()
 
 
-def ledger_path(root: Path) -> Path:
+def common_dir(root: Path) -> Path:
     r = _git(root, "rev-parse", "--path-format=absolute", "--git-common-dir")
     if r.returncode != 0:
         raise GitError(f"not a git repository: {root}")
-    return Path(r.stdout.strip()).resolve().parent / LEDGER
+    return Path(r.stdout.strip()).resolve()
+
+
+def ledger_path(root: Path) -> Path:
+    return common_dir(root).parent / LEDGER
+
+
+def admin_dir(wt: Path, common: Path) -> Path | None:
+    """git's record of the linked worktree at `wt` (<common dir>/worktrees/<name>), read from
+    wt/.git. None unless it lies directly under that worktrees directory, so cleanup can never
+    delete anything else."""
+    try:
+        text = (wt / ".git").read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    if not text.startswith("gitdir: "):
+        return None
+    admin = Path(text[len("gitdir: "):]).resolve()
+    return admin if admin.parent == (common / "worktrees").resolve() else None
 
 
 def read_rows(path: Path) -> list[dict]:
@@ -175,9 +194,10 @@ def _fail(code: str, message: str, **extra) -> int:
 
 def cmd_run(root: Path, branch: str, base: str, timeout: int) -> int:
     try:
-        ledger = ledger_path(root)
+        common_git = common_dir(root)
     except GitError as e:
         return _fail("git_error", str(e))
+    ledger = common_git.parent / LEDGER
     base_sha = resolve_commit(root, base)
     tip_sha = resolve_commit(root, branch)
     if base_sha is None or tip_sha is None:
@@ -218,11 +238,12 @@ def cmd_run(root: Path, branch: str, base: str, timeout: int) -> int:
         if counts is None:
             return _fail("no_report", f"pytest exit {rc} wrote no readable JUnit report",
                          **common)
+        # The report is the evidence, not the exit code: a hook can force exit 0.
+        if counts["failed"] or counts["errors"]:
+            return _fail("tests_failed",
+                         f"{counts['failed']} failed, {counts['errors']} errors, "
+                         f"{counts['passed']} passed", **common)
         if rc != 0:
-            if counts["failed"] or counts["errors"]:
-                return _fail("tests_failed",
-                             f"{counts['failed']} failed, {counts['errors']} errors, "
-                             f"{counts['passed']} passed", **common)
             return _fail(f"pytest_exit_{rc}", f"pytest exit {rc}", **common)
         if counts["collected"] <= 0:
             return _fail("zero_collected", "collected 0 tests", **common)
@@ -238,10 +259,13 @@ def cmd_run(root: Path, branch: str, base: str, timeout: int) -> int:
         return _out({"status": "ok", "action": "run", **row, "recorded": True,
                      "ledger": str(ledger)}, 0)
     finally:
-        # Delete the directory, then prune: git drops the record of a worktree whose
-        # directory is gone, and keeps one whose directory still exists.
+        # Only this run's worktree is cleaned up: its directory, then git's record of it.
+        # A repository-wide `git worktree prune` would also drop the record of any other
+        # worktree whose directory is absent at that moment.
+        admin = admin_dir(wt, common_git)
         shutil.rmtree(tmp, ignore_errors=True)
-        _git(root, "worktree", "prune")
+        if admin is not None:
+            shutil.rmtree(admin, ignore_errors=True)
 
 
 def cmd_check(root: Path, tip: str, base: str) -> int:
