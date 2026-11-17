@@ -299,7 +299,8 @@ def test_empty_body_exits_zero(monkeypatch, tmp_path, capsys):
 def test_running_the_script_blocks_a_bad_draft(tmp_path):
     """`python3 tools/check_draft_voice.py` must reach main(). Runs a COPY from tmp_path,
     so its DRAFT_FILE and SOURCE_FILE are the temp ones, never the real pending draft."""
-    for name in ("check_draft_voice.py", "hook_command_lint.py", "hook_runtime.py"):
+    for name in ("check_draft_voice.py", "hook_command_lint.py", "hook_runtime.py",
+                 "shell_tokens.py"):
         shutil.copy(TOOLS / name, tmp_path / name)
     (tmp_path / ".pending-draft.txt").write_text(
         "TO: casey@example.com\nSUBJECT: hi\nBODY:\nI genuinely enjoyed it.\n",

@@ -30,10 +30,12 @@ check_bare_python.py. Pure functions, stdlib only.
 """
 import os
 import re
+import sys
 from dataclasses import dataclass
 
-_SINGLE_QUOTED = re.compile(r"'[^']*'")
-_DOUBLE_QUOTED_LITERAL = re.compile(r'"[^"$`]*"')
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from shell_tokens import tokenize  # noqa: E402
+
 
 # Heredoc: `<<` or `<<-`, optional ws, optional quote, TAG, (matching quote),
 # rest-of-operator-line, body (non-greedy), then TAG alone on a line.
@@ -57,13 +59,50 @@ def _strip_heredoc_bodies(command: str) -> str:
     return _HEREDOC.sub(repl, command)
 
 
+def _closed(s: str, a: int, b: int) -> bool:
+    """True if the quoted span s[a:b] ends with the quote that opened it."""
+    if s.startswith("$'", a):
+        return b - a >= 3 and s[b - 1] == "'"
+    return b - a >= 2 and s[b - 1] == s[a]
+
+
 def strip_literals(command: str) -> str:
     """Blank literal spans (quoted strings + heredoc bodies) so a trigger token
-    inside them is not mistaken for a real command invocation."""
-    command = _strip_heredoc_bodies(command)
-    command = _SINGLE_QUOTED.sub(" ", command)
-    command = _DOUBLE_QUOTED_LITERAL.sub(" ", command)
-    return command
+    inside them is not mistaken for a real command invocation.
+
+    Read from shell_tokens' per-segment spans (Q11, Nick 2026-11-16: "Rebuild on
+    shell_tokens"), so each quote pairs with the quote that really closes it. The two
+    regexes this replaced paired `"$f"`'s closing quote with the NEXT span's opening
+    quote, blanking real code and exposing quoted text.
+
+    Policy, unchanged from the regex version:
+      - a single-quoted or $'...' span is blanked;
+      - a double-quoted span with no `$` or backtick is blanked; one with either is
+        kept, with each `$( )` / backtick body inside it stripped recursively;
+      - an unquoted `$( )` / backtick body is stripped recursively;
+      - a heredoc body is blanked when its delimiter is quoted or the body holds no
+        real substitution (tokenize's subs, so an escaped backtick is not one);
+        otherwise kept as written.
+    """
+    edits: list[tuple[int, int, str]] = []
+    for tok in tokenize(command):
+        if tok.kind == "heredoc":
+            if tok.quoted or not tok.subs:
+                edits.append((tok.start, tok.end, " "))
+        # A heredoc token has no spans. tokenize records a "sub" only where it runs
+        # (unquoted or inside a "dqx" span), never inside a literal one.
+        for kind, a, b in tok.spans:
+            # Only a span that CLOSES is a literal. tokenize reads an unterminated quote
+            # to the end of the input; blanking that would hide the rest of the command
+            # from a blocking hook, so it stays visible (the regex version left it too).
+            if kind in ("sq", "dq") and _closed(command, a, b):
+                edits.append((a, b, " "))
+            elif kind == "sub":
+                edits.append((a, b, strip_literals(command[a:b])))
+    out = command
+    for a, b, text in sorted(edits, reverse=True):
+        out = out[:a] + text + out[b:]
+    return out
 
 
 # --- python interpreter calls, read from shell_tokens words -------------------------

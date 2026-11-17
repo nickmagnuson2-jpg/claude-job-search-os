@@ -73,6 +73,16 @@ since="$(git log -1 --format=%ct "$head" 2>/dev/null || echo 0)"
 numstat="$(git diff --numstat "$range" 2>/dev/null || echo '')"
 [ -z "$numstat" ] && exit 0
 
+# TREE KEY (Nick, 2026-11-16): a review row carrying `tree` covers this push only when
+# it equals "$head"'s tree, whatever its time. Rows without `tree` keep the time bound.
+# This hook file is installed ONCE and shared by every worktree, while each checkout runs
+# its OWN gate. A gate older than the tree key rejects --tip as an unknown argument, so
+# pass it only when this checkout's gate lists it in --help. An older gate then runs
+# exactly as before; a failed probe passes no tip, and tree rows then cover nothing.
+tip_arg=()
+if gate_help="$(PYTHONIOENCODING=utf-8 python3 "$root/tools/cross_model_gate.py" --help 2>/dev/null)"; then
+  case "$gate_help" in *--tip*) tip_arg=(--tip "$head") ;; esac
+fi
 printf '%s\n' "$numstat" | PYTHONIOENCODING=utf-8 python3 \
-  "$root/tools/cross_model_gate.py" --repo-root "$root" --since "$since" || exit 1
+  "$root/tools/cross_model_gate.py" --repo-root "$root" --since "$since" "${tip_arg[@]}" || exit 1
 exit 0

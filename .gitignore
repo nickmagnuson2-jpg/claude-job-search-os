@@ -205,3 +205,6 @@ tools/calendar_write_token*
 
 # /audit-pii clean-pass records (tools/audit_pii_record.py); local, never pushed
 tools/.audit-pii-ledger.jsonl
+
+# Full-suite pass records on merged trees (tools/suite_record.py); local, never pushed
+tools/.suite-ledger.jsonl

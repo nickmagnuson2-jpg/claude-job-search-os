@@ -138,3 +138,20 @@ def test_a_second_c_after_the_code_is_an_argument_not_an_option():
 def test_a_long_option_that_takes_a_value_skips_it():
     (call,) = list(h.python_calls(["python3", "--check-hash-based-pycs", "always", "s.py"]))
     assert call.script == "s.py" and call.code is None
+
+
+# --- _strip_heredoc_bodies, called directly -----------------------------------------
+# strip_literals now reads heredocs from shell_tokens (Q11, 2026-11-16), so the tests
+# above no longer reach this function. check_draft_voice and check_pipe_close_via_update
+# still import it, so it is pinned here on its own.
+
+@pytest.mark.parametrize("cmd, expected", [
+    ("cat <<'EOF'\npython x\nEOF", "cat <<'EOF'\n \nEOF"),                  # quoted: blanked
+    ('cat <<"EOF"\npython x\nEOF', 'cat <<"EOF"\n \nEOF'),
+    ("cat <<EOF\npython x\nEOF", "cat <<EOF\n \nEOF"),                      # no expansion: blanked
+    ("cat <<EOF\n$(python x)\nEOF", "cat <<EOF\n$(python x)\nEOF"),         # $( ): kept
+    ("cat <<EOF\n`python x`\nEOF", "cat <<EOF\n`python x`\nEOF"),           # backtick: kept
+    ("cat <<-'EOF' >f\n\tpython x\n\tEOF", "cat <<-'EOF' >f\n \n\tEOF"),    # <<- and opline kept
+])
+def test_strip_heredoc_bodies_exact(cmd, expected):
+    assert h._strip_heredoc_bodies(cmd) == expected

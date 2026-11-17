@@ -424,6 +424,10 @@ REGISTRY: dict[tuple[str, str, str | None], object] = {
         "only the printed sample of hits is cut; the count beside it and the claim "
         "sentence are computed from every hit, so no answer is drawn from the cut list",
         shown=Text("tools/records_lookup.py", r'"hit_count": len\(found\)')),
+    # suite_record.py: pytest's own skip count. A run where every collected test skipped
+    # exits 0 and ran nothing, so it records no pass (2026-11-16, found on the merged tree).
+    ("suite_record.py", "skipped", None): [
+        Branch("suite_record.py", "cmd_run", reads="skipped", closes="exit")],
     ("calibration_review.py", "skipped", None): [
         Branch("calibration_review.py", "main", reads="status", literal="ok", closes="exit")],
 

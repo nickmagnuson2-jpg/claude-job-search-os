@@ -288,3 +288,65 @@ def test_a_call_is_kept_when_a_later_line_is_stamped_after_now(tmp_path, capsys)
     write_log(tmp_path, "cc-debug-1.log", call(-100, [70]) + call(+50, [900]))
     code, out = run(tmp_path, capsys, "--raw")
     assert "calls=1" in out["value"] and "bash_wall_p50=70ms" in out["value"]
+
+
+# --- reach line (tools/count_report.py), 2026-11-16 -------------------------------------
+# A reading names the logs it was taken from: how many matched the glob, how many were
+# read, and how many were skipped as untouched since the window. The banded `value` is
+# unchanged, so workstream_state (which lifts `value` only) does not surface a change.
+
+def _reach(tmp_path, population, included, days=7):
+    return (f"scope: debug logs matching {tmp_path / 'cc-debug-*.log'} | population {population}"
+            f" | included {included} | excluded: modified before the {days}-day window"
+            f" {population - included}")
+
+
+@pytest.mark.parametrize("args", [(), ("--raw",)])
+def test_a_reading_carries_its_reach_line(tmp_path, capsys, args):
+    write_log(tmp_path, "cc-debug-old.log", call(-100, [900]), mtime=NOW - 30 * 86400)
+    write_log(tmp_path, "cc-debug-new.log", call(-100, [50]))
+    code, out = run(tmp_path, capsys, *args)
+    assert code == 0 and out["reach"] == _reach(tmp_path, 2, 1)
+    # `value` is exactly what it was before the reach line existed (Grok r1 F3).
+    assert out["value"] == {(): "bash_wall=0-99ms | blocks=0.0-0.9/100 | hooks/call=1",
+                            ("--raw",): "bash_wall_p50=50ms | blocks_per_100=0.00 | hooks/call=1"
+                                        " | calls=1 | ambiguous=0 | logs=1"}[args]
+
+
+def test_the_reach_line_uses_the_window_given(tmp_path, capsys):
+    write_log(tmp_path, "cc-debug-old.log", call(-100, [900]), mtime=NOW - 3 * 86400)
+    write_log(tmp_path, "cc-debug-new.log", call(-100, [50]))
+    code, out = run(tmp_path, capsys, "--days", "2")
+    assert code == 0 and out["reach"] == _reach(tmp_path, 2, 1, days=2)
+
+
+def test_no_reading_states_the_reach_of_the_logs_it_looked_at(tmp_path, capsys):
+    write_log(tmp_path, "cc-debug-old.log", call(-100, [900]), mtime=NOW - 30 * 86400)
+    write_log(tmp_path, "cc-debug-new.log", [f"{ts(-100)} [DEBUG] nothing here\n"])
+    code, out = run(tmp_path, capsys)
+    assert code == 2 and "value" not in out
+    assert out["reach"] == _reach(tmp_path, 2, 1)
+    assert "no PreToolUse:Bash timing" in out["error"] and out["reach"] in out["error"]
+
+
+def test_workstream_state_surfaces_the_no_timing_error_and_its_reach(tmp_path):
+    """Codex r1 F1 / Grok r1 F1: on exit 2 workstream_state reads stderr only, so the
+    error and its reach must be on stderr, checked through the real probe runner."""
+    import workstream_state as ws
+    write_log(tmp_path, "cc-debug-old.log", call(-100, [900]), mtime=NOW - 30 * 86400)
+    spec = {"argv": ["python3", str(REPO / "tools" / "hook_telemetry.py"), "--logs-glob",
+                     str(tmp_path / "cc-debug-*.log"), "--now", str(NOW)],
+            "ok_exit": [0], "text": False, "field": "value"}
+    got = ws._run_probe(spec, REPO, timeout=60, max_bytes=100_000)
+    assert got["state"] == "error"
+    assert "no PreToolUse:Bash timing" in got["error"] and "population 1 | included 0" in got["error"]
+
+
+@pytest.mark.parametrize("args", [("--days", "-1"), ("--now", "nan"), ("--now", "inf")])
+def test_a_window_that_is_not_a_real_past_interval_is_an_error_not_a_reach(tmp_path, capsys, args):
+    """Codex r1 F2 / Grok r1 F2: with a negative window or a non-finite clock every log
+    would be reported as 'modified before the window', which is false."""
+    write_log(tmp_path, "cc-debug-1.log", call(-100, [50]))
+    code = ht.main(["--logs-glob", str(tmp_path / "cc-debug-*.log"), "--now", str(NOW), *args])
+    out = json.loads(capsys.readouterr().out)
+    assert code == 2 and "error" in out and "reach" not in out and "value" not in out
