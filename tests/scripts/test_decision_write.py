@@ -376,6 +376,37 @@ def test_other_owners_are_unaffected_by_the_split(main, capsys):
     assert run(main, "resolve", "Q1", capsys=capsys)[0] == 0
 
 
+def resolve_org_before_the_move(main, capsys):
+    add(main, capsys, owner="org", cls="order")
+    rule(main, "overnight-swarm", "RULING Q1 | option: b | reason: x | window: org")
+    code, data, _, _ = run(main, "resolve", "Q1", capsys=capsys)
+    assert code == 0 and data["ruling"]["file"].endswith("overnight-swarm.md")
+
+
+def test_check_follows_a_sealed_ruling_across_the_move(main, capsys):
+    """A resolved event seals the file path it read; the move must not read as a broken ruling."""
+    resolve_org_before_the_move(main, capsys)
+    move_org_file(main)
+    code, data, _, _ = run(main, "check", capsys=capsys)
+    assert code == 0 and data["problems"] == []
+
+
+def test_check_still_sees_an_edited_ruling_after_the_move(main, capsys):
+    resolve_org_before_the_move(main, capsys)
+    move_org_file(main)
+    f = main / "data" / "workstreams" / "orchestration.md"
+    f.write_text(f.read_text(encoding="utf-8").replace("option: b", "option: a"), encoding="utf-8")
+    code, data, _, _ = run(main, "check", capsys=capsys)
+    assert code == 1 and any("Q1: ruling line changed" in x for x in data["problems"])
+
+
+def test_check_refuses_both_org_files(main, capsys):
+    resolve_org_before_the_move(main, capsys)
+    (main / "data" / "workstreams" / "orchestration.md").write_text("# o\n", encoding="utf-8")
+    code, data, _, _ = run(main, "check", capsys=capsys)
+    assert code == 1 and data["code"] == "org_file_split"
+
+
 def test_resolve_refuses_unknown_and_already_resolved(main, capsys):
     code, data, _, _ = run(main, "resolve", "Q4", capsys=capsys)
     assert code == 1 and data["code"] == "unknown_question"
