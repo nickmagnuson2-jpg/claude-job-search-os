@@ -285,3 +285,22 @@ def test_ansi_c_invalid_code_points_do_not_crash():
     assert w("$'\\U00110000'") == "\\U00110000"
     assert w("$'\\uD800'") == "\\uD800"
     assert w("$'a\\c'") == "a\\c"
+
+
+# --- simple_commands: the fields mutation found unpinned (2026-11-16, Q11) ---------------
+
+def test_simple_commands_links_only_a_pipe_to_the_command_before_it():
+    piped = simple_commands("a x | b y; c z")
+    assert piped[1].fed_by is piped[0]
+    assert piped[2].fed_by is None
+
+
+def test_simple_commands_records_per_word_quoting():
+    (cmd,) = simple_commands("echo 'a b' c \"d\"")
+    assert cmd.words == ["echo", "a b", "c", "d"]
+    assert cmd.quoted == [False, True, False, True]
+
+
+def test_simple_commands_collects_the_subs_of_its_words():
+    (cmd,) = simple_commands('echo "$(date)" `id`')
+    assert cmd.subs == ["date", "id"]
