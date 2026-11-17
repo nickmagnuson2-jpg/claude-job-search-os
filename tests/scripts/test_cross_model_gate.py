@@ -1725,3 +1725,121 @@ def test_a_matched_tree_row_is_not_also_judged_by_time(tmp_path):
     v = g.check(tmp_path, push, since=_FAR_FUTURE, tip=git("rev-parse", "HEAD"))
     assert v.blocked is True and "Uncovered" in v.message
     assert "OLDER" not in v.message and "different tree" not in v.message
+
+
+# --- HOOK x GATE COMPATIBILITY (b2, 2026-11-16) -------------------------------
+# The installed pre-push is ONE file shared by every worktree; each checkout runs its OWN
+# gate. So all four pairings occur during a landing. Each test runs the REAL hook (bash)
+# against a REAL gate: "old" is f58251d6, the last main before the tree key.
+
+_OLD = "f58251d6"
+_GATE_FILES = ("tools/cross_model_gate.py", "tools/inbox_lock.py", "tools/finding_write.py")
+
+
+def _old_source(path):
+    import subprocess
+    p = subprocess.run(["git", "show", f"{_OLD}:{path}"], cwd=REPO_ROOT,
+                       capture_output=True, text=True)
+    if p.returncode != 0:
+        pytest.skip(f"{_OLD} is not in this clone's object store")
+    return p.stdout
+
+
+def _source(path, old):
+    return _old_source(path) if old else (REPO_ROOT / path).read_text(encoding="utf-8")
+
+
+def _hook_push(tmp_path, *, old_hook, old_gate, rows):
+    """Commit a gate (old or new) into a fresh repo, then a qualifying change; write
+    `rows` (callables of the tip's tree) to the ledger; run the hook on that push."""
+    import subprocess
+    repo = tmp_path / "repo"
+    for f in _GATE_FILES:
+        (repo / f).parent.mkdir(parents=True, exist_ok=True)
+        (repo / f).write_text(_source(f, old_gate), encoding="utf-8")
+    hook = tmp_path / "pre-push"
+    hook.write_text(_source("tools/hooks/pre-push", old_hook), encoding="utf-8")
+    git = _tree_repo(repo)                    # commits tools/career_scanner/scanner.py
+    git("add", "-A")
+    git("commit", "-qm", "gate")
+    base = git("rev-parse", "HEAD")
+    (repo / "tools" / "career_scanner" / "scanner.py").write_text(
+        "".join(f"x{i} = {i}\n" for i in range(240)), encoding="utf-8")
+    git("commit", "-qam", "work")
+    head, tree = git("rev-parse", "HEAD"), git("rev-parse", "HEAD^{tree}")
+    for make in rows:
+        _row(repo, **make(tree))
+    p = subprocess.run(["bash", str(hook), "origin", "file:///elsewhere"], cwd=repo,
+                       input=f"refs/heads/w {head} refs/heads/w {base}\n",
+                       capture_output=True, text=True, timeout=120)
+    return p.returncode, p.stdout + p.stderr
+
+
+def _tree_row_older_than_the_work(tree):
+    return {"tree": tree, "recorded": "2000-01-01T00:00:00+00:00"}
+
+
+def _legacy_row(recorded):
+    return lambda tree: {"recorded": recorded}
+
+
+_LEDGERS = {
+    "tree row, older than the work": [_tree_row_older_than_the_work],
+    "legacy row, newer than the work": [_legacy_row("2099-01-01T00:00:00+00:00")],
+    "legacy row, older than the work": [_legacy_row("2000-01-01T00:00:00+00:00")],
+}
+
+
+def test_new_hook_with_new_gate_is_tree_keyed(tmp_path):
+    rc, out = _hook_push(tmp_path, old_hook=False, old_gate=False,
+                         rows=[_tree_row_older_than_the_work])
+    assert rc == 0, out
+
+
+@pytest.mark.parametrize("ledger", list(_LEDGERS))
+def test_new_hook_with_old_gate_behaves_exactly_as_the_old_hook(tmp_path, ledger):
+    """The old gate has no --tip; the new hook must not pass one, so every verdict and
+    message is the one today's hook produces on the same push and ledger."""
+    new = _hook_push(tmp_path / "n", old_hook=False, old_gate=True, rows=_LEDGERS[ledger])
+    old = _hook_push(tmp_path / "o", old_hook=True, old_gate=True, rows=_LEDGERS[ledger])
+    assert "unrecognized arguments" not in new[1]
+    assert new[0] == old[0]
+    assert new[1].replace(str(tmp_path / "n"), "") == old[1].replace(str(tmp_path / "o"), "")
+
+
+def test_old_hook_with_old_gate_is_unchanged(tmp_path):
+    """Today's pairing, pinned: the time rule alone. A tree row is ignored by it."""
+    assert _hook_push(tmp_path / "a", old_hook=True, old_gate=True,
+                      rows=_LEDGERS["legacy row, newer than the work"])[0] == 0
+    assert _hook_push(tmp_path / "b", old_hook=True, old_gate=True,
+                      rows=_LEDGERS["legacy row, older than the work"])[0] != 0
+    assert _hook_push(tmp_path / "c", old_hook=True, old_gate=True,
+                      rows=[_tree_row_older_than_the_work])[0] != 0
+
+
+def test_old_hook_with_new_gate_blocks_a_tree_keyed_push(tmp_path):
+    """WHY install.sh comes BEFORE pushing this branch: the old hook passes no tip, so a
+    tree row covers nothing, fail-closed. The block names the reason."""
+    rc, out = _hook_push(tmp_path, old_hook=True, old_gate=False,
+                         rows=[_tree_row_older_than_the_work])
+    assert rc != 0
+    assert "not given or did not resolve" in out
+
+
+def test_a_failed_gate_probe_passes_no_tip(tmp_path, monkeypatch):
+    """If the gate's `--help` fails, the hook does not guess: it passes no tip, so a tree
+    row covers nothing (fail closed) instead of the push being let through."""
+    real = _source
+
+    def broken_help(path, old):
+        text = real(path, old)
+        if path == "tools/cross_model_gate.py":
+            text = text.replace("from __future__ import annotations\n",
+                                "from __future__ import annotations\nimport sys as _s\n"
+                                "if '--help' in _s.argv: _s.exit(3)\n", 1)
+        return text
+    monkeypatch.setitem(globals(), "_source", broken_help)
+    rc, out = _hook_push(tmp_path, old_hook=False, old_gate=False,
+                         rows=[_tree_row_older_than_the_work])
+    assert rc != 0
+    assert "not given or did not resolve" in out
