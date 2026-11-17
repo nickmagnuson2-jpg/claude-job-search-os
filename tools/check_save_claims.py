@@ -31,6 +31,21 @@ WHAT IT DOES
   "in ./memory", "at that path"), since a scoped claim may be true.
   Origin: feedback_two_memory_locations_check_both_before_absence (4 fires).
 
+  A claimed path that is not on disk is then checked against the session's ACTUAL
+  writes before it blocks (redesign 2026-11-16, Nick's Q2 ruling, option a). A
+  debug-log audit found 0 true positives in 21 real blocks (2026-08-31..11-09): most
+  were files that WERE written but whose prose path did not resolve (a sibling repo
+  reached by `cd`, a path elided with `...`, a tokenizer cut, a write made in an
+  earlier turn). Every successful Write/Edit/MultiEdit/NotebookEdit and every Bash
+  write target (tools/shell_writes.py, the parser the Bash write gates share) in the
+  session transcript counts, and only once its tool_result arrived without an error:
+  a request with no result yet, or a failed one, proves nothing was written. A claim
+  matches a write by exact path or by path suffix (after dropping a leading `.../`).
+  No fragment matching: it equated report.md with report.md.bak (Codex + Grok r1, P0),
+  and the tokenizer cuts it was meant for are fixed in extraction. The write walk runs
+  only when a claim is missing, so a turn with no missing claim adds no second pass.
+  Evidence: output/infra-backlog/111626-telemetry/hook-audit.md (Q1, gitignored).
+
 WHAT IT DOES NOT DO
   - Does not fire on future/conditional phrasing ("I'll save this to X",
     "that would go in X", "drop it in X"). Only completed claims.
@@ -52,6 +67,7 @@ EXIT CODES
 
 Override: SAVE_CLAIMS_OVERRIDE=1
 """
+import json
 import os
 import re
 import sys
@@ -182,7 +198,10 @@ def extract_claimed_paths(text: str):
         # A line opening with a "File:" label also ends the window: /lessons-learned lists
         # proposed target files that way, and a claim verb above it ("I copied it") is not
         # about that file (2nd ledger fire, 2026-10-21; promotion drain build 296).
-        cut = re.search(r"(?<=[.!?])\s+[A-Z]|\n[ \t]*\n|\n[ \t]*File:", window)
+        # The label may sit in a list item and in emphasis ("- *File:* `x.md`"), which is
+        # how /lessons-learned printed it on 2026-10-21 (debug-log replay, 2026-11-16).
+        cut = re.search(r"(?<=[.!?])\s+[A-Z]|\n[ \t]*\n|\n[ \t]*(?:[-*+][ \t]+)?[*_]{0,2}File:",
+                        window)
         if cut:
             window = window[:cut.start()]
         # Tokens come from the FULL text and must lie wholly inside the window. Matching
@@ -344,6 +363,107 @@ def exists_anywhere(tok: str, root: Path, home: Path | None = None) -> bool:
     return False
 
 
+WRITE_TOOLS = {"Write", "Edit", "MultiEdit", "NotebookEdit"}
+_ELISION = re.compile(r"^(?:\.{1,3}/|\u2026/)+")
+
+
+def session_write_targets(transcript_path: str, root) -> list[str]:
+    """Every file the session wrote: Write/Edit/MultiEdit/NotebookEdit paths, and Bash write
+    targets that are files on disk now, from tool calls whose tool_result arrived and was
+    not an error. A call with no
+    result (interrupted, or not flushed yet) is not proof of a write: counting it cleared a
+    claim for a file that never landed (Codex + Grok r1 F1, P0). A relative path is joined to
+    the record's `cwd` (else root). An unreadable transcript yields []."""
+    uses: dict = {}
+    succeeded: set = set()
+    try:
+        fh = open(transcript_path, encoding="utf-8")
+    except OSError:
+        return []
+    with fh:
+        for line in fh:
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            msg = rec.get("message") if isinstance(rec, dict) else None
+            content = msg.get("content") if isinstance(msg, dict) else None
+            if not isinstance(content, list):
+                continue
+            for block in content:
+                if not isinstance(block, dict):
+                    continue
+                if block.get("type") == "tool_use" and block.get("id"):
+                    uses[block["id"]] = (block.get("name"), block.get("input"),
+                                         rec.get("cwd") or "", rec.get("timestamp"))
+                elif block.get("type") == "tool_result" and not block.get("is_error"):
+                    succeeded.add(block.get("tool_use_id"))
+    out: list[str] = []
+    for tid, (name, inp, cwd, stamp) in uses.items():
+        if tid not in succeeded or not isinstance(inp, dict):
+            continue
+        base = cwd if isinstance(cwd, str) and os.path.isabs(cwd) else str(root)
+        if name in WRITE_TOOLS:
+            path = inp.get("file_path") or inp.get("notebook_path")
+            if isinstance(path, str) and path:
+                out.append(path if os.path.isabs(path) else os.path.join(base, path))
+        elif name == "Bash" and isinstance(inp.get("command"), str):
+            # Imported here: shell_writes pulls in check_public_pii, and most turns never
+            # reach this line.
+            import shell_writes
+            # bash_write_targets is the blocking gates' MAY-write superset: every cwd a `cd`
+            # could reach, and redirects that a `&&`/`||` may never have run. A superset
+            # is safe for a gate that blocks and unsafe for one that clears, so a Bash
+            # target counts only where a file is on disk AND was modified at or after the
+            # call, an observed effect of this session (Codex + Grok r2 F1, r3 F1, P0: a
+            # file that was already there at an untaken redirect is not a write).
+            since = _epoch(stamp)
+            if since is None:
+                continue
+            try:
+                cands = shell_writes.bash_write_targets(inp["command"], base, root)
+            except Exception:  # an unparseable command clears nothing
+                cands = []
+            out.extend(c for c in cands if _modified_since(c, since))
+    return list(dict.fromkeys(os.path.normpath(t) for t in out))
+
+
+# Filesystem mtimes and transcript timestamps come from different clocks and
+# resolutions; a write that lands in the same second as the call must still count.
+MTIME_SLACK_S = 2.0
+
+
+def _epoch(stamp) -> float | None:
+    """A transcript ISO-8601 timestamp ("2026-11-16T21:51:14.123Z") as epoch seconds, or
+    None when it is missing or unreadable."""
+    if not isinstance(stamp, str) or not stamp:
+        return None
+    try:
+        from datetime import datetime
+        return datetime.fromisoformat(stamp.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
+def _modified_since(path: str, since: float) -> bool:
+    try:
+        st = os.stat(path)
+    except OSError:
+        return False
+    return os.path.isfile(path) and st.st_mtime >= since - MTIME_SLACK_S
+
+
+def claim_matches_write(tok: str, targets) -> bool:
+    """True if the claimed path names one of `targets`: the same path, or a path suffix of it
+    (after dropping a leading ./, ../ or .../)."""
+    claim = _ELISION.sub("", tok.strip()).strip("/")
+    for target in targets:
+        t = os.path.normpath(str(target))
+        if t == claim or t.endswith("/" + claim):
+            return True
+    return False
+
+
 def main() -> int:
     if os.environ.get(OVERRIDE_ENV) == "1":
         return 0
@@ -364,6 +484,9 @@ def main() -> int:
 
     root = project_root()
     missing = [t for t in extract_claimed_paths(text) if not exists_anywhere(t, root)]
+    if missing:
+        writes = session_write_targets(transcript, root)
+        missing = [t for t in missing if not claim_matches_write(t, writes)]
     present = [t for t in extract_absence_claims(text) if exists_anywhere(t, root)]
 
     if not missing and not present:
