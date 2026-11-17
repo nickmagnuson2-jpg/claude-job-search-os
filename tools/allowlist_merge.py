@@ -50,8 +50,7 @@ class AllowlistConflict(ValueError):
 
     def __init__(self, conflicts: list[tuple[str, str | None, str | None]]):
         self.conflicts = conflicts
-        super().__init__(f"{len(conflicts)} conflicting key(s): "
-                         + ", ".join(c[0] for c in conflicts))
+        super().__init__("conflicting keys: " + ", ".join(c[0] for c in conflicts))
 
 
 def _check(side: str, data) -> dict:

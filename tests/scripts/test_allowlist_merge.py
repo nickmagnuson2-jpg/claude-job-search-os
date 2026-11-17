@@ -233,7 +233,7 @@ def test_it_works_as_a_registered_git_merge_driver(tmp_path):
 def test_the_conflict_exception_names_every_key():
     with pytest.raises(am.AllowlistConflict) as exc:
         am.merge({}, {K1: "x", K2: "x"}, {K1: "y", K2: "y"})
-    assert "2 conflicting key(s)" in str(exc.value)
+    assert str(exc.value) == f"conflicting keys: {K1}, {K2}"
     assert K1 in str(exc.value) and K2 in str(exc.value)
 
 
@@ -241,7 +241,7 @@ def test_a_conflict_prints_a_count_line_before_the_detail(tmp_path):
     o = _write(tmp_path / "O", {})
     a = _write(tmp_path / "A", {K1: "x"})
     b = _write(tmp_path / "B", {K1: "y"})
-    assert _run(o, a, b).stderr.startswith("allowlist_merge: 1 conflicting key(s)")
+    assert _run(o, a, b).stderr.startswith(f"allowlist_merge: conflicting keys: {K1}\n")
 
 
 def test_main_returns_zero_on_a_clean_merge(sides, tmp_path):
