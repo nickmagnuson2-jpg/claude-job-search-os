@@ -357,7 +357,7 @@ def test_either_name_as_owner_is_recorded_and_routed_as_org(main, capsys, alias)
     assert code == 0 and data["question"]["owner"] == "org"
     assert events(main)[0]["owner"] == "org"
     code, data, _, _ = run(main, "list", "--json", capsys=capsys)
-    assert code == 0 and [q["route"] for q in data["open"]] == ["job-search-zz"]
+    assert code == 0 and [q["route"] for q in data["open"]] == ["org"]
 
 
 def test_both_org_files_refuse_resolve(main, capsys):
