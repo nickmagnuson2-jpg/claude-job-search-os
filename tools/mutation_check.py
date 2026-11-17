@@ -2327,6 +2327,7 @@ def main() -> int:
         # The changed tests' lines come from the line map, and neither path builds one.
         why = "--list runs no tests" if args.list else "--no-line-map"
         scope = {"mode": "whole_file", "base": scope["base"],
+                 "changed": scope["changed"], "deleted_at": scope["deleted_at"],
                  "tests_changed": scope["tests_changed"],
                  "reason": f"mapped tests changed and their lines need the line map "
                            f"({why}); measuring the whole file"}

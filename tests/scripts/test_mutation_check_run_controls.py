@@ -339,3 +339,37 @@ def test_a_capped_whole_file_run_measures_the_changed_lines_first(tmp_path):
     assert d["scope"]["changed_mutants_unfinished"] == d["scope"]["changed_mutants"]
     first_n = d["unfinished_mutants"][:d["scope"]["changed_mutants"]]
     assert all("::second::" in k for k in first_n), d["unfinished_mutants"]
+
+
+def test_the_no_line_map_fallback_also_measures_changed_lines_first(tmp_path):
+    """Codex 1.F1 / Grok 2.F1 (2026-11-17): an ADDED test with --no-line-map falls back to
+    the whole file through a second path, which dropped the diff and stayed in file order."""
+    env = {"PATH": "/usr/bin:/bin:/usr/local/bin", "HOME": str(tmp_path),
+           "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+           "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
+    def git(*a):
+        return subprocess.run(["git", *a], cwd=str(tmp_path), env=env,
+                              capture_output=True, text=True)
+    (tmp_path / "tools").mkdir()
+    (tmp_path / "tests").mkdir()
+    src = tmp_path / "tools" / "subject.py"
+    src.write_text(TWO_FUNCS, encoding="utf-8")
+    t = tmp_path / "tests" / "test_subject.py"
+    body = (f"import sys; sys.path.insert(0, r'{tmp_path / 'tools'}')\n"
+            "from subject import first, second\n"
+            "def test_first(): assert first(1) == 'a' and first(-1) == 'b'\n"
+            "def test_second(): assert second(5) == 'c' and second(-1) == 'd'\n")
+    t.write_text(body, encoding="utf-8")
+    git("init", "-q"); git("add", "-A"); git("commit", "-qm", "base")
+    base = git("rev-parse", "HEAD").stdout.strip()
+    src.write_text(TWO_FUNCS.replace("def second(n):\n    if n > 0:",
+                                     "def second(n):\n    if n > 1:"), encoding="utf-8")
+    t.write_text(body + "def test_second_edge(): assert second(1) == 'd'\n", encoding="utf-8")
+    git("add", "-A"); git("commit", "-qm", "change")
+    r = _run([str(src), "--tests", str(t), "--base", base, "--max-hours", "0",
+              "--no-line-map"], tmp_path)
+    d = json.loads(r.stdout)
+    assert d["scope"]["mode"] == "whole_file", d["scope"]
+    assert d["scope"]["changed_mutants"] >= 1
+    first_n = d["unfinished_mutants"][:d["scope"]["changed_mutants"]]
+    assert all("::second::" in k for k in first_n), d["unfinished_mutants"]
