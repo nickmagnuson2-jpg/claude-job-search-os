@@ -619,8 +619,14 @@ def _one_value(word: str, env: dict) -> str:
 # inside such a chain (it binds tighter than `&&`), carry X forward; `;`, a newline, `||`,
 # `&` and `)` return to the union of every directory seen. Before this, a script editing
 # ANOTHER checkout's copy of a guard after `cd <worktree> &&` was blocked as if it edited
-# this repo's (Nick approved, 2026-11-16: 6 of 28 replayed script blocks).
+# this repo's (Nick approved, 2026-11-16; a replay of 39,816 past commands cleared 5 such
+# blocks and blocked nothing new). A chain starts only at a cd that is certain to run in
+# the shell itself: not right of `||` (it may be skipped), not in a pipe (a subshell). A
+# command that may move the shell (popd, source, `.`, eval, ...) ends the chain. Review
+# round 1, Codex F2 and Grok F1-F3.
 _CHAIN_OPS = ("&&", "|", "|&")
+_CERTAIN_BEFORE = (None, ";", "\n", "&&", "&")
+_MOVES_SHELL = {"cd", "pushd", "popd", "source", ".", "eval", "builtin", "command", "exec"}
 
 
 def _following_ops(command: str) -> list:
@@ -638,12 +644,8 @@ def _following_ops(command: str) -> list:
             if content:
                 ops.append(t.text)
                 content = False
-        elif t.kind == "redir":
-            content = True
-            if k + 1 < len(toks) and toks[k + 1].kind == "word":
-                k += 1                                # its target, as simple_commands does
-        elif t.kind == "word":
-            content = True
+        elif t.kind in ("redir", "word"):              # a redirection's target is a word:
+            content = True                            # it changes nothing either way
         k += 1
     if content:
         ops.append(None)
@@ -681,8 +683,9 @@ def bash_guard_writes(command: str, cwd: str = ".", _depth: int = 0) -> list[str
     if len(ops) != len(cmds):
         ops = [None] * len(cmds)                      # cannot align: no chains, the union
     chain: list[str] | None = None                    # set: the next command runs only here
-    for cmd, op in zip(cmds, ops):
+    for n, (cmd, op) in enumerate(zip(cmds, ops)):
         here = chain if chain is not None else cwds
+        certain = cmd.fed_by is None and (ops[n - 1] if n else None) in _CERTAIN_BEFORE
         lead = [w for w in cmd.words if not re.match(r"[A-Za-z_]\w*=", w)]
         if lead[:1] in (["cd"], ["pushd"]) and cwds is not None:
             to = _one_value(lead[1], env) if len(lead) > 1 else _UNKNOWN
@@ -693,10 +696,12 @@ def bash_guard_writes(command: str, cwd: str = ".", _depth: int = 0) -> list[str
             if cwds is not None and len(cwds) > 8:
                 cwds = None                           # too many places: the heuristic
             # `cd -` and `cd -P x` are not a plain directory: never a chain.
-            chain = (list(dict.fromkeys(moved)) if op == "&&" and moved is not None
+            chain = (list(dict.fromkeys(moved)) if op == "&&" and certain and moved is not None
                      and cwds is not None and not to.startswith("-") else None)
         else:
-            chain = chain if chain is not None and op in _CHAIN_OPS else None
+            moves = {os.path.basename(cmd.words[i]) for i in _all_command_positions(cmd.words)}
+            chain = (chain if chain is not None and op in _CHAIN_OPS
+                     and not moves & _MOVES_SHELL else None)
         for inner in cmd.subs:
             hits += bash_guard_writes(inner, cwd, _depth + 1)
         words = cmd.words
