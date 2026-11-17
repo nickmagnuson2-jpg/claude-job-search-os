@@ -360,6 +360,15 @@ def test_either_name_as_owner_is_recorded_and_routed_as_org(main, capsys, alias)
     assert code == 0 and [q["route"] for q in data["open"]] == ["org"]
 
 
+@pytest.mark.parametrize("asked_as", ["org", "overnight-swarm", "orchestration"])
+@pytest.mark.parametrize("listed_as", ["org", "overnight-swarm", "orchestration"])
+def test_list_owner_filter_accepts_any_organizer_name(main, capsys, asked_as, listed_as):
+    """add stores every organizer name as org, so list --owner must canonicalize too (Grok r1 F3)."""
+    add(main, capsys, owner=asked_as, cls="order")
+    code, data, _, _ = run(main, "list", "--json", "--owner", listed_as, capsys=capsys)
+    assert code == 0 and [q["id"] for q in data["open"]] == ["Q1"]
+
+
 def test_both_org_files_refuse_resolve(main, capsys):
     add(main, capsys, owner="org", cls="order")
     ws = main / "data" / "workstreams"
