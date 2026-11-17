@@ -2053,10 +2053,28 @@ def _in_repo(arg: str) -> str:
         raise ValueError(f"{arg} is outside the repository; a worktree run cannot reach it")
 
 
+IN_WORKTREE_FLAG = "--in-worktree"
+# Set in the env of the child a worktree run starts. The child IS the throwaway tree, so
+# it never dispatches again, whatever its argv says (Grok 214344b883 F1 backstop).
+IN_WORKTREE_CHILD_ENV = "MUTATION_IN_WORKTREE_CHILD"
+
+
+def _is_in_worktree_flag(arg: str) -> bool:
+    """The flag or any abbreviation argparse accepts for it. `--in` is the shortest unique
+    prefix (`--i` also matches --isolation, which argparse rejects as ambiguous)."""
+    return arg.startswith("--in") and IN_WORKTREE_FLAG.startswith(arg)
+
+
 def worktree_argv(argv: list[str]) -> list[str]:
-    """This run's arguments for the copy inside the worktree: everything but the flag, with
-    absolute in-repo paths made relative."""
-    return [_in_repo(a) for a in argv if a != "--in-worktree"]
+    """This run's arguments for the copy inside the worktree: everything but the flag (in
+    any abbreviation argparse accepts), with absolute in-repo paths made relative."""
+    return [_in_repo(a) for a in argv if not _is_in_worktree_flag(a)]
+
+
+def _env_without_git() -> dict[str, str]:
+    """The environment minus GIT_*. An inherited GIT_DIR (a hook, a caller's override)
+    would make `git worktree add HEAD` read another checkout's HEAD (Grok 214344b883 F2)."""
+    return {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
 
 
 def run_inputs(args) -> set[str]:
@@ -2081,7 +2099,8 @@ def uncommitted_inputs(root: Path, only: set[str] | None = None) -> list[str]:
     # Scoped runs check their own inputs wherever they live (review 747.F2).
     spec = ["--", "tools", "tests"] if only is None else []
     proc = subprocess.run(["git", "status", "--porcelain", "--untracked-files=all"] + spec,
-                          capture_output=True, text=True, cwd=str(root))
+                          capture_output=True, text=True, cwd=str(root),
+                          env=_env_without_git())
     paths = [line[3:].split(" -> ")[-1] for line in proc.stdout.splitlines() if line.strip()]
     return [q for q in paths if only is None or q in only]
 
@@ -2103,8 +2122,9 @@ def run_in_worktree(argv: list[str], args) -> int:
         return 1
     scratch = Path(tempfile.mkdtemp(prefix="mutation-wt-"))
     wt = scratch / "wt"
+    git_env = _env_without_git()
     add = subprocess.run(["git", "worktree", "add", "--detach", str(wt), "HEAD"],
-                         capture_output=True, text=True, cwd=str(REPO_ROOT))
+                         capture_output=True, text=True, cwd=str(REPO_ROOT), env=git_env)
     if add.returncode != 0:
         print(json.dumps({"status": "error", "code": "worktree_add_failed",
                           "message": add.stderr.strip()}))
@@ -2112,17 +2132,17 @@ def run_in_worktree(argv: list[str], args) -> int:
     try:
         # MUTATION_REPO_ROOT is pinned to the new worktree: inherited, it would point the
         # child back at the caller's tree and mutate it in place after all.
-        env = {**os.environ, "MUTATION_REPO_ROOT": str(wt)}
+        env = {**git_env, "MUTATION_REPO_ROOT": str(wt), IN_WORKTREE_CHILD_ENV: "1"}
         return subprocess.run([sys.executable, str(wt / "tools" / "mutation_check.py")]
                               + child_argv, cwd=str(wt), env=env).returncode
     finally:
         rm = subprocess.run(["git", "worktree", "remove", "--force", str(wt)],
-                            capture_output=True, text=True, cwd=str(REPO_ROOT))
+                            capture_output=True, text=True, cwd=str(REPO_ROOT), env=git_env)
         shutil.rmtree(scratch, ignore_errors=True)
         # If remove failed, the directory is gone now; prune drops git's record of it
         # (review 744.F4), and a failure of either is reported, not swallowed (747.F4).
         pr = subprocess.run(["git", "worktree", "prune"], capture_output=True, text=True,
-                            cwd=str(REPO_ROOT))
+                            cwd=str(REPO_ROOT), env=git_env)
         for step, res in (("worktree remove", rm), ("worktree prune", pr)):
             if res.returncode != 0:
                 print(f"mutation_check: {step} failed for {wt}: {res.stderr.strip()}",
@@ -2215,8 +2235,9 @@ def main() -> int:
     args = ap.parse_args()
     # Honored from anywhere, a linked worktree included (FT:26, 2026-11-16). It used to be
     # skipped there, so the run mutated the caller's worktree in place and froze it (one
-    # froze ~8 h). The child never sees the flag (worktree_argv drops it), so no loop.
-    if args.in_worktree:
+    # froze ~8 h). The child never sees the flag (worktree_argv drops it in any
+    # abbreviation), and the child env marker stops a second dispatch regardless.
+    if args.in_worktree and not os.environ.get(IN_WORKTREE_CHILD_ENV):
         return run_in_worktree(sys.argv[1:], args)
 
     target = Path(args.target)

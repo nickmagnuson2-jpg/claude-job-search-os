@@ -2291,6 +2291,46 @@ def test_in_worktree_from_a_linked_worktree_refuses_uncommitted_inputs(tmp_path)
     assert (wt / "tools" / "plain.py").read_text() == _HOOK_SRC + "# dirty\n"
 
 
+@pytest.mark.parametrize("flag", ["--in", "--in-", "--in-w", "--in-worktre", "--in-worktree"])
+def test_worktree_argv_drops_every_abbreviation_argparse_accepts(flag):
+    """Grok 214344b883 F1: argparse takes a unique prefix, so `--in` reached the child.
+    With the flag now honored inside a linked worktree, the child would dispatch again."""
+    assert mc.worktree_argv(["tools/x.py", flag, "--isolation"]) == ["tools/x.py", "--isolation"]
+
+
+def test_worktree_argv_keeps_flags_that_only_share_a_prefix():
+    assert mc.worktree_argv(["tools/x.py", "--isolation", "--i"]) == ["tools/x.py", "--isolation", "--i"]
+
+
+def test_an_abbreviated_flag_from_a_linked_worktree_runs_once_in_a_fresh_one(tmp_path):
+    wt = _linked_wt_with_stub(tmp_path)
+    record = tmp_path / "record.json"
+    r = _run(["tools/plain.py", "--in"], cwd=wt, env_extra={"STUB_RECORD": str(record)})
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert json.loads(record.read_text())["argv"] == ["tools/plain.py"]
+
+
+def test_a_child_never_dispatches_again_even_if_the_flag_reaches_it(tmp_path):
+    """Backstop independent of argv parsing: the child env carries a marker."""
+    wt = _linked_wt_with_stub(tmp_path)
+    r = _run(["tools/plain.py", "--in-worktree", "--list"], cwd=wt,
+             env_extra={mc.IN_WORKTREE_CHILD_ENV: "1"})
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert json.loads(r.stdout)["status"] == "ok"           # ran here, did not dispatch
+
+
+def test_a_stray_git_dir_does_not_change_which_head_the_worktree_is_made_from(tmp_path):
+    """Grok 214344b883 F2: with GIT_DIR aimed at the main checkout, `git worktree add
+    HEAD` used the main checkout's HEAD, not the caller's."""
+    wt = _linked_wt_with_stub(tmp_path)
+    record = tmp_path / "record.json"
+    r = _run(["tools/plain.py", "--in-worktree"], cwd=wt,
+             env_extra={"STUB_RECORD": str(record),
+                        "GIT_DIR": str(tmp_path / "repo" / ".git")})
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert json.loads(record.read_text())["target_text"].endswith("# side\n")
+
+
 # --- review round 4 (2026-10-27, runs 744/746) -------------------------------------------
 
 def test_an_absolute_target_inside_the_repo_is_made_relative():
