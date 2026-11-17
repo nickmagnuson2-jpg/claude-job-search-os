@@ -47,7 +47,12 @@ def test_real_unquoted_glob_after_a_dollar_span_is_still_blocked():
     # The other direction: the bad pairing used to BLANK the real code in between.
     cmd = 'echo "== $f"; grep -rn foo --include=*.md .; echo "done"'
     assert "--include=*.md" in h.strip_literals(cmd)
-    assert _hook("check_unquoted_glob.py", cmd) == 2
+    # check_unquoted_glob now quotes a simple unquoted glob in place (exit 0 with an
+    # updatedInput) instead of blocking; either way the real glob must be acted on.
+    payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": cmd}})
+    r = subprocess.run([sys.executable, os.path.join(TOOLS, "check_unquoted_glob.py")],
+                       input=payload, capture_output=True, text=True, timeout=30)
+    assert r.returncode == 2 or "--include='*.md'" in r.stdout
 
 
 # --- the other direction, for the command-position hooks ---------------------------

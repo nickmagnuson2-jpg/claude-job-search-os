@@ -112,12 +112,15 @@ def test_blocks_when_rewrite_not_safe(command):
 
 
 def test_blocks_when_strip_literals_misreads_quotes():
-    # strip_literals blanks '...' then "...". In `"it's" --include=*.md "x'y"`
-    # the single-quote regex pairs the apostrophes ACROSS the real double-quoted
-    # strings, so the flag is hidden from detection -> today's verdict is CLEAN, and
-    # the rewrite must not change it (do not act on what detection never saw).
+    # Until Q11 (2026-11-16) strip_literals blanked '...' then "..." with two regexes,
+    # and in `"it's" --include=*.md "x'y"` the single-quote regex paired the apostrophes
+    # ACROSS the real double-quoted strings, hiding the flag, so this test pinned a
+    # CLEAN verdict. strip_literals now reads shell_tokens spans and pairs each quote
+    # correctly, so the unquoted glob is seen and quoted in place like any other.
     cmd = 'echo "it\'s" --include=*.md "x\'y"'
-    assert _run(cmd) == 0 and _call(cmd).stdout == ""
+    r = _call(cmd)
+    assert r.returncode == 0
+    assert '--include=\'*.md\' \\"x\'y\\"' in r.stdout
 
 
 def test_blocks_when_shlex_places_match_inside_quotes():
