@@ -87,6 +87,7 @@ import sys
 # tools/ next to hook_command_lint.py; PYTHONPATH covers the staging layout.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from hook_command_lint import strip_literals  # noqa: E402
+from shell_tokens import tokenize  # noqa: E402
 from hook_runtime import read_payload  # noqa: E402
 
 # Final-stage commands whose exit status is a constant 0 in a pipeline — it can
@@ -123,7 +124,6 @@ _COMMENT = re.compile(r"(?:^|(?<=\s))#[^\n]*")
 
 _VAR_PREFIX = re.compile(r"^\s*(?:\w+=\S*\s+)*")
 _FIRST_WORD = re.compile(r"[\w./+-]+")
-_AND_OR = re.compile(r"(\|\||&&)")
 _LINE_CONT = re.compile(r"\\\n")
 
 
@@ -133,14 +133,75 @@ def _first_word(segment: str) -> str | None:
     return os.path.basename(m.group(0)) if m else None
 
 
-def _terminal_formatter(element: str) -> str | None:
-    """If `element` is a pipeline whose LAST stage is a pure formatter, return
-    that formatter's name; otherwise None."""
-    if "|" not in element:
+_STATEMENT_OPS = (";", "\n", "&", ";;")
+_AND_OR_OPS = ("&&", "||")
+_PIPE_OPS = ("|", "|&")
+_ASSIGNMENT = re.compile(r"^[A-Za-z_]\w*=")
+_TESTS = ("[", "[[", "test")
+
+
+def _split(toks, ops):
+    """Split a token list at op tokens whose text is in `ops`: [(tokens, op_after)].
+    The tokens come from shell_tokens.tokenize, so an operator inside quotes or a
+    substitution is never one of them (Q11: the regex split broke on a `|` inside
+    `"$(wc -l < f | tr -d ' ')"`)."""
+    out, cur = [], []
+    for t in toks:
+        if t.kind == "op" and t.text in ops:
+            out.append((cur, t.text))
+            cur = []
+        else:
+            cur.append(t)
+    out.append((cur, None))
+    return out
+
+
+def _words(toks):
+    return [t for t in toks if t.kind == "word"]
+
+
+def _element_formatter(toks, src: str) -> str | None:
+    """The formatter whose status this and-or element reports, or None.
+
+    A pipeline reports its LAST stage. An assignment with no command word
+    (`x=$(a | head)`, quoted or not) reports its last substitution's status, so that
+    body is read instead."""
+    stages = _split(toks, _PIPE_OPS)
+    if len(stages) < 2:
+        words = _words(toks)
+        if words and all(_ASSIGNMENT.match(w.text) for w in words):
+            subs = [sub for w in words for sub in w.subs]
+            if subs:
+                return _command_formatter(subs[-1])
         return None
-    last_stage = element.rsplit("|", 1)[1]
-    word = _first_word(last_stage)
+    last = stages[-1][0]
+    if not last:
+        return None
+    # The stage's first word is read from its source text with the same rule as
+    # before, so `"tail"` or `$FMT` is still not a formatter word; only the split
+    # points changed.
+    word = _first_word(src[last[0].start:last[-1].end])
     return word if word in FORMATTERS else None
+
+
+def _command_formatter(command: str) -> str | None:
+    """The formatter whose status a whole command reports: its last element."""
+    statements = [st for st, _ in _split(tokenize(command), _STATEMENT_OPS) if _words(st)]
+    if not statements:
+        return None
+    return _element_formatter(_split(statements[-1], _AND_OR_OPS)[-1][0], command)
+
+
+def _terminal_formatter(element: str) -> str | None:
+    """String form of _element_formatter, for one and-or element."""
+    return _element_formatter(tokenize(element), element)
+
+
+def _is_test(toks) -> bool:
+    words = [w.text for w in _words(toks)]
+    if words and words[0] == "!":
+        words = words[1:]
+    return bool(words) and words[0] in _TESTS
 
 
 def find_violation(command: str) -> tuple[str, str] | None:
@@ -152,35 +213,46 @@ def find_violation(command: str) -> tuple[str, str] | None:
     if _BASH_PIPESTATUS.search(text):
         return "PIPESTATUS", "PIPESTATUS"
 
-    # Statements: top-level `;` / newline. `||` and `&&` contain neither, so
-    # and-or lists survive intact inside a statement.
-    statements = re.split(r"[;\n]", text)
+    return _find_in(command)
 
+
+def _find_in(command: str) -> tuple[str, str] | None:
+    """The shape scan over shell_tokens structure. Each substitution body is then
+    scanned as a command of its own, so `$(a | cut -f2 || echo 0)` is still caught."""
+    toks = tokenize(command)
+    statements = [(st, command[st[0].start:st[-1].end])
+                  for st, _ in _split(toks, _STATEMENT_OPS) if _words(st)]
     pipefail = False                 # in effect for the statements that follow
-    for i, stmt in enumerate(statements):
-        if _PIPEFAIL_ON.search(stmt.strip()):
+    for i, (stmt, src) in enumerate(statements):
+        flat = _COMMENT.sub("", strip_literals(src)).strip()
+        if _PIPEFAIL_ON.search(flat):
             pipefail = True
-        if _PIPEFAIL_OFF.search(stmt.strip()):
+        if _PIPEFAIL_OFF.search(flat):
             pipefail = False
         if pipefail:
             continue
-        parts = _AND_OR.split(stmt)
-        # parts = [element, op, element, op, element, ...]
-        for j in range(0, len(parts), 2):
-            fmt = _terminal_formatter(parts[j])
+        parts = _split(stmt, _AND_OR_OPS)
+        for j, (part, op_after) in enumerate(parts):
+            fmt = _element_formatter(part, command)
             if not fmt:
                 continue
-            # Shape A: an `||` verdict hangs off this pipeline.
-            if j + 1 < len(parts) and parts[j + 1] == "||":
-                return fmt, "||"
+            # Shape A: an `||` verdict hangs off this pipeline. Not when a TEST
+            # guards it (`[ -f f ] && wc -l < f | tr -d ' ' || echo MISSING`): there the
+            # `||` is the test's else-branch and does fire (Q14, Nick 2026-11-16).
+            if op_after == "||":
+                guarded = j >= 1 and parts[j - 1][1] == "&&" and _is_test(parts[j - 1][0])
+                if not guarded:
+                    return fmt, "||"
             # Shape B: the next statement reads `$?`.
-            if j + 2 >= len(parts):
-                for nxt in statements[i + 1:]:
-                    if not nxt.strip():
-                        continue
-                    if "$?" in nxt:
-                        return fmt, "$?"
-                    break
+            if j == len(parts) - 1 and i + 1 < len(statements):
+                nxt = _COMMENT.sub("", strip_literals(statements[i + 1][1]))
+                if "$?" in nxt:
+                    return fmt, "$?"
+    for tok in toks:
+        for sub in tok.subs:
+            hit = _find_in(sub)
+            if hit:
+                return hit
     return None
 
 
