@@ -15,6 +15,7 @@ import json
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 import pytest
@@ -197,7 +198,9 @@ def test_all_skipped_does_not_record(sr, repo, tmp_parent, capsys):
 def test_timeout_does_not_record_and_cleans_up(sr, repo, tmp_parent, capsys):
     slow = "import time\n\ndef test_slow():\n    time.sleep(60)\n"
     _branch(repo, "slow", {"tests/test_slow.py": slow})
+    start = time.monotonic()
     code, out = _run(sr, repo, capsys, "slow", "--base", "main", "--timeout", "3")
+    assert time.monotonic() - start < 40, "pytest was not killed at the timeout"
     assert code == 1
     assert out["code"] == "timeout" and out["message"] == "timeout after 3 s"
     assert _ledger_rows(repo) == []
@@ -339,3 +342,102 @@ def test_cli_subprocess_end_to_end(repo, tmp_path):
                         "--tip", "feat", "--base", "main"],
                        capture_output=True, text=True, env=env)
     assert c.returncode == 0, c.stdout + c.stderr
+
+
+# --------------------------------------------------------------------------- mutation gaps
+# Added 2026-11-16 after mutation_check left 21 survivors on 3e74ce5b. The serious class: a
+# git failure whose error return was never exercised, so a mutant returning None made the
+# CLI exit 0 with no output, which a caller reads as a recorded pass.
+
+def _failing_git(sr, monkeypatch, prefix):
+    """Make one git subcommand fail the way git does (rc 128); every other call is real."""
+    real = sr._git
+
+    def fake(root, *args, **kw):
+        if tuple(args[:len(prefix)]) == prefix:
+            return subprocess.CompletedProcess(["git", *args], 128, "", "fatal: injected")
+        return real(root, *args, **kw)
+    monkeypatch.setattr(sr, "_git", fake)
+
+
+@pytest.mark.parametrize("prefix", [
+    ("rev-parse", "--path-format=absolute"),     # ledger_path
+    ("merge-tree",),                             # a git error that is not a conflict
+    ("commit-tree",),
+    ("worktree", "add"),
+])
+def test_a_git_failure_in_run_is_named_and_records_nothing(sr, repo, tmp_parent, capsys,
+                                                          monkeypatch, prefix):
+    _branch(repo, "feat", {"tests/test_feat.py": PASSING})
+    _failing_git(sr, monkeypatch, prefix)
+    code, out = _run(sr, repo, capsys, "feat", "--base", "main")
+    assert code == 1 and out["status"] == "fail" and out["code"] == "git_error"
+    assert "injected" in out["message"] or "not a git repository" in out["message"]
+    assert out["recorded"] is False
+    assert _ledger_rows(repo) == []
+    assert list(tmp_parent.iterdir()) == []
+
+
+def test_a_git_failure_in_check_exits_2(sr, repo, tmp_parent, capsys, monkeypatch):
+    _branch(repo, "feat", {"tests/test_feat.py": PASSING})
+    _failing_git(sr, monkeypatch, ("merge-tree",))
+    code, out = _check(sr, repo, capsys, "feat")
+    assert code == 2 and out["code"] == "git_error" and "injected" in out["message"]
+
+
+def test_bad_ref_message_names_the_ref_that_is_missing(sr, repo, tmp_parent, capsys):
+    _branch(repo, "feat", {"tests/test_feat.py": PASSING})
+    code, out = _check(sr, repo, capsys, "feat", base="nobase")
+    assert code == 2 and out["message"].startswith("nobase is not a commit")
+    code, out = _check(sr, repo, capsys, "notip")
+    assert code == 2 and out["message"].startswith("notip is not a commit")
+
+
+def test_ledger_blank_lines_are_skipped_and_non_objects_refused(sr, repo, tmp_parent,
+                                                                 capsys):
+    _branch(repo, "feat", {"tests/test_feat.py": PASSING})
+    tree = _merged_tree(repo, "main", "feat")
+    (repo / "tools").mkdir()
+    row = json.dumps({"kind": "suite", "verdict": "pass", "tree": tree})
+    (repo / LEDGER).write_text("\n   \n" + row + "\n\n", encoding="utf-8")
+    assert _check(sr, repo, capsys, "feat")[0] == 0
+    (repo / LEDGER).write_text(row + "\n[1, 2]\n", encoding="utf-8")
+    code, out = _check(sr, repo, capsys, "feat")
+    assert code == 2 and out["code"] == "ledger_unreadable"
+    assert "line 2 is not an object" in out["message"]
+
+
+def test_a_failing_run_reports_the_end_of_pytest_output(sr, repo, tmp_parent, capsys):
+    _branch(repo, "bad", {"tests/test_bad.py": FAILING})
+    code, out = _run(sr, repo, capsys, "bad", "--base", "main")
+    assert code == 1 and out["code"] == "tests_failed"
+    assert "test_bad" in out["output_tail"] and "1 failed" in out["output_tail"]
+
+
+def test_tail_of_a_missing_log_is_empty(sr, tmp_path):
+    assert sr._tail(tmp_path / "missing.log") == ""
+
+
+def test_a_nonzero_exit_with_no_failures_is_named_by_its_code(sr, repo, tmp_parent, capsys):
+    """Interrupted or internal-error runs fail by exit code, never as tests_failed."""
+    conftest = ("def pytest_sessionfinish(session, exitstatus):\n"
+                "    session.exitstatus = 3\n")
+    _branch(repo, "exit3", {"conftest.py": conftest})
+    code, out = _run(sr, repo, capsys, "exit3", "--base", "main")
+    assert code == 1 and out["returncode"] == 3
+    assert out["failed"] == 0 and out["errors"] == 0
+    assert out["code"] == "pytest_exit_3" and out["message"] == "pytest exit 3"
+    assert _ledger_rows(repo) == []
+
+
+def test_worktree_metadata_is_pruned_when_remove_fails(sr, repo, tmp_parent, capsys,
+                                                       monkeypatch):
+    """If `git worktree remove` fails, the directory is still deleted, and the prune that
+    follows must then drop git's record of it. A prune run before the delete sees a live
+    directory and keeps the record."""
+    _branch(repo, "feat", {"tests/test_feat.py": PASSING})
+    _failing_git(sr, monkeypatch, ("worktree", "remove"))
+    code, out = _run(sr, repo, capsys, "feat", "--base", "main")
+    assert code == 0, out
+    assert list(tmp_parent.iterdir()) == []
+    assert len(_worktrees(repo)) == 1
