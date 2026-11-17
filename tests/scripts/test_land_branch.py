@@ -973,3 +973,15 @@ def test_checkers_outside_a_repo_are_never_current(tmp_path):
     c = lb.checker_provenance(tmp_path / "tools", {"github_main": "a" * 40, "ref": "b" * 40})
     assert c["head"] is None and c["current"] is False
     assert "at ?, not GitHub main aaaaaaaa" in c["warnings"][0]
+
+
+def test_module_loads_by_path_without_tools_on_sys_path(tmp_path):
+    """The count_report import must not depend on the caller's sys.path (mutation r7)."""
+    code = ("import importlib.util, sys; "
+            f"spec = importlib.util.spec_from_file_location('lbx', {str(Path(lb.__file__))!r}); "
+            "m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m); "
+            "print(m.format_line('x', 1, 1, {}))")
+    p = subprocess.run([sys.executable, "-I", "-c", code], cwd=tmp_path,
+                       capture_output=True, text=True)
+    assert p.returncode == 0, p.stderr
+    assert p.stdout.strip() == "scope: x | population 1 | included 1 | excluded: none"
