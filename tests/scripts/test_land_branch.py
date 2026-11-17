@@ -45,7 +45,9 @@ if mode == 'garbage':
     print('not json'); sys.exit(0)
 print(json.dumps(r)); sys.exit(0)
 """
-SUITE_STUB = "import os, sys\nsys.exit(int(os.environ.get('LB_SUITE_RC', '0')))\n"
+SUITE_STUB = ("import json, os, sys\n"
+              "open(os.environ['LB_ARGV_LOG'], 'a').write(json.dumps(['suite', *sys.argv[1:]]) + '\\n')\n"
+              "sys.exit(int(os.environ.get('LB_SUITE_RC', '0')))\n")
 HOOK_STUB = """#!/bin/bash
 cat > "$LB_HOOK_LOG"
 echo "waive=${CODEX_VERIFY_WAIVE:-unset}/${AUDIT_PII_WAIVE:-unset}/${PUSH_PII_OVERRIDE:-unset} remote=$1 url=$2" >> "$LB_HOOK_LOG"
@@ -799,10 +801,12 @@ def test_branch_cannot_judge_itself_with_its_own_tools(repo, monkeypatch):
 
 def test_trusted_tools_get_the_worktree_and_tip(repo):
     wt, tip = branch(repo, "feat", {"f.py": "x = 1\n"})
-    lb.check(repo["root"], ["feat"], gh=gh_local_main(repo))
+    (repo["root"] / "tools" / "suite_record.py").write_text(SUITE_STUB)
+    lb.check(repo["root"], ["feat"], want_suite=True, gh=gh_local_main(repo))
     rows = [json.loads(x) for x in Path(os.environ["LB_ARGV_LOG"]).read_text().splitlines()]
     assert ["audit", "--repo-root", str(wt), "check", "--tip", tip] in rows
     assert ["pii", "--scan", "--stdin-paths", str(wt / "f.py")] in rows
+    assert ["suite", "check", "--tip", tip] in rows
 
 
 def test_trusted_tools_resolve_to_main_checkout_from_a_worktree(repo):
