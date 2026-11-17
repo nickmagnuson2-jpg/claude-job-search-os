@@ -540,7 +540,7 @@ def test_an_id_already_written_is_not_rewritten_after_its_file_is_gone(tmp_path,
     written, _ = gmail_fetch.write_messages([_full_msg("m1")], state, tmp_path, dry_run=False)
     assert written == 0
     assert list(tmp_path.glob("*.md")) == []
-    assert "Skipped m1: already written" in capsys.readouterr().out
+    assert "Skipped m1: id already in state written_ids" in capsys.readouterr().out
 
 
 def test_a_repeat_within_one_batch_is_written_once(tmp_path):
@@ -550,6 +550,14 @@ def test_a_repeat_within_one_batch_is_written_once(tmp_path):
     assert written == 1 and senders == ["a@example.com"]
     assert len(list(tmp_path.glob("*.md"))) == 1
     assert list(state["written_ids"]) == ["m1"]
+
+
+def test_use_state_ids_false_dedupes_on_the_folder_only(tmp_path, capsys):
+    state = {"written_ids": {"m1": datetime.now().isoformat()}}
+    written, _ = gmail_fetch.write_messages([_full_msg("m1"), _full_msg("m1")], state, tmp_path,
+                                            dry_run=False, use_state_ids=False)
+    assert written == 1
+    assert "Skipped m1: repeated earlier in this batch" in capsys.readouterr().out
 
 
 def test_written_ids_drops_entries_older_than_30_days(tmp_path):
@@ -601,7 +609,7 @@ def test_a_dry_run_records_nothing_for_an_id_found_in_the_inbox(tmp_path, capsys
     state = {}
     written, _ = gmail_fetch.write_messages([_full_msg("m1")], state, tmp_path, dry_run=True)
     assert written == 0
-    assert "Skipped m1: already written" in capsys.readouterr().out
+    assert "Skipped m1: file already present in" in capsys.readouterr().out
     assert state["written_ids"] == {}
 
 
@@ -699,3 +707,34 @@ def test_a_failed_rename_leaves_nothing_and_queues_a_retry(tmp_path, monkeypatch
     assert list(tmp_path.iterdir()) == []
     assert state["retry_ids"] == {"m1": 1}
     assert state["written_ids"] == {}
+
+
+# ── survivors from the 2026-11-16 mutation run ────────────────────────────────
+
+def test_two_messages_without_an_id_in_one_batch_are_both_written(tmp_path):
+    # An id-less message falls back to msg_id "?", so the dedupe must not consult `seen`
+    # for it, or the second one is skipped as "repeated earlier in this batch".
+    a, b = _full_msg("x"), _full_msg("y", subject="Other")
+    del a["id"], b["id"]
+    written, _ = gmail_fetch.write_messages([a, b], {}, tmp_path, dry_run=False)
+    assert written == 2
+
+
+def test_save_state_leaves_no_temp_file_when_the_replace_fails(tmp_path, monkeypatch):
+    def boom(*_a, **_k):
+        raise OSError("replace failed")
+    monkeypatch.setattr(gmail_fetch.os, "replace", boom)
+    with pytest.raises(OSError):
+        gmail_fetch._save_state(tmp_path / ".gmail_state.json", {"historyId": "1"})
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_imports_as_a_package_module_without_tools_on_the_path():
+    # The module puts its own directory on sys.path so `from slug import ...` resolves
+    # when it is imported as tools.gmail_fetch (e.g. by another tool), not only as a script.
+    import subprocess
+    repo = Path(__file__).resolve().parents[2]
+    r = subprocess.run([sys.executable, "-I", "-c",
+                        "import sys; sys.path.insert(0, '.'); import tools.gmail_fetch"],
+                       cwd=repo, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr

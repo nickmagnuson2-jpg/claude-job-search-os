@@ -51,14 +51,42 @@ def test_cli_and_library_agree_on_every_role():
 
 @pytest.mark.live_data
 def test_the_scorer_actually_discriminates_these_three():
-    """A parity test passes trivially if the scorer returns a constant. Pin the ordering."""
+    """A parity test passes trivially if the scorer returns a constant. Pin the ordering.
+
+    The negative comes from the live fit-spec, not from a title typed here. This test
+    used to hard-code one title as the not-fit example; when fit-spec.yaml moved that
+    title to positive_title_patterns, the test failed on a premise the data no longer
+    held. Reading the same file the scorer reads keeps the test from drifting from it.
+    """
     ctx = load_scoring_context(REPO)
-    s = {r["title"]: score_role(r, ctx) for r in ROLES}
-    assert s["Deployment Strategist"] > s["Chief of Staff"], (
-        "'deployment strateg' is a positive_title_pattern and 'chief of staff' is a "
+    not_fit = [str(p) for p in (ctx["fit_spec"].get("not_fit_title_patterns") or [])]
+    if not not_fit:
+        pytest.skip("fit-spec.yaml has no not_fit_title_patterns, so there is no "
+                    "not-fit title to order against")
+    negative = {"title": not_fit[0].title(), "company": "Someco",
+                "location": "San Francisco",
+                "description": "Own the team's plan and report on it weekly."}
+    s = {r["title"]: score_role(r, ctx) for r in ROLES + [negative]}
+    assert s["Deployment Strategist"] > s[negative["title"]], (
+        f"'deployment strateg' is a positive_title_pattern and {not_fit[0]!r} is a "
         f"not_fit_title_pattern in fit-spec.yaml; the scorer must separate them. Got {s}")
     assert s["Deployment Strategist"] > s["Enterprise Account Executive"], (
         f"quota/land-and-expand language is a scope_disqualifier. Got {s}")
+
+    # The orderings above can hold on the base dimensions alone: a not-fit title also
+    # scores lower on title match, so they pass even if the not-fit list is ignored.
+    # Compare each role against the same scorer with the not-fit list emptied.
+    no_not_fit = {**ctx, "fit_spec": {**ctx["fit_spec"], "not_fit_title_patterns": []}}
+    assert score_role(negative, ctx) < score_role(negative, no_not_fit), (
+        f"{not_fit[0]!r} is a not_fit_title_pattern, so it must lower the score of a "
+        "role with that title")
+    for title in ctx.get("target_titles") or []:
+        role = {"title": title, "company": "Someco", "location": "San Francisco",
+                "description": "Own the team's plan and report on it weekly."}
+        assert score_role(role, ctx) >= score_role(role, no_not_fit), (
+            f"{title!r} is an Open to Work title in goals.md, but a not_fit_title_pattern "
+            "in fit-spec.yaml lowers its score; goals.md says every scorer must count "
+            "each Open to Work title as in-lane")
 
 
 def test_cli_rejects_junk_instead_of_scoring_it():

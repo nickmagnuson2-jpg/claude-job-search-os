@@ -49,6 +49,10 @@ To LIST a label read-only (the thing `--search ""` looks like it would do):
   --backfill leaves historyId untouched; --dry-run prints "[dry-run] Would write:"
   plus a 300-char preview per message and creates no files (it does still mkdir the
   inbox dir if absent). Drop --dry-run only when you want the messages imported.
+  Dedupe: into the default inbox/, a backfill skips ids already on a file there OR in
+  the forward sync's written_ids. With --inbox-dir anywhere else it checks that
+  folder's files only, since written_ids describes inbox/. The first output line names
+  the source, and each "Skipped" line names which one matched.
 
 State file: tools/.gmail_state.json
   {"historyId": "...", "last_refresh": "ISO-datetime",
@@ -998,7 +1002,7 @@ def _prune_written(state: dict, now: datetime) -> None:
 
 
 def write_messages(messages: list, state: dict, inbox_dir: Path,
-                   dry_run: bool) -> tuple[int, list[str]]:
+                   dry_run: bool, use_state_ids: bool = True) -> tuple[int, list[str]]:
     """Write each message to the inbox. A written message leaves state["retry_ids"]; one
     that fails is queued there for the next run. Returns (written, senders).
 
@@ -1006,16 +1010,32 @@ def write_messages(messages: list, state: dict, inbox_dir: Path,
     state["written_ids"], is skipped. A run killed after writing but before its state was
     saved therefore writes nothing new when the same history is replayed, and the record
     outlives cleanup_old_inbox_files. written_ids is saved by the same _save_state that
-    moves historyId, so the two cannot disagree."""
+    moves historyId, so the two cannot disagree.
+
+    use_state_ids=False dedupes against inbox_dir's files only. written_ids records what the
+    forward sync wrote to ITS folder, so a backfill into a different folder must not consult
+    it (2026-11-16: 64 ids the forward sync had just written to inbox/ were skipped by a
+    backfill into a scratch folder that never received them). Every Skipped line names
+    which source matched."""
     now = datetime.now()
     written_ids = state.setdefault("written_ids", {})
-    done = _existing_message_ids(inbox_dir) | set(written_ids)
+    file_ids = _existing_message_ids(inbox_dir)
+    state_ids = set(written_ids) if use_state_ids else set()
+    seen: set[str] = set()
     written = 0
     new_senders = []
     for msg in messages:
         msg_id = msg.get("id", "?")
-        if msg.get("id") and msg_id in done:
-            print(f"  Skipped {msg_id}: already written")
+        reason = None
+        if msg.get("id"):
+            if msg_id in seen:
+                reason = "repeated earlier in this batch"
+            elif msg_id in file_ids:
+                reason = f"file already present in {inbox_dir}"
+            elif msg_id in state_ids:
+                reason = "id already in state written_ids"
+        if reason:
+            print(f"  Skipped {msg_id}: {reason}")
             (state.get("retry_ids") or {}).pop(msg_id, None)
             if not dry_run:
                 written_ids.setdefault(msg_id, now.isoformat())
@@ -1031,7 +1051,7 @@ def write_messages(messages: list, state: dict, inbox_dir: Path,
                 (state.get("retry_ids") or {}).pop(msg_id, None)
                 if msg.get("id"):
                     written_ids[msg_id] = now.isoformat()
-            done.add(msg_id)
+            seen.add(msg_id)
         except Exception as e:
             print(f"Warning: could not process message {msg_id}: {e}", file=sys.stderr)
             _mark_retry(state, msg_id)
@@ -1489,10 +1509,20 @@ def main():
             since_date=args.since,
             max_messages=args.max_messages,
         )
-        # The same idempotent writer as forward sync, on a throwaway copy of the state: it
-        # skips ids already written, and the state file is never saved here.
+        # The same idempotent writer as forward sync, on a throwaway copy of the state: the
+        # state file is never saved here. Forward-sync written_ids describe the DEFAULT
+        # inbox only, so an --inbox-dir elsewhere dedupes against its own files. The dry run
+        # takes the same branch as the real run, so its "Would write" lines match the real
+        # run's "Wrote" lines unless the state, the folder, or the fetched Gmail set changed
+        # in between (a launchd sync can run between the two). The final "Wrote N" line is 0
+        # on a dry run by design.
+        use_state_ids = args.inbox_dir is None or inbox_dir == (repo_root / "inbox").resolve()
+        source = ("files in " + str(inbox_dir) + " + forward-sync written_ids" if use_state_ids
+                  else "files in " + str(inbox_dir) + " only")
+        print(f"Backfill dedupe: {source}")
         scratch = json.loads(json.dumps(_load_state(state_path)))
-        written, _ = write_messages(messages, scratch, inbox_dir, dry_run=args.dry_run)
+        written, _ = write_messages(messages, scratch, inbox_dir, dry_run=args.dry_run,
+                                    use_state_ids=use_state_ids)
         print(f"Backfill done. Wrote {written} inbox file(s). Forward-sync state unchanged.")
         return
 
