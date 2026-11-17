@@ -47,6 +47,15 @@ def _run(command: str, tool: str = "Bash"):
     "GIT_DIR=$HOME/.other-git git push origin master",
     "env GIT_TERMINAL_PROMPT=0 git fetch",
     "timeout 60 git fetch -q origin",
+    "time -p git push origin x",                  # time's own option (prior-art r2 F1 sibling)
+    "time -- git fetch",
+    "time -o /tmp/t git push origin x",           # time(1) -o FILE (E1 r3 F1, Codex + Grok)
+    "/usr/bin/time -o /tmp/t git push origin x",
+    "time --output /tmp/t git fetch",
+    "time -f %e git push origin x",              # GNU time -f FORMAT
+    "time -a -o /tmp/t git push origin x",
+    "env -P /usr/bin git push origin x",          # BSD env -P altpath (E1 r3 F2, Grok)
+    "caffeinate -s git push origin x",            # caffeinate -s is a flag (timeout's -s takes a value)
     "command git pull",
     "/usr/bin/git fetch",
     "cd ../repo && git pull",

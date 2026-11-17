@@ -49,18 +49,27 @@ from shell_tokens import simple_commands  # noqa: E402
 NETWORK_SUBCOMMANDS = {"fetch", "pull", "push", "ls-remote", "clone", "fetch-pack", "send-pack"}
 REMOTE_NETWORK = {"update", "prune", "show"}
 SHELLS = {"bash", "sh", "zsh", "dash", "ksh"}
-KEYWORDS = {"if", "then", "else", "elif", "do", "while", "until", "!", "{", "}", "time"}
+# `time` is NOT here: it is in WRAPPERS, whose branch also consumes its own `-p`/`--`.
+# As a keyword it was skipped alone and `time -p git push` passed (2026-11-16, found
+# while fixing check_prior_art.py, which shares this parser).
+KEYWORDS = {"if", "then", "else", "elif", "do", "while", "until", "!", "{", "}"}
 # Wrappers that run the rest of the line as a command, and how many words each option eats.
 WRAPPERS = {"env", "command", "exec", "nice", "nohup", "timeout", "caffeinate", "time"}
 GIT_VALUE_OPTS = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path",
                   "--config-env", "--super-prefix", "--list-cmds"}
-# Wrapper options that take the NEXT word as their value (Codex r1 F3: `env -C /tmp`,
-# `caffeinate -t 5`, `nice --adjustment 5` hid the git command that followed).
-_WRAPPER_VALUE_OPTS = {"-u", "--unset", "-C", "--chdir",                         # env
-                       "-n", "--adjustment",                                       # nice
-                       "-s", "--signal", "-k", "--kill-after",                     # timeout
-                       "-t", "-w",                                                 # caffeinate
-                       "-a"}                                                       # exec -a NAME (r3 F3)
+# Wrapper options that take the NEXT word as their value, PER WRAPPER (Codex r1 F3: `env -C
+# /tmp`, `caffeinate -t 5`, `nice --adjustment 5` hid the git command that followed). Per
+# wrapper because the same letter differs between them: exec's `-a NAME` takes a value and
+# time's `-a` does not, so one shared set read `time -a -o F git push` as running `F`
+# (E1 r3, 2026-11-16).
+_WRAPPER_VALUE_OPTS = {
+    "env": {"-u", "--unset", "-C", "--chdir", "-P"},      # -P altpath (BSD), E1 r3 F2
+    "time": {"-o", "--output", "-f", "--format"},         # BSD -o, GNU -o/-f, E1 r3 F1
+    "nice": {"-n", "--adjustment"},
+    "timeout": {"-s", "--signal", "-k", "--kill-after"},
+    "caffeinate": {"-t", "-w"},
+    "exec": {"-a"},                                       # exec -a NAME (r3 F3)
+}
 ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 MAX_DEPTH = 6
 
@@ -100,7 +109,7 @@ def _strip_prefix(words: list[str]) -> list[str]:
                     # Parsed as env's own arguments, since the value may start with more env
                     # options (`env -S '-i git push'`, Codex r3 F1).
                     return _strip_prefix(["env"] + (inner[0].words if inner else []) + after)
-                i += 2 if w in _WRAPPER_VALUE_OPTS else 1
+                i += 2 if w in _WRAPPER_VALUE_OPTS.get(base, ()) else 1
             if base == "timeout" and i < len(words) and re.fullmatch(r"[0-9.]+[smhd]?", words[i]):
                 i += 1          # the duration
             continue
