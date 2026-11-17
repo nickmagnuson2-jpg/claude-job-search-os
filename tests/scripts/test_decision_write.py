@@ -310,6 +310,72 @@ def test_org_rulings_live_in_overnight_swarm(main, capsys):
     assert code == 0 and data["ruling"]["file"].endswith("data/workstreams/overnight-swarm.md")
 
 
+# ------------------------------------------------------------------ the organizer's file is renamed
+# overnight-swarm -> orchestration (Nick, 2026-11-16). The code ships before the data file moves,
+# so both states must work, and both files at once must refuse: two org files would let rulings
+# split between them.
+
+def move_org_file(main):
+    ws = main / "data" / "workstreams"
+    (ws / "overnight-swarm.md").rename(ws / "orchestration.md")
+
+
+def test_org_rulings_live_in_orchestration_after_the_move(main, capsys):
+    move_org_file(main)
+    add(main, capsys, owner="org", cls="order")
+    rule(main, "orchestration", "RULING Q1 | option: b | reason: x | window: org")
+    code, data, _, _ = run(main, "resolve", "Q1", capsys=capsys)
+    assert code == 0 and data["ruling"]["file"].endswith("data/workstreams/orchestration.md")
+
+
+def test_question_asked_before_the_move_resolves_after_it(main, capsys):
+    add(main, capsys, owner="org", cls="order")
+    move_org_file(main)
+    rule(main, "orchestration", "RULING Q1 | option: b | reason: x | window: org")
+    code, data, _, _ = run(main, "resolve", "Q1", capsys=capsys)
+    assert code == 0 and data["ruling"]["file"].endswith("data/workstreams/orchestration.md")
+
+
+@pytest.mark.parametrize("alias", ["overnight-swarm", "orchestration"])
+@pytest.mark.parametrize("moved", [False, True])
+def test_either_name_as_owner_reads_the_one_org_file(main, capsys, alias, moved):
+    if moved:
+        move_org_file(main)
+    code, _, _, _ = add(main, capsys, owner=alias, cls="order")
+    assert code == 0
+    live = "orchestration" if moved else "overnight-swarm"
+    rule(main, live, "RULING Q1 | option: b | reason: x | window: org")
+    code, data, _, _ = run(main, "resolve", "Q1", capsys=capsys)
+    assert code == 0 and data["ruling"]["file"].endswith(f"data/workstreams/{live}.md")
+
+
+def test_both_org_files_refuse_resolve(main, capsys):
+    add(main, capsys, owner="org", cls="order")
+    ws = main / "data" / "workstreams"
+    (ws / "orchestration.md").write_text("# Workstream: orchestration\n", encoding="utf-8")
+    rule(main, "overnight-swarm", "RULING Q1 | option: b | reason: x | window: org")
+    code, data, _, _ = run(main, "resolve", "Q1", capsys=capsys)
+    assert code == 1 and data["code"] == "org_file_split"
+    assert [e["type"] for e in events(main)] == ["asked"]
+
+
+@pytest.mark.parametrize("owner", ["org", "overnight-swarm", "orchestration"])
+def test_both_org_files_refuse_add(main, capsys, owner):
+    ws = main / "data" / "workstreams"
+    (ws / "orchestration.md").write_text("# Workstream: orchestration\n", encoding="utf-8")
+    code, data, _, _ = add(main, capsys, owner=owner, cls="order")
+    assert code == 1 and data["code"] == "org_file_split"
+    assert not (main / "data" / "run-manifest" / "questions.jsonl").exists() or events(main) == []
+
+
+def test_other_owners_are_unaffected_by_the_split(main, capsys):
+    ws = main / "data" / "workstreams"
+    (ws / "orchestration.md").write_text("# Workstream: orchestration\n", encoding="utf-8")
+    add(main, capsys)
+    rule(main, "alpha-work", "RULING Q1 | option: b | reason: x | window: aa")
+    assert run(main, "resolve", "Q1", capsys=capsys)[0] == 0
+
+
 def test_resolve_refuses_unknown_and_already_resolved(main, capsys):
     code, data, _, _ = run(main, "resolve", "Q4", capsys=capsys)
     assert code == 1 and data["code"] == "unknown_question"
