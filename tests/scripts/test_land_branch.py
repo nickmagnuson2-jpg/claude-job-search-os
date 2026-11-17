@@ -32,6 +32,14 @@ if mode == 'hit':
 if mode == 'ambiguous':
     r['ambiguous_unresolved'] = ['x.py:voice']
     print(json.dumps(r)); sys.exit(3)
+if mode == 'private':
+    r.update(scanned=0, skipped=[{'path': 'data/x.md', 'why': 'gitignored'}])
+    print(json.dumps(r)); sys.exit(1)
+if mode == 'unreadable':
+    r.update(scanned=0, unreadable=[{'path': 'x.py', 'why': 'OSError'}], error='1 unreadable')
+    print(json.dumps(r)); sys.exit(1)
+if mode == 'garbage':
+    print('not json'); sys.exit(0)
 print(json.dumps(r)); sys.exit(0)
 """
 SUITE_STUB = "import os, sys\nsys.exit(int(os.environ.get('LB_SUITE_RC', '0')))\n"
@@ -418,3 +426,290 @@ def test_pushed_flag_true_only_when_github_head_equals_tip(repo):
     assert "notes" not in by_name(same)["feat"]
     absent = lb.check(repo["root"], ["feat"], gh=gh_local_main(repo))
     assert absent["landing"][0]["pushed"] is False
+
+
+# ---------------------------------------------------------------- error paths (mutation round 1)
+def test_run_reports_127_when_the_command_cannot_start():
+    rc, out, err = lb.run(["/nonexistent/land-branch-binary"])
+    assert rc == 127 and out == "" and "Error" in err
+
+
+def test_run_sets_utf8_io_and_strips_waivers(monkeypatch):
+    monkeypatch.delenv("PYTHONIOENCODING", raising=False)
+    monkeypatch.setenv("AUDIT_PII_WAIVE", "x")
+    rc, out, _ = lb.run([sys.executable, "-c",
+                         "import os; print(os.environ.get('PYTHONIOENCODING'), "
+                         "os.environ.get('AUDIT_PII_WAIVE'))"])
+    assert (rc, out.strip()) == (0, "utf-8 None")
+
+
+def test_tail_keeps_last_lines():
+    assert lb.tail("a\nb\nc\n", 2) == "b\nc"
+
+
+def _fake_gh(tmp_path, monkeypatch, body: str, rc: int = 0):
+    bindir = tmp_path / "bin"
+    bindir.mkdir(exist_ok=True)
+    (bindir / "gh").write_text(f"#!/bin/bash\necho \"$@\" > {tmp_path}/gh.args\n"
+                               f"printf '%s' '{body}'\nexit {rc}\n")
+    (bindir / "gh").chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bindir}:{os.environ['PATH']}")
+
+
+def test_gh_json_parses_and_joins_pages(tmp_path, monkeypatch):
+    _fake_gh(tmp_path, monkeypatch, '[{"a": 1}][{"a": 2}]')
+    assert lb.gh_json("repos/o/r/x", tmp_path, paginate=True) == [{"a": 1}, {"a": 2}]
+    assert (tmp_path / "gh.args").read_text().split() == ["api", "--paginate", "repos/o/r/x"]
+
+
+def test_gh_json_single_page_unchanged(tmp_path, monkeypatch):
+    _fake_gh(tmp_path, monkeypatch, '{"s": "x][y"}')
+    assert lb.gh_json("repos/o/r/c", tmp_path) == {"s": "x][y"}
+    assert (tmp_path / "gh.args").read_text().split() == ["api", "repos/o/r/c"]
+
+
+def test_gh_json_failure_raises(tmp_path, monkeypatch):
+    _fake_gh(tmp_path, monkeypatch, "", rc=1)
+    with pytest.raises(RuntimeError, match="rc=1"):
+        lb.gh_json("repos/o/r/c", tmp_path)
+
+
+def test_github_state_without_main_raises(repo):
+    with pytest.raises(RuntimeError, match="no refs/heads/main"):
+        lb.github_state(repo["root"], "owner/repo", gh_for({"feat": repo["base"]}, {}))
+
+
+def test_unreadable_github_falls_back_loudly(repo):
+    m = lb.resolve_main_ref(repo["root"], None)
+    assert (m["method"], m["ref"], m["github_main"]) == ("fallback", repo["base"], None)
+    assert m["warnings"] == ["GitHub unreadable: checking against LOCAL origin/main, "
+                             "which may be stale"]
+
+
+def test_commit_tree_failure_falls_back(repo, monkeypatch):
+    _, side = branch(repo, "side", {"side.txt": "s\n"})
+    tree = sh(repo["root"], "merge-tree", "--write-tree", repo["base"], side).splitlines()[0]
+    real = lb.git
+    monkeypatch.setattr(lb, "git", lambda a, c: (1, "", "boom") if a[0] == "commit-tree"
+                        else real(a, c))
+    m = lb.resolve_main_ref(repo["root"], lb.github_state(
+        repo["root"], "owner/repo", gh_main_at(FAKE_SHA, [repo["base"], side], tree)))
+    assert (m["method"], m["ref"]) == ("fallback", repo["base"])
+    assert any("commit-tree failed: boom" in w for w in m["warnings"])
+
+
+def test_merge_check_bad_ref_is_an_error_not_clean(repo):
+    m = lb.merge_check(repo["root"], repo["base"], "no-such-ref")
+    assert m["clean"] is False and m["files"] == [] and m["error"]
+
+
+def test_missing_hook_and_tools_each_refuse(repo):
+    wt, _ = branch(repo, "feat", {"f.py": "x = 1\n"})
+    hook = Path(sh(repo["root"], "rev-parse", "--path-format=absolute", "--git-path", "hooks"))
+    (hook / "pre-push").unlink()
+    (wt / "tools" / "audit_pii_record.py").unlink()
+    (wt / "tools" / "check_public_pii.py").unlink()
+    r = by_name(lb.check(repo["root"], ["feat"], gh=gh_local_main(repo)))["feat"]
+    s = r["steps"]
+    assert s["gate"]["error"] == "no pre-push hook installed" and s["gate"]["rc"] is None
+    assert s["audit"]["error"].startswith("missing ") and s["audit"]["ok"] is False
+    assert s["pii"]["error"].startswith("missing ") and s["pii"]["ok"] is False
+    assert "push gate rc None" in r["refusals"]
+    assert any(x.startswith("PII scan rc None: missing ") for x in r["refusals"])
+
+
+def test_changed_files_bad_base_is_empty(repo):
+    assert lb.changed_files(repo["root"], "no-such-ref", repo["base"]) == []
+    assert lb.commit_subjects(repo["root"], "no-such-ref", repo["base"]) == []
+
+
+@pytest.mark.parametrize("mode,ok,key,value", [
+    ("private", True, "note", "no public A/M files"),
+    ("unreadable", False, "error", "1 unreadable"),
+    ("garbage", False, "error", "scan output not JSON: not json"),
+    ("clean", True, "note", None),
+])
+def test_pii_scan_result_shapes(repo, monkeypatch, mode, ok, key, value):
+    wt, _ = branch(repo, "feat", {"f.py": "x = 1\n"})
+    monkeypatch.setenv("LB_PII_MODE", mode)
+    res = lb.pii_scan(wt, ["f.py"])
+    assert res["ok"] is ok
+    assert res.get(key) == value
+
+
+def test_pii_scan_with_no_files_is_ok_without_running():
+    res = lb.pii_scan(Path("/nonexistent"), [])
+    assert res["ok"] is True and res["rc"] is None and res["note"] == "no A/M files"
+
+
+def test_unreadable_pii_scan_refuses_with_rc(repo, monkeypatch):
+    branch(repo, "feat", {"f.py": "x = 1\n"})
+    monkeypatch.setenv("LB_PII_MODE", "unreadable")
+    r = by_name(lb.check(repo["root"], ["feat"], gh=gh_local_main(repo)))["feat"]
+    assert "PII scan rc 1: 1 unreadable" in r["refusals"]
+
+
+def test_main_refusal_text(repo):
+    r = by_name(lb.check(repo["root"], ["main"], gh=gh_local_main(repo)))["main"]
+    assert r["refusals"] == ["refusing to land main itself"]
+
+
+def test_unresolvable_branch_refuses(repo):
+    wt, _ = branch(repo, "feat", {"f.py": "x = 1\n"})
+    r = lb.check_branch(repo["root"], "ghost", {"ghost": str(wt)}, None, repo["base"], "", False)
+    assert r["refusals"] == ["branch does not resolve"] and "tip" not in r
+
+
+def test_git_status_failure_refuses(repo, monkeypatch):
+    branch(repo, "feat", {"f.py": "x = 1\n"})
+    real = lb.git
+    monkeypatch.setattr(lb, "git", lambda a, c: (128, "", "status broke") if a[0] == "status"
+                        else real(a, c))
+    r = by_name(lb.check(repo["root"], ["feat"], gh=gh_local_main(repo)))["feat"]
+    assert "git status failed in worktree: status broke" in r["refusals"]
+
+
+def test_upstream_recorded_or_none(repo):
+    branch(repo, "a1", {"f.py": "x = 1\n"})
+    branch(repo, "b1", {"g.py": "x = 1\n"}, upstream="origin/main")
+    rep = by_name(lb.check(repo["root"], ["a1", "b1"], gh=gh_local_main(repo)))
+    assert rep["a1"]["upstream"] is None and rep["b1"]["upstream"] == "origin/main"
+
+
+def test_no_main_ref_refuses(repo):
+    wt, _ = branch(repo, "feat", {"f.py": "x = 1\n"})
+    r = lb.check_branch(repo["root"], "feat", {"feat": str(wt)}, None, None, "", False)
+    assert "no main ref to check against" in r["refusals"]
+    assert "merge_main" not in r["steps"]
+
+
+def test_suite_step_absent_unless_asked(repo):
+    branch(repo, "feat", {"f.py": "x = 1\n", "tools/suite_record.py": SUITE_STUB})
+    r = by_name(lb.check(repo["root"], ["feat"], gh=gh_local_main(repo)))["feat"]
+    assert "suite" not in r["steps"]
+
+
+def test_pr_body_without_conflict_has_no_merge_note(repo):
+    branch(repo, "feat", {"f.py": "x = 1\n"})
+    rep = lb.check(repo["root"], ["feat"], gh=gh_local_main(repo))
+    assert "Merge note" not in _decode(rep["landing"][0]["compare_url"])[1]["body"]
+
+
+def test_conflict_pair_of_unready_branches_is_not_in_merge_order(repo):
+    branch(repo, "a1", {"shared.json": '{\n  "a": 1,\n  "x": 1\n}\n'}, upstream="origin/main")
+    branch(repo, "b1", {"shared.json": '{\n  "a": 1,\n  "y": 1\n}\n'}, upstream="origin/main")
+    branch(repo, "c1", {"shared.json": '{\n  "a": 1,\n  "z": 1\n}\n'})
+    rep = lb.check(repo["root"], ["a1", "b1", "c1"], gh=gh_local_main(repo))
+    assert len(rep["conflicts"]) == 3
+    assert [(p["a"], p["b"]) for p in rep["merge_order"]["pairs"]] == [("a1", "c1"), ("b1", "c1")]
+
+
+def test_non_github_origin_is_a_loud_github_failure(repo):
+    sh(repo["root"], "remote", "set-url", "origin", "git@gitlab.com:o/r.git")
+    branch(repo, "feat", {"f.py": "x = 1\n"})
+    rep = lb.check(repo["root"], ["feat"], gh=gh_local_main(repo))
+    assert rep["main"]["warnings"][0].startswith("GitHub read failed: origin is not a GitHub URL")
+    assert not rep["all_ready"]
+
+
+# ---------------------------------------------------------------- the printed report, exactly
+def test_render_exact():
+    rep = {
+        "main": {"github_main": "g" * 40, "local_origin_main": "l" * 40, "ref": "r" * 40,
+                 "method": "rebuilt", "warnings": ["W1"]},
+        "branches": [
+            {"branch": "ok1", "tip": "a" * 40, "ready": True, "refusals": [], "notes": ["N1"],
+             "steps": {"merge_main": {"clean": True}, "gate": {"ok": True, "rc": 0},
+                       "pii": {"ok": True, "rc": 3, "hits": [], "ambiguous": ["x.py:voice"]},
+                       "audit": {"ok": True, "rc": 0},
+                       "suite": {"ok": True, "rc": None, "note": "skipped note"}}},
+            {"branch": "bad1", "tip": "b" * 40, "ready": False, "refusals": ["R1"],
+             "steps": {"pii": {"ok": True, "rc": 2, "hits": ["y.py: Tok"],
+                               "ambiguous": ["y.py:H1"]}}},
+        ],
+        "conflicts": [{"a": "ok1", "b": "bad1", "files": ["m.json"]}],
+        "merge_order": {"first": ["c1"], "pairs": [{"a": "ok1", "b": "bad1", "files": ["m.json"]}]},
+        "landing": [{"push": "P1", "compare_url": "U1", "pushed": True},
+                    {"push": "P2", "compare_url": "U2", "pushed": False}],
+        "all_ready": False,
+    }
+    expected = "\n".join([
+        f"GitHub main: {'g' * 40}",
+        f"local origin/main: {'l' * 40}",
+        f"checked against: {'r' * 40} (rebuilt)",
+        "!!! W1",
+        "",
+        "READY      ok1  aaaaaaaa  merge_main=ok gate=ok(rc 0) pii=ok(rc 3) audit=ok(rc 0) suite=ok",
+        "           note: N1",
+        "           ambiguous PII (settled by audit record): x.py:voice",
+        "           suite: skipped note",
+        "NOT READY  bad1  bbbbbbbb  pii=ok(rc 2)",
+        "           - R1",
+        "           PII hits: y.py: Tok",
+        "           ambiguous PII (UNSETTLED): y.py:H1",
+        "",
+        "Pairwise conflicts:",
+        "  ok1 x bad1: m.json",
+        "",
+        "Merge order (on GitHub, no rebase):",
+        "  1. c1",
+        "  then ok1, then bad1 (conflict in m.json; resolve the second after the first lands)",
+        "A hand-resolved conflict is not landed until the merged file is checked on GitHub main:",
+        "  - m.json: parses as JSON (python3 -m json.tool) and keeps every key from both sides",
+        "",
+        "Push commands and PR pages (2; gh is read-only by design, so open each page and click Create):",
+        "  P1  [already on GitHub at this tip]",
+        "    U1",
+        "  P2",
+        "    U2",
+        "",
+        "NOT ALL READY",
+    ])
+    assert lb.render(rep) == expected
+
+
+def test_render_exact_no_conflicts_github_down():
+    rep = {"main": {"github_main": None, "local_origin_main": "l" * 40, "ref": "l" * 40,
+                    "method": "fallback", "warnings": []},
+           "branches": [{"branch": "ok1", "tip": "a" * 40, "ready": True, "refusals": [],
+                         "steps": {"pii": {"ok": True, "rc": 0, "hits": [], "ambiguous": []},
+                                   "suite": {"ok": False, "rc": 1}}}],
+           "conflicts": [], "merge_order": {"first": ["ok1"], "pairs": []},
+           "landing": [], "all_ready": True}
+    assert lb.render(rep) == "\n".join([
+        "GitHub main: UNREADABLE", f"local origin/main: {'l' * 40}",
+        f"checked against: {'l' * 40} (fallback)", "",
+        "READY      ok1  aaaaaaaa  pii=ok(rc 0) suite=FAIL(rc 1)", "",
+        "Pairwise conflicts: none", "",
+        "Merge order (on GitHub, no rebase):", "  1. ok1", "",
+        "Push commands and PR pages (0; gh is read-only by design, so open each page and click Create):",
+        "", "ALL READY"])
+
+
+@pytest.mark.parametrize("files,line", [
+    (["a.json"], "  - a.json: parses as JSON (python3 -m json.tool) and keeps every key from both sides"),
+    (["b.py"], "  - b.py: keeps both sides' changes and its tests pass"),
+])
+def test_post_merge_check_lines(files, line):
+    out = lb.post_merge_checks([{"a": "x", "b": "y", "files": files}])
+    assert out[1] == line and len(out) == 2
+    assert lb.post_merge_checks([]) == []
+
+
+def test_cli_messages_and_script_entry(repo, tmp_path, capsys):
+    assert lb.main([]) == 2
+    assert "usage: land_branch.py" in capsys.readouterr().err
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    assert lb.main(["--repo-root", str(plain), "x"]) == 2
+    assert f"not a git repository: {plain}" in capsys.readouterr().err
+    p = subprocess.run([sys.executable, str(Path(lb.__file__)), "--repo-root", str(plain), "x"],
+                       capture_output=True, text=True)
+    assert p.returncode == 2 and "not a git repository" in p.stderr
+
+
+def test_cli_prints_the_report(repo, monkeypatch, capsys):
+    branch(repo, "ok1", {"f.py": "x = 1\n"})
+    monkeypatch.setattr(lb.check, "__defaults__", (False, gh_local_main(repo)))
+    assert lb.main(["--repo-root", str(repo["root"]), "ok1"]) == 0
+    assert capsys.readouterr().out.rstrip().endswith("ALL READY")

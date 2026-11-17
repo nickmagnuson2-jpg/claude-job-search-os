@@ -79,8 +79,6 @@ def parse_worktrees(porcelain: str) -> dict[str, str]:
         elif line.startswith("branch ") and path:
             ref = line[len("branch "):]
             out[ref.removeprefix("refs/heads/")] = path
-        elif not line.strip():
-            path = None
     return out
 
 
@@ -177,9 +175,11 @@ def short(sha: str | None) -> str:
 def merge_check(root: Path, a: str, b: str) -> dict:
     """Clean merge of a and b? Names each conflicting file. Writes only object-store blobs."""
     rc, out, err = git(["merge-tree", "--write-tree", "--name-only", "--no-messages", a, b], root)
-    if rc not in (0, 1):
-        return {"clean": False, "error": err.strip()[:300] or f"merge-tree rc {rc}", "files": []}
     lines = [ln for ln in out.splitlines() if ln.strip()]
+    # rc 1 means conflict ONLY when a tree sha was printed: git also exits 1 for a ref it
+    # cannot resolve ("not something we can merge"), with nothing on stdout.
+    if rc not in (0, 1) or not lines:
+        return {"clean": False, "error": err.strip()[:300] or f"merge-tree rc {rc}", "files": []}
     return {"clean": rc == 0, "tree": lines[0] if lines else None,
             "files": sorted(set(lines[1:])) if rc == 1 else []}
 
@@ -421,6 +421,21 @@ def check(root: Path, branches: list[str], want_suite: bool = False, gh=gh_json)
                          and gh_state is not None}
 
 
+def post_merge_checks(conflicts: list[dict]) -> list[str]:
+    """What a hand-resolved conflict needs before the landing counts as done. On 2026-11-16
+    a hand resolution of mutation-allow.json in the GitHub editor broke main."""
+    files = sorted({f for c in conflicts for f in c["files"]})
+    if not files:
+        return []
+    out = ["A hand-resolved conflict is not landed until the merged file is checked on "
+           "GitHub main:"]
+    for f in files:
+        how = ("parses as JSON (python3 -m json.tool) and keeps every key from both sides"
+               if f.endswith(".json") else "keeps both sides' changes and its tests pass")
+        out.append(f"  - {f}: {how}")
+    return out
+
+
 def render(rep: dict) -> str:
     m = rep["main"]
     out = [f"GitHub main: {m['github_main'] or 'UNREADABLE'}",
@@ -459,6 +474,7 @@ def render(rep: dict) -> str:
     for c in mo["pairs"]:
         out.append(f"  then {c['a']}, then {c['b']} (conflict in {', '.join(c['files'])}; "
                    "resolve the second after the first lands)")
+    out += post_merge_checks(rep["conflicts"])
     out.append("")
     out.append(f"Push commands and PR pages ({len(rep['landing'])}; gh is read-only by design, "
                "so open each page and click Create):")
