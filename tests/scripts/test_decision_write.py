@@ -349,6 +349,17 @@ def test_either_name_as_owner_reads_the_one_org_file(main, capsys, alias, moved)
     assert code == 0 and data["ruling"]["file"].endswith(f"data/workstreams/{live}.md")
 
 
+@pytest.mark.parametrize("alias", ["overnight-swarm", "orchestration"])
+def test_either_name_as_owner_is_recorded_and_routed_as_org(main, capsys, alias):
+    """The board routes the organizer by its org row, never by a workstream column, so an alias
+    owner kept as typed would show UNROUTED. It is stored as org."""
+    code, data, _, _ = add(main, capsys, owner=alias, cls="order")
+    assert code == 0 and data["question"]["owner"] == "org"
+    assert events(main)[0]["owner"] == "org"
+    code, data, _, _ = run(main, "list", "--json", capsys=capsys)
+    assert code == 0 and [q["route"] for q in data["open"]] == ["job-search-zz"]
+
+
 def test_both_org_files_refuse_resolve(main, capsys):
     add(main, capsys, owner="org", cls="order")
     ws = main / "data" / "workstreams"
