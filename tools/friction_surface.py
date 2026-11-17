@@ -304,7 +304,7 @@ _HARNESS_KINDS = (
 # The harness writes a hook block as `PreToolUse:<Tool> hook error: [<command>]: <stderr>`.
 # Only that header names the hook; a BLOCKED word elsewhere in output is data.
 _HOOK_HEADER_RE = re.compile(
-    r"^(?:Exit code \d+\s*)?PreToolUse:\w+ hook error: \[[^\]\n]*?tools/([A-Za-z0-9_]+\.py)[^\]\n]*\]")
+    r"^(?:Exit code \S+\s*)?PreToolUse:\w+ hook error: \[[^\]\n]*?tools/([A-Za-z0-9_]+\.py)[^\]\n]*\]")
 
 
 # A harness message OPENS the tool result; the phrase must start within this many characters

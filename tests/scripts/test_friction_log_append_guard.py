@@ -179,3 +179,20 @@ def test_append_records_real_friction(tmp_path):
     assert out["action"] == "appended"
     assert out["occurrences"] == 1
     assert "todo_write.py" in led.read_text(encoding="utf-8")
+
+
+def test_a_third_block_occurrence_emits_model_habit_not_script_patch(tmp_path):
+    """Codex r3 F2 (P0) / Grok r3 F1: the stored rung for block:<hook> is model-habit, so the
+    emitted promotion_action must not tell the consumer to patch the hook."""
+    led = _ledger(tmp_path)
+    for _ in range(3):
+        out = _append(led, "block:check_demo.py", "[auto-stop] BLOCKED: unquoted glob in x")
+    assert out["occurrences"] == 3
+    assert out["promotion_action"] == "model-habit"
+
+
+def test_a_third_ordinary_occurrence_still_emits_script_patch(tmp_path):
+    led = _ledger(tmp_path)
+    for _ in range(3):
+        out = _append(led, "pipe_write.py", "[auto] usage: pipe_write.py update company new_stage")
+    assert out["promotion_action"] == "script-patch"

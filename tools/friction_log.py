@@ -393,9 +393,12 @@ def cmd_append(args: argparse.Namespace) -> None:
 
     atomic_write(LEDGER, body)
 
+    # Same ladder as the stored Promotion cell: a block:<hook> row tops out at model-habit, so
+    # the consumer is never told to patch a hook that worked (Codex r3 F2, P0, 2026-11-16).
     promotion_action = (
         "none" if occurrences == 1
         else "memory" if occurrences == 2
+        else "model-habit" if new_row["surface"].startswith("block:")
         else "script-patch"
     )
     ok({

@@ -470,3 +470,51 @@ def test_a_harness_event_writes_no_row(error, ledger):
              "failure_details": {"exit_code": 1, "error_type": error}}, ledger)
     assert r.returncode == 0
     assert rows(ledger) == before
+
+
+@pytest.mark.parametrize("stderr", [
+    "Permission to use Bash with command git push has been denied. (quoted by the script)",
+    "This command requires approval -- copied into our log line by the script under test",
+])
+def test_a_process_failure_that_quotes_harness_prose_is_logged(stderr, ledger):
+    """Codex r3 F1 (P0): stderr/stdout means the process RAN, so it is never a harness
+    denial, whatever it quotes. Before the fix it was dropped as harness."""
+    r = run(bash_failure("python3 tools/pipe_write.py add x", stderr=stderr), ledger)
+    assert r.returncode == 0
+    got = rows(ledger)
+    assert len(got) == 1 and got[0]["surface"] == "pipe_write.py"
+
+
+def test_a_hook_block_in_stderr_with_no_exit_code_is_still_a_block(ledger):
+    """The 'Exit code ?' prefix for an unknown exit must not hide a hook header."""
+    stderr = ("PreToolUse:Bash hook error: [PYTHONIOENCODING=utf-8 python3 "
+              "$CLAUDE_PROJECT_DIR/tools/check_demo_hook.py]: BLOCKED: demo")
+    r = run(bash_failure("python3 tools/pipe_write.py add x", stderr=stderr, exit_code=None), ledger)
+    assert r.returncode == 0
+    got = rows(ledger)
+    assert len(got) == 1 and got[0]["surface"] == "block:check_demo_hook.py"
+
+
+def _ltf():
+    import importlib.util
+    sys.path.insert(0, str(HOOK.parent))
+    spec = importlib.util.spec_from_file_location("ltf_under_test", HOOK)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+@pytest.mark.parametrize("payload,expected", [
+    ({"failure_details": {"stderr": "boom"}}, True),
+    ({"failure_details": {"stdout": "boom"}}, True),
+    ({"failure_details": {"error_type": "denied"}}, False),
+    ({"error": "denied", "tool_response": {"stderr": "x"}}, False),
+    ({"tool_response": {"stderr": "boom"}}, True),
+    ({"tool_response": {"stdout": ""}}, False),
+    ({}, False),
+    ({"failure_details": "not a dict", "tool_response": {"stdout": "x"}}, True),
+])
+def test_text_is_process_output_follows_extract_failure_text(payload, expected):
+    """The text came from the process's own stderr/stdout exactly when extract_failure_text
+    took it from those fields; an `error` or `error_type` is the harness talking."""
+    assert _ltf().text_is_process_output(payload) is expected
