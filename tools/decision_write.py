@@ -6,7 +6,7 @@ Why this exists: approvals do not relay between sessions (Nick, 2026-11-05), so 
 organizer collects an answer another session will act on, Nick says it twice or the relayed
 answer goes stale. Three fires on 2026-11-06. Nick: "I don't really want to have to say things
 twice to the organizer and the child agent." This is part 1 of the run manifest (workstream
-overnight-swarm). Spec and threat model: output/question-queue-1106/110626-spec-threat-model.md.
+orchestration, formerly overnight-swarm). Spec and threat model: output/question-queue-1106/110626-spec-threat-model.md.
 
 What it holds and what it does not:
   - OPEN questions, as append-only events in data/run-manifest/questions.jsonl. A question is
@@ -67,13 +67,16 @@ CLASSES = {
 }
 SPEND_THRESHOLD_USD = 5.0          # Nick, 2026-11-07: the total a decision commits
 ORG = "org"
-ORG_FILE = "overnight-swarm"       # the organizer's rulings live in its own workstream
+ORG_FILE = "orchestration"         # the organizer's rulings live in its own workstream
+LEGACY_ORG_FILE = "overnight-swarm"  # its name before 2026-11-16; read while it is the only one
+ORG_NAMES = (ORG, ORG_FILE, LEGACY_ORG_FILE)  # every owner name that means the organizer
 SIGNING_NAMESPACE = "decision-approval"   # v2: approval_signing namespace for big items
 
 QUESTIONS_REL = Path("data/run-manifest/questions.jsonl")
 PREDICTIONS_REL = Path("data/run-manifest/predictions.jsonl")
 WORKSTREAMS_REL = Path("data/workstreams")
 BOARD_REL = Path("output/overnight-merge-back/SESSIONS.md")
+ORG_FILE_RELS = {(WORKSTREAMS_REL / f"{n}.md").as_posix() for n in (ORG_FILE, LEGACY_ORG_FILE)}
 
 OPTION_RE = re.compile(r"^([A-Za-z0-9]+):\s*(\S.*)$")
 RULING_RE = re.compile(r"^RULING (Q\d+) \| option: *(\S+) *\| reason: *(.*?) *\| window: *(.*?) *$")
@@ -113,9 +116,21 @@ def paths(main: Path) -> dict:
             "workstreams": main / WORKSTREAMS_REL, "board": main / BOARD_REL}
 
 
+def org_file(p: dict) -> Path:
+    """The organizer's workstream file. Renamed overnight-swarm -> orchestration (Nick,
+    2026-11-16); the code landed before the data file moved, so the old name is read while it is
+    the only one. Both present is refused: rulings must never split across two files."""
+    new = p["workstreams"] / f"{ORG_FILE}.md"
+    old = p["workstreams"] / f"{LEGACY_ORG_FILE}.md"
+    if new.exists() and old.exists():
+        raise Refusal("org_file_split", f"both {new.name} and {old.name} exist in {p['workstreams']}; "
+                      f"merge {old.name} into {new.name} and remove it")
+    return old if old.exists() else new
+
+
 def owner_file(p: dict, owner: str) -> Path:
     """The owner's workstream file, refused if it resolves outside data/workstreams."""
-    f = p["workstreams"] / f"{ORG_FILE if owner == ORG else owner}.md"
+    f = org_file(p) if owner in ORG_NAMES else p["workstreams"] / f"{owner}.md"
     if not f.resolve().is_relative_to(p["workstreams"].resolve()):
         raise Refusal("owner_file_outside", f"{f} resolves outside {p['workstreams']}")
     return f
@@ -290,7 +305,7 @@ def parse_usd(cls: str, raw):
 
 def cmd_add(p: dict, a) -> dict:
     owner = a.owner
-    if owner != ORG and not owner_file(p, owner).is_file():
+    if not owner_file(p, owner).is_file() and owner != ORG:
         raise Refusal("unknown_owner", f"no workstream file for {owner!r}; owner is a workstream or 'org'")
     if a.cls not in CLASSES:
         raise Refusal("unknown_class", f"{a.cls!r} is not a codified class: {', '.join(CLASSES)}")
@@ -478,6 +493,8 @@ def cmd_check(p: dict) -> tuple[dict, int]:
         if e.get("type") != "resolved":
             continue
         f = p["main"] / e["file"]
+        if Path(e["file"]).as_posix() in ORG_FILE_RELS:
+            f = org_file(p)     # a sealed event names the file it read; the rename moved it
         lines = f.read_text(encoding="utf-8").splitlines() if f.is_file() else []
         if not any(l.startswith(f"RULING {e['id']} |") and sha(l) == e["line_hash"] for l in lines):
             problems.append(f"{e['id']}: ruling line changed or missing in {f}")
