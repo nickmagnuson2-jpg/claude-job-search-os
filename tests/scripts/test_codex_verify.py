@@ -165,20 +165,30 @@ def test_a_run_appends_a_ledger_row_the_gate_can_read(tmp_path, monkeypatch):
         import subprocess
         return subprocess.CompletedProcess(cmd, 0, "closing message", "")
 
-    monkeypatch.setattr(cv.subprocess, "run", fake_codex)
+    # A real repo: since 2026-11-16 the row carries the reviewed tree, and the gate
+    # matches it against the pushed tip's tree. Outside a repo the tree is null and
+    # the row covers nothing (test_outside_a_git_repo_the_tree_is_null_not_absent).
+    git = _git_repo(tmp_path)
+    real_run = subprocess.run
+    monkeypatch.setattr(cv.subprocess, "run",
+                        lambda cmd, **kw: real_run(cmd, **kw)
+                        if isinstance(cmd, str) or kw.get("shell") or cmd[0] == "git"
+                        else fake_codex(cmd, **kw))
     out = cv.run(tmp_path, "the drain", ["tools/scanner.py"], "", report, None, False)
     assert out["status"] == "ok" and out["open_findings"] == 1
+    tip = git("rev-parse", "HEAD")
 
     rows = gate.read_ledger(tmp_path)
     assert len(rows) == 1
     assert rows[0]["paths"] == ["tools/scanner.py"] and rows[0]["waived"] is False
     # ...it COVERS exactly that path, but its own open P0 blocks the push (B2,
     # 2026-09-23) until the finding carries a disposition. Then it clears.
-    v = gate.check(tmp_path, [("tools/scanner.py", 200, 40)], since=0)
+    v = gate.check(tmp_path, [("tools/scanner.py", 200, 40)], since=0, tip=tip)
     assert v.blocked is True and "1.F1" in v.message and "Uncovered" not in v.message
     import finding_write
     finding_write.set_disposition(tmp_path, "1.F1", "fixed", "test: fixed in place")
-    assert gate.check(tmp_path, [("tools/scanner.py", 200, 40)], since=0).blocked is False
+    assert gate.check(tmp_path, [("tools/scanner.py", 200, 40)], since=0,
+                      tip=tip).blocked is False
 
 
 def test_a_run_that_writes_no_report_is_not_recorded_as_success(tmp_path, monkeypatch):
@@ -2587,3 +2597,120 @@ def test_run_holds_the_worktree_lock_through_the_first_mirror(main_and_worktree,
     report = wt / "output" / "analysis" / "111626-codex-lock-r1.md"
     assert _review(monkeypatch, wt, report)["mirrored"] is True
     assert at_mirror and gate.ledger_path(wt).resolve() in at_mirror[0]
+
+
+# --- TREE KEY (Nick, 2026-11-16: "Tree hash") ----------------------------------
+# Each row records the tree the reviewer saw, so the gate can accept a review for a
+# push with the same final tree even when newer commits exist.
+
+def _git_repo(tmp_path):
+    def git(*a):
+        return subprocess.run(
+            ["git", "-c", "user.name=t", "-c", "user.email=t@example.com",
+             "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", *a],
+            cwd=tmp_path, capture_output=True, text=True, check=True).stdout.strip()
+    git("init", "-q")
+    (tmp_path / "a.py").write_text("x = 1\n")
+    git("add", "a.py")
+    git("commit", "-qm", "c1")
+    return git
+
+
+def _model_only_fake(report, real_run, on_model=None):
+    """Fake the MODEL call only; git commands run for real."""
+    def fake(cmd, **kw):
+        if isinstance(cmd, str) or kw.get("shell") or (cmd and cmd[0] == "git"):
+            return real_run(cmd, **kw)
+        if on_model:
+            on_model()
+        report.parent.mkdir(parents=True, exist_ok=True)
+        report.write_text("## FINDINGS (machine-readable)\n[]", encoding="utf-8")
+        return subprocess.CompletedProcess(cmd, 0, "ok", "")
+    return fake
+
+
+def test_a_row_records_the_reviewed_tree(tmp_path, monkeypatch):
+    git = _git_repo(tmp_path)
+    report = tmp_path / "out" / "r.md"
+    monkeypatch.setattr(cv.subprocess, "run", _model_only_fake(report, subprocess.run))
+    cv.run(tmp_path, "t", ["a.py"], "", report, None, False)
+    assert gate.read_ledger(tmp_path)[-1]["tree"] == git("rev-parse", "HEAD^{tree}")
+
+
+def test_a_dirty_checkout_records_the_tree_of_what_was_on_disk(tmp_path, monkeypatch):
+    """The reviewer read the working tree, not HEAD. Recording HEAD^{tree} here would
+    let a review of uncommitted content clear a push of different committed content."""
+    git = _git_repo(tmp_path)
+    (tmp_path / "a.py").write_text("x = 2\n")
+    report = tmp_path / "out" / "r.md"
+    monkeypatch.setattr(cv.subprocess, "run", _model_only_fake(report, subprocess.run))
+    cv.run(tmp_path, "t", ["a.py"], "", report, None, False)
+    tree = gate.read_ledger(tmp_path)[-1]["tree"]
+    assert tree and tree != git("rev-parse", "HEAD^{tree}")
+    git("commit", "-qam", "commit exactly what was reviewed")
+    assert tree == git("rev-parse", "HEAD^{tree}")
+
+
+def test_a_tree_that_changes_during_the_review_is_recorded_as_null(tmp_path, monkeypatch):
+    git = _git_repo(tmp_path)
+    report = tmp_path / "out" / "r.md"
+
+    def edit():
+        (tmp_path / "a.py").write_text("edited mid-review\n")
+    monkeypatch.setattr(cv.subprocess, "run",
+                        _model_only_fake(report, subprocess.run, on_model=edit))
+    cv.run(tmp_path, "t", ["a.py"], "", report, None, False)
+    row = gate.read_ledger(tmp_path)[-1]
+    assert "tree" in row and row["tree"] is None
+
+
+def test_outside_a_git_repo_the_tree_is_null_not_absent(tmp_path, monkeypatch):
+    """A row with no `tree` key is legacy and keeps the time rule. A new row that could
+    not read its tree must carry `tree: null`, which covers nothing."""
+    report = tmp_path / "out" / "r.md"
+    monkeypatch.setattr(cv.subprocess, "run", _model_only_fake(report, subprocess.run))
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path.parent))
+    cv.run(tmp_path, "t", ["a.py"], "", report, None, False)
+    row = gate.read_ledger(tmp_path)[-1]
+    assert "tree" in row and row["tree"] is None
+
+
+def test_a_failed_stash_create_records_no_tree_not_heads(tmp_path, monkeypatch):
+    """`git stash create` failing means the on-disk tree is unknown. Falling back to
+    HEAD^{tree} would record a tree the reviewer may not have seen (a dirty checkout)."""
+    _git_repo(tmp_path)
+    real = subprocess.run
+
+    def fake(cmd, **kw):
+        if isinstance(cmd, list) and cmd[:3] == ["git", "stash", "create"]:
+            return subprocess.CompletedProcess(cmd, 1, "", "boom")
+        return real(cmd, **kw)
+    monkeypatch.setattr(cv.subprocess, "run", fake)
+    assert cv.reviewed_tree(tmp_path) is None
+
+
+def test_a_mirrored_row_keeps_the_tree_and_clears_the_gate_from_main(main_and_worktree,
+                                                                     monkeypatch):
+    """findings-durable x tree key: main's mirror copies the whole row, `tree` included.
+    Tree ids are shared by every worktree of one repo, so the gate run FROM MAIN clears a
+    push of the reviewed tree and blocks a push of a different one."""
+    main, wt = main_and_worktree
+    report = wt / "output" / "analysis" / "111626-codex-tree-mirror.md"
+    assert _review(monkeypatch, wt, report)["mirrored"] is True
+    monkeypatch.setattr(cv.subprocess, "run", _REAL_RUN)
+    reviewed = _REAL_RUN(["git", "-C", str(wt), "rev-parse", "HEAD^{tree}"],
+                         capture_output=True, text=True, check=True).stdout.strip()
+    [row] = gate.read_ledger(main)
+    assert row["tree"] == reviewed == gate.read_ledger(wt)[0]["tree"]
+
+    def tip():
+        return _REAL_RUN(["git", "-C", str(wt), "rev-parse", "HEAD"],
+                         capture_output=True, text=True, check=True).stdout.strip()
+    push = [("tools/x.py", 200, 40)]
+    _git(wt, "-c", "user.email=t@example.com", "-c", "user.name=t",
+         "commit", "-q", "--allow-empty", "-m", "same tree, newer commit")
+    assert gate.check(main, push, since=4102444800.0, tip=tip()).blocked is False
+    (wt / "tools" / "x.py").write_text("x = 2\n", encoding="utf-8")
+    _git(wt, "-c", "user.email=t@example.com", "-c", "user.name=t",
+         "commit", "-qam", "different tree")
+    assert gate.check(main, push, since=0, tip=tip()).blocked is True

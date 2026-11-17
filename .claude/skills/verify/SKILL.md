@@ -205,10 +205,13 @@ it. This section holds only what the gate cannot know.
 0. **Choose reviewers against the `GATE:` line, before dispatch.** `codex_verify.py` prints
    to stderr what the gate will demand for `--paths`: the tier, how many families outside
    Anthropic it needs, and whether this run counts. Enforcement machinery needs both
-   `codex` and `grok`, and `fable` never counts toward the total. A commit by anyone
-   after a review, even to unrelated files, makes that review out of date. Before telling
-   Nick to push, run the gate's dry run (`cross_model_gate.py --since <newest commit's
-   epoch> --numstat <file>`); exit 0 means clear.
+   `codex` and `grok`, and `fable` never counts toward the total. A review row records
+   the tree it read (`tree`); it covers a push only when that equals the pushed tip's
+   tree, so a commit after a review voids it unless the tree is unchanged (a message
+   amend or same-tree re-commit keeps it). Rows with no `tree` predate 2026-11-16 and
+   are voided by any later commit. Before telling Nick to push, run the gate's dry run
+   (`cross_model_gate.py --since <newest commit's epoch> --tip <tip sha> --numstat
+   <file>`); exit 0 means clear.
 
 0b. **State the stopping rule before round 1, and tie it to what the gate blocks.** The gate
    blocks on an open P0 and on missing reviews after the newest commit. It does not block on

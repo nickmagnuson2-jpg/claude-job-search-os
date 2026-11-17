@@ -915,6 +915,40 @@ def mirror_to_main(repo_root: Path, report: Path, row: dict,
         return False
 
 
+_TREE_RE = re.compile(r"^[0-9a-f]{40}([0-9a-f]{24})?$")
+
+
+def reviewed_tree(repo_root: Path) -> str | None:
+    """The tree of what the reviewer can read: tracked files AS THEY ARE ON DISK.
+
+    Equal to HEAD^{tree} on a clean checkout. On a dirty one it is the tree of the
+    uncommitted content (`git stash create` builds that commit without touching any ref,
+    the index or the working tree), so a review of uncommitted edits matches only a push
+    that commits exactly those edits. Recording HEAD^{tree} there would let a review of
+    one content clear a push of another. Untracked files are not in it; they are not in
+    any pushed tree either.
+
+    None when it cannot be read. The caller records None, never omits the key: a row with
+    no `tree` is legacy and keeps the time rule, which a new row must not inherit by
+    failing to read git.
+    """
+    def git(*a: str) -> str | None:
+        try:
+            p = subprocess.run(["git", *a], capture_output=True, text=True,
+                               cwd=str(repo_root), timeout=60)
+        except (subprocess.SubprocessError, OSError):
+            return None
+        if getattr(p, "returncode", 1) != 0 or not isinstance(p.stdout, str):
+            return None
+        return p.stdout.strip()
+
+    stash = git("stash", "create")
+    if stash is None:
+        return None
+    tree = git("rev-parse", "--verify", "--quiet", f"{stash or 'HEAD'}^{{tree}}")
+    return tree if tree and _TREE_RE.match(tree) else None
+
+
 def run(repo_root: Path, target: str, paths: list[str], question: str,
         report: Path, prior: str | None, print_only: bool,
         mode: str = "verify", claims: list[str] | None = None,
@@ -953,6 +987,9 @@ def run(repo_root: Path, target: str, paths: list[str], question: str,
     policy_file.write_text(policy, encoding="utf-8")
     argv = jailed_argv(repo_root, policy_file, model, images=images)
     refuse_dispatch_inside_tests(argv)
+    # Read at review time, on both sides of the run. If the tree moved while the model
+    # was reading, no single tree was reviewed, and the row records None (covers nothing).
+    tree_before = reviewed_tree(repo_root)
     try:
         if spec.prompt_via == "argv":
             proc = subprocess.run(argv + [prompt], capture_output=True, text=True,
@@ -962,6 +999,8 @@ def run(repo_root: Path, target: str, paths: list[str], question: str,
                                   cwd=str(repo_root))
     finally:
         policy_file.unlink(missing_ok=True)
+    tree_after = reviewed_tree(repo_root)
+    tree = tree_before if tree_before and tree_before == tree_after else None
 
     # A read-only model cannot write its own report, so we write what it printed. The
     # freshness check downstream is unaffected: the file provably came from THIS run.
@@ -999,6 +1038,10 @@ def run(repo_root: Path, target: str, paths: list[str], question: str,
         "report_written": report.is_file(),
         "report_fresh": report_fresh,
         "verified": verified,
+        # THE TREE KEY (Nick, 2026-11-16): the gate accepts this row for a push whose
+        # tip has this exact tree, whatever was committed after. Always present; None
+        # means "unknown", which covers nothing (see reviewed_tree).
+        "tree": tree,
     }
     # Both real roots (this checkout and, from a linked worktree, its main checkout), and
     # whether or not append_row is stubbed: a stub-only exemption let a mutated guard write
