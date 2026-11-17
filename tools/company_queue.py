@@ -167,22 +167,49 @@ def _default_fetchers():
     return {"ashby": fetch_ashby, "greenhouse": fetch_greenhouse, "lever": fetch_lever}
 
 
+class BoardCheckIndeterminate(Exception):
+    """A probe failed (timeout, 5xx, rate limit), so "no board found" cannot be claimed."""
+
+
 def detect_board(name: str, fetchers: dict | None = None) -> dict | None:
     """First public board with at least one posting, else None.
 
-    A board with zero postings is indistinguishable from a wrong slug (every fetcher
-    returns [] on an HTTP error), so None means "no board FOUND", never "no board".
-    The caller records the company as outreach-only and says so."""
+    None means every probe ANSWERED and none had postings. A probe that errored (an
+    exception, or an entry the fetcher appended to its `errors` list) makes the result
+    indeterminate: raise BoardCheckIndeterminate so the caller leaves the company
+    queued instead of recording it outreach-only (review 2026-11-17, Codex/Grok F1).
+    A wrong slug and a real board with zero postings both return [] without an error,
+    so None is "no board found", never proof there is no board."""
     fetchers = fetchers if fetchers is not None else _default_fetchers()
+    failed = []
     for slug in slug_candidates(name):
         for ats, fetch in fetchers.items():
+            errors: list = []
             try:
-                roles = fetch(slug)
-            except Exception:  # noqa: BLE001 -- one bad probe must not stop the check
-                roles = []
+                roles = fetch(slug, errors) if _takes_errors(fetch) else fetch(slug)
+            except Exception as exc:  # noqa: BLE001 -- recorded, decides the verdict below
+                failed.append(f"{ats}/{slug}: {exc}")
+                continue
             if roles:
                 return {"ats": ats, "slug": slug, "n_roles": len(roles)}
+            failed += [f"{ats}/{slug}: {e.get('reason', e) if isinstance(e, dict) else e}"
+                       for e in errors if not _is_not_found(e)]
+    if failed:
+        raise BoardCheckIndeterminate("; ".join(failed[:5]))
     return None
+
+
+def _takes_errors(fetch) -> bool:
+    import inspect
+    try:
+        return "errors" in inspect.signature(fetch).parameters
+    except (TypeError, ValueError):
+        return False
+
+
+def _is_not_found(err) -> bool:
+    """A 404 is an answer (no board at this slug), not a failed probe."""
+    return "404" in str(err.get("reason", err) if isinstance(err, dict) else err)
 
 
 def _act_apply(repo_root: Path, args: list[str]) -> dict:
@@ -207,7 +234,12 @@ def decide(repo_root: Path, name: str, decision: str, reason: str | None = None,
                 "message": f"no pending company named {name!r} in the queue"}
     entry = match[0]
     if decision == "accept":
-        board = detector(entry["name"])
+        try:
+            board = detector(entry["name"])
+        except BoardCheckIndeterminate as exc:
+            return {"status": "error", "code": "board_check_failed",
+                    "message": f"board check failed, nothing written, {entry['name']} "
+                               f"stays queued: {exc}"}
         args = ["target-add", entry["name"]]
         if board:
             args += ["--ats", board["ats"], "--slug", board["slug"]]
@@ -230,6 +262,13 @@ def decide(repo_root: Path, name: str, decision: str, reason: str | None = None,
     if dry_run:
         return {"status": "ok", "dry_run": True, "would_run": args, "board": board}
     result = runner(repo_root, args)
+    # act_apply answers status ok with added: false when the company is ALREADY under
+    # companies: or rejected:, which may be the opposite of this decision. Only a write
+    # that happened moves the entry (review 2026-11-17, Codex/Grok F2).
+    if result.get("status") == "ok" and result.get("added") is False:
+        return {"status": "error", "code": "already_known", "act_apply": result,
+                "message": f"{entry['name']} is already in scan-targets.yaml (companies or "
+                           f"rejected); nothing written, it stays queued for Nick to resolve"}
     if result.get("status") != "ok":
         return {"status": "error", "code": "act_apply_failed", "act_apply": result,
                 "message": "scan-targets.yaml not changed; the company stays queued"}
@@ -316,8 +355,15 @@ def import_inbox(repo_root: Path, inbox: Path, remove: bool = False) -> dict:
             _, sp = parse_inbox_blocks(t)
             ls = t.splitlines(keepends=True)
             drop = set()
+            # Only the lines this parser understood: the header, the review-gated marker,
+            # the entry lines it imported, and blank lines. Anything else in a span stays
+            # (review 2026-11-17, Codex/Grok F3).
             for a, b in sp:
-                drop.update(range(a, b))
+                for k in range(a, b):
+                    line = ls[k].rstrip("\n")
+                    if (k == a or not line.strip() or line.startswith("<!-- review-gated")
+                            or _COMPANY_LINE.match(line) or _PERSON_LINE.match(line)):
+                        drop.add(k)
             return "".join(l for k, l in enumerate(ls) if k not in drop)
         before = len(spans)
         inbox_lock.atomic_update(inbox, transform)

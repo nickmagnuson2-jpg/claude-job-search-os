@@ -282,3 +282,54 @@ def test_cli_read_decide_and_import(tmp_path):
     assert code == 0 and out["would_run"] == ["target-reject", "Acme", "--reason", "r", "--lane", "a"]
     code, out = _cli(tmp_path, "decide", "--name", "Nope", "--accept")
     assert code == 1 and out["code"] == "not_found"
+
+
+# --- review 2026-11-17 (Codex + Grok, both rounds agreed): F1, F2, F3 ----------------
+
+def test_a_failed_probe_makes_the_board_check_indeterminate_not_absent():
+    def flaky(slug, errors=None):
+        errors.append({"reason": "HTTP 503"})
+        return []
+
+    def gone(slug, errors=None):
+        errors.append({"reason": "HTTP 404"})
+        return []
+    with pytest.raises(cq.BoardCheckIndeterminate):
+        cq.detect_board("Acme", {"ashby": flaky, "greenhouse": gone})
+    assert cq.detect_board("Acme", {"greenhouse": gone}) is None, "a 404 is an answer"
+
+
+def test_an_indeterminate_board_check_writes_nothing_and_keeps_the_company(tmp_path):
+    cq.add(tmp_path, "a", CO, _cands("Acme"), "2026-11-16")
+
+    def boom(name):
+        raise cq.BoardCheckIndeterminate("ashby/acme: HTTP 503")
+    out = cq.decide(tmp_path, "Acme", "accept", detector=boom,
+                    runner=lambda r, a: pytest.fail("must not write"))
+    assert out["code"] == "board_check_failed"
+    assert [e["name"] for e in cq.load(tmp_path)["pending"]] == ["Acme"]
+
+
+def test_an_already_known_company_is_not_marked_decided(tmp_path):
+    out, _ = _decide(tmp_path, "accept", result={"status": "ok", "added": False})
+    assert out["code"] == "already_known"
+    assert [e["name"] for e in cq.load(tmp_path)["pending"]] == ["Acme"]
+
+
+def test_accepting_a_previously_rejected_company_through_act_apply_stays_queued(tmp_path):
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "scan-targets.yaml").write_text(
+        "companies: []\nrejected:\n  - name: Acme\n", encoding="utf-8")
+    cq.add(tmp_path, "a", CO, _cands("Acme"), "2026-11-16")
+    out = cq.decide(tmp_path, "Acme", "accept", detector=lambda n: None)
+    assert out["code"] == "already_known"
+    assert cq.load(tmp_path)["decided"] == []
+
+
+def test_remove_keeps_lines_in_a_drip_block_that_were_not_imported(tmp_path):
+    inbox = tmp_path / "inbox.md"
+    inbox.write_text("# Inbox\n\n## 2026-11-16 | Agent drip: a (company)\n"
+                     "- **Acme** - x (score 7)\n- a stray line someone typed\n", encoding="utf-8")
+    cq.import_inbox(tmp_path, inbox, remove=True)
+    left = inbox.read_text(encoding="utf-8")
+    assert "a stray line someone typed" in left and "Acme" not in left
