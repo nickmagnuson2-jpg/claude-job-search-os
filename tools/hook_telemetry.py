@@ -38,9 +38,11 @@ a separate key, so workstream_state.py, which lifts `value` only, never sees it 
 The default value is BANDED (100 ms; 1.0 blocks per 100 calls) because
 workstream_state.py surfaces a workstream whenever its value changes: 50 ms bands put the
 2026-11-16 p50 (244 ms) on a band edge, which would surface daily as noise.
-A reading that cannot be taken (no Bash timing in the window) is exit 2 with
-{"error": ...}, never a zero: if Nick stops launching with --debug, the probe errors, and
-an error always surfaces.
+A reading that cannot be taken (no Bash timing in the window, an unreadable log, or a
+window that is not a real past interval: --days below 0 or a non-finite --now) is exit 2
+with {"error": ...} on stdout and the same text on stderr, never a zero: if Nick stops
+launching with --debug, the probe errors, and an error always surfaces. The stderr copy is
+what workstream_state.py shows, since it reads only stderr when the exit is not ok.
 
 Usage:
   PYTHONIOENCODING=utf-8 python3 tools/hook_telemetry.py [--days 7] [--raw]
@@ -51,6 +53,7 @@ import argparse
 import datetime as dt
 import glob
 import json
+import math
 import os
 import re
 import statistics
@@ -140,6 +143,14 @@ def read(pattern: str, now: float, days: int):
     return len(matched), files, walls, counts, calls, blocked, ambiguous
 
 
+def _fail(error: str, **extra) -> int:
+    """Exit 2: the JSON on stdout (the probe contract) and the text on stderr (what
+    workstream_state.py shows for an exit outside ok_exit)."""
+    print(json.dumps({"error": error, **extra}))
+    print(error, file=sys.stderr)
+    return 2
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="hooks workstream speed + block-rate probe")
     ap.add_argument("--days", type=int, default=7)
@@ -148,19 +159,20 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--now", type=float, default=None, help=argparse.SUPPRESS)
     a = ap.parse_args(argv)
     now = a.now if a.now is not None else time.time()
+    # Logs left out are labelled "modified before the window", which is true only when
+    # the window is a real past interval.
+    if a.days < 0 or not math.isfinite(now):
+        return _fail(f"the window is not a real past interval (--days {a.days}, now {now})")
     try:
         matched, files, walls, counts, calls, blocks, ambiguous = read(a.logs_glob, now, a.days)
     except (OSError, ValueError) as e:
-        print(json.dumps({"error": f"could not read the debug logs: {e!r}"}))
-        return 2
+        return _fail(f"could not read the debug logs: {e!r}")
     reach = format_line(f"debug logs matching {a.logs_glob}", population=matched,
                         included=len(files),
                         excluded={f"modified before the {a.days}-day window": matched - len(files)})
     if not walls:
-        # workstream_state.py shows only `error`, so the reach goes inside it too.
-        print(json.dumps({"error": f"no PreToolUse:Bash timing ({reach}); "
-                                   f"is Claude Code launched with --debug?", "reach": reach}))
-        return 2
+        return _fail(f"no PreToolUse:Bash timing ({reach}); "
+                     f"is Claude Code launched with --debug?", reach=reach)
     p50 = statistics.median(walls)
     per_call = statistics.median(counts)
     rate = 100 * blocks / calls
