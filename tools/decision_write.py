@@ -465,6 +465,7 @@ def cmd_takeover(p: dict, a) -> dict:
 
 
 def cmd_check(p: dict) -> tuple[dict, int]:
+    org_file(p)     # the two-file split is refused up front, whatever the queue holds
     events, problems = read_lines(p["questions"])
     preds, pred_problems = read_lines(p["predictions"])
     problems += pred_problems
