@@ -283,3 +283,59 @@ def test_the_sweep_never_counts_an_incomplete_run_as_measured():
             {"tool": "tools/b.py", "status": "survivors", "unfinished": 2},
             {"tool": "tools/c.py", "status": "ok", "unfinished": 0}]
     assert ms.partially_measured_tools(rows) == ["tools/a.py", "tools/b.py"]
+
+
+# ── changed lines first under a cap (2026-11-17) ─────────────────────────────
+# A whole-file run measures mutants in file order. With --max-hours, a branch whose
+# changed lines sit low in a long file can spend its whole budget above them: C2
+# (mutation-in-worktree-1116) ran 59 of 936 mutants and none on its changed lines.
+
+def test_changed_first_puts_changed_line_mutants_first_and_keeps_order():
+    cat = [{"line": n, "col": 0, "op": "x"} for n in (1, 2, 3, 4, 5)]
+    scope = {"changed": {4, 2}, "deleted_at": []}
+    ordered, n = mc.changed_first(cat, {}, scope, [])
+    assert [e["line"] for e in ordered] == [2, 4, 1, 3, 5]
+    assert n == 2
+
+
+def test_changed_first_without_a_diff_changes_nothing():
+    cat = [{"line": n, "col": 0, "op": "x"} for n in (1, 2, 3)]
+    ordered, n = mc.changed_first(cat, {}, {"mode": "whole_file"}, [])
+    assert ordered == cat and n == 0
+
+
+TWO_FUNCS = ("def first(n):\n    if n > 0:\n        return 'a'\n    return 'b'\n\n\n"
+             "def second(n):\n    if n > 0:\n        return 'c'\n    return 'd'\n")
+
+
+def test_a_capped_whole_file_run_measures_the_changed_lines_first(tmp_path):
+    env = {"PATH": "/usr/bin:/bin:/usr/local/bin", "HOME": str(tmp_path),
+           "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+           "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
+    def git(*a):
+        return subprocess.run(["git", *a], cwd=str(tmp_path), env=env,
+                              capture_output=True, text=True)
+    (tmp_path / "tools").mkdir()
+    src = tmp_path / "tools" / "subject.py"
+    src.write_text(TWO_FUNCS, encoding="utf-8")
+    (tmp_path / "tests").mkdir()
+    t = tmp_path / "tests" / "test_subject.py"   # only files under tests/ are judged
+    body = (f"import sys; sys.path.insert(0, r'{tmp_path / 'tools'}')\n"
+            "from subject import first, second\n"
+            "def test_first(): assert first(1) == 'a' and first(-1) == 'b'\n"
+            "def test_second(): assert second(5) == 'c' and second(-1) == 'd'\n")
+    t.write_text(body, encoding="utf-8")
+    git("init", "-q"); git("add", "-A"); git("commit", "-qm", "base")
+    base = git("rev-parse", "HEAD").stdout.strip()
+    src.write_text(TWO_FUNCS.replace("def second(n):\n    if n > 0:",
+                                     "def second(n):\n    if n > 1:"), encoding="utf-8")
+    t.write_text("LIMIT = 1  # module-level test code: forces whole-file scope\n" + body,
+                 encoding="utf-8")
+    git("add", "-A"); git("commit", "-qm", "change")
+    r = _run([str(src), "--tests", str(t), "--base", base, "--max-hours", "0"], tmp_path)
+    d = json.loads(r.stdout)
+    assert d["scope"]["mode"] == "whole_file", d["scope"]
+    assert d["scope"]["changed_mutants"] >= 1
+    assert d["scope"]["changed_mutants_unfinished"] == d["scope"]["changed_mutants"]
+    first_n = d["unfinished_mutants"][:d["scope"]["changed_mutants"]]
+    assert all("::second::" in k for k in first_n), d["unfinished_mutants"]

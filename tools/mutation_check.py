@@ -979,6 +979,20 @@ def in_scope(span: tuple[int, int], scope: dict, functions: list[tuple[int, int]
     return False
 
 
+
+def changed_first(catalog: list, spans: dict, scope: dict, functions: list) -> tuple[list, int]:
+    """The catalog with mutants on changed lines first, in file order within each group, and
+    how many there are. A whole-file run otherwise measures in file order, so a --max-hours
+    cap can spend its budget above the changed code: C2 (2026-11-17) ran 59 of 936 mutants
+    and none on its changed lines. Without a diff (`changed` absent) the order is kept."""
+    if scope.get("changed") is None:
+        return list(catalog), 0
+    hit = [e for e in catalog
+           if in_scope(spans.get((e["line"], e["col"], e["op"]), (e["line"], e["line"])),
+                       scope, functions)]
+    ids = {id(e) for e in hit}
+    return hit + [e for e in catalog if id(e) not in ids], len(hit)
+
 def _test_sources(text: str) -> tuple[dict[str, str], str] | None:
     """({test name: its source}, everything else) for a test file; None if it will not
     parse. A test class counts as one unit per method, plus its other lines in "the rest"
@@ -1245,6 +1259,7 @@ def resolve_scope(args, target: Path, root: Path, test_files: list | None = None
     if t["whole"]:
         listed = [f"{p} ({why})" for p, why in t["whole"]]
         return {"mode": "whole_file", "base": base,
+                "changed": d["changed"], "deleted_at": d["deleted_at"],  # for changed_first
                 "tests_changed": [p for p, _ in t["whole"]] + t["tests"],
                 "reason": "test inputs that can reach any test changed since the base: "
                           + "; ".join(listed[:5]) + ("; ..." if len(listed) > 5 else "")}
@@ -2325,6 +2340,7 @@ def main() -> int:
                                scope, functions)]
     scope_out = {"mode": scope["mode"], "base": scope["base"], "reason": scope["reason"],
                  "mutants_in_file": mutants_in_file, "mutants_in_scope": len(catalog)}
+    changed_ids: set[int] | None = None   # set when changed_first reorders (whole file)
     if scope.get("tests_changed"):
         scope_out["tests_changed"] = scope["tests_changed"]
     if scope["mode"] == "diff":
@@ -2432,6 +2448,11 @@ def main() -> int:
                                                  (e["line"], e["line"])), widened, functions)]
                 scope_out["test_lines"] = sorted(test_lines)
             scope_out["mutants_in_scope"] = len(catalog)
+
+        if scope_out["mode"] == "whole_file" and scope.get("changed") is not None:
+            catalog, n_changed = changed_first(catalog, spans, scope, _function_spans(tree))
+            changed_ids = {id(e) for e in catalog[:n_changed]}
+            scope_out["changed_mutants"] = n_changed
 
         def subset_is_valid(argv: tuple) -> bool:
             """Does this subset pass on the UNMUTATED source? Asked once per subset. A
@@ -2596,6 +2617,8 @@ def main() -> int:
             "tests": [str(t) for t in test_files]}))
         return 1
 
+    if changed_ids is not None:
+        scope_out["changed_mutants_unfinished"] = sum(id(e) in changed_ids for e in unfinished)
     audit = audit_test_quality(test_files)
     result = {
         "recovered_stranded_file": recovered,
