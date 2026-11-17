@@ -30,7 +30,7 @@ if mode == 'hit':
     r['hits'] = [{'file': 'x.py', 'tokens': ['Realname']}]
     print(json.dumps(r)); sys.exit(2)
 if mode == 'ambiguous':
-    r['ambiguous_unresolved'] = ['x.py:voice']
+    r['ambiguous_unresolved'] = ['x.py:widget']
     print(json.dumps(r)); sys.exit(3)
 if mode == 'private':
     r.update(scanned=0, skipped=[{'path': 'data/x.md', 'why': 'gitignored'}])
@@ -312,7 +312,7 @@ def test_ambiguous_pii_settled_by_clean_audit(repo, monkeypatch):
     monkeypatch.setenv("LB_PII_MODE", "ambiguous")
     rep = lb.check(repo["root"], ["feat"], gh=gh_local_main(repo))
     assert by_name(rep)["feat"]["ready"]
-    assert "ambiguous PII (settled by audit record): x.py:voice" in lb.render(rep)
+    assert "ambiguous PII (settled by audit record): x.py:widget" in lb.render(rep)
 
 
 def test_ambiguous_pii_without_audit_record_refuses(repo, monkeypatch):
@@ -626,12 +626,12 @@ def test_render_exact():
         "branches": [
             {"branch": "ok1", "tip": "a" * 40, "ready": True, "refusals": [], "notes": ["N1"],
              "steps": {"merge_main": {"clean": True}, "gate": {"ok": True, "rc": 0},
-                       "pii": {"ok": True, "rc": 3, "hits": [], "ambiguous": ["x.py:voice"]},
+                       "pii": {"ok": True, "rc": 3, "hits": [], "ambiguous": ["x.py:widget"]},
                        "audit": {"ok": True, "rc": 0},
                        "suite": {"ok": True, "rc": None, "note": "skipped note"}}},
             {"branch": "bad1", "tip": "b" * 40, "ready": False, "refusals": ["R1"],
              "steps": {"pii": {"ok": True, "rc": 2, "hits": ["y.py: Tok"],
-                               "ambiguous": ["y.py:H1"]}}},
+                               "ambiguous": ["y.py:gadget"]}}},
         ],
         "conflicts": [{"a": "ok1", "b": "bad1", "files": ["m.json"]}],
         "merge_order": {"first": ["c1"], "pairs": [{"a": "ok1", "b": "bad1", "files": ["m.json"]}]},
@@ -647,12 +647,12 @@ def test_render_exact():
         "",
         "READY      ok1  aaaaaaaa  merge_main=ok gate=ok(rc 0) pii=ok(rc 3) audit=ok(rc 0) suite=ok",
         "           note: N1",
-        "           ambiguous PII (settled by audit record): x.py:voice",
+        "           ambiguous PII (settled by audit record): x.py:widget",
         "           suite: skipped note",
         "NOT READY  bad1  bbbbbbbb  pii=ok(rc 2)",
         "           - R1",
         "           PII hits: y.py: Tok",
-        "           ambiguous PII (UNSETTLED): y.py:H1",
+        "           ambiguous PII (UNSETTLED): y.py:gadget",
         "",
         "Pairwise conflicts:",
         "  ok1 x bad1: m.json",
