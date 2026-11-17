@@ -1,3 +1,4 @@
+# Separate from test_hook_command_lint.py: quote-PAIRING regressions of strip_literals, each run through the importing hooks as well as the function (Q11).
 """Quote PAIRING tests for hook_command_lint.strip_literals (proposal, 2026-11-16).
 
 Written to fail on the two-regex version at HEAD. The old double-quote regex

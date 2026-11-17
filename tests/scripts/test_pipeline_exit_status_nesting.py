@@ -1,3 +1,4 @@
+# Separate from test_check_pipeline_exit_status.py: pins how the hook reads NESTED structure (substitutions, quotes, heredocs) through shell_tokens spans (Q11); that file pins the verdict rules.
 """check_pipeline_exit_status: a pipeline INSIDE a substitution does not decide the
 status of the command it is an argument of (2026-11-16).
 

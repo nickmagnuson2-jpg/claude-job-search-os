@@ -1,3 +1,4 @@
+# Separate from test_shell_tokens.py: pins only the Token.spans field added by Q11, so the additive change can be tested and mutated on its own.
 """shell_tokens: per-segment source spans on each word (Q11, 2026-11-16).
 
 `Token.quoted` is one flag per WORD, but a word can mix quoting (`--include="*.md"`,
