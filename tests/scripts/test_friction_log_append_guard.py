@@ -80,8 +80,9 @@ def _rows(led, *lines):
     return led
 
 
-def test_dedup_collapses_same_nature_across_surfaces(tmp_path):
-    """The same error on different surfaces is ONE logical friction."""
+def test_dedup_never_merges_across_surfaces(tmp_path):
+    """RULING Q10 (2026-11-16): each surface keeps its own count; dedup used to sum the same
+    nature across surfaces onto one representative row (Codex + Grok P0 on 1a6c4750)."""
     led = _rows(
         tmp_path / "friction-log.md",
         "| 2026-06-02 | pipeline_staleness.py | (eval):1: command not found: python | — | 1 | — |",
@@ -90,9 +91,8 @@ def test_dedup_collapses_same_nature_across_surfaces(tmp_path):
         "| 2026-05-27 | networking_write.py | (eval):1: command not found: python | — | 1 | — |",
     )
     rep = _dedup(led)
-    assert rep["rows_after"] == 1
-    assert rep["clusters"][0]["occurrences"] == 4
-    assert "script-patch" in rep["clusters"][0]["promotion"]
+    assert rep["rows_after"] == 4
+    assert all(c["occurrences"] == 1 for c in rep["clusters"])
     assert rep["reconciles"] is True  # all 4 source rows accounted for
 
 
@@ -101,8 +101,9 @@ def test_dedup_sums_existing_counts(tmp_path):
     led = _rows(
         tmp_path / "friction-log.md",
         "| 2026-05-27..2026-06-01 | tool:Edit | File has not been read yet. Read it first before writing | — | 3 | script-patch (mandatory) |",
-        "| 2026-05-27..2026-06-01 | tool:Write | File has not been read yet. Read it first before writing | — | 2 | memory (do now) |",
+        "| 2026-05-20..2026-05-26 | tool:Edit | File has not been read yet. Read it first before writing | — | 2 | memory (do now) |",
     )
+    # Same surface on both rows: dedup no longer merges across surfaces (RULING Q10).
     rep = _dedup(led)
     assert rep["rows_after"] == 1
     assert rep["clusters"][0]["occurrences"] == 5  # 3 + 2, not 2
@@ -131,15 +132,17 @@ def test_dedup_drops_broadened_fp_rows(tmp_path):
     assert rep["reconciles"] is True  # 1 dropped + 1 clustered == 2 source rows
 
 
-def test_append_merges_same_nature_new_surface(tmp_path):
-    """A recurring interpreter error on a NEW surface increments, not fragments."""
+def test_append_never_merges_across_surfaces(tmp_path):
+    """RULING Q10 (2026-11-16): the same nature on a NEW surface opens its own row. A
+    cross-surface merge moved occurrences onto another surface's promotion count (an
+    auto-mode classifier timeout counted 12 times against check_public_pii.py)."""
     led = _rows(
         tmp_path / "friction-log.md",
         "| 2026-06-01 | remember_classify.py | (eval):1: command not found: python | — | 1 | — |",
     )
     out = _append(led, "pipeline_staleness.py", "(eval):1: command not found: python")
-    assert out["action"] == "updated"
-    assert out["occurrences"] == 2
+    assert out["action"] == "appended"
+    assert out["occurrences"] == 1
 
 
 # --- integration: append rejects FP natures, keeps real ones ----------------
@@ -176,3 +179,20 @@ def test_append_records_real_friction(tmp_path):
     assert out["action"] == "appended"
     assert out["occurrences"] == 1
     assert "todo_write.py" in led.read_text(encoding="utf-8")
+
+
+def test_a_third_block_occurrence_emits_model_habit_not_script_patch(tmp_path):
+    """Codex r3 F2 (P0) / Grok r3 F1: the stored rung for block:<hook> is model-habit, so the
+    emitted promotion_action must not tell the consumer to patch the hook."""
+    led = _ledger(tmp_path)
+    for _ in range(3):
+        out = _append(led, "block:check_demo.py", "[auto-stop] BLOCKED: unquoted glob in x")
+    assert out["occurrences"] == 3
+    assert out["promotion_action"] == "model-habit"
+
+
+def test_a_third_ordinary_occurrence_still_emits_script_patch(tmp_path):
+    led = _ledger(tmp_path)
+    for _ in range(3):
+        out = _append(led, "pipe_write.py", "[auto] usage: pipe_write.py update company new_stage")
+    assert out["promotion_action"] == "script-patch"

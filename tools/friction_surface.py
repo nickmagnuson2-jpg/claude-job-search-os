@@ -41,11 +41,8 @@ EXCLUDE_SCRIPTS = {
 
 # PreToolUse block message: "... BLOCKED: <operand>.py invoked ..." — the operand
 # is the script being mis-called (the useful surface).
-_BLOCK_OPERAND_RE = re.compile(r"BLOCKED:\s*([a-z0-9_]+\.py)\b", re.IGNORECASE)
 # Fallback: the check_*.py named in "[python3 /.../check_foo.py]:".
-_BLOCK_CHECK_RE = re.compile(r"\b(check_[a-z0-9_]+\.py)\b", re.IGNORECASE)
 # Any BLOCKED marker (to know we're in a block at all).
-_BLOCK_MARKER_RE = re.compile(r"\bBLOCKED\b", re.IGNORECASE)
 
 # Inline python: `python3 -c` / `python -c`.
 _INLINE_C_RE = re.compile(r"\bpython3?\b\s+-c\b")
@@ -88,6 +85,13 @@ _ERROR_SIGNAL_RE = re.compile(
     r"|\b(error|fatal|traceback|not found|no such file|"
     r"permission denied|cannot|invalid|failed|denied|refused|"
     r"unrecognized|illegal option|command not found|no matches found|"
+    # 2026-11-16 restraint replay (RULING Q10): two real failure shapes carried no signal
+    # and would have been dropped by the Bash-lane gate: macOS permission refusals on
+    # grep/sed/ls, and the harness's "Command timed out after 2m 0s" (exit 143).
+    r"operation not permitted|timed out|"
+    # Codex + Grok P0 on 1a6c4750: fatal ends carried no signal and were dropped.
+    r"killed|segmentation fault|no space left on device|out of memory|bus error|"
+    r"exit code (?:12[89]|1[3-9]\d|2[0-5]\d)|"
     r"ignored by one of your \.gitignore files)\b",
     re.IGNORECASE,
 )
@@ -160,23 +164,6 @@ def _first_token(command: str) -> str:
             if "=" not in t:
                 return t
     return first
-
-
-def _surface_from_block(error_text: str) -> str:
-    """If the failure is a PreToolUse BLOCK, attribute to the mis-called script."""
-    if not error_text or not _BLOCK_MARKER_RE.search(error_text):
-        return ""
-    m = _BLOCK_OPERAND_RE.search(error_text)
-    if m:
-        cand = m.group(1).lower()
-        if cand not in EXCLUDE_SCRIPTS:
-            return cand
-    m = _BLOCK_CHECK_RE.search(error_text)
-    if m:
-        cand = m.group(1).lower()
-        if cand not in EXCLUDE_SCRIPTS:
-            return cand
-    return ""
 
 
 def _inline_c_body(command: str) -> str:
@@ -297,14 +284,105 @@ def is_excluded_bash(tool_use: dict) -> bool:
     return bool(matches) and all((m + ".py").lower() in EXCLUDE_SCRIPTS for m in matches)
 
 
+# --- harness events and hook blocks (RULINGS Q9 + Q10, data/workstreams/hooks.md, 2026-11-16) ---
+# 4c's audit (output/infra-backlog/111626-telemetry/friction-attribution.md): of 726 automatic
+# rows, 74 sat on the wrong surface and 370 were not friction. Two causes are fixed here:
+# harness events (auto-mode classifier, permission denials, user rejections) were filed under
+# whatever script the command named, and a hook BLOCK was attributed from text anywhere in the
+# output instead of the harness header. Q9: a block that worked as designed goes on its own
+# `block:<hook>` surface, which friction_log.promotion_for keeps off the script-patch ladder.
+_HARNESS_KINDS = (
+    ("classifier", re.compile(r"auto mode classifier|auto mode cannot determine|classifier gave no "
+                              r"verdict|temporarily unavailable, so auto mode", re.IGNORECASE)),
+    ("permission", re.compile(r"\bPermission to use \S+.*\bhas been denied|requires approval|"
+                              r"can't be checked before it runs|was blocked\. For security|"
+                              r"Contains brace with quote character|<tool_use_error>Blocked:",
+                              re.IGNORECASE | re.DOTALL)),
+    ("user", re.compile(r"user (?:doesn't|does not) want to proceed|tool use was rejected|"
+                        r"Request interrupted by user", re.IGNORECASE)),
+)
+# The harness writes a hook block as `PreToolUse:<Tool> hook error: [<command>]: <stderr>`.
+# Only that header names the hook; a BLOCKED word elsewhere in output is data.
+_HOOK_HEADER_RE = re.compile(
+    r"^(?:Exit code \S+\s*)?PreToolUse:\w+ hook error: \[[^\]\n]*?tools/([A-Za-z0-9_]+\.py)[^\]\n]*\]")
+
+
+# A harness message OPENS the tool result; the phrase must start within this many characters
+# ("ls in '<path>' was blocked" puts a path first). Searching the whole result filed a real
+# failure that quoted a denial as a harness event and dropped it (Codex r2 3.F2, P0).
+_HARNESS_PHRASE_WITHIN = 300
+_HARNESS_SCAN_CAP = 50_000
+
+
+def harness_kind(error_text: str) -> str:
+    """'classifier' | 'permission' | 'user' when the text is a harness event, else ''.
+
+    A Bash result opens with "Exit code N" and is the command's own output; in 1,020+ real
+    harness results none did, so such a result is never a harness event, whatever it quotes.
+    Otherwise a harness phrase must start near the opening of the text."""
+    head = (error_text or "").lstrip()
+    if head.startswith("Exit code"):
+        return ""
+    # The phrase must START near the opening, but may run long: "Permission to use Bash with
+    # command <the whole command> has been denied" ends after the command, so cutting the text
+    # short filed a long denial as the script's friction (Codex + Grok r4 F1, P0). The cap only
+    # bounds the regex's work on a huge result.
+    head = head[:_HARNESS_SCAN_CAP]
+    for kind, rx in _HARNESS_KINDS:
+        m = rx.search(head)
+        if m and m.start() <= _HARNESS_PHRASE_WITHIN:
+            return kind
+    return ""
+
+
+# A designed block is the hook's own message, and every real one (1,021 of 1,021 header
+# results in the transcripts, 2026-11-16) opens its stderr with BLOCKED. Anything else after
+# the header is the hook dying: argparse, IndentationError, Killed, a segfault, empty stderr.
+# Crash is the default; a fixed list of crash phrases missed all of those (r2 3.F1, 4.F1, P0).
+_BLOCK_SIGNAL_RE = re.compile(r"[\s:]*BLOCKED\b")
+
+
+def _hook_header(error_text: str):
+    """(hook, is_designed_block) for a harness hook header at the start of the text, else None."""
+    text = (error_text or "").lstrip()
+    m = _HOOK_HEADER_RE.match(text)
+    if not m:
+        return None
+    return m.group(1).lower(), bool(_BLOCK_SIGNAL_RE.match(text, m.end()))
+
+
+def hook_block(error_text: str) -> str:
+    """The hook named in a harness header whose stderr opens with BLOCKED, else ''."""
+    h = _hook_header(error_text)
+    return h[0] if h and h[1] else ""
+
+
+def hook_crash(error_text: str) -> str:
+    """The hook named in a harness header whose stderr does NOT open with BLOCKED, else ''."""
+    h = _hook_header(error_text)
+    return h[0] if h and not h[1] else ""
+
+
 def derive_surface(tool_name: str, command: str, error_text: str = "") -> str:
     """The 'surface' is what failed. Precedence:
-    1. non-Bash tool      -> tool:<name>
-    2. explicit tools/*.py -> that script (existing, well-tested path)
-    3. PreToolUse BLOCK    -> the mis-called operand script
+    0. harness event       -> harness:<kind>  (never a script's friction; callers skip it)
+    1. hook block header   -> block:<hook>    (any tool; Q9 model-habit ladder)
+    2. non-Bash tool       -> tool:<name>
+    3. explicit tools/*.py -> that script (existing, well-tested path)
     4. inline python -c    -> real .py in traceback, else first import
     5. fallback            -> bash:<first-non-env-token>
+    A BLOCKED word anywhere else in the output is NOT a hook block (2026-11-16: run-log text
+    printed by a grep was filed under check_guard_edit_approval.py).
     """
+    kind = harness_kind(error_text)
+    if kind:
+        return f"harness:{kind}"
+    hook = hook_block(error_text)
+    if hook:
+        return f"block:{hook}"
+    crashed = hook_crash(error_text)
+    if crashed:
+        return crashed
     tool_name = (tool_name or "").strip()
     if tool_name != "Bash":
         return f"tool:{tool_name}" if tool_name else "tool:unknown"
@@ -314,10 +392,6 @@ def derive_surface(tool_name: str, command: str, error_text: str = "") -> str:
     scripts = [(m + ".py").lower() for m in matches if (m + ".py").lower() not in EXCLUDE_SCRIPTS]
     if scripts:
         return scripts[0]
-
-    s = _surface_from_block(error_text)
-    if s:
-        return s
 
     s = _surface_from_inline(command, error_text)
     if s:
