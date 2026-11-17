@@ -1703,3 +1703,25 @@ def test_cli_passes_the_tip_through(tmp_path):
 def test_the_hook_passes_the_pushed_tip_to_the_gate():
     hook = (REPO_ROOT / "tools" / "hooks" / "pre-push").read_text(encoding="utf-8")
     assert '--tip "$head"' in hook
+
+
+@pytest.mark.parametrize("tip", [None, ""])
+def test_no_tip_asks_git_nothing(tmp_path, monkeypatch, tip):
+    import subprocess
+
+    def boom(*a, **k):
+        raise AssertionError("git was run for an empty tip")
+    monkeypatch.setattr(subprocess, "run", boom)
+    assert g.tip_tree(tmp_path, tip) is None
+
+
+def test_a_matched_tree_row_is_not_also_judged_by_time(tmp_path):
+    """A row whose tree matches is done: it neither falls into the time rule (no OLDER
+    note for an old matched row) nor counts as a different tree."""
+    git = _tree_repo(tmp_path)
+    _row(tmp_path, tree=git("rev-parse", "HEAD^{tree}"),
+         recorded="2000-01-01T00:00:00+00:00")
+    push = _PUSH + [("tools/career_scanner/other.py", 200, 40)]   # same tier, so relevant
+    v = g.check(tmp_path, push, since=_FAR_FUTURE, tip=git("rev-parse", "HEAD"))
+    assert v.blocked is True and "Uncovered" in v.message
+    assert "OLDER" not in v.message and "different tree" not in v.message

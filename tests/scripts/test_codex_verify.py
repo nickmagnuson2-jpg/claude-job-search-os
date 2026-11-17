@@ -2673,3 +2673,44 @@ def test_outside_a_git_repo_the_tree_is_null_not_absent(tmp_path, monkeypatch):
     cv.run(tmp_path, "t", ["a.py"], "", report, None, False)
     row = gate.read_ledger(tmp_path)[-1]
     assert "tree" in row and row["tree"] is None
+
+
+def test_a_failed_stash_create_records_no_tree_not_heads(tmp_path, monkeypatch):
+    """`git stash create` failing means the on-disk tree is unknown. Falling back to
+    HEAD^{tree} would record a tree the reviewer may not have seen (a dirty checkout)."""
+    _git_repo(tmp_path)
+    real = subprocess.run
+
+    def fake(cmd, **kw):
+        if isinstance(cmd, list) and cmd[:3] == ["git", "stash", "create"]:
+            return subprocess.CompletedProcess(cmd, 1, "", "boom")
+        return real(cmd, **kw)
+    monkeypatch.setattr(cv.subprocess, "run", fake)
+    assert cv.reviewed_tree(tmp_path) is None
+
+
+def test_a_mirrored_row_keeps_the_tree_and_clears_the_gate_from_main(main_and_worktree,
+                                                                     monkeypatch):
+    """findings-durable x tree key: main's mirror copies the whole row, `tree` included.
+    Tree ids are shared by every worktree of one repo, so the gate run FROM MAIN clears a
+    push of the reviewed tree and blocks a push of a different one."""
+    main, wt = main_and_worktree
+    report = wt / "output" / "analysis" / "111626-codex-tree-mirror.md"
+    assert _review(monkeypatch, wt, report)["mirrored"] is True
+    monkeypatch.setattr(cv.subprocess, "run", _REAL_RUN)
+    reviewed = _REAL_RUN(["git", "-C", str(wt), "rev-parse", "HEAD^{tree}"],
+                         capture_output=True, text=True, check=True).stdout.strip()
+    [row] = gate.read_ledger(main)
+    assert row["tree"] == reviewed == gate.read_ledger(wt)[0]["tree"]
+
+    def tip():
+        return _REAL_RUN(["git", "-C", str(wt), "rev-parse", "HEAD"],
+                         capture_output=True, text=True, check=True).stdout.strip()
+    push = [("tools/x.py", 200, 40)]
+    _git(wt, "-c", "user.email=t@example.com", "-c", "user.name=t",
+         "commit", "-q", "--allow-empty", "-m", "same tree, newer commit")
+    assert gate.check(main, push, since=4102444800.0, tip=tip()).blocked is False
+    (wt / "tools" / "x.py").write_text("x = 2\n", encoding="utf-8")
+    _git(wt, "-c", "user.email=t@example.com", "-c", "user.name=t",
+         "commit", "-qam", "different tree")
+    assert gate.check(main, push, since=0, tip=tip()).blocked is True
