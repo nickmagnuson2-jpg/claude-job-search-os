@@ -14,7 +14,8 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TOOLS = REPO_ROOT / "tools"
 HOOK = TOOLS / "hooks" / "pre-commit"
-COPIED = ("precommit_pii_guard.py", "check_public_pii.py", "shell_tokens.py", "hook_runtime.py")
+COPIED = ("precommit_pii_guard.py", "check_public_pii.py", "shell_tokens.py", "hook_runtime.py",
+          "vault_paths.py")
 
 
 def _git(repo, *args, env=None, check=True):
@@ -116,6 +117,17 @@ def test_no_denylist_file_passes_and_says_so(repo):
     (repo / "tools" / ".pii-denylist.txt").unlink()
     r = _commit(repo, "docs/b.md", "Zorpcorp\n")
     assert r.returncode == 0 and "gen_pii_denylist" in r.stderr
+
+
+def test_a_linked_worktree_uses_the_main_checkouts_denylist(repo, tmp_path):
+    """The lists are gitignored, so a worktree has none; it reads the main checkout's
+    (2026-11-17). Before, this gate printed `no denylist` and passed the real name."""
+    wt = tmp_path / "wt"
+    _git(repo, "worktree", "add", "-q", "--detach", str(wt))
+    assert not (wt / "tools" / ".pii-denylist.txt").exists()
+    r = _commit(wt, "docs/b.md", "We met with Zorpcorp today.\n")
+    assert r.returncode != 0
+    assert "Zorpcorp" in r.stderr and "precommit_pii_guard" in r.stderr
 
 
 def test_an_override_commits_and_is_recorded(repo):

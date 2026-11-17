@@ -145,3 +145,44 @@ def test_naive_append_to_template_lands_in_block_tier(tmp_path):
     res = _run(tmp_path)
     assert "Marisol Vantrell" in res["tokens"]
     assert "Marisol Vantrell" not in res["ambiguous"]
+
+
+def test_a_run_from_a_linked_worktree_uses_the_main_checkout(tmp_path):
+    """Codex 1.F1 / Grok 2.F1 (2026-11-17): the PII gates read the main checkout's lists from
+    a worktree, so a regeneration started in a worktree must read and write there too. A
+    worktree has no data/ (gitignored) and its own copy would be ignored by every gate."""
+    main = tmp_path / "main"
+    main.mkdir()
+    env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.com",
+           "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.com"}
+    for a in (["init", "-q"], ["commit", "-q", "--allow-empty", "-m", "x"],
+              ["worktree", "add", "-q", "--detach", str(tmp_path / "wt")]):
+        subprocess.run(["git", "-C", str(main), *a], check=True, capture_output=True, env=env)
+    _setup(main, "[block]\nThessaly Quorne\n")
+    res = _run(tmp_path / "wt")
+    assert "Thessaly Quorne" in res["tokens"]
+    assert Path(res["manual_source"]).resolve().is_relative_to(main.resolve())
+
+
+def test_a_real_run_from_a_linked_worktree_writes_the_main_checkouts_lists(tmp_path):
+    """Codex 3.F1 / Grok 4.F1 (2026-11-17): the dry run proves what is READ; this proves
+    where the four lists are WRITTEN."""
+    main = tmp_path / "main"
+    main.mkdir()
+    env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.com",
+           "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.com"}
+    wt = tmp_path / "wt"
+    for a in (["init", "-q"], ["commit", "-q", "--allow-empty", "-m", "x"],
+              ["worktree", "add", "-q", "--detach", str(wt)]):
+        subprocess.run(["git", "-C", str(main), *a], check=True, capture_output=True, env=env)
+    _setup(main, "[block]\nThessaly Quorne\n")
+    r = subprocess.run([sys.executable, str(TOOLS / "gen_pii_denylist.py"), "--repo-root", str(wt)],
+                       capture_output=True, text=True, encoding="utf-8",
+                       env={**os.environ, "PYTHONIOENCODING": "utf-8"})
+    assert r.returncode == 0, r.stderr
+    written = (main / "tools" / ".pii-denylist.txt").read_text(encoding="utf-8")
+    assert "Thessaly Quorne" in written
+    for name in (".pii-denylist.txt", ".pii-denylist-ambiguous.txt",
+                 ".pii-denylist-retired.txt", ".pii-denylist-targetwords.txt"):
+        assert (main / "tools" / name).is_file(), name   # Codex 5.F1 / Grok 6.F1: all four
+    assert not list(wt.rglob(".pii-denylist*")), "a list was written into the worktree"

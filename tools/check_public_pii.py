@@ -34,6 +34,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from shell_tokens import simple_commands, tokenize  # noqa: E402
 from hook_runtime import read_payload  # noqa: E402
+from vault_paths import main_checkout  # noqa: E402
 from pathlib import Path
 
 DENYLIST_REL = "tools/.pii-denylist.txt"
@@ -1038,11 +1039,23 @@ def is_gitignored(root: Path, rel: str) -> bool:
         return False
 
 
+def list_path(root: Path, rel: str) -> Path:
+    """Where `root` reads the list `rel` from. A linked worktree (its `.git` is a file)
+    always reads the main checkout's: one source, so a copy made in a worktree can never
+    go stale and hide names added later (Nick, 2026-11-17: cut the bloat). Every PII
+    gate asks this, so none keeps its own idea of where the lists live. The main
+    checkout comes from vault_paths.main_checkout (a file read, no git process), the
+    helper the other hooks already use for gitignored files beside the main checkout."""
+    return main_checkout(root) / rel
+
+
 def _load_list(root: Path, rel: str) -> list[str]:
-    """One token per line; blank lines and # comments skipped. A missing or unreadable
-    file is an empty list (fail open), the same for every tier."""
+    """One token per line; blank lines and # comments skipped, read from
+    `list_path(root, rel)`. Missing or unreadable is an empty list (fail open), for
+    every tier."""
+    path = list_path(root, rel)
     try:
-        lines = (root / rel).read_text(encoding="utf-8").splitlines()
+        lines = path.read_text(encoding="utf-8").splitlines()
     except (FileNotFoundError, PermissionError):
         return []
     return [ln.strip() for ln in lines if ln.strip() and not ln.startswith("#")]

@@ -15,7 +15,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 TOOLS = REPO_ROOT / "tools"
 HOOK = TOOLS / "hooks" / "commit-msg"
 COPIED = ("commit_msg_pii_guard.py", "precommit_pii_guard.py", "check_public_pii.py",
-          "shell_tokens.py", "hook_runtime.py")
+          "shell_tokens.py", "hook_runtime.py", "vault_paths.py")
 
 sys.path.insert(0, str(TOOLS))
 import commit_msg_pii_guard as guard  # noqa: E402
@@ -100,6 +100,17 @@ def test_an_override_commits_and_is_recorded(repo):
     row = json.loads(log.read_text().splitlines()[-1])
     assert row["reason"] == "fixture name"
     assert row["blocked"] == [{"file": "<commit message>", "tokens": ["Zorpcorp"]}]
+
+
+def test_a_linked_worktree_uses_the_main_checkouts_denylist(repo, tmp_path):
+    """The lists are gitignored, so a worktree has none; it reads the main checkout's
+    (2026-11-17). Before, this gate printed `no denylist` and passed the real name."""
+    wt = tmp_path / "wt"
+    _git(repo, "worktree", "add", "-q", "--detach", str(wt))
+    assert not (wt / "tools" / ".pii-denylist.txt").exists()
+    r = _commit(wt, "fix: a case Zorpcorp hit")
+    assert r.returncode != 0
+    assert "Zorpcorp" in r.stderr and "commit_msg_pii_guard" in r.stderr
 
 
 def test_an_empty_denylist_refuses(repo):

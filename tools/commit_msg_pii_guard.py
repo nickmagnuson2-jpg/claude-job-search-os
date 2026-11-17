@@ -67,7 +67,7 @@ def main(argv=None) -> int:
     args = ap.parse_args(argv)
     root = Path(args.repo_root).resolve() if args.repo_root else pii.repo_root()
 
-    if not (root / pii.DENYLIST_REL).is_file():
+    if not pii.list_path(root, pii.DENYLIST_REL).is_file():
         print(f"commit-msg PII gate: no {pii.DENYLIST_REL} in this checkout, nothing to "
               "match against; run tools/gen_pii_denylist.py to enable it.", file=sys.stderr)
         return 0
