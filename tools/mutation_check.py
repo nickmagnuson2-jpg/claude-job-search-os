@@ -2450,8 +2450,10 @@ def main() -> int:
                 scope_out["test_lines"] = sorted(test_lines)
             scope_out["mutants_in_scope"] = len(catalog)
 
-        # Always: without a diff the order is kept and the count is 0; in diff mode every
-        # mutant in scope is on a changed line, so the order is kept and the count is all.
+        # On every run that measures mutants (--list returns earlier and measures none):
+        # without a diff the order is kept and the count is 0. With one, mutants on changed
+        # code lines go first, also in diff mode, where changed tests can widen the scope to
+        # lines they execute; those widened mutants follow (Codex 5.F2 / Grok 6.F1).
         catalog, n_changed = changed_first(catalog, spans, scope, _function_spans(tree))
         changed_ids = {id(e) for e in catalog[:n_changed]}
         scope_out["changed_mutants"] = n_changed
