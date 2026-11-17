@@ -68,6 +68,7 @@ def run(cmd: list[str], cwd: str | Path | None = None, stdin: str | None = None,
         timeout: int = 600) -> tuple[int, str, str]:
     env = {k: v for k, v in os.environ.items() if k not in WAIVER_ENV}
     env.setdefault("PYTHONIOENCODING", "utf-8")
+    env["PYTHONDONTWRITEBYTECODE"] = "1"     # a cold run must not create __pycache__ (Codex r2)
     try:
         p = subprocess.run(cmd, cwd=str(cwd) if cwd else None, input=stdin, text=True,
                            capture_output=True, timeout=timeout, env=env)
@@ -116,29 +117,44 @@ def configured_upstream(wt: Path, branch: str) -> str | None:
     return f"{remote}/{merge.strip().removeprefix('refs/heads/')}"
 
 
-def trusted_tools(root: Path) -> Path:
+NO_TRUSTED = "no trusted checkers: the main checkout's common git dir could not be resolved"
+
+
+def trusted_tools(root: Path) -> Path | None:
     """tools/ in the main checkout: the parent of the common git dir, the same for every
-    worktree. Steps 6 to 8 run from here so a candidate branch never runs its own judge."""
+    worktree. Steps 6 to 8 run from here so a candidate branch never runs its own judge.
+    None when that cannot be resolved: never fall back to the candidate's own tools/
+    (Codex r2 F2)."""
     rc, common, _ = git(["rev-parse", "--path-format=absolute", "--git-common-dir"], root)
-    return Path(common.strip()).parent / "tools" if rc == 0 else root / "tools"
+    return Path(common.strip()).parent / "tools" if rc == 0 and common.strip() else None
 
 
-def checker_provenance(tools: Path, main: dict) -> dict:
+def checker_provenance(tools: Path | None, main: dict) -> dict:
     """Which copies of the audit, PII and suite checkers ran. They are whatever the main
     checkout has checked out, which can lag GitHub main (2026-11-16: local main at f58251d6
-    while GitHub main was 23a3251b). Never let a report imply they ran at current main."""
+    while GitHub main was 23a3251b). Never let a report imply they ran at current main:
+    "current" needs GitHub main known, HEAD equal to it, and a clean, readable tools/."""
+    if tools is None:
+        return {"path": None, "head": None, "dirty": [], "current": False,
+                "warnings": [NO_TRUSTED]}
     checkout = tools.parent
     rc, head, _ = git(["rev-parse", "HEAD"], checkout)
     head = head.strip() if rc == 0 else None
-    rc, st, _ = git(["--no-optional-locks", "status", "--porcelain", "--", "tools"], checkout)
-    dirty = [ln[3:] for ln in st.splitlines() if ln.strip()] if rc == 0 else []
-    want = main.get("github_main") or main.get("ref")
+    want = main.get("github_main")
     warnings = []
-    if head != want:
+    if want is None:
+        warnings.append("GitHub main unknown, so the checkers' commit could not be compared "
+                        "with it: do not read their results as current")
+    elif head != want:
         warnings.append(f"checkers (audit, PII, suite) ran from {checkout} at {short(head) or '?'}, "
-                        f"not GitHub main {short(want) or '?'}: those results come from that "
+                        f"not GitHub main {short(want)}: those results come from that "
                         "older or different copy")
-    if dirty:
+    rc, st, err = git(["--no-optional-locks", "status", "--porcelain", "--", "tools"], checkout)
+    dirty = [ln[3:] for ln in st.splitlines() if ln.strip()] if rc == 0 else []
+    if rc != 0:
+        warnings.append(f"could not inspect {checkout}/tools for uncommitted changes "
+                        f"(git status rc {rc}): {err.strip()[:200]}")
+    elif dirty:
         warnings.append(f"checkers ran with uncommitted changes in {checkout}/tools: "
                         f"{', '.join(dirty)}")
     return {"path": str(tools), "head": head, "dirty": dirty, "current": not warnings,
@@ -259,7 +275,9 @@ def gate_reason(text: str) -> str:
     return (blocked or lines or ["(no output)"])[0]
 
 
-def audit_check(tools: Path, wt: Path, tip: str) -> dict:
+def audit_check(tools: Path | None, wt: Path, tip: str) -> dict:
+    if tools is None:
+        return {"rc": None, "ok": False, "error": NO_TRUSTED}
     tool = tools / "audit_pii_record.py"
     if not tool.is_file():
         return {"rc": None, "ok": False, "error": f"missing {tool}"}
@@ -276,9 +294,11 @@ def changed_files(wt: Path, base: str, tip: str) -> list[str]:
     return [ln for ln in out.splitlines() if ln.strip()] if rc == 0 else []
 
 
-def pii_scan(tools: Path, wt: Path, files: list[str]) -> dict:
+def pii_scan(tools: Path | None, wt: Path, files: list[str]) -> dict:
     if not files:
         return {"rc": None, "ok": True, "hits": [], "ambiguous": [], "note": "no A/M files"}
+    if tools is None:
+        return {"rc": None, "ok": False, "hits": [], "ambiguous": [], "error": NO_TRUSTED}
     tool = tools / "check_public_pii.py"
     if not tool.is_file():
         return {"rc": None, "ok": False, "hits": [], "ambiguous": [], "error": f"missing {tool}"}
@@ -305,7 +325,9 @@ def pii_scan(tools: Path, wt: Path, files: list[str]) -> dict:
     return res
 
 
-def suite_check(tools: Path, wt: Path, tip: str) -> dict:
+def suite_check(tools: Path | None, wt: Path, tip: str) -> dict:
+    if tools is None:
+        return {"rc": None, "ok": False, "error": NO_TRUSTED}
     tool = tools / "suite_record.py"
     if tool.is_file():
         rc, out, err = run([sys.executable, str(tool), "check", "--tip", tip], cwd=wt)
@@ -353,7 +375,8 @@ def check_branch(root: Path, branch: str, worktrees: dict, gh_state: dict | None
     up = configured_upstream(wt, branch)
     r["upstream"] = up
     if up and upstream_is_main(up):
-        r["refusals"].append(f"upstream is {up}: a bare `git push` would push main")
+        r["refusals"].append(f"upstream is {up}: this branch is configured to push to main, "
+                             "so a bare `git push` from its worktree targets main")
     if r["github_tip"] and r["github_tip"] != tip:
         ff = git(["merge-base", "--is-ancestor", remote_sha, tip], wt)[0] == 0
         if ff:
@@ -529,7 +552,7 @@ def render(rep: dict) -> str:
            f"local origin/main: {m['local_origin_main']}",
            f"checked against: {m['ref']} ({m['method']})"]
     c = rep["checkers"]
-    out.append(f"checkers: {c['path']} at {c['head']} "
+    out.append(f"checkers: {c['path'] or 'UNRESOLVED'} at {c['head'] or '?'} "
                f"({'current' if c['current'] else 'NOT current main'})")
     out += [f"!!! {w}" for w in m["warnings"] + c["warnings"]]
     out.append("")

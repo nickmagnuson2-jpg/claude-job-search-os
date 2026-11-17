@@ -269,7 +269,15 @@ def test_pairwise_conflict_named_and_ordered_last(repo):
     assert "a1 x b1: shared.json" in out
 
 
-@pytest.mark.parametrize("var", lb.WAIVER_ENV)
+WAIVERS = ("CODEX_VERIFY_WAIVE", "AUDIT_PII_WAIVE", "PUSH_PII_OVERRIDE")
+
+
+def test_waiver_list_is_exactly_the_three_gate_overrides():
+    # A literal list, so dropping one from the tool cannot silently shrink the test (Grok r2 F2).
+    assert tuple(lb.WAIVER_ENV) == WAIVERS
+
+
+@pytest.mark.parametrize("var", WAIVERS)
 def test_gate_receives_git_refs_line_and_no_waiver(repo, monkeypatch, var):
     _, tip = branch(repo, "feat", {"f.py": "x = 1\n"})
     monkeypatch.setenv(var, "should never reach the hook")
@@ -366,6 +374,10 @@ def test_github_unreadable_is_not_ready_and_loud(repo):
     assert any("GitHub read failed" in w for w in rep["main"]["warnings"])
     assert "GitHub unreadable: base not confirmed" in by_name(rep)["feat"]["refusals"]
     assert "GitHub main: UNREADABLE" in lb.render(rep)
+    # Grok r2 F1: with GitHub main unknown the checkers can never read as current.
+    assert rep["checkers"]["current"] is False
+    assert rep["checkers"]["warnings"][0].startswith("GitHub main unknown")
+    assert "(NOT current main)" in lb.render(rep)
 
 
 def test_check_changes_no_ref_and_no_worktree(repo):
@@ -455,8 +467,9 @@ def test_run_sets_utf8_io_and_strips_waivers(monkeypatch):
     monkeypatch.setenv("AUDIT_PII_WAIVE", "x")
     rc, out, _ = lb.run([sys.executable, "-c",
                          "import os; print(os.environ.get('PYTHONIOENCODING'), "
-                         "os.environ.get('AUDIT_PII_WAIVE'))"])
-    assert (rc, out.strip()) == (0, "utf-8 None")
+                         "os.environ.get('AUDIT_PII_WAIVE'), "
+                         "os.environ.get('PYTHONDONTWRITEBYTECODE'))"])
+    assert (rc, out.strip()) == (0, "utf-8 None 1")
 
 
 def test_tail_keeps_last_lines():
@@ -819,7 +832,34 @@ def test_trusted_tools_get_the_worktree_and_tip(repo):
 def test_trusted_tools_resolve_to_main_checkout_from_a_worktree(repo):
     wt, _ = branch(repo, "feat", {"f.py": "x = 1\n"})
     assert lb.trusted_tools(wt).resolve() == (repo["root"] / "tools").resolve()
-    assert lb.trusted_tools(repo["tmp"]) == repo["tmp"] / "tools"
+    assert lb.trusted_tools(repo["tmp"]) is None      # never the candidate's own tools/
+
+
+def test_unresolved_trusted_tools_refuse_every_checker(repo, monkeypatch):
+    """Codex r2 F2: no fallback to the candidate's tools/ when the common dir is unknown."""
+    branch(repo, "feat", {"f.py": "x = 1\n"})
+    monkeypatch.setattr(lb, "trusted_tools", lambda root: None)
+    rep = lb.check(repo["root"], ["feat"], want_suite=True, gh=gh_local_main(repo))
+    r = by_name(rep)["feat"]
+    assert [r["steps"][k]["error"] for k in ("audit", "pii", "suite")] == [lb.NO_TRUSTED] * 3
+    assert "audit_pii_record check rc None" in r["refusals"]
+    assert f"PII scan rc None: {lb.NO_TRUSTED}" in r["refusals"]
+    assert "suite_record check rc None" in r["refusals"]
+    c = rep["checkers"]
+    assert (c["path"], c["current"], c["warnings"]) == (None, False, [lb.NO_TRUSTED])
+    assert "checkers: UNRESOLVED at ? (NOT current main)" in lb.render(rep)
+
+
+def test_unreadable_checker_tools_status_is_never_current(repo, monkeypatch):
+    """Codex r2 F1: a failed git status on the checkers' tools/ must not read as clean."""
+    real = lb.git
+    monkeypatch.setattr(lb, "git", lambda a, c: (128, "", "index locked")
+                        if a[:2] == ["--no-optional-locks", "status"] and a[-1] == "tools"
+                        else real(a, c))
+    c = lb.checker_provenance(repo["root"] / "tools", {"github_main": repo["base"]})
+    assert c["current"] is False and c["dirty"] == []
+    assert c["warnings"] == [f"could not inspect {repo['root']}/tools for uncommitted changes "
+                             "(git status rc 128): index locked"]
 
 
 def test_diverged_github_branch_is_refused_as_non_fast_forward(repo):
