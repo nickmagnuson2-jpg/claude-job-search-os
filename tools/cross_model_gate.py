@@ -583,14 +583,49 @@ def _parse_ts(value) -> float | None:
     return ts.timestamp()
 
 
+_SHA_RE = re.compile(r"^[0-9a-f]{40}([0-9a-f]{24})?$")
+
+
+def tip_tree(repo_root: Path, tip: str | None) -> str | None:
+    """The tree of the commit being pushed, or None when it cannot be read.
+
+    None is not a wildcard: a tree-keyed row compares against it and never matches.
+    """
+    if not tip:
+        return None
+    import subprocess
+    try:
+        out = subprocess.run(["git", "rev-parse", "--verify", "--quiet", f"{tip}^{{tree}}"],
+                             cwd=str(repo_root), capture_output=True, text=True,
+                             timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    tree = out.stdout.strip()
+    return tree if out.returncode == 0 and _SHA_RE.match(tree) else None
+
+
 def check(repo_root: Path, changes: list[tuple[str, int, int]],
-          since: float) -> Verdict:
+          since: float, tip: str | None = None) -> Verdict:
     """Block a qualifying push that no verification covers.
 
-    `since` is the epoch time of the NEWEST commit being pushed: a verification that
-    predates the work is not a verification of it. (The caller passed the base commit
-    until 2026-09-03; the hook was fixed and this line was not, so it described the
-    opposite of the behaviour for three days.)
+    TWO KEYS, chosen per row (Nick, 2026-11-16: "Tree hash").
+
+    A row carrying a `tree` field covers the push only when that tree equals the pushed
+    tip's tree (`tip`, resolved here). Time is ignored for it: identical tree means the
+    reviewer saw exactly the content being pushed, so a re-commit or a message amend
+    after the review no longer voids it. A tree that differs, is null, or cannot be
+    compared (no `tip`, or a tip that does not resolve) covers NOTHING, however recent
+    the row. Fails closed.
+
+    A row WITHOUT `tree` is legacy and keeps the committer-time rule: `since` is the
+    epoch time of the NEWEST commit being pushed, and a verification that predates the
+    work is not a verification of it. (The caller passed the base commit until
+    2026-09-03; the hook was fixed and this line was not, so it described the opposite
+    of the behaviour for three days.)
+
+    The ledger is local and writable, so a hand-forged `tree` clears a push the same way
+    a hand-forged `recorded` stamp does under the time rule. The tree key opens no hole
+    the time key did not already have.
     """
     v = qualifies(changes)
     if not v.qualified:
@@ -631,7 +666,8 @@ def check(repo_root: Path, changes: list[tuple[str, int, int]],
         return v
 
     covered: dict[str, set[str]] = {}
-    stale = unusable = failed = 0
+    stale = unusable = failed = other_tree = 0
+    pushed_tree = tip_tree(repo_root, tip)
 
     def _relevant(row) -> bool:
         """Does this row say anything about a path this push actually needs covered?
@@ -648,6 +684,15 @@ def check(repo_root: Path, changes: list[tuple[str, int, int]],
     for row in rows:
         if not row_is_usable(row):
             failed += _relevant(row)
+            continue
+        if "tree" in row:
+            # Tree-keyed: same final tree or nothing. Time is not consulted.
+            reviewed = row["tree"]
+            if not (pushed_tree and isinstance(reviewed, str) and reviewed == pushed_tree):
+                other_tree += _relevant(row)
+                continue
+            for pth in row.get("paths") or []:
+                covered.setdefault(pth, set()).add(row_model(row))
             continue
         recorded = _parse_ts(row.get("recorded"))
         if recorded is None:
@@ -725,6 +770,10 @@ def check(repo_root: Path, changes: list[tuple[str, int, int]],
         notes.append(f"{unusable} record(s) have an unreadable timestamp")
     if failed:
         notes.append(f"{failed} record(s) came from a run that did not complete")
+    if other_tree:
+        notes.append(f"{other_tree} record(s) reviewed a different tree than the pushed "
+                     f"tip" + ("" if pushed_tree else " (the tip's tree was not given or "
+                                                    "did not resolve)"))
     wanted = TIER_MODELS.get(v.tier, 0)
     if wanted > len(WIRED_MODELS):
         notes.append(f"tier {v.tier} wants {wanted} independent models but only "
@@ -799,6 +848,8 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--repo-root", default=str(REPO_ROOT))
     ap.add_argument("--since", type=float, default=0.0)
+    ap.add_argument("--tip", default=None,
+                    help="the pushed commit; tree-keyed rows match its tree")
     ap.add_argument("--numstat", default="-",
                     help="path to `git diff --numstat` output, or - for stdin")
     args = ap.parse_args(argv)
@@ -827,7 +878,7 @@ def main(argv=None) -> int:
                   f"  recorded; total waivers: {waiver_count(root)}", file=sys.stderr)
         return 0
 
-    v = check(root, changes, since=args.since)
+    v = check(root, changes, since=args.since, tip=args.tip)
     if v.blocked:
         print(f"\nBLOCKED: cross-model verification\n\n{v.message}\n", file=sys.stderr)
         return 2

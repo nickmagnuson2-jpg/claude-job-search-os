@@ -1576,3 +1576,130 @@ def test_a_mirrored_row_with_worktree_fields_still_clears_the_gate(tmp_path):
          worktree="/x/claude-worktrees/some-branch", worktree_run=7, model="codex")
     v = g.check(tmp_path, [("tools/career_scanner/scanner.py", 200, 40)], since=0)
     assert v.blocked is False
+
+
+# --- TREE KEY (Nick, 2026-11-16: "Tree hash") ----------------------------------
+# A review covers a push when it reviewed the same final tree as the pushed tip. Under
+# the committer-time rule any new commit voided every review, even a message amend with
+# an identical tree. A tree-keyed row ignores time; a row WITHOUT `tree` is legacy and
+# keeps the time rule unchanged (every test above runs with no tip and no tree).
+
+def _tree_repo(tmp_path):
+    """A real git repo at tmp_path, so `<tip>^{tree}` resolves the way the hook's does."""
+    import subprocess
+
+    def git(*a):
+        return subprocess.run(
+            ["git", "-c", "user.name=t", "-c", "user.email=t@example.com",
+             "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", *a],
+            cwd=tmp_path, capture_output=True, text=True, check=True).stdout.strip()
+
+    git("init", "-q")
+    scanner = tmp_path / "tools" / "career_scanner" / "scanner.py"
+    scanner.parent.mkdir(parents=True)
+    scanner.write_text("x = 1\n")
+    git("add", "tools/career_scanner/scanner.py")
+    git("commit", "-qm", "work")
+    return git
+
+
+_PUSH = [("tools/career_scanner/scanner.py", 200, 40)]
+_FAR_FUTURE = 4102444800.0  # 2100-01-01: newer than every row, so time alone clears nothing
+
+
+def test_a_same_tree_recommit_after_the_review_still_clears(tmp_path):
+    git = _tree_repo(tmp_path)
+    reviewed = git("rev-parse", "HEAD^{tree}")
+    _row(tmp_path, tree=reviewed)
+    git("commit", "-q", "--amend", "-m", "same tree, new message")
+    v = g.check(tmp_path, _PUSH, since=_FAR_FUTURE, tip=git("rev-parse", "HEAD"))
+    assert v.blocked is False, v.message
+
+
+def test_a_content_change_after_the_review_blocks_even_with_a_newer_row(tmp_path):
+    """Fails closed: a different tree covers nothing, however recent the row."""
+    git = _tree_repo(tmp_path)
+    reviewed = git("rev-parse", "HEAD^{tree}")
+    (tmp_path / "tools" / "career_scanner" / "scanner.py").write_text("x = 2\n")
+    git("commit", "-qam", "changed after review")
+    _row(tmp_path, tree=reviewed, recorded="2099-01-01T00:00:00+00:00")
+    v = g.check(tmp_path, _PUSH, since=0, tip=git("rev-parse", "HEAD"))
+    assert v.blocked is True
+    assert "different tree" in v.message
+
+
+def test_a_matching_tree_with_uncovered_paths_blocks(tmp_path):
+    git = _tree_repo(tmp_path)
+    _row(tmp_path, tree=git("rev-parse", "HEAD^{tree}"), paths=["tools/todo_write.py"])
+    v = g.check(tmp_path, _PUSH, since=0, tip=git("rev-parse", "HEAD"))
+    assert v.blocked is True and "Uncovered" in v.message
+
+
+def test_a_forged_tree_on_a_row_older_than_the_work_clears(tmp_path):
+    """STATED BEHAVIOUR, not an accident. A row recorded BEFORE the pushed commit whose
+    `tree` equals the tip's tree clears: tree identity means identical content, so the
+    time is irrelevant by Nick's ruling. The gate cannot tell a forged `tree` from a real
+    one, exactly as it cannot tell a forged `recorded` stamp today: both live in the same
+    local, writable ledger, so this opens no hole the time rule did not already have."""
+    git = _tree_repo(tmp_path)
+    _row(tmp_path, tree=git("rev-parse", "HEAD^{tree}"),
+         recorded="2000-01-01T00:00:00+00:00")
+    v = g.check(tmp_path, _PUSH, since=_FAR_FUTURE, tip=git("rev-parse", "HEAD"))
+    assert v.blocked is False, v.message
+
+
+@pytest.mark.parametrize("tip", [None, "0" * 40, "not-a-ref"])
+def test_a_tree_row_covers_nothing_when_the_tip_tree_is_unknown(tmp_path, tip):
+    """No tip, or one that does not resolve: the comparison cannot be made, and an
+    unknown comparison is not a match."""
+    git = _tree_repo(tmp_path)
+    _row(tmp_path, tree=git("rev-parse", "HEAD^{tree}"), recorded="2099-01-01T00:00:00+00:00")
+    assert g.check(tmp_path, _PUSH, since=0, tip=tip).blocked is True
+
+
+@pytest.mark.parametrize("tree", [None, "", 42])
+def test_a_tree_row_with_no_usable_tree_covers_nothing(tmp_path, tree):
+    """codex_verify writes `tree: null` when it could not read the tree. That row is
+    not legacy: it must not fall back to the time rule."""
+    git = _tree_repo(tmp_path)
+    _row(tmp_path, tree=tree, recorded="2099-01-01T00:00:00+00:00")
+    assert g.check(tmp_path, _PUSH, since=0, tip=git("rev-parse", "HEAD")).blocked is True
+
+
+def test_a_legacy_row_keeps_the_time_rule_when_a_tip_is_passed(tmp_path):
+    git = _tree_repo(tmp_path)
+    tip = git("rev-parse", "HEAD")
+    _row(tmp_path, recorded="2099-01-01T00:00:00+00:00")
+    assert g.check(tmp_path, _PUSH, since=0, tip=tip).blocked is False
+    assert g.check(tmp_path, _PUSH, since=_FAR_FUTURE, tip=tip).blocked is True
+
+
+def test_tree_and_legacy_rows_from_two_families_combine(tmp_path):
+    """Coverage still accumulates across rows: one tree-keyed and one legacy row from
+    different families meet a two-model tier together."""
+    git = _tree_repo(tmp_path)
+    _row(tmp_path, paths=["CLAUDE.md"], model="codex", tree=git("rev-parse", "HEAD^{tree}"))
+    _row(tmp_path, paths=["CLAUDE.md"], model="grok", recorded="2099-01-01T00:00:00+00:00")
+    v = g.check(tmp_path, [("CLAUDE.md", 3, 1)], since=0, tip=git("rev-parse", "HEAD"))
+    assert v.blocked is False, v.message
+
+
+def test_cli_passes_the_tip_through(tmp_path):
+    import subprocess
+    git = _tree_repo(tmp_path)
+    _row(tmp_path, tree=git("rev-parse", "HEAD^{tree}"))
+    git("commit", "-q", "--amend", "-m", "re-commit")
+    base = [sys.executable, str(REPO_ROOT / "tools" / "cross_model_gate.py"),
+            "--repo-root", str(tmp_path), "--since", str(_FAR_FUTURE)]
+    env = {"PYTHONIOENCODING": "utf-8", "PATH": "/usr/bin:/bin"}
+    numstat = "200\t40\ttools/career_scanner/scanner.py\n"
+    with_tip = subprocess.run(base + ["--tip", git("rev-parse", "HEAD")], input=numstat,
+                              capture_output=True, text=True, env=env)
+    without = subprocess.run(base, input=numstat, capture_output=True, text=True, env=env)
+    assert with_tip.returncode == 0, with_tip.stderr
+    assert without.returncode == 2
+
+
+def test_the_hook_passes_the_pushed_tip_to_the_gate():
+    hook = (REPO_ROOT / "tools" / "hooks" / "pre-push").read_text(encoding="utf-8")
+    assert '--tip "$head"' in hook

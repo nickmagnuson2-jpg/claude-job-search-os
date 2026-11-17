@@ -73,6 +73,8 @@ since="$(git log -1 --format=%ct "$head" 2>/dev/null || echo 0)"
 numstat="$(git diff --numstat "$range" 2>/dev/null || echo '')"
 [ -z "$numstat" ] && exit 0
 
+# TREE KEY (Nick, 2026-11-16): a review row carrying `tree` covers this push only when
+# it equals "$head"'s tree, whatever its time. Rows without `tree` keep the time bound.
 printf '%s\n' "$numstat" | PYTHONIOENCODING=utf-8 python3 \
-  "$root/tools/cross_model_gate.py" --repo-root "$root" --since "$since" || exit 1
+  "$root/tools/cross_model_gate.py" --repo-root "$root" --since "$since" --tip "$head" || exit 1
 exit 0
