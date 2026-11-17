@@ -484,3 +484,39 @@ def test_cleanup_leaves_other_worktrees_alone(sr, repo, tmp_path, tmp_parent, ca
     assert list(tmp_parent.iterdir()) == []
     listed = _worktrees(repo)
     assert len(listed) == 2 and any(str(other) in ln for ln in listed)
+
+
+# Grok r1 on ddd86433.
+
+def test_caller_pytest_addopts_cannot_shrink_the_suite(sr, repo, tmp_parent, capsys,
+                                                       monkeypatch):
+    """F3 (P1): `-k` from the caller's PYTEST_ADDOPTS would run only the passing test and
+    record a full-suite pass for a tree with a failing one."""
+    monkeypatch.setenv("PYTEST_ADDOPTS", "-k test_ok")
+    _branch(repo, "feat", {"tests/test_bad.py": FAILING})
+    code, out = _run(sr, repo, capsys, "feat", "--base", "main")
+    assert code == 1 and out["code"] == "tests_failed" and out["failed"] == 1
+    assert _ledger_rows(repo) == []
+
+
+def test_inner_pytest_gets_no_caller_pytest_addopts_or_pythonpath(sr, repo, tmp_parent,
+                                                                  capsys, monkeypatch):
+    monkeypatch.setenv("PYTEST_ADDOPTS", "-p no:randomly")
+    monkeypatch.setenv("PYTHONPATH", str(repo))
+    probe = ("import os\n\ndef test_env():\n"
+             "    assert 'PYTEST_ADDOPTS' not in os.environ\n"
+             "    assert 'PYTHONPATH' not in os.environ\n")
+    _branch(repo, "envprobe", {"tests/test_env.py": probe})
+    code, out = _run(sr, repo, capsys, "envprobe", "--base", "main")
+    assert code == 0, out
+
+
+def test_an_unreadable_ledger_is_named_not_a_traceback(sr, repo, tmp_parent, capsys):
+    _branch(repo, "feat", {"tests/test_feat.py": PASSING})
+    (repo / LEDGER).mkdir(parents=True)          # a directory where the file should be
+    code, out = _check(sr, repo, capsys, "feat")
+    assert code == 2 and out["code"] == "ledger_unreadable"
+    (repo / LEDGER).rmdir()
+    (repo / LEDGER).write_bytes(b"\xff\xfe not utf-8\n")
+    code, out = _check(sr, repo, capsys, "feat")
+    assert code == 2 and out["code"] == "ledger_unreadable"
