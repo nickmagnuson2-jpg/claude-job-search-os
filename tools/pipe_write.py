@@ -11,6 +11,9 @@ Subcommands:
   note <company> --append TEXT [--role ROLE]
                                adds to the Notes cell only; Stage and Date Updated stay,
                                so a note is not counted as a pipeline move
+  restage <company> --stage {Withdrawn,Rejected,Accepted} [--role ROLE]
+                               corrects the stage of an ARCHIVED row; Date Updated stays,
+                               and Notes records "[restaged <date>: Old -> New]"
 
 Options (all subcommands):
   --repo-root PATH   Repository root. Defaults to cwd.
@@ -411,6 +414,57 @@ def cmd_note(args, pipeline_path: Path, dry_run: bool) -> None:
     out_ok("note", f"Added a note to {args.company} | {cols[1]}", company=cols[0], role=cols[1])
 
 
+def cmd_restage(args, pipeline_path: Path, dry_run: bool) -> None:
+    """Correct the terminal stage of a row already in ## Archived. `remove` reads ## Active
+    only, and `update` with a terminal stage is blocked by check_pipe_close_via_update, so
+    before this a row archived under the wrong outcome could only be fixed by hand-editing
+    (2026-11-16: a row archived as Withdrawn whose own note said the company passed).
+
+    Date Updated is kept, as in cmd_note: a correction is not a pipeline move. The change is
+    recorded in Notes so the row still shows what it said before."""
+    stage = args.stage
+    if stage not in ARCHIVABLE_STAGES:
+        out_error(f"--stage must be one of {sorted(ARCHIVABLE_STAGES)}, got {stage!r}.",
+                  "invalid_stage", stage=stage)
+    content, lines = load_lines(pipeline_path)
+    start, end = find_section(lines, r"^##\s+Archived")   # missing section: (-1, -1), no rows
+    matches = [(i, parse_cols(lines[i])) for i in range(start, end)
+               if is_data_row(lines[i]) and parse_cols(lines[i])
+               and parse_cols(lines[i])[0].lower() == args.company.lower()]
+    if args.role:
+        matches = [(i, c) for i, c in matches if len(c) > 1 and c[1].lower() == args.role.lower()]
+    if not matches:
+        out_error(f"No archived pipeline entry for: {args.company}"
+                  + (f" / {args.role}" if args.role else "")
+                  + ". To close an active row, use `remove --stage`.", "not_found")
+    if len(matches) > 1:
+        out_error(f"{args.company} has more than one archived row; pass --role.",
+                  "ambiguous_match",
+                  matches=[{"role": c[1] if len(c) > 1 else ""} for _, c in matches])
+    row_idx, cols = matches[0]
+    if len(cols) > 8:
+        out_error(f"Row for {args.company} has {len(cols)} columns, expected 8 — a cell likely "
+                  f"contains an unescaped '|'. Fix the row by hand in {PIPELINE_FILE} before "
+                  f"retrying, or the rewrite would drop the cells after the 8th.",
+                  "malformed_row", row=row_idx + 1, column_count=len(cols))
+    cols = (cols + ["—"] * 8)[:8]
+    previous = cols[2]
+    if previous == stage:
+        out_error(f"{args.company} | {cols[1]} is already {stage}.", "unchanged_stage")
+    today = date.today().strftime("%Y-%m-%d")
+    new_notes = merge_notes(cols[6], append=f"[restaged {today}: {previous} -> {stage}]")
+    row = fmt_row(cols[0], cols[1], stage, cols[3], cols[4], cols[5], new_notes, cols[7])
+    if dry_run:
+        out_ok("restage", f"Would restage {args.company} | {cols[1]}: {previous} -> {stage}",
+               dry_run=True, role=cols[1], previous_stage=previous, stage=stage,
+               would_mutate=[{"file": str(pipeline_path), "line": row_idx + 1, "row": row}])
+        return
+    lines[row_idx] = row
+    save_lines(pipeline_path, lines, content)
+    out_ok("restage", f"Restaged {args.company} | {cols[1]}: {previous} -> {stage}",
+           company=cols[0], role=cols[1], previous_stage=previous, stage=stage)
+
+
 def parse_args():
     p = JsonArgumentParser(description="Atomic mutations for data/job-pipeline.md.")
     p.add_argument("--repo-root", default=None, help="Repository root. Defaults to cwd.")
@@ -469,13 +523,24 @@ def parse_args():
              "archiving a rejection as a withdrawal inverts the fact.",
     )
 
+    rs_p = sub.add_parser("restage")
+    rs_p.add_argument("company")
+    rs_p.add_argument("--role", default=None,
+                      help="Select WHICH archived row when a company has several.")
+    rs_p.add_argument(
+        # Validated in cmd_restage, as in remove, so a bad stage returns the JSON contract.
+        "--stage", required=True,
+        help="The correct terminal stage: Rejected when the company passed, Withdrawn when "
+             "Nick passed, Accepted when an offer was taken.",
+    )
+
     return p.parse_args()
 
 
 def main() -> None:
     args = parse_args()
     if not args.command:
-        out_error("Usage: pipe_write.py <add|update|remove|note> [args...]")
+        out_error("Usage: pipe_write.py <add|update|remove|note|restage> [args...]")
 
     repo_root     = Path(args.repo_root) if args.repo_root else Path.cwd()
     pipeline_path = repo_root / PIPELINE_FILE
@@ -493,6 +558,8 @@ def main() -> None:
         cmd_remove(args, pipeline_path, args.dry_run)
     elif args.command == "note":
         cmd_note(args, pipeline_path, args.dry_run)
+    elif args.command == "restage":
+        cmd_restage(args, pipeline_path, args.dry_run)
     else:
         out_error(f"Unknown command: {args.command}")
 

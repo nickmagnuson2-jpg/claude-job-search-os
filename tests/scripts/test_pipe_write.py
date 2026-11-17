@@ -807,3 +807,80 @@ def test_a_company_with_a_pipe_is_found_again_as_a_duplicate(tmp_path):
     assert code == 0 and result["action"] == "duplicate_warning", result
     result, code = run_pipe_write("--repo-root", str(tmp_path), "note", "Test|Co", "--append", "x")
     assert code == 0 and result["company"] == "Test/Co"
+
+
+# ---------------------------------------------------------------------------
+# restage: correct the terminal stage of an ARCHIVED row (2026-11-16: a row archived as
+# Withdrawn whose own note said the company passed had no tool path, so it was hand-edited)
+# ---------------------------------------------------------------------------
+
+ARCHIVED_OLDCO = PIPELINE_MD + "| OldCo | PM | Withdrawn | 2026-01-01 | — | — | they passed | — |\n"
+
+
+def test_restage_changes_stage_and_records_it_in_notes(tmp_path):
+    from datetime import date
+    write_fixture(tmp_path, "data/job-pipeline.md", ARCHIVED_OLDCO)
+    result, code = run_pipe_write("--repo-root", str(tmp_path), "restage", "oldco",
+                                  "--stage", "Rejected")
+    assert code == 0 and result["action"] == "restage", result
+    assert result["previous_stage"] == "Withdrawn" and result["stage"] == "Rejected"
+    today = date.today().isoformat()
+    assert _rows(tmp_path) == [
+        f"| OldCo | PM | Rejected | 2026-01-01 | — | — | they passed "
+        f"[restaged {today}: Withdrawn -> Rejected] | — |"]
+
+
+def test_restage_refuses_an_active_row(tmp_path):
+    write_fixture(tmp_path, "data/job-pipeline.md", PIPELINE_WITH_ROW)
+    before = (tmp_path / "data/job-pipeline.md").read_text(encoding="utf-8")
+    result, code = run_pipe_write("--repo-root", str(tmp_path), "restage", "Acme Corp",
+                                  "--stage", "Rejected")
+    assert code != 0 and result["code"] == "not_found" and "remove" in result["message"]
+    assert (tmp_path / "data/job-pipeline.md").read_text(encoding="utf-8") == before
+
+
+def test_restage_refuses_a_non_terminal_or_unchanged_stage(tmp_path):
+    write_fixture(tmp_path, "data/job-pipeline.md", ARCHIVED_OLDCO)
+    before = (tmp_path / "data/job-pipeline.md").read_text(encoding="utf-8")
+    result, code = run_pipe_write("--repo-root", str(tmp_path), "restage", "OldCo",
+                                  "--stage", "Interview")
+    assert code != 0 and result["code"] == "invalid_stage"
+    result, code = run_pipe_write("--repo-root", str(tmp_path), "restage", "OldCo",
+                                  "--stage", "Withdrawn")
+    assert code != 0 and result["code"] == "unchanged_stage"
+    assert (tmp_path / "data/job-pipeline.md").read_text(encoding="utf-8") == before
+
+
+def test_restage_needs_a_role_when_two_archived_rows_match(tmp_path):
+    text = (ARCHIVED_OLDCO
+            + "| OldCo | Director | Withdrawn | 2026-01-02 | — | — | — | — |\n")
+    write_fixture(tmp_path, "data/job-pipeline.md", text)
+    result, code = run_pipe_write("--repo-root", str(tmp_path), "restage", "OldCo",
+                                  "--stage", "Rejected")
+    assert code != 0 and result["code"] == "ambiguous_match"
+    assert result["matches"] == [{"role": "PM"}, {"role": "Director"}]
+    result, code = run_pipe_write("--repo-root", str(tmp_path), "restage", "OldCo",
+                                  "--role", "director", "--stage", "Rejected")
+    assert code == 0, result
+    rows = _rows(tmp_path)
+    assert rows[0].startswith("| OldCo | PM | Withdrawn |")
+    assert rows[1].startswith("| OldCo | Director | Rejected | 2026-01-02 |")
+
+
+def test_restage_dry_run_writes_nothing(tmp_path):
+    write_fixture(tmp_path, "data/job-pipeline.md", ARCHIVED_OLDCO)
+    before = (tmp_path / "data/job-pipeline.md").read_text(encoding="utf-8")
+    result, code = run_pipe_write("--repo-root", str(tmp_path), "--dry-run", "restage", "OldCo",
+                                  "--stage", "Accepted")
+    assert code == 0 and result["dry_run"] is True
+    assert (tmp_path / "data/job-pipeline.md").read_text(encoding="utf-8") == before
+
+
+def test_restage_refuses_a_row_with_a_stray_pipe(tmp_path):
+    text = PIPELINE_MD + "| OldCo | PM | Withdrawn | 2026-01-01 | — | — | a | b | — |\n"
+    write_fixture(tmp_path, "data/job-pipeline.md", text)
+    before = (tmp_path / "data/job-pipeline.md").read_text(encoding="utf-8")
+    result, code = run_pipe_write("--repo-root", str(tmp_path), "restage", "OldCo",
+                                  "--stage", "Rejected")
+    assert code != 0 and result["code"] == "malformed_row" and result["column_count"] == 9
+    assert (tmp_path / "data/job-pipeline.md").read_text(encoding="utf-8") == before
