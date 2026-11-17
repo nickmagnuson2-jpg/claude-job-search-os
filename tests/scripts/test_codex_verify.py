@@ -2347,3 +2347,73 @@ def test_a_worktree_with_no_main_checkout_mirrors_nothing(tmp_path, monkeypatch)
     (tmp_path / ".git").write_text("gitdir: /x/.git/worktrees/y\n", encoding="utf-8")
     monkeypatch.setattr(cv, "_main_checkout", lambda root: None)
     assert cv.mirror_to_main(tmp_path, tmp_path / "r.md", {"report": "r"}) is None
+
+
+# --- 11/09 review of the mirror, parked P1s fixed under RULING Q20 (2026-11-16) ------------
+
+def _rel_report(wt, text):
+    rel = "output/analysis/111626-codex-mirror-r1.md"
+    (wt / rel).parent.mkdir(parents=True, exist_ok=True)
+    (wt / rel).write_text(text, encoding="utf-8")
+    return rel
+
+
+def test_a_row_already_in_main_does_not_overwrite_mains_report(main_and_worktree):
+    """Codex 3.F1 (codex-evidence-main-1109): the duplicate check ran AFTER the copy, so
+    mirroring a row main already holds replaced main's report with the worktree's bytes."""
+    main, wt = main_and_worktree
+    rel = _rel_report(wt, "OLD worktree bytes")
+    row = {"recorded": "2026-11-16T00:00:00+00:00", "report": rel, "model": "codex"}
+    gate.append_row(main, {**row, "worktree": str(wt)})
+    (main / rel).parent.mkdir(parents=True, exist_ok=True)
+    (main / rel).write_text("NEWER main bytes", encoding="utf-8")
+    assert cv.mirror_to_main(wt, wt / rel, row) is True
+    assert (main / rel).read_text(encoding="utf-8") == "NEWER main bytes"
+    assert len(gate.read_ledger(main)) == 1
+
+
+def test_the_duplicate_check_and_the_append_share_one_lock(main_and_worktree, monkeypatch):
+    """Codex 3.F2: read-then-append outside one lock let two mirrors of one run both append.
+    The read and the append must both happen inside the main ledger's file lock."""
+    import contextlib
+    import inbox_lock
+    main, wt = main_and_worktree
+    rel = _rel_report(wt, "r")
+    events, held = [], []
+
+    @contextlib.contextmanager
+    def fake_lock(path, *a, **k):
+        held.append(Path(path).resolve()); events.append(("enter", Path(path).resolve()))
+        try:
+            yield
+        finally:
+            held.pop(); events.append("exit")
+    real_read, real_append = gate.read_ledger, gate.append_row
+    monkeypatch.setattr(inbox_lock, "file_lock", fake_lock)
+    monkeypatch.setattr(gate, "read_ledger",
+                        lambda r: events.append(("read", bool(held))) or real_read(r))
+    monkeypatch.setattr(gate, "append_row",
+                        lambda r, row: events.append(("append", bool(held))) or real_append(r, row))
+    row = {"recorded": "2026-11-16T00:00:01+00:00", "report": rel, "model": "codex"}
+    assert cv.mirror_to_main(wt, wt / rel, row) is True
+    assert ("read", True) in events and ("append", True) in events
+    assert ("read", False) not in events and ("append", False) not in events
+    first = events.index(("enter", gate.ledger_path(main).resolve()))   # main's ledger lock
+    assert events.index(("read", True)) > first and events.index(("append", True)) > first
+
+
+def test_a_stubbed_append_inside_a_test_still_never_copies_into_a_real_checkout(
+        main_and_worktree, monkeypatch, capsys):
+    """Grok 4.F3: the interlock returned early only when gate.append_row was real, so a test
+    that stubbed append_row (as the warning advises) and left the resolver real could copy a
+    report into a real checkout's output/. Real report file, real .git pointer."""
+    main, wt = main_and_worktree
+    rel = _rel_report(wt, "report body")
+    monkeypatch.setattr(cv, "_real_ledger_roots", lambda: {main})
+    appended = []
+    monkeypatch.setattr(gate, "append_row", lambda r, row: appended.append(r))
+    row = {"recorded": "2026-11-16T00:00:02+00:00", "report": rel, "model": "codex"}
+    assert cv.mirror_to_main(wt, wt / rel, row) is False
+    assert not (main / rel).exists()
+    assert appended == []
+    assert "real ledger" in capsys.readouterr().err

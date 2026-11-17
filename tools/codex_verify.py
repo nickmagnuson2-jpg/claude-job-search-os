@@ -863,21 +863,26 @@ def mirror_to_main(repo_root: Path, report: Path, row: dict) -> bool | None:
         if main is None:
             return None
         main = main.resolve()
-        if (os.environ.get("PYTEST_CURRENT_TEST") and gate.append_row is _REAL_APPEND_ROW
-                and main in _real_ledger_roots()):
+        # Inside pytest, a real checkout gets NEITHER the copy NOR the row, whether or not
+        # append_row is stubbed (Grok 4.F3, 11/09: a stubbed append let the copy through).
+        if os.environ.get("PYTEST_CURRENT_TEST") and main in _real_ledger_roots():
             print("codex_verify: not mirroring into a real ledger inside a test run; "
-                  "use a tmp main checkout or stub gate.append_row.", file=sys.stderr)
+                  "use a tmp main checkout.", file=sys.stderr)
             return False
-        src = Path(report).resolve()
-        if src.is_file() and src.is_relative_to(root):
-            dest = main / src.relative_to(root)
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src, dest)
         key = (row.get("report"), row.get("model"), row.get("recorded"))
-        if any((r.get("report"), r.get("model"), r.get("recorded")) == key
-               for r in gate.read_ledger(main)):
-            return True
-        gate.append_row(main, {**row, "worktree": str(root)})
+        # One lock around the duplicate check, the copy and the append (Codex 3.F2), and
+        # the check FIRST, so a row main already holds never overwrites main's report with
+        # older bytes (Codex 3.F1). append_row takes the same lock; it is reentrant.
+        with gate.inbox_lock.file_lock(gate.ledger_path(main)):
+            if any((r.get("report"), r.get("model"), r.get("recorded")) == key
+                   for r in gate.read_ledger(main)):
+                return True
+            src = Path(report).resolve()
+            if src.is_file() and src.is_relative_to(root):
+                dest = main / src.relative_to(root)
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, dest)
+            gate.append_row(main, {**row, "worktree": str(root)})
         return True
     except Exception as e:      # the review stands; only its copy is missing
         print(f"codex_verify: warning: could not mirror the review to the main checkout: "
