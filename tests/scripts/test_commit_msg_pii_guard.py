@@ -15,7 +15,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 TOOLS = REPO_ROOT / "tools"
 HOOK = TOOLS / "hooks" / "commit-msg"
 COPIED = ("commit_msg_pii_guard.py", "precommit_pii_guard.py", "check_public_pii.py",
-          "shell_tokens.py", "hook_runtime.py")
+          "shell_tokens.py", "hook_runtime.py", "vault_paths.py")
 
 sys.path.insert(0, str(TOOLS))
 import commit_msg_pii_guard as guard  # noqa: E402

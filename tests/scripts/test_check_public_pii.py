@@ -167,17 +167,6 @@ def test_a_worktree_copy_made_before_a_denylist_update_cannot_mask_it(tmp_path):
     assert code == 2, err
 
 
-def test_a_main_checkout_does_not_ask_git_where_main_is(tmp_path, monkeypatch):
-    """Only a linked worktree (whose .git is a file) looks up the main checkout, so the
-    hook adds no git process to every call in the main checkout."""
-    sys.path.insert(0, str(SCRIPT.parent))
-    import check_public_pii as cpp
-    main, _ = _linked_worktree(tmp_path, main_lists=True)
-    monkeypatch.setattr(cpp, "_main_checkout",
-                        lambda root: (_ for _ in ()).throw(AssertionError("called")))
-    assert cpp.load_denylist(main) == ["Zorptech"]
-
-
 def test_a_main_checkout_without_lists_does_not_look_elsewhere(tmp_path):
     sys.path.insert(0, str(SCRIPT.parent))
     import check_public_pii as cpp

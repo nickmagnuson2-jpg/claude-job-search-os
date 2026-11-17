@@ -34,6 +34,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from shell_tokens import simple_commands, tokenize  # noqa: E402
 from hook_runtime import read_payload  # noqa: E402
+from vault_paths import main_checkout  # noqa: E402
 from pathlib import Path
 
 DENYLIST_REL = "tools/.pii-denylist.txt"
@@ -1038,39 +1039,14 @@ def is_gitignored(root: Path, rel: str) -> bool:
         return False
 
 
-def _main_checkout(root: Path) -> Path | None:
-    """The main checkout of the repository `root` is a LINKED worktree of, else None.
-
-    The lists are gitignored, so `git worktree add` never copies them, and every PII
-    gate run from a new worktree used to read them as empty and pass (process gap #5,
-    2026-11-16: 36 worktrees, lists copied by hand). Worktrees now read only these. The main checkout is the parent of
-    the common git dir; a primary checkout's common dir is its own `.git`."""
-    try:
-        r = subprocess.run(
-            ["git", "-C", str(root), "rev-parse", "--path-format=absolute",
-             "--git-common-dir"], capture_output=True, text=True, timeout=5)
-    except Exception:
-        return None
-    common = Path(r.stdout.strip()) if r.returncode == 0 and r.stdout.strip() else None
-    if common is None or common.name != ".git":
-        return None
-    main = common.parent
-    try:
-        return None if main.resolve() == root.resolve() else main
-    except OSError:
-        return None
-
-
 def list_path(root: Path, rel: str) -> Path:
     """Where `root` reads the list `rel` from. A linked worktree (its `.git` is a file)
     always reads the main checkout's: one source, so a copy made in a worktree can never
     go stale and hide names added later (Nick, 2026-11-17: cut the bloat). Every PII
-    gate asks this, so none keeps its own idea of where the lists live."""
-    if (root / ".git").is_file():
-        main = _main_checkout(root)
-        if main is not None:
-            return main / rel
-    return root / rel
+    gate asks this, so none keeps its own idea of where the lists live. The main
+    checkout comes from vault_paths.main_checkout (a file read, no git process), the
+    helper the other hooks already use for gitignored files beside the main checkout."""
+    return main_checkout(root) / rel
 
 
 def _load_list(root: Path, rel: str) -> list[str]:

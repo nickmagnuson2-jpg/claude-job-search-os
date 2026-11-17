@@ -14,7 +14,8 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TOOLS = REPO_ROOT / "tools"
 HOOK = TOOLS / "hooks" / "pre-commit"
-COPIED = ("precommit_pii_guard.py", "check_public_pii.py", "shell_tokens.py", "hook_runtime.py")
+COPIED = ("precommit_pii_guard.py", "check_public_pii.py", "shell_tokens.py", "hook_runtime.py",
+          "vault_paths.py")
 
 
 def _git(repo, *args, env=None, check=True):
