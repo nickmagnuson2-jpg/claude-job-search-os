@@ -194,7 +194,16 @@ def gate_dry_run(root: Path, wt: Path, branch: str, tip: str, remote_sha: str,
         return {"rc": None, "ok": False, "hook": str(hook), "error": "no pre-push hook installed"}
     line = f"refs/heads/{branch} {tip} refs/heads/{branch} {remote_sha}\n"
     rc, out, err = run([str(hook), "origin", remote_url], cwd=wt, stdin=line)
-    return {"rc": rc, "ok": rc == 0, "hook": str(hook), "tail": tail(out + err)}
+    return {"rc": rc, "ok": rc == 0, "hook": str(hook), "tail": tail(out + err),
+            "reason": None if rc == 0 else gate_reason(out + err)}
+
+
+def gate_reason(text: str) -> str:
+    """The gate's first BLOCKED line in full: that line says why. The last lines are the
+    remedy, which is no use without it. Falls back to the first non-empty line."""
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    blocked = [ln for ln in lines if "BLOCKED" in ln]
+    return (blocked or lines or ["(no output)"])[0]
 
 
 def audit_check(wt: Path, tip: str) -> dict:
@@ -302,7 +311,7 @@ def check_branch(root: Path, branch: str, worktrees: dict, gh_state: dict | None
     g = gate_dry_run(root, wt, branch, tip, remote_sha, remote_url)
     r["steps"]["gate"] = g
     if not g["ok"]:
-        r["refusals"].append(f"push gate rc {g['rc']}")
+        r["refusals"].append(f"push gate rc {g['rc']}: {g.get('reason') or g.get('error')}")
     a = audit_check(wt, tip)
     r["steps"]["audit"] = a
     if not a["ok"]:

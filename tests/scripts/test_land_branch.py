@@ -46,6 +46,11 @@ SUITE_STUB = "import os, sys\nsys.exit(int(os.environ.get('LB_SUITE_RC', '0')))\
 HOOK_STUB = """#!/bin/bash
 cat > "$LB_HOOK_LOG"
 echo "waive=${CODEX_VERIFY_WAIVE:-unset} remote=$1 url=$2" >> "$LB_HOOK_LOG"
+if [ "${LB_GATE_RC:-0}" != 0 ]; then
+  echo "prepush: checking"
+  echo "BLOCKED: stub gate says no for refs/heads/x" >&2
+  echo "  Fix: run the stub remedy" >&2
+fi
 exit "${LB_GATE_RC:-0}"
 """
 
@@ -282,7 +287,8 @@ def test_gate_failure_refuses(repo, monkeypatch):
     branch(repo, "feat", {"f.py": "x = 1\n"})
     monkeypatch.setenv("LB_GATE_RC", "1")
     r = by_name(lb.check(repo["root"], ["feat"], gh=gh_local_main(repo)))["feat"]
-    assert "push gate rc 1" in r["refusals"]
+    assert "push gate rc 1: BLOCKED: stub gate says no for refs/heads/x" in r["refusals"]
+    assert r["steps"]["gate"]["reason"] == "BLOCKED: stub gate says no for refs/heads/x"
 
 
 def test_audit_failure_refuses(repo, monkeypatch):
@@ -514,7 +520,7 @@ def test_missing_hook_and_tools_each_refuse(repo):
     assert s["gate"]["error"] == "no pre-push hook installed" and s["gate"]["rc"] is None
     assert s["audit"]["error"].startswith("missing ") and s["audit"]["ok"] is False
     assert s["pii"]["error"].startswith("missing ") and s["pii"]["ok"] is False
-    assert "push gate rc None" in r["refusals"]
+    assert "push gate rc None: no pre-push hook installed" in r["refusals"]
     assert any(x.startswith("PII scan rc None: missing ") for x in r["refusals"])
 
 
@@ -713,3 +719,42 @@ def test_cli_prints_the_report(repo, monkeypatch, capsys):
     monkeypatch.setattr(lb.check, "__defaults__", (False, gh_local_main(repo)))
     assert lb.main(["--repo-root", str(repo["root"]), "ok1"]) == 0
     assert capsys.readouterr().out.rstrip().endswith("ALL READY")
+
+
+# ---------------------------------------------------------------- mutation round 2 survivors
+@pytest.mark.parametrize("text,reason", [
+    ("ok line\nBLOCKED: first why\nBLOCKED: second\n  Fix: x", "BLOCKED: first why"),
+    ("\n  first plain line\nlast", "first plain line"),
+    ("", "(no output)"),
+])
+def test_gate_reason(text, reason):
+    assert lb.gate_reason(text) == reason
+
+
+def test_passing_gate_has_no_reason(repo):
+    branch(repo, "feat", {"f.py": "x = 1\n"})
+    r = by_name(lb.check(repo["root"], ["feat"], gh=gh_local_main(repo)))["feat"]
+    assert r["steps"]["gate"]["reason"] is None
+
+
+def test_failed_merge_base_never_falls_through_to_head(repo):
+    # With the merge-base empty, `..tip` would mean HEAD..tip and list the branch's files.
+    _, tip = branch(repo, "feat", {"f.py": "x = 1\n"})
+    assert lb.changed_files(repo["root"], "no-such-ref", tip) == []
+    assert lb.commit_subjects(repo["root"], "no-such-ref", tip) == []
+    assert lb.changed_files(repo["root"], repo["base"], tip) == ["f.py"]
+    assert lb.commit_subjects(repo["root"], repo["base"], tip) == ["feat"]
+
+
+@pytest.mark.parametrize("mode", ["clean", "private", "ambiguous"])
+def test_ok_pii_scan_carries_no_error(repo, monkeypatch, mode):
+    wt, _ = branch(repo, "feat", {"f.py": "x = 1\n"})
+    monkeypatch.setenv("LB_PII_MODE", mode)
+    res = lb.pii_scan(wt, ["f.py"])
+    assert res["ok"] is True and "error" not in res
+
+
+def test_readable_github_adds_no_warning(repo):
+    branch(repo, "feat", {"f.py": "x = 1\n"})
+    rep = lb.check(repo["root"], ["feat"], gh=gh_local_main(repo))
+    assert rep["main"]["warnings"] == []
