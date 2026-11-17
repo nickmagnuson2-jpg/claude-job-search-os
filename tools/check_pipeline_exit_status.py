@@ -170,7 +170,9 @@ def _element_formatter(toks, src: str) -> str | None:
     if len(stages) < 2:
         words = _words(toks)
         if words and all(_ASSIGNMENT.match(w.text) for w in words):
-            subs = [sub for w in words for sub in w.subs]
+            # Every substitution the assignment runs, including one inside ${...}
+            # (spans; Token.subs skips those), in source order. Its status is the last.
+            subs = [src[a:b] for w in words for kind, a, b in w.spans if kind == "sub"]
             if subs:
                 return _command_formatter(subs[-1])
         return None
@@ -216,19 +218,29 @@ def find_violation(command: str) -> tuple[str, str] | None:
     return _find_in(command)
 
 
-def _find_in(command: str) -> tuple[str, str] | None:
+def _find_in(command: str, pipefail: bool = False) -> tuple[str, str] | None:
     """The shape scan over shell_tokens structure. Each substitution body is then
     scanned as a command of its own, so `$(a | cut -f2 || echo 0)` is still caught."""
     toks = tokenize(command)
     statements = [(st, command[st[0].start:st[-1].end])
                   for st, _ in _split(toks, _STATEMENT_OPS) if _words(st)]
-    pipefail = False                 # in effect for the statements that follow
+    # In effect for the statements that follow; a substitution body inherits the state
+    # of the statement it sits in (Codex/Grok q11-r1 F1).
     for i, (stmt, src) in enumerate(statements):
         flat = _COMMENT.sub("", strip_literals(src)).strip()
         if _PIPEFAIL_ON.search(flat):
             pipefail = True
         if _PIPEFAIL_OFF.search(flat):
             pipefail = False
+        for tok in stmt:
+            # Every body that runs: $( ) and backticks, also inside "..." and ${...}
+            # (spans), and a heredoc's substitutions (subs; a heredoc has no spans).
+            bodies = ([command[a:b] for kind, a, b in tok.spans if kind == "sub"]
+                      if tok.kind != "heredoc" else tok.subs)
+            for body in bodies:
+                hit = _find_in(body, pipefail)
+                if hit:
+                    return hit
         if pipefail:
             continue
         parts = _split(stmt, _AND_OR_OPS)
@@ -248,11 +260,6 @@ def _find_in(command: str) -> tuple[str, str] | None:
                 nxt = _COMMENT.sub("", strip_literals(statements[i + 1][1]))
                 if "$?" in nxt:
                     return fmt, "$?"
-    for tok in toks:
-        for sub in tok.subs:
-            hit = _find_in(sub)
-            if hit:
-                return hit
     return None
 
 

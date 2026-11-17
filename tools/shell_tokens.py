@@ -110,6 +110,30 @@ def _read_balanced(s: str, i: int, open_ch: str, close_ch: str) -> int:
     return n
 
 
+def _param_sub_spans(s: str, i: int, end: int) -> list[tuple[str, int, int]]:
+    """"sub" spans for the `$( )` / backtick bodies inside a `${...}` body s[i:end].
+    They run when the expansion does (`${x:-$(cmd)}`), so a caller that scans every
+    command must see them (Codex/Grok q11-r1 F2). Only Token.spans records them;
+    Token.subs stays as it was."""
+    out = []
+    while i < end:
+        if s[i] == "\\":
+            i += 2
+        elif s[i] == "'":
+            j = s.find("'", i + 1)
+            i = end if j == -1 else j + 1
+        elif s.startswith("$(", i):
+            inner, j = _paren_sub(s, i)
+            out.append(("sub", i + 2, i + 2 + len(inner)))
+            i = j
+        elif s[i] == "`":
+            out.append(("sub", i + 1, _closing_backtick(s, i)))
+            i = _closing_backtick(s, i) + 1
+        else:
+            i += 1
+    return out
+
+
 def _closing_backtick(s: str, i: int) -> int:
     """Index of the backtick closing the one at s[i] (escapes skipped), or len(s)."""
     k = i + 1
@@ -370,6 +394,7 @@ def tokenize(s: str) -> list[Token]:
         if s.startswith("${", i):                      # parameter expansion, not a command
             start_word(i)
             j = _read_balanced(s, i + 1, "{", "}")
+            spans.extend(_param_sub_spans(s, i + 2, j - 1))
             word.append(s[i:j])
             i = j
             continue

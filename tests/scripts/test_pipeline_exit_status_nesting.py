@@ -69,11 +69,23 @@ def test_top_level_and_assignment_pipelines_still_found(element, fmt):
     "for f in a.xlsx b.xlsx; do [ -s \"$f\" ] && printf '%s %s\\n' \"$f\" \"$(wc -c <\"$f\" | tr -d ' ')b\" || printf '%s missing\\n' \"$f\"; done",
     # 6. echo of a count, then a separate statement reading $? of a non-pipeline
     "echo \"lines: $(git status --short | wc -l)\"; git fetch -q origin; echo \"fetch exit=$?\"",
+    # zsh `${(f)"$( )"}` with no fallback: a pipe inside it is not a verdict (q11 shape corpus)
+    'files=(${(f)"$(git status --porcelain | awk \'{print $2}\')"})',
+    # an outer || on a command whose ARGUMENT substitution holds the pipe (q11 shape corpus)
+    'echo "n: $(wc -l < f | tr -d " ")" || echo MISSING',
+    # the || is the test's else-branch and does fire (Q14, Nick 2026-11-16)
+    '[ -f f ] && wc -l < f | tr -d " " || echo MISSING',
+    # prose in a heredoc body is data, not a command (q11 shape corpus)
+    'cat >> f <<EOF\nrow \\`date\\` and x | head || else\nEOF',
+    'cat >> f <<EOF\nrow $(date) and x | head || else\nEOF',
 ])
 def test_replay_false_positive_shapes_pass(command):
     assert _rc(command) == 0
 
 
+# The restraint replay only protects shapes that appear in transcripts: 39 commands used
+# `${...$( )...}`, none with a dead fallback, so the replay could not see Grok q11-r1 F2.
+# Shapes that reviewers or tests name go in these two lists with their expected verdict.
 @pytest.mark.parametrize("command", [
     'cmd 2>&1 | tail -5; echo "exit=$?"',
     "grep -n x f | head -3 || echo none",
@@ -84,6 +96,10 @@ def test_replay_false_positive_shapes_pass(command):
     'echo "first: $(grep -o x f | head -1 || echo none)"',
     # && before a non-test command does not make the fallback live for the pipeline
     "cd /tmp && grep -n x f | head -3 || echo none",
+    # zsh `${(f)"$( )"}` holding a dead fallback (q11 shape corpus; needs the ${...} sub span)
+    'files=(${(f)"$(git status --porcelain | head -5 || echo none)"})',
+    # a real substitution in a heredoc body is scanned (q11 shape corpus)
+    'cat <<EOF\n$(cmd | head -1 || echo none)\nEOF',
 ])
 def test_true_positive_shapes_still_block(command):
     assert _rc(command) == 2
@@ -108,3 +124,25 @@ def test_an_empty_stage_or_substitution_is_clean_not_a_crash(command):
 
 def test_a_negated_test_still_guards_the_else_branch():
     assert _rc("! [ -f f ] && grep x g | head -3 || echo none") == 0
+
+
+# Codex/Grok q11-r1: a dead fallback inside ${...$( )...} still blocks (Grok F2, P0), and a
+# substitution inherits the pipefail state of its statement (Codex F1 + Grok F1, P1).
+def test_a_dead_fallback_inside_a_parameter_expansion_blocks():
+    assert _rc('echo ${x:-$(cmd | head -1 || echo none)}') == 2
+
+
+@pytest.mark.parametrize("command", [
+    'set -o pipefail; echo "$(cmd | head -1 || echo failed)"',
+    'set -euo pipefail\nx=$(cmd | tail -1); echo $?',
+])
+def test_a_substitution_inherits_pipefail(command):
+    assert _rc(command) == 0
+
+
+def test_pipefail_turned_off_is_inherited_too():
+    assert _rc('set -o pipefail; set +o pipefail; echo "$(cmd | head -1 || echo failed)"') == 2
+
+
+def test_an_assignment_takes_the_status_of_a_substitution_inside_a_parameter_expansion():
+    assert _rc('v=${x:-$(cmd | tail -1)}; echo $?') == 2

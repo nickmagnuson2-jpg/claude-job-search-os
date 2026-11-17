@@ -75,3 +75,25 @@ def test_spans_reset_between_words():
 def test_a_backtick_inside_double_quotes_records_its_body():
     s = 'echo "a `ls` b"'
     assert _spans(s) == [("sub", "ls"), ("dqx", '"a `ls` b"')]
+
+
+# Codex/Grok q11-r1 F2: a substitution inside an unquoted ${...} runs too. It is recorded
+# as a "sub" span; Token.subs is unchanged (additive).
+def test_a_substitution_inside_a_parameter_expansion_records_its_body():
+    s = 'echo ${x:-$(cmd | head -1)}'
+    assert _spans(s) == [("sub", "cmd | head -1")]
+    word = [t for t in tokenize(s) if t.kind == "word"][1]
+    assert word.subs == []
+
+
+def test_a_quote_inside_a_parameter_expansion_does_not_start_a_sub():
+    assert _spans("echo ${x:-'$(not run)'}") == []
+
+
+@pytest.mark.parametrize("s, expected", [
+    ("echo ${x:-\\$(not run)}", []),                          # an escaped $ starts nothing
+    ("echo ${x:-'a'$(b)}", [("sub", "b")]),                   # a quoted part, then a real sub
+    ("echo ${x:-`b`}", [("sub", "b")]),                       # a backtick inside ${...}
+])
+def test_parameter_expansion_sub_spans(s, expected):
+    assert _spans(s) == expected
