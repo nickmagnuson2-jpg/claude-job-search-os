@@ -71,7 +71,6 @@ class LedgerError(Exception):
 
 class Conflict(Exception):
     def __init__(self, paths: list[str]):
-        super().__init__(", ".join(paths))
         self.paths = paths
 
 
@@ -240,8 +239,8 @@ def cmd_run(root: Path, branch: str, base: str, timeout: int) -> int:
                      "ledger": str(ledger)}, 0)
     finally:
         _git(root, "worktree", "remove", "--force", str(wt))
-        _git(root, "worktree", "prune")
         shutil.rmtree(tmp, ignore_errors=True)
+        _git(root, "worktree", "prune")     # after the delete: prune keeps a live directory
 
 
 def cmd_check(root: Path, tip: str, base: str) -> int:
