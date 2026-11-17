@@ -430,11 +430,11 @@ def test_a_nonzero_exit_with_no_failures_is_named_by_its_code(sr, repo, tmp_pare
     assert _ledger_rows(repo) == []
 
 
-def test_worktree_metadata_is_pruned_when_remove_fails(sr, repo, tmp_parent, capsys,
-                                                       monkeypatch):
-    """If `git worktree remove` fails, the directory is still deleted, and the prune that
-    follows must then drop git's record of it. A prune run before the delete sees a live
-    directory and keeps the record."""
+def test_worktree_metadata_is_pruned_without_worktree_remove(sr, repo, tmp_parent, capsys,
+                                                             monkeypatch):
+    """Cleanup is the directory delete followed by `git worktree prune`. A prune run before
+    the delete sees a live directory and keeps git's record of it. `worktree remove` is
+    made to fail so that the delete and the prune alone must do the cleanup."""
     _branch(repo, "feat", {"tests/test_feat.py": PASSING})
     _failing_git(sr, monkeypatch, ("worktree", "remove"))
     code, out = _run(sr, repo, capsys, "feat", "--base", "main")

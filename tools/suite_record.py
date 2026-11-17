@@ -21,7 +21,7 @@ claim, and refuses every way that run can look green without being green:
 
 The merged tree is built with `git merge-tree --write-tree` (no checkout is touched), turned
 into a commit with `git commit-tree`, and run in a NEW detached worktree under a fresh
-tempfile.mkdtemp() directory, which is always removed in a finally block.
+tempfile.mkdtemp() directory, which is always deleted and pruned in a finally block.
 
 Rows are keyed to the merged TREE, so rewording a commit keeps its record while any content
 change on either side needs a new run. The ledger is <main checkout>/tools/.suite-ledger.jsonl
@@ -238,9 +238,10 @@ def cmd_run(root: Path, branch: str, base: str, timeout: int) -> int:
         return _out({"status": "ok", "action": "run", **row, "recorded": True,
                      "ledger": str(ledger)}, 0)
     finally:
-        _git(root, "worktree", "remove", "--force", str(wt))
+        # Delete the directory, then prune: git drops the record of a worktree whose
+        # directory is gone, and keeps one whose directory still exists.
         shutil.rmtree(tmp, ignore_errors=True)
-        _git(root, "worktree", "prune")     # after the delete: prune keeps a live directory
+        _git(root, "worktree", "prune")
 
 
 def cmd_check(root: Path, tip: str, base: str) -> int:
