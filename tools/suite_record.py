@@ -37,7 +37,8 @@ Exit codes: run 0 recorded / 1 not recorded. check 0 pass on record / 1 none (in
 conflict) / 2 usage error, bad ref, or unreadable ledger.
 
 LIMIT: the suite runs on tracked files only. Gitignored trees (data/, output/) are absent in
-the temp worktree, exactly as they are on any fresh clone.
+the temp worktree. It is a linked worktree, so tests marked live_data skip there
+(tests/conftest.py skips them when .git is a file); on a fresh clone they would run.
 """
 from __future__ import annotations
 
@@ -239,10 +240,14 @@ def cmd_run(root: Path, branch: str, base: str, timeout: int) -> int:
 
     tmp = Path(tempfile.mkdtemp(prefix="suite-record-"))
     wt = tmp / "wt"
+    admin = None
     try:
         add = _git(root, "worktree", "add", "--detach", str(wt), merged_commit)
         if add.returncode != 0:
             return _fail("git_error", f"git worktree add failed: {add.stderr.strip()}", **ids)
+        # Read git's record of this worktree now, before the merged tree's code runs in it:
+        # that code can rewrite wt/.git, so it must not choose what cleanup deletes.
+        admin = admin_dir(wt, common_git)
         junit, log = tmp / "junit.xml", tmp / "pytest.log"
         start = time.monotonic()
         rc = _run_pytest(wt, junit, log, timeout)
@@ -281,7 +286,6 @@ def cmd_run(root: Path, branch: str, base: str, timeout: int) -> int:
         # Only this run's worktree is cleaned up: its directory, then git's record of it.
         # A repository-wide `git worktree prune` would also drop the record of any other
         # worktree whose directory is absent at that moment.
-        admin = admin_dir(wt, common_git)
         shutil.rmtree(tmp, ignore_errors=True)
         if admin is not None:
             shutil.rmtree(admin, ignore_errors=True)
