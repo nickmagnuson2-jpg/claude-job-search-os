@@ -417,6 +417,9 @@ REGISTRY: dict[tuple[str, str, str | None], object] = {
         Branch("source_corrections.py", "main", reads="unreadable", closes="exit")],
     ("check_public_pii.py", "unreadable", None): [
         Branch("check_public_pii.py", "scan_paths", reads="unreadable", closes="exit")],
+    ("company_queue.py", "skipped", None): NotCoverage(
+        "candidates already pending or already decided in the discovery queue: a "
+        "deliberate dedupe of known companies, not input the tool failed to read"),
     ("check_public_pii.py", "skipped", None): NotCoverage(
         "paths outside the repo, gitignored, not public, or binary: none of them ships "
         "as text, so none needed the check"),

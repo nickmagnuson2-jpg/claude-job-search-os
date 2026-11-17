@@ -15,8 +15,9 @@ def test_render_inbox_block_person():
     assert "Deployment Lead" in block and "review-gated" in block
 
 
-def test_collect_main_scores_companies_and_writes_inbox(tmp_path, monkeypatch):
-    """Collector: company preset -> Agent -> score -> new items -> inbox block + seen."""
+def test_collect_main_scores_companies_and_writes_the_queue(tmp_path, monkeypatch):
+    """Collector: company preset -> Agent -> score -> new items -> discovery queue + seen.
+    Discovery no longer writes the inbox (funnel-intake decision 3, 2026-11-06)."""
     import tools.agent_collect as ac
 
     presets = tmp_path / "presets.yaml"
@@ -33,6 +34,7 @@ def test_collect_main_scores_companies_and_writes_inbox(tmp_path, monkeypatch):
     inbox_file = tmp_path / "inbox.md"
     monkeypatch.setattr(ac, "SEEN_PATH", seen_file)
     monkeypatch.setattr(ac, "INBOX", inbox_file)
+    monkeypatch.setattr(ac, "QUEUE_ROOT", tmp_path)
     monkeypatch.setattr(ac, "PIPELINE", tmp_path / "no-pipeline.md")
     monkeypatch.setattr(ac, "load_dotenv", lambda: None)
     monkeypatch.setattr(ac, "make_client", lambda: object())
@@ -50,9 +52,11 @@ def test_collect_main_scores_companies_and_writes_inbox(tmp_path, monkeypatch):
                                      "--presets-file", str(presets)])
     ac.main()
 
-    body = inbox_file.read_text(encoding="utf-8")
-    assert "Agent drip: lane-x (company)" in body
-    assert "Acme" in body and "score 7" in body
+    import tools.company_queue as cq
+    assert not inbox_file.exists(), "discovery must not write the inbox any more"
+    pending = cq.load(tmp_path)["pending"]
+    assert [(e["name"], e["score"], e["preset"], e["entity"], e["first_seen"]) for e in pending] \
+        == [("Acme", 7, "lane-x", "company", "2026-07-24")]
     import json
     assert "acme" in json.loads(seen_file.read_text(encoding="utf-8"))["lane-x"]
 
@@ -71,6 +75,7 @@ def test_collect_main_skips_unmonitored_and_non_completed(tmp_path, monkeypatch)
     inbox_file = tmp_path / "inbox.md"
     monkeypatch.setattr(ac, "SEEN_PATH", seen_file)
     monkeypatch.setattr(ac, "INBOX", inbox_file)
+    monkeypatch.setattr(ac, "QUEUE_ROOT", tmp_path)
     monkeypatch.setattr(ac, "PIPELINE", tmp_path / "no-pipeline.md")
     monkeypatch.setattr(ac, "load_dotenv", lambda: None)
     monkeypatch.setattr(ac, "make_client", lambda: object())
@@ -80,8 +85,9 @@ def test_collect_main_skips_unmonitored_and_non_completed(tmp_path, monkeypatch)
     monkeypatch.setattr("sys.argv", ["agent_collect.py", "--today", "2026-07-24",
                                      "--presets-file", str(presets)])
     ac.main()
-    # failing preset produced no inbox file (no fresh candidates written)
+    # failing preset produced no queue and no inbox file (no fresh candidates written)
     assert not inbox_file.exists()
+    assert not (tmp_path / "tools" / ".company-queue.json").exists()
 
 
 # --- the geo flag must reach the human -------------------------------------------
@@ -211,6 +217,7 @@ def _collect_env(tmp_path, monkeypatch, presets_yaml, agent_result):
     presets.write_text(presets_yaml, encoding="utf-8")
     monkeypatch.setattr(ac, "SEEN_PATH", tmp_path / ".agent_seen.json")
     monkeypatch.setattr(ac, "INBOX", tmp_path / "inbox.md")
+    monkeypatch.setattr(ac, "QUEUE_ROOT", tmp_path)
     monkeypatch.setattr(ac, "PIPELINE", tmp_path / "no-pipeline.md")
     calls = []
     monkeypatch.setattr(ac, "load_dotenv", lambda: calls.append("dotenv"))
@@ -247,10 +254,12 @@ def test_a_person_preset_is_neither_reconciled_nor_scored_as_companies(tmp_path,
     monkeypatch.setattr(ac, "reconcile_candidates", company_only)
     monkeypatch.setattr(ac, "score_company_candidates", company_only)
     ac.main()
-    assert "Casey Doe" in (tmp_path / "inbox.md").read_text(encoding="utf-8")
+    import tools.company_queue as cq
+    [person] = cq.load(tmp_path)["pending"]
+    assert (person["name"], person["entity"], person["company"]) == ("Casey Doe", "person", "Acme")
 
 
-def test_a_run_whose_candidates_were_all_seen_writes_no_inbox_block(tmp_path, monkeypatch):
+def test_a_run_whose_candidates_were_all_seen_writes_nothing(tmp_path, monkeypatch):
     import json
     ac, _ = _collect_env(tmp_path, monkeypatch,
                          "presets:\n  live: {entity_type: company, query: q, monitor: {cadence: weekly}}\n",
@@ -260,9 +269,10 @@ def test_a_run_whose_candidates_were_all_seen_writes_no_inbox_block(tmp_path, mo
     monkeypatch.setattr(ac, "score_company_candidates", lambda c, w, k: c)
     ac.main()
     assert not (tmp_path / "inbox.md").exists()
+    assert not (tmp_path / "tools" / ".company-queue.json").exists()
 
 
-def test_a_failed_inbox_write_is_reported_on_stderr(tmp_path, monkeypatch, capsys):
+def test_a_failed_queue_write_is_reported_on_stderr(tmp_path, monkeypatch, capsys):
     ac, _ = _collect_env(tmp_path, monkeypatch,
                          "presets:\n  live: {entity_type: company, query: q, monitor: {cadence: weekly}}\n",
                          {"status": "completed",
@@ -270,8 +280,8 @@ def test_a_failed_inbox_write_is_reported_on_stderr(tmp_path, monkeypatch, capsy
     monkeypatch.setattr(ac, "score_company_candidates", lambda c, w, k: c)
 
     def locked(*a, **k):
-        raise ac.inbox_lock.LockTimeout("inbox locked")
-    monkeypatch.setattr(ac.inbox_lock, "prepend_entries", locked)
+        raise ac.inbox_lock.LockTimeout("queue locked")
+    monkeypatch.setattr(ac.company_queue, "add", locked)
     ac.main()
     captured = capsys.readouterr()
     assert "proposals NOT written" in captured.err

@@ -75,6 +75,9 @@ def commands(target_date: str, read_only: bool = False,
         "source_check": ["tools/source_check.py", "due", *r, *d, "--json"],
         "workstream_state": ["tools/workstream_state.py", *render, "--json"],
         "role_queue": ["tools/role_queue_read.py", *r, "--top", "5"],
+        # funnel-intake decision 3 (Nick, 2026-11-06): discovery output waits in a queue
+        # /standup reads, not in the inbox. Read only; Nick decides with company_queue.py decide.
+        "company_queue": ["tools/company_queue.py", *r, "read", "--top", "4"],
         "sent_artifacts": ["tools/sent_artifact_check.py", *r, "--json", *no_state],
         "build_check": ["tools/build_check.py", *r, "--json"],
         # S7 (2026-10-28, "Merge into the collector"): the five capture lanes' due count,

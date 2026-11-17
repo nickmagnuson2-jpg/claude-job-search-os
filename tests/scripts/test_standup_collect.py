@@ -19,7 +19,7 @@ import standup_collect as sc  # noqa: E402
 
 def test_every_command_is_an_argv_list_naming_a_script_that_exists():
     cmds = sc.commands("2026-01-02")
-    assert len(cmds) == 13
+    assert len(cmds) == 14
     for name, argv in cmds.items():
         assert isinstance(argv, list) and all(isinstance(a, str) and " " not in a for a in argv), name
         assert (REPO_ROOT / argv[0]).is_file(), f"{name}: {argv[0]} does not exist"
@@ -88,7 +88,7 @@ def test_the_cli_exits_1_when_any_script_failed(tmp_path):
                         "--repo-root", str(root), "--target-date", "2026-01-02"],
                        capture_output=True, text=True, timeout=120)
     out = json.loads(r.stdout)
-    assert r.returncode == 1 and len(out["failed"]) == 13, "a repo with no scripts fails all thirteen"
+    assert r.returncode == 1 and len(out["failed"]) == 14, "a repo with no scripts fails all fourteen"
 
 
 def test_a_script_that_cannot_start_is_reported_not_raised(tmp_path, monkeypatch):
