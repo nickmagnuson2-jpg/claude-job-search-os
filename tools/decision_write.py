@@ -128,6 +128,12 @@ def org_file(p: dict) -> Path:
     return old if old.exists() else new
 
 
+def canonical_owner(owner: str) -> str:
+    """Every organizer name is stored and matched as org: the board routes the organizer by its
+    org row, never by a workstream column."""
+    return ORG if owner in ORG_NAMES else owner
+
+
 def owner_file(p: dict, owner: str) -> Path:
     """The owner's workstream file, refused if it resolves outside data/workstreams."""
     f = org_file(p) if owner in ORG_NAMES else p["workstreams"] / f"{owner}.md"
@@ -304,7 +310,7 @@ def parse_usd(cls: str, raw):
 
 
 def cmd_add(p: dict, a) -> dict:
-    owner = ORG if a.owner in ORG_NAMES else a.owner   # the board routes the organizer as org
+    owner = canonical_owner(a.owner)
     if not owner_file(p, owner).is_file() and owner != ORG:
         raise Refusal("unknown_owner", f"no workstream file for {owner!r}; owner is a workstream or 'org'")
     if a.cls not in CLASSES:
@@ -362,7 +368,7 @@ def listing(p: dict) -> tuple[list, str]:
 
 def cmd_list(p: dict, a) -> None:
     every, board = listing(p)
-    qs = [q for q in every if not a.owner or q["owner"] == a.owner]
+    qs = [q for q in every if not a.owner or q["owner"] == canonical_owner(a.owner)]
     if a.json:
         emit({"status": "ok", "board": board, "open": qs})
         return
