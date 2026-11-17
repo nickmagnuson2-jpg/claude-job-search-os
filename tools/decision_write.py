@@ -304,7 +304,7 @@ def parse_usd(cls: str, raw):
 
 
 def cmd_add(p: dict, a) -> dict:
-    owner = a.owner
+    owner = ORG if a.owner in ORG_NAMES else a.owner   # the board routes the organizer as org
     if not owner_file(p, owner).is_file() and owner != ORG:
         raise Refusal("unknown_owner", f"no workstream file for {owner!r}; owner is a workstream or 'org'")
     if a.cls not in CLASSES:
