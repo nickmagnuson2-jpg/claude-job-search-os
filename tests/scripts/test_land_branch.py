@@ -634,6 +634,8 @@ def test_render_exact():
     rep = {
         "main": {"github_main": "g" * 40, "local_origin_main": "l" * 40, "ref": "r" * 40,
                  "method": "rebuilt", "warnings": ["W1"]},
+        "checkers": {"path": "/m/tools", "head": "c" * 40, "dirty": [], "current": False,
+                     "warnings": ["C1"]},
         "branches": [
             {"branch": "ok1", "tip": "a" * 40, "ready": True, "refusals": [], "notes": ["N1"],
              "steps": {"merge_main": {"clean": True}, "gate": {"ok": True, "rc": 0},
@@ -654,7 +656,9 @@ def test_render_exact():
         f"GitHub main: {'g' * 40}",
         f"local origin/main: {'l' * 40}",
         f"checked against: {'r' * 40} (rebuilt)",
+        f"checkers: /m/tools at {'c' * 40} (NOT current main)",
         "!!! W1",
+        "!!! C1",
         "",
         "READY      ok1  aaaaaaaa  merge_main=ok gate=ok(rc 0) pii=ok(rc 3) audit=ok(rc 0) suite=ok",
         "           note: N1",
@@ -688,6 +692,8 @@ def test_render_exact():
 def test_render_exact_no_conflicts_github_down():
     rep = {"main": {"github_main": None, "local_origin_main": "l" * 40, "ref": "l" * 40,
                     "method": "fallback", "warnings": []},
+           "checkers": {"path": "/m/tools", "head": "l" * 40, "dirty": [], "current": True,
+                        "warnings": []},
            "branches": [{"branch": "ok1", "tip": "a" * 40, "ready": True, "refusals": [],
                          "steps": {"pii": {"ok": True, "rc": 0, "hits": [], "ambiguous": []},
                                    "suite": {"ok": False, "rc": 1}}}],
@@ -695,7 +701,8 @@ def test_render_exact_no_conflicts_github_down():
            "landing": [], "all_ready": True}
     assert lb.render(rep) == "\n".join([
         "GitHub main: UNREADABLE", f"local origin/main: {'l' * 40}",
-        f"checked against: {'l' * 40} (fallback)", "",
+        f"checked against: {'l' * 40} (fallback)",
+        f"checkers: /m/tools at {'l' * 40} (current)", "",
         "READY      ok1  aaaaaaaa  pii=ok(rc 0) suite=FAIL(rc 1)", "",
         "Pairwise conflicts: none", "",
         "Merge order (on GitHub, no rebase):", "  1. ok1", "",
@@ -881,3 +888,46 @@ def test_status_runs_without_optional_locks(repo, monkeypatch):
     monkeypatch.setattr(lb, "git", lambda a, c: (seen.append(a), real(a, c))[1])
     lb.check(repo["root"], ["feat"], gh=gh_local_main(repo))
     assert ["--no-optional-locks", "status", "--porcelain", "--untracked-files=no"] in seen
+
+
+# ---------------------------------------------------------------- checker provenance (b2, r2 bar)
+def test_checkers_current_when_main_checkout_is_github_main(repo):
+    branch(repo, "feat", {"f.py": "x = 1\n"})
+    rep = lb.check(repo["root"], ["feat"], gh=gh_local_main(repo))
+    c = rep["checkers"]
+    assert (c["head"], c["current"], c["warnings"], c["dirty"]) == (repo["base"], True, [], [])
+    body = _decode(rep["landing"][0]["compare_url"])[1]["body"]
+    assert f"(checkers at {short_(repo['base'])})" in body
+    assert "NOT current" not in lb.render(rep)
+
+
+def test_checkers_behind_github_main_warn_and_say_so_in_pr_text(repo):
+    _, side = branch(repo, "side", {"side.txt": "s\n"})
+    tree = sh(repo["root"], "merge-tree", "--write-tree", repo["base"], side).splitlines()[0]
+    branch(repo, "feat", {"f.py": "x = 1\n"})
+    rep = lb.check(repo["root"], ["feat"], gh=gh_main_at(FAKE_SHA, [repo["base"], side], tree))
+    c = rep["checkers"]
+    assert c["current"] is False
+    assert c["warnings"] == [
+        f"checkers (audit, PII, suite) ran from {repo['root']} at {short_(repo['base'])}, not "
+        f"GitHub main {short_(FAKE_SHA)}: those results come from that older or different copy"]
+    out = lb.render(rep)
+    assert f"!!! {c['warnings'][0]}" in out and "(NOT current main)" in out
+    body = _decode(rep["landing"][0]["compare_url"])[1]["body"]
+    assert f"checkers at {short_(repo['base'])}, NOT current main" in body
+
+
+def test_checkers_with_uncommitted_tool_changes_warn(repo):
+    branch(repo, "feat", {"f.py": "x = 1\n"})
+    p = repo["root"] / "tools" / "audit_pii_record.py"
+    p.write_text(p.read_text() + "# local edit\n")
+    c = lb.check(repo["root"], ["feat"], gh=gh_local_main(repo))["checkers"]
+    assert c["dirty"] == ["tools/audit_pii_record.py"] and c["current"] is False
+    assert c["warnings"] == [f"checkers ran with uncommitted changes in {repo['root']}/tools: "
+                             "tools/audit_pii_record.py"]
+
+
+def test_checkers_outside_a_repo_are_never_current(tmp_path):
+    c = lb.checker_provenance(tmp_path / "tools", {"github_main": "a" * 40, "ref": "b" * 40})
+    assert c["head"] is None and c["current"] is False
+    assert "at ?, not GitHub main aaaaaaaa" in c["warnings"][0]

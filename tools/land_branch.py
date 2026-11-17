@@ -26,7 +26,9 @@ For each branch:
      skipped with a notice when it does not.
 
 Steps 6 to 8 run the MAIN CHECKOUT's copies of those tools, never the branch's: a branch that
-edits its own audit or PII scanner must not get to judge itself (Codex r1 F1, P0).
+edits its own audit or PII scanner must not get to judge itself (Codex r1 F1, P0). Those
+copies are whatever the main checkout has checked out, so the report prints that commit and
+warns when it is not GitHub main, and the PR text says which copies ran.
 
 A branch is also refused when GitHub already has it at a sha that is not an ancestor of the
 local tip (the printed push would be rejected as non-fast-forward), and when the merge check
@@ -119,6 +121,28 @@ def trusted_tools(root: Path) -> Path:
     worktree. Steps 6 to 8 run from here so a candidate branch never runs its own judge."""
     rc, common, _ = git(["rev-parse", "--path-format=absolute", "--git-common-dir"], root)
     return Path(common.strip()).parent / "tools" if rc == 0 else root / "tools"
+
+
+def checker_provenance(tools: Path, main: dict) -> dict:
+    """Which copies of the audit, PII and suite checkers ran. They are whatever the main
+    checkout has checked out, which can lag GitHub main (2026-11-16: local main at f58251d6
+    while GitHub main was 23a3251b). Never let a report imply they ran at current main."""
+    checkout = tools.parent
+    rc, head, _ = git(["rev-parse", "HEAD"], checkout)
+    head = head.strip() if rc == 0 else None
+    rc, st, _ = git(["--no-optional-locks", "status", "--porcelain", "--", "tools"], checkout)
+    dirty = [ln[3:] for ln in st.splitlines() if ln.strip()] if rc == 0 else []
+    want = main.get("github_main") or main.get("ref")
+    warnings = []
+    if head != want:
+        warnings.append(f"checkers (audit, PII, suite) ran from {checkout} at {short(head) or '?'}, "
+                        f"not GitHub main {short(want) or '?'}: those results come from that "
+                        "older or different copy")
+    if dirty:
+        warnings.append(f"checkers ran with uncommitted changes in {checkout}/tools: "
+                        f"{', '.join(dirty)}")
+    return {"path": str(tools), "head": head, "dirty": dirty, "current": not warnings,
+            "warnings": warnings}
 
 
 # ---------------------------------------------------------------- GitHub (read-only)
@@ -396,15 +420,18 @@ def commit_subjects(root: Path, base: str, tip: str) -> list[str]:
     return [s for s in out.splitlines() if s.strip()] if rc == 0 else []
 
 
-def pr_text(r: dict, main: dict, subjects: list[str], conflicts: list[dict]) -> tuple[str, str]:
-    """Title and body. States only what this run checked."""
+def pr_text(r: dict, main: dict, subjects: list[str], conflicts: list[dict],
+            checkers: dict) -> tuple[str, str]:
+    """Title and body. States only what this run checked, and with which checker copies."""
     title = subjects[-1] if subjects else r["branch"]      # oldest commit names the feature
     against = f"main {short(main.get('github_main') or main.get('ref'))}"
+    at = (f"checkers at {short(checkers['head'])}" if checkers["current"] else
+          f"checkers at {short(checkers['head']) or '?'}, NOT current main")
     lines = ["## Summary", *[f"- {s}" for s in subjects], "", "## Verification",
              f"- Merges cleanly onto {against} (land_branch.py, git merge-tree, "
              f"{main['method']}).",
              "- Pre-push gate dry run rc 0; /audit-pii record present for this tip; "
-             "PII denylist scan: no hits."]
+             f"PII denylist scan: no hits ({at})."]
     mine = [c for c in conflicts if r["branch"] in (c["a"], c["b"])]
     if mine:
         lines += ["", "## Merge note"]
@@ -461,18 +488,20 @@ def check(root: Path, branches: list[str], want_suite: bool = False, gh=gh_json)
         m = merge_check(root, tips[a], tips[b])
         if not m["clean"]:
             conflicts.append({"a": a, "b": b, "files": m["files"], "error": m.get("error")})
+    checkers = checker_provenance(trusted_tools(root), main)
     landing = []
     for r in results:
         if not r["ready"]:
             continue
-        title, body = pr_text(r, main, commit_subjects(root, main["ref"], r["tip"]), conflicts)
+        title, body = pr_text(r, main, commit_subjects(root, main["ref"], r["tip"]), conflicts,
+                              checkers)
         landing.append({"branch": r["branch"],
                         "push": f"cd {r['worktree']} && git push origin "
                                 f"refs/heads/{r['branch']}:refs/heads/{r['branch']}",
                         "compare_url": compare_url(slug, r["branch"], title, body),
                         "pushed": r.get("github_tip") == r["tip"]})
-    return {"repo": slug, "main": main, "branches": results, "conflicts": conflicts,
-            "merge_order": merge_order(results, conflicts),
+    return {"repo": slug, "main": main, "checkers": checkers, "branches": results,
+            "conflicts": conflicts, "merge_order": merge_order(results, conflicts),
             "landing": landing,
             "push_commands": [x["push"] for x in landing],
             "all_ready": bool(results) and all(r["ready"] for r in results)
@@ -499,7 +528,10 @@ def render(rep: dict) -> str:
     out = [f"GitHub main: {m['github_main'] or 'UNREADABLE'}",
            f"local origin/main: {m['local_origin_main']}",
            f"checked against: {m['ref']} ({m['method']})"]
-    out += [f"!!! {w}" for w in m["warnings"]]
+    c = rep["checkers"]
+    out.append(f"checkers: {c['path']} at {c['head']} "
+               f"({'current' if c['current'] else 'NOT current main'})")
+    out += [f"!!! {w}" for w in m["warnings"] + c["warnings"]]
     out.append("")
     for r in rep["branches"]:
         verdict = "READY" if r["ready"] else "NOT READY"
