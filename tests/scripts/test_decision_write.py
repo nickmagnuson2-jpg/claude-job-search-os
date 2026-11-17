@@ -418,6 +418,20 @@ def test_check_refuses_both_org_files(main, capsys):
     assert code == 1 and data["code"] == "org_file_split"
 
 
+@pytest.mark.parametrize("queue", ["empty", "open_org_question", "non_org_resolution"])
+def test_check_refuses_both_org_files_whatever_the_queue_holds(main, capsys, queue):
+    """The split is refused up front, not only while validating an org resolution (Codex r1 F1)."""
+    if queue == "open_org_question":
+        add(main, capsys, owner="org", cls="order")
+    elif queue == "non_org_resolution":
+        add(main, capsys)
+        rule(main, "alpha-work", "RULING Q1 | option: b | reason: x | window: aa")
+        assert run(main, "resolve", "Q1", capsys=capsys)[0] == 0
+    (main / "data" / "workstreams" / "orchestration.md").write_text("# o\n", encoding="utf-8")
+    code, data, _, _ = run(main, "check", capsys=capsys)
+    assert code == 1 and data["code"] == "org_file_split"
+
+
 def test_resolve_refuses_unknown_and_already_resolved(main, capsys):
     code, data, _, _ = run(main, "resolve", "Q4", capsys=capsys)
     assert code == 1 and data["code"] == "unknown_question"
