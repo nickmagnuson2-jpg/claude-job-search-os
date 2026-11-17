@@ -1061,16 +1061,23 @@ def _main_checkout(root: Path) -> Path | None:
         return None
 
 
-def _load_list(root: Path, rel: str) -> list[str]:
-    """One token per line; blank lines and # comments skipped. A linked worktree (its
-    `.git` is a file) always reads the main checkout's list: one source, so a copy made
-    in a worktree can never go stale and hide names added later (Nick, 2026-11-17: cut
-    the bloat). Missing or unreadable is an empty list (fail open), for every tier."""
-    path = root / rel
+def list_path(root: Path, rel: str) -> Path:
+    """Where `root` reads the list `rel` from. A linked worktree (its `.git` is a file)
+    always reads the main checkout's: one source, so a copy made in a worktree can never
+    go stale and hide names added later (Nick, 2026-11-17: cut the bloat). Every PII
+    gate asks this, so none keeps its own idea of where the lists live."""
     if (root / ".git").is_file():
         main = _main_checkout(root)
         if main is not None:
-            path = main / rel
+            return main / rel
+    return root / rel
+
+
+def _load_list(root: Path, rel: str) -> list[str]:
+    """One token per line; blank lines and # comments skipped, read from
+    `list_path(root, rel)`. Missing or unreadable is an empty list (fail open), for
+    every tier."""
+    path = list_path(root, rel)
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
     except (FileNotFoundError, PermissionError):

@@ -102,6 +102,17 @@ def test_an_override_commits_and_is_recorded(repo):
     assert row["blocked"] == [{"file": "<commit message>", "tokens": ["Zorpcorp"]}]
 
 
+def test_a_linked_worktree_uses_the_main_checkouts_denylist(repo, tmp_path):
+    """The lists are gitignored, so a worktree has none; it reads the main checkout's
+    (2026-11-17). Before, this gate printed `no denylist` and passed the real name."""
+    wt = tmp_path / "wt"
+    _git(repo, "worktree", "add", "-q", "--detach", str(wt))
+    assert not (wt / "tools" / ".pii-denylist.txt").exists()
+    r = _commit(wt, "fix: a case Zorpcorp hit")
+    assert r.returncode != 0
+    assert "Zorpcorp" in r.stderr and "commit_msg_pii_guard" in r.stderr
+
+
 def test_an_empty_denylist_refuses(repo):
     (repo / "tools" / ".pii-denylist.txt").write_text("")
     r = _commit(repo, "fix: anything")
