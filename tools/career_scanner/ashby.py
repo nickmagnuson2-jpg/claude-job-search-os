@@ -33,7 +33,31 @@ def fetch_ashby(slug: str, errors: list | None = None) -> list[dict]:
     Returns:
         List of standardized role dicts, or [] on error.
     """
+    return _fetch_board(slug, errors, include_compensation=False)
+
+
+def fetch_ashby_with_compensation(slug: str, errors: list | None = None) -> list[dict]:
+    """Fetch an Ashby board WITH pay: same as fetch_ashby, plus two keys per role.
+
+    Adds ``id`` (the posting id) and ``compensation_summary`` (the posting's
+    ``compensationTierSummary``; "" when the posting publishes no pay). The board is
+    requested with ``includeCompensation=true``.
+
+    A separate function, not a flag on fetch_ashby, because every parser shares one
+    signature and one ROLE_KEYS contract (tests/scripts/test_career_scanner_filters.py,
+    tests/scripts/test_parsers.py). The nightly scan keeps calling fetch_ashby.
+
+    Added 2026-11-18: in the session history, 103 of 147 hand-rolled Ashby board
+    fetches asked for compensation, which fetch_ashby did not return, so they went
+    around the project parser and lost its error channel.
+    """
+    return _fetch_board(slug, errors, include_compensation=True)
+
+
+def _fetch_board(slug: str, errors: list | None, include_compensation: bool) -> list[dict]:
     url = f"https://api.ashbyhq.com/posting-api/job-board/{slug}"
+    if include_compensation:
+        url += "?includeCompensation=true"
     req = urllib.request.Request(url)
     req.add_header("Accept", "application/json")
     req.add_header("User-Agent", "Mozilla/5.0 (compatible; career-scanner/1.0)")
@@ -75,5 +99,10 @@ def fetch_ashby(slug: str, errors: list | None = None) -> list[dict]:
             "description_plain": job.get("descriptionPlain", "") or "",
             "ats": "ashby",
         })
+        if include_compensation:
+            comp = job.get("compensation")
+            summary = comp.get("compensationTierSummary") if isinstance(comp, dict) else ""
+            roles[-1]["id"] = job.get("id", "") or ""
+            roles[-1]["compensation_summary"] = summary or ""
 
     return roles
