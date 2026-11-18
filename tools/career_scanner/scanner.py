@@ -124,20 +124,29 @@ _LEVEL_ONLY = re.compile(r"(senior |associate |assistant )?(manager|director|hea
 # family is a category from the 2026-11-17 hand review of the 454 titles the old include
 # list cut (the gitignored calibration file title-cut-review-2026-11-17.json, field `why`).
 # Patterns run on normalize_title(title_head(title)). Kept in code because scan-targets.yaml
-# changes need Nick's ruling; moving the list into the yaml is a decision for him.
+# changes need Nick's ruling; moving the list into the yaml is a decision for him. Second
+# pass (2026-11-18, after a live dry run): patterns for labelled not-fit titles that reached
+# the scorer at score 4-5 (tech lead, revenue ops / deal desk, paid / SEO / events / comms,
+# compliance / security); none cuts a labelled in-lane or old-gate-passed title.
 OUT_OF_LANE_FAMILIES = {
     "sales": r"\bsales\b|\bsdr\b|\bbdr\b|\bbusiness development\b|\baccount (executive|director|manager)\b"
-             r"|\brvp\b|\bregional (vice president|vp)\b|\benablement\b|\bae\b",
-    "marketing": r"\bmarketing\b|\bmarketer\b|\bbrand\b|\bcampaign\b|\bpmm\b|\babm\b",
+             r"|\brvp\b|\bregional (vice president|vp)\b|\benablement\b|\bae\b"
+             r"|\brevenue operations\b|\brevops\b|\bdeal desk\b",
+    "marketing": r"\bmarketing\b|\bmarketer\b|\bbrand\b|\bcampaign\b|\bpmm\b|\babm\b"
+                 r"|\bpaid\b|\bseo\b|\bsem\b|\bevents?\b|\banalyst relations\b|\bcommunications\b"
+                 r"|\bpr\b|\bdeveloper (community|relations|advocate)\w*",
     "recruiting": r"\brecruit\w*|\btalent\b|\bsourcer\b",
     "people": r"\bhr\b|\bpeople (business partner|programs|partner)\b|\bhead of people\b",
     "legal/finance/admin": r"\bcounsel\b|\blegal\b|\baccountant\b|\baccounting\b|\bpayroll\b"
                            r"|\bfp and a\b|\bfinancial analyst\b|\bfinance\b|\boffice manager\b"
                            r"|\bexecutive assistant\b|\bfront desk\b|\badministrative\b"
-                           r"|\bworkplace\b|\bfacilities\b|\bit (administrator|manager)\b",
+                           r"|\bworkplace\b|\bfacilities\b|\bit (administrator|manager)\b"
+                           r"|\bcompliance\b|\bsecurity\b",
     "customer support": r"\bcustomer success\b|\bsupport\b",
     "research/technical": r"\bresearch\w*|\bscientist\b|\btechnical staff\b|\bmachine learning\b"
-                          r"|\bml\b|\bdata scien\w*",
+                          r"|\bml\b|\bdata scien\w*"
+                          # Engineering heads without the word "engineer" (1f's check on b8a3ae4a).
+                          r"|\btech lead\b|\bsre\b|\btechnical program manager\b",
     "solutions/presales": r"\bsolutions? (architect|consultant|consulting)\b|\bhead of solutions\b",
     "design": r"\bdesigner\b|\bdesign\b",
     "product": r"\bproduct (manager|lead|designer|owner)\b|\bhead of product\b",

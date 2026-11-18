@@ -49,8 +49,9 @@ KNOWN_CLEAR_PASSES = {
     "Compute Finance and Strategy",
 }
 # Not-fit rows outside the clear categories that may pass the gate (the scorer ranks them).
-# Measured 2026-11-18 on the full file: 108 of 131. A ceiling, so noise growth is visible.
-OTHER_PASS_CEILING = 108
+# Measured 2026-11-18 on the full file: 79 of 131 (108 before the second family pass).
+# A ceiling, so noise growth is visible.
+OTHER_PASS_CEILING = 79
 
 
 def _sets():
@@ -197,6 +198,25 @@ def test_title_head(raw, head):
     ("Strategy and Sales Lead", None),
     ("Chief of Staff, Marketing", None),
     ("Strategic Project Lead", None),
+    # Second pass: engineering heads without "engineer", and labelled not-fit groups that
+    # reached the scorer at score 4-5 in the 2026-11-18 dry run.
+    ("Tech Lead Manager", "research/technical"),
+    ("Tech Lead, Applied AI - Evals", "research/technical"),
+    ("Senior Technical Program Manager", "research/technical"),
+    ("Senior SRE", "research/technical"),
+    ("RevOps Lead", "sales"),
+    ("Senior Manager, Revenue Operations", "sales"),
+    ("Senior Deal Desk Manager", "sales"),
+    ("Paid Search & SEM", "marketing"),
+    ("SEO & AEO", "marketing"),
+    ("Head of Global Events", "marketing"),
+    ("Head of Analyst Relations", "marketing"),
+    ("PR & Communications Manager", "marketing"),
+    ("Developer Community Manager", "marketing"),
+    ("Senior Compliance Manager", "legal/finance/admin"),
+    ("Global Security Manager", "legal/finance/admin"),
+    ("Strategy & Operations Programs, Support", None),
+    ("Revenue Strategy & Operations Lead", None),     # protected function beats the family
 ])
 def test_out_of_lane_family(title, family):
     assert out_of_lane_family(title) == family
