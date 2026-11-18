@@ -85,3 +85,60 @@ import pytest  # noqa: E402
 def test_seniority_matches_whole_words_only(title, level):
     """A substring test read International as intern and Leadership as lead (finding 40.F1)."""
     assert extract_seniority(title) == level
+
+
+# ---------------------------------------------------------------------------
+# RULING Q19 b (2026-11-16, data/workstreams/scoring-integrity.md:470):
+# "score a title with no seniority word as on target (neutral)". Evidence: 46 of 62
+# Family A titles had no seniority word, defaulted to level 4 against a median
+# target of 6, and lost 4 of 10 seniority points for omitting a word.
+# Test the ruling pinned: a Family A title with no seniority word gets the same
+# seniority sub-score as an on-target title.
+# ---------------------------------------------------------------------------
+
+def test_q19b_no_seniority_word_scores_same_as_on_target_title():
+    ctx = {"target_seniority_level": 6}
+    no_word = _score_seniority_match({"title": "Deployment Strategist"}, ctx)
+    on_target = _score_seniority_match({"title": "Chief of Staff"}, ctx)  # parses to 6
+    assert on_target == 10.0
+    assert no_word == on_target
+
+
+@pytest.mark.parametrize("title", [
+    "Deployment Strategist",
+    "Forward Deployed Engineer",
+    "Customer Outcomes Partner",
+    "Strategy and Operations",
+    "Business Operations",
+])
+@pytest.mark.parametrize("target", [1, 4, 6, 9])
+def test_q19b_no_seniority_word_is_on_target_at_any_target_level(title, target):
+    assert _score_seniority_match({"title": title}, {"target_seniority_level": target}) == 10.0
+
+
+@pytest.mark.parametrize("title,expected", [
+    ("Senior Deployment Strategist", 8.0),   # 5 vs 6
+    ("Head of Deployment", 6.0),             # 8 vs 6
+    ("VP of Engineering", 4.0),              # 9 vs 6
+    ("Deployment Intern", 1.0),              # 1 vs 6 -> 0, clamped to 1
+])
+def test_q19b_titles_with_a_seniority_word_still_score_by_distance(title, expected):
+    assert _score_seniority_match({"title": title}, {"target_seniority_level": 6}) == expected
+
+
+def test_q19b_keyword_fallback_path_also_treats_no_word_as_on_target():
+    # Contexts with only a 'Target seniority:' keyword take the back-compat branch.
+    ctx = {"target_seniority": "director"}
+    assert _score_seniority_match({"title": "Deployment Strategist"}, ctx) == 10.0
+    assert _score_seniority_match({"title": "Senior Strategist"}, ctx) == 4.0
+
+
+def test_q19b_no_target_at_all_stays_neutral_five():
+    # Without any target there is no "on target"; the pre-existing neutral 5.0 holds.
+    assert _score_seniority_match({"title": "Deployment Strategist"}, {}) == 5.0
+
+
+def test_q19b_target_level_inference_is_unchanged():
+    # Q16 c is not decided: the median of target titles still counts a no-word title as 4.
+    assert extract_seniority("Deployment Strategist") == 4
+    assert _resolve_target_level("", ["Deployment Strategist", "Chief of Staff", "Head of Ops"]) == 6
