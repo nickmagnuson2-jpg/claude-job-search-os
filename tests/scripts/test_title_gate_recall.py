@@ -201,7 +201,7 @@ def test_title_head(raw, head):
     # Second pass: engineering heads without "engineer", and labelled not-fit groups that
     # reached the scorer at score 4-5 in the 2026-11-18 dry run.
     ("Tech Lead Manager", "research/technical"),
-    ("Tech Lead, Applied AI - Evals", "research/technical"),
+    ("Tech Lead, Applied AI", "research/technical"),
     ("Senior Technical Program Manager", "research/technical"),
     ("Senior SRE", "research/technical"),
     ("RevOps Lead", "sales"),
@@ -217,7 +217,7 @@ def test_title_head(raw, head):
     ("Developer Relationship Manager", None),       # Grok r2 F2: word-bounded, no prefix match
     ("Senior Compliance Manager", "legal/finance/admin"),
     ("Global Security Manager", "legal/finance/admin"),
-    ("Strategy & Operations Programs, Support", None),
+    ("Strategy & Operations Manager, Support", None),        # family word only in the suffix
     ("Revenue Strategy & Operations Lead", None),     # protected function beats the family
 ])
 def test_out_of_lane_family(title, family):
