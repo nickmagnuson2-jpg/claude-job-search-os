@@ -28,7 +28,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
 import workstream_state as ws  # noqa: E402
 
 TODAY = dt.date(2026, 11, 8)
+LATE = dt.date(2026, 11, 20)   # after the done_when cutover
 GOOD_ACTION = "write the parser test and watch it fail"
+GOOD_DONE = "test_parser.py passes and the report shows 0 problems"
 
 VALID_ROWS = {
     "Owner": "s1",
@@ -233,10 +235,89 @@ def test_next_block_inside_the_state_block_is_not_read(root):
     {"date": "2026-11-08"},
     {"action": GOOD_ACTION},
     {"date": "2026-11-08", "action": GOOD_ACTION, "size": "S"},
+    {"date": "2026-11-08", "action": GOOD_ACTION, "done_when": GOOD_DONE, "size": "S"},
+    {"date": "2026-11-08", "done_when": GOOD_DONE},
     "2026-11-08: a plain string item",
 ])
 def test_next_item_must_be_exactly_date_and_action(root, item):
     assert has(reasons(ws_text(items=[item]), root), "item 1")
+
+
+# done_when (2026-11-17): a next item may say what done looks like, and from the cutover it
+# must. Items dated before the cutover are grandfathered so the live registry stays valid.
+
+def dated(date, **extra):
+    return {"date": date, "action": GOOD_ACTION, **extra}
+
+
+def test_done_when_cutover_is_pinned():
+    assert ws.DONE_WHEN_CUTOVER == dt.date(2026, 11, 18)
+
+
+def test_done_when_is_accepted_on_an_item_before_the_cutover(root):
+    assert reasons(ws_text(items=[dated("2026-11-08", done_when=GOOD_DONE)]), root) == []
+
+
+def test_item_before_the_cutover_needs_no_done_when(root):
+    rs = reasons(ws_text(items=[dated("2026-11-17")]), root, today=LATE)
+    assert rs == []
+
+
+@pytest.mark.parametrize("date", ["2026-11-18", "2026-11-20"])
+def test_item_from_the_cutover_without_done_when_is_refused(root, date):
+    rs = reasons(ws_text(items=[dated(date)]), root, today=LATE)
+    assert rs == [f"next item 1: done_when is required for items dated from "
+                  f"{ws.DONE_WHEN_CUTOVER} (the observable result that means done)"]
+
+
+@pytest.mark.parametrize("date", ["2026-11-18", "2026-11-20"])
+def test_item_from_the_cutover_with_done_when_is_accepted(root, date):
+    rs = reasons(ws_text(items=[dated(date, done_when=GOOD_DONE)]), root, today=LATE)
+    assert rs == []
+
+
+@pytest.mark.parametrize("date", ["2026-11-08", "2026-11-18"])
+@pytest.mark.parametrize("done", ["", "   ", "TBD", "x" * 14, 5, None, ["a list"]])
+def test_empty_or_placeholder_done_when_is_refused(root, date, done):
+    rs = reasons(ws_text(items=[dated(date, done_when=done)]), root, today=LATE)
+    assert rs == [f"next item 1: done_when must be at least {ws.MIN_ACTION} characters "
+                  "stating the observable result"]
+
+
+def test_done_when_of_exactly_15_characters_is_accepted(root):
+    rs = reasons(ws_text(items=[dated("2026-11-18", done_when="d" * 15)]), root, today=LATE)
+    assert rs == []
+
+
+def test_done_when_is_checked_on_every_item(root):
+    items = [dated("2026-11-18", done_when=GOOD_DONE), dated("2026-11-19")]
+    rs = reasons(ws_text(items=items), root, today=LATE)
+    assert rs == [f"next item 2: done_when is required for items dated from "
+                  f"{ws.DONE_WHEN_CUTOVER} (the observable result that means done)"]
+
+
+def test_an_unparseable_date_is_not_also_asked_for_done_when(root):
+    rs = reasons(ws_text(items=[dated("2026-13-01")]), root, today=LATE)
+    assert rs == ["next item 1: date '2026-13-01' is not YYYY-MM-DD"]
+
+
+def test_missing_done_when_makes_the_workstream_a_backlog_problem(root):
+    write(root, "alpha", ws_text(items=[dated("2026-11-18")]))
+    rep = run_backlog(root, today=LATE)
+    assert rep["problems"] == ["alpha: header is invalid and the workstream is not exempt"]
+    assert has(rep["invalid"][0]["reasons"], "done_when is required")
+
+
+def test_done_when_reaches_the_ranked_next_items(root):
+    write(root, "alpha", ws_text(items=[dated("2026-11-18", done_when=GOOD_DONE)]))
+    rep = run_backlog(root, today=LATE)
+    assert rep["ranked"][0]["next"] == [dated("2026-11-18", done_when=GOOD_DONE)]
+
+
+def test_the_refusal_names_done_when_as_the_optional_key(root):
+    rs = reasons(ws_text(items=[dated("2026-11-08", size="S")]), root)
+    assert rs == ["next item 1: must be an object with date and action, "
+                  "and optionally done_when"]
 
 
 @pytest.mark.parametrize("date", ["11/08/2026", "2026-11-8", "2026-13-01", "", 20261108])
@@ -458,7 +539,7 @@ def write(root, slug, text):
     (root / "data" / "workstreams" / f"{slug}.md").write_text(text, encoding="utf-8")
 
 
-def run_backlog(root, *, questions=None, branches=None, board=None, ceiling=None):
+def run_backlog(root, *, questions=None, branches=None, board=None, ceiling=None, today=TODAY):
     """ceiling None: the exempt list's own length, so tests about other properties are not
     tripped by the shrink-only ratchet. Ratchet tests pass ceiling explicitly."""
     board = board or {}
@@ -466,7 +547,7 @@ def run_backlog(root, *, questions=None, branches=None, board=None, ceiling=None
     if ceiling is None:
         listed = ws.load_exemptions(registry)[1]
         ceiling = len(listed)
-    return ws.backlog(registry, today=TODAY, root=root,
+    return ws.backlog(registry, today=today, root=root,
                       board_owner=lambda slug: board.get(slug, "UNROUTED: no session holds it"),
                       exempt_ceiling=ceiling, **lookups(questions, branches))
 
@@ -1170,3 +1251,21 @@ def test_print_backlog_layout_is_pinned(capsys):
         "problems (2):\n"
         "  p1\n"
         "  p2\n")
+
+
+def test_print_backlog_shows_done_when_under_its_item(capsys):
+    """_print_backlog: done_when prints on its own line under the item it belongs to; an
+    item without one prints nothing extra."""
+    item = {"slug": "alpha", "value": "V2", "size": "S", "group": "free", "blockers": [],
+            "stale_blockers": [], "owner": "s1", "board_owner": "s1", "owner_drift": False,
+            "evidence": None,
+            "next": [{"date": "2026-11-18", "action": GOOD_ACTION, "done_when": GOOD_DONE},
+                     {"date": "2026-11-08", "action": GOOD_ACTION}]}
+    rep = {"today": "2026-11-20", "registry": "/reg", "invalid": [], "ranked": [item],
+           "overlaps": [], "terminal": [], "value_counts": {"V1": 0, "V2": 1, "V3": 0, "V4": 0},
+           "problems": []}
+    ws._print_backlog(rep)
+    out = capsys.readouterr().out
+    assert (f"      next 2026-11-18: {GOOD_ACTION}\n"
+            f"        done when: {GOOD_DONE}\n"
+            f"      next 2026-11-08: {GOOD_ACTION}\n\noverlaps (0):") in out
