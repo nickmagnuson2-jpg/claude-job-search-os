@@ -1,0 +1,139 @@
+{
+ "scan": {
+  "scanned_at": "2026-01-06T16:30:00+00:00",
+  "age_hours": 24.5,
+  "late_after_hours": 26
+ },
+ "cuts": {
+  "error": null,
+  "scanned_at": "2026-01-06T16:30:00+00:00",
+  "cuts": [
+   {
+    "company": "Acme Corp",
+    "title": "Senior Software Engineer",
+    "location": "San Francisco, CA",
+    "url": "https://jobs.example.com/acme/2",
+    "rule": "title_filter",
+    "reason": "engineer title",
+    "key": "aaaa2222",
+    "review": false,
+    "new": true,
+    "role_key": "https://jobs.example.com/acme/2"
+   },
+   {
+    "company": "Beta Inc",
+    "title": "Strategy Lead",
+    "location": "London",
+    "url": "https://jobs.example.com/beta/1",
+    "rule": "location",
+    "reason": "location: excluded",
+    "key": "bbbb1111",
+    "review": false,
+    "new": true,
+    "role_key": "https://jobs.example.com/beta/1"
+   },
+   {
+    "company": "Acme Corp",
+    "title": "Business Operations",
+    "location": "San Francisco, CA",
+    "url": "https://jobs.example.com/acme/3",
+    "rule": "title_filter",
+    "reason": "title not in the target's role_filters",
+    "key": "aaaa3333",
+    "history": "you passed 01/02 (Business Operations)",
+    "review": true,
+    "new": false,
+    "role_key": "https://jobs.example.com/acme/3"
+   },
+   {
+    "company": "Acme Corp",
+    "title": "Head of Operations Planning",
+    "location": "San Francisco, CA",
+    "url": "https://jobs.example.com/acme/1",
+    "rule": "title_filter",
+    "reason": "title not in the target's role_filters",
+    "key": "aaaa1111",
+    "review": true,
+    "new": true,
+    "role_key": "https://jobs.example.com/acme/1"
+   }
+  ],
+  "fetch_failures": 0
+ },
+ "rulings": {
+  "error": null,
+  "bad_lines": 0,
+  "rulings": [
+   {
+    "ruled_at": "2026-01-06T20:00:00+00:00",
+    "key": "aaaa1111",
+    "role_key": "https://jobs.example.com/acme/1",
+    "ruling": "should_have_shown",
+    "reason": "ops planning is in lane",
+    "by": "nick",
+    "company": "Acme Corp",
+    "title": "Head of Operations Planning"
+   }
+  ]
+ },
+ "passed": {
+  "error": null,
+  "new_this_scan": 1,
+  "standing_count": 1,
+  "roles": [
+   {
+    "company": "Gamma LLC",
+    "title": "Deployment Strategist",
+    "score": 8,
+    "history": "",
+    "url": "https://jobs.example.com/gamma/1",
+    "apply_url": "https://jobs.example.com/gamma/1/apply"
+   },
+   {
+    "company": "Beta Inc",
+    "title": "Chief of Staff",
+    "score": 6,
+    "history": "in pipeline: Applied (Ops)",
+    "url": "https://jobs.example.com/beta/2",
+    "apply_url": null
+   }
+  ],
+  "goals_stale": false
+ },
+ "watched": {
+  "error": null,
+  "count": 4,
+  "entries": 6,
+  "last_grew": "2025-12-01",
+  "undated_entries": 2,
+  "open": [
+   "Beta Inc"
+  ],
+  "closed": [
+   "Acme Corp",
+   "Delta Co"
+  ],
+  "never": [
+   "Gamma LLC"
+  ],
+  "pipeline_error": null
+ },
+ "live": {
+  "error": null,
+  "other_open": 1,
+  "rows": [
+   {
+    "company": "Beta Inc",
+    "stage": "Applied",
+    "updated": "2026-01-05"
+   },
+   {
+    "company": "Zeta",
+    "stage": "Recruiter screen",
+    "updated": "2026-01-06"
+   }
+  ]
+ },
+ "scans_error": null,
+ "fetch_failures": 0
+}

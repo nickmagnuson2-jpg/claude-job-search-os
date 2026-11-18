@@ -17,8 +17,13 @@ What it writes: the page (default output/morning-page/index.html), and at 19:00 
 also a dated copy (output/morning-page/<date>.html) as the day's record. calendar_fetch
 may refresh its own token file; nothing else is written.
 
-Content, in Nick's order: 1 must-dos, 2 waiting on me, 3 people funnel (placeholder until
-the funnel codify run; holds "Waiting on them", the processes whose next move is theirs), 4 machine room, 5 done so far today, 6 one commonplace prompt.
+Content, in Nick's order: 3 the funnel FIRST, full width (funnel-intake.md step 1, Nick
+2026-11-17: "I haven't been getting shown the roles that are coming in"): this week's
+applications against the target, sends, replies, live processes, watched companies, the
+roles the latest scan passed with their scores, and EVERY role it cut, each with the key
+tools/title_cut_ruling.py takes to record "should have shown". Then 1 must-dos, 2 waiting
+on me, "Waiting on them" (the processes whose next move is theirs), 5 done so far today,
+6 one commonplace prompt. The machine room (block 4) is off the page (same ruling).
 Plus "Claude's read" and the First chair prompt.
 
 Rules the tests hold it to:
@@ -53,6 +58,7 @@ from pathlib import Path
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import day_check  # noqa: E402
+import funnel_state  # noqa: E402
 import standup_collect  # noqa: E402
 from stage_vocab import is_terminal_stage  # noqa: E402
 
@@ -179,14 +185,6 @@ def waiting_on_them(root: Path) -> dict:
     return {"error": None, "rows": rows}
 
 
-def open_findings(root: Path) -> int | None:
-    try:
-        import finding_write
-        return len(finding_write.collect(root, only_open=True))
-    except Exception:
-        return None
-
-
 def gather_live(root: Path, now: datetime) -> dict:
     today = now.date()
     return {
@@ -195,15 +193,18 @@ def gather_live(root: Path, now: datetime) -> dict:
         "calendar": calendar_events(root),
         "commonplace": commonplace(root, today),
         "claude_read": claude_read(root, today),
-        "open_findings": open_findings(root),
         "waiting_on_them": waiting_on_them(root),
+        "funnel": funnel_state.collect(root, now.astimezone()),
     }
+
+
+SOURCES = ("collector", "day", "calendar", "commonplace", "claude_read", "waiting_on_them",
+           "funnel")
 
 
 def gather_demo(fixtures: Path = FIXTURES, today: date | None = None) -> dict:
     out = {}
-    for name in ("collector", "day", "calendar", "commonplace", "claude_read", "open_findings",
-                 "waiting_on_them"):
+    for name in SOURCES:
         out[name] = json.loads((fixtures / f"{name}.json").read_text(encoding="utf-8"))
     if today is not None:
         # The fixtures are dated to the collector's target_date. Move the calendar by the same
@@ -230,6 +231,71 @@ def _event_line(ev: dict) -> str:
     start = str(ev.get("start", ""))
     when = "all day" if ev.get("all_day") else start[11:16]
     return f"{when}  {ev.get('summary') or '(no title)'}"
+
+
+RULE_CMD = ('PYTHONIOENCODING=utf-8 python3 tools/title_cut_ruling.py mark --key KEY '
+            '--reason "why it should have shown"')
+
+
+def funnel_view(f: dict, day: dict) -> dict:
+    """The funnel section's content (funnel-intake.md step 1). Every number is read from
+    funnel_state.collect or day_check.collect; nothing is counted here except list lengths."""
+    counts = day.get("counts") or {}
+    target = (day.get("targets") or {}).get("applications")
+    week = {k: (counts.get(k) or {}).get("week") for k in ("applications", "sends", "replies")}
+
+    rulings = f.get("rulings") or {}
+    # Only Nick's rulings are the R1 log (funnel-intake.md, Autonomy ladder): only they are
+    # counted, listed, and mark a cut. Entries by anyone else are counted apart, never mixed.
+    all_rulings = rulings.get("rulings")
+    nick = None if all_rulings is None else [r for r in all_rulings if _by(r) == ""]
+    by_key = {r.get("role_key"): r for r in (nick or [])}  # full identity (Fable F4)
+    cuts = f.get("cuts") or {}
+    rows = None
+    if cuts.get("cuts") is not None:
+        rows = [{"key": c.get("key", ""), "company": c.get("company") or "?",
+                 "title": c.get("title", ""), "url": c.get("url", ""),
+                 "reason": c.get("reason", ""), "location": c.get("location", ""),
+                 "rule": c.get("rule", ""), "history": c.get("history") or "",
+                 "review": bool(c.get("review")), "new": bool(c.get("new")),
+                 "ruling": by_key.get(c.get("role_key"))} for c in cuts["cuts"]]
+    groups = None
+    if rows is not None:
+        # The full list is grouped by company, never by the reason text: the reason strings
+        # belong to the title gate and change with it (title-gate-1118). Shown as given.
+        g = {}
+        for r in rows:
+            g.setdefault(r["company"], []).append(r)
+        for rs in g.values():  # ruled rows first, so a ruling is seen next to its role
+            rs.sort(key=lambda r: r["ruling"] is None)
+        groups = sorted(g.items(), key=lambda kv: (-len(kv[1]), kv[0].casefold()))
+
+    scan = f.get("scan") or {}
+    age = scan.get("age_hours")
+    late = scan.get("late_after_hours")
+    return {
+        "applications_week": week["applications"],
+        "applications_target": target.get("target") if target else None,
+        "sends_week": week["sends"], "replies_week": week["replies"],
+        "scan_at": scan.get("scanned_at"), "scan_age_hours": age,
+        "scan_late": age is not None and late is not None and age > late,
+        "cuts_error": cuts.get("error") if cuts else "not read",
+        "cut_count": None if rows is None else len(rows),
+        # The two-minute list: new in this scan and worth a look, plus anything Nick ruled.
+        "to_look": None if rows is None else [r for r in rows if r["review"] and r["new"]],
+        "review_total": None if rows is None else sum(r["review"] for r in rows),
+        "scans_error": f.get("scans_error"),
+        "fetch_failures": f.get("fetch_failures"),
+        "cut_groups": groups,
+        "rulings": list(reversed(nick or []))[:MAX_ITEMS],
+        "ruling_count": None if nick is None else len(nick),
+        "other_entries": 0 if all_rulings is None else len(all_rulings) - len(nick),
+        "rulings_error": rulings.get("error"),
+        "rulings_bad_lines": rulings.get("bad_lines") or 0,
+        "passed": f.get("passed") or {"error": "not read", "roles": None},
+        "watched": f.get("watched") or {"error": "not read"},
+        "live": f.get("live") or {"error": "not read", "rows": None},
+    }
 
 
 def build_view(src: dict, now: datetime) -> dict:
@@ -269,24 +335,8 @@ def build_view(src: dict, now: datetime) -> dict:
     names = [f"{x.get('name', '')}, {x.get('follow_up_action', '')}"[:80]
              for x in (nf.get("followup_overdue") or [])[:MAX_ITEMS - 1]]
 
-    # 4. Machine room.
-    cm = _data(col, "conversations_metric") or {}
-    sent = (cm.get("outreach_sent") or {}).get("counts") or {}
-    m4 = None
-    if "7d" in sent and "30d" in sent:
-        floor = round(sent["30d"] / 30 * 7, 1)
-        m4 = {"last_7": sent["7d"], "floor": floor, "ok": sent["7d"] >= floor}
-    ws = (_data(col, "workstream_state") or {}).get("summary") or {}
-    ah = _data(col, "automation_health") or {}
-    machine = {
-        "m4": m4,
-        "workstreams_changed": ws.get("changed"),
-        "workstream_errors": ws.get("error"),
-        "open_findings": src.get("open_findings"),
-        "launchd_warnings": len(ah["warnings"]) if isinstance(ah.get("warnings"), list) else None,
-        "learning_due": (_data(col, "learning_ledger") or {}).get("due_total"),
-        "sources_failed": list(col.get("failed") or []),
-    }
+    funnel = funnel_view(src.get("funnel") or {}, src.get("day") or {})
+    sources_failed = list(col.get("failed") or [])
 
     read = src.get("claude_read") or {}
     text = read.get("text")
@@ -299,7 +349,7 @@ def build_view(src: dict, now: datetime) -> dict:
         "calendar_error": cal.get("error") if isinstance(cal, dict) else None,
         "cal_today": cal_today, "cal_soon": cal_soon, "todos": todos,
         "waiting": waiting, "waiting_names": names,
-        "machine": machine,
+        "funnel": funnel, "sources_failed": sources_failed,
         "day": src.get("day") or {},
         "commonplace": cp.get("pick"),
         "claude_read": read,
@@ -356,7 +406,13 @@ td.n .muted{font-weight:400}
 li{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}
 ul{list-style:none;padding-left:0}li{padding-left:14px;text-indent:-14px}li::before{content:"\\2022\\00a0\\00a0"}
 .ok{color:var(--ok)}.warn{color:var(--warn)}
+.funnel{grid-column:1/-1}.fgrid2{display:grid;grid-template-columns:3fr 2fr;column-gap:40px}
+ul.cuts{columns:2;column-gap:40px}ul.cuts li{break-inside:avoid}
+code{font:15px/1.3 ui-monospace,Menlo,monospace}summary{cursor:pointer;font-weight:600;margin-top:6px}
+.ruled{color:var(--ok);font-weight:700}.funnel li{display:block}
+#sources-failed{margin:0 32px 20px}
 @media (max-width:900px){main{grid-template-columns:1fr;padding:0 16px 16px}
+.fgrid2{grid-template-columns:1fr}ul.cuts{columns:1}#sources-failed{margin:0 16px 16px}
 header{padding:10px 16px 4px}.read{margin:0 16px 8px}}
 """
 
@@ -366,6 +422,140 @@ function chk(){var el=document.getElementById('stale');if(isNaN(g)||Date.now()-g
 el.style.display='block';el.textContent='STALE: this page was generated at '+
 document.body.dataset.generatedAt+' and has not updated since.';}}chk();setInterval(chk,60000);})();
 """ % STALE_MINUTES
+
+
+def _when(iso) -> str:
+    """'Tue Nov 17, 8:30 AM' in local time, or the raw value when it does not parse."""
+    try:
+        t = datetime.fromisoformat(str(iso)).astimezone()
+    except ValueError:
+        return str(iso)
+    return f"{t.strftime('%a %b')} {t.day}, {t.strftime('%I:%M %p').lstrip('0')}"
+
+
+def _link(url, text) -> str:
+    u = str(url or "")
+    if u.startswith(("https://", "http://")):
+        return f'<a href="{_e(u)}" target="_blank" rel="noopener">{_e(text)}</a>'
+    return _e(text)
+
+
+def _by(ruling: dict) -> str:
+    """'' for Nick's own ruling; ' (by claude)' otherwise. Only Nick's rulings earn R1
+    (funnel-intake.md, Autonomy ladder), so a ruling Claude made must not read as his."""
+    by = str(ruling.get("by") or "nick")
+    return "" if by == "nick" else f" (by {_e(by)})"
+
+
+def _cut_li(r: dict, with_company: bool) -> str:
+    note = [r["reason"]]
+    if r["rule"] == "location" and r["location"]:
+        note.append(r["location"])
+    note.append(r["history"])  # empty parts are dropped by the join below
+    ruled = (f' <span class="ruled">RULED should have shown: {_e(r["ruling"].get("reason"))}</span>'
+             if r["ruling"] else "")
+    name = f'{r["company"]}: {r["title"]}' if with_company else r["title"]
+    return (f'<li><code>{_e(r["key"])}</code> {_link(r["url"], name)} '
+            f'<span class="muted">({_e("; ".join(n for n in note if n))})</span>{ruled}</li>')
+
+
+def render_funnel(f: dict) -> str:
+    """The funnel section (funnel-intake.md step 1). First the roles to act on: new cuts
+    worth a look and the roles that passed, each linked to its posting. Then the week and
+    the live processes. Then the rulings and every cut, one click away."""
+    when = _e(_when(f["scan_at"])) if f["scan_at"] else "unknown"
+    # 1. New cuts worth a look.
+    if f["to_look"] is None:
+        look = f'<h3>Cut by the scan</h3><p class="warn">Cuts unavailable: {_e(f["cuts_error"])}</p>'
+    else:
+        look = (f'<h3 id="cuts-head">Cut by the scan of {when}, new, in a location the scan accepts, '
+                f'cut only because the title is not on the list: {len(f["to_look"])}</h3>')
+        look += ("<ul>" + "".join(_cut_li(r, True) for r in f["to_look"]) + "</ul>"
+                 if f["to_look"] else '<p class="muted">None new in this scan.</p>')
+        look += ('<p class="muted">Should one have shown? Run <code>' + _e(RULE_CMD)
+                 + '</code> in the repo, KEY from the row.</p>')
+    if f["scan_late"]:
+        look += (f'<p class="warn">The scan has not run since {when} '
+                 f'({f["scan_age_hours"]:g} hours ago); it runs daily at 8:30.</p>')
+    if f.get("fetch_failures"):
+        look += (f'<p class="warn">{f["fetch_failures"]} boards failed to fetch in this scan; '
+                 "their roles are missing from both lists.</p>")
+    if f["scans_error"]:
+        look += f'<p class="warn">{_e(f["scans_error"])}</p>'
+
+    # 2. Roles that passed.
+    ps = f["passed"]
+    if ps.get("roles") is None:
+        passed = f'<h3>Passed the scan</h3><p class="muted">{_e(ps.get("error"))}</p>'
+    else:
+        items = "".join(
+            f'<li><strong>{_n(r.get("score"))}</strong> '
+            + _link(r.get("apply_url") or r.get("url"), f'{r.get("company")}: {r.get("title")}')
+            + (f' <span class="muted">({_e(r["history"])})</span>' if r.get("history") else "")
+            + "</li>" for r in ps["roles"])
+        passed = (f'<h3>Passed the title list, unread or still open, by score: {len(ps["roles"])}</h3>'
+                  + (f"<ul>{items}</ul>" if items else '<p class="muted">Nothing passed.</p>')
+                  + (f'<p class="warn">plus {ps["unlisted"]} more standing roles the queue does '
+                     "not store</p>" if ps.get("unlisted") else "")
+                  + ('<p class="warn">goals.md is stale, so the scan scored nothing: scores '
+                     "show as unknown.</p>" if ps.get("goals_stale") else ""))
+
+    # 3. The week, watched companies, live processes.
+    app, tgt = f["applications_week"], f["applications_target"]
+    cls = " warn" if isinstance(app, int) and isinstance(tgt, int) and app < tgt else ""
+    app_cell = _n(app) + (f' <span class="muted">/ {_e(tgt)}</span>' if tgt is not None else "")
+    w, lv = f["watched"], f["live"]
+    rows = [f'<tr><td>Applications this week</td><td class="n{cls}">{app_cell}</td></tr>',
+            f'<tr><td>Sends this week</td><td class="n">{_n(f["sends_week"])}</td></tr>',
+            f'<tr><td>Replies this week</td><td class="n">{_n(f["replies_week"])}</td></tr>',
+            '<tr><td>Live processes</td><td class="n">'
+            + ("unknown" if lv.get("rows") is None else str(len(lv["rows"]))) + "</td></tr>"]
+    if w.get("error"):
+        rows.append('<tr><td>Watched companies</td><td class="n">unknown</td></tr>')
+    else:
+        rows.append(f'<tr><td>Watched companies</td><td class="n">{_n(w.get("count"))}</td></tr>')
+        if w.get("open") is not None:
+            rows.append('<tr><td class="muted">open / closed / never engaged</td><td class="n">'
+                        f'{len(w["open"])} / {len(w["closed"])} / {len(w["never"])}</td></tr>')
+        rows.append(f'<tr><td class="muted">list last grew</td><td class="n">'
+                    f'{_n(w.get("last_grew"))}</td></tr>')
+    week = "<h3>This week</h3><table>" + "".join(rows) + "</table>"
+    if w.get("error"):
+        week += f'<p class="muted">Watched list: {_e(w["error"])}</p>'
+    if lv.get("rows") is None:
+        live = f'<h3>Live processes</h3><p class="muted">Pipeline unavailable: {_e(lv.get("error"))}</p>'
+    else:
+        items = "".join(f'<li>{_e(r["company"])}: {_e(r["stage"])}</li>' for r in lv["rows"])
+        live = ("<h3>Live processes</h3>" + (f"<ul>{items}</ul>" if items else '<p class="muted">None.</p>')
+                + (f'<p class="muted">plus {lv["other_open"]} open rows not yet in a process</p>'
+                   if lv.get("other_open") else ""))
+
+    out = (f'<div class="fgrid2"><div>{look}</div><div>{passed}</div></div>'
+           f'<div class="fgrid2"><div>{week}</div><div>{live}</div></div>')
+
+    # 4. Rulings and every cut.
+    if f["rulings_error"]:
+        out += f'<p class="warn">Rulings log unreadable: {_e(f["rulings_error"])}</p>'
+    else:
+        out += f'<h3>Your rulings in the log: {_n(f["ruling_count"])}</h3>'
+        if f["other_entries"]:
+            out += (f'<p class="muted">{f["other_entries"]} entries in the log not made by you '
+                    "are not counted and mark nothing.</p>")
+        if f["rulings_bad_lines"]:
+            out += f'<p class="warn">{f["rulings_bad_lines"]} unreadable lines in the log</p>'
+        if f["rulings"]:
+            out += "<ul>" + "".join(
+                f'<li>{_e(r.get("company"))}: {_e(r.get("title"))}. {_e(r.get("reason"))} '
+                f'<span class="muted">({_e(str(r.get("ruled_at", ""))[:10])})</span></li>'
+                for r in f["rulings"]) + "</ul>"
+    if f["cut_groups"] is not None:
+        body = "".join(
+            f'<h3>{_e(company)}: {len(rs)}</h3><ul class="cuts">'
+            + "".join(_cut_li(r, False) for r in rs) + "</ul>"
+            for company, rs in f["cut_groups"])
+        out += (f'<details><summary>Every cut in the scan of {when}: {f["cut_count"]} '
+                f'({f["review_total"]} in an accepted location and cut only by the title list)</summary>{body}</details>')
+    return out
 
 
 def render(view: dict, now: datetime, demo: bool) -> str:
@@ -389,25 +579,9 @@ def render(view: dict, now: datetime, demo: bool) -> str:
     waiting += ('<p class="muted">Not wired yet: drafts staged, spines, Applied '
                 'confirmations, debrief scores, P0 sign-offs, coaching decisions.</p>')
 
-    m = view["machine"]
-    if m["m4"]:
-        cls = "ok" if m["m4"]["ok"] else "warn"
-        # M4 in the codify plan: green while the last 7 days are at or above the 30-day pace.
-        m4 = (f'<tr><td>Outreach pace: sent in 7 days</td><td class="n {cls}">'
-              f'{_e(m["m4"]["last_7"])} <span class="muted">(avg {m["m4"]["floor"]:g})</span>'
-              '</td></tr>')
-    else:
-        m4 = '<tr><td>Outreach pace: sent in 7 days</td><td class="n">unknown</td></tr>'
-    machine = ("<table>" + m4
-               + '<tr><td>M1 weekly flow</td><td class="n">not built</td></tr>'
-               + f'<tr><td>Workstreams changed</td><td class="n">{_n(m["workstreams_changed"])}</td></tr>'
-               + f'<tr><td>Workstream probe errors</td><td class="n">{_n(m["workstream_errors"])}</td></tr>'
-               + f'<tr><td>Open cross-model findings</td><td class="n">{_n(m["open_findings"])}</td></tr>'
-               + f'<tr><td>launchd warnings</td><td class="n">{_n(m["launchd_warnings"])}</td></tr>'
-               + f'<tr><td>Learning lanes due</td><td class="n">{_n(m["learning_due"])}</td></tr>'
-               + "</table>")
-    if m["sources_failed"]:
-        machine += f'<p class="warn">Sources failed: {_e(", ".join(m["sources_failed"]))}</p>'
+    funnel = render_funnel(view["funnel"])
+    failed = (f'<p class="warn" id="sources-failed">Sources failed: '
+              f'{_e(", ".join(view["sources_failed"]))}</p>' if view["sources_failed"] else "")
 
     day = view["day"]
     counts = day.get("counts") or {}
@@ -433,11 +607,11 @@ def render(view: dict, now: datetime, demo: bool) -> str:
 
     wt = view["waiting_on_them"]
     if wt.get("rows") is None:
-        theirs = f'<h3>Waiting on them</h3><p class="muted">Pipeline unavailable: {_e(wt.get("error"))}</p>'
+        theirs = f'<p class="muted">Pipeline unavailable: {_e(wt.get("error"))}</p>'
     else:
         items = [f"{r['company']}: {r['next']}" for r in wt["rows"]]
         more = len(items) - MAX_ITEMS
-        theirs = ("<h3>Waiting on them</h3>" + _list(items, "")
+        theirs = (_list(items, "")
                   + (f'<p class="muted">and {more} more</p>' if more > 0 else ""))
 
     read = view["claude_read"]
@@ -459,13 +633,14 @@ def render(view: dict, now: datetime, demo: bool) -> str:
 <header><h1>{_e(heading)}</h1><span class="gen">updated {_e(updated)}</span></header>
 <div class="read" id="claude-read"><strong>Claude's read:</strong> {read_html}</div>
 <main>
+<section id="b3" class="funnel"><h2>Funnel</h2>{funnel}</section>
 <section id="b1"><h2>Today's must-dos</h2>{must}</section>
 <section id="b2"><h2>Waiting on me</h2>{waiting}</section>
-<section id="b3"><h2>People funnel</h2><p class="muted">Placeholder until the funnel codify run.</p>{theirs}</section>
-<section id="b4"><h2>Machine room</h2>{machine}</section>
+<section id="theirs"><h2>Waiting on them</h2>{theirs}</section>
 <section id="b5"><h2>Done so far</h2>{done}</section>
 <section id="b6"><h2>Commonplace</h2>{cp}</section>
 </main>
+{failed}
 <script>{STALE_JS}</script>
 </body></html>
 """
