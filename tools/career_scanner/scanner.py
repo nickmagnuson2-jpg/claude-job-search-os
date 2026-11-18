@@ -134,7 +134,7 @@ OUT_OF_LANE_FAMILIES = {
              r"|\brevenue operations\b|\brevops\b|\bdeal desk\b",
     "marketing": r"\bmarketing\b|\bmarketer\b|\bbrand\b|\bcampaign\b|\bpmm\b|\babm\b"
                  r"|\bpaid\b|\bseo\b|\bsem\b|\bevents?\b|\banalyst relations\b|\bcommunications\b"
-                 r"|\bpr\b|\bdeveloper (community|relations|advocate)\w*",
+                 r"|\bpr\b|\bdeveloper (community|relations|advocates?)\b",
     "recruiting": r"\brecruit\w*|\btalent\b|\bsourcer\b",
     "people": r"\bhr\b|\bpeople (business partner|programs|partner)\b|\bhead of people\b",
     "legal/finance/admin": r"\bcounsel\b|\blegal\b|\baccountant\b|\baccounting\b|\bpayroll\b"

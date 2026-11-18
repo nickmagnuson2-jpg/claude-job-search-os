@@ -301,9 +301,11 @@ def test_a_genuinely_empty_board_is_not_recorded_as_an_error(fake_ashby):
     under test. Once the parser gained an error channel the test failed, correctly.
     """
     from tools.career_scanner.scanner import fetch_company_roles
-    fake_ashby([{"title": "Warehouse Associate", "location": "San Francisco, CA"}])
+    # title-gate-1118: an out-of-lane family title, so the board really filters to empty
+    # (Grok r2 F1: "Warehouse Associate" now passes the gate and no longer did that).
+    fake_ashby([{"title": "Sales Development Representative", "location": "San Francisco, CA"}])
     errors = []
-    fetch_company_roles(_target(), errors=errors)   # filtered to empty, not failed
+    assert fetch_company_roles(_target(), errors=errors) == []   # filtered to empty, not failed
     assert errors == [], f"an empty-but-working board was recorded as a failure: {errors}"
 
 

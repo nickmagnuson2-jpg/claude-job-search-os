@@ -213,6 +213,8 @@ def test_title_head(raw, head):
     ("Head of Analyst Relations", "marketing"),
     ("PR & Communications Manager", "marketing"),
     ("Developer Community Manager", "marketing"),
+    ("Developer Advocates Lead", "marketing"),
+    ("Developer Relationship Manager", None),       # Grok r2 F2: word-bounded, no prefix match
     ("Senior Compliance Manager", "legal/finance/admin"),
     ("Global Security Manager", "legal/finance/admin"),
     ("Strategy & Operations Programs, Support", None),
