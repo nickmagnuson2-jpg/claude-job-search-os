@@ -254,3 +254,18 @@ def test_a_claude_label_does_not_block_nicks_ruling(tmp_path):
 def test_load_cuts_reports_fetch_failures_as_a_count(tmp_path, ff, want):
     root = _root(tmp_path, payload={"scanned_at": "x", "cut_at_fetch": [], "fetch_failures": ff})
     assert tcr.load_cuts(root)["fetch_failures"] == want
+
+
+
+def test_mark_checks_and_appends_under_the_rulings_lock(tmp_path, monkeypatch):
+    import contextlib
+    seen = []
+
+    @contextlib.contextmanager
+    def fake_lock(path):
+        seen.append(Path(path))
+        yield path
+    monkeypatch.setattr(tcr, "file_lock", fake_lock)
+    root = _root(tmp_path)
+    assert tcr.mark(root, _key(CUTS[0]), "r")[0] == 0
+    assert seen == [root / tcr.RULINGS_REL]

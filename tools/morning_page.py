@@ -249,7 +249,9 @@ def funnel_view(f: dict, day: dict) -> dict:
     # counted, listed, and mark a cut. Entries by anyone else are counted apart, never mixed.
     all_rulings = rulings.get("rulings")
     nick = None if all_rulings is None else [r for r in all_rulings if _by(r) == ""]
-    by_key = {r.get("role_key"): r for r in (nick or [])}  # full identity (Fable F4)
+    # Joined on the full posting identity (Fable F4); a role_key that is not text is
+    # skipped, never used as a dict key (Codex/Grok F1, round 2).
+    by_key = {r["role_key"]: r for r in (nick or []) if isinstance(r.get("role_key"), str)}
     cuts = f.get("cuts") or {}
     rows = None
     if cuts.get("cuts") is not None:
@@ -281,7 +283,7 @@ def funnel_view(f: dict, day: dict) -> dict:
         "scan_late": age is not None and late is not None and age > late,
         "cuts_error": cuts.get("error") if cuts else "not read",
         "cut_count": None if rows is None else len(rows),
-        # The two-minute list: new in this scan and worth a look, plus anything Nick ruled.
+        # The two-minute list: cuts new in this scan and worth a look.
         "to_look": None if rows is None else [r for r in rows if r["review"] and r["new"]],
         "review_total": None if rows is None else sum(r["review"] for r in rows),
         "scans_error": f.get("scans_error"),

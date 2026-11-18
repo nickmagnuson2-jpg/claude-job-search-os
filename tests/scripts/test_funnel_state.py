@@ -233,8 +233,10 @@ SF = "San Francisco, CA"
      {"role_excludes": None}, True),
     # geo_filter: false, as the fetch honours it (Fable F2)
     ({"rule": "title_filter", "title": "Ops Lead", "location": "London"}, {"geo_filter": False}, True),
-    ({"rule": "title_filter", "title": "Ops Lead", "location": None}, None, True),  # geo_ok keeps unknown
-    ({"rule": "title_filter", "title": None, "location": SF}, None, True),
+    ({"rule": "title_filter", "title": "Ops Lead", "location": None}, {}, True),  # geo_ok keeps unknown
+    # no config for the company: the gate cannot be replayed (Fable F9, round 2)
+    ({"rule": "title_filter", "title": "Ops Lead", "location": SF}, None, False),
+    ({"rule": "title_filter", "title": None, "location": SF}, {}, True),
 ])
 def test_to_review_uses_the_scanners_own_location_and_title_tests(cut, target, want):
     assert fs.to_review(cut, target) is want
@@ -277,15 +279,16 @@ def test_collect_flags_review_and_new_against_the_previous_scan(tmp_path):
     targets = TARGETS.replace("    notes: 'promoted 2025-11-02 from a drip'",
                               "    notes: 'promoted 2025-11-02 from a drip'\n    role_excludes: ['account executive']")
     root = _root(tmp_path, queue=q, targets=targets)
-    key0 = fs.title_cut_ruling.cut_key(q["cut_at_fetch"][0])
-    key2 = fs.title_cut_ruling.cut_key(q["cut_at_fetch"][2])
+    key0 = q["cut_at_fetch"][0]["url"]  # the store holds full posting identities
+    key2 = q["cut_at_fetch"][2]["url"]
     # key2 was cut two scans ago, dropped out, and is back: new again (Codex F1).
     fs.scans_path(root).parent.mkdir(parents=True, exist_ok=True)
     fs.scans_path(root).write_text(json.dumps({"2026-01-04T16:30:00+00:00": [key2],
                                                "2026-01-05T16:30:00+00:00": [key0]}))
     out = fs.collect(root, NOW)
     c = out["cuts"]["cuts"]
-    assert [x["review"] for x in c] == [True, False, True]
+    # Nobody has no scan-targets entry: not to review
+    assert [x["review"] for x in c] == [True, False, False]
     assert [x["new"] for x in c] == [False, True, True]
     assert out["scans_error"] is None
 
@@ -324,22 +327,50 @@ def test_standing_roles_beyond_the_stored_cap_are_counted(tmp_path):
 
 
 
-def test_a_scan_with_fetch_failures_is_compared_but_never_stored(tmp_path):
+def test_a_scan_with_fetch_failures_carries_the_previous_keys_forward(tmp_path):
+    # Grok F6 / Fable F1+F8, round 2: compared against a real previous scan, and stored as
+    # this scan's keys plus the previous ones, so the baseline still advances.
     root = _root(tmp_path, queue={**QUEUE, "fetch_failures": 2})
+    fs.scans_path(root).parent.mkdir(parents=True, exist_ok=True)
+    fs.scans_path(root).write_text(json.dumps({"2026-01-05T16:30:00+00:00":
+                                               ["https://jobs.example.com/a/2", "gone"]}))
     out = fs.collect(root, NOW)
-    assert out["fetch_failures"] == 2 and not fs.scans_path(root).exists()
-    assert all(c["new"] for c in out["cuts"]["cuts"])
-    (tmp_path / "ok").mkdir()
-    root2 = _root(tmp_path / "ok")
-    assert fs.collect(root2, NOW)["fetch_failures"] == 0 and fs.scans_path(root2).exists()
+    assert out["fetch_failures"] == 2
+    assert [c["new"] for c in out["cuts"]["cuts"]] == [False]
+    stored = json.loads(fs.scans_path(root).read_text())
+    assert stored["2026-01-06T16:30:00+00:00"] == ["gone", "https://jobs.example.com/a/2"]
     assert fs.collect(tmp_path / "none", NOW)["fetch_failures"] is None
 
 
-def test_record_scan_with_store_false_writes_nothing(tmp_path):
+def test_record_scan_without_carry_stores_only_this_scan(tmp_path):
     fs.record_scan(tmp_path, "2026-01-01T08:30", ["a"])
-    before = fs.scans_path(tmp_path).read_text()
-    assert fs.record_scan(tmp_path, "2026-01-02T08:30", ["b"], store=False)["previous"] == {"a"}
-    assert fs.scans_path(tmp_path).read_text() == before
+    assert fs.record_scan(tmp_path, "2026-01-02T08:30", ["b"])["previous"] == {"a"}
+    assert json.loads(fs.scans_path(tmp_path).read_text())["2026-01-02T08:30"] == ["b"]
+    fs.record_scan(tmp_path, "2026-01-03T08:30", ["c"], carry=True)
+    assert json.loads(fs.scans_path(tmp_path).read_text())["2026-01-03T08:30"] == ["b", "c"]
+
+
+def test_a_store_holding_non_text_keys_is_unreadable_not_a_crash(tmp_path):
+    path = fs.scans_path(tmp_path)
+    path.parent.mkdir(parents=True)
+    path.write_text('{"2026-01-01T08:30": [["a"], {"b": 1}]}')
+    got = fs.record_scan(tmp_path, "2026-01-02T08:30", ["a"])
+    assert "unreadable" in got["error"] and got["previous"] is None
+
+
+def test_a_store_that_cannot_be_written_degrades(tmp_path, monkeypatch):
+    def boom(self, *a, **k):
+        raise PermissionError("read-only")
+    monkeypatch.setattr(Path, "write_text", boom)
+    got = fs.record_scan(tmp_path, "2026-01-02T08:30", ["a"])
+    assert got == {"error": "cut-scan store not written: read-only", "previous": None}
+
+
+def test_watched_matches_names_with_the_shared_company_matcher(tmp_path):
+    pipe = PIPE.replace("| Beta Inc | BizOps | Applied", "| Beta, Inc. | BizOps | Applied")
+    root = _root(tmp_path, pipe=pipe)
+    rows, err = fs._pipeline(root)
+    assert _watched(root, rows, err)["open"] == ["beta inc"]
 
 
 def test_passed_reads_non_string_fields_as_text(tmp_path):

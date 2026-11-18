@@ -658,3 +658,12 @@ def test_rulings_join_on_the_full_posting_identity_not_the_short_key():
 
 def test_funnel_rows_are_not_clamped_to_two_lines():
     assert ".funnel li{display:block}" in mp.CSS
+
+
+
+def test_a_ruling_with_a_non_text_role_key_is_skipped_not_a_crash():
+    src = mp.gather_demo()
+    src["funnel"]["rulings"]["rulings"].append({"key": "x", "role_key": ["a"], "by": "nick"})
+    src["funnel"]["rulings"]["rulings"].append({"key": "y", "role_key": {"a": 1}, "by": "nick"})
+    b3 = _section(mp.render(mp.build_view(src, NOW), NOW, demo=True), "b3")
+    assert "Your rulings in the log: 3</h3>" in b3

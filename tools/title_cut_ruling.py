@@ -38,6 +38,7 @@ sys.path.insert(0, str(REPO_ROOT))
 from tools.count_report import report  # noqa: E402
 from tools.career_scanner.dedup import role_key  # noqa: E402
 from tools.career_scanner.scanner import role_queue_path  # noqa: E402
+from tools.inbox_lock import file_lock  # noqa: E402
 
 RULINGS_REL = Path("data") / "calibration" / "title-cut-rulings.jsonl"
 KEY_LEN = 8
@@ -48,7 +49,9 @@ def cut_key(cut: dict) -> str:
     """Short, stable key for one cut role: the first 8 hex of sha1(role_key).
 
     role_key is the posting URL (or company::title without one), the same identity the
-    scanner dedups on, so a role cut on two nights keeps one key."""
+    scanner dedups on, so a posting with a URL keeps one key across nights. A posting with
+    no URL is keyed by company and title, so a retitled one gets a new key: the scanner's
+    own identity rule (dedup.role_key), kept rather than redefined here."""
     return hashlib.sha1(role_key(cut).encode("utf-8")).hexdigest()[:KEY_LEN]
 
 
@@ -130,6 +133,16 @@ def mark(root: Path, key: str, reason: str, by: str = "nick",
         return 2, {"error": f"key {key!r} matches {len(hits)} different postings; "
                             "no ruling written. Tell Claude: the key needs lengthening (KEY_LEN)"}
     cut = hits[0]
+    path = rulings_path(root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # Check and append under one lock, so two marks of one role cannot both write
+    # (Codex/Grok/Fable F3, round 2).
+    with file_lock(path):
+        return _check_and_append(root, cut, loaded["scanned_at"], reason, by, now)
+
+
+def _check_and_append(root: Path, cut: dict, scanned_at, reason: str, by: str,
+                      now: datetime | None) -> tuple[int, dict]:
     prior = load_rulings(root)
     if prior["error"]:
         return 2, {"error": prior["error"]}
@@ -145,11 +158,9 @@ def mark(root: Path, key: str, reason: str, by: str = "nick",
         "company": cut.get("company", ""), "title": cut.get("title", ""),
         "location": cut.get("location", ""), "url": cut.get("url", ""),
         "rule": cut.get("rule", ""), "cut_reason": cut.get("reason", ""),
-        "scan_at": loaded["scanned_at"],
+        "scan_at": scanned_at,
     }
-    path = rulings_path(root)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "a", encoding="utf-8") as f:
+    with open(rulings_path(root), "a", encoding="utf-8") as f:
         f.write(json.dumps(rec, ensure_ascii=False) + "\n")
         f.flush()
         os.fsync(f.fileno())

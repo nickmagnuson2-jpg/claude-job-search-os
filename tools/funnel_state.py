@@ -33,6 +33,7 @@ sys.path.insert(0, str(REPO_ROOT / "tools"))
 
 import day_check  # noqa: E402
 import title_cut_ruling  # noqa: E402
+from pipeline_history import normalize_name, same_company  # noqa: E402
 from stage_vocab import is_active_pursuit, is_terminal_stage  # noqa: E402
 from tools.career_scanner.dedup import role_key  # noqa: E402
 from tools.career_scanner.scanner import (  # noqa: E402
@@ -96,8 +97,8 @@ def watched(companies: list | None, err: str | None, rows: list[list[str]] | Non
         return out
     status = {"open": [], "closed": [], "never": []}
     for c in targets:
-        name = str(c.get("name", "")).strip().casefold()
-        stages = [r[2] for r in rows if r[0].strip().casefold() == name]
+        # The one company matcher (pipeline_history.same_company; Fable F2, round 2).
+        stages = [r[2] for r in rows if same_company(r[0], str(c.get("name", "")))]
         if not stages:
             status["never"].append(c.get("name"))
         elif any(not is_terminal_stage(s) for s in stages):
@@ -179,7 +180,11 @@ def to_review(cut: dict, target: dict | None) -> bool:
     all 9 roles the 11-17 hand review labelled fit or maybe
     (data/calibration/title-cut-review-2026-11-17.json; its 6 in-lane roles outside SF
     are left out, as the SF filter in goals.md requires)."""
-    t = target if isinstance(target, dict) else {}
+    if not isinstance(target, dict):
+        # No config for this company (unreadable file, renamed target): the fetch gate
+        # cannot be replayed, so the role stays in the full list only (Fable F9, round 2).
+        return False
+    t = target
     if cut.get("rule") != "title_filter":
         return False
     # The same location rule the fetch applies, including a target's geo_filter: false
@@ -199,7 +204,7 @@ def scans_path(root: Path) -> Path:
     return Path(root) / SCANS_REL
 
 
-def record_scan(root: Path, scanned_at: str, keys: list[str], store: bool = True) -> dict:
+def record_scan(root: Path, scanned_at: str, keys: list[str], carry: bool = False) -> dict:
     """Record this scan's cut keys; return the previous scan's keys.
 
     {"error", "previous"}: previous is a set, or None when there is no earlier scan (every
@@ -209,7 +214,9 @@ def record_scan(root: Path, scanned_at: str, keys: list[str], store: bool = True
     path = scans_path(root)
     try:
         scans = json.loads(path.read_text(encoding="utf-8"))
-        if not isinstance(scans, dict) or not all(isinstance(v, list) for v in scans.values()):
+        if not isinstance(scans, dict) or not all(
+                isinstance(v, list) and all(isinstance(k, str) for k in v)
+                for v in scans.values()):
             raise ValueError("not an object of key lists")
     except FileNotFoundError:
         scans = {}
@@ -218,13 +225,19 @@ def record_scan(root: Path, scanned_at: str, keys: list[str], store: bool = True
                 "previous": None}
     earlier = sorted(k for k in scans if k < scanned_at)
     previous = set(scans[earlier[-1]]) if earlier else None
-    if store and scanned_at not in scans:
-        scans[scanned_at] = sorted(set(keys))
+    if scanned_at not in scans:
+        # carry: boards failed in this scan, so the previous scan's keys are kept too.
+        # Their roles are then neither lost nor shown as new tomorrow, and the baseline
+        # still advances when a board fails every night (Grok F6 / Fable F1, round 2).
+        scans[scanned_at] = sorted(set(keys) | (previous or set() if carry else set()))
         kept = {k: scans[k] for k in sorted(scans)[-KEEP_SCANS:]}
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(kept, indent=0, sort_keys=True), encoding="utf-8")
-        tmp.replace(path)
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(kept, indent=0, sort_keys=True), encoding="utf-8")
+            tmp.replace(path)
+        except OSError as e:  # a disk or permission error degrades, never aborts the page
+            return {"error": f"cut-scan store not written: {e}", "previous": previous}
     return {"error": None, "previous": previous}
 
 
@@ -236,17 +249,16 @@ def collect(root: Path, now: datetime) -> dict:
     rulings = title_cut_ruling.load_rulings(root)
     scans_error = None
     if cuts["cuts"] is not None:
-        by_name = {str(c.get("name", "")).strip().casefold(): c
-                   for c in (companies or []) if isinstance(c, dict)}
-        # A scan where boards failed to fetch is missing their cuts: it is compared with the
-        # scan before it but never stored as "the previous scan", or every cut at those
-        # boards would show as new the next day (Fable F1).
-        rec = record_scan(root, str(cuts["scanned_at"] or ""), [c["key"] for c in cuts["cuts"]],
-                          store=not cuts.get("fetch_failures"))
+        by_name = {normalize_name(str(c.get("name", ""))): c
+                   for c in (companies or []) if isinstance(c, dict) and c.get("name")}
+        # Stored by full posting identity, never the 8-hex key (Grok F5, round 2).
+        rec = record_scan(root, str(cuts["scanned_at"] or ""),
+                          [c["role_key"] for c in cuts["cuts"]],
+                          carry=bool(cuts.get("fetch_failures")))
         scans_error, previous = rec["error"], rec["previous"]
         for c in cuts["cuts"]:
-            c["review"] = to_review(c, by_name.get(str(c.get("company", "")).strip().casefold()))
-            c["new"] = previous is None or c["key"] not in previous
+            c["review"] = to_review(c, by_name.get(normalize_name(str(c.get("company", "")))))
+            c["new"] = previous is None or c["role_key"] not in previous
     return {
         "scan": {"scanned_at": cuts["scanned_at"],
                  "age_hours": scan_age_hours(cuts["scanned_at"], now)
