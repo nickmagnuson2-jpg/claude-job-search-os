@@ -306,6 +306,12 @@ def extract_seniority(title: str) -> int:
     Returns integer 1-10 based on SENIORITY_LEVELS map.
     Defaults to 4 (mid-level) if no seniority keyword found.
     """
+    level = _seniority_word_level(title)
+    return 4 if level is None else level  # default: mid
+
+
+def _seniority_word_level(title: str) -> int | None:
+    """Level of the seniority word in a title, or None when the title has none."""
     title_lower = title.lower()
     # Check multi-word keys first (e.g., 'vice president', 'c-suite')
     # Whole words only, plural allowed: a substring test read 'International' as intern and
@@ -314,7 +320,7 @@ def extract_seniority(title: str) -> int:
     for keyword in sorted(SENIORITY_LEVELS.keys(), key=len, reverse=True):
         if re.search(rf"(?<![a-z0-9]){re.escape(keyword)}s?(?![a-z0-9])", title_lower):
             return SENIORITY_LEVELS[keyword]
-    return 4  # default: mid
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -440,7 +446,8 @@ def _resolve_target_level(target_seniority: str, target_titles: list) -> int | N
 def _score_seniority_match(role: dict, context: dict) -> float:
     """Dimension 2: Seniority match (weight 0.25).
 
-    Score = 10 - abs(role_level - target_level) * 2, clamped 1-10.
+    Score = 10 - abs(role_level - target_level) * 2, clamped 1-10. A title with no
+    seniority word scores 10 (on target) whenever a target exists (Q19 b).
     """
     target_level = context.get("target_seniority_level")
     if target_level is None:
@@ -451,7 +458,13 @@ def _score_seniority_match(role: dict, context: dict) -> float:
             return 5.0
         target_level = SENIORITY_LEVELS.get(target_seniority.lower(), 4)
 
-    role_level = extract_seniority(role.get("title", ""))
+    role_level = _seniority_word_level(role.get("title", ""))
+    if role_level is None:
+        # RULING Q19 b (2026-11-16, data/workstreams/scoring-integrity.md:470): a title
+        # with no seniority word scores as on target. The level-4 default cost 46 of 62
+        # Family A titles 4 points against a target of 6. extract_seniority keeps the
+        # default, so target-level inference is unchanged (Q16 c, undecided).
+        return 10.0
     raw = 10 - abs(role_level - target_level) * 2
     return max(1.0, min(10.0, float(raw)))
 
