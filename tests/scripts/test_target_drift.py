@@ -136,15 +136,15 @@ def test_clean(tmp_path):
 
 
 def test_a_title_cut_at_fetch_names_the_target_and_reason(tmp_path):
-    code, out = run(make(tmp_path, titles="Deployment Strategist; Head of Business Operations"))
+    code, out = run(make(tmp_path, titles="Deployment Strategist; Head of Sales"))
     assert code == 1 and out["drift"] is True
-    [t] = [x for x in out["titles"] if x["title"] == "Head of Business Operations"]
-    assert t["cut_at_fetch"] == [{"target": "Placeholder Co", "reason": "title not in the target's role_filters"}]
+    [t] = [x for x in out["titles"] if x["title"] == "Head of Sales"]
+    assert t["cut_at_fetch"] == [{"target": "Placeholder Co", "reason": "title in out-of-lane family 'sales'"}]
     assert t["in_lane"] is False
 
 
 def test_a_target_with_no_filters_cuts_nothing(tmp_path):
-    code, out = run(make(tmp_path, titles="Head of Business Operations"))
+    code, out = run(make(tmp_path, titles="Head of Sales"))
     [t] = out["titles"]
     assert [c["target"] for c in t["cut_at_fetch"]] == ["Placeholder Co"]
 
@@ -290,8 +290,8 @@ def test_unranked_reason(ctx, expected):
 
 
 def test_a_cut_is_named_with_its_reach_in_problems(tmp_path):
-    _, out = run(make(tmp_path, titles="Deployment Strategist; Head of Business Operations"))
-    assert "'Head of Business Operations' is cut at fetch by 1 of 2 scanned targets" in out["problems"]
+    _, out = run(make(tmp_path, titles="Deployment Strategist; Head of Sales"))
+    assert "'Head of Sales' is cut at fetch by 1 of 2 scanned targets" in out["problems"]
     assert out["targets_checked"] == 2
     assert "population 2 | included 2" in out["reach"]
 

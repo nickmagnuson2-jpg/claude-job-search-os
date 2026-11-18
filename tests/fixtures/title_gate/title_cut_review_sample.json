@@ -1,0 +1,2302 @@
+{
+ "source": "hand review of the titles a 2026-11-17 nightly scan cut with the old include-list gate; company names replaced by one placeholder, titles naming or fingerprinting a real company, product or program replaced with generic equivalents or dropped",
+ "lane_filters": [
+  "strategist",
+  "deployment",
+  "forward deployed",
+  "forward-deployed",
+  "engagement manager",
+  "engagement lead",
+  "implementation",
+  "transformation manager",
+  "outcomes lead",
+  "founding bizops",
+  "founding business operations",
+  "chief of staff",
+  "head of business operations",
+  "business operations lead",
+  "strategy and operations lead",
+  "strategy & operations lead"
+ ],
+ "lane_excludes": [
+  "content strategist",
+  "brand strategist",
+  "strategic finance",
+  "account executive",
+  "sales performance",
+  "recruiting",
+  "people operations"
+ ],
+ "rows": [
+  {
+   "company": "Company X",
+   "title": "Business/GTM Recruiter (Founding Team)",
+   "verdict": "not-fit",
+   "why": "recruiting/talent"
+  },
+  {
+   "company": "Company X",
+   "title": "Director of Sales - Dubai, UAE",
+   "verdict": "not-fit",
+   "why": "sales"
+  },
+  {
+   "company": "Company X",
+   "title": "Field Marketing Manager",
+   "verdict": "not-fit",
+   "why": "marketing"
+  },
+  {
+   "company": "Company X",
+   "title": "Founding Growth Lead",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "GTM Strategy: Products and Markets",
+   "verdict": "not-fit",
+   "why": "marketing"
+  },
+  {
+   "company": "Company X",
+   "title": "Head of Brand Design",
+   "verdict": "not-fit",
+   "why": "marketing"
+  },
+  {
+   "company": "Company X",
+   "title": "Sales Director - Seoul",
+   "verdict": "not-fit",
+   "why": "sales"
+  },
+  {
+   "company": "Company X",
+   "title": "Senior Member of Technical Staff, Platform Engineer (Infra)",
+   "verdict": "not-fit",
+   "why": "research/technical"
+  },
+  {
+   "company": "Company X",
+   "title": "Senior Member of Technical Staff, Platform Engineer (Infra)",
+   "verdict": "not-fit",
+   "why": "research/technical"
+  },
+  {
+   "company": "Company X",
+   "title": "Senior Member of Technical Staff, Product Engineering",
+   "verdict": "not-fit",
+   "why": "research/technical"
+  },
+  {
+   "company": "Company X",
+   "title": "Senior Member of Technical Staff, Product Engineering",
+   "verdict": "not-fit",
+   "why": "research/technical"
+  },
+  {
+   "company": "Company X",
+   "title": "Strategic Partnerships Lead",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Strategy and Ops",
+   "verdict": "fit",
+   "why": ""
+  },
+  {
+   "company": "Company X",
+   "title": "Technical Recruiter (Founding Team)",
+   "verdict": "not-fit",
+   "why": "recruiting/talent"
+  },
+  {
+   "company": "Company X",
+   "title": "Legal Counsel",
+   "verdict": "not-fit",
+   "why": "legal/finance/admin"
+  },
+  {
+   "company": "Company X",
+   "title": "Field Marketing Specialist",
+   "verdict": "not-fit",
+   "why": "marketing"
+  },
+  {
+   "company": "Company X",
+   "title": "Legal Counsel",
+   "verdict": "not-fit",
+   "why": "legal/finance/admin"
+  },
+  {
+   "company": "Company X",
+   "title": "Product Marketing Manager",
+   "verdict": "not-fit",
+   "why": "marketing"
+  },
+  {
+   "company": "Company X",
+   "title": "Founding People Business Partner",
+   "verdict": "not-fit",
+   "why": "people"
+  },
+  {
+   "company": "Company X",
+   "title": "Partnerships Strategy & Enablement Lead",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Deal Team",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "PR & Communications Manager",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Performance Marketing",
+   "verdict": "not-fit",
+   "why": "marketing"
+  },
+  {
+   "company": "Company X",
+   "title": "Senior Recruiter",
+   "verdict": "not-fit",
+   "why": "recruiting/talent"
+  },
+  {
+   "company": "Company X",
+   "title": "Head of Workplace Services",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Performance Marketing",
+   "verdict": "not-fit",
+   "why": "marketing"
+  },
+  {
+   "company": "Company X",
+   "title": "Founding Recruiter - APAC",
+   "verdict": "not-fit",
+   "why": "recruiting/talent"
+  },
+  {
+   "company": "Company X",
+   "title": "Technical Customer Support Specialist",
+   "verdict": "not-fit",
+   "why": "customer success/support"
+  },
+  {
+   "company": "Company X",
+   "title": "GL Accounting Manager",
+   "verdict": "not-fit",
+   "why": "sales/account mgmt"
+  },
+  {
+   "company": "Company X",
+   "title": "Head of Product Marketing",
+   "verdict": "not-fit",
+   "why": "marketing"
+  },
+  {
+   "company": "Company X",
+   "title": "Head of Sales, Mexico",
+   "verdict": "not-fit",
+   "why": "sales"
+  },
+  {
+   "company": "Company X",
+   "title": "Customer Success Manager",
+   "verdict": "not-fit",
+   "why": "customer success/support"
+  },
+  {
+   "company": "Company X",
+   "title": "Technical Customer Support Specialist",
+   "verdict": "not-fit",
+   "why": "customer success/support"
+  },
+  {
+   "company": "Company X",
+   "title": "Head of Customer Success",
+   "verdict": "not-fit",
+   "why": "customer success/support"
+  },
+  {
+   "company": "Company X",
+   "title": "Enterprise Sales Director - Australia",
+   "verdict": "not-fit",
+   "why": "sales"
+  },
+  {
+   "company": "Company X",
+   "title": "Technical Customer Support Specialist",
+   "verdict": "not-fit",
+   "why": "customer success/support"
+  },
+  {
+   "company": "Company X",
+   "title": "Staff Product Manager",
+   "verdict": "not-fit",
+   "why": "product"
+  },
+  {
+   "company": "Company X",
+   "title": "Enterprise SDR",
+   "verdict": "not-fit",
+   "why": "sales"
+  },
+  {
+   "company": "Company X",
+   "title": "Sales Director",
+   "verdict": "not-fit",
+   "why": "sales"
+  },
+  {
+   "company": "Company X",
+   "title": "Payer Partnerships Lead (Value-Based Care)",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Technical Success Manager",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Senior Product Manager",
+   "verdict": "not-fit",
+   "why": "product"
+  },
+  {
+   "company": "Company X",
+   "title": "Product Marketing Manager",
+   "verdict": "not-fit",
+   "why": "marketing"
+  },
+  {
+   "company": "Company X",
+   "title": "Brand Designer",
+   "verdict": "not-fit",
+   "why": "marketing"
+  },
+  {
+   "company": "Company X",
+   "title": "SDR Manager",
+   "verdict": "not-fit",
+   "why": "sales"
+  },
+  {
+   "company": "Company X",
+   "title": "Tech Lead Manager",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Talent & Workplace Coordinator",
+   "verdict": "not-fit",
+   "why": "recruiting/talent"
+  },
+  {
+   "company": "Company X",
+   "title": "Technical Recruiter",
+   "verdict": "not-fit",
+   "why": "recruiting/talent"
+  },
+  {
+   "company": "Company X",
+   "title": "Campus Recruiter",
+   "verdict": "not-fit",
+   "why": "recruiting/talent"
+  },
+  {
+   "company": "Company X",
+   "title": "Data Product Operations Lead",
+   "verdict": "maybe",
+   "why": ""
+  },
+  {
+   "company": "Company X",
+   "title": "Technical Product Manager",
+   "verdict": "not-fit",
+   "why": "product"
+  },
+  {
+   "company": "Company X",
+   "title": "HR Business Partner",
+   "verdict": "not-fit",
+   "why": "people"
+  },
+  {
+   "company": "Company X",
+   "title": "Senior Technical Recruiter",
+   "verdict": "not-fit",
+   "why": "recruiting/talent"
+  },
+  {
+   "company": "Company X",
+   "title": "Head of Quality Assurance Operations",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "General Manager, Data Operations",
+   "verdict": "maybe",
+   "why": ""
+  },
+  {
+   "company": "Company X",
+   "title": "Data Scientist",
+   "verdict": "not-fit",
+   "why": "research/technical"
+  },
+  {
+   "company": "Company X",
+   "title": "General Manager, Marketplace",
+   "verdict": "maybe",
+   "why": ""
+  },
+  {
+   "company": "Company X",
+   "title": "Head of Marketing",
+   "verdict": "not-fit",
+   "why": "marketing"
+  },
+  {
+   "company": "Company X",
+   "title": "Head of Legal",
+   "verdict": "not-fit",
+   "why": "legal/finance/admin"
+  },
+  {
+   "company": "Company X",
+   "title": "Commercial Associate",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Director of Sales",
+   "verdict": "not-fit",
+   "why": "sales"
+  },
+  {
+   "company": "Company X",
+   "title": "Strategic Projects Lead",
+   "verdict": "location",
+   "why": ""
+  },
+  {
+   "company": "Company X",
+   "title": "Senior Product Manager",
+   "verdict": "not-fit",
+   "why": "product"
+  },
+  {
+   "company": "Company X",
+   "title": "Special Projects Lead",
+   "verdict": "maybe",
+   "why": ""
+  },
+  {
+   "company": "Company X",
+   "title": "Growth Associate",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Financial Analyst",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Growth Lead",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Product Lead",
+   "verdict": "not-fit",
+   "why": "product"
+  },
+  {
+   "company": "Company X",
+   "title": "Account Manager",
+   "verdict": "not-fit",
+   "why": "sales/account mgmt"
+  },
+  {
+   "company": "Company X",
+   "title": "Head Of Security",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Strategic Project Lead",
+   "verdict": "maybe",
+   "why": ""
+  },
+  {
+   "company": "Company X",
+   "title": "Strategic Projects Lead, Data Platform",
+   "verdict": "location",
+   "why": ""
+  },
+  {
+   "company": "Company X",
+   "title": "Administrative Generalist",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Product Manager",
+   "verdict": "not-fit",
+   "why": "product"
+  },
+  {
+   "company": "Company X",
+   "title": "Strategic Project Associate",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Ops Recruiter",
+   "verdict": "not-fit",
+   "why": "recruiting/talent"
+  },
+  {
+   "company": "Company X",
+   "title": "Program Manager, Quality",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Enterprise AI Lead",
+   "verdict": "maybe",
+   "why": ""
+  },
+  {
+   "company": "Company X",
+   "title": "Healthcare Sales Lead",
+   "verdict": "not-fit",
+   "why": "sales"
+  },
+  {
+   "company": "Company X",
+   "title": "Technical Recruiter",
+   "verdict": "not-fit",
+   "why": "recruiting/talent"
+  },
+  {
+   "company": "Company X",
+   "title": "Enterprise AI Associate",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Member of Design Staff",
+   "verdict": "not-fit",
+   "why": "design"
+  },
+  {
+   "company": "Company X",
+   "title": "Security GRC Lead",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Enterprise AI Lead",
+   "verdict": "location",
+   "why": ""
+  },
+  {
+   "company": "Company X",
+   "title": "Growth Associate",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Project Manager, Delivery Team",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Head of Operations Planning",
+   "verdict": "fit",
+   "why": ""
+  },
+  {
+   "company": "Company X",
+   "title": "Healthcare GTM Associate",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Member of Technical Staff, iOS",
+   "verdict": "not-fit",
+   "why": "research/technical"
+  },
+  {
+   "company": "Company X",
+   "title": "Brand Design Lead",
+   "verdict": "not-fit",
+   "why": "marketing"
+  },
+  {
+   "company": "Company X",
+   "title": "Product Manager, Applied AI",
+   "verdict": "not-fit",
+   "why": "product"
+  },
+  {
+   "company": "Company X",
+   "title": "Strategic Sourcing Lead",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Member of Technical Staff, Environments",
+   "verdict": "not-fit",
+   "why": "research/technical"
+  },
+  {
+   "company": "Company X",
+   "title": "Member of Technical Staff, Agent Product",
+   "verdict": "not-fit",
+   "why": "research/technical"
+  },
+  {
+   "company": "Company X",
+   "title": "Member of Technical Staff, Enterprise Evals Platform",
+   "verdict": "not-fit",
+   "why": "research/technical"
+  },
+  {
+   "company": "Company X",
+   "title": "Senior HR Business Partner, Engineering & Product",
+   "verdict": "not-fit",
+   "why": "people"
+  },
+  {
+   "company": "Company X",
+   "title": "Product Manager, Environments",
+   "verdict": "not-fit",
+   "why": "product"
+  },
+  {
+   "company": "Company X",
+   "title": "Product Manager, Real World Data",
+   "verdict": "not-fit",
+   "why": "product"
+  },
+  {
+   "company": "Company X",
+   "title": "Tech Lead, AI Data Products",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Strategic Project Lead",
+   "verdict": "location",
+   "why": ""
+  },
+  {
+   "company": "Company X",
+   "title": "Strategic Project Associate",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Data Science Intern",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Senior HR Business Partner, Delivery",
+   "verdict": "not-fit",
+   "why": "people"
+  },
+  {
+   "company": "Company X",
+   "title": "Client Services Lead, Finance",
+   "verdict": "not-fit",
+   "why": "legal/finance/admin"
+  },
+  {
+   "company": "Company X",
+   "title": "Tech Lead, Applied AI - Evals",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Corporate Finance Senior / Associate",
+   "verdict": "not-fit",
+   "why": "legal/finance/admin"
+  },
+  {
+   "company": "Company X",
+   "title": "Marketing Manager",
+   "verdict": "not-fit",
+   "why": "marketing"
+  },
+  {
+   "company": "Company X",
+   "title": "Senior PMM, Evals",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "People Programs Specialist",
+   "verdict": "not-fit",
+   "why": "people"
+  },
+  {
+   "company": "Company X",
+   "title": "Pricing and Monetization Manager",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Global Payroll Lead",
+   "verdict": "not-fit",
+   "why": "legal/finance/admin"
+  },
+  {
+   "company": "Company X",
+   "title": "M&A Accounting and Integration Lead",
+   "verdict": "not-fit",
+   "why": "sales/account mgmt"
+  },
+  {
+   "company": "Company X",
+   "title": "Technical Recruiter",
+   "verdict": "not-fit",
+   "why": "recruiting/talent"
+  },
+  {
+   "company": "Company X",
+   "title": "ProcOps Specialist",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "G&A Recruiter",
+   "verdict": "not-fit",
+   "why": "recruiting/talent"
+  },
+  {
+   "company": "Company X",
+   "title": "GTM Recruiter",
+   "verdict": "not-fit",
+   "why": "recruiting/talent"
+  },
+  {
+   "company": "Company X",
+   "title": "Early Career & University Recruiter",
+   "verdict": "not-fit",
+   "why": "recruiting/talent"
+  },
+  {
+   "company": "Company X",
+   "title": "Partnerships Lead, Consulting & SI Partners",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Partnerships Lead, AI Infrastructure & Post-Training",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Finance GTM Associate",
+   "verdict": "not-fit",
+   "why": "legal/finance/admin"
+  },
+  {
+   "company": "Company X",
+   "title": "Legal GTM Associate",
+   "verdict": "not-fit",
+   "why": "legal/finance/admin"
+  },
+  {
+   "company": "Company X",
+   "title": "Client Services Lead, Legal",
+   "verdict": "not-fit",
+   "why": "legal/finance/admin"
+  },
+  {
+   "company": "Company X",
+   "title": "Enterprise AI Associate",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Strategic Project Lead",
+   "verdict": "location",
+   "why": ""
+  },
+  {
+   "company": "Company X",
+   "title": "Early Career & University Recruiter",
+   "verdict": "not-fit",
+   "why": "recruiting/talent"
+  },
+  {
+   "company": "Company X",
+   "title": "BDR - South EMEA - Spain & Italy",
+   "verdict": "not-fit",
+   "why": "sales"
+  },
+  {
+   "company": "Company X",
+   "title": "BDR UK",
+   "verdict": "not-fit",
+   "why": "sales"
+  },
+  {
+   "company": "Company X",
+   "title": "Business Transformation Advisory",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Business Transformation Advisory - Paris",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "CEMEA Solution Consulting Team Lead",
+   "verdict": "not-fit",
+   "why": "solutions/presales"
+  },
+  {
+   "company": "Company X",
+   "title": "Customer Success Lead - San Francisco",
+   "verdict": "not-fit",
+   "why": "customer success/support"
+  },
+  {
+   "company": "Company X",
+   "title": "Customer Success Manager",
+   "verdict": "not-fit",
+   "why": "customer success/support"
+  },
+  {
+   "company": "Company X",
+   "title": "Customer Success Manager, Central Europe (Frankfurt)",
+   "verdict": "not-fit",
+   "why": "customer success/support"
+  },
+  {
+   "company": "Company X",
+   "title": "Customer Success Manager, Planning  - San Francisco, Austin, New York or Toronto",
+   "verdict": "not-fit",
+   "why": "customer success/support"
+  },
+  {
+   "company": "Company X",
+   "title": "Data Scientist Internship",
+   "verdict": "not-fit",
+   "why": "research/technical"
+  },
+  {
+   "company": "Company X",
+   "title": "Delivery Quality Specialist \u2013 AI",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Enterprise Sales Manager",
+   "verdict": "not-fit",
+   "why": "sales"
+  },
+  {
+   "company": "Company X",
+   "title": "Planning Consultant - DACH",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Planning Project Manager",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Planning Services Sales Lead - London",
+   "verdict": "not-fit",
+   "why": "sales"
+  },
+  {
+   "company": "Company X",
+   "title": "Planning Services Sales Lead - Paris",
+   "verdict": "not-fit",
+   "why": "sales"
+  },
+  {
+   "company": "Company X",
+   "title": "Planning Technical Account Manager - Paris",
+   "verdict": "not-fit",
+   "why": "sales/account mgmt"
+  },
+  {
+   "company": "Company X",
+   "title": "Solutions Builder - Paris",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "FP&A Model Builder",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Global Head of Talent Acquisition",
+   "verdict": "not-fit",
+   "why": "recruiting/talent"
+  },
+  {
+   "company": "Company X",
+   "title": "Head of Brand Marketing",
+   "verdict": "not-fit",
+   "why": "marketing"
+  },
+  {
+   "company": "Company X",
+   "title": "Head of Partnerships, AMER",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Instructional Designer",
+   "verdict": "not-fit",
+   "why": "design"
+  },
+  {
+   "company": "Company X",
+   "title": "Marketing Operations Manager",
+   "verdict": "not-fit",
+   "why": "marketing"
+  },
+  {
+   "company": "Company X",
+   "title": "Partner Enablement Manager",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Partner Excellence Manager - London",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Partner Excellence Manager - Paris",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Partner Readiness Manager",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Product Support  Specialist Team Lead",
+   "verdict": "not-fit",
+   "why": "customer success/support"
+  },
+  {
+   "company": "Company X",
+   "title": "Product Support Specialist",
+   "verdict": "not-fit",
+   "why": "customer success/support"
+  },
+  {
+   "company": "Company X",
+   "title": "Regional Vice President, Enterprise Sales, East Region - Remote",
+   "verdict": "not-fit",
+   "why": "sales"
+  },
+  {
+   "company": "Company X",
+   "title": "Regional Vice President, Enterprise Sales, West Region",
+   "verdict": "not-fit",
+   "why": "sales"
+  },
+  {
+   "company": "Company X",
+   "title": "SEMEA Solution Consulting Team Lead",
+   "verdict": "not-fit",
+   "why": "solutions/presales"
+  },
+  {
+   "company": "Company X",
+   "title": "Senior AI Scientist",
+   "verdict": "not-fit",
+   "why": "research/technical"
+  },
+  {
+   "company": "Company X",
+   "title": "Senior Customer Success Operations Manager",
+   "verdict": "not-fit",
+   "why": "customer success/support"
+  },
+  {
+   "company": "Company X",
+   "title": "Senior Planning Consultant - Paris",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Senior Planning Consultant (Remote France)",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Senior Marketing Operations Manager",
+   "verdict": "not-fit",
+   "why": "marketing"
+  },
+  {
+   "company": "Company X",
+   "title": "Senior Product Manager",
+   "verdict": "not-fit",
+   "why": "product"
+  },
+  {
+   "company": "Company X",
+   "title": "Senior Sales Operations Manager, Americas",
+   "verdict": "not-fit",
+   "why": "sales"
+  },
+  {
+   "company": "Company X",
+   "title": "Senior Sales Operations Manager, EMEA",
+   "verdict": "not-fit",
+   "why": "sales"
+  },
+  {
+   "company": "Company X",
+   "title": "Senior SRE",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Senior SRE",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Solution Consultant - Germany",
+   "verdict": "not-fit",
+   "why": "solutions/presales"
+  },
+  {
+   "company": "Company X",
+   "title": "Solution Consultant - London",
+   "verdict": "not-fit",
+   "why": "solutions/presales"
+  },
+  {
+   "company": "Company X",
+   "title": "Solution Consultant - Paris",
+   "verdict": "not-fit",
+   "why": "solutions/presales"
+  },
+  {
+   "company": "Company X",
+   "title": "Solution Consultant - Switzerland",
+   "verdict": "not-fit",
+   "why": "solutions/presales"
+  },
+  {
+   "company": "Company X",
+   "title": "Solution Consultant, Financial Consolidation - London",
+   "verdict": "not-fit",
+   "why": "solutions/presales"
+  },
+  {
+   "company": "Company X",
+   "title": "Solution Consultant, Financial Consolidation - Paris",
+   "verdict": "not-fit",
+   "why": "solutions/presales"
+  },
+  {
+   "company": "Company X",
+   "title": "Solution Consultant, Supply Chain - Germany",
+   "verdict": "not-fit",
+   "why": "solutions/presales"
+  },
+  {
+   "company": "Company X",
+   "title": "Solution Consultant, Supply Chain - London",
+   "verdict": "not-fit",
+   "why": "solutions/presales"
+  },
+  {
+   "company": "Company X",
+   "title": "Solution Consultant, Supply Chain - Paris",
+   "verdict": "not-fit",
+   "why": "solutions/presales"
+  },
+  {
+   "company": "Company X",
+   "title": "Solutions Consultant - East Coast",
+   "verdict": "not-fit",
+   "why": "solutions/presales"
+  },
+  {
+   "company": "Company X",
+   "title": "Solutions Consultant - West Coast",
+   "verdict": "not-fit",
+   "why": "solutions/presales"
+  },
+  {
+   "company": "Company X",
+   "title": "Spontaneous application",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Talent Acquisition Manager GTM",
+   "verdict": "not-fit",
+   "why": "recruiting/talent"
+  },
+  {
+   "company": "Company X",
+   "title": "Talent Acquisition Manager GTM",
+   "verdict": "not-fit",
+   "why": "recruiting/talent"
+  },
+  {
+   "company": "Company X",
+   "title": "Talent Acquisition Partner",
+   "verdict": "not-fit",
+   "why": "recruiting/talent"
+  },
+  {
+   "company": "Company X",
+   "title": "Talent Acquisition Partner",
+   "verdict": "not-fit",
+   "why": "recruiting/talent"
+  },
+  {
+   "company": "Company X",
+   "title": "Talent Acquisition Partner",
+   "verdict": "not-fit",
+   "why": "recruiting/talent"
+  },
+  {
+   "company": "Company X",
+   "title": "Talent Acquisition Partner (Contract)",
+   "verdict": "not-fit",
+   "why": "recruiting/talent"
+  },
+  {
+   "company": "Company X",
+   "title": "Tech Talent Acquisition Lead",
+   "verdict": "not-fit",
+   "why": "recruiting/talent"
+  },
+  {
+   "company": "Company X",
+   "title": "Tech Talent Acquisition Manager",
+   "verdict": "not-fit",
+   "why": "recruiting/talent"
+  },
+  {
+   "company": "Company X",
+   "title": "Technical Solutions Consultant - Germany",
+   "verdict": "not-fit",
+   "why": "solutions/presales"
+  },
+  {
+   "company": "Company X",
+   "title": "Member of Technical Staff - GPU Infrastructure",
+   "verdict": "not-fit",
+   "why": "research/technical"
+  },
+  {
+   "company": "Company X",
+   "title": "Head of Growth",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Member of Technical Staff - Training Platform",
+   "verdict": "not-fit",
+   "why": "research/technical"
+  },
+  {
+   "company": "Company X",
+   "title": "Compute Finance and Strategy",
+   "verdict": "not-fit",
+   "why": "legal/finance/admin"
+  },
+  {
+   "company": "Company X",
+   "title": "Head of Marketing",
+   "verdict": "not-fit",
+   "why": "marketing"
+  },
+  {
+   "company": "Company X",
+   "title": "Head of Compute",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Member of Technical Staff - Sandbox Platform",
+   "verdict": "not-fit",
+   "why": "research/technical"
+  },
+  {
+   "company": "Company X",
+   "title": "Technical Account Manager - AI Infrastructure",
+   "verdict": "not-fit",
+   "why": "sales/account mgmt"
+  },
+  {
+   "company": "Company X",
+   "title": "Senior Technical Partnerships Manager",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Product Marketing Lead",
+   "verdict": "not-fit",
+   "why": "marketing"
+  },
+  {
+   "company": "Company X",
+   "title": "Office Manager",
+   "verdict": "not-fit",
+   "why": "legal/finance/admin"
+  },
+  {
+   "company": "Company X",
+   "title": "Head of People",
+   "verdict": "not-fit",
+   "why": "people"
+  },
+  {
+   "company": "Company X",
+   "title": "Member of Technical Staff - IT & Security Eng.",
+   "verdict": "not-fit",
+   "why": "research/technical"
+  },
+  {
+   "company": "Company X",
+   "title": "Member of Technical Staff - Security Eng.",
+   "verdict": "not-fit",
+   "why": "research/technical"
+  },
+  {
+   "company": "Company X",
+   "title": "Head of Product",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Technical Recruiter - Japan",
+   "verdict": "not-fit",
+   "why": "recruiting/talent"
+  },
+  {
+   "company": "Company X",
+   "title": "Founding GTM Recruiter - Japan",
+   "verdict": "not-fit",
+   "why": "recruiting/talent"
+  },
+  {
+   "company": "Company X",
+   "title": "Head of Partnerships - Japan",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Product Marketer",
+   "verdict": "not-fit",
+   "why": "marketing"
+  },
+  {
+   "company": "Company X",
+   "title": "Commercial Counsel",
+   "verdict": "not-fit",
+   "why": "legal/finance/admin"
+  },
+  {
+   "company": "Company X",
+   "title": "GTM Operations",
+   "verdict": "not-fit",
+   "why": "RevOps lead: CRM, forecasting, sales comp"
+  },
+  {
+   "company": "Company X",
+   "title": "Field Marketer",
+   "verdict": "not-fit",
+   "why": "marketing"
+  },
+  {
+   "company": "Company X",
+   "title": "Account Director, Enterprise (East)",
+   "verdict": "not-fit",
+   "why": "sales/account mgmt"
+  },
+  {
+   "company": "Company X",
+   "title": "Federal Account Director",
+   "verdict": "not-fit",
+   "why": "sales/account mgmt"
+  },
+  {
+   "company": "Company X",
+   "title": "Business Operations",
+   "verdict": "fit-but-previously-withdrawn",
+   "why": ""
+  },
+  {
+   "company": "Company X",
+   "title": "Account Director",
+   "verdict": "not-fit",
+   "why": "sales/account mgmt"
+  },
+  {
+   "company": "Company X",
+   "title": "Account Director - Europe",
+   "verdict": "not-fit",
+   "why": "sales/account mgmt"
+  },
+  {
+   "company": "Company X",
+   "title": "Director, Enterprise Sales (Central)",
+   "verdict": "not-fit",
+   "why": "sales"
+  },
+  {
+   "company": "Company X",
+   "title": "Account Director - Europe",
+   "verdict": "not-fit",
+   "why": "sales/account mgmt"
+  },
+  {
+   "company": "Company X",
+   "title": "Brand Marketer",
+   "verdict": "not-fit",
+   "why": "marketing"
+  },
+  {
+   "company": "Company X",
+   "title": "Account Director - ANZ",
+   "verdict": "not-fit",
+   "why": "sales/account mgmt"
+  },
+  {
+   "company": "Company X",
+   "title": "Paid Media Marketer",
+   "verdict": "not-fit",
+   "why": "marketing"
+  },
+  {
+   "company": "Company X",
+   "title": "Account Director - APAC",
+   "verdict": "not-fit",
+   "why": "sales/account mgmt"
+  },
+  {
+   "company": "Company X",
+   "title": "Account Director - MENA",
+   "verdict": "not-fit",
+   "why": "sales/account mgmt"
+  },
+  {
+   "company": "Company X",
+   "title": "Head of LATAM Marketing",
+   "verdict": "not-fit",
+   "why": "marketing"
+  },
+  {
+   "company": "Company X",
+   "title": "Account Director - APAC",
+   "verdict": "not-fit",
+   "why": "sales/account mgmt"
+  },
+  {
+   "company": "Company X",
+   "title": "Support Specialist, Subscriptions & Billing",
+   "verdict": "not-fit",
+   "why": "customer success/support"
+  },
+  {
+   "company": "Company X",
+   "title": "Workplace & Engagement Coordinator",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Partner Director - Japan",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Regional Vice President of Sales - India",
+   "verdict": "not-fit",
+   "why": "sales"
+  },
+  {
+   "company": "Company X",
+   "title": "GTM Recruiter - APAC",
+   "verdict": "not-fit",
+   "why": "recruiting/talent"
+  },
+  {
+   "company": "Company X",
+   "title": "Vice President of Sales - KSA",
+   "verdict": "not-fit",
+   "why": "sales"
+  },
+  {
+   "company": "Company X",
+   "title": "Regional Vice President of Sales - ANZ",
+   "verdict": "not-fit",
+   "why": "sales"
+  },
+  {
+   "company": "Company X",
+   "title": "Country Leader - South Korea",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Account Director - LATAM",
+   "verdict": "not-fit",
+   "why": "sales/account mgmt"
+  },
+  {
+   "company": "Company X",
+   "title": "Account Director - LATAM",
+   "verdict": "not-fit",
+   "why": "sales/account mgmt"
+  },
+  {
+   "company": "Company X",
+   "title": "Regional Sales Director",
+   "verdict": "not-fit",
+   "why": "sales"
+  },
+  {
+   "company": "Company X",
+   "title": "Capture Lead - Federal",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Workplace & Engagement Coordinator",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "GTM Operations - Europe",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Workplace & Engagement Coordinator",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Executive Assistant, Sales Leadership",
+   "verdict": "not-fit",
+   "why": "sales"
+  },
+  {
+   "company": "Company X",
+   "title": "Talent Operations Coordinator",
+   "verdict": "not-fit",
+   "why": "recruiting/talent"
+  },
+  {
+   "company": "Company X",
+   "title": "Technical Recruiter - APAC",
+   "verdict": "not-fit",
+   "why": "recruiting/talent"
+  },
+  {
+   "company": "Company X",
+   "title": "Head of EMEA Marketing",
+   "verdict": "not-fit",
+   "why": "marketing"
+  },
+  {
+   "company": "Company X",
+   "title": "Account Director - Qatar",
+   "verdict": "not-fit",
+   "why": "sales/account mgmt"
+  },
+  {
+   "company": "Company X",
+   "title": "Head of Analyst Relations",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Onboarding Coordinator",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "ABM/Enterprise Demand",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Paid & Digital",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Integrated Campaign Manager, Brand",
+   "verdict": "not-fit",
+   "why": "marketing"
+  },
+  {
+   "company": "Company X",
+   "title": "SEO & AEO",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Partner Director - US",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Workplace & Facilities Lead (West Coast)",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Head of Safety",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Japan Partner Marketing",
+   "verdict": "not-fit",
+   "why": "marketing"
+  },
+  {
+   "company": "Company X",
+   "title": "Recruiter - UK",
+   "verdict": "not-fit",
+   "why": "recruiting/talent"
+  },
+  {
+   "company": "Company X",
+   "title": "Program Manager - Field Engineering - US",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Global Security Manager",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Program Manager - Field Engineering - EMEA",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Paid Social & Influencer Lead",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Social Media Lead",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Partner Marketer",
+   "verdict": "not-fit",
+   "why": "marketing"
+  },
+  {
+   "company": "Company X",
+   "title": "Lifecycle Marketing Lead",
+   "verdict": "not-fit",
+   "why": "marketing"
+  },
+  {
+   "company": "Company X",
+   "title": "Member of Technical Staff",
+   "verdict": "not-fit",
+   "why": "research/technical"
+  },
+  {
+   "company": "Company X",
+   "title": "Founding, Go-To-Market Lead",
+   "verdict": "not-fit",
+   "why": "quota-carrying founding seller"
+  },
+  {
+   "company": "Company X",
+   "title": "Member of Technical Staff -- Applied Scientist",
+   "verdict": "not-fit",
+   "why": "research/technical"
+  },
+  {
+   "company": "Company X",
+   "title": "Founding Product Manager",
+   "verdict": "not-fit",
+   "why": "product"
+  },
+  {
+   "company": "Company X",
+   "title": "Head of Growth Marketing",
+   "verdict": "not-fit",
+   "why": "marketing"
+  },
+  {
+   "company": "Company X",
+   "title": "Strategic Partnerships",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Global Talent Partner",
+   "verdict": "not-fit",
+   "why": "recruiting/talent"
+  },
+  {
+   "company": "Company X",
+   "title": "Product Marketing Lead",
+   "verdict": "not-fit",
+   "why": "marketing"
+  },
+  {
+   "company": "Company X",
+   "title": "Lead Brand & Creative Designer (US)",
+   "verdict": "not-fit",
+   "why": "marketing"
+  },
+  {
+   "company": "Company X",
+   "title": "Data Scientist",
+   "verdict": "not-fit",
+   "why": "research/technical"
+  },
+  {
+   "company": "Company X",
+   "title": "Founding GTM",
+   "verdict": "not-fit",
+   "why": "sales-first founding GTM (sibling of the generalist posting)"
+  },
+  {
+   "company": "Company X",
+   "title": "Founding Technical Recruiter",
+   "verdict": "not-fit",
+   "why": "recruiting/talent"
+  },
+  {
+   "company": "Company X",
+   "title": "Agent Product Manager",
+   "verdict": "not-fit",
+   "why": "product"
+  },
+  {
+   "company": "Company X",
+   "title": "Content Marketing Lead",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Founding SDR",
+   "verdict": "not-fit",
+   "why": "sales"
+  },
+  {
+   "company": "Company X",
+   "title": "Product Designer",
+   "verdict": "not-fit",
+   "why": "design"
+  },
+  {
+   "company": "Company X",
+   "title": "Growth Manager | ABM",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "RevOps Lead",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Technical Recruiter - New Grad",
+   "verdict": "not-fit",
+   "why": "recruiting/talent"
+  },
+  {
+   "company": "Company X",
+   "title": "Product Marketing",
+   "verdict": "not-fit",
+   "why": "marketing"
+  },
+  {
+   "company": "Company X",
+   "title": "Executive Assistant to the CEO",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Founding Sales Recruiter",
+   "verdict": "not-fit",
+   "why": "recruiting/talent"
+  },
+  {
+   "company": "Company X",
+   "title": "Sales Enablement Lead",
+   "verdict": "not-fit",
+   "why": "sales"
+  },
+  {
+   "company": "Company X",
+   "title": "GTM Data Analyst",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Deal Desk Lead",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Founding Sales Operations",
+   "verdict": "not-fit",
+   "why": "sales"
+  },
+  {
+   "company": "Company X",
+   "title": "Founding Strategic Partnerships Lead",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "GTM Recruiter",
+   "verdict": "not-fit",
+   "why": "recruiting/talent"
+  },
+  {
+   "company": "Company X",
+   "title": "Product Marketing Lead",
+   "verdict": "not-fit",
+   "why": "marketing"
+  },
+  {
+   "company": "Company X",
+   "title": "Sales Manager, Mid-Market - East",
+   "verdict": "not-fit",
+   "why": "marketing"
+  },
+  {
+   "company": "Company X",
+   "title": "Sales Manager, Enterprise",
+   "verdict": "not-fit",
+   "why": "sales"
+  },
+  {
+   "company": "Company X",
+   "title": "Office Manager",
+   "verdict": "not-fit",
+   "why": "legal/finance/admin"
+  },
+  {
+   "company": "Company X",
+   "title": "General Talent Pool",
+   "verdict": "not-fit",
+   "why": "recruiting/talent"
+  },
+  {
+   "company": "Company X",
+   "title": "Emerging Talent Recruiter",
+   "verdict": "not-fit",
+   "why": "recruiting/talent"
+  },
+  {
+   "company": "Company X",
+   "title": "Technical Recruiter",
+   "verdict": "not-fit",
+   "why": "recruiting/talent"
+  },
+  {
+   "company": "Company X",
+   "title": "Sourcer",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Senior Strategic Field Marketing Manager, West",
+   "verdict": "not-fit",
+   "why": "marketing"
+  },
+  {
+   "company": "Company X",
+   "title": "Regional VP - Strat",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Executive Assistant",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Field Marketing Manager",
+   "verdict": "not-fit",
+   "why": "marketing"
+  },
+  {
+   "company": "Company X",
+   "title": "Head of Sales Enablement",
+   "verdict": "not-fit",
+   "why": "sales"
+  },
+  {
+   "company": "Company X",
+   "title": "Senior Field Marketing & ABM Manager, EMEA",
+   "verdict": "not-fit",
+   "why": "marketing"
+  },
+  {
+   "company": "Company X",
+   "title": "Product Marketing Manager",
+   "verdict": "not-fit",
+   "why": "marketing"
+  },
+  {
+   "company": "Company X",
+   "title": "Content Marketing Manager",
+   "verdict": "not-fit",
+   "why": "marketing"
+  },
+  {
+   "company": "Company X",
+   "title": "Product Marketing Manager- Customer Advocacy",
+   "verdict": "not-fit",
+   "why": "marketing"
+  },
+  {
+   "company": "Company X",
+   "title": "Head of Field Marketing, Strategic",
+   "verdict": "not-fit",
+   "why": "marketing"
+  },
+  {
+   "company": "Company X",
+   "title": "Senior Strategic Field Marketing Manager- Central",
+   "verdict": "not-fit",
+   "why": "marketing"
+  },
+  {
+   "company": "Company X",
+   "title": "Head of Field Marketing, Commercial",
+   "verdict": "not-fit",
+   "why": "marketing"
+  },
+  {
+   "company": "Company X",
+   "title": "Senior Strategic Field Marketing Manager, East",
+   "verdict": "not-fit",
+   "why": "marketing"
+  },
+  {
+   "company": "Company X",
+   "title": "Emerging Markets Strategy & Ops",
+   "verdict": "location",
+   "why": ""
+  },
+  {
+   "company": "Company X",
+   "title": "Senior Field Marketing Manager, Public Sector",
+   "verdict": "not-fit",
+   "why": "marketing"
+  },
+  {
+   "company": "Company X",
+   "title": "Head of Associate AE",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Senior Field Marketing Manager, Majors West",
+   "verdict": "not-fit",
+   "why": "marketing"
+  },
+  {
+   "company": "Company X",
+   "title": "Senior Product Designer",
+   "verdict": "not-fit",
+   "why": "design"
+  },
+  {
+   "company": "Company X",
+   "title": "Founding Strategic Partnerships, Cloud & Alliances",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Special Initiatives, AI Agents",
+   "verdict": "not-fit",
+   "why": "requires 2+ yrs professional software engineering"
+  },
+  {
+   "company": "Company X",
+   "title": "Special Initiatives, Founder Programs",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Compliance Manager (Contract)",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Senior Compliance Manager",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Senior Deal Desk Manager",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Senior IT Manager",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "FP&A Manager",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Channel Partnerships Manager",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "SDR Manager",
+   "verdict": "not-fit",
+   "why": "sales"
+  },
+  {
+   "company": "Company X",
+   "title": "Head of Sales",
+   "verdict": "not-fit",
+   "why": "sales"
+  },
+  {
+   "company": "Company X",
+   "title": "Clinical Data Specialist",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Sr. Product Manager",
+   "verdict": "not-fit",
+   "why": "product"
+  },
+  {
+   "company": "Company X",
+   "title": "Associate Director, Customer Engagement",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Sales Director",
+   "verdict": "not-fit",
+   "why": "sales"
+  },
+  {
+   "company": "Company X",
+   "title": "Product Lead, Orchestration",
+   "verdict": "not-fit",
+   "why": "product"
+  },
+  {
+   "company": "Company X",
+   "title": "Senior Technical Program Manager",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Senior Accountant",
+   "verdict": "not-fit",
+   "why": "sales/account mgmt"
+  },
+  {
+   "company": "Company X",
+   "title": "Customer Success Manager",
+   "verdict": "not-fit",
+   "why": "customer success/support"
+  },
+  {
+   "company": "Company X",
+   "title": "Regional Vice President of Sales - East",
+   "verdict": "not-fit",
+   "why": "sales"
+  },
+  {
+   "company": "Company X",
+   "title": "Regional Vice President of Sales - West",
+   "verdict": "not-fit",
+   "why": "sales"
+  },
+  {
+   "company": "Company X",
+   "title": "Senior Director, Corporate Marketing",
+   "verdict": "not-fit",
+   "why": "marketing"
+  },
+  {
+   "company": "Company X",
+   "title": "Customer Success Associate",
+   "verdict": "not-fit",
+   "why": "customer success/support"
+  },
+  {
+   "company": "Company X",
+   "title": "Data Analyst",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Vendor & Resource Manager",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "HR Business Leader",
+   "verdict": "not-fit",
+   "why": "people"
+  },
+  {
+   "company": "Company X",
+   "title": "Product Manager, Healthcare Agents",
+   "verdict": "not-fit",
+   "why": "product"
+  },
+  {
+   "company": "Company X",
+   "title": "IT Administrator",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Senior Data Scientist",
+   "verdict": "not-fit",
+   "why": "research/technical"
+  },
+  {
+   "company": "Company X",
+   "title": "Strategic Account Manager",
+   "verdict": "not-fit",
+   "why": "sales/account mgmt"
+  },
+  {
+   "company": "Company X",
+   "title": "Strategic Account Manager",
+   "verdict": "not-fit",
+   "why": "sales/account mgmt"
+  },
+  {
+   "company": "Company X",
+   "title": "Senior Manager, Quality Engineering",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Account Manager",
+   "verdict": "not-fit",
+   "why": "sales/account mgmt"
+  },
+  {
+   "company": "Company X",
+   "title": "General Manager - Mexico",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Account Manager",
+   "verdict": "not-fit",
+   "why": "sales/account mgmt"
+  },
+  {
+   "company": "Company X",
+   "title": "User Acceptance Testing Analyst",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Global Head of Solutions",
+   "verdict": "not-fit",
+   "why": "solutions/presales"
+  },
+  {
+   "company": "Company X",
+   "title": "Technical Product Manager - Fraud",
+   "verdict": "not-fit",
+   "why": "product"
+  },
+  {
+   "company": "Company X",
+   "title": "Lead, New Products (Product & GTM)",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Payroll Specialist - US/Canada",
+   "verdict": "not-fit",
+   "why": "legal/finance/admin"
+  },
+  {
+   "company": "Company X",
+   "title": "People Business Partner - Tech",
+   "verdict": "not-fit",
+   "why": "people"
+  },
+  {
+   "company": "Company X",
+   "title": "Partnerships Manager",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Partnerships Manager",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Founding Head of Sales",
+   "verdict": "not-fit",
+   "why": "sales"
+  },
+  {
+   "company": "Company X",
+   "title": "Agent Product Manager",
+   "verdict": "not-fit",
+   "why": "product"
+  },
+  {
+   "company": "Company X",
+   "title": "Founding Head of Go-to-Market",
+   "verdict": "not-fit",
+   "why": "marketing"
+  },
+  {
+   "company": "Company X",
+   "title": "RVP, US Sales",
+   "verdict": "not-fit",
+   "why": "sales"
+  },
+  {
+   "company": "Company X",
+   "title": "Sales Director",
+   "verdict": "not-fit",
+   "why": "sales"
+  },
+  {
+   "company": "Company X",
+   "title": "Technical Program Manager",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Customer Success Manager",
+   "verdict": "not-fit",
+   "why": "customer success/support"
+  },
+  {
+   "company": "Company X",
+   "title": "Deal Desk Operations Analyst",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Director, Customer Delivery & Education",
+   "verdict": "not-fit",
+   "why": "other (reviewed, not in lane)"
+  },
+  {
+   "company": "Company X",
+   "title": "Enterprise Customer Success Manager",
+   "verdict": "not-fit",
+   "why": "customer success/support"
+  },
+  {
+   "company": "Company X",
+   "title": "Principal Technical Recruiter",
+   "verdict": "not-fit",
+   "why": "recruiting/talent"
+  },
+  {
+   "company": "Company X",
+   "title": "Vice President of Sales, Large Accounts",
+   "verdict": "not-fit",
+   "why": "sales"
+  }
+ ],
+ "old_gate_passed": [
+  "AI Deployment Strategist",
+  "AI Strategist",
+  "Applied AI Transformation Manager - MENA",
+  "Associate Deployment Strategist (AI Product)",
+  "Business Operations Lead",
+  "Chief of Staff",
+  "Chief of Staff to the CEO",
+  "Chief of Staff, Delivery Operations",
+  "Deployment Leadership",
+  "Deployment Strategist",
+  "Deployment Strategist (AI Product)",
+  "Deployment Strategist, Flagship Account",
+  "Engagement Manager",
+  "Engagement Manager, Developer Tools",
+  "Engagement Manager, Legal",
+  "Founding Deployment Strategist",
+  "Founding GTM Strategy & Operations Lead",
+  "Senior Implementation Project Manager",
+  "Senior Implementations Product Specialist"
+ ],
+ "extra_recall_unlabelled": [
+  "Strategy & Operations Senior Lead, Logistics",
+  "Strategy & Operations Senior Lead (NYC or SF)",
+  "Strategy & Operations Senior Associate",
+  "Strategy & Operations Senior Lead, Marketing",
+  "GTM Strategy & Operations, Strategic Programs",
+  "Strategy & Operations Programs, Support",
+  "GTM Strategy & Operations, Professional Services",
+  "Business Operations",
+  "Infrastructure Strategy & Operations",
+  "Strategy & Operations Generalist",
+  "Business Operations Manager",
+  "Sales Strategy & Operations, AI Products",
+  "Sales Strategy & Operations, Enterprise (hybrid SF/NYC)",
+  "Manager, Customer Strategy & Operations"
+ ],
+ "notes": "old_gate_passed: titles the pre-1118 gate passed in the 2026-11-18 nightly scan (location cuts plus standing queue roles). extra_recall_unlabelled: SF ops-family titles another session found cut on 2026-11-18; NOT labelled by the owner, kept apart from rows; one distinctive title genericized."
+}

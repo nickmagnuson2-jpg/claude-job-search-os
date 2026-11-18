@@ -67,8 +67,14 @@ def test_empty_includes_passes_everything():
     assert title_matches("Warehouse Associate", []) is True
 
 
-def test_non_matching_title_is_dropped():
-    assert title_matches("Warehouse Associate", LANE) is False
+def test_out_of_lane_family_title_is_dropped():
+    assert title_matches("Sales Development Representative", LANE) is False
+
+
+def test_title_outside_the_includes_and_every_family_passes_to_the_scorer():
+    """title-gate-1118: the gate cuts only out-of-lane families; an unknown title is the
+    scorer's call. Before, the include list was an allowlist and cut this."""
+    assert title_matches("Warehouse Associate", LANE) is True
 
 
 def test_exclude_beats_include():
@@ -153,7 +159,7 @@ def test_filters_by_title_and_geography(fake_ashby):
     fake_ashby([
         {"title": "Deployment Strategist", "location": "San Francisco, CA"},
         {"title": "Deployment Strategist", "location": "San Mateo, CA"},
-        {"title": "Warehouse Associate", "location": "San Francisco, CA"},
+        {"title": "Sales Development Representative", "location": "San Francisco, CA"},
         {"title": "Forward Deployed Engineer", "location": "San Francisco, CA"},
     ])
     out = fetch_company_roles(_target())
@@ -176,7 +182,7 @@ def test_zero_raw_roles_warns_loudly(fake_ashby, capsys):
 
 def test_empty_after_filtering_does_not_warn(fake_ashby, capsys):
     """A board that legitimately has no matching roles is not a slug failure."""
-    fake_ashby([{"title": "Warehouse Associate", "location": "San Francisco, CA"}])
+    fake_ashby([{"title": "Sales Development Representative", "location": "San Francisco, CA"}])
     assert fetch_company_roles(_target()) == []
     assert "ZERO raw roles" not in capsys.readouterr().err
 

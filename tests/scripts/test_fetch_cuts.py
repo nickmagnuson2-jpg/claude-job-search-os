@@ -23,11 +23,13 @@ EXCL = ["account executive"]
 
 @pytest.mark.parametrize("title,includes,excludes,allow,reason", [
     ("Deployment Strategist", LANE, EXCL, False, None),
-    ("Founding Chief of Staff", LANE, EXCL, False, "title not in the target's role_filters"),
+    ("Founding Recruiter", LANE, EXCL, False, "title in out-of-lane family 'recruiting'"),
+    # title-gate-1118: outside the includes but in no out-of-lane family -> passes to the scorer.
+    ("Founding Chief of Staff", LANE, EXCL, False, None),
     ("Account Executive, Deployment", LANE, EXCL, False, "title matches role_excludes 'account executive'"),
     ("Forward Deployed Engineer", LANE, EXCL, False, "engineer title"),
-    # allow_engineer lifts only the engineer rule; the include-list still applies.
-    ("Forward Deployed Engineer", LANE, EXCL, True, "title not in the target's role_filters"),
+    # allow_engineer lifts only the engineer rule; the out-of-lane families still apply.
+    ("Sales Engineer", LANE, EXCL, True, "title in out-of-lane family 'sales'"),
     ("Deployment Engineer", LANE, EXCL, True, None),
     ("Founding Chief of Staff", [], [], False, None),
     ("Pre-Sales Lead, Deployment Engineering", LANE, EXCL, False, None),
@@ -55,7 +57,7 @@ def _target(**kw):
 
 ROLES = [
     {"title": "Deployment Strategist", "location": "San Francisco, CA", "url": "u1"},
-    {"title": "Founding Chief of Staff", "location": "San Francisco, CA", "url": "u2"},
+    {"title": "Founding Recruiter", "location": "San Francisco, CA", "url": "u2"},
     {"title": "Deployment Strategist", "location": "San Mateo, CA", "url": "u3"},
     {"title": "Forward Deployed Engineer", "location": "New York, NY", "url": "u4"},
 ]
@@ -67,8 +69,8 @@ def test_every_cut_is_recorded_with_rule_and_reason(fake_ashby):
     out = fetch_company_roles(_target(), cuts=cuts)
     assert [r["url"] for r in out] == ["u1"]
     assert cuts == [
-        {"company": "Placeholder Co", "title": "Founding Chief of Staff", "location": "San Francisco, CA",
-         "url": "u2", "rule": "title_filter", "reason": "title not in the target's role_filters"},
+        {"company": "Placeholder Co", "title": "Founding Recruiter", "location": "San Francisco, CA",
+         "url": "u2", "rule": "title_filter", "reason": "title in out-of-lane family 'recruiting'"},
         {"company": "Placeholder Co", "title": "Deployment Strategist", "location": "San Mateo, CA",
          "url": "u3", "rule": "location", "reason": "location: peninsula"},
         {"company": "Placeholder Co", "title": "Forward Deployed Engineer", "location": "New York, NY",
