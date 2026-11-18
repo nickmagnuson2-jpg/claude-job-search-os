@@ -46,7 +46,10 @@ BACKLOG (`--backlog`, rubric: output/infra-backlog/110726-workstream-backlog-rub
 Reads headers only: it never runs a probe and never writes. Every non-TERMINAL workstream
 carries five rows in its first `| Field | Value |` table (Owner, Value, Size, Blocker,
 Files) and a fenced ```json next block between that table and the first heading, holding a
-list of {"date": "YYYY-MM-DD", "action": "..."} items. check_workstream() returns the
+list of {"date": "YYYY-MM-DD", "action": "...", "done_when": "..."} items. done_when states the
+observable result that means the item is done (a file exists, a test passes, a page shows X,
+a number is read). It is optional before DONE_WHEN_CUTOVER and required on items dated from
+it; older items are grandfathered. check_workstream() returns the
 reasons a file is refused; backlog() ranks the valid ones (free before blocked, then Value
 descending, Size ascending, OLDEST next date, slug) and lists overlapping Files. Staleness
 compares the NEWEST next date with the newest heading that STARTS with a date
@@ -316,6 +319,10 @@ VALUES = ("V1", "V2", "V3", "V4")
 SIZES = ("S", "M", "L")
 SIZE_MAX_FILES = {"S": 3, "M": 10}
 MIN_ACTION = 15
+# Next items dated on or after this day must carry done_when (Nick, 2026-11-17). Items dated
+# before it are grandfathered, so the live registry stayed valid on the day this shipped.
+DONE_WHEN_CUTOVER = _dt.date(2026, 11, 18)
+NEXT_KEYS, NEXT_OPTIONAL = {"date", "action"}, {"done_when"}
 MAIN_BRANCH = "main"
 
 # Migration (rubric section 6 rule 1). The exemption list lives in the registry as
@@ -421,13 +428,14 @@ def _read_next(lines: list[str], table_end: int, today: _dt.date) -> tuple[list,
     except ValueError as exc:
         return [], [f"next block is not strict JSON: {exc}"]
     if not isinstance(items, list):
-        return [], ["next block must be a JSON list of {date, action} objects"]
+        return [], ["next block must be a JSON list of {date, action, done_when} objects"]
     if not items:
         return [], ["next block must hold at least one item"]
     reasons = []
     for n, item in enumerate(items, 1):
-        if not isinstance(item, dict) or set(item) != {"date", "action"}:
-            reasons.append(f"next item {n}: must be an object with exactly date and action")
+        if not isinstance(item, dict) or not NEXT_KEYS <= set(item) <= NEXT_KEYS | NEXT_OPTIONAL:
+            reasons.append(f"next item {n}: must be an object with date and action, "
+                           "and optionally done_when")
             continue
         d = _date(item["date"])
         if d is None:
@@ -437,6 +445,14 @@ def _read_next(lines: list[str], table_end: int, today: _dt.date) -> tuple[list,
         action = item["action"]
         if not isinstance(action, str) or len(action.strip()) < MIN_ACTION:
             reasons.append(f"next item {n}: action must be at least {MIN_ACTION} characters")
+        if "done_when" in item:
+            done = item["done_when"]
+            if not isinstance(done, str) or len(done.strip()) < MIN_ACTION:
+                reasons.append(f"next item {n}: done_when must be at least {MIN_ACTION} "
+                               "characters stating the observable result")
+        elif d is not None and d >= DONE_WHEN_CUTOVER:
+            reasons.append(f"next item {n}: done_when is required for items dated from "
+                           f"{DONE_WHEN_CUTOVER} (the observable result that means done)")
     return items, reasons
 
 
@@ -721,6 +737,8 @@ def _print_backlog(rep: dict) -> None:
             print(f"      evidence: {i['evidence']}")
         for item in i["next"]:
             print(f"      next {item['date']}: {item['action']}")
+            if "done_when" in item:
+                print(f"        done when: {item['done_when']}")
     print(f"\noverlaps ({len(rep['overlaps'])}):")
     for o in rep["overlaps"]:
         print(f"  {o['a']} and {o['b']}: {', '.join(o['shared'])}"
