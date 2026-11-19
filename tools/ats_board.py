@@ -37,6 +37,7 @@ if str(_REPO_ROOT) not in sys.path:
 from tools.career_scanner.ashby import fetch_ashby, fetch_ashby_with_compensation  # noqa: E402
 from tools.career_scanner.greenhouse import fetch_greenhouse  # noqa: E402
 from tools.career_scanner.lever import fetch_lever  # noqa: E402
+from tools.count_report import report  # noqa: E402
 
 
 def _fetcher(ats: str, comp: bool):
@@ -59,10 +60,15 @@ def read_board(ats: str, slug: str, comp: bool = False,
         # "0 roles" (Codex/Grok r1 F3, 2026-11-18).
         errors.append({"reason": f"{type(e).__name__}: {e}"})
         roles = []
-    if title:
-        pattern = re.compile(title, re.IGNORECASE)
-        roles = [r for r in roles if pattern.search(str(r.get("title", "") or ""))]
-    return roles, errors
+    return filter_title(roles, title), errors
+
+
+def filter_title(roles: list[dict], title: str | None) -> list[dict]:
+    """Keep roles whose title matches `title` (case-insensitive regex); all when None."""
+    if not title:
+        return roles
+    pattern = re.compile(title, re.IGNORECASE)
+    return [r for r in roles if pattern.search(str(r.get("title", "") or ""))]
 
 
 def format_line(role: dict) -> str:
@@ -96,17 +102,22 @@ def main(argv: list[str] | None = None) -> int:
             print(f"--title is not a valid regex: {e}", file=sys.stderr)
             return 2
 
-    roles, errors = read_board(args.ats, args.slug, comp=args.comp, title=args.title)
+    board, errors = read_board(args.ats, args.slug, comp=args.comp)
     if errors:
         reasons = "; ".join(e.get("reason", "?") for e in errors)
         print(f"FETCH FAILED for {args.ats}/{args.slug}: {reasons}. "
               f"A wrong slug fails this way; it is not an empty board.", file=sys.stderr)
         return 1
+    roles = filter_title(board, args.title)
     if args.json:
         print(json.dumps(roles, ensure_ascii=False, indent=1))
     else:
-        print(f"{args.ats}/{args.slug}: {len(roles)} role(s)"
-              + (f" matching /{args.title}/" if args.title else ""))
+        # The count carries its population (every role on the board) and the title
+        # filter as a named exclusion, so "1 role" cannot be read as "1 role posted".
+        excluded = {f"title not matching /{args.title}/": len(board) - len(roles)} \
+            if args.title else {}
+        report(f"roles on the {args.ats}/{args.slug} board", population=len(board),
+               included=len(roles), excluded=excluded)
         for r in roles:
             print("- " + format_line(r))
     return 0

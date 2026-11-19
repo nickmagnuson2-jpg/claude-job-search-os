@@ -96,8 +96,18 @@ def test_format_line_with_and_without_pay(seen_urls):
 def test_main_prints_count_and_lines(seen_urls, capsys):
     assert ats_board.main(["ashby", "acme", "--comp", "--title", "strategist"]) == 0
     out = capsys.readouterr().out
-    assert out.splitlines()[0] == "ashby/acme: 1 role(s) matching /strategist/"
+    assert out.splitlines()[0] == (
+        "scope: roles on the ashby/acme board | population 3 | included 1"
+        " | excluded: title not matching /strategist/ 2")
     assert "$150K – $200K" in out
+
+
+def test_main_without_title_reports_whole_board(seen_urls, capsys):
+    assert ats_board.main(["ashby", "acme"]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[0] == (
+        "scope: roles on the ashby/acme board | population 3 | included 3 | excluded: none")
+    assert len(lines) == 4
 
 
 def test_main_json(seen_urls, capsys):
