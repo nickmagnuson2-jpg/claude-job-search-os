@@ -250,6 +250,10 @@ Use `tools/pipe_write.py` (never Edit — rows exceed the Edit-safe length).
   already `Applied` or later, leave it and note that in the summary.
 - **`--notes` REPLACES the Notes cell**, so it drops any existing `[fit-reason ...]` tag. Re-apply the
   fit-reason in a separate `update` call after setting notes, or compose both in one call.
+- **A move into `Applied` stamps `Applied <today>` in Notes** (pipe_write.py, 2026-11-18). That text is
+  what `tools/day_check.py` counts as an application on the morning page and in `/check`. Run this step
+  the day Nick confirms the submission (Step 8); if he submitted on an earlier day, add
+  `--notes-append "Applied <that date>"` so the stamp is skipped and the right day counts.
 
 ### Step 11: Display summary
 

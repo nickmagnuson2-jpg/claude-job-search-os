@@ -28,12 +28,20 @@ subcommand; argparse rejects them after it with "unrecognized arguments"):
   PYTHONIOENCODING=utf-8 python3 tools/pipe_write.py --repo-root . add "Acme" "PM"
   PYTHONIOENCODING=utf-8 python3 tools/pipe_write.py --repo-root . update "Acme" "Applied"
   PYTHONIOENCODING=utf-8 python3 tools/pipe_write.py --repo-root . remove "Acme"
+
+Applications (2026-11-18): a move INTO Stage "Applied" (update from another stage, or add
+with --stage Applied) appends "Applied <today>" to Notes unless the row already carries an
+"Applied <date>". That text is what tools/day_check.py counts as an application; before
+this, the documented `update <co> Applied` wrote none, and the row was never counted. An
+update of a row that is already Applied stamps nothing, so a follow-up is not counted as a
+second application. The rule is shared through stage_vocab.py.
 """
 import re
 import sys
 from datetime import date
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # siblings import as `tools.X` too
+from stage_vocab import applied_dates, applied_stamp, is_applied_stage  # noqa: E402
 from md_table import JsonArgumentParser, find_section, load_lines, is_sep_row, merge_notes, out_error, out_ok, parse_cols, table_insert_pos, write_atomic  # noqa: E402
 
 # Stages a row may be archived under. Must stay in sync with
@@ -74,6 +82,14 @@ FIT_VERDICTS = ("fit", "not-fit", "neutral", "unknown")
 def sanitize_cell(text: str) -> str:
     """Collapse whitespace and strip any '|' that would break the 8-column row."""
     return re.sub(r"\s+", " ", str(text).replace("|", "/")).strip()
+
+
+def stamp_applied(notes: str, other_cells: list, today: str) -> tuple[str, bool]:
+    """Append "Applied <today>" to Notes unless some cell of the row already carries an
+    applied date. Returns (notes, stamped). Callers decide WHEN (a move into Applied)."""
+    if applied_dates([*other_cells, notes]):
+        return notes, False
+    return merge_notes(notes, append=applied_stamp(today)), True
 
 
 def compose_fit_note(existing_notes: str, fit_reason: str, fit_verdict, today: str) -> str:
@@ -153,6 +169,9 @@ def cmd_add(args, pipeline_path: Path, dry_run: bool) -> None:
                existing_roles=existing_roles)
         return
 
+    stamped = False
+    if is_applied_stage(stage):
+        notes, stamped = stamp_applied(notes, [args.role, next_action, url], today)
     row = fmt_row(args.company, args.role, stage, today, next_action, "—", notes, url)
     # Dry run after the duplicate check, so its preview matches what a real run does
     # (review 846.F3, 850.F3).
@@ -167,7 +186,8 @@ def cmd_add(args, pipeline_path: Path, dry_run: bool) -> None:
     out_ok("add", f"Added: {args.company} | {args.role} | {stage}"
            + (f" (same company, other roles: {', '.join(existing_roles)})" if existing_roles else ""),
            company=args.company, role=args.role, stage=stage,
-           fit_reason_logged=bool(getattr(args, "fit_reason", None)))
+           fit_reason_logged=bool(getattr(args, "fit_reason", None)),
+           applied_stamped=stamped)
 
 
 def select_active_row(args, lines: list, ambiguous_msg: str, with_stage: bool) -> tuple:
@@ -271,6 +291,20 @@ def cmd_update(args, pipeline_path: Path, dry_run: bool) -> None:
         else existing_role
     )
 
+    # No update drops the application's date, from Notes (--notes) or from any cell it
+    # rewrites (a Stage "Applied <date> via ..." set to bare "Applied"). day_check counts that
+    # date, so dropping it loses the application, and on a move into Applied it would be
+    # re-stamped today and counted again. Lost dates go to Notes, like fit-reason tags.
+    kept = applied_dates([new_role, args.new_stage, new_next_action, new_cv_used, new_notes, url])
+    lost = [d for d in dict.fromkeys(applied_dates(cols)) if d not in kept]
+    if lost:
+        new_notes = merge_notes(new_notes, append=" ".join(applied_stamp(d) for d in lost))
+
+    stamped = False
+    if is_applied_stage(args.new_stage) and not is_applied_stage(cols[2]):
+        new_notes, stamped = stamp_applied(
+            new_notes, [new_role, new_next_action, new_cv_used, url], today)
+
     updated_row = fmt_row(
         cols[0],
         new_role,
@@ -288,7 +322,8 @@ def cmd_update(args, pipeline_path: Path, dry_run: bool) -> None:
            company=args.company, role=new_role, stage=args.new_stage,
            previous_notes=old_notes,
            role_renamed=bool(getattr(args, "new_role", None)),
-           fit_reason_logged=bool(getattr(args, "fit_reason", None)))
+           fit_reason_logged=bool(getattr(args, "fit_reason", None)),
+           applied_stamped=stamped)
 
 
 def cmd_remove(args, pipeline_path: Path, dry_run: bool) -> None:

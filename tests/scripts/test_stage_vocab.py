@@ -120,3 +120,27 @@ def test_terminal_stage_is_never_active_pursuit():
     assert is_active_pursuit("Closed - lost in final round") is False
     assert is_active_pursuit("Rejected post-onsite") is False
     assert is_active_pursuit("Closed - rejected after HM screen") is False
+
+
+# --- Applications (2026-11-18): shared by pipe_write.py (writer) and day_check.py (reader)
+
+def test_applied_dates_reads_each_cell_and_both_phrasings():
+    from stage_vocab import applied_dates
+    assert applied_dates(["Applied 2026-11-06 via Ashby", "x", "applied on 2026-11-07"]) == [
+        "2026-11-06", "2026-11-07"]
+    # Stage "Applied" and Date Updated in separate cells are not an applied date.
+    assert applied_dates(["Applied", "2026-11-06"]) == []
+    assert applied_dates(["reapplied 2026-11-06", None]) == []
+
+
+def test_is_applied_stage_is_the_bare_stage_only():
+    from stage_vocab import is_applied_stage
+    assert is_applied_stage(" applied ")
+    assert not is_applied_stage("Applied via recruiter")
+    assert not is_applied_stage("To Apply")
+    assert not is_applied_stage(None)
+
+
+def test_applied_stamp_is_read_back_as_its_date():
+    from stage_vocab import applied_dates, applied_stamp
+    assert applied_dates([applied_stamp("2026-11-18")]) == ["2026-11-18"]

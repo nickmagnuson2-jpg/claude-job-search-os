@@ -105,3 +105,29 @@ def is_active_pursuit(stage: str) -> bool:
     # Leading boundary only (\bkw, no trailing \b) so stems match: "interview" ->
     # "Interviewing", "screen" -> "Screening", "research" -> "Researching".
     return any(re.search(rf"\b{re.escape(k)}", s) for k in ACTIVE_PURSUIT_KEYWORDS)
+
+
+# --- Applications -------------------------------------------------------------------
+# What makes a pipeline row count as an application, shared by the writer
+# (pipe_write.py stamps it) and the reader (day_check.py counts it), so the two cannot
+# drift. A row counts on the date in an "Applied <YYYY-MM-DD>" (or "applied on ...")
+# cell. The Stage cell alone never counts: a follow-up also moves Date Updated on an
+# Applied row, which would count an old application again.
+APPLIED_DATE_RE = re.compile(r"\bapplied (?:on )?(\d{4}-\d{2}-\d{2})\b", re.I)
+
+
+def is_applied_stage(stage: str) -> bool:
+    """True for the bare Stage value "Applied" (what `pipe_write.py update <co> Applied`
+    writes). Longer stages that mention applying are not this."""
+    return (stage or "").strip().casefold() == "applied"
+
+
+def applied_dates(cells) -> list[str]:
+    """Every ISO date carried by an "Applied <date>" text in any of the cells, in order.
+    Cell by cell: joining cells would read Stage "Applied" + Date Updated as one."""
+    return [m.group(1) for c in cells for m in APPLIED_DATE_RE.finditer(c or "")]
+
+
+def applied_stamp(iso_date: str) -> str:
+    """The text pipe_write.py writes into Notes when a row moves to Applied."""
+    return f"Applied {iso_date}"
