@@ -333,3 +333,21 @@ def test_remove_keeps_lines_in_a_drip_block_that_were_not_imported(tmp_path):
     cq.import_inbox(tmp_path, inbox, remove=True)
     left = inbox.read_text(encoding="utf-8")
     assert "a stray line someone typed" in left and "Acme" not in left
+
+
+# --- 2026-11-18: an Ashby API 404 for a board whose hosted page is live -------------
+
+def test_a_404_on_a_live_hosted_board_is_indeterminate_not_absent():
+    def live_but_api_404(slug, errors=None):
+        errors.append({"reason": "posting API HTTP 404, but the hosted board is live "
+                                 "(3 postings): https://jobs.ashbyhq.com/acme",
+                       "live_board": True})
+        return []
+    with pytest.raises(cq.BoardCheckIndeterminate, match="hosted board is live"):
+        cq.detect_board("Acme", {"ashby": live_but_api_404})
+
+
+def test_a_plain_404_dict_is_still_an_answer():
+    assert cq._is_not_found({"reason": "HTTP 404"}) is True
+    assert cq._is_not_found({"reason": "HTTP 404", "live_board": False}) is True
+    assert cq._is_not_found({"reason": "HTTP 404", "live_board": True}) is False

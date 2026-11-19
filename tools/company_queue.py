@@ -208,7 +208,12 @@ def _takes_errors(fetch) -> bool:
 
 
 def _is_not_found(err) -> bool:
-    """A 404 is an answer (no board at this slug), not a failed probe."""
+    """A 404 is an answer (no board at this slug), not a failed probe. Except when the
+    fetcher saw a live board behind the 404 (ashby.py `live_board`, 2026-11-18)."""
+    if isinstance(err, dict) and "not_found" in err:
+        return bool(err["not_found"])  # the fetcher decided (ashby.py, 2026-11-18)
+    if isinstance(err, dict) and err.get("live_board"):
+        return False
     return "404" in str(err.get("reason", err) if isinstance(err, dict) else err)
 
 
