@@ -103,13 +103,14 @@ def cached_index(cache_text: str) -> tuple[set, set, set]:
 
 
 def _cached(ad: dict, past: list, cached: list, repeats: list) -> None:
-    """File a cached ad, with the same history verdict the nightly scanner gives it: an exact
-    repeat of a posting Nick passed on goes to the visible held-back list, not `cached`, which
-    the skill reports as a count (Codex F1 / Grok F2 r1; Codex F1 r2)."""
+    """File a cached ad, with the same history verdict the nightly scanner gives it: a held-back
+    ad (an exact repeat of a posting Nick passed on, or an ad at a company that declined him)
+    goes to the visible held-back list, not `cached`, which the skill reports as a count
+    (Codex F1 / Grok F2 r1; Codex F1 r2; R9 2026-11-18)."""
     h = history(ad, past)
     row = {"title": ad["title"], "company": ad["company"], "history": h["label"]}
-    (repeats if h["declined_repeat"] else cached).append(
-        {**row, "url": ad.get("url", "")} if h["declined_repeat"] else row)
+    (repeats if h["held_back"] else cached).append(
+        {**row, "url": ad.get("url", "")} if h["held_back"] else row)
 
 
 def rules_version(root: Path) -> str:
@@ -225,11 +226,12 @@ def assess(ads: list, root: Path) -> dict:
                 continue
             row["reason"] = f"{reason} (re-checked under new rules; was {was})"
             row["rechecked"] = True
-        # Pipeline history (Nick, 2026-11-06): every role shows, labelled; only an exact
-        # repeat of a posting he passed on is held back, onto skipped_repeats.
+        # Pipeline history (Nick, 2026-11-06): every role is labelled. A held-back role (an
+        # exact repeat of a posting he passed on, or a role at a company that declined him,
+        # R9 2026-11-18) goes onto skipped_repeats with its label, never silently.
         h = history(ad, past)
         row["history"] = h["label"]
-        if h["declined_repeat"]:
+        if h["held_back"]:
             repeats.append({f: row[f] for f in ("title", "company", "url", "history")})
             continue
         if h["already_in_pipeline"]:

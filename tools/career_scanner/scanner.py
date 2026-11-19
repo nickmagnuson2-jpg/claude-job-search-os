@@ -425,9 +425,11 @@ def scan_all_targets(repo_root: Path, dry_run: bool = False, today=None) -> dict
 
     # Pipeline history (Nick, 2026-11-06), the SAME check /scan-jobs runs: every role is
     # labelled; the same role already active in the pipeline is a duplicate (counted in
-    # skipped_dupes, as before); an exact repeat of a posting he passed on moves to
-    # skipped_repeats. One definition for both scanners (the dedup.filter_duplicates
-    # path read active rows through a pipe_read subprocess, a second definition).
+    # skipped_dupes, as before); a held-back role (an exact repeat of a posting he passed
+    # on, or any role at a company that declined him, R9 2026-11-18) moves to
+    # skipped_repeats with its label. One definition for both scanners (the
+    # dedup.filter_duplicates path read active rows through a pipe_read subprocess, a
+    # second definition).
     from tools.pipeline_history import history, load_history
     past = load_history(repo_root)
     # Every role the fetch gates cut gets the same label (title-gate-1118). The check used
@@ -442,7 +444,7 @@ def scan_all_targets(repo_root: Path, dry_run: bool = False, today=None) -> dict
         role["history"] = h["label"]
         if h["already_in_pipeline"]:
             skipped += 1
-        elif h["declined_repeat"]:
+        elif h["held_back"]:
             repeats.append({f: role.get(f, "") for f in ("title", "company", "url", "history")})
         else:
             new_roles.append(role)
@@ -728,7 +730,12 @@ def _write_role_queue_locked(repo_root: Path, new_roles: list[dict],
     """The merge itself. Caller MUST already hold _queue_lock."""
     from tools.career_scanner.dedup import role_key
 
-    pending = read_pending(repo_root)
+    # A pending role this scan holds back (R9: its company declined Nick; or an exact repeat
+    # of a posting he passed on) leaves the pending log: it is on THIS payload's
+    # skipped_repeats with its label, so it moves to a visible list, never silently
+    # (Codex r2 F1).
+    held = {role_key(r) for r in (repeats or [])}
+    pending = [r for r in read_pending(repo_root) if role_key(r) not in held]
     # A pending role keeps its first-seen object, but a closed-row tag found by a LATER
     # scan must still reach it: the role is then standing, not new, and /standup reads
     # only the pending log (615.F1).
@@ -775,8 +782,9 @@ def _queue_payload(pending: list[dict], new_roles: list[dict],
         # exists so a cut is never silent, not as a backlog to work through.
         "cut_at_fetch_count": len(cuts or []),
         "cut_at_fetch": list(cuts or []),
-        # THIS scan's exact repeats of postings Nick passed on, held back with their
-        # history label (pipeline_history), never silently.
+        # THIS scan's held-back roles (an exact repeat of a posting Nick passed on, or a
+        # role at a company that declined him), with their history label
+        # (pipeline_history.history's held_back), never silently.
         "skipped_repeats": list(repeats or []),
         # THIS scan's target-drift report (tools/target_drift.py) and goals.md staleness.
         # On stale goals no role in this scan was ranked (target-drift-1106).

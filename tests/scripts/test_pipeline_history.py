@@ -3,6 +3,10 @@
 Nick, 2026-11-06: a role at a company with history ALWAYS shows, labelled; only an exact
 repeat of a posting he passed on is held back, onto a visible list. Spec:
 output/infra-backlog/110626-pipeline-history-check-spec.md.
+
+R9 (Nick, 2026-11-18): "Move any company that's rejected me to a skipped list." A role at a
+company (exact name match) with a declined_you row and no active row is held back onto the
+same visible list, labelled. Design: output/funnel-intake/111826-r9-design.md (option B).
 """
 import json
 import sys
@@ -22,6 +26,7 @@ PIPE = """# Job Pipeline
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | Northwind Labs | Deployment Strategist | Applied | 2026-10-20 | — | — | — | https://n.example/1 |
 | Quiet Co | Ops Lead |  |  | — | — | — | — |
+| Harbor Co | Strategy Lead | Applied | 2026-10-25 | — | — | — | https://h.example/2 |
 
 ## Archived
 
@@ -31,6 +36,10 @@ PIPE = """# Job Pipeline
 | Lantern Works | Strategy Lead | Withdrawn | 2026-09-12 | — | — | comp below floor. Also far. | https://l.example/1 |
 | Lantern Works | BizOps | Withdrawn | 2026-08-01 | — | — | — | https://l.example/2 |
 | Lantern Works | Chief of Staff | Closed - filled | 2026-07-01 | — | — | — | — |
+| Harbor Co | Ops Lead | Rejected | 2026-09-20 | — | — | — | https://h.example/1 |
+| Cove Labs | Analyst | Withdrawn | 2026-10-10 | — | — | — | — |
+| Cove Labs | BizOps | Withdrawn | 2026-10-05 | — | — | — | — |
+| Cove Labs | Ops Lead | Rejected | 2026-08-02 | — | — | — | — |
 """
 
 
@@ -52,7 +61,12 @@ def test_load_history_reads_every_row_with_an_outcome(rows):
                    ("Beacon AI", "Ops Lead"): "declined_you",
                    ("Lantern Works", "Strategy Lead"): "you_passed",
                    ("Lantern Works", "BizOps"): "you_passed",
-                   ("Lantern Works", "Chief of Staff"): "closed"}
+                   ("Lantern Works", "Chief of Staff"): "closed",
+                   ("Harbor Co", "Strategy Lead"): "in_pipeline",
+                   ("Harbor Co", "Ops Lead"): "declined_you",
+                   ("Cove Labs", "Analyst"): "you_passed",
+                   ("Cove Labs", "BizOps"): "you_passed",
+                   ("Cove Labs", "Ops Lead"): "declined_you"}
 
 
 def test_load_history_missing_file_is_empty(tmp_path):
@@ -79,15 +93,58 @@ def test_company_matcher(a, b, same, overlap):
     assert ph.company_overlap(a, b) is overlap
 
 
-def test_a_different_role_at_a_company_that_declined_you_shows_labelled(rows):
+def test_a_different_role_at_a_company_that_declined_you_is_held_back_labelled(rows):
+    """R9: any role at a company that declined Nick goes to the skipped list, labelled."""
     h = ph.history(role("Strategy Lead", "Beacon AI"), rows)
     assert h == {"label": "they declined you 10/03 (Ops Lead)", "declined_repeat": False,
+                 "declined_company": True, "held_back": True,
                  "already_in_pipeline": False, "possible_match": ""}
 
 
-def test_the_same_posting_that_declined_you_still_shows(rows):
+def test_the_same_posting_that_declined_you_is_held_back_as_a_declined_company(rows):
     h = ph.history(role("Ops Lead", "Beacon AI", "https://b.example/1"), rows)
-    assert h["declined_repeat"] is False and h["label"].startswith("they declined you")
+    assert h["declined_repeat"] is False and h["declined_company"] is True
+    assert h["label"].startswith("they declined you")
+
+
+def test_a_declining_company_with_an_active_row_is_not_held_back(rows):
+    """R9 grey area 4: never skip a company Nick has an active process with."""
+    h = ph.history(role("Chief of Staff", "Harbor Co"), rows)
+    assert h["declined_company"] is False and h["held_back"] is False
+    assert "they declined you 09/20 (Ops Lead)" in h["label"]
+
+
+def test_a_fuzzy_only_match_to_a_declining_company_is_not_held_back(rows):
+    """"Beacon" only possibly matches "Beacon AI": labelled, never skipped."""
+    h = ph.history(role("Ops Lead", "Beacon"), rows)
+    assert h["declined_company"] is False and h["held_back"] is False
+
+
+def test_a_company_you_only_passed_on_is_not_held_back(rows):
+    h = ph.history(role("Founding Ops", "Lantern Works"), rows)
+    assert h["declined_company"] is False and h["held_back"] is False
+
+
+def test_a_declined_company_label_names_the_decline_even_when_it_is_not_newest(rows):
+    """The two newest rows at Cove Labs are withdrawals; the label must still say why the
+    role is on the skipped list."""
+    h = ph.history(role("Strategy Lead", "Cove Labs"), rows)
+    assert h["declined_company"] is True
+    assert h["label"] == "they declined you 08/02 (Ops Lead); you passed 10/10 (Analyst); +1 more"
+
+
+def test_a_declined_company_label_leads_with_the_decline_when_the_title_matches_a_pass(rows):
+    """Grok r1 F1: Analyst matches the Analyst withdrawal, so the 11-06 "likely the role you
+    passed on" marker fires; the label must still lead with the decline."""
+    h = ph.history(role("Analyst", "Cove Labs"), rows)
+    assert h["declined_company"] is True
+    assert h["label"] == ("they declined you 08/02 (Ops Lead); likely the role you passed on; "
+                          "you passed 10/10 (Analyst); +1 more")
+
+
+def test_a_declined_repeat_is_held_back(rows):
+    h = ph.history(role("Strategy Lead", "Lantern Works", "https://l.example/1"), rows)
+    assert h["declined_repeat"] is True and h["held_back"] is True
 
 
 def test_you_passed_label_is_newest_first_and_counts_the_rest(rows):
@@ -122,12 +179,14 @@ def test_a_different_role_at_an_active_company_is_not_already_in_pipeline(rows):
 def test_a_blank_stage_is_unknown_and_never_hides(rows):
     h = ph.history(role("Ops Lead", "Quiet Co"), rows)
     assert h == {"label": "stage unknown, date unknown (Ops Lead)", "declined_repeat": False,
+                 "declined_company": False, "held_back": False,
                  "already_in_pipeline": False, "possible_match": ""}
 
 
 def test_a_possible_company_match_is_labelled_never_hidden(rows):
     h = ph.history(role("Ops Lead", "Beacon"), rows)
     assert h == {"label": "possible match: Beacon AI", "declined_repeat": False,
+                 "declined_company": False, "held_back": False,
                  "already_in_pipeline": False, "possible_match": "Beacon AI"}
 
 
@@ -156,10 +215,14 @@ ADS = [
      "url": "https://n.example/7", "description": "Run strategy."},
     {"title": "Chief of Staff", "company": "Northwind Labs", "location": "San Francisco",
      "url": "https://n.example/8", "description": "Run strategy."},
+    {"title": "Chief of Staff", "company": "Harbor Co", "location": "San Francisco",
+     "url": "https://h.example/9", "description": "Run strategy."},
+    {"title": "Ops Lead", "company": "Beacon", "location": "San Francisco",
+     "url": "https://bc.example/1", "description": "Run strategy."},
 ]
 
 
-def test_scan_jobs_labels_holds_back_only_a_declined_repeat_and_proposes_the_rest(tmp_path, monkeypatch):
+def test_scan_jobs_holds_back_a_declined_repeat_and_a_declining_company_and_proposes_the_rest(tmp_path, monkeypatch):
     sys.path.insert(0, str(REPO / "tools"))
     import scan_jobs as sj
     root = _scan_jobs_root(tmp_path)
@@ -167,12 +230,18 @@ def test_scan_jobs_labels_holds_back_only_a_declined_repeat_and_proposes_the_res
     out = sj.assess([dict(a) for a in ADS], root)
     new = {(r["company"], r["title"]): r for r in out["new"]}
     assert ("Lantern Works", "Strategy Lead") not in new
-    [rep] = out["skipped_repeats"]
-    assert rep["company"] == "Lantern Works" and rep["history"].startswith("you passed 09/12")
-    assert new[("Beacon AI", "Strategy Lead")]["history"] == "they declined you 10/03 (Ops Lead)"
+    assert ("Beacon AI", "Strategy Lead") not in new
+    held = {r["company"]: r for r in out["skipped_repeats"]}
+    assert set(held) == {"Lantern Works", "Beacon AI"}
+    assert held["Lantern Works"]["history"].startswith("you passed 09/12")
+    # R9: the declining company's role is on the skipped list WITH its label and URL.
+    assert held["Beacon AI"] == {"title": "Strategy Lead", "company": "Beacon AI",
+                                 "url": "https://b.example/9",
+                                 "history": "they declined you 10/03 (Ops Lead)"}
     assert new[("Northwind Labs", "Deployment Strategist")]["already_in_pipeline"] is True
     proposed = [(r["company"], r["title"]) for r in out["propose_for_pipeline"]]
-    assert proposed == [("Beacon AI", "Strategy Lead"), ("Northwind Labs", "Chief of Staff")]
+    assert proposed == [("Northwind Labs", "Chief of Staff"), ("Harbor Co", "Chief of Staff"),
+                        ("Beacon", "Ops Lead")]
 
 
 def test_the_nightly_scan_labels_and_holds_back_the_same_way(tmp_path, monkeypatch):
@@ -188,9 +257,13 @@ def test_the_nightly_scan_labels_and_holds_back_the_same_way(tmp_path, monkeypat
     payload = scanner.read_queue_payload(root)
     queued = {(r["company"], r["title"]): r for r in payload["new"]}
     assert ("Lantern Works", "Strategy Lead") not in queued
-    assert [r["company"] for r in payload["skipped_repeats"]] == ["Lantern Works"]
-    assert s["skipped_repeats"] == 1
-    assert queued[("Beacon AI", "Strategy Lead")]["history"] == "they declined you 10/03 (Ops Lead)"
+    assert ("Beacon AI", "Strategy Lead") not in queued
+    assert [r["company"] for r in payload["skipped_repeats"]] == ["Beacon AI", "Lantern Works"]
+    assert s["skipped_repeats"] == 2
+    assert payload["skipped_repeats"][0]["history"] == "they declined you 10/03 (Ops Lead)"
+    # A declining company with an active row, and a fuzzy-only match, still show.
+    assert "they declined you 09/20" in queued[("Harbor Co", "Chief of Staff")]["history"]
+    assert queued[("Beacon", "Ops Lead")]["history"] == "possible match: Beacon AI"
     # The active same-role row is the nightly scanner's existing duplicate drop.
     assert ("Northwind Labs", "Deployment Strategist") not in queued
 
@@ -249,14 +322,14 @@ def test_scan_jobs_labels_a_cached_ad_too(tmp_path, monkeypatch):
     sys.path.insert(0, str(REPO / "tools"))
     import scan_jobs as sj
     root = _scan_jobs_root(tmp_path)
-    ad = dict(ADS[0])
+    ad = dict(ADS[3])   # Northwind Labs Chief of Staff: labelled, not held back
     cache = root / ".claude/skills/scan-jobs/cache.md"
     cache.write_text(cache.read_text() + f"| {ad['title']} | {ad['company']} | 5/10 | listed | — | "
                      f"[Listing]({ad['url']}) | by hand |\n", encoding="utf-8")
     monkeypatch.setattr(sj, "score_role", lambda r, ctx: 9)
     out = sj.assess([ad], root)
     assert out["cached"] == [{"title": ad["title"], "company": ad["company"],
-                              "history": "they declined you 10/03 (Ops Lead)"}]
+                              "history": "in pipeline: Applied (Deployment Strategist)"}]
 
 
 def test_parity_every_ad_gets_the_same_verdict_from_both(tmp_path, monkeypatch):
@@ -304,8 +377,9 @@ def test_the_nightly_summary_lists_the_held_back_repeats(tmp_path, monkeypatch):
                         lambda t, errors=None, cuts=None: [dict(x) for x in ADS])
     monkeypatch.setattr(scanner.time, "sleep", lambda *_: None)
     s = scanner.scan_all_targets(tmp_path, dry_run=True)
-    assert [r["company"] for r in s["skipped_repeat_roles"]] == ["Lantern Works"]
-    assert s["skipped_repeats"] == 1
+    assert [r["company"] for r in s["skipped_repeat_roles"]] == ["Beacon AI", "Lantern Works"]
+    assert s["skipped_repeats"] == 2
+    assert all(r["company"] != "Beacon AI" for r in s["roles"])
 
 
 def test_the_cli_top_roles_carry_the_history_label(tmp_path, monkeypatch, capsys):
@@ -364,3 +438,71 @@ def test_the_nightly_scan_labels_roles_the_fetch_gates_cut(tmp_path, monkeypatch
     scanner.scan_all_targets(root)
     [cut] = scanner.read_queue_payload(root)["cut_at_fetch"]
     assert cut["history"] == "they declined you 10/03 (Ops Lead)"
+
+
+# ---------- R9: a company that declined Nick goes to the skipped list ----------
+
+def test_a_cached_ad_at_a_declining_company_goes_to_skipped_repeats(tmp_path, monkeypatch):
+    """R9: the cached path routes the same way as the fresh one."""
+    sys.path.insert(0, str(REPO / "tools"))
+    import scan_jobs as sj
+    root = _scan_jobs_root(tmp_path)
+    ad = dict(ADS[0])   # Beacon AI Strategy Lead: Beacon AI declined Nick
+    cache = root / ".claude/skills/scan-jobs/cache.md"
+    cache.write_text(cache.read_text() + f"| {ad['title']} | {ad['company']} | 5/10 | listed | — | "
+                     f"[Listing]({ad['url']}) | by hand |\n", encoding="utf-8")
+    monkeypatch.setattr(sj, "score_role", lambda r, ctx: 9)
+    out = sj.assess([ad], root)
+    assert out["cached"] == []
+    assert out["skipped_repeats"] == [{"title": ad["title"], "company": ad["company"],
+                                       "history": "they declined you 10/03 (Ops Lead)",
+                                       "url": ad["url"]}]
+
+
+def test_parity_both_scanners_hold_back_exactly_the_same_ads(tmp_path, monkeypatch):
+    """R9 parity: the same ads, the same held-back set (company, title, label) from both, and
+    every non-held ad is present in the other scanner's shown list."""
+    sys.path.insert(0, str(REPO / "tools"))
+    import scan_jobs as sj
+    from tools.career_scanner import scanner
+    a, b = tmp_path / "a", tmp_path / "b"
+    _scan_jobs_root(a)
+    (b / "data").mkdir(parents=True)
+    (b / "data" / "job-pipeline.md").write_text(PIPE, encoding="utf-8")
+    monkeypatch.setattr(sj, "score_role", lambda r, ctx: 9)
+    sj_out = sj.assess([dict(x) for x in ADS], a)
+    monkeypatch.setattr(scanner, "load_targets", lambda r: [{"name": "x", "ats": "ashby", "slug": "x"}])
+    monkeypatch.setattr(scanner, "fetch_company_roles",
+                        lambda t, errors=None, cuts=None: [dict(x) for x in ADS])
+    monkeypatch.setattr(scanner.time, "sleep", lambda *_: None)
+    scanner.scan_all_targets(b)
+    q = scanner.read_queue_payload(b)
+    trip = lambda rows: {(r["company"], r["title"], r["history"]) for r in rows}
+    assert trip(sj_out["skipped_repeats"]) == trip(q["skipped_repeats"])
+    assert {c for c, _, _ in trip(q["skipped_repeats"])} == {"Beacon AI", "Lantern Works"}
+    for ad in ADS:
+        held = ad["company"] in {"Beacon AI", "Lantern Works"} and ad["url"] in (
+            "https://b.example/9", "https://l.example/1")
+        assert held is ((ad["company"], ad["title"]) in {(c, t) for c, t, _ in trip(q["skipped_repeats"])})
+        assert held is ((ad["company"], ad["title"]) in {(c, t) for c, t, _ in trip(sj_out["skipped_repeats"])})
+
+
+def test_a_pending_role_now_held_back_moves_from_new_to_skipped(tmp_path, monkeypatch):
+    """Codex r2 F1: a role queued before the company declined Nick (or before R9) stayed in
+    the pending `new` list while also listed on skipped_repeats. It must move, and an
+    unrelated pending role must stay."""
+    from tools.career_scanner import scanner
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "job-pipeline.md").write_text(PIPE, encoding="utf-8")
+    held = {"title": "Strategy Lead", "company": "Beacon AI", "url": "https://b.example/9", "history": ""}
+    other = {"title": "Ops Lead", "company": "Fresh Co", "url": "https://f.example/1", "history": ""}
+    scanner.write_queue_payload(tmp_path, scanner._queue_payload([held, other], [held, other], [], []))
+    monkeypatch.setattr(scanner, "load_targets", lambda r: [{"name": "x", "ats": "ashby", "slug": "x"}])
+    monkeypatch.setattr(scanner, "fetch_company_roles",
+                        lambda t, errors=None, cuts=None: [dict(ADS[0])])
+    monkeypatch.setattr(scanner.time, "sleep", lambda *_: None)
+    scanner.scan_all_targets(tmp_path)
+    q = scanner.read_queue_payload(tmp_path)
+    assert [r["url"] for r in q["new"]] == ["https://f.example/1"]
+    assert [(r["url"], r["history"]) for r in q["skipped_repeats"]] == [
+        ("https://b.example/9", "they declined you 10/03 (Ops Lead)")]
