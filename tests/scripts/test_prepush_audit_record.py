@@ -436,3 +436,73 @@ def test_a_deletion_only_push_prints_no_record_report(repo):
     commit(repo, "a.md", "ok\n")
     r = guard(repo, push_line(ZERO_SHA))
     assert r.returncode == 0 and "/audit-pii record" not in r.stderr
+
+
+# --- merge chain (Nick, 2026-11-18: "No PRs") --------------------------------------------
+# A push of merge commits built by land_branch.py --merge-push: each merge's tree is git's
+# own merge of its parents (tools/merge_chain.py), so the record that matters is the one for
+# each SECOND parent's tree, the branch tip /audit-pii ran on. Nobody audits a merge tree.
+sys.path.insert(0, str(ROOT / "tools"))
+import merge_chain as _mc  # noqa: E402
+
+
+def _chain(repo):
+    base = commit(repo, "README.md", "base\n")
+    _git(repo, "checkout", "-q", "-b", "one", base)
+    t1 = commit(repo, "one.md", "one\n")
+    _git(repo, "checkout", "-q", "-b", "two", base)
+    t2 = commit(repo, "two.md", "two\n")
+    m1 = _mc.build(repo, base, t1, "one")
+    m2 = _mc.build(repo, m1, t2, "two")
+    return base, t1, t2, m1, m2
+
+
+def _clean(repo, sha):
+    write_row(repo, {"kind": "audit", "verdict": "clean", "tree": tree(repo, sha), "tip": sha})
+
+
+def main_push(tip, base):
+    return f"{tip} {tip} refs/heads/main {base}\n"
+
+
+def test_chain_push_passes_on_each_branch_tips_record(repo):
+    base, t1, t2, m1, m2 = _chain(repo)
+    _clean(repo, t1)
+    _clean(repo, t2)
+    r = guard(repo, main_push(m2, base))
+    assert r.returncode == 0, r.stderr
+
+
+def test_chain_push_blocks_when_one_branch_tip_has_no_record(repo):
+    base, t1, t2, m1, m2 = _chain(repo)
+    _clean(repo, t1)
+    r = guard(repo, main_push(m2, base))
+    assert r.returncode == 1
+    assert t2[:8] in r.stderr
+
+
+def test_chain_push_ignores_a_record_for_the_merge_tree_alone(repo):
+    base, t1, t2, m1, m2 = _chain(repo)
+    _clean(repo, m2)
+    _clean(repo, t1)
+    assert guard(repo, main_push(m2, base)).returncode == 1
+
+
+def test_non_chain_push_keeps_the_tip_tree_rule(repo):
+    base, t1, _t2, _m1, _m2 = _chain(repo)
+    sneak = commit(repo, "evil.md", "x\n")
+    bad = _git(repo, "commit-tree", tree(repo, sneak), "-p", base, "-p", t1, "-m", "m"
+               ).stdout.strip()
+    _clean(repo, t1)
+    assert guard(repo, main_push(bad, base)).returncode == 1
+    _clean(repo, bad)
+    assert guard(repo, main_push(bad, base)).returncode == 0
+
+
+def test_chain_waiver_records_the_missing_branch_tips(repo):
+    base, t1, t2, m1, m2 = _chain(repo)
+    _clean(repo, t1)
+    r = guard(repo, main_push(m2, base), env={"AUDIT_PII_WAIVE": "test"})
+    assert r.returncode == 0, r.stderr
+    waived = [x for x in rows(repo) if x.get("kind") == "waiver"]
+    assert [w["tree"] for w in waived] == [tree(repo, t2)]

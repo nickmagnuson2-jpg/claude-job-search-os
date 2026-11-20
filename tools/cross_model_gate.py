@@ -604,6 +604,34 @@ def tip_tree(repo_root: Path, tip: str | None) -> str | None:
     return tree if out.returncode == 0 and _SHA_RE.match(tree) else None
 
 
+def families_cover(fams: set, need: int, standin_used: list, pth: str) -> bool:
+    """Enough distinct families, AND at least one from outside the author's.
+
+    The second condition is what keeps a same-family verifier additive. Without it,
+    wiring Fable would let two Anthropic rows -- or one, at tier 1 -- clear a push
+    with nothing outside the family that wrote the code having looked at it, which
+    is the anchoring failure this gate exists to defeat, not a relaxation of it.
+    One function for check() and check_chain(), so the two cannot disagree on it.
+    """
+    # The tier's appetite must be met by families OUTSIDE the author's. Counting the
+    # author's own family toward it lets a same-family verifier OCCUPY one of the two
+    # slots a tier-2 push demands, so {openai, anthropic} would clear a bar that used
+    # to require {openai, xai}. That is a weakening dressed as an addition, and it is
+    # exactly what "additive, never sufficient" was supposed to prevent -- the first
+    # version of this check tested `fams - {AUTHOR_FAMILY}` for non-emptiness, which
+    # is true at tier 1 and false at tier 2. Found by cross-model review (F2, P0,
+    # 2026-09-16) on the same commit that wired the same-family model.
+    outside = fams - {AUTHOR_FAMILY}
+    if len(outside) >= need:
+        return True
+    # Grok-outage exception (see FABLE_STANDIN_UNTIL): Fable fills one slot, never all.
+    if (fable_standin_active() and AUTHOR_FAMILY in fams and outside
+            and len(outside) + 1 >= need):
+        standin_used.append(pth)
+        return True
+    return False
+
+
 def check(repo_root: Path, changes: list[tuple[str, int, int]],
           since: float, tip: str | None = None) -> Verdict:
     """Block a qualifying push that no verification covers.
@@ -716,31 +744,7 @@ def check(repo_root: Path, changes: list[tuple[str, int, int]],
     standin_used: list[str] = []
 
     def path_is_covered(pth: str) -> bool:
-        """Enough distinct families, AND at least one from outside the author's.
-
-        The second condition is what keeps a same-family verifier additive. Without it,
-        wiring Fable would let two Anthropic rows -- or one, at tier 1 -- clear a push
-        with nothing outside the family that wrote the code having looked at it, which
-        is the anchoring failure this gate exists to defeat, not a relaxation of it.
-        """
-        fams = covered.get(pth, set())
-        # The tier's appetite must be met by families OUTSIDE the author's. Counting the
-        # author's own family toward it lets a same-family verifier OCCUPY one of the two
-        # slots a tier-2 push demands, so {openai, anthropic} would clear a bar that used
-        # to require {openai, xai}. That is a weakening dressed as an addition, and it is
-        # exactly what "additive, never sufficient" was supposed to prevent -- the first
-        # version of this check tested `fams - {AUTHOR_FAMILY}` for non-emptiness, which
-        # is true at tier 1 and false at tier 2. Found by cross-model review (F2, P0,
-        # 2026-09-16) on the same commit that wired the same-family model.
-        outside = fams - {AUTHOR_FAMILY}
-        if len(outside) >= need:
-            return True
-        # Grok-outage exception (see FABLE_STANDIN_UNTIL): Fable fills one slot, never all.
-        if (fable_standin_active() and AUTHOR_FAMILY in fams and outside
-                and len(outside) + 1 >= need):
-            standin_used.append(pth)
-            return True
-        return False
+        return families_cover(covered.get(pth, set()), need, standin_used, pth)
 
     missing = sorted(p for p in required if not path_is_covered(p))
     # EVERY CHANGED PATH, not the trigger set. `required` is narrowed to the highest-tier
@@ -789,6 +793,116 @@ def check(repo_root: Path, changes: list[tuple[str, int, int]],
         f"  Or Nick waives:  CODEX_VERIFY_WAIVE='<why>' git push\n\n"
         f"A waiver is recorded and counted; /standup surfaces the running total."
         + (f"\n\nAlso: {_p0_block_text(blocking)}" if blocking else ""))
+    return v
+
+
+def check_chain(repo_root: Path, base: str, tip: str | None) -> Verdict | None:
+    """The gate for a push of merge commits (Nick, 2026-11-18: "No PRs").
+
+    land_branch.py --merge-push builds M1 = merge(main, b1), M2 = merge(M1, b2), ...
+    Nobody reviews a merge tree; each branch was reviewed at its own tip. So when
+    base..tip is a verified chain (tools/merge_chain.py: every commit is git's own
+    merge of its parents, first parents chaining from base) each merge Mi is judged
+    on its own: the paths p1..Mi changes need rows whose `tree` is p2's tree (the
+    branch tip that was reviewed), at the full family rule for that merge's tier.
+    Only tree rows count: a time-keyed row cannot say which branch it saw.
+
+    The push is also judged whole: when the merges together are a large or broad
+    change, each merge must have its share of those paths reviewed at its branch tip,
+    even when that merge alone is too small to qualify.
+
+    Open P0s are checked over every path any merge in the push changes.
+
+    Returns None when base..tip is NOT a verified chain, so the caller applies
+    check() to the whole push, which blocks a merge no row reviewed. A diff that
+    git cannot produce for a verified chain blocks (fails closed).
+    """
+    import merge_chain
+    if not (base and tip):
+        return None
+    try:
+        merges = merge_chain.walk(repo_root, base, tip)
+    except merge_chain.ChainError:
+        return None
+    v = Verdict(qualified=True, reason="is a chain of merge commits")
+    try:
+        per_merge = [(m, merge_chain.numstat(repo_root, m.p1, m.sha)) for m in merges]
+        changed = sorted({p for p, _a, _r in merge_chain.numstat(repo_root, base, tip)})
+    except merge_chain.ChainError as e:
+        v.blocked = True
+        v.message = f"This push is a merge chain, but its diff could not be read: {e}"
+        return v
+    v.changed = changed
+    rows, corrupt = read_ledger_with_health(repo_root)
+    if corrupt:
+        v.blocked = True
+        v.message = (f"This push {v.reason}.\nThe ledger has {corrupt} unreadable "
+                     f"line(s), so its coverage is unknown and it cannot be trusted to "
+                     f"clear anything.\n\n  Inspect:   tools/{LEDGER_NAME}\n"
+                     f"  Or waive:  CODEX_VERIFY_WAIVE='<why>' git push\n")
+        return v
+
+    by_tree: dict[str, dict[str, set[str]]] = {}
+    for row in rows:
+        if row_is_usable(row) and isinstance(row.get("tree"), str):
+            cov = by_tree.setdefault(row["tree"], {})
+            for pth in row.get("paths") or []:
+                cov.setdefault(pth, set()).add(row_model(row))
+
+    # The push is also judged WHOLE (Grok 2026-11-19 F1). Merges that are each too small
+    # to need review can add up to a large or broad change, which qualifies() exists to
+    # catch in one diff (test_many_small_code_edits_add_up). Lines are summed per path
+    # across the merges, so a file added in one merge and removed in a later one counts.
+    summed: dict[str, list[int]] = {}
+    for _m, changes in per_merge:
+        for p, a, r in changes:
+            s = summed.setdefault(p, [0, 0])
+            s[0] += a
+            s[1] += r
+    whole = qualifies([(p, a, r) for p, (a, r) in summed.items()])
+    whole_req = set(whole.triggers or []) if whole.qualified else set()
+
+    gaps: list[str] = []
+    standin_used: list[str] = []
+    for m, changes in per_merge:
+        mv = qualifies(changes)
+        mine = {p for p, _a, _r in changes}
+        shared = mine & whole_req
+        required = (set(mv.triggers or mine) if mv.qualified else set()) | shared
+        need = max(1, mv.need_models if mv.qualified else 0,
+                   whole.need_models if shared else 0)
+        tier = max(mv.tier if mv.qualified else 0, whole.tier if shared else 0)
+        branch_tree = tip_tree(repo_root, m.p2)
+        cov = by_tree.get(branch_tree, {}) if branch_tree else {}
+        missing = sorted(p for p in required
+                         if not families_cover(cov.get(p, set()), need, standin_used, p))
+        if missing:
+            gaps.append(f"  merge {m.sha[:8]} (branch tip {m.p2[:8]}, tier {tier}, "
+                        f"{need} model(s)): " + ", ".join(missing[:6])
+                        + (f" (+{len(missing) - 6} more)" if len(missing) > 6 else ""))
+
+    # Every path a sent commit changes, not only the net diff (Grok 2026-11-19 F2): a
+    # file added by one merge and removed by a later one is still pushed.
+    blocking = open_p0_against(repo_root, set(changed) | set(summed))
+    if not gaps and not blocking:
+        v.blocked = False
+        v.message = (f"cleared: each of {len(merges)} merge(s) is covered by reviews of "
+                     f"its branch tip's tree")
+        if standin_used:
+            v.message += (f"; NOTE: {len(standin_used)} path(s) cleared with Fable standing "
+                          f"in for Grok (exception until {FABLE_STANDIN_UNTIL.isoformat()})")
+        return v
+    v.blocked = True
+    parts = [f"This push {v.reason}."]
+    if gaps:
+        parts.append("Not covered by a review of the branch tip's tree:\n"
+                     + "\n".join(gaps)
+                     + "\n\n  Review the branch at that tip: tools/codex_verify.py "
+                     "--paths <paths>, run in the branch's worktree.\n"
+                     "  Or Nick waives:  CODEX_VERIFY_WAIVE='<why>' git push")
+    if blocking:
+        parts.append(_p0_block_text(blocking))
+    v.message = "\n".join(parts)
     return v
 
 
@@ -850,6 +964,9 @@ def main(argv=None) -> int:
     ap.add_argument("--since", type=float, default=0.0)
     ap.add_argument("--tip", default=None,
                     help="the pushed commit; tree-keyed rows match its tree")
+    ap.add_argument("--base", default=None,
+                    help="the remote's current tip; when base..tip is a verified merge "
+                         "chain, each merge is checked against its branch tip's reviews")
     ap.add_argument("--numstat", default="-",
                     help="path to `git diff --numstat` output, or - for stdin")
     args = ap.parse_args(argv)
@@ -878,7 +995,9 @@ def main(argv=None) -> int:
                   f"  recorded; total waivers: {waiver_count(root)}", file=sys.stderr)
         return 0
 
-    v = check(root, changes, since=args.since, tip=args.tip)
+    v = check_chain(root, args.base, args.tip) if args.base else None
+    if v is None:
+        v = check(root, changes, since=args.since, tip=args.tip)
     if v.blocked:
         print(f"\nBLOCKED: cross-model verification\n\n{v.message}\n", file=sys.stderr)
         return 2
