@@ -61,6 +61,16 @@ def load(repo_root: Path) -> dict:
     return data
 
 
+def serialize(data: dict) -> str:
+    """The one byte form of the allowlist: sorted keys, 2-space indent, trailing newline.
+
+    tools/merge_chain.py resolves a mutation-allow.json merge conflict to exactly these
+    bytes and the push gate recomputes them, so this function is the single definition
+    both the writer and the gate import (Nick, 2026-11-18: allowlist conflicts are
+    resolved by allowlist_merge + _dump)."""
+    return json.dumps(data, indent=2, ensure_ascii=False, sort_keys=True) + "\n"
+
+
 def _dump(repo_root: Path, data: dict) -> None:
     """Write the whole file, sorted, with a trailing newline.
 
@@ -69,8 +79,7 @@ def _dump(repo_root: Path, data: dict) -> None:
     """
     path = allow_path(repo_root)
     tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
-                   encoding="utf-8")
+    tmp.write_text(serialize(data), encoding="utf-8")
     tmp.replace(path)
 
 

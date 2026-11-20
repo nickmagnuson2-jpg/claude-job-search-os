@@ -50,13 +50,17 @@ import itertools
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 import urllib.parse
+from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from count_report import format_line  # noqa: E402  (a count states its reach)
+import merge_chain as mc  # noqa: E402  (one rule for a valid merge, shared with both gates)
 
 ZERO = "0" * 40
 # Env vars that turn a gate dry run into a recorded waiver. A read-only check must never
@@ -346,7 +350,7 @@ def tail(text: str, n: int = 6) -> str:
 
 def check_branch(root: Path, branch: str, worktrees: dict, gh_state: dict | None,
                  main_ref: str | None, remote_url: str, want_suite: bool,
-                 stale_base: str | None = None) -> dict:
+                 stale_base: str | None = None, allowlist_ok: bool = False) -> dict:
     r = {"branch": branch, "ready": False, "refusals": [], "steps": {}}
     if branch == "main":
         r["refusals"].append("refusing to land main itself")
@@ -395,7 +399,13 @@ def check_branch(root: Path, branch: str, worktrees: dict, gh_state: dict | None
     if main_ref:
         m = merge_check(root, main_ref, tip)
         r["steps"]["merge_main"] = m
-        if not m["clean"]:
+        if not m["clean"] and allowlist_ok and m["files"] == [mc.ALLOWLIST] \
+                and mc.expected_tree(root, main_ref, tip)[0]:
+            # Nick, 2026-11-18: the allowlist is resolved by key (allowlist_merge), and
+            # the push gate recomputes that resolution. Only --merge-push passes this.
+            r.setdefault("notes", []).append(
+                f"conflicts with main only in {mc.ALLOWLIST}; --merge-push resolves it by key")
+        elif not m["clean"]:
             r["refusals"].append("conflicts with main: " + (", ".join(m["files"]) or
                                                           m.get("error", "?")))
     else:
@@ -484,7 +494,8 @@ def merge_order(results: list[dict], conflicts: list[dict]) -> dict:
             "pairs": [c for c in conflicts if c["a"] in ready or c["b"] in ready]}
 
 
-def check(root: Path, branches: list[str], want_suite: bool = False, gh=gh_json) -> dict:
+def check(root: Path, branches: list[str], want_suite: bool = False, gh=gh_json, *,
+          allowlist_ok: bool = False) -> dict:
     rc, porcelain, err = git(["worktree", "list", "--porcelain"], root)
     worktrees = parse_worktrees(porcelain) if rc == 0 else {}
     # The PUSH url: the hook receives it on a real push, and it can differ from the fetch url.
@@ -507,7 +518,7 @@ def check(root: Path, branches: list[str], want_suite: bool = False, gh=gh_json)
         stale = (f"checked against local origin/main {short(main['ref'])}, not GitHub main "
                  f"{short(main['github_main'])}: a clean result here proves nothing about GitHub")
     results = [check_branch(root, b, worktrees, gh_state, main["ref"], remote_url, want_suite,
-                            stale) for b in branches]
+                            stale, allowlist_ok) for b in branches]
     tips = {r["branch"]: r["tip"] for r in results if r.get("tip")}
     conflicts = []
     for a, b in itertools.combinations([r["branch"] for r in results if r.get("tip")], 2):
@@ -526,7 +537,8 @@ def check(root: Path, branches: list[str], want_suite: bool = False, gh=gh_json)
                                 f"refs/heads/{r['branch']}:refs/heads/{r['branch']}",
                         "compare_url": compare_url(slug, r["branch"], title, body),
                         "pushed": r.get("github_tip") == r["tip"]})
-    return {"repo": slug, "main": main, "checkers": checkers, "branches": results,
+    return {"repo": slug, "remote_url": remote_url, "main": main, "checkers": checkers,
+            "branches": results,
             "conflicts": conflicts, "merge_order": merge_order(results, conflicts),
             "landing": landing,
             "push_commands": [x["push"] for x in landing],
@@ -605,25 +617,485 @@ def render(rep: dict) -> str:
     return "\n".join(out)
 
 
+# ================================================================ --merge-push
+# Nick, 2026-11-18: "It should not be something that I am doing." One command builds every
+# ready branch into a chain of merge commits on GitHub main and prints ONE push. Rulings
+# (data/workstreams/orchestration.md, 2026-11-18 15:42): no PRs, each merge message is the
+# branch's reviewed description; a mutation-allow.json conflict is resolved by key, any other
+# conflict holds that branch; SSH fetch only; the full suite on the final tree, 0 failures.
+DESC_DIR = Path("output") / "landing-descriptions"
+TITLE_MAX = 72
+EM_DASH = "—"
+# The gitignored files the push gate reads. The preview copies exactly these from the main
+# checkout, so it judges with the same evidence the real push will.
+GATE_DATA = (".cross-model-ledger.jsonl", ".audit-pii-ledger.jsonl", ".pii-denylist.txt",
+             ".pii-denylist-targetwords.txt", ".pii-denylist-ambiguous.txt")
+CROSS_LEDGER, AUDIT_LEDGER = GATE_DATA[0], GATE_DATA[1]
+_BUSY_RE = re.compile(r"\bssh\b.*git@github\.com|(?:^|[\s/])git(?:\s+-C\s+\S+)?\s+"
+                      r"(?:push|fetch|pull)\b")
+WEDGE_HELP = ('diagnose: ps -ax -o pid,etime,command | grep -E "ssh git@github.com|SecretAgent"; '
+              "a wedged agent is fixed by Nick: kill the waiting push pids, then "
+              "pkill -f SecretAgent; sleep 2; open -a Secretive")
+
+
+def busy_processes(ps_output: str | None = None) -> list[str]:
+    """Running pushes, fetches or GitHub ssh sessions. A second push while one waits on a
+    Touch ID prompt is how the Secretive agent wedged on 2026-11-17 (F3)."""
+    if ps_output is None:
+        rc, ps_output, _ = run(["ps", "-ax", "-o", "pid,etime,command"], timeout=30)
+        if rc != 0:
+            return [f"? ps failed rc {rc}: cannot tell whether a push is running"]
+    out = []
+    for line in ps_output.splitlines()[1:]:
+        parts = line.split(None, 2)
+        if len(parts) == 3 and parts[0] != str(os.getpid()) and _BUSY_RE.search(parts[2]):
+            out.append(line.strip())
+    return out
+
+
+def description_path(main: Path, branch: str) -> Path:
+    return main / DESC_DIR / f"{branch}.md"
+
+
+def check_description(main: Path, branch: str) -> tuple[str | None, list[str]]:
+    """The branch owner's reviewed description, or the problems that hold the branch.
+
+    Format: a title line (1-72 chars, no surrounding whitespace), a blank line, a body, and
+    PR_FOOTER as the last line. No em dash; no denylist or target-word hit (F5: thin titles
+    from commit subjects, leading-space and typo'd titles, >72-char titles cut by GitHub)."""
+    path = description_path(main, branch)
+    if not path.is_file():
+        return None, [f"no reviewed description at {path}"]
+    text = path.read_text(encoding="utf-8")
+    lines = text.splitlines()
+    title = lines[0] if lines else ""
+    probs = []
+    if not title.strip():
+        probs.append("description has no title line")
+    elif title != title.strip():
+        probs.append("title has leading or trailing whitespace")
+    if len(title) > TITLE_MAX:
+        probs.append(f"title is {len(title)} chars, longer than {TITLE_MAX}")
+    if len(lines) < 2 or lines[1].strip():
+        probs.append("line 2 of the description must be blank")
+    nonblank = [ln.strip() for ln in lines if ln.strip()]
+    if not nonblank or nonblank[-1] != PR_FOOTER:
+        probs.append(f"last line must be the footer: {PR_FOOTER}")
+    if not [ln for ln in lines[2:] if ln.strip() and ln.strip() != PR_FOOTER]:
+        probs.append("description has no body")
+    if EM_DASH in text:
+        probs.append("description contains an em dash")
+    import check_public_pii as cp
+    tokens = cp.load_denylist(main)
+    if not tokens:
+        probs.append("no denylist to check the description against (tools/.pii-denylist.txt)")
+    else:
+        hits = cp.find_pii(text, tokens) + cp.find_target_words(text, cp.load_target_words(main))
+        if hits:
+            probs.append(f"description has denylist hits: {', '.join(sorted(set(hits)))}")
+    return (None if probs else text), probs
+
+
+def merge_message(desc: str, branch: str, tip: str) -> str:
+    """The reviewed description, with a Merge-push trailer before its footer line."""
+    lines = desc.rstrip("\n").splitlines()
+    last = max(i for i, ln in enumerate(lines) if ln.strip())
+    head = "\n".join(lines[:last]).rstrip()
+    return f"{head}\n\nMerge-push: {branch} {tip}\n\n{lines[last].strip()}\n"
+
+
+def _jsonl(path: Path) -> list[dict]:
+    if not path.is_file():
+        return []
+    rows = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(row, dict):
+            rows.append(row)
+    return rows
+
+
+def _audit_key(row: dict) -> tuple:
+    return (row.get("kind"), row.get("verdict"), row.get("tree"), row.get("tip"),
+            row.get("recorded"))
+
+
+def collect_backfill(main: Path, built: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Rows the built branches' worktrees hold that the main checkout does not: review
+    rows by codex_verify.row_identity (the key mirror_to_main dedups on; rows before #49
+    were never mirrored) and clean /audit-pii records by content. Each copy names its
+    source in `copied_from`. Waivers are not copied: a waiver clears only its own push."""
+    from codex_verify import row_identity
+    have = {row_identity(r) for r in _jsonl(main / "tools" / CROSS_LEDGER)}
+    have_audit = {_audit_key(r) for r in _jsonl(main / "tools" / AUDIT_LEDGER)}
+    cross, audit = [], []
+    for b in built:
+        wt = Path(b["worktree"])
+        for row in _jsonl(wt / "tools" / CROSS_LEDGER):
+            if row_identity(row) not in have:
+                have.add(row_identity(row))
+                cross.append({**row, "copied_from": str(wt)})
+        for row in _jsonl(wt / "tools" / AUDIT_LEDGER):
+            if row.get("kind") == "audit" and row.get("verdict") == "clean" \
+                    and _audit_key(row) not in have_audit:
+                have_audit.add(_audit_key(row))
+                audit.append({**row, "copied_from": str(wt)})
+    return cross, audit
+
+
+def write_backfill(main: Path, cross: list[dict], audit: list[dict]) -> None:
+    import cross_model_gate as gate
+    for row in cross:
+        gate.append_row(main, row)          # takes the ledger lock finding_write uses
+    if audit:
+        path = main / "tools" / AUDIT_LEDGER
+        with path.open("a", encoding="utf-8") as fh:
+            for row in audit:
+                fh.write(json.dumps(row) + "\n")
+
+
+def preview_gate(root: Path, main: Path, checkers: Path, base: str, tip: str, url: str,
+                 extra_cross: list[dict], extra_audit: list[dict]) -> dict:
+    """Run the pre-push hook exactly as `git push origin <tip>:refs/heads/main` would, in a
+    throwaway no-checkout worktree whose tools/ is `checkers` plus the main checkout's gate
+    data (GATE_DATA) plus rows not yet written there. Nothing in the main checkout changes."""
+    tmp = Path(tempfile.mkdtemp(prefix="merge-push-preview."))
+    wt = tmp / "wt"
+    try:
+        rc, _, err = git(["worktree", "add", "--no-checkout", "--detach", str(wt), base], root)
+        if rc != 0:
+            return {"rc": None, "ok": False, "reason": f"preview worktree: {err.strip()[:200]}"}
+        shutil.copytree(checkers, wt / "tools", dirs_exist_ok=True,
+                        ignore=shutil.ignore_patterns(".*", "__pycache__", "logs", "*.log"))
+        for name in GATE_DATA:
+            src = main / "tools" / name
+            if src.is_file():
+                shutil.copy2(src, wt / "tools" / name)
+        for name, rows in ((CROSS_LEDGER, extra_cross), (AUDIT_LEDGER, extra_audit)):
+            # Zero rows leaves at most an empty ledger, which the gate reads as no rows.
+            with (wt / "tools" / name).open("a", encoding="utf-8") as fh:
+                fh.writelines(json.dumps(r) + "\n" for r in rows)
+        hook = wt / "tools" / "hooks" / "pre-push"
+        if not hook.is_file():
+            return {"rc": None, "ok": False, "reason": f"no hook at {checkers}/hooks/pre-push"}
+        rc, out, err = run(["bash", str(hook), "origin", url], cwd=wt,
+                           stdin=f"{tip} {tip} refs/heads/main {base}\n")
+        return {"rc": rc, "ok": rc == 0, "tail": tail(out + err, 12),
+                "reason": None if rc == 0 else gate_reason(out + err)}
+    finally:
+        git(["worktree", "remove", "--force", str(wt)], root)
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def hook_installed_matches(main: Path) -> tuple[bool, str]:
+    rc, hooks, _ = git(["rev-parse", "--path-format=absolute", "--git-path", "hooks"], main)
+    installed = Path(hooks.strip()) / "pre-push" if rc == 0 else None
+    tracked = main / "tools" / "hooks" / "pre-push"
+    if installed is None or not installed.is_file() or not tracked.is_file() \
+            or installed.read_bytes() != tracked.read_bytes():
+        return False, (f"the installed pre-push hook ({installed}) is not tools/hooks/pre-push "
+                       f"of {main}: the push would run a different gate. Run: "
+                       f"! bash {main}/tools/hooks/install.sh")
+    return True, ""
+
+
+def held_inside(root: Path, held: list[dict], base: str, tip: str) -> list[str]:
+    """The held branches whose commits `tip` would carry into the push.
+
+    A held branch is named by its ref, not by its worktree (grok F1, 2026-11-19): a branch
+    held for "no worktree" has no tip in its check row, and skipping it let a ready branch
+    stacked on it land its commits. A held tip already in `base` adds nothing, so it is not
+    counted. A git error is not "not an ancestor": the branch is reported as if inside."""
+    out = []
+    for h in held:
+        ht = h.get("tip")
+        if not ht:
+            rc, sha, _ = git(["rev-parse", "--verify", "--quiet",
+                              f"refs/heads/{h['branch']}^{{commit}}"], root)
+            ht = sha.strip() if rc == 0 else ""
+        if not ht or git(["merge-base", "--is-ancestor", ht, base], root)[0] == 0:
+            continue
+        rc = git(["merge-base", "--is-ancestor", ht, tip], root)[0]
+        if rc == 0:
+            out.append(h["branch"])
+        elif rc != 1:
+            out.append(f"{h['branch']} (ancestry unreadable, git rc {rc})")
+    return out
+
+
+def merge_push(root: Path, branches: list[str], *, dry_run: bool, gh=None,
+               checkers: Path | None = None, busy=None, want_suite: bool | None = None) -> dict:
+    """Build the merge chain and decide whether ONE push may land it. See the block above.
+
+    A real run writes: the copied ledger rows into the main checkout, and the suite record.
+    A dry run writes neither (objects in the store aside) and judges with the tools/ next
+    to this file, so a new gate can be tried before it lands; a real run judges only with
+    the main checkout's tools/ and only when they are current GitHub main."""
+    gh = gh or gh_json
+    busy = busy or busy_processes
+    want_suite = (not dry_run) if want_suite is None else want_suite
+    branches = list(dict.fromkeys(branches))
+    rep = {"dry_run": dry_run, "ok": False, "refusals": [], "held": [], "built": [],
+           "base": None, "chain_tip": None, "gate": None, "suite": None,
+           "backfill": {"cross": 0, "audit": 0, "written": False}, "commands": [],
+           "fetch_command": None, "verify_resolved": []}
+    tools = trusted_tools(root)
+    if tools is None:
+        rep["refusals"].append(NO_TRUSTED)
+        return rep
+    main = tools.parent
+    rep["main_checkout"] = str(main)
+    # check() runs the INSTALLED pre-push hook per branch, so it must be the tracked one
+    # before anything executes it, dry run included (codex F3, 2026-11-19).
+    same, why = hook_installed_matches(main)
+    if not same:
+        rep["refusals"].append(why)
+        return rep
+    running = busy()
+    if running:
+        rep["refusals"].append("another push or fetch is running (one at a time, F3): "
+                               + "; ".join(running) + ". " + WEDGE_HELP)
+    base_rep = check(root, branches, want_suite=False, gh=gh, allowlist_ok=True)
+    rep["check"] = base_rep
+    m = base_rep["main"]
+    base = rep["base"] = m["github_main"]
+    if base is None:
+        rep["refusals"].append("GitHub main unreadable: " + "; ".join(m["warnings"]))
+    elif m["method"] != "local":
+        rep["fetch_command"] = f"! git -C {main} fetch origin main"
+        rep["refusals"].append(f"GitHub main {short(base)} is not in the local object store; "
+                               "the chain must start on its exact sha. Fetch it (SSH, one "
+                               "Touch ID), then re-run")
+    if not dry_run:
+        if not base_rep["checkers"]["current"]:
+            rep["refusals"].append("checkers are not current GitHub main: "
+                                   + "; ".join(base_rep["checkers"]["warnings"]))
+    if rep["refusals"]:
+        return rep
+    gate_tools = checkers or (tools if not dry_run else Path(__file__).resolve().parent)
+    rep["gate_tools"] = str(gate_tools)
+
+    results = {r["branch"]: r for r in base_rep["branches"]}
+    candidates = {}
+    for b in branches:
+        r = results[b]
+        reasons = list(r["refusals"])
+        desc, probs = check_description(main, b)
+        if reasons or probs:
+            rep["held"].append({"branch": b, "tip": r.get("tip"), "reasons": reasons + probs})
+        else:
+            candidates[b] = (r["tip"], desc, r["worktree"])
+    first = [b for b in base_rep["merge_order"]["first"] if b in candidates]
+    order = first + [b for b in candidates if b not in first]
+    cur = base
+    for b in order:
+        tip, desc, wt = candidates[b]
+        # A held branch must not land inside another one (codex F1, 2026-11-19): a ready
+        # branch stacked on a held tip would carry the held commits into the push.
+        inside = held_inside(root, rep["held"], base, tip)
+        if inside:
+            rep["held"].append({"branch": b, "tip": tip, "reasons": [
+                "contains held branch(es) " + ", ".join(inside) + ": landing it would land them"]})
+            continue
+        try:
+            cur = mc.build(root, cur, tip, merge_message(desc, b, tip))
+        except mc.ChainError as e:
+            rep["held"].append({"branch": b, "tip": tip, "reasons": [str(e)]})
+            continue
+        rep["built"].append({"branch": b, "tip": tip, "merge": cur, "worktree": wt})
+    if not rep["built"]:
+        rep["refusals"].append("nothing to land: every branch is held")
+        return rep
+    try:
+        chain = mc.walk(root, base, cur)
+    except mc.ChainError as e:
+        rep["refusals"].append(f"the built chain does not verify: {e}")
+        return rep
+    for b, c in zip(rep["built"], chain):
+        b["resolved_allowlist"] = c.resolved_allowlist
+    rep["chain_tip"] = cur
+    if any(c.resolved_allowlist for c in chain):
+        rep["verify_resolved"] = [mc.ALLOWLIST]
+
+    cross, audit = collect_backfill(main, rep["built"])
+    rep["backfill"] = {"cross": len(cross), "audit": len(audit), "written": False}
+    if not dry_run:
+        write_backfill(main, cross, audit)
+        rep["backfill"]["written"] = True
+        cross, audit = [], []
+    g = preview_gate(root, main, gate_tools, base, cur, base_rep["remote_url"], cross, audit)
+    rep["gate"] = g
+    if not g["ok"]:
+        rep["refusals"].append(f"push gate rc {g['rc']}: {g.get('reason')}")
+        return rep
+    if want_suite:
+        tool = gate_tools / "suite_record.py"
+        rc, out, err = run([sys.executable, str(tool), "run", "--branch", cur, "--base", base,
+                            "--repo-root", str(main)], cwd=main, timeout=4 * 3600)
+        rep["suite"] = {"rc": rc, "ok": rc == 0, "tail": tail(out + err, 40)}
+        if rc != 0:
+            rep["refusals"].append(f"full suite on the merged tree did not pass (rc {rc}); "
+                                   "failing output is in suite.tail")
+            return rep
+    rep["commands"] = [
+        f"! git -C {main} push origin {cur}:refs/heads/main",
+        f"! git -C {main} merge --ff-only {cur}",
+        f"! PYTHONIOENCODING=utf-8 python3 {main}/tools/land_branch.py --verify-landed "
+        f"{base}..{cur}",
+    ]
+    rep["ok"] = True
+    return rep
+
+
+def render_merge_push(rep: dict) -> str:
+    out = [("DRY RUN (judged with " + rep.get("gate_tools", "?") + "; nothing written)")
+           if rep["dry_run"] else "MERGE-PUSH"]
+    if rep.get("base"):
+        out.append(f"base: GitHub main {rep['base']}")
+    for b in rep["built"]:
+        extra = "  (allowlist resolved by key)" if b.get("resolved_allowlist") else ""
+        out.append(f"BUILT  {b['branch']}  {short(b['tip'])} -> merge {short(b['merge'])}{extra}")
+    for h in rep["held"]:
+        out.append(f"HELD   {h['branch']}")
+        out += [f"         - {x}" for x in h["reasons"]]
+    bf = rep["backfill"]
+    out.append(f"evidence copied to the main checkout: {bf['cross']} review row(s), "
+               f"{bf['audit']} audit row(s) ({'written' if bf['written'] else 'not written'})")
+    if rep.get("gate"):
+        g = rep["gate"]
+        out.append(f"push gate preview: {'ok' if g['ok'] else 'BLOCKED'} (rc {g['rc']})")
+        if not g["ok"] and g.get("tail"):
+            out += ["  " + ln for ln in g["tail"].splitlines()]
+    if rep.get("suite"):
+        s = rep["suite"]
+        out.append(f"full suite on {short(rep['chain_tip'])}: {'pass' if s['ok'] else 'FAIL'} "
+                   f"(rc {s['rc']})")
+        if not s["ok"]:
+            out += ["  " + ln for ln in s["tail"].splitlines()]
+    elif rep["chain_tip"]:
+        out.append("full suite: not run (dry run; pass --suite to run it)")
+    out += [f"!!! {r}" for r in rep["refusals"]]
+    if rep.get("fetch_command"):
+        out += ["", "Run this first, then re-run:", f"  {rep['fetch_command']}"]
+    if rep["ok"]:
+        out += ["", "One push lands every BUILT branch. Run from the main checkout, in order:"]
+        out += [f"  {c}" for c in rep["commands"]]
+    return "\n".join(out)
+
+
+def verify_landed(root: Path, rng: str, gh=None) -> dict:
+    """After the push: every merged tip and the chain tip are on GitHub main (compare
+    behind_by 0, repo named explicitly, F14); a key-resolved allowlist parses on GitHub
+    main and holds every key and reason of the merged one; then a landing record is
+    appended to data/workstreams/orchestration.md in the main checkout. Read-only on GitHub."""
+    gh = gh or gh_json
+    base, sep, tip = rng.partition("..")
+    res = {"ok": False, "problems": [], "branches": []}
+    if not sep or not base or not tip:
+        res["problems"].append(f"expected BASE..TIP, got {rng!r}")
+        return res
+    try:
+        chain = mc.walk(root, base, tip)
+    except mc.ChainError as e:
+        res["problems"].append(f"not a merge-push chain: {e}")
+        return res
+    rc, url, _ = git(["remote", "get-url", "--push", "origin"], root)
+    slug = repo_slug(url) if rc == 0 else None
+    if not slug:
+        res["problems"].append("origin is not a GitHub URL")
+        return res
+    for sha in [c.p2 for c in chain] + [tip]:
+        try:
+            behind = gh(f"repos/{slug}/compare/{sha}...main", root).get("behind_by")
+        except (RuntimeError, json.JSONDecodeError, AttributeError) as e:
+            res["problems"].append(f"{short(sha)}: compare failed: {e}")
+            continue
+        if behind != 0:
+            res["problems"].append(f"{short(sha)} is not on GitHub main (behind_by {behind})")
+    if any(c.resolved_allowlist for c in chain):
+        import base64
+        try:
+            blob = gh(f"repos/{slug}/contents/{mc.ALLOWLIST}?ref=main", root)
+            remote = json.loads(base64.b64decode(blob["content"]).decode("utf-8"))
+            local = json.loads(git(["show", f"{tip}:{mc.ALLOWLIST}"], root)[1])
+            lost = [k for k, v in local.items() if remote.get(k) != v]
+            if lost:
+                res["problems"].append(f"{mc.ALLOWLIST} on GitHub main lacks {len(lost)} "
+                                       f"merged key(s): {', '.join(lost[:5])}")
+        except (RuntimeError, KeyError, ValueError, AttributeError) as e:
+            res["problems"].append(f"{mc.ALLOWLIST} on GitHub main did not parse: {e}")
+    for c in chain:
+        msg = git(["log", "-1", "--format=%B", c.sha], root)[1]
+        name = next((ln.split()[1] for ln in msg.splitlines()
+                     if ln.startswith("Merge-push: ") and len(ln.split()) >= 3), "?")
+        res["branches"].append({"branch": name, "tip": c.p2, "merge": c.sha,
+                                "resolved_allowlist": c.resolved_allowlist})
+    if res["problems"]:
+        return res
+    tools = trusted_tools(root)
+    record = tools.parent / "data" / "workstreams" / "orchestration.md" if tools else None
+    lines = [f"\n## {datetime.now().strftime('%Y-%m-%d %H:%M')} by `date` | merge-push landed "
+             f"{len(chain)} branch(es) (land_branch.py --verify-landed)\n",
+             f"- GitHub main contains {tip} (pushed onto {base}); every merged tip compares "
+             "behind_by 0 against GitHub main."]
+    lines += [f"- {b['branch']} at {b['tip']} via merge {b['merge']}"
+              + (" (allowlist resolved by key; parsed on GitHub main)"
+                 if b["resolved_allowlist"] else "") for b in res["branches"]]
+    if record is None or not record.is_file():
+        res["problems"].append(f"landing record not written: {record} not found")
+        return res
+    with record.open("a", encoding="utf-8") as fh:
+        fh.write("\n".join(lines) + "\n")
+    res["record"] = str(record)
+    res["ok"] = True
+    return res
+
+
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description="Check branches for landing (read-only).")
+    ap = argparse.ArgumentParser(description="Check branches for landing; --merge-push builds "
+                                             "the merge chain and prints one push.")
     ap.add_argument("branches", nargs="*")
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--suite", action="store_true",
-                    help="also run suite_record.py check when that tool exists")
+                    help="also run the suite (check mode: suite_record check; dry-run "
+                         "merge-push: the full suite on the merged tree)")
+    ap.add_argument("--merge-push", action="store_true",
+                    help="build every ready branch into one merge chain on GitHub main")
+    ap.add_argument("--dry-run", action="store_true",
+                    help="with --merge-push: judge with this file's tools/, write nothing")
+    ap.add_argument("--verify-landed", metavar="BASE..TIP", default=None)
     ap.add_argument("--repo-root", default=".")
     try:
         args = ap.parse_args(argv)
     except SystemExit:
         return 2
-    if not args.branches:
-        print("usage: land_branch.py <branch> [<branch> ...] [--json] [--suite]", file=sys.stderr)
+    if args.dry_run and not args.merge_push:
+        print("--dry-run needs --merge-push", file=sys.stderr)
         return 2
     rc, top, _ = git(["rev-parse", "--show-toplevel"], args.repo_root)
     if rc != 0:
         print(f"not a git repository: {args.repo_root}", file=sys.stderr)
         return 2
-    rep = check(Path(top.strip()), list(dict.fromkeys(args.branches)), args.suite)
+    root = Path(top.strip())
+    if args.verify_landed:
+        res = verify_landed(root, args.verify_landed)
+        print(json.dumps(res, indent=2) if args.json else
+              ("LANDED; record appended to " + res["record"]) if res["ok"] else
+              "NOT LANDED:\n" + "\n".join(f"  - {p}" for p in res["problems"]))
+        return 0 if res["ok"] else 1
+    if not args.branches:
+        print("usage: land_branch.py <branch> [<branch> ...] [--json] [--suite] "
+              "[--merge-push [--dry-run]] | --verify-landed BASE..TIP", file=sys.stderr)
+        return 2
+    if args.merge_push:
+        rep = merge_push(root, args.branches, dry_run=args.dry_run,
+                         want_suite=True if (args.suite or not args.dry_run) else False)
+        print(json.dumps(rep, indent=2) if args.json else render_merge_push(rep))
+        return 0 if rep["ok"] else 1
+    rep = check(root, list(dict.fromkeys(args.branches)), args.suite)
     print(json.dumps(rep, indent=2) if args.json else render(rep))
     return 0 if rep["all_ready"] else 1
 
